@@ -85,7 +85,41 @@
   outline: none !important;
 }
 
+/* Sidebar → canvas drag: parpadeo de todo el nodo (brillo/opacidad), sin acentuar bordes */
+@keyframes library-drop-node-pulse {
+  0%,
+  100% {
+    filter: brightness(0.82) saturate(0.92);
+    opacity: 0.78;
+  }
+  50% {
+    filter: brightness(1.12) saturate(1.06);
+    opacity: 1;
+  }
+}
 
+.react-flow__node.library-drop-compatible .custom-node {
+  animation: library-drop-node-pulse 0.95s ease-in-out infinite;
+  will-change: filter, opacity;
+}
+
+/* Cursor encima del compatible: mismo tipo de pulso, un poco más rápido y marcado (sin color ámbar) */
+@keyframes library-drop-node-pulse-hover {
+  0%,
+  100% {
+    filter: brightness(0.86) saturate(0.94);
+    opacity: 0.82;
+  }
+  50% {
+    filter: brightness(1.2) saturate(1.08);
+    opacity: 1;
+  }
+}
+
+.react-flow__node.library-drop-highlight .custom-node {
+  animation: library-drop-node-pulse-hover 0.65s ease-in-out infinite;
+  will-change: filter, opacity;
+}
 
 .node-header {
   padding: 16px 20px;
@@ -103,9 +137,30 @@
   border-top-right-radius: 24px;
 }
 
-.node-header svg {
+.node-header svg:not(.foldder-node-icon) {
   opacity: 0.8;
   filter: drop-shadow(0 0 8px currentColor);
+}
+
+/* Foldder node icons: hover on card, micro scale + clarity (see foldder-icons.tsx) */
+.custom-node:hover .foldder-node-icon-wrap {
+  transform: scale(1.05);
+  filter: brightness(1.08);
+}
+
+.foldder-icon-pulse {
+  animation: foldder-icon-pulse 1.35s ease-in-out infinite;
+  transform-origin: center;
+}
+
+@keyframes foldder-icon-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 .node-header .node-badge {

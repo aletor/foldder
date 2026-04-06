@@ -50,6 +50,13 @@ import { AgentHUD } from './AgentHUD';
 import { readResponseJson } from '@/lib/read-response-json';
 import './spaces.css';
 import { NODE_REGISTRY } from './nodeRegistry';
+import {
+  areNodesConnectable,
+  findLibraryDropPlan,
+  computeLibraryDropPosition,
+  findTopNodeUnderFlowPoint,
+} from './connection-utils';
+import { NodeIconMono } from './foldder-icons';
 import { 
   Save, 
   FolderOpen, 
@@ -68,17 +75,45 @@ import {
   LayoutGrid,
   ChevronLeft,
   Layers,
-  PlusSquare,
-  Scissors,
-  Cloud,
   Sparkles,
-  Zap,
-  Download
+  Download,
+  Brain,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
+
+const AUTH_HIGHLIGHTS: {
+  icon: LucideIcon;
+  title: string;
+  description: string;
+}[] = [
+  {
+    icon: Layers,
+    title: 'Your Entire Creative Stack. Rebuilt.',
+    description: 'Photoshop, Illustrator, DaVinci… now inside one canvas.',
+  },
+  {
+    icon: Workflow,
+    title: 'From Tools to Systems',
+    description: 'Design the full creative process as a connected flow.',
+  },
+  {
+    icon: Brain,
+    title: 'AI That Works Like You Do',
+    description: 'Not prompts. Pipelines. Fully visual and reusable.',
+  },
+  {
+    icon: Sparkles,
+    title: "Create What Didn't Exist Before",
+    description: 'Image, video and logic combined into new workflows.',
+  },
+];
 
 const initialNodes: Node[] = [];
 
 const FINAL_NODE_ID = 'final_output_permanent';
+
+/** Margin around the graph when fitting the viewport — higher = more “air”, nodes read smaller */
+const FIT_VIEW_PADDING = 1.2;
 
 const nodeTypes: any = {
   mediaInput: MediaInputNode,
@@ -121,7 +156,7 @@ const SpacesContent = () => {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState<any>(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<any>(initialEdges);
-  const { screenToFlowPosition, setViewport, fitView } = useReactFlow();
+  const { screenToFlowPosition, setViewport, fitView, getViewport } = useReactFlow();
   
   // Persistence state
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
@@ -140,6 +175,68 @@ const SpacesContent = () => {
   const [projectToDelete, setProjectToDelete] = useState<any | null>(null);
   const [navigationStack, setNavigationStack] = useState<string[]>([]);
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, nodeId?: string } | null>(null);
+
+  /** Tras soltar un nodo desde la librería en el lienzo, el panel queda colapsado hasta volver a la franja izquierda */
+  const [sidebarLockedCollapsed, setSidebarLockedCollapsed] = useState(false);
+
+  const [libraryDropTargetId, setLibraryDropTargetId] = useState<string | null>(null);
+  /** Durante arrastre desde librería: ids de nodos que pueden conectar con el tipo arrastrado */
+  const [libraryCompatibleIds, setLibraryCompatibleIds] = useState<string[]>([]);
+  const libraryDropTargetIdRef = useRef<string | null>(null);
+  const libraryDragTypeRef = useRef<string | null>(null);
+  /** Viewport antes del fit al arrastrar desde la librería — se restaura si el nodo no se suelta en el lienzo */
+  const libraryDragViewportRef = useRef<{ x: number; y: number; zoom: number } | null>(null);
+  /** true si onDrop en el lienzo añadió nodo(s) / archivos en este arrastre */
+  const libraryCanvasDropSucceededRef = useRef(false);
+
+  const handleLibraryDragStart = useCallback(
+    (nodeType: string) => {
+      libraryDragViewportRef.current = getViewport();
+      libraryCanvasDropSucceededRef.current = false;
+      libraryDragTypeRef.current = nodeType;
+
+      const compatible: string[] = [];
+      for (const n of nodes) {
+        if (n.id === FINAL_NODE_ID) continue;
+        if (findLibraryDropPlan(nodeType, n, edges)) {
+          compatible.push(n.id);
+        }
+      }
+      setLibraryCompatibleIds(compatible);
+
+      fitView({ padding: FIT_VIEW_PADDING, duration: 420 });
+    },
+    [fitView, getViewport, nodes, edges]
+  );
+
+  const handleLibraryDragEnd = useCallback(() => {
+    const saved = libraryDragViewportRef.current;
+    if (!libraryCanvasDropSucceededRef.current && saved) {
+      setViewport(saved, { duration: 380 });
+    }
+    libraryDragViewportRef.current = null;
+    libraryCanvasDropSucceededRef.current = false;
+    libraryDragTypeRef.current = null;
+    libraryDropTargetIdRef.current = null;
+    setLibraryDropTargetId(null);
+    setLibraryCompatibleIds([]);
+  }, [setViewport]);
+
+  /** Encuadra solo los nodos indicados (normalmente uno: el recién añadido), sin fit a todo el grafo */
+  const fitViewToNodeIds = useCallback(
+    (ids: string[], duration = 650) => {
+      const unique = [...new Set(ids.filter(Boolean))];
+      if (unique.length === 0) return;
+      setTimeout(() => {
+        void fitView({
+          nodes: unique.map((id) => ({ id })) as Node[],
+          padding: FIT_VIEW_PADDING,
+          duration,
+        });
+      }, 60);
+    },
+    [fitView]
+  );
 
   // ── Window Viewer Mode ─────────────────────────────────────────────────────
   const [windowMode, setWindowMode] = useState(false);
@@ -444,12 +541,6 @@ const SpacesContent = () => {
   const addNodeAtCenter = useCallback((type: string, extraData: Record<string, any> = {}) => {
     const center = screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
     const newId  = `${type}_${Date.now()}`;
-    const newNode = {
-      id: newId,
-      type,
-      position: { x: center.x - 160, y: center.y - 120 },
-      data: { label: '', ...extraData },
-    };
 
     // ── Auto-connect selected nodes ──────────────────────────────────────
     const selectedNodes = nodes.filter(n => n.selected);
@@ -574,6 +665,38 @@ const SpacesContent = () => {
       }
     }
 
+    let position = { x: center.x - 160, y: center.y - 120 };
+    if (autoEdges.length > 0 && selectedNodes.length === 1) {
+      const anchor = selectedNodes[0];
+      const primary = autoEdges.find(
+        (e: any) =>
+          (e.target === newId && e.source === anchor.id) ||
+          (e.source === newId && e.target === anchor.id)
+      );
+      if (primary) {
+        const plan =
+          primary.target === newId
+            ? {
+                direction: 'existing-to-new' as const,
+                sourceHandle: primary.sourceHandle,
+                targetHandle: primary.targetHandle,
+              }
+            : {
+                direction: 'new-to-existing' as const,
+                sourceHandle: primary.sourceHandle,
+                targetHandle: primary.targetHandle,
+              };
+        position = computeLibraryDropPosition(anchor, type, plan);
+      }
+    }
+
+    const newNode = {
+      id: newId,
+      type,
+      position,
+      data: { label: '', ...extraData },
+    };
+
     takeSnapshot(); // snapshot BEFORE adding node
     setNodes(nds => {
       const next = [...nds, newNode];
@@ -587,7 +710,13 @@ const SpacesContent = () => {
         ...autoEdges,
       ]);
     }, 50);
-  }, [screenToFlowPosition, nodes, edges, setNodes, setEdges, pushHistory, takeSnapshot]);
+
+    if (autoEdges.length > 0) {
+      setTimeout(() => {
+        fitViewToNodeIds([newId], 700);
+      }, 100);
+    }
+  }, [screenToFlowPosition, nodes, edges, setNodes, setEdges, pushHistory, takeSnapshot, fitViewToNodeIds]);
 
 
   // ── Node click: global z-order counter — each click brings that node above all others
@@ -605,8 +734,8 @@ const SpacesContent = () => {
   // ── Auto-layout (A key) ──────────────────────────────────────────────────
 
   const autoLayout = useCallback(() => {
-    const COL_GAP = 420; // horizontal distance between columns
-    const ROW_GAP = 280; // vertical distance between rows
+    const COL_GAP = 560; // horizontal distance between columns (flow units)
+    const ROW_GAP = 360; // vertical distance between rows
 
     const toArrange = nodes.some(n => n.selected)
       ? nodes.filter(n => n.selected)
@@ -670,7 +799,7 @@ const SpacesContent = () => {
         : n
     ));
 
-    setTimeout(() => fitView({ padding: 0.2, duration: 600 }), 50);
+    setTimeout(() => fitView({ padding: FIT_VIEW_PADDING, duration: 600 }), 50);
   }, [nodes, edges, setNodes, pushHistory, takeSnapshot, fitView]);
 
   // ── Keyboard shortcuts ───────────────────────────────────────────────────
@@ -737,7 +866,7 @@ const SpacesContent = () => {
         case 'x': addNodeAtCenter('crop'); break;
         case 'z': addNodeAtCenter('bezierMask'); break;
         // ── Canvas actions ───────────────────────────────────────────────
-        case 'f': fitView({ padding: 0.2, duration: 800 }); break;
+        case 'f': fitView({ padding: FIT_VIEW_PADDING, duration: 800 }); break;
         case 'a': autoLayout(); break;
         default: break;
       }
@@ -1097,7 +1226,7 @@ const SpacesContent = () => {
       setEdges([...(targetSpace.edges || [])]);
       setNavigationStack(prev => [...prev, currentId]);
       setActiveSpaceId(targetSpaceId);
-      setTimeout(() => fitView({ padding: 0.2, duration: 800 }), 100);
+      setTimeout(() => fitView({ padding: FIT_VIEW_PADDING, duration: 800 }), 100);
     }
   }, [activeSpaceId, nodes, edges, spacesMap, setNodes, setEdges, fitView, syncCurrentSpaceState]);
 
@@ -1119,7 +1248,7 @@ const SpacesContent = () => {
       setEdges([...(parentSpace.edges || [])]);
       setActiveSpaceId(parentSpaceId);
       setNavigationStack(newStack);
-      setTimeout(() => fitView({ padding: 0.2, duration: 800 }), 100);
+      setTimeout(() => fitView({ padding: FIT_VIEW_PADDING, duration: 800 }), 100);
     }
   }, [activeSpaceId, nodes, edges, spacesMap, navigationStack, setNodes, setEdges, fitView, syncCurrentSpaceState]);
 
@@ -1248,7 +1377,7 @@ const SpacesContent = () => {
     
     // Smooth transition
     setTimeout(() => {
-      fitView({ padding: 0.2, duration: 800 });
+      fitView({ padding: FIT_VIEW_PADDING, duration: 800 });
     }, 100);
   };
 
@@ -1377,7 +1506,7 @@ const SpacesContent = () => {
     });
 
     setNodes(newNodes);
-    setTimeout(() => fitView({ padding: 0.2, duration: 800 }), 100);
+    setTimeout(() => fitView({ padding: FIT_VIEW_PADDING, duration: 800 }), 100);
   }, [nodes, edges, setNodes, fitView]);
 
   const onGenerateAssistant = async (prompt: string) => {
@@ -1418,7 +1547,7 @@ const SpacesContent = () => {
         
         // Smooth transition to center generated workflow
         setTimeout(() => {
-          fitView({ padding: 0.2, duration: 800 });
+          fitView({ padding: FIT_VIEW_PADDING, duration: 800 });
         }, 100);
       }
     } catch (err) {
@@ -1447,8 +1576,9 @@ const SpacesContent = () => {
         pushHistory(nodes, next);
         return next;
       });
+      fitViewToNodeIds([params.target], 600);
     },
-    [setEdges, nodes, pushHistory]
+    [setEdges, nodes, pushHistory, fitViewToNodeIds]
   );
 
   // ── Handle→Node type suggestions ─────────────────────────────────────────
@@ -1544,8 +1674,9 @@ const SpacesContent = () => {
     // Delay edge slightly so ReactFlow's drag-cancel doesn't wipe it
     setTimeout(() => {
       setEdges((eds: any) => [...eds, newEdge]);
+      fitViewToNodeIds([newNodeId], 600);
     }, 30);
-  }, [edges, nodes, screenToFlowPosition, setNodes, setEdges, pushHistory]);
+  }, [edges, nodes, screenToFlowPosition, setNodes, setEdges, pushHistory, fitViewToNodeIds]);
 
 
 
@@ -1563,7 +1694,10 @@ const SpacesContent = () => {
     setNodes((nds) => nds.filter((node) => node.id !== id));
     setEdges((eds) => eds.filter((edge) => edge.source !== id && edge.target !== id));
     setContextMenu(null);
-  }, [setNodes, setEdges]);
+    setTimeout(() => {
+      fitView({ padding: FIT_VIEW_PADDING, duration: 650 });
+    }, 80);
+  }, [setNodes, setEdges, fitView]);
 
   const duplicateNode = useCallback((id: string) => {
     const node = nodes.find((n) => n.id === id);
@@ -1684,70 +1818,73 @@ const SpacesContent = () => {
     setContextMenu(null);
   }, [nodes, edges, spacesMap, setNodes, setEdges]);
 
+  const flowNodes = useMemo(() => {
+    const compatSet = new Set(libraryCompatibleIds);
+    return nodes.map((n: any) => {
+      const isCompat = compatSet.has(n.id);
+      const isHover = n.id === libraryDropTargetId;
+      const cls = [n.className, isCompat && 'library-drop-compatible', isHover && 'library-drop-highlight']
+        .filter(Boolean)
+        .join(' ');
+      return {
+        ...n,
+        className: cls || undefined,
+      };
+    });
+  }, [nodes, libraryDropTargetId, libraryCompatibleIds]);
+
   const isValidConnection = useCallback((connection: any) => {
     const sourceNode = nodes.find((n) => n.id === connection.source);
     const targetNode = nodes.find((n) => n.id === connection.target);
-
     if (!sourceNode || !targetNode) return false;
-
-    // Get source handle type
-    const sourceMetadata = NODE_REGISTRY[sourceNode.type];
-    let sourceHandleType = sourceMetadata?.outputs.find(o => o.id === connection.sourceHandle)?.type;
-
-    // IF SPACE NODE: Override sourceHandleType with the dynamic outputType from internal structure
-    if (sourceNode.type === 'space' && sourceNode.data?.outputType) {
-      sourceHandleType = sourceNode.data.outputType;
-    }
-
-    // Get target handle type
-    const targetMetadata = NODE_REGISTRY[targetNode.type];
-    let targetHandleType = targetMetadata?.inputs.find(i => i.id === connection.targetHandle)?.type;
-
-    // IF TARGET IS SPACE: Override targetHandleType with internal inputType
-    if (targetNode.type === 'space' && targetNode.data?.inputType) {
-        targetHandleType = targetNode.data.inputType;
-    }
-
-    // Fallback for missing/mismatched handle IDs: Use first handle type from registry
-    if (!sourceHandleType && sourceMetadata?.outputs?.[0]) sourceHandleType = sourceMetadata.outputs[0].type;
-    if (!targetHandleType && targetMetadata?.inputs?.[0]) targetHandleType = targetMetadata.inputs[0].type;
-
-    // Handle "layer-n" inputs for composer (they are always images)
-    if (connection.targetHandle?.startsWith('layer-')) {
-      targetHandleType = 'image';
-    }
-
-    // Handle "p-n" inputs for concatenator (they are always prompts)
-    if (targetNode.type === 'concatenator' && connection.targetHandle?.startsWith('p')) {
-      targetHandleType = 'prompt';
-    }
-
-    // Special cases for generic mediaInput
-    if (sourceNode.type === 'mediaInput') {
-       const actualType = (sourceNode.data as any)?.type; 
-       if (actualType === targetHandleType) return true;
-    }
-
-    // Allow: mask nodes can connect their 'rgba' output (type image) to any image input
-    // This handles BackgroundRemover and BezierMask both having 'rgba' id with type 'image'
-    if (connection.sourceHandle === 'rgba' && targetHandleType === 'image') return true;
-    if (connection.sourceHandle === 'rgba' && targetHandleType === 'url') return true;
-
-    // Match exact types or allow flexible 'url'
-    if (sourceHandleType === 'url' || targetHandleType === 'url') return true;
-    return sourceHandleType === targetHandleType;
+    return areNodesConnectable(sourceNode, targetNode, connection);
   }, [nodes]);
 
-  const onDragOver = useCallback((event: React.DragEvent) => {
-    event.preventDefault();
-    event.dataTransfer.dropEffect = 'move';
-  }, []);
+  const onDragOver = useCallback(
+    (event: React.DragEvent) => {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+
+      const t = libraryDragTypeRef.current;
+      if (!t) return;
+
+      const p = screenToFlowPosition({
+        x: event.clientX,
+        y: event.clientY,
+      });
+      const hit = findTopNodeUnderFlowPoint(p, nodes, {
+        excludeIds: new Set([FINAL_NODE_ID]),
+      });
+      if (!hit) {
+        libraryDropTargetIdRef.current = null;
+        setLibraryDropTargetId(null);
+        return;
+      }
+      const plan = findLibraryDropPlan(t, hit, edges);
+      if (!plan) {
+        libraryDropTargetIdRef.current = null;
+        setLibraryDropTargetId(null);
+        return;
+      }
+      libraryDropTargetIdRef.current = hit.id;
+      setLibraryDropTargetId(hit.id);
+    },
+    [screenToFlowPosition, nodes, edges]
+  );
 
   const onDrop = useCallback(
     (event: React.DragEvent) => {
       event.preventDefault();
 
-      const reactFlowType = event.dataTransfer.getData('application/reactflow');
+      const reactFlowType =
+        event.dataTransfer.getData('application/reactflow') || libraryDragTypeRef.current || '';
+      const snapTargetId = libraryDropTargetIdRef.current;
+
+      libraryDragTypeRef.current = null;
+      libraryDropTargetIdRef.current = null;
+      setLibraryDropTargetId(null);
+      setLibraryCompatibleIds([]);
+
       const files = Array.from(event.dataTransfer.files);
 
       const position = screenToFlowPosition({
@@ -1757,6 +1894,7 @@ const SpacesContent = () => {
 
       // Handle Native File Drops
       if (files.length > 0) {
+        libraryCanvasDropSucceededRef.current = true;
         files.forEach(async (file, index) => {
           const type = (name: string, mime: string): any => {
             if (mime.startsWith('video/') || name.match(/\.(mp4|mov|avi|webm|mkv)$/i)) return 'video';
@@ -1815,12 +1953,72 @@ const SpacesContent = () => {
             setNodes((nds) => nds.map((n) => n.id === nodeId ? { ...n, data: { ...n.data, loading: false, error: true } } : n));
           }
         });
+        setTimeout(() => {
+          fitView({ padding: FIT_VIEW_PADDING, duration: 800 });
+        }, 100);
         return;
       }
 
       // Handle Sidebar Drops
       if (!reactFlowType) return;
 
+      const targetNode = snapTargetId ? nodes.find((n) => n.id === snapTargetId) : null;
+      const plan =
+        targetNode && snapTargetId
+          ? findLibraryDropPlan(reactFlowType, targetNode, edges)
+          : null;
+
+      if (targetNode && plan && snapTargetId === targetNode.id) {
+        libraryCanvasDropSucceededRef.current = true;
+        const dropPos = computeLibraryDropPosition(targetNode, reactFlowType, plan);
+        const newId = `node_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+        const newNode = {
+          id: newId,
+          type: reactFlowType,
+          position: dropPos,
+          data: { value: '', label: `${reactFlowType} node` },
+        };
+
+        const edgeId = `e-lib-${newId}-${targetNode.id}-${Date.now()}`;
+        const newEdge =
+          plan.direction === 'existing-to-new'
+            ? {
+                id: edgeId,
+                source: targetNode.id,
+                sourceHandle: plan.sourceHandle,
+                target: newId,
+                targetHandle: plan.targetHandle,
+                type: 'buttonEdge' as const,
+                animated: true,
+              }
+            : {
+                id: edgeId,
+                source: newId,
+                sourceHandle: plan.sourceHandle,
+                target: targetNode.id,
+                targetHandle: plan.targetHandle,
+                type: 'buttonEdge' as const,
+                animated: true,
+              };
+
+        takeSnapshot();
+        setNodes((nds: any) => {
+          const next = [...nds, newNode];
+          setEdges((eds: any) => {
+            const nextE = addEdge(newEdge, eds);
+            pushHistory(next, nextE);
+            return nextE;
+          });
+          return next;
+        });
+        setTimeout(() => {
+          fitViewToNodeIds([newId], 700);
+        }, 100);
+        setSidebarLockedCollapsed(true);
+        return;
+      }
+
+      libraryCanvasDropSucceededRef.current = true;
       const newNode = {
         id: `node_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
         type: reactFlowType,
@@ -1829,8 +2027,12 @@ const SpacesContent = () => {
       };
 
       setNodes((nds) => [...nds, newNode]);
+      setTimeout(() => {
+        fitViewToNodeIds([newNode.id], 700);
+      }, 100);
+      setSidebarLockedCollapsed(true);
     },
-    [screenToFlowPosition, setNodes]
+    [screenToFlowPosition, setNodes, setEdges, nodes, edges, takeSnapshot, pushHistory, fitView, fitViewToNodeIds]
   );
 
   return (
@@ -2108,13 +2310,23 @@ const SpacesContent = () => {
         className="flex flex-1"
         style={{ height: '100%' }}
       >
-      {/* Sidebar: fixed full-height, floats above everything including viewer */}
-      <div style={{ position: 'fixed', top: 0, left: 0, height: '100vh', zIndex: 10003 }}>
-        <Sidebar />
-      </div>
+      {/* Sidebar: solo tras autenticar (oculto en pantalla de acceso) */}
+      {isAuthenticated && (
+        <div style={{ position: 'fixed', top: 0, left: 0, height: '100vh', zIndex: 10003 }}>
+          <Sidebar
+            windowMode={windowMode}
+            onLibraryDragStart={handleLibraryDragStart}
+            onLibraryDragEnd={handleLibraryDragEnd}
+            onAgentGenerate={!windowMode ? onGenerateAssistant : undefined}
+            isAgentGenerating={isGeneratingAssistant}
+            sidebarLockedCollapsed={sidebarLockedCollapsed}
+            onSidebarStripMouseEnter={() => setSidebarLockedCollapsed(false)}
+          />
+        </div>
+      )}
       <div className="flex-1 relative" onContextMenu={(e) => e.preventDefault()} style={{ marginLeft: 0 }}>
         <ReactFlow
-          nodes={nodes}
+          nodes={flowNodes}
           edges={edges}
           onNodesChange={(changes) => {
             // Guard: prevent deletion of the permanent FINAL output node
@@ -2127,6 +2339,11 @@ const SpacesContent = () => {
               (c) => !(c.type === 'remove' && c.id === FINAL_NODE_ID)
             );
             onNodesChange(filtered);
+            if (filtered.some((c) => c.type === 'remove')) {
+              setTimeout(() => {
+                fitView({ padding: FIT_VIEW_PADDING, duration: 650 });
+              }, 80);
+            }
           }}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
@@ -2177,8 +2394,8 @@ const SpacesContent = () => {
             <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-cyan-500/10 rounded-full blur-[120px] animate-pulse" />
             <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-blue-600/10 rounded-full blur-[120px] animate-pulse delay-700" />
             
-            <div className="relative z-10 flex flex-col items-center gap-8 w-full max-w-sm px-6">
-               <div className="flex flex-col items-center gap-2">
+            <div className="relative z-10 flex flex-col items-center gap-8 w-full max-w-xl px-6">
+               <div className="flex flex-col items-center gap-2 w-full max-w-sm">
                  <div className="flex flex-col items-center gap-1 mb-4">
                    {/* FOLDDER logo icon */}
                    <svg width="64" height="64" viewBox="0 0 52 52" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -2193,7 +2410,7 @@ const SpacesContent = () => {
                  <p className="text-[10px] font-bold text-violet-400 uppercase tracking-[4px] opacity-80">Studio Access</p>
                </div>
 
-               <div className="w-full flex flex-col gap-4">
+               <div className="w-full max-w-sm flex flex-col gap-4">
                  <div className="relative">
                    <input 
                      type="password"
@@ -2211,6 +2428,26 @@ const SpacesContent = () => {
                    )}
                  </div>
                  <p className="text-center text-[9px] font-medium text-white/30 uppercase tracking-[2px]">Enter security key to initialize studio</p>
+               </div>
+
+               <div className="w-full max-w-xl mx-auto mt-16 grid grid-cols-2 gap-6">
+                 {AUTH_HIGHLIGHTS.map(({ icon: Icon, title, description }) => (
+                   <div
+                     key={title}
+                     className="flex items-start gap-3 opacity-80 hover:opacity-100 transition group"
+                   >
+                     <Icon
+                       size={18}
+                       strokeWidth={1.5}
+                       className="shrink-0 text-purple-400 drop-shadow-[0_0_6px_rgba(168,85,247,0.6)] group-hover:scale-110 transition-transform duration-300"
+                       aria-hidden
+                     />
+                     <div className="min-w-0 pt-0.5">
+                       <p className="text-sm font-medium text-white">{title}</p>
+                       <p className="text-xs text-white/40 leading-snug mt-1">{description}</p>
+                     </div>
+                   </div>
+                 ))}
                </div>
             </div>
 
@@ -2240,13 +2477,13 @@ const SpacesContent = () => {
                   className="context-menu-item"
                   onClick={() => duplicateNode(contextMenu.nodeId!)}
                 >
-                  <Copy size={14} className="text-blue-400" /> Duplicate Node
+                  <NodeIconMono iconKey="concat" size={14} className="text-blue-400 opacity-90" /> Duplicate Node
                 </div>
                 <div 
                   className="context-menu-item danger"
                   onClick={() => deleteNode(contextMenu.nodeId!)}
                 >
-                  <Trash2 size={14} className="text-rose-500" /> Delete Node
+                  <NodeIconMono iconKey="matting" size={14} className="text-rose-400 opacity-90" /> Delete Node
                 </div>
               </>
             ) : (
@@ -2255,7 +2492,7 @@ const SpacesContent = () => {
                   className="context-menu-item primary"
                   onClick={groupSelectedToSpace}
                 >
-                  <PlusSquare size={14} /> Group into Nested Space
+                  <NodeIconMono iconKey="space" size={14} className="text-cyan-300 opacity-90" /> Group into Nested Space
                 </div>
                 <div className="context-menu-separator" />
                 <div 
@@ -2266,14 +2503,16 @@ const SpacesContent = () => {
                     setContextMenu(null);
                   }}
                 >
-                  <Trash2 size={14} /> Clear Canvas
+                  <NodeIconMono iconKey="canvas" size={14} className="text-slate-300 opacity-80" /> Clear Canvas
                 </div>
               </>
             )}
           </div>
         )}
         
-        <AgentHUD onGenerate={onGenerateAssistant} isGenerating={isGeneratingAssistant} windowMode={windowMode} />
+        {windowMode && isAuthenticated && (
+          <AgentHUD onGenerate={onGenerateAssistant} isGenerating={isGeneratingAssistant} windowMode />
+        )}
 
         {/* Action HUD - Consolidating Breadcrumbs & Actions on the Right */}
         <div
@@ -2294,6 +2533,7 @@ const SpacesContent = () => {
               </button>
               
               <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[2px]">
+                <NodeIconMono iconKey="canvas" size={12} className="opacity-70" />
                 <span 
                   onClick={() => {
                     if (activeSpaceId !== 'root') {
@@ -2316,6 +2556,8 @@ const SpacesContent = () => {
                 {navigationStack.map((id, idx) => (
                   <React.Fragment key={id}>
                     <span className="text-white/20">/</span>
+                    <span className="inline-flex items-center gap-1">
+                    <NodeIconMono iconKey="space" size={11} className="opacity-60" />
                     <span 
                       onClick={() => {
                         const { newMap: updatedSpacesMap } = syncCurrentSpaceState(nodes, edges, spacesMap, activeSpaceId);
@@ -2333,13 +2575,15 @@ const SpacesContent = () => {
                     >
                       {spacesMap[id]?.name || 'Space'}
                     </span>
+                    </span>
                   </React.Fragment>
                 ))}
                 
                 {activeSpaceId !== 'root' && (
                   <>
                     <span className="text-white/20">/</span>
-                    <span className="text-cyan-400 font-bold tracking-wider">
+                    <span className="inline-flex items-center gap-1 text-cyan-400 font-bold tracking-wider">
+                      <NodeIconMono iconKey="space" size={11} />
                       {spacesMap[activeSpaceId]?.name || 'Nested Space'}
                     </span>
                   </>
@@ -2364,7 +2608,7 @@ const SpacesContent = () => {
                 <LayoutGrid size={16} className="text-emerald-400 group-hover:text-emerald-300" />
               </button>
               <button 
-                onClick={() => fitView({ padding: 0.2, duration: 800 })}
+                onClick={() => fitView({ padding: FIT_VIEW_PADDING, duration: 800 })}
                 title="Fit View"
                 className="w-10 h-10 bg-white/5 hover:bg-white/10 backdrop-blur-md border border-white/5 rounded-xl text-white flex items-center justify-center transition-all hover:scale-105 group"
               >

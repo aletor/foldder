@@ -1,28 +1,34 @@
 "use client";
 
-import React, { useState } from 'react';
-import { 
-  Video, 
-  Type, 
-  Workflow, 
-  Compass, 
-  PlusSquare, 
-  Zap, 
-  ImageIcon,
-  Sparkles,
-  Loader2,
-  Scissors,
-  FilePlus,
-  Eye,
-  Paintbrush,
-  Layers,
-  Download,
-  ChevronRight,
-  ChevronLeft,
-  Globe,
-  Crop
-} from 'lucide-react';
+import React from 'react';
+import { ChevronRight } from 'lucide-react';
 import { NODE_REGISTRY } from './nodeRegistry';
+import { NodeIcon, NodeIconMono } from './foldder-icons';
+import { AgentHUD } from './AgentHUD';
+
+/** Icon-only mark from /public/foldder-logo.svg — shown when sidebar is collapsed */
+function FoldderLogoFMark({ size = 40 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 60 60"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className="drop-shadow-lg"
+      aria-hidden
+    >
+      <path
+        d="M4 8 Q4 4 8 4 L48 4 L56 12 L56 52 Q56 56 52 56 L8 56 Q4 56 4 52 Z"
+        fill="#6C5CE7"
+      />
+      <path d="M48 4 L56 12 L48 12 Z" fill="rgba(0,0,0,0.25)" />
+      <rect x="17" y="18" width="5" height="24" rx="2" fill="white" />
+      <rect x="17" y="18" width="20" height="5" rx="2" fill="white" />
+      <rect x="17" y="28" width="15" height="5" rx="2" fill="white" />
+    </svg>
+  );
+}
 
 // ── Key map: nodeType → shortcut key shown in the badge ──────────────────────
 const NODE_KEYS: Record<string, string> = {
@@ -49,8 +55,28 @@ const NODE_KEYS: Record<string, string> = {
 };
 
 
-const Sidebar = ({ windowMode = false }: { windowMode?: boolean }) => {
+type SidebarProps = {
+  windowMode?: boolean;
+  onLibraryDragStart?: (nodeType: string) => void;
+  onLibraryDragEnd?: () => void;
+  onAgentGenerate?: (prompt: string) => Promise<void>;
+  isAgentGenerating?: boolean;
+  /** Si true, el panel no se abre por hover hasta que el ratón entre en la franja izquierda */
+  sidebarLockedCollapsed?: boolean;
+  onSidebarStripMouseEnter?: () => void;
+};
+
+const Sidebar = ({
+  windowMode = false,
+  onLibraryDragStart,
+  onLibraryDragEnd,
+  onAgentGenerate,
+  isAgentGenerating = false,
+  sidebarLockedCollapsed = false,
+  onSidebarStripMouseEnter,
+}: SidebarProps) => {
   const onDragStart = (event: React.DragEvent, nodeType: string) => {
+    onLibraryDragStart?.(nodeType);
     event.dataTransfer.setData('application/reactflow', nodeType);
     event.dataTransfer.effectAllowed = 'move';
   };
@@ -110,34 +136,27 @@ const Sidebar = ({ windowMode = false }: { windowMode?: boolean }) => {
 
   // ── WINDOW MODE: compact horizontal icon bar ───────────────────────────
   if (windowMode) {
-    const allNodes = [
-      // Ingesta
-      { type: 'mediaInput',        icon: <FilePlus size={14} />,    color: 'text-emerald-500', label: 'Asset' },
-      { type: 'promptInput',       icon: <Type size={14} />,        color: 'text-emerald-500', label: 'Prompt' },
-      { type: 'background',        icon: <Paintbrush size={14} />,  color: 'text-emerald-500', label: 'Canvas' },
-      { type: 'urlImage',          icon: <Globe size={14} />,       color: 'text-emerald-500', label: 'Web' },
-      // Divider
+    const allNodes: ({ type: string; label: string } | null)[] = [
+      { type: 'mediaInput',        label: 'Asset' },
+      { type: 'promptInput',       label: 'Prompt' },
+      { type: 'background',        label: 'Canvas' },
+      { type: 'urlImage',          label: 'Web' },
       null,
-      // Inteligencia
-      { type: 'backgroundRemover', icon: <Scissors size={14} />,    color: 'text-cyan-400',    label: 'Matting' },
-      { type: 'mediaDescriber',    icon: <Eye size={14} />,         color: 'text-cyan-400',    label: 'Eye' },
-      { type: 'enhancer',          icon: <Sparkles size={14} />,    color: 'text-cyan-400',    label: 'Enhance' },
-      { type: 'grokProcessor',     icon: <Compass size={14} />,     color: 'text-cyan-400',    label: 'Grok' },
-      { type: 'nanoBanana',        icon: <Sparkles size={14} />,    color: 'text-cyan-400',    label: 'Nano' },
-      { type: 'geminiVideo',       icon: <Video size={14} />,       color: 'text-cyan-400',    label: 'Veo' },
-      // Divider
+      { type: 'backgroundRemover', label: 'Matting' },
+      { type: 'mediaDescriber',    label: 'Eye' },
+      { type: 'enhancer',          label: 'Enhance' },
+      { type: 'grokProcessor',     label: 'Grok' },
+      { type: 'nanoBanana',        label: 'Nano' },
+      { type: 'geminiVideo',       label: 'Veo' },
       null,
-      // Lógica
-      { type: 'concatenator',      icon: <PlusSquare size={14} />,  color: 'text-blue-400',    label: 'Concat' },
-      { type: 'space',             icon: <Layers size={14} />,      color: 'text-blue-400',    label: 'Space' },
-      // Divider
+      { type: 'concatenator',      label: 'Concat' },
+      { type: 'space',             label: 'Space' },
       null,
-      // Composición
-      { type: 'imageComposer',     icon: <Layers size={14} />,      color: 'text-amber-400',   label: 'Layout' },
-      { type: 'imageExport',       icon: <Download size={14} />,    color: 'text-amber-400',   label: 'Export' },
-      { type: 'painter',           icon: <Paintbrush size={14} />,  color: 'text-amber-400',   label: 'Painter' },
-      { type: 'textOverlay',       icon: <Type size={14} />,        color: 'text-amber-400',   label: 'Text' },
-      { type: 'crop',              icon: <Crop size={14} />,        color: 'text-amber-400',   label: 'Crop' },
+      { type: 'imageComposer',     label: 'Layout' },
+      { type: 'imageExport',       label: 'Export' },
+      { type: 'painter',           label: 'Painter' },
+      { type: 'textOverlay',       label: 'Text' },
+      { type: 'crop',              label: 'Crop' },
     ];
 
     return (
@@ -161,6 +180,7 @@ const Sidebar = ({ windowMode = false }: { windowMode?: boolean }) => {
               key={item.type}
               draggable
               onDragStart={(e) => onDragStart(e, item.type)}
+              onDragEnd={() => onLibraryDragEnd?.()}
               title={`${item.label} · ${NODE_KEYS[item.type] || ''}`}
               style={{
                 flexShrink: 0,
@@ -179,8 +199,8 @@ const Sidebar = ({ windowMode = false }: { windowMode?: boolean }) => {
               }}
               className="hover:bg-white/10 hover:border-white/20 active:scale-95"
             >
-              <span className={item.color}>{item.icon}</span>
-              <span style={{ fontSize: 7, fontWeight: 700, color: 'rgba(255,255,255,0.45)', letterSpacing: '0.04em', lineHeight: 1 }}>
+              <NodeIcon type={item.type} size={28} />
+              <span style={{ fontSize: 9.8, fontWeight: 700, color: 'rgba(255,255,255,0.45)', letterSpacing: '0.04em', lineHeight: 1 }}>
                 {item.label}
               </span>
             </div>
@@ -193,8 +213,21 @@ const Sidebar = ({ windowMode = false }: { windowMode?: boolean }) => {
   // ── NORMAL MODE: vertical sidebar panel ──────────────────────────────────
   return (
     <div className="group/sidebar absolute left-0 top-0 h-screen z-[1000]">
+      {/* Collapsed: solo la «F» del logo — misma zona que el antiguo HUD flotante */}
+      {onAgentGenerate && (
+        <div
+          className="pointer-events-none fixed left-6 top-6 z-[10004] transition-opacity duration-300 opacity-100 group-hover/sidebar:opacity-0"
+          title="Foldder"
+        >
+          <FoldderLogoFMark size={40} />
+        </div>
+      )}
+
       {/* Transparent hover trigger zone - wider than the pill */}
-      <div className="absolute inset-0 w-12 h-full pointer-events-auto" />
+      <div
+        className="absolute inset-0 w-12 h-full pointer-events-auto"
+        onMouseEnter={() => onSidebarStripMouseEnter?.()}
+      />
 
       {/* Collapsed pill — the visible strip when not hovering */}
       <div className="absolute left-2 top-1/2 -translate-y-1/2 w-6 h-20 bg-white/10 backdrop-blur-2xl border border-white/10 rounded-full flex items-center justify-center text-slate-400 group-hover/sidebar:opacity-0 transition-opacity duration-300 shadow-lg pointer-events-none">
@@ -203,35 +236,48 @@ const Sidebar = ({ windowMode = false }: { windowMode?: boolean }) => {
 
       {/* Expanded panel — uses exact same glass as AgentHUD */}
       <aside
-        className="absolute left-0 top-0 h-full w-0 overflow-hidden group-hover/sidebar:w-[200px] transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
+        className={
+          sidebarLockedCollapsed
+            ? 'absolute left-0 top-0 h-full w-0 overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]'
+            : 'absolute left-0 top-0 h-full w-0 overflow-hidden group-hover/sidebar:w-[200px] transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]'
+        }
         style={{ willChange: 'width' }}
       >
-        <div className="h-full w-[200px] bg-white/5 backdrop-blur-2xl border-r border-white/8 flex flex-col shadow-[4px_0_40px_rgba(0,0,0,0.4)]">
-          <div className="px-3 mb-4 pt-5 flex-1 overflow-y-auto custom-scrollbar">
+        <div className="h-full w-[200px] bg-white/5 backdrop-blur-2xl border-r border-white/8 flex flex-col min-h-0 shadow-[4px_0_40px_rgba(0,0,0,0.4)]">
+          {onAgentGenerate && (
+            <div className="shrink-0 px-3 pt-4 pb-3 border-b border-white/10">
+              <AgentHUD
+                variant="sidebar"
+                onGenerate={onAgentGenerate}
+                isGenerating={isAgentGenerating}
+              />
+            </div>
+          )}
+          <div className="px-3 mb-4 pt-4 flex-1 min-h-0 overflow-y-auto custom-scrollbar">
             <div className="text-[10px] font-black text-slate-500 uppercase tracking-[3px] mb-5 flex items-center gap-2 px-1">
-              <Layers size={13} className="shrink-0 text-slate-400" /> <span>Node Library</span>
+              <NodeIconMono iconKey="layout" size={13} className="shrink-0 text-slate-400" /> <span>Node Library</span>
             </div>
 
             {/* 📥 INGESTA */}
             <div className="mb-6">
               <h3 className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-3 px-1 flex items-center gap-1.5 whitespace-nowrap overflow-hidden">
-                <Download size={10} className="shrink-0" /> <span>Ingesta</span>
+                <NodeIconMono iconKey="asset" size={10} className="shrink-0" /> <span>Ingesta</span>
               </h3>
               <div className="grid grid-cols-2 gap-2">
                 {[
-                  { type: 'mediaInput',  icon: <FilePlus size={13} />,     label: 'Asset',  color: 'text-emerald-400' },
-                  { type: 'promptInput', icon: <Type size={13} />,          label: 'Prompt', color: 'text-emerald-400' },
-                  { type: 'background',  icon: <Paintbrush size={13} />,    label: 'Canvas', color: 'text-emerald-400' },
-                  { type: 'urlImage',    icon: <Globe size={13} />,          label: 'Web',    color: 'text-emerald-400' },
+                  { type: 'mediaInput',  label: 'Asset',  color: 'text-emerald-400' },
+                  { type: 'promptInput', label: 'Prompt', color: 'text-emerald-400' },
+                  { type: 'background',  label: 'Canvas', color: 'text-emerald-400' },
+                  { type: 'urlImage',    label: 'Web',    color: 'text-emerald-400' },
                 ].map(item => (
                   <div key={item.type}
                     className="dndnode relative flex flex-col items-center justify-center gap-1 py-3 px-2 !bg-white/20 hover:!bg-white/30 border border-white/25 hover:border-emerald-400/50 rounded-2xl cursor-grab active:scale-95 transition-all text-center aspect-square"
-                    onDragStart={(e) => onDragStart(e, item.type)} draggable
+                    onDragStart={(e) => onDragStart(e, item.type)} onDragEnd={() => onLibraryDragEnd?.()} draggable
                     title={`${item.label} · ${NODE_KEYS[item.type]}`}
                   >
                     <KeyBadge nodeType={item.type} />
-                    <span className={item.color}>{item.icon}</span>
-                    <span className="text-[7px] font-black text-slate-700">{item.label}</span>
+                    <span className={item.color}><NodeIcon type={item.type} size={25} /></span>
+                    <span className="text-[9.8px] font-black text-slate-700">{item.label}</span>
                     <TypeIndicators nodeType={item.type} />
                   </div>
                 ))}
@@ -241,25 +287,25 @@ const Sidebar = ({ windowMode = false }: { windowMode?: boolean }) => {
             {/* 🧠 INTELIGENCIA */}
             <div className="mb-6">
               <h3 className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-3 px-1 flex items-center gap-1.5">
-                <Zap size={10} className="shrink-0" /> <span>Inteligencia</span>
+                <NodeIconMono iconKey="grok" size={10} className="shrink-0" /> <span>Inteligencia</span>
               </h3>
               <div className="grid grid-cols-2 gap-2">
                 {[
-                  { type: 'backgroundRemover', icon: <Scissors size={13} />, label: 'Matting', color: 'text-cyan-400' },
-                  { type: 'mediaDescriber',    icon: <Eye size={13} />,       label: 'Eye',     color: 'text-cyan-400' },
-                  { type: 'enhancer',          icon: <Sparkles size={13} />,  label: 'Enhance', color: 'text-cyan-400' },
-                  { type: 'grokProcessor',     icon: <Compass size={13} />,   label: 'Grok',    color: 'text-cyan-400' },
-                  { type: 'nanoBanana',        icon: <Sparkles size={13} />,  label: 'Nano',    color: 'text-cyan-400' },
-                  { type: 'geminiVideo',       icon: <Video size={13} />,     label: 'Veo 3.1', color: 'text-cyan-400' },
+                  { type: 'backgroundRemover', label: 'Matting', color: 'text-cyan-400' },
+                  { type: 'mediaDescriber',    label: 'Eye',     color: 'text-cyan-400' },
+                  { type: 'enhancer',          label: 'Enhance', color: 'text-cyan-400' },
+                  { type: 'grokProcessor',     label: 'Grok',    color: 'text-cyan-400' },
+                  { type: 'nanoBanana',        label: 'Nano',    color: 'text-cyan-400' },
+                  { type: 'geminiVideo',       label: 'Veo 3.1', color: 'text-cyan-400' },
                 ].map(item => (
                   <div key={item.type}
                     className="dndnode relative flex flex-col items-center justify-center gap-1 py-3 px-2 !bg-white/20 hover:!bg-white/30 border border-white/25 hover:border-cyan-400/50 rounded-2xl cursor-grab active:scale-95 transition-all text-center aspect-square"
-                    onDragStart={(e) => onDragStart(e, item.type)} draggable
+                    onDragStart={(e) => onDragStart(e, item.type)} onDragEnd={() => onLibraryDragEnd?.()} draggable
                     title={`${item.label} · ${NODE_KEYS[item.type]}`}
                   >
                     <KeyBadge nodeType={item.type} />
-                    <span className={item.color}>{item.icon}</span>
-                    <span className="text-[7px] font-black text-slate-700">{item.label}</span>
+                    <span className={item.color}><NodeIcon type={item.type} size={25} /></span>
+                    <span className="text-[9.8px] font-black text-slate-700">{item.label}</span>
                     <TypeIndicators nodeType={item.type} />
                   </div>
                 ))}
@@ -269,23 +315,23 @@ const Sidebar = ({ windowMode = false }: { windowMode?: boolean }) => {
             {/* 🧩 LÓGICA */}
             <div className="mb-6">
               <h3 className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-3 px-1 flex items-center gap-1.5">
-                <PlusSquare size={10} className="shrink-0" /> <span>Lógica</span>
+                <NodeIconMono iconKey="concat" size={10} className="shrink-0" /> <span>Lógica</span>
               </h3>
               <div className="grid grid-cols-2 gap-2">
                 {[
-                  { type: 'concatenator', icon: <PlusSquare size={13} />, label: 'Concat', color: 'text-blue-400' },
-                  { type: 'space',        icon: <Layers size={13} />,     label: 'Space',  color: 'text-blue-400' },
-                  { type: 'spaceInput',   icon: <ChevronRight size={13} />, label: 'Entry', color: 'text-blue-400' },
-                  { type: 'spaceOutput',  icon: <ChevronLeft size={13} />,  label: 'Exit',  color: 'text-blue-400' },
+                  { type: 'concatenator', label: 'Concat', color: 'text-blue-400' },
+                  { type: 'space',        label: 'Space',  color: 'text-blue-400' },
+                  { type: 'spaceInput',   label: 'Entry', color: 'text-blue-400' },
+                  { type: 'spaceOutput',  label: 'Exit',  color: 'text-blue-400' },
                 ].map(item => (
                   <div key={item.type}
                     className="dndnode relative flex flex-col items-center justify-center gap-1 py-3 px-2 !bg-white/20 hover:!bg-white/30 border border-white/25 hover:border-blue-400/50 rounded-2xl cursor-grab active:scale-95 transition-all text-center aspect-square"
-                    onDragStart={(e) => onDragStart(e, item.type)} draggable
+                    onDragStart={(e) => onDragStart(e, item.type)} onDragEnd={() => onLibraryDragEnd?.()} draggable
                     title={`${item.label} · ${NODE_KEYS[item.type]}`}
                   >
                     <KeyBadge nodeType={item.type} />
-                    <span className={item.color}>{item.icon}</span>
-                    <span className="text-[7px] font-black text-slate-700">{item.label}</span>
+                    <span className={item.color}><NodeIcon type={item.type} size={25} /></span>
+                    <span className="text-[9.8px] font-black text-slate-700">{item.label}</span>
                     <TypeIndicators nodeType={item.type} />
                   </div>
                 ))}
@@ -295,25 +341,25 @@ const Sidebar = ({ windowMode = false }: { windowMode?: boolean }) => {
             {/* 🎨 COMPOSICIÓN */}
             <div className="mb-3">
               <h3 className="text-[8px] font-black text-slate-500 uppercase tracking-widest mb-3 px-1 flex items-center gap-1.5">
-                <Layers size={10} className="shrink-0" /> <span>Composición</span>
+                <NodeIconMono iconKey="canvas" size={10} className="shrink-0" /> <span>Composición</span>
               </h3>
               <div className="grid grid-cols-2 gap-2">
                 {[
-                  { type: 'imageComposer', icon: <Layers size={13} />,      label: 'Layout',  color: 'text-amber-400' },
-                  { type: 'imageExport',   icon: <Download size={13} />,    label: 'Export',  color: 'text-amber-400' },
-                  { type: 'painter',       icon: <Paintbrush size={13} />,  label: 'Painter', color: 'text-amber-400' },
-                  { type: 'textOverlay',   icon: <Type size={13} />,         label: 'Text',    color: 'text-amber-400' },
-                  { type: 'crop',          icon: <Crop size={13} />,         label: 'Crop',    color: 'text-amber-400' },
-                  { type: 'bezierMask',    icon: <Scissors size={13} />,    label: 'Bezier',  color: 'text-amber-400' },
+                  { type: 'imageComposer', label: 'Layout',  color: 'text-amber-400' },
+                  { type: 'imageExport',   label: 'Export',  color: 'text-amber-400' },
+                  { type: 'painter',       label: 'Painter', color: 'text-amber-400' },
+                  { type: 'textOverlay',   label: 'Text',    color: 'text-amber-400' },
+                  { type: 'crop',          label: 'Crop',    color: 'text-amber-400' },
+                  { type: 'bezierMask',    label: 'Bezier',  color: 'text-amber-400' },
                 ].map(item => (
                   <div key={item.type}
                     className="dndnode relative flex flex-col items-center justify-center gap-1 py-3 px-2 !bg-white/20 hover:!bg-white/30 border border-white/25 hover:border-amber-400/50 rounded-2xl cursor-grab active:scale-95 transition-all text-center aspect-square"
-                    onDragStart={(e) => onDragStart(e, item.type)} draggable
+                    onDragStart={(e) => onDragStart(e, item.type)} onDragEnd={() => onLibraryDragEnd?.()} draggable
                     title={`${item.label} · ${NODE_KEYS[item.type]}`}
                   >
                     <KeyBadge nodeType={item.type} />
-                    <span className={item.color}>{item.icon}</span>
-                    <span className="text-[7px] font-black text-slate-700">{item.label}</span>
+                    <span className={item.color}><NodeIcon type={item.type} size={25} /></span>
+                    <span className="text-[9.8px] font-black text-slate-700">{item.label}</span>
                     <TypeIndicators nodeType={item.type} />
                   </div>
                 ))}

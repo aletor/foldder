@@ -1,6 +1,6 @@
-# Media Composer
+# Foldder
 
-Next.js app: flujo visual **Spaces** (`/spaces`), APIs de Runway, Grok, Gemini, OpenAI (enhance), Replicate (matte) y persistencia en `data/spaces-db.json`.
+Aplicación **Next.js**: canvas **Spaces** (`/spaces`), APIs de Runway, Grok, Gemini, OpenAI (enhance), Replicate (matte) y persistencia en `data/spaces-db.json`.
 
 ```bash
 npm install
@@ -11,4 +11,6 @@ Abre [http://localhost:3000](http://localhost:3000) (redirige a `/spaces`).
 
 Despliegue y variables de entorno: **[DEPLOY.md](./DEPLOY.md)**.
 
-Repositorio hermano (marketing / FOLDDER): configurar allí `NEXT_PUBLIC_MEDIA_COMPOSER_URL` con la URL de esta app si quieres el acceso desde Labs.
+**Repositorio:** [github.com/aletor/foldder](https://github.com/aletor/foldder). Si el remoto local apunta al nombre antiguo: `git remote set-url origin https://github.com/aletor/foldder.git`
+
+En el repo de marketing, `NEXT_PUBLIC_MEDIA_COMPOSER_URL` debe apuntar a la URL de despliegue de esta app (Labs).

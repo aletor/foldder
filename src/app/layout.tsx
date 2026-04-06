@@ -9,9 +9,9 @@ const outfit = Outfit({
 });
 
 export const metadata: Metadata = {
-  title: "Media Composer",
+  title: "Foldder",
   description:
-    "Node-based media workflow — Runway, Gemini, Grok, and compositing tools.",
+    "Foldder — flujo visual Spaces, Runway, Gemini, Grok y herramientas de composición.",
   icons: { icon: "/favicon.png", apple: "/favicon.png" },
 };
 

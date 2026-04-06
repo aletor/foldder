@@ -1,6 +1,6 @@
-# Despliegue (Vercel): Media Composer
+# Despliegue (Vercel): Foldder
 
-Aplicación **Next.js** independiente: canvas en `/spaces` (raíz `/` redirige a `/spaces`).
+Aplicación **Next.js** (**Foldder**): canvas en `/spaces` (la raíz `/` redirige a `/spaces`).
 
 ## Vercel
 
@@ -26,4 +26,4 @@ El build de producción **no exige** estas claves en tiempo de compilación; hac
 
 ## Proyecto hermano (marketing)
 
-El producto de marketing y contenido vive en otro repo. Para un enlace desde Labs del marketing, allí se define `NEXT_PUBLIC_MEDIA_COMPOSER_URL` apuntando a la URL de este despliegue. Ver `DEPLOY.md` del repo marketing.
+El producto de marketing y contenido vive en otro repo. Para un enlace desde Labs del marketing, allí se define `NEXT_PUBLIC_MEDIA_COMPOSER_URL` apuntando a la URL de despliegue de **Foldder**. Ver `DEPLOY.md` del repo marketing.

@@ -50,6 +50,13 @@ import {
   EyeOff, Camera} from 'lucide-react';
 import './spaces.css';
 import { NODE_REGISTRY } from './nodeRegistry';
+import {
+  NodeIcon,
+  resolveFoldderNodeState,
+  foldderIconKeyForSpaceOutputType,
+  FOLDDER_INTERNAL_CATEGORY_TO_ICON,
+  type FoldderIconKey,
+} from './foldder-icons';
 
 interface BaseNodeData {
   value?: string;
@@ -248,7 +255,7 @@ export const BackgroundNode = memo(({ id, data, selected }: NodeProps<any>) => {
             <NodeResizer minWidth={280} minHeight={200} isVisible={selected} />
 <NodeLabel id={id} label={nodeData.label} defaultLabel="Background" />
       <div className="node-header">
-        <Paintbrush size={16} /> CANVAS
+        <NodeIcon type="background" selected={selected} size={16} /> CANVAS
       </div>
       <div className="node-content">
         <div className="grid grid-cols-2 gap-4 mb-4">
@@ -388,7 +395,7 @@ export const UrlImageNode = memo(({ id, data, selected }: NodeProps<any>) => {
       <NodeResizer minWidth={280} minHeight={320} isVisible={selected} />
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Image Search" />
       <div className="node-header text-cyan-400">
-        <Globe size={16} /> CAROUSEL {loading && <Loader2 size={12} className="animate-spin ml-auto" />}
+        <NodeIcon type="urlImage" loading={loading} selected={selected} size={16} /> CAROUSEL {loading && <Loader2 size={12} className="animate-spin ml-auto" />}
       </div>
       <div className="node-content">
         <div className="relative w-full aspect-video bg-slate-50 rounded-xl overflow-hidden border border-white/10 group mb-3 shadow-inner">
@@ -724,7 +731,7 @@ export const ImageComposerNode = memo(({ id, data, selected }: NodeProps<any>) =
 
       {/* Header */}
       <div className="node-header bg-gradient-to-r from-cyan-600/20 to-indigo-600/20">
-        <Layers size={14} className="text-cyan-400" />
+        <NodeIcon type="imageComposer" selected={selected} size={16} />
         <span>Composer</span>
         <div className="node-badge">{allLayersForRender.length} layers</div>
         <button
@@ -1747,7 +1754,7 @@ export const ImageExportNode = memo(({ id, data, selected }: NodeProps<any>) => 
         <span className="handle-label">Image Input</span>
       </div>
       <div className="node-header text-rose-400">
-        <Download size={16} /> IMAGE EXPORT
+        <NodeIcon type="imageExport" selected={selected} loading={isExporting} size={16} /> IMAGE EXPORT
       </div>
       <div className="node-content">
         <div className="flex gap-2 mb-3">
@@ -1853,13 +1860,16 @@ export const MediaInputNode = memo(({ id, data, selected }: NodeProps<any>) => {
     finally { setIsUploadingLocal(false); }
   };
 
-  const getIcon = () => {
-    if (nodeData.type === 'image') return <ImageIcon size={16} />;
-    if (nodeData.type === 'audio') return <Music size={16} />;
-    if (nodeData.type === 'pdf') return <FilePlus size={16} />;
-    if (nodeData.type === 'txt') return <FileText size={16} />;
-    if (nodeData.type === 'url') return <Globe size={16} />;
-    return <Film size={16} />;
+  const mediaIconKey = (): FoldderIconKey => {
+    switch (nodeData.type) {
+      case 'image': return 'asset';
+      case 'video': return 'video';
+      case 'audio': return 'nano';
+      case 'pdf': return 'prompt';
+      case 'txt': return 'prompt';
+      case 'url': return 'web';
+      default: return 'asset';
+    }
   };
 
   const getTitleColor = () => {
@@ -1886,7 +1896,7 @@ export const MediaInputNode = memo(({ id, data, selected }: NodeProps<any>) => {
 
       {/* Persistent header */}
       <div className="node-header" style={{ color: getTitleColor() }}>
-        {getIcon()}
+        <NodeIcon type="mediaInput" iconKey={mediaIconKey()} selected={selected} loading={isUploading} size={16} />
         <span className="font-black tracking-tighter uppercase">{nodeData.type || 'Media'} Input</span>
         {nodeData.type && (
           <span className="ml-auto text-[8px] bg-white/10 px-2 py-0.5 rounded-full font-black uppercase tracking-widest text-gray-400">
@@ -2012,7 +2022,7 @@ export const MediaInputNode = memo(({ id, data, selected }: NodeProps<any>) => {
         {hasMedia && (
           <div className="absolute top-2 left-2 flex items-center gap-1 px-2 py-1 rounded-full text-[8px] font-black uppercase tracking-widest"
             style={{ background: 'rgba(0,0,0,0.55)', color: getTitleColor(), backdropFilter: 'blur(6px)' }}>
-            {getIcon()}
+            <NodeIcon type="mediaInput" iconKey={mediaIconKey()} size={12} colorOverride={getTitleColor()} />
             <span>{nodeData.type}</span>
           </div>
         )}
@@ -2103,7 +2113,7 @@ export const PromptNode = memo(({ id, data, selected }: NodeProps<any>) => {
       <NodeResizer minWidth={280} minHeight={160} isVisible={selected} />
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Prompt" />
       <div className="node-header">
-        <Type size={16} /> PROMPT
+        <NodeIcon type="promptInput" selected={selected} size={16} /> PROMPT
       </div>
       <div className="node-content" style={{ display: 'flex', flexDirection: 'column' }}>
         <textarea 
@@ -2170,7 +2180,7 @@ export const ConcatenatorNode = memo(({ id, data, selected }: NodeProps<any>) =>
       ))}
       
       <div className="node-header bg-gradient-to-r from-blue-600/20 to-cyan-600/20">
-        <PlusSquare size={16} className="text-blue-400" /> 
+        <NodeIcon type="concatenator" selected={selected} size={16} />
         <span>Concatenator</span>
         <div className="node-badge">UTILITY</div>
       </div>
@@ -2272,7 +2282,7 @@ export const EnhancerNode = memo(({ id, data, selected }: NodeProps<any>) => {
       })}
 
       <div className="node-header bg-gradient-to-r from-purple-600/20 to-indigo-600/20">
-        <Zap size={16} className="text-purple-400" />
+        <NodeIcon type="enhancer" selected={selected} loading={loading} size={16} />
         <span>Prompt Enhancer</span>
         <div className="node-badge">AI TOOL</div>
       </div>
@@ -2373,7 +2383,13 @@ export const GrokNode = memo(({ id, data, selected }: NodeProps<any>) => {
         <span className="handle-label">Prompt in</span>
       </div>
       <div className="node-header">
-        <Compass size={16} /> GROK IMAGINE</div>
+        <NodeIcon
+          type="grokProcessor"
+          selected={selected}
+          state={resolveFoldderNodeState({ error: status === 'error', loading: status === 'running', done: status === 'success' })}
+          size={16}
+        />{' '}
+        GROK IMAGINE</div>
       <div className="node-content">
         <div className="flex gap-2 mb-3">
           <select className="node-input text-[10px]" value={nodeData.resolution || '720p'} onChange={(e) => setNodes((nds: any) => nds.map((n: any) => n.id === id ? {...n, data: {...n.data, resolution: e.target.value}} : n))}>
@@ -3884,7 +3900,12 @@ export const NanoBananaNode = memo(({ id, data, selected }: NodeProps<any>) => {
 
       {/* ── Header ── */}
       <div className="node-header bg-gradient-to-r from-yellow-600/20 to-orange-600/20">
-        <Sparkles size={14} className="text-yellow-500 flex-shrink-0" />
+        <NodeIcon
+          type="nanoBanana"
+          selected={selected}
+          state={resolveFoldderNodeState({ error: status === 'error', loading: status === 'running', done: !!result })}
+          size={16}
+        />
         <span className="flex-1 text-yellow-700">Nano Banana</span>
         <div className={`node-badge ${modelInfo.bg} ${modelInfo.color} border ${modelInfo.borderColor}`}>
           {modelInfo.badge}
@@ -4123,7 +4144,7 @@ export const TextOverlayNode = memo(({ id, data, selected }: NodeProps<any>) => 
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Text Overlay" />
 
       <div className="node-header bg-gradient-to-r from-purple-600/20 to-pink-600/20">
-        <Type size={14} className="text-purple-500" />
+        <NodeIcon type="textOverlay" selected={selected} size={16} />
         <span>Text Overlay</span>
         <div className="node-badge bg-purple-500/10 text-purple-400 border border-purple-500/30">TEXT</div>
       </div>
@@ -4394,7 +4415,12 @@ export const BackgroundRemoverNode = memo(({ id, data, selected }: NodeProps<any
       </div>
       
       <div className="node-header bg-gradient-to-r from-cyan-600/20 to-blue-600/20">
-        <Scissors size={16} className="text-cyan-400" /> 
+        <NodeIcon
+          type="backgroundRemover"
+          selected={selected}
+          state={resolveFoldderNodeState({ loading: status === 'running', done: status === 'success' })}
+          size={16}
+        />
         <span>Remove Background</span>
         <button 
           onClick={() => setIsStudioOpen(true)}
@@ -4704,19 +4730,6 @@ export const SpaceNode = memo(({ id, data, selected }: NodeProps<any>) => {
     window.dispatchEvent(event);
   };
 
-  // Dynamic Icon Mapping
-  const getIcon = () => {
-    switch (nodeData.outputType) {
-      case 'image': return <ImageIcon size={16} className="text-pink-400" />;
-      case 'video': return <Film size={16} className="text-rose-400" />;
-      case 'prompt': return <Type size={16} className="text-blue-400" />;
-      case 'mask': return <Scissors size={16} className="text-cyan-400" />;
-      case 'url': return <Globe size={16} className="text-emerald-400" />;
-      case 'json': return <Zap size={16} className="text-purple-400" />;
-      default: return <Layers size={16} className="text-cyan-400" />;
-    }
-  };
-
   const getHandleClass = () => {
     switch (nodeData.outputType) {
       case 'image': return 'handle-image';
@@ -4742,16 +4755,9 @@ export const SpaceNode = memo(({ id, data, selected }: NodeProps<any>) => {
   };
 
   const renderInternalIcon = (cat: string) => {
-    switch (cat) {
-      case 'ai': return <Zap size={14} key={cat} className="text-purple-400 drop-shadow-[0_0_5px_rgba(168,85,247,0.5)]" />;
-      case 'image': return <ImageIcon size={14} key={cat} className="text-pink-400 drop-shadow-[0_0_5px_rgba(244,63,94,0.5)]" />;
-      case 'canvas': return <Layers size={14} key={cat} className="text-amber-500 drop-shadow-[0_0_5px_rgba(245,158,11,0.5)]" />;
-      case 'prompt': return <Type size={14} key={cat} className="text-blue-400 drop-shadow-[0_0_5px_rgba(59,130,246,0.5)]" />;
-      case 'logic': return <RefreshCw size={14} key={cat} className="text-cyan-400 drop-shadow-[0_0_5px_rgba(34,211,238,0.5)]" />;
-      case 'video': return <Film size={14} key={cat} className="text-rose-400 drop-shadow-[0_0_5px_rgba(251,113,133,0.5)]" />;
-      case 'tool': return <Scissors size={14} key={cat} className="text-emerald-400 drop-shadow-[0_0_5px_rgba(16,185,129,0.5)]" />;
-      default: return null;
-    }
+    const key = FOLDDER_INTERNAL_CATEGORY_TO_ICON[cat];
+    if (!key) return null;
+    return <NodeIcon key={cat} type="space" iconKey={key} size={14} />;
   };
 
   return (
@@ -4787,7 +4793,13 @@ export const SpaceNode = memo(({ id, data, selected }: NodeProps<any>) => {
       )}
       
       <div className="node-header">
-        {getIcon()} <span className="uppercase">{nodeData.outputType ? `${nodeData.outputType} Space` : 'NESTED SPACE'}</span>
+        <NodeIcon
+          type="space"
+          iconKey={foldderIconKeyForSpaceOutputType(nodeData.outputType)}
+          selected={selected}
+          size={16}
+        />{' '}
+        <span className="uppercase">{nodeData.outputType ? `${nodeData.outputType} Space` : 'NESTED SPACE'}</span>
       </div>
       
       <div className="node-content">
@@ -4795,7 +4807,7 @@ export const SpaceNode = memo(({ id, data, selected }: NodeProps<any>) => {
         <div className="flex flex-col gap-1.5 mb-3 p-2 bg-slate-50/50 border border-slate-200/60 rounded-xl shadow-inner">
           <div className="flex justify-between items-center px-1">
              <span className="text-[7.5px] font-black text-gray-500 uppercase tracking-widest">Internal Blueprint</span>
-             <Layers size={10} className="text-gray-700" />
+             <NodeIcon type="space" iconKey="layout" size={12} />
           </div>
           <div className="flex items-center justify-center gap-3 py-1 min-h-[24px]">
             {nodeData.internalCategories && nodeData.internalCategories.length > 0 ? (
@@ -4875,7 +4887,8 @@ export const SpaceInputNode = memo(({ id, data, selected }: NodeProps<any>) => {
             <NodeResizer minWidth={200} minHeight={120} isVisible={selected} />
 <NodeLabel id={id} label={nodeData.label} defaultLabel="Input" />
       <div className="node-header">
-        <ChevronRight size={16} className={theme.text} /> SPACE INPUT
+        <NodeIcon type="spaceInput" selected={selected} size={16} />
+        SPACE INPUT
       </div>
       <div className="node-content text-center py-4">
         <div className={`w-12 h-12 ${theme.bg} rounded-full flex items-center justify-center border mx-auto mb-2`}>
@@ -4932,7 +4945,7 @@ export const SpaceOutputNode = memo(({ id, data, selected }: NodeProps<any>) => 
 
       {/* Header */}
       <div className="node-header" style={{ padding: '10px 14px' }}>
-        <ChevronLeft size={16} className={theme.text} />
+        <NodeIcon type="spaceOutput" selected={selected} done={!!inputEdge} size={16} />
         <span className="font-black tracking-tighter uppercase">Space Output</span>
       </div>
 
@@ -5071,7 +5084,7 @@ export const MediaDescriberNode = memo(({ id, data, selected }: NodeProps<any>) 
       </div>
       
       <div className="node-header bg-gradient-to-r from-indigo-600/20 to-blue-600/20">
-        <Eye size={16} className="text-indigo-400" />
+        <NodeIcon type="mediaDescriber" selected={selected} state={resolveFoldderNodeState({ loading: status === 'running', done: status === 'success', error: status === 'error' })} size={16} />
         <span>Gemini Describer</span>
         <div className="node-badge">VISION</div>
       </div>
@@ -5264,7 +5277,7 @@ export const GeminiVideoNode = memo(({ id, data, selected }: NodeProps<any>) => 
 
       {/* Header */}
       <div className="node-header bg-gradient-to-r from-emerald-600/20 to-cyan-600/20">
-        <Video size={15} className="text-emerald-500" />
+        <NodeIcon type="geminiVideo" selected={selected} state={resolveFoldderNodeState({ loading: status === 'running', done: !!result, error: status === 'error' })} size={16} />
         <span>Gemini Video</span>
         <div className="node-badge">VEO 3.1</div>
       </div>
@@ -5644,7 +5657,7 @@ export const PainterNode = memo(({ id, data, selected }: NodeProps<any>) => {
       </div>
 
       <div className="node-header bg-gradient-to-r from-amber-800/20 to-orange-900/20">
-        <Paintbrush size={14} className="text-amber-400" />
+        <NodeIcon type="painter" selected={selected} size={16} />
         <span>Painter</span>
         <span className="text-[7px] font-black uppercase tracking-widest text-amber-600/60 ml-auto">{ratio.label}</span>
       </div>
@@ -6276,7 +6289,7 @@ export const BezierMaskNode = memo(({ id, data, selected }: NodeProps<any>) => {
       </div>
       
       <div className="node-header bg-gradient-to-r from-cyan-600/20 to-indigo-600/20">
-        <Scissors size={16} className="text-cyan-400" />
+        <NodeIcon type="bezierMask" selected={selected} size={16} />
         <span>Bezier Mask</span>
         <button 
           onClick={() => setIsStudioOpen(true)}
