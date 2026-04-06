@@ -200,6 +200,57 @@ function estimateNodeHeight(node: Node): number {
   return 240;
 }
 
+/**
+ * Busca posición top-left para un nodo nuevo sin solapar cajas aproximadas de los existentes.
+ * Parte del mismo anclaje que addNodeAtCenter (centro − offset) y espira hacia fuera si hace falta.
+ */
+export function findEmptyPositionForNewNode(
+  newType: string,
+  nodeList: Node[],
+  preferredCenter: { x: number; y: number }
+): { x: number; y: number } {
+  const nw = DEFAULT_W[newType] ?? 300;
+  const nh = estimateNodeHeight({ type: newType } as Node);
+  const margin = 36;
+
+  function overlapsPlacement(px: number, py: number): boolean {
+    for (const n of nodeList) {
+      const w = estimateNodeWidth(n);
+      const h = estimateNodeHeight(n);
+      const nx = n.position.x;
+      const ny = n.position.y;
+      const noOverlap =
+        px + nw + margin < nx ||
+        px > nx + w + margin ||
+        py + nh + margin < ny ||
+        py > ny + h + margin;
+      if (!noOverlap) return true;
+    }
+    return false;
+  }
+
+  const cx = preferredCenter.x;
+  const cy = preferredCenter.y;
+  const baseX = cx - 160;
+  const baseY = cy - 120;
+
+  if (!overlapsPlacement(baseX, baseY)) {
+    return { x: baseX, y: baseY };
+  }
+
+  for (let i = 1; i < 6000; i++) {
+    const angle = i * 0.3;
+    const radius = Math.sqrt(i) * 38;
+    const x = baseX + Math.cos(angle) * radius;
+    const y = baseY + Math.sin(angle) * radius;
+    if (!overlapsPlacement(x, y)) {
+      return { x, y };
+    }
+  }
+
+  return { x: baseX + 500, y: baseY + 500 };
+}
+
 /** Top-most node whose bounding box contains the flow point (last in array wins = drawn on top in RF). */
 export function findTopNodeUnderFlowPoint(
   flowPoint: { x: number; y: number },

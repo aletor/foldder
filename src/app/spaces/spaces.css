@@ -10,6 +10,17 @@
   height: 100%;
 }
 
+/* Sin espacio: arrastre = selección (no mano). Con espacio: pan */
+.spaces-canvas:not(.spaces-canvas--space-pan) .react-flow__pane {
+  cursor: crosshair;
+}
+.spaces-canvas--space-pan .react-flow__pane {
+  cursor: grab !important;
+}
+.spaces-canvas--space-pan .react-flow__pane:active {
+  cursor: grabbing !important;
+}
+
 .custom-node {
   background: rgba(255, 255, 255, 0.45);
   backdrop-filter: blur(24px);

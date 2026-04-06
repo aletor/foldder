@@ -4,8 +4,6 @@ import React from 'react';
 import { ChevronRight } from 'lucide-react';
 import { NODE_REGISTRY } from './nodeRegistry';
 import { NodeIcon, NodeIconMono } from './foldder-icons';
-import { AgentHUD } from './AgentHUD';
-
 /** Icon-only mark from /public/foldder-logo.svg — shown when sidebar is collapsed */
 function FoldderLogoFMark({ size = 40 }: { size?: number }) {
   return (
@@ -59,8 +57,6 @@ type SidebarProps = {
   windowMode?: boolean;
   onLibraryDragStart?: (nodeType: string) => void;
   onLibraryDragEnd?: () => void;
-  onAgentGenerate?: (prompt: string) => Promise<void>;
-  isAgentGenerating?: boolean;
   /** Si true, el panel no se abre por hover hasta que el ratón entre en la franja izquierda */
   sidebarLockedCollapsed?: boolean;
   onSidebarStripMouseEnter?: () => void;
@@ -70,8 +66,6 @@ const Sidebar = ({
   windowMode = false,
   onLibraryDragStart,
   onLibraryDragEnd,
-  onAgentGenerate,
-  isAgentGenerating = false,
   sidebarLockedCollapsed = false,
   onSidebarStripMouseEnter,
 }: SidebarProps) => {
@@ -214,14 +208,12 @@ const Sidebar = ({
   return (
     <div className="group/sidebar absolute left-0 top-0 h-screen z-[1000]">
       {/* Collapsed: solo la «F» del logo — misma zona que el antiguo HUD flotante */}
-      {onAgentGenerate && (
-        <div
-          className="pointer-events-none fixed left-6 top-6 z-[10004] transition-opacity duration-300 opacity-100 group-hover/sidebar:opacity-0"
-          title="Foldder"
-        >
-          <FoldderLogoFMark size={40} />
-        </div>
-      )}
+      <div
+        className="pointer-events-none fixed left-6 top-6 z-[10004] transition-opacity duration-300 opacity-100 group-hover/sidebar:opacity-0"
+        title="Foldder"
+      >
+        <FoldderLogoFMark size={40} />
+      </div>
 
       {/* Transparent hover trigger zone - wider than the pill */}
       <div
@@ -234,7 +226,7 @@ const Sidebar = ({
         <ChevronRight size={14} />
       </div>
 
-      {/* Expanded panel — uses exact same glass as AgentHUD */}
+      {/* Expanded panel */}
       <aside
         className={
           sidebarLockedCollapsed
@@ -244,15 +236,6 @@ const Sidebar = ({
         style={{ willChange: 'width' }}
       >
         <div className="h-full w-[200px] bg-white/5 backdrop-blur-2xl border-r border-white/8 flex flex-col min-h-0 shadow-[4px_0_40px_rgba(0,0,0,0.4)]">
-          {onAgentGenerate && (
-            <div className="shrink-0 px-3 pt-4 pb-3 border-b border-white/10">
-              <AgentHUD
-                variant="sidebar"
-                onGenerate={onAgentGenerate}
-                isGenerating={isAgentGenerating}
-              />
-            </div>
-          )}
           <div className="px-3 mb-4 pt-4 flex-1 min-h-0 overflow-y-auto custom-scrollbar">
             <div className="text-[10px] font-black text-slate-500 uppercase tracking-[3px] mb-5 flex items-center gap-2 px-1">
               <NodeIconMono iconKey="layout" size={13} className="shrink-0 text-slate-400" /> <span>Node Library</span>

@@ -47,6 +47,12 @@ import {
 
 import Sidebar from './Sidebar';
 import { AgentHUD } from './AgentHUD';
+import {
+  TopbarPins,
+  MAX_TOPBAR_PINS,
+  TOPBAR_PINS_STORAGE_KEY,
+  DEFAULT_TOPBAR_PIN_TYPES,
+} from './TopbarPins';
 import { readResponseJson } from '@/lib/read-response-json';
 import './spaces.css';
 import { NODE_REGISTRY } from './nodeRegistry';
@@ -55,6 +61,7 @@ import {
   findLibraryDropPlan,
   computeLibraryDropPosition,
   findTopNodeUnderFlowPoint,
+  findEmptyPositionForNewNode,
 } from './connection-utils';
 import { NodeIconMono } from './foldder-icons';
 import { 
@@ -112,8 +119,38 @@ const initialNodes: Node[] = [];
 
 const FINAL_NODE_ID = 'final_output_permanent';
 
-/** Margin around the graph when fitting the viewport — higher = more “air”, nodes read smaller */
-const FIT_VIEW_PADDING = 1.2;
+/**
+ * Margen relativo para `fitView` (@xyflow: default 0.1). Valores altos añaden mucho aire y el grafo se ve pequeño;
+ * 1.2 era demasiado agresivo.
+ */
+const FIT_VIEW_PADDING = 0.14;
+
+/** Al encuadrar uno o pocos nodos (doble clic, nodo nuevo, etc.): un poco más de margen que el fit a todo el grafo */
+const FIT_VIEW_PADDING_NODE_FOCUS = 0.8;
+
+/** Ancho/alto efectivos para layout (evita solapes si solo usamos una cuadrícula fija) */
+function getNodeLayoutDimensions(n: Node): { w: number; h: number } {
+  const mw = n.measured?.width ?? n.width ?? n.initialWidth;
+  const mh = n.measured?.height ?? n.height ?? n.initialHeight;
+  const hasW = typeof mw === 'number' && mw > 0;
+  const hasH = typeof mh === 'number' && mh > 0;
+  let w = hasW ? mw : 300;
+  let h = hasH ? mh : 280;
+  if (!hasW || !hasH) {
+    const t = n.type ?? '';
+    if (t === 'geminiVideo') {
+      if (!hasW) w = 380;
+      if (!hasH) h = 560;
+    } else if (t === 'nanoBanana' || t === 'imageComposer' || t === 'grokProcessor') {
+      if (!hasW) w = 400;
+      if (!hasH) h = 420;
+    } else if (t === 'promptInput' || t === 'mediaInput') {
+      if (!hasW) w = 320;
+      if (!hasH) h = 240;
+    }
+  }
+  return { w: Math.max(96, w), h: Math.max(72, h) };
+}
 
 const nodeTypes: any = {
   mediaInput: MediaInputNode,
@@ -188,11 +225,69 @@ const SpacesContent = () => {
   const libraryDragViewportRef = useRef<{ x: number; y: number; zoom: number } | null>(null);
   /** true si onDrop en el lienzo añadió nodo(s) / archivos en este arrastre */
   const libraryCanvasDropSucceededRef = useRef(false);
+  /** true si se soltó en el topbar de accesos directos (no restaurar viewport) */
+  const libraryTopbarDropSucceededRef = useRef(false);
+
+  const [topbarPinnedTypes, setTopbarPinnedTypes] = useState<string[]>([]);
+  const skipTopbarPinsSaveOnce = useRef(true);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(TOPBAR_PINS_STORAGE_KEY);
+      let next: string[];
+      if (raw === null) {
+        next = [...DEFAULT_TOPBAR_PIN_TYPES];
+      } else {
+        const parsed = JSON.parse(raw) as unknown;
+        if (!Array.isArray(parsed)) {
+          next = [...DEFAULT_TOPBAR_PIN_TYPES];
+        } else {
+          next = parsed
+            .filter((t): t is string => typeof t === 'string' && Boolean(NODE_REGISTRY[t]))
+            .slice(0, MAX_TOPBAR_PINS);
+          if (next.length === 0) next = [...DEFAULT_TOPBAR_PIN_TYPES];
+        }
+      }
+      setTopbarPinnedTypes(next);
+    } catch {
+      setTopbarPinnedTypes([...DEFAULT_TOPBAR_PIN_TYPES]);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (skipTopbarPinsSaveOnce.current) {
+      skipTopbarPinsSaveOnce.current = false;
+      return;
+    }
+    try {
+      localStorage.setItem(TOPBAR_PINS_STORAGE_KEY, JSON.stringify(topbarPinnedTypes));
+    } catch {
+      /* ignore */
+    }
+  }, [topbarPinnedTypes]);
+
+  const handleTopbarDropFromSidebar = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const nodeType =
+      e.dataTransfer.getData('application/reactflow') ||
+      e.dataTransfer.getData('text/plain') ||
+      libraryDragTypeRef.current ||
+      '';
+    if (!NODE_REGISTRY[nodeType]) return;
+    libraryTopbarDropSucceededRef.current = true;
+    setTopbarPinnedTypes((prev) => {
+      if (prev.includes(nodeType)) return prev;
+      if (prev.length >= MAX_TOPBAR_PINS) return prev;
+      return [...prev, nodeType];
+    });
+  }, []);
 
   const handleLibraryDragStart = useCallback(
     (nodeType: string) => {
       libraryDragViewportRef.current = getViewport();
       libraryCanvasDropSucceededRef.current = false;
+      libraryTopbarDropSucceededRef.current = false;
       libraryDragTypeRef.current = nodeType;
 
       const compatible: string[] = [];
@@ -202,20 +297,25 @@ const SpacesContent = () => {
           compatible.push(n.id);
         }
       }
-      setLibraryCompatibleIds(compatible);
-
-      fitView({ padding: FIT_VIEW_PADDING, duration: 420 });
+      // Mismo tick que dragstart + setState + fitView cancela el drop HTML5 hacia el topbar (Chrome).
+      queueMicrotask(() => {
+        setLibraryCompatibleIds(compatible);
+        fitView({ padding: FIT_VIEW_PADDING, duration: 420 });
+      });
     },
     [fitView, getViewport, nodes, edges]
   );
 
   const handleLibraryDragEnd = useCallback(() => {
     const saved = libraryDragViewportRef.current;
-    if (!libraryCanvasDropSucceededRef.current && saved) {
+    const dropOk =
+      libraryCanvasDropSucceededRef.current || libraryTopbarDropSucceededRef.current;
+    if (!dropOk && saved) {
       setViewport(saved, { duration: 380 });
     }
     libraryDragViewportRef.current = null;
     libraryCanvasDropSucceededRef.current = false;
+    libraryTopbarDropSucceededRef.current = false;
     libraryDragTypeRef.current = null;
     libraryDropTargetIdRef.current = null;
     setLibraryDropTargetId(null);
@@ -230,8 +330,9 @@ const SpacesContent = () => {
       setTimeout(() => {
         void fitView({
           nodes: unique.map((id) => ({ id })) as Node[],
-          padding: FIT_VIEW_PADDING,
+          padding: FIT_VIEW_PADDING_NODE_FOCUS,
           duration,
+          interpolate: 'smooth',
         });
       }, 60);
     },
@@ -711,13 +812,37 @@ const SpacesContent = () => {
       ]);
     }, 50);
 
-    if (autoEdges.length > 0) {
+    // Encuadrar el nodo nuevo también si no hubo auto-conexión (antes solo con aristas)
+    setTimeout(() => {
+      fitViewToNodeIds([newId], 700);
+    }, autoEdges.length > 0 ? 100 : 80);
+  }, [screenToFlowPosition, nodes, edges, setNodes, setEdges, pushHistory, takeSnapshot, fitViewToNodeIds]);
+
+  /** Doble clic en pin del topbar: nodo suelto en hueco del lienzo (sin auto-conexión) + fit al nodo */
+  const addNodeFromTopbarPinDoubleClick = useCallback(
+    (reactFlowType: string) => {
+      if (!NODE_REGISTRY[reactFlowType]) return;
+      const center = screenToFlowPosition({
+        x: window.innerWidth / 2,
+        y: window.innerHeight / 2,
+      });
+      const position = findEmptyPositionForNewNode(reactFlowType, nodes, center);
+      const newId = `node_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+      const newNode = {
+        id: newId,
+        type: reactFlowType,
+        position,
+        data: { value: '', label: `${reactFlowType} node` },
+      };
+      takeSnapshot();
+      setNodes((nds) => [...nds, newNode]);
       setTimeout(() => {
         fitViewToNodeIds([newId], 700);
       }, 100);
-    }
-  }, [screenToFlowPosition, nodes, edges, setNodes, setEdges, pushHistory, takeSnapshot, fitViewToNodeIds]);
-
+      setSidebarLockedCollapsed(true);
+    },
+    [screenToFlowPosition, nodes, setNodes, takeSnapshot, fitViewToNodeIds]
+  );
 
   // ── Node click: global z-order counter — each click brings that node above all others
   // Every previously clicked node keeps its own relative position in the stack.
@@ -731,12 +856,34 @@ const SpacesContent = () => {
     ));
   }, [setNodes]);
 
+  const onNodeDoubleClick = useCallback(
+    (_evt: React.MouseEvent, node: Node) => {
+      if (lastDoubleClickFitNodeIdRef.current === node.id) {
+        lastDoubleClickFitNodeIdRef.current = null;
+        fitView({ padding: FIT_VIEW_PADDING, duration: 800 });
+      } else {
+        lastDoubleClickFitNodeIdRef.current = node.id;
+        fitViewToNodeIds([node.id], 650);
+      }
+    },
+    [fitView, fitViewToNodeIds]
+  );
+
+  /** Doble clic en el lienzo (no en un nodo) → fit a todo el grafo */
+  const onCanvasDoubleClick = useCallback(
+    (event: React.MouseEvent) => {
+      const el = event.target as HTMLElement;
+      if (el.closest('.react-flow__node')) return;
+      event.preventDefault();
+      lastDoubleClickFitNodeIdRef.current = null;
+      fitView({ padding: FIT_VIEW_PADDING, duration: 800, interpolate: 'smooth' });
+    },
+    [fitView]
+  );
+
   // ── Auto-layout (A key) ──────────────────────────────────────────────────
 
   const autoLayout = useCallback(() => {
-    const COL_GAP = 560; // horizontal distance between columns (flow units)
-    const ROW_GAP = 360; // vertical distance between rows
-
     const toArrange = nodes.some(n => n.selected)
       ? nodes.filter(n => n.selected)
       : [...nodes];
@@ -778,29 +925,58 @@ const SpacesContent = () => {
       if (col[n.id] === undefined) col[n.id] = maxCol + 1;
     }
 
-    // Assign row positions within each column
-    const colRows: Record<number, number> = {};
-    const positioned: Record<string, { x: number; y: number }> = {};
+    const H_GAP = 48;
+    const V_GAP = 44;
 
-    // Sort toArrange so nodes in same column are ordered predictably
-    const sorted = [...toArrange].sort((a, b) => (col[a.id] ?? 0) - (col[b.id] ?? 0));
-    for (const n of sorted) {
+    const nodesByColumn: Record<number, Node[]> = {};
+    const maxColIndex = Math.max(0, ...toArrange.map((n) => col[n.id] ?? 0));
+    for (let c = 0; c <= maxColIndex; c++) nodesByColumn[c] = [];
+    for (const n of toArrange) {
       const c = col[n.id] ?? 0;
-      const r = colRows[c] ?? 0;
-      positioned[n.id] = { x: c * COL_GAP, y: r * ROW_GAP };
-      colRows[c] = r + 1;
+      nodesByColumn[c].push(n);
+    }
+    for (let c = 0; c <= maxColIndex; c++) {
+      nodesByColumn[c].sort(
+        (a, b) => a.position.y - b.position.y || String(a.id).localeCompare(String(b.id))
+      );
+    }
+
+    const positioned: Record<string, { x: number; y: number }> = {};
+    let xCursor = 0;
+    for (let c = 0; c <= maxColIndex; c++) {
+      const list = nodesByColumn[c];
+      if (!list.length) continue;
+      const colMaxW = Math.max(...list.map((n) => getNodeLayoutDimensions(n).w));
+      let yCursor = 0;
+      for (const n of list) {
+        const { h } = getNodeLayoutDimensions(n);
+        positioned[n.id] = { x: xCursor, y: yCursor };
+        yCursor += h + V_GAP;
+      }
+      xCursor += colMaxW + H_GAP;
     }
 
     // Apply positions (don't touch nodes not being arranged)
     takeSnapshot(); // snapshot before layout
+    const arrangedIds = Object.keys(positioned);
+
     setNodes(nds => nds.map(n =>
       positioned[n.id]
         ? { ...n, position: positioned[n.id] }
         : n
     ));
 
-    setTimeout(() => fitView({ padding: FIT_VIEW_PADDING, duration: 600 }), 50);
-  }, [nodes, edges, setNodes, pushHistory, takeSnapshot, fitView]);
+    // Mismo criterio que al encuadrar tras conexión/nuevo nodo: suave, sin saltar de escala brusca
+    setTimeout(() => {
+      if (arrangedIds.length === 0) return;
+      void fitView({
+        nodes: arrangedIds.map((id) => ({ id })) as Node[],
+        padding: FIT_VIEW_PADDING_NODE_FOCUS,
+        duration: 700,
+        interpolate: 'smooth',
+      });
+    }, 100);
+  }, [nodes, edges, setNodes, takeSnapshot, fitView]);
 
   // ── Keyboard shortcuts ───────────────────────────────────────────────────
 
@@ -879,18 +1055,34 @@ const SpacesContent = () => {
   
   // ── Track last-clicked node for persistent z-index ──────────────────────
   const lastClickedRef = useRef<number>(0); // global z-order counter
+  /** Doble clic en nodo: alterna encuadrar ese nodo / segundo doble clic en el mismo → fit global */
+  const lastDoubleClickFitNodeIdRef = useRef<string | null>(null);
 
-  // ── Track Shift key for canvas pan ──────────────────────────────────────
-  const [shiftHeld, setShiftHeld] = useState(false);
+  // ── Espacio: pan; sin espacio: arrastre = selección (marco) ──────────────
+  const [spaceHeld, setSpaceHeld] = useState(false);
   useEffect(() => {
-    const onDown = (e: KeyboardEvent) => { if (e.key === 'Shift') setShiftHeld(true); };
-    const onUp   = (e: KeyboardEvent) => { if (e.key === 'Shift') setShiftHeld(false); };
-    const onBlur = () => setShiftHeld(false); // safety: reset if window loses focus
-    window.addEventListener('keydown', onDown);
+    const typingTarget = (t: EventTarget | null) => {
+      if (!(t instanceof HTMLElement)) return false;
+      const tag = t.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+      if (t.isContentEditable) return true;
+      return !!t.closest('[contenteditable="true"]');
+    };
+    const onDown = (e: KeyboardEvent) => {
+      if (e.code !== 'Space') return;
+      if (typingTarget(e.target)) return;
+      e.preventDefault();
+      setSpaceHeld(true);
+    };
+    const onUp = (e: KeyboardEvent) => {
+      if (e.code === 'Space') setSpaceHeld(false);
+    };
+    const onBlur = () => setSpaceHeld(false);
+    window.addEventListener('keydown', onDown, { capture: true });
     window.addEventListener('keyup', onUp);
     window.addEventListener('blur', onBlur);
     return () => {
-      window.removeEventListener('keydown', onDown);
+      window.removeEventListener('keydown', onDown, { capture: true });
       window.removeEventListener('keyup', onUp);
       window.removeEventListener('blur', onBlur);
     };
@@ -1447,10 +1639,8 @@ const SpacesContent = () => {
   };
 
   const autoLayoutNodes = useCallback(() => {
-    const nodeWidth = 350;
-    const nodeHeight = 450;
-    const paddingX = 250; // Increased from 100
-    const paddingY = 150; // Increased from 50
+    const GAP_X = 48;
+    const GAP_Y = 40;
 
     // 1. Build dependency map
     const incomingEdges: Record<string, string[]> = {};
@@ -1486,27 +1676,44 @@ const SpacesContent = () => {
       grouped[layer].push(id);
     });
 
-    // 4. Calculate new positions
-    const newNodes = nodes.map(node => {
-      const layer = layers[node.id] || 0;
-      const indexInLayer = grouped[layer].indexOf(node.id);
-      
-      // Vertical centering: find total height of this layer
-      const layerNodes = grouped[layer].length;
-      const totalLayerHeight = layerNodes * nodeHeight + (layerNodes - 1) * paddingY;
-      const startY = -totalLayerHeight / 2;
+    // 4. Posiciones por capa usando tamaño real de cada nodo (sin solapes)
+    const layerOrder = Object.keys(grouped)
+      .map(Number)
+      .sort((a, b) => a - b);
+    const newPositions: Record<string, { x: number; y: number }> = {};
+    let xCursor = 0;
+    for (const layer of layerOrder) {
+      const ids = grouped[layer];
+      const layerNodeList = ids.map((id) => nodes.find((n) => n.id === id)!).filter(Boolean);
+      if (layerNodeList.length === 0) continue;
+      const maxW = Math.max(...layerNodeList.map((n) => getNodeLayoutDimensions(n).w));
+      const heights = layerNodeList.map((n) => getNodeLayoutDimensions(n).h);
+      const totalH =
+        heights.reduce((acc, h) => acc + h, 0) + (layerNodeList.length - 1) * GAP_Y;
+      let yCursor = -totalH / 2;
+      for (let i = 0; i < layerNodeList.length; i++) {
+        const n = layerNodeList[i];
+        const { h } = getNodeLayoutDimensions(n);
+        newPositions[n.id] = { x: xCursor, y: yCursor };
+        yCursor += h + GAP_Y;
+      }
+      xCursor += maxW + GAP_X;
+    }
 
-      return {
-        ...node,
-        position: {
-          x: layer * (nodeWidth + paddingX),
-          y: startY + indexInLayer * (nodeHeight + paddingY)
-        }
-      };
-    });
+    const newNodes = nodes.map((node) =>
+      newPositions[node.id]
+        ? { ...node, position: newPositions[node.id] }
+        : node
+    );
 
     setNodes(newNodes);
-    setTimeout(() => fitView({ padding: FIT_VIEW_PADDING, duration: 800 }), 100);
+    setTimeout(() => {
+      void fitView({
+        padding: FIT_VIEW_PADDING_NODE_FOCUS,
+        duration: 700,
+        interpolate: 'smooth',
+      });
+    }, 100);
   }, [nodes, edges, setNodes, fitView]);
 
   const onGenerateAssistant = async (prompt: string) => {
@@ -2317,8 +2524,6 @@ const SpacesContent = () => {
             windowMode={windowMode}
             onLibraryDragStart={handleLibraryDragStart}
             onLibraryDragEnd={handleLibraryDragEnd}
-            onAgentGenerate={!windowMode ? onGenerateAssistant : undefined}
-            isAgentGenerating={isGeneratingAssistant}
             sidebarLockedCollapsed={sidebarLockedCollapsed}
             onSidebarStripMouseEnter={() => setSidebarLockedCollapsed(false)}
           />
@@ -2341,7 +2546,11 @@ const SpacesContent = () => {
             onNodesChange(filtered);
             if (filtered.some((c) => c.type === 'remove')) {
               setTimeout(() => {
-                fitView({ padding: FIT_VIEW_PADDING, duration: 650 });
+                void fitView({
+                  padding: FIT_VIEW_PADDING_NODE_FOCUS,
+                  duration: 650,
+                  interpolate: 'smooth',
+                });
               }, 80);
             }
           }}
@@ -2351,8 +2560,10 @@ const SpacesContent = () => {
            onDrop={onDrop}
           onDragOver={onDragOver}
           onPaneContextMenu={onPaneContextMenu}
+          onDoubleClick={onCanvasDoubleClick}
           onNodeContextMenu={onNodeContextMenu}
           onNodeClick={onNodeClick}
+          onNodeDoubleClick={onNodeDoubleClick}
           onNodeDragStart={onNodeDragStart}
           onNodeDragStop={onNodeDragStop}
           onConnectEnd={onConnectEnd}
@@ -2366,12 +2577,13 @@ const SpacesContent = () => {
           maxZoom={4}
           proOptions={{ hideAttribution: true }}
           multiSelectionKeyCode="Shift"
-          panOnDrag={!shiftHeld}
-          selectionOnDrag={shiftHeld}
+          panOnDrag={spaceHeld}
+          selectionOnDrag={!spaceHeld}
           selectionMode={SelectionMode.Partial}
           panOnScroll={false}
+          zoomOnDoubleClick={false}
 
-          className="spaces-canvas"
+          className={`spaces-canvas${spaceHeld ? ' spaces-canvas--space-pan' : ''}`}
 
 
         >
@@ -2514,149 +2726,158 @@ const SpacesContent = () => {
           <AgentHUD onGenerate={onGenerateAssistant} isGenerating={isGeneratingAssistant} windowMode />
         )}
 
-        {/* Action HUD - Consolidating Breadcrumbs & Actions on the Right */}
+        {/* Action HUD — fila1: agente (izq.) + Canvas/Untitled junto a Order/Fit (der.); fila2: pins topbar */}
         <div
           key="action-hud"
-          className="flex items-center gap-4"
+          className="pointer-events-none flex min-w-0 w-full max-w-[min(1280px,calc(100vw-48px))] flex-col gap-2"
           style={windowMode
-            ? { position: 'fixed', top: 8, right: 16, zIndex: 10002 }
-            : { position: 'absolute', top: 24, right: 24, zIndex: 50 }}
+            ? { position: 'fixed', top: 8, left: 16, right: 16, zIndex: 100 }
+            : { position: 'absolute', top: 24, left: 24, right: 24, zIndex: 100 }}
         >
-            {/* Navigation & Project Context (Clean Ghost Style) */}
-            <div className="flex items-center gap-3 pr-2 border-r border-white/10">
-              <button 
-                onClick={handleGoBack}
-                disabled={navigationStack.length === 0}
-                className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 text-slate-400 hover:text-white transition-all disabled:opacity-0"
-              >
-                <ChevronLeft size={16} />
-              </button>
-              
-              <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[2px]">
-                <NodeIconMono iconKey="canvas" size={12} className="opacity-70" />
-                <span 
-                  onClick={() => {
-                    if (activeSpaceId !== 'root') {
-                      const { newMap: updatedSpacesMap } = syncCurrentSpaceState(nodes, edges, spacesMap, activeSpaceId);
-                      const rootSpace = updatedSpacesMap['root'];
-                      if (rootSpace) {
-                        setSpacesMap(updatedSpacesMap);
-                        setNodes([...rootSpace.nodes]);
-                        setEdges([...(rootSpace.edges || [])]);
-                        setActiveSpaceId('root');
-                        setNavigationStack([]);
-                      }
-                    }
-                  }}
-                  className={`hover:text-cyan-400 cursor-pointer transition-colors ${activeSpaceId === 'root' ? 'text-cyan-400 font-bold' : 'text-slate-400'}`}
+          <div className="flex w-full min-w-0 items-center gap-2 sm:gap-3">
+            {isAuthenticated && !windowMode && (
+              <div className="pointer-events-auto min-w-0 flex-1 rounded-xl border border-white/10 bg-white/[0.06] px-2 py-1 shadow-sm backdrop-blur-md">
+                <AgentHUD
+                  variant="topbar"
+                  onGenerate={onGenerateAssistant}
+                  isGenerating={isGeneratingAssistant}
+                />
+              </div>
+            )}
+            <div
+              className={
+                isAuthenticated && !windowMode
+                  ? 'pointer-events-auto ml-auto flex min-w-0 shrink-0 items-center gap-2 sm:gap-3'
+                  : 'pointer-events-auto flex w-full min-w-0 flex-1 items-center justify-between gap-3'
+              }
+            >
+              {/* Navigation & Project Context (Clean Ghost Style) */}
+              <div className="flex shrink-0 items-center gap-3 border-r border-white/10 pr-2">
+                <button
+                  onClick={handleGoBack}
+                  disabled={navigationStack.length === 0}
+                  className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 text-slate-400 hover:text-white transition-all disabled:opacity-0"
                 >
-                  Canvas
-                </span>
-                
-                {navigationStack.map((id, idx) => (
-                  <React.Fragment key={id}>
-                    <span className="text-white/20">/</span>
-                    <span className="inline-flex items-center gap-1">
-                    <NodeIconMono iconKey="space" size={11} className="opacity-60" />
-                    <span 
-                      onClick={() => {
+                  <ChevronLeft size={16} />
+                </button>
+
+                <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[2px]">
+                  <NodeIconMono iconKey="canvas" size={12} className="opacity-70" />
+                  <span
+                    onClick={() => {
+                      if (activeSpaceId !== 'root') {
                         const { newMap: updatedSpacesMap } = syncCurrentSpaceState(nodes, edges, spacesMap, activeSpaceId);
-                        const newStack = navigationStack.slice(0, idx);
-                        const targetSpace = updatedSpacesMap[id];
-                        if (targetSpace) {
+                        const rootSpace = updatedSpacesMap['root'];
+                        if (rootSpace) {
                           setSpacesMap(updatedSpacesMap);
-                          setNodes([...targetSpace.nodes]);
-                          setEdges([...(targetSpace.edges || [])]);
-                          setActiveSpaceId(id);
-                          setNavigationStack(newStack);
+                          setNodes([...rootSpace.nodes]);
+                          setEdges([...(rootSpace.edges || [])]);
+                          setActiveSpaceId('root');
+                          setNavigationStack([]);
                         }
-                      }}
-                      className="text-slate-400 hover:text-cyan-400 cursor-pointer transition-colors"
-                    >
-                      {spacesMap[id]?.name || 'Space'}
-                    </span>
-                    </span>
-                  </React.Fragment>
-                ))}
-                
-                {activeSpaceId !== 'root' && (
-                  <>
-                    <span className="text-white/20">/</span>
-                    <span className="inline-flex items-center gap-1 text-cyan-400 font-bold tracking-wider">
-                      <NodeIconMono iconKey="space" size={11} />
-                      {spacesMap[activeSpaceId]?.name || 'Nested Space'}
-                    </span>
-                  </>
-                )}
+                      }
+                    }}
+                    className={`hover:text-cyan-400 cursor-pointer transition-colors ${activeSpaceId === 'root' ? 'text-cyan-400 font-bold' : 'text-slate-400'}`}
+                  >
+                    Canvas
+                  </span>
+
+                  {navigationStack.map((id, idx) => (
+                    <React.Fragment key={id}>
+                      <span className="text-white/20">/</span>
+                      <span className="inline-flex items-center gap-1">
+                        <NodeIconMono iconKey="space" size={11} className="opacity-60" />
+                        <span
+                          onClick={() => {
+                            const { newMap: updatedSpacesMap } = syncCurrentSpaceState(nodes, edges, spacesMap, activeSpaceId);
+                            const newStack = navigationStack.slice(0, idx);
+                            const targetSpace = updatedSpacesMap[id];
+                            if (targetSpace) {
+                              setSpacesMap(updatedSpacesMap);
+                              setNodes([...targetSpace.nodes]);
+                              setEdges([...(targetSpace.edges || [])]);
+                              setActiveSpaceId(id);
+                              setNavigationStack(newStack);
+                            }
+                          }}
+                          className="text-slate-400 hover:text-cyan-400 cursor-pointer transition-colors"
+                        >
+                          {spacesMap[id]?.name || 'Space'}
+                        </span>
+                      </span>
+                    </React.Fragment>
+                  ))}
+
+                  {activeSpaceId !== 'root' && (
+                    <>
+                      <span className="text-white/20">/</span>
+                      <span className="inline-flex items-center gap-1 text-cyan-400 font-bold tracking-wider">
+                        <NodeIconMono iconKey="space" size={11} />
+                        {spacesMap[activeSpaceId]?.name || 'Nested Space'}
+                      </span>
+                    </>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-3 px-3 py-1.5 rounded-xl">
+                  <div className="w-1.5 h-1.5 rounded-full bg-cyan-500 shadow-[0_0_8px_rgba(6,182,212,0.6)]" />
+                  <span className="max-w-[min(200px,28vw)] truncate text-[10px] font-black text-white uppercase tracking-widest drop-shadow-sm">
+                    {currentName || 'Untitled Composition'}
+                  </span>
+                </div>
               </div>
 
-              <div className="flex items-center gap-3 px-3 py-1.5 rounded-xl">
-                 <div className="w-1.5 h-1.5 rounded-full bg-cyan-500 shadow-[0_0_8px_rgba(6,182,212,0.6)]" />
-                 <span className="text-[10px] font-black text-white uppercase tracking-widest drop-shadow-sm">
-                   {currentName || 'Untitled Composition'}
-                 </span>
+              {/* Quick Actions */}
+              <div className="flex shrink-0 gap-1.5">
+                <button
+                  onClick={autoLayoutNodes}
+                  title="Order Nodes"
+                  className="w-10 h-10 bg-white/5 hover:bg-white/10 backdrop-blur-md border border-white/5 rounded-xl text-white flex items-center justify-center transition-all hover:scale-105 group"
+                >
+                  <LayoutGrid size={16} className="text-emerald-400 group-hover:text-emerald-300" />
+                </button>
+                <button
+                  onClick={() => fitView({ padding: FIT_VIEW_PADDING, duration: 800 })}
+                  title="Fit View"
+                  className="w-10 h-10 bg-white/5 hover:bg-white/10 backdrop-blur-md border border-white/5 rounded-xl text-white flex items-center justify-center transition-all hover:scale-105 group"
+                >
+                  <Maximize size={16} className="text-cyan-400 group-hover:text-cyan-300" />
+                </button>
+                <button
+                  onClick={() => setShowLoadModal(true)}
+                  title="My Spaces"
+                  className="w-10 h-10 bg-white/5 hover:bg-white/10 backdrop-blur-md border border-white/5 rounded-xl text-white flex items-center justify-center transition-all hover:scale-105 group"
+                >
+                  <FolderOpen size={16} className="text-rose-400 group-hover:text-rose-300" />
+                </button>
+                <button
+                  onClick={() => activeProjectId ? saveProject() : setShowSaveModal(true)}
+                  disabled={isSaving}
+                  className={`h-10 px-4 ${activeProjectId ? 'bg-rose-600/20 text-rose-400 border-rose-500/30' : 'bg-rose-600 text-white'} hover:brightness-110 backdrop-blur-xl border border-white/10 rounded-xl text-[9px] font-black uppercase tracking-widest flex items-center gap-2 transition-all hover:scale-105 disabled:opacity-50 shadow-xl shadow-rose-900/10`}
+                >
+                  {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                  <span className="hidden sm:inline">{activeProjectId ? 'Commit' : 'Save'}</span>
+                </button>
               </div>
             </div>
-
-            {/* Quick Actions */}
-            <div className="flex gap-1.5">
-              <button 
-                onClick={autoLayoutNodes}
-                title="Order Nodes"
-                className="w-10 h-10 bg-white/5 hover:bg-white/10 backdrop-blur-md border border-white/5 rounded-xl text-white flex items-center justify-center transition-all hover:scale-105 group"
-              >
-                <LayoutGrid size={16} className="text-emerald-400 group-hover:text-emerald-300" />
-              </button>
-              <button 
-                onClick={() => fitView({ padding: FIT_VIEW_PADDING, duration: 800 })}
-                title="Fit View"
-                className="w-10 h-10 bg-white/5 hover:bg-white/10 backdrop-blur-md border border-white/5 rounded-xl text-white flex items-center justify-center transition-all hover:scale-105 group"
-              >
-                <Maximize size={16} className="text-cyan-400 group-hover:text-cyan-300" />
-              </button>
-              <button 
-                onClick={() => setShowLoadModal(true)}
-                title="My Spaces"
-                className="w-10 h-10 bg-white/5 hover:bg-white/10 backdrop-blur-md border border-white/5 rounded-xl text-white flex items-center justify-center transition-all hover:scale-105 group"
-              >
-                <FolderOpen size={16} className="text-rose-400 group-hover:text-rose-300" />
-              </button>
-              <button 
-                onClick={() => activeProjectId ? saveProject() : setShowSaveModal(true)}
-                disabled={isSaving}
-                className={`h-10 px-4 ${activeProjectId ? 'bg-rose-600/20 text-rose-400 border-rose-500/30' : 'bg-rose-600 text-white'} hover:brightness-110 backdrop-blur-xl border border-white/10 rounded-xl text-[9px] font-black uppercase tracking-widest flex items-center gap-2 transition-all hover:scale-105 disabled:opacity-50 shadow-xl shadow-rose-900/10`}
-              >
-                {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} 
-                <span className="hidden sm:inline">{activeProjectId ? 'Commit' : 'Save'}</span>
-              </button>
-            </div>
+          </div>
         </div>
 
-        {/* Legend HUD - Ultra Minimal Single Row (always visible) */}
-        <div key="legend-hud" className="absolute bottom-6 left-6 flex items-center gap-6 px-6 py-2.5 bg-white/5 backdrop-blur-2xl border border-white/5 rounded-full z-50 pointer-events-none shadow-2xl shadow-black/5">
-            {[
-              { color: 'bg-blue-500', label: 'Prompt' },
-              { color: 'bg-rose-500', label: 'Video' },
-              { color: 'bg-pink-500', label: 'Image' },
-              { color: 'bg-purple-500', label: 'Sound' },
-              { color: 'bg-cyan-500', label: 'Mask' },
-              { color: 'bg-orange-500', label: 'PDF' },
-              { color: 'bg-amber-500', label: 'Txt' },
-              { color: 'bg-emerald-500', label: 'Url' },
-            ].map((item) => (
-              <div key={item.label} className="flex items-center gap-2">
-                <div className={`w-1.5 h-1.5 rounded-full ${item.color} shadow-[0_0_8px_rgba(255,255,255,0.2)]`} />
-                <span className="text-[8px] font-black text-white/60 uppercase tracking-widest">{item.label}</span>
-              </div>
-            ))}
-            <div className="h-3 w-[1px] bg-white/10 mx-1" />
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full border border-rose-500/50 flex items-center justify-center">
-                <div className="w-1 h-1 rounded-full bg-rose-500" />
-              </div>
-              <span className="text-[8px] font-black text-white/60 uppercase tracking-widest">Disconnect</span>
-            </div>
-        </div>
+        {/* Topbar de pins (antes bajo el HUD; ahora abajo, sustituye la leyenda) */}
+        {isAuthenticated && !windowMode && (
+          <div className="pointer-events-none absolute bottom-6 left-0 right-0 z-[120] flex justify-center overflow-visible px-4">
+            <TopbarPins
+              embedded
+              fullWidthRow
+              pinnedTypes={topbarPinnedTypes}
+              onRemove={(t) => setTopbarPinnedTypes((p) => p.filter((x) => x !== t))}
+              onDropFromSidebar={handleTopbarDropFromSidebar}
+              onLibraryDragStart={handleLibraryDragStart}
+              onLibraryDragEnd={handleLibraryDragEnd}
+              onPinDoubleClick={addNodeFromTopbarPinDoubleClick}
+            />
+          </div>
+        )}
 
         {/* Modals */}
         {showSaveModal && (

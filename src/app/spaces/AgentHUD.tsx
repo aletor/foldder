@@ -7,8 +7,8 @@ interface AgentHUDProps {
   onGenerate: (prompt: string) => Promise<void>;
   isGenerating?: boolean;
   windowMode?: boolean;
-  /** Embedded in sidebar (top, non-scrolling) */
-  variant?: 'floating' | 'sidebar';
+  /** floating = esquina; sidebar = columna (legacy); topbar = una línea junto al topbar de pins */
+  variant?: 'floating' | 'sidebar' | 'topbar';
 }
 
 export const AgentHUD = ({
@@ -84,6 +84,38 @@ export const AgentHUD = ({
       <div className="w-full pointer-events-auto flex flex-col gap-3">
         {renderBranding('sidebar')}
         {assistantCard}
+      </div>
+    );
+  }
+
+  if (variant === 'topbar') {
+    return (
+      <div className="flex w-full min-w-0 items-center gap-2">
+        <Sparkles size={14} className="shrink-0 text-cyan-400/90" aria-hidden />
+        <span className="hidden shrink-0 text-[8px] font-black uppercase tracking-widest text-white/45 sm:inline">
+          Agent
+        </span>
+        <input
+          type="text"
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              void handleGenerate();
+            }
+          }}
+          placeholder="Describe workflow changes…"
+          className="min-h-[30px] min-w-0 flex-1 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-[10px] text-white placeholder:text-white/35 focus:border-cyan-500/40 focus:outline-none"
+        />
+        <button
+          type="button"
+          onClick={() => void handleGenerate()}
+          disabled={isGenerating}
+          className="shrink-0 rounded-lg border border-cyan-500/30 bg-cyan-500/15 px-2.5 py-1 text-[9px] font-black uppercase tracking-wider text-cyan-300 transition hover:bg-cyan-500/25 disabled:opacity-50"
+        >
+          {isGenerating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Run'}
+        </button>
       </div>
     );
   }
