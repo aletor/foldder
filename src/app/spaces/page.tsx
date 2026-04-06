@@ -2736,12 +2736,36 @@ const SpacesContent = () => {
         >
           <div className="flex w-full min-w-0 items-center gap-2 sm:gap-3">
             {isAuthenticated && !windowMode && (
-              <div className="pointer-events-auto min-w-0 flex-1 rounded-xl border border-white/10 bg-white/[0.06] px-2 py-1 shadow-sm backdrop-blur-md">
-                <AgentHUD
-                  variant="topbar"
-                  onGenerate={onGenerateAssistant}
-                  isGenerating={isGeneratingAssistant}
-                />
+              <div className="pointer-events-auto flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
+                <div className="flex shrink-0 items-center gap-1.5" aria-hidden>
+                  <svg
+                    width={34}
+                    height={34}
+                    viewBox="0 0 60 60"
+                    fill="none"
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="drop-shadow-md"
+                  >
+                    <path
+                      d="M4 8 Q4 4 8 4 L48 4 L56 12 L56 52 Q56 56 52 56 L8 56 Q4 56 4 52 Z"
+                      fill="#6C5CE7"
+                    />
+                    <path d="M48 4 L56 12 L48 12 Z" fill="rgba(0,0,0,0.25)" />
+                    <rect x="17" y="18" width="5" height="24" rx="2" fill="white" />
+                    <rect x="17" y="18" width="20" height="5" rx="2" fill="white" />
+                    <rect x="17" y="28" width="15" height="5" rx="2" fill="white" />
+                  </svg>
+                  <span className="text-[7px] font-black uppercase tracking-[0.14em] text-slate-500">
+                    Beta
+                  </span>
+                </div>
+                <div className="min-w-0 flex-1 rounded-xl border border-white/10 bg-white/[0.06] px-2 py-1 shadow-sm backdrop-blur-md">
+                  <AgentHUD
+                    variant="topbar"
+                    onGenerate={onGenerateAssistant}
+                    isGenerating={isGeneratingAssistant}
+                  />
+                </div>
               </div>
             )}
             <div
@@ -2879,18 +2903,24 @@ const SpacesContent = () => {
           </div>
         )}
 
-        {/* Modals */}
+        {/* Modals — mismo estilo que tarjetas Lógica en Sidebar (borde blanco /25, fondo white/20, slate-700) */}
         {showSaveModal && (
           <div className="fixed inset-0 z-[10004] flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-md" onClick={() => setShowSaveModal(false)}></div>
-            <div className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl relative z-10 border border-slate-200">
-              <div className="flex justify-between items-center mb-6">
-                <h2 className="text-xl font-black text-slate-900 uppercase tracking-wide flex items-center gap-3">
+            <div
+              className="absolute inset-0 bg-black/45 backdrop-blur-xl"
+              onClick={() => setShowSaveModal(false)}
+              aria-hidden
+            />
+            <div className="relative z-10 w-full max-w-md rounded-3xl border border-white/25 bg-white/20 p-8 shadow-2xl shadow-black/20 backdrop-blur-xl">
+              <div className="mb-6 flex items-center justify-between">
+                <h2 className="flex items-center gap-3 text-xl font-black uppercase tracking-wide text-slate-800">
                   <Save size={20} className="text-cyan-500" /> Save Workspace
                 </h2>
-                <button 
+                <button
+                  type="button"
                   onClick={() => setShowSaveModal(false)}
-                  className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-700 rounded-full transition-colors"
+                  className="rounded-full p-2 text-slate-500 transition-colors hover:bg-white/40 hover:text-slate-800"
+                  aria-label="Close"
                 >
                   <X size={16} />
                 </button>
@@ -2905,18 +2935,20 @@ const SpacesContent = () => {
                   if (e.key === 'Enter') saveProject();
                   if (e.key === 'Escape') setShowSaveModal(false);
                 }}
-                className="w-full bg-slate-50 border-2 border-slate-200 focus:border-cyan-500 rounded-xl px-4 py-3 text-sm font-bold text-slate-800 outline-none transition-all placeholder:text-slate-400 mb-6"
+                className="mb-6 w-full rounded-2xl border border-white/25 bg-white/25 px-4 py-3 text-sm font-bold text-slate-800 shadow-inner outline-none backdrop-blur-sm transition-all placeholder:text-slate-500 focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-400/25"
               />
-              <div className="flex gap-3 justify-end">
-                <button 
+              <div className="flex justify-end gap-3">
+                <button
+                  type="button"
                   onClick={() => setShowSaveModal(false)}
-                  className="px-6 py-2.5 rounded-xl font-black text-[11px] uppercase tracking-widest text-slate-500 hover:bg-slate-100 transition-colors"
+                  className="rounded-2xl border border-white/25 bg-white/15 px-6 py-2.5 font-black text-[11px] uppercase tracking-widest text-slate-700 transition-all hover:bg-white/35"
                 >
                   Cancel
                 </button>
-                <button 
+                <button
+                  type="button"
                   onClick={() => saveProject()}
-                  className="px-6 py-2.5 rounded-xl font-black text-[11px] uppercase tracking-widest bg-cyan-500 hover:bg-cyan-400 text-white shadow-lg shadow-cyan-500/30 transition-all flex items-center gap-2"
+                  className="flex items-center gap-2 rounded-2xl border border-cyan-400/40 bg-cyan-500 px-6 py-2.5 font-black text-[11px] uppercase tracking-widest text-white shadow-lg shadow-cyan-500/25 transition-all hover:bg-cyan-400"
                 >
                   {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Save Project
                 </button>
@@ -2927,84 +2959,109 @@ const SpacesContent = () => {
 
         {showLoadModal && (
           <div className="fixed inset-0 z-[10004] flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-md" onClick={() => setShowLoadModal(false)}></div>
-            <div className="bg-white rounded-3xl p-8 w-full max-w-2xl shadow-2xl relative z-10 border border-slate-200 max-h-[80vh] flex flex-col">
-              <div className="flex justify-between items-center mb-6">
-                <h2 className="text-xl font-black text-slate-900 uppercase tracking-wide flex items-center gap-3">
+            <div
+              className="absolute inset-0 bg-black/45 backdrop-blur-xl"
+              onClick={() => setShowLoadModal(false)}
+              aria-hidden
+            />
+            <div className="relative z-10 flex max-h-[80vh] w-full max-w-2xl flex-col rounded-3xl border border-white/25 bg-white/20 p-8 shadow-2xl shadow-black/20 backdrop-blur-xl">
+              <div className="mb-6 flex items-center justify-between">
+                <h2 className="flex items-center gap-3 text-xl font-black uppercase tracking-wide text-slate-800">
                   <FolderOpen size={20} className="text-rose-500" /> Your Projects
                 </h2>
-                <button 
+                <button
+                  type="button"
                   onClick={() => setShowLoadModal(false)}
-                  className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-700 rounded-full transition-colors"
+                  className="rounded-full p-2 text-slate-500 transition-colors hover:bg-white/40 hover:text-slate-800"
+                  aria-label="Close"
                 >
                   <X size={16} />
                 </button>
               </div>
-              <p className="text-slate-500 text-sm mb-6">Select a configuration to restore it to the canvas.</p>
-              
-              <div className="flex-1 overflow-y-auto custom-scrollbar -mx-8 px-8 pb-8">
+              <p className="mb-6 text-sm text-slate-600">
+                Select a configuration to restore it to the canvas.
+              </p>
+
+              <div className="custom-scrollbar flex-1 overflow-y-auto pb-2 -mx-2 px-2">
                 {savedProjects.length === 0 ? (
-                  <div className="text-center py-20 border-2 border-dashed border-slate-200 rounded-3xl">
+                  <div className="rounded-3xl border-2 border-dashed border-white/30 bg-white/10 py-20 text-center backdrop-blur-sm">
                     <FolderOpen className="mx-auto mb-4 text-slate-400" size={48} />
-                    <p className="text-slate-500 font-bold">No saved projects found yet.</p>
+                    <p className="font-bold text-slate-600">No saved projects found yet.</p>
                   </div>
                 ) : (
                   <div className="grid gap-4">
                     {savedProjects.map((project) => (
-                      <div key={project.id} className="group/item flex items-center gap-4 p-4 bg-white hover:bg-slate-50 border border-slate-200 rounded-2xl transition-all shadow-sm hover:shadow-md">
-                        <div className="w-14 h-14 bg-rose-50 text-rose-500 rounded-xl flex items-center justify-center border border-rose-100 shrink-0">
+                      <div
+                        key={project.id}
+                        className="group/item flex items-center gap-4 rounded-2xl border border-white/25 bg-white/15 p-4 shadow-sm backdrop-blur-sm transition-all hover:bg-white/30"
+                      >
+                        <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-white/25 bg-white/25 text-rose-500">
                           <Workflow size={24} />
                         </div>
-                        <div className="flex-1 min-w-0">
+                        <div className="min-w-0 flex-1">
                           {editingId === project.id ? (
-                            <input 
+                            <input
                               autoFocus
                               type="text"
-                              className="bg-slate-50 border-2 border-rose-500 rounded-lg px-3 py-2 text-sm font-black text-slate-900 w-full focus:outline-none"
+                              className="w-full rounded-xl border border-white/25 bg-white/35 px-3 py-2 text-sm font-black text-slate-900 shadow-inner outline-none backdrop-blur-sm placeholder:text-slate-500 focus:border-rose-400/50 focus:ring-2 focus:ring-rose-400/20"
                               value={editingName}
                               onChange={(e) => setEditingName(e.target.value)}
                               onBlur={() => renameProject(project.id, editingName)}
                               onKeyDown={(e) => e.key === 'Enter' && renameProject(project.id, editingName)}
                             />
                           ) : (
-                            <h4 
+                            <h4
+                              role="button"
+                              tabIndex={0}
                               onClick={() => {
                                 setEditingId(project.id);
                                 setEditingName(project.name);
                               }}
-                              className="text-[15px] font-black text-slate-900 truncate tracking-tight cursor-pointer hover:text-rose-600 flex items-center gap-2 group/title"
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  setEditingId(project.id);
+                                  setEditingName(project.name);
+                                }
+                              }}
+                              className="group/title flex cursor-pointer items-center gap-2 truncate text-[15px] font-black tracking-tight text-slate-800 hover:text-rose-600"
                             >
                               {project.name}
-                              <Edit2 size={12} className="opacity-0 group-hover/title:opacity-100 text-slate-400 transition-opacity" />
+                              <Edit2
+                                size={12}
+                                className="text-slate-400 opacity-0 transition-opacity group-hover/title:opacity-100"
+                              />
                             </h4>
                           )}
-                          <div className="flex items-center gap-4 mt-2">
-                             <div className="flex items-center gap-1.5 text-[10px] text-slate-500 uppercase font-bold tracking-widest">
-                               <Calendar size={12} /> {new Date(project.updatedAt).toLocaleDateString()}
-                             </div>
-                             <div className="flex items-center gap-1.5 text-[10px] text-slate-500 uppercase font-bold tracking-widest">
-                               <Settings2 size={12} /> {Object.keys(project.spaces || {}).length} Spaces
-                             </div>
+                          <div className="mt-2 flex items-center gap-4">
+                            <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                              <Calendar size={12} /> {new Date(project.updatedAt).toLocaleDateString()}
+                            </div>
+                            <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                              <Settings2 size={12} /> {Object.keys(project.spaces || {}).length} Spaces
+                            </div>
                           </div>
                         </div>
-                        <div className="flex gap-2 opacity-0 group-hover/item:opacity-100 transition-opacity shrink-0">
-                          <button 
+                        <div className="flex shrink-0 gap-2 opacity-0 transition-opacity group-hover/item:opacity-100">
+                          <button
+                            type="button"
                             onClick={() => duplicateProject(project)}
                             title="Duplicate Project"
-                            className="p-3 text-slate-400 hover:text-blue-600 hover:bg-blue-50 bg-slate-100 rounded-xl transition-all"
+                            className="rounded-2xl border border-white/25 bg-white/15 p-3 text-slate-500 transition-all hover:border-sky-400/50 hover:bg-white/40 hover:text-sky-600"
                           >
                             <Copy size={16} />
                           </button>
-                          <button 
+                          <button
+                            type="button"
                             onClick={() => setProjectToDelete(project)}
                             title="Delete Project"
-                            className="p-3 text-slate-400 hover:text-rose-600 hover:bg-rose-50 bg-slate-100 rounded-xl transition-all"
+                            className="rounded-2xl border border-white/25 bg-white/15 p-3 text-slate-500 transition-all hover:border-rose-400/50 hover:bg-white/40 hover:text-rose-600"
                           >
                             <Trash2 size={16} />
                           </button>
-                          <button 
+                          <button
+                            type="button"
                             onClick={() => loadProject(project)}
-                            className="px-6 py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-[11px] font-black uppercase tracking-widest transition-all shadow-lg shadow-slate-900/20"
+                            className="rounded-2xl border border-white/25 bg-white/30 px-6 py-3 text-[11px] font-black uppercase tracking-widest text-slate-800 shadow-md transition-all hover:border-slate-400/40 hover:bg-white/50"
                           >
                             LOAD
                           </button>
@@ -3018,33 +3075,36 @@ const SpacesContent = () => {
           </div>
         )}
 
-        {/* Delete Confirmation Modal */}
+        {/* Delete Confirmation Modal — mismo estilo tarjetas Lógica */}
         {projectToDelete && (
-          <div className="absolute inset-0 z-[150] flex items-center justify-center bg-slate-900/60 backdrop-blur-md p-4">
-            <div className="w-full max-w-md bg-white border border-rose-200 rounded-3xl p-8 shadow-2xl relative overflow-hidden text-center">
-              
-              <div className="w-20 h-20 bg-rose-50 rounded-full flex items-center justify-center mb-6 mx-auto">
+          <div className="fixed inset-0 z-[10005] flex items-center justify-center bg-black/45 p-4 backdrop-blur-xl">
+            <div className="relative w-full max-w-md overflow-hidden rounded-3xl border border-white/25 bg-white/20 p-8 text-center shadow-2xl shadow-black/20 backdrop-blur-xl">
+              <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-2xl border border-white/25 bg-white/25">
                 <Trash2 size={36} className="text-rose-500" />
               </div>
 
-              <h2 className="text-2xl font-black text-slate-900 mb-2">Delete Project?</h2>
-              <p className="text-slate-500 text-sm mb-8 leading-relaxed">
-                This will permanently remove <strong className="text-slate-900">"{projectToDelete.name}"</strong>. This action cannot be undone.
+              <h2 className="mb-2 text-2xl font-black text-slate-800">Delete Project?</h2>
+              <p className="mb-8 text-sm leading-relaxed text-slate-600">
+                This will permanently remove{' '}
+                <strong className="text-slate-900">&quot;{projectToDelete.name}&quot;</strong>. This action cannot be
+                undone.
               </p>
-              
+
               <div className="flex gap-4">
-                <button 
+                <button
+                  type="button"
                   onClick={() => setProjectToDelete(null)}
-                  className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl font-black uppercase text-[11px] tracking-widest transition-all"
+                  className="flex-1 rounded-2xl border border-white/25 bg-white/15 py-3 font-black uppercase text-[11px] tracking-widest text-slate-700 transition-all hover:bg-white/35"
                 >
                   CANCEL
                 </button>
-                <button 
+                <button
+                  type="button"
                   onClick={() => {
                     deleteProject(projectToDelete.id);
                     setProjectToDelete(null);
                   }}
-                  className="flex-1 py-3 bg-rose-600 hover:bg-rose-500 text-white rounded-xl font-black uppercase text-[11px] tracking-widest transition-all shadow-lg shadow-rose-600/20"
+                  className="flex-1 rounded-2xl border border-rose-400/40 bg-rose-600 py-3 font-black uppercase text-[11px] tracking-widest text-white shadow-lg shadow-rose-600/25 transition-all hover:bg-rose-500"
                 >
                   DELETE
                 </button>

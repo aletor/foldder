@@ -91,8 +91,7 @@ export const AgentHUD = ({
   if (variant === 'topbar') {
     return (
       <div className="flex w-full min-w-0 items-center gap-2">
-        <Sparkles size={14} className="shrink-0 text-cyan-400/90" aria-hidden />
-        <span className="hidden shrink-0 text-[8px] font-black uppercase tracking-widest text-white/45 sm:inline">
+        <span className="hidden shrink-0 text-[8px] font-black uppercase tracking-widest text-white/55 sm:inline">
           Agent
         </span>
         <input
