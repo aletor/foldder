@@ -131,6 +131,11 @@ const FIT_VIEW_PADDING = 0.14;
 /** Al encuadrar uno o pocos nodos (doble clic, nodo nuevo, etc.): un poco más de margen que el fit a todo el grafo */
 const FIT_VIEW_PADDING_NODE_FOCUS = 0.8;
 
+/** Animaciones de encuadre ~2× más rápidas (mitad de ms, mínimo 40). */
+function fitAnim(ms: number): number {
+  return Math.max(40, Math.round(ms / 2));
+}
+
 /** Ancho/alto efectivos para layout (evita solapes si solo usamos una cuadrícula fija) */
 function getNodeLayoutDimensions(n: Node): { w: number; h: number } {
   const mw = n.measured?.width ?? n.width ?? n.initialWidth;
@@ -308,7 +313,7 @@ const SpacesContent = () => {
       // Mismo tick que dragstart + setState + fitView cancela el drop HTML5 hacia el topbar (Chrome).
       queueMicrotask(() => {
         setLibraryCompatibleIds(compatible);
-        fitView({ padding: FIT_VIEW_PADDING, duration: 420 });
+        fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(420) });
       });
     },
     [fitView, getViewport, nodes, edges]
@@ -319,7 +324,7 @@ const SpacesContent = () => {
     const dropOk =
       libraryCanvasDropSucceededRef.current || libraryTopbarDropSucceededRef.current;
     if (!dropOk && saved) {
-      setViewport(saved, { duration: 380 });
+      setViewport(saved, { duration: fitAnim(380) });
     }
     libraryDragViewportRef.current = null;
     libraryCanvasDropSucceededRef.current = false;
@@ -335,11 +340,12 @@ const SpacesContent = () => {
     (ids: string[], duration = 650) => {
       const unique = [...new Set(ids.filter(Boolean))];
       if (unique.length === 0) return;
+      const d = fitAnim(duration);
       setTimeout(() => {
         void fitView({
           nodes: unique.map((id) => ({ id })) as Node[],
           padding: FIT_VIEW_PADDING_NODE_FOCUS,
-          duration,
+          duration: d,
           interpolate: 'smooth',
         });
       }, 60);
@@ -893,7 +899,7 @@ const SpacesContent = () => {
     (_evt: React.MouseEvent, node: Node) => {
       if (lastDoubleClickFitNodeIdRef.current === node.id) {
         lastDoubleClickFitNodeIdRef.current = null;
-        fitView({ padding: FIT_VIEW_PADDING, duration: 800 });
+        fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(800) });
       } else {
         lastDoubleClickFitNodeIdRef.current = node.id;
         fitViewToNodeIds([node.id], 650);
@@ -909,7 +915,7 @@ const SpacesContent = () => {
       if (el.closest('.react-flow__node')) return;
       event.preventDefault();
       lastDoubleClickFitNodeIdRef.current = null;
-      fitView({ padding: FIT_VIEW_PADDING, duration: 800, interpolate: 'smooth' });
+      fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(800), interpolate: 'smooth' });
     },
     [fitView]
   );
@@ -1005,7 +1011,7 @@ const SpacesContent = () => {
       void fitView({
         nodes: arrangedIds.map((id) => ({ id })) as Node[],
         padding: FIT_VIEW_PADDING_NODE_FOCUS,
-        duration: 700,
+        duration: fitAnim(700),
         interpolate: 'smooth',
       });
     }, 100);
@@ -1300,7 +1306,7 @@ const SpacesContent = () => {
         case 'x': addNode('crop'); break;
         case 'z': addNode('bezierMask'); break;
         // ── Canvas actions ───────────────────────────────────────────────
-        case 'f': doFitView({ padding: FIT_VIEW_PADDING, duration: 800 }); break;
+        case 'f': doFitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(800) }); break;
         case 'a': doAutoLayout(); break;
         default: break;
       }
@@ -1344,6 +1350,38 @@ const SpacesContent = () => {
       window.removeEventListener('keyup', onUp);
       window.removeEventListener('blur', onBlur);
     };
+  }, []);
+
+  /** Botón central (rueda): cursor mano + pan; mismo estilo que Espacio */
+  const [middlePanHeld, setMiddlePanHeld] = useState(false);
+  useEffect(() => {
+    const down = (e: PointerEvent) => {
+      if (e.button === 1) setMiddlePanHeld(true);
+    };
+    const up = (e: PointerEvent) => {
+      if (e.button === 1) setMiddlePanHeld(false);
+    };
+    const clear = () => setMiddlePanHeld(false);
+    window.addEventListener('pointerdown', down);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('blur', clear);
+    return () => {
+      window.removeEventListener('pointerdown', down);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('blur', clear);
+    };
+  }, []);
+
+  useEffect(() => {
+    const onMouseDown = (e: MouseEvent) => {
+      if (e.button !== 1) return;
+      const rf = document.querySelector('.react-flow__renderer');
+      if (rf && e.target instanceof Element && rf.contains(e.target)) {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener('mousedown', onMouseDown, { capture: true });
+    return () => window.removeEventListener('mousedown', onMouseDown, { capture: true });
   }, []);
 
   // ── Allow canvas zoom from anywhere (including over inputs / textareas) ──
@@ -1721,7 +1759,7 @@ const SpacesContent = () => {
       setEdges([...(targetSpace.edges || [])]);
       setNavigationStack(prev => [...prev, currentId]);
       setActiveSpaceId(targetSpaceId);
-      setTimeout(() => fitView({ padding: FIT_VIEW_PADDING, duration: 800 }), 100);
+      setTimeout(() => fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(800) }), 100);
     }
   }, [activeSpaceId, nodes, edges, spacesMap, setNodes, setEdges, fitView, syncCurrentSpaceState]);
 
@@ -1743,7 +1781,7 @@ const SpacesContent = () => {
       setEdges([...(parentSpace.edges || [])]);
       setActiveSpaceId(parentSpaceId);
       setNavigationStack(newStack);
-      setTimeout(() => fitView({ padding: FIT_VIEW_PADDING, duration: 800 }), 100);
+      setTimeout(() => fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(800) }), 100);
     }
   }, [activeSpaceId, nodes, edges, spacesMap, navigationStack, setNodes, setEdges, fitView, syncCurrentSpaceState]);
 
@@ -1760,7 +1798,7 @@ const SpacesContent = () => {
     setNavigationStack([]);
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        void fitView({ padding: FIT_VIEW_PADDING, duration: 480, interpolate: 'smooth' });
+        void fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(480), interpolate: 'smooth' });
       });
     });
   }, [activeSpaceId, nodes, edges, spacesMap, setNodes, setEdges, fitView, syncCurrentSpaceState]);
@@ -1912,7 +1950,7 @@ const SpacesContent = () => {
     
     // Smooth transition
     setTimeout(() => {
-      fitView({ padding: FIT_VIEW_PADDING, duration: 800 });
+      fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(800) });
     }, 100);
   };
 
@@ -2053,7 +2091,7 @@ const SpacesContent = () => {
     setTimeout(() => {
       void fitView({
         padding: FIT_VIEW_PADDING_NODE_FOCUS,
-        duration: 700,
+        duration: fitAnim(700),
         interpolate: 'smooth',
       });
     }, 100);
@@ -2097,7 +2135,7 @@ const SpacesContent = () => {
         
         // Smooth transition to center generated workflow
         setTimeout(() => {
-          fitView({ padding: FIT_VIEW_PADDING, duration: 800 });
+          fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(800) });
         }, 100);
       }
     } catch (err) {
@@ -2245,7 +2283,7 @@ const SpacesContent = () => {
     setEdges((eds) => eds.filter((edge) => edge.source !== id && edge.target !== id));
     setContextMenu(null);
     setTimeout(() => {
-      fitView({ padding: FIT_VIEW_PADDING, duration: 650 });
+      fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(650) });
     }, 80);
   }, [setNodes, setEdges, fitView]);
 
@@ -2627,7 +2665,7 @@ const SpacesContent = () => {
           }
         });
         setTimeout(() => {
-          fitView({ padding: FIT_VIEW_PADDING, duration: 800 });
+          fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(800) });
         }, 100);
         return;
       }
@@ -3049,7 +3087,7 @@ const SpacesContent = () => {
               setTimeout(() => {
                 void fitView({
                   padding: FIT_VIEW_PADDING_NODE_FOCUS,
-                  duration: 650,
+                  duration: fitAnim(650),
                   interpolate: 'smooth',
                 });
               }, 80);
@@ -3078,13 +3116,13 @@ const SpacesContent = () => {
           maxZoom={4}
           proOptions={{ hideAttribution: true }}
           multiSelectionKeyCode="Shift"
-          panOnDrag={spaceHeld}
+          panOnDrag={spaceHeld ? true : [1]}
           selectionOnDrag={!spaceHeld}
           selectionMode={SelectionMode.Partial}
           panOnScroll={false}
           zoomOnDoubleClick={false}
 
-          className={`spaces-canvas${spaceHeld ? ' spaces-canvas--space-pan' : ''}`}
+          className={`spaces-canvas${spaceHeld || middlePanHeld ? ' spaces-canvas--space-pan' : ''}`}
 
 
         >
@@ -3352,7 +3390,7 @@ const SpacesContent = () => {
                   <LayoutGrid size={16} className="text-emerald-400 group-hover:text-emerald-300" />
                 </button>
                 <button
-                  onClick={() => fitView({ padding: FIT_VIEW_PADDING, duration: 800 })}
+                  onClick={() => fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(800) })}
                   title="Fit View"
                   className="w-10 h-10 bg-white/5 hover:bg-white/10 backdrop-blur-md border border-white/5 rounded-xl text-white flex items-center justify-center transition-all hover:scale-105 group"
                 >
