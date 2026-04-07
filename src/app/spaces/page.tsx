@@ -63,6 +63,7 @@ import {
   findTopNodeUnderFlowPoint,
   findEmptyPositionForNewNode,
   planDuplicateBelowMultiInput,
+  orderedSourcesForSharedTarget,
 } from './connection-utils';
 import { NodeIconMono } from './foldder-icons';
 import { 
@@ -670,12 +671,26 @@ const SpacesContent = () => {
       const singleSelection = selectedNodes.length === 1;
 
       // For spaceOutput: only wire the last (rightmost) selected node
-      const nodesToConnect = type === 'spaceOutput'
-        ? [selectedNodes.reduce((prev, cur) =>
-            (cur.position.x > prev.position.x || (cur.position.x === prev.position.x && cur.position.y > prev.position.y))
-              ? cur : prev
-          )]
-        : selectedNodes;
+      let nodesToConnect: typeof selectedNodes =
+        type === 'spaceOutput'
+          ? [
+              selectedNodes.reduce((prev, cur) =>
+                cur.position.x > prev.position.x ||
+                (cur.position.x === prev.position.x && cur.position.y > prev.position.y)
+                  ? cur
+                  : prev
+              ),
+            ]
+          : selectedNodes;
+
+      // Varios orígenes → concatenator / enhancer / composer: ranuras p0,p1… / layer_0… en orden de lienzo (arriba→abajo, izq→der), igual que ↑↓ entre fuentes
+      if (type !== 'spaceOutput' && nodesToConnect.length > 1 && MULTI_SLOT_NODES[type]) {
+        nodesToConnect = [...nodesToConnect].sort((a, b) => {
+          if (a.position.y !== b.position.y) return a.position.y - b.position.y;
+          if (a.position.x !== b.position.x) return a.position.x - b.position.x;
+          return String(a.id).localeCompare(String(b.id));
+        });
+      }
 
       for (const sel of nodesToConnect) {
         const selMeta = NODE_REGISTRY[sel.type];
@@ -1033,24 +1048,15 @@ const SpacesContent = () => {
         target.isContentEditable;
       if (typing) return;
 
-      // Escape: cerrar menú contextual; si estamos en un space anidado, volver al lienzo root + fit
-      if (e.key === 'Escape') {
-        if (keyboardShortcutsRef.current.handleEscape?.()) {
-          e.preventDefault();
-        }
-        return;
-      }
-
-      // Tab / Shift+Tab — siguiente o anterior por aristas; al llegar al fin del ramal, vuelta al primero/último del componente conexo
-      if (e.key === 'Tab') {
+      /** Misma lógica que Tab / Shift+Tab: siguiente o anterior por aristas con wrap en el componente conexo. */
+      const tryNavigateConnectedNodes = (forward: boolean): boolean => {
         const nds = liveNodesRef.current;
         const es = liveEdgesRef.current;
         const selected = nds.filter((n) => n.selected);
-        if (selected.length !== 1) return;
+        if (selected.length !== 1) return false;
         const fromId = selected[0].id;
-        const forward = !e.shiftKey;
         const idSet = new Set(nds.map((n) => n.id));
-        if (!idSet.has(fromId)) return;
+        if (!idSet.has(fromId)) return false;
 
         const adj = new Map<string, string[]>();
         const link = (a: string, b: string) => {
@@ -1073,19 +1079,18 @@ const SpacesContent = () => {
           }
         }
         const sortedComponent = [...component].sort((a, b) => a.localeCompare(b));
-        // Tab “al primero”: no usar orden alfabético crudo — `final_output_permanent` iba primero y el wrap no movía la selección
         const wrapPool = sortedComponent
           .filter((id) => id !== FINAL_NODE_ID)
           .sort((a, b) => a.localeCompare(b));
         const sourcesInComponent = wrapPool.filter(
-          (id) => !es.some((e) => e.target === id && component.has(e.source))
+          (id) => !es.some((edge) => edge.target === id && component.has(edge.source))
         );
         const firstInLoop =
           [...sourcesInComponent].sort((a, b) => a.localeCompare(b))[0] ??
           wrapPool[0] ??
           sortedComponent[0];
         const sinksInComponent = wrapPool.filter(
-          (id) => !es.some((e) => e.source === id && component.has(e.target))
+          (id) => !es.some((edge) => edge.source === id && component.has(edge.target))
         );
         const lastInLoop =
           [...sinksInComponent].sort((a, b) => a.localeCompare(b)).slice(-1)[0] ??
@@ -1104,10 +1109,77 @@ const SpacesContent = () => {
             .sort((a, b) => String(a.source).localeCompare(String(b.source)));
           nextId = ins[0]?.source ?? lastInLoop ?? null;
         }
-        if (!nextId) return;
-        e.preventDefault();
+        if (!nextId) return false;
         doSetNodes((nds2) => nds2.map((n) => ({ ...n, selected: n.id === nextId })));
         doFitViewToNodeIds([nextId], 600);
+        return true;
+      };
+
+      /** Varios nodos → mismo target: ↑/↓ ciclan entre fuentes que comparten ese destino (orden estable). */
+      const tryNavigateSharedTargetPeers = (forward: boolean): boolean => {
+        const nds = liveNodesRef.current;
+        const es = liveEdgesRef.current;
+        const selected = nds.filter((n) => n.selected);
+        if (selected.length !== 1) return false;
+        const fromId = selected[0].id;
+        const idSet = new Set(nds.map((n) => n.id));
+        if (!idSet.has(fromId)) return false;
+
+        const outgoingTargets = [
+          ...new Set(es.filter((edge) => edge.source === fromId).map((edge) => edge.target)),
+        ].sort((a, b) => a.localeCompare(b));
+
+        for (const targetId of outgoingTargets) {
+          if (!idSet.has(targetId)) continue;
+          const targetNode = nds.find((n) => n.id === targetId);
+          const tgtType = targetNode?.type;
+          if (!tgtType) continue;
+          const sourcesToTarget = orderedSourcesForSharedTarget(tgtType, targetId, es, nds);
+          if (sourcesToTarget.length <= 1) continue;
+
+          const idx = sourcesToTarget.indexOf(fromId);
+          if (idx === -1) continue;
+
+          const n = sourcesToTarget.length;
+          const nextIdx = forward ? (idx + 1) % n : (idx - 1 + n) % n;
+          const nextId = sourcesToTarget[nextIdx];
+          if (nextId === fromId) return false;
+
+          doSetNodes((nds2) => nds2.map((node) => ({ ...node, selected: node.id === nextId })));
+          doFitViewToNodeIds([nextId], 600);
+          return true;
+        }
+        return false;
+      };
+
+      // Escape: cerrar menú contextual; si estamos en un space anidado, volver al lienzo root + fit
+      if (e.key === 'Escape') {
+        if (keyboardShortcutsRef.current.handleEscape?.()) {
+          e.preventDefault();
+        }
+        return;
+      }
+
+      // Tab / Shift+Tab — mismo grafo que flechas ← / →
+      if (e.key === 'Tab') {
+        if (!tryNavigateConnectedNodes(!e.shiftKey)) return;
+        e.preventDefault();
+        return;
+      }
+
+      // Flechas ← / → — igual que Tab; no en vistas studio (data-foldder-studio-canvas), p. ej. Composer
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        if (typeof document !== 'undefined' && document.querySelector('[data-foldder-studio-canvas]')) return;
+        if (!tryNavigateConnectedNodes(e.key === 'ArrowRight')) return;
+        e.preventDefault();
+        return;
+      }
+
+      // Flechas ↑ / ↓ — otras fuentes que entran en el mismo nodo destino (p. ej. varios prompts → concatenator)
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        if (typeof document !== 'undefined' && document.querySelector('[data-foldder-studio-canvas]')) return;
+        if (!tryNavigateSharedTargetPeers(e.key === 'ArrowDown')) return;
+        e.preventDefault();
         return;
       }
 

@@ -134,7 +134,7 @@ const NodeLabel = ({ id, label, defaultLabel }: { id: string, label?: string, de
       {isEditing ? (
         <input
           autoFocus
-          className="bg-cyan-500/20 border border-cyan-500/50 text-[10px] font-black uppercase tracking-widest text-cyan-400 focus:outline-none px-2 py-0.5 rounded-lg cursor-text min-w-[120px] shadow-lg shadow-cyan-500/10"
+          className="min-w-[120px] cursor-text rounded-lg border border-white/25 bg-white/20 px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-slate-900 shadow-sm outline-none backdrop-blur-xl placeholder:text-slate-500 focus:border-cyan-400/50 focus:ring-2 focus:ring-cyan-400/25"
           value={val}
           onChange={(e) => setVal(e.target.value)}
           onBlur={handleBlur}
@@ -143,10 +143,10 @@ const NodeLabel = ({ id, label, defaultLabel }: { id: string, label?: string, de
       ) : (
         <div 
           onDoubleClick={() => setIsEditing(true)}
-          className="px-2 py-0.5 rounded-lg bg-slate-50/50 backdrop-blur-md border border-white/10 text-[9px] font-black text-white/40 truncate hover:text-cyan-400 group-hover/label:border-cyan-500/30 transition-all uppercase tracking-widest cursor-pointer select-none flex items-center gap-2"
+          className="flex items-center gap-2 truncate rounded-lg border border-white/25 bg-white/20 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-slate-800 shadow-sm backdrop-blur-xl transition-all select-none hover:text-cyan-900 group-hover/label:border-cyan-400/40 cursor-pointer"
           title="Double click to rename (max 5 words)"
         >
-          <div className="w-1.5 h-1.5 rounded-full bg-cyan-500/50 animate-pulse" />
+          <div className="w-1.5 h-1.5 shrink-0 rounded-full bg-cyan-600 animate-pulse" />
           {displayLabel}
         </div>
       )}
@@ -1201,7 +1201,10 @@ const ComposerStudio = ({ layers: initLayers, imageLayers, onUpdateLayers, onClo
   const allDisplayLayers = layers.filter(l => l.visible !== false);
 
   return (
-    <div className="fixed inset-0 z-[9999] bg-black/95 backdrop-blur-xl flex flex-col">
+    <div
+      className="fixed inset-0 z-[9999] bg-black/95 backdrop-blur-xl flex flex-col"
+      data-foldder-studio-canvas=""
+    >
       {/* ── Top bar ─────────────────────────────────────────────────────── */}
       <div
         className="h-14 border-b border-white/5 flex items-center px-6 gap-2 flex-shrink-0"
@@ -2056,6 +2059,7 @@ export const MediaInputNode = memo(({ id, data, selected }: NodeProps<any>) => {
       {showFullSize && nodeData.value && typeof document !== 'undefined' && createPortal(
         <div
           className="fixed inset-0 z-[9999] bg-black/95 flex flex-col items-center justify-center nodrag nopan"
+          data-foldder-studio-canvas=""
           onClick={() => setShowFullSize(false)}
           style={{ backdropFilter: 'blur(12px)' }}
         >
@@ -3244,7 +3248,11 @@ const NanoBananaStudio = memo(({
   };
 
     return createPortal(
-    <div className="fixed inset-0 z-[9999] flex flex-col" style={{ background: '#0d0d12' }}>
+    <div
+      className="fixed inset-0 z-[9999] flex flex-col"
+      style={{ background: '#0d0d12' }}
+      data-foldder-studio-canvas=""
+    >
 
       {/* ══ TOP BAR: Header + Model + Resolution + Usar generada ══════════════ */}
       <div className="flex items-center gap-3 px-4 py-2.5 flex-shrink-0"
@@ -3666,8 +3674,11 @@ const NanoBananaStudio = memo(({
 
       {/* ── Call Preview Modal ─────────────────────────────────────────── */}
       {callPreview && (
-        <div className="fixed inset-0 z-[10000] flex items-center justify-center p-6"
-             style={{ background: 'rgba(0,0,0,0.88)' }}>
+        <div
+          className="fixed inset-0 z-[10000] flex items-center justify-center p-6"
+          style={{ background: 'rgba(0,0,0,0.88)' }}
+          data-foldder-studio-canvas=""
+        >
           <div className="w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-3xl flex flex-col"
                style={{ background: '#16161a', border: '1px solid rgba(255,255,255,0.1)' }}>
             {/* Header */}
@@ -4030,6 +4041,7 @@ export const NanoBananaNode = memo(({ id, data, selected }: NodeProps<any>) => {
       {showFullSize && result && (
         <div
           className="fixed inset-0 z-[9999] bg-black/92 flex items-center justify-center p-10 cursor-zoom-out nodrag nopan"
+          data-foldder-studio-canvas=""
           onClick={() => setShowFullSize(false)}
         >
           <div className="absolute top-8 right-8 text-white/50 hover:text-white transition-colors">
@@ -4574,7 +4586,10 @@ const MatteStudioOverlay = ({
   getPreviewImage 
 }: MatteStudioOverlayProps) => {
   return (
-    <div className="fixed inset-0 z-[9999] bg-black/95 backdrop-blur-xl flex flex-col studio-overlay nodrag nopan">
+    <div
+      className="fixed inset-0 z-[9999] bg-black/95 backdrop-blur-xl flex flex-col studio-overlay nodrag nopan"
+      data-foldder-studio-canvas=""
+    >
       <div className="h-16 border-b border-slate-200/60 bg-slate-50/50 flex items-center px-8 gap-6 backdrop-blur-md">
         <button onClick={onClose} className="text-gray-500 hover:text-white transition-colors cursor-pointer"><X size={20} /></button>
         <div className="h-6 w-px bg-white/10" />
@@ -5713,7 +5728,11 @@ export const PainterNode = memo(({ id, data, selected }: NodeProps<any>) => {
 
       {/* Fullscreen — portal to body so it covers everything */}
       {typeof document !== 'undefined' && fullscreen && createPortal(
-        <div className="fixed inset-0 flex flex-col bg-[#0a0a0a]" style={{ zIndex: 99999 }}>
+        <div
+          className="fixed inset-0 flex flex-col bg-[#0a0a0a]"
+          style={{ zIndex: 99999 }}
+          data-foldder-studio-canvas=""
+        >
           <div className="flex items-center gap-3 px-4 py-2.5 bg-[#1a1a1a] border-b border-white/10">
             <Paintbrush size={14} className="text-amber-400" />
             <span className="text-[10px] font-black text-amber-300 uppercase tracking-widest">Painter — Fullscreen · {ratio.label}</span>
@@ -6361,7 +6380,11 @@ export const BezierMaskNode = memo(({ id, data, selected }: NodeProps<any>) => {
 
       {/* FULLSCREEN STUDIO MODAL */}
       {isStudioOpen && createPortal(
-        <div className="fixed inset-0 z-[99999] bg-[#0a0a0a]/95 backdrop-blur-xl flex flex-col" onWheel={handleWheel}>
+        <div
+          className="fixed inset-0 z-[99999] bg-[#0a0a0a]/95 backdrop-blur-xl flex flex-col"
+          data-foldder-studio-canvas=""
+          onWheel={handleWheel}
+        >
           
           {/* TOP BAR */}
           <div className="h-14 bg-black/50 border-b border-white/10 flex items-center justify-between px-6 shrink-0">

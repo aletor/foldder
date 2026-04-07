@@ -69,6 +69,58 @@ const MULTI_SLOT_NODES: Record<string, Record<string, string[]>> = {
   },
 };
 
+/** Orden de ranura en el nodo destino (p0 → 0, p1 → 1…). Desconocido → 0 y se desempata por posición. */
+function targetHandleSlotIndex(nodeType: string, targetHandle: string | null | undefined): number {
+  if (!targetHandle) return 999999;
+  const multi = MULTI_SLOT_NODES[nodeType];
+  if (multi) {
+    for (const slots of Object.values(multi)) {
+      const idx = slots.indexOf(targetHandle);
+      if (idx !== -1) return idx;
+    }
+  }
+  if (nodeType === 'nanoBanana') {
+    const order = ['prompt', 'image', 'image2', 'image3', 'image4'];
+    const idx = order.indexOf(targetHandle);
+    if (idx !== -1) return idx;
+  }
+  return 0;
+}
+
+/**
+ * Fuentes con arista hacia `targetId`, ordenadas por ranura en el destino (prompt 1 = p0, prompt 2 = p1, …)
+ * y desempate por posición del nodo (y, luego x).
+ */
+export function orderedSourcesForSharedTarget(
+  targetNodeType: string,
+  targetId: string,
+  edges: Pick<Edge, 'source' | 'target' | 'targetHandle'>[],
+  nodes: Pick<Node, 'id' | 'position'>[]
+): string[] {
+  const list = edges.filter((e) => e.target === targetId);
+  const nodeById = new Map(nodes.map((n) => [n.id, n]));
+  list.sort((a, b) => {
+    const ka = targetHandleSlotIndex(targetNodeType, a.targetHandle);
+    const kb = targetHandleSlotIndex(targetNodeType, b.targetHandle);
+    if (ka !== kb) return ka - kb;
+    const na = nodeById.get(a.source);
+    const nb = nodeById.get(b.source);
+    if (na && nb) {
+      if (na.position.y !== nb.position.y) return na.position.y - nb.position.y;
+      if (na.position.x !== nb.position.x) return na.position.x - nb.position.x;
+    }
+    return a.source.localeCompare(b.source);
+  });
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const e of list) {
+    if (seen.has(e.source)) continue;
+    seen.add(e.source);
+    out.push(e.source);
+  }
+  return out;
+}
+
 function concreteNewNodeInputHandle(newType: string, inpType: string, registryInpId: string): string {
   const slots = MULTI_SLOT_NODES[newType]?.[inpType];
   if (slots?.length) return slots[0];

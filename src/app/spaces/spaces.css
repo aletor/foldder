@@ -309,9 +309,22 @@
 .processor-node .action-btn, .processor-node .execute-btn { background: linear-gradient(135deg, #a855f7, #9333ea); }
 .tool-node .action-btn, .tool-node .execute-btn { background: linear-gradient(135deg, #10b981, #059669); }
 .mask-node .action-btn, .mask-node .execute-btn { background: linear-gradient(135deg, #06b6d4, #0891b2); }
-.space-node .node-header { color: #06b6d4; }
-.space-io-node .node-header { color: #10b981; }
-.space-io-node.border-rose-500\/30 .node-header { color: #f43f5e; }
+/* Space cards: texto oscuro sobre cabecera clara (legible en lienzo blanco / cristal) */
+.space-node .node-header {
+  color: #0f172a;
+  background: rgba(255, 255, 255, 0.72);
+  border-bottom-color: rgba(15, 23, 42, 0.08);
+}
+.space-io-node .node-header {
+  color: #0f172a;
+  background: rgba(255, 255, 255, 0.72);
+  border-bottom-color: rgba(15, 23, 42, 0.08);
+}
+.space-io-node.border-rose-500\/30 .node-header {
+  color: #0f172a;
+  background: rgba(255, 255, 255, 0.72);
+  border-bottom-color: rgba(15, 23, 42, 0.08);
+}
 
 /* Handle styling */
 .handle-wrapper {
