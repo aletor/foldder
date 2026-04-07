@@ -62,6 +62,7 @@ import {
   computeLibraryDropPosition,
   findTopNodeUnderFlowPoint,
   findEmptyPositionForNewNode,
+  planDuplicateBelowMultiInput,
 } from './connection-utils';
 import { NodeIconMono } from './foldder-icons';
 import { 
@@ -764,7 +765,8 @@ const SpacesContent = () => {
       }
     }
 
-    let position = { x: center.x - 160, y: center.y - 120 };
+    // Por defecto: hueco libre alrededor del centro del viewport (igual que doble clic en pin del topbar).
+    let position = findEmptyPositionForNewNode(type, nodes, center);
     if (autoEdges.length > 0 && selectedNodes.length === 1) {
       const anchor = selectedNodes[0];
       const primary = autoEdges.find(
@@ -976,6 +978,10 @@ const SpacesContent = () => {
     }, 100);
   }, [nodes, edges, setNodes, takeSnapshot, fitView]);
 
+  /** Se rellena tras definir `goToRootCanvas` (debajo de `syncCurrentSpaceState`) para no romper el orden de hooks. */
+  const navigationEscapeRef = useRef<() => boolean>(() => false);
+  const groupSelectedToSpaceRef = useRef<() => void>(() => {});
+
   // ── Keyboard shortcuts (deps fijas `[]`: ref evita error de tamaño de array con Fast Refresh) ──
   const keyboardShortcutsRef = useRef({
     addNodeAtCenter,
@@ -984,8 +990,11 @@ const SpacesContent = () => {
     fitView,
     autoLayout,
     setNodes,
+    setEdges,
+    takeSnapshot,
     fitViewToNodeIds,
     pushHistory,
+    handleEscape: () => navigationEscapeRef.current(),
   });
   keyboardShortcutsRef.current = {
     addNodeAtCenter,
@@ -994,8 +1003,11 @@ const SpacesContent = () => {
     fitView,
     autoLayout,
     setNodes,
+    setEdges,
+    takeSnapshot,
     fitViewToNodeIds,
     pushHistory,
+    handleEscape: () => navigationEscapeRef.current(),
   };
 
   useEffect(() => {
@@ -1007,6 +1019,8 @@ const SpacesContent = () => {
         fitView: doFitView,
         autoLayout: doAutoLayout,
         setNodes: doSetNodes,
+        setEdges: doSetEdges,
+        takeSnapshot: doTakeSnapshot,
         fitViewToNodeIds: doFitViewToNodeIds,
         pushHistory: doPushHistory,
       } = keyboardShortcutsRef.current;
@@ -1018,6 +1032,14 @@ const SpacesContent = () => {
         target.tagName === 'SELECT' ||
         target.isContentEditable;
       if (typing) return;
+
+      // Escape: cerrar menú contextual; si estamos en un space anidado, volver al lienzo root + fit
+      if (e.key === 'Escape') {
+        if (keyboardShortcutsRef.current.handleEscape?.()) {
+          e.preventDefault();
+        }
+        return;
+      }
 
       // Tab / Shift+Tab — siguiente o anterior por aristas; al llegar al fin del ramal, vuelta al primero/último del componente conexo
       if (e.key === 'Tab') {
@@ -1095,20 +1117,53 @@ const SpacesContent = () => {
         if (e.shiftKey) doRedo(); else doUndo();
         return;
       }
-      // Ctrl+D — duplicate selected nodes
+      // Ctrl+D — duplicate selected nodes (ranuras múltiples: clon debajo + arista al siguiente handle libre)
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd') {
         e.preventDefault();
-        doSetNodes((nds) => {
-          const selected = nds.filter(n => n.selected);
-          if (selected.length === 0) return nds;
-          const clones = selected.map(n => ({
+        const nds = liveNodesRef.current;
+        const es = liveEdgesRef.current;
+        const selected = nds.filter((n) => n.selected);
+        if (selected.length === 0) return;
+
+        if (selected.length === 1) {
+          const src = selected[0];
+          const plan = planDuplicateBelowMultiInput(src, es, nds);
+          if (plan) {
+            const newId = `${src.type}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+            const clone = {
+              ...src,
+              id: newId,
+              position: plan.position,
+              selected: true,
+              data: { ...src.data },
+            };
+            const newEdge = {
+              id: `dup-${newId}-${plan.targetId}-${Date.now()}`,
+              source: newId,
+              sourceHandle: plan.sourceHandle,
+              target: plan.targetId,
+              targetHandle: plan.targetHandle,
+              type: 'buttonEdge',
+              animated: true,
+            };
+            doTakeSnapshot();
+            doSetNodes((prev) => [...prev.map((n) => ({ ...n, selected: false })), clone]);
+            doSetEdges((prev) => [...prev, newEdge]);
+            return;
+          }
+        }
+
+        doSetNodes((prev) => {
+          const sel = prev.filter((n) => n.selected);
+          if (sel.length === 0) return prev;
+          const clones = sel.map((n) => ({
             ...n,
             id: `${n.type}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
             position: { x: n.position.x + 30, y: n.position.y + 30 },
             selected: true,
             data: { ...n.data },
           }));
-          const next = [...nds.map(n => ({ ...n, selected: false })), ...clones];
+          const next = [...prev.map((n) => ({ ...n, selected: false })), ...clones];
           doPushHistory(next, liveEdgesRef.current);
           return next;
         });
@@ -1132,7 +1187,17 @@ const SpacesContent = () => {
         case 'v': addNode('geminiVideo'); break;
         // ── Lógica ───────────────────────────────────────────────────────
         case 'q': addNode('concatenator'); break;
-        case 's': addNode('space', { label: 'Space', hasInput: true, hasOutput: true }); break;
+        case 's': {
+          const sel = liveNodesRef.current.filter(
+            (n) => n.selected && n.id !== FINAL_NODE_ID
+          );
+          if (sel.length > 1) {
+            groupSelectedToSpaceRef.current();
+          } else {
+            addNode('space', { label: 'Space', hasInput: true, hasOutput: true });
+          }
+          break;
+        }
         case 'i': addNode('spaceInput'); break;
         case 'o': addNode('spaceOutput'); break;
         // ── Composición ──────────────────────────────────────────────────
@@ -1412,16 +1477,21 @@ const SpacesContent = () => {
     };
 
     // 3. Propagate to ALL potential parents in the stack (Deep Propagation)
-    // Update every parent space node in the map that points to this space (Upward)
+    // Update every parent space node in the map that points to this space (Upward).
+    // No machacar `data.label` con structure.label ("Image Space", etc.): el usuario lo renombra con NodeLabel (máx. 5 palabras).
     Object.keys(newMap).forEach(key => {
         if (newMap[key].nodes) {
             newMap[key].nodes = newMap[key].nodes.map((n: any) => {
                 if (n.type === 'space' && n.data.spaceId === currentId) {
+                    const keepLabel =
+                      n.data?.label != null && String(n.data.label).trim() !== ''
+                        ? n.data.label
+                        : structure.label;
                     return { 
                         ...n, 
                         data: { 
                             ...n.data, 
-                            label: structure.label,
+                            label: keepLabel,
                             outputType: structure.type, 
                             inputType: incomingType,
                             value: structure.value,
@@ -1461,6 +1531,33 @@ const SpacesContent = () => {
         n.type === 'spaceOutput' ? { ...n, data: { ...n.data, outputType: structure.type } } : n
     );
 
+    // 4.6 Nombre en breadcrumb / avisos: copiar del NodeLabel del nodo Space en el lienzo padre (cada space referenciado)
+    const resolveSpaceDisplayName = (map: Record<string, any>, sid: string, fallback: string) => {
+      for (const key of Object.keys(map)) {
+        const refNode = map[key]?.nodes?.find(
+          (n: any) => n.type === 'space' && n.data?.spaceId === sid
+        );
+        const lbl = refNode?.data?.label;
+        if (lbl != null && String(lbl).trim() !== '') return String(lbl).trim();
+      }
+      return fallback;
+    };
+    const referencedSpaceIds = new Set<string>([currentId]);
+    Object.keys(newMap).forEach((key) => {
+      newMap[key].nodes?.forEach((n: any) => {
+        if (n.type === 'space' && n.data?.spaceId) referencedSpaceIds.add(n.data.spaceId);
+      });
+    });
+    referencedSpaceIds.forEach((sid) => {
+      if (!newMap[sid]) return;
+      const fallback =
+        currentSpacesMap[sid]?.name && String(currentSpacesMap[sid].name).trim() !== ''
+          ? currentSpacesMap[sid].name
+          : 'Space';
+      const displayName = resolveSpaceDisplayName(newMap, sid, fallback);
+      newMap[sid] = { ...newMap[sid], name: displayName };
+    });
+
     // 5. COMMIT CHANGES TO STATE
     setSpacesMap(newMap);
 
@@ -1489,13 +1586,19 @@ const SpacesContent = () => {
     // Sync current state first
     const { newMap: updatedSpacesMap } = syncCurrentSpaceState(nodes, edges, spacesMap, currentId);
 
+    const triggerNode = nodes.find((n: any) => n.id === nodeId);
+    const nameFromTrigger =
+      triggerNode?.data?.label && String(triggerNode.data.label).trim()
+        ? String(triggerNode.data.label).trim()
+        : undefined;
+
     let targetSpaceId = spaceId;
     if (!targetSpaceId) {
       targetSpaceId = `space_${Date.now()}`;
       // Initialize if new
       updatedSpacesMap[targetSpaceId] = {
         id: targetSpaceId,
-        name: `Nested Space`,
+        name: nameFromTrigger || 'Nested Space',
         nodes: [
           { id: 'in', type: 'spaceInput', position: { x: 100, y: 200 }, data: { label: 'Input' } },
           { id: 'out', type: 'spaceOutput', position: { x: 800, y: 200 }, data: { label: 'Output' } }
@@ -1516,7 +1619,14 @@ const SpacesContent = () => {
 
     const targetSpace = updatedSpacesMap[targetSpaceId];
     if (targetSpace && targetSpace.nodes) {
-      setSpacesMap(updatedSpacesMap);
+      const mapToCommit =
+        nameFromTrigger
+          ? {
+              ...updatedSpacesMap,
+              [targetSpaceId]: { ...targetSpace, name: nameFromTrigger },
+            }
+          : updatedSpacesMap;
+      setSpacesMap(mapToCommit);
       setNodes([...targetSpace.nodes]);
       setEdges([...(targetSpace.edges || [])]);
       setNavigationStack(prev => [...prev, currentId]);
@@ -1546,6 +1656,46 @@ const SpacesContent = () => {
       setTimeout(() => fitView({ padding: FIT_VIEW_PADDING, duration: 800 }), 100);
     }
   }, [activeSpaceId, nodes, edges, spacesMap, navigationStack, setNodes, setEdges, fitView, syncCurrentSpaceState]);
+
+  /** Vuelve al lienzo root con sync; fit a todo el grafo tras aplicar nodos (doble rAF = tras pintar). */
+  const goToRootCanvas = useCallback(() => {
+    if (activeSpaceId === 'root') return;
+    const { newMap: updatedSpacesMap } = syncCurrentSpaceState(nodes, edges, spacesMap, activeSpaceId);
+    const rootSpace = updatedSpacesMap['root'];
+    if (!rootSpace) return;
+    setSpacesMap(updatedSpacesMap);
+    setNodes([...rootSpace.nodes]);
+    setEdges([...(rootSpace.edges || [])]);
+    setActiveSpaceId('root');
+    setNavigationStack([]);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        void fitView({ padding: FIT_VIEW_PADDING, duration: 480, interpolate: 'smooth' });
+      });
+    });
+  }, [activeSpaceId, nodes, edges, spacesMap, setNodes, setEdges, fitView, syncCurrentSpaceState]);
+
+  const handleEscapeNavigation = useCallback((): boolean => {
+    if (showSaveModal || showLoadModal || projectToDelete) return false;
+    if (contextMenu) {
+      setContextMenu(null);
+      return true;
+    }
+    if (activeSpaceId !== 'root') {
+      goToRootCanvas();
+      return true;
+    }
+    return false;
+  }, [
+    showSaveModal,
+    showLoadModal,
+    projectToDelete,
+    contextMenu,
+    activeSpaceId,
+    goToRootCanvas,
+  ]);
+
+  navigationEscapeRef.current = handleEscapeNavigation;
 
   useEffect(() => {
     window.addEventListener('enter-space', handleEnterSpace);
@@ -2009,124 +2159,247 @@ const SpacesContent = () => {
     }, 80);
   }, [setNodes, setEdges, fitView]);
 
-  const duplicateNode = useCallback((id: string) => {
-    const node = nodes.find((n) => n.id === id);
-    if (!node) return;
+  const duplicateNode = useCallback(
+    (id: string) => {
+      const node = nodes.find((n) => n.id === id);
+      if (!node) return;
 
-    const newNode = {
-      ...node,
-      id: `${node.type}_${Date.now()}`,
-      position: { x: node.position.x + 20, y: node.position.y + 20 },
-      selected: false,
-    };
+      const plan = planDuplicateBelowMultiInput(node, edges, nodes);
+      const newId = `${node.type}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+      const newNode = {
+        ...node,
+        id: newId,
+        position: plan?.position ?? { x: node.position.x + 20, y: node.position.y + 20 },
+        selected: true,
+        data: { ...node.data },
+      };
 
-    setNodes((nds) => [...nds, newNode]);
-    setContextMenu(null);
-  }, [nodes, setNodes]);
+      takeSnapshot();
+      setNodes((nds) => [...nds.map((n) => ({ ...n, selected: false })), newNode]);
+      if (plan) {
+        setEdges((eds) => [
+          ...eds,
+          {
+            id: `dup-${newId}-${plan.targetId}-${Date.now()}`,
+            source: newId,
+            sourceHandle: plan.sourceHandle,
+            target: plan.targetId,
+            targetHandle: plan.targetHandle,
+            type: 'buttonEdge',
+            animated: true,
+          },
+        ]);
+      }
+      setContextMenu(null);
+    },
+    [nodes, edges, setNodes, setEdges, takeSnapshot]
+  );
 
   const groupSelectedToSpace = useCallback(() => {
-    const selectedNodes = nodes.filter(n => n.selected);
+    const selectedNodes = nodes.filter(
+      (n) => n.selected && n.id !== FINAL_NODE_ID
+    );
     if (selectedNodes.length === 0) {
       setContextMenu(null);
       return;
     }
 
-    const selectedIds = new Set(selectedNodes.map(n => n.id));
-    const internalEdges = edges.filter(e => selectedIds.has(e.source) && selectedIds.has(e.target));
-    
-    const spaceId = `space_group_${Date.now()}`;
-    const minX = Math.min(...selectedNodes.map(n => n.position.x));
-    const minY = Math.min(...selectedNodes.map(n => n.position.y));
-    const maxX = Math.max(...selectedNodes.map(n => n.position.x));
-    const maxY = Math.max(...selectedNodes.map(n => n.position.y));
+    takeSnapshot();
+
+    const selectedIds = new Set(selectedNodes.map((n) => n.id));
+    const internalEdges = edges.filter(
+      (e) => selectedIds.has(e.source) && selectedIds.has(e.target)
+    );
+
+    const isSubgraphConnected = (): boolean => {
+      if (selectedIds.size <= 1) return true;
+      const adj = new Map<string, string[]>();
+      const link = (a: string, b: string) => {
+        if (!adj.has(a)) adj.set(a, []);
+        if (!adj.has(b)) adj.set(b, []);
+        adj.get(a)!.push(b);
+        adj.get(b)!.push(a);
+      };
+      internalEdges.forEach((e) => link(e.source, e.target));
+      const start = selectedNodes[0].id;
+      const seen = new Set<string>();
+      const stack = [start];
+      while (stack.length) {
+        const id = stack.pop()!;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        for (const nb of adj.get(id) || []) {
+          if (selectedIds.has(nb) && !seen.has(nb)) stack.push(nb);
+        }
+      }
+      return seen.size === selectedIds.size;
+    };
+
+    const connected = isSubgraphConnected();
+
+    const sinks = selectedNodes.filter(
+      (n) =>
+        !internalEdges.some(
+          (e) => e.source === n.id && selectedIds.has(e.target)
+        )
+    );
+    const sources = selectedNodes.filter(
+      (n) =>
+        !internalEdges.some(
+          (e) => e.target === n.id && selectedIds.has(e.source)
+        )
+    );
+
+    const reg = (t: string) => NODE_REGISTRY[t];
+    let includeSpaceInput = true;
+    if (sources.length === 1) {
+      if ((reg(sources[0].type)?.inputs?.length ?? 0) === 0) {
+        includeSpaceInput = false;
+      }
+    } else if (sources.length > 1) {
+      if (sources.every((s) => (reg(s.type)?.inputs?.length ?? 0) === 0)) {
+        includeSpaceInput = false;
+      }
+    }
+
+    const minX = Math.min(...selectedNodes.map((n) => n.position.x));
+    const minY = Math.min(...selectedNodes.map((n) => n.position.y));
+    const maxX = Math.max(...selectedNodes.map((n) => n.position.x));
+    const maxY = Math.max(...selectedNodes.map((n) => n.position.y));
     const avgX = (minX + maxX) / 2;
     const avgY = (minY + maxY) / 2;
 
-    // Create the new space
     const newSpacesMap = { ...spacesMap };
-    
-    // Offset nodes to be centered in the new space
-    const nestedNodes = selectedNodes.map(n => ({
+    const spaceId = `space_group_${Date.now()}`;
+
+    const nestedNodes = selectedNodes.map((n) => ({
       ...n,
-      position: { x: n.position.x - minX + 200, y: n.position.y - minY + 200 },
-      selected: false
+      position: {
+        x: n.position.x - minX + 200,
+        y: n.position.y - minY + 200,
+      },
+      selected: false,
     }));
 
-    // Find the rightmost node to auto-connect to SpaceOutput
-    const lastNode = nestedNodes.reduce((prev: any, cur: any) =>
-      (cur.position.x > prev.position.x || (cur.position.x === prev.position.x && cur.position.y > prev.position.y))
-        ? cur : prev
-    );
+    const pickRightmost = (arr: typeof nestedNodes) =>
+      arr.reduce((prev, cur) =>
+        cur.position.x > prev.position.x ||
+        (cur.position.x === prev.position.x && cur.position.y > prev.position.y)
+          ? cur
+          : prev
+      );
+
+    let lastNode = pickRightmost(nestedNodes);
+    if (connected && sinks.length > 0) {
+      const sinkNested = sinks
+        .map((s) => nestedNodes.find((nn) => nn.id === s.id))
+        .filter((n): n is (typeof nestedNodes)[0] => n != null);
+      if (sinkNested.length > 0) lastNode = pickRightmost(sinkNested);
+    }
+
     const lastNodeMeta = NODE_REGISTRY[lastNode.type];
     const lastNodeOutput = lastNodeMeta?.outputs?.[0];
 
-    // Build auto-edge FIRST so analyzeSpaceStructure can see it
-    const autoOutEdge = lastNodeOutput ? [{
-      id: `nested_auto_out_${Date.now()}`,
-      source: lastNode.id,
-      sourceHandle: lastNodeOutput.id,
-      target: 'out',
-      targetHandle: 'in',
-      type: 'buttonEdge',
-      animated: true,
-    }] : [];
+    const autoOutEdge = lastNodeOutput
+      ? [
+          {
+            id: `nested_auto_out_${Date.now()}`,
+            source: lastNode.id,
+            sourceHandle: lastNodeOutput.id,
+            target: 'out',
+            targetHandle: 'in',
+            type: 'buttonEdge',
+            animated: true,
+          },
+        ]
+      : [];
 
     const allInternalEdges = [
       ...internalEdges.map((e: any) => ({ ...e, id: `nested_${e.id}` })),
       ...autoOutEdge,
     ];
 
-    // NOW analyze structure with the complete edge set
     const virtualOutNode = { id: 'out', type: 'spaceOutput', data: {} };
-    const structure = analyzeSpaceStructure([...nestedNodes, virtualOutNode], allInternalEdges);
+    const structure = analyzeSpaceStructure(
+      [...nestedNodes, virtualOutNode],
+      allInternalEdges
+    );
 
-    // Output type and value come from last node directly (most reliable)
     const autoOutputType = lastNodeOutput?.type || structure.type;
     const autoOutputValue = lastNode.data?.value || structure.value || null;
+
+    const maxNestedX = Math.max(...nestedNodes.map((n: any) => n.position.x));
+
+    const innerNodes: any[] = [];
+    if (includeSpaceInput) {
+      innerNodes.push({
+        id: 'in',
+        type: 'spaceInput',
+        position: { x: 50, y: 250 },
+        data: { label: 'Input' },
+      });
+    }
+    innerNodes.push({
+      id: 'out',
+      type: 'spaceOutput',
+      position: {
+        x: maxNestedX + 320,
+        y: lastNode.position.y,
+      },
+      data: { label: 'Output', outputType: autoOutputType },
+    });
+    innerNodes.push(...nestedNodes);
 
     newSpacesMap[spaceId] = {
       id: spaceId,
       name: `Grouped Space`,
-      nodes: [
-        { id: 'in', type: 'spaceInput', position: { x: 50, y: 250 }, data: { label: 'Input' } },
-        { id: 'out', type: 'spaceOutput', position: { x: Math.max(...nestedNodes.map((n: any) => n.position.x)) + 320, y: lastNode.position.y }, data: { label: 'Output', outputType: autoOutputType } },
-        ...nestedNodes
-      ],
+      nodes: innerNodes,
       edges: allInternalEdges,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       outputType: autoOutputType,
       outputValue: autoOutputValue,
-      hasInput: structure.hasInput,
+      hasInput: includeSpaceInput,
       hasOutput: true,
-      internalCategories: structure.internalCategories
+      internalCategories: structure.internalCategories,
     };
 
-    // Replace grouped nodes with a single space node
     const newNode = {
       id: `node_space_${Date.now()}`,
       type: 'space',
       position: { x: avgX, y: avgY },
-      data: { 
-        spaceId, 
+      data: {
+        spaceId,
         label: structure.label || 'Nested Group',
-        hasInput: true,
+        hasInput: includeSpaceInput,
         hasOutput: true,
         outputType: autoOutputType,
         value: autoOutputValue,
-        internalCategories: structure.internalCategories
+        internalCategories: structure.internalCategories,
       },
     };
 
-
-    const remainingNodes = nodes.filter(n => !selectedIds.has(n.id));
-    const remainingEdges = edges.filter(e => !selectedIds.has(e.source) && !selectedIds.has(e.target));
+    const remainingNodes = nodes.filter((n) => !selectedIds.has(n.id));
+    const remainingEdges = edges.filter(
+      (e) => !selectedIds.has(e.source) && !selectedIds.has(e.target)
+    );
 
     setNodes([...remainingNodes, newNode]);
     setEdges(remainingEdges);
     setSpacesMap(newSpacesMap);
     setContextMenu(null);
-  }, [nodes, edges, spacesMap, setNodes, setEdges]);
+  }, [
+    nodes,
+    edges,
+    spacesMap,
+    setNodes,
+    setEdges,
+    setSpacesMap,
+    takeSnapshot,
+    analyzeSpaceStructure,
+  ]);
+
+  groupSelectedToSpaceRef.current = groupSelectedToSpace;
 
   const flowNodes = useMemo(() => {
     const compatSet = new Set(libraryCompatibleIds);
@@ -2633,6 +2906,41 @@ const SpacesContent = () => {
         </div>
       )}
       <div className="flex-1 relative" onContextMenu={(e) => e.preventDefault()} style={{ marginLeft: 0 }}>
+        {/* Dentro de un Space anidado: viñeta + bordes laterales borrosos (se quita al volver a root) */}
+        {isAuthenticated && activeSpaceId !== 'root' && (
+          <div
+            className="pointer-events-none fixed inset-0 z-[35] transition-opacity duration-500 ease-out"
+            aria-hidden
+          >
+            <div
+              className="absolute inset-0"
+              style={{
+                background:
+                  'radial-gradient(ellipse 72% 58% at 50% 48%, rgba(15,23,42,0) 0%, rgba(15,23,42,0.14) 58%, rgba(15,23,42,0.38) 100%)',
+              }}
+            />
+            <div
+              className="absolute left-0 top-0 bottom-0 w-[min(26vw,380px)]"
+              style={{
+                background: 'linear-gradient(to right, rgba(15,23,42,0.42), rgba(15,23,42,0.08) 55%, transparent)',
+                backdropFilter: 'blur(14px) saturate(1.05)',
+                WebkitBackdropFilter: 'blur(14px) saturate(1.05)',
+                maskImage: 'linear-gradient(to right, black 0%, black 35%, transparent 100%)',
+                WebkitMaskImage: 'linear-gradient(to right, black 0%, black 35%, transparent 100%)',
+              }}
+            />
+            <div
+              className="absolute right-0 top-0 bottom-0 w-[min(26vw,380px)]"
+              style={{
+                background: 'linear-gradient(to left, rgba(15,23,42,0.42), rgba(15,23,42,0.08) 55%, transparent)',
+                backdropFilter: 'blur(14px) saturate(1.05)',
+                WebkitBackdropFilter: 'blur(14px) saturate(1.05)',
+                maskImage: 'linear-gradient(to left, black 0%, black 35%, transparent 100%)',
+                WebkitMaskImage: 'linear-gradient(to left, black 0%, black 35%, transparent 100%)',
+              }}
+            />
+          </div>
+        )}
         <ReactFlow
           nodes={flowNodes}
           edges={edges}
@@ -2892,17 +3200,7 @@ const SpacesContent = () => {
                   <NodeIconMono iconKey="canvas" size={12} className="opacity-70" />
                   <span
                     onClick={() => {
-                      if (activeSpaceId !== 'root') {
-                        const { newMap: updatedSpacesMap } = syncCurrentSpaceState(nodes, edges, spacesMap, activeSpaceId);
-                        const rootSpace = updatedSpacesMap['root'];
-                        if (rootSpace) {
-                          setSpacesMap(updatedSpacesMap);
-                          setNodes([...rootSpace.nodes]);
-                          setEdges([...(rootSpace.edges || [])]);
-                          setActiveSpaceId('root');
-                          setNavigationStack([]);
-                        }
-                      }
+                      if (activeSpaceId !== 'root') goToRootCanvas();
                     }}
                     className={`hover:text-cyan-400 cursor-pointer transition-colors ${activeSpaceId === 'root' ? 'text-cyan-400 font-bold' : 'text-slate-400'}`}
                   >
@@ -2988,6 +3286,21 @@ const SpacesContent = () => {
               </div>
             </div>
           </div>
+          {isAuthenticated && activeSpaceId !== 'root' && (
+            <div className="pointer-events-none w-full flex justify-center px-3 -mt-0.5">
+              <p className="max-w-[min(640px,92vw)] text-center text-[10px] sm:text-[11px] font-medium leading-snug text-slate-600 drop-shadow-sm">
+                Estás dentro del space{' '}
+                <span className="font-bold text-slate-800">
+                  {spacesMap[activeSpaceId]?.name || 'Space'}
+                </span>
+                , pulsa{' '}
+                <kbd className="inline rounded border border-slate-400/50 bg-white/50 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-slate-700 shadow-sm">
+                  ESC
+                </kbd>{' '}
+                para salir
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Topbar de pins (antes bajo el HUD; ahora abajo, sustituye la leyenda) */}

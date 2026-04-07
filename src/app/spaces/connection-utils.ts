@@ -200,6 +200,75 @@ function estimateNodeHeight(node: Node): number {
   return 240;
 }
 
+function multiSlotInputTypeForHandle(
+  nodeType: string,
+  targetHandle: string | null | undefined
+): string | null {
+  if (!targetHandle) return null;
+  const byType = MULTI_SLOT_NODES[nodeType];
+  if (!byType) return null;
+  for (const [inpType, ids] of Object.entries(byType)) {
+    if (ids.includes(targetHandle)) return inpType;
+  }
+  return null;
+}
+
+/**
+ * Duplicar un nodo cuya salida va a un target con varias ranuras del mismo tipo (concat, enhancer, composer):
+ * coloca el clon justo debajo y enlaza a la siguiente ranura libre en el mismo target.
+ */
+export function planDuplicateBelowMultiInput(
+  sourceNode: Node,
+  allEdges: Pick<Edge, 'source' | 'sourceHandle' | 'target' | 'targetHandle'>[],
+  allNodes: Node[]
+): {
+  targetId: string;
+  sourceHandle: string;
+  targetHandle: string;
+  position: { x: number; y: number };
+} | null {
+  const outEdges = allEdges.filter((e) => e.source === sourceNode.id);
+  const gap = 28;
+  const h = estimateNodeHeight(sourceNode);
+  const srcMeta = NODE_REGISTRY[sourceNode.type as string];
+
+  for (const e of outEdges) {
+    const targetNode = allNodes.find((n) => n.id === e.target);
+    if (!targetNode?.type) continue;
+
+    const tgtType = targetNode.type as string;
+    const inpType = multiSlotInputTypeForHandle(tgtType, e.targetHandle);
+    if (!inpType) continue;
+
+    const slots = MULTI_SLOT_NODES[tgtType]?.[inpType];
+    if (!slots?.length) continue;
+
+    const meta = NODE_REGISTRY[tgtType];
+    const regIn = meta?.inputs?.find((i) => i.type === inpType);
+    const registryInpId = regIn?.id ?? inpType;
+
+    const free = firstFreeTargetHandleOnNode(
+      targetNode.id,
+      tgtType,
+      inpType,
+      registryInpId,
+      allEdges
+    );
+    if (!free) continue;
+
+    const sourceHandle = e.sourceHandle ?? srcMeta?.outputs?.[0]?.id ?? 'prompt';
+
+    return {
+      targetId: targetNode.id,
+      sourceHandle,
+      targetHandle: free,
+      position: { x: sourceNode.position.x, y: sourceNode.position.y + h + gap },
+    };
+  }
+
+  return null;
+}
+
 /**
  * Busca posición top-left para un nodo nuevo sin solapar cajas aproximadas de los existentes.
  * Parte del mismo anclaje que addNodeAtCenter (centro − offset) y espira hacia fuera si hace falta.
