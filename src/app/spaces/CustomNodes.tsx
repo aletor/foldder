@@ -1690,6 +1690,9 @@ export const ImageExportNode = memo(({ id, data, selected }: NodeProps<any>) => 
     }].filter(l => l.value || l.color);
   }, [sourceNode, edges, nodes]);
 
+  /** Evita re-fetch en bucle: `layers` es un array nuevo cada render aunque el contenido sea igual */
+  const layersSignature = useMemo(() => JSON.stringify(layers), [layers]);
+
   // Native pixel size of the connected image (data URLs from Crop, http(s), blob: — all measured the same)
   const imageUrl = sourceNode?.data?.value as string | undefined;
   useEffect(() => {
@@ -1768,7 +1771,7 @@ export const ImageExportNode = memo(({ id, data, selected }: NodeProps<any>) => 
       ctrl.abort();
       clearTimeout(timer);
     };
-  }, [isComposer, layers, format, exportW, exportH, sourceNode?.id]);
+  }, [isComposer, layersSignature, format, exportW, exportH, sourceNode?.id]);
 
   useEffect(() => () => {
     setComposerPreviewUrl((prev) => {
