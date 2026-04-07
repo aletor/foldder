@@ -1,9 +1,39 @@
 "use client";
 
-import React from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { ChevronRight } from 'lucide-react';
 import { NODE_REGISTRY } from './nodeRegistry';
 import { NodeIcon, NodeIconMono } from './foldder-icons';
+import { SIDEBAR_HOVER_HELP } from './sidebarHoverHelp';
+
+const LIBRARY_TIP_WIDTH = 260;
+/** Altura aproximada del tooltip para decidir si cabe encima del botón */
+const LIBRARY_TIP_EST_HEIGHT = 92;
+const LIBRARY_TIP_SHOW_DELAY_MS = 1000;
+
+function libraryTooltipPosition(el: HTMLElement): {
+  centerX: number;
+  anchorY: number;
+  placement: 'above' | 'below';
+} {
+  const r = el.getBoundingClientRect();
+  const gap = 10;
+  const halfW = LIBRARY_TIP_WIDTH / 2;
+  const pad = 12;
+  let centerX = r.left + r.width / 2;
+  centerX = Math.max(pad + halfW, Math.min(window.innerWidth - pad - halfW, centerX));
+
+  const spaceAbove = r.top - pad;
+  const placement: 'above' | 'below' =
+    spaceAbove >= LIBRARY_TIP_EST_HEIGHT + gap ? 'above' : 'below';
+
+  return {
+    centerX,
+    anchorY: placement === 'above' ? r.top : r.bottom,
+    placement,
+  };
+}
 /** Icon-only mark from /public/foldder-logo.svg — shown when sidebar is collapsed */
 function FoldderLogoFMark({ size = 40 }: { size?: number }) {
   return (
@@ -69,6 +99,69 @@ const Sidebar = ({
   sidebarLockedCollapsed = false,
   onSidebarStripMouseEnter,
 }: SidebarProps) => {
+  const [libraryTip, setLibraryTip] = useState<{
+    type: string;
+    centerX: number;
+    anchorY: number;
+    placement: 'above' | 'below';
+  } | null>(null);
+
+  const libraryTipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearLibraryTipTimer = useCallback(() => {
+    if (libraryTipTimerRef.current !== null) {
+      clearTimeout(libraryTipTimerRef.current);
+      libraryTipTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => () => clearLibraryTipTimer(), [clearLibraryTipTimer]);
+
+  const onLibraryTileEnter = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>, nodeType: string) => {
+      if (!SIDEBAR_HOVER_HELP[nodeType]) return;
+      clearLibraryTipTimer();
+      const el = e.currentTarget;
+      libraryTipTimerRef.current = setTimeout(() => {
+        libraryTipTimerRef.current = null;
+        setLibraryTip({ type: nodeType, ...libraryTooltipPosition(el) });
+      }, LIBRARY_TIP_SHOW_DELAY_MS);
+    },
+    [clearLibraryTipTimer]
+  );
+
+  const onLibraryTileLeave = useCallback(() => {
+    clearLibraryTipTimer();
+    setLibraryTip(null);
+  }, [clearLibraryTipTimer]);
+
+  const libraryTipPortal =
+    libraryTip && SIDEBAR_HOVER_HELP[libraryTip.type]
+      ? createPortal(
+          <div
+            role="tooltip"
+            className="pointer-events-none fixed z-[10060] rounded-xl border border-white/45 bg-white/[0.16] px-3.5 py-2.5 shadow-[0_12px_40px_rgba(15,23,42,0.15)] backdrop-blur-2xl"
+            style={{
+              left: libraryTip.centerX,
+              top: libraryTip.anchorY,
+              width: LIBRARY_TIP_WIDTH,
+              transform:
+                libraryTip.placement === 'above'
+                  ? 'translate(-50%, calc(-100% - 10px))'
+                  : 'translate(-50%, 10px)',
+            }}
+          >
+            <div className="text-[10px] font-black uppercase tracking-[0.12em] text-amber-900/85 mb-1">
+              {SIDEBAR_HOVER_HELP[libraryTip.type].title}
+            </div>
+            <p className="text-[11px] leading-snug text-slate-700/95 m-0">
+              {SIDEBAR_HOVER_HELP[libraryTip.type].line}
+            </p>
+          </div>,
+          document.body
+        )
+      : null;
+
   const onDragStart = (event: React.DragEvent, nodeType: string) => {
     onLibraryDragStart?.(nodeType);
     event.dataTransfer.setData('application/reactflow', nodeType);
@@ -154,6 +247,7 @@ const Sidebar = ({
     ];
 
     return (
+      <>
       <div
         style={{
           display: 'flex',
@@ -175,6 +269,8 @@ const Sidebar = ({
               draggable
               onDragStart={(e) => onDragStart(e, item.type)}
               onDragEnd={() => onLibraryDragEnd?.()}
+              onMouseEnter={(e) => onLibraryTileEnter(e, item.type)}
+              onMouseLeave={onLibraryTileLeave}
               title={`${item.label} · ${NODE_KEYS[item.type] || ''}`}
               style={{
                 flexShrink: 0,
@@ -201,11 +297,14 @@ const Sidebar = ({
           )
         )}
       </div>
+      {libraryTipPortal}
+      </>
     );
   }
 
   // ── NORMAL MODE: vertical sidebar panel ──────────────────────────────────
   return (
+    <>
     <div className="group/sidebar absolute left-0 top-0 h-screen z-[1000]">
       {/* Collapsed: solo la «F» del logo — misma zona que el antiguo HUD flotante */}
       <div
@@ -256,6 +355,8 @@ const Sidebar = ({
                   <div key={item.type}
                     className="dndnode relative flex flex-col items-center justify-center gap-1 py-3 px-2 !bg-white/20 hover:!bg-white/30 border border-white/25 hover:border-emerald-400/50 rounded-2xl cursor-grab active:scale-95 transition-all text-center aspect-square"
                     onDragStart={(e) => onDragStart(e, item.type)} onDragEnd={() => onLibraryDragEnd?.()} draggable
+                    onMouseEnter={(e) => onLibraryTileEnter(e, item.type)}
+                    onMouseLeave={onLibraryTileLeave}
                     title={`${item.label} · ${NODE_KEYS[item.type]}`}
                   >
                     <KeyBadge nodeType={item.type} />
@@ -284,6 +385,8 @@ const Sidebar = ({
                   <div key={item.type}
                     className="dndnode relative flex flex-col items-center justify-center gap-1 py-3 px-2 !bg-white/20 hover:!bg-white/30 border border-white/25 hover:border-cyan-400/50 rounded-2xl cursor-grab active:scale-95 transition-all text-center aspect-square"
                     onDragStart={(e) => onDragStart(e, item.type)} onDragEnd={() => onLibraryDragEnd?.()} draggable
+                    onMouseEnter={(e) => onLibraryTileEnter(e, item.type)}
+                    onMouseLeave={onLibraryTileLeave}
                     title={`${item.label} · ${NODE_KEYS[item.type]}`}
                   >
                     <KeyBadge nodeType={item.type} />
@@ -310,6 +413,8 @@ const Sidebar = ({
                   <div key={item.type}
                     className="dndnode relative flex flex-col items-center justify-center gap-1 py-3 px-2 !bg-white/20 hover:!bg-white/30 border border-white/25 hover:border-blue-400/50 rounded-2xl cursor-grab active:scale-95 transition-all text-center aspect-square"
                     onDragStart={(e) => onDragStart(e, item.type)} onDragEnd={() => onLibraryDragEnd?.()} draggable
+                    onMouseEnter={(e) => onLibraryTileEnter(e, item.type)}
+                    onMouseLeave={onLibraryTileLeave}
                     title={`${item.label} · ${NODE_KEYS[item.type]}`}
                   >
                     <KeyBadge nodeType={item.type} />
@@ -338,6 +443,8 @@ const Sidebar = ({
                   <div key={item.type}
                     className="dndnode relative flex flex-col items-center justify-center gap-1 py-3 px-2 !bg-white/20 hover:!bg-white/30 border border-white/25 hover:border-amber-400/50 rounded-2xl cursor-grab active:scale-95 transition-all text-center aspect-square"
                     onDragStart={(e) => onDragStart(e, item.type)} onDragEnd={() => onLibraryDragEnd?.()} draggable
+                    onMouseEnter={(e) => onLibraryTileEnter(e, item.type)}
+                    onMouseLeave={onLibraryTileLeave}
                     title={`${item.label} · ${NODE_KEYS[item.type]}`}
                   >
                     <KeyBadge nodeType={item.type} />
@@ -352,6 +459,8 @@ const Sidebar = ({
         </div>
       </aside>
     </div>
+    {libraryTipPortal}
+    </>
   );
 };
 

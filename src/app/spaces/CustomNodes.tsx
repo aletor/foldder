@@ -2,7 +2,7 @@
 
 import React, { memo, useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Handle, Position, NodeProps, BaseEdge, EdgeLabelRenderer, getBezierPath, EdgeProps, useReactFlow, useNodes, useEdges, NodeResizer } from '@xyflow/react';
+import { Handle, Position, NodeProps, BaseEdge, EdgeLabelRenderer, getBezierPath, EdgeProps, useReactFlow, useNodes, useEdges, NodeResizer, type Node } from '@xyflow/react';
 import { 
   Video, 
   Type, 
@@ -1632,7 +1632,9 @@ export const ImageExportNode = memo(({ id, data, selected }: NodeProps<any>) => 
   const edges = useEdges();
   const [format, setFormat] = useState<'png' | 'jpeg'>('png');
   const [isExporting, setIsExporting] = useState(false);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  /** Solo compositor: preview generada por /api/spaces/compose */
+  const [composerPreviewUrl, setComposerPreviewUrl] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const [detectedSize, setDetectedSize] = useState<{ w: number; h: number } | null>(null);
 
   // Refs for synchronous form-based download (bypasses Chrome async security blocks)
@@ -1688,28 +1690,92 @@ export const ImageExportNode = memo(({ id, data, selected }: NodeProps<any>) => 
     }].filter(l => l.value || l.color);
   }, [sourceNode, edges, nodes]);
 
-  // Detect native image dimensions from source
+  // Native pixel size of the connected image (data URLs from Crop, http(s), blob: — all measured the same)
   const imageUrl = sourceNode?.data?.value as string | undefined;
   useEffect(() => {
-    if (!imageUrl || typeof imageUrl !== 'string' || !imageUrl.startsWith('http')) {
-      // For composer or non-URL sources, try stored dimensions
-      const w = (sourceNode?.data as any)?.width;
-      const h = (sourceNode?.data as any)?.height;
-      if (w && h) setDetectedSize({ w, h });
+    if (!imageUrl || typeof imageUrl !== 'string') {
+      setDetectedSize(null);
       return;
     }
     const img = new Image();
     img.onload = () => {
       if (img.naturalWidth > 0 && img.naturalHeight > 0) {
         setDetectedSize({ w: img.naturalWidth, h: img.naturalHeight });
+      } else {
+        setDetectedSize(null);
       }
     };
+    img.onerror = () => {
+      const w = Number((sourceNode?.data as any)?.width);
+      const h = Number((sourceNode?.data as any)?.height);
+      if (w > 0 && h > 0) setDetectedSize({ w, h });
+      else setDetectedSize(null);
+    };
     img.src = imageUrl;
-  }, [imageUrl, sourceNode]);
+  }, [imageUrl, sourceNode?.id]);
 
-  // Resolved export dimensions: native size > stored > 1920×1080 fallback
-  const exportW = detectedSize?.w || (sourceNode?.data as any)?.width || 1920;
-  const exportH = detectedSize?.h || (sourceNode?.data as any)?.height || 1080;
+  // Export canvas = tamaño real de la imagen (p. ej. recorte); si aún no se midió, datos del nodo o fallback
+  const exportW = detectedSize?.w || Number((sourceNode?.data as any)?.width) || 1920;
+  const exportH = detectedSize?.h || Number((sourceNode?.data as any)?.height) || 1080;
+
+  const isComposer = sourceNode?.type === 'imageComposer';
+  const directImageSrc =
+    sourceNode && !isComposer && typeof sourceNode.data?.value === 'string' ? sourceNode.data.value : null;
+
+  useEffect(() => {
+    if (!isComposer) {
+      setComposerPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
+      return;
+    }
+    if (!layers.length) {
+      setComposerPreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return null;
+      });
+      return;
+    }
+
+    const ctrl = new AbortController();
+    const timer = window.setTimeout(() => {
+      setPreviewLoading(true);
+      const formData = new FormData();
+      formData.append('layers', JSON.stringify(layers));
+      formData.append('filename', `preview_${Date.now()}.${format === 'jpeg' ? 'jpg' : 'png'}`);
+      formData.append('format', format);
+      formData.append('width', String(exportW));
+      formData.append('height', String(exportH));
+      formData.append('previewWidth', String(exportW));
+      formData.append('previewHeight', String(exportH));
+
+      fetch('/api/spaces/compose', { method: 'POST', body: formData, signal: ctrl.signal })
+        .then((r) => r.blob())
+        .then((blob) => {
+          setComposerPreviewUrl((prev) => {
+            if (prev) URL.revokeObjectURL(prev);
+            return URL.createObjectURL(blob);
+          });
+        })
+        .catch((err) => {
+          if ((err as Error).name !== 'AbortError') console.error('[Export] preview', err);
+        })
+        .finally(() => setPreviewLoading(false));
+    }, 280);
+
+    return () => {
+      ctrl.abort();
+      clearTimeout(timer);
+    };
+  }, [isComposer, layers, format, exportW, exportH, sourceNode?.id]);
+
+  useEffect(() => () => {
+    setComposerPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+  }, []);
 
   const handleExport = () => {
     if (!sourceNode) return alert("Connect an image first!");
@@ -1741,12 +1807,14 @@ export const ImageExportNode = memo(({ id, data, selected }: NodeProps<any>) => 
     formData.append('previewHeight', String(exportH));
 
     fetch('/api/spaces/compose', { method: 'POST', body: formData })
-      .then(r => r.blob())
-      .then(blob => {
-        const url = URL.createObjectURL(blob);
-        setPreviewUrl(url);
+      .then((r) => r.blob())
+      .then((blob) => {
+        setComposerPreviewUrl((prev) => {
+          if (prev) URL.revokeObjectURL(prev);
+          return URL.createObjectURL(blob);
+        });
       })
-      .catch(err => console.error('[Export] Preview fetch error:', err))
+      .catch((err) => console.error('[Export] Preview fetch error:', err))
       .finally(() => setTimeout(() => setIsExporting(false), 500));
   };
 
@@ -1814,20 +1882,27 @@ export const ImageExportNode = memo(({ id, data, selected }: NodeProps<any>) => 
         </button>
 
         <div className="mb-2 flex justify-between items-center text-[8px] font-mono text-gray-500 uppercase">
-          <span>{exportW}×{exportH} PX{detectedSize ? ' · NATIVE' : ' · FALLBACK'}</span>
+          <span>{exportW}×{exportH} PX{detectedSize ? ' · tamaño real' : ' · estimado'}</span>
           <span>COMPOSITION MODE</span>
         </div>
 
         <div className="relative w-full aspect-video bg-slate-50 rounded-xl overflow-hidden border border-white/10 flex items-center justify-center">
-          {previewUrl ? (
-            <img src={previewUrl} className="w-full h-full object-contain" alt="Export Preview" />
-          ) : (sourceNode?.data.value && sourceNode.type !== 'imageComposer') ? (
-            <img src={sourceNode?.data.value as string} className="w-full h-full object-contain" alt="Export Preview" />
-          ) : sourceNode?.type === 'imageComposer' ? (
-             <div className="flex flex-col items-center gap-2 text-rose-500/50">
-               <Layers size={32} />
-               <span className="text-[9px] font-black uppercase">Click Export to build {layers.length} layers</span>
-             </div>
+          {directImageSrc ? (
+            <img src={directImageSrc} className="w-full h-full object-contain" alt="Export preview" />
+          ) : isComposer && composerPreviewUrl ? (
+            <img src={composerPreviewUrl} className="w-full h-full object-contain" alt="Composed preview" />
+          ) : isComposer && previewLoading ? (
+            <div className="flex flex-col items-center gap-2 text-rose-400">
+              <Loader2 size={28} className="animate-spin" />
+              <span className="text-[9px] font-black uppercase">Updating preview…</span>
+            </div>
+          ) : isComposer ? (
+            <div className="flex flex-col items-center gap-2 text-rose-500/50 px-4 text-center">
+              <Layers size={32} />
+              <span className="text-[9px] font-black uppercase">
+                {layers.length ? `Compose ${layers.length} layer(s) — preview when ready` : 'Connect layers to composer'}
+              </span>
+            </div>
           ) : (
             <div className="flex flex-col items-center gap-2 text-gray-700">
               <ImageIcon size={32} />
@@ -1849,15 +1924,33 @@ export const MediaInputNode = memo(({ id, data, selected }: NodeProps<any>) => {
     source?: 'upload' | 'url' | 'asset',
     metadata?: { duration?: string, resolution?: string, fps?: number, size?: string, codec?: string }
   };
-  const { setNodes } = useReactFlow();
+  const { setNodes, fitView } = useReactFlow();
   const [isUploadingLocal, setIsUploadingLocal] = useState(false);
   const [showFullSize, setShowFullSize] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const mediaFitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isUploading = isUploadingLocal || nodeData.loading;
 
+  /** Tras cargar imagen/vídeo el nodo cambia de alto (p. ej. a aspect-video): encuadrar como en page `fitViewToNodeIds`. */
+  const scheduleFitViewportToThisNode = useCallback(() => {
+    if (mediaFitTimerRef.current) clearTimeout(mediaFitTimerRef.current);
+    mediaFitTimerRef.current = setTimeout(() => {
+      mediaFitTimerRef.current = null;
+      void fitView({
+        nodes: [{ id }] as Node[],
+        padding: 0.8,
+        duration: Math.max(40, Math.round(650 / 2)),
+        interpolate: 'smooth',
+      });
+    }, 100);
+  }, [fitView, id]);
+
+  useEffect(() => () => {
+    if (mediaFitTimerRef.current) clearTimeout(mediaFitTimerRef.current);
+  }, []);
 
   const updateNodeData = (updates: any) => {
     setNodes((nds) => nds.map((n) => (n.id === id ? { ...n, data: { ...n.data, ...updates } } : n)));
@@ -1888,6 +1981,7 @@ export const MediaInputNode = memo(({ id, data, selected }: NodeProps<any>) => {
           codec: file.type.split('/')[1]?.toUpperCase() || 'UNKNOWN'
         };
         updateNodeData({ value: json.url, type, source: 'upload', metadata: mockMetadata });
+        if (type === 'image' || type === 'video') scheduleFitViewportToThisNode();
       }
     } catch (err) { console.error("Upload error:", err); } 
     finally { setIsUploadingLocal(false); }
@@ -1970,6 +2064,7 @@ export const MediaInputNode = memo(({ id, data, selected }: NodeProps<any>) => {
               className="w-full h-full object-cover"
               muted
               loop
+              onLoadedData={scheduleFitViewportToThisNode}
               onPlay={() => setIsPlaying(true)}
               onPause={() => setIsPlaying(false)}
               onEnded={() => setIsPlaying(false)}
@@ -2009,7 +2104,12 @@ export const MediaInputNode = memo(({ id, data, selected }: NodeProps<any>) => {
           </div>
 
         ) : hasMedia && nodeData.type === 'image' ? (
-          <img src={nodeData.value} className="w-full h-full object-cover" alt="Preview" />
+          <img
+            src={nodeData.value}
+            className="w-full h-full object-cover"
+            alt="Preview"
+            onLoad={scheduleFitViewportToThisNode}
+          />
         ) : hasMedia && nodeData.type === 'audio' ? (
           <div className="flex flex-col items-center gap-3 text-purple-400">
             <Music size={36} />
@@ -2568,84 +2668,101 @@ const buildReferenceGrid = (
 };
 
 
-// Camera presets for NanaBanana Studio — aligned with camera_transform API spec
+/** Studio “Cámara”: solo cambios moderados que el modelo i2i suele respetar (sin órbitas extremas ni perfiles inventados). */
+const NB_CAMERA_PROMPT_PREFIX =
+  'Apply this as a global camera change to the full scene, not as a local object replacement.\n\n';
+
 const CAMERA_PRESETS: { group: string; items: { label: string; prompt: string }[] }[] = [
   {
-    group: '🔄 Órbita',
+    group: 'Giro y distancia',
     items: [
-      { label: 'Órbita 15° izq',  prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nReposition the viewpoint by orbiting the camera 15 degrees to the left around the main subject. Keep the main subject as the centered focal point. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition and perspective to update naturally to match the new camera angle.' },
-      { label: 'Órbita 15° der',  prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nReposition the viewpoint by orbiting the camera 15 degrees to the right around the main subject. Keep the main subject as the centered focal point. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition and perspective to update naturally to match the new camera angle.' },
-      { label: 'Órbita 30° izq',  prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nReposition the viewpoint by orbiting the camera 30 degrees to the left around the main subject. Keep the main subject as the centered focal point. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition and perspective to update naturally to match the new camera angle.' },
-      { label: 'Órbita 30° der',  prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nReposition the viewpoint by orbiting the camera 30 degrees to the right around the main subject. Keep the main subject as the centered focal point. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition and perspective to update naturally to match the new camera angle.' },
-      { label: 'Órbita 45° izq',  prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nReposition the viewpoint by orbiting the camera 45 degrees to the left around the main subject. Keep the main subject as the centered focal point. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition and perspective to update naturally to match the new camera angle.' },
-      { label: 'Órbita 45° der',  prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nReposition the viewpoint by orbiting the camera 45 degrees to the right around the main subject. Keep the main subject as the centered focal point. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition and perspective to update naturally to match the new camera angle.' },
-      { label: 'Órbita 90° izq',  prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nReposition the viewpoint by orbiting the camera 90 degrees to the left around the main subject, showing a side/profile view of the scene. Keep the main subject as the centered focal point. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition and perspective to update naturally to match the new camera angle.' },
-      { label: 'Órbita 90° der',  prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nReposition the viewpoint by orbiting the camera 90 degrees to the right around the main subject, showing a side/profile view of the scene. Keep the main subject as the centered focal point. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition and perspective to update naturally to match the new camera angle.' },
+      {
+        label: 'Giro suave a la izquierda',
+        prompt:
+          NB_CAMERA_PROMPT_PREFIX +
+          'Shift the viewpoint slightly by orbiting the camera about 15 degrees to the left around the main subject. Keep identity, set, and lighting; only adjust perspective moderately. Do not invent large unseen areas.',
+      },
+      {
+        label: 'Giro suave a la derecha',
+        prompt:
+          NB_CAMERA_PROMPT_PREFIX +
+          'Shift the viewpoint slightly by orbiting the camera about 15 degrees to the right around the main subject. Keep identity, set, and lighting; only adjust perspective moderately. Do not invent large unseen areas.',
+      },
+      {
+        label: 'Acercar un poco',
+        prompt:
+          NB_CAMERA_PROMPT_PREFIX +
+          'Move the camera slightly closer (moderate zoom in) so the main subject fills a bit more of the frame. Preserve the same scene, lighting, colors, and style.',
+      },
+      {
+        label: 'Alejar un poco',
+        prompt:
+          NB_CAMERA_PROMPT_PREFIX +
+          'Move the camera slightly farther (moderate zoom out) to show a bit more context around the subject. Preserve the same scene, lighting, colors, and style.',
+      },
     ],
   },
   {
-    group: '🔍 Zoom',
+    group: 'Altura del encuadre',
     items: [
-      { label: 'Zoom in ×10%',    prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nZoom the camera in by 10%, bringing the main subject slightly closer while keeping the overall framing balanced. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition to update naturally.' },
-      { label: 'Zoom in ×20%',    prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nZoom the camera in by 20%, bringing the main subject noticeably closer and filling more of the frame. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition to update naturally.' },
-      { label: 'Zoom in ×35%',    prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nZoom the camera in by 35%, making the main subject prominently fill the frame. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition to update naturally.' },
-      { label: 'Zoom out ×10%',   prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nZoom the camera out by 10%, revealing slightly more of the surrounding environment while keeping the main subject as the focal point. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition to update naturally.' },
-      { label: 'Zoom out ×20%',   prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nZoom the camera out by 20%, showing noticeably more context and environment around the main subject. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition to update naturally.' },
-      { label: 'Zoom out ×35%',   prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nZoom the camera out by 35%, significantly widening the field of view and showing much more of the environment. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition to update naturally.' },
+      {
+        label: 'Altura de ojo',
+        prompt:
+          NB_CAMERA_PROMPT_PREFIX +
+          'Use a natural eye-level camera height with a neutral, straight-on feel. Preserve the same scene content, lighting, colors, and style.',
+      },
+      {
+        label: 'Ángulo bajo',
+        prompt:
+          NB_CAMERA_PROMPT_PREFIX +
+          'Lower the camera toward a low angle, looking slightly upward at the subject. Keep the scene consistent; avoid inventing new background.',
+      },
+      {
+        label: 'Ligeramente desde arriba',
+        prompt:
+          NB_CAMERA_PROMPT_PREFIX +
+          'Raise the camera slightly so the view looks gently downward at the scene (mild high angle, not full overhead). Preserve the same scene content, lighting, colors, and style.',
+      },
     ],
   },
   {
-    group: '📐 Altura cámara',
+    group: 'Tipo de plano',
     items: [
-      { label: 'Altura ojo',      prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nReposition the camera to a natural eye-level height, giving a straight-on view of the scene. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition to update naturally.' },
-      { label: 'Más alto',        prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nRaise the camera slightly above eye level so it looks gently downward at the main subject. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition to update naturally.' },
-      { label: 'Más bajo',        prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nLower the camera slightly below eye level so it looks gently upward at the main subject. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition to update naturally.' },
-      { label: 'Picado suave',    prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nReposition the camera to a gentle elevated angle (approximately 45°), looking softly down at the scene. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition to update naturally.' },
-      { label: 'Picado fuerte',   prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nReposition the camera to a strong top-down angle, nearly overhead, looking steeply down at the scene. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition to update naturally.' },
-      { label: 'Ángulo bajo',     prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nReposition the camera to a dramatic low angle near ground level, looking upward at the main subject with a sense of scale and power. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition to update naturally.' },
-      { label: 'Ángulo alto',     prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nReposition the camera to a high elevated angle, looking prominently downward at the main subject. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition to update naturally.' },
+      {
+        label: 'Plano más amplio',
+        prompt:
+          NB_CAMERA_PROMPT_PREFIX +
+          'Widen the framing to show more of the environment while keeping the main subject clearly visible. Preserve the same scene elements, lighting, colors, and style.',
+      },
+      {
+        label: 'Plano medio',
+        prompt:
+          NB_CAMERA_PROMPT_PREFIX +
+          'Use a medium shot framing the main subject from about waist up. Preserve identity, set, lighting, colors, and style.',
+      },
+      {
+        label: 'Primer plano',
+        prompt:
+          NB_CAMERA_PROMPT_PREFIX +
+          'Tighten to a close-up on the face or main focal point without extreme macro. Preserve lighting, colors, and overall style.',
+      },
     ],
   },
   {
-    group: '🎬 Tipo de plano',
+    group: 'Composición',
     items: [
-      { label: 'Plano general',   prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nChange to a wide establishing shot that shows the full environment and all scene elements, with plenty of space around the main subject. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition to update naturally.' },
-      { label: 'Plano completo',  prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nChange to a full body shot that shows the main subject from head to toe. Keep the subject centered and well-composed. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition to update naturally.' },
-      { label: 'Plano americano', prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nChange to an American/cowboy shot that frames the main subject from the knees up. Keep the subject centered and well-composed. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition to update naturally.' },
-      { label: 'Plano medio',     prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nChange to a medium shot framing the main subject from the waist up. Keep the subject centered and well-composed. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition to update naturally.' },
-      { label: 'Primer plano',    prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nChange to a close-up shot tightly framing the face or main focal point of the subject. Preserve the same branding, lighting, colors, and overall visual style. Allow the composition to update naturally.' },
-      { label: 'Plano detalle',   prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nChange to a macro/extreme close-up detail shot focusing on a specific key detail of the main subject or scene. Preserve the same lighting, colors, and overall visual style. Allow the composition to update naturally.' },
-    ],
-  },
-  {
-    group: '👁️ Dirección vista',
-    items: [
-      { label: 'Frontal',         prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nChange to a straight-on frontal view, centered and symmetrical, with the main subject facing the camera directly. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition and perspective to update naturally to match the new camera angle.' },
-      { label: '3/4 izquierda',   prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nChange to a three-quarter left view — camera positioned to the left so the main subject is seen at a 3/4 angle. Keep the main subject as the centered focal point. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition and perspective to update naturally to match the new camera angle.' },
-      { label: 'Perfil izquierdo',prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nChange to a full left profile view — reposition the camera to the side so the main subject is seen from directly to their left. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition and perspective to update naturally to match the new camera angle.' },
-      { label: '3/4 derecha',     prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nChange to a three-quarter right view — camera positioned to the right so the main subject is seen at a 3/4 angle. Keep the main subject as the centered focal point. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition and perspective to update naturally to match the new camera angle.' },
-      { label: 'Perfil derecho',  prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nChange to a full right profile view — reposition the camera to the side so the main subject is seen from directly to their right. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition and perspective to update naturally to match the new camera angle.' },
-    ],
-  },
-  {
-    group: '⚖️ Reencuadre',
-    items: [
-      { label: 'Centrar sujeto',  prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nReframe the shot to center the main subject perfectly in the middle of the frame. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition to update naturally.' },
-      { label: 'Regla de tercios',prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nReframe the shot placing the main subject on a rule-of-thirds intersection for a more dynamic composition. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition to update naturally.' },
-      { label: 'Más aire arriba', prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nReframe the shot giving the main subject more headroom above, including more space at the top of the frame. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition to update naturally.' },
-      { label: 'Más espacio lado',prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nReframe the shot adding more negative space to one side of the main subject. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition to update naturally.' },
-      { label: 'Sujeto izquierda',prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nReframe the shot placing the main subject on the left side of the frame, with negative space to the right. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition to update naturally.' },
-      { label: 'Sujeto derecha',  prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nReframe the shot placing the main subject on the right side of the frame, with negative space to the left. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition to update naturally.' },
-      { label: 'Más simétrico',   prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nReframe the shot to achieve a more symmetric and balanced composition, with the main subject and scene elements evenly distributed. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition to update naturally.' },
-    ],
-  },
-  {
-    group: '🔭 Estilo óptica',
-    items: [
-      { label: 'Más gran angular',prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nSimulate a wider focal length (wide-angle lens), expanding the field of view with a more expansive perspective and slight edge distortion. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition to update naturally.' },
-      { label: 'Más teleobjetivo',prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nSimulate a longer telephoto focal length, compressing the perspective and bringing the main subject visually closer with background compression. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition to update naturally.' },
-      { label: 'Perspectiva natural',prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nApply a natural 50mm-equivalent perspective — closest to human eye perception — with no distortion and balanced depth. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition to update naturally.' },
-      { label: 'Perspectiva cinemática',prompt: 'Apply this as a global camera change to the full scene, not as a local object replacement.\n\nApply a cinematic widescreen perspective with a slight anamorphic quality, compressed depth, and a filmic look. Preserve the same set, props, branding, lighting, colors, and overall visual style. Allow the composition to update naturally.' },
+      {
+        label: 'Centrar el sujeto',
+        prompt:
+          NB_CAMERA_PROMPT_PREFIX +
+          'Reframe so the main subject sits near the center of the frame. Preserve the same scene, lighting, colors, and style.',
+      },
+      {
+        label: 'Regla de tercios',
+        prompt:
+          NB_CAMERA_PROMPT_PREFIX +
+          'Reframe placing the main subject on a rule-of-thirds intersection. Preserve the same scene, lighting, colors, and style.',
+      },
     ],
   },
 ];
@@ -2662,6 +2779,12 @@ interface NBChange {
   isGlobal?: boolean;         // if true: no paintData needed — applies to whole image
 }
 
+/** Output resolution for Nano Banana (Studio + nodo). Default 2k; invalid/missing → 2k */
+function normalizeNanoBananaResolution(r: string | undefined): '1k' | '2k' | '4k' {
+  if (r === '1k' || r === '2k' || r === '4k') return r;
+  return '2k';
+}
+
 interface NanoBananaStudioProps {
   nodeId: string;
   initialImage: string | null;   // connected image (ref slot 0)
@@ -2673,6 +2796,7 @@ interface NanoBananaStudioProps {
   prompt: string;
   onClose: () => void;
   onGenerated: (dataUrl: string) => void;
+  onResolutionChange?: (resolution: '1k' | '2k' | '4k') => void;
 }
 
 // NanaBananaPaintCanvas: draws ONLY over the actual image pixels.
@@ -2775,7 +2899,7 @@ const hexToRgb = (hex: string): [number, number, number] => {
 
 const NanoBananaStudio = memo(({
   nodeId, initialImage, lastGenerated, modelKey, aspectRatio, resolution,
-  thinking, prompt, onClose, onGenerated,
+  thinking, prompt, onClose, onGenerated, onResolutionChange,
 }: NanoBananaStudioProps) => {
   // ── Generation state ────────────────────────────────────────────────────
   const [genStatus, setGenStatus] = useState<'idle'|'running'|'success'|'error'>('idle');
@@ -2789,7 +2913,11 @@ const NanoBananaStudio = memo(({
 
   // ── Studio-local model/resolution overrides ──────────────────────────────
   const [studioModelKey, setStudioModelKey] = useState(modelKey);
-  const [studioResolution, setStudioResolution] = useState(resolution);
+  const normalizedRes = normalizeNanoBananaResolution(resolution);
+  const [studioResolution, setStudioResolution] = useState(normalizedRes);
+  useEffect(() => {
+    setStudioResolution(normalizeNanoBananaResolution(resolution));
+  }, [resolution]);
 
   // ── Change layers ────────────────────────────────────────────────────────
   const [changes, setChanges] = useState<NBChange[]>([]);
@@ -3201,7 +3329,11 @@ const NanoBananaStudio = memo(({
         fullPrompt = aiJson.prompt;
         // Store the server-built marked image (base+strokes) so generation uses it as ref2
         if (aiJson.markedImageData) {
-          markedRef2DataUrl = `data:image/jpeg;base64,${aiJson.markedImageData}`;
+          const mime =
+            typeof aiJson.markedImageMime === "string" && aiJson.markedImageMime
+              ? aiJson.markedImageMime
+              : "image/png";
+          markedRef2DataUrl = `data:${mime};base64,${aiJson.markedImageData}`;
         }
       } else {
         throw new Error(aiJson.error || 'No prompt returned');
@@ -3280,113 +3412,163 @@ const NanoBananaStudio = memo(({
 
     return createPortal(
     <div
-      className="fixed inset-0 z-[9999] flex flex-col"
-      style={{ background: '#0d0d12' }}
+      className="nb-studio-root fixed inset-0 z-[9999] flex flex-col"
       data-foldder-studio-canvas=""
     >
 
       {/* ══ TOP BAR: Header + Model + Resolution + Usar generada ══════════════ */}
-      <div className="flex items-center gap-3 px-4 py-2.5 flex-shrink-0"
-           style={{ background: '#13131c', borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
+      <div
+        className="nb-studio-topbar flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 flex-shrink-0"
+      >
 
         {/* Logo / title */}
-        <div className="flex items-center gap-2 pr-4" style={{ borderRight: '1px solid rgba(255,255,255,0.08)' }}>
-          <Sparkles size={13} className="text-yellow-400" />
-          <span className="text-[10px] font-black uppercase tracking-widest text-zinc-300">Studio</span>
-          <span className="text-[9px] text-zinc-600 font-mono">NanaBanana</span>
+        <div className="flex items-center gap-2 pr-4 shrink-0" style={{ borderRight: '1px solid rgba(255,255,255,0.12)' }}>
+          <Sparkles size={14} className="text-[#a78bfa] shrink-0" aria-hidden />
+          <div className="flex flex-col leading-tight">
+            <span className="text-[11px] font-black uppercase tracking-[0.14em] text-zinc-100">Studio</span>
+            <span className="nb-studio-brand-sub text-[9px] font-semibold text-zinc-400 font-mono tracking-tight">Nano Banana</span>
+          </div>
         </div>
 
-        {/* Model pills */}
-        <div className="flex items-center gap-1.5">
+        {/* Model pills — active ring = Foldder violet; dot keeps model hue */}
+        <div className="flex items-center gap-2" role="group" aria-label="Modelo de imagen">
           {[
-            { key: 'flash25',  label: 'NB 1',  sub: 'Rápido',   color: '#6ee7b7' },
-            { key: 'flash31',  label: 'NB 2',  sub: 'Calidad',  color: '#60a5fa' },
-            { key: 'pro3',     label: 'Pro',   sub: 'Máximo',   color: '#f59e0b' },
+            { key: 'flash25',  label: 'NB 1',  sub: 'Rápido',   color: '#34d399' },
+            { key: 'flash31',  label: 'NB 2',  sub: 'Calidad',  color: '#38bdf8' },
+            { key: 'pro3',     label: 'Pro',   sub: 'Máximo',   color: '#fbbf24' },
           ].map(m => (
-            <button key={m.key}
+            <button
+              key={m.key}
+              type="button"
               onClick={() => setStudioModelKey(m.key)}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all"
-              style={studioModelKey === m.key
-                ? { background: m.color + '20', color: m.color, border: '1px solid ' + m.color + '50' }
-                : { background: 'rgba(255,255,255,0.03)', color: '#555', border: '1px solid rgba(255,255,255,0.05)' }
+              className="flex flex-col items-start gap-0.5 px-3 py-1.5 rounded-xl text-left transition-all min-w-[4.5rem]"
+              style={
+                studioModelKey === m.key
+                  ? {
+                      background: 'rgba(108,92,231,0.16)',
+                      color: '#ede9fe',
+                      border: '2px solid #6C5CE7',
+                      boxShadow: '0 0 0 1px rgba(108,92,231,0.35)',
+                    }
+                  : {
+                      background: 'rgba(39,39,48,0.9)',
+                      color: '#d4d4d8',
+                      border: '1px solid rgba(113,113,122,0.45)',
+                    }
               }
             >
-              {m.label}
-              <span className="opacity-60 font-normal normal-case tracking-normal">{m.sub}</span>
+              <span className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wide leading-none">
+                <span className="w-1.5 h-1.5 rounded-full shrink-0 ring-1 ring-white/15" style={{ background: m.color }} />
+                {m.label}
+              </span>
+              <span
+                className="nb-studio-model-sub text-[9px] font-semibold normal-case tracking-normal leading-none"
+                style={{ color: studioModelKey === m.key ? '#c4b5fd' : '#a1a1aa' }}
+              >
+                {m.sub}
+              </span>
             </button>
           ))}
         </div>
 
         {/* Divider */}
-        <div className="h-5 w-px bg-white/[0.07]" />
+        <div className="h-6 w-px bg-zinc-600/60 shrink-0" aria-hidden />
 
         {/* Resolution chips — only non-flash25 */}
         {studioModelKey !== 'flash25' && (
-          <div className="flex items-center gap-1">
-            <span className="text-[8px] font-black text-zinc-600 uppercase tracking-wider mr-1">Res</span>
-            {['1k', '2k', '4k'].map(r => (
-              <button key={r}
-                onClick={() => setStudioResolution(r)}
-                className="px-2 py-1 rounded text-[8px] font-black uppercase tracking-wider transition-all"
-                style={studioResolution === r
-                  ? { background: 'rgba(99,102,241,0.2)', color: '#a5b4fc', border: '1px solid rgba(99,102,241,0.4)' }
-                  : { background: 'rgba(255,255,255,0.03)', color: '#444', border: '1px solid rgba(255,255,255,0.05)' }
+          <div className="flex items-center gap-1.5" role="group" aria-label="Resolución de salida">
+            <span className="text-[9px] font-black text-zinc-400 uppercase tracking-wider mr-0.5">Res</span>
+            {(['1k', '2k', '4k'] as const).map(r => (
+              <button
+                key={r}
+                type="button"
+                onClick={() => {
+                  setStudioResolution(r);
+                  onResolutionChange?.(r);
+                }}
+                className="min-w-[2rem] px-2 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all"
+                style={
+                  studioResolution === r
+                    ? {
+                        background: 'rgba(108,92,231,0.22)',
+                        color: '#ede9fe',
+                        border: '2px solid rgba(108,92,231,0.65)',
+                      }
+                    : {
+                        background: 'rgba(39,39,48,0.9)',
+                        color: '#d4d4d8',
+                        border: '1px solid rgba(113,113,122,0.45)',
+                      }
                 }
-              >{r}</button>
+              >
+                {r}
+              </button>
             ))}
           </div>
         )}
 
         {/* Divider */}
-        {generatedOnce && <div className="h-5 w-px bg-white/[0.07]" />}
+        {generatedOnce && <div className="h-6 w-px bg-zinc-600/60 shrink-0" aria-hidden />}
 
         {/* Usar generada toggle */}
         {generatedOnce && (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 rounded-lg px-2 py-1 bg-zinc-800/60 border border-zinc-600/40">
             {lastGenerated && (
-              <img src={lastGenerated} alt="" className="w-8 h-6 object-cover rounded border border-white/10 flex-shrink-0" />
+              <img src={lastGenerated} alt="" className="w-8 h-6 object-cover rounded border border-zinc-500/50 flex-shrink-0" />
             )}
-            <span className="text-[8px] font-black text-zinc-500 uppercase tracking-wider">
-              {reSendGenerated ? 'Usando generada' : 'Usando original'}
+            <span className="text-[9px] font-bold text-zinc-300 uppercase tracking-wide">
+              {reSendGenerated ? 'Base: última gen.' : 'Base: original'}
             </span>
             <button
+              type="button"
               onClick={() => setReSendGenerated(v => !v)}
-              className="w-8 h-4 rounded-full flex items-center px-0.5 transition-all"
-              style={{ background: reSendGenerated ? '#f59e0b' : 'rgba(255,255,255,0.1)', justifyContent: reSendGenerated ? 'flex-end' : 'flex-start' }}
+              className="w-9 h-5 rounded-full flex items-center px-0.5 transition-all shrink-0"
+              style={{ background: reSendGenerated ? '#6C5CE7' : 'rgba(63,63,70,0.95)', justifyContent: reSendGenerated ? 'flex-end' : 'flex-start' }}
+              title={reSendGenerated ? 'Usar imagen conectada como base' : 'Usar última generación como base'}
             >
-              <div className="w-3 h-3 rounded-full" style={{ background: reSendGenerated ? '#111' : '#555' }} />
+              <div className="w-3.5 h-3.5 rounded-full shadow-sm" style={{ background: reSendGenerated ? '#0a0a0f' : '#e4e4e7' }} />
             </button>
           </div>
         )}
 
         {/* Spacer */}
-        <div className="flex-1" />
+        <div className="flex-1 min-w-[1rem]" />
 
         {/* Generate buttons in top bar */}
         <button
+          type="button"
           onClick={onGenerateCall}
           disabled={addingChange || analyzingCall || changes.filter(c=>c.isGlobal ? c.description.trim() : (c.paintData && c.description.trim())).length === 0}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all disabled:opacity-30"
-          style={{ background: 'rgba(99,102,241,0.12)', color: '#a5b4fc', border: '1px solid rgba(99,102,241,0.3)' }}
+          className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[10px] font-black uppercase tracking-wide transition-all disabled:opacity-35 disabled:cursor-not-allowed shadow-sm border"
+          style={{
+            background: 'rgba(108,92,231,0.2)',
+            color: '#ede9fe',
+            borderColor: 'rgba(108,92,231,0.45)',
+          }}
         >
-          {analyzingCall ? <><Loader2 size={10} className="animate-spin" /> Analizando…</> : <><Eye size={10} /> Ver llamada</>}
+          {analyzingCall ? <><Loader2 size={11} className="animate-spin shrink-0" /> Analizando…</> : <><Eye size={11} className="shrink-0" /> Ver llamada</>}
         </button>
         <button
+          type="button"
           onClick={onGenerate}
           disabled={genStatus === 'running' || addingChange}
-          className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all disabled:opacity-40"
-          style={{ background: 'linear-gradient(135deg,#f59e0b,#d97706)', color: '#111' }}
+          className="flex items-center gap-1.5 px-5 py-2 rounded-xl text-[11px] font-black uppercase tracking-wide transition-all disabled:opacity-45 disabled:cursor-not-allowed shadow-[0_2px_14px_rgba(108,92,231,0.4)] border border-[#6C5CE7]/50"
+          style={{ background: 'linear-gradient(135deg,#6C5CE7,#5548c8)', color: '#fafafa' }}
         >
           {genStatus === 'running'
-            ? <><Loader2 size={11} className="animate-spin" /> Generando…</>
-            : <><Sparkles size={11} /> Generar</>
+            ? <><Loader2 size={12} className="animate-spin shrink-0" /> Generando…</>
+            : <><Sparkles size={12} className="shrink-0" /> Generar</>
           }
         </button>
 
         {/* Close */}
-        <button onClick={onClose}
-          className="ml-2 w-7 h-7 rounded-lg hover:bg-white/[0.08] flex items-center justify-center text-zinc-600 hover:text-zinc-300 transition-all">
-          <X size={14} strokeWidth={2.5} />
+        <button
+          type="button"
+          onClick={onClose}
+          className="ml-1 w-9 h-9 rounded-xl flex items-center justify-center text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.08] border border-transparent hover:border-[#6C5CE7]/35 transition-all shrink-0"
+          title="Cerrar Studio"
+        >
+          <X size={16} strokeWidth={2.5} />
         </button>
       </div>
 
@@ -3444,9 +3626,12 @@ const NanoBananaStudio = memo(({
             style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', display: 'block' }}
           />
         ) : (
-          <div className="flex flex-col items-center gap-4 opacity-30">
-            <ImageIcon size={64} className="text-zinc-500" />
-            <span className="text-zinc-500 text-sm font-black uppercase tracking-widest">Genera para empezar</span>
+          <div className="flex flex-col items-center gap-3 px-6 text-center">
+            <ImageIcon size={56} className="text-zinc-500" strokeWidth={1.25} />
+            <div>
+              <p className="text-zinc-300 text-sm font-bold">Conecta una imagen en Ref 1 del nodo</p>
+              <p className="text-zinc-500 text-xs mt-1">Luego podrás pintar zonas y generar desde arriba.</p>
+            </div>
           </div>
         )}
 
@@ -3482,10 +3667,10 @@ const NanoBananaStudio = memo(({
         {genStatus === 'running' && (
           <div className="absolute bottom-0 left-0 right-0">
             <div className="w-full h-1 bg-black/50">
-              <div className="h-full bg-gradient-to-r from-yellow-500 to-orange-500 transition-all duration-500"
+              <div className="h-full bg-gradient-to-r from-[#6C5CE7] to-[#a78bfa] transition-all duration-500"
                    style={{ width: `${progress}%` }} />
             </div>
-            <p className="text-[9px] text-yellow-400 font-black text-center py-1 bg-black/70 animate-pulse uppercase tracking-widest">
+            <p className="text-[9px] text-violet-300 font-black text-center py-1 bg-black/70 animate-pulse uppercase tracking-widest">
               {isPro && thinking ? `Thinking… ${Math.round(progress)}%` : `Generating… ${Math.round(progress)}%`}
             </p>
           </div>
@@ -3493,9 +3678,15 @@ const NanoBananaStudio = memo(({
 
         {/* Drawing-mode hint */}
         {addingChange && (
-          <div className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-2 px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest text-white"
-               style={{ background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(8px)', border: '1px solid rgba(251,113,133,0.4)' }}>
-            <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+          <div
+            className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-2.5 px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest text-rose-50 shadow-lg"
+            style={{
+              background: 'rgba(12,10,14,0.92)',
+              backdropFilter: 'blur(10px)',
+              border: '1px solid rgba(251,113,133,0.5)',
+            }}
+          >
+            <span className="w-2 h-2 rounded-full bg-rose-400 animate-pulse shadow-[0_0_10px_rgba(251,113,133,0.8)]" />
             Dibuja el área · Arrastra para mover la vista
           </div>
         )}
@@ -3509,25 +3700,29 @@ const NanoBananaStudio = memo(({
       </div>
 
       {/* ══ BOTTOM BAR: Changes ════════════════════════════════════════════════ */}
-      <div className="flex-shrink-0" style={{ background: '#13131c', borderTop: '1px solid rgba(255,255,255,0.07)' }}>
+      <div
+        className="nb-studio-bottombar flex-shrink-0"
+      >
 
         {/* Active drawing controls */}
         {addingChange && activeChangeId && (
-          <div className="flex items-center gap-4 px-4 py-3"
-               style={{ background: 'rgba(251,113,133,0.05)', borderBottom: '1px solid rgba(251,113,133,0.15)' }}>
-            <span className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-rose-400 flex-shrink-0">
-              <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+          <div
+            className="flex items-center gap-4 px-4 py-3.5"
+            style={{ background: 'rgba(251,113,133,0.08)', borderBottom: '1px solid rgba(251,113,133,0.25)' }}
+          >
+            <span className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-rose-300 flex-shrink-0">
+              <span className="w-2 h-2 rounded-full bg-rose-400 animate-pulse shadow-[0_0_8px_rgba(251,113,133,0.6)]" />
               Dibujando área
             </span>
             {/* Color */}
             <div className="flex items-center gap-1.5">
-              <span className="text-[9px] text-zinc-500">Color</span>
+              <span className="text-[9px] font-bold text-zinc-400">Color</span>
               <input type="color" value={brushColor} onChange={e => setBrushColor(e.target.value)}
                 className="w-8 h-8 rounded-lg border border-white/10 cursor-pointer" />
             </div>
             {/* Brush size */}
             <div className="flex items-center gap-2 flex-1 max-w-[200px]">
-              <span className="text-[9px] text-zinc-500 flex-shrink-0">Grosor {brushSize}px</span>
+              <span className="text-[9px] font-bold text-zinc-400 flex-shrink-0">Grosor {brushSize}px</span>
               <input type="range" min={4} max={48} value={brushSize} onChange={e => setBrushSize(+e.target.value)}
                 className="flex-1" />
             </div>
@@ -3536,7 +3731,7 @@ const NanoBananaStudio = memo(({
               value={newDesc}
               onChange={e => setNewDesc(e.target.value)}
               placeholder="¿Qué quieres cambiar en esta área?…"
-              className="flex-1 bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-[10px] text-zinc-300 placeholder-zinc-600 outline-none focus:border-rose-500/40"
+              className="flex-1 bg-zinc-950/80 border border-zinc-600/50 rounded-lg px-3 py-2 text-[11px] text-zinc-100 placeholder-zinc-500 outline-none focus:border-rose-400/70 focus:ring-1 focus:ring-rose-500/30"
             />
             <button onClick={confirmChange}
               className="px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all whitespace-nowrap"
@@ -3551,15 +3746,29 @@ const NanoBananaStudio = memo(({
         )}
 
         {/* Changes list row — chips in scrollable section, buttons outside scroll */}
-        <div className="flex items-center gap-0 px-4 py-4" style={{ minHeight: 68 }}>
+        <div className="nb-studio-changes-row flex items-center gap-0 px-4 py-4" style={{ minHeight: 72 }}>
           {/* Label */}
-          <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest flex-shrink-0 pr-2 mr-2"
-                style={{ borderRight: '1px solid rgba(255,255,255,0.07)' }}>Cambios</span>
+          <div
+            className="flex flex-col gap-0.5 flex-shrink-0 pr-3 mr-2"
+            style={{ borderRight: '1px solid rgba(255,255,255,0.12)' }}
+          >
+            <span className="text-[10px] font-black text-zinc-200 uppercase tracking-[0.12em]">Cambios</span>
+            <span className="text-[8px] font-medium text-zinc-500 normal-case tracking-normal max-w-[5.5rem] leading-tight">
+              Instrucciones para la IA
+            </span>
+          </div>
 
           {/* Scrollable chips — overflow isolated here */}
           <div className="flex items-center gap-3 flex-1 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
             {changes.length === 0 && (
-              <span className="text-[9px] text-zinc-600 italic flex-shrink-0">Sin cambios aún · añade uno para empezar</span>
+              <div className="flex flex-col gap-1 flex-shrink-0 py-0.5">
+                <span className="text-[10px] font-semibold text-zinc-300">Ningún cambio todavía</span>
+                <span className="text-[9px] text-zinc-500 leading-snug max-w-md">
+                  Usa <span className="text-rose-300 font-semibold">Zona</span> para pintar qué editar, o{' '}
+                  <span className="text-violet-300 font-semibold">Global</span> /{' '}
+                  <span className="text-violet-200 font-semibold">Cámara</span> para el resto.
+                </span>
+              </div>
             )}
 
             {/* Change chips — larger and with ref upload */}
@@ -3570,18 +3779,18 @@ const NanoBananaStudio = memo(({
                 <div key={ch.id}
                   className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl flex-shrink-0 transition-all"
                   style={ch.isGlobal || (ch.paintData && ch.description.trim())
-                    ? { background: hex + '18', color: hex, border: '1px solid ' + hex + '50' }
-                    : { background: 'rgba(255,255,255,0.04)', color: '#666', border: '1px solid rgba(255,255,255,0.08)' }
+                    ? { background: hex + '22', color: '#f4f4f5', border: '1px solid ' + hex + '66' }
+                    : { background: 'rgba(39,39,48,0.85)', color: '#a1a1aa', border: '1px solid rgba(113,113,122,0.4)' }
                   }
                 >
                   {/* Color dot or global indicator */}
                   {ch.isGlobal
                     ? <Globe size={11} className="flex-shrink-0" style={{ color: hex }} />
-                    : <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ background: hex }} />
+                    : <span className="w-3 h-3 rounded-full flex-shrink-0 ring-1 ring-white/20" style={{ background: hex }} />
                   }
 
                   {/* Description */}
-                  <span className="text-[10px] font-black uppercase tracking-wide max-w-[160px] truncate">
+                  <span className="text-[10px] font-bold uppercase tracking-wide max-w-[160px] truncate">
                     {ch.description || 'Sin descripción'}
                   </span>
 
@@ -3615,8 +3824,12 @@ const NanoBananaStudio = memo(({
                   )}
 
                   {/* Delete */}
-                  <button onClick={() => deleteChange(ch.id)}
-                    className="text-zinc-600 hover:text-rose-400 transition-colors flex-shrink-0 ml-1">
+                  <button
+                    type="button"
+                    onClick={() => deleteChange(ch.id)}
+                    className="text-zinc-500 hover:text-rose-400 transition-colors flex-shrink-0 ml-1 p-0.5 rounded hover:bg-white/5"
+                    title="Quitar cambio"
+                  >
                     <Trash2 size={11} />
                   </button>
                 </div>
@@ -3625,23 +3838,23 @@ const NanoBananaStudio = memo(({
           </div>{/* end scrollable chips */}
 
           {/* ── Action buttons — OUTSIDE overflow-x-auto so dropdowns aren't clipped ── */}
-          <div className="flex items-center gap-2 flex-shrink-0 pl-3" style={{ borderLeft: '1px solid rgba(255,255,255,0.07)' }}>
+          <div className="flex items-center gap-2 flex-shrink-0 pl-3" style={{ borderLeft: '1px solid rgba(255,255,255,0.12)' }}>
 
             {/* Global change inline input */}
             {showGlobalInput && (
               <div className="flex items-center gap-2" style={{ minWidth: 340 }}>
-                <Globe size={11} className="text-purple-400 flex-shrink-0" />
+                <Globe size={12} className="text-violet-400 flex-shrink-0" aria-hidden />
                 <input
                   autoFocus
                   value={globalDesc}
                   onChange={e => setGlobalDesc(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') addGlobalChange(globalDesc); if (e.key === 'Escape') { setShowGlobalInput(false); setGlobalDesc(''); } }}
                   placeholder="Describe el cambio global…"
-                  className="flex-1 bg-black/40 border border-purple-500/30 rounded-lg px-3 py-2 text-[10px] text-zinc-200 placeholder-zinc-600 outline-none focus:border-purple-500/60"
+                  className="flex-1 bg-zinc-950/80 border border-violet-500/45 rounded-xl px-3 py-2.5 text-[11px] text-zinc-100 placeholder-zinc-500 outline-none focus:border-violet-400/80 focus:ring-1 focus:ring-violet-500/25"
                 />
                 <button onClick={() => addGlobalChange(globalDesc)}
                   className="px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all whitespace-nowrap"
-                  style={{ background: 'rgba(168,85,247,0.2)', color: '#c084fc', border: '1px solid rgba(168,85,247,0.4)' }}>
+                  style={{ background: 'rgba(108,92,231,0.22)', color: '#ddd6fe', border: '1px solid rgba(108,92,231,0.45)' }}>
                   ✓
                 </button>
                 <button onClick={() => { setShowGlobalInput(false); setGlobalDesc(''); }}
@@ -3653,42 +3866,86 @@ const NanoBananaStudio = memo(({
 
             {!addingChange && !showGlobalInput && (<>
               {/* Pintar área */}
-              <button onClick={startAddChange}
-                className="flex items-center gap-2 px-3 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex-shrink-0 whitespace-nowrap"
-                style={{ background: 'rgba(251,113,133,0.12)', color: '#fb7185', border: '1px solid rgba(251,113,133,0.3)' }}>
-                <Plus size={11} /> Zona
+              <button
+                type="button"
+                onClick={startAddChange}
+                className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex-shrink-0 whitespace-nowrap shadow-sm hover:brightness-110"
+                style={{
+                  background: 'linear-gradient(180deg, rgba(251,113,133,0.22) 0%, rgba(251,113,133,0.1) 100%)',
+                  color: '#fecdd3',
+                  border: '1px solid rgba(251,113,133,0.45)',
+                }}
+                title="Pinta sobre la imagen qué parte quieres cambiar"
+              >
+                <Plus size={12} strokeWidth={2.5} /> Zona
               </button>
 
               {/* Global */}
-              <button onClick={() => setShowGlobalInput(true)}
-                className="flex items-center gap-2 px-3 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex-shrink-0 whitespace-nowrap"
-                style={{ background: 'rgba(168,85,247,0.12)', color: '#c084fc', border: '1px solid rgba(168,85,247,0.3)' }}>
-                <Globe size={11} /> Global
+              <button
+                type="button"
+                onClick={() => setShowGlobalInput(true)}
+                className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex-shrink-0 whitespace-nowrap shadow-sm hover:brightness-110"
+                style={{
+                  background: 'linear-gradient(180deg, rgba(108,92,231,0.24) 0%, rgba(108,92,231,0.1) 100%)',
+                  color: '#ede9fe',
+                  border: '1px solid rgba(108,92,231,0.45)',
+                }}
+                title="Instrucción que afecta a toda la imagen"
+              >
+                <Globe size={12} strokeWidth={2.5} /> Global
               </button>
 
               {/* Camera — dropdown goes UPWARD, no overflow clipping because parent has no overflow-x-auto */}
               <div className="relative flex-shrink-0">
                 <button
+                  type="button"
                   onClick={() => setShowCameraMenu(v => !v)}
-                  className="flex items-center gap-2 px-3 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all whitespace-nowrap"
-                  style={{ background: 'rgba(99,102,241,0.12)', color: '#a5b4fc', border: '1px solid rgba(99,102,241,0.3)' }}>
-                  <Camera size={11} /> Cámara ▾
+                  className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all whitespace-nowrap shadow-sm hover:brightness-110"
+                  style={{
+                    background: 'linear-gradient(180deg, rgba(108,92,231,0.18) 0%, rgba(108,92,231,0.08) 100%)',
+                    color: '#e8e4ff',
+                    border: '1px solid rgba(108,92,231,0.4)',
+                  }}
+                  title="Solo ajustes suaves de encuadre (recomendado para esta API)"
+                >
+                  <Camera size={12} strokeWidth={2.5} /> Cámara ▾
                 </button>
                 {showCameraMenu && (
-                  <div className="absolute bottom-full mb-2 right-0 z-[9999] rounded-xl overflow-hidden shadow-2xl"
-                       style={{ background: '#1a1a28', border: '1px solid rgba(99,102,241,0.3)', minWidth: 220, maxHeight: 320, overflowY: 'auto' }}>
-                    <div className="px-3 py-2 text-[8px] font-black uppercase tracking-widest text-indigo-400 sticky top-0"
-                         style={{ background: '#1a1a28', borderBottom: '1px solid rgba(255,255,255,0.07)' }}>Presets de cámara</div>
+                  <div
+                    className="absolute bottom-full mb-2 right-0 z-[9999] rounded-xl overflow-hidden shadow-2xl"
+                    style={{
+                      background: 'rgba(22,22,30,0.96)',
+                      backdropFilter: 'blur(16px)',
+                      border: '1px solid rgba(108,92,231,0.35)',
+                      minWidth: 220,
+                      maxHeight: 360,
+                      overflowY: 'auto',
+                    }}
+                  >
+                    <div
+                      className="px-3 py-2.5 text-[9px] font-black uppercase tracking-widest text-violet-300 sticky top-0"
+                      style={{ background: 'rgba(22,22,30,0.98)', borderBottom: '1px solid rgba(255,255,255,0.1)' }}
+                    >
+                      Encuadre posible
+                    </div>
+                    <p className="px-3 py-2 text-[8px] text-zinc-500 leading-snug border-b border-white/[0.06]">
+                      Evita giros extremos o vistas que no existan en la imagen base.
+                    </p>
                     {CAMERA_PRESETS.map(group => (
                       <div key={group.group}>
-                        <div className="px-3 py-1.5 text-[8px] font-black uppercase tracking-widest text-zinc-500"
-                             style={{ background: 'rgba(255,255,255,0.03)', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                        <div
+                          className="px-3 py-2 text-[9px] font-black uppercase tracking-widest text-zinc-400"
+                          style={{ background: 'rgba(0,0,0,0.25)', borderTop: '1px solid rgba(255,255,255,0.06)' }}
+                        >
                           {group.group}
                         </div>
                         {group.items.map(preset => (
-                          <button key={preset.label}
+                          <button
+                            key={`${group.group}-${preset.label}`}
+                            type="button"
                             onClick={() => { addGlobalChange(preset.prompt); setShowCameraMenu(false); }}
-                            className="w-full text-left px-4 py-2 text-[9px] font-medium text-zinc-300 hover:bg-indigo-500/20 hover:text-white transition-colors">
+                            className="w-full text-left px-4 py-2.5 text-[10px] font-medium text-zinc-200 hover:bg-[#6C5CE7]/25 hover:text-white transition-colors border-b border-white/[0.04] last:border-0"
+                          >
                             {preset.label}
                           </button>
                         ))}
@@ -3711,12 +3968,15 @@ const NanoBananaStudio = memo(({
           data-foldder-studio-canvas=""
         >
           <div className="w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-3xl flex flex-col"
-               style={{ background: '#16161a', border: '1px solid rgba(255,255,255,0.1)' }}>
+               style={{ background: '#1a1a22', border: '1px solid rgba(255,255,255,0.12)' }}>
             {/* Header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.07]">
-              <span className="text-[11px] font-black uppercase tracking-widest text-indigo-400">Vista previa de llamada a NanoBanana</span>
-              <button onClick={() => setCallPreview(null)} className="text-zinc-500 hover:text-white transition-colors">
-                <X size={18} />
+            <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.1] bg-white/[0.04] backdrop-blur-md">
+              <div className="flex flex-col gap-0.5">
+                <span className="text-[12px] font-black uppercase tracking-[0.1em] text-violet-200">Vista previa de la llamada</span>
+                <span className="text-[10px] text-zinc-500 font-medium normal-case tracking-normal">Revisa refs y el texto que se enviará a Nano Banana</span>
+              </div>
+              <button type="button" onClick={() => setCallPreview(null)} className="text-zinc-400 hover:text-white transition-colors p-1 rounded-lg hover:bg-white/10" title="Cerrar">
+                <X size={20} />
               </button>
             </div>
 
@@ -3789,8 +4049,8 @@ const NanoBananaStudio = memo(({
               <button
                 onClick={() => onGenerateFromCall(callPreview.colorMapUrl, callPreview.fullPrompt, callPreview.markedRef2, callPreview.referenceGridUrl)}
                 disabled={genStatus === 'running'}
-                className="px-6 py-2.5 rounded-xl text-[11px] font-black uppercase tracking-widest flex items-center gap-2 transition-all disabled:opacity-40"
-                style={{ background: 'linear-gradient(135deg,#f59e0b,#d97706)', color: '#111' }}
+                className="px-6 py-2.5 rounded-xl text-[11px] font-black uppercase tracking-widest flex items-center gap-2 transition-all disabled:opacity-40 shadow-[0_2px_12px_rgba(108,92,231,0.35)]"
+                style={{ background: 'linear-gradient(135deg,#6C5CE7,#5548c8)', color: '#fafafa' }}
               >
                 <Sparkles size={13} /> Generar imagen
               </button>
@@ -3871,7 +4131,7 @@ export const NanoBananaNode = memo(({ id, data, selected }: NodeProps<any>) => {
           prompt,
           images: refImages,
           aspect_ratio: nodeData.aspect_ratio || '16:9',
-          resolution: isFlash25 ? '1k' : (nodeData.resolution || '1k'),
+          resolution: isFlash25 ? '1k' : normalizeNanoBananaResolution(nodeData.resolution),
           model: selectedModel,
           thinking: nodeData.thinking && isPro,
         }),
@@ -4058,7 +4318,7 @@ export const NanoBananaNode = memo(({ id, data, selected }: NodeProps<any>) => {
             lastGenerated={result}
             modelKey={nodeData.modelKey || 'flash31'}
             aspectRatio={nodeData.aspect_ratio || '16:9'}
-            resolution={nodeData.resolution || '1k'}
+            resolution={normalizeNanoBananaResolution(nodeData.resolution)}
             thinking={!!nodeData.thinking}
             prompt={promptVal}
             onClose={() => setShowStudio(false)}
@@ -4068,6 +4328,7 @@ export const NanoBananaNode = memo(({ id, data, selected }: NodeProps<any>) => {
                 n.id === id ? { ...n, data: { ...n.data, value: url, type: 'image' } } : n
               ));
             }}
+            onResolutionChange={(r) => updateData('resolution', r)}
           />
         );
       })()}
@@ -5790,6 +6051,35 @@ export const PainterNode = memo(({ id, data, selected }: NodeProps<any>) => {
 });
 
 
+/** `object-contain`: tamaño y offset de la imagen dibujada dentro del contenedor cw×ch */
+function containedImageRect(cw: number, ch: number, nw: number, nh: number) {
+  const ir = nw / nh;
+  const cr = cw / ch;
+  if (ir > cr) {
+    const dw = cw;
+    const dh = cw / ir;
+    return { dw, dh, ox: 0, oy: (ch - dh) / 2 };
+  }
+  const dh = ch;
+  const dw = ch * ir;
+  return { dw, dh, ox: (cw - dw) / 2, oy: 0 };
+}
+
+/** Evita canvas “tainted” con URLs externas (misma lógica que en otros nodos). */
+function imageUrlForCanvasCrop(src: string): string {
+  if (src.startsWith('data:') || src.startsWith('blob:')) return src;
+  try {
+    const u = new URL(src, typeof window !== 'undefined' ? window.location.href : 'http://localhost');
+    if (typeof window !== 'undefined' && u.origin === window.location.origin) return src;
+  } catch {
+    /* ignore */
+  }
+  if (/^https?:\/\//i.test(src)) {
+    return `/api/spaces/proxy?url=${encodeURIComponent(src)}`;
+  }
+  return src;
+}
+
 // --- CROP NODE ---
 export const CropNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const { setNodes } = useReactFlow();
@@ -5809,6 +6099,10 @@ export const CropNode = memo(({ id, data, selected }: NodeProps<any>) => {
   
   const [draggingAction, setDraggingAction] = useState<'move' | 'nw' | 'ne' | 'sw' | 'se' | null>(null);
   const [dragStartInfo, setDragStartInfo] = useState<{ startX: number, startY: number, initialCrop: any } | null>(null);
+  const latestCropRef = useRef(crop);
+  useEffect(() => {
+    latestCropRef.current = crop;
+  }, [crop]);
 
   const inputEdge = edges.find(e => e.target === id && e.targetHandle === 'image');
   const inputNode = nodes.find(n => n.id === inputEdge?.source);
@@ -5823,50 +6117,83 @@ export const CropNode = memo(({ id, data, selected }: NodeProps<any>) => {
     setNodes((nds: any) => nds.map((n: any) => n.id === id ? { ...n, data: { ...n.data, [key]: val } } : n));
   };
   
-  const applyCrop = useCallback(() => {
-    if (!sourceImage || !previewRef.current) return;
-    
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-      
-      const naturalAR = img.naturalWidth / img.naturalHeight;
-      const previewRect = previewRef.current!.getBoundingClientRect();
-      const containerAR = previewRect.width / previewRect.height;
-      
-      let renderX = crop.x;
-      let renderY = crop.y;
-      let renderW = crop.w;
-      let renderH = crop.h;
+  const commitCropRect = useCallback(
+    (rect: { x: number; y: number; w: number; h: number }) => {
+      if (!sourceImage || !containerRef.current) return;
 
-      const sx = (renderX / 100) * img.naturalWidth;
-      const sy = (renderY / 100) * img.naturalHeight;
-      const sw = (renderW / 100) * img.naturalWidth;
-      const sh = (renderH / 100) * img.naturalHeight;
-      
-      canvas.width = sw;
-      canvas.height = sh;
-      
-      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
-      
-      const croppedDataUrl = canvas.toDataURL('image/jpeg', 0.95);
-      
-      setNodes((nds: any) => nds.map((n: any) => n.id === id ? { 
-        ...n, 
-        data: { 
-          ...n.data, 
-          value: croppedDataUrl, 
-          type: 'image',
-          cropConfig: crop,
-          aspectRatio
-        } 
-      } : n));
-    };
-    img.src = sourceImage;
-  }, [sourceImage, crop, id, setNodes, aspectRatio]);
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        const container = containerRef.current;
+        if (!container) return;
+
+        const cw = container.clientWidth;
+        const ch = container.clientHeight;
+        if (cw < 2 || ch < 2) return;
+
+        const nw = img.naturalWidth;
+        const nh = img.naturalHeight;
+        if (!nw || !nh) return;
+
+        const { dw, dh, ox, oy } = containedImageRect(cw, ch, nw, nh);
+
+        const cropLeft = (rect.x / 100) * cw;
+        const cropTop = (rect.y / 100) * ch;
+        const cropWpx = (rect.w / 100) * cw;
+        const cropHpx = (rect.h / 100) * ch;
+
+        let sx = ((cropLeft - ox) / dw) * nw;
+        let sy = ((cropTop - oy) / dh) * nh;
+        let sw = (cropWpx / dw) * nw;
+        let sh = (cropHpx / dh) * nh;
+
+        sx = Math.max(0, Math.min(nw - 1, Math.round(sx)));
+        sy = Math.max(0, Math.min(nh - 1, Math.round(sy)));
+        sw = Math.max(1, Math.min(nw - sx, Math.round(sw)));
+        sh = Math.max(1, Math.min(nh - sy, Math.round(sh)));
+
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+
+        canvas.width = sw;
+        canvas.height = sh;
+        ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+
+        let croppedDataUrl: string;
+        try {
+          croppedDataUrl = canvas.toDataURL('image/png');
+        } catch (e) {
+          console.error('[CropNode] toDataURL failed (CORS/taint?)', e);
+          return;
+        }
+
+        setNodes((nds: any) => nds.map((n: any) => n.id === id ? {
+          ...n,
+          data: {
+            ...n.data,
+            value: croppedDataUrl,
+            type: 'image',
+            cropConfig: rect,
+            aspectRatio,
+          },
+        } : n));
+      };
+      img.onerror = () => console.error('[CropNode] could not load image for cropping');
+      img.src = imageUrlForCanvasCrop(sourceImage);
+    },
+    [sourceImage, id, setNodes, aspectRatio],
+  );
+
+  const commitCropRectRef = useRef(commitCropRect);
+  commitCropRectRef.current = commitCropRect;
+  useEffect(() => {
+    if (!sourceImage) return;
+    const t = window.setTimeout(() => {
+      commitCropRectRef.current(latestCropRef.current);
+    }, 150);
+    return () => clearTimeout(t);
+  }, [sourceImage]);
 
   const handlePointerDown = (e: React.PointerEvent, action: 'move' | 'nw' | 'ne' | 'sw' | 'se') => {
     e.preventDefault();
@@ -5915,14 +6242,20 @@ export const CropNode = memo(({ id, data, selected }: NodeProps<any>) => {
     if (newX + newW > 100) newW = 100 - newX;
     if (newY + newH > 100) newH = 100 - newY;
 
-    setCrop({ x: newX, y: newY, w: newW, h: newH });
+    const next = { x: newX, y: newY, w: newW, h: newH };
+    latestCropRef.current = next;
+    setCrop(next);
   };
 
   const handlePointerUp = (e: React.PointerEvent) => {
     if (draggingAction) {
+      const rect = latestCropRef.current;
       setDraggingAction(null);
       setDragStartInfo(null);
       e.stopPropagation();
+      requestAnimationFrame(() => {
+        commitCropRect(rect);
+      });
     }
   };
 
@@ -5951,11 +6284,11 @@ export const CropNode = memo(({ id, data, selected }: NodeProps<any>) => {
             </div>
           ) : (
             <>
-              <img 
+              <img
                 ref={previewRef}
-                src={sourceImage} 
-                alt="Source" 
-                className="w-full h-full object-fill pointer-events-none block" 
+                src={sourceImage}
+                alt="Source"
+                className="w-full h-full min-h-0 object-contain pointer-events-none block"
               />
               
               <div className="absolute inset-0 bg-black/40 pointer-events-none"></div>
@@ -5994,30 +6327,27 @@ export const CropNode = memo(({ id, data, selected }: NodeProps<any>) => {
 
         <div className="flex items-center gap-2 w-full pt-2">
            <span className="text-[9px] font-black text-gray-500 uppercase tracking-widest">Aspect</span>
-           <select 
-             value={aspectRatio} 
+           <select
+             value={aspectRatio}
              onChange={(e) => {
-               setAspectRatio(e.target.value);
-               updateData('aspectRatio', e.target.value);
-               if (e.target.value === '1:1') setCrop({ x: 25, y: 10, w: 50, h: 80 }); 
-               if (e.target.value === '16:9') setCrop({ x: 10, y: 25, w: 80, h: 50 }); 
-               if (e.target.value === '9:16') setCrop({ x: 30, y: 10, w: 40, h: 80 });
+               const v = e.target.value;
+               setAspectRatio(v);
+               updateData('aspectRatio', v);
+               let next = { ...latestCropRef.current };
+               if (v === '1:1') next = { x: 25, y: 10, w: 50, h: 80 };
+               if (v === '16:9') next = { x: 10, y: 25, w: 80, h: 50 };
+               if (v === '9:16') next = { x: 30, y: 10, w: 40, h: 80 };
+               latestCropRef.current = next;
+               setCrop(next);
+               window.setTimeout(() => commitCropRect(next), 0);
              }}
-             className="node-input text-[10px] w-full max-w-[100px] nodrag"
+             className="node-input text-[10px] w-full max-w-[140px] nodrag"
            >
              <option value="free">Freeform</option>
              <option value="1:1">1:1 Square</option>
              <option value="16:9">16:9 Wide</option>
              <option value="9:16">9:16 Story</option>
            </select>
-
-           <button 
-             onClick={applyCrop}
-             disabled={!sourceImage}
-             className="ml-auto bg-amber-500 hover:bg-amber-400 text-white font-black text-[9px] px-3 py-1.5 rounded uppercase tracking-widest shadow-[0_0_10px_rgba(245,158,11,0.3)] disabled:opacity-50 nodrag transition-colors"
-           >
-             Apply Crop
-           </button>
         </div>
       </div>
 

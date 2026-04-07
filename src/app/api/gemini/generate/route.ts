@@ -19,9 +19,13 @@ async function imageUrlToBase64(url: string): Promise<{ data: string; mimeType: 
     });
     if (!res.ok) return null;
     const buffer = await res.arrayBuffer();
+    const headerMime = res.headers.get("content-type")?.split(";")[0]?.trim();
+    const mimeType =
+      headerMime ||
+      (url.toLowerCase().includes(".png") ? "image/png" : "image/jpeg");
     return {
       data: Buffer.from(buffer).toString("base64"),
-      mimeType: res.headers.get("content-type") || "image/png",
+      mimeType,
     };
   } catch {
     return null;

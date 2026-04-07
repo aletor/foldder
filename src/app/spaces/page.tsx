@@ -2085,15 +2085,20 @@ const SpacesContent = () => {
     const fromType     = connectionState?.fromHandle?.type; // 'source' | 'target'
     if (!fromNodeId || !fromHandleId) return;
 
-    // Check if this handle ALREADY has a connection — if so, skip
-    const alreadyConnected = edges.some((e: any) => {
+    const srcNode = nodes.find((n: any) => n.id === fromNodeId);
+    const srcNodeType = srcNode?.type as string | undefined;
+    const mediaAssetType = srcNodeType === 'mediaInput' ? (srcNode?.data as { type?: string })?.type : undefined;
+
+    // Media output can fan out to several targets (e.g. multiple Nano Bananas)
+    const allowMultiFromMedia =
+      srcNodeType === 'mediaInput' && fromType === 'source' && fromHandleId === 'media';
+
+    const alreadyConnected = !allowMultiFromMedia && edges.some((e: any) => {
       if (fromType === 'source') return e.source === fromNodeId && e.sourceHandle === fromHandleId;
       return e.target === fromNodeId && e.targetHandle === fromHandleId;
     });
     if (alreadyConnected) return;
 
-    // Determine handle data type from NODE_REGISTRY
-    const srcNodeType = nodes.find((n: any) => n.id === fromNodeId)?.type;
     const meta = srcNodeType ? NODE_REGISTRY[srcNodeType] : null;
     if (!meta) return;
 
@@ -2103,8 +2108,14 @@ const SpacesContent = () => {
         : meta.inputs.find((i: any) => i.id === fromHandleId);
     if (!handleMeta) return;
 
-    const lookupKey  = `${handleMeta.type}:${fromType}`;
-    const newType    = HANDLE_DROP_MAP[lookupKey];
+    const lookupKey = `${handleMeta.type}:${fromType}`;
+    let newType = HANDLE_DROP_MAP[lookupKey];
+
+    // Registry types media output as `url`, but an uploaded image behaves as image → Nano Banana on canvas drop
+    if (srcNodeType === 'mediaInput' && fromType === 'source' && fromHandleId === 'media' && mediaAssetType === 'image') {
+      newType = 'nanoBanana';
+    }
+
     if (!newType) return;
 
     // Convert mouse position to flow coords
@@ -2123,10 +2134,15 @@ const SpacesContent = () => {
     const newMeta  = NODE_REGISTRY[newType];
 
     // Pick the connecting handle on the new node
+    const wireType =
+      srcNodeType === 'mediaInput' && mediaAssetType === 'image' && newType === 'nanoBanana'
+        ? 'image'
+        : handleMeta.type;
+
     let newHandle: string | undefined;
     if (fromType === 'source') {
       // new node should receive: find its input matching the handle type
-      newHandle = newMeta?.inputs.find((i: any) => i.type === handleMeta.type)?.id;
+      newHandle = newMeta?.inputs.find((i: any) => i.type === wireType)?.id;
     } else {
       // new node should provide: find its output matching the handle type
       newHandle = newMeta?.outputs.find((o: any) => o.type === handleMeta.type)?.id;

@@ -25,9 +25,13 @@ async function parseImage(image: string): Promise<{ data: string; mimeType: stri
       const res = await fetch(image, { headers: { "User-Agent": "Mozilla/5.0" } });
       if (!res.ok) { console.warn("[analyze-areas] Failed to fetch image:", res.status); return null; }
       const buffer = await res.arrayBuffer();
+      const headerMime = res.headers.get("content-type")?.split(";")[0]?.trim();
+      const mimeType =
+        headerMime ||
+        (image.toLowerCase().includes(".png") ? "image/png" : "image/jpeg");
       return {
         data: Buffer.from(buffer).toString("base64"),
-        mimeType: res.headers.get("content-type") || "image/jpeg",
+        mimeType,
       };
     } catch (e: any) {
       console.warn("[analyze-areas] Error fetching image URL:", e.message);
@@ -93,9 +97,12 @@ async function buildMarkedImageWithSharp(
 
     if (overlays.length === 0) return null;
 
-    // Composite all overlays onto the base image
-    const resultBuffer = await composite.composite(overlays).jpeg({ quality: 92 }).toBuffer();
-    console.log("[analyze-areas] Marked image built with sharp, size:", resultBuffer.length);
+    // PNG lossless — avoid JPEG recompression drift between Studio iterations
+    const resultBuffer = await composite
+      .composite(overlays)
+      .png({ compressionLevel: 6, adaptiveFiltering: true })
+      .toBuffer();
+    console.log("[analyze-areas] Marked image built (PNG lossless), size:", resultBuffer.length);
     return resultBuffer.toString("base64");
   } catch (e: any) {
     console.warn("[analyze-areas] Sharp compositing failed:", e.message);
@@ -131,7 +138,7 @@ export async function POST(req: NextRequest) {
         changes as AreaChange[]
       );
       if (markedImgData) {
-        parts.push({ inline_data: { mime_type: "image/jpeg", data: markedImgData } });
+        parts.push({ inline_data: { mime_type: "image/png", data: markedImgData } });
         useMarked = true;
         console.log("[analyze-areas] Using marked image approach");
       }
@@ -223,6 +230,7 @@ Devuelve SOLO el prompt, sin texto adicional.`;
       prompt: text.trim(),
       // Return the marked image so the client uses it as REFERENCIA 2 in generation
       markedImageData: useMarked && markedImgData ? markedImgData : null,
+      markedImageMime: useMarked && markedImgData ? "image/png" : null,
     });
 
   } catch (error: any) {
