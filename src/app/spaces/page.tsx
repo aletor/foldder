@@ -53,6 +53,7 @@ import {
   DEFAULT_TOPBAR_PIN_TYPES,
 } from './TopbarPins';
 import { readResponseJson } from '@/lib/read-response-json';
+import { FOLDDER_FIT_VIEW_EASE } from '@/lib/fit-view-ease';
 import './spaces.css';
 import { NODE_REGISTRY } from './nodeRegistry';
 import {
@@ -91,7 +92,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
-/** Tras el splash «Bienvenido», si el lienzo sigue vacío: atajos visibles 3 s. */
+/** Tras el splash «Bienvenido», si el lienzo sigue vacío: atajos visibles hasta el primer nodo. */
 const EMPTY_CANVAS_SHORTCUT_HINT: {
   label: string;
   keyLabel: string;
@@ -146,9 +147,9 @@ const FIT_VIEW_PADDING_NODE_FOCUS = 0.8;
 /** Modo cartas: margen al encuadrar el nodo activo. */
 const FIT_VIEW_PADDING_CARDS = 0.35;
 
-/** Animaciones de encuadre ~2× más rápidas (mitad de ms, mínimo 40). */
+/** Duración efectiva de encuadres `fitView` / `fitViewToNodeIds` (≈4× más rápido que el valor nominal, mín. 40 ms). */
 function fitAnim(ms: number): number {
-  return Math.max(40, Math.round(ms / 2));
+  return Math.max(40, Math.round(ms / 4));
 }
 
 /** Ancho/alto efectivos para layout (evita solapes si solo usamos una cuadrícula fija) */
@@ -333,7 +334,7 @@ const SpacesContent = () => {
       // Mismo tick que dragstart + setState + fitView cancela el drop HTML5 hacia el topbar (Chrome).
       queueMicrotask(() => {
         setLibraryCompatibleIds(compatible);
-        fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(420) });
+        fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(420), ...FOLDDER_FIT_VIEW_EASE });
       });
     },
     [fitView, getViewport, nodes, edges]
@@ -344,7 +345,7 @@ const SpacesContent = () => {
     const dropOk =
       libraryCanvasDropSucceededRef.current || libraryTopbarDropSucceededRef.current;
     if (!dropOk && saved) {
-      setViewport(saved, { duration: fitAnim(380) });
+      setViewport(saved, { duration: fitAnim(380), ...FOLDDER_FIT_VIEW_EASE });
     }
     libraryDragViewportRef.current = null;
     libraryCanvasDropSucceededRef.current = false;
@@ -368,6 +369,7 @@ const SpacesContent = () => {
           padding,
           duration: d,
           interpolate: 'smooth',
+          ...FOLDDER_FIT_VIEW_EASE,
         });
       }, 60);
     },
@@ -434,6 +436,7 @@ const SpacesContent = () => {
         padding: FIT_VIEW_PADDING,
         duration: fitAnim(800),
         interpolate: 'smooth',
+        ...FOLDDER_FIT_VIEW_EASE,
       });
     }, 90);
   }, [setNodes, fitView]);
@@ -468,24 +471,10 @@ const SpacesContent = () => {
 
   const [showWelcome, setShowWelcome] = useState(false); // triggered after auth
   const [showEmptyShortcutsHint, setShowEmptyShortcutsHint] = useState(false);
-  const emptyShortcutsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (emptyShortcutsTimerRef.current) {
-        clearTimeout(emptyShortcutsTimerRef.current);
-        emptyShortcutsTimerRef.current = null;
-      }
-    };
-  }, []);
 
   useEffect(() => {
     if (showEmptyShortcutsHint && nodes.length > 0) {
       setShowEmptyShortcutsHint(false);
-      if (emptyShortcutsTimerRef.current) {
-        clearTimeout(emptyShortcutsTimerRef.current);
-        emptyShortcutsTimerRef.current = null;
-      }
     }
   }, [nodes.length, showEmptyShortcutsHint]);
 
@@ -960,7 +949,7 @@ const SpacesContent = () => {
     (_evt: React.MouseEvent, node: Node) => {
       if (lastDoubleClickFitNodeIdRef.current === node.id) {
         lastDoubleClickFitNodeIdRef.current = null;
-        fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(800) });
+        fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(800), ...FOLDDER_FIT_VIEW_EASE });
       } else {
         lastDoubleClickFitNodeIdRef.current = node.id;
         fitViewToNodeIds([node.id], 650);
@@ -976,7 +965,7 @@ const SpacesContent = () => {
       if (el.closest('.react-flow__node')) return;
       event.preventDefault();
       lastDoubleClickFitNodeIdRef.current = null;
-      fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(800), interpolate: 'smooth' });
+      fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(800), interpolate: 'smooth', ...FOLDDER_FIT_VIEW_EASE });
     },
     [fitView]
   );
@@ -1074,6 +1063,7 @@ const SpacesContent = () => {
         padding: FIT_VIEW_PADDING_NODE_FOCUS,
         duration: fitAnim(700),
         interpolate: 'smooth',
+        ...FOLDDER_FIT_VIEW_EASE,
       });
     }, 100);
   }, [nodes, edges, setNodes, takeSnapshot, fitView]);
@@ -1394,7 +1384,7 @@ const SpacesContent = () => {
         case 'x': addNode('crop'); break;
         case 'z': addNode('bezierMask'); break;
         // ── Canvas actions ───────────────────────────────────────────────
-        case 'f': doFitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(800) }); break;
+        case 'f': doFitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(800), ...FOLDDER_FIT_VIEW_EASE }); break;
         case 'a': doAutoLayout(); break;
         default: break;
       }
@@ -1848,7 +1838,7 @@ const SpacesContent = () => {
       setEdges([...(targetSpace.edges || [])]);
       setNavigationStack(prev => [...prev, currentId]);
       setActiveSpaceId(targetSpaceId);
-      setTimeout(() => fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(800) }), 100);
+      setTimeout(() => fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(800), ...FOLDDER_FIT_VIEW_EASE }), 100);
     }
   }, [activeSpaceId, nodes, edges, spacesMap, setNodes, setEdges, fitView, syncCurrentSpaceState]);
 
@@ -1865,7 +1855,7 @@ const SpacesContent = () => {
     setNavigationStack([]);
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        void fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(480), interpolate: 'smooth' });
+        void fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(480), interpolate: 'smooth', ...FOLDDER_FIT_VIEW_EASE });
       });
     });
   }, [activeSpaceId, nodes, edges, spacesMap, setNodes, setEdges, fitView, syncCurrentSpaceState]);
@@ -2015,7 +2005,7 @@ const SpacesContent = () => {
     
     // Smooth transition
     setTimeout(() => {
-      fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(800) });
+      fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(800), ...FOLDDER_FIT_VIEW_EASE });
     }, 100);
   };
 
@@ -2158,6 +2148,7 @@ const SpacesContent = () => {
         padding: FIT_VIEW_PADDING_NODE_FOCUS,
         duration: fitAnim(700),
         interpolate: 'smooth',
+        ...FOLDDER_FIT_VIEW_EASE,
       });
     }, 100);
   }, [nodes, edges, setNodes, fitView]);
@@ -2199,7 +2190,7 @@ const SpacesContent = () => {
         
         // Smooth transition to center generated workflow
         setTimeout(() => {
-          fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(800) });
+          fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(800), ...FOLDDER_FIT_VIEW_EASE });
         }, 100);
       }
     } catch (err) {
@@ -2363,7 +2354,7 @@ const SpacesContent = () => {
     setEdges((eds) => eds.filter((edge) => edge.source !== id && edge.target !== id));
     setContextMenu(null);
     setTimeout(() => {
-      fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(650) });
+      fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(650), ...FOLDDER_FIT_VIEW_EASE });
     }, 80);
   }, [setNodes, setEdges, fitView]);
 
@@ -2797,7 +2788,7 @@ const SpacesContent = () => {
           }
         });
         setTimeout(() => {
-          fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(800) });
+          fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(800), ...FOLDDER_FIT_VIEW_EASE });
         }, 100);
         return;
       }
@@ -2893,13 +2884,6 @@ const SpacesContent = () => {
           setShowWelcome(false);
           if (liveNodesRef.current.length === 0) {
             setShowEmptyShortcutsHint(true);
-            if (emptyShortcutsTimerRef.current) {
-              clearTimeout(emptyShortcutsTimerRef.current);
-            }
-            emptyShortcutsTimerRef.current = setTimeout(() => {
-              setShowEmptyShortcutsHint(false);
-              emptyShortcutsTimerRef.current = null;
-            }, 3000);
           }
         }}
         >
@@ -2926,7 +2910,7 @@ const SpacesContent = () => {
         </div>
       )}
 
-      {/* Atajos minimalistas: solo tras bienvenida si el lienzo sigue vacío (3 s) */}
+      {/* Atajos minimalistas: tras bienvenida mientras el lienzo siga vacío */}
       {isAuthenticated &&
         showEmptyShortcutsHint &&
         !windowMode &&
@@ -3196,6 +3180,7 @@ const SpacesContent = () => {
                   padding: FIT_VIEW_PADDING_NODE_FOCUS,
                   duration: fitAnim(650),
                   interpolate: 'smooth',
+                  ...FOLDDER_FIT_VIEW_EASE,
                 });
               }, 80);
             }
@@ -3453,7 +3438,7 @@ const SpacesContent = () => {
                   <LayoutGrid size={16} className="text-emerald-400 group-hover:text-emerald-300" />
                 </button>
                 <button
-                  onClick={() => fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(800) })}
+                  onClick={() => fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(800), ...FOLDDER_FIT_VIEW_EASE })}
                   title="Fit View"
                   className="w-10 h-10 bg-white/5 hover:bg-white/10 backdrop-blur-md border border-white/5 rounded-xl text-white flex items-center justify-center transition-all hover:scale-105 group"
                 >

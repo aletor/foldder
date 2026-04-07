@@ -49,6 +49,7 @@ import {
   Trash2,
   EyeOff, Camera} from 'lucide-react';
 import './spaces.css';
+import { FOLDDER_FIT_VIEW_EASE } from '@/lib/fit-view-ease';
 import { NODE_REGISTRY } from './nodeRegistry';
 import {
   NodeIcon,
@@ -1937,7 +1938,7 @@ export const MediaInputNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const mediaFitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isUploading = isUploadingLocal || nodeData.loading;
 
-  /** Tras cargar imagen/vídeo el nodo cambia de alto (p. ej. a aspect-video): encuadrar como en page `fitViewToNodeIds`. */
+  /** Tras cargar imagen/vídeo el nodo cambia de alto (p. ej. a aspect-video): encuadrar; duración alineada con `fitAnim` en page. */
   const scheduleFitViewportToThisNode = useCallback(() => {
     if (mediaFitTimerRef.current) clearTimeout(mediaFitTimerRef.current);
     mediaFitTimerRef.current = setTimeout(() => {
@@ -1945,8 +1946,9 @@ export const MediaInputNode = memo(({ id, data, selected }: NodeProps<any>) => {
       void fitView({
         nodes: [{ id }] as Node[],
         padding: 0.8,
-        duration: Math.max(40, Math.round(650 / 2)),
+        duration: Math.max(40, Math.round(650 / 4)),
         interpolate: 'smooth',
+        ...FOLDDER_FIT_VIEW_EASE,
       });
     }, 100);
   }, [fitView, id]);

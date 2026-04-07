@@ -924,7 +924,7 @@ body.nb-studio-open .spaces-sidebar:hover {
   transform-origin: center center;
 }
 
-/* ── Popover de atajos tras bienvenida (lienzo vacío) ───────────────────── */
+/* ── Popover de atajos tras bienvenida (hasta que haya al menos un nodo) ─ */
 @keyframes foldderEmptyShortcutsIn {
   from {
     opacity: 0;
