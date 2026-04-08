@@ -377,16 +377,20 @@
 /* Sincronizada desde page.tsx (onMove / rueda sobre inputs) — compensa zoom del lienzo */
 :root {
   --foldder-viewport-zoom: 0.7;
+  /* Por debajo de este zoom (60%), los handles dejan de compensarse del todo y encogen en pantalla con el nodo */
+  --foldder-handle-zoom-floor: 0.6;
 }
 
 /* Tamaño ~constante en pantalla vía dimensiones en flujo (sin scale en el handle).
-   scale() rompía el cálculo de posiciones de aristas en React Flow (cables invisibles / mal alineados). */
+   scale() rompía el cálculo de posiciones de aristas en React Flow (cables invisibles / mal alineados).
+   Con zoom >= --foldder-handle-zoom-floor: divisor = zoom (tamaño visual estable).
+   Con zoom menor: divisor = suelo → tamaño en pantalla ∝ zoom (como el nodo). */
 .react-flow__handle {
-  width: calc(17px / var(--foldder-viewport-zoom, 1)) !important;
-  height: calc(17px / var(--foldder-viewport-zoom, 1)) !important;
+  width: calc(17px / max(var(--foldder-viewport-zoom, 1), var(--foldder-handle-zoom-floor, 0.6))) !important;
+  height: calc(17px / max(var(--foldder-viewport-zoom, 1), var(--foldder-handle-zoom-floor, 0.6))) !important;
   border-radius: 50% !important;
   background: transparent !important;
-  border-width: calc(3px / var(--foldder-viewport-zoom, 1)) !important;
+  border-width: calc(3px / max(var(--foldder-viewport-zoom, 1), var(--foldder-handle-zoom-floor, 0.6))) !important;
   transform-origin: center center;
   transition: box-shadow 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275), border-color 0.2s;
   pointer-events: all;

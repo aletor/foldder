@@ -1957,7 +1957,7 @@ export const MediaInputNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const mediaFitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isUploading = isUploadingLocal || nodeData.loading;
 
-  /** Tras cargar imagen/vídeo el nodo cambia de alto (p. ej. a aspect-video): encuadrar; duración alineada con `fitAnim` en page. */
+  /** Tras cargar imagen/vídeo el nodo cambia de alto (p. ej. a aspect-video): encuadrar; duración alineada con `fitAnim` (nominal/2) en page. */
   const scheduleFitViewportToThisNode = useCallback(() => {
     if (mediaFitTimerRef.current) clearTimeout(mediaFitTimerRef.current);
     mediaFitTimerRef.current = setTimeout(() => {
@@ -1965,7 +1965,7 @@ export const MediaInputNode = memo(({ id, data, selected }: NodeProps<any>) => {
       void fitView({
         nodes: [{ id }] as Node[],
         padding: 0.8,
-        duration: Math.max(40, Math.round(650 / 4)),
+        duration: Math.max(40, Math.round(650 / 2)),
         interpolate: 'smooth',
         ...FOLDDER_FIT_VIEW_EASE,
       });

@@ -211,6 +211,52 @@ const CANVAS_BACKGROUNDS: CanvasBackgroundOption[] = [
 const FINAL_NODE_ID = 'final_output_permanent';
 
 /**
+ * Por defecto XY Flow usa `noPanClassName="nopan"`: si el wheel va a un descendiente de `.nopan`,
+ * el filtro rechaza el evento y no hay pan con trackpad. Varios nodos llevan `nopan` en zonas amplias.
+ * Usamos una clase que no existe en el DOM: el pan con dos dedos llega al lienzo; `nowheel` en inputs no cambia.
+ */
+const XYFLOW_NO_PAN_WHEEL_GUARD_CLASS = 'foldder-xyflow-nopan-guard-disabled';
+
+/** Alineado con @xyflow/system (wheelDelta en createPanOnScrollHandler). */
+function foldderIsMacOs(): boolean {
+  return typeof navigator !== 'undefined' && /Mac|iPhone|iPod|iPad/i.test(navigator.platform);
+}
+
+/**
+ * Distingue rueda física vs trackpad (no hay API estándar).
+ * - Línea/página → casi siempre ratón (zoom).
+ * - Píxeles, delta grande en un eje → rueda rápida (zoom).
+ * - Píxeles, deltas pequeños y eventos muy seguidos (~60 Hz) → scroll suave del trackpad (pan).
+ * - Píxeles, deltas pequeños y ticks separados → rueda lenta (zoom); el umbral fijo ~40 fallaba aquí.
+ *
+ * @param dtFromPreviousMs tiempo desde el último wheel en el lienzo (∞ si no hay anterior).
+ */
+function foldderWheelLooksLikeMouse(e: WheelEvent, dtFromPreviousMs: number): boolean {
+  if (e.deltaMode === WheelEvent.DOM_DELTA_LINE || e.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+    return true;
+  }
+  const ax = Math.abs(e.deltaX);
+  const ay = Math.abs(e.deltaY);
+
+  if (ax >= 4 && ay >= 4) return false;
+
+  if (ax >= 6 && ay < 4) return false;
+
+  if (ax < 3 && ay >= 40) return true;
+  if (ay < 3 && ax >= 40) return true;
+
+  const smallDeltas = ax < 36 && ay < 36 && Math.max(ax, ay) <= 12;
+  const trackpadBurst =
+    Number.isFinite(dtFromPreviousMs) &&
+    dtFromPreviousMs > 0 &&
+    dtFromPreviousMs < 42 &&
+    smallDeltas;
+  if (trackpadBurst) return false;
+
+  return true;
+}
+
+/**
  * Margen relativo para `fitView` (@xyflow: default 0.1). Valores altos añaden mucho aire y el grafo se ve pequeño;
  * 1.2 era demasiado agresivo.
  */
@@ -222,9 +268,9 @@ const FIT_VIEW_PADDING_NODE_FOCUS = 0.8;
 /** Modo cartas: margen al encuadrar el nodo activo. */
 const FIT_VIEW_PADDING_CARDS = 0.35;
 
-/** Duración efectiva de encuadres `fitView` / `fitViewToNodeIds` (≈4× más rápido que el valor nominal, mín. 40 ms). */
+/** Duración efectiva de encuadres `fitView` / `fitViewToNodeIds` (nominal ÷ 2; antes ÷ 4, demasiado rápido). Mín. 40 ms. */
 function fitAnim(ms: number): number {
-  return Math.max(40, Math.round(ms / 4));
+  return Math.max(40, Math.round(ms / 2));
 }
 
 /** Ancho/alto efectivos para layout (evita solapes si solo usamos una cuadrícula fija) */
@@ -1617,11 +1663,11 @@ const SpacesContent = () => {
     return () => window.removeEventListener('mousedown', onMouseDown, { capture: true });
   }, []);
 
-  // ── Allow canvas zoom from anywhere (including over inputs / textareas) ──
-  // Problem: ReactFlow's zoom listener is on .react-flow__pane, which is a
-  // DOM SIBLING of .react-flow__nodes — events from inside nodes don't bubble
-  // to it. So we must manually call setViewport when wheel fires over inputs.
+  // ── Wheel en el lienzo: XY Flow no ve eventos que salen de nodos; además hacemos
+  // ratón (zoom) vs trackpad (pan) con heurística, interceptando en capture antes del core.
   const viewportRef = useRef({ zoom: 0.7, x: -559, y: 134 });
+  /** Para distinguir ráfaga tipo trackpad vs ticks discretos de rueda (ms entre wheels en el lienzo). */
+  const lastFlowWheelTsRef = useRef(0);
 
   const setViewportZoomCssVar = useCallback((zoom: number) => {
     const z = Math.max(0.05, Math.min(4, Number.isFinite(zoom) ? zoom : 1));
@@ -1633,44 +1679,98 @@ const SpacesContent = () => {
   }, [setViewportZoomCssVar]);
 
   useEffect(() => {
-    const onWheel = (e: WheelEvent) => {
-      if (canvasViewModeRef.current === 'cards') return;
+    const PAN_ON_SCROLL_SPEED = 1;
 
-      const target = e.target as HTMLElement;
-      const tag = target.tagName;
-      const isInput =
-        (tag === 'INPUT' && (target as HTMLInputElement).type !== 'submit') ||
-        tag === 'TEXTAREA';
-      if (!isInput) return;
-
-      // Only act when inside the ReactFlow canvas (not the sidebar etc.)
-      const rfRoot = document.querySelector('.react-flow__renderer');
-      if (!rfRoot || !rfRoot.contains(target)) return;
-
-      e.preventDefault(); // stop scroll / value-change
-
-      // Manually compute new zoom centered on the mouse position
-      const SENSITIVITY = 0.001;
-      const vp = viewportRef.current;
+    /**
+     * El transform del store usa el mismo espacio que `screenToFlowPosition`: coords relativas al
+     * `domNode` (`.react-flow`), no a `.react-flow__renderer`. Si mezclamos rectángulos, el zoom
+     * al cursor introduce paneo espurio (muy visible en Y).
+     */
+    const applyWheelZoomMouse = (e: WheelEvent, flowDom: Element) => {
+      const vp = getViewport();
       const rawScale = Math.pow(0.998, e.deltaY);
-      const newZoom  = Math.min(4, Math.max(0.1, vp.zoom * rawScale));
-      if (Math.abs(newZoom - vp.zoom) < 0.0001) return;
-
-      const rect = rfRoot.getBoundingClientRect();
-      const mx   = e.clientX - rect.left;
-      const my   = e.clientY - rect.top;
+      const newZoom = Math.min(4, Math.max(0.05, vp.zoom * rawScale));
+      if (Math.abs(newZoom - vp.zoom) < 1e-6) return;
+      const rect = flowDom.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
       const ratio = newZoom / vp.zoom;
-      const newX  = mx - ratio * (mx - vp.x);
-      const newY  = my - ratio * (my - vp.y);
-
+      const newX = mx - ratio * (mx - vp.x);
+      const newY = my - ratio * (my - vp.y);
       const next = { x: newX, y: newY, zoom: newZoom };
       viewportRef.current = next;
       setViewport(next);
     };
-    window.addEventListener('wheel', onWheel, { capture: true, passive: false });
-    return () => window.removeEventListener('wheel', onWheel, { capture: true });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [setViewport, setViewportZoomCssVar]);
+
+    const applyWheelPanTrackpad = (e: WheelEvent) => {
+      const vp = getViewport();
+      const deltaNormalize = e.deltaMode === 1 ? 20 : 1;
+      let deltaX = e.deltaX * deltaNormalize;
+      let deltaY = e.deltaY * deltaNormalize;
+      if (!foldderIsMacOs() && e.shiftKey) {
+        deltaX = e.deltaY * deltaNormalize;
+        deltaY = 0;
+      }
+      const newX = vp.x - (deltaX / vp.zoom) * PAN_ON_SCROLL_SPEED;
+      const newY = vp.y - (deltaY / vp.zoom) * PAN_ON_SCROLL_SPEED;
+      const next = { x: newX, y: newY, zoom: vp.zoom };
+      viewportRef.current = next;
+      setViewport(next);
+    };
+
+    const applyPinchZoom = (e: WheelEvent, flowDom: Element) => {
+      const vp = getViewport();
+      const factor = foldderIsMacOs() ? 10 : 1;
+      const pinchDelta =
+        -e.deltaY * (e.deltaMode === 1 ? 0.05 : e.deltaMode ? 1 : 0.002) * factor;
+      const newZoom = Math.min(4, Math.max(0.05, vp.zoom * 2 ** pinchDelta));
+      if (Math.abs(newZoom - vp.zoom) < 1e-6) return;
+      const rect = flowDom.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      const ratio = newZoom / vp.zoom;
+      const newX = mx - ratio * (mx - vp.x);
+      const newY = my - ratio * (my - vp.y);
+      const next = { x: newX, y: newY, zoom: newZoom };
+      viewportRef.current = next;
+      setViewport(next);
+    };
+
+    const onWheelCapture = (e: WheelEvent) => {
+      if (canvasViewModeRef.current === 'cards') return;
+
+      const flowDom = document.querySelector('.react-flow');
+      if (!flowDom || !(e.target instanceof Element) || !flowDom.contains(e.target)) return;
+
+      const prevTs = lastFlowWheelTsRef.current;
+      const dtFromPreviousMs = prevTs > 0 ? e.timeStamp - prevTs : Number.POSITIVE_INFINITY;
+      lastFlowWheelTsRef.current = e.timeStamp;
+
+      if (e.ctrlKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        applyPinchZoom(e, flowDom);
+        return;
+      }
+
+      if (foldderWheelLooksLikeMouse(e, dtFromPreviousMs)) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        applyWheelZoomMouse(e, flowDom);
+        return;
+      }
+
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      applyWheelPanTrackpad(e);
+    };
+
+    window.addEventListener('wheel', onWheelCapture, { capture: true, passive: false });
+    return () => window.removeEventListener('wheel', onWheelCapture, { capture: true });
+  }, [getViewport, setViewport, setViewportZoomCssVar]);
 
   // Ref + CSS var + HUD de zoom: cualquier cambio de viewport (rueda, pinch, fitView, setViewport…)
   const onViewportChangeFromFlow = useCallback(
@@ -3375,6 +3475,7 @@ const SpacesContent = () => {
             />
           </div>
         )}
+        {/* Wheel: listener global (ratón→zoom, trackpad→pan); panOnScroll false para no solapar con XY Flow. noPanClassName placeholder evita .nopan bloqueando wheel en nodos */}
         <ReactFlow
           onInit={onCanvasInit}
           nodes={flowNodes}
@@ -3423,9 +3524,11 @@ const SpacesContent = () => {
           selectionOnDrag={!spaceHeld && canvasViewMode === 'free'}
           selectionMode={SelectionMode.Partial}
           panOnScroll={false}
-          zoomOnScroll={canvasViewMode !== 'cards'}
+          panOnScrollSpeed={1}
+          zoomOnScroll={false}
           zoomOnPinch={canvasViewMode !== 'cards'}
-          zoomActivationKeyCode={canvasViewMode === 'cards' ? null : undefined}
+          zoomActivationKeyCode={null}
+          noPanClassName={XYFLOW_NO_PAN_WHEEL_GUARD_CLASS}
           zoomOnDoubleClick={false}
           nodesDraggable={canvasViewMode === 'free'}
           nodesConnectable={canvasViewMode === 'free'}
