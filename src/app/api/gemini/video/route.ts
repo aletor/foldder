@@ -1,6 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
+import { recordApiUsage } from "@/lib/api-usage";
 import { uploadToS3, getPresignedUrl } from "@/lib/s3-utils";
 import crypto from "crypto";
+
+/** Vercel / hosting: permite polling largo (Veo suele tardar minutos). Ajusta según tu plan. */
+export const maxDuration = 300;
+
+/** Extrae el URI del vídeo en respuestas de operación larga (Veo 3.x). */
+function extractVeoVideoUri(pollData: Record<string, unknown>): string {
+  const response = pollData.response as Record<string, unknown> | undefined;
+  const gen = response?.generateVideoResponse as Record<string, unknown> | undefined;
+  if (!gen) return "";
+  const samples = gen.generatedSamples as Array<{ video?: { uri?: string } }> | undefined;
+  const u0 = samples?.[0]?.video?.uri;
+  if (typeof u0 === "string" && u0.length > 0) return u0;
+  const alt = gen.video as { uri?: string } | undefined;
+  if (typeof alt?.uri === "string" && alt.uri.length > 0) return alt.uri;
+  return "";
+}
 
 export async function POST(req: NextRequest) {
   console.log("[Gemini Video] Request received");
@@ -98,32 +115,54 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: data.error?.message || "Gemini Video API Error" }, { status: response.status });
     }
 
-    const operationName = data.name;
+    const operationName = data.name as string;
+    if (!operationName || typeof operationName !== "string") {
+      console.error("[Gemini Video] Missing operation name:", data);
+      return NextResponse.json({ error: "No operation name from Gemini" }, { status: 502 });
+    }
     console.log(`[Gemini Video] Operation started: ${operationName}`);
 
-    // Polling Mechanism
-    let isDone = false;
-    let attempts = 0;
-    const maxAttempts = 30; // 30 * 10s = 300s (5 mins)
+    const pollPath = operationName.startsWith("http")
+      ? `${operationName}${operationName.includes("?") ? "&" : "?"}key=${encodeURIComponent(apiKey)}`
+      : `${BASE_URL}/${operationName}?key=${encodeURIComponent(apiKey)}`;
+
     let videoUri = "";
+    const maxAttempts = 36; // 36 × 8s ≈ 288s + trabajo previo < maxDuration 300s
+    const pollIntervalMs = 8000;
 
-    while (!isDone && attempts < maxAttempts) {
-      attempts++;
-      console.log(`[Gemini Video] Polling attempt ${attempts}/${maxAttempts}...`);
-      await new Promise(r => setTimeout(r, 10000)); // Wait 10s
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      console.log(`[Gemini Video] Polling attempt ${attempt}/${maxAttempts}...`);
+      await new Promise((r) => setTimeout(r, pollIntervalMs));
 
-      const pollRes = await fetch(`${BASE_URL}/${operationName}?key=${apiKey}`);
-      const pollData = await pollRes.json();
+      const pollRes = await fetch(pollPath);
+      const pollData = (await pollRes.json().catch(() => ({}))) as Record<string, unknown>;
 
-      if (pollData.done) {
-        isDone = true;
-        videoUri = pollData.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri;
-        console.log(`[Gemini Video] Operation complete. Video URI: ${videoUri}`);
+      if (!pollRes.ok) {
+        console.warn("[Gemini Video] Poll HTTP error:", pollRes.status, pollData);
+        continue;
+      }
+
+      if (pollData.done === true) {
+        if (pollData.error) {
+          const errObj = pollData.error as { message?: string; code?: number };
+          const msg = errObj?.message || JSON.stringify(pollData.error);
+          console.error("[Gemini Video] Operation error:", pollData.error);
+          throw new Error(`Veo: ${msg}`);
+        }
+        videoUri = extractVeoVideoUri(pollData);
+        console.log(`[Gemini Video] Operation complete. Video URI: ${videoUri ? "ok" : "(empty)"}`);
+        if (videoUri) break;
+        console.error("[Gemini Video] done=true but no URI. Snapshot:", JSON.stringify(pollData).slice(0, 1200));
+        throw new Error(
+          "Veo terminó pero no devolvió URI de vídeo. Revisa modelo/cuota o la respuesta en logs."
+        );
       }
     }
 
     if (!videoUri) {
-      throw new Error("Video generation timed out or failed to return URI");
+      throw new Error(
+        "Tiempo de espera agotado: el vídeo no estuvo listo antes del límite del servidor. Prueba de nuevo o usa un plan con más tiempo de ejecución."
+      );
     }
 
     // Download and upload to S3
@@ -137,6 +176,19 @@ export async function POST(req: NextRequest) {
     const filename = `veo_${crypto.randomUUID()}.mp4`;
     const key = await uploadToS3(filename, videoBuffer, "video/mp4");
     const url = await getPresignedUrl(key);
+
+    const dur = typeof durationSeconds === "number" && durationSeconds > 0 ? durationSeconds : 8;
+    await recordApiUsage({
+      provider: "gemini",
+      serviceId: "gemini-veo",
+      route: "/api/gemini/video",
+      model: "veo-3.1-generate-preview",
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      costUsd: Math.round(dur * 0.05 * 1_000_000) / 1_000_000,
+      note: "Veo vídeo (coste orientativo por segundo)",
+    });
 
     return NextResponse.json({ 
       output: url,

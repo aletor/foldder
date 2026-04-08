@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { uploadToS3, getPresignedUrl } from "@/lib/s3-utils";
+import {
+  estimateGeminiImageGenerationUsd,
+  parseGeminiUsageMetadata,
+  recordApiUsage,
+} from "@/lib/api-usage";
 import crypto from "crypto";
 
 // ── Model IDs ──────────────────────────────────────────────────────────────────
@@ -174,6 +179,31 @@ export async function POST(req: NextRequest) {
     const filename = `gemini_${modelKey}_${crypto.randomUUID()}.png`;
     const key = await uploadToS3(filename, imageBuffer, "image/png");
     const url = await getPresignedUrl(key);
+
+    const usage = parseGeminiUsageMetadata(data);
+    if (usage) {
+      await recordApiUsage({
+        provider: "gemini",
+        serviceId: "gemini-nano",
+        route: "/api/gemini/generate",
+        model: modelId,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        totalTokens: usage.totalTokens,
+      });
+    } else {
+      await recordApiUsage({
+        provider: "gemini",
+        serviceId: "gemini-nano",
+        route: "/api/gemini/generate",
+        model: modelId,
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        costUsd: estimateGeminiImageGenerationUsd(String(modelKey)),
+        note: "Imagen sin usageMetadata en respuesta (coste estimado por generación)",
+      });
+    }
 
     return NextResponse.json({
       output: url,

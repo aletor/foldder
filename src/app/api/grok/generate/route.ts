@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { recordApiUsage } from '@/lib/api-usage';
 import fs from 'fs';
 import path from 'path';
 
@@ -54,6 +55,19 @@ RESPONSE: ${JSON.stringify(data, null, 2)}
     if (!response.ok) {
       throw new Error(data.error?.message || data.error || "xAI API error");
     }
+
+    const d = typeof duration === "number" && duration > 0 ? duration : 5;
+    await recordApiUsage({
+      provider: "grok",
+      serviceId: "grok-video",
+      route: "/api/grok/generate",
+      model: "grok-imagine-video",
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      costUsd: Math.round(d * 0.04 * 1_000_000) / 1_000_000,
+      note: "Vídeo Grok (coste orientativo por segundo)",
+    });
 
     // Official response returns a request_id
     return NextResponse.json({ taskId: data.id || data.request_id });

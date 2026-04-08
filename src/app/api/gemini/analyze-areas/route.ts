@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseGeminiUsageMetadata, recordApiUsage } from "@/lib/api-usage";
 import sharp from "sharp";
 
 // Cheapest Gemini model with vision capability (text output only)
@@ -225,6 +226,31 @@ Devuelve SOLO el prompt, sin texto adicional.`;
 
     const text = data.candidates?.[0]?.content?.parts?.find((p: any) => p.text)?.text || "";
     if (!text) return NextResponse.json({ error: "No text response from AI" }, { status: 500 });
+
+    const usage = parseGeminiUsageMetadata(data);
+    if (usage) {
+      await recordApiUsage({
+        provider: "gemini",
+        serviceId: "gemini-analyze",
+        route: "/api/gemini/analyze-areas",
+        model: VISION_MODEL,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        totalTokens: usage.totalTokens,
+      });
+    } else {
+      await recordApiUsage({
+        provider: "gemini",
+        serviceId: "gemini-analyze",
+        route: "/api/gemini/analyze-areas",
+        model: VISION_MODEL,
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        costUsd: 0.02,
+        note: "analyze-areas sin usageMetadata (estimado)",
+      });
+    }
 
     return NextResponse.json({
       prompt: text.trim(),

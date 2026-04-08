@@ -50,7 +50,10 @@ import {
   EyeOff, Camera} from 'lucide-react';
 import './spaces.css';
 import { FOLDDER_FIT_VIEW_EASE } from '@/lib/fit-view-ease';
+import { runAiJobWithNotification } from '@/lib/ai-job-notifications';
+import { isFoldderMediaPreviewAutoFitSuppressed } from '@/lib/media-preview-fit-suppress';
 import { NODE_REGISTRY } from './nodeRegistry';
+import { DEFAULT_EDGE_COLOR, HANDLE_COLORS } from './handle-type-colors';
 import {
   NodeIcon,
   resolveFoldderNodeState,
@@ -188,27 +191,6 @@ const NodeLabel = ({ id, label, defaultLabel }: { id: string, label?: string, de
     </div>
   );
 };
-
-// ── Handle type → stroke color (mirrors spaces.css .handle-* classes) ──────
-const HANDLE_COLORS: Record<string, string> = {
-  prompt:   '#3b82f6',  // blue
-  video:    '#f43f5e',  // rose-red
-  image:    '#ec4899',  // pink
-  image2:   '#ec4899',
-  image3:   '#ec4899',
-  image4:   '#ec4899',
-  sound:    '#a855f7',  // purple
-  mask:     '#06b6d4',  // cyan
-  pdf:      '#f97316',  // orange
-  txt:      '#f59e0b',  // amber
-  url:      '#10b981',  // emerald
-  rose:     '#f43f5e',
-  emerald:  '#10b981',
-};
-const DEFAULT_EDGE_COLOR = '#94a3b8'; // neutral slate for unknown handles
-
-
-
 
 export const ButtonEdge = ({
   id,
@@ -396,37 +378,44 @@ export const UrlImageNode = memo(({ id, data, selected }: NodeProps<any>) => {
       const triggerSearch = async () => {
         setLoading(true);
         try {
-          const res = await fetch('/api/spaces/search', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query: nodeData.label, limit: 10 })
+          const ok = await runAiJobWithNotification({ nodeId: id, label: 'Búsqueda de imágenes' }, async () => {
+            const res = await fetch('/api/spaces/search', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ query: nodeData.label, limit: 10 }),
+            });
+            const json = await res.json();
+            if (json.urls && json.urls.length > 0) {
+              setNodes((nds: any) => nds.map((n: any) => n.id === id ? {
+                ...n,
+                data: {
+                  ...n.data,
+                  urls: json.urls,
+                  value: json.urls[0],
+                  selectedIndex: 0,
+                  pendingSearch: false,
+                  type: 'image',
+                  source: 'url',
+                },
+              } : n));
+            } else {
+              setNodes((nds: any) => nds.map((n: any) => n.id === id ? {
+                ...n,
+                data: { ...n.data, pendingSearch: false },
+              } : n));
+            }
           });
-          const json = await res.json();
-          if (json.urls && json.urls.length > 0) {
-            setNodes((nds: any) => nds.map((n: any) => n.id === id ? { 
-              ...n, 
-              data: { 
-                ...n.data, 
-                urls: json.urls, 
-                value: json.urls[0], 
-                selectedIndex: 0, 
-                pendingSearch: false,
-                type: 'image',
-                source: 'url'
-              } 
-            } : n));
-          } else {
-            // No results, clear flag
-            setNodes((nds: any) => nds.map((n: any) => n.id === id ? { 
-              ...n, 
-              data: { ...n.data, pendingSearch: false } 
+          if (!ok) {
+            setNodes((nds: any) => nds.map((n: any) => n.id === id ? {
+              ...n,
+              data: { ...n.data, pendingSearch: false },
             } : n));
           }
         } catch (err) {
-          console.error("Search failed:", err);
-          setNodes((nds: any) => nds.map((n: any) => n.id === id ? { 
-            ...n, 
-            data: { ...n.data, pendingSearch: false } 
+          console.error('Search failed:', err);
+          setNodes((nds: any) => nds.map((n: any) => n.id === id ? {
+            ...n,
+            data: { ...n.data, pendingSearch: false },
           } : n));
         } finally {
           setLoading(false);
@@ -2039,8 +2028,14 @@ export const MediaInputNode = memo(({ id, data, selected }: NodeProps<any>) => {
           duration: (type === 'video' || type === 'audio') ? '–' : '-',
           codec: file.type.split('/')[1]?.toUpperCase() || 'UNKNOWN'
         };
-        updateNodeData({ value: json.url, type, source: 'upload', metadata: mockMetadata });
-        if (type === 'image' || type === 'video') scheduleFitViewportToThisNode();
+        updateNodeData({
+          value: json.url,
+          type,
+          source: 'upload',
+          metadata: mockMetadata,
+          ...(json.s3Key ? { s3Key: json.s3Key } : {}),
+        });
+        if (type === 'image' || type === 'video') scheduleFitViewportToThisNode({ force: true });
       }
     } catch (err) { console.error("Upload error:", err); } 
     finally { setIsUploadingLocal(false); }
@@ -2428,17 +2423,26 @@ export const EnhancerNode = memo(({ id, data, selected }: NodeProps<any>) => {
     if (!input) return alert('Connect at least one prompt!');
     setLoading(true);
     try {
-      const res = await fetch('/api/openai/enhance', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: input }),
+      await runAiJobWithNotification({ nodeId: id, label: 'Prompt Enhancer' }, async () => {
+        const res = await fetch('/api/openai/enhance', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt: input }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${res.status}`);
+        }
+        const json = await res.json();
+        setNodes((nds: any) =>
+          nds.map((n: any) => n.id === id ? { ...n, data: { ...n.data, value: json.enhanced } } : n)
+        );
       });
-      const json = await res.json();
-      setNodes((nds: any) =>
-        nds.map((n: any) => n.id === id ? { ...n, data: { ...n.data, value: json.enhanced } } : n)
-      );
-    } catch (err) { console.error(err); }
-    finally { setLoading(false); }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -2535,33 +2539,52 @@ export const GrokNode = memo(({ id, data, selected }: NodeProps<any>) => {
     const video = nodes.find(n => n.id === edges.find(e => e.target === id && e.targetHandle === 'video')?.source)?.data.value;
     const prompt = nodes.find(n => n.id === edges.find(e => e.target === id && e.targetHandle === 'prompt')?.source)?.data.value;
     if (!prompt) return alert("Need prompt!");
-    
+
     setStatus('running');
-    try {
+    const ok = await runAiJobWithNotification({ nodeId: id, label: 'Grok Imagine' }, async () => {
       const res = await fetch('/api/grok/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          promptText: prompt, 
-          videoUrl: video, 
+        body: JSON.stringify({
+          promptText: prompt,
+          videoUrl: video,
           duration: nodeData.duration || 5,
           resolution: nodeData.resolution || '720p',
           aspect_ratio: nodeData.aspect_ratio || '16:9'
         })
       });
       const json = await res.json();
-      if (json.taskId) {
+      if (!json.taskId) throw new Error('No task from Grok');
+
+      await new Promise<void>((resolve, reject) => {
+        let polls = 0;
         const check = setInterval(async () => {
-          const sRes = await fetch(`/api/grok/status/${json.taskId}`);
-          const sJson = await sRes.json();
-          if (['SUCCEEDED', 'DONE'].includes(sJson.status?.toUpperCase())) {
-            setResult(sJson.output?.[0]);
-            setStatus('success');
+          polls += 1;
+          if (polls > 400) {
             clearInterval(check);
+            reject(new Error('Tiempo de espera agotado (Grok)'));
+            return;
+          }
+          try {
+            const sRes = await fetch(`/api/grok/status/${json.taskId}`);
+            const sJson = await sRes.json();
+            const st = (sJson.status || '').toUpperCase();
+            if (['SUCCEEDED', 'DONE'].includes(st)) {
+              clearInterval(check);
+              setResult(sJson.output?.[0]);
+              resolve();
+            } else if (['FAILED', 'EXPIRED'].includes(st) || st === 'ERROR') {
+              clearInterval(check);
+              reject(new Error(sJson.error || 'Grok failed'));
+            }
+          } catch (e) {
+            clearInterval(check);
+            reject(e instanceof Error ? e : new Error(String(e)));
           }
         }, 3000);
-      }
-    } catch (e) { setStatus('error'); }
+      });
+    });
+    setStatus(ok ? 'success' : 'error');
   };
 
   return (
@@ -2854,7 +2877,7 @@ interface NanoBananaStudioProps {
   thinking: boolean;
   prompt: string;
   onClose: () => void;
-  onGenerated: (dataUrl: string) => void;
+  onGenerated: (dataUrl: string, s3Key?: string) => void;
   onResolutionChange?: (resolution: '1k' | '2k' | '4k') => void;
 }
 
@@ -3075,48 +3098,48 @@ const NanoBananaStudio = memo(({
       setProgress(p => { const n = p + (isPro ? 0.6 : 1.2); return n > 92 ? 92 : n; });
     }, 400);
 
-    // Select which image to send
     const imageToSend = (generatedOnce && reSendGenerated && currentImage)
-      ? currentImage  // send last generated
-      : initialImage; // send connected image
+      ? currentImage
+      : initialImage;
 
-    // Collect change masks as additional context (merge all paint layers into prompt addition)
     const changeDescriptions = changes.map(c => c.description).filter(Boolean).join('. ');
     const fullPrompt = changeDescriptions
       ? `${prompt}. INSTRUCCIONES DE CAMBIO: ${changeDescriptions}`
       : prompt;
 
-    // Collect paint masks as reference images
     const maskImages = changes.map(c => c.paintData).filter(Boolean) as string[];
     const refImages = [...(imageToSend ? [imageToSend] : []), ...maskImages];
 
     try {
-      const res = await fetch('/api/gemini/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: fullPrompt,
-          images: refImages,
-          aspect_ratio: aspectRatio,
-          resolution: isFlash25 ? '1k' : studioResolution,
-          model: studioModelKey,
-          thinking: thinking && isPro,
-        }),
+      const ok = await runAiJobWithNotification({ nodeId, label: 'Nano Banana Studio' }, async () => {
+        const res = await fetch('/api/gemini/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt: fullPrompt,
+            images: refImages,
+            aspect_ratio: aspectRatio,
+            resolution: isFlash25 ? '1k' : studioResolution,
+            model: studioModelKey,
+            thinking: thinking && isPro,
+          }),
+        });
+        if (!res.ok) { const e = await res.json().catch(()=>({})); throw new Error(e.error || `HTTP ${res.status}`); }
+        const json = await res.json();
+        if (json.output) {
+          setCurrentImage(json.output);
+          setGeneratedOnce(true);
+          setReSendGenerated(true);
+          setGenStatus('success');
+          onGenerated(json.output, typeof json.key === 'string' ? json.key : undefined);
+        } else throw new Error('No output');
       });
       clearInterval(interval);
-      setProgress(100);
-      if (!res.ok) { const e = await res.json().catch(()=>({})); throw new Error(e.error || `HTTP ${res.status}`); }
-      const json = await res.json();
-      if (json.output) {
-        setCurrentImage(json.output);
-        setGeneratedOnce(true);
-        setReSendGenerated(true); // auto-enable so toggle is consistent
-        setGenStatus('success');
-        onGenerated(json.output);
-      } else throw new Error('No output');
+      if (ok) setProgress(100);
+      else setGenStatus('error');
     } catch (e: any) {
       clearInterval(interval);
-      alert('Error: ' + e.message);
+      console.error('[NanoBananaStudio] onGenerate:', e);
       setGenStatus('error');
     } finally {
       setTimeout(() => setProgress(0), 1000);
@@ -3280,12 +3303,12 @@ const NanoBananaStudio = memo(({
       return;
     }
 
-    // ── Single AI call: Gemini Flash sees base image + MARKED base image + descriptions ──
-    // The "marked image" = base + paint strokes overlaid directly → AI sees exactly which pixels
-    setAnalyzingCall(true);
     let fullPrompt = '';
     let markedRef2DataUrl: string | null = null;
-    try {
+
+    await runAiJobWithNotification({ nodeId, label: 'Nano Banana · Áreas' }, async () => {
+      setAnalyzingCall(true);
+      try {
       const validChanges = changes.filter(c => (c.isGlobal ? c.description.trim() : (c.paintData && c.description.trim())));
 
       // Build "marked base image" = base image with each paint stroke overlaid in its assigned color
@@ -3400,17 +3423,18 @@ const NanoBananaStudio = memo(({
     } catch (e: any) {
       console.warn('[analyze-areas] AI call failed, using fallback:', e.message);
       // Fallback: basic prompt without object identification
-      const validChanges = changes.filter(c => c.description.trim());
+      const validChangesFb = changes.filter(c => c.description.trim());
       fullPrompt = [
         'REFERENCIA 1: imagen base. Mantén todo lo que no se indica cambiar.',
         'REFERENCIA 2: mapa de colores con áreas de cambio.',
         '',
-        ...validChanges.filter(c => !c.isGlobal).map(c => `En el área ${c.assignedColor.name} de la referencia 2: ${c.description}`),
-        ...validChanges.filter(c => c.isGlobal).map(c => `CAMBIO GLOBAL: ${c.description}`),
+        ...validChangesFb.filter(c => !c.isGlobal).map(c => `En el área ${c.assignedColor.name} de la referencia 2: ${c.description}`),
+        ...validChangesFb.filter(c => c.isGlobal).map(c => `CAMBIO GLOBAL: ${c.description}`),
       ].join('\n');
     } finally {
       setAnalyzingCall(false);
     }
+    });
 
     // Build reference grid from per-change images
     const referenceGridUrl = await buildReferenceGrid(validChanges);
@@ -3428,7 +3452,6 @@ const NanoBananaStudio = memo(({
       setProgress(p => { const n = p + (isPro ? 0.6 : 1.2); return n > 92 ? 92 : n; });
     }, 400);
 
-    // ref1 = current base image, ref2 = marked image (base+strokes) if available, ref3 = reference grid
     const ref2 = markedRef2 || colorMapUrl;
     const refImages = [
       ...(currentImage ? [currentImage] : []),
@@ -3437,32 +3460,35 @@ const NanoBananaStudio = memo(({
     ];
 
     try {
-      const res = await fetch('/api/gemini/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: customPrompt,
-          images: refImages,
-          aspect_ratio: aspectRatio,
-          resolution: isFlash25 ? '1k' : studioResolution,
-          model: studioModelKey,
-          thinking: thinking && isPro,
-        }),
+      const ok = await runAiJobWithNotification({ nodeId, label: 'Nano Banana Studio' }, async () => {
+        const res = await fetch('/api/gemini/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt: customPrompt,
+            images: refImages,
+            aspect_ratio: aspectRatio,
+            resolution: isFlash25 ? '1k' : studioResolution,
+            model: studioModelKey,
+            thinking: thinking && isPro,
+          }),
+        });
+        if (!res.ok) { const e = await res.json().catch(()=>({})); throw new Error(e.error || `HTTP ${res.status}`); }
+        const json = await res.json();
+        if (json.output) {
+          setCurrentImage(json.output);
+          setGeneratedOnce(true);
+          setReSendGenerated(true);
+          setGenStatus('success');
+          onGenerated(json.output, typeof json.key === 'string' ? json.key : undefined);
+        } else throw new Error('No output');
       });
       clearInterval(interval);
-      setProgress(100);
-      if (!res.ok) { const e = await res.json().catch(()=>({})); throw new Error(e.error || `HTTP ${res.status}`); }
-      const json = await res.json();
-      if (json.output) {
-        setCurrentImage(json.output);
-        setGeneratedOnce(true);
-        setReSendGenerated(true); // auto-enable resend after generation
-        setGenStatus('success');
-        onGenerated(json.output);
-      } else throw new Error('No output');
+      if (ok) setProgress(100);
+      else setGenStatus('error');
     } catch (e: any) {
       clearInterval(interval);
-      alert('Error: ' + e.message);
+      console.error('[NanoBananaStudio] onGenerateFromCall:', e);
       setGenStatus('error');
     } finally {
       setTimeout(() => setProgress(0), 1000);
@@ -4183,41 +4209,44 @@ export const NanoBananaNode = memo(({ id, data, selected }: NodeProps<any>) => {
     }, 400);
 
     try {
-      const res = await fetch('/api/gemini/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt,
-          images: refImages,
-          aspect_ratio: nodeData.aspect_ratio || '16:9',
-          resolution: isFlash25 ? '1k' : normalizeNanoBananaResolution(nodeData.resolution),
-          model: selectedModel,
-          thinking: nodeData.thinking && isPro,
-        }),
-      });
+      const ok = await runAiJobWithNotification({ nodeId: id, label: 'Nano Banana' }, async () => {
+        const res = await fetch('/api/gemini/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt,
+            images: refImages,
+            aspect_ratio: nodeData.aspect_ratio || '16:9',
+            resolution: isFlash25 ? '1k' : normalizeNanoBananaResolution(nodeData.resolution),
+            model: selectedModel,
+            thinking: nodeData.thinking && isPro,
+          }),
+        });
 
-      clearInterval(progressInterval);
-      setProgress(100);
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${res.status}`);
+        }
 
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || `HTTP ${res.status}`);
-      }
-
-      const json = await res.json();
-      if (json.output) {
+        const json = await res.json();
+        if (!json.output) throw new Error("No output received");
         setResult(json.output);
+        setProgress(100);
         setNodes(nds => nds.map(n =>
-          n.id === id ? { ...n, data: { ...n.data, value: json.output, type: 'image' } } : n
+          n.id === id ? {
+            ...n,
+            data: {
+              ...n.data,
+              value: json.output,
+              type: 'image',
+              ...(typeof json.key === 'string' ? { s3Key: json.key } : {}),
+            },
+          } : n
         ));
-        setStatus('success');
-      } else throw new Error("No output received");
-    } catch (e: any) {
-      clearInterval(progressInterval);
-      console.error("[NanoBanana] Error:", e.message);
-      alert("Nano Banana Error:\n" + e.message);
-      setStatus('error');
+      });
+      setStatus(ok ? 'success' : 'error');
     } finally {
+      clearInterval(progressInterval);
       setTimeout(() => setProgress(0), 1000);
     }
   };
@@ -4378,10 +4407,13 @@ export const NanoBananaNode = memo(({ id, data, selected }: NodeProps<any>) => {
             thinking={!!nodeData.thinking}
             prompt={promptVal}
             onClose={() => setShowStudio(false)}
-            onGenerated={(url) => {
+            onGenerated={(url, s3Key) => {
               setResult(url);
               setNodes((nds: any) => nds.map((n: any) =>
-                n.id === id ? { ...n, data: { ...n.data, value: url, type: 'image' } } : n
+                n.id === id ? {
+                  ...n,
+                  data: { ...n.data, value: url, type: 'image', ...(s3Key ? { s3Key } : {}) },
+                } : n
               ));
             }}
             onResolutionChange={(r) => updateData('resolution', r)}
@@ -4717,8 +4749,7 @@ export const BackgroundRemoverNode = memo(({ id, data, selected }: NodeProps<any
     }
 
     setStatus('running');
-    try {
-      console.log("[BackgroundRemover] Fetching matte...");
+    const ok = await runAiJobWithNotification({ nodeId: id, label: 'Quitar fondo' }, async () => {
       const res = await fetch('/api/spaces/matte', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -4733,10 +4764,10 @@ export const BackgroundRemoverNode = memo(({ id, data, selected }: NodeProps<any
       const json = await res.json();
       if (json.error) throw new Error(json.error);
 
-      setNodes((nds: any) => nds.map((n: any) => n.id === id ? { 
-        ...n, 
-        data: { 
-          ...n.data, 
+      setNodes((nds: any) => nds.map((n: any) => n.id === id ? {
+        ...n,
+        data: {
+          ...n.data,
           rgba: json.rgba_image,
           mask: json.mask,
           bbox: json.bbox,
@@ -4745,15 +4776,10 @@ export const BackgroundRemoverNode = memo(({ id, data, selected }: NodeProps<any
           value: json.rgba_image,
           metadata: json.metadata,
           type: 'image'
-        } 
+        }
       } : n));
-      
-      setStatus('success');
-    } catch (err: any) {
-      console.error("[BackgroundRemover] Error:", err.message);
-      alert("Background Remover Error:\n" + err.message);
-      setStatus('idle');
-    }
+    });
+    setStatus(ok ? 'success' : 'idle');
   };
 
   const getPreviewImage = () => {
@@ -5361,24 +5387,22 @@ export const MediaDescriberNode = memo(({ id, data, selected }: NodeProps<any>) 
     if (!inputNode) return alert("Need media input to describe!");
 
     setStatus('running');
-    
-    try {
+
+    const ok = await runAiJobWithNotification({ nodeId: id, label: 'Gemini Describer' }, async () => {
       let finalMediaUrl = inputNode.data.value;
       let finalMediaType = inputNode.type === 'imageComposer' ? 'image' : (inputNode.data.type || 'image');
 
-      // If it's a composer and it doesn't have a flattened value yet, compose it on the fly
       if (inputNode.type === 'imageComposer' && !finalMediaUrl) {
-        // Extract layers
         const composerEdges = edges.filter(e => e.target === inputNode.id)
           .sort((a: any, b: any) => (a.targetHandle || '').localeCompare(b.targetHandle || ''));
-        
+
         const layersConfig: Record<string, any> = inputNode.data.layersConfig || {};
-        
+
         const layers = composerEdges.map(edge => {
           const node = nodes.find(n => n.id === edge.source);
           const hId = edge.targetHandle || 'layer-0';
           const config = layersConfig[hId] || { x: 0, y: 0, scale: 1 };
-          
+
           return {
             type: node?.type,
             value: (node?.data?.value || ((node?.data as any)?.urls && (node?.data as any)?.urls[(node?.data as any)?.selectedIndex || 0])) as string | undefined,
@@ -5403,10 +5427,9 @@ export const MediaDescriberNode = memo(({ id, data, selected }: NodeProps<any>) 
 
         const composeRes = await fetch('/api/spaces/compose', { method: 'POST', body: formData });
         if (!composeRes.ok) throw new Error("Failed to flatten composer image.");
-        
+
         const blob = await composeRes.blob();
-        
-        // Convert blob to base64 for the OpenAI Vision API (it accepts data URIs)
+
         finalMediaUrl = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
           reader.onloadend = () => resolve(reader.result as string);
@@ -5420,26 +5443,23 @@ export const MediaDescriberNode = memo(({ id, data, selected }: NodeProps<any>) 
       const res = await fetch('/api/spaces/describe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          url: finalMediaUrl, 
+        body: JSON.stringify({
+          url: finalMediaUrl,
           type: finalMediaType,
           metadata: inputNode.data.metadata
         })
       });
       const json = await res.json();
-      
+
       if (json.description) {
         setDescription(json.description);
         setNodes((nds: any) => nds.map((n: any) => (n.id === id ? { ...n, data: { ...n.data, value: json.description } } : n)));
-        setStatus('success');
       } else {
         throw new Error(json.error || "Failed to analyze");
       }
-    } catch (err) {
-      console.error("Describe error:", err);
-      setStatus('error');
-      alert("Error analyzing media: " + (err as Error).message);
-    }
+    });
+    setStatus(ok ? 'success' : 'error');
+    if (!ok) console.error("Describe error");
   };
 
   return (
@@ -5577,38 +5597,43 @@ export const GeminiVideoNode = memo(({ id, data, selected }: NodeProps<any>) => 
     }, 2000);
 
     try {
-      const res = await fetch('/api/gemini/video', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt,
-          firstFrame,
-          lastFrame,
-          resolution: nodeData.resolution || "1080p",
-          durationSeconds: nodeData.duration || "5",
-          audio: nodeData.audio || false,
-          seed: nodeData.seed,
-          negativePrompt: negativePrompt,
-          animationPrompt: nodeData.animationPrompt,
-          cameraPreset: nodeData.cameraPreset
-        })
-      });
+      const ok = await runAiJobWithNotification({ nodeId: id, label: 'Gemini Video (Veo)' }, async () => {
+        const res = await fetch('/api/gemini/video', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt,
+            firstFrame,
+            lastFrame,
+            resolution: nodeData.resolution || "1080p",
+            durationSeconds: nodeData.duration || "5",
+            audio: nodeData.audio || false,
+            seed: nodeData.seed,
+            negativePrompt: negativePrompt,
+            animationPrompt: nodeData.animationPrompt,
+            cameraPreset: nodeData.cameraPreset
+          })
+        });
 
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "Generation failed");
-      }
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || "Generation failed");
+        }
 
-      const json = await res.json();
-      if (json.output) {
+        const json = await res.json();
+        if (!json.output) throw new Error("No video output");
         setResult(json.output);
-        setNodes((nds) => nds.map((n) => (n.id === id ? { ...n, data: { ...n.data, value: json.output, type: 'video' } } : n)));
-        setStatus('success');
-      }
-    } catch (e: any) {
-      console.error(e);
-      setStatus('error');
-      alert("Error generating video: " + e.message);
+        setNodes((nds) => nds.map((n) => (n.id === id ? {
+          ...n,
+          data: {
+            ...n.data,
+            value: json.output,
+            type: 'video',
+            ...(typeof json.key === 'string' ? { s3Key: json.key } : {}),
+          },
+        } : n)));
+      });
+      setStatus(ok ? 'success' : 'error');
     } finally {
       clearInterval(progressInterval);
       setProgress(100);

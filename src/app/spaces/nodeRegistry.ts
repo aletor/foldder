@@ -310,3 +310,19 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
     }
   },
 };
+
+/**
+ * Texto compacto para el system prompt del asistente (mucho menos tokens que JSON.stringify del registro completo).
+ */
+export function buildNodeRegistryDigestForAssistant(): string {
+  return Object.entries(NODE_REGISTRY)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, meta]) => {
+      const ins = meta.inputs.map((i) => `${i.id}:${i.type}`).join(", ");
+      const outs = meta.outputs.map((o) => `${o.id}:${o.type}`).join(", ");
+      const desc =
+        meta.description.length > 160 ? meta.description.slice(0, 157) + "…" : meta.description;
+      return `• ${key} — ${meta.label}: ${desc} | IN: ${ins || "—"} | OUT: ${outs || "—"}`;
+    })
+    .join("\n");
+}

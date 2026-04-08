@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { recordApiUsage } from '@/lib/api-usage';
 import sharp from 'sharp';
 import Replicate from 'replicate';
 
@@ -69,6 +70,17 @@ export async function POST(req: NextRequest) {
                 }
             );
             maskUrl = Array.isArray(output) ? output[0] : output.toString();
+            await recordApiUsage({
+              provider: "replicate",
+              serviceId: "replicate-bg",
+              route: "/api/spaces/matte",
+              model: "851-labs/background-remover",
+              inputTokens: 0,
+              outputTokens: 0,
+              totalTokens: 0,
+              costUsd: 0.01,
+              note: "Eliminar fondo (estimado)",
+            });
             break; // Success!
         } catch (mlErr: any) {
             const is429 = mlErr.message?.includes("429") || mlErr.status === 429;

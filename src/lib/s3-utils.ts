@@ -2,7 +2,7 @@ import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } fro
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 // Force us-east-1 to match the bucket location and avoid endpoint conflicts
-const s3Client = new S3Client({
+export const s3Client = new S3Client({
   region: "us-east-1",
   credentials: {
     accessKeyId: process.env.AWS_ACCESS_KEY_ID || "",

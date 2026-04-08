@@ -107,7 +107,7 @@ export const AgentHUD = ({
               void handleGenerate();
             }
           }}
-          placeholder="Describe workflow changes…"
+          placeholder="Ej.: borra todo, nuevo espacio, vacía el lienzo, Nano Banana + export…"
           className="min-h-[38px] min-w-0 flex-1 rounded-lg border border-white/35 bg-white/[0.10] px-3 py-2 text-[15px] leading-snug text-white placeholder:text-white/45 shadow-inner backdrop-blur-md focus:border-white/55 focus:outline-none focus:ring-1 focus:ring-white/25"
         />
         <button

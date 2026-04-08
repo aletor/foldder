@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { recordApiUsage } from '@/lib/api-usage';
 import OpenAI from 'openai';
 
 export async function POST(req: Request) {
@@ -49,6 +50,31 @@ export async function POST(req: Request) {
     });
 
     const description = completion.choices[0].message.content || "No description available.";
+
+    const u = completion.usage;
+    if (u) {
+      await recordApiUsage({
+        provider: "openai",
+        serviceId: "openai-describe",
+        route: "/api/spaces/describe",
+        model: "gpt-4o",
+        inputTokens: u.prompt_tokens,
+        outputTokens: u.completion_tokens,
+        totalTokens: u.total_tokens,
+      });
+    } else {
+      await recordApiUsage({
+        provider: "openai",
+        serviceId: "openai-describe",
+        route: "/api/spaces/describe",
+        model: "gpt-4o",
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        costUsd: 0.005,
+        note: "Describe sin usage (estimado)",
+      });
+    }
 
     return NextResponse.json({ description });
 

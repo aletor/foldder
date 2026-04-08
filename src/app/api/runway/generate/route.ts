@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { recordApiUsage } from '@/lib/api-usage';
 import RunwayML from '@runwayml/sdk';
 
 function getRunwayClient() {
@@ -25,6 +26,19 @@ export async function POST(req: Request) {
       promptImage: videoUrl || imageUrl, 
       promptText: promptText,
       duration: duration as 5 | 10
+    });
+
+    const dur = duration === 10 ? 10 : 5;
+    await recordApiUsage({
+      provider: "runway",
+      serviceId: "runway-gen3",
+      route: "/api/runway/generate",
+      model: "gen3a_turbo",
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      costUsd: Math.round(dur * 0.05 * 1_000_000) / 1_000_000,
+      note: "Gen-3 (coste orientativo por segundo)",
     });
 
     return NextResponse.json({ taskId: task.id });

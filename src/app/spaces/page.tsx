@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useCallback, useMemo, useRef, useEffect, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ReactFlow,
   Controls,
@@ -48,13 +49,26 @@ import {
 
 import Sidebar from './Sidebar';
 import { AgentHUD } from './AgentHUD';
+import { ApiUsageHud } from './ApiUsageHud';
+import { HandleTypeLegend } from './HandleTypeLegend';
+import { AiRequestHud } from './AiRequestHud';
 import {
   TopbarPins,
   MAX_TOPBAR_PINS,
   TOPBAR_PINS_STORAGE_KEY,
   DEFAULT_TOPBAR_PIN_TYPES,
 } from './TopbarPins';
+import { matchesClearCanvasIntent } from '@/lib/clear-canvas-intent';
+import { matchesAddSpaceNodeIntent } from '@/lib/assistant-quick-intents';
+import { installAiFetchOverlay } from '@/lib/ai-request-overlay';
 import { readResponseJson } from '@/lib/read-response-json';
+import { hydrateSpacesMapWithFreshUrls } from '@/lib/s3-media-hydrate';
+import {
+  AI_JOB_COMPLETE_EVENT,
+  AI_JOB_CANVAS_NODE_ID,
+  runAiJobWithNotification,
+  type AiJobCompleteDetail,
+} from '@/lib/ai-job-notifications';
 import { FOLDDER_FIT_VIEW_EASE } from '@/lib/fit-view-ease';
 import {
   isDocumentFullscreen,
@@ -100,6 +114,10 @@ import {
   Brain,
   Type,
   Film,
+  ZoomIn,
+  MessageCircle,
+  CheckCircle2,
+  AlertCircle,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -372,12 +390,23 @@ const SpacesContent = () => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
   const [isGeneratingAssistant, setIsGeneratingAssistant] = useState(false);
+  /** Respuesta del modelo pidiendo desambiguación (opciones en modal). */
+  const [assistantClarify, setAssistantClarify] = useState<{
+    message: string;
+    options: string[];
+    originalPrompt: string;
+  } | null>(null);
   const [projectToDelete, setProjectToDelete] = useState<any | null>(null);
   const [navigationStack, setNavigationStack] = useState<string[]>([]);
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, nodeId?: string } | null>(null);
 
   /** Zoom actual del lienzo (React Flow) — HUD fijo abajo-derecha */
   const [canvasZoom, setCanvasZoom] = useState(0.7);
+  /** Panel de uso de APIs: oculto hasta pulsar el control de zoom */
+  const [apiUsagePanelOpen, setApiUsagePanelOpen] = useState(false);
+
+  /** Avisos poco intrusivos al terminar trabajos de IA en segundo plano */
+  const [aiJobToasts, setAiJobToasts] = useState<Array<{ id: string } & AiJobCompleteDetail>>([]);
 
   /** Fondo visual del lienzo (persistido) */
   const [canvasBgId, setCanvasBgId] = useState<string>('studio');
@@ -844,33 +873,26 @@ const SpacesContent = () => {
     setViewerHeight(Math.max(Math.round(window.innerHeight * 0.5), 400));
   }, []);
 
-  const MAX_HISTORY = 20;
+  /** Mínimo garantizado: Ctrl+Z / Ctrl+Shift+Z (también Cmd en macOS). */
+  const UNDO_REDO_DEPTH = 10;
   const historyRef = useRef<Array<{ nodes: any[]; edges: any[] }>>([]);
   const futureRef  = useRef<Array<{ nodes: any[]; edges: any[] }>>([]);
 
   // takeSnapshot: call BEFORE making a change so we record the pre-change state.
-  // This replaces the old pushHistory(newState) pattern — call it before setNodes/setEdges.
   const takeSnapshot = useCallback(() => {
     historyRef.current = [
-      ...historyRef.current.slice(-(MAX_HISTORY - 1)),
+      ...historyRef.current.slice(-(UNDO_REDO_DEPTH - 1)),
       { nodes: [...liveNodesRef.current], edges: [...liveEdgesRef.current] },
     ];
     futureRef.current = []; // any new action clears redo stack
   }, []);
 
-  // Keep refs in sync whenever React re-renders with new nodes/edges
-  // (We also use a legacy alias so old pushHistory call-sites still work without crash)
-  const pushHistory = useCallback((ns: any[], es: any[]) => {
-    // Legacy: some callers pass the NEW state — we store it but this is less accurate.
-    // Prefer takeSnapshot() before mutations going forward.
-    historyRef.current = [...historyRef.current.slice(-(MAX_HISTORY - 1)), { nodes: [...ns], edges: [...es] }];
-    futureRef.current = [];
-  }, []);
-
   const undo = useCallback(() => {
     if (historyRef.current.length === 0) return;
-    // Save current state to future so redo can restore it
     futureRef.current.unshift({ nodes: [...liveNodesRef.current], edges: [...liveEdgesRef.current] });
+    if (futureRef.current.length > UNDO_REDO_DEPTH) {
+      futureRef.current.pop();
+    }
     const prev = historyRef.current.pop()!;
     setNodes([...prev.nodes]);
     setEdges([...prev.edges]);
@@ -878,9 +900,8 @@ const SpacesContent = () => {
 
   const redo = useCallback(() => {
     if (futureRef.current.length === 0) return;
-    // Save current state to history before jumping forward
     historyRef.current = [
-      ...historyRef.current.slice(-(MAX_HISTORY - 1)),
+      ...historyRef.current.slice(-(UNDO_REDO_DEPTH - 1)),
       { nodes: [...liveNodesRef.current], edges: [...liveEdgesRef.current] },
     ];
     const next = futureRef.current.shift()!;
@@ -1120,7 +1141,7 @@ const SpacesContent = () => {
     setTimeout(() => {
       fitViewToNodeIds([newId], 700);
     }, autoEdges.length > 0 ? 100 : 80);
-  }, [screenToFlowPosition, nodes, edges, setNodes, setEdges, pushHistory, takeSnapshot, fitViewToNodeIds, updateNodeInternals]);
+  }, [screenToFlowPosition, nodes, edges, setNodes, setEdges, takeSnapshot, fitViewToNodeIds, updateNodeInternals]);
 
   /** Doble clic en pin del topbar o en mosaico del sidebar: hueco libre (prioridad a la derecha del nodo más a la derecha) + fit */
   const addNodeFromTopbarPinDoubleClick = useCallback(
@@ -1306,7 +1327,6 @@ const SpacesContent = () => {
     setEdges,
     takeSnapshot,
     fitViewToNodeIds,
-    pushHistory,
     handleEscape: () => navigationEscapeRef.current(),
     setCardsFocusIndex,
     canvasViewModeRef,
@@ -1321,7 +1341,6 @@ const SpacesContent = () => {
     setEdges,
     takeSnapshot,
     fitViewToNodeIds,
-    pushHistory,
     handleEscape: () => navigationEscapeRef.current(),
     setCardsFocusIndex,
     canvasViewModeRef,
@@ -1339,7 +1358,6 @@ const SpacesContent = () => {
         setEdges: doSetEdges,
         takeSnapshot: doTakeSnapshot,
         fitViewToNodeIds: doFitViewToNodeIds,
-        pushHistory: doPushHistory,
       } = keyboardShortcutsRef.current;
 
       const target = e.target as HTMLElement;
@@ -1550,6 +1568,7 @@ const SpacesContent = () => {
           }
         }
 
+        doTakeSnapshot();
         doSetNodes((prev) => {
           const sel = prev.filter((n) => n.selected);
           if (sel.length === 0) return prev;
@@ -1560,9 +1579,7 @@ const SpacesContent = () => {
             selected: true,
             data: { ...n.data },
           }));
-          const next = [...prev.map((n) => ({ ...n, selected: false })), ...clones];
-          doPushHistory(next, liveEdgesRef.current);
-          return next;
+          return [...prev.map((n) => ({ ...n, selected: false })), ...clones];
         });
         return;
       }
@@ -1818,6 +1835,47 @@ const SpacesContent = () => {
     });
   }, [getViewport, onViewportChangeFromFlow]);
 
+  const focusAiJobNode = useCallback(
+    (nodeId: string | undefined) => {
+      if (!nodeId || nodeId === AI_JOB_CANVAS_NODE_ID) {
+        requestAnimationFrame(() => {
+          fitView({
+            padding: FIT_VIEW_PADDING,
+            duration: fitAnim(650),
+            interpolate: 'smooth',
+            ...FOLDDER_FIT_VIEW_EASE,
+          });
+        });
+        return;
+      }
+      setNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === nodeId })));
+      requestAnimationFrame(() => {
+        fitView({
+          nodes: [{ id: nodeId } as Node],
+          padding: FIT_VIEW_PADDING_NODE_FOCUS,
+          duration: fitAnim(650),
+          interpolate: 'smooth',
+          ...FOLDDER_FIT_VIEW_EASE,
+        });
+      });
+    },
+    [fitView, setNodes]
+  );
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const ce = e as CustomEvent<AiJobCompleteDetail>;
+      const d = ce.detail;
+      if (!d?.label) return;
+      const id = `ai-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+      setAiJobToasts((prev) => [...prev.slice(-4), { id, ...d }]);
+      window.setTimeout(() => {
+        setAiJobToasts((p) => p.filter((t) => t.id !== id));
+      }, 5000);
+    };
+    window.addEventListener(AI_JOB_COMPLETE_EVENT, handler as EventListener);
+    return () => window.removeEventListener(AI_JOB_COMPLETE_EVENT, handler as EventListener);
+  }, []);
 
   // Access Security
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -1838,6 +1896,11 @@ const SpacesContent = () => {
       }, 500);
     }
   };
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    return installAiFetchOverlay();
+  }, [isAuthenticated]);
 
   // Helper to detect structure and data output from a space
   const analyzeSpaceStructure = (nodes: any[], edges: any[]): { 
@@ -2166,6 +2229,10 @@ const SpacesContent = () => {
   }, [activeSpaceId, nodes, edges, spacesMap, setNodes, setEdges, fitView, syncCurrentSpaceState]);
 
   const handleEscapeNavigation = useCallback((): boolean => {
+    if (assistantClarify) {
+      setAssistantClarify(null);
+      return true;
+    }
     if (showSaveModal || showLoadModal || projectToDelete) return false;
     if (windowMode) {
       setWindowMode(false);
@@ -2182,6 +2249,7 @@ const SpacesContent = () => {
     }
     return false;
   }, [
+    assistantClarify,
     showSaveModal,
     showLoadModal,
     projectToDelete,
@@ -2225,30 +2293,32 @@ const SpacesContent = () => {
   const saveProject = async (nameToSave?: string) => {
     setIsSaving(true);
     try {
-      // Synchronize current nodes/edges to the active space in the map
-      const structure = analyzeSpaceStructure(nodes, edges);
-      const updatedSpacesMap = {
-        ...spacesMap,
-        [activeSpaceId]: {
-          ...(spacesMap[activeSpaceId] || {}),
-          id: activeSpaceId,
-          nodes: [...nodes],
-          edges: [...edges],
-          outputType: structure.type,
-          outputValue: structure.value,
-          hasInput: structure.hasInput,
-          hasOutput: structure.hasOutput,
-          internalCategories: structure.internalCategories,
-          updatedAt: new Date().toISOString()
-        }
+      // Propagación completa (padres/hijos, spaceInput, etiquetas de nested spaces) — mismo criterio que al navegar
+      const { newMap: syncedSpaces } = syncCurrentSpaceState(nodes, edges, spacesMap, activeSpaceId);
+
+      const uiSnapshot = {
+        canvasBgId,
+        topbarPinnedTypes,
+        canvasViewMode,
+        cardsFocusIndex,
+        viewport: getViewport(),
+        navigationStack,
+        activeSpaceId,
+        sidebarLockedCollapsed,
+        windowMode,
+        viewerSourceNodeId,
       };
 
       const projectToSave = {
         id: activeProjectId,
         name: nameToSave || currentName || 'Untitled Project',
-        rootSpaceId: 'root', // Always 'root' now
-        spaces: updatedSpacesMap,
-        metadata: metadata
+        rootSpaceId: 'root',
+        spaces: syncedSpaces,
+        metadata: {
+          ...metadata,
+          ui: uiSnapshot,
+          savedAt: new Date().toISOString(),
+        },
       };
 
       const res = await fetch('/api/spaces', {
@@ -2266,11 +2336,11 @@ const SpacesContent = () => {
         if (!activeProjectId) {
            const newest = updatedList[updatedList.length - 1];
            setActiveProjectId(newest.id);
-           setActiveSpaceId('root');
+           setActiveSpaceId(activeSpaceId);
            setCurrentName(newest.name);
-           setSpacesMap(newest.spaces);
+           setSpacesMap(newest.spaces || syncedSpaces);
         } else {
-           setSpacesMap(updatedSpacesMap);
+           setSpacesMap(syncedSpaces);
         }
       }
       setShowSaveModal(false);
@@ -2283,35 +2353,117 @@ const SpacesContent = () => {
   };
 
   const loadProject = (project: any) => {
-    // Migration/Normalization: Use project.rootSpaceId or default to 'root'
-    const rootSpaceId = project.rootSpaceId || 'root';
-    const rootSpace = project.spaces?.[rootSpaceId] || project.spaces?.['root'];
-    
-    if (!rootSpace) {
-      console.error("Root space not found for project:", project.id);
-      alert("Error: could not find the main space for this project.");
-      return;
-    }
+    void (async () => {
+      const rootSpaceId = project.rootSpaceId || 'root';
+      const rootSpace = project.spaces?.[rootSpaceId] || project.spaces?.['root'];
 
-    const stripLegacyFinal = (ns: any[]) =>
-      ns.filter((n: any) => n.id !== FINAL_NODE_ID && n.type !== 'finalOutput');
-    const stripEdgesToFinal = (es: any[]) =>
-      es.filter((e: any) => e.target !== FINAL_NODE_ID);
+      if (!rootSpace) {
+        console.error('Root space not found for project:', project.id);
+        alert('Error: could not find the main space for this project.');
+        return;
+      }
 
-    setNodes(stripLegacyFinal([...(rootSpace.nodes || [])]));
-    setEdges(stripEdgesToFinal([...(rootSpace.edges || [])]));
-    setActiveProjectId(project.id);
-    setActiveSpaceId(rootSpaceId);
-    setCurrentName(project.name);
-    setSpacesMap(project.spaces);
-    setMetadata(project.metadata || {});
-    setNavigationStack([]); // Clear stack on new project load
-    setShowLoadModal(false);
-    
-    // Smooth transition
-    setTimeout(() => {
-      fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(800), ...FOLDDER_FIT_VIEW_EASE });
-    }, 100);
+      let spaces: Record<string, unknown> = project.spaces || {};
+      try {
+        spaces = await hydrateSpacesMapWithFreshUrls(spaces);
+      } catch (e) {
+        console.error('[loadProject] hydrate S3 URLs:', e);
+      }
+
+      const stripLegacyFinal = (ns: any[]) =>
+        ns.filter((n: any) => n.id !== FINAL_NODE_ID && n.type !== 'finalOutput');
+      const stripEdgesToFinal = (es: any[]) =>
+        es.filter((e: any) => e.target !== FINAL_NODE_ID);
+
+      const ui = project.metadata?.ui as
+        | {
+            canvasBgId?: string;
+            topbarPinnedTypes?: string[];
+            canvasViewMode?: 'free' | 'cards';
+            cardsFocusIndex?: number;
+            viewport?: { x?: number; y?: number; zoom?: number };
+            navigationStack?: string[];
+            activeSpaceId?: string;
+            sidebarLockedCollapsed?: boolean;
+            windowMode?: boolean;
+            viewerSourceNodeId?: string | null;
+          }
+        | undefined;
+
+      const targetSpaceId =
+        ui?.activeSpaceId &&
+        spaces[ui.activeSpaceId] &&
+        Array.isArray((spaces as Record<string, { nodes?: unknown[] }>)[ui.activeSpaceId]?.nodes)
+          ? ui.activeSpaceId
+          : rootSpaceId;
+      const targetSpace =
+        (spaces[targetSpaceId] as { nodes?: any[]; edges?: any[] } | undefined) ||
+        (spaces[rootSpaceId] as { nodes?: any[]; edges?: any[] });
+
+      const nextNodes = stripLegacyFinal([...(targetSpace?.nodes || [])]);
+      const nextEdges = stripEdgesToFinal([...(targetSpace?.edges || [])]);
+
+      setNodes(nextNodes);
+      setEdges(nextEdges);
+      setActiveProjectId(project.id);
+      setActiveSpaceId(targetSpaceId);
+      setCurrentName(project.name);
+      setSpacesMap(spaces as Record<string, any>);
+      setMetadata(project.metadata || {});
+
+      const nav = ui?.navigationStack;
+      setNavigationStack(
+        Array.isArray(nav) && nav.every((x) => typeof x === 'string') ? [...nav] : []
+      );
+
+      if (ui?.canvasBgId && CANVAS_BACKGROUNDS.some((b) => b.id === ui.canvasBgId)) {
+        setCanvasBgId(ui.canvasBgId);
+      }
+      if (Array.isArray(ui?.topbarPinnedTypes)) {
+        const nextPins = ui.topbarPinnedTypes
+          .filter((t): t is string => typeof t === 'string' && Boolean(NODE_REGISTRY[t]))
+          .slice(0, MAX_TOPBAR_PINS);
+        if (nextPins.length > 0) setTopbarPinnedTypes(nextPins);
+      }
+      if (ui?.canvasViewMode === 'free' || ui?.canvasViewMode === 'cards') {
+        setCanvasViewMode(ui.canvasViewMode);
+      }
+      if (typeof ui?.sidebarLockedCollapsed === 'boolean') {
+        setSidebarLockedCollapsed(ui.sidebarLockedCollapsed);
+      }
+      if (typeof ui?.windowMode === 'boolean') {
+        setWindowMode(ui.windowMode);
+      }
+      if (ui?.viewerSourceNodeId === null || typeof ui?.viewerSourceNodeId === 'string') {
+        setViewerSourceNodeId(ui.viewerSourceNodeId);
+      }
+
+      const ci = ui?.cardsFocusIndex;
+      if (typeof ci === 'number' && Number.isFinite(ci) && nextNodes.length > 0) {
+        setCardsFocusIndex(Math.min(Math.max(0, Math.floor(ci)), Math.max(0, nextNodes.length - 1)));
+      } else {
+        setCardsFocusIndex(0);
+      }
+
+      setShowLoadModal(false);
+
+      setTimeout(() => {
+        const vp = ui?.viewport;
+        if (
+          vp &&
+          typeof vp.x === 'number' &&
+          typeof vp.y === 'number' &&
+          typeof vp.zoom === 'number' &&
+          Number.isFinite(vp.x) &&
+          Number.isFinite(vp.y) &&
+          Number.isFinite(vp.zoom)
+        ) {
+          setViewport({ x: vp.x, y: vp.y, zoom: vp.zoom });
+        } else {
+          fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(800), ...FOLDDER_FIT_VIEW_EASE });
+        }
+      }, 100);
+    })();
   };
 
   const deleteProject = async (idToDelete: string) => {
@@ -2459,51 +2611,80 @@ const SpacesContent = () => {
   }, [nodes, edges, setNodes, fitView]);
 
   const onGenerateAssistant = async (prompt: string) => {
-    // Client-side clear detection — no AI needed for simple canvas reset
-    const clearKeywords = ['clear', 'limpiar', 'reset', 'borrar', 'vaciar', 'limpia', 'elimina todo', 'nueva pizarra', 'start over', 'new canvas'];
-    if (clearKeywords.some(kw => prompt.toLowerCase().includes(kw))) {
+    if (matchesClearCanvasIntent(prompt)) {
+      takeSnapshot();
       setNodes([]);
       setEdges([]);
       return;
     }
 
+    if (matchesAddSpaceNodeIntent(prompt)) {
+      takeSnapshot();
+      addNodeAtCenter('space', { label: 'Space', hasInput: true, hasOutput: true });
+      return;
+    }
+
     setIsGeneratingAssistant(true);
     try {
-      const res = await fetch('/api/spaces/assistant', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          prompt,
-          currentNodes: nodes,
-          currentEdges: edges
-        })
-      });
-      const data = await readResponseJson<{ nodes?: Node[]; edges?: Edge[] }>(
-        res,
-        'POST /api/spaces/assistant'
-      );
-      
-      if (data?.nodes && data?.edges) {
-        // Validation: Ensure all nodes have a valid position {x, y}
-        const validatedNodes = data.nodes.map((n: any) => ({
-          ...n,
-          position: n.position || { x: 0, y: 0 } // Fail-safe default
-        }));
+      await runAiJobWithNotification(
+        { nodeId: AI_JOB_CANVAS_NODE_ID, label: 'Asistente del lienzo' },
+        async () => {
+          const res = await fetch('/api/spaces/assistant', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              prompt,
+              currentNodes: nodes,
+              currentEdges: edges,
+            }),
+          });
+          const data = await readResponseJson<{
+            nodes?: Node[];
+            edges?: Edge[];
+            clarify?: { message?: string; question?: string; options?: unknown };
+          }>(res, 'POST /api/spaces/assistant');
 
-        setNodes(validatedNodes);
-        setEdges(data.edges);
-        
-        // Smooth transition to center generated workflow
-        setTimeout(() => {
-          fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(800), ...FOLDDER_FIT_VIEW_EASE });
-        }, 100);
-      }
+          if (data && data.clarify && typeof data.clarify === 'object') {
+            const c = data.clarify;
+            const msg = (c.message ?? c.question ?? '').trim() || '¿Qué prefieres?';
+            const opts = Array.isArray(c.options)
+              ? c.options.filter((o): o is string => typeof o === 'string' && o.trim().length > 0)
+              : [];
+            if (opts.length > 0) {
+              setAssistantClarify({ message: msg, options: opts, originalPrompt: prompt });
+            }
+            return;
+          }
+
+          if (data && Array.isArray(data.nodes)) {
+            const validatedNodes = data.nodes.map((n: any) => ({
+              ...n,
+              position: n.position || { x: 0, y: 0 },
+            }));
+
+            setNodes(validatedNodes);
+            setEdges(Array.isArray(data.edges) ? data.edges : []);
+
+            setTimeout(() => {
+              fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(800), ...FOLDDER_FIT_VIEW_EASE });
+            }, 100);
+          }
+        }
+      );
     } catch (err) {
       console.error('Assistant Generation error:', err);
-      alert('AI Assistant failed to generate the space. Try again.');
     } finally {
       setIsGeneratingAssistant(false);
     }
+  };
+
+  const onAssistantClarifyPick = (option: string) => {
+    if (!assistantClarify) return;
+    const { originalPrompt } = assistantClarify;
+    setAssistantClarify(null);
+    void onGenerateAssistant(
+      `[CLARIFICATION_REPLY] The user chose: "${option}". Original request: ${originalPrompt}`
+    );
   };
 
 
@@ -2518,12 +2699,9 @@ const SpacesContent = () => {
 
   const onConnect: OnConnect = useCallback(
     (params) => {
+      takeSnapshot();
       const edgeId = `e-${params.source}-${params.target}-${params.sourceHandle || 'def'}-${params.targetHandle || 'def'}-${Math.random().toString(36).substring(2, 6)}`;
-      setEdges((eds) => {
-        const next = addEdge({ ...params, id: edgeId, type: 'buttonEdge' }, eds);
-        pushHistory(nodes, next);
-        return next;
-      });
+      setEdges((eds) => addEdge({ ...params, id: edgeId, type: 'buttonEdge' }, eds));
       queueMicrotask(() => {
         updateNodeInternals(params.source);
         updateNodeInternals(params.target);
@@ -2543,7 +2721,7 @@ const SpacesContent = () => {
       }, 50);
       fitViewToNodeIds([params.target], 600);
     },
-    [setEdges, nodes, pushHistory, fitViewToNodeIds, updateNodeInternals]
+    [setEdges, takeSnapshot, fitViewToNodeIds, updateNodeInternals]
   );
 
   // ── Handle→Node type suggestions ─────────────────────────────────────────
@@ -2637,6 +2815,8 @@ const SpacesContent = () => {
     }
     if (!newHandle) return;
 
+    takeSnapshot();
+
     const newEdge = {
       id:           edgeId,
       source:       fromType === 'source' ? fromNodeId  : newNodeId,
@@ -2647,11 +2827,7 @@ const SpacesContent = () => {
       animated:     true,
     };
 
-    setNodes((nds: any) => {
-      const next = [...nds, newNode];
-      pushHistory(next, [...edges, newEdge]);
-      return next;
-    });
+    setNodes((nds: any) => [...nds, newNode]);
     // Delay edge slightly so ReactFlow's drag-cancel doesn't wipe it; luego recalcular handles (Enhancer, etc.)
     setTimeout(() => {
       setEdges((eds: any) => [...eds, newEdge]);
@@ -2666,7 +2842,7 @@ const SpacesContent = () => {
       });
       fitViewToNodeIds([newNodeId], 600);
     }, 30);
-  }, [edges, nodes, screenToFlowPosition, setNodes, setEdges, pushHistory, fitViewToNodeIds, updateNodeInternals]);
+  }, [edges, nodes, screenToFlowPosition, setNodes, setEdges, takeSnapshot, fitViewToNodeIds, updateNodeInternals]);
 
 
 
@@ -3200,11 +3376,7 @@ const SpacesContent = () => {
         takeSnapshot();
         setNodes((nds: any) => {
           const next = [...nds, newNode];
-          setEdges((eds: any) => {
-            const nextE = addEdge(newEdge, eds);
-            pushHistory(next, nextE);
-            return nextE;
-          });
+          setEdges((eds: any) => addEdge(newEdge, eds));
           return next;
         });
         setTimeout(() => {
@@ -3226,13 +3398,14 @@ const SpacesContent = () => {
         data: { value: '', label: `${reactFlowType} node` },
       };
 
+      takeSnapshot();
       setNodes((nds) => [...nds, newNode]);
       setTimeout(() => {
         fitViewToNodeIds([newNode.id], 700);
       }, 100);
       setSidebarLockedCollapsed(true);
     },
-    [screenToFlowPosition, setNodes, setEdges, nodes, edges, takeSnapshot, pushHistory, fitView, fitViewToNodeIds]
+    [screenToFlowPosition, setNodes, setEdges, nodes, edges, takeSnapshot, fitView, fitViewToNodeIds]
   );
 
   return (
@@ -3597,13 +3770,84 @@ const SpacesContent = () => {
           <Background color="#111" gap={40} size={1} />
         </ReactFlow>
 
+        {typeof document !== 'undefined' &&
+          isAuthenticated &&
+          aiJobToasts.length > 0 &&
+          createPortal(
+            <div
+              className="pointer-events-none fixed inset-0 z-[10025] flex items-center justify-center p-4"
+              aria-live="polite"
+            >
+              <div className="flex w-full max-w-[min(92vw,380px)] flex-col items-stretch gap-2">
+                {aiJobToasts.map((t) => {
+                  const focusCanvas =
+                    !t.nodeId || t.nodeId === AI_JOB_CANVAS_NODE_ID;
+                  return (
+                    <div
+                      key={t.id}
+                      className="pointer-events-auto flex items-start gap-2.5 rounded-xl border border-white/25 bg-white/[0.06] px-3 py-2.5 shadow-lg backdrop-blur-xl"
+                    >
+                      {t.ok ? (
+                        <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-white/85" aria-hidden />
+                      ) : (
+                        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-white/75" aria-hidden />
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[10px] font-semibold leading-snug text-white">
+                          {t.ok ? 'Listo' : 'Error'} · <span className="text-white/90">{t.label}</span>
+                        </p>
+                        {!t.ok && t.message && (
+                          <p className="mt-0.5 line-clamp-3 text-[9px] leading-snug text-white/65">{t.message}</p>
+                        )}
+                        {t.ok && (
+                          <p className="mt-0.5 text-[9px] text-white/55">La petición anterior ha terminado.</p>
+                        )}
+                      </div>
+                      <div className="flex shrink-0 flex-col gap-1">
+                        <button
+                          type="button"
+                          className="rounded-lg border border-white/25 bg-white/[0.08] px-2.5 py-1 text-[9px] font-semibold uppercase tracking-wide text-white shadow-sm backdrop-blur-xl transition-colors hover:bg-white/[0.14]"
+                          onClick={() => {
+                            focusAiJobNode(t.nodeId);
+                            setAiJobToasts((p) => p.filter((x) => x.id !== t.id));
+                          }}
+                        >
+                          {focusCanvas ? 'Ver lienzo' : 'Ir al nodo'}
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded px-1 py-0.5 text-[8px] text-white/45 transition-colors hover:text-white/80"
+                          onClick={() => setAiJobToasts((p) => p.filter((x) => x.id !== t.id))}
+                        >
+                          Cerrar
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>,
+            document.body
+          )}
+
+        {isAuthenticated && <HandleTypeLegend />}
+
         {isAuthenticated && (
-          <div
-            className="pointer-events-none fixed bottom-4 right-4 z-[90] select-none rounded-lg border border-white/15 bg-white/[0.06] px-2.5 py-1.5 font-mono text-[11px] tabular-nums text-slate-800 shadow-sm backdrop-blur-xl backdrop-saturate-150"
-            aria-live="polite"
-            title="Zoom del lienzo"
-          >
-            {(canvasZoom * 100).toFixed(0)}%
+          <div className="pointer-events-none fixed bottom-4 right-4 z-[90] flex flex-col items-end gap-2">
+            {apiUsagePanelOpen && <ApiUsageHud />}
+            <AiRequestHud />
+            <button
+              type="button"
+              className="pointer-events-auto flex select-none items-center gap-1 rounded-md border border-white/25 bg-black/55 px-2 py-1.5 font-mono text-[11px] font-medium tabular-nums text-white shadow-md backdrop-blur-md hover:bg-black/70"
+              aria-expanded={apiUsagePanelOpen}
+              aria-controls="foldder-api-usage-panel"
+              aria-live="polite"
+              title={apiUsagePanelOpen ? 'Ocultar uso de APIs' : 'Ver uso de APIs (zoom del lienzo)'}
+              onClick={() => setApiUsagePanelOpen((v) => !v)}
+            >
+              <ZoomIn className="h-3.5 w-3.5 shrink-0 text-white" strokeWidth={2} aria-hidden />
+              <span className="text-white">{(canvasZoom * 100).toFixed(0)}%</span>
+            </button>
           </div>
         )}
 
@@ -3952,6 +4196,53 @@ const SpacesContent = () => {
               onPinDoubleClick={addNodeFromTopbarPinDoubleClick}
               paletteDragActive={paletteDragActive}
             />
+          </div>
+        )}
+
+        {assistantClarify && (
+          <div className="fixed inset-0 z-[10006] flex items-center justify-center p-4">
+            <div
+              className="absolute inset-0 bg-black/45 backdrop-blur-xl"
+              onClick={() => setAssistantClarify(null)}
+              aria-hidden
+            />
+            <div
+              className="relative z-10 w-full max-w-md rounded-3xl border border-white/25 bg-white/20 p-6 shadow-2xl shadow-black/20 backdrop-blur-xl"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="assistant-clarify-title"
+            >
+              <div className="mb-4 flex items-center justify-between gap-2">
+                <h2
+                  id="assistant-clarify-title"
+                  className="flex items-center gap-2 text-sm font-black uppercase tracking-wide text-slate-800"
+                >
+                  <MessageCircle size={18} className="shrink-0 text-violet-500" />
+                  Aclaración
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setAssistantClarify(null)}
+                  className="rounded-full p-2 text-slate-500 transition-colors hover:bg-white/40 hover:text-slate-800"
+                  aria-label="Cerrar"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <p className="mb-4 text-sm leading-relaxed text-slate-700">{assistantClarify.message}</p>
+              <div className="flex flex-col gap-2">
+                {assistantClarify.options.map((opt, idx) => (
+                  <button
+                    key={`${idx}-${opt.slice(0, 48)}`}
+                    type="button"
+                    onClick={() => onAssistantClarifyPick(opt)}
+                    className="rounded-2xl border border-white/25 bg-white/15 px-4 py-3 text-left text-sm font-bold text-slate-800 transition-all hover:bg-white/35"
+                  >
+                    {opt}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         )}
 

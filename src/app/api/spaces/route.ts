@@ -53,22 +53,30 @@ export async function POST(req: Request) {
     } else {
       const projectId = uuidv4();
       const initialSpaceId = uuidv4();
+      /** Cliente usa `root`; proyectos vacíos sin body pueden usar un UUID de espacio por defecto. */
+      const resolvedRoot =
+        rootSpaceId != null && rootSpaceId !== ""
+          ? rootSpaceId
+          : spaces && typeof spaces === "object" && spaces !== null && "root" in spaces
+            ? "root"
+            : initialSpaceId;
       const newProject = {
         id: projectId,
         name: name || `New Project ${projects.length + 1}`,
-        rootSpaceId: initialSpaceId,
+        rootSpaceId: resolvedRoot,
         spaces: spaces || {
-            [initialSpaceId]: {
-                id: initialSpaceId,
-                name: 'Main Space',
-                nodes: [],
-                edges: [],
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString()
-            }
+          [initialSpaceId]: {
+            id: initialSpaceId,
+            name: "Main Space",
+            nodes: [],
+            edges: [],
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
         },
+        metadata: metadata ?? {},
         createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       };
       projects.push(newProject);
     }

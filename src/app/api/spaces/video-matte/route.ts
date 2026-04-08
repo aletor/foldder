@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { recordApiUsage } from '@/lib/api-usage';
 import Replicate from 'replicate';
 
 export async function POST(req: NextRequest) {
@@ -35,6 +36,18 @@ export async function POST(req: NextRequest) {
 
     // RVM typically returns a URL to the processed video
     const result_url = Array.isArray(output) ? output[0] : output;
+
+    await recordApiUsage({
+      provider: "replicate",
+      serviceId: "replicate-vmatte",
+      route: "/api/spaces/video-matte",
+      model: "robust_video_matting",
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      costUsd: 0.05,
+      note: "Video matte (estimado)",
+    });
 
     return NextResponse.json({
       rgba_url: result_url,
