@@ -4244,7 +4244,6 @@ export const NanoBananaNode = memo(({ id, data, selected }: NodeProps<any>) => {
           <FoldderDataHandle type="target" position={Position.Left} id={slot.id} dataType="image" />
           <span className="handle-label" style={{
             color: connectedSlots[i] ? '#f59e0b' : undefined,
-            fontWeight: connectedSlots[i] ? '900' : undefined,
           }}>
             {connectedSlots[i] ? `✓ ${slot.label}` : slot.label}
           </span>

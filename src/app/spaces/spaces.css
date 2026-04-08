@@ -367,18 +367,20 @@
   z-index: 50;
   flex-shrink: 0;
   font-size: 7px;
-  font-weight: 900;
-  color: #1e293b;
+  font-weight: 400;
+  color: rgba(15, 23, 42, 0.88);
   text-transform: uppercase;
   letter-spacing: 0.15em;
-  background: #ffffff;
+  background: rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   padding: 4px 8px;
-  border: 1px solid #f1f5f9;
+  border: 1px solid rgba(255, 255, 255, 0.32);
   border-radius: 6px;
   white-space: nowrap;
   opacity: 0;
   transition: opacity 0.25s ease, transform 0.25s ease;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+  box-shadow: 0 2px 14px rgba(15, 23, 42, 0.06);
   pointer-events: none;
 }
 
