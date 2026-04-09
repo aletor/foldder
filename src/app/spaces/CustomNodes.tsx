@@ -10,23 +10,18 @@ import {
   Loader2, 
   CheckCircle, 
   AlertCircle, 
-  Film, 
   Compass, 
-  MoreHorizontal, 
   Maximize2, 
   Download, 
-  Volume2, 
   ArrowRight, 
   X,
   Zap,
-  PlusSquare,
   ImageIcon,
   RefreshCw,
   Scissors,
   Layers,
   Link,
   FilePlus,
-  FileText,
   Music,
   Info,
   Globe,
@@ -37,9 +32,6 @@ import {
   ChevronUp,
   ChevronDown,
   Plus,
-  Move,
-  Maximize,
-  MousePointer2,
   Sparkles,
   Eraser,
   Crop,
@@ -47,7 +39,9 @@ import {
   Pencil,
   Square,
   Trash2,
-  EyeOff, Camera} from 'lucide-react';
+  EyeOff,
+  Camera,
+} from 'lucide-react';
 import './spaces.css';
 import { FOLDDER_FIT_VIEW_EASE } from '@/lib/fit-view-ease';
 import { readResponseJson } from '@/lib/read-response-json';
@@ -119,7 +113,7 @@ function ViewerOpenButton({ nodeId, disabled, className }: { nodeId: string; dis
   );
 }
 
-/** Studio en preview: mismo patrón que Nano Banana (60% alto, chip grande). */
+/** Studio en preview: centrado H+V en el área de preview (chip grande). */
 function StudioModeCenterButton({
   onClick,
   disabled,
@@ -131,10 +125,7 @@ function StudioModeCenterButton({
 }) {
   return (
     <div className={`pointer-events-none absolute inset-0 z-[15] overflow-hidden ${className ?? ''}`}>
-      <div
-        className="pointer-events-none absolute left-0 right-0 flex justify-center px-2"
-        style={{ top: '60%', transform: 'translateY(-50%)' }}
-      >
+      <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-2">
         <button
           type="button"
           disabled={disabled}
@@ -158,7 +149,7 @@ function StudioModeCenterButton({
   );
 }
 
-/** Nano Banana: botón Studio más grande, centrado al 60% del alto del área de preview. */
+/** Nano Banana: botón Studio centrado en el área de preview. */
 function NanoBananaStudioModeButton({
   onClick,
   disabled,
@@ -168,10 +159,7 @@ function NanoBananaStudioModeButton({
 }) {
   return (
     <div className="pointer-events-none absolute inset-0 z-[15] overflow-hidden">
-      <div
-        className="pointer-events-none absolute left-0 right-0 flex justify-center px-2"
-        style={{ top: '60%', transform: 'translateY(-50%)' }}
-      >
+      <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-2">
         <button
           type="button"
           disabled={disabled}
@@ -4782,7 +4770,8 @@ export const NanoBananaNode = memo(({ id, data, selected }: NodeProps<any>) => {
   useLayoutEffect(() => {
     const p = getAiHudNanoBananaJobProgressForNode(id);
     if (p != null && p < 100) {
-      setStatus('running');
+      // No bajar de success/error por rehidratación: evita «Generando 90%» tras terminar.
+      setStatus((s) => (s === 'success' || s === 'error' ? s : 'running'));
       setProgress(p);
     }
   }, [id]);
@@ -4790,7 +4779,7 @@ export const NanoBananaNode = memo(({ id, data, selected }: NodeProps<any>) => {
     return subscribeAiHudGenerationProgress(() => {
       const p = getAiHudNanoBananaJobProgressForNode(id);
       if (p != null && p < 100) {
-        setStatus('running');
+        setStatus((s) => (s === 'success' || s === 'error' ? s : 'running'));
         setProgress(p);
       }
     });
@@ -4850,6 +4839,7 @@ export const NanoBananaNode = memo(({ id, data, selected }: NodeProps<any>) => {
         const out = json.output;
         setResult(out);
         setProgress(100);
+        aiHudNanoBananaJobProgress(id, 100);
         setNodes(nds => nds.map(n => {
           if (n.id !== id) return n;
           const oldVal = typeof n.data?.value === 'string' && n.data.value ? n.data.value : null;
@@ -5028,13 +5018,13 @@ export const NanoBananaNode = memo(({ id, data, selected }: NodeProps<any>) => {
         {/* Progress bar while generating — z-50 para quedar por encima del preview object-contain */}
         {isActivelyGenerating && (
           <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-[50]">
-            <div className="h-1.5 w-full bg-black/60">
+            <div className="h-px w-full bg-white/15">
               <div
-                className="h-full bg-gradient-to-r from-yellow-400 to-orange-500 transition-all duration-500"
+                className="h-full bg-white transition-all duration-500"
                 style={{ width: `${Math.min(100, progress)}%` }}
               />
             </div>
-            <p className="bg-black/80 px-2 py-1 text-center text-[7px] font-black uppercase tracking-widest text-amber-100 backdrop-blur-sm">
+            <p className="bg-black/80 px-2 py-1 text-center text-[7px] font-black uppercase tracking-widest text-white/95 backdrop-blur-sm">
               {isPro && nodeData.thinking ? `Thinking… ${Math.round(progress)}%` : `Generando… ${Math.round(progress)}%`}
             </p>
           </div>

@@ -125,30 +125,66 @@
   -webkit-user-select: text;
 }
 
-/* ── NodeResizer handles ── */
+/* ── NodeResizer handles: más grandes, un poco fuera del nodo, flechas hacia fuera ── */
 .react-flow__resize-control.handle {
-  width: 16px !important;
-  height: 16px !important;
-  /* Tiny square rendered via background, centered in the larger hit area */
-  background-color: transparent !important;
-  background-image: linear-gradient(#aaaaaa, #aaaaaa) !important;
-  background-size: 4px 4px !important;
+  width: 22px !important;
+  height: 22px !important;
+  background-color: rgba(30, 30, 30, 0.88) !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cg stroke='%23ffffff' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M12 4v6M12 14v6M4 12h6M14 12h6'/%3E%3C/g%3E%3C/svg%3E") !important;
+  background-size: 16px 16px !important;
   background-repeat: no-repeat !important;
   background-position: center !important;
-  border: none !important;
-  box-shadow: none !important;
-  border-radius: 0 !important;
-  transition: background-image 0.15s;
+  border: 1px solid rgba(255, 255, 255, 0.45) !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35) !important;
+  border-radius: 4px !important;
+  transition: background-color 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
 .react-flow__resize-control.handle:hover {
-  background-image: linear-gradient(#666666, #666666) !important;
-  background-size: 5px 5px !important;
+  background-color: rgba(15, 15, 15, 0.95) !important;
+  border-color: rgba(255, 255, 255, 0.65) !important;
 }
-/* Line controls = invisible wider drag zone, no visual */
+/* Desplazar fuera del borde del nodo (base: translate -50% -50% en @xyflow/style.css) */
+.react-flow__resize-control.handle.top.left {
+  translate: calc(-50% - 8px) calc(-50% - 8px) !important;
+}
+.react-flow__resize-control.handle.top.right {
+  translate: calc(-50% + 8px) calc(-50% - 8px) !important;
+}
+.react-flow__resize-control.handle.bottom.left {
+  translate: calc(-50% - 8px) calc(-50% + 8px) !important;
+}
+.react-flow__resize-control.handle.bottom.right {
+  translate: calc(-50% + 8px) calc(-50% + 8px) !important;
+}
+.react-flow__resize-control.handle.left {
+  translate: calc(-50% - 8px) -50% !important;
+}
+.react-flow__resize-control.handle.right {
+  translate: calc(-50% + 8px) -50% !important;
+}
+.react-flow__resize-control.handle.top {
+  translate: -50% calc(-50% - 8px) !important;
+}
+.react-flow__resize-control.handle.bottom {
+  translate: -50% calc(-50% + 8px) !important;
+}
+/* Líneas de resize: zona de arrastre un poco fuera del borde del nodo */
 .react-flow__resize-control.line {
   background: transparent !important;
   border: none !important;
   box-shadow: none !important;
+}
+.react-flow__resize-control.line.top {
+  top: -7px !important;
+}
+.react-flow__resize-control.line.bottom {
+  top: calc(100% + 7px) !important;
+}
+.react-flow__resize-control.line.left {
+  left: -7px !important;
+}
+.react-flow__resize-control.line.right {
+  left: calc(100% + 7px) !important;
 }
 
 .react-flow__node .custom-node:not(.canvas-group-frame):hover {
@@ -156,19 +192,11 @@
   box-shadow: 0 30px 60px -12px rgba(0, 0, 0, 0.12);
 }
 
-/* Hover fuera del lienzo (p. ej. previews): mismo relieve que antes */
-.custom-node:not(.canvas-group-frame):hover {
-  border: none;
-  box-shadow: 0 30px 60px -12px rgba(0, 0, 0, 0.12);
-}
-
-/* ── Node selection (click / Shift+click) ─────────────────────────── */
+/* ── Node selection (click / Shift+click) — sin anillo blanco extra ── */
 .react-flow__node.selected .custom-node:not(.canvas-group-frame) {
   border: none;
-  box-shadow:
-    0 0 0 2px rgba(255, 255, 255, 0.45),
-    0 20px 40px -4px rgba(0, 0, 0, 0.10);
-  transform: translateY(-2px) scale(1.005);
+  box-shadow: 0 20px 40px -4px rgba(0, 0, 0, 0.1);
+  transform: none;
 }
 
 .react-flow__node.selected .canvas-group-frame.custom-node {
@@ -611,6 +639,14 @@
   flex-direction: row-reverse;
 }
 
+/* Centro vertical del lado izq./der. del nodo (se recoloca al redimensionar).
+   Un `style={{ top: '…' }}` en el wrapper sigue teniendo prioridad sobre `top: 50%` y reparte varios handles en el mismo lado. */
+.handle-wrapper.handle-left,
+.handle-wrapper.handle-right {
+  top: 50%;
+  transform: translateY(-50%);
+}
+
 .handle-label {
   position: relative;
   z-index: 50;
@@ -654,11 +690,11 @@
 /* Tamaño ~constante en pantalla vía dimensiones en flujo (sin scale en el handle).
    Legacy: puntos circulares si algún handle no usa .foldder-data-handle */
 .react-flow__handle:not(.foldder-data-handle) {
-  width: calc(10.2px / max(var(--foldder-viewport-zoom, 1), var(--foldder-handle-zoom-floor, 1.37))) !important;
-  height: calc(10.2px / max(var(--foldder-viewport-zoom, 1), var(--foldder-handle-zoom-floor, 1.37))) !important;
+  width: calc(18.564px / max(var(--foldder-viewport-zoom, 1), var(--foldder-handle-zoom-floor, 1.37))) !important;
+  height: calc(18.564px / max(var(--foldder-viewport-zoom, 1), var(--foldder-handle-zoom-floor, 1.37))) !important;
   border-radius: 50% !important;
   background: transparent !important;
-  border-width: calc(1.8px / max(var(--foldder-viewport-zoom, 1), var(--foldder-handle-zoom-floor, 1.37))) !important;
+  border-width: calc(3.276px / max(var(--foldder-viewport-zoom, 1), var(--foldder-handle-zoom-floor, 1.37))) !important;
   transform-origin: center center;
   transition: box-shadow 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275), border-color 0.2s;
   pointer-events: all;
@@ -682,9 +718,9 @@
 .foldder-data-handle.react-flow__handle {
   position: relative;
   z-index: 1;
-  width: calc(14.4px / max(var(--foldder-viewport-zoom, 1), var(--foldder-handle-zoom-floor, 1.37))) !important;
-  height: calc(14.4px / max(var(--foldder-viewport-zoom, 1), var(--foldder-handle-zoom-floor, 1.37))) !important;
-  border-radius: calc(3.6px / max(var(--foldder-viewport-zoom, 1), var(--foldder-handle-zoom-floor, 1.37))) !important;
+  width: calc(26.208px / max(var(--foldder-viewport-zoom, 1), var(--foldder-handle-zoom-floor, 1.37))) !important;
+  height: calc(26.208px / max(var(--foldder-viewport-zoom, 1), var(--foldder-handle-zoom-floor, 1.37))) !important;
+  border-radius: calc(6.552px / max(var(--foldder-viewport-zoom, 1), var(--foldder-handle-zoom-floor, 1.37))) !important;
   background: linear-gradient(145deg, #1d2433 0%, #2f3a4f 55%, #3d4a62 100%) !important;
   border: none !important;
   display: flex !important;
@@ -727,17 +763,17 @@
   flex-shrink: 0;
 }
 
-.foldder-data-handle--connected.handle-prompt { box-shadow: 0 0 0 1.5px rgba(59, 130, 246, 0.55) !important; }
-.foldder-data-handle--connected.handle-video  { box-shadow: 0 0 0 1.5px rgba(108, 92, 231, 0.55) !important; }
-.foldder-data-handle--connected.handle-image  { box-shadow: 0 0 0 1.5px rgba(108, 92, 231, 0.55) !important; }
-.foldder-data-handle--connected.handle-sound  { box-shadow: 0 0 0 1.5px rgba(168, 85, 247, 0.55) !important; }
-.foldder-data-handle--connected.handle-mask   { box-shadow: 0 0 0 1.5px rgba(6, 182, 212, 0.55) !important; }
-.foldder-data-handle--connected.handle-pdf    { box-shadow: 0 0 0 1.5px rgba(249, 115, 22, 0.55) !important; }
-.foldder-data-handle--connected.handle-txt    { box-shadow: 0 0 0 1.5px rgba(245, 158, 11, 0.55) !important; }
-.foldder-data-handle--connected.handle-url    { box-shadow: 0 0 0 1.5px rgba(16, 185, 129, 0.55) !important; }
-.foldder-data-handle--connected.handle-rose   { box-shadow: 0 0 0 1.5px rgba(244, 63, 94, 0.55) !important; }
-.foldder-data-handle--connected.handle-emerald{ box-shadow: 0 0 0 1.5px rgba(16, 185, 129, 0.55) !important; }
-.foldder-data-handle--connected.handle-generic { box-shadow: 0 0 0 1.5px rgba(148, 163, 184, 0.5) !important; }
+.foldder-data-handle--connected.handle-prompt { box-shadow: 0 0 0 2.8px rgba(59, 130, 246, 0.55) !important; }
+.foldder-data-handle--connected.handle-video  { box-shadow: 0 0 0 2.8px rgba(108, 92, 231, 0.55) !important; }
+.foldder-data-handle--connected.handle-image  { box-shadow: 0 0 0 2.8px rgba(108, 92, 231, 0.55) !important; }
+.foldder-data-handle--connected.handle-sound  { box-shadow: 0 0 0 2.8px rgba(168, 85, 247, 0.55) !important; }
+.foldder-data-handle--connected.handle-mask   { box-shadow: 0 0 0 2.8px rgba(6, 182, 212, 0.55) !important; }
+.foldder-data-handle--connected.handle-pdf    { box-shadow: 0 0 0 2.8px rgba(249, 115, 22, 0.55) !important; }
+.foldder-data-handle--connected.handle-txt    { box-shadow: 0 0 0 2.8px rgba(245, 158, 11, 0.55) !important; }
+.foldder-data-handle--connected.handle-url    { box-shadow: 0 0 0 2.8px rgba(16, 185, 129, 0.55) !important; }
+.foldder-data-handle--connected.handle-rose   { box-shadow: 0 0 0 2.8px rgba(244, 63, 94, 0.55) !important; }
+.foldder-data-handle--connected.handle-emerald{ box-shadow: 0 0 0 2.8px rgba(16, 185, 129, 0.55) !important; }
+.foldder-data-handle--connected.handle-generic { box-shadow: 0 0 0 2.8px rgba(148, 163, 184, 0.5) !important; }
 
 /* Misma composición que @xyflow/react/style.css: si falta el eje Y/X, los bounds del handle fallan y las aristas no se dibujan (getEdgePosition → null). */
 .react-flow__handle-left {
@@ -786,93 +822,12 @@
   to { transform: translateX(100%); }
 }
 
-/* Sidebar Styling */
-.spaces-sidebar {
-  position: fixed;  /* fixed = outside ReactFlow transform context, allows backdrop-filter to work */
-  left: 0;
-  top: 0;
-  width: 16px;
-  background: rgba(0, 0, 0, 0.01);
-  backdrop-filter: blur(0px);
-  -webkit-backdrop-filter: blur(0px);
-  border-right: 1px solid transparent;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  z-index: 1000;
-  overflow: visible;
-  height: 100vh;
-  transition: width 0.6s cubic-bezier(0.16, 1, 0.3, 1), background 0.4s ease, backdrop-filter 0.4s ease, border-color 0.4s ease, padding 0.6s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.4s ease;
-}
-
-/* Expansion area for hover: Makes it easier to trigger the sidebar */
-.spaces-sidebar::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 48px;
-  height: 100%;
-  background: transparent;
-  pointer-events: auto;
-  z-index: -1;
-}
-
-.spaces-sidebar:hover {
-  width: 200px;
-  background: rgba(255, 255, 255, 0.04);
-  backdrop-filter: blur(40px);      /* matches backdrop-blur-2xl = 40px like the legend */
-  -webkit-backdrop-filter: blur(40px);
-  border-right: 1px solid rgba(255, 255, 255, 0.07);
-  padding: 16px 12px;
-  box-shadow: 4px 0 80px rgba(0, 0, 0, 0.5);
-}
-
-/* Nano Banana Studio fullscreen: no sidebar strip, no top HUD (evita solapar el logo con “Studio”) */
-body.nb-studio-open .spaces-sidebar,
-body.nb-studio-open .spaces-sidebar:hover {
-  display: none !important;
-  pointer-events: none !important;
-}
-
+/* Nano Banana Studio fullscreen: hide top HUD to avoid overlapping Studio header */
 body.nb-studio-open [data-foldder-top-hud] {
   display: none !important;
   visibility: hidden !important;
   pointer-events: none !important;
   opacity: 0 !important;
-}
-
-/* Collapsible Content Control */
-.collapsible-content {
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.3s ease;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-
-.spaces-sidebar:hover .collapsible-content {
-  opacity: 1;
-  pointer-events: auto;
-  transition: opacity 0.5s 0.2s ease;
-}
-
-.sidebar-label {
-  font-size: 0.6rem;
-  font-weight: 800;
-  margin-top: 2px;
-}
-
-/* Node Grid Adaptation */
-.spaces-sidebar .grid {
-  grid-template-columns: repeat(1, minmax(0, 1fr));
-  transition: grid-template-columns 0.5s ease;
-  justify-items: center;
-}
-
-.spaces-sidebar:hover .grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .dndnode {
@@ -983,16 +938,6 @@ body.nb-studio-open [data-foldder-top-hud] {
   transform: scale(1.4);
 }
 
-/* Overlay for DnD */
-.dnd-overlay {
-  position: absolute;
-  inset: 0;
-  background: rgba(244, 63, 94, 0.05);
-  border: 2px dashed #f43f5e;
-  z-index: 5;
-  pointer-events: none;
-}
-
 /* Edge & Wire disconnection styles */
 /* Con elevateEdgesOnSelect, el <svg> de la arista gana z-index alto y tapaba el botón (EdgeLabelRenderer).
    La capa de etiquetas debe quedar por encima del trazo para pointer-events en el disconnect. */
@@ -1063,34 +1008,6 @@ body.nb-studio-open [data-foldder-top-hud] {
   to { opacity: 1; backdrop-filter: blur(12px); }
 }
 
-.studio-canvas {
-  box-shadow: 0 50px 100px -20px rgba(0, 0, 0, 0.7);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-}
-
-.studio-layer {
-  transition: box-shadow 0.2s, transform 0.2s;
-}
-
-.studio-layer:active {
-  cursor: grabbing !important;
-}
-
-.studio-handle {
-  width: 12px;
-  height: 12px;
-  background: white;
-  border: 3px solid #06b6d4;
-  border-radius: 50%;
-  box-shadow: 0 2px 10px rgba(0,0,0,0.3);
-  transition: all 0.2s;
-}
-
-.studio-handle:hover {
-  transform: scale(1.5);
-  background: #06b6d4;
-  border-color: white;
-}
 /* Context Menu Styling */
 .context-menu {
   position: fixed;
