@@ -477,6 +477,26 @@ function alignMultiInputTargetsToSources(
   }
 }
 
+/** Bajo el cursor del cliente: primer nodo/grupo React Flow (`.react-flow__node`) en el stack de pintado. */
+function getReactFlowNodeIdAtClientPoint(clientX: number, clientY: number): string | null {
+  if (typeof document === 'undefined') return null;
+  try {
+    const stack = document.elementsFromPoint(clientX, clientY);
+    for (const el of stack) {
+      if (!(el instanceof Element)) continue;
+      const wrap = el.closest('.react-flow__node');
+      if (!wrap) continue;
+      const id =
+        wrap.getAttribute('data-id') ||
+        (wrap instanceof HTMLElement && wrap.id ? wrap.id : null);
+      if (id) return id;
+    }
+  } catch {
+    /* elementsFromPoint puede fallar en coordenadas inválidas */
+  }
+  return null;
+}
+
 function sortNodesCardsOrder<T extends { id: string; position: { x: number; y: number } }>(arr: T[]): T[] {
   return [...arr].sort(
     (a, b) =>
@@ -1891,8 +1911,33 @@ const SpacesContent = () => {
   /** Doble clic en nodo: alterna encuadrar ese nodo / segundo doble clic en el mismo → fit global */
   const lastDoubleClickFitNodeIdRef = useRef<string | null>(null);
 
-  // ── Espacio: pan; sin espacio: arrastre = selección (marco) ──────────────
+  // ── Espacio: pan; sin espacio: arrastre = selección (marco). Espacio también = mismo modo “overview” que Ctrl/Mayús.
   const [spaceHeld, setSpaceHeld] = useState(false);
+  /** Control, Mayús o Espacio: fit global + rollover; al soltar la última de estas teclas → encuadrar nodo bajo cursor o restaurar zoom. */
+  const ctrlHeldForOverviewRef = useRef(false);
+  const shiftHeldForOverviewRef = useRef(false);
+  const spaceHeldForOverviewRef = useRef(false);
+  const viewportBeforeOverviewRef = useRef<{ x: number; y: number; zoom: number } | null>(null);
+  const lastPointerClientRef = useRef({ x: 0, y: 0 });
+  /** Rollover con Control/Mayús/Espacio: recuadro grueso en el nodo/grupo bajo el cursor. */
+  const [overviewHoverHighlightId, setOverviewHoverHighlightId] = useState<string | null>(null);
+  useEffect(() => {
+    const overviewHeld = () =>
+      ctrlHeldForOverviewRef.current ||
+      shiftHeldForOverviewRef.current ||
+      spaceHeldForOverviewRef.current;
+    const onMove = (e: MouseEvent) => {
+      lastPointerClientRef.current = { x: e.clientX, y: e.clientY };
+      if (!overviewHeld()) return;
+      const raw = getReactFlowNodeIdAtClientPoint(e.clientX, e.clientY);
+      const id =
+        raw && liveNodesRef.current.some((n) => n.id === raw) ? raw : null;
+      setOverviewHoverHighlightId((prev) => (prev === id ? prev : id));
+    };
+    window.addEventListener('mousemove', onMove, { passive: true });
+    return () => window.removeEventListener('mousemove', onMove);
+  }, []);
+
   useEffect(() => {
     const typingTarget = (t: EventTarget | null) => {
       if (!(t instanceof HTMLElement)) return false;
@@ -1901,25 +1946,114 @@ const SpacesContent = () => {
       if (t.isContentEditable) return true;
       return !!t.closest('[contenteditable="true"]');
     };
-    const onDown = (e: KeyboardEvent) => {
-      if (e.code !== 'Space') return;
+    const restoreSavedViewport = (saved: { x: number; y: number; zoom: number }) => {
+      setViewport({ x: saved.x, y: saved.y, zoom: saved.zoom }, {
+        duration: fitAnim(480),
+        ...FOLDDER_FIT_VIEW_EASE,
+      });
+    };
+    const refreshOverviewHover = () => {
+      const { x, y } = lastPointerClientRef.current;
+      const raw = getReactFlowNodeIdAtClientPoint(x, y);
+      const id =
+        raw && liveNodesRef.current.some((n) => n.id === raw) ? raw : null;
+      setOverviewHoverHighlightId(id);
+    };
+    /** blur: suelta “virtualmente” modificadores y restaura zoom (sin encuadrar nodo). */
+    const onBlur = () => {
+      if (
+        !ctrlHeldForOverviewRef.current &&
+        !shiftHeldForOverviewRef.current &&
+        !spaceHeldForOverviewRef.current
+      ) {
+        return;
+      }
+      const saved = viewportBeforeOverviewRef.current;
+      ctrlHeldForOverviewRef.current = false;
+      shiftHeldForOverviewRef.current = false;
+      spaceHeldForOverviewRef.current = false;
+      setSpaceHeld(false);
+      viewportBeforeOverviewRef.current = null;
+      setOverviewHoverHighlightId(null);
+      if (saved) restoreSavedViewport(saved);
+    };
+    const onModifierDown = (e: KeyboardEvent) => {
+      const isCtrl = e.key === 'Control';
+      const isShift = e.key === 'Shift';
+      const isSpace = e.code === 'Space';
+      if (!isCtrl && !isShift && !isSpace) return;
+      if (e.repeat) return;
       if (typingTarget(e.target)) return;
-      e.preventDefault();
-      setSpaceHeld(true);
+
+      if (isSpace) e.preventDefault();
+
+      const wasHeld =
+        ctrlHeldForOverviewRef.current ||
+        shiftHeldForOverviewRef.current ||
+        spaceHeldForOverviewRef.current;
+      if (isCtrl) ctrlHeldForOverviewRef.current = true;
+      if (isShift) shiftHeldForOverviewRef.current = true;
+      if (isSpace) {
+        spaceHeldForOverviewRef.current = true;
+        setSpaceHeld(true);
+      }
+
+      if (wasHeld) {
+        queueMicrotask(refreshOverviewHover);
+        return;
+      }
+
+      viewportBeforeOverviewRef.current = getViewport();
+      void fitView({
+        padding: FIT_VIEW_PADDING,
+        duration: fitAnim(480),
+        interpolate: 'smooth',
+        ...FOLDDER_FIT_VIEW_EASE,
+      });
+      queueMicrotask(refreshOverviewHover);
     };
-    const onUp = (e: KeyboardEvent) => {
-      if (e.code === 'Space') setSpaceHeld(false);
+    const onModifierUp = (e: KeyboardEvent) => {
+      const isCtrl = e.key === 'Control';
+      const isShift = e.key === 'Shift';
+      const isSpace = e.code === 'Space';
+      if (!isCtrl && !isShift && !isSpace) return;
+
+      if (isCtrl) ctrlHeldForOverviewRef.current = false;
+      if (isShift) shiftHeldForOverviewRef.current = false;
+      if (isSpace) {
+        spaceHeldForOverviewRef.current = false;
+        setSpaceHeld(false);
+      }
+
+      if (
+        ctrlHeldForOverviewRef.current ||
+        shiftHeldForOverviewRef.current ||
+        spaceHeldForOverviewRef.current
+      ) {
+        return;
+      }
+
+      const saved = viewportBeforeOverviewRef.current;
+      viewportBeforeOverviewRef.current = null;
+      setOverviewHoverHighlightId(null);
+
+      const { x, y } = lastPointerClientRef.current;
+      const nodeId = getReactFlowNodeIdAtClientPoint(x, y);
+      if (nodeId && liveNodesRef.current.some((n) => n.id === nodeId)) {
+        fitViewToNodeIds([nodeId], 520, { padding: FIT_VIEW_PADDING_NODE_FOCUS });
+        return;
+      }
+      if (saved) restoreSavedViewport(saved);
     };
-    const onBlur = () => setSpaceHeld(false);
-    window.addEventListener('keydown', onDown, { capture: true });
-    window.addEventListener('keyup', onUp);
+    window.addEventListener('keydown', onModifierDown, true);
+    window.addEventListener('keyup', onModifierUp, true);
     window.addEventListener('blur', onBlur);
     return () => {
-      window.removeEventListener('keydown', onDown, { capture: true });
-      window.removeEventListener('keyup', onUp);
+      window.removeEventListener('keydown', onModifierDown, true);
+      window.removeEventListener('keyup', onModifierUp, true);
       window.removeEventListener('blur', onBlur);
     };
-  }, []);
+  }, [getViewport, setViewport, fitView, fitViewToNodeIds]);
 
   /** Botón central (rueda): cursor mano + pan; mismo estilo que Espacio */
   const [middlePanHeld, setMiddlePanHeld] = useState(false);
@@ -3440,9 +3574,15 @@ const SpacesContent = () => {
       return nodes.map((node: any) => {
         const isCompat = compatSet.has(node.id);
         const isHover = node.id === libraryDropTargetId;
+        const isOverviewHover = node.id === overviewHoverHighlightId;
         const stackIdx = ordered.findIndex((x) => x.id === node.id);
         if (stackIdx === -1) {
-          const cls = [node.className, isCompat && 'library-drop-compatible', isHover && 'library-drop-highlight']
+          const cls = [
+            node.className,
+            isCompat && 'library-drop-compatible',
+            isHover && 'library-drop-highlight',
+            isOverviewHover && 'foldder-ctrl-overview-hover',
+          ]
             .filter(Boolean)
             .join(' ');
           return { ...node, className: cls || undefined };
@@ -3453,6 +3593,7 @@ const SpacesContent = () => {
           node.className,
           isCompat && 'library-drop-compatible',
           isHover && 'library-drop-highlight',
+          isOverviewHover && 'foldder-ctrl-overview-hover',
           isFocused && 'foldder-cards-front',
           isFocused && introClass,
         ]
@@ -3485,7 +3626,13 @@ const SpacesContent = () => {
     return nodes.map((n: any) => {
       const isCompat = compatSet.has(n.id);
       const isHover = n.id === libraryDropTargetId;
-      const cls = [n.className, isCompat && 'library-drop-compatible', isHover && 'library-drop-highlight']
+      const isOverviewHover = n.id === overviewHoverHighlightId;
+      const cls = [
+        n.className,
+        isCompat && 'library-drop-compatible',
+        isHover && 'library-drop-highlight',
+        isOverviewHover && 'foldder-ctrl-overview-hover',
+      ]
         .filter(Boolean)
         .join(' ');
       return {
@@ -3493,7 +3640,15 @@ const SpacesContent = () => {
         className: cls || undefined,
       };
     });
-  }, [nodes, libraryDropTargetId, libraryCompatibleIds, canvasViewMode, cardsFocusIndex, cardsIntroTick]);
+  }, [
+    nodes,
+    libraryDropTargetId,
+    libraryCompatibleIds,
+    canvasViewMode,
+    cardsFocusIndex,
+    cardsIntroTick,
+    overviewHoverHighlightId,
+  ]);
 
   const isValidConnection = useCallback((connection: any) => {
     const sourceNode = nodes.find((n) => n.id === connection.source);

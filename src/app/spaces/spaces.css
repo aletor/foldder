@@ -117,6 +117,18 @@
   outline: none !important;
 }
 
+/* Control, Mayús o Espacio mantenido: rollover antes de soltar — marco grueso (encuadre a nodo) */
+.react-flow__node.foldder-ctrl-overview-hover .custom-node {
+  outline: 4px solid rgba(34, 211, 238, 0.95);
+  outline-offset: 4px;
+  box-shadow:
+    0 0 0 1px rgba(8, 47, 73, 0.45),
+    0 18px 44px -10px rgba(34, 211, 238, 0.38);
+  z-index: 2;
+  position: relative;
+  transform: none !important;
+}
+
 /* Sidebar → canvas drag: parpadeo de todo el nodo (brillo/opacidad), sin acentuar bordes */
 @keyframes library-drop-node-pulse {
   0%,

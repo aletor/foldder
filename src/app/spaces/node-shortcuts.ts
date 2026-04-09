@@ -3,7 +3,8 @@
  * Debe coincidir con el `switch (e.key)` del atajo en `page.tsx` (~keydown en el lienzo).
  *
  * Alias no reflejados en la chapa: Listado también con **F**; Layout también con **L**;
- * **Mayús+F** encuadra todo el grafo. **G** agrupa en el lienzo; **Mayús+G** desagrupa. Grok = **K**.
+ * **Mayús+F** encuadra todo el grafo. Mantener **Control**, **Mayús** o **Espacio**: vista global + rollover; soltar la última encuadra nodo bajo cursor o restaura zoom.
+ * **G** agrupa en el lienzo; **Mayús+G** desagrupa. Grok = **K**.
  * **A** auto-layout: por componente conexo; nodos sueltos (sin aristas al resto) en columna al margen, no mezclados con el flujo enlazado.
  */
 export const NODE_KEYS: Record<string, string> = {
