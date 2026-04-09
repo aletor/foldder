@@ -1982,10 +1982,12 @@ export const MediaInputNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const isUploading = isUploadingLocal || nodeData.loading;
 
   /** Tras cargar imagen/vídeo el nodo cambia de alto (p. ej. a aspect-video): encuadrar; duración alineada con `fitAnim` (nominal/2) en page. */
-  const scheduleFitViewportToThisNode = useCallback(() => {
+  const scheduleFitViewportToThisNode = useCallback((opts?: { force?: boolean }) => {
+    if (!opts?.force && isFoldderMediaPreviewAutoFitSuppressed()) return;
     if (mediaFitTimerRef.current) clearTimeout(mediaFitTimerRef.current);
     mediaFitTimerRef.current = setTimeout(() => {
       mediaFitTimerRef.current = null;
+      if (!opts?.force && isFoldderMediaPreviewAutoFitSuppressed()) return;
       void fitView({
         nodes: [{ id }] as Node[],
         padding: 0.8,
@@ -2116,7 +2118,7 @@ export const MediaInputNode = memo(({ id, data, selected }: NodeProps<any>) => {
               className="w-full h-full object-cover"
               muted
               loop
-              onLoadedData={scheduleFitViewportToThisNode}
+              onLoadedData={() => scheduleFitViewportToThisNode()}
               onPlay={() => setIsPlaying(true)}
               onPause={() => setIsPlaying(false)}
               onEnded={() => setIsPlaying(false)}
@@ -2160,7 +2162,7 @@ export const MediaInputNode = memo(({ id, data, selected }: NodeProps<any>) => {
             src={nodeData.value}
             className="w-full h-full object-cover"
             alt="Preview"
-            onLoad={scheduleFitViewportToThisNode}
+            onLoad={() => scheduleFitViewportToThisNode()}
           />
         ) : hasMedia && nodeData.type === 'audio' ? (
           <div className="flex flex-col items-center gap-3 text-purple-400">

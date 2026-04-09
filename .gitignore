@@ -42,3 +42,6 @@ next-env.d.ts
 
 # API usage log (local)
 /data/api-usage.jsonl
+
+# portable Node bundle (no subir)
+.node-portable/
