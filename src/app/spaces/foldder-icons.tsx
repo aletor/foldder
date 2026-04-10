@@ -368,12 +368,39 @@ export function FoldderMask({ state, className, size }: GlyphProps) {
   );
 }
 
-export function FoldderFreehand({ state, className, size }: GlyphProps) {
+/** Raster logo (fh monogram) — crisp at any node size */
+export function FoldderFreehand({ state, className, size = 16 }: GlyphProps) {
+  const s = state ?? 'idle';
   return (
-    <FoldderIcon state={state} className={className} size={size}>
-      <path d="M4 12.5 L6.5 4 L8 8.5 L10 3.5 L12 12.5" />
-      <path d="M5 10 Q8 6 11 10" opacity={0.35} />
-    </FoldderIcon>
+    <span
+      className={shellClass(s, `${className ?? ''} relative inline-flex items-center justify-center`)}
+      style={{ ...shellFilter(s), width: size, height: size }}
+      aria-hidden
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src="/freehand-node-icon.png"
+        alt=""
+        width={size}
+        height={size}
+        className="h-full w-full select-none rounded-[3px] object-contain pointer-events-none"
+        draggable={false}
+      />
+      {s === 'processing' && (
+        <span
+          className="foldder-icon-pulse absolute right-px top-px block h-[5px] w-[5px] rounded-full bg-current opacity-95"
+          aria-hidden
+        />
+      )}
+      {s === 'done' && (
+        <span className="absolute right-px top-px block h-[4px] w-[4px] rounded-full bg-current opacity-95" aria-hidden />
+      )}
+      {s === 'error' && (
+        <span className="absolute -bottom-px -right-px text-[8px] leading-none text-rose-400 opacity-90" aria-hidden>
+          ×
+        </span>
+      )}
+    </span>
   );
 }
 
@@ -400,7 +427,7 @@ export const FOLDDER_ICON_COLORS: Record<FoldderIconKey, string> = {
   text: '#e9d5ff',
   crop: '#fde68a',
   mask: '#99f6e4',
-  freehand: '#f472b6',
+  freehand: '#22d3ee',
 };
 
 export const FOLDDER_NODE_ICONS: Record<FoldderIconKey, React.FC<GlyphProps>> = {

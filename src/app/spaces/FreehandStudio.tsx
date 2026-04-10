@@ -51,7 +51,17 @@ import {
   ChevronDown,
   ChevronsUp,
   ChevronsDown,
+  Hand,
+  ZoomIn,
+  Droplet,
 } from "lucide-react";
+import { FreehandExportModal, type ProfessionalExportOptions } from "./freehand/FreehandExportModal";
+import {
+  buildStandaloneSvgFromCanvasDom,
+  boundsOfObjects,
+  expandExportIds,
+  type Rect as ExportRect,
+} from "./freehand/freehand-export";
 import {
   type FillAppearance,
   migrateFill,
@@ -76,7 +86,17 @@ import { textToOutlinePaths } from "./freehand/text-outline";
 //  TYPES
 // ═══════════════════════════════════════════════════════════════════════════
 
-type Tool = "select" | "directSelect" | "pen" | "rect" | "ellipse" | "gradient" | "text";
+type Tool =
+  | "select"
+  | "directSelect"
+  | "pen"
+  | "rect"
+  | "ellipse"
+  | "gradient"
+  | "text"
+  | "eyedropper"
+  | "handTool"
+  | "zoomTool";
 
 interface Point { x: number; y: number }
 interface Rect { x: number; y: number; w: number; h: number }
@@ -222,7 +242,7 @@ export interface ClippingContainerObject extends FreehandObjectBase {
   content: FreehandObject[];
 }
 
-type FreehandObject = RectObject | EllipseObject | PathObject | ImageObject | TextObject | BooleanGroupObject | ClippingContainerObject;
+export type FreehandObject = RectObject | EllipseObject | PathObject | ImageObject | TextObject | BooleanGroupObject | ClippingContainerObject;
 
 interface FreehandStudioProps {
   nodeId: string;
@@ -450,8 +470,6 @@ function getPathBoundsFromPoints(points: BezierPoint[]): Rect {
 function degToRad(d: number) { return (d * Math.PI) / 180; }
 
 /** Mayús durante arrastre = control fino (mover / escalar). */
-const TRANSFORM_SHIFT_FINE = 0.18;
-
 /**
  * Píxeles de puntero → delta en espacio del lienzo. Con zoom < 1, 1/zoom dispara demasiado el tamaño
  * al redimensionar; amortiguamos solo en resize. El movimiento mantiene 1/zoom para seguir el cursor.
@@ -462,8 +480,13 @@ function canvasScaleFromPointer(zoom: number, kind: "move" | "resize"): number {
   return inv;
 }
 
-function shiftFineFactor(e: ReactMouseEvent): number {
-  return e.shiftKey || e.nativeEvent.getModifierState?.("Shift") ? TRANSFORM_SHIFT_FINE : 1;
+function isShiftHeld(e: ReactMouseEvent): boolean {
+  return e.shiftKey || (typeof e.getModifierState === "function" && e.getModifierState("Shift"));
+}
+
+function constrainToAxis(dx: number, dy: number): { x: number; y: number } {
+  if (Math.abs(dx) >= Math.abs(dy)) return { x: dx, y: 0 };
+  return { x: 0, y: dy };
 }
 
 /** Delta angular más corto entre dos ángulos (rad), evita saltos de atan2 al cruzar ±π. */
@@ -1270,7 +1293,11 @@ function svgStringToCanvas(svgStr: string, w: number, h: number, bgColor?: strin
 function ToolBtn({ active, onClick, title, children }: { active?: boolean; onClick: () => void; title: string; children: React.ReactNode }) {
   return (
     <button type="button" title={title} onClick={onClick}
-      className={`flex items-center justify-center w-9 h-9 rounded-lg transition-colors ${active ? "bg-violet-600 text-white shadow-lg shadow-violet-600/30" : "text-zinc-400 hover:text-white hover:bg-white/10"}`}
+      className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg transition-all duration-150 ease-out ${
+        active
+          ? "bg-white/[0.12] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.14)]"
+          : "text-zinc-500 hover:bg-white/[0.06] hover:text-white"
+      }`}
     >{children}</button>
   );
 }
@@ -1301,25 +1328,16 @@ function CtxMenu({ x, y, items, onClose }: { x: number; y: number; items: Contex
   );
 }
 
-function ExportDialog({ onClose, onExportSvg, onExportPng, onExportJpg, onExportNode }: {
-  onClose: () => void;
-  onExportSvg: () => void;
-  onExportPng: () => void;
-  onExportJpg: () => void;
-  onExportNode: () => void;
-}) {
-  return (
-    <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/60" onClick={onClose}>
-      <div className="bg-zinc-900 border border-white/15 rounded-xl p-5 w-72 space-y-3" onClick={(e) => e.stopPropagation()}>
-        <div className="text-[12px] font-bold uppercase tracking-widest text-zinc-400">Export</div>
-        <button type="button" onClick={onExportSvg} className="w-full py-2 rounded-lg bg-white/5 border border-white/10 text-white text-[11px] font-bold uppercase hover:bg-white/10 transition-colors">Download SVG</button>
-        <button type="button" onClick={onExportPng} className="w-full py-2 rounded-lg bg-white/5 border border-white/10 text-white text-[11px] font-bold uppercase hover:bg-white/10 transition-colors">Download PNG (transparent)</button>
-        <button type="button" onClick={onExportJpg} className="w-full py-2 rounded-lg bg-white/5 border border-white/10 text-white text-[11px] font-bold uppercase hover:bg-white/10 transition-colors">Download JPG (white bg)</button>
-        <div className="h-px bg-white/10" />
-        <button type="button" onClick={onExportNode} className="w-full py-2 rounded-lg bg-violet-600 text-white text-[11px] font-bold uppercase hover:bg-violet-500 transition-colors">Export to Node</button>
-      </div>
-    </div>
-  );
+function clipMapFromObjects(objs: FreehandObject[]): Map<string, FreehandObject[]> {
+  const map = new Map<string, FreehandObject[]>();
+  for (const o of objs) {
+    if (o.clipMaskId) {
+      const arr = map.get(o.clipMaskId) || [];
+      arr.push(o);
+      map.set(o.clipMaskId, arr);
+    }
+  }
+  return map;
 }
 
 function layerRowIcon(o: FreehandObject) {
@@ -1454,7 +1472,10 @@ export default function FreehandStudio({
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; canvas?: Point } | null>(null);
   const [textEditingId, setTextEditingId] = useState<string | null>(null);
   const [showGrid, setShowGrid] = useState(true);
-  const [showExport, setShowExport] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportModalScope, setExportModalScope] = useState<"selection" | "full">("selection");
+  const [toast, setToast] = useState<string | null>(null);
+  const [exportFlash, setExportFlash] = useState<ExportRect | null>(null);
   const [snapEnabled, setSnapEnabled] = useState(true);
   const [snapGuides, setSnapGuides] = useState<SnapGuide[]>([]);
 
@@ -2422,6 +2443,149 @@ export default function FreehandStudio({
     onExport(canvas.toDataURL("image/png"));
   }, [objects, onExport]);
 
+  const triggerExportFlash = useCallback((b: ExportRect) => {
+    setExportFlash(b);
+    window.setTimeout(() => setExportFlash(null), 700);
+  }, []);
+
+  const quickExportSelectionPng = useCallback(async () => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const objs = objectsRef.current;
+    const sel = selectedIdsRef.current;
+    if (sel.size === 0) {
+      setToast("Select objects to export");
+      window.setTimeout(() => setToast(null), 2200);
+      return;
+    }
+    const cmap = clipMapFromObjects(objs);
+    const exportIds = expandExportIds(new Set(sel), objs, cmap);
+    const targets = objs.filter((o) => exportIds.has(o.id) && o.visible);
+    const b = getGroupBounds(targets);
+    if (b.w < 1 || b.h < 1) return;
+    const str = buildStandaloneSvgFromCanvasDom(svg, {
+      exportIds,
+      bounds: b,
+      scale: 1,
+      background: "transparent",
+    });
+    const w = Math.max(1, Math.round(b.w));
+    const h = Math.max(1, Math.round(b.h));
+    const canvas = await svgStringToCanvas(str, w, h);
+    canvas.toBlob((blob) => {
+      if (blob) downloadBlob(blob, `export-${Date.now()}.png`);
+    }, "image/png");
+    triggerExportFlash(b);
+    setToast("Exported PNG (1×)");
+    window.setTimeout(() => setToast(null), 2600);
+  }, [triggerExportFlash]);
+
+  const runProfessionalExport = useCallback(
+    async (opts: ProfessionalExportOptions) => {
+      const svg = svgRef.current;
+      if (!svg) return;
+      const objs = objectsRef.current;
+      const sel = selectedIdsRef.current;
+      const cmap = clipMapFromObjects(objs);
+      const scope = exportModalScope;
+
+      const bgForCanvas =
+        opts.format === "jpg"
+          ? opts.background === "transparent"
+            ? "#ffffff"
+            : opts.background
+          : opts.background === "transparent"
+            ? undefined
+            : opts.background;
+
+      const downloadSvg = (str: string, name: string) => {
+        downloadBlob(new Blob([str], { type: "image/svg+xml;charset=utf-8" }), name);
+      };
+
+      const rasterize = (str: string, bw: number, bh: number, name: string) => {
+        return svgStringToCanvas(str, bw, bh, bgForCanvas).then((canvas) => {
+          const mime = opts.format === "jpg" ? "image/jpeg" : "image/png";
+          const quality = opts.format === "jpg" ? 0.92 : undefined;
+          return new Promise<void>((res) => {
+            canvas.toBlob(
+              (blob) => {
+                if (blob) downloadBlob(blob, name);
+                res();
+              },
+              mime,
+              quality,
+            );
+          });
+        });
+      };
+
+      const runOne = async (exportIds: Set<string> | null, b: ExportRect, suffix: string) => {
+        const bg =
+          opts.format === "jpg"
+            ? opts.background === "transparent"
+              ? "#ffffff"
+              : opts.background
+            : opts.background;
+        const str = buildStandaloneSvgFromCanvasDom(svg, {
+          exportIds,
+          bounds: b,
+          scale: opts.scale,
+          background: bg,
+        });
+        const base = opts.filename.replace(/\.(png|svg|jpg|jpeg)$/i, "");
+        const ext = opts.format === "svg" ? "svg" : opts.format === "jpg" ? "jpg" : "png";
+        const name = suffix ? `${base}-${suffix}.${ext}` : `${base}.${ext}`;
+        const pw = Math.max(1, Math.round(b.w * opts.scale));
+        const ph = Math.max(1, Math.round(b.h * opts.scale));
+        if (opts.format === "svg") downloadSvg(str, name);
+        else await rasterize(str, pw, ph, name);
+        triggerExportFlash(b);
+      };
+
+      try {
+        if (scope === "full") {
+          const visible = objs.filter((o) => o.visible);
+          const b = getGroupBounds(visible);
+          if (b.w < 1 || b.h < 1) return;
+          await runOne(null, b, "");
+        } else {
+          if (sel.size === 0) return;
+          const exportIds = expandExportIds(new Set(sel), objs, cmap);
+          const targets = objs.filter((o) => exportIds.has(o.id) && o.visible);
+          const b = getGroupBounds(targets);
+          if (b.w < 1 || b.h < 1) return;
+
+          if (
+            !opts.merged &&
+            sel.size > 1 &&
+            (opts.format === "png" || opts.format === "svg" || opts.format === "jpg")
+          ) {
+            let i = 0;
+            for (const id of sel) {
+              const oneIds = expandExportIds(new Set([id]), objs, cmap);
+              const targs = objs.filter((o) => oneIds.has(o.id) && o.visible);
+              const bb = getGroupBounds(targs);
+              if (bb.w >= 1 && bb.h >= 1) await runOne(oneIds, bb, `${++i}`);
+            }
+            setToast(`Exported ${sel.size} assets`);
+            window.setTimeout(() => setToast(null), 2800);
+            setShowExportModal(false);
+            return;
+          }
+          await runOne(exportIds, b, "");
+        }
+        setToast(`Exported ${opts.format.toUpperCase()}${opts.scale !== 1 ? ` (${opts.scale}×)` : ""}`);
+        window.setTimeout(() => setToast(null), 2800);
+        setShowExportModal(false);
+      } catch (err) {
+        console.error(err);
+        setToast("Export failed");
+        window.setTimeout(() => setToast(null), 3000);
+      }
+    },
+    [exportModalScope, triggerExportFlash],
+  );
+
   // ── Keyboard ──────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -2442,6 +2606,16 @@ export default function FreehandStudio({
       if (e.key === "e" && !e.metaKey && !e.ctrlKey) { e.preventDefault(); setActiveTool("ellipse"); return; }
       if (e.key === "t" || e.key === "T") { e.preventDefault(); setActiveTool("text"); return; }
       if ((e.key === "g" || e.key === "G") && !e.metaKey && !e.ctrlKey) { e.preventDefault(); setActiveTool("gradient"); return; }
+      if ((e.key === "o" || e.key === "O") && !e.metaKey && !e.ctrlKey) { e.preventDefault(); setActiveTool("ellipse"); return; }
+      if ((e.key === "i" || e.key === "I") && !e.metaKey && !e.ctrlKey) { e.preventDefault(); setActiveTool("eyedropper"); return; }
+      if ((e.key === "z" || e.key === "Z") && !e.metaKey && !e.ctrlKey) { e.preventDefault(); setActiveTool("zoomTool"); return; }
+      if ((e.key === "h" || e.key === "H") && !e.metaKey && !e.ctrlKey) { e.preventDefault(); setActiveTool("handTool"); return; }
+
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === "e" || e.key === "E")) {
+        e.preventDefault();
+        void quickExportSelectionPng();
+        return;
+      }
 
       if ((e.metaKey || e.ctrlKey) && e.key === "c") { e.preventDefault(); copySelectedObjects(); return; }
       if ((e.metaKey || e.ctrlKey) && e.key === "x") { e.preventDefault(); cutSelectedObjects(); return; }
@@ -2487,7 +2661,7 @@ export default function FreehandStudio({
   }, [objects, selectedIds, selectedPoints, isPenDrawing, penPoints, activeTool,
       undo, redo, pushHistory, deleteSelected, duplicateSelected, groupSelected,
       ungroupSelected, bringForward, sendBackward, finishPenPath, deleteSelectedPoints, exitIsolation,
-      copySelectedObjects, cutSelectedObjects, pasteClipboardObjects, pasteInside]);
+      copySelectedObjects, cutSelectedObjects, pasteClipboardObjects, pasteInside, quickExportSelectionPng]);
 
   // ── Mouse handlers ────────────────────────────────────────────────
 
@@ -2510,13 +2684,53 @@ export default function FreehandStudio({
       return;
     }
 
-    // Pan: middle click or space+drag
-    if (e.button === 1 || spaceHeld) {
+    // Pan: middle click, space+drag, or hand tool
+    if (e.button === 1 || spaceHeld || (activeTool === "handTool" && e.button === 0)) {
       setDragState({ type: "pan", startX: e.clientX, startY: e.clientY, svpX: viewport.x, svpY: viewport.y });
       return;
     }
 
     const pos = screenToCanvas(e.clientX, e.clientY);
+
+    // ── Zoom tool (click = zoom in toward point, Alt = zoom out) ─
+    if (activeTool === "zoomTool" && e.button === 0) {
+      e.preventDefault();
+      const r = containerRef.current?.getBoundingClientRect();
+      if (!r) return;
+      const factor = e.altKey ? 1 / 1.2 : 1.2;
+      const mx = e.clientX - r.left, my = e.clientY - r.top;
+      setViewport((v) => {
+        const nz = clamp(v.zoom * factor, 0.05, 20);
+        const ratio = nz / v.zoom;
+        return { zoom: nz, x: mx - (mx - v.x) * ratio, y: my - (my - v.y) * ratio };
+      });
+      return;
+    }
+
+    // ── Eyedropper ────────────────────────────────────────────────
+    if (activeTool === "eyedropper" && e.button === 0) {
+      e.preventDefault();
+      const th = 8 / viewport.zoom;
+      for (let i = objects.length - 1; i >= 0; i--) {
+        const obj = objects[i];
+        if (!obj.visible || obj.locked) continue;
+        if (!hitTestObject(pos, obj, th)) continue;
+        const f = migrateFill(obj.fill);
+        if (f.type === "solid" && f.color !== "none") {
+          const c = f.color;
+          setFillColor(c);
+          if (selectedIds.size > 0) {
+            setObjects((prev) =>
+              prev.map((o) => (selectedIds.has(o.id) ? { ...o, fill: solidFill(c) } : o)),
+            );
+          }
+        }
+        setActiveTool("select");
+        return;
+      }
+      setActiveTool("select");
+      return;
+    }
 
     // ── Pen tool ──────────────────────────────────────────────────
     if (activeTool === "pen") {
@@ -2881,9 +3095,13 @@ export default function FreehandStudio({
     }
 
     if (dragState.type === "move" && dragState.positions) {
-      const fine = shiftFineFactor(e);
-      const scale = canvasScaleFromPointer(viewport.zoom, "move") * fine;
+      const scale = canvasScaleFromPointer(viewport.zoom, "move");
       let mdx = dx * scale, mdy = dy * scale;
+
+      if (isShiftHeld(e)) {
+        const c = constrainToAxis(mdx, mdy);
+        mdx = c.x; mdy = c.y;
+      }
 
       if (snapEnabled && dragState.positions.size > 0) {
         const firstPos = Array.from(dragState.positions.values())[0];
@@ -2921,8 +3139,7 @@ export default function FreehandStudio({
     }
 
     if (dragState.type === "resize" && dragState.allBounds && dragState.initialOrientedFrame) {
-      const fine = shiftFineFactor(e);
-      const scale = canvasScaleFromPointer(viewport.zoom, "resize") * fine;
+      const scale = canvasScaleFromPointer(viewport.zoom, "resize");
       const dCanvas = { x: dx * scale, y: dy * scale };
       const f0 = dragState.initialOrientedFrame;
       const h = dragState.handle!;
@@ -2932,6 +3149,17 @@ export default function FreehandStudio({
       if (h.includes("w")) nw = Math.max(10, f0.w - dLocal.x);
       if (h.includes("s")) nh = Math.max(10, f0.h + dLocal.y);
       if (h.includes("n")) nh = Math.max(10, f0.h - dLocal.y);
+
+      if (isShiftHeld(e)) {
+        const aspect = f0.w / f0.h;
+        if (h === "n" || h === "s") nw = Math.max(10, nh * aspect);
+        else if (h === "e" || h === "w") nh = Math.max(10, nw / aspect);
+        else {
+          const avgScale = ((nw / f0.w) + (nh / f0.h)) / 2;
+          nw = Math.max(10, f0.w * avgScale);
+          nh = Math.max(10, f0.h * avgScale);
+        }
+      }
 
       const dw = nw - f0.w, dh = nh - f0.h;
       const th = degToRad(f0.angleDeg);
@@ -2972,8 +3200,7 @@ export default function FreehandStudio({
     }
 
     if (dragState.type === "resize" && dragState.bounds && dragState.allBounds && !dragState.initialOrientedFrame) {
-      const fine = shiftFineFactor(e);
-      const scale = canvasScaleFromPointer(viewport.zoom, "resize") * fine;
+      const scale = canvasScaleFromPointer(viewport.zoom, "resize");
       const b = dragState.bounds;
       const h = dragState.handle!;
       let nx = b.x, ny = b.y, nw = b.w, nh = b.h;
@@ -2981,6 +3208,18 @@ export default function FreehandStudio({
       if (h.includes("s")) nh = Math.max(10, b.h + dy * scale);
       if (h.includes("w")) { nw = Math.max(10, b.w - dx * scale); nx = b.x + (b.w - nw); }
       if (h.includes("n")) { nh = Math.max(10, b.h - dy * scale); ny = b.y + (b.h - nh); }
+
+      if (isShiftHeld(e)) {
+        const aspect = b.w / b.h;
+        if (h === "n" || h === "s") { nw = Math.max(10, nh * aspect); nx = b.x + (b.w - nw) / 2; }
+        else if (h === "e" || h === "w") { nh = Math.max(10, nw / aspect); ny = b.y + (b.h - nh) / 2; }
+        else {
+          const avgScale = ((nw / b.w) + (nh / b.h)) / 2;
+          nw = Math.max(10, b.w * avgScale); nh = Math.max(10, b.h * avgScale);
+          if (h.includes("w")) nx = b.x + b.w - nw;
+          if (h.includes("n")) ny = b.y + b.h - nh;
+        }
+      }
 
       const sx = nw / b.w, sy = nh / b.h;
       setObjects((prev) => prev.map((o) => {
@@ -3256,6 +3495,7 @@ export default function FreehandStudio({
             ]
           : []),
         { label: "Arrange (use toolbar / ] [)", action: () => {}, disabled: true, separator: true },
+        { label: "Export selection", action: () => { setExportModalScope("selection"); setShowExportModal(true); }, disabled: !hasSel },
         { label: "Duplicate", shortcut: "⌘D", action: duplicateSelected, disabled: !hasSel },
         { label: "Delete", action: deleteSelected, disabled: !hasSel },
       ];
@@ -3269,6 +3509,7 @@ export default function FreehandStudio({
         { label: "Rectangle", shortcut: "R", action: () => setActiveTool("rect") },
         { label: "Ellipse", shortcut: "E", action: () => setActiveTool("ellipse") },
         { label: "Select all", shortcut: "⌘A", action: () => setSelectedIds(new Set(objects.map((o) => o.id))) },
+        { label: "Export artboard…", action: () => { setExportModalScope("full"); setShowExportModal(true); }, separator: true },
         { label: "Reset zoom", action: resetZoomCanvas, separator: true },
         { label: "Fit all", action: fitAllCanvas },
         { label: showGrid ? "Hide grid" : "Show grid", action: () => setShowGrid((g) => !g) },
@@ -3283,6 +3524,7 @@ export default function FreehandStudio({
         { label: "Paste", shortcut: "⌘V", action: pasteClipboardObjects, separator: true },
         { label: "Duplicate", shortcut: "⌘D", action: duplicateSelected },
         { label: "Delete", action: deleteSelected },
+        { label: "Export selection", action: () => { setExportModalScope("selection"); setShowExportModal(true); }, separator: true },
         { label: "Group", shortcut: "⌘G", action: groupSelected, separator: true },
         { label: "Align left", action: () => alignObjects("left") },
         { label: "Align center (H)", action: () => alignObjects("centerH") },
@@ -3304,6 +3546,7 @@ export default function FreehandStudio({
         { label: "Convert to outlines", action: () => { void convertTextToOutlines(); }, separator: true },
         { label: "Duplicate", shortcut: "⌘D", action: duplicateSelected },
         { label: "Delete", action: deleteSelected },
+        { label: "Export selection", action: () => { setExportModalScope("selection"); setShowExportModal(true); }, separator: true },
         { label: "Bring to front", action: bringToFront, separator: true },
         { label: "Send to back", action: sendToBack },
       ];
@@ -3314,6 +3557,7 @@ export default function FreehandStudio({
         { label: "Edit boolean group", action: () => enterIsolation(single.id) },
         { label: "Expand boolean", action: () => void expandBoolean(), separator: true },
         { label: "Duplicate", action: duplicateSelected },
+        { label: "Export selection", action: () => { setExportModalScope("selection"); setShowExportModal(true); }, separator: true },
         { label: "Lock / Unlock", action: () => updateSelectedProp("locked", !single.locked) },
         { label: "Hide / Show", action: () => updateSelectedProp("visible", !single.visible) },
       ];
@@ -3327,6 +3571,7 @@ export default function FreehandStudio({
         { label: "Release clipping", action: releaseClippingStructure, separator: true },
         { label: "Duplicate", shortcut: "⌘D", action: duplicateSelected },
         { label: "Delete", action: deleteSelected },
+        { label: "Export selection", action: () => { setExportModalScope("selection"); setShowExportModal(true); }, separator: true },
         { label: "Lock / Unlock", action: () => updateSelectedProp("locked", !cc.locked) },
         { label: "Hide / Show", action: () => updateSelectedProp("visible", !cc.visible) },
       ];
@@ -3339,6 +3584,7 @@ export default function FreehandStudio({
         { label: "Release clipping mask", action: releaseClipMask, separator: true },
         { label: "Duplicate", action: duplicateSelected },
         { label: "Delete", action: deleteSelected },
+        { label: "Export selection", action: () => { setExportModalScope("selection"); setShowExportModal(true); }, separator: true },
       ];
     }
 
@@ -3352,6 +3598,7 @@ export default function FreehandStudio({
       { label: "Paste inside", shortcut: "⇧⌘V / Ctrl+⇧V", action: pasteInside, disabled: !canPasteInsideMenu, separator: true },
       { label: "Duplicate", shortcut: "⌘D", action: duplicateSelected },
       { label: "Delete", action: deleteSelected },
+      { label: "Export selection", action: () => { setExportModalScope("selection"); setShowExportModal(true); }, separator: true },
       { label: "Rename…", action: renameSelected, separator: true },
       { label: "Bring forward", shortcut: "⌘]", action: bringForward },
       { label: "Send backward", shortcut: "⌘[", action: sendBackward },
@@ -3372,6 +3619,7 @@ export default function FreehandStudio({
       { label: "Cycle anchor type", action: () => { selectedPoints.forEach((idxs, objId) => { idxs.forEach((idx) => cycleVertexMode(objId, idx)); }); }, disabled: selectedPoints.size === 0 },
     ];
   }, [ctxMenu, selectedIds, selectedObjects, selectedPoints, isolationDepth, objects, showGrid, snapEnabled,
+      setShowExportModal, setExportModalScope,
       duplicateSelected, deleteSelected, bringForward, sendBackward, bringToFront, sendToBack,
       updateSelectedProp, groupSelected, ungroupSelected, createClipMask, releaseClipMask, togglePathClosed,
       cycleVertexMode, booleanOp, enterIsolation, expandBoolean, exitIsolation, alignObjects, fitAllCanvas,
@@ -3448,66 +3696,162 @@ export default function FreehandStudio({
   //  RENDER
   // ═══════════════════════════════════════════════════════════════════
 
-  return (
-    <div data-foldder-studio-canvas className="fixed inset-0 z-[9999] flex" style={{ background: "#1a1a2e" }}
-      onDrop={handleDrop} onDragOver={handleDragOver}>
+  const studioMode: "Object" | "Edit" | "Mask" =
+    isolationDepth === 0
+      ? "Object"
+      : (() => {
+          const fr = isolationStackRef.current[isolationStackRef.current.length - 1];
+          return fr?.kind === "clipping" && fr.editMode === "mask" ? "Mask" : "Edit";
+        })();
 
-      {/* Hidden file input for manual image import */}
+  return (
+    <div
+      data-foldder-studio-canvas
+      className="fixed inset-0 z-[9999] flex min-h-0 flex-col bg-[#0b0d10] text-zinc-200"
+      style={{ fontFamily: "var(--font-geist-sans), ui-sans-serif, Inter, system-ui" }}
+      onDrop={handleDrop}
+      onDragOver={handleDragOver}
+    >
+
       <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => {
         const f = e.target.files?.[0];
         if (f) importImageFile(f);
         e.target.value = "";
       }} />
 
-      {/* ── LEFT TOOLBAR ─────────────────────────────────────────── */}
-      <div className="flex flex-col items-center gap-1.5 py-3 px-1.5 bg-zinc-900/95 border-r border-white/10 w-12 shrink-0">
+      <header className="flex h-14 shrink-0 items-center gap-3 border-b border-white/[0.08] bg-[#12151a] px-4">
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[13px] font-semibold tracking-tight text-white">Freehand</div>
+          <div className="truncate text-[10px] text-zinc-500">Vector document</div>
+        </div>
+        <div
+          className="hidden items-center gap-1 rounded-lg bg-white/[0.04] p-0.5 sm:flex"
+          title="Editing context"
+        >
+          {(["Object", "Edit", "Mask"] as const).map((m) => (
+            <span
+              key={m}
+              className={`rounded-md px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors duration-150 ${
+                (m === "Object" && studioMode === "Object") ||
+                (m === "Edit" && studioMode === "Edit") ||
+                (m === "Mask" && studioMode === "Mask")
+                  ? "bg-white/[0.1] text-white"
+                  : "text-zinc-500"
+              }`}
+            >
+              {m}
+            </span>
+          ))}
+        </div>
+        <div className="flex items-center gap-1 rounded-lg border border-white/[0.08] bg-[#0b0d10] px-1 py-0.5">
+          <button
+            type="button"
+            className="rounded px-2 py-1 text-[12px] text-zinc-400 transition-colors duration-150 hover:bg-white/[0.06] hover:text-white"
+            onClick={() =>
+              setViewport((v) => {
+                const nz = clamp(v.zoom / 1.15, 0.05, 20);
+                return { ...v, zoom: nz };
+              })
+            }
+            title="Zoom out"
+          >
+            −
+          </button>
+          <span className="min-w-[3.25rem] text-center font-mono text-[11px] tabular-nums text-zinc-300">
+            {Math.round(viewport.zoom * 100)}%
+          </span>
+          <button
+            type="button"
+            className="rounded px-2 py-1 text-[12px] text-zinc-400 transition-colors duration-150 hover:bg-white/[0.06] hover:text-white"
+            onClick={() =>
+              setViewport((v) => {
+                const nz = clamp(v.zoom * 1.15, 0.05, 20);
+                return { ...v, zoom: nz };
+              })
+            }
+            title="Zoom in"
+          >
+            +
+          </button>
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={undo}
+            className="rounded-lg p-2 text-zinc-400 transition-colors duration-150 hover:bg-white/[0.06] hover:text-white"
+            title="Undo (⌘Z)"
+          >
+            <Undo2 size={18} strokeWidth={1.5} />
+          </button>
+          <button
+            type="button"
+            onClick={redo}
+            className="rounded-lg p-2 text-zinc-400 transition-colors duration-150 hover:bg-white/[0.06] hover:text-white"
+            title="Redo (⇧⌘Z)"
+          >
+            <Redo2 size={18} strokeWidth={1.5} />
+          </button>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            setExportModalScope(selectedIds.size > 0 ? "selection" : "full");
+            setShowExportModal(true);
+          }}
+          className="ml-auto flex items-center gap-2 rounded-lg bg-sky-600 px-3 py-2 text-[12px] font-semibold text-white shadow-lg shadow-sky-900/25 transition-colors duration-150 hover:bg-sky-500"
+        >
+          <Download size={16} strokeWidth={1.5} />
+          Export
+        </button>
+      </header>
+
+      <div className="flex min-h-0 flex-1 flex-row">
+      <div className="flex w-14 shrink-0 flex-col items-center gap-1 border-r border-white/[0.08] bg-[#12151a] py-3">
         <ToolBtn active={activeTool === "select"} onClick={() => { setActiveTool("select"); setSelectedPoints(new Map()); }} title="Selection (V)">
-          <MousePointer2 size={18} />
+          <MousePointer2 size={20} strokeWidth={1.5} />
         </ToolBtn>
         <ToolBtn active={activeTool === "directSelect"} onClick={() => setActiveTool("directSelect")} title="Direct Selection (A)">
-          <MousePointer2 size={18} className="opacity-60" />
+          <MousePointer2 size={20} strokeWidth={1.5} className="opacity-60" />
         </ToolBtn>
         <ToolBtn active={activeTool === "pen"} onClick={() => setActiveTool("pen")} title="Pen (P)">
-          <PenTool size={18} />
+          <PenTool size={20} strokeWidth={1.5} />
         </ToolBtn>
         <ToolBtn active={activeTool === "rect"} onClick={() => setActiveTool("rect")} title="Rectangle (R)">
-          <Square size={18} />
+          <Square size={20} strokeWidth={1.5} />
         </ToolBtn>
-        <ToolBtn active={activeTool === "ellipse"} onClick={() => setActiveTool("ellipse")} title="Ellipse (E)">
-          <Circle size={18} />
+        <ToolBtn active={activeTool === "ellipse"} onClick={() => setActiveTool("ellipse")} title="Ellipse (O)">
+          <Circle size={20} strokeWidth={1.5} />
         </ToolBtn>
-        <ToolBtn active={activeTool === "text"} onClick={() => setActiveTool("text")} title="Type tool — point & area text (T)">
-          <Type size={18} />
+        <ToolBtn active={activeTool === "text"} onClick={() => setActiveTool("text")} title="Text (T)">
+          <Type size={20} strokeWidth={1.5} />
         </ToolBtn>
-        <ToolBtn active={activeTool === "gradient"} onClick={() => setActiveTool("gradient")} title="Gradient — edit fills on canvas (G)">
-          <Blend size={18} />
+        <ToolBtn active={activeTool === "gradient"} onClick={() => setActiveTool("gradient")} title="Gradient (G)">
+          <Blend size={20} strokeWidth={1.5} />
         </ToolBtn>
-
-        <div className="w-6 h-px bg-white/10 my-1" />
-
-        <ToolBtn onClick={() => fileInputRef.current?.click()} title="Import Image">
-          <Upload size={16} />
+        <ToolBtn active={activeTool === "eyedropper"} onClick={() => setActiveTool("eyedropper")} title="Eyedropper (I)">
+          <Droplet size={20} strokeWidth={1.5} />
         </ToolBtn>
-
-        <div className="w-6 h-px bg-white/10 my-1" />
-
-        <ToolBtn onClick={undo} title="Undo (⌘Z)"><Undo2 size={16} /></ToolBtn>
-        <ToolBtn onClick={redo} title="Redo (⇧⌘Z)"><Redo2 size={16} /></ToolBtn>
-
-        <div className="flex-1" />
-
-        <ToolBtn active={snapEnabled} onClick={() => setSnapEnabled((p) => !p)} title={`Snap ${snapEnabled ? "ON" : "OFF"}`}>
-          <svg viewBox="0 0 16 16" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={1.5}>
-            <path d="M1 8h14M8 1v14" />
-            <circle cx={8} cy={8} r={2} />
-          </svg>
+        <ToolBtn active={activeTool === "handTool"} onClick={() => setActiveTool("handTool")} title="Hand (H) — drag to pan">
+          <Hand size={20} strokeWidth={1.5} />
+        </ToolBtn>
+        <ToolBtn active={activeTool === "zoomTool"} onClick={() => setActiveTool("zoomTool")} title="Zoom (Z) — click: in, Alt+click: out">
+          <ZoomIn size={20} strokeWidth={1.5} />
         </ToolBtn>
 
-        <ToolBtn onClick={() => setShowExport(true)} title="Export"><Download size={16} /></ToolBtn>
+        <div className="my-1 h-px w-6 bg-white/[0.08]" />
+
+        <ToolBtn onClick={() => fileInputRef.current?.click()} title="Import image">
+          <Upload size={18} strokeWidth={1.5} />
+        </ToolBtn>
+
+        <div className="flex-1 min-h-[8px]" />
+
+        <ToolBtn active={snapEnabled} onClick={() => setSnapEnabled((p) => !p)} title={`Snap ${snapEnabled ? "on" : "off"}`}>
+          <Magnet size={18} strokeWidth={1.5} />
+        </ToolBtn>
       </div>
 
-      {/* ── CANVAS + BREADCRUMB ──────────────────────────────────── */}
-      <div className="flex-1 relative flex flex-col overflow-hidden">
+      <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-[#0B0D10]">
 
         {/* Isolation breadcrumb */}
         {isolationDepth > 0 && (
@@ -3616,13 +3960,14 @@ export default function FreehandStudio({
             }
           }
           if (isolationStackRef.current.length > 0) exitIsolation();
+          if (activeTool === "select") fitAllCanvas();
         }}>
 
         <svg ref={svgRef} className="absolute inset-0 w-full h-full" style={{ userSelect: "none" }}>
           <defs>
             <pattern id="fh-grid" width={20 * viewport.zoom} height={20 * viewport.zoom} patternUnits="userSpaceOnUse"
               x={viewport.x % (20 * viewport.zoom)} y={viewport.y % (20 * viewport.zoom)}>
-              <circle cx={1} cy={1} r={0.5} fill="rgba(255,255,255,0.06)" />
+              <circle cx={1} cy={1} r={0.5} fill="rgba(255,255,255,0.04)" />
             </pattern>
             {flattenObjectsForGradientDefs(objects).map((o) => {
               const f = migrateFill(o.fill);
@@ -3639,7 +3984,7 @@ export default function FreehandStudio({
             <rect width="100%" height="100%" fill="transparent" data-ui="grid" />
           )}
 
-          <g transform={`translate(${viewport.x}, ${viewport.y}) scale(${viewport.zoom})`}>
+          <g data-fh-world transform={`translate(${viewport.x}, ${viewport.y}) scale(${viewport.zoom})`}>
             {/* Render objects (multi-select: non-primary slightly faded) */}
             {objects.map((obj) => {
               if (obj.isClipMask) return null;
@@ -3657,14 +4002,14 @@ export default function FreehandStudio({
 
             {/* Render clipped groups */}
             {Array.from(clippedGroups.entries()).map(([clipId, members]) => (
-              <g key={`cg-${clipId}`} clipPath={`url(#clip-${clipId})`}>
+              <g key={`cg-${clipId}`} data-fh-clip-root={clipId} clipPath={`url(#clip-${clipId})`}>
                 {members.map((m) => {
                   const inSel = selectedIds.has(m.id);
                   const multi = selectedIds.size > 1;
                   const isPrimary = !multi || !inSel || primarySelectedId === m.id || primarySelectedId == null;
                   const op = multi && inSel && !isPrimary ? 0.62 : 1;
                   return (
-                    <g key={m.id} opacity={op}>
+                    <g key={m.id} data-fh-obj={m.id} opacity={op}>
                       {renderObj(m)}
                     </g>
                   );
@@ -3743,8 +4088,8 @@ export default function FreehandStudio({
               return (
                 <rect key={`sel-outline-${obj.id}`} x={ob.x} y={ob.y} width={ob.w} height={ob.h}
                   fill="none"
-                  stroke={isPr ? "rgba(59,130,246,0.95)" : "rgba(59,130,246,0.38)"}
-                  strokeWidth={(isPr ? 1.35 : 1) / viewport.zoom}
+                  stroke={isPr ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.42)"}
+                  strokeWidth={(isPr ? 1.1 : 0.9) / viewport.zoom}
                   strokeDasharray={isPr ? undefined : `${3 / viewport.zoom}`}
                   pointerEvents="none"
                   data-ui="per-sel" />
@@ -3793,7 +4138,7 @@ export default function FreehandStudio({
               <g data-ui="selection-box" transform={`translate(${selectionFrame.cx},${selectionFrame.cy}) rotate(${selectionFrame.angleDeg})`} filter="url(#fh-selection-shadow)">
                 <rect x={-selectionFrame.w / 2 - 1 / viewport.zoom} y={-selectionFrame.h / 2 - 1 / viewport.zoom}
                   width={selectionFrame.w + 2 / viewport.zoom} height={selectionFrame.h + 2 / viewport.zoom}
-                  fill="rgba(59,130,246,0.08)" stroke="#2563eb" strokeWidth={1.5 / viewport.zoom}
+                  fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.92)" strokeWidth={1 / viewport.zoom}
                   pointerEvents="none" />
                 {["nw", "ne", "se", "sw", "n", "e", "s", "w"].map((h) => {
                   const sz = 7 / viewport.zoom;
@@ -3807,7 +4152,7 @@ export default function FreehandStudio({
                   if (h === "e" || h === "w") hy = 0;
                   return (
                     <rect key={h} x={hx - sz / 2} y={hy - sz / 2} width={sz} height={sz}
-                      fill="#3b82f6" stroke="#fff" strokeWidth={1 / viewport.zoom}
+                      fill="#1a1d24" stroke="rgba(255,255,255,0.95)" strokeWidth={1 / viewport.zoom}
                       rx={1.5 / viewport.zoom} style={{ cursor: `${h}-resize` }} data-ui="handle" />
                   );
                 })}
@@ -3823,11 +4168,25 @@ export default function FreehandStudio({
                   ];
                   return corners.map((c, ci) => (
                     <circle key={`rot-${ci}`} cx={c.x} cy={c.y} r={rotR}
-                      fill="transparent" stroke="#3b82f6" strokeWidth={1.2 / viewport.zoom}
+                      fill="transparent" stroke="rgba(255,255,255,0.75)" strokeWidth={1.1 / viewport.zoom}
                       style={{ cursor: "grab" }} data-ui="rotate-handle" />
                   ));
                 })()}
               </g>
+            )}
+
+            {exportFlash && (
+              <rect
+                x={exportFlash.x}
+                y={exportFlash.y}
+                width={exportFlash.w}
+                height={exportFlash.h}
+                fill="none"
+                stroke="rgba(56,189,248,0.95)"
+                strokeWidth={2 / viewport.zoom}
+                pointerEvents="none"
+                data-ui="export-flash"
+              />
             )}
 
             {/* Direct select: anchor points and handles for selected paths */}
@@ -4006,7 +4365,7 @@ export default function FreehandStudio({
       </div>
 
       {/* ── RIGHT PANEL ──────────────────────────────────────────── */}
-      <div className="w-64 shrink-0 bg-zinc-900/95 border-l border-white/10 flex flex-col overflow-hidden">
+      <div className="flex w-[300px] shrink-0 flex-col overflow-hidden border-l border-white/[0.08] bg-[#12151a]">
         {/* Header */}
         <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
           <span className="text-[11px] font-bold uppercase tracking-widest text-zinc-400">Freehand Studio</span>
@@ -4546,27 +4905,49 @@ export default function FreehandStudio({
         </div>
 
         {/* Status bar */}
-        <div className="px-3 py-2 border-t border-white/10 flex items-center justify-between text-[9px] text-zinc-600">
+        <div className="flex items-center justify-between border-t border-white/[0.08] px-3 py-2 text-[9px] text-zinc-500">
           <span>{objects.length} objects · {selectedIds.size} selected{isolationDepth > 0 ? ` · Isolation (depth ${isolationDepth})` : ""}</span>
-          <button type="button" onClick={() => setShowExport(true)}
-            className="px-2 py-1 rounded bg-violet-600 text-white text-[9px] font-bold uppercase tracking-wider hover:bg-violet-500 transition-colors">
-            Export
-          </button>
         </div>
+      </div>
       </div>
 
       {/* ── Context menu ─────────────────────────────────────────── */}
       {ctxMenu && <CtxMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenuItems} onClose={() => setCtxMenu(null)} />}
 
-      {/* ── Export dialog ─────────────────────────────────────────── */}
-      {showExport && (
-        <ExportDialog
-          onClose={() => setShowExport(false)}
-          onExportSvg={() => { doExportSvg(); setShowExport(false); }}
-          onExportPng={() => { doExportPng(); setShowExport(false); }}
-          onExportJpg={() => { doExportJpg(); setShowExport(false); }}
-          onExportNode={() => { doExportNode(); setShowExport(false); }}
+      {showExportModal && (
+        <FreehandExportModal
+          open={showExportModal}
+          onClose={() => setShowExportModal(false)}
+          bounds={
+            exportModalScope === "full"
+              ? boundsOfObjects(objects.filter((o) => o.visible)) ?? { x: 0, y: 0, w: 100, h: 100 }
+              : selectedObjects.length > 0
+                ? getGroupBounds(selectedObjects)
+                : null
+          }
+          defaultFilename={
+            exportModalScope === "selection" && firstSelected
+              ? `${firstSelected.name || "selection"}`
+              : "artboard"
+          }
+          selectionLabel={
+            exportModalScope === "full"
+              ? "Entire artboard"
+              : selectedObjects.length === 0
+                ? "Nothing selected"
+                : selectedObjects.length === 1
+                  ? `Selection · ${firstSelected?.name ?? "layer"}`
+                  : `${selectedObjects.length} objects`
+          }
+          hasSelection={selectedIds.size > 0}
+          onExport={runProfessionalExport}
         />
+      )}
+
+      {toast && (
+        <div className="pointer-events-none fixed bottom-8 left-1/2 z-[100001] -translate-x-1/2 rounded-lg border border-white/[0.12] bg-[#1a1f28] px-4 py-2 text-[12px] font-medium text-white shadow-xl">
+          {toast}
+        </div>
       )}
     </div>
   );
