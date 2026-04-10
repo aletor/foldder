@@ -1389,6 +1389,8 @@ export default function FreehandStudio({
     bounds?: Rect;
     /** Initial OBB when resize/rotate started (for oriented transform UI). */
     initialOrientedFrame?: OrientedSelectionFrame;
+    /** Deep copy of selected objects at resize start — transforms must not compound per frame. */
+    resizeSnapshot?: Map<string, FreehandObject>;
     allBounds?: Map<string, Rect>;
     createType?: "rect" | "ellipse";
     createOrigin?: Point;
@@ -2694,13 +2696,18 @@ export default function FreehandStudio({
         const hp = localToWorldOBB({ x: hi.lx, y: hi.ly }, f.cx, f.cy, f.angleDeg);
         if (dist(pos, hp) < handleSize) {
           const allBounds = new Map<string, Rect>();
-          for (const so of selectedObjects) allBounds.set(so.id, getVisualAABB(so));
+          const resizeSnapshot = new Map<string, FreehandObject>();
+          for (const so of selectedObjects) {
+            allBounds.set(so.id, getVisualAABB(so));
+            resizeSnapshot.set(so.id, deepCloneFreehandObjectKeepIds(so));
+          }
           setDragState({
             type: "resize", startX: e.clientX, startY: e.clientY,
             handle: hi.id,
             bounds: { ...groupBounds },
             initialOrientedFrame: { ...f },
             allBounds,
+            resizeSnapshot,
           });
           return;
         }
@@ -2936,12 +2943,14 @@ export default function FreehandStudio({
 
       setObjects((prev) => prev.map((o) => {
         if (!dragState.allBounds!.has(o.id)) return o;
+        const src = dragState.resizeSnapshot?.get(o.id);
+        if (!src) return o;
         const mapWorld = (p: Point) => {
           const L = worldToLocalOBB(p, f0.cx, f0.cy, f0.angleDeg);
           return localToWorldOBB({ x: L.x * sx, y: L.y * sy }, ncx, ncy, f0.angleDeg);
         };
-        if (o.type === "path") {
-          const pts = (o as PathObject).points.map((pt) => ({
+        if (src.type === "path") {
+          const pts = (src as PathObject).points.map((pt) => ({
             ...pt,
             anchor: mapWorld(pt.anchor),
             handleIn: mapWorld(pt.handleIn),
@@ -2950,12 +2959,12 @@ export default function FreehandStudio({
           const pb = getPathBoundsFromPoints(pts);
           return { ...o, x: pb.x, y: pb.y, width: pb.w, height: pb.h, points: pts };
         }
-        if (o.type === "clippingContainer") {
-          return mapObjectPointsWithWorld(o, mapWorld) as ClippingContainerObject;
+        if (src.type === "clippingContainer") {
+          return mapObjectPointsWithWorld(src, mapWorld) as ClippingContainerObject;
         }
-        const newW = Math.max(4, o.width * sx);
-        const newH = Math.max(4, o.height * sy);
-        const pivot = { x: o.x + o.width / 2, y: o.y + o.height / 2 };
+        const newW = Math.max(4, src.width * sx);
+        const newH = Math.max(4, src.height * sy);
+        const pivot = { x: src.x + src.width / 2, y: src.y + src.height / 2 };
         const newC = mapWorld(pivot);
         return { ...o, x: newC.x - newW / 2, y: newC.y - newH / 2, width: newW, height: newH };
       }));
@@ -2976,11 +2985,12 @@ export default function FreehandStudio({
       const sx = nw / b.w, sy = nh / b.h;
       setObjects((prev) => prev.map((o) => {
         const ob = dragState.allBounds!.get(o.id);
-        if (!ob) return o;
+        const src = dragState.resizeSnapshot?.get(o.id);
+        if (!ob || !src) return o;
         const newX = nx + (ob.x - b.x) * sx;
         const newY = ny + (ob.y - b.y) * sy;
-        if (o.type === "path") {
-          const pts = (o as PathObject).points.map(pt => ({
+        if (src.type === "path") {
+          const pts = (src as PathObject).points.map(pt => ({
             ...pt,
             anchor: { x: nx + (pt.anchor.x - b.x) * sx, y: ny + (pt.anchor.y - b.y) * sy },
             handleIn: { x: nx + (pt.handleIn.x - b.x) * sx, y: ny + (pt.handleIn.y - b.y) * sy },
@@ -2989,12 +2999,12 @@ export default function FreehandStudio({
           const pb = getPathBoundsFromPoints(pts);
           return { ...o, x: pb.x, y: pb.y, width: pb.w, height: pb.h, points: pts };
         }
-        if (o.type === "clippingContainer") {
+        if (src.type === "clippingContainer") {
           const mapWorld = (p: Point) => ({
             x: nx + (p.x - b.x) * sx,
             y: ny + (p.y - b.y) * sy,
           });
-          return mapObjectPointsWithWorld(o, mapWorld) as ClippingContainerObject;
+          return mapObjectPointsWithWorld(src, mapWorld) as ClippingContainerObject;
         }
         return {
           ...o,
