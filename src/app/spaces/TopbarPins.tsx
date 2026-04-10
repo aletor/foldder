@@ -12,12 +12,13 @@ const PIN_ICON_COLOR = '#171717';
 export const MAX_TOPBAR_PINS = 5;
 export const TOPBAR_PINS_STORAGE_KEY = "foldder-topbar-pins";
 
-/** Valores por defecto: Prompt, Nano, Video (Veo), Export */
+/** Valores por defecto: Prompt, Nano, Video (Veo), Export, Freehand */
 export const DEFAULT_TOPBAR_PIN_TYPES: string[] = [
   "promptInput",
   "nanoBanana",
   "geminiVideo",
   "imageExport",
+  "freehand",
 ];
 
 type TopbarPinsProps = {

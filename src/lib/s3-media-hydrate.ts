@@ -30,12 +30,49 @@ function collectPresignKeysFromNodeData(d: Record<string, unknown>, keys: Set<st
   const k = resolveS3KeyFromNodeData(d);
   if (k) keys.add(k);
   const gh = d.generationHistory;
-  if (!Array.isArray(gh)) return;
-  for (const item of gh) {
-    if (typeof item !== "string") continue;
-    const fromUrl = tryExtractKnowledgeFilesKeyFromUrl(item);
-    if (fromUrl) keys.add(fromUrl);
+  if (Array.isArray(gh)) {
+    for (const item of gh) {
+      if (typeof item !== "string") continue;
+      const fromUrl = tryExtractKnowledgeFilesKeyFromUrl(item);
+      if (fromUrl) keys.add(fromUrl);
+    }
   }
+  const av = d._assetVersions;
+  if (Array.isArray(av)) {
+    for (const entry of av) {
+      if (!entry || typeof entry !== "object") continue;
+      const e = entry as { s3Key?: unknown; url?: unknown };
+      if (typeof e.s3Key === "string" && e.s3Key.startsWith("knowledge-files/")) {
+        keys.add(e.s3Key);
+      } else if (typeof e.url === "string") {
+        const fromUrl = tryExtractKnowledgeFilesKeyFromUrl(e.url);
+        if (fromUrl) keys.add(fromUrl);
+      }
+    }
+  }
+}
+
+/** All `knowledge-files/…` keys referenced by node data (current value, history, versions). */
+export function collectS3KeysFromNodeData(d: Record<string, unknown>): string[] {
+  const keys = new Set<string>();
+  collectPresignKeysFromNodeData(d, keys);
+  return [...keys];
+}
+
+/** Collect keys from every node in a project's `spaces` map (for project DELETE). */
+export function collectS3KeysFromProjectSpaces(spaces: Record<string, unknown>): string[] {
+  const all = new Set<string>();
+  for (const space of Object.values(spaces)) {
+    const s = space as { nodes?: Array<{ data?: Record<string, unknown> }> };
+    for (const n of s.nodes || []) {
+      if (n.data) {
+        for (const k of collectS3KeysFromNodeData(n.data)) {
+          all.add(k);
+        }
+      }
+    }
+  }
+  return [...all];
 }
 
 function hydrateGenerationHistoryUrls(
@@ -55,6 +92,28 @@ function hydrateGenerationHistoryUrls(
     return item;
   });
   return changed ? { ...d, generationHistory: next } : d;
+}
+
+function hydrateAssetVersionUrls(
+  d: Record<string, unknown>,
+  urls: Record<string, string>
+): Record<string, unknown> {
+  const av = d._assetVersions;
+  if (!Array.isArray(av) || av.length === 0) return d;
+  let changed = false;
+  const next = av.map((entry) => {
+    if (!entry || typeof entry !== "object") return entry;
+    const e = entry as { s3Key?: string; url?: string };
+    const key = typeof e.s3Key === "string" ? e.s3Key : null;
+    const keyFromUrl = typeof e.url === "string" ? tryExtractKnowledgeFilesKeyFromUrl(e.url) : null;
+    const resolvedKey = key || keyFromUrl;
+    if (resolvedKey && urls[resolvedKey]) {
+      changed = true;
+      return { ...e, url: urls[resolvedKey], s3Key: resolvedKey };
+    }
+    return entry;
+  });
+  return changed ? { ...d, _assetVersions: next } : d;
 }
 
 /**
@@ -101,6 +160,7 @@ export async function hydrateSpacesMapWithFreshUrls(
           d.s3Key = k;
         }
         d = hydrateGenerationHistoryUrls(d, urls);
+        d = hydrateAssetVersionUrls(d, urls);
         return { ...n, data: d };
       }),
     };

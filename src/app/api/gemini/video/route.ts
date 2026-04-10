@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { recordApiUsage } from "@/lib/api-usage";
+import { estimateGeminiVeoVideoUsd } from "@/lib/pricing-config";
 import { uploadToS3, getPresignedUrl } from "@/lib/s3-utils";
 import crypto from "crypto";
 
@@ -88,6 +89,8 @@ export async function POST(req: NextRequest) {
     if (cameraPreset) finalPrompt += `. Camera motion: ${cameraPreset}`;
     if (negativePrompt) finalPrompt += `. Negative prompt: avoid ${negativePrompt}`;
 
+    const dur = Number(durationSeconds);
+
     const payload = {
       instances: [{
         prompt: finalPrompt,
@@ -97,6 +100,8 @@ export async function POST(req: NextRequest) {
         sampleCount: 1,
         aspectRatio: "16:9",
         resolution: resolution || "1080p",
+        ...(dur > 0 ? { durationSeconds: dur } : {}),
+        ...(audio === true ? { generateAudio: true } : {}),
         seed: seed !== undefined ? Number(seed) : undefined
       }
     };
@@ -177,7 +182,7 @@ export async function POST(req: NextRequest) {
     const key = await uploadToS3(filename, videoBuffer, "video/mp4");
     const url = await getPresignedUrl(key);
 
-    const dur = typeof durationSeconds === "number" && durationSeconds > 0 ? durationSeconds : 8;
+    const costDur = dur > 0 ? dur : 8;
     await recordApiUsage({
       provider: "gemini",
       serviceId: "gemini-veo",
@@ -186,7 +191,7 @@ export async function POST(req: NextRequest) {
       inputTokens: 0,
       outputTokens: 0,
       totalTokens: 0,
-      costUsd: Math.round(dur * 0.05 * 1_000_000) / 1_000_000,
+      costUsd: estimateGeminiVeoVideoUsd(costDur),
       note: "Veo vídeo (coste orientativo por segundo)",
     });
 

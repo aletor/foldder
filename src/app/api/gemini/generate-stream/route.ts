@@ -17,9 +17,13 @@ export async function POST(req: NextRequest) {
       };
 
       try {
-        const result = await geminiImageGenerate(body, (progress, stage) => {
-          send({ type: "phase", progress, stage });
-        });
+        const result = await geminiImageGenerate(
+          body,
+          (progress, stage) => {
+            send({ type: "phase", progress, stage });
+          },
+          { usageRoute: "/api/gemini/generate-stream" },
+        );
         const done: Record<string, unknown> = {
           type: "done",
           output: result.output,

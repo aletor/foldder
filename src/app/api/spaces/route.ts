@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { deleteFromS3 } from '@/lib/s3-utils';
+import { collectS3KeysFromProjectSpaces } from '@/lib/s3-media-hydrate';
 
 const DB_PATH = path.join(process.cwd(), 'data', 'spaces-db.json');
 
@@ -101,15 +102,9 @@ export async function DELETE(req: Request) {
     if (projectToDelete) {
         console.log(`[Cleanup] Deleting project "${projectToDelete.name}"...`);
         
-        // Find all S3 keys across all internal spaces
-        const s3Keys: string[] = [];
-        Object.values(projectToDelete.spaces || {}).forEach((space: any) => {
-            if (space.nodes) {
-                space.nodes.forEach((n: any) => {
-                    if (n.data?.s3Key) s3Keys.push(n.data.s3Key);
-                });
-            }
-        });
+        const s3Keys = collectS3KeysFromProjectSpaces(
+          (projectToDelete.spaces || {}) as Record<string, unknown>,
+        );
         
         if (s3Keys.length > 0) {
             console.log(`[Cleanup] Found ${s3Keys.length} assets across all spaces to remove from S3.`);

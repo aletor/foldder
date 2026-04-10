@@ -85,7 +85,8 @@ import { matchesClearCanvasIntent } from '@/lib/clear-canvas-intent';
 import { matchesAddSpaceNodeIntent } from '@/lib/assistant-quick-intents';
 import { installAiFetchOverlay } from '@/lib/ai-request-overlay';
 import { readResponseJson } from '@/lib/read-response-json';
-import { hydrateSpacesMapWithFreshUrls } from '@/lib/s3-media-hydrate';
+import { hydrateSpacesMapWithFreshUrls, collectS3KeysFromNodeData } from '@/lib/s3-media-hydrate';
+import { deleteSupersededS3Key, fireAndForgetDeleteS3Keys } from '@/lib/s3-delete-client';
 import {
   AI_JOB_COMPLETE_EVENT,
   AI_JOB_CANVAS_NODE_ID,
@@ -147,57 +148,15 @@ import {
   ChevronDown,
   Layers,
   Move,
-  Sparkles,
   Download,
-  Brain,
-  Type,
-  Film,
   ZoomIn,
   MessageCircle,
   CheckCircle2,
   AlertCircle,
   Wallet,
 } from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
-
-/** Tras el splash «Bienvenido», si el lienzo sigue vacío: atajos visibles hasta el primer nodo. */
-const EMPTY_CANVAS_SHORTCUT_HINT: {
-  label: string;
-  keyLabel: string;
-  Icon: LucideIcon;
-}[] = [
-  { label: 'Prompt', keyLabel: 'P', Icon: Type },
-  { label: 'Nano Banana', keyLabel: 'N', Icon: Sparkles },
-  { label: 'Video', keyLabel: 'V', Icon: Film },
-  { label: 'Export', keyLabel: 'E', Icon: Download },
-];
-
-const AUTH_HIGHLIGHTS: {
-  icon: LucideIcon;
-  title: string;
-  description: string;
-}[] = [
-  {
-    icon: Layers,
-    title: 'Your Entire Creative Stack. Rebuilt.',
-    description: 'Photoshop, Illustrator, DaVinci… now inside one canvas.',
-  },
-  {
-    icon: Workflow,
-    title: 'From Tools to Systems',
-    description: 'Design the full creative process as a connected flow.',
-  },
-  {
-    icon: Brain,
-    title: 'AI That Works Like You Do',
-    description: 'Not prompts. Pipelines. Fully visual and reusable.',
-  },
-  {
-    icon: Sparkles,
-    title: "Create What Didn't Exist Before",
-    description: 'Image, video and logic combined into new workflows.',
-  },
-];
+import { SpacesWelcomeChrome } from './SpacesWelcomeChrome';
+import { SpacesPasswordOverlay } from './SpacesPasswordOverlay';
 
 const initialNodes: Node[] = [];
 
@@ -740,6 +699,9 @@ const SpacesContent = () => {
             .filter((t): t is string => typeof t === 'string' && Boolean(NODE_REGISTRY[t]))
             .slice(0, MAX_TOPBAR_PINS);
           if (next.length === 0) next = [...DEFAULT_TOPBAR_PIN_TYPES];
+          else if (!next.includes('freehand') && next.length < MAX_TOPBAR_PINS) {
+            next = [...next, 'freehand'];
+          }
         }
       }
       setTopbarPinnedTypes(next);
@@ -3813,8 +3775,15 @@ const SpacesContent = () => {
     (event: React.DragEvent) => {
       event.preventDefault();
 
-      const reactFlowType =
-        event.dataTransfer.getData('application/reactflow') || libraryDragTypeRef.current || '';
+      const dt = event.dataTransfer;
+      const rawType = (
+        dt.getData('application/reactflow') ||
+        dt.getData('text/plain') ||
+        libraryDragTypeRef.current ||
+        ''
+      ).trim();
+      const libraryType = rawType && NODE_REGISTRY[rawType] ? rawType : '';
+
       const snapTargetId = libraryDropTargetIdRef.current;
 
       libraryDragTypeRef.current = null;
@@ -3822,15 +3791,111 @@ const SpacesContent = () => {
       setLibraryDropTargetId(null);
       setLibraryCompatibleIds([]);
 
-      const files = Array.from(event.dataTransfer.files);
+      const files = Array.from(dt.files);
 
       const position = screenToFlowPosition({
         x: event.clientX,
         y: event.clientY,
       });
 
+      // Librería / pins: prioridad sobre archivos (algunos navegadores rellenan `files` o no exponen MIME custom hasta el drop)
+      if (libraryType) {
+        const targetNode = snapTargetId ? nodes.find((n) => n.id === snapTargetId) : null;
+        const plan =
+          targetNode && snapTargetId
+            ? findLibraryDropPlan(libraryType, targetNode, edges)
+            : null;
+
+        if (targetNode && plan && snapTargetId === targetNode.id) {
+          libraryCanvasDropSucceededRef.current = true;
+          const dropPos = computeLibraryDropPosition(targetNode, libraryType, plan);
+          const placement = findEmptyPositionForNewNode(libraryType, nodes, {
+            x: dropPos.x + 160,
+            y: dropPos.y + 120,
+          });
+          const newId = `node_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+          const newNode = {
+            id: newId,
+            type: libraryType,
+            position: placement,
+            data: withFoldderCanvasIntro(libraryType, { value: '', label: `${libraryType} node` }),
+          };
+
+          const edgeId = `e-lib-${newId}-${targetNode.id}-${Date.now()}`;
+          const newEdge =
+            plan.direction === 'existing-to-new'
+              ? {
+                  id: edgeId,
+                  source: targetNode.id,
+                  sourceHandle: plan.sourceHandle,
+                  target: newId,
+                  targetHandle: plan.targetHandle,
+                  type: 'buttonEdge' as const,
+                  animated: true,
+                }
+              : {
+                  id: edgeId,
+                  source: newId,
+                  sourceHandle: plan.sourceHandle,
+                  target: targetNode.id,
+                  targetHandle: plan.targetHandle,
+                  type: 'buttonEdge' as const,
+                  animated: true,
+                };
+
+          takeSnapshot();
+          setNodes((nds: any) => {
+            const next = [...nds, newNode];
+            setEdges((eds: any) => addEdge(newEdge, eds));
+            return next;
+          });
+          scheduleFoldderCanvasIntroEnd(newId);
+          setTimeout(() => {
+            fitViewToNodeIds([newId], 700);
+          }, 100);
+          setSidebarLockedCollapsed(true);
+          return;
+        }
+
+        libraryCanvasDropSucceededRef.current = true;
+        const placement = findEmptyPositionForNewNode(libraryType, nodes, {
+          x: position.x + 160,
+          y: position.y + 120,
+        });
+        const libDropId = `node_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+        const newNode = {
+          id: libDropId,
+          type: libraryType,
+          position: placement,
+          data: withFoldderCanvasIntro(libraryType, { value: '', label: `${libraryType} node` }),
+        };
+
+        takeSnapshot();
+        setNodes((nds) => [...nds, newNode]);
+        scheduleFoldderCanvasIntroEnd(libDropId);
+        setTimeout(() => {
+          fitViewToNodeIds([newNode.id], 700);
+        }, 100);
+        setSidebarLockedCollapsed(true);
+        return;
+      }
+
       // Handle Native File Drops
       if (files.length > 0) {
+        const overFreehandStudio = (() => {
+          const path = event.nativeEvent.composedPath?.() as EventTarget[] | undefined;
+          if (
+            path?.some(
+              (t) => t instanceof HTMLElement && t.closest?.('[data-foldder-studio-canvas]')
+            )
+          ) {
+            return true;
+          }
+          const top = document.elementFromPoint(event.clientX, event.clientY);
+          return top instanceof HTMLElement && !!top.closest('[data-foldder-studio-canvas]');
+        })();
+        if (overFreehandStudio) return;
+
         libraryCanvasDropSucceededRef.current = true;
         const inferMediaType = (name: string, mime: string): string => {
           if (mime.startsWith('video/') || name.match(/\.(mp4|mov|avi|webm|mkv)$/i)) return 'video';
@@ -3887,8 +3952,10 @@ const SpacesContent = () => {
                 'POST /api/runway/upload'
               );
               if (json?.url) {
-                setNodes((nds) =>
-                  nds.map((n) =>
+                setNodes((nds) => {
+                  const prevKey = nds.find((n) => n.id === nodeId)?.data?.s3Key;
+                  deleteSupersededS3Key(prevKey, json.s3Key);
+                  return nds.map((n) =>
                     n.id === nodeId
                       ? {
                           ...n,
@@ -3906,8 +3973,8 @@ const SpacesContent = () => {
                           },
                         }
                       : n
-                  )
-                );
+                  );
+                });
               } else {
                 const detail =
                   json?.error ||
@@ -3955,167 +4022,37 @@ const SpacesContent = () => {
         }, 100);
         return;
       }
-
-      // Handle Sidebar Drops
-      if (!reactFlowType) return;
-
-      const targetNode = snapTargetId ? nodes.find((n) => n.id === snapTargetId) : null;
-      const plan =
-        targetNode && snapTargetId
-          ? findLibraryDropPlan(reactFlowType, targetNode, edges)
-          : null;
-
-      if (targetNode && plan && snapTargetId === targetNode.id) {
-        libraryCanvasDropSucceededRef.current = true;
-        const dropPos = computeLibraryDropPosition(targetNode, reactFlowType, plan);
-        const placement = findEmptyPositionForNewNode(reactFlowType, nodes, {
-          x: dropPos.x + 160,
-          y: dropPos.y + 120,
-        });
-        const newId = `node_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-        const newNode = {
-          id: newId,
-          type: reactFlowType,
-          position: placement,
-          data: withFoldderCanvasIntro(reactFlowType, { value: '', label: `${reactFlowType} node` }),
-        };
-
-        const edgeId = `e-lib-${newId}-${targetNode.id}-${Date.now()}`;
-        const newEdge =
-          plan.direction === 'existing-to-new'
-            ? {
-                id: edgeId,
-                source: targetNode.id,
-                sourceHandle: plan.sourceHandle,
-                target: newId,
-                targetHandle: plan.targetHandle,
-                type: 'buttonEdge' as const,
-                animated: true,
-              }
-            : {
-                id: edgeId,
-                source: newId,
-                sourceHandle: plan.sourceHandle,
-                target: targetNode.id,
-                targetHandle: plan.targetHandle,
-                type: 'buttonEdge' as const,
-                animated: true,
-              };
-
-        takeSnapshot();
-        setNodes((nds: any) => {
-          const next = [...nds, newNode];
-          setEdges((eds: any) => addEdge(newEdge, eds));
-          return next;
-        });
-        scheduleFoldderCanvasIntroEnd(newId);
-        setTimeout(() => {
-          fitViewToNodeIds([newId], 700);
-        }, 100);
-        setSidebarLockedCollapsed(true);
-        return;
-      }
-
-      libraryCanvasDropSucceededRef.current = true;
-      const placement = findEmptyPositionForNewNode(reactFlowType, nodes, {
-        x: position.x + 160,
-        y: position.y + 120,
-      });
-      const libDropId = `node_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-      const newNode = {
-        id: libDropId,
-        type: reactFlowType,
-        position: placement,
-        data: withFoldderCanvasIntro(reactFlowType, { value: '', label: `${reactFlowType} node` }),
-      };
-
-      takeSnapshot();
-      setNodes((nds) => [...nds, newNode]);
-      scheduleFoldderCanvasIntroEnd(libDropId);
-      setTimeout(() => {
-        fitViewToNodeIds([newNode.id], 700);
-      }, 100);
-      setSidebarLockedCollapsed(true);
     },
-    [screenToFlowPosition, setNodes, setEdges, nodes, edges, takeSnapshot, fitView, fitViewToNodeIds, scheduleFoldderCanvasIntroEnd]
+    [
+      screenToFlowPosition,
+      setNodes,
+      setEdges,
+      nodes,
+      edges,
+      takeSnapshot,
+      fitView,
+      fitViewToNodeIds,
+      scheduleFoldderCanvasIntroEnd,
+      setSidebarLockedCollapsed,
+    ]
   );
 
   return (
     <div className="flex w-full h-full" ref={reactFlowWrapper} style={{ flexDirection: 'column' }}>
 
-      {/* ── WELCOME SPLASH ─────────────────────────────────────────────────── */}
-      {showWelcome && (
-        <div style={{
-          position: 'fixed', inset: 0, zIndex: 20000,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          pointerEvents: 'none',
-          animation: 'welcomeFade 4s ease forwards',
-        }}
-        onAnimationEnd={() => {
+      <SpacesWelcomeChrome
+        showWelcome={showWelcome}
+        onWelcomeAnimationEnd={() => {
           setShowWelcome(false);
           if (liveNodesRef.current.length === 0) {
             setShowEmptyShortcutsHint(true);
           }
         }}
-        >
-          <style>{`
-            @keyframes welcomeFade {
-              0%   { opacity: 0; transform: scale(0.94); }
-              15%  { opacity: 1; transform: scale(1); }
-              80%  { opacity: 1; transform: scale(1); }
-              100% { opacity: 0; transform: scale(1.03); }
-            }
-          `}</style>
-          <span style={{
-            fontSize: 'clamp(48px,8vw,96px)',
-            fontWeight: 900,
-            letterSpacing: '-0.04em',
-            color: 'transparent',
-            backgroundImage: 'linear-gradient(135deg,#fff 0%,rgba(255,255,255,0.35) 100%)',
-            WebkitBackgroundClip: 'text',
-            backgroundClip: 'text',
-            userSelect: 'none',
-          }}>
-            Bienvenido
-          </span>
-        </div>
-      )}
-
-      {/* Atajos minimalistas: tras bienvenida mientras el lienzo siga vacío */}
-      {isAuthenticated &&
-        showEmptyShortcutsHint &&
-        !windowMode &&
-        nodes.length === 0 && (
-          <div
-            className="foldder-empty-shortcuts-anchor pointer-events-none fixed inset-x-0 z-[19950] flex justify-center px-3"
-            style={{ bottom: 'max(5.25rem, 11vh)' }}
-            aria-live="polite"
-          >
-            <div className="foldder-empty-shortcuts-popover text-black">
-              <ul className="m-0 list-none p-0">
-                {EMPTY_CANVAS_SHORTCUT_HINT.map(({ label, keyLabel, Icon }) => (
-                  <li
-                    key={label}
-                    className="foldder-empty-shortcuts-row flex items-center gap-2.5 py-1 pl-1 pr-1"
-                  >
-                    <Icon
-                      className="shrink-0 text-black opacity-90"
-                      size={12}
-                      strokeWidth={1.35}
-                      aria-hidden
-                    />
-                    <span className="min-w-0 flex-1 truncate font-medium tracking-tight text-black/85">
-                      {label}
-                    </span>
-                    <kbd className="foldder-empty-shortcuts-kbd shrink-0 font-mono text-black/80">
-                      {keyLabel}
-                    </kbd>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        )}
+        isAuthenticated={isAuthenticated}
+        showEmptyShortcutsHint={showEmptyShortcutsHint}
+        windowMode={windowMode}
+        nodeCount={nodes.length}
+      />
 
       {/* ── WINDOW VIEWER PANEL ─────────────────────────────────────────────── */}
       {windowMode && (
@@ -4358,6 +4295,16 @@ const SpacesContent = () => {
             });
             const removals = filtered.filter((c) => c.type === "remove");
             if (removals.length > 0) {
+              for (const c of removals) {
+                const rid = (c as { id?: string }).id;
+                if (!rid) continue;
+                const removed = nds.find((n) => n.id === rid);
+                const data = removed?.data as Record<string, unknown> | undefined;
+                if (data) {
+                  const keys = collectS3KeysFromNodeData(data);
+                  if (keys.length > 0) fireAndForgetDeleteS3Keys(keys);
+                }
+              }
               takeSnapshot();
             }
             onNodesChange(filtered);
@@ -4524,77 +4471,12 @@ const SpacesContent = () => {
           </div>
         )}
 
-        {/* Password Overlay */}
         {!isAuthenticated && (
-          <div className="fixed inset-0 z-[1000] bg-[#0a0a0a] flex flex-col items-center justify-center backdrop-blur-3xl overflow-hidden">
-            {/* Ambient Background Glows */}
-            <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-cyan-500/10 rounded-full blur-[120px] animate-pulse" />
-            <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-blue-600/10 rounded-full blur-[120px] animate-pulse delay-700" />
-            
-            <div className="relative z-10 flex flex-col items-center gap-8 w-full max-w-xl px-6">
-               <div className="flex flex-col items-center gap-2 w-full max-w-sm">
-                 <div className="flex flex-col items-center gap-1 mb-4">
-                   {/* FOLDDER logo icon */}
-                   <svg width="64" height="64" viewBox="0 0 52 52" fill="none" xmlns="http://www.w3.org/2000/svg">
-                     <path d="M4 6 Q4 2 8 2 L36 2 L50 16 L50 46 Q50 50 46 50 L8 50 Q4 50 4 46 Z" fill="#6C5CE7"/>
-                     <path d="M36 2 L50 16 L36 16 Z" fill="rgba(0,0,0,0.22)"/>
-                     <rect x="14" y="15" width="5" height="22" rx="2.5" fill="white"/>
-                     <rect x="14" y="15" width="19" height="5" rx="2.5" fill="white"/>
-                     <rect x="14" y="25.5" width="14" height="5" rx="2.5" fill="white"/>
-                   </svg>
-                 </div>
-                 <h1 className="text-2xl font-black text-white uppercase tracking-[8px] mr-[-8px]">Foldder</h1>
-                 <p className="text-[10px] font-bold text-violet-400 uppercase tracking-[4px] opacity-80">Studio Access</p>
-               </div>
-
-               <div className="w-full max-w-sm flex flex-col gap-4">
-                 <div className="relative">
-                   <input 
-                     type="password"
-                     autoFocus
-                     maxLength={4}
-                     value={passcode}
-                     onChange={(e) => handleAuth(e.target.value)}
-                     placeholder="••••"
-                     className={`w-full bg-white/5 border ${passError ? 'border-rose-500 shadow-[0_0_20px_rgba(244,63,94,0.2)]' : 'border-white/10'} rounded-2xl py-5 text-center text-4xl font-black tracking-[1.5em] pl-[1.5em] text-white focus:outline-none focus:border-cyan-500/40 transition-all placeholder:text-white/10`}
-                   />
-                   {passError && (
-                     <p className="absolute -bottom-6 left-0 w-full text-center text-[8px] font-black text-rose-500 uppercase tracking-widest animate-bounce">
-                       Invalid passcode
-                     </p>
-                   )}
-                 </div>
-                 <p className="text-center text-[9px] font-medium text-white/30 uppercase tracking-[2px]">Enter security key to initialize studio</p>
-               </div>
-
-               <div className="w-full max-w-xl mx-auto mt-16 grid grid-cols-2 gap-6">
-                 {AUTH_HIGHLIGHTS.map(({ icon: Icon, title, description }) => (
-                   <div
-                     key={title}
-                     className="flex items-start gap-3 opacity-80 hover:opacity-100 transition group"
-                   >
-                     <Icon
-                       size={18}
-                       strokeWidth={1.5}
-                       className="shrink-0 text-purple-400 drop-shadow-[0_0_6px_rgba(168,85,247,0.6)] group-hover:scale-110 transition-transform duration-300"
-                       aria-hidden
-                     />
-                     <div className="min-w-0 pt-0.5">
-                       <p className="text-sm font-medium text-white">{title}</p>
-                       <p className="text-xs text-white/40 leading-snug mt-1">{description}</p>
-                     </div>
-                   </div>
-                 ))}
-               </div>
-            </div>
-
-            <div className="absolute bottom-12 flex flex-col items-center gap-2 opacity-20 hover:opacity-100 transition-opacity">
-               <div className="flex items-center gap-2">
-                 <div className="w-1 h-1 rounded-full bg-cyan-500" />
-                 <span className="text-[8px] font-bold text-white uppercase tracking-[4px]">Verified Infrastructure</span>
-               </div>
-            </div>
-          </div>
+          <SpacesPasswordOverlay
+            passcode={passcode}
+            passError={passError}
+            onPasscodeChange={handleAuth}
+          />
         )}
 
         {/* Context Menu */}

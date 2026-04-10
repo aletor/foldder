@@ -4,7 +4,7 @@ import React, { useMemo, useState, useEffect } from "react";
 import { X } from "lucide-react";
 import type { Rect } from "./freehand-export";
 
-export type ExportFormat = "png" | "svg" | "jpg";
+export type ExportFormat = "png" | "svg" | "jpg" | "pdf";
 export type ExportScalePreset = 1 | 2 | 3;
 
 export type ProfessionalExportOptions = {
@@ -68,8 +68,9 @@ export function FreehandExportModal({
 
   const run = async () => {
     const base = filename.trim() || "export";
-    const ext = format === "svg" ? "svg" : format === "jpg" ? "jpg" : "png";
-    const safe = `${base.replace(/\.(png|svg|jpg|jpeg)$/i, "")}.${ext}`;
+    const ext =
+      format === "svg" ? "svg" : format === "jpg" ? "jpg" : format === "pdf" ? "pdf" : "png";
+    const safe = `${base.replace(/\.(png|svg|jpg|jpeg|pdf)$/i, "")}.${ext}`;
     await onExport({
       format,
       scale: effectiveScale,
@@ -108,8 +109,8 @@ export function FreehandExportModal({
         <div className="space-y-4 px-4 py-4">
           <div className="space-y-2">
             <label className="text-[10px] font-medium uppercase tracking-wider text-zinc-500">Format</label>
-            <div className="grid grid-cols-3 gap-2">
-              {(["png", "svg", "jpg"] as const).map((f) => (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {(["png", "svg", "jpg", "pdf"] as const).map((f) => (
                 <button
                   key={f}
                   type="button"
@@ -122,6 +123,11 @@ export function FreehandExportModal({
                 </button>
               ))}
             </div>
+            {format === "pdf" && (
+              <p className="text-[10px] leading-snug text-zinc-500">
+                PDF vectorial: mismas primitivas que el SVG (trazos, texto nativo donde el visor lo permita).
+              </p>
+            )}
           </div>
 
           <div className="space-y-2">
@@ -192,7 +198,7 @@ export function FreehandExportModal({
               <label className="text-[10px] font-medium uppercase tracking-wider text-zinc-500">Multi-selection</label>
               <label className="flex cursor-pointer items-center gap-2 text-[11px] text-zinc-300">
                 <input type="checkbox" checked={merged} onChange={(e) => setMerged(e.target.checked)} className="accent-sky-500" />
-                Single merged asset (uncheck to export each object separately — PNG/SVG only)
+                Single merged asset (uncheck to export each object separately — PNG/SVG/PDF)
               </label>
             </div>
           )}
@@ -211,7 +217,7 @@ export function FreehandExportModal({
             <div className="rounded-lg border border-white/[0.06] bg-[#0b0d10] px-3 py-2 text-[11px] text-zinc-400">
               <span className="text-zinc-500">Output size · </span>
               <span className="font-mono text-zinc-200">
-                {pixelSize.w} × {pixelSize.h} px
+                {pixelSize.w} × {pixelSize.h} px{format === "pdf" ? " (vector)" : ""}
               </span>
               <span className="text-zinc-600"> · artboard {Math.round(bounds.w)} × {Math.round(bounds.h)}</span>
             </div>

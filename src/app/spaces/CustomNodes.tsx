@@ -43,6 +43,36 @@ import {
   Camera,
 } from 'lucide-react';
 import FreehandStudio from './FreehandStudio';
+
+/** Snapshot current output into _assetVersions for version history. */
+function captureCurrentOutput(
+  data: Record<string, unknown>,
+  newUrl: string,
+  source: string,
+): Array<{ url: string; source: string; timestamp: number; s3Key?: string }> {
+  const prev = Array.isArray(data._assetVersions) ? data._assetVersions : [];
+  const entry: { url: string; source: string; timestamp: number; s3Key?: string } = {
+    url: newUrl,
+    source,
+    timestamp: Date.now(),
+  };
+  if (typeof data.s3Key === "string") entry.s3Key = data.s3Key;
+  return [...prev, entry];
+}
+
+/** Solid color as 1×1 PNG data URL so downstream nodes can read `data.value` like other image outputs. */
+function solidColorToPngDataUrl(hex: string): string {
+  if (typeof document === "undefined") return "";
+  const canvas = document.createElement("canvas");
+  canvas.width = 1;
+  canvas.height = 1;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return "";
+  ctx.fillStyle = hex;
+  ctx.fillRect(0, 0, 1, 1);
+  return canvas.toDataURL("image/png");
+}
+
 import './spaces.css';
 import { FOLDDER_FIT_VIEW_EASE } from '@/lib/fit-view-ease';
 import { readResponseJson } from '@/lib/read-response-json';
@@ -56,8 +86,9 @@ import {
 } from '@/lib/ai-hud-generation-progress';
 import { geminiGenerateWithServerProgress } from '@/lib/gemini-generate-stream-client';
 import { isFoldderMediaPreviewAutoFitSuppressed } from '@/lib/media-preview-fit-suppress';
+import { deleteSupersededS3Key } from '@/lib/s3-delete-client';
 import { NODE_REGISTRY } from './nodeRegistry';
-import { useRegisterAssistantNodeRun } from './NodeExecutionBridge';
+import { useRegisterAssistantNodeRun } from './use-assistant-node-run';
 import { DEFAULT_EDGE_COLOR, FOLDDER_LOGO_BLUE, HANDLE_COLORS } from './handle-type-colors';
 import {
   NodeIcon,
@@ -114,7 +145,7 @@ function ViewerOpenButton({ nodeId, disabled, className }: { nodeId: string; dis
   );
 }
 
-/** Studio en preview: centrado H+V en el área de preview (chip grande). */
+/** Studio en preview: centrado H+V en el área de preview (chip grande). Solo visible en hover. */
 function StudioModeCenterButton({
   onClick,
   disabled,
@@ -125,7 +156,7 @@ function StudioModeCenterButton({
   className?: string;
 }) {
   return (
-    <div className={`pointer-events-none absolute inset-0 z-[15] overflow-hidden ${className ?? ''}`}>
+    <div className={`pointer-events-none absolute inset-0 z-[15] overflow-hidden opacity-0 transition-opacity duration-200 group-hover/node:opacity-100 ${className ?? ''}`}>
       <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-2">
         <button
           type="button"
@@ -150,7 +181,7 @@ function StudioModeCenterButton({
   );
 }
 
-/** Nano Banana: botón Studio centrado en el área de preview. */
+/** Nano Banana: botón Studio centrado en el área de preview. Solo visible con hover sobre el nodo (`group/node`). */
 function NanoBananaStudioModeButton({
   onClick,
   disabled,
@@ -159,7 +190,7 @@ function NanoBananaStudioModeButton({
   disabled?: boolean;
 }) {
   return (
-    <div className="pointer-events-none absolute inset-0 z-[15] overflow-hidden">
+    <div className="pointer-events-none absolute inset-0 z-[15] overflow-hidden opacity-0 transition-opacity duration-200 group-hover/node:opacity-100">
       <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-2">
         <button
           type="button"
@@ -423,6 +454,18 @@ export const BackgroundNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const w = nodeData.width ?? 1920;
   const h = nodeData.height ?? 1080;
   const color = nodeData.color ?? '#000000';
+
+  useEffect(() => {
+    const url = solidColorToPngDataUrl(color);
+    if (!url) return;
+    setNodes((nds: any) =>
+      nds.map((n: any) => {
+        if (n.id !== id) return n;
+        if (n.data?.value === url) return n;
+        return { ...n, data: { ...n.data, value: url, type: "image" } };
+      }),
+    );
+  }, [color, id, setNodes]);
 
   return (
     <div className={`custom-node background-node` }>
@@ -933,7 +976,7 @@ export const ImageComposerNode = memo(({ id, data, selected }: NodeProps<any>) =
 
   return (
     <div
-      className="custom-node composer-node min-w-0 max-w-full"
+      className="custom-node composer-node min-w-0 max-w-full group/node"
       style={{ minWidth: 340 }}
     >
       <FoldderNodeResizer minWidth={340} minHeight={300} isVisible={selected} />
@@ -2892,7 +2935,7 @@ export const EnhancerNode = memo(({ id, data, selected }: NodeProps<any>) => {
     [connectedEdges, nodes]
   );
 
-  const handleEnhance = async () => {
+  const handleEnhance = useCallback(async () => {
     const input = concatenated || nodeData.value;
     if (!input) return alert('Connect at least one prompt!');
     setLoading(true);
@@ -2917,7 +2960,11 @@ export const EnhancerNode = memo(({ id, data, selected }: NodeProps<any>) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [concatenated, nodeData.value, id, setNodes]);
+
+  const enhancerOnRunRef = useRef(handleEnhance);
+  enhancerOnRunRef.current = handleEnhance;
+  useRegisterAssistantNodeRun(id, () => enhancerOnRunRef.current());
 
   return (
     <div className="custom-node tool-node" style={{ minWidth: 240 }}>
@@ -3021,7 +3068,14 @@ export const GrokNode = memo(({ id, data, selected }: NodeProps<any>) => {
           aspect_ratio: nodeData.aspect_ratio || '16:9'
         })
       });
-      const json = await res.json();
+      const json = (await res.json().catch(() => ({}))) as { taskId?: string; error?: string };
+      if (!res.ok) {
+        throw new Error(
+          typeof json.error === 'string' && json.error
+            ? json.error
+            : `Grok generate failed (${res.status})`,
+        );
+      }
       if (!json.taskId) throw new Error('No task from Grok');
 
       await new Promise<void>((resolve, reject) => {
@@ -3035,11 +3089,30 @@ export const GrokNode = memo(({ id, data, selected }: NodeProps<any>) => {
           }
           try {
             const sRes = await fetch(`/api/grok/status/${json.taskId}`);
-            const sJson = await sRes.json();
+            const sJson = (await sRes.json().catch(() => ({}))) as { status?: string; output?: string[]; error?: string };
+            if (!sRes.ok) {
+              clearInterval(check);
+              reject(
+                new Error(
+                  typeof sJson.error === 'string' && sJson.error
+                    ? sJson.error
+                    : `Grok status failed (${sRes.status})`,
+                ),
+              );
+              return;
+            }
             const st = (sJson.status || '').toUpperCase();
             if (['SUCCEEDED', 'DONE'].includes(st)) {
               clearInterval(check);
-              setResult(sJson.output?.[0]);
+              const videoUrl = sJson.output?.[0];
+              setResult(videoUrl ?? null);
+              if (videoUrl) {
+                setNodes((nds: any) => nds.map((n: any) => {
+                  if (n.id !== id) return n;
+                  const versions = captureCurrentOutput(n.data, videoUrl, 'graph-run');
+                  return { ...n, data: { ...n.data, value: videoUrl, type: 'video', _assetVersions: versions } };
+                }));
+              }
               resolve();
             } else if (['FAILED', 'EXPIRED'].includes(st) || st === 'ERROR') {
               clearInterval(check);
@@ -3091,6 +3164,10 @@ export const GrokNode = memo(({ id, data, selected }: NodeProps<any>) => {
           <select className="node-input text-[10px]" value={nodeData.aspect_ratio || '16:9'} onChange={(e) => setNodes((nds: any) => nds.map((n: any) => n.id === id ? {...n, data: {...n.data, aspect_ratio: e.target.value}} : n))}>
             <option value="16:9">16:9</option>
             <option value="9:16">9:16</option>
+          </select>
+          <select className="node-input text-[10px]" value={nodeData.duration || 5} onChange={(e) => setNodes((nds: any) => nds.map((n: any) => n.id === id ? {...n, data: {...n.data, duration: Number(e.target.value)}} : n))}>
+            <option value={5}>5s</option>
+            <option value={10}>10s</option>
           </select>
         </div>
         <button className="execute-btn w-full justify-center" onClick={onRun}>{status === 'running' ? 'PROCESSING...' : 'GENERATE VIDEO'}</button>
@@ -4848,10 +4925,14 @@ export const NanoBananaNode = memo(({ id, data, selected }: NodeProps<any>) => {
         aiHudNanoBananaJobProgress(id, 100);
         setNodes(nds => nds.map(n => {
           if (n.id !== id) return n;
+          const prevKey = (n.data as { s3Key?: string }).s3Key;
+          const nextKey = typeof json.key === 'string' ? json.key : undefined;
+          deleteSupersededS3Key(prevKey, nextKey);
           const oldVal = typeof n.data?.value === 'string' && n.data.value ? n.data.value : null;
           const h = Array.isArray(n.data.generationHistory) ? [...n.data.generationHistory] : [];
           if (oldVal && oldVal !== out && !h.includes(oldVal)) h.push(oldVal);
           if (!h.includes(out)) h.push(out);
+          const versions = captureCurrentOutput(n.data, out, 'graph-run');
           return {
             ...n,
             data: {
@@ -4860,6 +4941,7 @@ export const NanoBananaNode = memo(({ id, data, selected }: NodeProps<any>) => {
               type: 'image',
               ...(typeof json.key === 'string' ? { s3Key: json.key } : {}),
               generationHistory: h,
+              _assetVersions: versions,
             },
           };
         }));
@@ -4895,7 +4977,7 @@ export const NanoBananaNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const nbResLabel = isFlash25 ? '1K' : normalizeNanoBananaResolution(nodeData.resolution).toUpperCase();
 
   return (
-    <div className={`custom-node processor-node ${isActivelyGenerating ? 'node-glow-running' : ''}`}
+    <div className={`custom-node processor-node group/node ${isActivelyGenerating ? 'node-glow-running' : ''}`}
          style={{ minWidth: 240, maxHeight: 600 }}>
       <FoldderNodeResizer minWidth={240} minHeight={180} maxWidth={960} maxHeight={600} isVisible={selected} />
       <NodeLabel id={id} label={nodeData.label} defaultLabel="CREACION DE IMAGEN (Gemini 3 - Nano Banana)" />
@@ -5081,6 +5163,7 @@ export const NanoBananaNode = memo(({ id, data, selected }: NodeProps<any>) => {
               setResult(url);
               setNodes((nds: any) => nds.map((n: any) => {
                 if (n.id !== id) return n;
+                deleteSupersededS3Key((n.data as { s3Key?: string }).s3Key, s3Key);
                 const data: Record<string, unknown> = { ...n.data, value: url, type: 'image' };
                 if (s3Key) data.s3Key = s3Key;
                 else delete data.s3Key;
@@ -5477,7 +5560,7 @@ export const BackgroundRemoverNode = memo(({ id, data, selected }: NodeProps<any
   };
 
   return (
-    <div className={`custom-node mask-node ${status === 'running' ? 'node-glow-running' : ''}`} style={{ minWidth: 320 }}>
+    <div className={`custom-node mask-node group/node ${status === 'running' ? 'node-glow-running' : ''}`} style={{ minWidth: 320 }}>
       <FoldderNodeResizer minWidth={320} minHeight={320} maxWidth={700} maxHeight={700} isVisible={selected} />
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Background Remover" />
       <div className="handle-wrapper handle-left">
@@ -6341,15 +6424,29 @@ export const GeminiVideoNode = memo(({ id, data, selected }: NodeProps<any>) => 
         const json = await res.json();
         if (!json.output) throw new Error("No video output");
         setResult(json.output);
-        setNodes((nds) => nds.map((n) => (n.id === id ? {
-          ...n,
-          data: {
-            ...n.data,
-            value: json.output,
-            type: 'video',
-            ...(typeof json.key === 'string' ? { s3Key: json.key } : {}),
-          },
-        } : n)));
+        setNodes((nds) =>
+          nds.map((n) => {
+            if (n.id !== id) return n;
+            const prevKey = (n.data as { s3Key?: string }).s3Key;
+            const nextKey = typeof json.key === 'string' ? json.key : undefined;
+            deleteSupersededS3Key(prevKey, nextKey);
+            const versions = captureCurrentOutput(
+              n.data as Record<string, unknown>,
+              json.output as string,
+              'graph-run',
+            );
+            return {
+              ...n,
+              data: {
+                ...n.data,
+                value: json.output,
+                type: 'video',
+                ...(typeof json.key === 'string' ? { s3Key: json.key } : {}),
+                _assetVersions: versions,
+              },
+            };
+          }),
+        );
       });
       setStatus(ok ? 'success' : 'error');
     } finally {
@@ -6503,10 +6600,24 @@ const PAINT_RATIOS = [
 
 export const PainterNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const { setNodes } = useReactFlow();
+  const nodes = useNodes();
+  const edges = useEdges();
   const nodeData = data as BaseNodeData & {
     bgColor?: string; strokeColor?: string; brushSize?: number;
     aspectRatio?: string;
   };
+
+  const baseImageUrl = useMemo(() => {
+    const edge = edges.find((e) => e.target === id && e.targetHandle === 'image');
+    if (!edge) return null;
+    const src = nodes.find((n) => n.id === edge.source);
+    const v = src?.data && typeof (src.data as { value?: unknown }).value === 'string'
+      ? (src.data as { value: string }).value
+      : null;
+    if (!v) return null;
+    if (v.startsWith('http') || v.startsWith('data:') || v.startsWith('blob:')) return v;
+    return null;
+  }, [edges, nodes, id]);
 
   const ratio    = PAINT_RATIOS.find(r => r.value === (nodeData.aspectRatio || '16:9')) || PAINT_RATIOS[1];
   const canvasW  = ratio.w;
@@ -6555,28 +6666,38 @@ export const PainterNode = memo(({ id, data, selected }: NodeProps<any>) => {
     setNodes((nds: any) => nds.map((n: any) => n.id === id ? { ...n, data: { ...n.data, value: url, type: 'image' } } : n));
   }, [id, setNodes]);
 
-  // Init canvas
+  // Init canvas — saved `data.value` wins; else optional upstream Base image; else flat fill
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    if (!data.value) {
-      ctx.fillStyle = bgHexRef.current;
-      ctx.fillRect(0, 0, canvasW, canvasH);
-      saveToNode();
-    } else {
+    const paintFromUrl = (url: string) => {
       const img = new Image();
       img.crossOrigin = 'anonymous';
       img.onload = () => {
         ctx.clearRect(0, 0, canvasW, canvasH);
         ctx.drawImage(img, 0, 0, canvasW, canvasH);
-        saveToNode(); // update preview with rescaled content
+        saveToNode();
       };
-      img.src = data.value;
+      img.onerror = () => {
+        ctx.fillStyle = bgHexRef.current;
+        ctx.fillRect(0, 0, canvasW, canvasH);
+        saveToNode();
+      };
+      img.src = url;
+    };
+    if (data.value) {
+      paintFromUrl(data.value);
+    } else if (baseImageUrl) {
+      paintFromUrl(baseImageUrl);
+    } else {
+      ctx.fillStyle = bgHexRef.current;
+      ctx.fillRect(0, 0, canvasW, canvasH);
+      saveToNode();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canvasW, canvasH, fullscreen]);
+  }, [canvasW, canvasH, fullscreen, baseImageUrl]);
 
   // Repaint background when bgColor changes (preserving drawing content)
   useEffect(() => {
@@ -7485,7 +7606,7 @@ export const BezierMaskNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const hasMask = !!(nodeData.result_rgba);
 
   return (
-    <div className={`custom-node mask-node w-[360px]`}>
+    <div className={`custom-node mask-node group/node w-[360px]`}>
             <FoldderNodeResizer minWidth={360} minHeight={400} isVisible={selected} />
 <NodeLabel id={id} label={nodeData.label} defaultLabel="Bezier Mask" />
       <div className="handle-wrapper handle-left">
@@ -7726,43 +7847,18 @@ export const BezierMaskNode = memo(({ id, data, selected }: NodeProps<any>) => {
 // ── FREEHAND VECTOR EDITOR NODE ──────────────────────────────────────────
 
 export const FreehandNode = memo(({ id, data, selected }: NodeProps<any>) => {
-  const nodeData = data as BaseNodeData & { objects?: any[]; value?: string };
-  const nodes = useNodes();
-  const edges = useEdges();
+  const nodeData = data as BaseNodeData & { objects?: any[]; artboards?: any[]; value?: string };
   const { setNodes } = useReactFlow();
-  const updateNodeInternals = useUpdateNodeInternals();
   const [isStudioOpen, setIsStudioOpen] = useState(false);
-
-  const ALL_HANDLES = ['i0', 'i1', 'i2', 'i3', 'i4', 'i5', 'i6', 'i7'];
-
-  const connectedEdges = useMemo(
-    () =>
-      edges
-        .filter((e: any) => e.target === id)
-        .sort((a: any, b: any) => (a.targetHandle || '').localeCompare(b.targetHandle || '')),
-    [edges, id]
-  );
-
-  const connectedHandleIds = new Set(connectedEdges.map((e: any) => e.targetHandle));
-  const visibleCount = Math.min(Math.max(connectedEdges.length + 1, 1), ALL_HANDLES.length);
-
-  useEffect(() => {
-    updateNodeInternals(id);
-  }, [id, visibleCount, updateNodeInternals]);
-
-  const inputImages = useMemo(() => {
-    return connectedEdges
-      .map((edge: any) => {
-        const src = nodes.find((n: any) => n.id === edge.source);
-        return src?.data?.value as string | undefined;
-      })
-      .filter(Boolean) as string[];
-  }, [connectedEdges, nodes]);
 
   const handleExport = useCallback(
     (dataUrl: string) => {
       setNodes((nds: any) =>
-        nds.map((n: any) => (n.id === id ? { ...n, data: { ...n.data, value: dataUrl } } : n))
+        nds.map((n: any) => {
+          if (n.id !== id) return n;
+          const versions = captureCurrentOutput(n.data, dataUrl, 'studio-edit');
+          return { ...n, data: { ...n.data, value: dataUrl, _assetVersions: versions } };
+        })
       );
     },
     [id, setNodes]
@@ -7772,6 +7868,15 @@ export const FreehandNode = memo(({ id, data, selected }: NodeProps<any>) => {
     (objects: any[]) => {
       setNodes((nds: any) =>
         nds.map((n: any) => (n.id === id ? { ...n, data: { ...n.data, objects } } : n))
+      );
+    },
+    [id, setNodes]
+  );
+
+  const handleUpdateArtboards = useCallback(
+    (artboards: any[]) => {
+      setNodes((nds: any) =>
+        nds.map((n: any) => (n.id === id ? { ...n, data: { ...n.data, artboards } } : n))
       );
     },
     [id, setNodes]
@@ -7787,35 +7892,9 @@ export const FreehandNode = memo(({ id, data, selected }: NodeProps<any>) => {
   }, [isStudioOpen]);
 
   return (
-    <div className="custom-node tool-node" style={{ minWidth: 240 }}>
+    <div className="custom-node tool-node group/node" style={{ minWidth: 240 }}>
       <FoldderNodeResizer minWidth={240} minHeight={200} maxWidth={520} maxHeight={400} isVisible={selected} />
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Freehand" />
-
-      {ALL_HANDLES.map((hId, index) => {
-        const visible = index < visibleCount;
-        return (
-          <div
-            key={hId}
-            className="handle-wrapper handle-left"
-            style={{
-              top: `${((index + 1) / (ALL_HANDLES.length + 1)) * 100}%`,
-              opacity: visible ? 1 : 0,
-              pointerEvents: visible ? 'auto' : 'none',
-            }}
-          >
-            <FoldderDataHandle
-              type="target"
-              position={Position.Left}
-              id={hId}
-              dataType="image"
-              className={connectedHandleIds.has(hId) ? '' : 'opacity-40'}
-            />
-            <span className="handle-label" style={{ fontSize: 4 }}>
-              {connectedHandleIds.has(hId) ? `Img ${index + 1} ✓` : `Img ${index + 1}`}
-            </span>
-          </div>
-        );
-      })}
 
       <div className="node-header">
         <NodeIcon type="freehand" selected={selected} size={16} />
@@ -7846,11 +7925,12 @@ export const FreehandNode = memo(({ id, data, selected }: NodeProps<any>) => {
         createPortal(
           <FreehandStudio
             nodeId={id}
-            inputImages={inputImages}
             initialObjects={nodeData.objects || []}
+            initialArtboards={nodeData.artboards}
             onClose={() => setIsStudioOpen(false)}
             onExport={handleExport}
             onUpdateObjects={handleUpdateObjects}
+            onUpdateArtboards={handleUpdateArtboards}
           />,
           document.body
         )}

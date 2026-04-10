@@ -2,6 +2,13 @@ import fs from "fs/promises";
 import path from "path";
 import { appendUsageLineToS3Queued, isUsageS3Enabled, readUsageLogFromS3 } from "@/lib/api-usage-s3";
 import { USAGE_PERIOD_START_ISO } from "@/lib/usage-constants";
+import { estimateGeminiUsd, estimateOpenAIUsd } from "@/lib/pricing-config";
+
+export {
+  estimateGeminiImageGenerationUsd,
+  estimateGeminiUsd,
+  estimateOpenAIUsd,
+} from "@/lib/pricing-config";
 
 export const DEFAULT_USAGE_SINCE_ISO = USAGE_PERIOD_START_ISO;
 
@@ -84,58 +91,6 @@ export function inferServiceIdFromRecord(r: UsageRecordLine): UsageServiceId {
   if (r.provider === "grok") return "grok-video";
   if (r.provider === "runway") return "runway-gen3";
   return "replicate-bg";
-}
-
-/** Precios orientativos USD / 1M tokens (ajustables). OpenAI chat. */
-function openaiCostPerMillion(model: string | undefined): { in: number; out: number } {
-  const m = (model || "").toLowerCase();
-  if (m.includes("gpt-4o-mini")) return { in: 0.15, out: 0.6 };
-  if (m.includes("gpt-4.1-nano") || m.includes("4.1-nano")) return { in: 0.1, out: 0.4 };
-  if (m.includes("gpt-4o")) return { in: 2.5, out: 10 };
-  if (m.includes("gpt-3.5")) return { in: 0.5, out: 1.5 };
-  return { in: 0.15, out: 0.6 };
-}
-
-/** Gemini texto / multimodal (aprox.). */
-function geminiCostPerMillion(model: string | undefined): { in: number; out: number } {
-  const m = (model || "").toLowerCase();
-  if (m.includes("pro") || m.includes("3-pro") || m.includes("veo")) {
-    return { in: 1.25, out: 5 };
-  }
-  if (m.includes("2.5-flash") || m.includes("flash")) {
-    return { in: 0.075, out: 0.3 };
-  }
-  return { in: 0.1, out: 0.4 };
-}
-
-export function estimateOpenAIUsd(
-  model: string | undefined,
-  inputTokens: number,
-  outputTokens: number
-): number {
-  const { in: pi, out: po } = openaiCostPerMillion(model);
-  return (inputTokens * pi + outputTokens * po) / 1_000_000;
-}
-
-export function estimateGeminiUsd(
-  model: string | undefined,
-  inputTokens: number,
-  outputTokens: number
-): number {
-  const { in: pi, out: po } = geminiCostPerMillion(model);
-  return (inputTokens * pi + outputTokens * po) / 1_000_000;
-}
-
-export function estimateGeminiImageGenerationUsd(modelKey: string): number {
-  switch (modelKey) {
-    case "pro3":
-      return 0.12;
-    case "flash25":
-      return 0.02;
-    case "flash31":
-    default:
-      return 0.05;
-  }
 }
 
 /**

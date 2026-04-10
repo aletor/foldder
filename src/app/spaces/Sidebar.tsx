@@ -172,8 +172,18 @@ const Sidebar = ({
 
   const onDragStart = (event: React.DragEvent, nodeType: string) => {
     onLibraryDragStart?.(nodeType);
-    event.dataTransfer.setData('application/reactflow', nodeType);
-    event.dataTransfer.effectAllowed = 'move';
+    try {
+      event.dataTransfer.setData('text/plain', nodeType);
+      event.dataTransfer.setData('application/reactflow', nodeType);
+      event.dataTransfer.effectAllowed = 'copyMove';
+    } catch {
+      try {
+        event.dataTransfer.setData('application/reactflow', nodeType);
+        event.dataTransfer.effectAllowed = 'move';
+      } catch {
+        /* Safari / permisos */
+      }
+    }
   };
 
   const TypeIndicators = ({ nodeType }: { nodeType: string }) => {

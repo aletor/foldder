@@ -10,6 +10,7 @@ import React, {
   type WheelEvent as ReactWheelEvent,
   type DragEvent as ReactDragEvent,
 } from "react";
+import { usePreventBrowserPinchZoom } from "@/lib/use-prevent-browser-pinch-zoom";
 import {
   X,
   MousePointer2,
@@ -43,22 +44,31 @@ import {
   Spline,
   Unlink2,
   Type,
-  Blend,
   Magnet,
-  Grid3x3,
   Image as ImageIconLucide,
   ChevronUp,
   ChevronDown,
   ChevronsUp,
   ChevronsDown,
-  Hand,
-  ZoomIn,
-  Droplet,
+  LayoutTemplate,
 } from "lucide-react";
 import { FreehandExportModal, type ProfessionalExportOptions } from "./freehand/FreehandExportModal";
 import {
+  type Artboard,
+  type ArtboardDisplayUnit,
+  ARTBOARD_PRESETS,
+  applyArtboardResize,
+  artboardToRect,
+  createArtboard,
+  displayUnitToPx,
+  hitArtboardResizeHandle,
+  pickPrimaryArtboard,
+  pointInArtboard,
+  pxToDisplayUnit,
+  unionRects,
+} from "./freehand/artboard";
+import {
   buildStandaloneSvgFromCanvasDom,
-  boundsOfObjects,
   expandExportIds,
   type Rect as ExportRect,
 } from "./freehand/freehand-export";
@@ -81,6 +91,25 @@ import {
   textFillCssProperties,
 } from "./freehand/fill";
 import { textToOutlinePaths } from "./freehand/text-outline";
+import { GOOGLE_FONTS_POPULAR, googleFontStylesheetHref } from "./freehand/google-fonts";
+import { extractDocumentColorStats, replaceHexEverywhere } from "./freehand/extract-document-colors";
+import { FreehandColorPalette, loadSavedPaletteFromStorage, persistSavedPalette } from "./freehand/FreehandColorPalette";
+
+const OPEN_TYPE_PANEL_TAGS = ["kern", "liga", "calt", "smcp", "onum", "frac", "sups", "subs"] as const;
+
+function parseOpenTypeFeatureMap(s: string | undefined): Map<string, number> {
+  const m = new Map<string, number>();
+  if (!s || !s.trim() || s.trim() === "normal") return m;
+  const re = /"([^"]+)"\s*(\d+)/g;
+  let hit: RegExpExecArray | null;
+  while ((hit = re.exec(s)) !== null) m.set(hit[1], Number(hit[2]));
+  return m;
+}
+
+function stringifyOpenTypeFeatureMap(map: Map<string, number>): string {
+  if (map.size === 0) return "normal";
+  return [...map.entries()].map(([k, v]) => `"${k}" ${v}`).join(", ");
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  TYPES
@@ -92,8 +121,8 @@ type Tool =
   | "pen"
   | "rect"
   | "ellipse"
-  | "gradient"
   | "text"
+  | "artboard"
   | "eyedropper"
   | "handTool"
   | "zoomTool";
@@ -201,6 +230,9 @@ interface FreehandObjectBase {
   strokeDasharray: string;
   opacity: number;
   rotation: number;
+  /** Espejo horizontal/vertical (escala −1 en el eje local respecto al centro del recto de selección). */
+  flipX?: boolean;
+  flipY?: boolean;
   visible: boolean;
   locked: boolean;
   name: string;
@@ -212,7 +244,12 @@ interface FreehandObjectBase {
 interface RectObject extends FreehandObjectBase { type: "rect"; rx: number }
 interface EllipseObject extends FreehandObjectBase { type: "ellipse" }
 interface PathObject extends FreehandObjectBase { type: "path"; points: BezierPoint[]; closed: boolean }
-interface ImageObject extends FreehandObjectBase { type: "image"; src: string }
+interface ImageObject extends FreehandObjectBase {
+  type: "image";
+  src: string;
+  /** Natural aspect w/h for proportional scaling */
+  intrinsicRatio?: number;
+}
 
 interface TextObject extends FreehandObjectBase {
   type: "text";
@@ -223,7 +260,47 @@ interface TextObject extends FreehandObjectBase {
   fontWeight: number;
   lineHeight: number;
   letterSpacing: number;
+  /** Tracking (CSS em); pair kerning via OpenType features. */
+  fontKerning?: "auto" | "none";
+  fontFeatureSettings?: string;
+  fontVariantLigatures?: string;
+  paragraphIndent?: number;
   textAlign: "left" | "center" | "right" | "justify";
+  fontStyle?: "normal" | "italic";
+  fontVariantCaps?: "normal" | "small-caps";
+  textUnderline?: boolean;
+  textStrikethrough?: boolean;
+  /** Trazo del texto encima o debajo del relleno (vista + export). Por defecto `over`. */
+  strokePosition?: "over" | "under";
+  /** Escala no uniforme del bloque de texto (handles de transformación); por defecto 1. */
+  scaleX?: number;
+  scaleY?: number;
+}
+
+/** Texto siguiendo un PathObject por id; geometría de guía en tiempo de render. */
+interface TextOnPathObject extends Omit<FreehandObjectBase, "fill"> {
+  type: "textOnPath";
+  guidePathId: string;
+  text: string;
+  fontFamily: string;
+  fontSize: number;
+  fontWeight: number;
+  fontStyle: string;
+  /** Color de relleno del texto (hex/nombre); distinto de `FillAppearance` en otros tipos. */
+  fill: string;
+  letterSpacing: number;
+  /** 0–100 (% de longitud del path). */
+  startOffset: number;
+  side: "above" | "below";
+  /** Separación adicional respecto al trazado (px). */
+  baselineShift: number;
+  textAnchor: "start" | "middle" | "end";
+  /** Espaciado extra entre caracteres sobre la curva (además del letter-spacing base si aplica). */
+  charSpacing: number;
+  pathVisible: boolean;
+  pathColor: string;
+  pathWidth: number;
+  overflow: "hidden" | "visible" | "scale";
 }
 
 type BooleanOperation = "union" | "subtract" | "intersect" | "exclude";
@@ -242,15 +319,25 @@ export interface ClippingContainerObject extends FreehandObjectBase {
   content: FreehandObject[];
 }
 
-export type FreehandObject = RectObject | EllipseObject | PathObject | ImageObject | TextObject | BooleanGroupObject | ClippingContainerObject;
+export type FreehandObject =
+  | RectObject
+  | EllipseObject
+  | PathObject
+  | ImageObject
+  | TextObject
+  | TextOnPathObject
+  | BooleanGroupObject
+  | ClippingContainerObject;
 
 interface FreehandStudioProps {
   nodeId: string;
-  inputImages: string[];
   initialObjects: FreehandObject[];
+  /** Mesas de trabajo (lienzos exportables). */
+  initialArtboards?: Artboard[];
   onClose: () => void;
   onExport: (dataUrl: string) => void;
   onUpdateObjects: (objects: FreehandObject[]) => void;
+  onUpdateArtboards?: (artboards: Artboard[]) => void;
 }
 
 interface ContextMenuItem {
@@ -264,6 +351,14 @@ interface ContextMenuItem {
 type IsolationFrame =
   | {
       kind: "boolean";
+      groupId: string;
+      parentObjects: FreehandObject[];
+      parentSelectedIds: Set<string>;
+      parentHistory: { objects: FreehandObject[]; sel: string[] }[];
+      parentHistoryIdx: number;
+    }
+  | {
+      kind: "vectorGroup";
       groupId: string;
       parentObjects: FreehandObject[];
       parentSelectedIds: Set<string>;
@@ -311,6 +406,7 @@ function worldToLocalBox(o: FreehandObject, p: Point): { lx: number; ly: number 
 function supportsGradientFill(o: FreehandObject): boolean {
   if (!o.visible || o.locked) return false;
   if (o.type === "image" || o.type === "booleanGroup" || o.type === "clippingContainer") return false;
+  if (o.type === "textOnPath") return false;
   if (o.type === "path" && !(o as PathObject).closed) return false;
   return true;
 }
@@ -339,7 +435,146 @@ function defaultObj(partial: Partial<FreehandObjectBase>): FreehandObjectBase {
   } as FreehandObjectBase;
 }
 
+/**
+ * Une un TextObject y un PathObject de la selección en un `TextOnPathObject`.
+ * Pura: no actualiza estado ni historial. Si la selección no es exactamente path+text, devuelve `objects` sin cambios.
+ */
+function linkTextToPath(objects: FreehandObject[], selectedIds: Set<string>): FreehandObject[] {
+  const selObjs = objects.filter((o) => selectedIds.has(o.id));
+  const paths = selObjs.filter((o) => o.type === "path");
+  const texts = selObjs.filter((o) => o.type === "text");
+  if (paths.length !== 1 || texts.length !== 1) return objects;
+  const path = paths[0] as PathObject;
+  const text = texts[0] as TextObject;
+
+  const mf = migrateFill(text.fill);
+  const fillStr =
+    mf.type === "solid"
+      ? mf.color === "none"
+        ? "transparent"
+        : mf.color
+      : mf.stops[0]?.color ?? "#000000";
+  const textAnchor: TextOnPathObject["textAnchor"] =
+    text.textAlign === "center" ? "middle" : text.textAlign === "right" ? "end" : "start";
+
+  const base = defaultObj({
+    name: "Text on path",
+    x: path.x,
+    y: path.y,
+    width: path.width,
+    height: path.height,
+    opacity: text.opacity,
+    rotation: text.rotation,
+    stroke: text.stroke,
+    strokeWidth: text.strokeWidth,
+    strokeLinecap: text.strokeLinecap,
+    strokeLinejoin: text.strokeLinejoin,
+    strokeDasharray: text.strokeDasharray,
+    visible: text.visible,
+    locked: text.locked,
+    groupId: text.groupId,
+    clipMaskId: text.clipMaskId,
+  });
+
+  const newObj: TextOnPathObject = {
+    ...(base as FreehandObjectBase),
+    type: "textOnPath",
+    guidePathId: path.id,
+    text: text.text,
+    fontFamily: text.fontFamily,
+    fontSize: text.fontSize,
+    fontWeight: text.fontWeight,
+    fontStyle: "normal",
+    fill: fillStr,
+    letterSpacing: text.letterSpacing,
+    startOffset: 0,
+    side: "above",
+    baselineShift: 0,
+    textAnchor,
+    charSpacing: 0,
+    pathVisible: true,
+    pathColor: path.stroke,
+    pathWidth: Math.max(path.strokeWidth, 0.5),
+    overflow: "visible",
+  };
+
+  let replaced = false;
+  const next: FreehandObject[] = [];
+  for (const o of objects) {
+    if (o.id === text.id) {
+      next.push(newObj);
+      replaced = true;
+    } else {
+      next.push(o);
+    }
+  }
+  return replaced ? next : objects;
+}
+
 // ── Geometry ────────────────────────────────────────────────────────────
+
+/** Dimensiones del `foreignObject` del texto (coinciden con `renderObj` / export). */
+function textLayoutDims(t: TextObject): { w: number; h: number } {
+  const w = t.textMode === "point" ? Math.max(t.width, 32) : t.width;
+  const h = t.textMode === "point" ? Math.max(t.height, t.fontSize * t.lineHeight + 4) : t.height;
+  return { w, h };
+}
+
+/** Rectángulo visual (tras escala) para AABB, marco de selección y hit-test. */
+function textVisualRectLike(t: TextObject): { x: number; y: number; width: number; height: number } {
+  const { w, h } = textLayoutDims(t);
+  const sx = t.scaleX ?? 1, sy = t.scaleY ?? 1;
+  const ew = w * Math.abs(sx), eh = h * Math.abs(sy);
+  const cx = t.x + w / 2, cy = t.y + h / 2;
+  return { x: cx - ew / 2, y: cy - eh / 2, width: ew, height: eh };
+}
+
+function textSvgTransform(t: TextObject): string | undefined {
+  const { w, h } = textLayoutDims(t);
+  const cx = t.x + w / 2, cy = t.y + h / 2;
+  const sx = t.scaleX ?? 1, sy = t.scaleY ?? 1;
+  const r = t.rotation || 0;
+  const parts: string[] = [];
+  if (sx !== 1 || sy !== 1 || r) {
+    parts.push(`translate(${cx} ${cy})`);
+    if (r) parts.push(`rotate(${r})`);
+    if (sx !== 1 || sy !== 1) parts.push(`scale(${sx} ${sy})`);
+    parts.push(`translate(${-cx} ${-cy})`);
+  }
+  return parts.length ? parts.join(" ") : undefined;
+}
+
+/** Rotación + espejo alrededor del centro del bounding box (mismo espíritu que el texto con scale). */
+function buildObjTransform(o: FreehandObject): string | undefined {
+  const cx = o.x + o.width / 2;
+  const cy = o.y + o.height / 2;
+  const fx = o.flipX ? -1 : 1;
+  const fy = o.flipY ? -1 : 1;
+  const r = o.rotation || 0;
+  const parts: string[] = [];
+  if (fx !== 1 || fy !== 1 || r) {
+    parts.push(`translate(${cx} ${cy})`);
+    if (r) parts.push(`rotate(${r})`);
+    if (fx !== 1 || fy !== 1) parts.push(`scale(${fx} ${fy})`);
+    parts.push(`translate(${-cx} ${-cy})`);
+  }
+  return parts.length ? parts.join(" ") : undefined;
+}
+
+/** Inversa del transform del objeto (hit-test de paths con el mismo `d` que en pantalla). */
+function inverseObjMatrix(o: FreehandObject): DOMMatrix | null {
+  if (typeof DOMMatrix === "undefined") return null;
+  const cx = o.x + o.width / 2;
+  const cy = o.y + o.height / 2;
+  const m = new DOMMatrix();
+  m.translateSelf(cx, cy);
+  if (o.rotation) m.rotateSelf(0, 0, o.rotation);
+  const fx = o.flipX ? -1 : 1;
+  const fy = o.flipY ? -1 : 1;
+  if (fx !== 1 || fy !== 1) m.scaleSelf(fx, fy);
+  m.translateSelf(-cx, -cy);
+  return m.inverse();
+}
 
 function pointInRotatedRect(px: number, py: number, obj: FreehandObject): boolean {
   const rad = (-obj.rotation * Math.PI) / 180;
@@ -400,17 +635,40 @@ function distToPathSegments(pos: Point, path: PathObject): { dist: number; segId
   return best;
 }
 
-function hitTestObject(pos: Point, obj: FreehandObject, threshold: number): boolean {
+function hitTestObject(
+  pos: Point,
+  obj: FreehandObject,
+  threshold: number,
+  allObjects?: FreehandObject[],
+): boolean {
   if (!obj.visible || obj.locked) return false;
   if (obj.isClipMask) return false;
   switch (obj.type) {
-    case "text":
-      return pointInRotatedRect(pos.x, pos.y, obj);
+    case "text": {
+      const t = obj as TextObject;
+      const v = textVisualRectLike(t);
+      return pointInRotatedRect(pos.x, pos.y, { ...t, ...v } as FreehandObject);
+    }
     case "ellipse": return pointInEllipse(pos.x, pos.y, obj);
+    case "textOnPath": {
+      const tp = obj as TextOnPathObject;
+      if (!allObjects) return pointInRotatedRect(pos.x, pos.y, tp);
+      const g = allObjects.find((x) => x.id === tp.guidePathId);
+      if (!g || g.type !== "path") return false;
+      return hitTestObject(pos, g, threshold, allObjects);
+    }
     case "path": {
       const pathObj = obj as PathObject;
-      if (pathObj.closed && pointInRotatedRect(pos.x, pos.y, obj)) return true;
-      return distToPathSegments(pos, pathObj).dist < threshold;
+      let hp = pos;
+      if (obj.rotation || obj.flipX || obj.flipY) {
+        const inv = inverseObjMatrix(obj);
+        if (inv) {
+          const t = inv.transformPoint(new DOMPoint(pos.x, pos.y));
+          hp = { x: t.x, y: t.y };
+        }
+      }
+      if (pathObj.closed && pointInRotatedRect(hp.x, hp.y, obj)) return true;
+      return distToPathSegments(hp, pathObj).dist < threshold;
     }
     case "booleanGroup":
     case "rect":
@@ -434,6 +692,43 @@ function hitTestObject(pos: Point, obj: FreehandObject, threshold: number): bool
     }
     default: return pointInRotatedRect(pos.x, pos.y, obj);
   }
+}
+
+/** En aislamiento de grupo vectorial, no expandir selección a todos los miembros con el mismo `groupId`. */
+function vectorIsolationGroupId(stack: IsolationFrame[]): string | undefined {
+  const top = stack[stack.length - 1];
+  return top?.kind === "vectorGroup" ? top.groupId : undefined;
+}
+
+/** Objetos del mismo grupo lógico que `resolveSelection`, o `[obj.id]` si no hay grupo. */
+function groupMemberIdsForSelection(
+  obj: FreehandObject,
+  objs: FreehandObject[],
+  vecIsoGid?: string,
+): string[] {
+  const gid = obj.groupId;
+  if (gid && vecIsoGid && gid === vecIsoGid) return [obj.id];
+  return gid ? objs.filter((o) => o.groupId === gid).map((o) => o.id) : [obj.id];
+}
+
+/**
+ * `hits`: de frente a fondo (índice 0 = más encima). Con Mayús/Cmd y solape, si el de arriba
+ * ya está entero en la selección, usar el siguiente bajo el puntero para poder añadir otro objeto.
+ */
+function pickHitForExtendSelection(
+  hits: FreehandObject[],
+  extend: boolean,
+  sel: Set<string>,
+  objs: FreehandObject[],
+  vecIsoGid?: string,
+): FreehandObject | undefined {
+  if (hits.length === 0) return undefined;
+  if (!extend || hits.length === 1) return hits[0];
+  const addable = hits.find((h) => {
+    const m = groupMemberIdsForSelection(h, objs, vecIsoGid);
+    return !m.every((id) => sel.has(id));
+  });
+  return addable ?? hits[0];
 }
 
 function getPathBoundsFromPoints(points: BezierPoint[]): Rect {
@@ -531,7 +826,7 @@ function rectWorldCorners(o: FreehandObject): Point[] {
 }
 
 /** Axis-aligned bounding box of the painted shape (accounts for rotation). */
-function getVisualAABB(o: FreehandObject): Rect {
+function getVisualAABB(o: FreehandObject, allObjects?: FreehandObject[]): Rect {
   switch (o.type) {
     case "path": {
       const pb = getPathBoundsFromPoints((o as PathObject).points);
@@ -545,9 +840,20 @@ function getVisualAABB(o: FreehandObject): Rect {
       ].map((p) => rotatePointAround(p, { x: cx, y: cy }, o.rotation));
       return aabbFromPoints(corners);
     }
+    case "textOnPath": {
+      const tp = o as TextOnPathObject;
+      if (!allObjects) return aabbFromPoints(rectWorldCorners(tp));
+      const g = allObjects.find((x) => x.id === tp.guidePathId);
+      if (!g || g.type !== "path") return { x: 0, y: 0, w: 0, h: 0 };
+      return getVisualAABB(g, allObjects);
+    }
     case "clippingContainer":
       return aabbFromPoints(rectWorldCorners(o));
-    case "text":
+    case "text": {
+      const t = o as TextObject;
+      const v = textVisualRectLike(t);
+      return aabbFromPoints(rectWorldCorners({ ...t, ...v } as FreehandObject));
+    }
     case "ellipse":
     case "rect":
     case "image":
@@ -557,8 +863,8 @@ function getVisualAABB(o: FreehandObject): Rect {
   }
 }
 
-function getObjBounds(o: FreehandObject): Rect {
-  return getVisualAABB(o);
+function getObjBounds(o: FreehandObject, allObjects?: FreehandObject[]): Rect {
+  return getVisualAABB(o, allObjects);
 }
 
 function isClosedPathForMask(p: PathObject): boolean {
@@ -618,7 +924,7 @@ function offsetObjectWorldToLocal(o: FreehandObject, ox: number, oy: number): Fr
     const pb = getPathBoundsFromPoints(pts);
     return { ...p, x: pb.x, y: pb.y, width: pb.w, height: pb.h, points: pts };
   }
-  if (o.type === "rect" || o.type === "ellipse" || o.type === "image" || o.type === "text") {
+  if (o.type === "rect" || o.type === "ellipse" || o.type === "image" || o.type === "text" || o.type === "textOnPath") {
     return { ...o, x: o.x - ox, y: o.y - oy };
   }
   return o;
@@ -650,7 +956,7 @@ function translateFreehandObject(o: FreehandObject, dx: number, dy: number): Fre
     const pb = getPathBoundsFromPoints(newPts);
     return { ...p, x: pb.x, y: pb.y, width: pb.w, height: pb.h, points: newPts };
   }
-  if (o.type === "rect" || o.type === "ellipse" || o.type === "image" || o.type === "text") {
+  if (o.type === "rect" || o.type === "ellipse" || o.type === "image" || o.type === "text" || o.type === "textOnPath") {
     return { ...o, x: o.x + dx, y: o.y + dy };
   }
   return o;
@@ -693,6 +999,14 @@ function deepCloneFreehandObject(o: FreehandObject, newId: () => string): Freeha
       mask: deepCloneFreehandObject(c.mask, newId) as RectObject | EllipseObject | PathObject,
       content: c.content.map((ch) => deepCloneFreehandObject(ch, newId)),
     };
+  }
+  if (o.type === "textOnPath") {
+    const t = o as TextOnPathObject;
+    return { ...t, id };
+  }
+  if (o.type === "text") {
+    const t = o as TextObject;
+    return { ...t, id, fill: cloneFill(migrateFill(t.fill)) };
   }
   return { ...o, id, fill: cloneFill(migrateFill(o.fill)) };
 }
@@ -783,6 +1097,48 @@ function mapObjectPointsWithWorld(
   return o;
 }
 
+/** Rotación rígida en torno al pivote de selección: mueve el centro del objeto y suma el ángulo. */
+function rotateRectLikeAroundPivot(init: FreehandObject, pivot: Point, angleDeltaDeg: number): FreehandObject {
+  const C0 = { x: init.x + init.width / 2, y: init.y + init.height / 2 };
+  const newCenter = rotatePointAround(C0, pivot, angleDeltaDeg);
+  return {
+    ...init,
+    x: newCenter.x - init.width / 2,
+    y: newCenter.y - init.height / 2,
+    rotation: init.rotation + angleDeltaDeg,
+  };
+}
+
+/**
+ * Path: controles a mundo con el giro del objeto, luego rotación rígida alrededor del pivote de selección;
+ * se guardan coordenadas absolutas con rotation=0.
+ */
+function rotatePathAroundSelectionPivot(init: PathObject, pivot: Point, angleDeltaDeg: number): PathObject {
+  const C0 = { x: init.x + init.width / 2, y: init.y + init.height / 2 };
+  const r0 = init.rotation;
+  const toWorld = (p: Point) => rotatePointAround(p, C0, r0);
+  const mapP = (p: Point) => rotatePointAround(toWorld(p), pivot, angleDeltaDeg);
+  const newPts = init.points.map((pt) => ({
+    ...pt,
+    anchor: mapP(pt.anchor),
+    handleIn: mapP(pt.handleIn),
+    handleOut: mapP(pt.handleOut),
+  }));
+  const pb = getPathBoundsFromPoints(newPts);
+  return { ...init, x: pb.x, y: pb.y, width: pb.w, height: pb.h, points: newPts, rotation: 0 };
+}
+
+function applyRotateAroundSelectionPivot(init: FreehandObject, pivot: Point, angleDeltaDeg: number): FreehandObject {
+  if (init.type === "path") {
+    return rotatePathAroundSelectionPivot(init as PathObject, pivot, angleDeltaDeg);
+  }
+  if (init.type === "clippingContainer" || init.type === "booleanGroup") {
+    const mapWorld = (p: Point) => rotatePointAround(p, pivot, angleDeltaDeg);
+    return mapObjectPointsWithWorld(init, mapWorld) as FreehandObject;
+  }
+  return rotateRectLikeAroundPivot(init, pivot, angleDeltaDeg);
+}
+
 /** Map nested content to world by composing parent → child local transforms. */
 function mapChildToWorldWithChain(outerChain: (p: Point) => Point, o: FreehandObject): FreehandObject {
   if (o.type === "clippingContainer") {
@@ -824,7 +1180,7 @@ function renderMaskShapeClipInner(m: RectObject | EllipseObject | PathObject): R
 }
 
 /** All world-space corners contributing to selection bounds. */
-function objectWorldCorners(o: FreehandObject): Point[] {
+function objectWorldCorners(o: FreehandObject, allObjects?: FreehandObject[]): Point[] {
   if (o.type === "path") {
     const pb = getPathBoundsFromPoints((o as PathObject).points);
     const cx = o.x + o.width / 2, cy = o.y + o.height / 2;
@@ -843,6 +1199,20 @@ function objectWorldCorners(o: FreehandObject): Point[] {
       { x: pb.x, y: pb.y + pb.h },
     ].map((p) => rotatePointAround(p, { x: cx, y: cy }, o.rotation));
   }
+  if (o.type === "textOnPath") {
+    const tp = o as TextOnPathObject;
+    if (!allObjects) return rectWorldCorners(tp);
+    const g = allObjects.find((x) => x.id === tp.guidePathId);
+    if (!g || g.type !== "path") {
+      return [
+        { x: 0, y: 0 },
+        { x: 0, y: 0 },
+        { x: 0, y: 0 },
+        { x: 0, y: 0 },
+      ];
+    }
+    return objectWorldCorners(g, allObjects);
+  }
   return rectWorldCorners(o);
 }
 
@@ -859,7 +1229,7 @@ function computeOrientedSelectionFrame(objs: FreehandObject[]): OrientedSelectio
   if (objs.length === 0) return null;
   const angleDeg = objs.reduce((s, o) => s + o.rotation, 0) / objs.length;
   const allCorners: Point[] = [];
-  for (const o of objs) allCorners.push(...objectWorldCorners(o));
+  for (const o of objs) allCorners.push(...objectWorldCorners(o, objs));
   const gb = aabbFromPoints(allCorners);
   const C = { x: gb.x + gb.w / 2, y: gb.y + gb.h / 2 };
   const r = degToRad(-angleDeg);
@@ -907,7 +1277,7 @@ function getGroupBounds(objs: FreehandObject[]): Rect {
   if (objs.length === 0) return { x: 0, y: 0, w: 0, h: 0 };
   let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
   for (const o of objs) {
-    const b = getObjBounds(o);
+    const b = getObjBounds(o, objs);
     x1 = Math.min(x1, b.x);
     y1 = Math.min(y1, b.y);
     x2 = Math.max(x2, b.x + b.w);
@@ -939,7 +1309,7 @@ function computeSnap(
 
   for (const obj of allObjects) {
     if (excludeIds.has(obj.id) || !obj.visible || obj.isClipMask) continue;
-    const vb = getVisualAABB(obj);
+    const vb = getVisualAABB(obj, allObjects);
     const oxs = [vb.x, vb.x + vb.w / 2, vb.x + vb.w];
     const oys = [vb.y, vb.y + vb.h / 2, vb.y + vb.h];
     for (const mx of mxs) {
@@ -982,6 +1352,10 @@ function bezierToSvgD(points: BezierPoint[], closed: boolean): string {
   return d;
 }
 
+function pathObjToD(obj: PathObject): string {
+  return bezierToSvgD(obj.points, obj.closed);
+}
+
 function splitBezierSegment(pts: BezierPoint[], segIdx: number, t: number): BezierPoint[] {
   const j = (segIdx + 1) % pts.length;
   const p0 = pts[segIdx].anchor, cp1 = pts[segIdx].handleOut;
@@ -1018,11 +1392,9 @@ function svgStrokeDashArray(raw: string | undefined): string | undefined {
 
 // ── Render SVG object ───────────────────────────────────────────────────
 
-function renderObj(obj: FreehandObject): React.ReactNode {
+function renderObj(obj: FreehandObject, allObjects: FreehandObject[]): React.ReactNode {
   if (!obj.visible || obj.isClipMask) return null;
-  const transform = obj.rotation
-    ? `rotate(${obj.rotation} ${obj.x + obj.width / 2} ${obj.y + obj.height / 2})`
-    : undefined;
+  const transform = buildObjTransform(obj);
   const fill = migrateFill(obj.fill);
   const gid = gradientDefId(obj.id);
   const fillAttr = fillPaintValue(fill, gid);
@@ -1043,45 +1415,112 @@ function renderObj(obj: FreehandObject): React.ReactNode {
     case "path": {
       const p = obj as PathObject;
       const fp = p.closed && fillHasPaint(fill) ? fillAttr : "none";
-      return <path key={obj.id} d={bezierToSvgD(p.points, p.closed)} fill={fp} transform={transform} {...strokeProps} />;
+      return <path key={obj.id} d={pathObjToD(p)} fill={fp} transform={transform} {...strokeProps} />;
     }
     case "text": {
       const t = obj as TextObject;
       const foW = t.textMode === "point" ? Math.max(t.width, 32) : t.width;
       const foH = t.textMode === "point" ? Math.max(t.height, t.fontSize * t.lineHeight + 4) : t.height;
       const ta = t.textAlign === "justify" ? "justify" : t.textAlign;
-      return (
-        <g key={obj.id} transform={transform}>
-          <foreignObject x={t.x} y={t.y} width={foW} height={foH} style={{ overflow: "visible" }}>
+      const pad = t.textMode === "area" ? 4 : 0;
+      const padL = pad + (t.paragraphIndent ?? 0);
+      const fillCss = textFillCssProperties(fill);
+      const hasStroke = t.strokeWidth > 0 && t.stroke && t.stroke !== "none";
+      const strokePos = t.strokePosition ?? "over";
+      const strokeCss: React.CSSProperties = hasStroke
+        ? { WebkitTextStroke: `${t.strokeWidth}px ${t.stroke}` }
+        : {};
+      const baseTypography: React.CSSProperties = {
+        margin: 0,
+        padding: pad,
+        paddingLeft: padL,
+        width: "100%",
+        height: "100%",
+        boxSizing: "border-box",
+        fontFamily: t.fontFamily,
+        fontSize: t.fontSize,
+        fontWeight: t.fontWeight,
+        fontStyle: t.fontStyle ?? "normal",
+        lineHeight: t.lineHeight,
+        letterSpacing: t.letterSpacing,
+        fontKerning: t.fontKerning === "none" ? "none" : "auto",
+        fontFeatureSettings: t.fontFeatureSettings ?? '"kern" 1, "liga" 1, "calt" 1',
+        fontVariantLigatures: t.fontVariantLigatures ?? "common-ligatures",
+        ...(t.fontVariantCaps === "small-caps" ? { fontVariantCaps: "small-caps" as const } : {}),
+        textDecoration: [t.textUnderline && "underline", t.textStrikethrough && "line-through"].filter(Boolean).join(" ") || undefined,
+        textAlign: ta,
+        whiteSpace: t.textMode === "point" ? "pre" : "pre-wrap",
+        wordBreak: t.textMode === "area" ? ("break-word" as const) : "normal",
+        opacity: t.opacity,
+        userSelect: "none",
+      };
+      const content = t.text || "\u00a0";
+      const solidFillHex =
+        fill.type === "solid" && fill.color !== "none" ? fill.color : undefined;
+      let inner: React.ReactNode;
+      if (!hasStroke) {
+        inner = (
+          <div {...({ xmlns: "http://www.w3.org/1999/xhtml" } as Record<string, unknown>)} style={{ ...baseTypography, ...fillCss }}>
+            {content}
+          </div>
+        );
+      } else if (strokePos === "under") {
+        inner = (
+          <div
+            {...({ xmlns: "http://www.w3.org/1999/xhtml" } as Record<string, unknown>)}
+            style={{ position: "relative", width: "100%", height: "100%", margin: 0, boxSizing: "border-box" }}
+          >
             <div
-              {...({ xmlns: "http://www.w3.org/1999/xhtml" } as Record<string, unknown>)}
               style={{
-                margin: 0,
-                padding: t.textMode === "area" ? 4 : 0,
-                width: "100%",
-                height: "100%",
-                boxSizing: "border-box",
-                fontFamily: t.fontFamily,
-                fontSize: t.fontSize,
-                fontWeight: t.fontWeight,
-                lineHeight: t.lineHeight,
-                letterSpacing: t.letterSpacing,
-                textAlign: ta,
-                whiteSpace: t.textMode === "point" ? "pre" : "pre-wrap",
-                wordBreak: t.textMode === "area" ? "break-word" as const : "normal",
-                ...textFillCssProperties(fill),
-                opacity: t.opacity,
-                userSelect: "none",
+                ...baseTypography,
+                position: "absolute",
+                inset: 0,
+                ...strokeCss,
+                color: "transparent",
+                WebkitTextFillColor: "transparent",
               }}
             >
-              {t.text || "\u00a0"}
+              {content}
             </div>
+            <div
+              style={{
+                ...baseTypography,
+                position: "absolute",
+                inset: 0,
+                pointerEvents: "none",
+                ...fillCss,
+              }}
+            >
+              {content}
+            </div>
+          </div>
+        );
+      } else {
+        inner = (
+          <div
+            {...({ xmlns: "http://www.w3.org/1999/xhtml" } as Record<string, unknown>)}
+            style={{
+              ...baseTypography,
+              ...fillCss,
+              ...strokeCss,
+              ...(solidFillHex ? { WebkitTextFillColor: solidFillHex } : {}),
+            }}
+          >
+            {content}
+          </div>
+        );
+      }
+      const textT = textSvgTransform(t);
+      return (
+        <g key={obj.id} data-fh-text={t.id} transform={textT}>
+          <foreignObject x={t.x} y={t.y} width={foW} height={foH} style={{ overflow: "visible" }}>
+            {inner}
           </foreignObject>
         </g>
       );
     }
     case "image":
-      return <image key={obj.id} href={(obj as ImageObject).src} x={obj.x} y={obj.y} width={obj.width} height={obj.height} preserveAspectRatio="none" transform={transform} opacity={obj.opacity} />;
+      return <image key={obj.id} href={(obj as ImageObject).src} x={obj.x} y={obj.y} width={obj.width} height={obj.height} preserveAspectRatio="xMidYMid meet" transform={transform} opacity={obj.opacity} />;
     case "booleanGroup": {
       const bg = obj as BooleanGroupObject;
       if (bg.cachedResult) {
@@ -1101,7 +1540,55 @@ function renderObj(obj: FreehandObject): React.ReactNode {
                 {renderMaskShapeClipInner(cc.mask)}
               </clipPath>
             </defs>
-            <g clipPath={`url(#${cid})`}>{cc.content.map((ch) => renderObj(ch))}</g>
+            <g clipPath={`url(#${cid})`}>{cc.content.map((ch) => renderObj(ch, allObjects))}</g>
+          </g>
+        </g>
+      );
+    }
+    case "textOnPath": {
+      const tp = obj as TextOnPathObject;
+      const guide = allObjects.find((o) => o.id === tp.guidePathId);
+      if (!guide || guide.type !== "path") {
+        if (process.env.NODE_ENV === "development") {
+          console.warn(
+            `[Freehand] TextOnPath "${tp.id}" orphan: guidePathId "${tp.guidePathId}" does not resolve to a PathObject.`,
+          );
+        }
+        return null;
+      }
+      const gp = guide as PathObject;
+      const d = pathObjToD(gp);
+      const pathRefId = `tp-${tp.id}`;
+      const dy = tp.side === "above" ? -tp.fontSize * 0.2 + tp.baselineShift : tp.fontSize * 0.2 + tp.baselineShift;
+      const clipOverflowId = `tp-overflow-${tp.id}`;
+      return (
+        <g key={tp.id} data-fh-obj={tp.id} transform={transform} opacity={tp.opacity}>
+          <defs>
+            <path id={pathRefId} d={d} fill="none" stroke="none" />
+            {tp.overflow === "hidden" && (
+              <clipPath id={clipOverflowId} clipPathUnits="userSpaceOnUse">
+                <rect x={tp.x} y={tp.y} width={tp.width} height={tp.height} />
+              </clipPath>
+            )}
+          </defs>
+          {tp.pathVisible ? (
+            <path d={d} fill="none" stroke={tp.pathColor} strokeWidth={tp.pathWidth} />
+          ) : null}
+          {/* TODO: overflow "scale" — auto-fit text length (next iteration) */}
+          <g clipPath={tp.overflow === "hidden" ? `url(#${clipOverflowId})` : undefined}>
+            <text
+              fontFamily={tp.fontFamily}
+              fontSize={tp.fontSize}
+              fontWeight={tp.fontWeight}
+              fontStyle={tp.fontStyle as "normal" | "italic" | "oblique"}
+              fill={tp.fill}
+              letterSpacing={tp.letterSpacing + tp.charSpacing}
+              textAnchor={tp.textAnchor}
+            >
+              <textPath href={`#${pathRefId}`} startOffset={`${tp.startOffset}%`}>
+                <tspan dy={dy}>{tp.text || "\u00a0"}</tspan>
+              </textPath>
+            </text>
           </g>
         </g>
       );
@@ -1135,6 +1622,128 @@ function escapeXmlAttr(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 }
 
+function escapeXmlText(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/** Raster export strips `foreignObject` (tainted canvas); emit native SVG text so PNG/node preview shows copy. */
+function textObjectToNativeSvgMarkup(t: TextObject): string {
+  const fill = migrateFill(t.fill);
+  const gid = gradientDefId(t.id);
+  const fillAttr = escapeXmlAttr(fillPaintValue(fill, gid));
+  const raw = t.text || "\u00a0";
+  const lines = raw.split("\n");
+  const lhPx = t.fontSize * t.lineHeight;
+  const pad = t.textMode === "area" ? 4 : 0;
+  const indent = t.paragraphIndent ?? 0;
+  const boxW = t.textMode === "point" ? Math.max(t.width, 32) : t.width;
+  const ta = t.textAlign === "justify" ? "left" : t.textAlign;
+  let textAnchor: "start" | "middle" | "end" = "start";
+  let baseX = t.x + pad;
+  if (ta === "center") {
+    textAnchor = "middle";
+    baseX = t.x + boxW / 2;
+  } else if (ta === "right") {
+    textAnchor = "end";
+    baseX = t.x + boxW - pad;
+  } else {
+    baseX = t.x + pad + indent;
+  }
+  const firstY = t.y + pad + t.fontSize;
+  const sp = t.strokePosition ?? "over";
+  // TODO: validar paint-order en canvas raster cross-browser;
+  // si el orden no coincide con la vista en vivo, sustituir
+  // por doble <text> (una pasada stroke, otra fill)
+  const strokePart =
+    t.strokeWidth > 0 && t.stroke && t.stroke !== "none"
+      ? ` stroke="${escapeXmlAttr(t.stroke)}" stroke-width="${t.strokeWidth}" paint-order="${sp === "under" ? "fill stroke" : "stroke fill"}"`
+      : "";
+  const tspans = lines.map((line, i) => {
+    const xLine =
+      ta === "center" || ta === "right"
+        ? baseX
+        : t.x + pad + (i === 0 ? indent : 0);
+    if (i === 0) {
+      return `<tspan x="${xLine}" y="${firstY}">${escapeXmlText(line)}</tspan>`;
+    }
+    return `<tspan x="${xLine}" dy="${lhPx}">${escapeXmlText(line)}</tspan>`;
+  });
+  const inner =
+    `<text font-family="${escapeXmlAttr(t.fontFamily)}" font-size="${t.fontSize}" font-weight="${t.fontWeight}" ` +
+    `fill="${fillAttr}" text-anchor="${textAnchor}" opacity="${t.opacity}" ` +
+    `letter-spacing="${t.letterSpacing}"${strokePart}>${tspans.join("")}</text>`;
+  const tt = textSvgTransform(t);
+  return tt ? `<g transform="${escapeXmlAttr(tt)}">${inner}</g>` : inner;
+}
+
+/** Serializa `textFillCssProperties` + extras para atributo `style` en foreignObject estático. */
+function textFillStyleAttrFromAppearance(fill: FillAppearance): string {
+  const o = textFillCssProperties(fill);
+  const parts: string[] = [];
+  const mapKey = (k: string): string => {
+    if (k === "WebkitBackgroundClip") return "-webkit-background-clip";
+    if (k === "WebkitTextFillColor") return "-webkit-text-fill-color";
+    if (k === "WebkitTextStroke") return "-webkit-text-stroke";
+    return k.replace(/([A-Z])/g, "-$1").toLowerCase();
+  };
+  for (const [k, val] of Object.entries(o)) {
+    if (val == null || val === "") continue;
+    const v = String(val).replace(/"/g, "&quot;");
+    parts.push(`${mapKey(k)}:${v}`);
+  }
+  return parts.join(";");
+}
+
+function textForeignObjectStaticInnerXml(t: TextObject, fillAp: FillAppearance): string {
+  const raw = escapeXmlAttr(t.text || " ").replace(/\n/g, "&#10;");
+  const pad = t.textMode === "area" ? 4 : 0;
+  const padL = pad + (t.paragraphIndent ?? 0);
+  const ta = t.textAlign === "justify" ? "justify" : t.textAlign;
+  const fst = t.fontStyle && t.fontStyle !== "normal" ? `font-style:${t.fontStyle};` : "";
+  const fcaps = t.fontVariantCaps === "small-caps" ? "font-variant-caps:small-caps;" : "";
+  const deco = [t.textUnderline && "underline", t.textStrikethrough && "line-through"].filter(Boolean).join(" ");
+  const tdeco = deco ? `text-decoration:${deco};` : "";
+  const base = `margin:0;padding:${pad}px;padding-left:${padL}px;width:100%;height:100%;box-sizing:border-box;font-family:${escapeXmlAttr(t.fontFamily)};font-size:${t.fontSize}px;font-weight:${t.fontWeight};${fst}line-height:${t.lineHeight};letter-spacing:${t.letterSpacing}px;font-kerning:${t.fontKerning === "none" ? "none" : "auto"};${fcaps}${tdeco}text-align:${ta};white-space:${t.textMode === "point" ? "pre" : "pre-wrap"};word-break:${t.textMode === "area" ? "break-word" : "normal"};opacity:${t.opacity};user-select:none`;
+  const fillStr = textFillStyleAttrFromAppearance(fillAp);
+  const hasStroke = t.strokeWidth > 0 && t.stroke && t.stroke !== "none";
+  const strokePos = t.strokePosition ?? "over";
+  if (!hasStroke) {
+    return `<div xmlns="http://www.w3.org/1999/xhtml" style="${base};${fillStr}">${raw}</div>`;
+  }
+  const wts = `-webkit-text-stroke:${t.strokeWidth}px ${escapeXmlAttr(t.stroke)}`;
+  if (strokePos === "under") {
+    return (
+      `<div xmlns="http://www.w3.org/1999/xhtml" style="position:relative;width:100%;height:100%;margin:0;box-sizing:border-box">` +
+      `<div style="position:absolute;inset:0;${base};${wts};color:transparent;-webkit-text-fill-color:transparent">${raw}</div>` +
+      `<div style="position:absolute;inset:0;pointer-events:none;${base};${fillStr}">${raw}</div>` +
+      `</div>`
+    );
+  }
+  const solidHex = fillAp.type === "solid" && fillAp.color !== "none" ? fillAp.color : "";
+  const fillPart = solidHex ? `;-webkit-text-fill-color:${escapeXmlAttr(solidHex)}` : "";
+  return `<div xmlns="http://www.w3.org/1999/xhtml" style="${base};${fillStr};${wts}${fillPart}">${raw}</div>`;
+}
+
+function substituteNativeTextForRasterExport(svgXml: string, objects: FreehandObject[]): string {
+  const texts = objects.filter((o): o is TextObject => o.type === "text" && o.visible && !o.isClipMask);
+  if (texts.length === 0) return svgXml;
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(svgXml, "image/svg+xml");
+  if (doc.querySelector("parsererror")) return svgXml;
+  for (const t of texts) {
+    const g = doc.querySelector(`g[data-fh-text="${t.id}"]`);
+    if (!g) continue;
+    g.querySelectorAll("foreignObject").forEach((el) => el.remove());
+    const wrap = parser.parseFromString(
+      `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">${textObjectToNativeSvgMarkup(t)}</svg>`,
+      "image/svg+xml",
+    );
+    const root = wrap.documentElement;
+    while (root.firstChild) g.appendChild(root.firstChild);
+  }
+  return new XMLSerializer().serializeToString(doc.documentElement);
+}
+
 function objToSvgStringStatic(obj: FreehandObject, w: number, h: number, ox: number, oy: number): string {
   const parts: string[] = [];
   const fill = migrateFill(obj.fill);
@@ -1143,7 +1752,8 @@ function objToSvgStringStatic(obj: FreehandObject, w: number, h: number, ox: num
   const defStr = fill.type === "solid" ? "" : fillDefSvgString(fill, gid);
   parts.push(`<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${w}" height="${h}" viewBox="${ox} ${oy} ${w} ${h}">`);
   if (defStr) parts.push(`<defs>${defStr}</defs>`);
-  const transform = obj.rotation ? `transform="rotate(${obj.rotation} ${obj.x + obj.width / 2} ${obj.y + obj.height / 2})"` : "";
+  const tf = buildObjTransform(obj);
+  const transform = tf ? ` transform="${escapeXmlAttr(tf)}"` : "";
   const dash = svgStrokeDashArray(obj.strokeDasharray);
   const dashAttr = dash ? ` stroke-dasharray="${dash}"` : "";
   const capJoin = ` stroke-linecap="${obj.strokeLinecap}" stroke-linejoin="${obj.strokeLinejoin}"`;
@@ -1164,12 +1774,10 @@ function objToSvgStringStatic(obj: FreehandObject, w: number, h: number, ox: num
       const t = obj as TextObject;
       const foW = t.textMode === "point" ? Math.max(t.width, 32) : t.width;
       const foH = t.textMode === "point" ? Math.max(t.height, t.fontSize * t.lineHeight + 4) : t.height;
-      const inner = escapeXmlAttr(t.text || " ").replace(/\n/g, "&#10;");
-      parts.push(
-        `<g ${transform}><foreignObject x="${t.x}" y="${t.y}" width="${foW}" height="${foH}">` +
-          `<div xmlns="http://www.w3.org/1999/xhtml" style="margin:0;padding:${t.textMode === "area" ? 4 : 0}px;width:100%;height:100%;font-family:${escapeXmlAttr(t.fontFamily)};font-size:${t.fontSize}px;font-weight:${t.fontWeight};line-height:${t.lineHeight};letter-spacing:${t.letterSpacing}px;text-align:${t.textAlign};white-space:${t.textMode === "point" ? "pre" : "pre-wrap"};opacity:${t.opacity}">${inner}</div>` +
-        `</foreignObject></g>`,
-      );
+      const innerFo = textForeignObjectStaticInnerXml(t, fill);
+      const tt = textSvgTransform(t);
+      const gtr = tt ? ` transform="${escapeXmlAttr(tt)}"` : "";
+      parts.push(`<g${gtr}><foreignObject x="${t.x}" y="${t.y}" width="${foW}" height="${foH}">${innerFo}</foreignObject></g>`);
       break;
     }
     case "image":
@@ -1203,7 +1811,8 @@ async function computeBooleanCachedResult(children: FreehandObject[], operation:
   const ctx = canvas.getContext("2d")!;
 
   for (let i = 0; i < visible.length; i++) {
-    const svgStr = objToSvgStringStatic(visible[i], w, h, ox, oy);
+    let svgStr = objToSvgStringStatic(visible[i], w, h, ox, oy);
+    svgStr = await inlineSvgRasterImagesToDataUrls(svgStr);
     const blob = new Blob([svgStr], { type: "image/svg+xml" });
     const url = URL.createObjectURL(blob);
     const img = await new Promise<HTMLImageElement>((res) => {
@@ -1227,7 +1836,7 @@ async function computeBooleanCachedResult(children: FreehandObject[], operation:
   }
   ctx.globalCompositeOperation = "source-over";
 
-  return { dataUrl: canvas.toDataURL("image/png"), bounds: { x: ox, y: oy, w, h } };
+  return { dataUrl: canvasToPngDataUrlSafe(canvas), bounds: { x: ox, y: oy, w, h } };
 }
 
 // ── Export helpers ──────────────────────────────────────────────────────
@@ -1244,15 +1853,173 @@ function buildExportBounds(objects: FreehandObject[]): Rect {
   return { x: x1 - pad, y: y1 - pad, w: x2 - x1 + pad * 2, h: y2 - y1 + pad * 2 };
 }
 
-function buildExportSvgString(svgEl: SVGSVGElement, bounds: Rect): string {
-  const clone = svgEl.cloneNode(true) as SVGSVGElement;
-  clone.querySelectorAll("[data-ui]").forEach((el) => el.remove());
-  clone.setAttribute("viewBox", `${bounds.x} ${bounds.y} ${bounds.w} ${bounds.h}`);
-  clone.setAttribute("width", String(Math.round(bounds.w)));
-  clone.setAttribute("height", String(Math.round(bounds.h)));
-  clone.removeAttribute("style");
-  clone.removeAttribute("class");
-  return new XMLSerializer().serializeToString(clone);
+function resolveSceneExportBounds(
+  objects: FreehandObject[],
+  artboards: Artboard[],
+  selectedArtboardId: string | null,
+): Rect {
+  const ab = pickPrimaryArtboard(artboards, selectedArtboardId);
+  if (ab) return artboardToRect(ab);
+  return buildExportBounds(objects);
+}
+
+function resolveFitViewBounds(objects: FreehandObject[], artboards: Artboard[]): Rect {
+  const ob = buildExportBounds(objects);
+  if (artboards.length === 0) return ob;
+  const parts = [ob, ...artboards.map(artboardToRect)];
+  return unionRects(parts) ?? ob;
+}
+
+/** Evita canvas “tainted” al exportar: las <image> con http(s) deben ir como data URLs antes de rasterizar. */
+const TRANSPARENT_PIXEL_PNG =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+async function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onloadend = () => resolve(r.result as string);
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(blob);
+  });
+}
+
+async function rasterHrefToSafeDataUrl(href: string, cache: Map<string, string>): Promise<string> {
+  const raw = href.trim();
+  if (!raw) return TRANSPARENT_PIXEL_PNG;
+  if (raw.startsWith("data:")) return raw;
+
+  let resolved: string;
+  try {
+    resolved = new URL(raw, document.baseURI).href;
+  } catch {
+    return TRANSPARENT_PIXEL_PNG;
+  }
+
+  const cached = cache.get(resolved);
+  if (cached) return cached;
+
+  try {
+    const res = await fetch(resolved, { mode: "cors", credentials: "omit" });
+    if (!res.ok) throw new Error(String(res.status));
+    const blob = await res.blob();
+    const dataUrl = await blobToDataUrl(blob);
+    cache.set(resolved, dataUrl);
+    return dataUrl;
+  } catch {
+    try {
+      const dataUrl = await new Promise<string>((resolve) => {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.onload = () => {
+          try {
+            const c = document.createElement("canvas");
+            c.width = Math.max(1, img.naturalWidth);
+            c.height = Math.max(1, img.naturalHeight);
+            c.getContext("2d")!.drawImage(img, 0, 0);
+            resolve(c.toDataURL("image/png"));
+          } catch {
+            resolve(TRANSPARENT_PIXEL_PNG);
+          }
+        };
+        img.onerror = () => resolve(TRANSPARENT_PIXEL_PNG);
+        img.src = resolved;
+      });
+      cache.set(resolved, dataUrl);
+      return dataUrl;
+    } catch {
+      cache.set(resolved, TRANSPARENT_PIXEL_PNG);
+      return TRANSPARENT_PIXEL_PNG;
+    }
+  }
+}
+
+async function inlineSvgRasterImagesToDataUrls(svgXml: string): Promise<string> {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(svgXml, "image/svg+xml");
+  if (doc.querySelector("parsererror")) return svgXml;
+  const images = doc.getElementsByTagNameNS("http://www.w3.org/2000/svg", "image");
+  if (images.length === 0) return svgXml;
+
+  const cache = new Map<string, string>();
+  await Promise.all(
+    Array.from(images).map(async (el) => {
+      const href =
+        el.getAttribute("href") ||
+        el.getAttributeNS("http://www.w3.org/1999/xlink", "href") ||
+        el.getAttributeNS("http://www.w3.org/2000/svg", "href");
+      if (!href) return;
+      const safe = await rasterHrefToSafeDataUrl(href, cache);
+      el.setAttribute("href", safe);
+      el.setAttributeNS("http://www.w3.org/1999/xlink", "href", safe);
+    }),
+  );
+  return new XMLSerializer().serializeToString(doc.documentElement);
+}
+
+/** El HTML dentro de foreignObject puede contaminar el canvas al rasterizar el SVG. */
+function stripForeignObjectElements(svgXml: string): string {
+  if (!/foreignObject/i.test(svgXml)) return svgXml;
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(svgXml, "image/svg+xml");
+  if (doc.querySelector("parsererror")) return svgXml;
+  doc.querySelectorAll("foreignObject").forEach((el) => el.remove());
+  return new XMLSerializer().serializeToString(doc.documentElement);
+}
+
+function isCanvasExportReadable(canvas: HTMLCanvasElement): boolean {
+  try {
+    void canvas.toDataURL("image/png");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** `toDataURL` tras rasterizar SVG; nunca lanza SecurityError al nodo padre. */
+function canvasToPngDataUrlSafe(canvas: HTMLCanvasElement): string {
+  try {
+    return canvas.toDataURL("image/png");
+  } catch {
+    console.warn("Freehand: canvas export tainted after sanitization; using placeholder.");
+    return TRANSPARENT_PIXEL_PNG;
+  }
+}
+
+async function svgStringToCanvasSafe(
+  svgStr: string,
+  w: number,
+  h: number,
+  bgColor?: string,
+): Promise<HTMLCanvasElement> {
+  const tryPipeline = async (raw: string) => {
+    const inlined = await inlineSvgRasterImagesToDataUrls(raw);
+    return svgStringToCanvas(inlined, w, h, bgColor);
+  };
+
+  let canvas = await tryPipeline(svgStr);
+  if (isCanvasExportReadable(canvas)) return canvas;
+
+  const stripped = stripForeignObjectElements(svgStr);
+  if (stripped !== svgStr) {
+    canvas = await tryPipeline(stripped);
+    if (isCanvasExportReadable(canvas)) return canvas;
+  }
+
+  const strippedInlined = stripForeignObjectElements(await inlineSvgRasterImagesToDataUrls(svgStr));
+  canvas = await svgStringToCanvas(strippedInlined, w, h, bgColor);
+  if (isCanvasExportReadable(canvas)) return canvas;
+
+  const fallback = document.createElement("canvas");
+  fallback.width = Math.max(1, Math.round(w));
+  fallback.height = Math.max(1, Math.round(h));
+  const fx = fallback.getContext("2d");
+  if (fx) {
+    if (bgColor) {
+      fx.fillStyle = bgColor;
+      fx.fillRect(0, 0, fallback.width, fallback.height);
+    }
+  }
+  return fallback;
 }
 
 function downloadBlob(blob: Blob, filename: string) {
@@ -1289,6 +2056,103 @@ function svgStringToCanvas(svgStr: string, w: number, h: number, bgColor?: strin
 // ═══════════════════════════════════════════════════════════════════════════
 //  SUB-COMPONENTS
 // ═══════════════════════════════════════════════════════════════════════════
+
+/** Campo numérico: arrastre horizontal sobre el input (estilo DaVinci Resolve). Clic sin mover = editar con teclado. Mayús = ×10. */
+function ScrubNumberInput({
+  value,
+  onKeyboardCommit,
+  onScrubLive,
+  onScrubEnd,
+  step = 1,
+  roundFn = Math.round,
+  className,
+  title,
+  ...rest
+}: {
+  value: number;
+  onKeyboardCommit: (n: number) => void;
+  onScrubLive: (n: number) => void;
+  onScrubEnd: () => void;
+  step?: number;
+  roundFn?: (n: number) => number;
+  className?: string;
+  title?: string;
+} & Omit<React.InputHTMLAttributes<HTMLInputElement>, "type" | "value" | "onChange" | "onPointerDown">) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const scrubRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startVal: number;
+    active: boolean;
+  } | null>(null);
+
+  const onPointerDown = (e: React.PointerEvent<HTMLInputElement>) => {
+    if (e.button !== 0) return;
+    if (e.currentTarget.disabled) return;
+    const el = e.currentTarget;
+    scrubRef.current = {
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startVal: value,
+      active: false,
+    };
+    try {
+      el.setPointerCapture(e.pointerId);
+    } catch {
+      /* noop */
+    }
+
+    const onMove = (ev: PointerEvent) => {
+      const s = scrubRef.current;
+      if (!s || ev.pointerId !== s.pointerId) return;
+      const dx = ev.clientX - s.startX;
+      if (!s.active) {
+        if (Math.abs(dx) < 3) return;
+        s.active = true;
+        inputRef.current?.blur();
+        document.body.style.cursor = "ew-resize";
+        document.body.style.userSelect = "none";
+      }
+      const mult = ev.shiftKey ? 10 : 1;
+      const next = roundFn(s.startVal + dx * step * mult);
+      onScrubLive(next);
+    };
+
+    const onUp = (ev: PointerEvent) => {
+      const s = scrubRef.current;
+      if (!s || ev.pointerId !== s.pointerId) return;
+      try {
+        el.releasePointerCapture(ev.pointerId);
+      } catch {
+        /* noop */
+      }
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      el.removeEventListener("pointermove", onMove);
+      el.removeEventListener("pointerup", onUp);
+      el.removeEventListener("pointercancel", onUp);
+      if (s.active) onScrubEnd();
+      scrubRef.current = null;
+    };
+
+    el.addEventListener("pointermove", onMove);
+    el.addEventListener("pointerup", onUp);
+    el.addEventListener("pointercancel", onUp);
+  };
+
+  return (
+    <input
+      ref={inputRef}
+      type="number"
+      value={Number.isFinite(value) ? value : 0}
+      title={title}
+      onChange={(e) => onKeyboardCommit(Number(e.target.value))}
+      onPointerDown={onPointerDown}
+      className={className}
+      {...rest}
+    />
+  );
+}
 
 function ToolBtn({ active, onClick, title, children }: { active?: boolean; onClick: () => void; title: string; children: React.ReactNode }) {
   return (
@@ -1370,12 +2234,53 @@ function selectionKindLabel(objs: FreehandObject[]): string {
   }
 }
 
+/** Relleno/trazo para la siguiente forma o trazo a pluma, deducidos de un objeto con estilo vectorial. */
+function creationStyleSnapshotFromObject(o: FreehandObject): {
+  fillColor: string | null;
+  strokeColor: string | null;
+  strokeWidth: number;
+  strokeLinecap: FreehandObjectBase["strokeLinecap"];
+  strokeLinejoin: FreehandObjectBase["strokeLinejoin"];
+  strokeDasharray: string;
+} | null {
+  if (o.type === "image" || o.type === "booleanGroup" || o.type === "clippingContainer") return null;
+
+  let fillColor: string | null = null;
+  if (o.type === "textOnPath") {
+    const c = (o as TextOnPathObject).fill;
+    if (c && c !== "none" && c !== "transparent" && /^#[0-9A-Fa-f]{6}$/i.test(c)) fillColor = c;
+  } else {
+    const mf = migrateFill(o.fill);
+    if (mf.type === "solid" && mf.color !== "none") fillColor = mf.color;
+    else if (mf.type === "gradient-linear" || mf.type === "gradient-radial") {
+      const h = mf.stops[0]?.color;
+      if (h && /^#[0-9A-Fa-f]{6}$/i.test(h)) fillColor = h;
+    }
+  }
+
+  const strokeColor = o.stroke && o.stroke !== "none" ? o.stroke : null;
+  return {
+    fillColor,
+    strokeColor,
+    strokeWidth: o.strokeWidth,
+    strokeLinecap: o.strokeLinecap,
+    strokeLinejoin: o.strokeLinejoin,
+    strokeDasharray: o.strokeDasharray ?? "",
+  };
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 //  MAIN COMPONENT
 // ═══════════════════════════════════════════════════════════════════════════
 
 export default function FreehandStudio({
-  nodeId, inputImages, initialObjects, onClose, onExport, onUpdateObjects,
+  nodeId,
+  initialObjects,
+  initialArtboards,
+  onClose,
+  onExport,
+  onUpdateObjects,
+  onUpdateArtboards,
 }: FreehandStudioProps) {
 
   // ── Core state ─────────────────────────────────────────────────────
@@ -1384,9 +2289,16 @@ export default function FreehandStudio({
       ? (initialObjects.map((o) => ({ ...o, fill: migrateFill((o as FreehandObject).fill as unknown) })) as FreehandObject[])
       : [],
   );
+  const [artboards, setArtboards] = useState<Artboard[]>(() =>
+    (initialArtboards ?? []).map((a) => createArtboard(a)),
+  );
+  const [selectedArtboardId, setSelectedArtboardId] = useState<string | null>(null);
+  const [hoverArtboardId, setHoverArtboardId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [activeTool, setActiveTool] = useState<Tool>("select");
   const [viewport, setViewport] = useState({ x: 0, y: 0, zoom: 1 });
+  const studioShellRef = useRef<HTMLDivElement>(null);
+  usePreventBrowserPinchZoom(studioShellRef);
 
   // Pen tool
   const [penPoints, setPenPoints] = useState<BezierPoint[]>([]);
@@ -1395,7 +2307,7 @@ export default function FreehandStudio({
 
   // Drag state
   const [dragState, setDragState] = useState<{
-    type: "move" | "resize" | "pan" | "create" | "createText" | "directSelect" | "marquee" | "penHandle" | "rotate" | "gradient";
+    type: "move" | "resize" | "pan" | "create" | "createText" | "directSelect" | "marquee" | "penHandle" | "rotate" | "gradient" | "artboardMove" | "artboardResize";
     startX: number;
     startY: number;
     startCanvas?: Point;
@@ -1410,7 +2322,7 @@ export default function FreehandStudio({
     /** Deep copy of selected objects at resize start — transforms must not compound per frame. */
     resizeSnapshot?: Map<string, FreehandObject>;
     allBounds?: Map<string, Rect>;
-    createType?: "rect" | "ellipse";
+    createType?: "rect" | "ellipse" | "artboard";
     createOrigin?: Point;
     gradientHandle?: "linA" | "linB" | "radC" | "radR" | "stop";
     gradientPrimaryId?: string;
@@ -1425,7 +2337,22 @@ export default function FreehandStudio({
     rotateCenter?: Point;
     rotateStartAngle?: number;
     rotateInitialRotations?: Map<string, number>;
+    /** Copia profunda al inicio del gesto; la rotación se calcula desde aquí (pivote = centro de selección). */
+    rotateInitialSnapshots?: Map<string, FreehandObject>;
+    artboardId?: string;
+    artboardSnapshot?: Artboard;
+    artboardStart?: Point;
+    abHandle?: string;
+    /** Alt+arrastre: al soltar, memorizar el delta para ⌘D (paso repetido). */
+    duplicateMove?: boolean;
   } | null>(null);
+
+  /** Paso de duplicado (⌘D): por defecto 20×20 px mundo; tras Alt+arrastre copia = último desplazamiento. */
+  const duplicateStepRef = useRef({ dx: 20, dy: 20 });
+
+  /** Atajo de teclado → herramienta de creación: tiempo del keydown (`e.code`) para “mantener = temporal, soltar → V”. */
+  const shapeShortcutKeyDownAtRef = useRef<Partial<Record<string, number>>>({});
+  const SHAPE_SHORTCUT_HOLD_MS = 200;
 
   // Layer drag reorder
   const [layerDragId, setLayerDragId] = useState<string | null>(null);
@@ -1437,6 +2364,8 @@ export default function FreehandStudio({
   const [hoverCanvasId, setHoverCanvasId] = useState<string | null>(null);
   /** Layer row hover (panel). */
   const [layerHoverId, setLayerHoverId] = useState<string | null>(null);
+  /** Panel de capas: plegado por defecto abajo en la columna derecha. */
+  const [layersPanelExpanded, setLayersPanelExpanded] = useState(false);
   /** Quick fill/stroke popover: which channel is being edited from canvas. */
   const [quickEditMode, setQuickEditMode] = useState<"fill" | "stroke" | null>(null);
 
@@ -1459,13 +2388,29 @@ export default function FreehandStudio({
   const historyIdxRef = useRef(0);
   const [, forceRender] = useState(0);
 
-  // Default colors
+  // Próxima forma / pluma: se actualiza al cambiar la selección primaria (o al editar ese objeto)
   const [fillColor, setFillColor] = useState("#6366f1");
   const [strokeColor, setStrokeColor] = useState("#ffffff");
   const [strokeWidth, setStrokeWidth] = useState(2);
   const [strokeLinecap, setStrokeLinecap] = useState<"butt" | "round" | "square">("round");
   const [strokeLinejoin, setStrokeLinejoin] = useState<"miter" | "round" | "bevel">("round");
   const [strokeDasharray, setStrokeDasharray] = useState("");
+
+  const [paletteTarget, setPaletteTarget] = useState<"fill" | "stroke">("fill");
+  const [savedPaletteColors, setSavedPaletteColors] = useState<string[]>([]);
+
+  useEffect(() => {
+    setSavedPaletteColors(loadSavedPaletteFromStorage());
+  }, []);
+
+  useEffect(() => {
+    persistSavedPalette(savedPaletteColors);
+  }, [savedPaletteColors]);
+
+  const documentColorStats = useMemo(
+    () => extractDocumentColorStats(objects, artboards.map((a) => a.background)),
+    [objects, artboards],
+  );
 
   // UI state
   const [spaceHeld, setSpaceHeld] = useState(false);
@@ -1486,6 +2431,7 @@ export default function FreehandStudio({
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const customFontInputRef = useRef<HTMLInputElement>(null);
 
   const selectedIdsRef = useRef(selectedIds);
   selectedIdsRef.current = selectedIds;
@@ -1493,6 +2439,10 @@ export default function FreehandStudio({
   selectedPointsRef.current = selectedPoints;
   const objectsRef = useRef(objects);
   objectsRef.current = objects;
+  const artboardsRef = useRef(artboards);
+  artboardsRef.current = artboards;
+  const selectedArtboardIdRef = useRef(selectedArtboardId);
+  selectedArtboardIdRef.current = selectedArtboardId;
 
   // ── History helpers (using refs to avoid stale closures) ──────────
 
@@ -1551,6 +2501,11 @@ export default function FreehandStudio({
           fullObjects = frame.parentObjects.map((o) =>
             o.id === frame.containerId ? merged : o
           );
+        } else if (frame.kind === "vectorGroup") {
+          fullObjects = frame.parentObjects.map((o) => {
+            const u = fullObjects.find((c) => c.id === o.id);
+            return u ? u : o;
+          });
         } else {
           fullObjects = frame.parentObjects.map((o) =>
             o.id === frame.groupId ? { ...o, children: fullObjects } : o
@@ -1561,6 +2516,16 @@ export default function FreehandStudio({
     }, 500);
     return () => clearTimeout(syncRef.current);
   }, [objects, onUpdateObjects]);
+
+  const artboardSyncRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => {
+    if (!onUpdateArtboards) return;
+    clearTimeout(artboardSyncRef.current);
+    artboardSyncRef.current = setTimeout(() => {
+      onUpdateArtboards(artboards);
+    }, 500);
+    return () => clearTimeout(artboardSyncRef.current);
+  }, [artboards, onUpdateArtboards]);
 
   // ── Live boolean preview during isolation ───────────────────────
 
@@ -1573,7 +2538,7 @@ export default function FreehandStudio({
     const stack = isolationStackRef.current;
     if (stack.length === 0) return;
     const frame = stack[stack.length - 1];
-    if (frame.kind === "clipping") {
+    if (frame.kind === "clipping" || frame.kind === "vectorGroup") {
       setLivePreview(null);
       return;
     }
@@ -1602,6 +2567,57 @@ export default function FreehandStudio({
 
   const selectedObjects = useMemo(() => objects.filter((o) => selectedIds.has(o.id)), [objects, selectedIds]);
   const firstSelected = selectedObjects[0] ?? null;
+
+  const styleSourceForCreation = useMemo((): FreehandObject | null => {
+    if (selectedObjects.length === 0) return null;
+    if (primarySelectedId) {
+      const p = selectedObjects.find((x) => x.id === primarySelectedId);
+      if (p) return p;
+    }
+    return selectedObjects[0] ?? null;
+  }, [selectedObjects, primarySelectedId]);
+
+  useEffect(() => {
+    const o = styleSourceForCreation;
+    if (!o) return;
+    const snap = creationStyleSnapshotFromObject(o);
+    if (!snap) return;
+    if (snap.fillColor) setFillColor(snap.fillColor);
+    if (snap.strokeColor) setStrokeColor(snap.strokeColor);
+    setStrokeWidth(snap.strokeWidth);
+    setStrokeLinecap(snap.strokeLinecap);
+    setStrokeLinejoin(snap.strokeLinejoin);
+    setStrokeDasharray(snap.strokeDasharray);
+  }, [styleSourceForCreation]);
+
+  const canLinkTextToPath = useMemo(
+    () =>
+      selectedIds.size === 2 &&
+      selectedObjects.filter((o) => o.type === "path").length === 1 &&
+      selectedObjects.filter((o) => o.type === "text").length === 1,
+    [selectedIds, selectedObjects],
+  );
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const t =
+      firstSelected?.type === "text"
+        ? (firstSelected as TextObject)
+        : firstSelected?.type === "textOnPath"
+          ? (firstSelected as TextOnPathObject)
+          : null;
+    if (!t) return;
+    const fam = t.fontFamily.split(",")[0].replace(/['"]/g, "").trim();
+    if (!fam) return;
+    let el = document.getElementById("fh-gfont-active") as HTMLLinkElement | null;
+    if (!el) {
+      el = document.createElement("link");
+      el.id = "fh-gfont-active";
+      el.rel = "stylesheet";
+      document.head.appendChild(el);
+    }
+    el.href = googleFontStylesheetHref(fam);
+  }, [firstSelected]);
 
   useEffect(() => {
     if (selectedIds.size === 0) setPrimarySelectedId(null);
@@ -1632,14 +2648,18 @@ export default function FreehandStudio({
     return { modes: [...modes], unified };
   }, [selectedPoints, objects]);
 
-  // Resolve group: if an object has a groupId, selecting it selects the whole group
+  // Resolve group: if an object has a groupId, selecting it selects the whole group (except inside vector-group isolation)
   const resolveSelection = useCallback((objId: string, shiftKey: boolean): Set<string> => {
     const objs = objectsRef.current;
     const sel = selectedIdsRef.current;
     const obj = objs.find((o) => o.id === objId);
     if (!obj) return sel;
+    const vecIsoGid = vectorIsolationGroupId(isolationStackRef.current);
     const gid = obj.groupId;
-    const groupMembers = gid ? objs.filter((o) => o.groupId === gid).map((o) => o.id) : [objId];
+    const expandGroup = Boolean(gid && !(vecIsoGid && gid === vecIsoGid));
+    const groupMembers = expandGroup
+      ? objs.filter((o) => o.groupId === gid).map((o) => o.id)
+      : [objId];
 
     if (shiftKey) {
       const s = new Set(sel);
@@ -1651,32 +2671,9 @@ export default function FreehandStudio({
     return new Set(groupMembers);
   }, []);
 
-  // ── Import connected images ───────────────────────────────────────
-
-  const prevImagesRef = useRef<string[]>([]);
-  useEffect(() => {
-    const prevSet = new Set(prevImagesRef.current);
-    const newImgs = inputImages.filter((s) => !prevSet.has(s));
-    prevImagesRef.current = inputImages;
-    if (newImgs.length === 0) return;
-    const imgObjs: ImageObject[] = newImgs.map((src, i) => ({
-      ...defaultObj({ name: `Image ${objects.length + i + 1}` }),
-      type: "image" as const,
-      x: 100 + i * 40, y: 100 + i * 40,
-      width: 300, height: 300,
-      fill: solidFill("none"), stroke: "none", strokeWidth: 0,
-      src,
-    } as ImageObject));
-    setObjects((prev) => {
-      const next = [...prev, ...imgObjs];
-      pushHistory(next, selectedIds);
-      return next;
-    });
-  }, [inputImages]);
-
   // ── Image import from file / drop / paste ─────────────────────────
 
-  const importImageFile = useCallback((file: File) => {
+  const importImageFile = useCallback((file: File, at?: Point) => {
     const reader = new FileReader();
     reader.onload = () => {
       const src = reader.result as string;
@@ -1688,12 +2685,18 @@ export default function FreehandStudio({
           const scale = maxDim / Math.max(w, h);
           w *= scale; h *= scale;
         }
+        const ox = at?.x ?? 200;
+        const oy = at?.y ?? 200;
         const newObj: ImageObject = {
-          ...defaultObj({ name: `Image ${objects.length + 1}` }),
+          ...defaultObj({ name: `Image ${objectsRef.current.length + 1}` }),
           type: "image",
-          x: 200, y: 200, width: w, height: h,
+          x: ox - w / 2,
+          y: oy - h / 2,
+          width: w,
+          height: h,
           fill: solidFill("none"), stroke: "none", strokeWidth: 0,
           src,
+          intrinsicRatio: img.width / Math.max(img.height, 1),
         } as ImageObject;
         setObjects((prev) => {
           const next = [...prev, newObj];
@@ -1705,15 +2708,20 @@ export default function FreehandStudio({
       img.src = src;
     };
     reader.readAsDataURL(file);
-  }, [objects.length, pushHistory]);
+  }, [pushHistory]);
 
   const handleDrop = useCallback((e: ReactDragEvent) => {
     e.preventDefault();
+    e.stopPropagation();
+    const pos = screenToCanvas(e.clientX, e.clientY);
     const files = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith("image/"));
-    files.forEach(importImageFile);
-  }, [importImageFile]);
+    files.forEach((f) => importImageFile(f, pos));
+  }, [importImageFile, screenToCanvas]);
 
-  const handleDragOver = useCallback((e: ReactDragEvent) => { e.preventDefault(); }, []);
+  const handleDragOver = useCallback((e: ReactDragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
 
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
@@ -1764,15 +2772,111 @@ export default function FreehandStudio({
     });
   }, [pushHistory]);
 
+  /** Misma mutación que `updateSelectedProp` pero sin apilar historial (p. ej. arrastre tipo scrub). */
+  const updateSelectedPropSilent = useCallback((key: string, value: any) => {
+    const sel = selectedIdsRef.current;
+    if (sel.size === 0) return;
+    setObjects((prev) => prev.map((o) => (sel.has(o.id) ? { ...o, [key]: value } : o)));
+  }, []);
+
+  /** Un solo paso de deshacer al terminar un gesto de scrub. */
+  const commitHistoryAfterScrub = useCallback(() => {
+    pushHistory(objectsRef.current, selectedIdsRef.current);
+  }, [pushHistory]);
+
+  const TRANSFORM_DIM_MIN = 1;
+
+  /** W/H con signo: negativo = espejo en ese eje (texto usa scaleX/Y). `silent` evita historial (scrub en vivo). */
+  const applySignedDimension = useCallback(
+    (dim: "width" | "height", raw: number, silent: boolean) => {
+      const sel = selectedIdsRef.current;
+      if (sel.size === 0) return;
+      const mag = Math.max(TRANSFORM_DIM_MIN, Math.abs(raw));
+      const neg = raw < 0;
+      setObjects((prev) => {
+        const next = prev.map((o) => {
+          if (!sel.has(o.id)) return o;
+          if (o.type === "text") {
+            const t = o as TextObject;
+            if (dim === "width") {
+              const sx = t.scaleX ?? 1;
+              const nextSx = neg ? -Math.abs(sx) : Math.abs(sx);
+              return { ...t, width: mag, scaleX: nextSx };
+            }
+            const sy = t.scaleY ?? 1;
+            const nextSy = neg ? -Math.abs(sy) : Math.abs(sy);
+            return { ...t, height: mag, scaleY: nextSy };
+          }
+          if (dim === "width") return { ...o, width: mag, flipX: neg };
+          return { ...o, height: mag, flipY: neg };
+        });
+        if (!silent) pushHistory(next, sel);
+        return next;
+      });
+    },
+    [pushHistory],
+  );
+
+  const replaceDocumentColorLive = useCallback((from: string, to: string) => {
+    setObjects((prev) => replaceHexEverywhere(prev, from, to));
+  }, []);
+
+  const commitPaletteHistory = useCallback(() => {
+    pushHistory(objectsRef.current, selectedIdsRef.current);
+  }, [pushHistory]);
+
+  const applyPaletteHex = useCallback(
+    (hex: string) => {
+      const t = paletteTarget;
+      const sel = selectedIdsRef.current;
+      if (sel.size === 0) {
+        if (t === "fill") setFillColor(hex);
+        else setStrokeColor(hex);
+        return;
+      }
+      if (t === "stroke") {
+        updateSelectedProp("stroke", hex);
+        return;
+      }
+      setObjects((prev) => {
+        const next = prev.map((o) => {
+          if (!sel.has(o.id)) return o;
+          if (o.type === "textOnPath") return { ...o, fill: hex };
+          if (o.type === "booleanGroup" || o.type === "image") return o;
+          return { ...o, fill: solidFill(hex) };
+        });
+        pushHistory(next, sel);
+        return next;
+      });
+    },
+    [paletteTarget, updateSelectedProp, pushHistory],
+  );
+
   const updateSelectedFill = useCallback((updater: (f: FillAppearance) => FillAppearance) => {
     const sel = selectedIdsRef.current;
     if (sel.size === 0) return;
     setObjects((prev) => {
-      const next = prev.map((o) => (sel.has(o.id) ? { ...o, fill: updater(migrateFill(o.fill)) } : o));
+      const next = prev.map((o) => {
+        if (!sel.has(o.id)) return o;
+        if (o.type === "textOnPath") return o;
+        return { ...o, fill: updater(migrateFill(o.fill)) };
+      });
       pushHistory(next, sel);
       return next;
     });
   }, [pushHistory]);
+
+  const updateSelectedFillSilent = useCallback((updater: (f: FillAppearance) => FillAppearance) => {
+    const sel = selectedIdsRef.current;
+    if (sel.size === 0) return;
+    setObjects((prev) =>
+      prev.map((o) => {
+        if (!sel.has(o.id)) return o;
+        if (o.type === "textOnPath") return o;
+        return { ...o, fill: updater(migrateFill(o.fill)) };
+      }),
+    );
+  }, []);
 
   const objectClipboardRef = useRef<FreehandObject[] | null>(null);
 
@@ -1838,7 +2942,7 @@ export default function FreehandStudio({
   }, [pushHistory]);
 
   const fitAllCanvas = useCallback(() => {
-    const b = buildExportBounds(objects);
+    const b = resolveFitViewBounds(objects, artboards);
     const el = containerRef.current;
     if (!el) return;
     const rw = el.clientWidth, rh = el.clientHeight;
@@ -1851,7 +2955,14 @@ export default function FreehandStudio({
       x: margin - b.x * z + (rw - margin * 2 - b.w * z) / 2,
       y: margin - b.y * z + (rh - margin * 2 - b.h * z) / 2,
     });
-  }, [objects]);
+  }, [objects, artboards]);
+
+  const updateSelectedArtboard = useCallback((patch: Partial<Artboard>) => {
+    if (!selectedArtboardId) return;
+    setArtboards((prev) =>
+      prev.map((a) => (a.id === selectedArtboardId ? { ...a, ...patch } : a)),
+    );
+  }, [selectedArtboardId]);
 
   const resetZoomCanvas = useCallback(() => {
     setViewport((v) => ({ ...v, zoom: 1 }));
@@ -1884,8 +2995,9 @@ export default function FreehandStudio({
     const sel = selectedIdsRef.current;
     const objs = objectsRef.current;
     if (sel.size === 0) return;
+    const { dx, dy } = duplicateStepRef.current;
     const dupes = objs.filter((o) => sel.has(o.id))
-      .map((o) => translateFreehandObject(deepCloneFreehandObject(o, uid), 20, 20));
+      .map((o) => translateFreehandObject(deepCloneFreehandObject(o, uid), dx, dy));
     const next = [...objs, ...dupes];
     const ns = new Set(dupes.map((d) => d.id));
     setObjects(next); setSelectedIds(ns);
@@ -2098,8 +3210,11 @@ export default function FreehandStudio({
       ...group,
       operation: newOp,
       cachedResult: dataUrl,
-      x: bounds.x, y: bounds.y,
-      width: bounds.w, height: bounds.h,
+      // Mantener posición en el lienzo (tras mover el grupo solo cambian x/y del padre; los hijos no se trasladan).
+      x: group.x,
+      y: group.y,
+      width: bounds.w,
+      height: bounds.h,
     };
     setObjects((prev) => {
       const next = prev.map((o) => o.id === group.id ? updated : o);
@@ -2148,6 +3263,26 @@ export default function FreehandStudio({
     setObjects(children);
     setSelectedIds(new Set());
     historyRef.current = [{ objects: [...children], sel: [] }];
+    historyIdxRef.current = 0;
+    setIsolationDepth((d) => d + 1);
+  }, []);
+
+  const enterVectorGroupIsolation = useCallback((groupId: string) => {
+    const objs = objectsRef.current;
+    const members = objs.filter((o) => o.groupId === groupId);
+    if (members.length < 2) return;
+    isolationStackRef.current.push({
+      kind: "vectorGroup",
+      groupId,
+      parentObjects: objs.map((o) => ({ ...o })),
+      parentSelectedIds: new Set(selectedIdsRef.current),
+      parentHistory: [...historyRef.current],
+      parentHistoryIdx: historyIdxRef.current,
+    });
+    const copy = members.map((m) => ({ ...m }));
+    setObjects(copy);
+    setSelectedIds(new Set());
+    historyRef.current = [{ objects: copy, sel: [] }];
     historyIdxRef.current = 0;
     setIsolationDepth((d) => d + 1);
   }, []);
@@ -2243,6 +3378,21 @@ export default function FreehandStudio({
       setLivePreview(null);
       return;
     }
+    if (frame.kind === "vectorGroup") {
+      const current = objectsRef.current;
+      const restoredObjects = frame.parentObjects.map((o) => {
+        const u = current.find((c) => c.id === o.id);
+        return u ? u : o;
+      });
+      objectsRef.current = restoredObjects;
+      setObjects(restoredObjects);
+      setSelectedIds(new Set([...frame.parentSelectedIds].filter((id) => restoredObjects.some((o) => o.id === id))));
+      historyRef.current = frame.parentHistory;
+      historyIdxRef.current = frame.parentHistoryIdx;
+      setIsolationDepth((d) => d - 1);
+      setLivePreview(null);
+      return;
+    }
     const currentChildren = objectsRef.current;
     const parentGroup = frame.parentObjects.find((o) => o.id === frame.groupId) as BooleanGroupObject;
     if (!parentGroup) return;
@@ -2252,8 +3402,11 @@ export default function FreehandStudio({
       ...parentGroup,
       children: currentChildren.map((c) => ({ ...c })),
       cachedResult: dataUrl,
-      x: bounds.x, y: bounds.y,
-      width: bounds.w, height: bounds.h,
+      // Misma razón que en changeBooleanOp: no reanclar al bbox de los hijos si el grupo ya se movió en el artboard.
+      x: parentGroup.x,
+      y: parentGroup.y,
+      width: bounds.w,
+      height: bounds.h,
     };
 
     const restoredObjects = frame.parentObjects.map((o) =>
@@ -2352,6 +3505,28 @@ export default function FreehandStudio({
     });
   }, [pushHistory]);
 
+  const addMidAnchorToSelectedPath = useCallback(() => {
+    const sel = selectedIdsRef.current;
+    if (sel.size !== 1) return;
+    const id = Array.from(sel)[0];
+    const o = objectsRef.current.find((x) => x.id === id && x.type === "path") as PathObject | undefined;
+    if (!o || o.points.length < 2) return;
+    const count = o.closed ? o.points.length : o.points.length - 1;
+    let bestI = 0;
+    let bestLen = 0;
+    for (let i = 0; i < count; i++) {
+      const j = o.closed ? (i + 1) % o.points.length : i + 1;
+      const a = o.points[i].anchor;
+      const b = o.points[j].anchor;
+      const L = dist(a, b);
+      if (L > bestLen) {
+        bestLen = L;
+        bestI = i;
+      }
+    }
+    addPointOnSegment(o.id, bestI, 0.5);
+  }, [addPointOnSegment]);
+
   const togglePathClosed = useCallback((objId: string) => {
     const sel = selectedIdsRef.current;
     setObjects((prev) => {
@@ -2411,37 +3586,88 @@ export default function FreehandStudio({
   const doExportSvg = useCallback(() => {
     const svg = svgRef.current;
     if (!svg) return;
-    const bounds = buildExportBounds(objects);
-    const str = buildExportSvgString(svg, bounds);
-    downloadBlob(new Blob([str], { type: "image/svg+xml" }), "freehand.svg");
-  }, [objects]);
+    const bounds = resolveSceneExportBounds(objects, artboards, selectedArtboardId);
+    const ab = pickPrimaryArtboard(artboards, selectedArtboardId);
+    const bg: "transparent" | string = ab?.background ?? "transparent";
+    const str = buildStandaloneSvgFromCanvasDom(svg, {
+      exportIds: null,
+      bounds,
+      scale: 1,
+      background: bg,
+    });
+    downloadBlob(new Blob([str], { type: "image/svg+xml;charset=utf-8" }), "freehand.svg");
+  }, [objects, artboards, selectedArtboardId]);
 
   const doExportPng = useCallback(async () => {
     const svg = svgRef.current;
     if (!svg) return;
-    const bounds = buildExportBounds(objects);
-    const str = buildExportSvgString(svg, bounds);
-    const canvas = await svgStringToCanvas(str, bounds.w, bounds.h);
+    const bounds = resolveSceneExportBounds(objects, artboards, selectedArtboardId);
+    const ab = pickPrimaryArtboard(artboards, selectedArtboardId);
+    const bg: "transparent" | string = ab?.background ?? "transparent";
+    const strRaw = buildStandaloneSvgFromCanvasDom(svg, {
+      exportIds: null,
+      bounds,
+      scale: 1,
+      background: bg,
+    });
+    const str = substituteNativeTextForRasterExport(strRaw, objects);
+    const canvas = await svgStringToCanvasSafe(str, bounds.w, bounds.h);
     canvas.toBlob((blob) => { if (blob) downloadBlob(blob, "freehand.png"); }, "image/png");
-  }, [objects]);
+  }, [objects, artboards, selectedArtboardId]);
 
   const doExportJpg = useCallback(async () => {
     const svg = svgRef.current;
     if (!svg) return;
-    const bounds = buildExportBounds(objects);
-    const str = buildExportSvgString(svg, bounds);
-    const canvas = await svgStringToCanvas(str, bounds.w, bounds.h, "#ffffff");
+    const bounds = resolveSceneExportBounds(objects, artboards, selectedArtboardId);
+    const ab = pickPrimaryArtboard(artboards, selectedArtboardId);
+    const bg: "transparent" | string = ab?.background ?? "transparent";
+    const strRaw = buildStandaloneSvgFromCanvasDom(svg, {
+      exportIds: null,
+      bounds,
+      scale: 1,
+      background: bg,
+    });
+    const str = substituteNativeTextForRasterExport(strRaw, objects);
+    const jpgBg = bg === "transparent" ? "#ffffff" : bg;
+    const canvas = await svgStringToCanvasSafe(str, bounds.w, bounds.h, jpgBg);
     canvas.toBlob((blob) => { if (blob) downloadBlob(blob, "freehand.jpg"); }, "image/jpeg", 0.92);
-  }, [objects]);
+  }, [objects, artboards, selectedArtboardId]);
 
   const doExportNode = useCallback(async () => {
     const svg = svgRef.current;
     if (!svg) return;
-    const bounds = buildExportBounds(objects);
-    const str = buildExportSvgString(svg, bounds);
-    const canvas = await svgStringToCanvas(str, bounds.w, bounds.h);
-    onExport(canvas.toDataURL("image/png"));
-  }, [objects, onExport]);
+    const bounds = resolveSceneExportBounds(objects, artboards, selectedArtboardId);
+    const ab = pickPrimaryArtboard(artboards, selectedArtboardId);
+    const bg: "transparent" | string = ab?.background ?? "transparent";
+    const strRaw = buildStandaloneSvgFromCanvasDom(svg, {
+      exportIds: null,
+      bounds,
+      scale: 1,
+      background: bg,
+    });
+    const str = substituteNativeTextForRasterExport(strRaw, objects);
+    const canvas = await svgStringToCanvasSafe(str, bounds.w, bounds.h);
+    onExport(canvasToPngDataUrlSafe(canvas));
+  }, [objects, artboards, selectedArtboardId, onExport]);
+
+  const closeInFlight = useRef(false);
+  const handleCloseStudio = useCallback(async () => {
+    if (closeInFlight.current) return;
+    closeInFlight.current = true;
+    try {
+      const hasVisibleArt = objects.some((o) => o.visible);
+      if (hasVisibleArt) {
+        try {
+          await doExportNode();
+        } catch (err) {
+          console.error("Freehand: export on close failed", err);
+        }
+      }
+      onClose();
+    } finally {
+      closeInFlight.current = false;
+    }
+  }, [objects, doExportNode, onClose]);
 
   const triggerExportFlash = useCallback((b: ExportRect) => {
     setExportFlash(b);
@@ -2463,15 +3689,18 @@ export default function FreehandStudio({
     const targets = objs.filter((o) => exportIds.has(o.id) && o.visible);
     const b = getGroupBounds(targets);
     if (b.w < 1 || b.h < 1) return;
-    const str = buildStandaloneSvgFromCanvasDom(svg, {
-      exportIds,
-      bounds: b,
-      scale: 1,
-      background: "transparent",
-    });
+    const str = substituteNativeTextForRasterExport(
+      buildStandaloneSvgFromCanvasDom(svg, {
+        exportIds,
+        bounds: b,
+        scale: 1,
+        background: "transparent",
+      }),
+      objs,
+    );
     const w = Math.max(1, Math.round(b.w));
     const h = Math.max(1, Math.round(b.h));
-    const canvas = await svgStringToCanvas(str, w, h);
+    const canvas = await svgStringToCanvasSafe(str, w, h);
     canvas.toBlob((blob) => {
       if (blob) downloadBlob(blob, `export-${Date.now()}.png`);
     }, "image/png");
@@ -2502,20 +3731,19 @@ export default function FreehandStudio({
         downloadBlob(new Blob([str], { type: "image/svg+xml;charset=utf-8" }), name);
       };
 
-      const rasterize = (str: string, bw: number, bh: number, name: string) => {
-        return svgStringToCanvas(str, bw, bh, bgForCanvas).then((canvas) => {
-          const mime = opts.format === "jpg" ? "image/jpeg" : "image/png";
-          const quality = opts.format === "jpg" ? 0.92 : undefined;
-          return new Promise<void>((res) => {
-            canvas.toBlob(
-              (blob) => {
-                if (blob) downloadBlob(blob, name);
-                res();
-              },
-              mime,
-              quality,
-            );
-          });
+      const rasterize = async (str: string, bw: number, bh: number, name: string) => {
+        const canvas = await svgStringToCanvasSafe(str, bw, bh, bgForCanvas);
+        const mime = opts.format === "jpg" ? "image/jpeg" : "image/png";
+        const quality = opts.format === "jpg" ? 0.92 : undefined;
+        await new Promise<void>((res) => {
+          canvas.toBlob(
+            (blob) => {
+              if (blob) downloadBlob(blob, name);
+              res();
+            },
+            mime,
+            quality,
+          );
         });
       };
 
@@ -2526,26 +3754,40 @@ export default function FreehandStudio({
               ? "#ffffff"
               : opts.background
             : opts.background;
-        const str = buildStandaloneSvgFromCanvasDom(svg, {
+        const strRaw = buildStandaloneSvgFromCanvasDom(svg, {
           exportIds,
           bounds: b,
           scale: opts.scale,
           background: bg,
         });
-        const base = opts.filename.replace(/\.(png|svg|jpg|jpeg)$/i, "");
-        const ext = opts.format === "svg" ? "svg" : opts.format === "jpg" ? "jpg" : "png";
+        const str =
+          opts.format === "svg" || opts.format === "pdf"
+            ? strRaw
+            : substituteNativeTextForRasterExport(strRaw, objs);
+        const base = opts.filename.replace(/\.(png|svg|jpg|jpeg|pdf)$/i, "");
+        const ext =
+          opts.format === "svg" ? "svg" : opts.format === "jpg" ? "jpg" : opts.format === "pdf" ? "pdf" : "png";
         const name = suffix ? `${base}-${suffix}.${ext}` : `${base}.${ext}`;
         const pw = Math.max(1, Math.round(b.w * opts.scale));
         const ph = Math.max(1, Math.round(b.h * opts.scale));
-        if (opts.format === "svg") downloadSvg(str, name);
-        else await rasterize(str, pw, ph, name);
+        if (opts.format === "svg") {
+          downloadSvg(strRaw, name);
+        } else if (opts.format === "pdf") {
+          const { downloadSvgAsVectorPdf } = await import("./freehand/download-vector-pdf");
+          await downloadSvgAsVectorPdf(strRaw, name);
+        } else {
+          await rasterize(str, pw, ph, name);
+        }
         triggerExportFlash(b);
       };
 
       try {
         if (scope === "full") {
+          const abs = artboardsRef.current;
+          const sid = selectedArtboardIdRef.current;
+          const ab = pickPrimaryArtboard(abs, sid);
           const visible = objs.filter((o) => o.visible);
-          const b = getGroupBounds(visible);
+          const b = ab ? artboardToRect(ab) : getGroupBounds(visible);
           if (b.w < 1 || b.h < 1) return;
           await runOne(null, b, "");
         } else {
@@ -2558,7 +3800,7 @@ export default function FreehandStudio({
           if (
             !opts.merged &&
             sel.size > 1 &&
-            (opts.format === "png" || opts.format === "svg" || opts.format === "jpg")
+            (opts.format === "png" || opts.format === "svg" || opts.format === "jpg" || opts.format === "pdf")
           ) {
             let i = 0;
             for (const id of sel) {
@@ -2601,15 +3843,36 @@ export default function FreehandStudio({
         e.preventDefault(); setActiveTool("select"); return;
       }
       if (e.key === "a" && !e.metaKey && !e.ctrlKey) { e.preventDefault(); setActiveTool("directSelect"); return; }
-      if (e.key === "p" || e.key === "P") { e.preventDefault(); setActiveTool("pen"); return; }
-      if (e.key === "r" || e.key === "R") { e.preventDefault(); setActiveTool("rect"); return; }
-      if (e.key === "e" && !e.metaKey && !e.ctrlKey) { e.preventDefault(); setActiveTool("ellipse"); return; }
-      if (e.key === "t" || e.key === "T") { e.preventDefault(); setActiveTool("text"); return; }
-      if ((e.key === "g" || e.key === "G") && !e.metaKey && !e.ctrlKey) { e.preventDefault(); setActiveTool("gradient"); return; }
-      if ((e.key === "o" || e.key === "O") && !e.metaKey && !e.ctrlKey) { e.preventDefault(); setActiveTool("ellipse"); return; }
-      if ((e.key === "i" || e.key === "I") && !e.metaKey && !e.ctrlKey) { e.preventDefault(); setActiveTool("eyedropper"); return; }
-      if ((e.key === "z" || e.key === "Z") && !e.metaKey && !e.ctrlKey) { e.preventDefault(); setActiveTool("zoomTool"); return; }
-      if ((e.key === "h" || e.key === "H") && !e.metaKey && !e.ctrlKey) { e.preventDefault(); setActiveTool("handTool"); return; }
+      if (e.key === "p" || e.key === "P") {
+        e.preventDefault();
+        setActiveTool("pen");
+        if (!e.repeat) shapeShortcutKeyDownAtRef.current.KeyP = Date.now();
+        return;
+      }
+      if (e.key === "r" || e.key === "R") {
+        e.preventDefault();
+        setActiveTool("rect");
+        if (!e.repeat) shapeShortcutKeyDownAtRef.current.KeyR = Date.now();
+        return;
+      }
+      if (e.key === "e" && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        setActiveTool("ellipse");
+        if (!e.repeat) shapeShortcutKeyDownAtRef.current.KeyE = Date.now();
+        return;
+      }
+      if (e.key === "t" || e.key === "T") {
+        e.preventDefault();
+        setActiveTool("text");
+        if (!e.repeat) shapeShortcutKeyDownAtRef.current.KeyT = Date.now();
+        return;
+      }
+      if ((e.key === "o" || e.key === "O") && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        setActiveTool("ellipse");
+        if (!e.repeat) shapeShortcutKeyDownAtRef.current.KeyO = Date.now();
+        return;
+      }
 
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === "e" || e.key === "E")) {
         e.preventDefault();
@@ -2629,6 +3892,11 @@ export default function FreehandStudio({
       if ((e.key === "Delete" || e.key === "Backspace")) {
         e.preventDefault();
         if (activeTool === "directSelect" && selectedPoints.size > 0) { deleteSelectedPoints(); return; }
+        if (activeTool === "artboard" && selectedArtboardId) {
+          setArtboards((p) => p.filter((a) => a.id !== selectedArtboardId));
+          setSelectedArtboardId(null);
+          return;
+        }
         deleteSelected();
         return;
       }
@@ -2644,21 +3912,105 @@ export default function FreehandStudio({
       if ((e.metaKey || e.ctrlKey) && (e.key === "]" || e.key === "}")) { e.preventDefault(); bringForward(); return; }
       if ((e.metaKey || e.ctrlKey) && (e.key === "[" || e.key === "{")) { e.preventDefault(); sendBackward(); return; }
 
+      if (
+        (e.key === "ArrowUp" || e.key === "ArrowDown" || e.key === "ArrowLeft" || e.key === "ArrowRight") &&
+        !e.metaKey && !e.ctrlKey && !e.altKey
+      ) {
+        if (textEditingId) return;
+        const step = 1 / viewport.zoom;
+        let mdx = 0, mdy = 0;
+        if (e.key === "ArrowLeft") mdx = -step;
+        else if (e.key === "ArrowRight") mdx = step;
+        else if (e.key === "ArrowUp") mdy = -step;
+        else mdy = step;
+
+        const sel = selectedIdsRef.current;
+        const sp = selectedPointsRef.current;
+
+        if (activeTool === "directSelect" && sp.size > 0) {
+          e.preventDefault();
+          setObjects((prev) => {
+            const next = prev.map((o) => {
+              if (o.type !== "path") return o;
+              const idxs = sp.get(o.id);
+              if (!idxs || idxs.size === 0) return o;
+              const p = o as PathObject;
+              const newPts = p.points.map((pt, pi) => {
+                if (!idxs.has(pi)) return pt;
+                return {
+                  ...pt,
+                  anchor: { x: pt.anchor.x + mdx, y: pt.anchor.y + mdy },
+                  handleIn: { x: pt.handleIn.x + mdx, y: pt.handleIn.y + mdy },
+                  handleOut: { x: pt.handleOut.x + mdx, y: pt.handleOut.y + mdy },
+                };
+              });
+              const pb = getPathBoundsFromPoints(newPts);
+              return { ...p, points: newPts, x: pb.x, y: pb.y, width: pb.w, height: pb.h };
+            });
+            pushHistory(next, sel);
+            return next;
+          });
+          return;
+        }
+
+        if (sel.size > 0) {
+          e.preventDefault();
+          setObjects((prev) => {
+            const next = prev.map((o) => (sel.has(o.id) ? translateFreehandObject(o, mdx, mdy) : o));
+            pushHistory(next, sel);
+            return next;
+          });
+        }
+        return;
+      }
+
       if (e.key === "Escape") {
         e.preventDefault();
         setQuickEditMode(null);
         if (isPenDrawing && penPoints.length > 0) finishPenPath(false);
         else if (isolationStackRef.current.length > 0) exitIsolation();
-        else { setSelectedIds(new Set()); setSelectedPoints(new Map()); }
+        else {
+          setSelectedIds(new Set());
+          setSelectedPoints(new Map());
+          setSelectedArtboardId(null);
+        }
       }
     };
 
-    const onKeyUp = (e: KeyboardEvent) => { e.stopPropagation(); if (e.code === "Space") setSpaceHeld(false); };
+    const onKeyUp = (e: KeyboardEvent) => {
+      e.stopPropagation();
+      if (e.code === "Space") setSpaceHeld(false);
+
+      const tgt = e.target as HTMLElement;
+      if (tgt.tagName === "INPUT" || tgt.tagName === "TEXTAREA" || tgt.tagName === "SELECT") return;
+
+      const codeToTool: Partial<Record<string, Tool>> = {
+        KeyR: "rect",
+        KeyE: "ellipse",
+        KeyO: "ellipse",
+        KeyT: "text",
+        KeyP: "pen",
+      };
+      const want = codeToTool[e.code];
+      if (!want) return;
+
+      const t0 = shapeShortcutKeyDownAtRef.current[e.code];
+      if (t0 == null) return;
+      delete shapeShortcutKeyDownAtRef.current[e.code];
+
+      if (activeTool !== want) return;
+      if (Date.now() - t0 < SHAPE_SHORTCUT_HOLD_MS) return;
+      const ds = dragState?.type;
+      if (ds === "create" || ds === "createText") return;
+      if (isPenDrawing) return;
+
+      setActiveTool("select");
+    };
 
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
     return () => { window.removeEventListener("keydown", onKeyDown); window.removeEventListener("keyup", onKeyUp); };
-  }, [objects, selectedIds, selectedPoints, isPenDrawing, penPoints, activeTool,
+  }, [objects, selectedIds, selectedPoints, isPenDrawing, penPoints, activeTool, textEditingId, viewport.zoom, dragState,
       undo, redo, pushHistory, deleteSelected, duplicateSelected, groupSelected,
       ungroupSelected, bringForward, sendBackward, finishPenPath, deleteSelectedPoints, exitIsolation,
       copySelectedObjects, cutSelectedObjects, pasteClipboardObjects, pasteInside, quickExportSelectionPng]);
@@ -2675,7 +4027,7 @@ export default function FreehandStudio({
       // If right-clicking an object, select it first
       for (let i = objects.length - 1; i >= 0; i--) {
         const obj = objects[i];
-        if (hitTestObject(pos, obj, 8 / viewport.zoom)) {
+        if (hitTestObject(pos, obj, 8 / viewport.zoom, objects)) {
           if (!selectedIds.has(obj.id)) setSelectedIds(resolveSelection(obj.id, false));
           break;
         }
@@ -2714,14 +4066,18 @@ export default function FreehandStudio({
       for (let i = objects.length - 1; i >= 0; i--) {
         const obj = objects[i];
         if (!obj.visible || obj.locked) continue;
-        if (!hitTestObject(pos, obj, th)) continue;
+        if (!hitTestObject(pos, obj, th, objects)) continue;
         const f = migrateFill(obj.fill);
         if (f.type === "solid" && f.color !== "none") {
           const c = f.color;
           setFillColor(c);
           if (selectedIds.size > 0) {
             setObjects((prev) =>
-              prev.map((o) => (selectedIds.has(o.id) ? { ...o, fill: solidFill(c) } : o)),
+              prev.map((o) => {
+                if (!selectedIds.has(o.id)) return o;
+                if (o.type === "textOnPath") return { ...o, fill: c };
+                return { ...o, fill: solidFill(c) };
+              }),
             );
           }
         }
@@ -2761,6 +4117,55 @@ export default function FreehandStudio({
 
     if (activeTool === "text") {
       setDragState({ type: "createText", startX: e.clientX, startY: e.clientY, createOrigin: pos, currentCanvas: pos });
+      return;
+    }
+
+    // ── Artboard tool (mesas de trabajo / export frame) ───────────
+    if (activeTool === "artboard") {
+      for (let i = artboards.length - 1; i >= 0; i--) {
+        const ab = artboards[i];
+        if (selectedArtboardId === ab.id) {
+          const h = hitArtboardResizeHandle(pos.x, pos.y, ab, viewport.zoom);
+          if (h) {
+            setDragState({
+              type: "artboardResize",
+              startX: e.clientX,
+              startY: e.clientY,
+              artboardId: ab.id,
+              artboardSnapshot: { ...ab },
+              abHandle: h,
+            });
+            return;
+          }
+        }
+      }
+      for (let i = artboards.length - 1; i >= 0; i--) {
+        const ab = artboards[i];
+        if (pointInArtboard(pos.x, pos.y, ab)) {
+          setSelectedArtboardId(ab.id);
+          setSelectedIds(new Set());
+          setSelectedPoints(new Map());
+          setDragState({
+            type: "artboardMove",
+            startX: e.clientX,
+            startY: e.clientY,
+            artboardId: ab.id,
+            artboardStart: { x: ab.x, y: ab.y },
+          });
+          return;
+        }
+      }
+      setSelectedArtboardId(null);
+      setSelectedIds(new Set());
+      setSelectedPoints(new Map());
+      setDragState({
+        type: "create",
+        startX: e.clientX,
+        startY: e.clientY,
+        createType: "artboard",
+        createOrigin: pos,
+        currentCanvas: pos,
+      });
       return;
     }
 
@@ -2815,6 +4220,60 @@ export default function FreehandStudio({
         }
       }
 
+      // Transform handles (same as selection tool) so rect/ellipse scale from corners in Direct Selection
+      const shiftHeldDS = e.shiftKey || (typeof e.nativeEvent.getModifierState === "function" && e.nativeEvent.getModifierState("Shift"));
+      if (selectedObjects.length > 0 && selectionFrame && !shiftHeldDS) {
+        const f = selectionFrame;
+        const handleSize = 8 / viewport.zoom;
+        const rotOffset = 14 / viewport.zoom;
+        const hw = f.w / 2, hh = f.h / 2;
+        const rotLocal = [{ x: hw + rotOffset, y: -hh - rotOffset }];
+        for (const rl of rotLocal) {
+          const rc = localToWorldOBB(rl, f.cx, f.cy, f.angleDeg);
+          if (dist(pos, rc) < handleSize) {
+            const startAngle = Math.atan2(pos.y - f.cy, pos.x - f.cx);
+            const initRots = new Map<string, number>();
+            const initSnaps = new Map<string, FreehandObject>();
+            for (const so of selectedObjects) {
+              initRots.set(so.id, so.rotation);
+              initSnaps.set(so.id, deepCloneFreehandObjectKeepIds(so));
+            }
+            setDragState({
+              type: "rotate", startX: e.clientX, startY: e.clientY,
+              rotateCenter: { x: f.cx, y: f.cy }, rotateStartAngle: startAngle, rotateInitialRotations: initRots,
+              rotateInitialSnapshots: initSnaps,
+            });
+            return;
+          }
+        }
+        const hDefs: { id: string; lx: number; ly: number }[] = [
+          { id: "nw", lx: -hw, ly: -hh }, { id: "ne", lx: hw, ly: -hh },
+          { id: "se", lx: hw, ly: hh }, { id: "sw", lx: -hw, ly: hh },
+          { id: "n", lx: 0, ly: -hh }, { id: "e", lx: hw, ly: 0 },
+          { id: "s", lx: 0, ly: hh }, { id: "w", lx: -hw, ly: 0 },
+        ];
+        for (const hi of hDefs) {
+          const hp = localToWorldOBB({ x: hi.lx, y: hi.ly }, f.cx, f.cy, f.angleDeg);
+          if (dist(pos, hp) < handleSize) {
+            const allBounds = new Map<string, Rect>();
+            const resizeSnapshot = new Map<string, FreehandObject>();
+            for (const so of selectedObjects) {
+              allBounds.set(so.id, getVisualAABB(so, objects));
+              resizeSnapshot.set(so.id, deepCloneFreehandObjectKeepIds(so));
+            }
+            setDragState({
+              type: "resize", startX: e.clientX, startY: e.clientY,
+              handle: hi.id,
+              bounds: { ...groupBounds },
+              initialOrientedFrame: { ...f },
+              allBounds,
+              resizeSnapshot,
+            });
+            return;
+          }
+        }
+      }
+
       // Click on empty → marquee
       setSelectedPoints(new Map());
       setDragState({ type: "marquee", startX: e.clientX, startY: e.clientY, marqueeOrigin: pos, currentCanvas: pos });
@@ -2823,9 +4282,10 @@ export default function FreehandStudio({
 
     // ── Select & gradient tools ─────────────────────────────────────
     const threshold = 6 / viewport.zoom;
-    const shiftHeld = e.shiftKey || (typeof e.getModifierState === "function" && e.getModifierState("Shift"));
+    /** Ampliar selección: Mayús, o Cmd/Ctrl (común en macOS). */
+    const extendSel = isShiftHeld(e) || e.metaKey || e.ctrlKey;
 
-    if (activeTool === "gradient" && selectedIds.size > 0) {
+    if (activeTool === "select" && selectedIds.size > 0) {
       const gTh = 12 / viewport.zoom;
       for (const oid of Array.from(selectedIds)) {
         const o = objects.find((x) => x.id === oid);
@@ -2873,28 +4333,28 @@ export default function FreehandStudio({
       }
     }
 
-    // Resize/rotate handles (skip when Shift so Shift+click can add to selection)
-    if (selectedObjects.length > 0 && selectionFrame && !shiftHeld) {
+    // Resize/rotate handles (omitir si se amplía selección: el clic debe llegar al objeto bajo el marco)
+    if (selectedObjects.length > 0 && selectionFrame && !extendSel) {
       const f = selectionFrame;
       const handleSize = 8 / viewport.zoom;
       const rotOffset = 14 / viewport.zoom;
       const hw = f.w / 2, hh = f.h / 2;
 
-      const rotLocal = [
-        { x: -hw - rotOffset, y: -hh - rotOffset },
-        { x: hw + rotOffset, y: -hh - rotOffset },
-        { x: hw + rotOffset, y: hh + rotOffset },
-        { x: -hw - rotOffset, y: hh + rotOffset },
-      ];
+      const rotLocal = [{ x: hw + rotOffset, y: -hh - rotOffset }];
       for (const rl of rotLocal) {
         const rc = localToWorldOBB(rl, f.cx, f.cy, f.angleDeg);
         if (dist(pos, rc) < handleSize) {
           const startAngle = Math.atan2(pos.y - f.cy, pos.x - f.cx);
           const initRots = new Map<string, number>();
-          for (const so of selectedObjects) initRots.set(so.id, so.rotation);
+          const initSnaps = new Map<string, FreehandObject>();
+          for (const so of selectedObjects) {
+            initRots.set(so.id, so.rotation);
+            initSnaps.set(so.id, deepCloneFreehandObjectKeepIds(so));
+          }
           setDragState({
             type: "rotate", startX: e.clientX, startY: e.clientY,
             rotateCenter: { x: f.cx, y: f.cy }, rotateStartAngle: startAngle, rotateInitialRotations: initRots,
+            rotateInitialSnapshots: initSnaps,
           });
           return;
         }
@@ -2912,7 +4372,7 @@ export default function FreehandStudio({
           const allBounds = new Map<string, Rect>();
           const resizeSnapshot = new Map<string, FreehandObject>();
           for (const so of selectedObjects) {
-            allBounds.set(so.id, getVisualAABB(so));
+            allBounds.set(so.id, getVisualAABB(so, objects));
             resizeSnapshot.set(so.id, deepCloneFreehandObjectKeepIds(so));
           }
           setDragState({
@@ -2928,58 +4388,93 @@ export default function FreehandStudio({
       }
     }
 
-    // Hit test objects (top to bottom)
+    // Todos los objetos bajo el cursor (frente → fondo). Con solape + Mayús, elegir uno que aún no esté entero en la selección.
+    const hits: FreehandObject[] = [];
     for (let i = objects.length - 1; i >= 0; i--) {
-      const obj = objects[i];
-      if (hitTestObject(pos, obj, threshold)) {
-        // Alt/Option + drag → duplicate then drag the clones
-        if (e.altKey) {
-          const baseSel = selectedIds.has(obj.id) ? selectedIds : resolveSelection(obj.id, false);
-          const toClone = objects.filter((o) => baseSel.has(o.id));
-          if (toClone.length > 0) {
-            const clones = toClone.map((o) => deepCloneFreehandObject(o, uid));
-            const next = [...objects, ...clones];
-            setObjects(next);
-            const cloneSel = new Set(clones.map((c) => c.id));
-            setSelectedIds(cloneSel);
-            const positions = new Map<string, Point>();
-            const pathPointsMap = new Map<string, BezierPoint[]>();
-            for (const c of clones) {
-              positions.set(c.id, { x: c.x, y: c.y });
-              if (c.type === "path") pathPointsMap.set(c.id, (c as PathObject).points.map(pt => ({ ...pt, anchor: { ...pt.anchor }, handleIn: { ...pt.handleIn }, handleOut: { ...pt.handleOut } })));
-            }
-            setDragState({ type: "move", startX: e.clientX, startY: e.clientY, positions, pathPointsMap });
-            pushHistory(next, cloneSel);
-            return;
-          }
-        }
+      const o = objects[i];
+      if (hitTestObject(pos, o, threshold, objects)) hits.push(o);
+    }
 
-        const newSel = resolveSelection(obj.id, shiftHeld);
-        setSelectedIds(newSel);
-        setPrimarySelectedId(obj.id);
-        const positions = new Map<string, Point>();
-        const pathPointsMap = new Map<string, BezierPoint[]>();
-        for (const sid of newSel) {
-          const o = objects.find((x) => x.id === sid);
-          if (o) {
-            positions.set(sid, { x: o.x, y: o.y });
-            if (o.type === "path") pathPointsMap.set(sid, (o as PathObject).points.map(pt => ({ ...pt, anchor: { ...pt.anchor }, handleIn: { ...pt.handleIn }, handleOut: { ...pt.handleOut } })));
+    if (hits.length > 0) {
+      const vecIsoGid = vectorIsolationGroupId(isolationStackRef.current);
+      const obj = pickHitForExtendSelection(hits, extendSel, selectedIdsRef.current, objects, vecIsoGid) ?? hits[0];
+      // Alt/Option + drag → duplicate then drag the clones
+      if (e.altKey) {
+        const baseSel = selectedIds.has(obj.id) ? selectedIds : resolveSelection(obj.id, false);
+        const toClone = objects.filter((o) => baseSel.has(o.id));
+        if (toClone.length > 0) {
+          const clones = toClone.map((o) => deepCloneFreehandObject(o, uid));
+          const next = [...objects, ...clones];
+          setObjects(next);
+          const cloneSel = new Set(clones.map((c) => c.id));
+          setSelectedIds(cloneSel);
+          setSelectedArtboardId(null);
+          const positions = new Map<string, Point>();
+          const pathPointsMap = new Map<string, BezierPoint[]>();
+          for (const c of clones) {
+            positions.set(c.id, { x: c.x, y: c.y });
+            if (c.type === "path") pathPointsMap.set(c.id, (c as PathObject).points.map(pt => ({ ...pt, anchor: { ...pt.anchor }, handleIn: { ...pt.handleIn }, handleOut: { ...pt.handleOut } })));
           }
+          setDragState({
+            type: "move",
+            startX: e.clientX,
+            startY: e.clientY,
+            positions,
+            pathPointsMap,
+            duplicateMove: true,
+          });
+          pushHistory(next, cloneSel);
+          return;
         }
-        setDragState({ type: "move", startX: e.clientX, startY: e.clientY, positions, pathPointsMap });
-        return;
       }
+
+      const newSel = extendSel
+        ? resolveSelection(obj.id, true)
+        : selectedIds.has(obj.id)
+          ? new Set(selectedIds)
+          : resolveSelection(obj.id, false);
+      setSelectedIds(newSel);
+      setPrimarySelectedId(obj.id);
+      setSelectedArtboardId(null);
+      const positions = new Map<string, Point>();
+      const pathPointsMap = new Map<string, BezierPoint[]>();
+      for (const sid of newSel) {
+        const o = objects.find((x) => x.id === sid);
+        if (o) {
+          positions.set(sid, { x: o.x, y: o.y });
+          if (o.type === "path") pathPointsMap.set(sid, (o as PathObject).points.map(pt => ({ ...pt, anchor: { ...pt.anchor }, handleIn: { ...pt.handleIn }, handleOut: { ...pt.handleOut } })));
+        }
+      }
+      setDragState({ type: "move", startX: e.clientX, startY: e.clientY, positions, pathPointsMap });
+      return;
     }
 
     // Empty click → start marquee
-    if (!shiftHeld) setSelectedIds(new Set());
-    setDragState({ type: "marquee", startX: e.clientX, startY: e.clientY, marqueeOrigin: pos, currentCanvas: pos, shiftKey: shiftHeld });
-  }, [activeTool, viewport, spaceHeld, objects, selectedIds, selectedObjects, groupBounds, selectionFrame,
+    if (!extendSel) {
+      setSelectedIds(new Set());
+      setSelectedArtboardId(null);
+    }
+    setDragState({ type: "marquee", startX: e.clientX, startY: e.clientY, marqueeOrigin: pos, currentCanvas: pos, shiftKey: extendSel });
+  }, [activeTool, viewport, spaceHeld, objects, artboards, selectedIds, selectedArtboardId, selectedObjects, groupBounds, selectionFrame,
       screenToCanvas, isPenDrawing, penPoints, finishPenPath, resolveSelection, addPointOnSegment, pushHistory]);
 
   const handleMouseMove = useCallback((e: ReactMouseEvent) => {
     if (!dragState) {
-      if (activeTool === "select" || activeTool === "gradient") {
+      if (activeTool === "artboard") {
+        const pos = screenToCanvas(e.clientX, e.clientY);
+        let found: string | null = null;
+        for (let i = artboards.length - 1; i >= 0; i--) {
+          const ab = artboards[i];
+          if (pointInArtboard(pos.x, pos.y, ab)) {
+            found = ab.id;
+            break;
+          }
+        }
+        setHoverArtboardId((prev) => (prev === found ? prev : found));
+      } else {
+        setHoverArtboardId(null);
+      }
+      if (activeTool === "select" || activeTool === "directSelect") {
         const pos = screenToCanvas(e.clientX, e.clientY);
         const threshold = 8 / viewport.zoom;
         let found: string | null = null;
@@ -2987,7 +4482,7 @@ export default function FreehandStudio({
           const obj = objects[i];
           if (!obj.visible || obj.locked) continue;
           if (obj.isClipMask || obj.clipMaskId) continue;
-          if (hitTestObject(pos, obj, threshold)) {
+          if (hitTestObject(pos, obj, threshold, objects)) {
             found = obj.id;
             break;
           }
@@ -3001,6 +4496,27 @@ export default function FreehandStudio({
 
     if (dragState.type === "pan") {
       setViewport((v) => ({ ...v, x: (dragState.svpX ?? 0) + dx, y: (dragState.svpY ?? 0) + dy }));
+      return;
+    }
+
+    if (dragState.type === "artboardMove" && dragState.artboardId && dragState.artboardStart) {
+      const scale = 1 / viewport.zoom;
+      const ddx = (e.clientX - dragState.startX) * scale;
+      const ddy = (e.clientY - dragState.startY) * scale;
+      const ox = dragState.artboardStart.x;
+      const oy = dragState.artboardStart.y;
+      const id = dragState.artboardId;
+      setArtboards((prev) =>
+        prev.map((a) => (a.id === id ? { ...a, x: ox + ddx, y: oy + ddy } : a)),
+      );
+      return;
+    }
+
+    if (dragState.type === "artboardResize" && dragState.artboardSnapshot && dragState.abHandle && dragState.artboardId) {
+      const pos = screenToCanvas(e.clientX, e.clientY);
+      const next = applyArtboardResize(dragState.abHandle, dragState.artboardSnapshot, pos);
+      const id = dragState.artboardId;
+      setArtboards((prev) => prev.map((a) => (a.id === id ? next : a)));
       return;
     }
 
@@ -3054,6 +4570,7 @@ export default function FreehandStudio({
         setObjects((prev) =>
           prev.map((o) => {
             if (o.id !== dragState.gradientPrimaryId || !sel.has(o.id)) return o;
+            if (o.type === "textOnPath") return o;
             const mf = migrateFill(o.fill);
             if (mf.type !== "gradient-linear") return o;
             const stops = mf.stops.map((s, i) => (i === si ? { ...s, position: posPct } : { ...s }));
@@ -3071,6 +4588,7 @@ export default function FreehandStudio({
       setObjects((prev) =>
         prev.map((o) => {
           if (!sel.has(o.id) || !supportsGradientFill(o)) return o;
+          if (o.type === "textOnPath") return o;
           const f = migrateFill(o.fill);
           if (f.type === "gradient-linear") {
             let nf = { ...f, stops: f.stops.map((s) => ({ ...s })) };
@@ -3159,14 +4677,30 @@ export default function FreehandStudio({
           nw = Math.max(10, f0.w * avgScale);
           nh = Math.max(10, f0.h * avgScale);
         }
+      } else {
+        const snaps = dragState.resizeSnapshot;
+        if (snaps && dragState.allBounds) {
+          const ids = Array.from(dragState.allBounds.keys());
+          if (ids.length > 0 && ids.every((id) => snaps.get(id)?.type === "image")) {
+            const u = (nw / f0.w + nh / f0.h) / 2;
+            nw = Math.max(10, f0.w * u);
+            nh = Math.max(10, f0.h * u);
+          }
+        }
       }
 
       const dw = nw - f0.w, dh = nh - f0.h;
       const th = degToRad(f0.angleDeg);
       const ux = Math.cos(th), uy = Math.sin(th);
       const vx = -Math.sin(th), vy = Math.cos(th);
-      const ncx = f0.cx + (dw / 2) * ux + (dh / 2) * vx;
-      const ncy = f0.cy + (dw / 2) * uy + (dh / 2) * vy;
+      /** Borde opuesto fijo: e/s suman mitad; w/n restan (antes +/+ para todos y n/w movían el lado equivocado). */
+      let tcx = 0, tcy = 0;
+      if (h.includes("e")) { tcx += (dw / 2) * ux; tcy += (dw / 2) * uy; }
+      if (h.includes("w")) { tcx -= (dw / 2) * ux; tcy -= (dw / 2) * uy; }
+      if (h.includes("s")) { tcx += (dh / 2) * vx; tcy += (dh / 2) * vy; }
+      if (h.includes("n")) { tcx -= (dh / 2) * vx; tcy -= (dh / 2) * vy; }
+      const ncx = f0.cx + tcx;
+      const ncy = f0.cy + tcy;
       const sx = nw / f0.w, sy = nh / f0.h;
 
       setObjects((prev) => prev.map((o) => {
@@ -3189,6 +4723,21 @@ export default function FreehandStudio({
         }
         if (src.type === "clippingContainer") {
           return mapObjectPointsWithWorld(src, mapWorld) as ClippingContainerObject;
+        }
+        if (src.type === "text") {
+          const t = src as TextObject;
+          const { w: lw, h: lh } = textLayoutDims(t);
+          const pivot = { x: src.x + lw / 2, y: src.y + lh / 2 };
+          const newC = mapWorld(pivot);
+          return {
+            ...o,
+            x: newC.x - lw / 2,
+            y: newC.y - lh / 2,
+            width: t.width,
+            height: t.height,
+            scaleX: (t.scaleX ?? 1) * sx,
+            scaleY: (t.scaleY ?? 1) * sy,
+          };
         }
         const newW = Math.max(4, src.width * sx);
         const newH = Math.max(4, src.height * sy);
@@ -3219,6 +4768,16 @@ export default function FreehandStudio({
           if (h.includes("w")) nx = b.x + b.w - nw;
           if (h.includes("n")) ny = b.y + b.h - nh;
         }
+      } else {
+        const snaps = dragState.resizeSnapshot;
+        if (snaps && dragState.allBounds) {
+          const ids = Array.from(dragState.allBounds.keys());
+          if (ids.length > 0 && ids.every((id) => snaps.get(id)?.type === "image")) {
+            const u = (nw / b.w + nh / b.h) / 2;
+            nw = Math.max(10, b.w * u);
+            nh = Math.max(10, b.h * u);
+          }
+        }
       }
 
       const sx = nw / b.w, sy = nh / b.h;
@@ -3245,6 +4804,23 @@ export default function FreehandStudio({
           });
           return mapObjectPointsWithWorld(src, mapWorld) as ClippingContainerObject;
         }
+        if (src.type === "text") {
+          const tt = src as TextObject;
+          const { w: lw, h: lh } = textLayoutDims(tt);
+          const vx = nx + (ob.x - b.x) * sx;
+          const vy = ny + (ob.y - b.y) * sy;
+          const vw = ob.w * sx, vh = ob.h * sy;
+          const tcx = vx + vw / 2, tcy = vy + vh / 2;
+          return {
+            ...o,
+            x: tcx - lw / 2,
+            y: tcy - lh / 2,
+            width: tt.width,
+            height: tt.height,
+            scaleX: (tt.scaleX ?? 1) * sx,
+            scaleY: (tt.scaleY ?? 1) * sy,
+          };
+        }
         return {
           ...o,
           x: newX, y: newY,
@@ -3257,16 +4833,23 @@ export default function FreehandStudio({
 
     if (dragState.type === "rotate" && dragState.rotateCenter && dragState.rotateStartAngle != null) {
       const pos = screenToCanvas(e.clientX, e.clientY);
-      const center = dragState.rotateCenter;
-      const currentAngle = Math.atan2(pos.y - center.y, pos.x - center.x);
+      const pivot = dragState.rotateCenter;
+      const currentAngle = Math.atan2(pos.y - pivot.y, pos.x - pivot.x);
       const radDelta = shortestAngleDeltaRad(currentAngle, dragState.rotateStartAngle);
       let angleDelta = (radDelta * 180) / Math.PI;
       if (e.shiftKey) angleDelta = Math.round(angleDelta / 15) * 15;
-      setObjects((prev) => prev.map((o) => {
-        const initRot = dragState.rotateInitialRotations?.get(o.id);
-        if (initRot == null) return o;
-        return { ...o, rotation: initRot + angleDelta };
-      }));
+      const snaps = dragState.rotateInitialSnapshots;
+      setObjects((prev) =>
+        prev.map((o) => {
+          const initRot = dragState.rotateInitialRotations?.get(o.id);
+          if (initRot == null) return o;
+          if (snaps?.has(o.id)) {
+            const init = snaps.get(o.id)!;
+            return applyRotateAroundSelectionPivot(init, pivot, angleDelta);
+          }
+          return { ...o, rotation: initRot + angleDelta };
+        }),
+      );
       return;
     }
 
@@ -3290,7 +4873,7 @@ export default function FreehandStudio({
       }));
       return;
     }
-  }, [dragState, viewport, objects, selectedIds, snapEnabled, screenToCanvas, penPoints.length, activeTool]);
+  }, [dragState, viewport, objects, artboards, selectedIds, snapEnabled, screenToCanvas, penPoints.length, activeTool]);
 
   const handleMouseUp = useCallback((e: ReactMouseEvent) => {
     if (!dragState) return;
@@ -3326,12 +4909,14 @@ export default function FreehandStudio({
           setSelectedIds(new Set(newPts.keys()));
         } else {
           const marqueeSel = new Set<string>();
+          const vecIsoGid = vectorIsolationGroupId(isolationStackRef.current);
           for (const obj of objects) {
             if (obj.locked || !obj.visible || obj.isClipMask) continue;
-            const objRect = getObjBounds(obj);
+            const objRect = getObjBounds(obj, objects);
             if (rectsIntersect(marqueeRect, objRect)) {
               const gid = obj.groupId;
-              if (gid) objects.filter((oo) => oo.groupId === gid).forEach((oo) => marqueeSel.add(oo.id));
+              const expandMarquee = gid && !(vecIsoGid && gid === vecIsoGid);
+              if (expandMarquee) objects.filter((oo) => oo.groupId === gid).forEach((oo) => marqueeSel.add(oo.id));
               else marqueeSel.add(obj.id);
             }
           }
@@ -3370,10 +4955,17 @@ export default function FreehandStudio({
           fontWeight: 400,
           lineHeight: 1.35,
           letterSpacing: 0,
+          fontKerning: "auto",
+          fontFeatureSettings: '"kern" 1, "liga" 1, "calt" 1',
+          fontVariantLigatures: "common-ligatures",
+          paragraphIndent: 0,
           textAlign: "left" as const,
           fill: solidFill(fillColor),
           stroke: "none",
           strokeWidth: 0,
+          strokePosition: "over",
+          scaleX: 1,
+          scaleY: 1,
         } as TextObject;
         const next = [...objects, newObj];
         setObjects(next);
@@ -3397,10 +4989,17 @@ export default function FreehandStudio({
           fontWeight: 400,
           lineHeight: 1.35,
           letterSpacing: 0,
+          fontKerning: "auto",
+          fontFeatureSettings: '"kern" 1, "liga" 1, "calt" 1',
+          fontVariantLigatures: "common-ligatures",
+          paragraphIndent: 0,
           textAlign: "left" as const,
           fill: solidFill(fillColor),
           stroke: "none",
           strokeWidth: 0,
+          strokePosition: "over",
+          scaleX: 1,
+          scaleY: 1,
         } as TextObject;
         const next = [...objects, newObj];
         setObjects(next);
@@ -3414,19 +5013,50 @@ export default function FreehandStudio({
 
     if (dragState.type === "create" && dragState.createOrigin && dragState.currentCanvas) {
       const o = dragState.createOrigin, c = dragState.currentCanvas;
-      const x = Math.min(o.x, c.x), y = Math.min(o.y, c.y);
-      const w = Math.max(Math.abs(c.x - o.x), 4), h = Math.max(Math.abs(c.y - o.y), 4);
+      if (dragState.createType === "artboard") {
+        const x = Math.min(o.x, c.x), y = Math.min(o.y, c.y);
+        const w = Math.max(Math.abs(c.x - o.x), 40), h = Math.max(Math.abs(c.y - o.y), 40);
+        const nextA = createArtboard({
+          x,
+          y,
+          width: w,
+          height: h,
+          name: `Artboard ${artboards.length + 1}`,
+        });
+        setArtboards((p) => [...p, nextA]);
+        setSelectedArtboardId(nextA.id);
+        setActiveTool("artboard");
+      } else {
+        const x = Math.min(o.x, c.x), y = Math.min(o.y, c.y);
+        const w = Math.max(Math.abs(c.x - o.x), 4), h = Math.max(Math.abs(c.y - o.y), 4);
 
-      const newObj: FreehandObject = dragState.createType === "ellipse"
-        ? { ...defaultObj({ name: `Ellipse ${objects.length + 1}` }), type: "ellipse", x, y, width: w, height: h, fill: solidFill(fillColor), stroke: strokeColor, strokeWidth, strokeLinecap, strokeLinejoin, strokeDasharray } as EllipseObject
-        : { ...defaultObj({ name: `Rect ${objects.length + 1}` }), type: "rect", x, y, width: w, height: h, fill: solidFill(fillColor), stroke: strokeColor, strokeWidth, strokeLinecap, strokeLinejoin, strokeDasharray, rx: 0 } as RectObject;
+        const newObj: FreehandObject = dragState.createType === "ellipse"
+          ? { ...defaultObj({ name: `Ellipse ${objects.length + 1}` }), type: "ellipse", x, y, width: w, height: h, fill: solidFill(fillColor), stroke: strokeColor, strokeWidth, strokeLinecap, strokeLinejoin, strokeDasharray } as EllipseObject
+          : { ...defaultObj({ name: `Rect ${objects.length + 1}` }), type: "rect", x, y, width: w, height: h, fill: solidFill(fillColor), stroke: strokeColor, strokeWidth, strokeLinecap, strokeLinejoin, strokeDasharray, rx: 0 } as RectObject;
 
-      const next = [...objects, newObj];
-      setObjects(next);
-      const ns = new Set([newObj.id]);
-      setSelectedIds(ns);
-      pushHistory(next, ns);
-      setActiveTool("select");
+        const next = [...objects, newObj];
+        setObjects(next);
+        const ns = new Set([newObj.id]);
+        setSelectedIds(ns);
+        pushHistory(next, ns);
+        setActiveTool("select");
+      }
+    }
+
+    if (
+      dragState.type === "move" &&
+      dragState.duplicateMove &&
+      dragState.positions &&
+      dragState.positions.size > 0
+    ) {
+      const firstId = Array.from(dragState.positions.keys())[0];
+      if (firstId) {
+        const init = dragState.positions.get(firstId);
+        const cur = objects.find((o) => o.id === firstId);
+        if (init && cur) {
+          duplicateStepRef.current = { dx: cur.x - init.x, dy: cur.y - init.y };
+        }
+      }
     }
 
     if (dragState.type === "move" || dragState.type === "resize" || dragState.type === "directSelect" || dragState.type === "rotate" || dragState.type === "gradient") {
@@ -3434,7 +5064,7 @@ export default function FreehandStudio({
     }
 
     setDragState(null);
-  }, [dragState, objects, selectedIds, fillColor, strokeColor, strokeWidth, strokeLinecap, strokeLinejoin, strokeDasharray, activeTool, pushHistory, screenToCanvas, viewport.zoom]);
+  }, [dragState, objects, artboards, selectedIds, fillColor, strokeColor, strokeWidth, strokeLinecap, strokeLinejoin, strokeDasharray, activeTool, pushHistory, screenToCanvas, viewport.zoom]);
 
   const handleWheel = useCallback((e: ReactWheelEvent) => {
     e.preventDefault();
@@ -3455,7 +5085,7 @@ export default function FreehandStudio({
     const pos = screenToCanvas(e.clientX, e.clientY);
     for (let i = objects.length - 1; i >= 0; i--) {
       const obj = objects[i];
-      if (hitTestObject(pos, obj, 8 / viewport.zoom)) {
+      if (hitTestObject(pos, obj, 8 / viewport.zoom, objects)) {
         if (!selectedIds.has(obj.id)) setSelectedIds(resolveSelection(obj.id, false));
         break;
       }
@@ -3471,6 +5101,17 @@ export default function FreehandStudio({
     const name = window.prompt("Layer name", o.name);
     if (name != null && name.trim()) updateSelectedProp("name", name.trim());
   }, [updateSelectedProp]);
+
+  const handleLinkTextToPath = useCallback(() => {
+    const prev = objectsRef.current;
+    const sel = selectedIdsRef.current;
+    const next = linkTextToPath(prev, sel);
+    if (next === prev) return;
+    const added = next.find((n) => !prev.some((o) => o.id === n.id));
+    setObjects(next);
+    if (added?.type === "textOnPath") setSelectedIds(new Set([added.id]));
+    pushHistory(next, new Set(added?.type === "textOnPath" ? [added.id] : sel));
+  }, [pushHistory]);
 
   // ── Context menu items ────────────────────────────────────────────
 
@@ -3494,8 +5135,7 @@ export default function FreehandStudio({
               { label: "Edit mask", action: () => switchClippingIsolationMode("mask"), disabled: top.editMode === "mask" },
             ]
           : []),
-        { label: "Arrange (use toolbar / ] [)", action: () => {}, disabled: true, separator: true },
-        { label: "Export selection", action: () => { setExportModalScope("selection"); setShowExportModal(true); }, disabled: !hasSel },
+        { label: "Export selection", action: () => { setExportModalScope("selection"); setShowExportModal(true); }, disabled: !hasSel, separator: true },
         { label: "Duplicate", shortcut: "⌘D", action: duplicateSelected, disabled: !hasSel },
         { label: "Delete", action: deleteSelected, disabled: !hasSel },
       ];
@@ -3519,6 +5159,9 @@ export default function FreehandStudio({
 
     if (multiSel) {
       return [
+        ...(canLinkTextToPath
+          ? [{ label: "Texto sobre trazado", action: handleLinkTextToPath, separator: true } as ContextMenuItem]
+          : []),
         { label: "Cut", shortcut: "⌘X", action: cutSelectedObjects },
         { label: "Copy", shortcut: "⌘C", action: copySelectedObjects },
         { label: "Paste", shortcut: "⌘V", action: pasteClipboardObjects, separator: true },
@@ -3579,8 +5222,6 @@ export default function FreehandStudio({
 
     if (single && (single.isClipMask || single.clipMaskId)) {
       return [
-        { label: "Edit mask", action: () => {}, disabled: !single.isClipMask },
-        { label: "Edit contents", action: () => {}, disabled: !single.clipMaskId },
         { label: "Release clipping mask", action: releaseClipMask, separator: true },
         { label: "Duplicate", action: duplicateSelected },
         { label: "Delete", action: deleteSelected },
@@ -3613,18 +5254,28 @@ export default function FreehandStudio({
       { label: "Boolean subtract", action: () => void booleanOp("subtract"), disabled: selectedIds.size < 2 },
       { label: "Boolean intersect", action: () => void booleanOp("intersect"), disabled: selectedIds.size < 2 },
       { label: "Boolean exclude", action: () => void booleanOp("exclude"), disabled: selectedIds.size < 2 },
+      {
+        label: "Edit vector group",
+        action: () => {
+          const g = selectedObjects[0]?.groupId;
+          if (g) enterVectorGroupIsolation(g);
+        },
+        disabled: !(single?.groupId && objects.filter((o) => o.groupId === single.groupId).length >= 2),
+        separator: true,
+      },
       { label: "Edit boolean group", action: () => { const bg = selectedObjects.find((o) => o.type === "booleanGroup"); if (bg) enterIsolation(bg.id); }, disabled: !hasBoolGroup, separator: true },
       { label: "Expand boolean", action: () => void expandBoolean(), disabled: !hasBoolGroup },
       { label: "Open / close path", action: () => { if (hasPath) togglePathClosed(selectedObjects.find((o) => o.type === "path")!.id); }, disabled: !hasPath, separator: true },
       { label: "Cycle anchor type", action: () => { selectedPoints.forEach((idxs, objId) => { idxs.forEach((idx) => cycleVertexMode(objId, idx)); }); }, disabled: selectedPoints.size === 0 },
     ];
   }, [ctxMenu, selectedIds, selectedObjects, selectedPoints, isolationDepth, objects, showGrid, snapEnabled,
+      canLinkTextToPath, handleLinkTextToPath,
       setShowExportModal, setExportModalScope,
       duplicateSelected, deleteSelected, bringForward, sendBackward, bringToFront, sendToBack,
       updateSelectedProp, groupSelected, ungroupSelected, createClipMask, releaseClipMask, togglePathClosed,
       cycleVertexMode, booleanOp, enterIsolation, expandBoolean, exitIsolation, alignObjects, fitAllCanvas,
       resetZoomCanvas, pasteClipboardObjects, pasteInside, cutSelectedObjects, copySelectedObjects, renameSelected,
-      convertTextToOutlines, releaseClippingStructure, enterClippingIsolation, switchClippingIsolationMode]);
+      convertTextToOutlines, releaseClippingStructure, enterClippingIsolation, switchClippingIsolationMode, enterVectorGroupIsolation]);
 
   // ── Cursor ────────────────────────────────────────────────────────
 
@@ -3641,8 +5292,7 @@ export default function FreehandStudio({
     }
     if (dragState?.type === "rotate") return "grab";
     if (dragState?.type === "move") return "move";
-    if (activeTool === "pen" || activeTool === "rect" || activeTool === "ellipse" || activeTool === "text") return "crosshair";
-    if (activeTool === "gradient") return "cell";
+    if (activeTool === "pen" || activeTool === "rect" || activeTool === "ellipse" || activeTool === "text" || activeTool === "artboard") return "crosshair";
     return "default";
   }, [activeTool, spaceHeld, dragState]);
 
@@ -3650,10 +5300,9 @@ export default function FreehandStudio({
     if (!quickEditMode || !selectionFrame || typeof window === "undefined") return null;
     const el = containerRef.current;
     if (!el) return null;
-    const r = el.getBoundingClientRect();
     const cx = selectionFrame.cx * viewport.zoom + viewport.x;
     const bottomCanvas = selectionFrame.cy * viewport.zoom + viewport.y + (selectionFrame.h / 2) * viewport.zoom + 12;
-    return { left: r.left + cx, top: r.top + bottomCanvas };
+    return { left: cx, top: bottomCanvas };
   }, [quickEditMode, selectionFrame, viewport.x, viewport.y, viewport.zoom]);
 
   // ── Marquee rect ──────────────────────────────────────────────────
@@ -3668,7 +5317,9 @@ export default function FreehandStudio({
   const createPreviewRect = useMemo(() => {
     if (!dragState || dragState.type !== "create" || !dragState.createOrigin || !dragState.currentCanvas) return null;
     const o = dragState.createOrigin, c = dragState.currentCanvas;
-    return { x: Math.min(o.x, c.x), y: Math.min(o.y, c.y), w: Math.abs(c.x - o.x), h: Math.abs(c.y - o.y), type: dragState.createType };
+    const base = { x: Math.min(o.x, c.x), y: Math.min(o.y, c.y), w: Math.abs(c.x - o.x), h: Math.abs(c.y - o.y) };
+    if (dragState.createType === "artboard") return { ...base, shape: "artboard" as const };
+    return { ...base, type: dragState.createType };
   }, [dragState]);
 
   const createTextPreviewRect = useMemo(() => {
@@ -3706,6 +5357,7 @@ export default function FreehandStudio({
 
   return (
     <div
+      ref={studioShellRef}
       data-foldder-studio-canvas
       className="fixed inset-0 z-[9999] flex min-h-0 flex-col bg-[#0b0d10] text-zinc-200"
       style={{ fontFamily: "var(--font-geist-sans), ui-sans-serif, Inter, system-ui" }}
@@ -3807,7 +5459,7 @@ export default function FreehandStudio({
 
       <div className="flex min-h-0 flex-1 flex-row">
       <div className="flex w-14 shrink-0 flex-col items-center gap-1 border-r border-white/[0.08] bg-[#12151a] py-3">
-        <ToolBtn active={activeTool === "select"} onClick={() => { setActiveTool("select"); setSelectedPoints(new Map()); }} title="Selection (V)">
+        <ToolBtn active={activeTool === "select"} onClick={() => { setActiveTool("select"); setSelectedPoints(new Map()); setSelectedArtboardId(null); }} title="Selection (V)">
           <MousePointer2 size={20} strokeWidth={1.5} />
         </ToolBtn>
         <ToolBtn active={activeTool === "directSelect"} onClick={() => setActiveTool("directSelect")} title="Direct Selection (A)">
@@ -3825,17 +5477,8 @@ export default function FreehandStudio({
         <ToolBtn active={activeTool === "text"} onClick={() => setActiveTool("text")} title="Text (T)">
           <Type size={20} strokeWidth={1.5} />
         </ToolBtn>
-        <ToolBtn active={activeTool === "gradient"} onClick={() => setActiveTool("gradient")} title="Gradient (G)">
-          <Blend size={20} strokeWidth={1.5} />
-        </ToolBtn>
-        <ToolBtn active={activeTool === "eyedropper"} onClick={() => setActiveTool("eyedropper")} title="Eyedropper (I)">
-          <Droplet size={20} strokeWidth={1.5} />
-        </ToolBtn>
-        <ToolBtn active={activeTool === "handTool"} onClick={() => setActiveTool("handTool")} title="Hand (H) — drag to pan">
-          <Hand size={20} strokeWidth={1.5} />
-        </ToolBtn>
-        <ToolBtn active={activeTool === "zoomTool"} onClick={() => setActiveTool("zoomTool")} title="Zoom (Z) — click: in, Alt+click: out">
-          <ZoomIn size={20} strokeWidth={1.5} />
+        <ToolBtn active={activeTool === "artboard"} onClick={() => { setActiveTool("artboard"); setSelectedIds(new Set()); setSelectedPoints(new Map()); }} title="Artboard — mesa de trabajo (export)">
+          <LayoutTemplate size={20} strokeWidth={1.5} />
         </ToolBtn>
 
         <div className="my-1 h-px w-6 bg-white/[0.08]" />
@@ -3862,7 +5505,9 @@ export default function FreehandStudio({
               const id = frame.kind === "clipping" ? frame.containerId : frame.groupId;
               const label = frame.kind === "clipping"
                 ? (frame.parentObjects.find((o) => o.id === frame.containerId)?.name ?? "Clip container")
-                : (frame.parentObjects.find((o) => o.id === frame.groupId)?.name ?? "Boolean Group");
+                : frame.kind === "vectorGroup"
+                  ? "Vector group"
+                  : (frame.parentObjects.find((o) => o.id === frame.groupId)?.name ?? "Boolean Group");
               const sub = frame.kind === "clipping" && frame.editMode === "mask" ? " · mask" : "";
               return (
                 <React.Fragment key={id}>
@@ -3890,6 +5535,7 @@ export default function FreehandStudio({
                   const fr = isolationStackRef.current[isolationStackRef.current.length - 1];
                   if (!fr) return "Isolation";
                   if (fr.kind === "clipping") return fr.editMode === "mask" ? "Edit mask" : "Edit content";
+                  if (fr.kind === "vectorGroup") return "Edit group";
                   return "Edit content";
                 })()}
               </span>
@@ -3921,7 +5567,7 @@ export default function FreehandStudio({
 
       <div ref={containerRef} className="flex-1 relative overflow-hidden" style={{ cursor }}
         onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp}
-        onMouseLeave={() => { setHoverCanvasId(null); }}
+        onMouseLeave={() => { setHoverCanvasId(null); setHoverArtboardId(null); }}
         onWheel={handleWheel} onContextMenu={handleContextMenu}
         onDoubleClick={(e) => {
           const pos = screenToCanvas(e.clientX, e.clientY);
@@ -3929,7 +5575,7 @@ export default function FreehandStudio({
           if (activeTool === "select" || activeTool === "text") {
             for (let i = objects.length - 1; i >= 0; i--) {
               const obj = objects[i];
-              if (obj.type === "text" && hitTestObject(pos, obj, threshold)) {
+              if (obj.type === "text" && hitTestObject(pos, obj, threshold, objects)) {
                 setSelectedIds(new Set([obj.id]));
                 setTextEditingId(obj.id);
                 return;
@@ -3939,20 +5585,27 @@ export default function FreehandStudio({
           if (activeTool !== "select") return;
           for (let i = objects.length - 1; i >= 0; i--) {
             const obj = objects[i];
-            if (obj.type === "booleanGroup" && hitTestObject(pos, obj, threshold)) {
+            if (obj.type === "booleanGroup" && hitTestObject(pos, obj, threshold, objects)) {
               enterIsolation(obj.id);
               return;
             }
-            if (obj.type === "clippingContainer" && hitTestObject(pos, obj, threshold)) {
+            if (obj.type === "clippingContainer" && hitTestObject(pos, obj, threshold, objects)) {
               enterClippingIsolation(obj.id, "content");
               return;
+            }
+            if (obj.groupId && hitTestObject(pos, obj, threshold, objects)) {
+              const n = objects.filter((x) => x.groupId === obj.groupId).length;
+              if (n >= 2) {
+                enterVectorGroupIsolation(obj.groupId);
+                return;
+              }
             }
           }
           for (let i = objects.length - 1; i >= 0; i--) {
             const obj = objects[i];
             if (!obj.visible || obj.locked) continue;
             if (obj.isClipMask || obj.clipMaskId) continue;
-            if (hitTestObject(pos, obj, threshold)) {
+            if (hitTestObject(pos, obj, threshold, objects)) {
               setSelectedIds(new Set([obj.id]));
               setPrimarySelectedId(obj.id);
               setQuickEditMode(e.altKey ? "stroke" : "fill");
@@ -3985,6 +5638,61 @@ export default function FreehandStudio({
           )}
 
           <g data-fh-world transform={`translate(${viewport.x}, ${viewport.y}) scale(${viewport.zoom})`}>
+            {/* Artboards: fill behind objects; chrome is data-ui (stripped on export). */}
+            {artboards.map((ab) => {
+              const hz = 5 / viewport.zoom;
+              const showChrome = activeTool === "artboard" && selectedArtboardId === ab.id;
+              const handleCenters: { id: string; cx: number; cy: number }[] = [
+                { id: "nw", cx: ab.x, cy: ab.y },
+                { id: "n", cx: ab.x + ab.width / 2, cy: ab.y },
+                { id: "ne", cx: ab.x + ab.width, cy: ab.y },
+                { id: "e", cx: ab.x + ab.width, cy: ab.y + ab.height / 2 },
+                { id: "se", cx: ab.x + ab.width, cy: ab.y + ab.height },
+                { id: "s", cx: ab.x + ab.width / 2, cy: ab.y + ab.height },
+                { id: "sw", cx: ab.x, cy: ab.y + ab.height },
+                { id: "w", cx: ab.x, cy: ab.y + ab.height / 2 },
+              ];
+              const isHover = hoverArtboardId === ab.id && activeTool === "artboard";
+              return (
+                <g key={ab.id} data-fh-artboard={ab.id}>
+                  <rect
+                    x={ab.x}
+                    y={ab.y}
+                    width={ab.width}
+                    height={ab.height}
+                    fill={ab.background}
+                  />
+                  <rect
+                    x={ab.x}
+                    y={ab.y}
+                    width={ab.width}
+                    height={ab.height}
+                    fill="none"
+                    stroke={isHover ? "rgba(56,189,248,0.75)" : "rgba(148,163,184,0.4)"}
+                    strokeWidth={(isHover ? 1.25 : 1) / viewport.zoom}
+                    strokeDasharray={`${4 / viewport.zoom}`}
+                    data-ui="artboard-edge"
+                    pointerEvents="none"
+                  />
+                  {showChrome &&
+                    handleCenters.map(({ id, cx, cy }) => (
+                      <rect
+                        key={id}
+                        x={cx - hz}
+                        y={cy - hz}
+                        width={hz * 2}
+                        height={hz * 2}
+                        fill="#0f172a"
+                        stroke="#38bdf8"
+                        strokeWidth={1.2 / viewport.zoom}
+                        data-ui="artboard-handle"
+                        pointerEvents="none"
+                      />
+                    ))}
+                </g>
+              );
+            })}
+
             {/* Render objects (multi-select: non-primary slightly faded) */}
             {objects.map((obj) => {
               if (obj.isClipMask) return null;
@@ -3995,7 +5703,7 @@ export default function FreehandStudio({
               const op = multi && inSel && !isPrimary ? 0.62 : 1;
               return (
                 <g key={obj.id} opacity={op} data-fh-obj={obj.id}>
-                  {renderObj(obj)}
+                  {renderObj(obj, objects)}
                 </g>
               );
             })}
@@ -4010,7 +5718,7 @@ export default function FreehandStudio({
                   const op = multi && inSel && !isPrimary ? 0.62 : 1;
                   return (
                     <g key={m.id} data-fh-obj={m.id} opacity={op}>
-                      {renderObj(m)}
+                      {renderObj(m, objects)}
                     </g>
                   );
                 })}
@@ -4018,11 +5726,11 @@ export default function FreehandStudio({
             ))}
 
             {/* Hover outline: canvas hover or layers panel hover (sync) */}
-            {(hoverCanvasId || layerHoverId) && (activeTool === "select" || activeTool === "gradient") && (() => {
+            {(hoverCanvasId || layerHoverId) && (activeTool === "select" || activeTool === "directSelect") && (() => {
               const hid = hoverCanvasId ?? layerHoverId;
               const ho = objects.find((o) => o.id === hid);
               if (!ho || selectedIds.has(ho.id)) return null;
-              const ob = getVisualAABB(ho);
+              const ob = getVisualAABB(ho, objects);
               const fromPanel = !!(layerHoverId && layerHoverId === hid && !hoverCanvasId);
               return (
                 <rect x={ob.x} y={ob.y} width={ob.w} height={ob.h} fill="none"
@@ -4061,12 +5769,17 @@ export default function FreehandStudio({
 
             {/* Create preview */}
             {createPreviewRect && (
-              createPreviewRect.type === "ellipse"
+              "shape" in createPreviewRect && createPreviewRect.shape === "artboard"
+                ? <rect x={createPreviewRect.x} y={createPreviewRect.y} width={createPreviewRect.w} height={createPreviewRect.h}
+                    fill="rgba(56,189,248,0.06)" stroke="#38bdf8" strokeWidth={1 / viewport.zoom} strokeDasharray={`${5 / viewport.zoom}`} data-ui="preview" />
+                : !("shape" in createPreviewRect) && createPreviewRect.type === "ellipse"
                 ? <ellipse cx={createPreviewRect.x + createPreviewRect.w / 2} cy={createPreviewRect.y + createPreviewRect.h / 2}
                     rx={createPreviewRect.w / 2} ry={createPreviewRect.h / 2}
                     fill={fillColor} stroke={strokeColor} strokeWidth={strokeWidth} opacity={0.5} data-ui="preview" />
-                : <rect x={createPreviewRect.x} y={createPreviewRect.y} width={createPreviewRect.w} height={createPreviewRect.h}
+                : !("shape" in createPreviewRect)
+                ? <rect x={createPreviewRect.x} y={createPreviewRect.y} width={createPreviewRect.w} height={createPreviewRect.h}
                     fill={fillColor} stroke={strokeColor} strokeWidth={strokeWidth} opacity={0.5} data-ui="preview" />
+                : null
             )}
 
             {createTextPreviewRect && createTextPreviewRect.w > 1 && createTextPreviewRect.h > 1 && (
@@ -4082,8 +5795,8 @@ export default function FreehandStudio({
             )}
 
             {/* Per-object selection outlines (multi-select): primary stronger, secondary lighter */}
-            {selectedObjects.length > 1 && (activeTool === "select" || activeTool === "gradient") && selectedObjects.map((obj) => {
-              const ob = getVisualAABB(obj);
+            {selectedObjects.length > 1 && (activeTool === "select" || activeTool === "directSelect") && selectedObjects.map((obj) => {
+              const ob = getVisualAABB(obj, objects);
               const isPr = primarySelectedId === obj.id || primarySelectedId == null;
               return (
                 <rect key={`sel-outline-${obj.id}`} x={ob.x} y={ob.y} width={ob.w} height={ob.h}
@@ -4097,7 +5810,7 @@ export default function FreehandStudio({
             })}
 
             {/* Selection: oriented bounding box + handles (matches object rotation) */}
-            {activeTool === "gradient" && selectedObjects.length === 1 && supportsGradientFill(selectedObjects[0]) && (() => {
+            {activeTool === "select" && selectedObjects.length === 1 && supportsGradientFill(selectedObjects[0]) && (() => {
               const o = selectedObjects[0];
               const f = migrateFill(o.fill);
               const hz = 5 / viewport.zoom;
@@ -4134,7 +5847,7 @@ export default function FreehandStudio({
               return null;
             })()}
 
-            {selectedObjects.length > 0 && (activeTool === "select" || activeTool === "gradient") && selectionFrame && (
+            {selectedObjects.length > 0 && (activeTool === "select" || activeTool === "directSelect") && selectionFrame && (
               <g data-ui="selection-box" transform={`translate(${selectionFrame.cx},${selectionFrame.cy}) rotate(${selectionFrame.angleDeg})`} filter="url(#fh-selection-shadow)">
                 <rect x={-selectionFrame.w / 2 - 1 / viewport.zoom} y={-selectionFrame.h / 2 - 1 / viewport.zoom}
                   width={selectionFrame.w + 2 / viewport.zoom} height={selectionFrame.h + 2 / viewport.zoom}
@@ -4160,17 +5873,12 @@ export default function FreehandStudio({
                   const rotOff = 14 / viewport.zoom;
                   const rotR = 4 / viewport.zoom;
                   const hw = selectionFrame.w / 2, hh = selectionFrame.h / 2;
-                  const corners = [
-                    { x: -hw - rotOff, y: -hh - rotOff },
-                    { x: hw + rotOff, y: -hh - rotOff },
-                    { x: hw + rotOff, y: hh + rotOff },
-                    { x: -hw - rotOff, y: hh + rotOff },
-                  ];
-                  return corners.map((c, ci) => (
-                    <circle key={`rot-${ci}`} cx={c.x} cy={c.y} r={rotR}
+                  const c = { x: hw + rotOff, y: -hh - rotOff };
+                  return (
+                    <circle cx={c.x} cy={c.y} r={rotR}
                       fill="transparent" stroke="rgba(255,255,255,0.75)" strokeWidth={1.1 / viewport.zoom}
                       style={{ cursor: "grab" }} data-ui="rotate-handle" />
-                  ));
+                  );
                 })()}
               </g>
             )}
@@ -4274,28 +5982,53 @@ export default function FreehandStudio({
         {textEditingId && (() => {
           const to = objects.find((o) => o.id === textEditingId) as TextObject | undefined;
           if (!to) return null;
-          const r = containerRef.current?.getBoundingClientRect();
-          if (!r) return null;
-          const left = r.left + viewport.x + to.x * viewport.zoom;
-          const top = r.top + viewport.y + to.y * viewport.zoom;
-          const w = Math.max(to.width * viewport.zoom, 120);
-          const h = Math.max(to.height * viewport.zoom, to.fontSize * to.lineHeight * viewport.zoom);
+          if (!containerRef.current) return null;
+          const foW = to.textMode === "point" ? Math.max(to.width, 32) : to.width;
+          const foH = to.textMode === "point" ? Math.max(to.height, to.fontSize * to.lineHeight + 4) : to.height;
+          const rcx = to.x + to.width / 2;
+          const rcy = to.y + to.height / 2;
+          const rot = to.rotation ?? 0;
+          const tl = rotatePointAround({ x: to.x, y: to.y }, { x: rcx, y: rcy }, rot);
+          // Coordinates relative to containerRef (position:absolute), same basis as SVG <g data-fh-world>:
+          // screen = containerRect + (viewport pan + world * zoom); do not add getBoundingClientRect here.
+          const left = viewport.x + tl.x * viewport.zoom;
+          const top = viewport.y + tl.y * viewport.zoom;
+          const w = Math.max(foW * viewport.zoom, 120);
+          const h = Math.max(foH * viewport.zoom, to.fontSize * to.lineHeight * viewport.zoom);
+          const fill = migrateFill(to.fill);
+          const caretColor =
+            fill.type === "solid"
+              ? (fill.color === "none" ? "rgba(255,255,255,0.95)" : fill.color)
+              : (fill.stops[0]?.color ?? "rgba(255,255,255,0.95)");
+          const padSide = (to.textMode === "area" ? 4 : 0) + (to.paragraphIndent ?? 0);
+          const z = viewport.zoom;
           return (
             <textarea
               data-fh-text-editor
-              className="absolute z-[10001] rounded-md border border-violet-500/45 bg-zinc-950/98 text-white p-2 shadow-2xl outline-none resize-none"
+              className="absolute z-[10001] resize-none border-0 bg-transparent p-0 shadow-none outline-none ring-0 placeholder:text-transparent [&::selection]:bg-white/15 [&::selection]:text-transparent"
               style={{
                 left,
                 top,
                 width: w,
                 minHeight: h,
                 fontFamily: to.fontFamily,
-                fontSize: Math.max(10, to.fontSize * viewport.zoom * 0.95),
+                fontSize: Math.max(8, to.fontSize * z),
+                fontWeight: to.fontWeight,
                 lineHeight: to.lineHeight,
-                letterSpacing: to.letterSpacing ? to.letterSpacing * viewport.zoom : undefined,
+                letterSpacing: to.letterSpacing !== undefined ? `${to.letterSpacing * z}px` : undefined,
                 textAlign: to.textAlign,
-                transform: to.rotation ? `rotate(${to.rotation}deg)` : undefined,
-                transformOrigin: "top left",
+                fontFeatureSettings: to.fontFeatureSettings ?? '"kern" 1, "liga" 1',
+                fontKerning: to.fontKerning === "none" ? "none" : undefined,
+                paddingTop: (to.textMode === "area" ? 4 : 0) * z,
+                paddingRight: (to.textMode === "area" ? 4 : 0) * z,
+                paddingBottom: (to.textMode === "area" ? 4 : 0) * z,
+                paddingLeft: padSide * z,
+                boxSizing: "border-box",
+                color: "transparent",
+                WebkitTextFillColor: "transparent",
+                caretColor,
+                transform: rot ? `rotate(${rot}deg)` : undefined,
+                transformOrigin: `${(to.width / 2) * z}px ${(to.height / 2) * z}px`,
               }}
               value={to.text}
               onChange={(e) => {
@@ -4337,7 +6070,7 @@ export default function FreehandStudio({
                 {isolationStackRef.current.length > 0 && (() => {
                   const f = isolationStackRef.current[isolationStackRef.current.length - 1];
                   const hid = f.kind === "clipping" ? f.containerId : f.groupId;
-                  return f.parentObjects.filter((o) => o.id !== hid).map((o) => renderObj(o));
+                  return f.parentObjects.filter((o) => o.id !== hid).map((o) => renderObj(o, f.parentObjects));
                 })()}
               </g>
             </svg>
@@ -4365,48 +6098,344 @@ export default function FreehandStudio({
       </div>
 
       {/* ── RIGHT PANEL ──────────────────────────────────────────── */}
-      <div className="flex w-[300px] shrink-0 flex-col overflow-hidden border-l border-white/[0.08] bg-[#12151a]">
+      <div className="flex w-[300px] shrink-0 flex-col min-h-0 overflow-hidden border-l border-white/[0.08] bg-[#12151a]">
         {/* Header */}
-        <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
+        <div className="flex items-center justify-between px-3 py-2 border-b border-white/10 shrink-0">
           <span className="text-[11px] font-bold uppercase tracking-widest text-zinc-400">Freehand Studio</span>
-          <button type="button" onClick={onClose} className="text-zinc-500 hover:text-white transition-colors p-1 rounded-md hover:bg-white/10" title="Close Studio">
+          <button
+            type="button"
+            onClick={() => void handleCloseStudio()}
+            className="text-zinc-500 hover:text-white transition-colors p-1 rounded-md hover:bg-white/10"
+            title="Close — saves preview to the node"
+          >
             <X size={16} />
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto">
-          {/* ── Properties ──────────────────────────────────────── */}
-          <div className="p-3 border-b border-white/10 space-y-2.5">
-            <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">Properties</div>
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {activeTool === "artboard" && (
+              <div className="border-b border-white/[0.08] px-[14px] py-3 space-y-3">
+                <div className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Artboard</div>
+                {!selectedArtboardId ? (
+                  <p className="text-[10px] leading-relaxed text-zinc-500">
+                    Crea una mesa arrastrando en el lienzo. El export a tamaño completo usa el área de la mesa (el resto es borrador).
+                  </p>
+                ) : (() => {
+                  const selAb = artboards.find((a) => a.id === selectedArtboardId);
+                  if (!selAb) return null;
+                  const u = selAb.displayUnit;
+                  const wDu = pxToDisplayUnit(selAb.width, u);
+                  const hDu = pxToDisplayUnit(selAb.height, u);
+                  return (
+                    <>
+                      <div className="space-y-0.5">
+                        <label className="text-[8px] text-zinc-600">Nombre</label>
+                        <input
+                          type="text"
+                          value={selAb.name}
+                          onChange={(e) => updateSelectedArtboard({ name: e.target.value })}
+                          className="w-full rounded border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-white"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-0.5">
+                          <label className="text-[8px] text-zinc-600">Ancho ({u})</label>
+                          <input
+                            type="number"
+                            value={Math.round(wDu * 1000) / 1000}
+                            onChange={(e) => {
+                              const v = Number(e.target.value);
+                              if (!Number.isFinite(v) || v <= 0) return;
+                              updateSelectedArtboard({ width: displayUnitToPx(v, u) });
+                            }}
+                            className="w-full rounded border border-white/10 bg-white/5 px-2 py-1 font-mono text-[11px] text-white"
+                          />
+                        </div>
+                        <div className="space-y-0.5">
+                          <label className="text-[8px] text-zinc-600">Alto ({u})</label>
+                          <input
+                            type="number"
+                            value={Math.round(hDu * 1000) / 1000}
+                            onChange={(e) => {
+                              const v = Number(e.target.value);
+                              if (!Number.isFinite(v) || v <= 0) return;
+                              updateSelectedArtboard({ height: displayUnitToPx(v, u) });
+                            }}
+                            className="w-full rounded border border-white/10 bg-white/5 px-2 py-1 font-mono text-[11px] text-white"
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-0.5">
+                        <label className="text-[8px] text-zinc-600">Unidad</label>
+                        <select
+                          value={u}
+                          onChange={(e) => {
+                            const next = e.target.value as ArtboardDisplayUnit;
+                            updateSelectedArtboard({ displayUnit: next });
+                          }}
+                          className="w-full rounded border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-white"
+                        >
+                          {(["px", "mm", "cm", "in", "pt"] as const).map((unit) => (
+                            <option key={unit} value={unit}>
+                              {unit}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[8px] text-zinc-600">Presets</label>
+                        <div className="flex flex-wrap gap-1">
+                          {ARTBOARD_PRESETS.map((p) => (
+                            <button
+                              key={p.label}
+                              type="button"
+                              title={p.label}
+                              onClick={() =>
+                                updateSelectedArtboard({
+                                  width: displayUnitToPx(p.width, p.unit),
+                                  height: displayUnitToPx(p.height, p.unit),
+                                  displayUnit: p.unit,
+                                })
+                              }
+                              className="rounded border border-white/10 bg-white/5 px-2 py-0.5 text-[8px] font-semibold uppercase tracking-wide text-zinc-400 hover:bg-white/10 hover:text-white"
+                            >
+                              {p.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <label className="text-[8px] text-zinc-600 shrink-0">Fondo</label>
+                        <input
+                          type="color"
+                          value={/^#[0-9A-Fa-f]{6}$/.test(selAb.background) ? selAb.background : "#ffffff"}
+                          onChange={(e) => updateSelectedArtboard({ background: e.target.value })}
+                          className="h-8 w-10 cursor-pointer rounded border border-white/20 bg-transparent"
+                        />
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+            )}
+
+            <FreehandColorPalette
+              inUse={documentColorStats}
+              savedColors={savedPaletteColors}
+              onSavedColorsChange={setSavedPaletteColors}
+              applyTarget={paletteTarget}
+              onApplyTargetChange={setPaletteTarget}
+              onApplyHex={applyPaletteHex}
+              onReplaceDocumentColor={replaceDocumentColorLive}
+              onCommitHistory={commitPaletteHistory}
+            />
 
             {firstSelected ? (
               <>
+                {/* Transform */}
+                <div className="border-b border-white/[0.08] px-[14px] py-3 space-y-2">
+                  <div className="text-[10px] text-zinc-500 uppercase tracking-wider">Transform</div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {(["x", "y"] as const).map((key) => (
+                      <div key={key} className="space-y-0.5">
+                        <label className="text-[10px] text-zinc-500 uppercase tracking-wider">{key.charAt(0).toUpperCase()}</label>
+                        <ScrubNumberInput
+                          value={Math.round(firstSelected[key])}
+                          onKeyboardCommit={(n) => updateSelectedProp(key, n)}
+                          onScrubLive={(n) => updateSelectedPropSilent(key, n)}
+                          onScrubEnd={commitHistoryAfterScrub}
+                          step={1}
+                          title="Arrastra horizontalmente para cambiar · Mayús = ×10"
+                          className="w-full cursor-ew-resize rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 font-mono text-[12px] text-zinc-100"
+                        />
+                      </div>
+                    ))}
+                    <div className="space-y-0.5">
+                      <label className="text-[10px] text-zinc-500 uppercase tracking-wider">W</label>
+                      <ScrubNumberInput
+                        value={Math.round(
+                          firstSelected.type === "text"
+                            ? (firstSelected as TextObject).width *
+                                (((firstSelected as TextObject).scaleX ?? 1) < 0 ? -1 : 1)
+                            : firstSelected.width * (firstSelected.flipX ? -1 : 1),
+                        )}
+                        onKeyboardCommit={(n) => applySignedDimension("width", n, false)}
+                        onScrubLive={(n) => applySignedDimension("width", n, true)}
+                        onScrubEnd={commitHistoryAfterScrub}
+                        step={1}
+                        title="Valor con signo: negativo = espejo horizontal. Arrastra · Mayús = ×10"
+                        className="w-full cursor-ew-resize rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 font-mono text-[12px] text-zinc-100"
+                      />
+                    </div>
+                    <div className="space-y-0.5">
+                      <label className="text-[10px] text-zinc-500 uppercase tracking-wider">H</label>
+                      <ScrubNumberInput
+                        value={Math.round(
+                          firstSelected.type === "text"
+                            ? (firstSelected as TextObject).height *
+                                (((firstSelected as TextObject).scaleY ?? 1) < 0 ? -1 : 1)
+                            : firstSelected.height * (firstSelected.flipY ? -1 : 1),
+                        )}
+                        onKeyboardCommit={(n) => applySignedDimension("height", n, false)}
+                        onScrubLive={(n) => applySignedDimension("height", n, true)}
+                        onScrubEnd={commitHistoryAfterScrub}
+                        step={1}
+                        title="Valor con signo: negativo = espejo vertical. Arrastra · Mayús = ×10"
+                        className="w-full cursor-ew-resize rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 font-mono text-[12px] text-zinc-100"
+                      />
+                    </div>
+                    <div className="space-y-0.5">
+                      <label className="text-[10px] text-zinc-500 uppercase tracking-wider">Rot</label>
+                      <ScrubNumberInput
+                        value={Math.round(firstSelected.rotation * 1000) / 1000}
+                        onKeyboardCommit={(n) => updateSelectedProp("rotation", n)}
+                        onScrubLive={(n) => updateSelectedPropSilent("rotation", n)}
+                        onScrubEnd={commitHistoryAfterScrub}
+                        step={0.1}
+                        roundFn={(n) => Math.round(n * 1000) / 1000}
+                        title="Arrastra horizontalmente · Mayús = ×10"
+                        className="w-full cursor-ew-resize rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 font-mono text-[12px] text-zinc-100"
+                      />
+                    </div>
+                    <div className="space-y-0.5">
+                      <label className="text-[10px] text-zinc-500 uppercase tracking-wider">Opacity</label>
+                      <ScrubNumberInput
+                        value={Math.round(firstSelected.opacity * 100)}
+                        onKeyboardCommit={(n) => updateSelectedProp("opacity", clamp(n, 0, 100) / 100)}
+                        onScrubLive={(n) => updateSelectedPropSilent("opacity", clamp(n, 0, 100) / 100)}
+                        onScrubEnd={commitHistoryAfterScrub}
+                        step={1}
+                        roundFn={(n) => clamp(Math.round(n), 0, 100)}
+                        min={0}
+                        max={100}
+                        title="Opacity % · Mayús = ×10"
+                        className="w-full cursor-ew-resize rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 font-mono text-[12px] text-zinc-100"
+                      />
+                    </div>
+                  </div>
+                </div>
+
                 {/* Fill */}
+                <div className="py-3 px-[14px] border-b border-white/[0.08] space-y-3">
                 {firstSelected.type === "image" || firstSelected.type === "booleanGroup" ? (
                   <p className="text-[9px] text-zinc-500 leading-relaxed">
                     {firstSelected.type === "booleanGroup"
                       ? "Boolean preview is rasterized. Gradient fill applies after vector boolean in a future update."
                       : "Bitmap images do not use vector fill."}
                   </p>
+                ) : firstSelected.type === "textOnPath" ? (
+                  (() => {
+                    const top = firstSelected as TextOnPathObject;
+                    const noFillTp = top.fill === "none" || top.fill === "transparent";
+                    const tpHex = /^#[0-9A-Fa-f]{6}$/.test(top.fill) ? top.fill : "#000000";
+                    return (
+                  <div className="space-y-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Fill</span>
+                      <div className="flex flex-col items-end gap-1">
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            title="Sin relleno"
+                            aria-pressed={noFillTp}
+                            onClick={() => updateSelectedProp("fill", "none")}
+                            className={`relative h-[22px] w-[22px] shrink-0 overflow-hidden rounded-[5px] border bg-[#2a2d33] transition-colors ${
+                              noFillTp
+                                ? "border-[#534AB7] ring-1 ring-[#534AB7]/40"
+                                : "border-white/[0.08] hover:bg-white/[0.06]"
+                            }`}
+                          >
+                            <svg width="22" height="22" viewBox="0 0 22 22" className="pointer-events-none absolute inset-0 text-red-500" aria-hidden>
+                              <line x1="4" y1="18" x2="18" y2="4" stroke="currentColor" strokeWidth="1.35" strokeLinecap="square" />
+                            </svg>
+                          </button>
+                          <input
+                            type="color"
+                            value={noFillTp ? "#000000" : tpHex}
+                            onChange={(e) => updateSelectedProp("fill", e.target.value)}
+                            className="h-[22px] w-[22px] shrink-0 cursor-pointer rounded-[5px] border border-white/[0.08] bg-transparent"
+                            title="Elige un color para el relleno del texto"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                    );
+                  })()
                 ) : (
-                  <div className="space-y-2">
-                    <label className="text-[9px] text-zinc-500 uppercase tracking-wider">Fill</label>
-                    <div className="flex rounded-md overflow-hidden border border-white/10 p-0.5 gap-0.5 bg-black/20">
+                  (() => {
+                    const mf = migrateFill(firstSelected.fill);
+                    const noFill = mf.type === "solid" && mf.color === "none";
+                    const fillExpanded = mf.type !== "solid" || !noFill;
+                    const fillPickerValue =
+                      mf.type === "solid"
+                        ? mf.color === "none"
+                          ? "#000000"
+                          : mf.color
+                        : mf.type === "gradient-linear" || mf.type === "gradient-radial"
+                          ? mf.stops[0]?.color ?? "#6366f1"
+                          : "#000000";
+                    return (
+                  <div className="space-y-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Fill</span>
+                      <div className="flex flex-col items-end gap-1">
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            title="Sin relleno"
+                            aria-label="Sin relleno"
+                            aria-pressed={noFill}
+                            onClick={() => updateSelectedFill(() => solidFill("none"))}
+                            className={`relative h-[22px] w-[22px] shrink-0 overflow-hidden rounded-[5px] border bg-[#2a2d33] transition-colors ${
+                              noFill
+                                ? "border-[#534AB7] ring-1 ring-[#534AB7]/40"
+                                : "border-white/[0.08] hover:bg-white/[0.06]"
+                            }`}
+                          >
+                            <svg
+                              width="22"
+                              height="22"
+                              viewBox="0 0 22 22"
+                              className="pointer-events-none absolute inset-0 text-red-500"
+                              aria-hidden
+                            >
+                              <line x1="4" y1="18" x2="18" y2="4" stroke="currentColor" strokeWidth="1.35" strokeLinecap="square" />
+                            </svg>
+                          </button>
+                          <input
+                            type="color"
+                            value={fillPickerValue}
+                            onChange={(e) => {
+                              const c = e.target.value;
+                              updateSelectedFill(() => solidFill(c));
+                              setFillColor(c);
+                            }}
+                            className="h-[22px] w-[22px] shrink-0 cursor-pointer rounded-[5px] border border-white/[0.08] bg-transparent"
+                            title="Elige un color para relleno sólido (reactiva el relleno)"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                    {fillExpanded ? (
+                    <>
+                    <div className="flex gap-1.5">
                       {([
                         { id: "solid" as const, label: "Solid" },
                         { id: "gradient-linear" as const, label: "Linear" },
                         { id: "gradient-radial" as const, label: "Radial" },
                       ]).map((m) => {
-                        const cur = migrateFill(firstSelected.fill).type;
+                        const cur = mf.type;
                         const active = cur === m.id;
                         return (
                           <button
                             key={m.id}
                             type="button"
-                            className={`flex-1 py-1 text-[8px] font-bold uppercase tracking-wide rounded ${active ? "bg-violet-600 text-white" : "text-zinc-500 hover:text-zinc-300"}`}
+                            className={`flex-1 rounded-[5px] border px-2 py-1 text-[12px] transition-colors ${active ? "border-[#534AB7] bg-[#534AB7] text-white" : "border-white/[0.08] bg-transparent text-zinc-400 hover:text-zinc-200"}`}
                             onClick={() => {
                               if (m.id === "solid") {
-                                const prev = migrateFill(firstSelected.fill);
+                                const prev = mf;
                                 const c = prev.type === "solid" ? prev.color : "#6366f1";
                                 updateSelectedFill(() => solidFill(c));
                                 setFillColor(c === "none" ? "#6366f1" : c);
@@ -4420,43 +6449,64 @@ export default function FreehandStudio({
                         );
                       })}
                     </div>
-                    {migrateFill(firstSelected.fill).type === "solid" && (() => {
-                      const sf = migrateFill(firstSelected.fill);
-                      const solidHex = sf.type === "solid" && sf.color !== "none" ? sf.color : "#000000";
+                    {mf.type === "solid" && (() => {
+                      const sf = mf;
+                      const solidHex = sf.color !== "none" ? sf.color : "#000000";
                       return (
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-1.5">
                         <input
-                          type="color"
-                          value={solidHex}
-                          onChange={(e) => {
-                            updateSelectedFill(() => solidFill(e.target.value));
-                            setFillColor(e.target.value);
+                          key={solidHex}
+                          type="text"
+                          defaultValue={solidHex}
+                          disabled={noFill}
+                          spellCheck={false}
+                          onBlur={(e) => {
+                            const v = e.currentTarget.value.trim();
+                            if (/^#[0-9A-Fa-f]{6}$/.test(v)) {
+                              updateSelectedFill(() => solidFill(v));
+                              setFillColor(v);
+                            } else {
+                              e.currentTarget.value = solidHex;
+                            }
                           }}
-                          className="w-7 h-7 rounded cursor-pointer border border-white/20 bg-transparent"
+                          className={`min-w-0 flex-1 rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 font-mono text-[12px] text-zinc-100 ${noFill ? "cursor-not-allowed opacity-40" : ""}`}
                         />
-                        <button type="button" className="text-[8px] text-zinc-500 hover:text-white" title="No fill"
-                          onClick={() => updateSelectedFill(() => solidFill("none"))}>✕</button>
+                        <span
+                          className="min-w-[44px] shrink-0 rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 text-center text-[12px] text-zinc-300"
+                          title="Opacidad global del objeto"
+                        >
+                          {Math.round(firstSelected.opacity * 100)}%
+                        </span>
                       </div>
                       );
                     })()}
-                    {migrateFill(firstSelected.fill).type === "gradient-linear" && (() => {
-                      const gf = migrateFill(firstSelected.fill) as Extract<FillAppearance, { type: "gradient-linear" }>;
+                    {mf.type === "gradient-linear" && (() => {
+                      const gf = mf as Extract<FillAppearance, { type: "gradient-linear" }>;
                       const ang = Math.round(angleFromLinearGradient(gf));
                       return (
                         <div className="space-y-2">
                           <div className="flex items-center justify-between gap-2">
-                            <span className="text-[8px] text-zinc-500">Angle</span>
-                            <input
-                              type="number"
+                            <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Angle</span>
+                            <ScrubNumberInput
                               value={ang}
-                              onChange={(e) => {
-                                const deg = Number(e.target.value) || 0;
-                                const xy = linearGradientFromAngle(deg);
+                              onKeyboardCommit={(deg) => {
+                                const d = Number(deg) || 0;
+                                const xy = linearGradientFromAngle(d);
                                 updateSelectedFill((f) =>
                                   f.type === "gradient-linear" ? { ...f, ...xy, stops: f.stops.map((s) => ({ ...s })) } : f,
                                 );
                               }}
-                              className="w-16 bg-white/5 border border-white/10 rounded px-1 py-0.5 text-[10px] text-white font-mono"
+                              onScrubLive={(deg) => {
+                                const d = Number(deg) || 0;
+                                const xy = linearGradientFromAngle(d);
+                                updateSelectedFillSilent((f) =>
+                                  f.type === "gradient-linear" ? { ...f, ...xy, stops: f.stops.map((s) => ({ ...s })) } : f,
+                                );
+                              }}
+                              onScrubEnd={commitHistoryAfterScrub}
+                              step={1}
+                              title="Arrastra horizontalmente · Mayús = ×10"
+                              className="w-16 cursor-ew-resize rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 font-mono text-[12px] text-zinc-100"
                             />
                           </div>
                           <div className="h-3 rounded-full border border-white/10 relative overflow-hidden"
@@ -4464,14 +6514,14 @@ export default function FreehandStudio({
                               background: `linear-gradient(90deg, ${gf.stops.map((s) => `rgba(${parseInt(s.color.slice(1, 3), 16)},${parseInt(s.color.slice(3, 5), 16)},${parseInt(s.color.slice(5, 7), 16)},${s.opacity}) ${s.position}%`).join(",")})`,
                             }}
                           />
-                          <div className="flex flex-wrap gap-1">
-                            <button type="button" className="text-[8px] px-2 py-0.5 rounded bg-white/10 hover:bg-white/20" onClick={() => updateSelectedFill((f) => (f.type === "gradient-linear" ? { ...f, stops: addMidStop(f.stops) } : f))}>+ Stop</button>
-                            <button type="button" className="text-[8px] px-2 py-0.5 rounded bg-white/10 hover:bg-white/20" onClick={() => updateSelectedFill((f) => (f.type === "gradient-linear" ? { ...f, stops: reverseGradientStops(f.stops) } : f))}>Reverse</button>
+                          <div className="flex flex-wrap gap-1.5">
+                            <button type="button" className="rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 text-[10px] text-zinc-300 hover:bg-white/10" onClick={() => updateSelectedFill((f) => (f.type === "gradient-linear" ? { ...f, stops: addMidStop(f.stops) } : f))}>+ Stop</button>
+                            <button type="button" className="rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 text-[10px] text-zinc-300 hover:bg-white/10" onClick={() => updateSelectedFill((f) => (f.type === "gradient-linear" ? { ...f, stops: reverseGradientStops(f.stops) } : f))}>Reverse</button>
                           </div>
                           <div className="space-y-1 max-h-28 overflow-y-auto">
                             {gf.stops.map((s, si) => (
                               <div key={si} className="flex items-center gap-1">
-                                <input type="color" value={s.color} className="w-6 h-6 rounded border border-white/20"
+                                <input type="color" value={s.color} className="h-6 w-6 shrink-0 rounded-[5px] border border-white/[0.08]"
                                   onChange={(e) => {
                                     const c = e.target.value;
                                     updateSelectedFill((f) => {
@@ -4489,15 +6539,30 @@ export default function FreehandStudio({
                                       return { ...f, stops };
                                     });
                                   }} />
-                                <input type="number" value={s.position} className="w-10 bg-white/5 border border-white/10 rounded px-1 text-[9px] text-white"
-                                  onChange={(e) => {
-                                    const p = Number(e.target.value);
+                                <ScrubNumberInput
+                                  value={s.position}
+                                  onKeyboardCommit={(p) => {
                                     updateSelectedFill((f) => {
                                       if (f.type !== "gradient-linear") return f;
                                       const stops = f.stops.map((st, j) => (j === si ? { ...st, position: clamp(p, 0, 100) } : st));
                                       return { ...f, stops };
                                     });
-                                  }} />
+                                  }}
+                                  onScrubLive={(p) => {
+                                    updateSelectedFillSilent((f) => {
+                                      if (f.type !== "gradient-linear") return f;
+                                      const stops = f.stops.map((st, j) => (j === si ? { ...st, position: clamp(p, 0, 100) } : st));
+                                      return { ...f, stops };
+                                    });
+                                  }}
+                                  onScrubEnd={commitHistoryAfterScrub}
+                                  step={1}
+                                  roundFn={(n) => clamp(Math.round(n), 0, 100)}
+                                  min={0}
+                                  max={100}
+                                  title="Arrastra horizontalmente · Mayús = ×10"
+                                  className="w-10 cursor-ew-resize rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 text-[12px] text-zinc-100"
+                                />
                                 <button type="button" className="text-zinc-500 text-[8px]" disabled={gf.stops.length <= 2}
                                   onClick={() => updateSelectedFill((f) => {
                                     if (f.type !== "gradient-linear" || f.stops.length <= 2) return f;
@@ -4509,33 +6574,33 @@ export default function FreehandStudio({
                         </div>
                       );
                     })()}
-                    {migrateFill(firstSelected.fill).type === "gradient-radial" && (() => {
-                      const gf = migrateFill(firstSelected.fill) as Extract<FillAppearance, { type: "gradient-radial" }>;
+                    {mf.type === "gradient-radial" && (() => {
+                      const gf = mf as Extract<FillAppearance, { type: "gradient-radial" }>;
                       return (
                         <div className="space-y-2">
                           <div className="flex items-center justify-between gap-2">
-                            <span className="text-[8px] text-zinc-500">Radius</span>
-                            <input
-                              type="number"
+                            <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Radius</span>
+                            <ScrubNumberInput
                               value={Math.round(gf.r * 100) / 100}
+                              onKeyboardCommit={(r) => updateSelectedFill((f) => (f.type === "gradient-radial" ? { ...f, r: clamp(r, 0.02, 2) } : f))}
+                              onScrubLive={(r) => updateSelectedFillSilent((f) => (f.type === "gradient-radial" ? { ...f, r: clamp(r, 0.02, 2) } : f))}
+                              onScrubEnd={commitHistoryAfterScrub}
                               step={0.02}
+                              roundFn={(n) => Math.round(clamp(n, 0.02, 2) * 100) / 100}
                               min={0.02}
                               max={2}
-                              onChange={(e) => {
-                                const r = Number(e.target.value);
-                                updateSelectedFill((f) => (f.type === "gradient-radial" ? { ...f, r: clamp(r, 0.02, 2) } : f));
-                              }}
-                              className="w-16 bg-white/5 border border-white/10 rounded px-1 py-0.5 text-[10px] text-white font-mono"
+                              title="Arrastra horizontalmente · Mayús = ×10"
+                              className="w-16 cursor-ew-resize rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 font-mono text-[12px] text-zinc-100"
                             />
                           </div>
                           <div className="h-3 rounded-full border border-white/10" style={{ background: `radial-gradient(circle, ${gf.stops.map((s) => `${s.color} ${s.position}%`).join(",")})` }} />
-                          <div className="flex flex-wrap gap-1">
-                            <button type="button" className="text-[8px] px-2 py-0.5 rounded bg-white/10 hover:bg-white/20" onClick={() => updateSelectedFill((f) => (f.type === "gradient-radial" ? { ...f, stops: addMidStop(f.stops) } : f))}>+ Stop</button>
-                            <button type="button" className="text-[8px] px-2 py-0.5 rounded bg-white/10 hover:bg-white/20" onClick={() => updateSelectedFill((f) => (f.type === "gradient-radial" ? { ...f, stops: reverseGradientStops(f.stops) } : f))}>Reverse</button>
+                          <div className="flex flex-wrap gap-1.5">
+                            <button type="button" className="rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 text-[10px] text-zinc-300 hover:bg-white/10" onClick={() => updateSelectedFill((f) => (f.type === "gradient-radial" ? { ...f, stops: addMidStop(f.stops) } : f))}>+ Stop</button>
+                            <button type="button" className="rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 text-[10px] text-zinc-300 hover:bg-white/10" onClick={() => updateSelectedFill((f) => (f.type === "gradient-radial" ? { ...f, stops: reverseGradientStops(f.stops) } : f))}>Reverse</button>
                           </div>
                           {gf.stops.map((s, si) => (
                             <div key={si} className="flex items-center gap-1">
-                              <input type="color" value={s.color} className="w-6 h-6 rounded border border-white/20"
+                              <input type="color" value={s.color} className="h-6 w-6 shrink-0 rounded-[5px] border border-white/[0.08]"
                                 onChange={(e) => {
                                   const c = e.target.value;
                                   updateSelectedFill((f) => {
@@ -4553,155 +6618,725 @@ export default function FreehandStudio({
                                     return { ...f, stops };
                                   });
                                 }} />
-                              <input type="number" value={s.position} className="w-10 bg-white/5 border border-white/10 rounded px-1 text-[9px]"
-                                onChange={(e) => {
-                                  const p = Number(e.target.value);
+                              <ScrubNumberInput
+                                value={s.position}
+                                onKeyboardCommit={(p) => {
                                   updateSelectedFill((f) => {
                                     if (f.type !== "gradient-radial") return f;
                                     const stops = f.stops.map((st, j) => (j === si ? { ...st, position: clamp(p, 0, 100) } : st));
                                     return { ...f, stops };
                                   });
-                                }} />
+                                }}
+                                onScrubLive={(p) => {
+                                  updateSelectedFillSilent((f) => {
+                                    if (f.type !== "gradient-radial") return f;
+                                    const stops = f.stops.map((st, j) => (j === si ? { ...st, position: clamp(p, 0, 100) } : st));
+                                    return { ...f, stops };
+                                  });
+                                }}
+                                onScrubEnd={commitHistoryAfterScrub}
+                                step={1}
+                                roundFn={(n) => clamp(Math.round(n), 0, 100)}
+                                min={0}
+                                max={100}
+                                title="Arrastra horizontalmente · Mayús = ×10"
+                                className="w-10 cursor-ew-resize rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 text-[12px] text-zinc-100"
+                              />
                             </div>
                           ))}
                         </div>
                       );
                     })()}
-                    {activeTool === "gradient" && !supportsGradientFill(firstSelected) && (
-                      <p className="text-[9px] text-amber-400/90">Select a closed shape to edit gradient on canvas.</p>
-                    )}
+                    {(() => {
+                      const ft = mf.type;
+                      const isGrad = ft === "gradient-linear" || ft === "gradient-radial";
+                      return isGrad && !supportsGradientFill(firstSelected) ? (
+                        <p className="text-[9px] text-amber-400/90">This layer cannot use on-canvas gradient handles; adjust gradient in the panel or pick another shape.</p>
+                      ) : null;
+                    })()}
+                    </>
+                    ) : null}
                   </div>
+                    );
+                  })()
                 )}
+                </div>
 
-                {/* Stroke */}
-                <div className="space-y-1">
-                  <label className="text-[9px] text-zinc-500 uppercase tracking-wider">Stroke</label>
-                  <div className="flex items-center gap-2">
-                    <input type="color" value={firstSelected.stroke === "none" ? "#000000" : firstSelected.stroke}
-                      onChange={(e) => { updateSelectedProp("stroke", e.target.value); setStrokeColor(e.target.value); }}
-                      className="w-7 h-7 rounded cursor-pointer border border-white/20 bg-transparent" />
-                    <input type="number" value={firstSelected.strokeWidth}
-                      onChange={(e) => updateSelectedProp("strokeWidth", Number(e.target.value))}
-                      className="w-14 bg-white/5 border border-white/10 rounded px-2 py-1 text-[10px] text-white font-mono" min={0} max={50} step={0.5} />
+                {/* Stroke — swatches; opciones al elegir color */}
+                {(() => {
+                  const noStroke = firstSelected.stroke === "none";
+                  return (
+                <div className={`border-b border-white/[0.08] py-3 px-[14px] ${noStroke ? "space-y-0" : "space-y-2.5"}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Stroke</span>
+                    <div className="flex flex-col items-end gap-1">
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          title="Sin trazo (ningún borde)"
+                          aria-label="Sin trazo"
+                          aria-pressed={noStroke}
+                          onClick={() => updateSelectedProp("stroke", "none")}
+                          className={`relative h-[22px] w-[22px] shrink-0 overflow-hidden rounded-[5px] border bg-[#2a2d33] transition-colors ${
+                            noStroke
+                              ? "border-[#534AB7] ring-1 ring-[#534AB7]/40"
+                              : "border-white/[0.08] hover:bg-white/[0.06]"
+                          }`}
+                        >
+                          <svg
+                            width="22"
+                            height="22"
+                            viewBox="0 0 22 22"
+                            className="pointer-events-none absolute inset-0 text-red-500"
+                            aria-hidden
+                          >
+                            <line x1="4" y1="18" x2="18" y2="4" stroke="currentColor" strokeWidth="1.35" strokeLinecap="square" />
+                          </svg>
+                        </button>
+                        <input
+                          type="color"
+                          value={noStroke ? "#000000" : firstSelected.stroke}
+                          onChange={(e) => {
+                            const c = e.target.value;
+                            updateSelectedProp("stroke", c);
+                            setStrokeColor(c);
+                          }}
+                          className="h-[22px] w-[22px] shrink-0 cursor-pointer rounded-[5px] border border-white/[0.08] bg-transparent"
+                          title="Elige un color para activar el trazo de nuevo"
+                        />
+                      </div>
+                    </div>
                   </div>
-                  {/* Stroke cap / join — icon toggles */}
-                  <div className="flex flex-col gap-1.5 pt-1">
-                    <div className="flex items-center gap-1" title="Line cap">
+                  {!noStroke ? (
+                    <>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="w-14 shrink-0 text-[10px] text-zinc-500 uppercase tracking-wider">Weight</span>
+                    <ScrubNumberInput
+                      value={firstSelected.strokeWidth}
+                      onKeyboardCommit={(n) => updateSelectedProp("strokeWidth", clamp(n, 0, 50))}
+                      onScrubLive={(n) => updateSelectedPropSilent("strokeWidth", clamp(n, 0, 50))}
+                      onScrubEnd={commitHistoryAfterScrub}
+                      step={0.5}
+                      roundFn={(n) => Math.round(clamp(n, 0, 50) * 2) / 2}
+                      min={0}
+                      max={50}
+                      title="Arrastra horizontalmente · Mayús = ×10"
+                      className="min-w-[3rem] flex-1 cursor-ew-resize rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 font-mono text-[12px] text-zinc-100"
+                    />
+                    <div className="flex items-center gap-1.5" title="Cap">
                       {([
-                        { v: "butt" as const, Icon: Minus, label: "Butt" },
-                        { v: "round" as const, Icon: Circle, label: "Round" },
-                        { v: "square" as const, Icon: RectangleHorizontal, label: "Square" },
+                        { v: "butt" as const, Icon: Minus, label: "Butt cap" },
+                        { v: "round" as const, Icon: Circle, label: "Round cap" },
+                        { v: "square" as const, Icon: RectangleHorizontal, label: "Square cap" },
                       ]).map(({ v, Icon, label }) => (
-                        <button key={v} type="button" title={label}
-                          onClick={() => { updateSelectedProp("strokeLinecap", v); setStrokeLinecap(v); }}
-                          className={`p-1.5 rounded border transition-colors ${firstSelected.strokeLinecap === v ? "bg-violet-600/40 border-violet-400 text-white" : "bg-white/5 border-white/10 text-zinc-500 hover:text-white"}`}>
-                          <Icon size={14} strokeWidth={2} />
+                        <button
+                          key={v}
+                          type="button"
+                          title={label}
+                          onClick={() => {
+                            updateSelectedProp("strokeLinecap", v);
+                            setStrokeLinecap(v);
+                          }}
+                          className={`rounded-[5px] border p-1.5 transition-colors ${firstSelected.strokeLinecap === v ? "border-[#534AB7] bg-[#534AB7] text-white" : "border-white/[0.08] bg-transparent text-zinc-400 hover:text-zinc-200"}`}
+                        >
+                          <Icon size={13} strokeWidth={2} />
                         </button>
                       ))}
                     </div>
-                    <div className="flex items-center gap-1" title="Line join">
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="w-14 shrink-0 text-[10px] text-zinc-500 uppercase tracking-wider">Join</span>
+                    <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-1.5" title="Join">
                       {([
-                        { v: "miter" as const, Icon: Triangle, label: "Miter" },
-                        { v: "round" as const, Icon: Circle, label: "Round" },
-                        { v: "bevel" as const, Icon: Diamond, label: "Bevel" },
+                        { v: "miter" as const, Icon: Triangle, label: "Miter join" },
+                        { v: "round" as const, Icon: Circle, label: "Round join" },
+                        { v: "bevel" as const, Icon: Diamond, label: "Bevel join" },
                       ]).map(({ v, Icon, label }) => (
-                        <button key={v} type="button" title={label}
-                          onClick={() => { updateSelectedProp("strokeLinejoin", v); setStrokeLinejoin(v); }}
-                          className={`p-1.5 rounded border transition-colors ${firstSelected.strokeLinejoin === v ? "bg-violet-600/40 border-violet-400 text-white" : "bg-white/5 border-white/10 text-zinc-500 hover:text-white"}`}>
-                          <Icon size={14} strokeWidth={2} />
+                        <button
+                          key={v}
+                          type="button"
+                          title={label}
+                          onClick={() => {
+                            updateSelectedProp("strokeLinejoin", v);
+                            setStrokeLinejoin(v);
+                          }}
+                          className={`rounded-[5px] border p-1.5 transition-colors ${firstSelected.strokeLinejoin === v ? "border-[#534AB7] bg-[#534AB7] text-white" : "border-white/[0.08] bg-transparent text-zinc-400 hover:text-zinc-200"}`}
+                        >
+                          <Icon size={13} strokeWidth={2} />
                         </button>
                       ))}
                     </div>
-                    <input type="text" value={firstSelected.strokeDasharray ?? ""} placeholder="Dash e.g. 8 4"
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="w-14 shrink-0 text-[10px] text-zinc-500 uppercase tracking-wider">Dash</span>
+                    <input
+                      type="text"
+                      value={firstSelected.strokeDasharray ?? ""}
+                      placeholder="—"
                       onChange={(e) => {
                         const v = e.target.value.replace(/,/g, " ");
                         updateSelectedProp("strokeDasharray", v);
                         setStrokeDasharray(v);
                       }}
-                      className="w-full bg-white/5 border border-white/10 rounded px-1.5 py-1 text-[9px] text-white font-mono" title="Guiones: números separados por espacio (ej. 8 4)" />
+                      className="min-w-0 flex-1 rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 font-mono text-[12px] text-zinc-100"
+                      title="Dash gap (e.g. 8 4)"
+                    />
                   </div>
-                </div>
-
-                {/* Opacity */}
-                <div className="space-y-1">
-                  <label className="text-[9px] text-zinc-500 uppercase tracking-wider">Opacity</label>
-                  <input type="range" min={0} max={1} step={0.01} value={firstSelected.opacity}
-                    onChange={(e) => updateSelectedProp("opacity", Number(e.target.value))}
-                    className="w-full accent-violet-500" />
-                </div>
-
-                {/* Dimensions */}
-                <div className="grid grid-cols-2 gap-1.5">
-                  {(["x", "y", "width", "height"] as const).map((key) => (
-                    <div key={key} className="space-y-0.5">
-                      <label className="text-[8px] text-zinc-600 uppercase">{key.charAt(0).toUpperCase()}</label>
-                      <input type="number" value={Math.round(firstSelected[key])}
-                        onChange={(e) => updateSelectedProp(key, Number(e.target.value))}
-                        className="w-full bg-white/5 border border-white/10 rounded px-1.5 py-0.5 text-[10px] text-white font-mono" />
+                  {firstSelected.type === "text" && firstSelected.strokeWidth > 0 ? (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="w-14 shrink-0 text-[10px] text-zinc-500 uppercase tracking-wider">Posición</span>
+                      <div className="flex flex-1 gap-1.5">
+                        {([
+                          { id: "over" as const, label: "Encima" },
+                          { id: "under" as const, label: "Debajo" },
+                        ]).map((p) => {
+                          const tx = firstSelected as TextObject;
+                          const cur = tx.strokePosition ?? "over";
+                          const active = cur === p.id;
+                          return (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={() => updateSelectedProp("strokePosition", p.id)}
+                              className={`flex-1 rounded-[5px] border px-2 py-1 text-[11px] transition-colors ${active ? "border-[#534AB7] bg-[#534AB7] text-white" : "border-white/[0.08] bg-transparent text-zinc-400 hover:text-zinc-200"}`}
+                            >
+                              {p.label}
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
-                  ))}
+                  ) : null}
+                    </>
+                  ) : null}
                 </div>
+                  );
+                })()}
 
-                {/* Rotation */}
-                <div className="space-y-1">
-                  <label className="text-[9px] text-zinc-500 uppercase tracking-wider">Rotation (°)</label>
-                  <input type="number" value={Math.round(firstSelected.rotation * 1000) / 1000}
-                    onChange={(e) => updateSelectedProp("rotation", Number(e.target.value))}
-                    className="w-full bg-white/5 border border-white/10 rounded px-2 py-1 text-[10px] text-white font-mono" step={0.1} />
-                </div>
+                <div className="space-y-2.5 px-[14px] pb-3 pt-1">
 
                 {firstSelected.type === "text" && (() => {
                   const tx = firstSelected as TextObject;
+                  const primaryFamily = tx.fontFamily.split(",")[0].replace(/['"]/g, "").trim();
+                  const feaMap = parseOpenTypeFeatureMap(tx.fontFeatureSettings);
+                  const activeOtTags = OPEN_TYPE_PANEL_TAGS.filter((t) => feaMap.get(t) === 1);
+                  const activosLine = activeOtTags.length > 0 ? activeOtTags.join(", ") : "—";
+                  const inp =
+                    "w-full cursor-ew-resize rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 font-mono text-[12px] text-zinc-100";
+                  const lbl = "text-[10px] text-zinc-500 uppercase tracking-wider";
+                  const pillOn = "border-[#534AB7] bg-[#534AB7] text-white";
+                  const pillOff = "border-white/[0.08] bg-transparent text-zinc-400 hover:text-zinc-200";
                   return (
-                    <div className="space-y-2 pt-2 border-t border-white/10">
-                      <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">Typography</div>
-                      <input type="text" value={tx.fontFamily}
+                    <div className="-mx-[14px] space-y-3 border-b border-white/[0.08] px-[14px] py-3">
+                      <div className={lbl}>Typography</div>
+                      <div className="flex gap-1.5">
+                        <select
+                          value={GOOGLE_FONTS_POPULAR.some((g) => g.family === primaryFamily) ? primaryFamily : ""}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            if (!v) return;
+                            updateSelectedProp("fontFamily", `${v}, system-ui, sans-serif`);
+                          }}
+                          className="min-w-0 flex-1 rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1.5 text-[12px] text-zinc-100"
+                        >
+                          <option value="">— Font —</option>
+                          {GOOGLE_FONTS_POPULAR.map((g) => (
+                            <option key={g.family} value={g.family}>
+                              {g.family} ({g.category})
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          title="Import .ttf / .otf"
+                          onClick={() => customFontInputRef.current?.click()}
+                          className="shrink-0 rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1.5 font-mono text-[11px] text-zinc-300"
+                        >
+                          .TTF
+                        </button>
+                        <input
+                          ref={customFontInputRef}
+                          type="file"
+                          accept=".ttf,.otf,.woff,.woff2"
+                          className="hidden"
+                          onChange={async (e) => {
+                            const f = e.target.files?.[0];
+                            if (!f) return;
+                            try {
+                              const buf = await f.arrayBuffer();
+                              const face = new FontFace(f.name.replace(/\.[^.]+$/, ""), buf);
+                              await face.load();
+                              document.fonts.add(face);
+                              updateSelectedProp("fontFamily", `"${face.family}", system-ui, sans-serif`);
+                              setToast(`Font loaded: ${face.family}`);
+                              setTimeout(() => setToast(null), 2500);
+                            } catch {
+                              setToast("Could not load font file");
+                              setTimeout(() => setToast(null), 2500);
+                            }
+                            e.target.value = "";
+                          }}
+                        />
+                      </div>
+                      <input
+                        type="text"
+                        value={tx.fontFamily}
                         onChange={(e) => updateSelectedProp("fontFamily", e.target.value)}
-                        className="w-full bg-white/5 border border-white/10 rounded px-2 py-1 text-[10px] text-white" placeholder="Font family" />
-                      <div className="grid grid-cols-2 gap-1.5">
+                        spellCheck={false}
+                        className="w-full rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 font-mono text-[12px] text-zinc-100"
+                        placeholder="Inter, system-ui, sans-serif"
+                      />
+                      <div className="grid grid-cols-3 gap-1.5">
                         <div className="space-y-0.5">
-                          <label className="text-[8px] text-zinc-600">Size</label>
-                          <input type="number" value={tx.fontSize} min={4} max={400}
-                            onChange={(e) => updateSelectedProp("fontSize", Number(e.target.value))}
-                            className="w-full bg-white/5 border border-white/10 rounded px-1.5 py-0.5 text-[10px] text-white font-mono" />
+                          <label className={lbl}>Size</label>
+                          <ScrubNumberInput
+                            value={tx.fontSize}
+                            onKeyboardCommit={(n) => updateSelectedProp("fontSize", clamp(Math.round(n), 4, 400))}
+                            onScrubLive={(n) => updateSelectedPropSilent("fontSize", clamp(Math.round(n), 4, 400))}
+                            onScrubEnd={commitHistoryAfterScrub}
+                            step={1}
+                            roundFn={(n) => clamp(Math.round(n), 4, 400)}
+                            min={4}
+                            max={400}
+                            title="Arrastra horizontalmente · Mayús = ×10"
+                            className={inp}
+                          />
                         </div>
                         <div className="space-y-0.5">
-                          <label className="text-[8px] text-zinc-600">Weight</label>
-                          <input type="number" value={tx.fontWeight} min={100} max={900} step={100}
-                            onChange={(e) => updateSelectedProp("fontWeight", Number(e.target.value))}
-                            className="w-full bg-white/5 border border-white/10 rounded px-1.5 py-0.5 text-[10px] text-white font-mono" />
+                          <label className={lbl}>Weight</label>
+                          <ScrubNumberInput
+                            value={tx.fontWeight}
+                            onKeyboardCommit={(n) => updateSelectedProp("fontWeight", clamp(Math.round(n), 100, 900))}
+                            onScrubLive={(n) => updateSelectedPropSilent("fontWeight", clamp(Math.round(n), 100, 900))}
+                            onScrubEnd={commitHistoryAfterScrub}
+                            step={1}
+                            roundFn={(n) => clamp(Math.round(n), 100, 900)}
+                            min={100}
+                            max={900}
+                            title="Arrastra horizontalmente · Mayús = ×10"
+                            className={inp}
+                          />
+                        </div>
+                        <div className="space-y-0.5">
+                          <label className={lbl}>Leading</label>
+                          <ScrubNumberInput
+                            value={tx.lineHeight}
+                            onKeyboardCommit={(n) => updateSelectedProp("lineHeight", clamp(Math.round(n * 100) / 100, 0.5, 4))}
+                            onScrubLive={(n) => updateSelectedPropSilent("lineHeight", clamp(Math.round(n * 100) / 100, 0.5, 4))}
+                            onScrubEnd={commitHistoryAfterScrub}
+                            step={0.05}
+                            roundFn={(n) => Math.round(clamp(n, 0.5, 4) * 100) / 100}
+                            min={0.5}
+                            max={4}
+                            title="Arrastra horizontalmente · Mayús = ×10"
+                            className={inp}
+                          />
                         </div>
                       </div>
                       <div className="grid grid-cols-2 gap-1.5">
                         <div className="space-y-0.5">
-                          <label className="text-[8px] text-zinc-600">Line height</label>
-                          <input type="number" value={tx.lineHeight} min={0.5} max={4} step={0.05}
-                            onChange={(e) => updateSelectedProp("lineHeight", Number(e.target.value))}
-                            className="w-full bg-white/5 border border-white/10 rounded px-1.5 py-0.5 text-[10px] text-white font-mono" />
+                          <label className={lbl}>Tracking</label>
+                          <ScrubNumberInput
+                            value={tx.letterSpacing}
+                            onKeyboardCommit={(n) => updateSelectedProp("letterSpacing", Math.round(n * 100) / 100)}
+                            onScrubLive={(n) => updateSelectedPropSilent("letterSpacing", Math.round(n * 100) / 100)}
+                            onScrubEnd={commitHistoryAfterScrub}
+                            step={0.05}
+                            roundFn={(n) => Math.round(n * 100) / 100}
+                            title="Arrastra horizontalmente · Mayús = ×10"
+                            className={inp}
+                          />
                         </div>
                         <div className="space-y-0.5">
-                          <label className="text-[8px] text-zinc-600">Tracking</label>
-                          <input type="number" value={tx.letterSpacing} step={0.1}
-                            onChange={(e) => updateSelectedProp("letterSpacing", Number(e.target.value))}
-                            className="w-full bg-white/5 border border-white/10 rounded px-1.5 py-0.5 text-[10px] text-white font-mono" />
+                          <label className={lbl}>Indent</label>
+                          <ScrubNumberInput
+                            value={tx.paragraphIndent ?? 0}
+                            onKeyboardCommit={(n) => updateSelectedProp("paragraphIndent", clamp(Math.round(n), 0, 200))}
+                            onScrubLive={(n) => updateSelectedPropSilent("paragraphIndent", clamp(Math.round(n), 0, 200))}
+                            onScrubEnd={commitHistoryAfterScrub}
+                            step={1}
+                            roundFn={(n) => clamp(Math.round(n), 0, 200)}
+                            min={0}
+                            max={200}
+                            title="Arrastra horizontalmente · Mayús = ×10"
+                            className={inp}
+                          />
                         </div>
                       </div>
-                      <div className="flex gap-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className={lbl}>Kerning</span>
+                        <select
+                          value={tx.fontKerning ?? "auto"}
+                          onChange={(e) => updateSelectedProp("fontKerning", e.target.value as "auto" | "none")}
+                          className="min-w-[7rem] rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 text-[12px] text-zinc-100"
+                        >
+                          <option value="auto">Auto</option>
+                          <option value="none">None</option>
+                        </select>
+                      </div>
+                      <div className="flex gap-1.5">
                         {(["left", "center", "right", "justify"] as const).map((al) => (
-                          <button key={al} type="button"
+                          <button
+                            key={al}
+                            type="button"
                             onClick={() => updateSelectedProp("textAlign", al)}
-                            className={`flex-1 py-1 rounded text-[8px] font-bold uppercase ${tx.textAlign === al ? "bg-violet-600/50 text-white" : "bg-white/5 text-zinc-500 hover:text-white"}`}>
-                            {al.slice(0, 3)}
+                            className={`flex-1 rounded-[5px] border py-1 text-[11px] font-bold uppercase transition-colors ${tx.textAlign === al ? pillOn : pillOff}`}
+                          >
+                            {al === "left" ? "LEF" : al === "center" ? "CEN" : al === "right" ? "RIG" : "JUS"}
                           </button>
                         ))}
                       </div>
-                      <p className="text-[8px] text-zinc-500">Double-click text on canvas to edit. Esc exits edit.</p>
-                      <button type="button"
-                        onClick={() => { if (window.confirm("Convert to outlines will make text non-editable. Continue?")) void convertTextToOutlines(); }}
-                        className="w-full py-1.5 rounded-lg bg-white/5 border border-white/10 text-[9px] font-bold uppercase tracking-wider text-zinc-300 hover:bg-white/10 hover:text-white transition-colors">
+                      <div className="flex gap-1.5">
+                        <button
+                          type="button"
+                          title="Small caps"
+                          onClick={() =>
+                            updateSelectedProp("fontVariantCaps", tx.fontVariantCaps === "small-caps" ? "normal" : "small-caps")
+                          }
+                          className={`flex-1 rounded-[5px] border py-1 text-[12px] font-semibold transition-colors ${tx.fontVariantCaps === "small-caps" ? pillOn : pillOff}`}
+                        >
+                          Aa
+                        </button>
+                        <button
+                          type="button"
+                          title="Bold"
+                          onClick={() => updateSelectedProp("fontWeight", tx.fontWeight >= 600 ? 400 : 700)}
+                          className={`flex-1 rounded-[5px] border py-1 text-[12px] font-bold transition-colors ${tx.fontWeight >= 600 ? pillOn : pillOff}`}
+                        >
+                          B
+                        </button>
+                        <button
+                          type="button"
+                          title="Italic"
+                          onClick={() =>
+                            updateSelectedProp("fontStyle", tx.fontStyle === "italic" ? "normal" : "italic")
+                          }
+                          className={`flex-1 rounded-[5px] border py-1 text-[12px] italic transition-colors ${tx.fontStyle === "italic" ? pillOn : pillOff}`}
+                        >
+                          I
+                        </button>
+                        <button
+                          type="button"
+                          title="Underline"
+                          onClick={() => updateSelectedProp("textUnderline", !tx.textUnderline)}
+                          className={`flex-1 rounded-[5px] border py-1 text-[12px] transition-colors ${tx.textUnderline ? pillOn : pillOff}`}
+                        >
+                          U
+                        </button>
+                        <button
+                          type="button"
+                          title="Strikethrough"
+                          onClick={() => updateSelectedProp("textStrikethrough", !tx.textStrikethrough)}
+                          className={`flex-1 rounded-[5px] border py-1 text-[12px] transition-colors ${tx.textStrikethrough ? pillOn : pillOff}`}
+                        >
+                          S
+                        </button>
+                      </div>
+                      <div className="space-y-2 pt-1">
+                        <div className={lbl}>OpenType</div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {OPEN_TYPE_PANEL_TAGS.map((tag) => {
+                            const on = feaMap.get(tag) === 1;
+                            return (
+                              <button
+                                key={tag}
+                                type="button"
+                                onClick={() => {
+                                  const next = parseOpenTypeFeatureMap(tx.fontFeatureSettings);
+                                  if (next.get(tag) === 1) next.delete(tag);
+                                  else next.set(tag, 1);
+                                  updateSelectedProp("fontFeatureSettings", stringifyOpenTypeFeatureMap(next));
+                                }}
+                                className={`rounded-[5px] border px-2 py-1 font-mono text-[11px] transition-colors ${on ? pillOn : "border-white/[0.08] bg-white/[0.06] text-zinc-400 hover:text-zinc-200"}`}
+                              >
+                                {tag}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <p className="text-[10px] text-zinc-500">
+                          Activos: {activosLine}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (window.confirm("Convert to outlines will make text non-editable. Continue?")) void convertTextToOutlines();
+                        }}
+                        className="w-full rounded-[5px] border border-white/[0.08] bg-white/[0.06] py-2 text-[12px] font-medium text-zinc-200 transition-colors hover:bg-white/[0.1]"
+                      >
                         Convert to outlines
                       </button>
                     </div>
+                  );
+                })()}
+
+                {firstSelected.type === "textOnPath" && (() => {
+                  const top = firstSelected as TextOnPathObject;
+                  const primaryFamily = top.fontFamily.split(",")[0].replace(/['"]/g, "").trim();
+                  return (
+                    <>
+                      <div className="space-y-2 border-t border-white/10 pt-2">
+                        <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">Typography</div>
+                        <label className="text-[8px] text-zinc-500">Google Fonts</label>
+                        <select
+                          value={GOOGLE_FONTS_POPULAR.some((g) => g.family === primaryFamily) ? primaryFamily : ""}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            if (!v) return;
+                            updateSelectedProp("fontFamily", `${v}, system-ui, sans-serif`);
+                          }}
+                          className="w-full rounded border border-white/10 bg-white/5 px-2 py-1.5 text-[10px] text-white"
+                        >
+                          <option value="">— Elegir fuente —</option>
+                          {GOOGLE_FONTS_POPULAR.map((g) => (
+                            <option key={g.family} value={g.family}>{g.family} ({g.category})</option>
+                          ))}
+                        </select>
+                        <input
+                          type="text"
+                          value={top.fontFamily}
+                          onChange={(e) => updateSelectedProp("fontFamily", e.target.value)}
+                          className="w-full rounded border border-white/10 bg-white/5 px-2 py-1 text-[10px] text-white"
+                          placeholder="CSS font stack (prioridad)"
+                        />
+                        <div className="flex gap-1">
+                          <button
+                            type="button"
+                            className="flex-1 rounded border border-white/10 bg-white/5 py-1 text-[8px] font-bold uppercase text-zinc-300 hover:bg-white/10"
+                            onClick={() => customFontInputRef.current?.click()}
+                          >
+                            Importar .ttf / .otf
+                          </button>
+                          <input
+                            ref={customFontInputRef}
+                            type="file"
+                            accept=".ttf,.otf,.woff,.woff2"
+                            className="hidden"
+                            onChange={async (e) => {
+                              const f = e.target.files?.[0];
+                              if (!f) return;
+                              try {
+                                const buf = await f.arrayBuffer();
+                                const face = new FontFace(f.name.replace(/\.[^.]+$/, ""), buf);
+                                await face.load();
+                                document.fonts.add(face);
+                                updateSelectedProp("fontFamily", `"${face.family}", system-ui, sans-serif`);
+                                setToast(`Font loaded: ${face.family}`);
+                                setTimeout(() => setToast(null), 2500);
+                              } catch {
+                                setToast("Could not load font file");
+                                setTimeout(() => setToast(null), 2500);
+                              }
+                              e.target.value = "";
+                            }}
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-1.5">
+                          <div className="space-y-0.5">
+                            <label className="text-[8px] text-zinc-600">Size</label>
+                            <ScrubNumberInput
+                              value={top.fontSize}
+                              onKeyboardCommit={(n) => updateSelectedProp("fontSize", clamp(Math.round(n), 4, 400))}
+                              onScrubLive={(n) => updateSelectedPropSilent("fontSize", clamp(Math.round(n), 4, 400))}
+                              onScrubEnd={commitHistoryAfterScrub}
+                              step={1}
+                              roundFn={(n) => clamp(Math.round(n), 4, 400)}
+                              min={4}
+                              max={400}
+                              title="Arrastra horizontalmente · Mayús = ×10"
+                              className="w-full cursor-ew-resize rounded border border-white/10 bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-white"
+                            />
+                          </div>
+                          <div className="space-y-0.5">
+                            <label className="text-[8px] text-zinc-600">Weight</label>
+                            <ScrubNumberInput
+                              value={top.fontWeight}
+                              onKeyboardCommit={(n) => updateSelectedProp("fontWeight", clamp(Math.round(n), 100, 900))}
+                              onScrubLive={(n) => updateSelectedPropSilent("fontWeight", clamp(Math.round(n), 100, 900))}
+                              onScrubEnd={commitHistoryAfterScrub}
+                              step={1}
+                              roundFn={(n) => clamp(Math.round(n), 100, 900)}
+                              min={100}
+                              max={900}
+                              title="Arrastra horizontalmente · Mayús = ×10"
+                              className="w-full cursor-ew-resize rounded border border-white/10 bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-white"
+                            />
+                          </div>
+                        </div>
+                        <div className="space-y-0.5">
+                          <label className="text-[8px] text-zinc-600">Style</label>
+                          <select
+                            value={top.fontStyle === "italic" || top.fontStyle === "oblique" ? top.fontStyle : "normal"}
+                            onChange={(e) => updateSelectedProp("fontStyle", e.target.value)}
+                            className="w-full rounded border border-white/10 bg-white/5 px-2 py-1 text-[10px] text-white"
+                          >
+                            <option value="normal">Normal</option>
+                            <option value="italic">Italic</option>
+                            <option value="oblique">Oblique</option>
+                          </select>
+                        </div>
+                        <div className="space-y-0.5">
+                          <label className="text-[8px] text-zinc-600">Tracking</label>
+                          <ScrubNumberInput
+                            value={top.letterSpacing}
+                            onKeyboardCommit={(n) => updateSelectedProp("letterSpacing", Math.round(n * 100) / 100)}
+                            onScrubLive={(n) => updateSelectedPropSilent("letterSpacing", Math.round(n * 100) / 100)}
+                            onScrubEnd={commitHistoryAfterScrub}
+                            step={0.05}
+                            roundFn={(n) => Math.round(n * 100) / 100}
+                            title="Arrastra horizontalmente · Mayús = ×10"
+                            className="w-full cursor-ew-resize rounded border border-white/10 bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-white"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-2 border-t border-white/10 pt-2">
+                        <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">Texto en trazado</div>
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <label className="text-[8px] text-zinc-500">Inicio en trazado</label>
+                            <span className="font-mono text-[9px] text-zinc-400">{Math.round(top.startOffset)}%</span>
+                          </div>
+                          <input
+                            type="range"
+                            min={0}
+                            max={100}
+                            step={1}
+                            value={top.startOffset}
+                            onChange={(e) => updateSelectedPropSilent("startOffset", Number(e.target.value))}
+                            onPointerUp={commitHistoryAfterScrub}
+                            className="w-full accent-violet-500"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[8px] text-zinc-500">Lado</label>
+                          <div className="flex gap-1">
+                            <button
+                              type="button"
+                              onClick={() => updateSelectedProp("side", "above")}
+                              className={`flex-1 rounded py-1.5 text-[8px] font-bold uppercase ${top.side === "above" ? "bg-violet-600/50 text-white" : "bg-white/5 text-zinc-500 hover:text-white"}`}
+                            >
+                              Encima
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => updateSelectedProp("side", "below")}
+                              className={`flex-1 rounded py-1.5 text-[8px] font-bold uppercase ${top.side === "below" ? "bg-violet-600/50 text-white" : "bg-white/5 text-zinc-500 hover:text-white"}`}
+                            >
+                              Debajo
+                            </button>
+                          </div>
+                        </div>
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <label className="text-[8px] text-zinc-500">Separación</label>
+                            <span className="font-mono text-[9px] text-zinc-400">{Math.round(top.baselineShift)}px</span>
+                          </div>
+                          <input
+                            type="range"
+                            min={-100}
+                            max={100}
+                            step={1}
+                            value={top.baselineShift}
+                            onChange={(e) => updateSelectedPropSilent("baselineShift", Number(e.target.value))}
+                            onPointerUp={commitHistoryAfterScrub}
+                            className="w-full accent-violet-500"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[8px] text-zinc-500">Anclaje</label>
+                          <div className="flex items-center justify-center gap-1">
+                            {(
+                              [
+                                { a: "start" as const, Icon: AlignStartHorizontal, title: "Inicio" },
+                                { a: "middle" as const, Icon: AlignCenterHorizontal, title: "Centro" },
+                                { a: "end" as const, Icon: AlignEndHorizontal, title: "Fin" },
+                              ] as const
+                            ).map(({ a, Icon, title }) => (
+                              <button
+                                key={a}
+                                type="button"
+                                title={title}
+                                onClick={() => updateSelectedProp("textAnchor", a)}
+                                className={`rounded border p-2 transition-colors ${
+                                  top.textAnchor === a ? "border-violet-400 bg-violet-600/45 text-white" : "border-white/10 bg-white/5 text-zinc-500 hover:text-white"
+                                }`}
+                              >
+                                <Icon size={16} strokeWidth={2} />
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <label className="text-[8px] text-zinc-500">Espaciado curva</label>
+                            <span className="font-mono text-[9px] text-zinc-400">{Math.round(top.charSpacing * 10) / 10}</span>
+                          </div>
+                          <input
+                            type="range"
+                            min={-20}
+                            max={100}
+                            step={0.5}
+                            value={top.charSpacing}
+                            onChange={(e) => updateSelectedPropSilent("charSpacing", Number(e.target.value))}
+                            onPointerUp={commitHistoryAfterScrub}
+                            className="w-full accent-violet-500"
+                          />
+                        </div>
+                        <div className="flex items-center justify-between gap-2">
+                          <label className="text-[8px] text-zinc-500">Mostrar guía</label>
+                          <button
+                            type="button"
+                            onClick={() => updateSelectedProp("pathVisible", !top.pathVisible)}
+                            className={`rounded px-2 py-0.5 text-[8px] font-bold uppercase ${top.pathVisible ? "bg-violet-600/50 text-white" : "bg-white/5 text-zinc-500"}`}
+                          >
+                            {top.pathVisible ? "Sí" : "No"}
+                          </button>
+                        </div>
+                        {top.pathVisible ? (
+                          <div className="flex flex-wrap items-center gap-2">
+                            <input
+                              type="color"
+                              value={/^#[0-9A-Fa-f]{6}$/.test(top.pathColor) ? top.pathColor : "#888888"}
+                              onChange={(e) => updateSelectedProp("pathColor", e.target.value)}
+                              className="h-7 w-7 cursor-pointer rounded border border-white/20 bg-transparent"
+                            />
+                            <div className="min-w-[120px] flex-1 space-y-0.5">
+                              <div className="flex justify-between text-[8px] text-zinc-500">
+                                <span>Grosor</span>
+                                <span className="font-mono">{top.pathWidth}px</span>
+                              </div>
+                              <input
+                                type="range"
+                                min={1}
+                                max={10}
+                                step={0.5}
+                                value={top.pathWidth}
+                                onChange={(e) => updateSelectedPropSilent("pathWidth", Number(e.target.value))}
+                                onPointerUp={commitHistoryAfterScrub}
+                                className="w-full accent-violet-500"
+                              />
+                            </div>
+                          </div>
+                        ) : null}
+                        <div className="space-y-0.5">
+                          <label className="text-[8px] text-zinc-500">Desbordamiento</label>
+                          <select
+                            value={top.overflow}
+                            onChange={(e) => updateSelectedProp("overflow", e.target.value as TextOnPathObject["overflow"])}
+                            className="w-full rounded border border-white/10 bg-white/5 px-2 py-1 text-[10px] text-white"
+                          >
+                            <option value="hidden">Ocultar</option>
+                            <option value="visible">Visible</option>
+                            {/* TODO: requiere medir longitud del path y ajustar fontSize iterativamente — próxima iteración */}
+                            <option value="scale" disabled>
+                              Escalar (próximamente)
+                            </option>
+                          </select>
+                        </div>
+                      </div>
+                    </>
                   );
                 })()}
 
@@ -4728,6 +7363,23 @@ export default function FreehandStudio({
                           <span className="text-[7px] font-bold uppercase tracking-wide">{label}</span>
                         </button>
                       ))}
+                    </div>
+                  </div>
+                )}
+
+                {activeTool === "directSelect" && firstSelected?.type === "path" && (
+                  <div className="space-y-1.5 pt-2 border-t border-white/10">
+                    <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">Puntos del trazado</div>
+                    <p className="text-[8px] text-zinc-500">Clic en un segmento añade un punto. También puedes usar los botones o Suprimir con puntos seleccionados.</p>
+                    <div className="flex gap-1">
+                      <button type="button" onClick={addMidAnchorToSelectedPath}
+                        className="flex-1 rounded border border-white/10 bg-white/5 py-1.5 text-[8px] font-bold uppercase text-zinc-200 hover:bg-white/10">
+                        + Punto (segmento largo)
+                      </button>
+                      <button type="button" onClick={deleteSelectedPoints}
+                        className="flex-1 rounded border border-rose-500/25 bg-rose-500/10 py-1.5 text-[8px] font-bold uppercase text-rose-200 hover:bg-rose-500/20">
+                        − Quitar selección
+                      </button>
                     </div>
                   </div>
                 )}
@@ -4760,33 +7412,24 @@ export default function FreehandStudio({
                     </button>
                   </div>
                 )}
+                </div>
               </>
             ) : (
               <div className="text-[10px] text-zinc-600 italic">No object selected</div>
             )}
 
-            {/* Default colors */}
-            <div className="pt-2 border-t border-white/5 space-y-1">
-              <label className="text-[8px] text-zinc-600 uppercase tracking-wider">Defaults</label>
-              <div className="flex items-center gap-2">
-                <div className="flex flex-col items-center gap-0.5">
-                  <input type="color" value={fillColor} onChange={(e) => setFillColor(e.target.value)}
-                    className="w-6 h-6 rounded cursor-pointer border border-white/20 bg-transparent" />
-                  <span className="text-[7px] text-zinc-600">Fill</span>
-                </div>
-                <div className="flex flex-col items-center gap-0.5">
-                  <input type="color" value={strokeColor} onChange={(e) => setStrokeColor(e.target.value)}
-                    className="w-6 h-6 rounded cursor-pointer border border-white/20 bg-transparent" />
-                  <span className="text-[7px] text-zinc-600">Stroke</span>
-                </div>
-                <div className="flex flex-col items-center gap-0.5">
-                  <input type="number" value={strokeWidth} onChange={(e) => setStrokeWidth(Number(e.target.value))}
-                    className="w-10 bg-white/5 border border-white/10 rounded px-1 py-0.5 text-[9px] text-white font-mono" min={0} max={50} step={0.5} />
-                  <span className="text-[7px] text-zinc-600">W</span>
-                </div>
+            {canLinkTextToPath ? (
+              <div className="border-t border-white/[0.08] px-[14px] py-3">
+                <div className="mb-2 text-[10px] text-zinc-500 uppercase tracking-wider">Acciones</div>
+                <button
+                  type="button"
+                  onClick={handleLinkTextToPath}
+                  className="w-full rounded-[5px] bg-[#534AB7] py-2.5 text-[12px] font-semibold text-white transition-colors hover:bg-[#6357c4]"
+                >
+                  Texto sobre trazado
+                </button>
               </div>
-            </div>
-          </div>
+            ) : null}
 
           {/* ── Alignment (when multi-selected) ─────────────────── */}
           {selectedObjects.length >= 2 && (
@@ -4812,100 +7455,244 @@ export default function FreehandStudio({
                 <ToolBtn onClick={ungroupSelected} title="Ungroup (⇧⌘G)"><Ungroup size={14} /></ToolBtn>
               </div>
               <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mt-2">Boolean</div>
-              <div className="grid grid-cols-2 gap-1">
-                <button type="button" onClick={() => booleanOp("union")}
-                  className="py-1 rounded text-[8px] text-zinc-400 hover:text-white hover:bg-white/10 transition-colors uppercase font-bold tracking-wider">Union</button>
-                <button type="button" onClick={() => booleanOp("subtract")}
-                  className="py-1 rounded text-[8px] text-zinc-400 hover:text-white hover:bg-white/10 transition-colors uppercase font-bold tracking-wider">Subtract</button>
-                <button type="button" onClick={() => booleanOp("intersect")}
-                  className="py-1 rounded text-[8px] text-zinc-400 hover:text-white hover:bg-white/10 transition-colors uppercase font-bold tracking-wider">Intersect</button>
-                <button type="button" onClick={() => booleanOp("exclude")}
-                  className="py-1 rounded text-[8px] text-zinc-400 hover:text-white hover:bg-white/10 transition-colors uppercase font-bold tracking-wider">Exclude</button>
+              <div className="grid grid-cols-2 gap-1.5">
+                {([
+                  { op: "union" as const, Icon: Layers, label: "Union", title: "Union" },
+                  { op: "subtract" as const, Icon: Minus, label: "Subtract", title: "Subtract" },
+                  { op: "intersect" as const, Icon: Crop, label: "Intersect", title: "Intersect" },
+                  { op: "exclude" as const, Icon: Split, label: "Exclude", title: "Exclude" },
+                ]).map(({ op, Icon, label, title }) => (
+                  <button
+                    key={op}
+                    type="button"
+                    title={title}
+                    onClick={() => void booleanOp(op)}
+                    className="group flex flex-col items-center justify-center gap-1 rounded-md border border-white/10 bg-white/[0.04] py-2 transition-colors hover:bg-white/10 hover:border-white/15"
+                  >
+                    <Icon size={16} strokeWidth={2} className="text-zinc-300 group-hover:text-white" />
+                    <span className="text-[7px] font-bold uppercase tracking-wider text-zinc-500 group-hover:text-zinc-200">{label}</span>
+                  </button>
+                ))}
               </div>
             </div>
           )}
 
-          {/* ── Layers ──────────────────────────────────────────── */}
-          <div className="p-3">
-            <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mb-2">Layers ({objects.length})</div>
-            <div className="space-y-0.5">
-              {[...objects].reverse().map((obj) => {
-                const isSel = selectedIds.has(obj.id);
-                const isDropTarget = layerDropTarget === obj.id;
-                return (
-                  <div key={obj.id}
-                    draggable
-                    onDragStart={(e) => {
-                      e.dataTransfer.effectAllowed = "move";
-                      setLayerDragId(obj.id);
-                    }}
-                    onDragOver={(e) => {
-                      e.preventDefault();
-                      e.dataTransfer.dropEffect = "move";
-                      if (layerDragId && layerDragId !== obj.id) setLayerDropTarget(obj.id);
-                    }}
-                    onDragLeave={() => { if (layerDropTarget === obj.id) setLayerDropTarget(null); }}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      if (layerDragId && layerDragId !== obj.id) {
-                        setObjects((prev) => {
-                          const fromIdx = prev.findIndex((o) => o.id === layerDragId);
-                          const toIdx = prev.findIndex((o) => o.id === obj.id);
-                          if (fromIdx < 0 || toIdx < 0) return prev;
-                          const n = [...prev];
-                          const [moved] = n.splice(fromIdx, 1);
-                          n.splice(toIdx, 0, moved);
-                          pushHistory(n, selectedIds);
-                          return n;
-                        });
-                      }
-                      setLayerDragId(null);
-                      setLayerDropTarget(null);
-                    }}
-                    onDragEnd={() => { setLayerDragId(null); setLayerDropTarget(null); }}
-                    onMouseEnter={() => setLayerHoverId(obj.id)}
-                    onMouseLeave={() => setLayerHoverId((h) => (h === obj.id ? null : h))}
-                    className={`flex items-center gap-1.5 px-2 py-1.5 rounded-md cursor-grab transition-colors text-[10px] border border-transparent ${
-                      isSel ? "bg-violet-600/30 text-white border-violet-500/25" : "text-zinc-400 hover:bg-white/5"
-                    } ${obj.isClipMask ? "italic opacity-50" : ""} ${isDropTarget ? "ring-1 ring-violet-400" : ""} ${layerDragId === obj.id ? "opacity-40" : ""} ${
-                      (hoverCanvasId === obj.id || layerHoverId === obj.id) && !isSel ? "ring-1 ring-sky-500/50 bg-sky-500/10" : ""
-                    }`}
-                    onClick={(e) => {
-                      const ns = resolveSelection(obj.id, e.shiftKey || e.nativeEvent.getModifierState?.("Shift"));
-                      setSelectedIds(ns);
-                      if (ns.has(obj.id)) setPrimarySelectedId(obj.id);
-                    }}>
-                    <button type="button" title="Toggle visibility" className="hover:text-white shrink-0"
-                      onClick={(e) => { e.stopPropagation(); setObjects((p) => p.map((o) => o.id === obj.id ? { ...o, visible: !o.visible } : o)); }}>
-                      {obj.visible ? <Eye size={12} /> : <EyeOff size={12} className="opacity-40" />}
+          {/* ── Artboards (quick select) ─────────────────────────── */}
+          {artboards.length > 0 && (
+            <div className="p-3 border-b border-white/10">
+              <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mb-2">Artboards</div>
+              <div className="space-y-0.5">
+                {artboards.map((ab) => {
+                  const isSel = selectedArtboardId === ab.id;
+                  return (
+                    <button
+                      key={ab.id}
+                      type="button"
+                      onClick={() => {
+                        setActiveTool("artboard");
+                        setSelectedArtboardId(ab.id);
+                        setSelectedIds(new Set());
+                        setSelectedPoints(new Map());
+                      }}
+                      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[10px] transition-colors ${
+                        isSel ? "bg-sky-600/25 text-white ring-1 ring-sky-500/40" : "text-zinc-400 hover:bg-white/5 hover:text-white"
+                      }`}
+                    >
+                      <LayoutTemplate size={12} className="shrink-0 opacity-70" />
+                      <span className="truncate">{ab.name}</span>
+                      <span className="ml-auto font-mono text-[8px] text-zinc-600 tabular-nums">
+                        {Math.round(ab.width)}×{Math.round(ab.height)}
+                      </span>
                     </button>
-                    <button type="button" title="Toggle lock" className="hover:text-white shrink-0"
-                      onClick={(e) => { e.stopPropagation(); setObjects((p) => p.map((o) => o.id === obj.id ? { ...o, locked: !o.locked } : o)); }}>
-                      {obj.locked ? <Lock size={12} className="text-amber-400" /> : <Unlock size={12} className="opacity-40" />}
-                    </button>
-                    {layerRowIcon(obj)}
-                    <span className="flex-1 truncate"
-                      onDoubleClick={(e) => {
-                        if (obj.type === "booleanGroup") { e.stopPropagation(); enterIsolation(obj.id); }
-                        if (obj.type === "clippingContainer") { e.stopPropagation(); enterClippingIsolation(obj.id, "content"); }
-                      }}>
-                      {obj.name}{obj.groupId ? " ◆" : ""}{obj.isClipMask ? " [clip]" : ""}
-                      {obj.type === "booleanGroup" && <span className="text-violet-400 ml-1 text-[8px]">◇{(obj as BooleanGroupObject).operation} ({(obj as BooleanGroupObject).children.length})</span>}
-                      {obj.type === "clippingContainer" && <span className="text-emerald-400/90 ml-1 text-[8px]">▣ clip ({(obj as ClippingContainerObject).content.length})</span>}
-                    </span>
-                    <button type="button" title="Delete" className="hover:text-red-400 shrink-0"
-                      onClick={(e) => { e.stopPropagation(); setObjects((p) => { const n = p.filter((o) => o.id !== obj.id); pushHistory(n, new Set()); return n; }); setSelectedIds((s) => { const ns = new Set(s); ns.delete(obj.id); return ns; }); }}>
-                      <Trash2 size={11} />
-                    </button>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
+          )}
+
+          </div>
+
+          {/* ── Layers (plegable abajo, solo en la columna derecha) ── */}
+          <div
+            className={`flex min-h-0 flex-col border-t border-white/[0.08] bg-[#12151a] ${
+              layersPanelExpanded ? "min-h-[120px] flex-1" : "shrink-0"
+            }`}
+          >
+            {layersPanelExpanded ? (
+              <>
+                <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 bg-[#151820] px-3 py-2">
+                  <span className="text-[9px] font-bold uppercase tracking-widest text-zinc-400">Layers ({objects.length})</span>
+                  <button
+                    type="button"
+                    className="rounded-md p-1 text-zinc-500 transition-colors hover:bg-white/10 hover:text-white"
+                    title="Plegar capas"
+                    onClick={() => setLayersPanelExpanded(false)}
+                  >
+                    <ChevronDown size={16} strokeWidth={2} />
+                  </button>
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto p-3">
+                  <div className="space-y-0.5">
+                    {[...objects].reverse().map((obj) => {
+                      const isSel = selectedIds.has(obj.id);
+                      const isDropTarget = layerDropTarget === obj.id;
+                      return (
+                        <div
+                          key={obj.id}
+                          draggable
+                          onDragStart={(e) => {
+                            e.dataTransfer.effectAllowed = "move";
+                            setLayerDragId(obj.id);
+                          }}
+                          onDragOver={(e) => {
+                            e.preventDefault();
+                            e.dataTransfer.dropEffect = "move";
+                            if (layerDragId && layerDragId !== obj.id) setLayerDropTarget(obj.id);
+                          }}
+                          onDragLeave={() => {
+                            if (layerDropTarget === obj.id) setLayerDropTarget(null);
+                          }}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            if (layerDragId && layerDragId !== obj.id) {
+                              setObjects((prev) => {
+                                const fromIdx = prev.findIndex((o) => o.id === layerDragId);
+                                const toIdx = prev.findIndex((o) => o.id === obj.id);
+                                if (fromIdx < 0 || toIdx < 0) return prev;
+                                const n = [...prev];
+                                const [moved] = n.splice(fromIdx, 1);
+                                n.splice(toIdx, 0, moved);
+                                pushHistory(n, selectedIds);
+                                return n;
+                              });
+                            }
+                            setLayerDragId(null);
+                            setLayerDropTarget(null);
+                          }}
+                          onDragEnd={() => {
+                            setLayerDragId(null);
+                            setLayerDropTarget(null);
+                          }}
+                          onMouseEnter={() => setLayerHoverId(obj.id)}
+                          onMouseLeave={() => setLayerHoverId((h) => (h === obj.id ? null : h))}
+                          className={`flex cursor-grab items-center gap-1.5 rounded-md border border-transparent px-2 py-1.5 text-[10px] transition-colors ${
+                            isSel ? "border-violet-500/25 bg-violet-600/30 text-white" : "text-zinc-400 hover:bg-white/5"
+                          } ${obj.isClipMask ? "italic opacity-50" : ""} ${isDropTarget ? "ring-1 ring-violet-400" : ""} ${layerDragId === obj.id ? "opacity-40" : ""} ${
+                            (hoverCanvasId === obj.id || layerHoverId === obj.id) && !isSel ? "bg-sky-500/10 ring-1 ring-sky-500/50" : ""
+                          }`}
+                          onClick={(e) => {
+                            const extend =
+                              e.shiftKey ||
+                              e.metaKey ||
+                              e.ctrlKey ||
+                              (typeof e.nativeEvent.getModifierState === "function" && e.nativeEvent.getModifierState("Shift"));
+                            const ns = resolveSelection(obj.id, extend);
+                            setSelectedIds(ns);
+                            if (ns.has(obj.id)) setPrimarySelectedId(obj.id);
+                          }}
+                        >
+                          <button
+                            type="button"
+                            title="Toggle visibility"
+                            className="shrink-0 hover:text-white"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setObjects((p) => p.map((o) => (o.id === obj.id ? { ...o, visible: !o.visible } : o)));
+                            }}
+                          >
+                            {obj.visible ? <Eye size={12} /> : <EyeOff size={12} className="opacity-40" />}
+                          </button>
+                          <button
+                            type="button"
+                            title="Toggle lock"
+                            className="shrink-0 hover:text-white"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setObjects((p) => p.map((o) => (o.id === obj.id ? { ...o, locked: !o.locked } : o)));
+                            }}
+                          >
+                            {obj.locked ? <Lock size={12} className="text-amber-400" /> : <Unlock size={12} className="opacity-40" />}
+                          </button>
+                          {layerRowIcon(obj)}
+                          <span
+                            className="flex-1 truncate"
+                            onDoubleClick={(e) => {
+                              if (obj.type === "booleanGroup") {
+                                e.stopPropagation();
+                                enterIsolation(obj.id);
+                              }
+                              if (obj.type === "clippingContainer") {
+                                e.stopPropagation();
+                                enterClippingIsolation(obj.id, "content");
+                              }
+                              if (obj.groupId) {
+                                const n = objects.filter((x) => x.groupId === obj.groupId).length;
+                                if (n >= 2) {
+                                  e.stopPropagation();
+                                  enterVectorGroupIsolation(obj.groupId!);
+                                }
+                              }
+                            }}
+                          >
+                            {obj.name}
+                            {obj.groupId ? " ◆" : ""}
+                            {obj.isClipMask ? " [clip]" : ""}
+                            {obj.type === "booleanGroup" && (
+                              <span className="ml-1 text-[8px] text-violet-400">
+                                ◇{(obj as BooleanGroupObject).operation} ({(obj as BooleanGroupObject).children.length})
+                              </span>
+                            )}
+                            {obj.type === "clippingContainer" && (
+                              <span className="ml-1 text-[8px] text-emerald-400/90">
+                                ▣ clip ({(obj as ClippingContainerObject).content.length})
+                              </span>
+                            )}
+                          </span>
+                          <button
+                            type="button"
+                            title="Delete"
+                            className="shrink-0 hover:text-red-400"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setObjects((p) => {
+                                const n = p.filter((o) => o.id !== obj.id);
+                                pushHistory(n, new Set());
+                                return n;
+                              });
+                              setSelectedIds((s) => {
+                                const ns = new Set(s);
+                                ns.delete(obj.id);
+                                return ns;
+                              });
+                            }}
+                          >
+                            <Trash2 size={11} />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left transition-colors hover:bg-white/[0.04]"
+                title="Mostrar capas"
+                onClick={() => setLayersPanelExpanded(true)}
+              >
+                <span className="flex items-center gap-2 text-[9px] font-bold uppercase tracking-widest text-zinc-500">
+                  <Layers size={14} className="text-zinc-400" strokeWidth={2} />
+                  Layers ({objects.length})
+                </span>
+                <ChevronUp size={16} strokeWidth={2} className="shrink-0 text-zinc-500" />
+              </button>
+            )}
           </div>
         </div>
 
         {/* Status bar */}
-        <div className="flex items-center justify-between border-t border-white/[0.08] px-3 py-2 text-[9px] text-zinc-500">
+        <div className="flex shrink-0 items-center justify-between border-t border-white/[0.08] px-3 py-2 text-[9px] text-zinc-500">
           <span>{objects.length} objects · {selectedIds.size} selected{isolationDepth > 0 ? ` · Isolation (depth ${isolationDepth})` : ""}</span>
         </div>
       </div>
@@ -4920,7 +7707,7 @@ export default function FreehandStudio({
           onClose={() => setShowExportModal(false)}
           bounds={
             exportModalScope === "full"
-              ? boundsOfObjects(objects.filter((o) => o.visible)) ?? { x: 0, y: 0, w: 100, h: 100 }
+              ? resolveSceneExportBounds(objects, artboards, selectedArtboardId)
               : selectedObjects.length > 0
                 ? getGroupBounds(selectedObjects)
                 : null

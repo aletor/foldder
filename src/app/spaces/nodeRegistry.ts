@@ -108,15 +108,20 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
   },
   grokProcessor: {
     type: 'grokProcessor',
-    label: 'Grok Imagine',
-    description: 'Generates artistic images using xAI Grok model.',
+    label: 'Grok Video',
+    description: 'Generates videos using xAI Grok Imagine Video. Supports text-to-video and video-to-video editing.',
     inputs: [
-      { id: 'prompt', label: 'Prompt Input', type: 'prompt' }
+      { id: 'prompt', label: 'Prompt Input', type: 'prompt' },
+      { id: 'video', label: 'Video Input', type: 'video' }
     ],
     outputs: [
-      { id: 'image', label: 'Image Out', type: 'image' }
+      { id: 'video', label: 'Video Out', type: 'video' }
     ],
-    dataSchema: {}
+    dataSchema: {
+      duration: 'number (seconds, default 5)',
+      resolution: 'string (e.g. "720p")',
+      aspect_ratio: 'string (e.g. "16:9")'
+    }
   },
   concatenator: {
     type: 'concatenator',
@@ -247,15 +252,20 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
     inputs: [
       { id: 'firstFrame', label: 'First Frame', type: 'image' },
       { id: 'lastFrame', label: 'Last Frame', type: 'image' },
-      { id: 'prompt', label: 'Creative Prompt', type: 'prompt' }
+      { id: 'prompt', label: 'Creative Prompt', type: 'prompt' },
+      { id: 'negativePrompt', label: 'Negative Prompt', type: 'prompt' }
     ],
     outputs: [
       { id: 'video', label: 'Video Out', type: 'video' }
     ],
     dataSchema: {
       resolution: '720p | 1080p | 4K',
-      duration: '4 | 5 | 6 | 8',
-      audio: 'boolean'
+      duration: '4 | 5 | 6 | 8 (seconds)',
+      audio: 'boolean',
+      seed: 'number (optional, for reproducibility)',
+      negativePrompt: 'string (things to avoid)',
+      animationPrompt: 'string (motion description)',
+      cameraPreset: 'string (Dolly-in | Dolly-out | Orbit-Left | Slow-Pan | Crane-Up | empty for auto)'
     }
   },
   painter: {
@@ -330,15 +340,14 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
   freehand: {
     type: 'freehand',
     label: 'Freehand',
-    description: 'Minimal vector editor with pen, shapes, and selection tools. Opens in fullscreen Studio mode. Accepts dynamic image inputs as placeable layers.',
-    inputs: [
-      { id: 'i-n', label: 'Image Input', type: 'image' as HandleType }
-    ],
+    description: 'Minimal vector editor with pen, shapes, and selection tools. Opens in fullscreen Studio mode. Import images inside the studio; unlimited layers on the artboard.',
+    inputs: [],
     outputs: [
       { id: 'image', label: 'Image Out', type: 'image' as HandleType }
     ],
     dataSchema: {
       objects: 'FreehandObject[] (vector objects on canvas)',
+      artboards: 'Artboard[] (optional export frames / mesas de trabajo)',
       value: 'string (exported raster data URL)',
     }
   },
@@ -365,9 +374,9 @@ export const ASSISTANT_NODE_DATA_HINTS: Record<string, string> = {
   promptInput: "value (texto del prompt), label (título visible encima del nodo — obligatorio si el usuario pide nombres/etiquetas por nodo)",
   nanoBanana:
     "modelKey (flash31|flash25|pro3), aspect_ratio, resolution (1k|2k|4k), thinking (bool), value/s3Key (salida), label",
-  grokProcessor: "duration, resolution, aspect_ratio, value (salida vídeo), label",
+  grokProcessor: "duration (number, 5|10), resolution, aspect_ratio, value (salida vídeo URL), type ('video'), label",
   geminiVideo:
-    "resolution, duration, audio, seed, negativePrompt, animationPrompt, cameraPreset, value (salida), label",
+    "resolution, duration (string '4'|'5'|'6'|'8'), audio (bool), seed, negativePrompt, animationPrompt, cameraPreset, value (salida vídeo URL), type ('video'), s3Key, label",
   enhancer: "value (texto mejorado), label",
   concatenator: "label; el texto combinado viene de las entradas conectadas",
   listado:

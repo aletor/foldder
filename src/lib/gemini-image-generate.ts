@@ -7,11 +7,8 @@
  */
 
 import { uploadToS3, getPresignedUrl } from "@/lib/s3-utils";
-import {
-  estimateGeminiImageGenerationUsd,
-  parseGeminiUsageMetadata,
-  recordApiUsage,
-} from "@/lib/api-usage";
+import { parseGeminiUsageMetadata, recordApiUsage } from "@/lib/api-usage";
+import { estimateGeminiImageGenerationUsd } from "@/lib/pricing-config";
 import crypto from "crypto";
 
 export const GEMINI_IMAGE_MODELS = {
@@ -35,6 +32,12 @@ export type GeminiImageGenerateResult = {
   key: string;
   model: string;
   time: number;
+};
+
+/** Optional flags for shared generator (e.g. correct usage log `route`). */
+export type GeminiImageGenerateOptions = {
+  /** Defaults to `/api/gemini/generate` for `recordApiUsage`. */
+  usageRoute?: string;
 };
 
 export class GeminiGenerateError extends Error {
@@ -93,8 +96,10 @@ function expectedGeminiWaitMs(modelKey: string, thinking: boolean): number {
  */
 export async function geminiImageGenerate(
   raw: GeminiImageGenerateBody,
-  onProgress?: (progress: number, stage: string) => void
+  onProgress?: (progress: number, stage: string) => void,
+  options?: GeminiImageGenerateOptions
 ): Promise<GeminiImageGenerateResult> {
+  const usageRoute = options?.usageRoute ?? "/api/gemini/generate";
   const report = (progress: number, stage: string) => {
     onProgress?.(Math.min(100, Math.max(0, Math.round(progress))), stage);
   };
@@ -249,7 +254,7 @@ export async function geminiImageGenerate(
     await recordApiUsage({
       provider: "gemini",
       serviceId: "gemini-nano",
-      route: "/api/gemini/generate",
+      route: usageRoute,
       model: modelId,
       inputTokens: usage.inputTokens,
       outputTokens: usage.outputTokens,
@@ -259,7 +264,7 @@ export async function geminiImageGenerate(
     await recordApiUsage({
       provider: "gemini",
       serviceId: "gemini-nano",
-      route: "/api/gemini/generate",
+      route: usageRoute,
       model: modelId,
       inputTokens: 0,
       outputTokens: 0,
