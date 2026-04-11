@@ -13,6 +13,8 @@ export type ProfessionalExportOptions = {
   background: "transparent" | string;
   filename: string;
   merged: boolean;
+  /** Si se define y tiene longitud > 0, exporta cada artboard indicado (vista completa). */
+  batchArtboardIds?: string[] | null;
 };
 
 type Props = {
@@ -23,6 +25,9 @@ type Props = {
   defaultFilename: string;
   selectionLabel: string;
   hasSelection: boolean;
+  exportScope?: "selection" | "full";
+  /** Listado para exportación por lote (mismo documento). */
+  artboardList?: { id: string; name: string }[];
   onExport: (opts: ProfessionalExportOptions) => void | Promise<void>;
 };
 
@@ -33,6 +38,8 @@ export function FreehandExportModal({
   defaultFilename,
   selectionLabel,
   hasSelection,
+  exportScope = "selection",
+  artboardList = [],
   onExport,
 }: Props) {
   const [format, setFormat] = useState<ExportFormat>("png");
@@ -43,6 +50,8 @@ export function FreehandExportModal({
   const [bgColor, setBgColor] = useState("#ffffff");
   const [filename, setFilename] = useState(defaultFilename);
   const [merged, setMerged] = useState(true);
+  const [batchAllArtboards, setBatchAllArtboards] = useState(false);
+  const [batchSelected, setBatchSelected] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (open) setFilename(defaultFilename.replace(/[^a-z0-9-_]/gi, "_").slice(0, 80));
@@ -71,12 +80,17 @@ export function FreehandExportModal({
     const ext =
       format === "svg" ? "svg" : format === "jpg" ? "jpg" : format === "pdf" ? "pdf" : "png";
     const safe = `${base.replace(/\.(png|svg|jpg|jpeg|pdf)$/i, "")}.${ext}`;
+    const batchIds =
+      exportScope === "full" && batchAllArtboards && artboardList.length > 0
+        ? artboardList.filter((a) => batchSelected[a.id]).map((a) => a.id)
+        : null;
     await onExport({
       format,
       scale: effectiveScale,
       background: format === "jpg" ? bgMode === "transparent" ? "#ffffff" : bgColor : bgMode === "transparent" ? "transparent" : bgColor,
       filename: safe,
       merged,
+      batchArtboardIds: batchIds && batchIds.length > 0 ? batchIds : undefined,
     });
   };
 
@@ -125,7 +139,7 @@ export function FreehandExportModal({
             </div>
             {format === "pdf" && (
               <p className="text-[10px] leading-snug text-zinc-500">
-                PDF vectorial: mismas primitivas que el SVG (trazos, texto nativo donde el visor lo permita).
+                El PDF exporta el texto como trazados para máxima compatibilidad. Vectorial: mismas primitivas que el SVG.
               </p>
             )}
           </div>
@@ -192,6 +206,36 @@ export function FreehandExportModal({
               <p className="text-[10px] text-amber-500/90">JPG always uses a solid background; transparent becomes white.</p>
             )}
           </div>
+
+          {exportScope === "full" && artboardList.length > 1 && (
+            <div className="space-y-2">
+              <label className="text-[10px] font-medium uppercase tracking-wider text-zinc-500">Artboards</label>
+              <label className="flex cursor-pointer items-center gap-2 text-[11px] text-zinc-300">
+                <input
+                  type="checkbox"
+                  checked={batchAllArtboards}
+                  onChange={(e) => setBatchAllArtboards(e.target.checked)}
+                  className="accent-sky-500"
+                />
+                Exportar todos los artboards (ZIP si hay más de uno)
+              </label>
+              {batchAllArtboards && (
+                <ul className="max-h-32 space-y-1 overflow-y-auto rounded-lg border border-white/[0.06] bg-[#0b0d10] p-2">
+                  {artboardList.map((a) => (
+                    <li key={a.id} className="flex items-center gap-2 text-[11px] text-zinc-300">
+                      <input
+                        type="checkbox"
+                        className="accent-sky-500"
+                        checked={batchSelected[a.id] ?? true}
+                        onChange={(e) => setBatchSelected((prev) => ({ ...prev, [a.id]: e.target.checked }))}
+                      />
+                      <span className="truncate">{a.name || a.id}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
 
           {hasSelection && (
             <div className="space-y-2">

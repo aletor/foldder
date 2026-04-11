@@ -348,6 +348,7 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
     dataSchema: {
       objects: 'FreehandObject[] (vector objects on canvas)',
       artboards: 'Artboard[] (optional export frames / mesas de trabajo)',
+      layoutGuides: 'LayoutGuide[] (optional vertical/horizontal alignment guides)',
       value: 'string (exported raster data URL)',
     }
   },

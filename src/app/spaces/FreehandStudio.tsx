@@ -51,6 +51,7 @@ import {
   ChevronsUp,
   ChevronsDown,
   LayoutTemplate,
+  FileType2,
 } from "lucide-react";
 import { FreehandExportModal, type ProfessionalExportOptions } from "./freehand/FreehandExportModal";
 import {
@@ -90,10 +91,19 @@ import {
   addMidStop,
   textFillCssProperties,
 } from "./freehand/fill";
-import { textToOutlinePaths } from "./freehand/text-outline";
+import {
+  FONT_CONVERSION_UNAVAILABLE,
+  loadFontForTextConversion,
+  parsePrimaryFontFamily,
+  registerUserFontBuffer,
+  substituteTextWithOutlinedPathsInSvg,
+  textToGlyphPathPayloads,
+} from "./freehand/text-outline";
 import { GOOGLE_FONTS_POPULAR, googleFontStylesheetHref } from "./freehand/google-fonts";
 import { extractDocumentColorStats, replaceHexEverywhere } from "./freehand/extract-document-colors";
 import { FreehandColorPalette, loadSavedPaletteFromStorage, persistSavedPalette } from "./freehand/FreehandColorPalette";
+import type { SvgImportShape } from "./freehand/svg-import";
+import { offsetAndScaleShapes, parseSvgToShapes } from "./freehand/svg-import";
 
 const OPEN_TYPE_PANEL_TAGS = ["kern", "liga", "calt", "smcp", "onum", "frac", "sups", "subs"] as const;
 
@@ -243,7 +253,15 @@ interface FreehandObjectBase {
 
 interface RectObject extends FreehandObjectBase { type: "rect"; rx: number }
 interface EllipseObject extends FreehandObjectBase { type: "ellipse" }
-interface PathObject extends FreehandObjectBase { type: "path"; points: BezierPoint[]; closed: boolean }
+interface PathObject extends FreehandObjectBase {
+  type: "path";
+  points: BezierPoint[];
+  closed: boolean;
+  /** Contornos múltiples (p. ej. conversión desde tipografía). Si existe, tiene prioridad en `d` SVG. */
+  svgPathD?: string;
+  /** Import SVG: escala + traslación del lote aplicados al `d` en espacio parse (no reescribir `d`). */
+  svgPathMatrix?: { a: number; b: number; c: number; d: number; e: number; f: number };
+}
 interface ImageObject extends FreehandObjectBase {
   type: "image";
   src: string;
@@ -334,10 +352,13 @@ interface FreehandStudioProps {
   initialObjects: FreehandObject[];
   /** Mesas de trabajo (lienzos exportables). */
   initialArtboards?: Artboard[];
+  /** Guías de alineación (persistidas en el nodo). */
+  initialLayoutGuides?: LayoutGuide[];
   onClose: () => void;
   onExport: (dataUrl: string) => void;
   onUpdateObjects: (objects: FreehandObject[]) => void;
   onUpdateArtboards?: (artboards: Artboard[]) => void;
+  onUpdateLayoutGuides?: (guides: LayoutGuide[]) => void;
 }
 
 interface ContextMenuItem {
@@ -377,7 +398,17 @@ type IsolationFrame =
       parentHistoryIdx: number;
     };
 
-interface SnapGuide { axis: "x" | "y"; pos: number }
+type SnapVisual =
+  | { type: "line"; axis: "x" | "y"; pos: number }
+  | { type: "anchor"; x: number; y: number }
+  | { type: "cross"; cx: number; cy: number };
+
+/** Guías de diseño (coordenadas mundo): vertical = posición X; horizontal = posición Y. */
+export interface LayoutGuide {
+  id: string;
+  orientation: "vertical" | "horizontal";
+  position: number;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  HELPERS
@@ -385,6 +416,15 @@ interface SnapGuide { axis: "x" | "y"; pos: number }
 
 let _idC = 0;
 function uid() { return `fh_${Date.now()}_${_idC++}`; }
+
+let _lgSeq = 0;
+function layoutGuideUid() {
+  return `lg_${Date.now()}_${++_lgSeq}`;
+}
+
+function createLayoutGuide(orientation: "vertical" | "horizontal", position: number): LayoutGuide {
+  return { id: layoutGuideUid(), orientation, position };
+}
 
 function clamp(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)); }
 
@@ -667,7 +707,18 @@ function hitTestObject(
           hp = { x: t.x, y: t.y };
         }
       }
-      if (pathObj.closed && pointInRotatedRect(hp.x, hp.y, obj)) return true;
+      // Import SVG / texto a contornos: solo `svgPathD`, sin puntos Bézier → distToPathSegments no aplica.
+      if (pathObj.svgPathD && pathObj.points.length < 2) {
+        const pad = Math.max(threshold * 2, (pathObj.strokeWidth || 0) / 2 + threshold);
+        return pointInRotatedRect(pos.x, pos.y, {
+          ...obj,
+          x: obj.x - pad,
+          y: obj.y - pad,
+          width: obj.width + 2 * pad,
+          height: obj.height + 2 * pad,
+        } as FreehandObject);
+      }
+      if (pathObj.closed && pointInRotatedRect(pos.x, pos.y, obj)) return true;
       return distToPathSegments(hp, pathObj).dist < threshold;
     }
     case "booleanGroup":
@@ -779,9 +830,15 @@ function isShiftHeld(e: ReactMouseEvent): boolean {
   return e.shiftKey || (typeof e.getModifierState === "function" && e.getModifierState("Shift"));
 }
 
-function constrainToAxis(dx: number, dy: number): { x: number; y: number } {
-  if (Math.abs(dx) >= Math.abs(dy)) return { x: dx, y: 0 };
-  return { x: 0, y: dy };
+/** Mayús al crear rectángulo/elipse: segunda esquina para un cuadrado / círculo perfecto (lado = max(|dx|,|dy|)). */
+function oppositeCornerForSquareDrag(origin: Point, pointer: Point): Point {
+  const dx = pointer.x - origin.x;
+  const dy = pointer.y - origin.y;
+  const s = Math.max(Math.abs(dx), Math.abs(dy));
+  if (s === 0) return { ...origin };
+  const signX = dx !== 0 ? Math.sign(dx) : Math.sign(dy);
+  const signY = dy !== 0 ? Math.sign(dy) : Math.sign(dx);
+  return { x: origin.x + signX * s, y: origin.y + signY * s };
 }
 
 /** Delta angular más corto entre dos ángulos (rad), evita saltos de atan2 al cruzar ±π. */
@@ -829,6 +886,19 @@ function rectWorldCorners(o: FreehandObject): Point[] {
 function getVisualAABB(o: FreehandObject, allObjects?: FreehandObject[]): Rect {
   switch (o.type) {
     case "path": {
+      const po = o as PathObject;
+      if (po.svgPathD && po.points.length < 2) {
+        const r = { x: o.x, y: o.y, w: o.width, h: o.height };
+        const cx = o.x + o.width / 2, cy = o.y + o.height / 2;
+        if (!o.rotation) return r;
+        const corners = [
+          { x: r.x, y: r.y },
+          { x: r.x + r.w, y: r.y },
+          { x: r.x + r.w, y: r.y + r.h },
+          { x: r.x, y: r.y + r.h },
+        ].map((p) => rotatePointAround(p, { x: cx, y: cy }, o.rotation));
+        return aabbFromPoints(corners);
+      }
       const pb = getPathBoundsFromPoints((o as PathObject).points);
       const cx = o.x + o.width / 2, cy = o.y + o.height / 2;
       if (!o.rotation) return pb;
@@ -952,6 +1022,15 @@ function translateFreehandObject(o: FreehandObject, dx: number, dy: number): Fre
   }
   if (o.type === "path") {
     const p = o as PathObject;
+    if (p.svgPathD && p.points.length < 2 && p.svgPathMatrix) {
+      const m = p.svgPathMatrix;
+      return {
+        ...p,
+        x: p.x + dx,
+        y: p.y + dy,
+        svgPathMatrix: { ...m, e: m.e + dx, f: m.f + dy },
+      };
+    }
     const newPts = translateBezierPoints(p.points, dx, dy);
     const pb = getPathBoundsFromPoints(newPts);
     return { ...p, x: pb.x, y: pb.y, width: pb.w, height: pb.h, points: newPts };
@@ -1292,46 +1371,119 @@ function rectsIntersect(a: Rect, b: Rect): boolean {
 
 // ── Snap ────────────────────────────────────────────────────────────────
 
-const SNAP_THRESHOLD = 6;
+const SNAP_SCREEN_PX = 8;
+
+function collectPathAnchorPoints(allObjects: FreehandObject[], excludeIds: Set<string>): Point[] {
+  const out: Point[] = [];
+  for (const o of allObjects) {
+    if (excludeIds.has(o.id) || !o.visible || o.locked) continue;
+    if (o.type !== "path") continue;
+    for (const pt of (o as PathObject).points) out.push(pt.anchor);
+  }
+  return out;
+}
+
+function snapDeltaTo45(dx: number, dy: number): { x: number; y: number } {
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-9) return { x: 0, y: 0 };
+  const a = Math.atan2(dy, dx);
+  const step = Math.PI / 4;
+  const snapped = Math.round(a / step) * step;
+  return { x: Math.cos(snapped) * len, y: Math.sin(snapped) * len };
+}
 
 function computeSnap(
   movingBounds: Rect,
   allObjects: FreehandObject[],
   excludeIds: Set<string>,
   zoom: number,
-): { dx: number; dy: number; guides: SnapGuide[] } {
-  const thr = SNAP_THRESHOLD / zoom;
-  const guides: SnapGuide[] = [];
+  layoutGuideSnap?: { vertical: number[]; horizontal: number[] },
+): { dx: number; dy: number; guides: SnapVisual[] } {
+  const thr = SNAP_SCREEN_PX / zoom;
+  const guides: SnapVisual[] = [];
+  const mcx = movingBounds.x + movingBounds.w / 2;
+  const mcy = movingBounds.y + movingBounds.h / 2;
+
+  const anchors = collectPathAnchorPoints(allObjects, excludeIds);
+  let bestPd = thr + 1;
+  let pdx = 0, pdy = 0;
+  let anchorHit: Point | null = null;
+  for (const ap of anchors) {
+    const d = Math.hypot(mcx - ap.x, mcy - ap.y);
+    if (d < bestPd) {
+      bestPd = d;
+      pdx = ap.x - mcx;
+      pdy = ap.y - mcy;
+      anchorHit = ap;
+    }
+  }
+  if (bestPd <= thr && anchorHit) {
+    guides.push({ type: "anchor", x: anchorHit.x, y: anchorHit.y });
+    return { dx: pdx, dy: pdy, guides };
+  }
+
   let snapDx = 0, snapDy = 0;
   let bestDx = thr + 1, bestDy = thr + 1;
-  const mxs = [movingBounds.x, movingBounds.x + movingBounds.w / 2, movingBounds.x + movingBounds.w];
-  const mys = [movingBounds.y, movingBounds.y + movingBounds.h / 2, movingBounds.y + movingBounds.h];
+  let usedMidX = false, usedMidY = false;
+  const mxs = [movingBounds.x, mcx, movingBounds.x + movingBounds.w];
+  const mys = [movingBounds.y, mcy, movingBounds.y + movingBounds.h];
 
   for (const obj of allObjects) {
     if (excludeIds.has(obj.id) || !obj.visible || obj.isClipMask) continue;
     const vb = getVisualAABB(obj, allObjects);
     const oxs = [vb.x, vb.x + vb.w / 2, vb.x + vb.w];
+    for (let xi = 0; xi < mxs.length; xi++) {
+      for (let xj = 0; xj < oxs.length; xj++) {
+        const d = Math.abs(mxs[xi] - oxs[xj]);
+        if (d < bestDx) {
+          bestDx = d;
+          snapDx = oxs[xj] - mxs[xi];
+          usedMidX = xi === 1 && xj === 1;
+        }
+      }
+    }
+  }
+  for (const gx of layoutGuideSnap?.vertical ?? []) {
+    for (let xi = 0; xi < mxs.length; xi++) {
+      const d = Math.abs(mxs[xi] - gx);
+      if (d < bestDx) {
+        bestDx = d;
+        snapDx = gx - mxs[xi];
+        usedMidX = xi === 1;
+      }
+    }
+  }
+  for (const obj of allObjects) {
+    if (excludeIds.has(obj.id) || !obj.visible || obj.isClipMask) continue;
+    const vb = getVisualAABB(obj, allObjects);
     const oys = [vb.y, vb.y + vb.h / 2, vb.y + vb.h];
-    for (const mx of mxs) {
-      for (const ox of oxs) {
-        const d = Math.abs(mx - ox);
-        if (d < bestDx) { bestDx = d; snapDx = ox - mx; }
-      }
-    }
-    for (const my of mys) {
-      for (const oy of oys) {
-        const d = Math.abs(my - oy);
-        if (d < bestDy) { bestDy = d; snapDy = oy - my; }
+    for (let yi = 0; yi < mys.length; yi++) {
+      for (let yj = 0; yj < oys.length; yj++) {
+        const d = Math.abs(mys[yi] - oys[yj]);
+        if (d < bestDy) {
+          bestDy = d;
+          snapDy = oys[yj] - mys[yi];
+          usedMidY = yi === 1 && yj === 1;
+        }
       }
     }
   }
-  if (bestDx > thr) snapDx = 0; else {
-    const snapX = mxs[0] + snapDx;
-    guides.push({ axis: "x", pos: snapX });
+  for (const gy of layoutGuideSnap?.horizontal ?? []) {
+    for (let yi = 0; yi < mys.length; yi++) {
+      const d = Math.abs(mys[yi] - gy);
+      if (d < bestDy) {
+        bestDy = d;
+        snapDy = gy - mys[yi];
+        usedMidY = yi === 1;
+      }
+    }
   }
-  if (bestDy > thr) snapDy = 0; else {
-    const snapY = mys[0] + snapDy;
-    guides.push({ axis: "y", pos: snapY });
+  if (bestDx > thr) snapDx = 0;
+  else guides.push({ type: "line", axis: "x", pos: mxs[0] + snapDx });
+  if (bestDy > thr) snapDy = 0;
+  else guides.push({ type: "line", axis: "y", pos: mys[0] + snapDy });
+  if (usedMidX && usedMidY && bestDx <= thr && bestDy <= thr) {
+    guides.push({ type: "cross", cx: mcx + snapDx, cy: mcy + snapDy });
   }
   return { dx: snapDx, dy: snapDy, guides };
 }
@@ -1353,6 +1505,7 @@ function bezierToSvgD(points: BezierPoint[], closed: boolean): string {
 }
 
 function pathObjToD(obj: PathObject): string {
+  if (obj.svgPathD && obj.svgPathD.length > 0) return obj.svgPathD;
   return bezierToSvgD(obj.points, obj.closed);
 }
 
@@ -1415,7 +1568,21 @@ function renderObj(obj: FreehandObject, allObjects: FreehandObject[]): React.Rea
     case "path": {
       const p = obj as PathObject;
       const fp = p.closed && fillHasPaint(fill) ? fillAttr : "none";
-      return <path key={obj.id} d={pathObjToD(p)} fill={fp} transform={transform} {...strokeProps} />;
+      const imp = p.svgPathMatrix;
+      const innerM = imp
+        ? `matrix(${imp.a},${imp.b},${imp.c},${imp.d},${imp.e},${imp.f})`
+        : undefined;
+      const d = pathObjToD(p);
+      if (innerM) {
+        return (
+          <g key={obj.id} transform={transform}>
+            <g transform={innerM}>
+              <path d={d} fill={fp} {...strokeProps} />
+            </g>
+          </g>
+        );
+      }
+      return <path key={obj.id} d={d} fill={fp} transform={transform} {...strokeProps} />;
     }
     case "text": {
       const t = obj as TextObject;
@@ -1767,7 +1934,8 @@ function objToSvgStringStatic(obj: FreehandObject, w: number, h: number, ox: num
     case "path": {
       const p = obj as PathObject;
       const fp = p.closed && fillHasPaint(fill) ? escapeXmlAttr(fillAttr) : "none";
-      parts.push(`<path d="${bezierToSvgD(p.points, p.closed)}" fill="${fp}" stroke="${obj.stroke}" stroke-width="${obj.strokeWidth}"${capJoin}${dashAttr} ${transform}/>`);
+      const dStr = escapeXmlAttr(pathObjToD(p));
+      parts.push(`<path d="${dStr}" fill="${fp}" stroke="${obj.stroke}" stroke-width="${obj.strokeWidth}"${capJoin}${dashAttr} ${transform}/>`);
       break;
     }
     case "text": {
@@ -1842,12 +2010,15 @@ async function computeBooleanCachedResult(children: FreehandObject[], operation:
 // ── Export helpers ──────────────────────────────────────────────────────
 
 function buildExportBounds(objects: FreehandObject[]): Rect {
-  const visible = objects.filter((o) => o.visible);
+  const visible = objects.filter((o) => o.visible && !o.isClipMask);
   if (visible.length === 0) return { x: 0, y: 0, w: 1920, h: 1080 };
   let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
   for (const o of visible) {
-    x1 = Math.min(x1, o.x); y1 = Math.min(y1, o.y);
-    x2 = Math.max(x2, o.x + o.width); y2 = Math.max(y2, o.y + o.height);
+    const vb = getVisualAABB(o, objects);
+    x1 = Math.min(x1, vb.x);
+    y1 = Math.min(y1, vb.y);
+    x2 = Math.max(x2, vb.x + vb.w);
+    y2 = Math.max(y2, vb.y + vb.h);
   }
   const pad = 20;
   return { x: x1 - pad, y: y1 - pad, w: x2 - x1 + pad * 2, h: y2 - y1 + pad * 2 };
@@ -1931,6 +2102,124 @@ async function rasterHrefToSafeDataUrl(href: string, cache: Map<string, string>)
       return TRANSPARENT_PIXEL_PNG;
     }
   }
+}
+
+async function freehandObjectsFromSvgImportShapes(shapes: SvgImportShape[]): Promise<FreehandObject[]> {
+  const cache = new Map<string, string>();
+  const out: FreehandObject[] = [];
+  for (let i = 0; i < shapes.length; i++) {
+    const s = shapes[i]!;
+    const n = i + 1;
+    const gid = s.groupId ? { groupId: s.groupId } : {};
+    if (s.kind === "rect") {
+      const fill = typeof s.fill === "string" ? migrateFill(solidFill(s.fill)) : migrateFill(s.fill);
+      out.push({
+        ...defaultObj({ name: `Rectangle ${n}`, ...gid }),
+        type: "rect",
+        x: s.x,
+        y: s.y,
+        width: s.width,
+        height: s.height,
+        rx: s.rx,
+        fill,
+        stroke: s.stroke,
+        strokeWidth: s.strokeWidth,
+        opacity: s.opacity,
+        rotation: s.rotation,
+      } as RectObject);
+      continue;
+    }
+    if (s.kind === "ellipse") {
+      const fill = typeof s.fill === "string" ? migrateFill(solidFill(s.fill)) : migrateFill(s.fill);
+      out.push({
+        ...defaultObj({ name: `Ellipse ${n}`, ...gid }),
+        type: "ellipse",
+        x: s.x,
+        y: s.y,
+        width: s.width,
+        height: s.height,
+        fill,
+        stroke: s.stroke,
+        strokeWidth: s.strokeWidth,
+        opacity: s.opacity,
+        rotation: s.rotation,
+      } as EllipseObject);
+      continue;
+    }
+    if (s.kind === "path") {
+      const fill = typeof s.fill === "string" ? migrateFill(solidFill(s.fill)) : migrateFill(s.fill);
+      out.push({
+        ...defaultObj({ name: `Path ${n}`, ...gid }),
+        type: "path",
+        x: s.x,
+        y: s.y,
+        width: s.width,
+        height: s.height,
+        points: [],
+        closed: s.closed,
+        svgPathD: s.svgPathD,
+        ...(s.svgPathMatrix ? { svgPathMatrix: s.svgPathMatrix } : {}),
+        fill,
+        stroke: s.stroke,
+        strokeWidth: Math.max(0, s.strokeWidth),
+        opacity: s.opacity,
+        rotation: s.rotation,
+      } as PathObject);
+      continue;
+    }
+    if (s.kind === "text") {
+      const fill = typeof s.fill === "string" ? migrateFill(solidFill(s.fill)) : migrateFill(s.fill);
+      out.push({
+        ...defaultObj({ name: `Text ${n}`, ...gid }),
+        type: "text",
+        textMode: "point",
+        text: s.text,
+        x: s.x,
+        y: s.y,
+        width: Math.max(40, s.width),
+        height: Math.max(12, s.height),
+        fontFamily: s.fontFamily,
+        fontSize: s.fontSize,
+        fontWeight: s.fontWeight,
+        lineHeight: 1.35,
+        letterSpacing: 0,
+        fontKerning: "auto",
+        fontFeatureSettings: '"kern" 1, "liga" 1, "calt" 1',
+        fontVariantLigatures: "common-ligatures",
+        paragraphIndent: 0,
+        textAlign: "left",
+        fill,
+        stroke: s.stroke,
+        strokeWidth: s.strokeWidth,
+        strokePosition: "over",
+        scaleX: 1,
+        scaleY: 1,
+        opacity: s.opacity,
+        rotation: s.rotation,
+      } as TextObject);
+      continue;
+    }
+    if (s.kind === "image") {
+      const src = await rasterHrefToSafeDataUrl(s.href, cache);
+      const ratio = s.width / Math.max(s.height, 1);
+      out.push({
+        ...defaultObj({ name: `Image ${n}`, ...gid }),
+        type: "image",
+        x: s.x,
+        y: s.y,
+        width: s.width,
+        height: s.height,
+        fill: solidFill("none"),
+        stroke: "none",
+        strokeWidth: 0,
+        src,
+        intrinsicRatio: ratio,
+        opacity: s.opacity,
+        rotation: s.rotation,
+      } as ImageObject);
+    }
+  }
+  return out;
 }
 
 async function inlineSvgRasterImagesToDataUrls(svgXml: string): Promise<string> {
@@ -2277,10 +2566,12 @@ export default function FreehandStudio({
   nodeId,
   initialObjects,
   initialArtboards,
+  initialLayoutGuides,
   onClose,
   onExport,
   onUpdateObjects,
   onUpdateArtboards,
+  onUpdateLayoutGuides,
 }: FreehandStudioProps) {
 
   // ── Core state ─────────────────────────────────────────────────────
@@ -2307,7 +2598,7 @@ export default function FreehandStudio({
 
   // Drag state
   const [dragState, setDragState] = useState<{
-    type: "move" | "resize" | "pan" | "create" | "createText" | "directSelect" | "marquee" | "penHandle" | "rotate" | "gradient" | "artboardMove" | "artboardResize";
+    type: "move" | "resize" | "pan" | "create" | "createText" | "directSelect" | "marquee" | "penHandle" | "rotate" | "gradient" | "artboardMove" | "artboardResize" | "guideMove";
     startX: number;
     startY: number;
     startCanvas?: Point;
@@ -2345,6 +2636,11 @@ export default function FreehandStudio({
     abHandle?: string;
     /** Alt+arrastre: al soltar, memorizar el delta para ⌘D (paso repetido). */
     duplicateMove?: boolean;
+    /** Inicio de `e,f` en paths importados (matrix) para arrastre sin acumular mal. */
+    pathSvgMatrixStart?: Map<string, { e: number; f: number }>;
+    guideId?: string;
+    guideOrientation?: "vertical" | "horizontal";
+    guideStartPos?: number;
   } | null>(null);
 
   /** Paso de duplicado (⌘D): por defecto 20×20 px mundo; tras Alt+arrastre copia = último desplazamiento. */
@@ -2417,12 +2713,14 @@ export default function FreehandStudio({
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; canvas?: Point } | null>(null);
   const [textEditingId, setTextEditingId] = useState<string | null>(null);
   const [showGrid, setShowGrid] = useState(true);
+  const [layoutGuides, setLayoutGuides] = useState<LayoutGuide[]>(() => initialLayoutGuides ?? []);
+  const [showLayoutGuides, setShowLayoutGuides] = useState(true);
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportModalScope, setExportModalScope] = useState<"selection" | "full">("selection");
   const [toast, setToast] = useState<string | null>(null);
   const [exportFlash, setExportFlash] = useState<ExportRect | null>(null);
   const [snapEnabled, setSnapEnabled] = useState(true);
-  const [snapGuides, setSnapGuides] = useState<SnapGuide[]>([]);
+  const [snapGuides, setSnapGuides] = useState<SnapVisual[]>([]);
 
   // Isolation mode for BooleanGroups
   const [isolationDepth, setIsolationDepth] = useState(0);
@@ -2431,6 +2729,7 @@ export default function FreehandStudio({
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const svgInputRef = useRef<HTMLInputElement>(null);
   const customFontInputRef = useRef<HTMLInputElement>(null);
 
   const selectedIdsRef = useRef(selectedIds);
@@ -2443,6 +2742,8 @@ export default function FreehandStudio({
   artboardsRef.current = artboards;
   const selectedArtboardIdRef = useRef(selectedArtboardId);
   selectedArtboardIdRef.current = selectedArtboardId;
+  const layoutGuidesRef = useRef<LayoutGuide[]>(layoutGuides);
+  layoutGuidesRef.current = layoutGuides;
 
   // ── History helpers (using refs to avoid stale closures) ──────────
 
@@ -2526,6 +2827,16 @@ export default function FreehandStudio({
     }, 500);
     return () => clearTimeout(artboardSyncRef.current);
   }, [artboards, onUpdateArtboards]);
+
+  const layoutGuideSyncRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => {
+    if (!onUpdateLayoutGuides) return;
+    clearTimeout(layoutGuideSyncRef.current);
+    layoutGuideSyncRef.current = setTimeout(() => {
+      onUpdateLayoutGuides(layoutGuides);
+    }, 500);
+    return () => clearTimeout(layoutGuideSyncRef.current);
+  }, [layoutGuides, onUpdateLayoutGuides]);
 
   // ── Live boolean preview during isolation ───────────────────────
 
@@ -2671,6 +2982,22 @@ export default function FreehandStudio({
     return new Set(groupMembers);
   }, []);
 
+  const fitAllCanvas = useCallback(() => {
+    const b = resolveFitViewBounds(objects, artboards);
+    const el = containerRef.current;
+    if (!el) return;
+    const rw = el.clientWidth, rh = el.clientHeight;
+    if (b.w < 2 || b.h < 2) return;
+    const margin = 40;
+    const zx = (rw - margin * 2) / b.w, zy = (rh - margin * 2) / b.h;
+    const z = clamp(Math.min(zx, zy), 0.05, 8);
+    setViewport({
+      zoom: z,
+      x: margin - b.x * z + (rw - margin * 2 - b.w * z) / 2,
+      y: margin - b.y * z + (rh - margin * 2 - b.h * z) / 2,
+    });
+  }, [objects, artboards]);
+
   // ── Image import from file / drop / paste ─────────────────────────
 
   const importImageFile = useCallback((file: File, at?: Point) => {
@@ -2710,13 +3037,65 @@ export default function FreehandStudio({
     reader.readAsDataURL(file);
   }, [pushHistory]);
 
+  const importSvgFile = useCallback(
+    async (file: File, at?: Point) => {
+      try {
+        const text = await file.text();
+        const { shapes, skipped } = parseSvgToShapes(text);
+        if (shapes.length === 0) {
+          setToast("No se pudo leer el SVG.");
+          window.setTimeout(() => setToast(null), 3200);
+          return;
+        }
+        const ab = pickPrimaryArtboard(artboardsRef.current, selectedArtboardIdRef.current);
+        const fitInside = ab ? artboardToRect(ab) : null;
+        let center: Point;
+        if (at) center = at;
+        else {
+          const r = containerRef.current?.getBoundingClientRect();
+          center = r ? screenToCanvas(r.left + r.width / 2, r.top + r.height / 2) : { x: 400, y: 300 };
+        }
+        const scaled = offsetAndScaleShapes(shapes, {
+          newId: uid,
+          targetCenter: center,
+          fitInside,
+        });
+        const newObjs = await freehandObjectsFromSvgImportShapes(scaled);
+        const ids = newObjs.map((o) => o.id);
+        setObjects((prev) => {
+          const next = [...prev, ...newObjs];
+          pushHistory(next, new Set(ids));
+          return next;
+        });
+        setSelectedIds(new Set(ids));
+        if (skipped > 0) {
+          setToast("Algunos elementos no pudieron importarse como vectores editables.");
+          window.setTimeout(() => setToast(null), 4200);
+        }
+        window.setTimeout(() => {
+          fitAllCanvas();
+        }, 0);
+      } catch {
+        setToast("Error al importar el SVG.");
+        window.setTimeout(() => setToast(null), 3200);
+      }
+    },
+    [pushHistory, screenToCanvas, fitAllCanvas],
+  );
+
   const handleDrop = useCallback((e: ReactDragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     const pos = screenToCanvas(e.clientX, e.clientY);
-    const files = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith("image/"));
-    files.forEach((f) => importImageFile(f, pos));
-  }, [importImageFile, screenToCanvas]);
+    for (const f of Array.from(e.dataTransfer.files)) {
+      const lower = f.name.toLowerCase();
+      if (f.type === "image/svg+xml" || lower.endsWith(".svg")) {
+        void importSvgFile(f, pos);
+      } else if (f.type.startsWith("image/")) {
+        importImageFile(f, pos);
+      }
+    }
+  }, [importImageFile, importSvgFile, screenToCanvas]);
 
   const handleDragOver = useCallback((e: ReactDragEvent) => {
     e.preventDefault();
@@ -2906,56 +3285,92 @@ export default function FreehandStudio({
     const objs = objectsRef.current;
     const t = objs.find((o) => sel.has(o.id) && o.type === "text") as TextObject | undefined;
     if (!t || !t.text.trim()) return;
-    const baselineY = t.y + t.fontSize;
-    const result = await textToOutlinePaths(t.text, t.fontFamily, t.fontSize, t.fontWeight, t.x, baselineY);
-    if (!result || result.points.length < 2) return;
-    const pts: BezierPoint[] = result.points.map((p) => ({
-      anchor: { ...p.anchor },
-      handleIn: { ...p.handleIn },
-      handleOut: { ...p.handleOut },
-      vertexMode: (p.vertexMode === "corner" || p.vertexMode === "cusp") ? p.vertexMode : "smooth",
-    }));
-    const pb = getPathBoundsFromPoints(pts);
-    const pathObj: PathObject = {
-      ...defaultObj({ name: `${t.name} (outlines)` }),
-      type: "path",
-      x: pb.x,
-      y: pb.y,
-      width: pb.w,
-      height: pb.h,
-      fill: cloneFill(migrateFill(t.fill)),
-      stroke: t.stroke,
-      strokeWidth: t.strokeWidth,
-      strokeLinecap: t.strokeLinecap,
-      strokeLinejoin: t.strokeLinejoin,
-      strokeDasharray: t.strokeDasharray,
-      points: pts,
-      closed: result.closed,
-    } as PathObject;
+    const fontRes = await loadFontForTextConversion({
+      fontFamily: t.fontFamily,
+      fontSize: t.fontSize,
+      fontWeight: t.fontWeight,
+    });
+    if ("error" in fontRes) {
+      setToast(FONT_CONVERSION_UNAVAILABLE);
+      window.setTimeout(() => setToast(null), 3200);
+      return;
+    }
+    const payloads = await textToGlyphPathPayloads(
+      {
+        name: t.name,
+        text: t.text,
+        textMode: t.textMode,
+        x: t.x,
+        y: t.y,
+        width: t.width,
+        height: t.height,
+        fontSize: t.fontSize,
+        fontWeight: t.fontWeight,
+        lineHeight: t.lineHeight,
+        letterSpacing: t.letterSpacing,
+        fontKerning: t.fontKerning,
+        textAlign: t.textAlign,
+        paragraphIndent: t.paragraphIndent,
+      },
+      fontRes.font,
+    );
+    if (payloads.length === 0) {
+      setToast(FONT_CONVERSION_UNAVAILABLE);
+      window.setTimeout(() => setToast(null), 3200);
+      return;
+    }
+    const gid = uid();
+    const newPaths: PathObject[] = payloads.map((pl, i) => {
+      const pts: BezierPoint[] =
+        pl.points.length >= 2
+          ? pl.points.map((p) => ({
+              anchor: { ...p.anchor },
+              handleIn: { ...p.handleIn },
+              handleOut: { ...p.handleOut },
+              vertexMode: p.vertexMode === "corner" || p.vertexMode === "cusp" ? p.vertexMode : "smooth",
+            }))
+          : [
+              {
+                anchor: { x: pl.x, y: pl.y },
+                handleIn: { x: pl.x, y: pl.y },
+                handleOut: { x: pl.x + 1, y: pl.y },
+                vertexMode: "corner" as const,
+              },
+              {
+                anchor: { x: pl.x + pl.width, y: pl.y + pl.height },
+                handleIn: { x: pl.x + pl.width, y: pl.y + pl.height },
+                handleOut: { x: pl.x + pl.width, y: pl.y + pl.height },
+                vertexMode: "corner" as const,
+              },
+            ];
+      return {
+        ...defaultObj({ name: pl.name || `${t.name} ${i + 1}` }),
+        type: "path" as const,
+        x: pl.x,
+        y: pl.y,
+        width: pl.width,
+        height: pl.height,
+        fill: cloneFill(migrateFill(t.fill)),
+        stroke: t.stroke,
+        strokeWidth: t.strokeWidth,
+        strokeLinecap: t.strokeLinecap,
+        strokeLinejoin: t.strokeLinejoin,
+        strokeDasharray: t.strokeDasharray,
+        opacity: t.opacity,
+        points: pts,
+        closed: pl.closed,
+        svgPathD: pl.svgPathD,
+        groupId: gid,
+      } as PathObject;
+    });
     setObjects((prev) => {
-      const next = prev.filter((o) => o.id !== t.id).concat(pathObj);
-      pushHistory(next, new Set([pathObj.id]));
+      const next = prev.filter((o) => o.id !== t.id).concat(newPaths);
+      pushHistory(next, new Set(newPaths.map((p) => p.id)));
       return next;
     });
-    setSelectedIds(new Set([pathObj.id]));
+    setSelectedIds(new Set(newPaths.map((p) => p.id)));
     setTextEditingId(null);
   }, [pushHistory]);
-
-  const fitAllCanvas = useCallback(() => {
-    const b = resolveFitViewBounds(objects, artboards);
-    const el = containerRef.current;
-    if (!el) return;
-    const rw = el.clientWidth, rh = el.clientHeight;
-    if (b.w < 2 || b.h < 2) return;
-    const margin = 40;
-    const zx = (rw - margin * 2) / b.w, zy = (rh - margin * 2) / b.h;
-    const z = clamp(Math.min(zx, zy), 0.05, 8);
-    setViewport({
-      zoom: z,
-      x: margin - b.x * z + (rw - margin * 2 - b.w * z) / 2,
-      y: margin - b.y * z + (rh - margin * 2 - b.h * z) / 2,
-    });
-  }, [objects, artboards]);
 
   const updateSelectedArtboard = useCallback((patch: Partial<Artboard>) => {
     if (!selectedArtboardId) return;
@@ -3774,7 +4189,40 @@ export default function FreehandStudio({
           downloadSvg(strRaw, name);
         } else if (opts.format === "pdf") {
           const { downloadSvgAsVectorPdf } = await import("./freehand/download-vector-pdf");
-          await downloadSvgAsVectorPdf(strRaw, name);
+          let pdfMarkup = strRaw;
+          const textObjs = objs.filter((o): o is TextObject => o.type === "text" && o.visible && !o.isClipMask);
+          if (textObjs.length > 0) {
+            pdfMarkup = await substituteTextWithOutlinedPathsInSvg(
+              strRaw,
+              textObjs.map((tx) => {
+                const f = migrateFill(tx.fill);
+                const fillColor = f.type === "solid" && f.color !== "none" ? f.color : "#000000";
+                return {
+                  id: tx.id,
+                  name: tx.name,
+                  text: tx.text,
+                  textMode: tx.textMode,
+                  x: tx.x,
+                  y: tx.y,
+                  width: tx.width,
+                  height: tx.height,
+                  fontSize: tx.fontSize,
+                  fontWeight: tx.fontWeight,
+                  lineHeight: tx.lineHeight,
+                  letterSpacing: tx.letterSpacing,
+                  fontKerning: tx.fontKerning,
+                  textAlign: tx.textAlign,
+                  paragraphIndent: tx.paragraphIndent,
+                  fontFamily: tx.fontFamily,
+                  fillColor,
+                  stroke: tx.stroke,
+                  strokeWidth: tx.strokeWidth,
+                  opacity: tx.opacity,
+                };
+              }),
+            );
+          }
+          await downloadSvgAsVectorPdf(pdfMarkup, name);
         } else {
           await rasterize(str, pw, ph, name);
         }
@@ -3782,6 +4230,97 @@ export default function FreehandStudio({
       };
 
       try {
+        if (opts.batchArtboardIds && opts.batchArtboardIds.length > 0 && scope === "full") {
+          const abs = artboardsRef.current;
+          const { default: JSZip } = await import("jszip");
+          const { svgMarkupToPdfBlob } = await import("./freehand/download-vector-pdf");
+          const mapTextForPdf = (tx: TextObject) => {
+            const f = migrateFill(tx.fill);
+            const fillColor = f.type === "solid" && f.color !== "none" ? f.color : "#000000";
+            return {
+              id: tx.id,
+              name: tx.name,
+              text: tx.text,
+              textMode: tx.textMode,
+              x: tx.x,
+              y: tx.y,
+              width: tx.width,
+              height: tx.height,
+              fontSize: tx.fontSize,
+              fontWeight: tx.fontWeight,
+              lineHeight: tx.lineHeight,
+              letterSpacing: tx.letterSpacing,
+              fontKerning: tx.fontKerning,
+              textAlign: tx.textAlign,
+              paragraphIndent: tx.paragraphIndent,
+              fontFamily: tx.fontFamily,
+              fillColor,
+              stroke: tx.stroke,
+              strokeWidth: tx.strokeWidth,
+              opacity: tx.opacity,
+            };
+          };
+          const entries: { fname: string; blob: Blob }[] = [];
+          const ext =
+            opts.format === "svg" ? "svg" : opts.format === "jpg" ? "jpg" : opts.format === "pdf" ? "pdf" : "png";
+          for (const abId of opts.batchArtboardIds) {
+            const ab = abs.find((a) => a.id === abId);
+            if (!ab) continue;
+            const b = artboardToRect(ab);
+            if (b.w < 1 || b.h < 1) continue;
+            const bg =
+              opts.format === "jpg"
+                ? opts.background === "transparent"
+                  ? "#ffffff"
+                  : opts.background
+                : opts.background;
+            const strRaw = buildStandaloneSvgFromCanvasDom(svg, {
+              exportIds: null,
+              bounds: b,
+              scale: opts.scale,
+              background: bg,
+            });
+            const safeName = (ab.name || "artboard").replace(/[^a-z0-9-_]+/gi, "_").slice(0, 80);
+            const fname = `${safeName}.${ext}`;
+            if (opts.format === "svg") {
+              entries.push({ fname, blob: new Blob([strRaw], { type: "image/svg+xml;charset=utf-8" }) });
+            } else if (opts.format === "pdf") {
+              let pdfMarkup = strRaw;
+              const textObjs = objs.filter((o): o is TextObject => o.type === "text" && o.visible && !o.isClipMask);
+              if (textObjs.length > 0) {
+                pdfMarkup = await substituteTextWithOutlinedPathsInSvg(strRaw, textObjs.map(mapTextForPdf));
+              }
+              entries.push({ fname, blob: await svgMarkupToPdfBlob(pdfMarkup) });
+            } else {
+              const str = substituteNativeTextForRasterExport(strRaw, objs);
+              const pw = Math.max(1, Math.round(b.w * opts.scale));
+              const ph = Math.max(1, Math.round(b.h * opts.scale));
+              const canvas = await svgStringToCanvasSafe(str, pw, ph, bgForCanvas);
+              const mime = opts.format === "jpg" ? "image/jpeg" : "image/png";
+              const quality = opts.format === "jpg" ? 0.92 : undefined;
+              const blob = await new Promise<Blob>((resolve, reject) => {
+                canvas.toBlob((bl) => (bl ? resolve(bl) : reject(new Error("toBlob"))), mime, quality);
+              });
+              entries.push({ fname, blob });
+            }
+            triggerExportFlash(b);
+          }
+          if (entries.length === 0) return;
+          if (entries.length === 1) {
+            downloadBlob(entries[0].blob, entries[0].fname);
+          } else {
+            const zip = new JSZip();
+            for (const e of entries) zip.file(e.fname, e.blob);
+            const zb = await zip.generateAsync({ type: "blob" });
+            const zipBase = opts.filename.replace(/\.[^.]+$/i, "").replace(/[^a-z0-9-_]+/gi, "_") || "export";
+            downloadBlob(zb, `${zipBase}-artboards.zip`);
+          }
+          setToast(`Exported ${entries.length} artboard(s)`);
+          window.setTimeout(() => setToast(null), 2800);
+          setShowExportModal(false);
+          return;
+        }
+
         if (scope === "full") {
           const abs = artboardsRef.current;
           const sid = selectedArtboardIdRef.current;
@@ -3837,6 +4376,11 @@ export default function FreehandStudio({
 
       e.stopPropagation();
 
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.code === "KeyO") {
+        e.preventDefault();
+        void convertTextToOutlines();
+        return;
+      }
       if (e.code === "Space" && !e.repeat) { e.preventDefault(); setSpaceHeld(true); return; }
       // Plain V = select tool; must not steal Ctrl/Meta+V (paste) or Ctrl+Shift+V (paste inside)
       if ((e.key === "v" || e.key === "V") && !e.metaKey && !e.ctrlKey && !e.altKey) {
@@ -4013,7 +4557,7 @@ export default function FreehandStudio({
   }, [objects, selectedIds, selectedPoints, isPenDrawing, penPoints, activeTool, textEditingId, viewport.zoom, dragState,
       undo, redo, pushHistory, deleteSelected, duplicateSelected, groupSelected,
       ungroupSelected, bringForward, sendBackward, finishPenPath, deleteSelectedPoints, exitIsolation,
-      copySelectedObjects, cutSelectedObjects, pasteClipboardObjects, pasteInside, quickExportSelectionPng]);
+      copySelectedObjects, cutSelectedObjects, pasteClipboardObjects, pasteInside, quickExportSelectionPng, convertTextToOutlines]);
 
   // ── Mouse handlers ────────────────────────────────────────────────
 
@@ -4086,6 +4630,50 @@ export default function FreehandStudio({
       }
       setActiveTool("select");
       return;
+    }
+
+    // ── Layout guides: arrastrar para mover, Alt+clic para quitar (solo selección / directa) ─
+    if (
+      e.button === 0 &&
+      showLayoutGuides &&
+      layoutGuides.length > 0 &&
+      (activeTool === "select" || activeTool === "directSelect")
+    ) {
+      const hitW = 12 / viewport.zoom;
+      for (let i = layoutGuides.length - 1; i >= 0; i--) {
+        const g = layoutGuides[i];
+        if (g.orientation === "vertical") {
+          if (Math.abs(pos.x - g.position) < hitW) {
+            if (e.altKey) {
+              setLayoutGuides((prev) => prev.filter((x) => x.id !== g.id));
+              return;
+            }
+            setDragState({
+              type: "guideMove",
+              startX: e.clientX,
+              startY: e.clientY,
+              guideId: g.id,
+              guideOrientation: g.orientation,
+              guideStartPos: g.position,
+            });
+            return;
+          }
+        } else if (Math.abs(pos.y - g.position) < hitW) {
+          if (e.altKey) {
+            setLayoutGuides((prev) => prev.filter((x) => x.id !== g.id));
+            return;
+          }
+          setDragState({
+            type: "guideMove",
+            startX: e.clientX,
+            startY: e.clientY,
+            guideId: g.id,
+            guideOrientation: g.orientation,
+            guideStartPos: g.position,
+          });
+          return;
+        }
+      }
     }
 
     // ── Pen tool ──────────────────────────────────────────────────
@@ -4411,9 +4999,14 @@ export default function FreehandStudio({
           setSelectedArtboardId(null);
           const positions = new Map<string, Point>();
           const pathPointsMap = new Map<string, BezierPoint[]>();
+          const pathSvgMatrixStart = new Map<string, { e: number; f: number }>();
           for (const c of clones) {
             positions.set(c.id, { x: c.x, y: c.y });
-            if (c.type === "path") pathPointsMap.set(c.id, (c as PathObject).points.map(pt => ({ ...pt, anchor: { ...pt.anchor }, handleIn: { ...pt.handleIn }, handleOut: { ...pt.handleOut } })));
+            if (c.type === "path") {
+              const cp = c as PathObject;
+              pathPointsMap.set(c.id, cp.points.map(pt => ({ ...pt, anchor: { ...pt.anchor }, handleIn: { ...pt.handleIn }, handleOut: { ...pt.handleOut } })));
+              if (cp.svgPathMatrix) pathSvgMatrixStart.set(c.id, { e: cp.svgPathMatrix.e, f: cp.svgPathMatrix.f });
+            }
           }
           setDragState({
             type: "move",
@@ -4421,6 +5014,7 @@ export default function FreehandStudio({
             startY: e.clientY,
             positions,
             pathPointsMap,
+            pathSvgMatrixStart: pathSvgMatrixStart.size > 0 ? pathSvgMatrixStart : undefined,
             duplicateMove: true,
           });
           pushHistory(next, cloneSel);
@@ -4438,14 +5032,26 @@ export default function FreehandStudio({
       setSelectedArtboardId(null);
       const positions = new Map<string, Point>();
       const pathPointsMap = new Map<string, BezierPoint[]>();
+      const pathSvgMatrixStart = new Map<string, { e: number; f: number }>();
       for (const sid of newSel) {
         const o = objects.find((x) => x.id === sid);
         if (o) {
           positions.set(sid, { x: o.x, y: o.y });
-          if (o.type === "path") pathPointsMap.set(sid, (o as PathObject).points.map(pt => ({ ...pt, anchor: { ...pt.anchor }, handleIn: { ...pt.handleIn }, handleOut: { ...pt.handleOut } })));
+          if (o.type === "path") {
+            const po = o as PathObject;
+            pathPointsMap.set(sid, po.points.map(pt => ({ ...pt, anchor: { ...pt.anchor }, handleIn: { ...pt.handleIn }, handleOut: { ...pt.handleOut } })));
+            if (po.svgPathMatrix) pathSvgMatrixStart.set(sid, { e: po.svgPathMatrix.e, f: po.svgPathMatrix.f });
+          }
         }
       }
-      setDragState({ type: "move", startX: e.clientX, startY: e.clientY, positions, pathPointsMap });
+      setDragState({
+        type: "move",
+        startX: e.clientX,
+        startY: e.clientY,
+        positions,
+        pathPointsMap,
+        pathSvgMatrixStart: pathSvgMatrixStart.size > 0 ? pathSvgMatrixStart : undefined,
+      });
       return;
     }
 
@@ -4456,7 +5062,8 @@ export default function FreehandStudio({
     }
     setDragState({ type: "marquee", startX: e.clientX, startY: e.clientY, marqueeOrigin: pos, currentCanvas: pos, shiftKey: extendSel });
   }, [activeTool, viewport, spaceHeld, objects, artboards, selectedIds, selectedArtboardId, selectedObjects, groupBounds, selectionFrame,
-      screenToCanvas, isPenDrawing, penPoints, finishPenPath, resolveSelection, addPointOnSegment, pushHistory]);
+      screenToCanvas, isPenDrawing, penPoints, finishPenPath, resolveSelection, addPointOnSegment, pushHistory,
+      layoutGuides, showLayoutGuides]);
 
   const handleMouseMove = useCallback((e: ReactMouseEvent) => {
     if (!dragState) {
@@ -4520,6 +5127,23 @@ export default function FreehandStudio({
       return;
     }
 
+    if (dragState.type === "guideMove" && dragState.guideId && dragState.guideOrientation && dragState.guideStartPos != null) {
+      const scale = 1 / viewport.zoom;
+      const ddx = (e.clientX - dragState.startX) * scale;
+      const ddy = (e.clientY - dragState.startY) * scale;
+      const id = dragState.guideId;
+      const start = dragState.guideStartPos;
+      const orient = dragState.guideOrientation;
+      setLayoutGuides((prev) =>
+        prev.map((g) => {
+          if (g.id !== id) return g;
+          if (orient === "vertical") return { ...g, position: start + ddx };
+          return { ...g, position: start + ddy };
+        }),
+      );
+      return;
+    }
+
     if (dragState.type === "penHandle" && penPoints.length > 0) {
       const pos = screenToCanvas(e.clientX, e.clientY);
       setPenPoints((prev) => {
@@ -4539,7 +5163,13 @@ export default function FreehandStudio({
 
     if (dragState.type === "create" && dragState.createOrigin) {
       const pos = screenToCanvas(e.clientX, e.clientY);
-      setDragState((prev) => prev ? { ...prev, currentCanvas: pos } : null);
+      const o = dragState.createOrigin;
+      const ct = dragState.createType;
+      const next =
+        (ct === "rect" || ct === "ellipse") && isShiftHeld(e)
+          ? oppositeCornerForSquareDrag(o, pos)
+          : pos;
+      setDragState((prev) => prev ? { ...prev, currentCanvas: next } : null);
       return;
     }
 
@@ -4617,7 +5247,7 @@ export default function FreehandStudio({
       let mdx = dx * scale, mdy = dy * scale;
 
       if (isShiftHeld(e)) {
-        const c = constrainToAxis(mdx, mdy);
+        const c = snapDeltaTo45(mdx, mdy);
         mdx = c.x; mdy = c.y;
       }
 
@@ -4629,7 +5259,9 @@ export default function FreehandStudio({
             return { ...obj, x: p.x + mdx, y: p.y + mdy };
           })
         );
-        const snap = computeSnap(tentBounds, objects, selectedIds, viewport.zoom);
+        const vg = layoutGuidesRef.current.filter((g) => g.orientation === "vertical").map((g) => g.position);
+        const hg = layoutGuidesRef.current.filter((g) => g.orientation === "horizontal").map((g) => g.position);
+        const snap = computeSnap(tentBounds, objects, selectedIds, viewport.zoom, { vertical: vg, horizontal: hg });
         mdx += snap.dx;
         mdy += snap.dy;
         setSnapGuides(snap.guides);
@@ -4640,7 +5272,11 @@ export default function FreehandStudio({
       setObjects((prev) => prev.map((o) => {
         const sp = dragState.positions!.get(o.id);
         if (!sp) return o;
-        if (o.type === "path" && dragState.pathPointsMap?.has(o.id)) {
+        if (
+          o.type === "path" &&
+          dragState.pathPointsMap?.has(o.id) &&
+          (dragState.pathPointsMap.get(o.id)?.length ?? 0) > 0
+        ) {
           const origPts = dragState.pathPointsMap.get(o.id)!;
           const newPts = origPts.map(pt => ({
             ...pt,
@@ -4650,6 +5286,18 @@ export default function FreehandStudio({
           }));
           const pb = getPathBoundsFromPoints(newPts);
           return { ...o, x: pb.x, y: pb.y, width: pb.w, height: pb.h, points: newPts };
+        }
+        if (o.type === "path") {
+          const po = o as PathObject;
+          const m0 = dragState.pathSvgMatrixStart?.get(o.id);
+          if (m0 && po.svgPathMatrix) {
+            return {
+              ...o,
+              x: sp.x + mdx,
+              y: sp.y + mdy,
+              svgPathMatrix: { ...po.svgPathMatrix, e: m0.e + mdx, f: m0.f + mdy },
+            };
+          }
         }
         return { ...o, x: sp.x + mdx, y: sp.y + mdy };
       }));
@@ -4856,7 +5504,12 @@ export default function FreehandStudio({
     if (dragState.type === "directSelect" && dragState.dsObjId) {
       const scale = 1 / viewport.zoom;
       const start = dragState.dsStartPt!;
-      const newPos: Point = { x: start.x + dx * scale, y: start.y + dy * scale };
+      let ndx = dx * scale, ndy = dy * scale;
+      if (isShiftHeld(e)) {
+        const s = snapDeltaTo45(ndx, ndy);
+        ndx = s.x; ndy = s.y;
+      }
+      const newPos: Point = { x: start.x + ndx, y: start.y + ndy };
       setObjects((prev) => prev.map((o) => {
         if (o.id !== dragState.dsObjId || o.type !== "path") return o;
         const pts = (o as PathObject).points.map((pt, pi) => {
@@ -5012,7 +5665,15 @@ export default function FreehandStudio({
     }
 
     if (dragState.type === "create" && dragState.createOrigin && dragState.currentCanvas) {
-      const o = dragState.createOrigin, c = dragState.currentCanvas;
+      const o = dragState.createOrigin;
+      const raw = screenToCanvas(e.clientX, e.clientY);
+      const ct = dragState.createType;
+      const c =
+        ct === "artboard"
+          ? raw
+          : (ct === "rect" || ct === "ellipse") && isShiftHeld(e)
+            ? oppositeCornerForSquareDrag(o, raw)
+            : raw;
       if (dragState.createType === "artboard") {
         const x = Math.min(o.x, c.x), y = Math.min(o.y, c.y);
         const w = Math.max(Math.abs(c.x - o.x), 40), h = Math.max(Math.abs(c.y - o.y), 40);
@@ -5144,8 +5805,33 @@ export default function FreehandStudio({
     if (!hasSel) {
       return [
         { label: "Paste", shortcut: "⌘V", action: pasteClipboardObjects },
-        { label: "Import image…", action: () => fileInputRef.current?.click(), separator: true },
-        { label: "Add text", shortcut: "T", action: () => setActiveTool("text") },
+        { label: "Import image…", action: () => fileInputRef.current?.click() },
+        { label: "Import SVG…", action: () => svgInputRef.current?.click() },
+        {
+          label: "Guía vertical aquí",
+          action: () => {
+            const c = ctxMenu?.canvas;
+            if (c) setLayoutGuides((p) => [...p, createLayoutGuide("vertical", c.x)]);
+          },
+        },
+        {
+          label: "Guía horizontal aquí",
+          action: () => {
+            const c = ctxMenu?.canvas;
+            if (c) setLayoutGuides((p) => [...p, createLayoutGuide("horizontal", c.y)]);
+          },
+        },
+        {
+          label: "Quitar todas las guías",
+          action: () => setLayoutGuides([]),
+          disabled: layoutGuides.length === 0,
+          separator: true,
+        },
+        {
+          label: showLayoutGuides ? "Ocultar guías" : "Mostrar guías",
+          action: () => setShowLayoutGuides((v) => !v),
+        },
+        { label: "Add text", shortcut: "T", action: () => setActiveTool("text"), separator: true },
         { label: "Rectangle", shortcut: "R", action: () => setActiveTool("rect") },
         { label: "Ellipse", shortcut: "E", action: () => setActiveTool("ellipse") },
         { label: "Select all", shortcut: "⌘A", action: () => setSelectedIds(new Set(objects.map((o) => o.id))) },
@@ -5275,7 +5961,8 @@ export default function FreehandStudio({
       updateSelectedProp, groupSelected, ungroupSelected, createClipMask, releaseClipMask, togglePathClosed,
       cycleVertexMode, booleanOp, enterIsolation, expandBoolean, exitIsolation, alignObjects, fitAllCanvas,
       resetZoomCanvas, pasteClipboardObjects, pasteInside, cutSelectedObjects, copySelectedObjects, renameSelected,
-      convertTextToOutlines, releaseClippingStructure, enterClippingIsolation, switchClippingIsolationMode, enterVectorGroupIsolation]);
+      convertTextToOutlines, releaseClippingStructure, enterClippingIsolation, switchClippingIsolationMode, enterVectorGroupIsolation,
+      layoutGuides.length, showLayoutGuides]);
 
   // ── Cursor ────────────────────────────────────────────────────────
 
@@ -5370,6 +6057,17 @@ export default function FreehandStudio({
         if (f) importImageFile(f);
         e.target.value = "";
       }} />
+      <input
+        ref={svgInputRef}
+        type="file"
+        accept=".svg,image/svg+xml"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) void importSvgFile(f);
+          e.target.value = "";
+        }}
+      />
 
       <header className="flex h-14 shrink-0 items-center gap-3 border-b border-white/[0.08] bg-[#12151a] px-4">
         <div className="min-w-0 flex-1">
@@ -5485,6 +6183,9 @@ export default function FreehandStudio({
 
         <ToolBtn onClick={() => fileInputRef.current?.click()} title="Import image">
           <Upload size={18} strokeWidth={1.5} />
+        </ToolBtn>
+        <ToolBtn onClick={() => svgInputRef.current?.click()} title="Import SVG">
+          <FileType2 size={18} strokeWidth={1.5} />
         </ToolBtn>
 
         <div className="flex-1 min-h-[8px]" />
@@ -5692,6 +6393,38 @@ export default function FreehandStudio({
                 </g>
               );
             })}
+
+            {/* Guías de diseño (no exportan con el vector; solo ayuda visual / snap) */}
+            {showLayoutGuides &&
+              layoutGuides.map((g) =>
+                g.orientation === "vertical" ? (
+                  <line
+                    key={g.id}
+                    data-ui="layout-guide"
+                    x1={g.position}
+                    y1={-5e5}
+                    x2={g.position}
+                    y2={5e5}
+                    stroke="rgba(196,181,253,0.92)"
+                    strokeWidth={1 / viewport.zoom}
+                    strokeDasharray={`${6 / viewport.zoom} ${4 / viewport.zoom}`}
+                    pointerEvents="none"
+                  />
+                ) : (
+                  <line
+                    key={g.id}
+                    data-ui="layout-guide"
+                    x1={-5e5}
+                    y1={g.position}
+                    x2={5e5}
+                    y2={g.position}
+                    stroke="rgba(196,181,253,0.92)"
+                    strokeWidth={1 / viewport.zoom}
+                    strokeDasharray={`${6 / viewport.zoom} ${4 / viewport.zoom}`}
+                    pointerEvents="none"
+                  />
+                ),
+              )}
 
             {/* Render objects (multi-select: non-primary slightly faded) */}
             {objects.map((obj) => {
@@ -5935,11 +6668,26 @@ export default function FreehandStudio({
             })}
 
             {/* Snap guides */}
-            {snapGuides.map((g, i) => (
-              g.axis === "x"
+            {snapGuides.map((g, i) => {
+              if (g.type === "anchor") {
+                return (
+                  <circle key={`sg-${i}`} cx={g.x} cy={g.y} r={4 / viewport.zoom} fill="none" stroke="#38bdf8" strokeWidth={1.5 / viewport.zoom} data-ui="snap" />
+                );
+              }
+              if (g.type === "cross") {
+                return (
+                  <g key={`sg-${i}`} data-ui="snap">
+                    <line x1={g.cx} y1={-99999} x2={g.cx} y2={99999} stroke="#38bdf8" strokeWidth={1 / viewport.zoom} opacity={0.9} />
+                    <line x1={-99999} y1={g.cy} x2={99999} y2={g.cy} stroke="#38bdf8" strokeWidth={1 / viewport.zoom} opacity={0.9} />
+                  </g>
+                );
+              }
+              return g.type === "line" && g.axis === "x"
                 ? <line key={`sg-${i}`} x1={g.pos} y1={-99999} x2={g.pos} y2={99999} stroke="#f472b6" strokeWidth={1 / viewport.zoom} data-ui="snap" />
-                : <line key={`sg-${i}`} x1={-99999} y1={g.pos} x2={99999} y2={g.pos} stroke="#f472b6" strokeWidth={1 / viewport.zoom} data-ui="snap" />
-            ))}
+                : g.type === "line"
+                  ? <line key={`sg-${i}`} x1={-99999} y1={g.pos!} x2={99999} y2={g.pos!} stroke="#f472b6" strokeWidth={1 / viewport.zoom} data-ui="snap" />
+                  : null;
+            })}
           </g>
         </svg>
 
@@ -6867,6 +7615,7 @@ export default function FreehandStudio({
                               const face = new FontFace(f.name.replace(/\.[^.]+$/, ""), buf);
                               await face.load();
                               document.fonts.add(face);
+                              registerUserFontBuffer(parsePrimaryFontFamily(face.family), tx.fontWeight, buf);
                               updateSelectedProp("fontFamily", `"${face.family}", system-ui, sans-serif`);
                               setToast(`Font loaded: ${face.family}`);
                               setTimeout(() => setToast(null), 2500);
@@ -7121,6 +7870,7 @@ export default function FreehandStudio({
                                 const face = new FontFace(f.name.replace(/\.[^.]+$/, ""), buf);
                                 await face.load();
                                 document.fonts.add(face);
+                                registerUserFontBuffer(parsePrimaryFontFamily(face.family), top.fontWeight, buf);
                                 updateSelectedProp("fontFamily", `"${face.family}", system-ui, sans-serif`);
                                 setToast(`Font loaded: ${face.family}`);
                                 setTimeout(() => setToast(null), 2500);
@@ -7727,6 +8477,8 @@ export default function FreehandStudio({
                   : `${selectedObjects.length} objects`
           }
           hasSelection={selectedIds.size > 0}
+          exportScope={exportModalScope}
+          artboardList={artboards.map((a) => ({ id: a.id, name: a.name }))}
           onExport={runProfessionalExport}
         />
       )}

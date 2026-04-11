@@ -7847,7 +7847,7 @@ export const BezierMaskNode = memo(({ id, data, selected }: NodeProps<any>) => {
 // ── FREEHAND VECTOR EDITOR NODE ──────────────────────────────────────────
 
 export const FreehandNode = memo(({ id, data, selected }: NodeProps<any>) => {
-  const nodeData = data as BaseNodeData & { objects?: any[]; artboards?: any[]; value?: string };
+  const nodeData = data as BaseNodeData & { objects?: any[]; artboards?: any[]; layoutGuides?: any[]; value?: string };
   const { setNodes } = useReactFlow();
   const [isStudioOpen, setIsStudioOpen] = useState(false);
 
@@ -7877,6 +7877,15 @@ export const FreehandNode = memo(({ id, data, selected }: NodeProps<any>) => {
     (artboards: any[]) => {
       setNodes((nds: any) =>
         nds.map((n: any) => (n.id === id ? { ...n, data: { ...n.data, artboards } } : n))
+      );
+    },
+    [id, setNodes]
+  );
+
+  const handleUpdateLayoutGuides = useCallback(
+    (layoutGuides: any[]) => {
+      setNodes((nds: any) =>
+        nds.map((n: any) => (n.id === id ? { ...n, data: { ...n.data, layoutGuides } } : n))
       );
     },
     [id, setNodes]
@@ -7927,10 +7936,12 @@ export const FreehandNode = memo(({ id, data, selected }: NodeProps<any>) => {
             nodeId={id}
             initialObjects={nodeData.objects || []}
             initialArtboards={nodeData.artboards}
+            initialLayoutGuides={nodeData.layoutGuides}
             onClose={() => setIsStudioOpen(false)}
             onExport={handleExport}
             onUpdateObjects={handleUpdateObjects}
             onUpdateArtboards={handleUpdateArtboards}
+            onUpdateLayoutGuides={handleUpdateLayoutGuides}
           />,
           document.body
         )}
