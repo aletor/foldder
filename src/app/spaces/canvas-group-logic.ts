@@ -33,7 +33,7 @@ function layoutDimsForBounds(n: Node): { w: number; h: number } {
   let h = hasH ? mh : 280;
   if (!hasW || !hasH) {
     const t = n.type ?? "";
-    if (t === "geminiVideo") {
+    if (t === "geminiVideo" || t === "vfxGenerator") {
       if (!hasW) w = sw ?? 380;
       if (!hasH) h = sh ?? 560;
     } else if (t === "nanoBanana" || t === "imageComposer" || t === "grokProcessor") {

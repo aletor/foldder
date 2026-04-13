@@ -1,7 +1,20 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { EMPTY_CANVAS_SHORTCUT_HINT } from "./spaces-chrome-constants";
+import { TOPBAR_GLYPH_BY_NODE_TYPE } from "./TopbarPinIcons";
+
+/** Portal a `body` evita stacking contexts del lienzo. */
+const EMPTY_SHORTCUTS_Z = 20100;
+
+/**
+ * Borde inferior del popover (`fixed`): debe quedar por encima del recuadro de la barra de accesos
+ * sin solaparse. Coincide con `page.tsx` (`bottom-6` = 1.5rem) + `TopbarPins` embebido (`py-1.5` + chips `min-h-[3.85rem]`).
+ * +1.25rem ≈ 20px de hueco entre el techo de la barra y la base del modal (incl. pico del popover).
+ */
+const EMPTY_SHORTCUTS_BOTTOM =
+  "calc(1.5rem + 0.75rem + 3.85rem + 1.25rem + env(safe-area-inset-bottom, 0px))";
 
 type Props = {
   showWelcome: boolean;
@@ -20,6 +33,45 @@ export function SpacesWelcomeChrome({
   windowMode,
   nodeCount,
 }: Props) {
+  const [portalReady, setPortalReady] = useState(false);
+  useEffect(() => {
+    setPortalReady(true);
+  }, []);
+
+  const emptyShortcutsHint =
+    isAuthenticated &&
+    showEmptyShortcutsHint &&
+    !windowMode &&
+    nodeCount === 0 ? (
+      <div
+        className="foldder-empty-shortcuts-anchor pointer-events-none fixed inset-x-0 flex justify-center px-3"
+        style={{ bottom: EMPTY_SHORTCUTS_BOTTOM, zIndex: EMPTY_SHORTCUTS_Z }}
+        aria-live="polite"
+      >
+        <div className="foldder-empty-shortcuts-popover text-black">
+          <ul className="m-0 list-none p-0">
+            {EMPTY_CANVAS_SHORTCUT_HINT.map(({ label, keyLabel, nodeType }) => {
+              const Glyph = TOPBAR_GLYPH_BY_NODE_TYPE[nodeType];
+              return (
+                <li
+                  key={nodeType}
+                  className="foldder-empty-shortcuts-row flex items-center gap-2.5 py-1 pl-1 pr-1"
+                >
+                  <Glyph className="shrink-0 text-black opacity-90" size={14} />
+                  <span className="min-w-0 flex-1 truncate font-medium tracking-tight text-black/85">
+                    {label}
+                  </span>
+                  <kbd className="foldder-empty-shortcuts-kbd shrink-0 font-mono text-black/80">
+                    {keyLabel}
+                  </kbd>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      </div>
+    ) : null;
+
   return (
     <>
       {showWelcome && (
@@ -61,40 +113,9 @@ export function SpacesWelcomeChrome({
         </div>
       )}
 
-      {isAuthenticated &&
-        showEmptyShortcutsHint &&
-        !windowMode &&
-        nodeCount === 0 && (
-          <div
-            className="foldder-empty-shortcuts-anchor pointer-events-none fixed inset-x-0 z-[19950] flex justify-center px-3"
-            style={{ bottom: "max(5.25rem, 11vh)" }}
-            aria-live="polite"
-          >
-            <div className="foldder-empty-shortcuts-popover text-black">
-              <ul className="m-0 list-none p-0">
-                {EMPTY_CANVAS_SHORTCUT_HINT.map(({ label, keyLabel, Icon }) => (
-                  <li
-                    key={label}
-                    className="foldder-empty-shortcuts-row flex items-center gap-2.5 py-1 pl-1 pr-1"
-                  >
-                    <Icon
-                      className="shrink-0 text-black opacity-90"
-                      size={12}
-                      strokeWidth={1.35}
-                      aria-hidden
-                    />
-                    <span className="min-w-0 flex-1 truncate font-medium tracking-tight text-black/85">
-                      {label}
-                    </span>
-                    <kbd className="foldder-empty-shortcuts-kbd shrink-0 font-mono text-black/80">
-                      {keyLabel}
-                    </kbd>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        )}
+      {portalReady && emptyShortcutsHint
+        ? createPortal(emptyShortcutsHint, document.body)
+        : null}
     </>
   );
 }

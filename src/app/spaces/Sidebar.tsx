@@ -63,12 +63,12 @@ type SidebarProps = {
   windowMode?: boolean;
   onLibraryDragStart?: (nodeType: string) => void;
   onLibraryDragEnd?: () => void;
-  /** Doble clic en un mosaico: mismo comportamiento que doble clic en pin del topbar */
+  /** Doble clic en un mosaico: mismo comportamiento que doble clic en la barra inferior de accesos */
   onLibraryTileDoubleClick?: (nodeType: string) => void;
   /** Si true, el panel no se abre por hover hasta que el ratón entre en la franja izquierda */
   sidebarLockedCollapsed?: boolean;
   onSidebarStripMouseEnter?: () => void;
-  /** Arrastre desde librería/topbar: sin tooltips de ayuda rollover */
+  /** Arrastre desde la librería: sin tooltips de ayuda rollover */
   paletteDragActive?: boolean;
 };
 
@@ -242,6 +242,7 @@ const Sidebar = ({
       { type: 'grokProcessor',     label: 'Grok' },
       { type: 'nanoBanana',        label: 'Nano' },
       { type: 'geminiVideo',       label: 'Video Gen' },
+      { type: 'vfxGenerator',      label: 'VFX' },
       null,
       { type: 'concatenator',      label: 'Concat' },
       { type: 'listado',           label: 'Listado' },
@@ -397,6 +398,7 @@ const Sidebar = ({
                   { type: 'grokProcessor',     label: 'Grok' },
                   { type: 'nanoBanana',        label: 'Nano' },
                   { type: 'geminiVideo',       label: 'Video Generator' },
+                  { type: 'vfxGenerator',      label: 'VFX Generator' },
                 ].map(item => (
                   <div key={item.type}
                     className="dndnode relative flex flex-col items-center justify-center gap-1 py-3 px-2 !bg-white/20 hover:!bg-white/30 border border-white/25 hover:border-cyan-400/50 rounded-2xl cursor-grab active:scale-95 transition-all text-center aspect-square"

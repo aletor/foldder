@@ -1,25 +1,30 @@
 import type { LucideIcon } from "lucide-react";
-import {
-  Type,
-  Sparkles,
-  Film,
-  Download,
-  Layers,
-  Workflow,
-  Brain,
-} from "lucide-react";
+import { Layers, Workflow, Brain, Sparkles } from "lucide-react";
+import { NODE_KEYS } from "./node-shortcuts";
+
+/** Alineado con la barra inferior y con el `switch` de teclas del lienzo en `page.tsx`. */
+export type EmptyCanvasShortcutNodeType =
+  | "freehand"
+  | "nanoBanana"
+  | "geminiVideo"
+  | "vfxGenerator";
 
 /** Tras el splash «Bienvenido», si el lienzo sigue vacío: atajos visibles hasta el primer nodo. */
 export const EMPTY_CANVAS_SHORTCUT_HINT: {
   label: string;
   keyLabel: string;
-  Icon: LucideIcon;
-}[] = [
-  { label: "Prompt", keyLabel: "P", Icon: Type },
-  { label: "Nano Banana", keyLabel: "N", Icon: Sparkles },
-  { label: "Video", keyLabel: "V", Icon: Film },
-  { label: "Export", keyLabel: "E", Icon: Download },
-];
+  nodeType: EmptyCanvasShortcutNodeType;
+}[] = (
+  [
+    { label: "Vector", nodeType: "freehand" },
+    { label: "Image", nodeType: "nanoBanana" },
+    { label: "Video", nodeType: "geminiVideo" },
+    { label: "VFX", nodeType: "vfxGenerator" },
+  ] as const
+).map((row) => ({
+  ...row,
+  keyLabel: NODE_KEYS[row.nodeType].toUpperCase(),
+}));
 
 export const AUTH_HIGHLIGHTS: {
   icon: LucideIcon;

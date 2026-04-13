@@ -26,7 +26,7 @@ export const HANDLE_COLORS: Record<string, string> = {
 export const DEFAULT_EDGE_COLOR = "#94a3b8";
 
 /** Nodos que conservan el acento (logo) en vidrio/cabecera/botón; el resto igual que Image Export. */
-const ACCENT_SURFACE_NODE_TYPES = new Set<string>(["nanoBanana", "geminiVideo", "grokProcessor"]);
+const ACCENT_SURFACE_NODE_TYPES = new Set<string>(["nanoBanana", "geminiVideo", "vfxGenerator", "grokProcessor"]);
 
 /** Salida “principal” para el anillo del nodo: prioriza imagen/vídeo/prompt frente a mask/json cuando hay varias. */
 const PRIMARY_OUTPUT_PRIORITY: HandleType[] = [

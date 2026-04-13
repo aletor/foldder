@@ -245,6 +245,38 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
     dataSchema: {}
   },
 
+  vfxGenerator: {
+    type: 'vfxGenerator',
+    label: 'VFX Generator',
+    description:
+      'Beeble SwitchX: efectos VFX sobre un vídeo fuente con prompt(s) e imagen de referencia opcional; máscara alpha si el modo lo requiere.',
+    inputs: [
+      { id: 'sourceVideo', label: 'Source video', type: 'video' },
+      { id: 'referenceImage', label: 'Reference image', type: 'image' },
+      { id: 'alphaMask', label: 'Alpha mask', type: 'image' },
+      { id: 'p0', label: 'Prompt 1', type: 'prompt' },
+      { id: 'p1', label: 'Prompt 2', type: 'prompt' },
+      { id: 'p2', label: 'Prompt 3', type: 'prompt' },
+      { id: 'p3', label: 'Prompt 4', type: 'prompt' },
+      { id: 'p4', label: 'Prompt 5', type: 'prompt' },
+      { id: 'p5', label: 'Prompt 6', type: 'prompt' },
+      { id: 'p6', label: 'Prompt 7', type: 'prompt' },
+      { id: 'p7', label: 'Prompt 8', type: 'prompt' },
+    ],
+    outputs: [{ id: 'video', label: 'Video Out', type: 'video' }],
+    dataSchema: {
+      prompts: 'string[]',
+      alphaMode: 'auto | fill | select | custom',
+      maxResolution: '720 | 1080',
+      activePromptIndex: 'number',
+      sourceVideoUri: 'string (URL o beeble_uri)',
+      referenceImageUri: 'string',
+      alphaUri: 'string',
+      activeJobId: 'string',
+      value: 'vídeo de salida (URL)',
+    },
+  },
+
   geminiVideo: {
     type: 'geminiVideo',
     label: 'Video Generator',
@@ -380,6 +412,8 @@ export const ASSISTANT_NODE_DATA_HINTS: Record<string, string> = {
   grokProcessor: "duration (number, 5|10), resolution, aspect_ratio, value (salida vídeo URL), type ('video'), label",
   geminiVideo:
     "videoModel (veo31|seedance2), videoFormat (16:9|9:16|1:1), resolution (720p|1080p|4K Veo), duration (s), audio (bool), seed, negativePrompt, animationPrompt, cameraPreset, value (salida vídeo URL), type ('video'), s3Key, label",
+  vfxGenerator:
+    "prompts[], alphaMode, maxResolution (720|1080), activePromptIndex, sourceVideoUri, referenceImageUri, alphaUri, activeJobId, outputRenderUrl, value (vídeo), type ('video'), label",
   enhancer: "value (texto mejorado), label",
   concatenator: "label; el texto combinado viene de las entradas conectadas",
   listado:

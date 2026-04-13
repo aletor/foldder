@@ -20,6 +20,10 @@ export const SIDEBAR_HOVER_HELP: Record<string, { title: string; line: string }>
     title: 'Video Generator',
     line: 'Veo 3.1 o Seedance 2: prompt y frames opcionales',
   },
+  vfxGenerator: {
+    title: 'VFX Generator',
+    line: 'Beeble SwitchX: vídeo fuente, prompts e imagen de referencia',
+  },
   grokProcessor: {
     title: 'Grok Imagine',
     line: 'Genera imagen con motor Grok',

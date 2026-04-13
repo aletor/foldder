@@ -51,6 +51,7 @@ const RUNNABLE_TYPES = new Set([
   "nanoBanana",
   "backgroundRemover",
   "geminiVideo",
+  "vfxGenerator",
   "grokProcessor",
   "imageExport",
   "mediaDescriber",

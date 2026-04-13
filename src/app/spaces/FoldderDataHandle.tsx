@@ -36,7 +36,7 @@ const TYPE_CLASS: Record<FoldderHandleDataType, string> = {
   generic: "handle-generic",
 };
 
-/** Misma gramática de iconos que sidebar / topbar (`NodeIcon` + `NODE_TYPE_TO_FOLDDER_ICON`). */
+/** Misma gramática de iconos que sidebar y barra de accesos (`NodeIcon` + `NODE_TYPE_TO_FOLDDER_ICON`). */
 const DATA_TYPE_TO_ICON: Record<FoldderHandleDataType, FoldderIconKey> = {
   prompt: "prompt",
   image: "asset",

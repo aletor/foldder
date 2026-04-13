@@ -40,7 +40,9 @@ export function resolveHandleMetaForCanvasDrop(
   if (fromFlow === "target") {
     if (/^p\d+$/.test(handleId)) {
       const hasPromptInput = list.some((i) => i.type === "prompt");
-      const multiPromptNode = ["concatenator", "listado", "enhancer"].includes(nodeType || "");
+      const multiPromptNode = ["concatenator", "listado", "enhancer", "vfxGenerator"].includes(
+        nodeType || "",
+      );
       if (hasPromptInput || multiPromptNode) {
         return { type: "prompt", id: handleId };
       }
@@ -109,6 +111,15 @@ export function defaultDataForCanvasDropNode(nodeType: string): Record<string, u
         videoModel: "veo31",
         resolution: "1080p",
         duration: "8",
+      };
+    case "vfxGenerator":
+      return {
+        label: "",
+        type: "video",
+        prompts: [""],
+        alphaMode: "auto",
+        maxResolution: 1080,
+        activePromptIndex: 0,
       };
     default:
       return { label: "" };

@@ -40,6 +40,7 @@ import {
   SpaceInputNode,
   SpaceOutputNode,
   GeminiVideoNode,
+  VfxGeneratorNode,
   PainterNode,
   CropNode,
   BezierMaskNode,
@@ -72,10 +73,6 @@ import { AiRequestHud } from './AiRequestHud';
 import { ExternalApiBlockedModal } from './ExternalApiBlockedModal';
 import {
   TopbarPins,
-  MAX_TOPBAR_PINS,
-  TOPBAR_PINS_STORAGE_KEY,
-  DEFAULT_TOPBAR_PIN_TYPES,
-  TOPBAR_PIN_ALLOWLIST,
 } from './TopbarPins';
 import {
   resolveHandleMetaForCanvasDrop,
@@ -288,7 +285,7 @@ function foldderWheelLooksLikeMouse(e: WheelEvent, dtFromPreviousMs: number): bo
 const FIT_VIEW_PADDING = 0.14;
 
 /**
- * Solo al arrastrar un tipo desde el sidebar o el topbar (con parpadeo de compatibles): `FIT_VIEW_PADDING` × 5
+ * Solo al arrastrar un tipo desde el sidebar (con parpadeo de compatibles): `FIT_VIEW_PADDING` × 5
  * para ver mucho más lienzo vacío al colocar. No afecta al resto de “ajustar a ventana”.
  */
 const FIT_VIEW_PADDING_LIBRARY_DRAG = FIT_VIEW_PADDING * 5;
@@ -518,6 +515,7 @@ const nodeTypes: any = {
   spaceInput: SpaceInputNode,
   spaceOutput: SpaceOutputNode,
   geminiVideo: GeminiVideoNode,
+  vfxGenerator: VfxGeneratorNode,
   painter: PainterNode,
   crop: CropNode,
   bezierMask: BezierMaskNode,
@@ -677,48 +675,8 @@ const SpacesContent = () => {
   const libraryDragViewportRef = useRef<{ x: number; y: number; zoom: number } | null>(null);
   /** true si onDrop en el lienzo añadió nodo(s) / archivos en este arrastre */
   const libraryCanvasDropSucceededRef = useRef(false);
-  /** true si se soltó en el topbar de accesos directos (no restaurar viewport) */
-  const libraryTopbarDropSucceededRef = useRef(false);
-  /** Arrastre activo desde librería o topbar: oculta tooltips rollover y evita solapes de UI */
+  /** Arrastre activo desde la librería: oculta tooltips rollover y evita solapes de UI */
   const [paletteDragActive, setPaletteDragActive] = useState(false);
-
-  const [topbarPinnedTypes, setTopbarPinnedTypes] = useState<string[]>([]);
-  const skipTopbarPinsSaveOnce = useRef(true);
-
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(TOPBAR_PINS_STORAGE_KEY);
-      let next: string[];
-      if (raw === null) {
-        next = [...DEFAULT_TOPBAR_PIN_TYPES];
-      } else {
-        const parsed = JSON.parse(raw) as unknown;
-        if (!Array.isArray(parsed)) {
-          next = [...DEFAULT_TOPBAR_PIN_TYPES];
-        } else {
-          next = parsed
-            .filter((t): t is string => typeof t === 'string' && TOPBAR_PIN_ALLOWLIST.has(t))
-            .slice(0, MAX_TOPBAR_PINS);
-          if (next.length === 0) next = [...DEFAULT_TOPBAR_PIN_TYPES];
-        }
-      }
-      setTopbarPinnedTypes(next);
-    } catch {
-      setTopbarPinnedTypes([...DEFAULT_TOPBAR_PIN_TYPES]);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (skipTopbarPinsSaveOnce.current) {
-      skipTopbarPinsSaveOnce.current = false;
-      return;
-    }
-    try {
-      localStorage.setItem(TOPBAR_PINS_STORAGE_KEY, JSON.stringify(topbarPinnedTypes));
-    } catch {
-      /* ignore */
-    }
-  }, [topbarPinnedTypes]);
 
   useEffect(() => {
     try {
@@ -762,29 +720,11 @@ const SpacesContent = () => {
     };
   }, [canvasBgId]);
 
-  const handleTopbarDropFromSidebar = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const nodeType =
-      e.dataTransfer.getData('application/reactflow') ||
-      e.dataTransfer.getData('text/plain') ||
-      libraryDragTypeRef.current ||
-      '';
-    if (!NODE_REGISTRY[nodeType] || !TOPBAR_PIN_ALLOWLIST.has(nodeType)) return;
-    libraryTopbarDropSucceededRef.current = true;
-    setTopbarPinnedTypes((prev) => {
-      if (prev.includes(nodeType)) return prev;
-      if (prev.length >= MAX_TOPBAR_PINS) return prev;
-      return [...prev, nodeType];
-    });
-  }, []);
-
   const handleLibraryDragStart = useCallback(
     (nodeType: string) => {
       setPaletteDragActive(true);
       libraryDragViewportRef.current = getViewport();
       libraryCanvasDropSucceededRef.current = false;
-      libraryTopbarDropSucceededRef.current = false;
       libraryDragTypeRef.current = nodeType;
 
       const compatible: string[] = [];
@@ -793,7 +733,6 @@ const SpacesContent = () => {
           compatible.push(n.id);
         }
       }
-      // Mismo tick que dragstart + setState + fitView cancela el drop HTML5 hacia el topbar (Chrome).
       queueMicrotask(() => {
         setLibraryCompatibleIds(compatible);
         fitView({
@@ -809,14 +748,12 @@ const SpacesContent = () => {
   const handleLibraryDragEnd = useCallback(() => {
     setPaletteDragActive(false);
     const saved = libraryDragViewportRef.current;
-    const dropOk =
-      libraryCanvasDropSucceededRef.current || libraryTopbarDropSucceededRef.current;
+    const dropOk = libraryCanvasDropSucceededRef.current;
     if (!dropOk && saved) {
       setViewport(saved, { duration: fitAnim(380), ...FOLDDER_FIT_VIEW_EASE });
     }
     libraryDragViewportRef.current = null;
     libraryCanvasDropSucceededRef.current = false;
-    libraryTopbarDropSucceededRef.current = false;
     libraryDragTypeRef.current = null;
     libraryDropTargetIdRef.current = null;
     setLibraryDropTargetId(null);
@@ -1067,7 +1004,7 @@ const SpacesContent = () => {
     const value = typeof node.data?.value === 'string' ? node.data.value : null;
     let type: 'image' | 'video' = 'image';
     const nt = node.type as string;
-    if (nt === 'geminiVideo' || nt === 'grokProcessor') type = 'video';
+    if (nt === 'geminiVideo' || nt === 'vfxGenerator' || nt === 'grokProcessor') type = 'video';
     else if (node.data?.type === 'video') type = 'video';
     else if (typeof value === 'string' && value.startsWith('data:video')) type = 'video';
     return { value, type };
@@ -1206,6 +1143,7 @@ const SpacesContent = () => {
       concatenator: { prompt: ['p0','p1','p2','p3','p4','p5','p6','p7'] },
       listado:      { prompt: ['p0','p1','p2','p3','p4','p5','p6','p7'] },
       enhancer:     { prompt: ['p0','p1','p2','p3','p4','p5','p6','p7','p8','p9','p10','p11','p12','p13','p14','p15'] },
+      vfxGenerator: { prompt: ['p0','p1','p2','p3','p4','p5','p6','p7'] },
       imageComposer: { image: ['layer_0','layer_1','layer_2','layer_3','layer_4','layer_5','layer_6','layer_7'] },
     };
     // Per-handle-type slot counters, reset per new node creation
@@ -1333,7 +1271,7 @@ const SpacesContent = () => {
       }
     }
 
-    // Por defecto: hueco libre alrededor del centro del viewport (igual que doble clic en pin del topbar).
+    // Por defecto: hueco libre alrededor del centro del viewport (igual que doble clic en la barra inferior de accesos).
     let position = findEmptyPositionForNewNode(type, nodes, center);
     if (autoEdges.length > 0 && selectedNodes.length === 1) {
       const anchor = selectedNodes[0];
@@ -1387,7 +1325,7 @@ const SpacesContent = () => {
     const defaultStyleForType =
       type === 'nanoBanana'
         ? ({ width: NANO_BANANA_DEFAULT_W, height: NANO_BANANA_DEFAULT_H } as React.CSSProperties)
-        : type === 'geminiVideo'
+        : type === 'geminiVideo' || type === 'vfxGenerator'
           ? ({ width: GEMINI_VIDEO_DEFAULT_W, height: GEMINI_VIDEO_DEFAULT_H } as React.CSSProperties)
           : undefined;
 
@@ -1438,7 +1376,7 @@ const SpacesContent = () => {
     }, autoEdges.length > 0 ? 100 : 80);
   }, [screenToFlowPosition, nodes, edges, setNodes, setEdges, takeSnapshot, fitViewToNodeIds, updateNodeInternals, scheduleFoldderCanvasIntroEnd]);
 
-  /** Doble clic en pin del topbar o en mosaico del sidebar: hueco libre (prioridad a la derecha del nodo más a la derecha) + fit */
+  /** Doble clic en la barra inferior de accesos o en mosaico del sidebar: hueco libre (prioridad a la derecha del nodo más a la derecha) + fit */
   const addNodeFromTopbarPinDoubleClick = useCallback(
     (reactFlowType: string) => {
       if (!NODE_REGISTRY[reactFlowType]) return;
@@ -1453,7 +1391,7 @@ const SpacesContent = () => {
       const pinStyle: React.CSSProperties | undefined =
         reactFlowType === 'nanoBanana'
           ? { width: NANO_BANANA_DEFAULT_W, height: NANO_BANANA_DEFAULT_H }
-          : reactFlowType === 'geminiVideo'
+          : reactFlowType === 'geminiVideo' || reactFlowType === 'vfxGenerator'
             ? { width: GEMINI_VIDEO_DEFAULT_W, height: GEMINI_VIDEO_DEFAULT_H }
             : undefined;
       const newNode = {
@@ -1551,9 +1489,11 @@ const SpacesContent = () => {
    * Solo nodos **raíz** (`!parentId`): los hijos de un `canvasGroup` usan coords relativas.
    * Por **componentes conexos** (no dirigido): los prompts+concatenador forman un bloque; los
    * nodos sin aristas al resto van en una columna al margen (no intercalados en la misma columna).
+   * Con `horizontalIsolates`: los aislados se reparten en filas a izquierda y derecha del núcleo
+   * conectado (mitades por posición X previa), para dejarlos accesibles a los lados.
    */
   const autoLayout = useCallback(
-    (opts?: { ignoreSelection?: boolean }) => {
+    (opts?: { ignoreSelection?: boolean; horizontalIsolates?: boolean }) => {
       const useAll = Boolean(opts?.ignoreSelection) || !nodes.some((n) => n.selected);
       const rawArrange = useAll ? [...nodes] : nodes.filter((n) => n.selected);
       const toArrange = rawArrange.filter((n) => !n.parentId);
@@ -1614,15 +1554,80 @@ const SpacesContent = () => {
 
       if (isolates.length) {
         const isoNodes = isolates.map((id) => nodeById.get(id)!);
-        const heights = isoNodes.map((n) => getNodeLayoutDimensions(n).h);
-        const totalH =
-          heights.reduce((acc, h) => acc + h, 0) +
-          (isoNodes.length > 1 ? (isoNodes.length - 1) * GAP : 0);
-        let y = -totalH / 2;
-        for (const n of isoNodes) {
-          const { h } = getNodeLayoutDimensions(n);
-          positioned[n.id] = { x: xCursor, y: y };
-          y += h + GAP;
+        const horizontalIsolates = Boolean(opts?.horizontalIsolates);
+
+        if (horizontalIsolates && wired.length > 0) {
+          let WminX = Infinity;
+          let WmaxX = -Infinity;
+          let WminY = Infinity;
+          let WmaxY = -Infinity;
+          for (const comp of wired) {
+            for (const id of comp) {
+              const p = positioned[id];
+              if (!p) continue;
+              const n = nodeById.get(id);
+              if (!n) continue;
+              const { w, h } = getNodeLayoutDimensions(n);
+              WminX = Math.min(WminX, p.x);
+              WmaxX = Math.max(WmaxX, p.x + w);
+              WminY = Math.min(WminY, p.y);
+              WmaxY = Math.max(WmaxY, p.y + h);
+            }
+          }
+          const cy = (WminY + WmaxY) / 2;
+          const sortedIso = [...isolates].sort(
+            (a, b) =>
+              nodeById.get(a)!.position.x - nodeById.get(b)!.position.x ||
+              String(a).localeCompare(String(b))
+          );
+          const mid = Math.ceil(sortedIso.length / 2);
+          const leftIds = sortedIso.slice(0, mid);
+          const rightIds = sortedIso.slice(mid);
+
+          let xLeft = WminX - GAP;
+          for (let i = leftIds.length - 1; i >= 0; i--) {
+            const id = leftIds[i];
+            const n = nodeById.get(id)!;
+            const { w, h } = getNodeLayoutDimensions(n);
+            xLeft -= w;
+            positioned[id] = { x: xLeft, y: cy - h / 2 };
+            xLeft -= GAP;
+          }
+
+          let xRight = WmaxX + GAP;
+          for (const id of rightIds) {
+            const n = nodeById.get(id)!;
+            const { w, h } = getNodeLayoutDimensions(n);
+            positioned[id] = { x: xRight, y: cy - h / 2 };
+            xRight += w + GAP;
+          }
+        } else if (horizontalIsolates && wired.length === 0) {
+          const sorted = [...isoNodes].sort(
+            (a, b) => a.position.x - b.position.x || String(a.id).localeCompare(String(b.id))
+          );
+          let totalW = 0;
+          const dims = sorted.map((n) => {
+            const { w, h } = getNodeLayoutDimensions(n);
+            totalW += w;
+            return { n, w, h };
+          });
+          totalW += (sorted.length - 1) * GAP;
+          let x = -totalW / 2;
+          for (const { n, w, h } of dims) {
+            positioned[n.id] = { x, y: -h / 2 };
+            x += w + GAP;
+          }
+        } else {
+          const heights = isoNodes.map((n) => getNodeLayoutDimensions(n).h);
+          const totalH =
+            heights.reduce((acc, h) => acc + h, 0) +
+            (isoNodes.length > 1 ? (isoNodes.length - 1) * GAP : 0);
+          let y = -totalH / 2;
+          for (const n of isoNodes) {
+            const { h } = getNodeLayoutDimensions(n);
+            positioned[n.id] = { x: xCursor, y: y };
+            y += h + GAP;
+          }
         }
       }
 
@@ -1654,6 +1659,8 @@ const SpacesContent = () => {
   const groupSelectedToSpaceRef = useRef<() => void>(() => {});
   const groupSelectedToCanvasGroupRef = useRef<() => void>(() => {});
   const ungroupSelectedCanvasGroupRef = useRef<() => void>(() => {});
+  /** Tecla A: pares → aislados en columna (clásico); impares → aislados en horizontal a lados del núcleo. */
+  const autoLayoutKeyParityRef = useRef(0);
 
   // ── Keyboard shortcuts (deps fijas `[]`: ref evita error de tamaño de array con Fast Refresh) ──
   const keyboardShortcutsRef = useRef({
@@ -1951,6 +1958,7 @@ const SpacesContent = () => {
         case 'k': addNode('grokProcessor'); break;
         case 'r': addNode('backgroundRemover'); break;
         case 'v': addNode('geminiVideo'); break;
+        case 'y': addNode('vfxGenerator'); break;
         // ── Lógica ───────────────────────────────────────────────────────
         case 'q': addNode('concatenator'); break;
         case 'j': addNode('listado'); break;
@@ -1977,15 +1985,20 @@ const SpacesContent = () => {
         case 'x': addNode('crop'); break;
         case 'z': addNode('bezierMask'); break;
         // ── Canvas actions ───────────────────────────────────────────────
-        // F = Listado; Mayús+F = encuadrar todo el grafo (antes F solo hacía fit).
+        // F = Freehand / Vector Studio; Mayús+F = encuadrar todo el grafo. Listado = J.
         case 'f':
           if (e.shiftKey) {
             doFitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(800), ...FOLDDER_FIT_VIEW_EASE });
           } else {
-            addNode('listado');
+            addNode('freehand');
           }
           break;
-        case 'a': doAutoLayout(); break;
+        case 'a': {
+          const horizontalIsolates = autoLayoutKeyParityRef.current % 2 === 1;
+          doAutoLayout({ horizontalIsolates });
+          autoLayoutKeyParityRef.current++;
+          break;
+        }
         default: break;
       }
 
@@ -2759,7 +2772,6 @@ const SpacesContent = () => {
 
       const uiSnapshot = {
         canvasBgId,
-        topbarPinnedTypes,
         canvasViewMode,
         cardsFocusIndex,
         viewport: getViewport(),
@@ -2839,7 +2851,6 @@ const SpacesContent = () => {
       const ui = project.metadata?.ui as
         | {
             canvasBgId?: string;
-            topbarPinnedTypes?: string[];
             canvasViewMode?: 'free' | 'cards';
             cardsFocusIndex?: number;
             viewport?: { x?: number; y?: number; zoom?: number };
@@ -2883,12 +2894,6 @@ const SpacesContent = () => {
 
       if (ui?.canvasBgId && CANVAS_BACKGROUNDS.some((b) => b.id === ui.canvasBgId)) {
         setCanvasBgId(ui.canvasBgId);
-      }
-      if (Array.isArray(ui?.topbarPinnedTypes)) {
-        const nextPins = ui.topbarPinnedTypes
-          .filter((t): t is string => typeof t === 'string' && TOPBAR_PIN_ALLOWLIST.has(t))
-          .slice(0, MAX_TOPBAR_PINS);
-        if (nextPins.length > 0) setTopbarPinnedTypes(nextPins);
       }
       if (ui?.canvasViewMode === 'free' || ui?.canvasViewMode === 'cards') {
         setCanvasViewMode(ui.canvasViewMode);
@@ -2998,7 +3003,7 @@ const SpacesContent = () => {
 
   /** Mismo criterio que **A**, pero ordena todo el grafo (ignora selección). Menú «Ordenar nodos». */
   const autoLayoutNodes = useCallback(() => {
-    autoLayout({ ignoreSelection: true });
+    autoLayout({ ignoreSelection: true, horizontalIsolates: false });
   }, [autoLayout]);
 
   const applyAssistantGraphPayload = (data: {
@@ -4558,7 +4563,7 @@ const SpacesContent = () => {
           />
         )}
 
-        {/* Action HUD — fila1: agente (izq.) + acciones (der.); fila2: pins topbar. Oculto con body.nb-studio-open (Nano Banana Studio fullscreen). */}
+        {/* Action HUD — fila1: agente (izq.) + acciones (der.); fila2: accesos fijos inferiores. Oculto con body.nb-studio-open (Nano Banana Studio fullscreen). */}
         <div
           key="action-hud"
           data-foldder-top-hud
@@ -4764,7 +4769,7 @@ const SpacesContent = () => {
           )}
         </div>
 
-        {/* Topbar de pins (antes bajo el HUD; ahora abajo, sustituye la leyenda) */}
+        {/* Barra inferior: cuatro accesos fijos (Freehand, imagen, vídeo, VFX) */}
         {isAuthenticated && !windowMode && (
           <div
             data-foldder-top-hud
@@ -4773,11 +4778,6 @@ const SpacesContent = () => {
             <TopbarPins
               embedded
               fullWidthRow
-              pinnedTypes={topbarPinnedTypes}
-              onRemove={(t) => setTopbarPinnedTypes((p) => p.filter((x) => x !== t))}
-              onDropFromSidebar={handleTopbarDropFromSidebar}
-              onLibraryDragStart={handleLibraryDragStart}
-              onLibraryDragEnd={handleLibraryDragEnd}
               onPinDoubleClick={addNodeFromTopbarPinDoubleClick}
               paletteDragActive={paletteDragActive}
             />

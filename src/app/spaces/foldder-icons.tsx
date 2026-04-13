@@ -467,6 +467,7 @@ export const NODE_TYPE_TO_FOLDDER_ICON: Record<string, FoldderIconKey> = {
   grokProcessor: 'grok',
   nanoBanana: 'nano',
   geminiVideo: 'video',
+  vfxGenerator: 'video',
   concatenator: 'concat',
   listado: 'listPick',
   space: 'space',

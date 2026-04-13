@@ -109,6 +109,7 @@ const MULTI_SLOT_NODES: Record<string, Record<string, string[]>> = {
   imageComposer: {
     image: ['layer_0', 'layer_1', 'layer_2', 'layer_3', 'layer_4', 'layer_5', 'layer_6', 'layer_7'],
   },
+  vfxGenerator: { prompt: ['p0', 'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7'] },
 };
 
 /** Orden de ranura en el nodo destino (p0 → 0, p1 → 1…). Desconocido → 0 y se desempata por posición. */
@@ -276,6 +277,7 @@ const DEFAULT_W: Record<string, number> = {
   grokProcessor: 320,
   nanoBanana: 280,
   geminiVideo: 340,
+  vfxGenerator: 340,
   space: 320,
 };
 

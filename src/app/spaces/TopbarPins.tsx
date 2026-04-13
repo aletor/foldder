@@ -1,34 +1,37 @@
 "use client";
 
-import React, { useCallback } from "react";
-import { NODE_REGISTRY } from "./nodeRegistry";
-import { NodeIcon } from "./foldder-icons";
+import React from "react";
+import { TOPBAR_GLYPH_BY_NODE_TYPE } from "./TopbarPinIcons";
 
-/** Iconos en la barra flotante (solo glyphs, sin texto) — ~30% más pequeños que el tamaño “grande” previo */
-export const TOPBAR_PIN_ICON_SIZE = 28;
+/** Iconos en la barra inferior — glyph dedicado + pie de etiqueta (icono predominante). */
+export const TOPBAR_PIN_ICON_SIZE = 32;
 
-const PIN_ICON_COLOR = '#171717';
+/**
+ * Accesos fijos (no personalizables): Vector Studio → Image Generator → Video Generator → VFX Generator.
+ * Orden estable; no se persiste ni se admite drag-and-drop sobre la barra.
+ */
+export const TOPBAR_FIXED_PIN_TYPES = [
+  "freehand",
+  "nanoBanana",
+  "geminiVideo",
+  "vfxGenerator",
+] as const;
 
-/** Solo estos tipos pueden figurar en la barra inferior de accesos (antes «topbar»). */
-export const TOPBAR_ALLOWED_PIN_TYPES = ["nanoBanana", "geminiVideo", "freehand"] as const;
-export const TOPBAR_PIN_ALLOWLIST = new Set<string>(TOPBAR_ALLOWED_PIN_TYPES);
-
-export const MAX_TOPBAR_PINS = TOPBAR_ALLOWED_PIN_TYPES.length;
-export const TOPBAR_PINS_STORAGE_KEY = "foldder-topbar-pins";
-
-/** Por defecto: Nano Banana, Video Generator, Freehand */
-export const DEFAULT_TOPBAR_PIN_TYPES: string[] = [...TOPBAR_ALLOWED_PIN_TYPES];
+/** Tooltip (nombre completo) vs etiqueta corta bajo el icono. */
+const TOPBAR_PIN_UI: Record<
+  (typeof TOPBAR_FIXED_PIN_TYPES)[number],
+  { title: string; shortLabel: string }
+> = {
+  freehand: { title: "Vector Studio", shortLabel: "Vector" },
+  nanoBanana: { title: "Image Generator", shortLabel: "Image" },
+  geminiVideo: { title: "Video Generator", shortLabel: "Video" },
+  vfxGenerator: { title: "VFX Generator", shortLabel: "VFX" },
+};
 
 type TopbarPinsProps = {
-  pinnedTypes: string[];
-  onRemove: (nodeType: string) => void;
-  onDropFromSidebar: (e: React.DragEvent) => void;
-  /** Mismo contrato que la librería: arrastrar chip al lienzo */
-  onLibraryDragStart?: (nodeType: string) => void;
-  onLibraryDragEnd?: () => void;
   /** Doble clic: añadir nodo al lienzo en hueco y encuadrar */
   onPinDoubleClick?: (nodeType: string) => void;
-  /** Arrastre desde librería/topbar: sin tooltip hover del pin */
+  /** Arrastre desde la librería: sin tooltip hover encima de la barra */
   paletteDragActive?: boolean;
   /** Dentro de una barra con borde padre: sin caja interior duplicada */
   embedded?: boolean;
@@ -36,11 +39,6 @@ type TopbarPinsProps = {
   fullWidthRow?: boolean;
 };
 
-/**
- * Barra inferior del canvas: el tooltip debe ir **encima** del chip (`bottom-full`).
- * Si va debajo (`top-full`), queda fuera del viewport o bajo el stacking del lienzo.
- * Pegado al icono: poca separación (`mb-0.5`), z-index alto sobre nodos React Flow.
- */
 function PinHoverCard({ label }: { label: string }) {
   return (
     <div
@@ -48,9 +46,7 @@ function PinHoverCard({ label }: { label: string }) {
       role="tooltip"
     >
       <div className="relative rounded-lg border border-white/10 bg-white/10 px-2.5 py-1 text-center shadow-sm backdrop-blur-md">
-        <p className="text-[11px] font-bold leading-tight tracking-tight text-black">
-          {label}
-        </p>
+        <p className="text-[11px] font-bold leading-tight tracking-tight text-black">{label}</p>
       </div>
       <div
         className="-mt-px h-1.5 w-1.5 rotate-45 border border-white/10 border-t-0 border-l-0 bg-white/10 shadow-sm backdrop-blur-md"
@@ -61,148 +57,102 @@ function PinHoverCard({ label }: { label: string }) {
 }
 
 type PinChipProps = {
-  type: string;
-  label: string;
+  type: (typeof TOPBAR_FIXED_PIN_TYPES)[number];
+  title: string;
+  shortLabel: string;
   iconSize: number;
   chipClassName: string;
-  onRemove: () => void;
-  onLibraryDragStart?: (nodeType: string) => void;
-  onLibraryDragEnd?: () => void;
+  captionClassName: string;
   onPinDoubleClick?: (nodeType: string) => void;
   paletteDragActive?: boolean;
 };
 
 function TopbarPinChip({
   type,
-  label,
+  title,
+  shortLabel,
   iconSize,
   chipClassName,
-  onRemove,
-  onLibraryDragStart,
-  onLibraryDragEnd,
+  captionClassName,
   onPinDoubleClick,
   paletteDragActive = false,
 }: PinChipProps) {
+  const Glyph = TOPBAR_GLYPH_BY_NODE_TYPE[type];
+
   return (
     <div className="relative shrink-0 group/pin pt-3 -mt-3 pb-0.5 overflow-visible">
-      <div
-        draggable
-        role="button"
-        tabIndex={0}
-        aria-label={`${label}. Arrastra al lienzo. Doble clic para añadir al lienzo. Clic derecho para quitar del topbar.`}
+      <button
+        type="button"
         className={chipClassName}
+        aria-label={`${title}. Doble clic para añadir al lienzo.`}
         onDoubleClick={(e) => {
           e.preventDefault();
           e.stopPropagation();
           onPinDoubleClick?.(type);
         }}
-        onContextMenu={(e) => {
-          e.preventDefault();
-          onRemove();
-        }}
-        onDragStart={(e) => {
-          onLibraryDragStart?.(type);
-          try {
-            e.dataTransfer.setData("text/plain", type);
-            e.dataTransfer.setData("application/reactflow", type);
-            e.dataTransfer.effectAllowed = "copyMove";
-          } catch {
-            /* Safari */
-          }
-        }}
-        onDragEnd={() => onLibraryDragEnd?.()}
       >
-        <NodeIcon
-          type={type}
-          size={iconSize}
-          colorOverride={PIN_ICON_COLOR}
-          className="shrink-0"
-        />
-      </div>
-      {!paletteDragActive && <PinHoverCard label={label} />}
+        <Glyph size={iconSize} className="shrink-0 text-white" />
+        <span className={captionClassName}>{shortLabel}</span>
+      </button>
+      {!paletteDragActive && <PinHoverCard label={title} />}
     </div>
   );
 }
 
 export function TopbarPins({
-  pinnedTypes,
-  onRemove,
-  onDropFromSidebar,
-  onLibraryDragStart,
-  onLibraryDragEnd,
   onPinDoubleClick,
   paletteDragActive = false,
   embedded = false,
   fullWidthRow = false,
 }: TopbarPinsProps) {
-  const allowDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    try {
-      e.dataTransfer.dropEffect = "copy";
-    } catch {
-      /* ignore */
-    }
-  }, []);
-
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      onDropFromSidebar(e);
-    },
-    [onDropFromSidebar]
-  );
-
   const pinRowSidebarStyle = embedded && fullWidthRow;
+
+  const captionBase =
+    "mt-0.5 max-w-[4rem] text-center text-white font-medium leading-none tracking-wide uppercase";
+
+  const captionEmbedded = captionBase + " text-[6px] sm:text-[6.5px]";
+  const captionDefault = captionBase + " text-[6px] sm:text-[6.5px]";
+
+  const chipEmbedded =
+    "flex min-h-[3.85rem] min-w-[3.85rem] max-w-[4.25rem] cursor-default flex-col items-center justify-center gap-0.5 rounded-2xl border border-white/30 !bg-white/15 px-1 py-1.5 transition-colors hover:!bg-white/25 select-none";
+  const chipDefault =
+    "flex min-h-[3.75rem] min-w-[3.75rem] max-w-[4.1rem] cursor-default flex-col items-center justify-center gap-0.5 rounded-xl border border-white/20 bg-white/[0.12] px-1 py-1.5 hover:bg-white/[0.2] select-none";
 
   return (
     <div
       data-foldder-topbar-pins
       className={
         embedded && fullWidthRow
-          ? "pointer-events-auto relative z-[1] mx-auto flex w-max max-w-full min-h-0 items-center gap-1.5 overflow-visible rounded-xl border border-white/25 bg-white/[0.08] px-1.5 py-1 shadow-sm backdrop-blur-xl"
+          ? "pointer-events-auto relative z-[1] mx-auto flex w-max max-w-full min-h-0 items-center gap-1.5 overflow-visible rounded-xl border border-white/25 bg-white/[0.08] px-2 py-1.5 shadow-sm backdrop-blur-xl"
           : embedded
             ? "pointer-events-auto relative z-[1] flex min-h-0 min-w-0 flex-[1.15] items-center justify-start px-1"
             : "pointer-events-auto relative z-[1] flex min-h-[36px] min-w-0 flex-1 items-center justify-center px-1.5"
       }
-      onDragEnter={allowDrop}
-      onDragOver={allowDrop}
-      onDrop={handleDrop}
     >
       <div
         className={
           embedded && fullWidthRow
-            ? "flex min-h-0 w-full min-w-0 flex-nowrap items-center gap-1.5"
+            ? "flex min-h-0 w-full min-w-0 flex-nowrap items-center justify-center gap-2 sm:gap-2.5"
             : embedded
               ? "flex min-h-[32px] w-full max-w-none flex-wrap items-center gap-1 px-0.5 py-0.5"
-              : "flex min-h-[36px] w-full max-w-[min(420px,40vw)] flex-wrap items-center gap-1 rounded-xl border border-white/25 bg-white/[0.08] px-1 py-0.5 shadow-sm backdrop-blur-xl"
+              : "flex min-h-[36px] w-full max-w-[min(520px,92vw)] flex-wrap items-center justify-center gap-1.5 rounded-xl border border-white/25 bg-white/[0.08] px-2 py-1 shadow-sm backdrop-blur-xl"
         }
-        onDragEnter={allowDrop}
-        onDragOver={allowDrop}
-        onDrop={handleDrop}
-        aria-label="Accesos directos (Nano Banana, Video Generator, Freehand). Arrastra o doble clic para añadir al lienzo. Clic derecho en un icono para quitarlo."
+        role="toolbar"
+        aria-label="Accesos directos: Vector, Image, Video, VFX. Doble clic para añadir al lienzo."
       >
-        {pinnedTypes.length === 0 && (
-          <span className="whitespace-nowrap px-1 text-[9px] font-bold uppercase tracking-widest text-white/40">
-            Arrastra aquí desde la librería
-          </span>
-        )}
-        {pinnedTypes.map((type) => {
-          const meta = NODE_REGISTRY[type];
-          if (!meta) return null;
+        {TOPBAR_FIXED_PIN_TYPES.map((type) => {
+          const ui = TOPBAR_PIN_UI[type];
 
           if (pinRowSidebarStyle) {
             return (
               <TopbarPinChip
                 key={type}
                 type={type}
-                label={meta.label}
+                title={ui.title}
+                shortLabel={ui.shortLabel}
                 iconSize={TOPBAR_PIN_ICON_SIZE}
-                chipClassName="flex size-[2.8rem] cursor-grab select-none items-center justify-center rounded-2xl border border-white/25 !bg-white/20 transition-colors hover:!bg-white/30 active:cursor-grabbing active:scale-[0.98]"
-                onRemove={() => onRemove(type)}
-                onLibraryDragStart={onLibraryDragStart}
-                onLibraryDragEnd={onLibraryDragEnd}
+                chipClassName={chipEmbedded}
+                captionClassName={captionEmbedded}
                 onPinDoubleClick={onPinDoubleClick}
                 paletteDragActive={paletteDragActive}
               />
@@ -213,12 +163,11 @@ export function TopbarPins({
             <TopbarPinChip
               key={type}
               type={type}
-              label={meta.label}
-              iconSize={22}
-              chipClassName="flex size-[2.45rem] cursor-grab select-none items-center justify-center rounded-xl border border-white/10 bg-white/[0.08] active:cursor-grabbing"
-              onRemove={() => onRemove(type)}
-              onLibraryDragStart={onLibraryDragStart}
-              onLibraryDragEnd={onLibraryDragEnd}
+              title={ui.title}
+              shortLabel={ui.shortLabel}
+              iconSize={28}
+              chipClassName={chipDefault}
+              captionClassName={captionDefault}
               onPinDoubleClick={onPinDoubleClick}
               paletteDragActive={paletteDragActive}
             />
