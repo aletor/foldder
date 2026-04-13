@@ -133,6 +133,8 @@ type Tool =
   | "rect"
   | "ellipse"
   | "text"
+  | "textFrame"
+  | "imageFrame"
   | "artboard"
   | "eyedropper"
   | "handTool"
@@ -250,6 +252,27 @@ interface FreehandObjectBase {
   groupId?: string;
   clipMaskId?: string;
   isClipMask?: boolean;
+  /** Designer mode: text frame linked to a story for threaded text flow. */
+  storyId?: string;
+  /** Designer mode: marks this text as a threaded text frame (vs regular text). */
+  isTextFrame?: boolean;
+  /** Designer mode: marks this rect as an image frame container. */
+  isImageFrame?: boolean;
+  /** Designer mode: image content inside an image frame. */
+  imageFrameContent?: {
+    src: string;
+    originalWidth: number;
+    originalHeight: number;
+    scaleX: number;
+    scaleY: number;
+    offsetX: number;
+    offsetY: number;
+    fittingMode: "fit-proportional" | "fill-proportional" | "fit-stretch" | "fill-stretch" | "center-content" | "frame-to-content";
+  } | null;
+  imageFrameAutoFit?: boolean;
+  imageFrameContentAlignment?: "top-left" | "top-center" | "top-right" | "middle-left" | "center" | "middle-right" | "bottom-left" | "bottom-center" | "bottom-right";
+  _designerOverflow?: boolean;
+  _designerThreadInfo?: { index: number; total: number };
 }
 
 interface RectObject extends FreehandObjectBase { type: "rect"; rx: number }
@@ -360,6 +383,34 @@ interface FreehandStudioProps {
   onUpdateObjects: (objects: FreehandObject[]) => void;
   onUpdateArtboards?: (artboards: Artboard[]) => void;
   onUpdateLayoutGuides?: (guides: LayoutGuide[]) => void;
+  /** Designer mode: enables text frame, image frame tools and page-style artboards. */
+  designerMode?: boolean;
+  /** Called when a text frame is created/modified in designer mode. */
+  onDesignerTextFrameCreate?: (frameObj: FreehandObject) => void;
+  /** Called when an image frame needs image placement in designer mode. */
+  onDesignerImageFramePlace?: (frameId: string) => void;
+  /** Imperative API ref for external object mutations (DesignerStudio ↔ FreehandStudio). */
+  studioApiRef?: React.MutableRefObject<DesignerStudioApi | null>;
+  /** Called when text editing ends on a text frame (blur). */
+  onDesignerTextFrameEdit?: (frameId: string, storyId: string, newText: string) => void;
+  /** Called when user requests a threaded continuation frame from an overflowing text frame. */
+  onDesignerAppendThreadedFrame?: (sourceFrameId: string) => void;
+  /** Serialized story content by storyId, for panel display. */
+  designerStoryMap?: Map<string, string>;
+  /** Called when the full story text is changed from the panel textarea. */
+  onDesignerStoryTextChange?: (storyId: string, newText: string) => void;
+  /** Called when user unlinks a text frame from its thread chain. */
+  onDesignerUnlinkTextFrame?: (frameId: string) => void;
+  /** Called when typography properties change on a text frame (to sync back to Story model). */
+  onDesignerTypographyChange?: (storyId: string, patch: Record<string, unknown>) => void;
+}
+
+export interface DesignerStudioApi {
+  patchObject: (id: string, patch: Partial<FreehandObject>) => void;
+  addObject: (obj: FreehandObject) => void;
+  getObjects: () => FreehandObject[];
+  getTextEditingId: () => string | null;
+  setSelectedIds: (ids: Set<string>) => void;
 }
 
 interface ContextMenuItem {
@@ -1562,8 +1613,40 @@ function renderObj(obj: FreehandObject, allObjects: FreehandObject[]): React.Rea
   };
 
   switch (obj.type) {
-    case "rect":
-      return <rect key={obj.id} x={obj.x} y={obj.y} width={obj.width} height={obj.height} rx={(obj as RectObject).rx} fill={fillAttr} transform={transform} {...strokeProps} />;
+    case "rect": {
+      const rObj = obj as RectObject;
+      if (rObj.isImageFrame) {
+        const ifc = rObj.imageFrameContent;
+        const cid = `imf-clip-${rObj.id}`;
+        return (
+          <g key={rObj.id} transform={transform} opacity={rObj.opacity}>
+            <defs>
+              <clipPath id={cid}>
+                <rect x={rObj.x} y={rObj.y} width={rObj.width} height={rObj.height} rx={rObj.rx} />
+              </clipPath>
+            </defs>
+            <rect x={rObj.x} y={rObj.y} width={rObj.width} height={rObj.height} rx={rObj.rx} fill={fillAttr} stroke={rObj.stroke} strokeWidth={rObj.strokeWidth} strokeDasharray={svgStrokeDashArray(rObj.strokeDasharray)} />
+            {ifc?.src ? (
+              <image
+                clipPath={`url(#${cid})`}
+                href={ifc.src}
+                x={rObj.x + ifc.offsetX}
+                y={rObj.y + ifc.offsetY}
+                width={ifc.originalWidth * ifc.scaleX}
+                height={ifc.originalHeight * ifc.scaleY}
+                preserveAspectRatio="none"
+              />
+            ) : (
+              <g clipPath={`url(#${cid})`} opacity={0.3}>
+                <line x1={rObj.x} y1={rObj.y} x2={rObj.x + rObj.width} y2={rObj.y + rObj.height} stroke={rObj.stroke || "#888"} strokeWidth={0.5} />
+                <line x1={rObj.x + rObj.width} y1={rObj.y} x2={rObj.x} y2={rObj.y + rObj.height} stroke={rObj.stroke || "#888"} strokeWidth={0.5} />
+              </g>
+            )}
+          </g>
+        );
+      }
+      return <rect key={obj.id} x={obj.x} y={obj.y} width={obj.width} height={obj.height} rx={rObj.rx} fill={fillAttr} transform={transform} {...strokeProps} />;
+    }
     case "ellipse":
       return <ellipse key={obj.id} cx={obj.x + obj.width / 2} cy={obj.y + obj.height / 2} rx={obj.width / 2} ry={obj.height / 2} fill={fillAttr} transform={transform} {...strokeProps} />;
     case "path": {
@@ -1681,9 +1764,18 @@ function renderObj(obj: FreehandObject, allObjects: FreehandObject[]): React.Rea
       const textT = textSvgTransform(t);
       return (
         <g key={obj.id} data-fh-text={t.id} transform={textT}>
-          <foreignObject x={t.x} y={t.y} width={foW} height={foH} style={{ overflow: "visible" }}>
+          {t.isTextFrame && (
+            <rect
+              x={t.x} y={t.y} width={foW} height={foH}
+              fill="none" stroke="#38bdf8" strokeWidth={0.75}
+              strokeDasharray="4 3" opacity={0.5}
+              pointerEvents="none"
+            />
+          )}
+          <foreignObject x={t.x} y={t.y} width={foW} height={foH} style={{ overflow: t.isTextFrame ? "hidden" : "visible" }}>
             {inner}
           </foreignObject>
+          {/* Text frame ports rendered in overlay layer above selection box */}
         </g>
       );
     }
@@ -2400,10 +2492,16 @@ function clipMapFromObjects(objs: FreehandObject[]): Map<string, FreehandObject[
 function layerRowIcon(o: FreehandObject) {
   const cls = "shrink-0 text-zinc-500";
   switch (o.type) {
-    case "rect": return <Square size={12} className={cls} />;
+    case "rect": {
+      if (o.isImageFrame) return <ImageIconLucide size={12} className={`${cls} text-amber-400/60`} />;
+      return <Square size={12} className={cls} />;
+    }
     case "ellipse": return <Circle size={12} className={cls} />;
     case "path": return <PenTool size={12} className={cls} />;
-    case "text": return <Type size={12} className={cls} />;
+    case "text": {
+      if (o.isTextFrame) return <Type size={12} className={`${cls} text-sky-400/60`} />;
+      return <Type size={12} className={cls} />;
+    }
     case "image": return <ImageIconLucide size={12} className={cls} />;
     case "booleanGroup": return <Layers size={12} className={cls} />;
     case "clippingContainer": return <Crop size={12} className={cls} />;
@@ -2416,10 +2514,10 @@ function selectionKindLabel(objs: FreehandObject[]): string {
   if (objs.length > 1) return `${objs.length} objects selected`;
   const o = objs[0];
   switch (o.type) {
-    case "rect": return "Rectangle";
+    case "rect": return o.isImageFrame ? "Image Frame" : "Rectangle";
     case "ellipse": return "Ellipse";
     case "path": return "Path";
-    case "text": return "Text";
+    case "text": return o.isTextFrame ? "Text Frame" : "Text";
     case "image": return "Image";
     case "booleanGroup": return "Boolean group";
     case "clippingContainer": return "Clipping container";
@@ -2476,6 +2574,16 @@ export default function FreehandStudio({
   onUpdateObjects,
   onUpdateArtboards,
   onUpdateLayoutGuides,
+  designerMode,
+  onDesignerTextFrameCreate,
+  onDesignerImageFramePlace,
+  studioApiRef,
+  onDesignerTextFrameEdit,
+  onDesignerAppendThreadedFrame,
+  designerStoryMap,
+  onDesignerStoryTextChange,
+  onDesignerUnlinkTextFrame,
+  onDesignerTypographyChange,
 }: FreehandStudioProps) {
 
   // ── Core state ─────────────────────────────────────────────────────
@@ -2502,7 +2610,7 @@ export default function FreehandStudio({
 
   // Drag state
   const [dragState, setDragState] = useState<{
-    type: "move" | "resize" | "pan" | "create" | "createText" | "directSelect" | "marquee" | "penHandle" | "rotate" | "gradient" | "artboardMove" | "artboardResize" | "guideMove";
+    type: "move" | "resize" | "pan" | "create" | "createText" | "createTextFrame" | "createImageFrame" | "directSelect" | "marquee" | "penHandle" | "rotate" | "gradient" | "artboardMove" | "artboardResize" | "guideMove";
     startX: number;
     startY: number;
     startCanvas?: Point;
@@ -2616,6 +2724,8 @@ export default function FreehandStudio({
   const [spaceHeld, setSpaceHeld] = useState(false);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; canvas?: Point } | null>(null);
   const [textEditingId, setTextEditingId] = useState<string | null>(null);
+  const textEditingIdRef = useRef(textEditingId);
+  textEditingIdRef.current = textEditingId;
   const [showGrid, setShowGrid] = useState(true);
   const [layoutGuides, setLayoutGuides] = useState<LayoutGuide[]>(() => initialLayoutGuides ?? []);
   const [showLayoutGuides, setShowLayoutGuides] = useState(true);
@@ -2648,6 +2758,43 @@ export default function FreehandStudio({
   selectedArtboardIdRef.current = selectedArtboardId;
   const layoutGuidesRef = useRef<LayoutGuide[]>(layoutGuides);
   layoutGuidesRef.current = layoutGuides;
+
+  useEffect(() => {
+    if (!studioApiRef) return;
+    studioApiRef.current = {
+      patchObject: (id, patch) => {
+        queueMicrotask(() => {
+          setObjects(prev => {
+            const idx = prev.findIndex(o => o.id === id);
+            if (idx < 0) return prev;
+            const obj = prev[idx]!;
+            let changed = false;
+            for (const k of Object.keys(patch)) {
+              if ((obj as any)[k] !== (patch as any)[k]) { changed = true; break; }
+            }
+            if (!changed) return prev;
+            const next = [...prev];
+            next[idx] = { ...obj, ...patch } as FreehandObject;
+            return next;
+          });
+        });
+      },
+      addObject: (obj) => {
+        queueMicrotask(() => {
+          setObjects(prev => {
+            if (prev.some(o => o.id === obj.id)) return prev;
+            return [...prev, obj];
+          });
+        });
+      },
+      getObjects: () => objectsRef.current,
+      getTextEditingId: () => textEditingIdRef.current,
+      setSelectedIds: (ids: Set<string>) => {
+        queueMicrotask(() => setSelectedIds(ids));
+      },
+    };
+    return () => { if (studioApiRef) studioApiRef.current = null; };
+  }, [studioApiRef]);
 
   // ── History helpers (using refs to avoid stale closures) ──────────
 
@@ -4449,7 +4596,7 @@ export default function FreehandStudio({
       if (activeTool !== want) return;
       if (Date.now() - t0 < SHAPE_SHORTCUT_HOLD_MS) return;
       const ds = dragState?.type;
-      if (ds === "create" || ds === "createText") return;
+      if (ds === "create" || ds === "createText" || ds === "createTextFrame" || ds === "createImageFrame") return;
       if (isPenDrawing) return;
 
       setActiveTool("select");
@@ -4609,6 +4756,16 @@ export default function FreehandStudio({
 
     if (activeTool === "text") {
       setDragState({ type: "createText", startX: e.clientX, startY: e.clientY, createOrigin: pos, currentCanvas: pos });
+      return;
+    }
+
+    // ── Designer: Text Frame & Image Frame ─────────────────────
+    if (activeTool === "textFrame") {
+      setDragState({ type: "createTextFrame", startX: e.clientX, startY: e.clientY, createOrigin: pos, currentCanvas: pos });
+      return;
+    }
+    if (activeTool === "imageFrame") {
+      setDragState({ type: "createImageFrame", startX: e.clientX, startY: e.clientY, createOrigin: pos, currentCanvas: pos });
       return;
     }
 
@@ -4819,6 +4976,23 @@ export default function FreehandStudio({
           }
           if (dist(pos, wr) < gTh) {
             setDragState({ type: "gradient", startX: e.clientX, startY: e.clientY, gradientHandle: "radR", gradientPrimaryId: o.id });
+            return;
+          }
+        }
+      }
+    }
+
+    // Designer: intercept click on text frame overflow port (before resize handles)
+    if (designerMode && selectedObjects.length === 1) {
+      const tfObj = selectedObjects[0];
+      if (tfObj.isTextFrame && (tfObj as any)._designerOverflow) {
+        const ti = (tfObj as any)._designerThreadInfo as { index: number; total: number } | undefined;
+        const hasOut = ti && ti.index < ti.total - 1;
+        if (!hasOut) {
+          const portCx = tfObj.x + tfObj.width + 13;
+          const portCy = tfObj.y + tfObj.height + 1;
+          if (dist(pos, { x: portCx, y: portCy }) < 14 / viewport.zoom) {
+            onDesignerAppendThreadedFrame?.(tfObj.id);
             return;
           }
         }
@@ -5083,6 +5257,12 @@ export default function FreehandStudio({
       return;
     }
 
+    if ((dragState.type === "createTextFrame" || dragState.type === "createImageFrame") && dragState.createOrigin) {
+      const pos = screenToCanvas(e.clientX, e.clientY);
+      setDragState((prev) => prev ? { ...prev, currentCanvas: pos } : null);
+      return;
+    }
+
     if (dragState.type === "gradient" && dragState.gradientPrimaryId && dragState.gradientHandle) {
       const pos = screenToCanvas(e.clientX, e.clientY);
       const primary = objects.find((o) => o.id === dragState.gradientPrimaryId);
@@ -5278,6 +5458,13 @@ export default function FreehandStudio({
         }
         if (src.type === "text") {
           const t = src as TextObject;
+          if (t.isTextFrame) {
+            const newW = Math.max(20, src.width * sx);
+            const newH = Math.max(20, src.height * sy);
+            const pivot = { x: src.x + src.width / 2, y: src.y + src.height / 2 };
+            const newC = mapWorld(pivot);
+            return { ...o, x: newC.x - newW / 2, y: newC.y - newH / 2, width: newW, height: newH };
+          }
           const { w: lw, h: lh } = textLayoutDims(t);
           const pivot = { x: src.x + lw / 2, y: src.y + lh / 2 };
           const newC = mapWorld(pivot);
@@ -5568,6 +5755,79 @@ export default function FreehandStudio({
       setActiveTool("select");
     }
 
+    // ── Designer: Text Frame creation ────────────────────────────
+    if (dragState.type === "createTextFrame" && dragState.createOrigin && dragState.currentCanvas) {
+      const o = dragState.createOrigin, c = dragState.currentCanvas;
+      const x = Math.min(o.x, c.x), y = Math.min(o.y, c.y);
+      const w = Math.max(Math.abs(c.x - o.x), 80), h = Math.max(Math.abs(c.y - o.y), 40);
+      const frameId = uid();
+      const newObj = {
+        ...defaultObj({ name: `Text Frame ${objects.length + 1}` }),
+        id: frameId,
+        type: "text" as const,
+        textMode: "area" as const,
+        text: "",
+        x, y,
+        width: w,
+        height: h,
+        fontFamily: "Inter, system-ui, sans-serif",
+        fontSize: 16,
+        fontWeight: 400,
+        lineHeight: 1.4,
+        letterSpacing: 0,
+        fontKerning: "auto" as const,
+        fontFeatureSettings: '"kern" 1, "liga" 1, "calt" 1',
+        fontVariantLigatures: "common-ligatures",
+        paragraphIndent: 0,
+        textAlign: "left" as const,
+        fill: solidFill("#000000"),
+        stroke: "none",
+        strokeWidth: 0,
+        strokePosition: "over",
+        scaleX: 1,
+        scaleY: 1,
+        isTextFrame: true,
+        storyId: frameId,
+      } as TextObject;
+      const next = [...objects, newObj];
+      setObjects(next);
+      const ns = new Set([newObj.id]);
+      setSelectedIds(ns);
+      pushHistory(next, ns);
+      setTextEditingId(newObj.id);
+      onDesignerTextFrameCreate?.(newObj);
+      setActiveTool("select");
+    }
+
+    // ── Designer: Image Frame creation ───────────────────────────
+    if (dragState.type === "createImageFrame" && dragState.createOrigin && dragState.currentCanvas) {
+      const o = dragState.createOrigin, c = dragState.currentCanvas;
+      const x = Math.min(o.x, c.x), y = Math.min(o.y, c.y);
+      const w = Math.max(Math.abs(c.x - o.x), 40), h = Math.max(Math.abs(c.y - o.y), 40);
+      const newObj: RectObject = {
+        ...defaultObj({ name: `Image Frame ${objects.length + 1}` }),
+        type: "rect",
+        x, y,
+        width: w,
+        height: h,
+        fill: solidFill("none"),
+        stroke: "#888888",
+        strokeWidth: 1,
+        strokeDasharray: `${6} ${4}`,
+        rx: 0,
+        isImageFrame: true,
+        imageFrameContent: null,
+        imageFrameAutoFit: true,
+        imageFrameContentAlignment: "center",
+      } as RectObject;
+      const next = [...objects, newObj];
+      setObjects(next);
+      const ns = new Set([newObj.id]);
+      setSelectedIds(ns);
+      pushHistory(next, ns);
+      setActiveTool("select");
+    }
+
     if (dragState.type === "create" && dragState.createOrigin && dragState.currentCanvas) {
       const o = dragState.createOrigin;
       const raw = screenToCanvas(e.clientX, e.clientY);
@@ -5586,7 +5846,7 @@ export default function FreehandStudio({
           y,
           width: w,
           height: h,
-          name: `Artboard ${artboards.length + 1}`,
+          name: designerMode ? `Page ${artboards.length + 1}` : `Artboard ${artboards.length + 1}`,
         });
         setArtboards((p) => [...p, nextA]);
         setSelectedArtboardId(nextA.id);
@@ -5773,6 +6033,25 @@ export default function FreehandStudio({
       ];
     }
 
+    if (single?.isTextFrame) {
+      const tfi = single._designerThreadInfo;
+      const canUnlinkTf = tfi && tfi.index > 0;
+      return [
+        { label: "Editar texto", action: () => setTextEditingId(single.id), shortcut: "dbl-click" },
+        ...(single._designerOverflow ? [
+          { label: "Añadir marco enlazado ↗", action: () => onDesignerAppendThreadedFrame?.(single.id) },
+        ] : []),
+        ...(canUnlinkTf ? [
+          { label: "Romper enlace entrante", action: () => onDesignerUnlinkTextFrame?.(single.id), separator: true },
+        ] : []),
+        { label: "Duplicate", shortcut: "⌘D", action: duplicateSelected, separator: !canUnlinkTf },
+        { label: "Delete", action: deleteSelected },
+        { label: "Bring to front", action: bringToFront, separator: true },
+        { label: "Send to back", action: sendToBack },
+        { label: "Lock / Unlock", action: () => updateSelectedProp("locked", !single.locked) },
+      ];
+    }
+
     if (single?.type === "text") {
       return [
         { label: "Edit text", action: () => setTextEditingId(single.id), shortcut: "dbl-click" },
@@ -5782,6 +6061,50 @@ export default function FreehandStudio({
         { label: "Export selection", action: () => { setExportModalScope("selection"); setShowExportModal(true); }, separator: true },
         { label: "Bring to front", action: bringToFront, separator: true },
         { label: "Send to back", action: sendToBack },
+      ];
+    }
+
+    if (single?.isImageFrame) {
+      const ifc = single.imageFrameContent;
+      const applyFit = (mode: string) => {
+        if (!ifc) return;
+        const fw = single.width, fh = single.height, iw = ifc.originalWidth, ih = ifc.originalHeight;
+        let sX: number, sY: number, oX: number, oY: number;
+        if (mode === "fit-proportional") { const s = Math.min(fw / iw, fh / ih); sX = sY = s; oX = (fw - iw * s) / 2; oY = (fh - ih * s) / 2; }
+        else if (mode === "fill-proportional") { const s = Math.max(fw / iw, fh / ih); sX = sY = s; oX = (fw - iw * s) / 2; oY = (fh - ih * s) / 2; }
+        else if (mode === "fit-stretch" || mode === "fill-stretch") { sX = fw / iw; sY = fh / ih; oX = 0; oY = 0; }
+        else if (mode === "center-content") { sX = sY = 1; oX = (fw - iw) / 2; oY = (fh - ih) / 2; }
+        else if (mode === "frame-to-content") {
+          const csx = ifc.scaleX || 1, csy = ifc.scaleY || 1;
+          updateSelectedProp("width", iw * csx);
+          updateSelectedProp("height", ih * csy);
+          updateSelectedProp("imageFrameContent", { ...ifc, offsetX: 0, offsetY: 0, fittingMode: mode });
+          return;
+        }
+        else { sX = sY = 1; oX = 0; oY = 0; }
+        updateSelectedProp("imageFrameContent", { ...ifc, scaleX: sX, scaleY: sY, offsetX: oX, offsetY: oY, fittingMode: mode });
+      };
+      const fittingItems: ContextMenuItem[] = ifc?.src ? [
+        { label: `Ajustar proporcional${ifc.fittingMode === "fit-proportional" ? " ✓" : ""}`, action: () => applyFit("fit-proportional") },
+        { label: `Rellenar proporcional${ifc.fittingMode === "fill-proportional" ? " ✓" : ""}`, action: () => applyFit("fill-proportional") },
+        { label: `Ajustar a la caja${ifc.fittingMode === "fit-stretch" ? " ✓" : ""}`, action: () => applyFit("fit-stretch") },
+        { label: `Centrar sin escalar${ifc.fittingMode === "center-content" ? " ✓" : ""}`, action: () => applyFit("center-content") },
+        { label: `Rellenar sin proporción${ifc.fittingMode === "fill-stretch" ? " ✓" : ""}`, action: () => applyFit("fill-stretch") },
+        { label: `Caja al contenido${ifc.fittingMode === "frame-to-content" ? " ✓" : ""}`, action: () => applyFit("frame-to-content"), separator: true },
+      ] : [];
+      const autoFitOn = (single as any).imageFrameAutoFit !== false;
+      return [
+        { label: "Colocar imagen dentro", action: () => { onDesignerImageFramePlace?.(single.id); } },
+        ...(ifc?.src ? [
+          { label: "Eliminar imagen", action: () => { updateSelectedProp("imageFrameContent", null); }, separator: true },
+        ] : []),
+        ...fittingItems,
+        { label: `Auto-Fit: ${autoFitOn ? "On ✓" : "Off"}`, action: () => updateSelectedProp("imageFrameAutoFit", !autoFitOn), separator: true },
+        { label: "Duplicate", shortcut: "⌘D", action: duplicateSelected },
+        { label: "Delete", action: deleteSelected, separator: true },
+        { label: "Bring to front", action: bringToFront },
+        { label: "Send to back", action: sendToBack },
+        { label: "Lock / Unlock", action: () => updateSelectedProp("locked", !single.locked) },
       ];
     }
 
@@ -5883,7 +6206,7 @@ export default function FreehandStudio({
     }
     if (dragState?.type === "rotate") return "grab";
     if (dragState?.type === "move") return "move";
-    if (activeTool === "pen" || activeTool === "rect" || activeTool === "ellipse" || activeTool === "text" || activeTool === "artboard") return "crosshair";
+    if (activeTool === "pen" || activeTool === "rect" || activeTool === "ellipse" || activeTool === "text" || activeTool === "textFrame" || activeTool === "imageFrame" || activeTool === "artboard") return "crosshair";
     return "default";
   }, [activeTool, spaceHeld, dragState]);
 
@@ -5915,6 +6238,18 @@ export default function FreehandStudio({
 
   const createTextPreviewRect = useMemo(() => {
     if (!dragState || dragState.type !== "createText" || !dragState.createOrigin || !dragState.currentCanvas) return null;
+    const o = dragState.createOrigin, c = dragState.currentCanvas;
+    return { x: Math.min(o.x, c.x), y: Math.min(o.y, c.y), w: Math.abs(c.x - o.x), h: Math.abs(c.y - o.y) };
+  }, [dragState]);
+
+  const createTextFramePreviewRect = useMemo(() => {
+    if (!dragState || dragState.type !== "createTextFrame" || !dragState.createOrigin || !dragState.currentCanvas) return null;
+    const o = dragState.createOrigin, c = dragState.currentCanvas;
+    return { x: Math.min(o.x, c.x), y: Math.min(o.y, c.y), w: Math.abs(c.x - o.x), h: Math.abs(c.y - o.y) };
+  }, [dragState]);
+
+  const createImageFramePreviewRect = useMemo(() => {
+    if (!dragState || dragState.type !== "createImageFrame" || !dragState.createOrigin || !dragState.currentCanvas) return null;
     const o = dragState.createOrigin, c = dragState.currentCanvas;
     return { x: Math.min(o.x, c.x), y: Math.min(o.y, c.y), w: Math.abs(c.x - o.x), h: Math.abs(c.y - o.y) };
   }, [dragState]);
@@ -6079,7 +6414,24 @@ export default function FreehandStudio({
         <ToolBtn active={activeTool === "text"} onClick={() => setActiveTool("text")} title="Text (T)">
           <Type size={20} strokeWidth={1.5} />
         </ToolBtn>
-        <ToolBtn active={activeTool === "artboard"} onClick={() => { setActiveTool("artboard"); setSelectedIds(new Set()); setSelectedPoints(new Map()); }} title="Artboard — mesa de trabajo (export)">
+        {designerMode && (
+          <>
+            <ToolBtn active={activeTool === "textFrame"} onClick={() => setActiveTool("textFrame")} title="Text Frame — caja de texto encadenada">
+              <svg width={20} height={20} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2" y="3" width="16" height="14" rx="1.5" strokeDasharray="3 2" />
+                <path d="M6 7.5h8M6 10h8M6 12.5h4" />
+              </svg>
+            </ToolBtn>
+            <ToolBtn active={activeTool === "imageFrame"} onClick={() => setActiveTool("imageFrame")} title="Image Frame — marco de imagen">
+              <svg width={20} height={20} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2" y="3" width="16" height="14" rx="1.5" />
+                <line x1="2" y1="3" x2="18" y2="17" opacity={0.5} />
+                <line x1="18" y1="3" x2="2" y2="17" opacity={0.5} />
+              </svg>
+            </ToolBtn>
+          </>
+        )}
+        <ToolBtn active={activeTool === "artboard"} onClick={() => { setActiveTool("artboard"); setSelectedIds(new Set()); setSelectedPoints(new Map()); }} title={designerMode ? "Page — página" : "Artboard — mesa de trabajo (export)"}>
           <LayoutTemplate size={20} strokeWidth={1.5} />
         </ToolBtn>
 
@@ -6180,6 +6532,11 @@ export default function FreehandStudio({
           if (activeTool === "select" || activeTool === "text") {
             for (let i = objects.length - 1; i >= 0; i--) {
               const obj = objects[i];
+              if (obj.isImageFrame && hitTestObject(pos, obj, threshold, objects)) {
+                setSelectedIds(new Set([obj.id]));
+                onDesignerImageFramePlace?.(obj.id);
+                return;
+              }
               if (obj.type === "text" && hitTestObject(pos, obj, threshold, objects)) {
                 setSelectedIds(new Set([obj.id]));
                 setTextEditingId(obj.id);
@@ -6424,6 +6781,27 @@ export default function FreehandStudio({
                 fill="rgba(167,139,250,0.06)" stroke="#a78bfa" strokeWidth={1 / viewport.zoom} strokeDasharray={`${5 / viewport.zoom}`} data-ui="text-preview" />
             )}
 
+            {/* Designer: Text frame preview */}
+            {createTextFramePreviewRect && createTextFramePreviewRect.w > 1 && createTextFramePreviewRect.h > 1 && (
+              <rect x={createTextFramePreviewRect.x} y={createTextFramePreviewRect.y} width={createTextFramePreviewRect.w} height={createTextFramePreviewRect.h}
+                fill="rgba(56,189,248,0.06)" stroke="#38bdf8" strokeWidth={1 / viewport.zoom} strokeDasharray={`${5 / viewport.zoom}`} data-ui="textframe-preview" />
+            )}
+
+            {/* Designer: Image frame preview */}
+            {createImageFramePreviewRect && createImageFramePreviewRect.w > 1 && createImageFramePreviewRect.h > 1 && (
+              <>
+                <rect x={createImageFramePreviewRect.x} y={createImageFramePreviewRect.y} width={createImageFramePreviewRect.w} height={createImageFramePreviewRect.h}
+                  fill="rgba(251,191,36,0.04)" stroke="#fbbf24" strokeWidth={1 / viewport.zoom} strokeDasharray={`${6 / viewport.zoom} ${4 / viewport.zoom}`} data-ui="imageframe-preview" />
+                {/* X placeholder */}
+                <line x1={createImageFramePreviewRect.x} y1={createImageFramePreviewRect.y}
+                  x2={createImageFramePreviewRect.x + createImageFramePreviewRect.w} y2={createImageFramePreviewRect.y + createImageFramePreviewRect.h}
+                  stroke="#fbbf24" strokeWidth={0.5 / viewport.zoom} opacity={0.4} />
+                <line x1={createImageFramePreviewRect.x + createImageFramePreviewRect.w} y1={createImageFramePreviewRect.y}
+                  x2={createImageFramePreviewRect.x} y2={createImageFramePreviewRect.y + createImageFramePreviewRect.h}
+                  stroke="#fbbf24" strokeWidth={0.5 / viewport.zoom} opacity={0.4} />
+              </>
+            )}
+
             {/* Marquee */}
             {marqueeRect && marqueeRect.w > 2 && marqueeRect.h > 2 && (
               <rect x={marqueeRect.x} y={marqueeRect.y} width={marqueeRect.w} height={marqueeRect.h}
@@ -6519,6 +6897,67 @@ export default function FreehandStudio({
                 })()}
               </g>
             )}
+
+            {/* ── Designer: text frame ports overlay (above selection box) ── */}
+            {designerMode && (() => {
+              const selTfId = selectedObjects.length === 1 && selectedObjects[0].isTextFrame ? selectedObjects[0].id : null;
+              return objects.filter(o => o.isTextFrame).map((t) => {
+                const ti = (t as any)._designerThreadInfo as { index: number; total: number } | undefined;
+                const hasIn = ti && ti.index > 0;
+                const hasOverflow = !!(t as any)._designerOverflow;
+                const hasOut = ti && ti.index < ti.total - 1;
+                if (!hasIn && !hasOverflow && !hasOut && !(ti && ti.total > 1)) return null;
+                const foW = t.width;
+                const foH = t.height;
+                const isSelected = t.id === selTfId;
+                return (
+                  <g key={`tfport-${t.id}`} data-ui="tf-ports" pointerEvents="visiblePainted">
+                    {/* IN port — left center */}
+                    {hasIn && (
+                      <circle cx={t.x} cy={t.y + foH / 2} r={5} fill="#38bdf8" stroke="#38bdf8" strokeWidth={0.75} opacity={0.8} pointerEvents="none" />
+                    )}
+                    {hasIn && (
+                      <polygon points={`${t.x - 2},${t.y + foH / 2 - 3} ${t.x + 3},${t.y + foH / 2} ${t.x - 2},${t.y + foH / 2 + 3}`} fill="white" opacity={0.9} pointerEvents="none" />
+                    )}
+                    {/* OUT port — overflow: red + button (only clickable on selected frame) */}
+                    {hasOverflow && !hasOut && isSelected && (
+                      <g
+                        style={{ cursor: "pointer" }}
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDesignerAppendThreadedFrame?.(t.id);
+                        }}
+                      >
+                        <rect x={t.x + foW + 4} y={t.y + foH - 8} width={18} height={18} rx={4} fill="#ef4444" opacity={0.95} />
+                        <text x={t.x + foW + 13} y={t.y + foH + 6} textAnchor="middle" fontSize={13} fill="white" fontWeight="bold" style={{ pointerEvents: "none" }}>+</text>
+                      </g>
+                    )}
+                    {/* OUT port — overflow indicator (non-selected: visual only) */}
+                    {hasOverflow && !hasOut && !isSelected && (
+                      <g pointerEvents="none">
+                        <rect x={t.x + foW + 4} y={t.y + foH - 8} width={18} height={18} rx={4} fill="#ef4444" opacity={0.45} />
+                        <text x={t.x + foW + 13} y={t.y + foH + 6} textAnchor="middle" fontSize={13} fill="white" fontWeight="bold" style={{ pointerEvents: "none" }}>+</text>
+                      </g>
+                    )}
+                    {/* OUT port — linked connector */}
+                    {hasOut && (
+                      <g pointerEvents="none">
+                        <circle cx={t.x + foW} cy={t.y + foH / 2} r={5} fill="#38bdf8" stroke="#38bdf8" strokeWidth={0.75} opacity={0.8} />
+                        <polygon points={`${t.x + foW - 2},${t.y + foH / 2 - 3} ${t.x + foW + 3},${t.y + foH / 2} ${t.x + foW - 2},${t.y + foH / 2 + 3}`} fill="white" opacity={0.9} />
+                      </g>
+                    )}
+                    {/* Thread badge */}
+                    {ti && ti.total > 1 && (
+                      <g pointerEvents="none">
+                        <rect x={t.x + foW - 26} y={t.y - 10} width={26} height={16} rx={4} fill="#38bdf8" opacity={0.9} />
+                        <text x={t.x + foW - 13} y={t.y + 2} textAnchor="middle" fontSize={10} fill="white" fontWeight="bold" style={{ pointerEvents: "none" }}>{ti.index + 1}/{ti.total}</text>
+                      </g>
+                    )}
+                  </g>
+                );
+              });
+            })()}
 
             {exportFlash && (
               <rect
@@ -6706,7 +7145,11 @@ export default function FreehandStudio({
                 }
               }}
               onBlur={() => {
+                const editedObj = objectsRef.current.find(o => o.id === to.id) as TextObject | undefined;
                 pushHistory(objectsRef.current, selectedIdsRef.current);
+                if (editedObj?.isTextFrame && onDesignerTextFrameEdit && editedObj.storyId) {
+                  onDesignerTextFrameEdit(editedObj.id, editedObj.storyId, editedObj.text);
+                }
                 setTextEditingId(null);
               }}
               autoFocus
@@ -6967,6 +7410,205 @@ export default function FreehandStudio({
                     </div>
                   </div>
                 </div>
+
+                {/* ── Designer: Marco de imagen ── */}
+                {designerMode && firstSelected.isImageFrame && (() => {
+                  const ifc = (firstSelected as any).imageFrameContent as FreehandObjectBase["imageFrameContent"];
+                  const autoFit = (firstSelected as any).imageFrameAutoFit !== false;
+                  const align = ((firstSelected as any).imageFrameContentAlignment ?? "center") as NonNullable<FreehandObjectBase["imageFrameContentAlignment"]>;
+                  const hasImg = !!ifc?.src;
+                  const fitting = ifc?.fittingMode ?? "fill-proportional";
+
+                  const IMG_FIT_OPTIONS: { value: string; label: string }[] = [
+                    { value: "fit-proportional", label: "Ajustar contenido proporcionalmente" },
+                    { value: "fill-proportional", label: "Rellenar caja proporcionalmente" },
+                    { value: "fit-stretch", label: "Ajustar contenido a la caja" },
+                    { value: "center-content", label: "Centrar contenido (sin escalar)" },
+                    { value: "fill-stretch", label: "Rellenar sin proporción" },
+                    { value: "frame-to-content", label: "Ajustar caja al contenido" },
+                  ];
+                  const IMG_ALIGN_GRID: NonNullable<FreehandObjectBase["imageFrameContentAlignment"]>[] = [
+                    "top-left", "top-center", "top-right",
+                    "middle-left", "center", "middle-right",
+                    "bottom-left", "bottom-center", "bottom-right",
+                  ];
+                  const ALIGN_LABELS: Record<string, string> = {
+                    "top-left": "↖", "top-center": "↑", "top-right": "↗",
+                    "middle-left": "←", "center": "·", "middle-right": "→",
+                    "bottom-left": "↙", "bottom-center": "↓", "bottom-right": "↘",
+                  };
+
+                  const applyFitting = (mode: string) => {
+                    if (!ifc) return;
+                    const fw = firstSelected.width, fh = firstSelected.height;
+                    const iw = ifc.originalWidth, ih = ifc.originalHeight;
+                    let sX: number, sY: number, oX: number, oY: number;
+                    if (mode === "fit-proportional") { const s = Math.min(fw / iw, fh / ih); sX = sY = s; oX = (fw - iw * s) / 2; oY = (fh - ih * s) / 2; }
+                    else if (mode === "fill-proportional") { const s = Math.max(fw / iw, fh / ih); sX = sY = s; oX = (fw - iw * s) / 2; oY = (fh - ih * s) / 2; }
+                    else if (mode === "fit-stretch" || mode === "fill-stretch") { sX = fw / iw; sY = fh / ih; oX = 0; oY = 0; }
+                    else if (mode === "center-content") { sX = sY = 1; oX = (fw - iw) / 2; oY = (fh - ih) / 2; }
+                    else if (mode === "frame-to-content") {
+                      const csx = ifc.scaleX || 1, csy = ifc.scaleY || 1;
+                      updateSelectedProp("width", iw * csx);
+                      updateSelectedProp("height", ih * csy);
+                      updateSelectedProp("imageFrameContent", { ...ifc, offsetX: 0, offsetY: 0, fittingMode: mode });
+                      return;
+                    }
+                    else { sX = sY = 1; oX = 0; oY = 0; }
+                    updateSelectedProp("imageFrameContent", { ...ifc, scaleX: sX, scaleY: sY, offsetX: oX, offsetY: oY, fittingMode: mode });
+                  };
+
+                  const applyAlignment = (al: NonNullable<FreehandObjectBase["imageFrameContentAlignment"]>) => {
+                    if (!ifc) return;
+                    const fw = firstSelected.width, fh = firstSelected.height;
+                    const w = ifc.originalWidth * ifc.scaleX, h = ifc.originalHeight * ifc.scaleY;
+                    const col = al.includes("left") ? 0 : al.includes("right") ? 2 : 1;
+                    const row = al.includes("top") ? 0 : al.includes("bottom") ? 2 : 1;
+                    const oX = col === 0 ? 0 : col === 1 ? (fw - w) / 2 : fw - w;
+                    const oY = row === 0 ? 0 : row === 1 ? (fh - h) / 2 : fh - h;
+                    updateSelectedProp("imageFrameContent", { ...ifc, offsetX: oX, offsetY: oY });
+                    updateSelectedProp("imageFrameContentAlignment", al);
+                  };
+
+                  return (
+                    <div className="border-b border-white/[0.08] px-[14px] py-3 space-y-2.5">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-amber-200/80">Marco de imagen</p>
+
+                      <button
+                        type="button"
+                        onClick={() => onDesignerImageFramePlace?.(firstSelected.id)}
+                        className="w-full rounded-lg border border-amber-400/35 bg-amber-500/15 py-2 text-[11px] font-semibold text-amber-50 transition hover:bg-amber-500/25"
+                      >
+                        Colocar imagen dentro
+                      </button>
+
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Auto-Fit</span>
+                        <button
+                          type="button"
+                          onClick={() => updateSelectedProp("imageFrameAutoFit", !autoFit)}
+                          className={`rounded-md border px-2 py-1 text-[10px] font-bold uppercase transition ${
+                            autoFit
+                              ? "border-violet-400/50 bg-violet-500/25 text-violet-200"
+                              : "border-white/[0.08] bg-white/[0.04] text-zinc-500"
+                          }`}
+                        >
+                          {autoFit ? "On" : "Off"}
+                        </button>
+                      </div>
+
+                      {hasImg && (
+                        <>
+                          <div className="space-y-1">
+                            <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Ajuste (fitting)</span>
+                            <select
+                              value={fitting}
+                              onChange={(e) => applyFitting(e.target.value)}
+                              className="w-full rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1.5 text-[11px] text-zinc-100 outline-none focus:ring-1 focus:ring-violet-500/40"
+                            >
+                              {IMG_FIT_OPTIONS.map((o) => (
+                                <option key={o.value} value={o.value}>{o.label}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="space-y-1">
+                            <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Alinear dentro de la caja</span>
+                            <div className="grid max-w-[9rem] grid-cols-3 gap-1">
+                              {IMG_ALIGN_GRID.map((al) => (
+                                <button
+                                  key={al}
+                                  type="button"
+                                  title={al}
+                                  onClick={() => applyAlignment(al)}
+                                  className={`h-7 rounded border text-[11px] font-bold transition ${
+                                    align === al
+                                      ? "border-violet-400/50 bg-violet-500/25 text-violet-200"
+                                      : "border-white/[0.08] bg-white/[0.04] text-zinc-500 hover:bg-white/[0.08] hover:text-zinc-300"
+                                  }`}
+                                >
+                                  {ALIGN_LABELS[al]}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-1.5 text-[10px] text-zinc-400">
+                            <span>Escala X: {((ifc?.scaleX ?? 1) * 100).toFixed(0)}%</span>
+                            <span>Escala Y: {((ifc?.scaleY ?? 1) * 100).toFixed(0)}%</span>
+                          </div>
+                        </>
+                      )}
+
+                      {hasImg && (
+                        <button
+                          type="button"
+                          onClick={() => updateSelectedProp("imageFrameContent", null)}
+                          className="w-full rounded-lg border border-rose-500/25 bg-rose-500/10 py-1.5 text-[10px] font-medium text-rose-300 transition hover:bg-rose-500/20"
+                        >
+                          Eliminar imagen
+                        </button>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* ── Designer: Marco de texto ── */}
+                {designerMode && firstSelected.isTextFrame && (() => {
+                  const storyId = (firstSelected as any).storyId as string | undefined;
+                  const ti = (firstSelected as any)._designerThreadInfo as { index: number; total: number } | undefined;
+                  const hasOverflow = !!(firstSelected as any)._designerOverflow;
+                  const isLinked = ti && ti.total > 1;
+                  const canUnlink = ti && ti.index > 0;
+                  const storyText = storyId ? designerStoryMap?.get(storyId) ?? "" : "";
+
+                  return (
+                    <div className="border-b border-white/[0.08] px-[14px] py-3 space-y-2.5">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-sky-200/80">Marco de texto</p>
+
+                      {isLinked && (
+                        <p className="text-[10px] leading-relaxed text-zinc-500">
+                          Historia enlazada · Marco {ti.index + 1} de {ti.total} · Puerto OUT (rojo +) para continuar el flujo.
+                        </p>
+                      )}
+
+                      {hasOverflow && (
+                        <div className="flex items-center gap-1.5 rounded-md border border-rose-500/25 bg-rose-500/10 px-2 py-1.5">
+                          <span className="text-[10px] font-medium text-rose-300">⚠ Texto desbordado</span>
+                          <button
+                            type="button"
+                            onClick={() => onDesignerAppendThreadedFrame?.(firstSelected.id)}
+                            className="ml-auto rounded border border-rose-400/30 bg-rose-500/20 px-2 py-0.5 text-[9px] font-bold text-rose-200 transition hover:bg-rose-500/30"
+                          >
+                            + Marco
+                          </button>
+                        </div>
+                      )}
+
+                      <label className="block text-[10px] font-medium text-zinc-500">Contenido</label>
+                      <textarea
+                        className="mt-0.5 min-h-[80px] w-full resize-y rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2.5 py-2 text-xs leading-relaxed text-zinc-100 outline-none focus:ring-1 focus:ring-sky-500/40"
+                        value={storyText}
+                        onChange={(e) => {
+                          if (storyId && onDesignerStoryTextChange) {
+                            onDesignerStoryTextChange(storyId, e.target.value);
+                          }
+                        }}
+                        spellCheck={false}
+                      />
+
+                      {canUnlink && (
+                        <button
+                          type="button"
+                          onClick={() => onDesignerUnlinkTextFrame?.(firstSelected.id)}
+                          className="flex w-full items-center justify-center gap-2 rounded-[5px] border border-white/[0.08] bg-white/[0.06] py-2 text-[11px] font-bold text-zinc-200 transition hover:bg-white/10"
+                        >
+                          Romper enlace entrante
+                        </button>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* Fill */}
                 <div className="py-3 px-[14px] border-b border-white/[0.08] space-y-3">

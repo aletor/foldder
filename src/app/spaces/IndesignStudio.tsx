@@ -38,10 +38,25 @@ import type {
 } from "fabric";
 import {
   useIndesignCanvas,
+  type FrameContextMenuDetail,
   type IndesignCanvasApi,
   type IndesignTool,
 } from "./indesign/useIndesignCanvas";
-import type { IndesignPageState, Story, TextFrame, Typography } from "./indesign/types";
+import type {
+  ContentAlignment,
+  ImageFittingMode,
+  ImageFrameRecord,
+  IndesignPageState,
+  Story,
+  TextFrame,
+  Typography,
+} from "./indesign/types";
+import {
+  applyContentAlignmentToImageFrame,
+  applyFittingModeToImageFrame,
+  clearImageFrameContent,
+  setImageFrameAutoFit,
+} from "./indesign/image-frame-studio-ops";
 import {
   appendTextFrameAfter,
   findFollowUpFrameRect,
@@ -85,6 +100,27 @@ const FH_INP =
   "w-full cursor-ew-resize rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 font-mono text-[12px] text-zinc-100 outline-none focus:ring-1 focus:ring-[#534AB7]/40";
 const FH_PILL_ON = "border-[#534AB7] bg-[#534AB7] text-white";
 const FH_PILL_OFF = "border-white/[0.08] bg-transparent text-zinc-400 hover:text-zinc-200";
+
+const IMG_FIT_OPTIONS: { value: ImageFittingMode; label: string }[] = [
+  { value: "fit-proportional", label: "Ajustar contenido proporcionalmente" },
+  { value: "fill-proportional", label: "Rellenar caja proporcionalmente" },
+  { value: "fit-stretch", label: "Ajustar contenido a la caja" },
+  { value: "center-content", label: "Centrar contenido (sin escalar)" },
+  { value: "fill-stretch", label: "Rellenar sin proporción" },
+  { value: "frame-to-content", label: "Ajustar caja al contenido" },
+];
+
+const IMG_ALIGN_GRID: ContentAlignment[] = [
+  "top-left",
+  "top-center",
+  "top-right",
+  "middle-left",
+  "center",
+  "middle-right",
+  "bottom-left",
+  "bottom-center",
+  "bottom-right",
+];
 
 function clamp(n: number, a: number, b: number): number {
   return Math.min(b, Math.max(a, n));
@@ -199,6 +235,25 @@ function primaryVectorShapeFromSelection(sel: FabricObject | null): FabricObject
   return null;
 }
 
+/** Marco de imagen (Rect) asociado a la selección actual (marco o imagen interna). */
+function primaryImageFrameFromSelection(
+  canvas: FabricCanvas | null,
+  sel: FabricObject | null,
+): FabricObject | null {
+  if (!sel) return null;
+  if (sel.get?.("indesignType") === "frame") return sel;
+  if (sel.get?.("indesignType") === "frameImage") {
+    const uid = sel.get("frameUid") as string | undefined;
+    if (!uid || !canvas) return null;
+    return (
+      canvas
+        .getObjects()
+        .find((o) => o.get("indesignUid") === uid && o.get("indesignType") === "frame") ?? null
+    );
+  }
+  return null;
+}
+
 function fabricFillIsEmpty(fill: unknown): boolean {
   if (fill == null || fill === "") return true;
   const s = String(fill).trim().toLowerCase();
@@ -287,6 +342,7 @@ export const IndesignStudio = memo(function IndesignStudio(props: IndesignStudio
               fabricJSON: null,
               stories: [],
               textFrames: [],
+              imageFrames: [],
             },
           ];
     return seed.map(migrateIndesignPageState);
@@ -311,6 +367,11 @@ export const IndesignStudio = memo(function IndesignStudio(props: IndesignStudio
   const [layerDragOverIdx, setLayerDragOverIdx] = useState<number | null>(null);
   /** Incrementa en deshacer/rehacer para forzar que el canvas vuelva a cargar el `fabricJSON` de la página activa. */
   const [canvasHydrationEpoch, setCanvasHydrationEpoch] = useState(0);
+  /** Edición de contenido interno (doble clic en imagen); null = solo marco. */
+  const [imageContentEditUid, setImageContentEditUid] = useState<string | null>(null);
+  const [frameCtx, setFrameCtx] = useState<FrameContextMenuDetail | null>(null);
+  const placeImageInputRef = useRef<HTMLInputElement>(null);
+  const placeImageTargetUidRef = useRef<string | null>(null);
 
   const clipboardPayloadRef = useRef<IndesignClipboardPayload | null>(null);
   const exportMenuRef = useRef<HTMLDivElement>(null);
@@ -388,6 +449,7 @@ export const IndesignStudio = memo(function IndesignStudio(props: IndesignStudio
   const fmt = formatById(activePage?.format ?? "a4v");
   const stories = activePage?.stories ?? [];
   const textFrames = activePage?.textFrames ?? [];
+  const imageFrames = activePage?.imageFrames ?? [];
 
   const frameLayouts = useMemo(
     () => layoutPageStories(stories, textFrames),
@@ -414,16 +476,28 @@ export const IndesignStudio = memo(function IndesignStudio(props: IndesignStudio
     [activePageIndex, commitPages],
   );
 
-  const handleJSONChange = useCallback(
-    (json: Record<string, unknown>) => {
+  const handlePagePatch = useCallback(
+    (patch: { fabricJSON?: Record<string, unknown>; imageFrames?: ImageFrameRecord[] }) => {
       commitPages((prev) => {
         const next = [...prev];
-        if (!next[activePageIndex]) return prev;
-        next[activePageIndex] = { ...next[activePageIndex], fabricJSON: json };
+        const p = next[activePageIndex];
+        if (!p) return prev;
+        next[activePageIndex] = {
+          ...p,
+          ...(patch.fabricJSON !== undefined ? { fabricJSON: patch.fabricJSON } : {}),
+          ...(patch.imageFrames !== undefined ? { imageFrames: patch.imageFrames } : {}),
+        };
         return next;
       });
     },
     [activePageIndex, commitPages],
+  );
+
+  const handleJSONChange = useCallback(
+    (json: Record<string, unknown>) => {
+      handlePagePatch({ fabricJSON: json });
+    },
+    [handlePagePatch],
   );
 
   const handleTextModelChangeRef = useRef(handleTextModelChange);
@@ -559,7 +633,10 @@ export const IndesignStudio = memo(function IndesignStudio(props: IndesignStudio
     pageHeight: pageDims.height,
     getPageSnapshot: getPageSnapshotRef,
     tool,
-    onJSONChange: handleJSONChange,
+    onPagePatch: handlePagePatch,
+    imageFrames,
+    imageContentEditUid,
+    onImageContentEditChange: setImageContentEditUid,
     onSelectionChange: setSelected,
     stories,
     textFrames,
@@ -568,8 +645,14 @@ export const IndesignStudio = memo(function IndesignStudio(props: IndesignStudio
     onLinkTargetFrame,
     onLinkEmptyCanvas,
     onAfterPlaceDraw: () => setTool("select"),
+    onFrameContextMenu: (d) => setFrameCtx(d),
   });
   canvasApiRef.current = canvasApi;
+
+  useEffect(() => {
+    setImageContentEditUid(null);
+    setFrameCtx(null);
+  }, [activePageIndex, canvasHydrationEpoch]);
 
   useEffect(() => {
     canvasApiRef.current?.getCanvas()?.requestRenderAll();
@@ -745,6 +828,15 @@ export const IndesignStudio = memo(function IndesignStudio(props: IndesignStudio
       ? (selected as FabricImageType)
       : null;
 
+  const selectedImageFrameShell = primaryImageFrameFromSelection(
+    getFabricCanvas(),
+    selected,
+  );
+  const selectedImageFrameUid = selectedImageFrameShell?.get("indesignUid") as string | undefined;
+  const selectedImageFrameRecord = selectedImageFrameUid
+    ? imageFrames.find((r) => r.id === selectedImageFrameUid)
+    : undefined;
+
   const selectedStoryId = selectedTextFrameHit
     ? (selectedTextFrameHit.get("storyId") as string)
     : undefined;
@@ -771,6 +863,7 @@ export const IndesignStudio = memo(function IndesignStudio(props: IndesignStudio
     "frameId",
     "shapeKind",
     "indesignLocked",
+    "indesignImageContentId",
     ...INDESIGN_PAGE_BG_SERIAL_PROPS,
   ];
   const serialPropsRef = useRef(SERIAL);
@@ -848,29 +941,12 @@ export const IndesignStudio = memo(function IndesignStudio(props: IndesignStudio
       const o = c?.getActiveObject();
       if (!c || !o) return;
       if (patch.src && typeof patch.src === "string") {
-        const { FabricImage } = await import("fabric");
         const old = o as FabricImageType;
-        const next = await FabricImage.fromURL(patch.src, { crossOrigin: "anonymous" });
-        next.set({
-          left: old.left,
-          top: old.top,
-          originX: old.originX,
-          originY: old.originY,
-          opacity: old.opacity,
-          angle: old.angle,
-          indesignType: "frameImage",
-          indesignUid: old.get("indesignUid"),
-          frameUid: old.get("frameUid"),
-          scaleX: old.scaleX,
-          scaleY: old.scaleY,
-        });
-        next.clipPath = old.clipPath;
-        c.remove(old);
-        c.add(next);
-        c.setActiveObject(next);
-        c.requestRenderAll();
-        handleJSONChange(c.toObject(SERIAL) as Record<string, unknown>);
-        return;
+        const frameUid = old.get("frameUid") as string | undefined;
+        if (frameUid) {
+          await canvasApi.placeImageInFrame(frameUid, patch.src);
+          return;
+        }
       }
       o.set(patch);
       c.requestRenderAll();
@@ -1082,15 +1158,36 @@ export const IndesignStudio = memo(function IndesignStudio(props: IndesignStudio
         c.remove(o);
         c.discardActiveObject();
         setSelected(null);
-        handleJSONChange(c.toObject(SERIAL) as Record<string, unknown>);
+        const nextImg = imageFrames.filter((r) => r.id !== uid);
+        handlePagePatch({
+          fabricJSON: c.toObject(SERIAL) as Record<string, unknown>,
+          imageFrames: nextImg,
+        });
         refreshLayerList();
         return;
       }
       if (it === "frameImage") {
-        c.remove(o);
-        c.discardActiveObject();
-        setSelected(null);
-        handleJSONChange(c.toObject(SERIAL) as Record<string, unknown>);
+        const fid = o.get("frameUid") as string;
+        const frameObj = c
+          .getObjects()
+          .find(
+            (x) =>
+              x.get("indesignUid") === fid && x.get("indesignType") === "frame",
+          );
+        if (frameObj) {
+          const nextRec = clearImageFrameContent(c, fid, imageFrames);
+          c.setActiveObject(frameObj);
+          setSelected(frameObj);
+          handlePagePatch({
+            fabricJSON: c.toObject(SERIAL) as Record<string, unknown>,
+            imageFrames: nextRec,
+          });
+        } else {
+          c.remove(o);
+          c.discardActiveObject();
+          setSelected(null);
+          handleJSONChange(c.toObject(SERIAL) as Record<string, unknown>);
+        }
         refreshLayerList();
         return;
       }
@@ -1103,7 +1200,9 @@ export const IndesignStudio = memo(function IndesignStudio(props: IndesignStudio
     [
       canvasApi,
       handleJSONChange,
+      handlePagePatch,
       handleTextModelChange,
+      imageFrames,
       refreshLayerList,
       setSelected,
       stories,
@@ -1545,6 +1644,7 @@ export const IndesignStudio = memo(function IndesignStudio(props: IndesignStudio
       fabricJSON: null,
       stories: [],
       textFrames: [],
+      imageFrames: [],
     };
     commitPages((prev) => {
       const next = [...prev, newPage];
@@ -1889,6 +1989,119 @@ export const IndesignStudio = memo(function IndesignStudio(props: IndesignStudio
               );
             })()}
 
+          {selectedImageFrameShell &&
+            !selectedTextFrameHit &&
+            !primaryVectorShapeFromSelection(selected) &&
+            selectedImageFrameUid &&
+            (() => {
+              const uid = selectedImageFrameUid;
+              const rec = selectedImageFrameRecord;
+              const hasImg = !!selectedImageFrameShell.get("hasImage");
+              const editContent = imageContentEditUid === uid && !!selectedFrameImg;
+              const fitting = rec?.imageContent?.fittingMode ?? "fill-proportional";
+              const auto = rec?.autoFit ?? true;
+
+              const commitIF = (next: ImageFrameRecord[]) => {
+                const c = canvasApi.getCanvas();
+                if (!c) return;
+                handlePagePatch({
+                  fabricJSON: c.toObject(SERIAL) as Record<string, unknown>,
+                  imageFrames: next,
+                });
+              };
+
+              const openPlace = () => {
+                placeImageTargetUidRef.current = uid;
+                placeImageInputRef.current?.click();
+              };
+
+              return (
+                <div className="space-y-2.5 border-b border-white/[0.08] px-[14px] py-3">
+                  <p className="text-xs font-semibold text-amber-100/90">Marco de imagen</p>
+                  {editContent ? (
+                    <p className="text-[10px] text-amber-400/90">
+                      Editando contenido interno · Esc = volver al marco
+                    </p>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={openPlace}
+                    className="w-full rounded-lg border border-amber-400/35 bg-amber-500/15 py-2 text-[11px] font-semibold text-amber-50 transition hover:bg-amber-500/25"
+                  >
+                    Colocar imagen dentro
+                  </button>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className={FH_LBL}>Auto-Fit</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const c = canvasApi.getCanvas();
+                        if (!c) return;
+                        const next = setImageFrameAutoFit(c, uid, !auto, imageFrames);
+                        commitIF(next);
+                      }}
+                      className={`rounded-md border px-2 py-1 text-[10px] font-bold uppercase ${
+                        auto ? FH_PILL_ON : FH_PILL_OFF
+                      }`}
+                    >
+                      {auto ? "On" : "Off"}
+                    </button>
+                  </div>
+                  <div className="space-y-1">
+                    <span className={FH_LBL}>Ajuste (fitting)</span>
+                    <select
+                      value={fitting}
+                      onChange={(e) => {
+                        const c = canvasApi.getCanvas();
+                        if (!c) return;
+                        const m = e.target.value as ImageFittingMode;
+                        const next = applyFittingModeToImageFrame(c, uid, m, imageFrames);
+                        commitIF(next);
+                      }}
+                      className="w-full rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1.5 text-[11px] text-zinc-100 outline-none focus:ring-1 focus:ring-[#534AB7]/40"
+                    >
+                      {IMG_FIT_OPTIONS.map((o) => (
+                        <option key={o.value + o.label} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {hasImg ? (
+                    <div className="space-y-1">
+                      <span className={FH_LBL}>Alinear dentro de la caja</span>
+                      <div className="grid max-w-[9rem] grid-cols-3 gap-1">
+                        {IMG_ALIGN_GRID.map((al) => (
+                          <button
+                            key={al}
+                            type="button"
+                            title={al}
+                            onClick={() => {
+                              const c = canvasApi.getCanvas();
+                              if (!c) return;
+                              const next = applyContentAlignmentToImageFrame(c, uid, al, imageFrames);
+                              commitIF(next);
+                            }}
+                            className={`h-7 rounded border text-[10px] font-bold ${
+                              rec?.contentAlignment === al ? FH_PILL_ON : FH_PILL_OFF
+                            }`}
+                          >
+                            ·
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  {editContent && selectedFrameImg ? (
+                    <div className="grid grid-cols-2 gap-1.5 text-[10px] text-zinc-400">
+                      <span>Escala X: {((selectedFrameImg.scaleX ?? 1) * 100).toFixed(0)}%</span>
+                      <span>Escala Y: {((selectedFrameImg.scaleY ?? 1) * 100).toFixed(0)}%</span>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })()}
+
           {selectedTextFrameHit && selectedTypo && selectedStory && (
             <div className="space-y-0 border-b border-white/[0.08] px-[14px] py-3">
               <p className="text-[10px] leading-relaxed text-zinc-500">
@@ -2228,29 +2441,6 @@ export const IndesignStudio = memo(function IndesignStudio(props: IndesignStudio
                 </div>
               );
             })()}
-
-          {selectedFrameImg && (
-            <div className="mt-4 space-y-3 rounded-xl border border-white/[0.07] bg-black/25 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
-              <p className="text-xs font-semibold text-amber-100/90">Imagen</p>
-              <p className="text-[10px] leading-relaxed text-zinc-500">
-                Ajuste fill/fit: vuelve a soltar imagen en el marco o recrea el marco.
-              </p>
-              <label className="mt-2 block cursor-pointer rounded-xl border border-dashed border-white/18 bg-white/[0.02] px-2 py-3.5 text-center text-[11px] font-medium text-zinc-400 transition hover:border-amber-400/35 hover:bg-amber-500/5 hover:text-zinc-200">
-                Reemplazar imagen
-                <input
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={(ev) => {
-                    const f = ev.target.files?.[0];
-                    if (!f) return;
-                    const url = URL.createObjectURL(f);
-                    applyImageProp({ src: url });
-                  }}
-                />
-              </label>
-            </div>
-          )}
 
           {selectedVectorShape &&
             (() => {
@@ -2835,6 +3025,96 @@ export const IndesignStudio = memo(function IndesignStudio(props: IndesignStudio
           </div>
         </aside>
       </div>
+
+      <input
+        ref={placeImageInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        aria-hidden
+        onChange={async (ev) => {
+          const f = ev.target.files?.[0];
+          ev.target.value = "";
+          const uid = placeImageTargetUidRef.current;
+          if (!f || !uid) return;
+          const url = URL.createObjectURL(f);
+          await canvasApi.placeImageInFrame(uid, url);
+        }}
+      />
+
+      {frameCtx ? (
+        <>
+          <div
+            className="fixed inset-0 z-[20060]"
+            aria-hidden
+            onMouseDown={() => setFrameCtx(null)}
+          />
+          <div
+            className="fixed z-[20070] min-w-[13.5rem] rounded-xl border border-white/12 bg-[#14141c] py-1.5 text-[11px] shadow-2xl shadow-black/50"
+            style={{
+              left: Math.min(frameCtx.clientX, typeof window !== "undefined" ? window.innerWidth - 220 : frameCtx.clientX),
+              top: frameCtx.clientY,
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              className="block w-full px-3 py-2 text-left text-zinc-200 hover:bg-white/[0.06]"
+              onClick={() => {
+                placeImageTargetUidRef.current = frameCtx.frameUid;
+                placeImageInputRef.current?.click();
+                setFrameCtx(null);
+              }}
+            >
+              Colocar imagen dentro
+            </button>
+            {frameCtx.hasImage ? (
+              <>
+                <div className="my-1 border-t border-white/[0.06]" />
+                <p className="px-3 pb-1 text-[9px] font-bold uppercase tracking-wider text-zinc-500">
+                  Ajuste
+                </p>
+                {IMG_FIT_OPTIONS.map((o) => (
+                  <button
+                    key={o.value + o.label}
+                    type="button"
+                    className="block w-full px-3 py-1.5 text-left text-zinc-300 hover:bg-white/[0.06]"
+                    onClick={() => {
+                      const c = canvasApi.getCanvas();
+                      if (!c) return;
+                      const next = applyFittingModeToImageFrame(c, frameCtx.frameUid, o.value, imageFrames);
+                      handlePagePatch({
+                        fabricJSON: c.toObject(SERIAL) as Record<string, unknown>,
+                        imageFrames: next,
+                      });
+                      setFrameCtx(null);
+                    }}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+                <div className="my-1 border-t border-white/[0.06]" />
+                <button
+                  type="button"
+                  className="block w-full px-3 py-2 text-left text-zinc-200 hover:bg-white/[0.06]"
+                  onClick={() => {
+                    const c = canvasApi.getCanvas();
+                    if (!c) return;
+                    const next = clearImageFrameContent(c, frameCtx.frameUid, imageFrames);
+                    handlePagePatch({
+                      fabricJSON: c.toObject(SERIAL) as Record<string, unknown>,
+                      imageFrames: next,
+                    });
+                    setFrameCtx(null);
+                  }}
+                >
+                  Eliminar imagen
+                </button>
+              </>
+            ) : null}
+          </div>
+        </>
+      ) : null}
 
       {addPageOpen && (
         <div

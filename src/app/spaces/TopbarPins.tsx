@@ -15,7 +15,7 @@ export const TOPBAR_FIXED_PIN_TYPES = [
   "nanoBanana",
   "geminiVideo",
   "vfxGenerator",
-  "indesign",
+  "designer",
 ] as const;
 
 /** Tooltip (nombre completo) vs etiqueta corta bajo el icono. */
@@ -27,7 +27,7 @@ const TOPBAR_PIN_UI: Record<
   nanoBanana: { title: "Image Generator", shortLabel: "Image" },
   geminiVideo: { title: "Video Generator", shortLabel: "Video" },
   vfxGenerator: { title: "VFX Generator", shortLabel: "VFX" },
-  indesign: { title: "Indesign Studio", shortLabel: "Layout" },
+  designer: { title: "Designer Studio", shortLabel: "Design" },
 };
 
 type TopbarPinsProps = {

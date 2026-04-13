@@ -46,6 +46,7 @@ import {
   BezierMaskNode,
   FreehandNode,
   IndesignNode,
+  DesignerNode,
   TextOverlayNode,
   ButtonEdge 
 } from './CustomNodes';
@@ -522,6 +523,7 @@ const nodeTypes: any = {
   bezierMask: BezierMaskNode,
   freehand: FreehandNode,
   indesign: IndesignNode,
+  designer: DesignerNode,
   textOverlay: TextOverlayNode,
   canvasGroup: CanvasGroupNode,
 };
@@ -1979,7 +1981,7 @@ const SpacesContent = () => {
         case 'o': addNode('spaceOutput'); break;
         // ── Composición ──────────────────────────────────────────────────
         case 'c': addNode('imageComposer'); break;
-        case 'l': addNode('imageComposer'); break;   // alias
+        case 'l': addNode('designer'); break;
         case 'e': addNode('imageExport'); break;
         case 't': addNode('textOverlay'); break;
         case 'w': addNode('painter'); break;

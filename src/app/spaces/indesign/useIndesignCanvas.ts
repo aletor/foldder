@@ -7,6 +7,23 @@ import { isFabricActiveSelection } from "./fabric-active-selection";
 import { INDESIGN_PAD } from "./page-formats";
 import { syncIndesignPageBackground, INDESIGN_PAGE_BG_SERIAL_PROPS } from "./indesign-page-background";
 import { INDESIGN_CUSTOM_PROPS } from "./types";
+import type { ImageFrameRecord, FrameImageContent } from "./image-frame-model";
+import {
+  emptyImageFrameRecord,
+  getImageFrameRecord,
+  legacyFabricImageFitToMode,
+  patchImageFrameRecord,
+  uidImageContent,
+  upsertImageFrameRecord,
+} from "./image-frame-model";
+import { computeFittingLayout } from "./image-frame-layout";
+import {
+  applyContentToFabricImage,
+  fabricImageToContent,
+  frameInnerSize,
+  frameOrigin,
+  updateImageClipFromFrame,
+} from "./image-frame-fabric";
 import type { Story, TextFrame } from "./text-model";
 import { serializeStoryContent } from "./text-model";
 import { layoutPageStories } from "./text-layout";
@@ -26,8 +43,6 @@ import {
 
 const EXTRA_PROPS = [
   ...INDESIGN_CUSTOM_PROPS,
-  "indesignUid",
-  "frameUid",
   "lineIndex",
   ...INDESIGN_PAGE_BG_SERIAL_PROPS,
 ];
@@ -88,6 +103,15 @@ export type IndesignCanvasApi = {
   panViewportBy: (dx: number, dy: number) => void;
   /** Encaja el lienzo completo en el host (mismo criterio que doble clic en vacío). */
   resetViewportFit: () => void;
+  /** Coloca o sustituye imagen en el marco (`indesignUid`). */
+  placeImageInFrame: (frameUid: string, url: string) => Promise<void>;
+};
+
+export type FrameContextMenuDetail = {
+  clientX: number;
+  clientY: number;
+  frameUid: string;
+  hasImage: boolean;
 };
 
 type UseIndesignCanvasOpts = {
@@ -97,7 +121,12 @@ type UseIndesignCanvasOpts = {
   pageHeight: number;
   getPageSnapshot: React.MutableRefObject<() => Record<string, unknown> | null>;
   tool: IndesignTool;
-  onJSONChange: (json: Record<string, unknown>) => void;
+  /** Actualiza `fabricJSON` y/o `imageFrames` en un solo commit. */
+  onPagePatch: (patch: { fabricJSON?: Record<string, unknown>; imageFrames?: ImageFrameRecord[] }) => void;
+  imageFrames: ImageFrameRecord[];
+  /** Marco cuyo contenido interno se está editando (doble clic); null = solo marco. */
+  imageContentEditUid: string | null;
+  onImageContentEditChange: (frameUid: string | null) => void;
   onSelectionChange: (obj: FabricObject | null) => void;
   stories: Story[];
   textFrames: TextFrame[];
@@ -107,6 +136,7 @@ type UseIndesignCanvasOpts = {
   onLinkEmptyCanvas: (point: { x: number; y: number }) => void;
   /** Tras colocar texto / forma / marco por arrastre, p. ej. volver a Selección. */
   onAfterPlaceDraw?: () => void;
+  onFrameContextMenu?: (detail: FrameContextMenuDetail) => void;
 };
 
 export function useIndesignCanvas(opts: UseIndesignCanvasOpts): IndesignCanvasApi {
@@ -117,7 +147,10 @@ export function useIndesignCanvas(opts: UseIndesignCanvasOpts): IndesignCanvasAp
     pageHeight,
     getPageSnapshot,
     tool,
-    onJSONChange,
+    onPagePatch,
+    imageFrames,
+    imageContentEditUid,
+    onImageContentEditChange,
     onSelectionChange,
     stories,
     textFrames,
@@ -126,6 +159,7 @@ export function useIndesignCanvas(opts: UseIndesignCanvasOpts): IndesignCanvasAp
     onLinkTargetFrame,
     onLinkEmptyCanvas,
     onAfterPlaceDraw,
+    onFrameContextMenu,
   } = opts;
 
   const canvasRef = useRef<FabricCanvas | null>(null);
@@ -136,31 +170,98 @@ export function useIndesignCanvas(opts: UseIndesignCanvasOpts): IndesignCanvasAp
   const linkingRef = useRef(linkingMode);
   const storiesRef = useRef(stories);
   const textFramesRef = useRef(textFrames);
-  const onJSONChangeRef = useRef(onJSONChange);
+  const imageFramesRef = useRef(imageFrames);
+  const onPagePatchRef = useRef(onPagePatch);
   const onSelectionChangeRef = useRef(onSelectionChange);
   const onTextModelChangeRef = useRef(onTextModelChange);
   const onLinkTargetFrameRef = useRef(onLinkTargetFrame);
   const onLinkEmptyCanvasRef = useRef(onLinkEmptyCanvas);
   const onAfterPlaceDrawRef = useRef(onAfterPlaceDraw);
+  const onImageContentEditChangeRef = useRef(onImageContentEditChange);
+  const onFrameContextMenuRef = useRef(onFrameContextMenu);
+  const imageContentEditUidRef = useRef<string | null>(null);
+  /** Evita bucles al redirigir selección de imagen → marco. */
+  const selectionRedirectRef = useRef(false);
+  /** Trazo original del marco al resaltar modo contenido (export JSON sin ámbar). */
+  const frameStrokeRestoreRef = useRef<Map<string, { stroke: unknown; strokeWidth: number }>>(
+    new Map(),
+  );
   const editingFrameIdRef = useRef<string | null>(null);
   const editTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const attachImageToFrameRef = useRef<
+    ((frame: FabricObject, url: string) => Promise<void>) | null
+  >(null);
 
   toolRef.current = tool;
   linkingRef.current = linkingMode;
   storiesRef.current = stories;
   textFramesRef.current = textFrames;
-  onJSONChangeRef.current = onJSONChange;
+  imageFramesRef.current = imageFrames;
+  onPagePatchRef.current = onPagePatch;
   onSelectionChangeRef.current = onSelectionChange;
   onTextModelChangeRef.current = onTextModelChange;
   onLinkTargetFrameRef.current = onLinkTargetFrame;
   onLinkEmptyCanvasRef.current = onLinkEmptyCanvas;
   onAfterPlaceDrawRef.current = onAfterPlaceDraw;
+  onImageContentEditChangeRef.current = onImageContentEditChange;
+  onFrameContextMenuRef.current = onFrameContextMenu;
+  imageContentEditUidRef.current = imageContentEditUid;
+
+  useEffect(() => {
+    imageFramesRef.current = imageFrames;
+  }, [imageFrames]);
+
+  useEffect(() => {
+    imageContentEditUidRef.current = imageContentEditUid;
+  }, [imageContentEditUid]);
+
+  const fabricJsonForExport = useCallback((): Record<string, unknown> => {
+    const c = canvasRef.current;
+    if (!c) return { objects: [] };
+    const editing = imageContentEditUidRef.current;
+    if (editing) {
+      const r0 = frameStrokeRestoreRef.current.get(editing);
+      const fr = c
+        .getObjects()
+        .find(
+          (o) => o.get("indesignUid") === editing && o.get("indesignType") === "frame",
+        ) as FabricObject | undefined;
+      if (fr && r0) {
+        fr.set({ stroke: r0.stroke, strokeWidth: r0.strokeWidth });
+        fr.setCoords();
+      }
+      const json = c.toObject(EXTRA_PROPS) as Record<string, unknown>;
+      if (fr && r0) {
+        fr.set({
+          stroke: "#f59e0b",
+          strokeWidth: Math.max(2, Number(r0.strokeWidth) || 1),
+        });
+        fr.setCoords();
+        c.requestRenderAll();
+      }
+      return json;
+    }
+    return c.toObject(EXTRA_PROPS) as Record<string, unknown>;
+  }, []);
+
+  const emitPagePatch = useCallback(
+    (nextImageFrames?: ImageFrameRecord[]) => {
+      const c = canvasRef.current;
+      if (!c) return;
+      const json = fabricJsonForExport();
+      if (nextImageFrames !== undefined) {
+        imageFramesRef.current = nextImageFrames;
+        onPagePatchRef.current({ fabricJSON: json, imageFrames: nextImageFrames });
+      } else {
+        onPagePatchRef.current({ fabricJSON: json, imageFrames: imageFramesRef.current });
+      }
+    },
+    [fabricJsonForExport],
+  );
 
   const emitChange = useCallback(() => {
-    const c = canvasRef.current;
-    if (!c) return;
-    onJSONChangeRef.current(c.toObject(EXTRA_PROPS) as Record<string, unknown>);
-  }, []);
+    emitPagePatch();
+  }, [emitPagePatch]);
 
   const paintTextFromModel = useCallback(() => {
     const c = canvasRef.current;
@@ -242,7 +343,7 @@ export function useIndesignCanvas(opts: UseIndesignCanvasOpts): IndesignCanvasAp
       const fabric = await import("fabric");
       if (disposed || !hostRef.current) return;
       fabricRef.current = fabric;
-      const { Canvas, Rect, Ellipse, FabricImage } = fabric;
+      const { Canvas, Rect, Ellipse, FabricImage, Pattern } = fabric;
 
       const cw = pageWidth + INDESIGN_PAD * 2;
       const ch = pageHeight + INDESIGN_PAD * 2;
@@ -265,13 +366,140 @@ export function useIndesignCanvas(opts: UseIndesignCanvasOpts): IndesignCanvasAp
       canvasRef.current = canvas;
       const upper = canvas.upperCanvasEl;
 
+      function mergeImageFramesFromCanvas(): ImageFrameRecord[] {
+        const map = new Map(imageFramesRef.current.map((r) => [r.id, { ...r }]));
+        for (const o of canvas.getObjects()) {
+          if (o.get("indesignType") !== "frame") continue;
+          const id = o.get("indesignUid") as string;
+          if (!id) continue;
+          if (!map.has(id)) {
+            map.set(id, emptyImageFrameRecord(id));
+          }
+          const img = canvas
+            .getObjects()
+            .find(
+              (x) =>
+                x.get("indesignType") === "frameImage" && x.get("frameUid") === id,
+            ) as FabricObject | undefined;
+          if (img && o.get("hasImage")) {
+            const prev = map.get(id)!;
+            const iw = img.width || 1;
+            const ih = img.height || 1;
+            const getSrc = (img as unknown as { getSrc?: () => string }).getSrc;
+            const src = typeof getSrc === "function" ? getSrc() : "";
+            const mode =
+              prev.imageContent?.fittingMode ?? legacyFabricImageFitToMode(o.get("imageFit"));
+            const ic =
+              prev.imageContent ??
+              fabricImageToContent(o, img, src || "about:blank", iw, ih, mode);
+            map.set(id, {
+              ...prev,
+              autoFit: prev.autoFit ?? true,
+              contentAlignment: prev.contentAlignment ?? "center",
+              imageContent: ic,
+            });
+          }
+        }
+        return Array.from(map.values());
+      }
+
+      function restoreFrameChromeFor(uid: string | null) {
+        if (!uid) return;
+        const r0 = frameStrokeRestoreRef.current.get(uid);
+        const fr = canvas
+          .getObjects()
+          .find(
+            (o) => o.get("indesignUid") === uid && o.get("indesignType") === "frame",
+          ) as FabricObject | undefined;
+        if (fr && r0) {
+          fr.set({ stroke: r0.stroke, strokeWidth: r0.strokeWidth });
+          fr.setCoords();
+        }
+        frameStrokeRestoreRef.current.delete(uid);
+      }
+
+      function enterImageContentEdit(uid: string, img: FabricObject) {
+        const prev = imageContentEditUidRef.current;
+        if (prev && prev !== uid) restoreFrameChromeFor(prev);
+        const fr = canvas
+          .getObjects()
+          .find(
+            (o) => o.get("indesignUid") === uid && o.get("indesignType") === "frame",
+          ) as FabricObject | undefined;
+        if (fr && !frameStrokeRestoreRef.current.has(uid)) {
+          frameStrokeRestoreRef.current.set(uid, {
+            stroke: fr.stroke,
+            strokeWidth: Number(fr.strokeWidth ?? 1),
+          });
+          fr.set({
+            stroke: "#f59e0b",
+            strokeWidth: Math.max(2, Number(fr.strokeWidth ?? 1)),
+          });
+          fr.setCoords();
+        }
+        onImageContentEditChangeRef.current(uid);
+        selectionRedirectRef.current = true;
+        canvas.setActiveObject(img);
+        selectionRedirectRef.current = false;
+        canvas.requestRenderAll();
+      }
+
+      function syncImageContentEditFromSelection(active: FabricObject | null) {
+        const cur = imageContentEditUidRef.current;
+        if (!cur) return;
+        if (
+          active &&
+          active.get("indesignType") === "frameImage" &&
+          active.get("frameUid") === cur
+        )
+          return;
+        restoreFrameChromeFor(cur);
+        onImageContentEditChangeRef.current(null);
+      }
+
+      function redirectFrameImageToFrame(active: FabricObject | null) {
+        if (selectionRedirectRef.current) return;
+        if (!active || imageContentEditUidRef.current) return;
+        if (active.get("indesignType") !== "frameImage") return;
+        const frameUid = active.get("frameUid") as string;
+        const fr = canvas
+          .getObjects()
+          .find(
+            (o) =>
+              o.get("indesignUid") === frameUid && o.get("indesignType") === "frame",
+          );
+        if (fr) {
+          selectionRedirectRef.current = true;
+          canvas.setActiveObject(fr);
+          selectionRedirectRef.current = false;
+        }
+      }
+
       function addFrame(left: number, top: number, w: number, h: number) {
+        const patternCanvas = document.createElement("canvas");
+        patternCanvas.width = 32;
+        patternCanvas.height = 32;
+        const pctx = patternCanvas.getContext("2d");
+        if (pctx) {
+          pctx.fillStyle = "rgba(0,0,0,0.06)";
+          pctx.fillRect(0, 0, 32, 32);
+          pctx.strokeStyle = "rgba(107,114,128,0.55)";
+          pctx.lineWidth = 1.2;
+          pctx.beginPath();
+          pctx.moveTo(4, 4);
+          pctx.lineTo(28, 28);
+          pctx.moveTo(28, 4);
+          pctx.lineTo(4, 28);
+          pctx.stroke();
+        }
+        const pattern = new Pattern({ source: patternCanvas, repeat: "repeat" });
+        const frameUid = uid();
         const frame = new Rect({
           left,
           top,
           width: Math.max(24, w),
           height: Math.max(24, h),
-          fill: "rgba(0,0,0,0.02)",
+          fill: pattern,
           stroke: "#6b7280",
           strokeWidth: 1,
           strokeDashArray: [5, 4],
@@ -280,7 +508,7 @@ export function useIndesignCanvas(opts: UseIndesignCanvasOpts): IndesignCanvasAp
         });
         frame.set({
           indesignType: "frame",
-          indesignUid: uid(),
+          indesignUid: frameUid,
           hasImage: false,
           imageFit: "fill",
           opacity: 1,
@@ -288,7 +516,8 @@ export function useIndesignCanvas(opts: UseIndesignCanvasOpts): IndesignCanvasAp
         canvas.add(frame);
         canvas.setActiveObject(frame);
         canvas.requestRenderAll();
-        emitChange();
+        const nextRec = upsertImageFrameRecord(imageFramesRef.current, emptyImageFrameRecord(frameUid));
+        emitPagePatch(nextRec);
       }
 
       function addVectorShapeRect(left: number, top: number, w: number, h: number) {
@@ -342,55 +571,71 @@ export function useIndesignCanvas(opts: UseIndesignCanvasOpts): IndesignCanvasAp
       }
 
       async function attachImageToFrame(frame: FabricObject, url: string) {
+        const frameUid = frame.get("indesignUid") as string;
+        const baseRec =
+          getImageFrameRecord(imageFramesRef.current, frameUid) ?? emptyImageFrameRecord(frameUid);
+        let fittingMode =
+          baseRec.imageContent?.fittingMode ?? legacyFabricImageFitToMode(frame.get("imageFit"));
+
+        for (const obj of [...canvas.getObjects()]) {
+          if (obj.get("indesignType") === "frameImage" && obj.get("frameUid") === frameUid) {
+            canvas.remove(obj);
+          }
+        }
+
         const img = await FabricImage.fromURL(url, { crossOrigin: "anonymous" });
-        const fw = (frame.width || 1) * (frame.scaleX || 1);
-        const fh = (frame.height || 1) * (frame.scaleY || 1);
-        const fl = frame.left || 0;
-        const ft = frame.top || 0;
         const iw = img.width || 1;
         const ih = img.height || 1;
-        const fit = (frame.get("imageFit") as string) || "fill";
-        let scale = 1;
-        let offX = 0;
-        let offY = 0;
-        if (fit === "fill") {
-          scale = Math.max(fw / iw, fh / ih);
-          offX = (fw - iw * scale) / 2;
-          offY = (fh - ih * scale) / 2;
-        } else if (fit === "fit") {
-          scale = Math.min(fw / iw, fh / ih);
-          offX = (fw - iw * scale) / 2;
-          offY = (fh - ih * scale) / 2;
-        } else {
-          scale = 1;
-          offX = (fw - iw) / 2;
-          offY = (fh - ih) / 2;
+
+        if (fittingMode === "frame-to-content") {
+          frame.set({ width: iw, height: ih, scaleX: 1, scaleY: 1 });
+          frame.setCoords();
         }
+
+        const { fw, fh } = frameInnerSize(frame);
+        let layout = computeFittingLayout(fw, fh, iw, ih, fittingMode);
+        if (fittingMode === "frame-to-content") {
+          fittingMode = "fill-proportional";
+          layout = computeFittingLayout(fw, fh, iw, ih, "fill-proportional");
+        }
+
+        const contentId = baseRec.imageContent?.id ?? uidImageContent();
+        const content: FrameImageContent = {
+          id: contentId,
+          src: url,
+          originalWidth: iw,
+          originalHeight: ih,
+          scaleX: layout.scaleX,
+          scaleY: layout.scaleY,
+          offsetX: layout.offsetX,
+          offsetY: layout.offsetY,
+          fittingMode,
+        };
+
         img.set({
-          left: fl + offX,
-          top: ft + offY,
-          scaleX: scale,
-          scaleY: scale,
-          originX: "left",
-          originY: "top",
           indesignType: "frameImage",
           indesignUid: uid(),
-          frameUid: frame.get("indesignUid"),
+          frameUid,
+          indesignImageContentId: contentId,
         });
-        const clip = new Rect({
-          left: fl,
-          top: ft,
-          width: fw,
-          height: fh,
-          absolutePositioned: true,
+        applyContentToFabricImage(frame, img, content);
+        updateImageClipFromFrame(Rect, frame, img);
+
+        frame.set({
+          hasImage: true,
+          fill: "rgba(0,0,0,0.02)",
         });
-        img.clipPath = clip;
         canvas.add(img);
-        frame.set({ hasImage: true });
         canvas.setActiveObject(img);
         canvas.requestRenderAll();
-        emitChange();
+
+        const nextRec = patchImageFrameRecord(imageFramesRef.current, frameUid, {
+          imageContent: content,
+        });
+        emitPagePatch(nextRec);
       }
+
+      attachImageToFrameRef.current = attachImageToFrame;
 
       function closeInlineTextEdit(save: boolean) {
         const fid = editingFrameIdRef.current;
@@ -509,6 +754,30 @@ export function useIndesignCanvas(opts: UseIndesignCanvasOpts): IndesignCanvasAp
           return;
         }
 
+        if (e.key === "Escape") {
+          if (typing) return;
+          const c = canvasRef.current;
+          if (!c) return;
+          if (imageContentEditUidRef.current) {
+            const uid = imageContentEditUidRef.current;
+            e.preventDefault();
+            e.stopPropagation();
+            restoreFrameChromeFor(uid);
+            onImageContentEditChangeRef.current(null);
+            const fr = c
+              .getObjects()
+              .find((o) => o.get("indesignUid") === uid && o.get("indesignType") === "frame");
+            if (fr) {
+              selectionRedirectRef.current = true;
+              c.setActiveObject(fr);
+              selectionRedirectRef.current = false;
+            }
+            c.requestRenderAll();
+            onSelectionChangeRef.current(fr ?? null);
+          }
+          return;
+        }
+
         if (e.key !== "Delete" && e.key !== "Backspace") return;
         if (typing) return;
         const c = canvasRef.current;
@@ -556,6 +825,8 @@ export function useIndesignCanvas(opts: UseIndesignCanvasOpts): IndesignCanvasAp
         return;
         }
 
+        const removedFrameIdsBatch: string[] = [];
+
         const removeVectorOrFrame = (o: FabricObject): boolean => {
           const t = o.get("indesignType") as string | undefined;
           if (t === "vectorShape") {
@@ -564,6 +835,11 @@ export function useIndesignCanvas(opts: UseIndesignCanvasOpts): IndesignCanvasAp
           }
           if (t === "frame") {
             const fid = o.get("indesignUid") as string;
+            removedFrameIdsBatch.push(fid);
+            if (imageContentEditUidRef.current === fid) {
+              restoreFrameChromeFor(fid);
+              onImageContentEditChangeRef.current(null);
+            }
             for (const obj of [...c.getObjects()]) {
               if (obj.get("frameUid") === fid) c.remove(obj);
             }
@@ -572,6 +848,37 @@ export function useIndesignCanvas(opts: UseIndesignCanvasOpts): IndesignCanvasAp
           }
           return false;
         };
+
+        if (active.get("indesignType") === "frameImage") {
+          const fid = active.get("frameUid") as string;
+          const frameObj = c
+            .getObjects()
+            .find(
+              (x) =>
+                x.get("indesignUid") === fid && x.get("indesignType") === "frame",
+            ) as FabricObject | undefined;
+          if (frameObj) {
+            e.preventDefault();
+            e.stopPropagation();
+            c.remove(active);
+            frameObj.set({
+              hasImage: false,
+              fill: "rgba(0,0,0,0.04)",
+            });
+            if (imageContentEditUidRef.current === fid) {
+              restoreFrameChromeFor(fid);
+              onImageContentEditChangeRef.current(null);
+            }
+            const nextFrames = patchImageFrameRecord(imageFramesRef.current, fid, {
+              imageContent: null,
+            });
+            emitPagePatch(nextFrames);
+            c.setActiveObject(frameObj);
+            c.requestRenderAll();
+            onSelectionChangeRef.current(frameObj);
+          }
+          return;
+        }
 
         if (isFabricActiveSelection(active)) {
           const group = active as FabricGroup;
@@ -586,7 +893,14 @@ export function useIndesignCanvas(opts: UseIndesignCanvasOpts): IndesignCanvasAp
             c.discardActiveObject();
             onSelectionChangeRef.current(null);
             c.requestRenderAll();
-            emitChange();
+            if (removedFrameIdsBatch.length > 0) {
+              const nextFrames = imageFramesRef.current.filter(
+                (r) => !removedFrameIdsBatch.includes(r.id),
+              );
+              emitPagePatch(nextFrames);
+            } else {
+              emitChange();
+            }
           }
           return;
         }
@@ -597,7 +911,14 @@ export function useIndesignCanvas(opts: UseIndesignCanvasOpts): IndesignCanvasAp
           c.discardActiveObject();
           onSelectionChangeRef.current(null);
           c.requestRenderAll();
-          emitChange();
+          if (removedFrameIdsBatch.length > 0) {
+            const nextFrames = imageFramesRef.current.filter(
+              (r) => !removedFrameIdsBatch.includes(r.id),
+            );
+            emitPagePatch(nextFrames);
+          } else {
+            emitChange();
+          }
         }
       };
 
@@ -680,6 +1001,27 @@ export function useIndesignCanvas(opts: UseIndesignCanvasOpts): IndesignCanvasAp
           return;
         }
         if (toolRef.current !== "select") return;
+
+        if (t?.get("indesignType") === "frame" && t.get("hasImage")) {
+          const uid = t.get("indesignUid") as string;
+          const imgObj = canvas
+            .getObjects()
+            .find((o) => o.get("indesignType") === "frameImage" && o.get("frameUid") === uid);
+          if (imgObj) {
+            opt.e.preventDefault();
+            opt.e.stopPropagation();
+            enterImageContentEdit(uid, imgObj);
+            return;
+          }
+        }
+        if (t?.get("indesignType") === "frameImage") {
+          const uid = t.get("frameUid") as string;
+          opt.e.preventDefault();
+          opt.e.stopPropagation();
+          enterImageContentEdit(uid, t as FabricObject);
+          return;
+        }
+
         if (isTextHit) {
           opt.e.preventDefault();
           opt.e.stopPropagation();
@@ -711,13 +1053,21 @@ export function useIndesignCanvas(opts: UseIndesignCanvasOpts): IndesignCanvasAp
         syncInlineTextareaLayout();
       });
 
-      canvas.on("selection:created", () =>
-        onSelectionChangeRef.current(canvas.getActiveObject() ?? null),
-      );
-      canvas.on("selection:updated", () =>
-        onSelectionChangeRef.current(canvas.getActiveObject() ?? null),
-      );
-      canvas.on("selection:cleared", () => onSelectionChangeRef.current(null));
+      function handleCanvasSelection() {
+        const active = canvas.getActiveObject() ?? null;
+        syncImageContentEditFromSelection(active);
+        redirectFrameImageToFrame(active);
+        onSelectionChangeRef.current(canvas.getActiveObject() ?? null);
+      }
+
+      canvas.on("selection:created", handleCanvasSelection);
+      canvas.on("selection:updated", handleCanvasSelection);
+      canvas.on("selection:cleared", () => {
+        const cur = imageContentEditUidRef.current;
+        if (cur) restoreFrameChromeFor(cur);
+        onImageContentEditChangeRef.current(null);
+        onSelectionChangeRef.current(null);
+      });
 
       canvas.on("object:modified", (e) => {
         const o = e.target;
@@ -774,6 +1124,88 @@ export function useIndesignCanvas(opts: UseIndesignCanvasOpts): IndesignCanvasAp
           paintTextFromModel();
           return;
         }
+
+        if (o.get("indesignType") === "frame") {
+          const uid = o.get("indesignUid") as string;
+          const img = canvas
+            .getObjects()
+            .find(
+              (x) =>
+                x.get("indesignType") === "frameImage" && x.get("frameUid") === uid,
+            ) as FabricObject | undefined;
+          if (img) {
+            updateImageClipFromFrame(Rect, o, img);
+            const rec = getImageFrameRecord(imageFramesRef.current, uid);
+            const ic = rec?.imageContent;
+            if (ic) {
+              const { fw, fh } = frameInnerSize(o);
+              const iw = ic.originalWidth;
+              const ih = ic.originalHeight;
+              const auto = rec?.autoFit ?? true;
+              if (auto) {
+                const mode =
+                  ic.fittingMode === "frame-to-content" ? "fill-proportional" : ic.fittingMode;
+                const layout = computeFittingLayout(fw, fh, iw, ih, mode);
+                const nextContent: FrameImageContent = {
+                  ...ic,
+                  scaleX: layout.scaleX,
+                  scaleY: layout.scaleY,
+                  offsetX: layout.offsetX,
+                  offsetY: layout.offsetY,
+                };
+                applyContentToFabricImage(o, img, nextContent);
+                updateImageClipFromFrame(Rect, o, img);
+                const nextRec = patchImageFrameRecord(imageFramesRef.current, uid, {
+                  imageContent: nextContent,
+                });
+                emitPagePatch(nextRec);
+                return;
+              }
+              const { fl, ft } = frameOrigin(o);
+              img.set({
+                left: fl + ic.offsetX,
+                top: ft + ic.offsetY,
+              });
+              img.setCoords();
+              updateImageClipFromFrame(Rect, o, img);
+            }
+          }
+          emitChange();
+          return;
+        }
+
+        if (o.get("indesignType") === "frameImage") {
+          const frameUid = o.get("frameUid") as string;
+          const frameObj = canvas
+            .getObjects()
+            .find(
+              (x) =>
+                x.get("indesignUid") === frameUid && x.get("indesignType") === "frame",
+            ) as FabricObject | undefined;
+          if (frameObj) {
+            updateImageClipFromFrame(Rect, frameObj, o);
+            const rec = getImageFrameRecord(imageFramesRef.current, frameUid);
+            const ic0 = rec?.imageContent;
+            if (ic0) {
+              const nextIc = fabricImageToContent(
+                frameObj,
+                o,
+                ic0.src,
+                ic0.originalWidth,
+                ic0.originalHeight,
+                ic0.fittingMode,
+              );
+              const nextRec = patchImageFrameRecord(imageFramesRef.current, frameUid, {
+                imageContent: nextIc,
+              });
+              emitPagePatch(nextRec);
+              return;
+            }
+          }
+          emitChange();
+          return;
+        }
+
         emitChange();
       });
 
@@ -887,9 +1319,40 @@ export function useIndesignCanvas(opts: UseIndesignCanvasOpts): IndesignCanvasAp
       };
       upper.addEventListener("dragover", onDragOver);
       upper.addEventListener("drop", onDrop);
+
+      const onContextMenu = (e: MouseEvent) => {
+        const handler = onFrameContextMenuRef.current;
+        if (!handler) return;
+        if (!upper.contains(e.target as Node)) return;
+        e.preventDefault();
+        const p = canvas.getPointer(e);
+        const pt = new Point(p.x, p.y);
+        const target = [...canvas.getObjects()]
+          .reverse()
+          .find((o) => {
+            if (o.get("name") === "indesignPageBg") return false;
+            if (o.visible === false) return false;
+            return typeof o.containsPoint === "function" && o.containsPoint(pt);
+          });
+        let frameUid: string | null = null;
+        let hasImage = false;
+        if (target?.get("indesignType") === "frame") {
+          frameUid = target.get("indesignUid") as string;
+          hasImage = !!target.get("hasImage");
+        } else if (target?.get("indesignType") === "frameImage") {
+          frameUid = target.get("frameUid") as string;
+          hasImage = true;
+        }
+        if (frameUid) {
+          handler({ clientX: e.clientX, clientY: e.clientY, frameUid, hasImage });
+        }
+      };
+      upper.addEventListener("contextmenu", onContextMenu);
+
       cleanupDrop = () => {
         upper.removeEventListener("dragover", onDragOver);
         upper.removeEventListener("drop", onDrop);
+        upper.removeEventListener("contextmenu", onContextMenu);
       };
 
       const snap = getPageSnapshot.current?.() ?? null;
@@ -902,11 +1365,16 @@ export function useIndesignCanvas(opts: UseIndesignCanvasOpts): IndesignCanvasAp
       canvas.requestRenderAll();
       removeAllTextFrameFabric(canvas, textRegistryRef.current);
       paintTextFromModel();
+      const mergedFrames = mergeImageFramesFromCanvas();
+      if (JSON.stringify(mergedFrames) !== JSON.stringify(imageFramesRef.current)) {
+        emitPagePatch(mergedFrames);
+      }
       queueMicrotask(() => resetViewportFitRef.current());
     })();
 
     return () => {
       disposed = true;
+      attachImageToFrameRef.current = null;
       cleanupWindows?.();
       cleanupDrop?.();
       const taUnmount = editTextareaRef.current;
@@ -938,6 +1406,7 @@ export function useIndesignCanvas(opts: UseIndesignCanvasOpts): IndesignCanvasAp
     hostRef,
     getPageSnapshot,
     emitChange,
+    emitPagePatch,
     paintTextFromModel,
   ]);
 
@@ -959,14 +1428,23 @@ export function useIndesignCanvas(opts: UseIndesignCanvasOpts): IndesignCanvasAp
     c.selection = tool === "select";
   }, [tool]);
 
+  const placeImageInFrame = useCallback(async (frameUid: string, url: string) => {
+    const c = canvasRef.current;
+    const fn = attachImageToFrameRef.current;
+    if (!c || !fn) return;
+    const frame = c
+      .getObjects()
+      .find(
+        (o) => o.get("indesignUid") === frameUid && o.get("indesignType") === "frame",
+      ) as FabricObject | undefined;
+    if (frame) await fn(frame, url);
+  }, []);
+
   return {
     getCanvas: () => canvasRef.current,
-    toJSON: () => {
-      const c = canvasRef.current;
-      if (!c) return { objects: [] };
-      return c.toObject(EXTRA_PROPS) as Record<string, unknown>;
-    },
+    toJSON: () => fabricJsonForExport(),
     panViewportBy,
     resetViewportFit,
+    placeImageInFrame,
   };
 }

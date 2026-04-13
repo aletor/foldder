@@ -55,6 +55,7 @@ export function migrateIndesignPageState(page: IndesignPageState): IndesignPageS
       ...page,
       stories: [],
       textFrames: page.textFrames ?? [],
+      imageFrames: page.imageFrames ?? [],
     };
   }
 
@@ -102,5 +103,6 @@ export function migrateIndesignPageState(page: IndesignPageState): IndesignPageS
     ...page,
     stories: newStories,
     textFrames: allFrames.length ? allFrames : page.textFrames ?? [],
+    imageFrames: page.imageFrames ?? [],
   };
 }

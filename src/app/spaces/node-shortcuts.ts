@@ -32,4 +32,5 @@ export const NODE_KEYS: Record<string, string> = {
   bezierMask: 'z',
   freehand: 'f',
   indesign: ',',
+  designer: 'l',
 };

@@ -48,6 +48,7 @@ export const IndesignNode = memo(({ id, data, selected }: NodeProps<any>) => {
             fabricJSON: null,
             stories: [],
             textFrames: [],
+            imageFrames: [],
           },
         ];
 

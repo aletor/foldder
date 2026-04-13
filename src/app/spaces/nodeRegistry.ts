@@ -394,6 +394,21 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
       value: 'string (exported raster data URL)',
     }
   },
+  designer: {
+    type: 'designer',
+    label: 'Designer',
+    description:
+      'Full design studio: vector tools (pen, shapes, text) + page-based layout + threaded text frames + image frames. Combines Freehand vector editing with InDesign-style page management.',
+    inputs: [],
+    outputs: [{ id: 'image', label: 'Image Out', type: 'image' as HandleType }],
+    dataSchema: {
+      pages:
+        'DesignerPageState[] (id, format, objects, layoutGuides, stories, textFrames, imageFrames)',
+      activePageIndex: 'number',
+      label: 'string',
+      value: 'string (exported raster data URL)',
+    },
+  },
   canvasGroup: {
     type: 'canvasGroup',
     label: 'Canvas Group',
