@@ -140,9 +140,6 @@ export default function DesignerStudio({
     const editingId = api.getTextEditingId();
 
     const layouts = layoutPageStories(stories, textFrames);
-    const storyFrameCounts = new Map<string, number>();
-    for (const s of stories) storyFrameCounts.set(s.id, s.frames.length);
-
     const currentObjs = api.getObjects();
 
     // Determine the "source of truth" frame for typography: the selected frame

@@ -4,11 +4,10 @@ import { NODE_KEYS } from "./node-shortcuts";
 
 /** Alineado con la barra inferior y con el `switch` de teclas del lienzo en `page.tsx`. */
 export type EmptyCanvasShortcutNodeType =
-  | "freehand"
+  | "designer"
   | "nanoBanana"
   | "geminiVideo"
-  | "vfxGenerator"
-  | "designer";
+  | "vfxGenerator";
 
 /** Tras el splash «Bienvenido», si el lienzo sigue vacío: atajos visibles hasta el primer nodo. */
 export const EMPTY_CANVAS_SHORTCUT_HINT: {
@@ -17,11 +16,10 @@ export const EMPTY_CANVAS_SHORTCUT_HINT: {
   nodeType: EmptyCanvasShortcutNodeType;
 }[] = (
   [
-    { label: "Vector", nodeType: "freehand" },
+    { label: "Design", nodeType: "designer" },
     { label: "Image", nodeType: "nanoBanana" },
     { label: "Video", nodeType: "geminiVideo" },
     { label: "VFX", nodeType: "vfxGenerator" },
-    { label: "Design", nodeType: "designer" },
   ] as const
 ).map((row) => ({
   ...row,

@@ -363,37 +363,6 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
       canvasH: 'number',
     }
   },
-  indesign: {
-    type: 'indesign',
-    label: 'Indesign',
-    description:
-      'Layout editor with pages, threaded text (Story model) and image frames; Fabric renders only; export raster or selectable-text PDF.',
-    inputs: [],
-    outputs: [{ id: 'pdf', label: 'PDF', type: 'pdf' }],
-    dataSchema: {
-      pages:
-        'IndesignPageState[] (id, format, fabricJSON, stories?: Story[], textFrames?: TextFrame[])',
-      activePageIndex: 'number',
-      label: 'string',
-      value: 'string (optional — data URL del último PDF exportado)',
-    },
-  },
-
-  freehand: {
-    type: 'freehand',
-    label: 'Freehand',
-    description: 'Minimal vector editor with pen, shapes, and selection tools. Opens in fullscreen Studio mode. Import images inside the studio; unlimited layers on the artboard.',
-    inputs: [],
-    outputs: [
-      { id: 'image', label: 'Image Out', type: 'image' as HandleType }
-    ],
-    dataSchema: {
-      objects: 'FreehandObject[] (vector objects on canvas)',
-      artboards: 'Artboard[] (optional export frames / mesas de trabajo)',
-      layoutGuides: 'LayoutGuide[] (optional vertical/horizontal alignment guides)',
-      value: 'string (exported raster data URL)',
-    }
-  },
   designer: {
     type: 'designer',
     label: 'Designer',

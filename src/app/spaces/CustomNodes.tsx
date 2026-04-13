@@ -66,7 +66,7 @@ import {
   Film,
   Cpu,
 } from 'lucide-react';
-import FreehandStudio from './FreehandStudio';
+
 
 /** Snapshot current output into _assetVersions for version history. */
 function captureCurrentOutput(
@@ -9300,111 +9300,5 @@ export const BezierMaskNode = memo(({ id, data, selected }: NodeProps<any>) => {
   );
 });
 
-// ── FREEHAND VECTOR EDITOR NODE ──────────────────────────────────────────
-
-export const FreehandNode = memo(({ id, data, selected }: NodeProps<any>) => {
-  const nodeData = data as BaseNodeData & { objects?: any[]; artboards?: any[]; layoutGuides?: any[]; value?: string };
-  const { setNodes } = useReactFlow();
-  const [isStudioOpen, setIsStudioOpen] = useState(false);
-
-  const handleExport = useCallback(
-    (dataUrl: string) => {
-      setNodes((nds: any) =>
-        nds.map((n: any) => {
-          if (n.id !== id) return n;
-          const versions = captureCurrentOutput(n.data, dataUrl, 'studio-edit');
-          return { ...n, data: { ...n.data, value: dataUrl, _assetVersions: versions } };
-        })
-      );
-    },
-    [id, setNodes]
-  );
-
-  const handleUpdateObjects = useCallback(
-    (objects: any[]) => {
-      setNodes((nds: any) =>
-        nds.map((n: any) => (n.id === id ? { ...n, data: { ...n.data, objects } } : n))
-      );
-    },
-    [id, setNodes]
-  );
-
-  const handleUpdateArtboards = useCallback(
-    (artboards: any[]) => {
-      setNodes((nds: any) =>
-        nds.map((n: any) => (n.id === id ? { ...n, data: { ...n.data, artboards } } : n))
-      );
-    },
-    [id, setNodes]
-  );
-
-  const handleUpdateLayoutGuides = useCallback(
-    (layoutGuides: any[]) => {
-      setNodes((nds: any) =>
-        nds.map((n: any) => (n.id === id ? { ...n, data: { ...n.data, layoutGuides } } : n))
-      );
-    },
-    [id, setNodes]
-  );
-
-  useEffect(() => {
-    if (isStudioOpen) {
-      document.body.classList.add('nb-studio-open');
-    } else {
-      document.body.classList.remove('nb-studio-open');
-    }
-    return () => document.body.classList.remove('nb-studio-open');
-  }, [isStudioOpen]);
-
-  return (
-    <div className="custom-node tool-node group/node" style={{ minWidth: 240 }}>
-      <FoldderNodeResizer minWidth={240} minHeight={200} maxWidth={520} maxHeight={400} isVisible={selected} />
-      <NodeLabel id={id} label={nodeData.label} defaultLabel="Freehand" />
-
-      <div className="node-header">
-        <NodeIcon type="freehand" selected={selected} size={16} />
-        <FoldderNodeHeaderTitle introActive={!!(nodeData as any)._foldderCanvasIntro}>
-          Freehand
-        </FoldderNodeHeaderTitle>
-        <div className="node-badge">VECTOR</div>
-      </div>
-
-      <div className="node-content relative" style={{ minHeight: 120 }}>
-        {nodeData.value ? (
-          <img src={nodeData.value} alt="Freehand preview" className="w-full rounded-lg" style={{ maxHeight: 180, objectFit: 'contain' }} />
-        ) : (
-          <div className="flex flex-col items-center justify-center gap-2 py-6 opacity-40">
-            <Pencil size={28} className="text-pink-400" strokeWidth={1.5} />
-            <span className="text-[7px] font-black uppercase tracking-widest text-zinc-500">Open Studio to draw</span>
-          </div>
-        )}
-        <StudioModeCenterButton onClick={() => setIsStudioOpen(true)} />
-      </div>
-
-      <div className="handle-wrapper handle-right">
-        <span className="handle-label">Image</span>
-        <FoldderDataHandle type="source" position={Position.Right} id="image" dataType="image" />
-      </div>
-
-      {isStudioOpen &&
-        createPortal(
-          <FreehandStudio
-            nodeId={id}
-            initialObjects={nodeData.objects || []}
-            initialArtboards={nodeData.artboards}
-            initialLayoutGuides={nodeData.layoutGuides}
-            onClose={() => setIsStudioOpen(false)}
-            onExport={handleExport}
-            onUpdateObjects={handleUpdateObjects}
-            onUpdateArtboards={handleUpdateArtboards}
-            onUpdateLayoutGuides={handleUpdateLayoutGuides}
-          />,
-          document.body
-        )}
-    </div>
-  );
-});
-
 export { VfxGeneratorNode } from "./VfxGeneratorNode";
-export { IndesignNode } from "./IndesignNode";
 export { DesignerNode } from "./DesignerNode";

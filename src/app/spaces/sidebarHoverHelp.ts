@@ -88,10 +88,6 @@ export const SIDEBAR_HOVER_HELP: Record<string, { title: string; line: string }>
     title: 'Space Exit',
     line: 'Salida del subflujo',
   },
-  freehand: {
-    title: 'Freehand',
-    line: 'Editor vectorial con pluma, formas y selección',
-  },
   designer: {
     title: 'Designer',
     line: 'Diseño completo: vectores, páginas, cajas de texto y marcos de imagen',

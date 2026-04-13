@@ -7,15 +7,14 @@ import { TOPBAR_GLYPH_BY_NODE_TYPE } from "./TopbarPinIcons";
 export const TOPBAR_PIN_ICON_SIZE = 32;
 
 /**
- * Accesos fijos (no personalizables): Vector → Image → Video → VFX → Indesign.
+ * Accesos fijos (no personalizables): Designer → Image → Video → VFX.
  * Orden estable; no se persiste ni se admite drag-and-drop sobre la barra.
  */
 export const TOPBAR_FIXED_PIN_TYPES = [
-  "freehand",
+  "designer",
   "nanoBanana",
   "geminiVideo",
   "vfxGenerator",
-  "designer",
 ] as const;
 
 /** Tooltip (nombre completo) vs etiqueta corta bajo el icono. */
@@ -23,11 +22,10 @@ const TOPBAR_PIN_UI: Record<
   (typeof TOPBAR_FIXED_PIN_TYPES)[number],
   { title: string; shortLabel: string }
 > = {
-  freehand: { title: "Vector Studio", shortLabel: "Vector" },
+  designer: { title: "Designer Studio", shortLabel: "Design" },
   nanoBanana: { title: "Image Generator", shortLabel: "Image" },
   geminiVideo: { title: "Video Generator", shortLabel: "Video" },
   vfxGenerator: { title: "VFX Generator", shortLabel: "VFX" },
-  designer: { title: "Designer Studio", shortLabel: "Design" },
 };
 
 type TopbarPinsProps = {

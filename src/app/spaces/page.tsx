@@ -44,8 +44,6 @@ import {
   PainterNode,
   CropNode,
   BezierMaskNode,
-  FreehandNode,
-  IndesignNode,
   DesignerNode,
   TextOverlayNode,
   ButtonEdge 
@@ -521,8 +519,6 @@ const nodeTypes: any = {
   painter: PainterNode,
   crop: CropNode,
   bezierMask: BezierMaskNode,
-  freehand: FreehandNode,
-  indesign: IndesignNode,
   designer: DesignerNode,
   textOverlay: TextOverlayNode,
   canvasGroup: CanvasGroupNode,
@@ -1988,14 +1984,13 @@ const SpacesContent = () => {
 
         case 'x': addNode('crop'); break;
         case 'z': addNode('bezierMask'); break;
-        case ',': addNode('indesign'); break;
         // ── Canvas actions ───────────────────────────────────────────────
-        // F = Freehand / Vector Studio; Mayús+F = encuadrar todo el grafo. Listado = J.
+        // F = Designer; Mayús+F = encuadrar todo el grafo. Listado = J.
         case 'f':
           if (e.shiftKey) {
             doFitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(800), ...FOLDDER_FIT_VIEW_EASE });
           } else {
-            addNode('freehand');
+            addNode('designer');
           }
           break;
         case 'a': {
@@ -3898,7 +3893,7 @@ const SpacesContent = () => {
 
       // Handle Native File Drops
       if (files.length > 0) {
-        const overFreehandStudio = (() => {
+        const overStudioCanvas = (() => {
           const path = event.nativeEvent.composedPath?.() as EventTarget[] | undefined;
           if (
             path?.some(
@@ -3910,7 +3905,7 @@ const SpacesContent = () => {
           const top = document.elementFromPoint(event.clientX, event.clientY);
           return top instanceof HTMLElement && !!top.closest('[data-foldder-studio-canvas]');
         })();
-        if (overFreehandStudio) return;
+        if (overStudioCanvas) return;
 
         libraryCanvasDropSucceededRef.current = true;
         const inferMediaType = (name: string, mime: string): string => {
@@ -4774,7 +4769,7 @@ const SpacesContent = () => {
           )}
         </div>
 
-        {/* Barra inferior: accesos fijos (Vector, imagen, vídeo, VFX, Indesign) */}
+        {/* Barra inferior: accesos fijos (Designer, imagen, vídeo, VFX) */}
         {isAuthenticated && !windowMode && (
           <div
             data-foldder-top-hud

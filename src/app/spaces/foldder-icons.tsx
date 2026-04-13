@@ -480,8 +480,6 @@ export const NODE_TYPE_TO_FOLDDER_ICON: Record<string, FoldderIconKey> = {
   crop: 'crop',
   bezierMask: 'mask',
   canvasGroup: 'layout',
-  freehand: 'freehand',
-  indesign: 'layout',
   designer: 'freehand',
 };
 

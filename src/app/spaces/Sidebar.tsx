@@ -253,7 +253,6 @@ const Sidebar = ({
       { type: 'painter',           label: 'Painter' },
       { type: 'textOverlay',       label: 'Text' },
       { type: 'crop',              label: 'Crop' },
-      { type: 'freehand',          label: 'Freehand' },
       { type: 'designer',          label: 'Designer' },
     ];
 
@@ -461,7 +460,6 @@ const Sidebar = ({
                   { type: 'textOverlay',   label: 'Text' },
                   { type: 'crop',          label: 'Crop' },
                   { type: 'bezierMask',    label: 'Bezier' },
-                  { type: 'freehand',      label: 'Freehand' },
                   { type: 'designer',      label: 'Designer' },
                 ].map(item => (
                   <div key={item.type}

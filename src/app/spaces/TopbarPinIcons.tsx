@@ -173,12 +173,11 @@ export function TopbarGlyphVfxGenerator({ size = 26, className }: GlyphProps) {
 }
 
 export const TOPBAR_GLYPH_BY_NODE_TYPE: Record<
-  "freehand" | "nanoBanana" | "geminiVideo" | "vfxGenerator" | "designer",
+  "designer" | "nanoBanana" | "geminiVideo" | "vfxGenerator",
   React.FC<GlyphProps>
 > = {
-  freehand: TopbarGlyphVectorStudio,
+  designer: TopbarGlyphIndesign,
   nanoBanana: TopbarGlyphImageGenerator,
   geminiVideo: TopbarGlyphVideoGenerator,
   vfxGenerator: TopbarGlyphVfxGenerator,
-  designer: TopbarGlyphIndesign,
 };
