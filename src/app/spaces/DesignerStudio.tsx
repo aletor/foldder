@@ -46,6 +46,38 @@ import {
   unlinkFrameAt,
   updateStoryTypography,
 } from "./indesign/text-threading";
+import { deleteSupersededS3Key } from "@/lib/s3-delete-client";
+import { readResponseJson } from "@/lib/read-response-json";
+
+/** Dimensiones intrínsecas del archivo local (evita diferencias S3/CORS/EXIF vs `<Image>` remota). */
+async function readImageFilePixelSize(file: File): Promise<{ w: number; h: number }> {
+  if (typeof createImageBitmap === "function") {
+    try {
+      const bmp = await createImageBitmap(file);
+      const w = bmp.width;
+      const h = bmp.height;
+      bmp.close();
+      if (w > 0 && h > 0) return { w, h };
+    } catch {
+      /* fallback */
+    }
+  }
+  const url = URL.createObjectURL(file);
+  const img = new window.Image();
+  img.decoding = "async";
+  img.src = url;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error("image-decode"));
+    });
+    const w = img.naturalWidth || 100;
+    const h = img.naturalHeight || 100;
+    return { w, h };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
 
 interface DesignerStudioProps {
   initialPages: DesignerPageState[];
@@ -498,23 +530,61 @@ export default function DesignerStudio({
       if (!frameId) return;
       const api = studioApiRef.current;
 
-      const url = URL.createObjectURL(file);
-      const img = new window.Image();
-      img.src = url;
-      await new Promise<void>((res) => {
-        img.onload = () => res();
-        img.onerror = () => res();
-      });
-      const iw = img.naturalWidth || 100;
-      const ih = img.naturalHeight || 100;
+      const frameObj = api?.getObjects().find((o) => o.id === frameId);
+      const prevKey = (frameObj as { imageFrameContent?: { s3Key?: string } } | undefined)
+        ?.imageFrameContent?.s3Key;
 
-      const frameObj = api?.getObjects().find(o => o.id === frameId);
+      const formData = new FormData();
+      formData.append("file", file);
+      let uploadRes: Response;
+      try {
+        uploadRes = await fetch("/api/runway/upload", { method: "POST", body: formData });
+      } catch (e) {
+        console.error("[Designer] image upload:", e);
+        alert("No se pudo subir la imagen (red). Vuelve a intentarlo.");
+        return;
+      }
+      const json = await readResponseJson<{ url?: string; s3Key?: string; error?: string }>(
+        uploadRes,
+        "POST /api/runway/upload (Designer)",
+      );
+      if (!uploadRes.ok || !json?.url || !json?.s3Key) {
+        const detail =
+          json?.error ||
+          (!uploadRes.ok ? `HTTP ${uploadRes.status}` : null) ||
+          "El servidor no devolvió URL.";
+        console.error("[Designer] upload failed:", detail, json);
+        alert(`No se pudo guardar la imagen: ${detail}`);
+        return;
+      }
+      deleteSupersededS3Key(prevKey, json.s3Key);
+
+      const persistedUrl = json.url;
+      let iw = 100;
+      let ih = 100;
+      try {
+        const dim = await readImageFilePixelSize(file);
+        iw = dim.w;
+        ih = dim.h;
+      } catch {
+        const img = new window.Image();
+        img.crossOrigin = "anonymous";
+        img.src = persistedUrl;
+        await new Promise<void>((res) => {
+          img.onload = () => res();
+          img.onerror = () => res();
+        });
+        iw = img.naturalWidth || 100;
+        ih = img.naturalHeight || 100;
+      }
+
       const fw = frameObj?.width ?? 200;
       const fh = frameObj?.height ?? 200;
       const layout = computeFittingLayout(fw, fh, iw, ih, "fill-proportional");
 
       const content = {
-        src: url,
+        src: persistedUrl,
+        s3Key: json.s3Key,
         originalWidth: iw,
         originalHeight: ih,
         ...layout,
@@ -530,7 +600,7 @@ export default function DesignerStudio({
         if (!p) return prev;
         n[idx] = {
           ...p,
-          objects: p.objects.map(o =>
+          objects: p.objects.map((o) =>
             o.id === frameId ? { ...o, imageFrameContent: content } : o,
           ),
         };
@@ -923,6 +993,10 @@ export default function DesignerStudio({
       }
       if (markups.length === 0) return;
       await downloadMultiPageVectorPdf(markups, `diseno-${Date.now()}.pdf`);
+    } catch (e) {
+      console.error("[Designer] PDF multipágina:", e);
+      const msg = e instanceof Error ? e.message : String(e);
+      alert(`No se pudo generar el PDF: ${msg}`);
     } finally {
       flushSync(() => {
         setActivePageIndex(savedIdx);
@@ -993,7 +1067,11 @@ export default function DesignerStudio({
               type="button"
               title="Descargar PDF vectorial (todas las páginas)"
               disabled={multiPdfBusy || pages.length === 0}
-              onClick={() => void handleExportMultiPageVectorPdf()}
+              onClick={() => {
+                void handleExportMultiPageVectorPdf().catch((err) => {
+                  console.error("[Designer] PDF export (unhandled):", err);
+                });
+              }}
               className="rounded-md p-1 text-zinc-500 transition hover:bg-white/10 hover:text-violet-200 disabled:pointer-events-none disabled:opacity-40"
             >
               <FileDown className="h-4 w-4" strokeWidth={2} />

@@ -26,9 +26,39 @@ function resolveS3KeyFromNodeData(data: Record<string, unknown>): string | null 
   return null;
 }
 
+/** Imágenes en marcos del nodo Designer (`data.pages[].objects[].imageFrameContent`). */
+function collectDesignerImageKeysFromPages(d: Record<string, unknown>, keys: Set<string>) {
+  const pages = d.pages;
+  if (!Array.isArray(pages)) return;
+  for (const page of pages) {
+    if (!page || typeof page !== "object") continue;
+    const objs = (page as { objects?: unknown[] }).objects;
+    if (!Array.isArray(objs)) continue;
+    for (const obj of objs) {
+      if (!obj || typeof obj !== "object") continue;
+      const o = obj as Record<string, unknown>;
+      if (!o.isImageFrame) continue;
+      const ifc = o.imageFrameContent;
+      if (!ifc || typeof ifc !== "object") continue;
+      const row = ifc as Record<string, unknown>;
+      const sk = row.s3Key;
+      if (typeof sk === "string" && sk.startsWith("knowledge-files/")) {
+        keys.add(sk);
+        continue;
+      }
+      const src = row.src;
+      if (typeof src === "string") {
+        const fromUrl = tryExtractKnowledgeFilesKeyFromUrl(src);
+        if (fromUrl) keys.add(fromUrl);
+      }
+    }
+  }
+}
+
 function collectPresignKeysFromNodeData(d: Record<string, unknown>, keys: Set<string>) {
   const k = resolveS3KeyFromNodeData(d);
   if (k) keys.add(k);
+  collectDesignerImageKeysFromPages(d, keys);
   const gh = d.generationHistory;
   if (Array.isArray(gh)) {
     for (const item of gh) {
@@ -116,6 +146,42 @@ function hydrateAssetVersionUrls(
   return changed ? { ...d, _assetVersions: next } : d;
 }
 
+function hydrateDesignerPagesInData(d: Record<string, unknown>, urls: Record<string, string>): Record<string, unknown> {
+  const pages = d.pages;
+  if (!Array.isArray(pages) || pages.length === 0) return d;
+  let any = false;
+  const nextPages = pages.map((page) => {
+    if (!page || typeof page !== "object") return page;
+    const p = page as { objects?: unknown[] };
+    if (!Array.isArray(p.objects)) return page;
+    const nextObjs = p.objects.map((obj) => {
+      if (!obj || typeof obj !== "object") return obj;
+      const o = obj as Record<string, unknown>;
+      if (!o.isImageFrame) return obj;
+      const ifc = o.imageFrameContent;
+      if (!ifc || typeof ifc !== "object") return obj;
+      const row = ifc as Record<string, unknown>;
+      const sk = typeof row.s3Key === "string" ? row.s3Key : null;
+      const keyFromUrl = typeof row.src === "string" ? tryExtractKnowledgeFilesKeyFromUrl(row.src) : null;
+      const resolvedKey = sk || keyFromUrl;
+      if (resolvedKey && urls[resolvedKey]) {
+        any = true;
+        return {
+          ...o,
+          imageFrameContent: {
+            ...row,
+            src: urls[resolvedKey],
+            s3Key: resolvedKey,
+          },
+        };
+      }
+      return obj;
+    });
+    return { ...p, objects: nextObjs };
+  });
+  return any ? { ...d, pages: nextPages } : d;
+}
+
 /**
  * Tras cargar un proyecto: renueva `data.value` con URLs prefirmadas válidas usando `s3Key`
  * o la clave inferida de una URL antigua del mismo prefijo.
@@ -161,6 +227,7 @@ export async function hydrateSpacesMapWithFreshUrls(
         }
         d = hydrateGenerationHistoryUrls(d, urls);
         d = hydrateAssetVersionUrls(d, urls);
+        d = hydrateDesignerPagesInData(d, urls);
         return { ...n, data: d };
       }),
     };

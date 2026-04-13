@@ -11,6 +11,7 @@ import React, {
   type DragEvent as ReactDragEvent,
 } from "react";
 import { usePreventBrowserPinchZoom } from "@/lib/use-prevent-browser-pinch-zoom";
+import { fireAndForgetDeleteS3Keys } from "@/lib/s3-delete-client";
 import {
   X,
   MousePointer2,
@@ -261,6 +262,8 @@ interface FreehandObjectBase {
   /** Designer mode: image content inside an image frame. */
   imageFrameContent?: {
     src: string;
+    /** Persistido en proyecto; URL en `src` se renueva al cargar con hydrate S3. */
+    s3Key?: string;
     originalWidth: number;
     originalHeight: number;
     scaleX: number;
@@ -1653,7 +1656,9 @@ function renderObj(obj: FreehandObject, allObjects: FreehandObject[]): React.Rea
                 y={rObj.y + ifc.offsetY}
                 width={ifc.originalWidth * ifc.scaleX}
                 height={ifc.originalHeight * ifc.scaleY}
-                preserveAspectRatio="none"
+                preserveAspectRatio={
+                  Math.abs(ifc.scaleX - ifc.scaleY) < 1e-5 ? "xMidYMid meet" : "none"
+                }
               />
             ) : (
               <g clipPath={`url(#${cid})`} opacity={0.3}>
@@ -6243,7 +6248,15 @@ export default function FreehandStudio({
       return [
         { label: "Colocar imagen dentro", action: () => { onDesignerImageFramePlace?.(single.id); } },
         ...(ifc?.src ? [
-          { label: "Eliminar imagen", action: () => { updateSelectedProp("imageFrameContent", null); }, separator: true },
+          {
+            label: "Eliminar imagen",
+            action: () => {
+              const sk = ifc?.s3Key;
+              if (typeof sk === "string" && sk.startsWith("knowledge-files/")) fireAndForgetDeleteS3Keys([sk]);
+              updateSelectedProp("imageFrameContent", null);
+            },
+            separator: true,
+          },
         ] : []),
         ...fittingItems,
         { label: `Auto-Fit: ${autoFitOn ? "On ✓" : "Off"}`, action: () => updateSelectedProp("imageFrameAutoFit", !autoFitOn), separator: true },
@@ -7690,7 +7703,13 @@ export default function FreehandStudio({
                       {hasImg && (
                         <button
                           type="button"
-                          onClick={() => updateSelectedProp("imageFrameContent", null)}
+                          onClick={() => {
+                            const sk = ifc?.s3Key;
+                            if (typeof sk === "string" && sk.startsWith("knowledge-files/")) {
+                              fireAndForgetDeleteS3Keys([sk]);
+                            }
+                            updateSelectedProp("imageFrameContent", null);
+                          }}
                           className="w-full rounded-lg border border-rose-500/25 bg-rose-500/10 py-1.5 text-[10px] font-medium text-rose-300 transition hover:bg-rose-500/20"
                         >
                           Eliminar imagen
