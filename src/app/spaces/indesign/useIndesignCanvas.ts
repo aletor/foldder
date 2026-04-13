@@ -105,6 +105,8 @@ type UseIndesignCanvasOpts = {
   linkingMode: boolean;
   onLinkTargetFrame: (frameId: string) => void;
   onLinkEmptyCanvas: (point: { x: number; y: number }) => void;
+  /** Tras soltar el dibujo de un marco de texto (herramienta T), p. ej. volver a Selección. */
+  onAfterTextFrameDraw?: () => void;
 };
 
 export function useIndesignCanvas(opts: UseIndesignCanvasOpts): IndesignCanvasApi {
@@ -123,6 +125,7 @@ export function useIndesignCanvas(opts: UseIndesignCanvasOpts): IndesignCanvasAp
     linkingMode,
     onLinkTargetFrame,
     onLinkEmptyCanvas,
+    onAfterTextFrameDraw,
   } = opts;
 
   const canvasRef = useRef<FabricCanvas | null>(null);
@@ -138,6 +141,7 @@ export function useIndesignCanvas(opts: UseIndesignCanvasOpts): IndesignCanvasAp
   const onTextModelChangeRef = useRef(onTextModelChange);
   const onLinkTargetFrameRef = useRef(onLinkTargetFrame);
   const onLinkEmptyCanvasRef = useRef(onLinkEmptyCanvas);
+  const onAfterTextFrameDrawRef = useRef(onAfterTextFrameDraw);
   const editingFrameIdRef = useRef<string | null>(null);
   const editTextareaRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -150,6 +154,7 @@ export function useIndesignCanvas(opts: UseIndesignCanvasOpts): IndesignCanvasAp
   onTextModelChangeRef.current = onTextModelChange;
   onLinkTargetFrameRef.current = onLinkTargetFrame;
   onLinkEmptyCanvasRef.current = onLinkEmptyCanvas;
+  onAfterTextFrameDrawRef.current = onAfterTextFrameDraw;
 
   const emitChange = useCallback(() => {
     const c = canvasRef.current;
@@ -698,6 +703,7 @@ export function useIndesignCanvas(opts: UseIndesignCanvasOpts): IndesignCanvasAp
             stories: [...storiesRef.current, story],
             textFrames: [...textFramesRef.current, frame],
           });
+          queueMicrotask(() => onAfterTextFrameDrawRef.current?.());
         }
         if (mode === "frame") addFrame(x1, y1, w, h);
       });

@@ -22,7 +22,7 @@ export const SIDEBAR_HOVER_HELP: Record<string, { title: string; line: string }>
   },
   vfxGenerator: {
     title: 'VFX Generator',
-    line: 'Beeble SwitchX: vídeo fuente, prompts e imagen de referencia',
+    line: 'Beeble SwitchX: vídeo fuente, prompt e imagen de referencia',
   },
   grokProcessor: {
     title: 'Grok Imagine',

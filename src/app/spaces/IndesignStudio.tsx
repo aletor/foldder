@@ -30,6 +30,7 @@ import {
 import type { IndesignPageState, Story, TextFrame, Typography } from "./indesign/types";
 import {
   appendTextFrameAfter,
+  findFollowUpFrameRect,
   linkFrameAfter,
   unlinkFrameAt,
   updateStoryTypography,
@@ -286,6 +287,26 @@ export const IndesignStudio = memo(function IndesignStudio(props: IndesignStudio
     setLinkingFlow(true);
   }, [stories]);
 
+  /** Doble clic en el OUT rojo: nuevo marco sin entrar en modo enlace (sin banner de ayuda). */
+  const onFlowOutDoubleClick = useCallback(
+    (frameId: string) => {
+      const story = stories.find((s) => s.frames.includes(frameId));
+      if (!story) return;
+      const ord = story.frames.indexOf(frameId);
+      if (ord >= 0 && ord < story.frames.length - 1) return;
+      const src = textFrames.find((f) => f.id === frameId);
+      if (!src) return;
+      const box = findFollowUpFrameRect(src, textFrames, pageDims.width, pageDims.height);
+      handleTextModelChange(
+        appendTextFrameAfter(stories, textFrames, frameId, {
+          ...box,
+          padding: src.padding ?? 4,
+        }),
+      );
+    },
+    [stories, textFrames, pageDims.width, pageDims.height, handleTextModelChange],
+  );
+
   const onLinkTargetFrame = useCallback(
     (targetFrameId: string) => {
       if (!flowSourceFrameId || targetFrameId === flowSourceFrameId) {
@@ -344,6 +365,7 @@ export const IndesignStudio = memo(function IndesignStudio(props: IndesignStudio
     linkingMode: linkingFlow,
     onLinkTargetFrame,
     onLinkEmptyCanvas,
+    onAfterTextFrameDraw: () => setTool("select"),
   });
   canvasApiRef.current = canvasApi;
 
@@ -954,6 +976,7 @@ export const IndesignStudio = memo(function IndesignStudio(props: IndesignStudio
               framesById={frameByIdMap}
               storiesById={storyByIdMap}
               onOverflowOutClick={onFlowOutClick}
+              onOverflowOutDoubleClick={onFlowOutDoubleClick}
             />
           </div>
           {linkingFlow && (
@@ -1225,6 +1248,7 @@ function TextFramePortsOverlay({
   framesById,
   storiesById,
   onOverflowOutClick,
+  onOverflowOutDoubleClick,
 }: {
   areaRef: React.RefObject<HTMLDivElement | null>;
   getCanvas: () => FabricCanvas | null;
@@ -1234,8 +1258,10 @@ function TextFramePortsOverlay({
   framesById: Map<string, TextFrame>;
   storiesById: Map<string, Story>;
   onOverflowOutClick: (frameId: string) => void;
+  onOverflowOutDoubleClick: (frameId: string) => void;
 }) {
   const [, setViewportTick] = useState(0);
+  const linkClickDelayRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
     let cancelled = false;
@@ -1316,10 +1342,27 @@ function TextFramePortsOverlay({
                   type="button"
                   className="pointer-events-auto absolute flex h-3.5 w-3.5 -translate-x-1/2 translate-y-1/2 items-center justify-center rounded-full border border-rose-300/50 bg-rose-600 text-[10px] font-bold leading-none text-white shadow-md hover:bg-rose-500"
                   style={outStyle}
-                  title="Desbordamiento: clic para activar enlace"
+                  title="Doble clic: nuevo marco aquí. Clic: enlazar con otro marco o vacío."
                   onClick={(e) => {
                     e.stopPropagation();
-                    onOverflowOutClick(lay.frameId);
+                    const id = lay.frameId;
+                    if (e.detail === 2) {
+                      const t = linkClickDelayRef.current.get(id);
+                      if (t) {
+                        clearTimeout(t);
+                        linkClickDelayRef.current.delete(id);
+                      }
+                      onOverflowOutDoubleClick(id);
+                      return;
+                    }
+                    if (e.detail !== 1) return;
+                    const prev = linkClickDelayRef.current.get(id);
+                    if (prev) clearTimeout(prev);
+                    const to = window.setTimeout(() => {
+                      linkClickDelayRef.current.delete(id);
+                      onOverflowOutClick(id);
+                    }, 320);
+                    linkClickDelayRef.current.set(id, to);
                   }}
                 >
                   +

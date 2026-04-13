@@ -9,11 +9,12 @@ async function proxyRequest(req: NextRequest, pathSegments: string[]) {
   }
 
   const targetUrl = `${BEE_BASE}/${subpath}${req.nextUrl.search}`;
-  const apiKey =
-    req.headers.get("x-api-key") ??
-    req.headers.get("x-beeble-api-key") ??
-    process.env.BEEBLE_API_KEY ??
-    "";
+  const headerKey = (
+    req.headers.get("x-api-key") ||
+    req.headers.get("x-beeble-api-key") ||
+    ""
+  ).trim();
+  const apiKey = headerKey || process.env.BEEBLE_API_KEY || "";
 
   if (!apiKey) {
     return NextResponse.json(

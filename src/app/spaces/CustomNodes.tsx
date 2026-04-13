@@ -9406,3 +9406,4 @@ export const FreehandNode = memo(({ id, data, selected }: NodeProps<any>) => {
 });
 
 export { VfxGeneratorNode } from "./VfxGeneratorNode";
+export { IndesignNode } from "./IndesignNode";

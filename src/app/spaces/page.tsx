@@ -45,6 +45,7 @@ import {
   CropNode,
   BezierMaskNode,
   FreehandNode,
+  IndesignNode,
   TextOverlayNode,
   ButtonEdge 
 } from './CustomNodes';
@@ -520,6 +521,7 @@ const nodeTypes: any = {
   crop: CropNode,
   bezierMask: BezierMaskNode,
   freehand: FreehandNode,
+  indesign: IndesignNode,
   textOverlay: TextOverlayNode,
   canvasGroup: CanvasGroupNode,
 };
@@ -1143,7 +1145,7 @@ const SpacesContent = () => {
       concatenator: { prompt: ['p0','p1','p2','p3','p4','p5','p6','p7'] },
       listado:      { prompt: ['p0','p1','p2','p3','p4','p5','p6','p7'] },
       enhancer:     { prompt: ['p0','p1','p2','p3','p4','p5','p6','p7','p8','p9','p10','p11','p12','p13','p14','p15'] },
-      vfxGenerator: { prompt: ['p0','p1','p2','p3','p4','p5','p6','p7'] },
+      vfxGenerator: { prompt: ['prompt'] },
       imageComposer: { image: ['layer_0','layer_1','layer_2','layer_3','layer_4','layer_5','layer_6','layer_7'] },
     };
     // Per-handle-type slot counters, reset per new node creation
@@ -1984,6 +1986,7 @@ const SpacesContent = () => {
 
         case 'x': addNode('crop'); break;
         case 'z': addNode('bezierMask'); break;
+        case ',': addNode('indesign'); break;
         // ── Canvas actions ───────────────────────────────────────────────
         // F = Freehand / Vector Studio; Mayús+F = encuadrar todo el grafo. Listado = J.
         case 'f':
@@ -4769,7 +4772,7 @@ const SpacesContent = () => {
           )}
         </div>
 
-        {/* Barra inferior: cuatro accesos fijos (Freehand, imagen, vídeo, VFX) */}
+        {/* Barra inferior: accesos fijos (Vector, imagen, vídeo, VFX, Indesign) */}
         {isAuthenticated && !windowMode && (
           <div
             data-foldder-top-hud

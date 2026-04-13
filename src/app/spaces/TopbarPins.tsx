@@ -7,7 +7,7 @@ import { TOPBAR_GLYPH_BY_NODE_TYPE } from "./TopbarPinIcons";
 export const TOPBAR_PIN_ICON_SIZE = 32;
 
 /**
- * Accesos fijos (no personalizables): Vector Studio → Image Generator → Video Generator → VFX Generator.
+ * Accesos fijos (no personalizables): Vector → Image → Video → VFX → Indesign.
  * Orden estable; no se persiste ni se admite drag-and-drop sobre la barra.
  */
 export const TOPBAR_FIXED_PIN_TYPES = [
@@ -15,6 +15,7 @@ export const TOPBAR_FIXED_PIN_TYPES = [
   "nanoBanana",
   "geminiVideo",
   "vfxGenerator",
+  "indesign",
 ] as const;
 
 /** Tooltip (nombre completo) vs etiqueta corta bajo el icono. */
@@ -26,6 +27,7 @@ const TOPBAR_PIN_UI: Record<
   nanoBanana: { title: "Image Generator", shortLabel: "Image" },
   geminiVideo: { title: "Video Generator", shortLabel: "Video" },
   vfxGenerator: { title: "VFX Generator", shortLabel: "VFX" },
+  indesign: { title: "Indesign Studio", shortLabel: "Layout" },
 };
 
 type TopbarPinsProps = {
@@ -138,7 +140,7 @@ export function TopbarPins({
               : "flex min-h-[36px] w-full max-w-[min(520px,92vw)] flex-wrap items-center justify-center gap-1.5 rounded-xl border border-white/25 bg-white/[0.08] px-2 py-1 shadow-sm backdrop-blur-xl"
         }
         role="toolbar"
-        aria-label="Accesos directos: Vector, Image, Video, VFX. Doble clic para añadir al lienzo."
+        aria-label="Accesos directos: Vector, Image, Video, VFX, Layout. Doble clic para añadir al lienzo."
       >
         {TOPBAR_FIXED_PIN_TYPES.map((type) => {
           const ui = TOPBAR_PIN_UI[type];

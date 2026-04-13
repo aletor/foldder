@@ -97,6 +97,40 @@ export function TopbarGlyphVideoGenerator({ size = 26, className }: GlyphProps) 
   );
 }
 
+/** Indesign — páginas apiladas + líneas de texto (maquetación editorial). */
+export function TopbarGlyphIndesign({ size = 26, className }: GlyphProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      className={className}
+      aria-hidden
+    >
+      <rect
+        x="5.25"
+        y="6.25"
+        width="12.5"
+        height="14.5"
+        rx="1.35"
+        stroke="currentColor"
+        strokeWidth={1.2}
+        opacity={0.38}
+      />
+      <rect x="3.75" y="4.25" width="14.5" height="16.5" rx="1.65" stroke="currentColor" strokeWidth={sw} />
+      <path
+        d="M7.25 9.25h7.5M7.25 12.25h7.5M7.25 15.25h4.75"
+        stroke="currentColor"
+        strokeWidth={1.25}
+        strokeLinecap="round"
+        opacity={0.88}
+      />
+      <rect x="8.25" y="17.35" width="6.5" height="2.15" rx="0.4" fill="currentColor" fillOpacity={0.22} />
+    </svg>
+  );
+}
+
 /** VFX Generator — capas apiladas + onda / impacto (efectos sobre vídeo). */
 export function TopbarGlyphVfxGenerator({ size = 26, className }: GlyphProps) {
   return (
@@ -139,11 +173,12 @@ export function TopbarGlyphVfxGenerator({ size = 26, className }: GlyphProps) {
 }
 
 export const TOPBAR_GLYPH_BY_NODE_TYPE: Record<
-  "freehand" | "nanoBanana" | "geminiVideo" | "vfxGenerator",
+  "freehand" | "nanoBanana" | "geminiVideo" | "vfxGenerator" | "indesign",
   React.FC<GlyphProps>
 > = {
   freehand: TopbarGlyphVectorStudio,
   nanoBanana: TopbarGlyphImageGenerator,
   geminiVideo: TopbarGlyphVideoGenerator,
   vfxGenerator: TopbarGlyphVfxGenerator,
+  indesign: TopbarGlyphIndesign,
 };

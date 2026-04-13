@@ -17,7 +17,7 @@ import { NodeIcon } from "./foldder-icons";
 import { resolveFoldderNodeState } from "./foldder-icons";
 import { resolvePromptValueFromEdgeSource } from "./canvas-group-logic";
 import { BeebleVfxStudio, type BeebleAlphaMode } from "./BeebleVfxStudio";
-import { BeebleClient, readStoredBeebleApiKey, type BeebleJob } from "@/lib/beeble-api";
+import { BeebleClient, type BeebleJob } from "@/lib/beeble-api";
 import { useBeebleJobPoller } from "@/hooks/useBeebleJobPoller";
 import { runAiJobWithNotification } from "@/lib/ai-job-notifications";
 
@@ -73,18 +73,18 @@ function ViewerOpenLocal({ nodeId, disabled }: { nodeId: string; disabled?: bool
   );
 }
 
-const PROMPT_HANDLES = ["p0", "p1", "p2", "p3", "p4", "p5", "p6", "p7"] as const;
-
 type BaseNodeData = { label?: string; value?: string; type?: string };
 
 export type VfxGeneratorNodeData = BaseNodeData & {
   sourceVideoUri?: string;
   referenceImageUri?: string;
   alphaUri?: string;
+  /** Texto editable en el Studio; si hay cable en `prompt`, el upstream tiene prioridad al generar. */
+  prompt?: string;
+  /** @deprecated migrado a `prompt` (primer elemento) */
   prompts?: string[];
   alphaMode?: BeebleAlphaMode;
   maxResolution?: 720 | 1080;
-  activePromptIndex?: number;
   activeJobId?: string;
   activeJobStatus?: BeebleJob["status"];
   activeJobProgress?: number;
@@ -93,10 +93,13 @@ export type VfxGeneratorNodeData = BaseNodeData & {
   outputAlphaUrl?: string;
 };
 
-function normalizePrompts(raw: unknown): string[] {
-  if (!Array.isArray(raw)) return [""];
-  const s = raw.map((x) => (typeof x === "string" ? x : ""));
-  return s.length > 0 ? s : [""];
+function migrateStoredPrompt(d: VfxGeneratorNodeData): string {
+  if (typeof d.prompt === "string") return d.prompt;
+  if (Array.isArray(d.prompts) && d.prompts.length > 0) {
+    const first = d.prompts[0];
+    return typeof first === "string" ? first : "";
+  }
+  return "";
 }
 
 function pushAssetVersion(data: Record<string, unknown>, url: string, source: string) {
@@ -110,7 +113,6 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<any>) =>
   const edges = useEdges();
   const nodes = useNodes();
   const [showStudio, setShowStudio] = useState(false);
-  const [apiKey, setApiKey] = useState<string | null>(() => readStoredBeebleApiKey());
   const [isLaunching, setIsLaunching] = useState(false);
   const [historyJobs, setHistoryJobs] = useState<BeebleJob[]>([]);
 
@@ -135,6 +137,14 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<any>) =>
     () => edges.find((e) => e.target === id && e.targetHandle === "alphaMask"),
     [edges, id],
   );
+  /** `prompt` es el handle actual; `p0` compatibilidad con grafos antiguos. */
+  const edgePrompt = useMemo(
+    () =>
+      edges.find(
+        (e) => e.target === id && (e.targetHandle === "prompt" || e.targetHandle === "p0"),
+      ),
+    [edges, id],
+  );
 
   const videoFromGraph = useMemo(() => {
     if (!edgeVideo) return "";
@@ -154,22 +164,21 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<any>) =>
     return typeof v === "string" && v.trim() ? v.trim() : "";
   }, [edgeAlpha, nodes]);
 
-  const promptsBase = normalizePrompts(nodeData.prompts);
-  const mergedPrompts = useMemo(() => {
-    return PROMPT_HANDLES.map((h, i) => {
-      const e = edges.find((e) => e.target === id && e.targetHandle === h);
-      if (e) {
-        const t = resolvePromptValueFromEdgeSource(e, nodes as any[]);
-        return typeof t === "string" ? t : promptsBase[i] ?? "";
-      }
-      return promptsBase[i] ?? "";
-    });
-  }, [edges, id, nodes, promptsBase]);
+  const promptFromGraph = useMemo(() => {
+    if (!edgePrompt) return "";
+    const t = resolvePromptValueFromEdgeSource(edgePrompt, nodes as any[]);
+    return typeof t === "string" ? t : "";
+  }, [edgePrompt, nodes]);
 
-  const promptConnected = useMemo(
-    () => PROMPT_HANDLES.map((h) => !!edges.find((e) => e.target === id && e.targetHandle === h)),
-    [edges, id],
+  const storedPrompt = useMemo(() => migrateStoredPrompt(nodeData), [nodeData]);
+
+  /** Upstream tiene prioridad si trae texto; si no, el texto guardado en el nodo. */
+  const effectivePrompt = useMemo(
+    () => promptFromGraph.trim() || storedPrompt.trim(),
+    [promptFromGraph, storedPrompt],
   );
+
+  const promptConnected = !!edgePrompt;
 
   const sourceVideoUri = videoFromGraph || (nodeData.sourceVideoUri ?? "").trim();
   const referenceImageUri = refFromGraph || (nodeData.referenceImageUri ?? "").trim();
@@ -177,12 +186,8 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<any>) =>
 
   const alphaMode: BeebleAlphaMode = nodeData.alphaMode ?? "auto";
   const maxResolution: 720 | 1080 = nodeData.maxResolution === 720 ? 720 : 1080;
-  const activePromptIndex = Math.min(
-    Math.max(0, nodeData.activePromptIndex ?? 0),
-    Math.max(0, mergedPrompts.length - 1),
-  );
 
-  const client = useMemo(() => (apiKey ? new BeebleClient(apiKey) : null), [apiKey]);
+  const client = useMemo(() => new BeebleClient(""), []);
 
   const onJobPoll = useCallback(
     (job: BeebleJob) => {
@@ -218,10 +223,9 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<any>) =>
     [id, setNodes, updatePatch],
   );
 
-  useBeebleJobPoller(nodeData.activeJobId && client ? nodeData.activeJobId : null, client, onJobPoll);
+  useBeebleJobPoller(nodeData.activeJobId ?? null, client, onJobPoll);
 
   const loadHistory = useCallback(async () => {
-    if (!client) return;
     try {
       const list = await client.listJobs();
       setHistoryJobs(Array.isArray(list) ? list : []);
@@ -232,7 +236,6 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<any>) =>
 
   const refreshJobById = useCallback(
     async (jobId: string) => {
-      if (!client) return;
       try {
         const job = await client.getJob(jobId);
         onJobPoll(job);
@@ -244,18 +247,14 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<any>) =>
   );
 
   const launchGeneration = useCallback(async () => {
-    if (!client) {
-      alert("Configura la API key (engranaje en el Studio).");
-      return;
-    }
-    const prompt = (mergedPrompts[activePromptIndex] ?? "").trim();
+    const prompt = effectivePrompt;
     const refU = referenceImageUri.trim();
     if (!sourceVideoUri.trim()) {
       alert("Se necesita vídeo fuente.");
       return;
     }
     if (!prompt && !refU) {
-      alert("Se necesita al menos un prompt activo o una imagen de referencia.");
+      alert("Se necesita al menos un prompt o una imagen de referencia.");
       return;
     }
 
@@ -288,8 +287,7 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<any>) =>
   }, [
     client,
     id,
-    mergedPrompts,
-    activePromptIndex,
+    effectivePrompt,
     sourceVideoUri,
     referenceImageUri,
     alphaUri,
@@ -317,24 +315,18 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<any>) =>
         <FoldderDataHandle type="target" position={Position.Left} id="sourceVideo" dataType="video" />
         <span className="handle-label text-cyan-500">Video</span>
       </div>
-      <div className="handle-wrapper handle-left !top-[24%]">
+      <div className="handle-wrapper handle-left !top-[22%]">
         <FoldderDataHandle type="target" position={Position.Left} id="referenceImage" dataType="image" />
         <span className="handle-label text-fuchsia-500">Ref</span>
       </div>
-      <div className="handle-wrapper handle-left !top-[36%]">
+      <div className="handle-wrapper handle-left !top-[32%]">
         <FoldderDataHandle type="target" position={Position.Left} id="alphaMask" dataType="image" />
         <span className="handle-label text-emerald-500">Alpha</span>
       </div>
-      {PROMPT_HANDLES.map((h, i) => (
-        <div
-          key={h}
-          className="handle-wrapper handle-left"
-          style={{ top: `${46 + Math.min(i, 5) * 5.5}%` }}
-        >
-          <FoldderDataHandle type="target" position={Position.Left} id={h} dataType="prompt" />
-          <span className="handle-label text-zinc-500">P{i + 1}</span>
-        </div>
-      ))}
+      <div className="handle-wrapper handle-left !top-[44%]">
+        <FoldderDataHandle type="target" position={Position.Left} id="prompt" dataType="prompt" />
+        <span className="handle-label text-violet-300">Prompt</span>
+      </div>
 
       <div className="node-header">
         <NodeIcon
@@ -427,9 +419,9 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<any>) =>
           alphaConnected={!!edgeAlpha && !!alphaFromGraph}
           alphaMode={alphaMode}
           maxResolution={maxResolution}
-          prompts={mergedPrompts}
+          prompt={storedPrompt}
+          promptFromGraph={promptFromGraph}
           promptConnected={promptConnected}
-          activePromptIndex={activePromptIndex}
           activeJobId={nodeData.activeJobId}
           activeJobStatus={nodeData.activeJobStatus}
           activeJobProgress={nodeData.activeJobProgress}
@@ -438,8 +430,6 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<any>) =>
           outputAlphaUrl={nodeData.outputAlphaUrl}
           onLaunch={launchGeneration}
           isLaunching={isLaunching}
-          apiKey={apiKey}
-          onApiKeyChange={setApiKey}
           onRefreshJob={refreshJobById}
           historyJobs={historyJobs}
           onLoadHistory={loadHistory}

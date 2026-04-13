@@ -7,7 +7,8 @@ export type EmptyCanvasShortcutNodeType =
   | "freehand"
   | "nanoBanana"
   | "geminiVideo"
-  | "vfxGenerator";
+  | "vfxGenerator"
+  | "indesign";
 
 /** Tras el splash «Bienvenido», si el lienzo sigue vacío: atajos visibles hasta el primer nodo. */
 export const EMPTY_CANVAS_SHORTCUT_HINT: {
@@ -20,6 +21,7 @@ export const EMPTY_CANVAS_SHORTCUT_HINT: {
     { label: "Image", nodeType: "nanoBanana" },
     { label: "Video", nodeType: "geminiVideo" },
     { label: "VFX", nodeType: "vfxGenerator" },
+    { label: "Layout", nodeType: "indesign" },
   ] as const
 ).map((row) => ({
   ...row,

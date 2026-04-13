@@ -31,4 +31,5 @@ export const NODE_KEYS: Record<string, string> = {
   crop: 'x',
   bezierMask: 'z',
   freehand: 'f',
+  indesign: ',',
 };

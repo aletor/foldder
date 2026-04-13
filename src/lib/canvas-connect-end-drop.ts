@@ -116,10 +116,9 @@ export function defaultDataForCanvasDropNode(nodeType: string): Record<string, u
       return {
         label: "",
         type: "video",
-        prompts: [""],
+        prompt: "",
         alphaMode: "auto",
         maxResolution: 1080,
-        activePromptIndex: 0,
       };
     default:
       return { label: "" };

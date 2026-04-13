@@ -1,4 +1,4 @@
-/** Cliente Beeble vía proxy `/api/beeble/*` (API key en cabecera, nunca en URL). */
+/** Cliente Beeble vía proxy `/api/beeble/*` (la API key va en el servidor: `BEEBLE_API_KEY`). */
 
 export const BEEBLE_API_PROXY_BASE = "/api/beeble";
 
@@ -37,11 +37,13 @@ export class BeebleClient {
   constructor(private apiKey: string) {}
 
   private headers(extra: Record<string, string> = {}): HeadersInit {
-    return {
+    const h: Record<string, string> = {
       "Content-Type": "application/json",
-      "x-api-key": this.apiKey,
       ...extra,
     };
+    const k = this.apiKey.trim();
+    if (k) h["x-api-key"] = k;
+    return h;
   }
 
   private url(path: string) {
@@ -113,7 +115,7 @@ export class BeebleClient {
 
   async getJob(jobId: string): Promise<BeebleJob> {
     const res = await fetch(this.url(`switchx/generations/${encodeURIComponent(jobId)}`), {
-      headers: { "x-api-key": this.apiKey },
+      headers: this.headers(),
     });
     if (!res.ok) throw await this.parseError(res);
     return res.json() as Promise<BeebleJob>;
@@ -121,7 +123,7 @@ export class BeebleClient {
 
   async listJobs(): Promise<BeebleJob[]> {
     const res = await fetch(this.url("switchx/generations"), {
-      headers: { "x-api-key": this.apiKey },
+      headers: this.headers(),
     });
     if (!res.ok) throw await this.parseError(res);
     const data = (await res.json()) as unknown;
@@ -137,7 +139,7 @@ export class BeebleClient {
 
   async getAccountInfo(): Promise<BeebleAccountInfo> {
     const res = await fetch(this.url("account/info"), {
-      headers: { "x-api-key": this.apiKey },
+      headers: this.headers(),
     });
     if (!res.ok) throw await this.parseError(res);
     return res.json() as Promise<BeebleAccountInfo>;
@@ -145,7 +147,7 @@ export class BeebleClient {
 
   async getBillingInfo(): Promise<unknown> {
     const res = await fetch(this.url("account/billing"), {
-      headers: { "x-api-key": this.apiKey },
+      headers: this.headers(),
     });
     if (!res.ok) throw await this.parseError(res);
     return res.json();
@@ -165,26 +167,4 @@ export function estimateBeebleCredits(
     estimated: Math.max(per30, Math.ceil((per30 / 30) * frames)),
     isApprox,
   };
-}
-
-export const BEEBLE_LOCAL_STORAGE_KEY = "foldder:beebleApiKey";
-
-export function readStoredBeebleApiKey(): string | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const v = window.localStorage.getItem(BEEBLE_LOCAL_STORAGE_KEY);
-    return v && v.trim() ? v.trim() : null;
-  } catch {
-    return null;
-  }
-}
-
-export function writeStoredBeebleApiKey(key: string | null): void {
-  if (typeof window === "undefined") return;
-  try {
-    if (!key || !key.trim()) window.localStorage.removeItem(BEEBLE_LOCAL_STORAGE_KEY);
-    else window.localStorage.setItem(BEEBLE_LOCAL_STORAGE_KEY, key.trim());
-  } catch {
-    /* ignore */
-  }
 }
