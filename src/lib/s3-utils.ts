@@ -29,7 +29,7 @@ export async function uploadToS3(filename: string, fileBuffer: Buffer, contentTy
   };
 
   const command = new PutObjectCommand(params);
-  await s3Client.send(command).catch((err: any) => {
+  await s3Client.send(command).catch((err: unknown) => {
     console.error("Error uploading to S3:", err);
     throw err;
   });
@@ -71,7 +71,7 @@ export async function deleteFromS3(key: string) {
   };
 
   const command = new DeleteObjectCommand(params);
-  await s3Client.send(command).catch((err: any) => {
+  await s3Client.send(command).catch((err: unknown) => {
     console.error("Error deleting from S3:", err);
     throw err;
   });

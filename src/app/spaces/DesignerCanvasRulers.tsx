@@ -82,7 +82,7 @@ export const DesignerRulerHorizontal = forwardRef<
   {
     viewport: DesignerViewport;
     widthPx: number;
-    /** Borde inferior hacia el lienzo: arrastrar crea guía horizontal (Y). */
+    /** Toda la regla: arrastrar crea guía horizontal (Y). */
     onGuideEdgePointerDown?: (e: React.PointerEvent) => void;
   }
 >(function DesignerRulerHorizontal({ viewport, widthPx, onGuideEdgePointerDown }, ref) {
@@ -127,7 +127,7 @@ export const DesignerRulerHorizontal = forwardRef<
       </svg>
       {onGuideEdgePointerDown ? (
         <div
-          className="absolute inset-x-0 bottom-0 z-[2] h-[7px] cursor-row-resize hover:bg-violet-500/15"
+          className="absolute inset-0 z-[2] cursor-row-resize hover:bg-violet-500/10"
           style={{ touchAction: "none" }}
           title="Arrastrar guía horizontal"
           onPointerDown={(e) => {
@@ -146,7 +146,7 @@ export const DesignerRulerVertical = forwardRef<
   {
     viewport: DesignerViewport;
     heightPx: number;
-    /** Borde derecho hacia el lienzo: arrastrar crea guía vertical (X). */
+    /** Toda la regla: arrastrar crea guía vertical (X). */
     onGuideEdgePointerDown?: (e: React.PointerEvent) => void;
   }
 >(function DesignerRulerVertical({ viewport, heightPx, onGuideEdgePointerDown }, ref) {
@@ -192,7 +192,7 @@ export const DesignerRulerVertical = forwardRef<
       </svg>
       {onGuideEdgePointerDown ? (
         <div
-          className="absolute inset-y-0 right-0 z-[2] w-[7px] cursor-col-resize hover:bg-violet-500/15"
+          className="absolute inset-0 z-[2] cursor-col-resize hover:bg-violet-500/10"
           style={{ touchAction: "none" }}
           title="Arrastrar guía vertical"
           onPointerDown={(e) => {

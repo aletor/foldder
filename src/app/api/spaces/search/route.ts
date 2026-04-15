@@ -123,7 +123,7 @@ export async function POST(req: Request) {
     };
 
     // Sin visión: mismo comportamiento que antes (GIS, si no hay nada → Wikipedia).
-    let urls: string[] =
+    const urls: string[] =
       gisUrls.length > 0 ? gisUrls : await getWikiPool();
 
     const tryVisionFilter = async (candidateUrls: string[]) => {

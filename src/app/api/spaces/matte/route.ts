@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
 
     // 1. ML Inference: Professional Matting (851-labs/background-remover)
     let maskUrl: string = "";
-    let maxRetries = 3;
+    const maxRetries = 3;
     let retryDelay = 2000; // Start with 2s
 
     for (let i = 0; i < maxRetries; i++) {

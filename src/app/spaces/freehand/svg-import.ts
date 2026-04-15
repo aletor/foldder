@@ -449,7 +449,7 @@ function walk(
   const lm = parseSvgTransform(el.getAttribute("transform"));
   const m = world.multiply(lm);
 
-  let strokeW = parseFloatAttr(el, "stroke-width", 0);
+  const strokeW = parseFloatAttr(el, "stroke-width", 0);
   const op = parseOpacity(el);
   const strokeP = parsePaint(el, "stroke", defs, { x: 0, y: 0, w: 1, h: 1 }, "", "none");
 
@@ -667,7 +667,7 @@ function walk(
   }
 
   if (tag === "image") {
-    let href = el.getAttribute("href") || el.getAttribute("xlink:href") || "";
+    const href = el.getAttribute("href") || el.getAttribute("xlink:href") || "";
     const w = parseFloatAttr(el, "width", 100);
     const h = parseFloatAttr(el, "height", 100);
     const x = parseFloatAttr(el, "x", 0);

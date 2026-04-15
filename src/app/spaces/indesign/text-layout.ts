@@ -32,6 +32,16 @@ export type FrameLayout = {
 
 let layoutCanvas: HTMLCanvasElement | null = null;
 
+/**
+ * Pequeño margen sobre el ancho útil: el canvas y el DOM no coinciden al 100 % tras medir por subcadenas.
+ */
+const LINE_WRAP_WIDTH_FUDGE = 1.008;
+
+/**
+ * Si `innerH / lineHeight` queda justo por debajo de un entero, conviene acercar el recuento al `line-height` CSS.
+ */
+const LINE_COUNT_VERTICAL_BIAS = 0.42;
+
 export function getLayoutCanvasContext(): CanvasRenderingContext2D {
   if (typeof document === "undefined") {
     throw new Error("text-layout requires browser DOM");
@@ -82,6 +92,57 @@ function measureText(ctx: CanvasRenderingContext2D, text: string, typo: Typograp
   return w;
 }
 
+/** Misma tipografía resuelta → mismo trazo para agrupar y usar `measureText` sobre la subcadena (kerning). */
+function resolvedTypoEqualForMeasure(a: Typography, b: Typography): boolean {
+  return (
+    a.fontFamily === b.fontFamily &&
+    a.fontSize === b.fontSize &&
+    a.fontWeight === b.fontWeight &&
+    a.fontStyle === b.fontStyle &&
+    a.letterSpacing === b.letterSpacing &&
+    a.fontVariantCaps === b.fontVariantCaps
+  );
+}
+
+/**
+ * Ancho de la línea [from, to) igual que el bucle antiguo (espaciado antes de cada carácter tras el primero),
+ * pero en tramos de **misma** tipografía usa `measureText(segmento)` para acercarse al shaping del navegador.
+ */
+function measureLineCharRange(
+  ctx: CanvasRenderingContext2D,
+  chars: { ch: string; style?: SpanStyle }[],
+  from: number,
+  to: number,
+  baseTypo: Typography,
+): number {
+  if (from >= to) return 0;
+  let w = 0;
+  let k = from;
+  while (k < to) {
+    if (k > from) {
+      const tGap = resolveRunTypo(baseTypo, chars[k]!.style);
+      w += tGap.letterSpacing * tGap.fontSize;
+    }
+    const t0 = resolveRunTypo(baseTypo, chars[k]!.style);
+    ctx.font = fontStringFromTypography(t0);
+    const extra0 = t0.letterSpacing * t0.fontSize;
+    let j = k + 1;
+    while (j < to && resolvedTypoEqualForMeasure(resolveRunTypo(baseTypo, chars[j]!.style), t0)) {
+      j++;
+    }
+    const seg = chars
+      .slice(k, j)
+      .map((c) => c.ch)
+      .join("");
+    w += ctx.measureText(seg).width;
+    if (seg.length > 1) {
+      w += extra0 * (seg.length - 1);
+    }
+    k = j;
+  }
+  return w;
+}
+
 /**
  * Layout rich text runs into a single TextFrame.
  * Returns lines with positioned styled runs, consumed character count, and overflow flag.
@@ -96,7 +157,8 @@ export function layoutRichTextInFrame(
   const innerW = Math.max(4, frame.width - pad * 2);
   const innerH = Math.max(4, frame.height - pad * 2);
   const lineHeightPx = baseTypo.fontSize * baseTypo.lineHeight;
-  const maxLines = Math.max(1, Math.floor(innerH / lineHeightPx));
+  const lineSlots = innerH / lineHeightPx;
+  const maxLines = Math.max(1, Math.floor(lineSlots + LINE_COUNT_VERTICAL_BIAS));
 
   const lines: LineData[] = [];
   let totalConsumed = 0;
@@ -123,10 +185,9 @@ export function layoutRichTextInFrame(
 
     const atParagraphStart = charIdx === 0 || (charIdx > 0 && chars[charIdx - 1]!.ch === "\n");
     const ind = atParagraphStart ? baseTypo.paragraphIndent : 0;
-    const wrapW = Math.max(4, innerW - ind);
+    const wrapW = Math.max(4, (innerW - ind) * LINE_WRAP_WIDTH_FUDGE);
 
-    // Build one line: accumulate characters until we exceed wrapW
-    let lineWidth = 0;
+    // Una línea: ampliar hasta que el ancho medido (kerning por tramos) supere wrapW
     let lineEnd = charIdx;
     let lastWordBreak = -1;
 
@@ -134,13 +195,10 @@ export function layoutRichTextInFrame(
       const c = chars[lineEnd]!;
       if (c.ch === "\n") break;
 
-      const cTypo = resolveRunTypo(baseTypo, c.style);
-      ctx.font = fontStringFromTypography(cTypo);
-      const extra = cTypo.letterSpacing * cTypo.fontSize;
-      const charW = ctx.measureText(c.ch).width + (lineEnd > charIdx ? extra : 0);
+      const candidateEnd = lineEnd + 1;
+      const w = measureLineCharRange(ctx, chars, charIdx, candidateEnd, baseTypo);
 
-      if (lineWidth + charW > wrapW && lineEnd > charIdx) {
-        // Try to break at last word boundary
+      if (w > wrapW && lineEnd > charIdx) {
         if (lastWordBreak > charIdx) {
           lineEnd = lastWordBreak;
         }
@@ -148,8 +206,7 @@ export function layoutRichTextInFrame(
       }
 
       if (c.ch === " ") lastWordBreak = lineEnd + 1;
-      lineWidth += charW;
-      lineEnd++;
+      lineEnd = candidateEnd;
     }
 
     if (lineEnd === charIdx && charIdx < chars.length) {

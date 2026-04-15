@@ -9,19 +9,24 @@ export function useBeebleJobPoller(
   onUpdate: (job: BeebleJob) => void,
 ) {
   const onUpdateRef = useRef(onUpdate);
-  onUpdateRef.current = onUpdate;
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    onUpdateRef.current = onUpdate;
+  }, [onUpdate]);
 
   useEffect(() => {
     if (!jobId || !client) return;
-
-    let intervalId: ReturnType<typeof setInterval> | undefined;
 
     const poll = async () => {
       try {
         const job = await client.getJob(jobId);
         onUpdateRef.current(job);
         if (job.status === "completed" || job.status === "failed") {
-          if (intervalId) clearInterval(intervalId);
+          if (intervalRef.current) {
+            clearInterval(intervalRef.current);
+            intervalRef.current = null;
+          }
         }
       } catch (e) {
         console.error("[useBeebleJobPoller]", e);
@@ -29,10 +34,13 @@ export function useBeebleJobPoller(
     };
 
     void poll();
-    intervalId = setInterval(() => void poll(), 5000);
+    intervalRef.current = setInterval(() => void poll(), 5000);
 
     return () => {
-      if (intervalId) clearInterval(intervalId);
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
     };
   }, [jobId, client]);
 }

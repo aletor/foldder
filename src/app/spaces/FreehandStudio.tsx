@@ -11,6 +11,7 @@ import React, {
   type WheelEvent as ReactWheelEvent,
   type DragEvent as ReactDragEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import { usePreventBrowserPinchZoom } from "@/lib/use-prevent-browser-pinch-zoom";
 import { fireAndForgetDeleteS3Keys } from "@/lib/s3-delete-client";
 import {
@@ -28,12 +29,17 @@ import {
   Undo2,
   Redo2,
   Upload,
-  AlignStartVertical,
-  AlignCenterVertical,
-  AlignEndVertical,
   AlignStartHorizontal,
   AlignCenterHorizontal,
   AlignEndHorizontal,
+  AlignHorizontalJustifyStart,
+  AlignHorizontalJustifyCenter,
+  AlignHorizontalJustifyEnd,
+  AlignVerticalJustifyStart,
+  AlignVerticalJustifyCenter,
+  AlignVerticalJustifyEnd,
+  AlignHorizontalSpaceBetween,
+  AlignVerticalSpaceBetween,
   Group,
   Ungroup,
   Minus,
@@ -53,6 +59,20 @@ import {
   ChevronsUp,
   ChevronsDown,
   FileType2,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+  AlignJustify,
+  Bold,
+  Italic,
+  Underline,
+  Strikethrough,
+  CaseSensitive,
+  Link2,
+  Weight,
+  BetweenVerticalStart,
+  BetweenHorizontalStart,
+  IndentIncrease,
 } from "lucide-react";
 import { ScrubNumberInput } from "./ScrubNumberInput";
 import { FreehandExportModal, type ProfessionalExportOptions } from "./freehand/FreehandExportModal";
@@ -95,6 +115,7 @@ import {
   textToGlyphPathPayloads,
 } from "./freehand/text-outline";
 import { GOOGLE_FONTS_POPULAR, googleFontStylesheetHref } from "./freehand/google-fonts";
+import { sanitizeStoryLinkHref, type SpanStyle } from "./indesign/text-model";
 import { extractDocumentColorStats, replaceHexEverywhere } from "./freehand/extract-document-colors";
 import { FreehandColorPalette, loadSavedPaletteFromStorage, persistSavedPalette } from "./freehand/FreehandColorPalette";
 import type { SvgImportShape } from "./freehand/svg-import";
@@ -105,22 +126,6 @@ import {
   DesignerRulerHorizontal,
   DesignerRulerVertical,
 } from "./DesignerCanvasRulers";
-
-const OPEN_TYPE_PANEL_TAGS = ["kern", "liga", "calt", "smcp", "onum", "frac", "sups", "subs"] as const;
-
-function parseOpenTypeFeatureMap(s: string | undefined): Map<string, number> {
-  const m = new Map<string, number>();
-  if (!s || !s.trim() || s.trim() === "normal") return m;
-  const re = /"([^"]+)"\s*(\d+)/g;
-  let hit: RegExpExecArray | null;
-  while ((hit = re.exec(s)) !== null) m.set(hit[1], Number(hit[2]));
-  return m;
-}
-
-function stringifyOpenTypeFeatureMap(map: Map<string, number>): string {
-  if (map.size === 0) return "normal";
-  return [...map.entries()].map(([k, v]) => `"${k}" ${v}`).join(", ");
-}
 
 /** Iconos para la botonera de modos de ajuste del marco de imagen (panel Designer). */
 function ImageFrameFittingGlyph({ mode, className }: { mode: string; className?: string }) {
@@ -333,7 +338,20 @@ interface FreehandObjectBase {
   imageFrameContentAlignment?: "top-left" | "top-center" | "top-right" | "middle-left" | "center" | "middle-right" | "bottom-left" | "bottom-center" | "bottom-right";
   _designerOverflow?: boolean;
   _designerThreadInfo?: { index: number; total: number };
-  _designerRichSpans?: Array<{ text: string; style?: { fontWeight?: string; fontStyle?: string; textUnderline?: boolean; textStrikethrough?: boolean; fontSize?: number; color?: string; fontFamily?: string; letterSpacing?: number } }>;
+  _designerRichSpans?: Array<{
+    text: string;
+    style?: {
+      fontWeight?: string;
+      fontStyle?: string;
+      textUnderline?: boolean;
+      textStrikethrough?: boolean;
+      fontSize?: number;
+      color?: string;
+      fontFamily?: string;
+      letterSpacing?: number;
+      linkHref?: string;
+    };
+  }>;
 }
 
 export interface RectObject extends FreehandObjectBase { type: "rect"; rx: number }
@@ -576,6 +594,164 @@ function createLayoutGuide(orientation: "vertical" | "horizontal", position: num
 function clamp(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)); }
 function escapeHtmlStr(s: string): string { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>"); }
 
+/** Barra + contentEditable compartidos entre el panel de propiedades y el modal ampliado (marco de texto). */
+function DesignerStoryRichEditorBlock({
+  storyId,
+  storyText,
+  storyHtml,
+  onRichChange,
+  editorClassName,
+  compactMaxLines,
+  onRequestOpenFull,
+  enableHyperlink,
+}: {
+  storyId: string;
+  storyText: string;
+  storyHtml: string;
+  onRichChange?: (sid: string, html: string) => void;
+  editorClassName: string;
+  /** Si se define, limita la altura del editor a N líneas (panel); si el texto supera, muestra «abrir completo». */
+  compactMaxLines?: number;
+  onRequestOpenFull?: () => void;
+  /** Solo en el modal ampliado: insertar / quitar hipervínculos. */
+  enableHyperlink?: boolean;
+}) {
+  const richEditorRef = useRef<HTMLDivElement | null>(null);
+  const [showOpenFull, setShowOpenFull] = useState(false);
+
+  const remeasureOverflow = useCallback(() => {
+    if (!compactMaxLines) {
+      setShowOpenFull(false);
+      return;
+    }
+    const el = richEditorRef.current;
+    if (!el) return;
+    setShowOpenFull(el.scrollHeight > el.clientHeight + 1);
+  }, [compactMaxLines]);
+
+  useLayoutEffect(() => {
+    remeasureOverflow();
+  }, [storyHtml, storyText, compactMaxLines, remeasureOverflow]);
+
+  useLayoutEffect(() => {
+    const el = richEditorRef.current;
+    if (!el || !compactMaxLines) return;
+    const ro = new ResizeObserver(() => remeasureOverflow());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [compactMaxLines, remeasureOverflow]);
+
+  const applyRichCmd = (cmd: string) => {
+    const el = richEditorRef.current;
+    if (!el) return;
+    el.focus();
+    document.execCommand(cmd, false);
+    if (onRichChange) onRichChange(storyId, el.innerHTML);
+    queueMicrotask(remeasureOverflow);
+  };
+
+  const applyStoryHyperlink = () => {
+    const el = richEditorRef.current;
+    if (!el) return;
+    el.focus();
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
+      window.alert("Selecciona el texto al que quieres aplicar el enlace.");
+      return;
+    }
+    const raw = window.prompt("URL del enlace", "https://");
+    if (raw == null) return;
+    const url = sanitizeStoryLinkHref(raw);
+    if (!url) return;
+    document.execCommand("createLink", false, url);
+    if (onRichChange) onRichChange(storyId, el.innerHTML);
+    queueMicrotask(remeasureOverflow);
+  };
+
+  const removeStoryHyperlink = () => {
+    const el = richEditorRef.current;
+    if (!el) return;
+    el.focus();
+    document.execCommand("unlink", false);
+    if (onRichChange) onRichChange(storyId, el.innerHTML);
+    queueMicrotask(remeasureOverflow);
+  };
+  const compactStyle =
+    compactMaxLines != null
+      ? ({
+          maxHeight: `calc(${compactMaxLines} * 0.75rem * 1.625 + 1rem)`,
+          overflow: "hidden",
+        } as const)
+      : undefined;
+  return (
+    <div className="flex flex-col">
+      <div className="flex items-center gap-0.5 rounded-t-[5px] border border-b-0 border-white/[0.08] bg-white/[0.04] px-1.5 py-1">
+        <button type="button" title="Bold (Ctrl+B)" className="rounded px-1.5 py-0.5 text-[11px] font-bold text-zinc-400 hover:bg-white/10 hover:text-white" onMouseDown={(e) => { e.preventDefault(); applyRichCmd("bold"); }}><b>B</b></button>
+        <button type="button" title="Italic (Ctrl+I)" className="rounded px-1.5 py-0.5 text-[11px] italic text-zinc-400 hover:bg-white/10 hover:text-white" onMouseDown={(e) => { e.preventDefault(); applyRichCmd("italic"); }}><i>I</i></button>
+        <button type="button" title="Underline (Ctrl+U)" className="rounded px-1.5 py-0.5 text-[11px] underline text-zinc-400 hover:bg-white/10 hover:text-white" onMouseDown={(e) => { e.preventDefault(); applyRichCmd("underline"); }}><u>U</u></button>
+        <button type="button" title="Strikethrough" className="rounded px-1.5 py-0.5 text-[11px] line-through text-zinc-400 hover:bg-white/10 hover:text-white" onMouseDown={(e) => { e.preventDefault(); applyRichCmd("strikeThrough"); }}><s>S</s></button>
+        {enableHyperlink && (
+          <>
+            <div className="mx-1 h-4 w-px bg-white/10" />
+            <button
+              type="button"
+              title="Añadir hipervínculo (selecciona texto antes)"
+              className="rounded px-1.5 py-0.5 text-zinc-400 hover:bg-white/10 hover:text-sky-300"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                applyStoryHyperlink();
+              }}
+            >
+              <Link2 size={14} strokeWidth={2} aria-hidden />
+            </button>
+            <button
+              type="button"
+              title="Quitar enlace"
+              className="rounded px-1.5 py-0.5 text-zinc-400 hover:bg-white/10 hover:text-sky-300"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                removeStoryHyperlink();
+              }}
+            >
+              <Unlink2 size={14} strokeWidth={2} aria-hidden />
+            </button>
+          </>
+        )}
+        <div className="mx-1 h-4 w-px bg-white/10" />
+        <button type="button" title="Remove formatting" className="rounded px-1.5 py-0.5 text-[10px] text-zinc-500 hover:bg-white/10 hover:text-white" onMouseDown={(e) => { e.preventDefault(); applyRichCmd("removeFormat"); }}>T̈</button>
+      </div>
+      <div
+        ref={(el) => {
+          richEditorRef.current = el;
+          if (el && !el.dataset.init) {
+            el.dataset.init = "1";
+            el.innerHTML = storyHtml || escapeHtmlStr(storyText) || "";
+          }
+        }}
+        contentEditable
+        suppressContentEditableWarning
+        style={compactStyle}
+        className={editorClassName}
+        onInput={(e) => {
+          if (onRichChange) onRichChange(storyId, (e.target as HTMLElement).innerHTML);
+          queueMicrotask(remeasureOverflow);
+        }}
+        onKeyDown={(e) => e.stopPropagation()}
+        spellCheck={false}
+      />
+      {compactMaxLines != null && showOpenFull && onRequestOpenFull && (
+        <button
+          type="button"
+          className="mt-1.5 w-full rounded-md border border-sky-500/25 bg-sky-500/10 py-1.5 text-[11px] font-semibold text-sky-200/95 transition hover:bg-sky-500/20"
+          onClick={onRequestOpenFull}
+        >
+          abrir completo
+        </button>
+      )}
+    </div>
+  );
+}
+
 function dist(a: Point, b: Point) { return Math.hypot(a.x - b.x, a.y - b.y); }
 
 /** Geometría del bitmap dentro de un marco de imagen (coordenadas mundo). */
@@ -622,6 +798,28 @@ function hitTestImageContentEdit(
     if (dist(lp, { x: c.x, y: c.y }) <= hs) return c.id;
   }
   if (lp.x >= g.L && lp.x <= g.R && lp.y >= g.T && lp.y <= g.B) return "pan";
+  return null;
+}
+
+/** Mismo criterio que el bitmap en marco de imagen: esquinas + pan sobre el interior (AABB mundo). */
+function hitTestInnerContentHandles(
+  pos: Point,
+  aabb: Rect,
+  zoom: number,
+): "nw" | "ne" | "sw" | "se" | "pan" | null {
+  const { x, y, w, h } = aabb;
+  const L = x, T = y, R = x + w, B = y + h;
+  const hs = 10 / zoom;
+  const corners: { id: "nw" | "ne" | "sw" | "se"; x: number; y: number }[] = [
+    { id: "nw", x: L, y: T },
+    { id: "ne", x: R, y: T },
+    { id: "sw", x: L, y: B },
+    { id: "se", x: R, y: B },
+  ];
+  for (const c of corners) {
+    if (dist(pos, { x: c.x, y: c.y }) <= hs) return c.id;
+  }
+  if (pos.x >= L && pos.x <= R && pos.y >= T && pos.y <= B) return "pan";
   return null;
 }
 
@@ -753,6 +951,42 @@ function textLayoutDims(t: TextObject): { w: number; h: number } {
   const w = t.textMode === "point" ? Math.max(t.width, 32) : t.width;
   const h = t.textMode === "point" ? Math.max(t.height, t.fontSize * t.lineHeight + 4) : t.height;
   return { w, h };
+}
+
+/** Entrada para PDF/SVG vectorial: incluye `richRuns` si el texto viene de Designer. */
+function textObjectToVectorPdfOutlineItem(tx: TextObject) {
+  const f = migrateFill(tx.fill);
+  const fillColor = f.type === "solid" && f.color !== "none" ? f.color : "#000000";
+  const richRuns =
+    tx._designerRichSpans && tx._designerRichSpans.length > 0
+      ? tx._designerRichSpans.map((s) => ({
+          text: s.text,
+          style: s.style as SpanStyle | undefined,
+        }))
+      : undefined;
+  return {
+    id: tx.id,
+    name: tx.name,
+    text: tx.text,
+    textMode: tx.textMode,
+    x: tx.x,
+    y: tx.y,
+    width: tx.width,
+    height: tx.height,
+    fontSize: tx.fontSize,
+    fontWeight: tx.fontWeight,
+    lineHeight: tx.lineHeight,
+    letterSpacing: tx.letterSpacing,
+    fontKerning: tx.fontKerning,
+    textAlign: tx.textAlign,
+    paragraphIndent: tx.paragraphIndent,
+    fontFamily: tx.fontFamily,
+    fillColor,
+    stroke: tx.stroke,
+    strokeWidth: tx.strokeWidth,
+    opacity: tx.opacity,
+    richRuns,
+  };
 }
 
 /** Rectángulo visual (tras escala) para AABB, marco de selección y hit-test. */
@@ -1536,6 +1770,41 @@ function mapMaskShapeWithWorldMap(m: ClipMaskShape, mapWorld: (p: Point) => Poin
   return { ...p, points: pts, x: pb.x, y: pb.y, width: pb.w, height: pb.h };
 }
 
+/** Inversa de `mapMaskShapeWithWorldMap` cuando la forma está en mundo y `mapWorldToLocal` lleva cada punto a local. */
+function mapMaskShapeWorldToLocalMap(m: ClipMaskShape, mapWorldToLocal: (wp: Point) => Point): ClipMaskShape {
+  if (m.type === "image") {
+    const im = m as ImageObject;
+    const c1 = mapWorldToLocal({ x: im.x, y: im.y });
+    const c2 = mapWorldToLocal({ x: im.x + im.width, y: im.y + im.height });
+    const x = Math.min(c1.x, c2.x), y = Math.min(c1.y, c2.y);
+    const w = Math.max(Math.abs(c2.x - c1.x), 1), h = Math.max(Math.abs(c2.y - c1.y), 1);
+    return { ...im, x, y, width: w, height: h };
+  }
+  if (m.type === "rect" || m.type === "ellipse") {
+    const c1 = mapWorldToLocal({ x: m.x, y: m.y });
+    const c2 = mapWorldToLocal({ x: m.x + m.width, y: m.y + m.height });
+    const x = Math.min(c1.x, c2.x), y = Math.min(c1.y, c2.y);
+    const w = Math.max(Math.abs(c2.x - c1.x), 1), h = Math.max(Math.abs(c2.y - c1.y), 1);
+    return { ...m, x, y, width: w, height: h };
+  }
+  const p = m as PathObject;
+  if (p.svgPathD && (!p.points || p.points.length < 2)) {
+    const c1 = mapWorldToLocal({ x: p.x, y: p.y });
+    const c2 = mapWorldToLocal({ x: p.x + p.width, y: p.y + p.height });
+    const x = Math.min(c1.x, c2.x), y = Math.min(c1.y, c2.y);
+    const w = Math.max(Math.abs(c2.x - c1.x), 1), h = Math.max(Math.abs(c2.y - c1.y), 1);
+    return { ...p, x, y, width: w, height: h };
+  }
+  const pts = p.points.map((pt) => ({
+    ...pt,
+    anchor: mapWorldToLocal(pt.anchor),
+    handleIn: mapWorldToLocal(pt.handleIn),
+    handleOut: mapWorldToLocal(pt.handleOut),
+  }));
+  const pb = getPathBoundsFromPoints(pts);
+  return { ...p, points: pts, x: pb.x, y: pb.y, width: pb.w, height: pb.h };
+}
+
 function mapObjectPointsWithWorld(
   o: FreehandObject,
   mapWorld: (p: Point) => Point,
@@ -1662,6 +1931,27 @@ function mapChildToWorldWithChain(outerChain: (p: Point) => Point, o: FreehandOb
     } as ClippingContainerObject;
   }
   return mapObjectPointsWithWorld(o, outerChain);
+}
+
+/** Inversa de `mapChildToWorldWithChain` (aislamiento contenido → coordenadas locales del clip). */
+function mapChildFromWorldWithChain(outerWorldToLocal: (wp: Point) => Point, o: FreehandObject): FreehandObject {
+  if (o.type === "clippingContainer") {
+    const inner = o as ClippingContainerObject;
+    const chainInv = (wp: Point) => worldPointToLocal(inner, outerWorldToLocal(wp));
+    const maskL = mapMaskShapeWorldToLocalMap(inner.mask, chainInv);
+    const contentL = inner.content.map((ch) => mapChildFromWorldWithChain(chainInv, ch));
+    const ub = clipContainerOuterBoundsFromMask(maskL);
+    return {
+      ...inner,
+      x: ub.x,
+      y: ub.y,
+      width: ub.w,
+      height: ub.h,
+      mask: offsetShapeWorldToLocal(maskL, ub.x, ub.y),
+      content: contentL.map((ch) => offsetObjectWorldToLocal(ch, ub.x, ub.y)),
+    } as ClippingContainerObject;
+  }
+  return mapObjectPointsWithWorld(o, outerWorldToLocal);
 }
 
 function releaseClippingContainerToObjects(c: ClippingContainerObject): FreehandObject[] {
@@ -1985,6 +2275,9 @@ function getPathRings(p: PathObject): BezierPoint[][] {
   return rings;
 }
 
+/** Pixels / zoom: misma distancia que el hit-test al hacer clic para cerrar el trazo en el primer ancla. */
+const PEN_CLOSE_TO_START_PX = 12;
+
 function bezierToSvgD(points: BezierPoint[], closed: boolean): string {
   if (points.length === 0) return "";
   let d = `M ${points[0].anchor.x} ${points[0].anchor.y}`;
@@ -1997,6 +2290,26 @@ function bezierToSvgD(points: BezierPoint[], closed: boolean): string {
     d += ` C ${last.handleOut.x} ${last.handleOut.y} ${first.handleIn.x} ${first.handleIn.y} ${first.anchor.x} ${first.anchor.y} Z`;
   }
   return d;
+}
+
+/**
+ * Siguiente tramo de la pluma antes de colocar el ancla: mismo esquema que une vértices en `bezierToSvgD`
+ * (`C prev.handleOut … next.handleIn … next.anchor`). La posición `handleIn` del vértice futuro se estima
+ * (suave/cúspide: reflejo del control saliente respecto al cursor; esquina: control entrante colapsado en el cursor).
+ */
+function penRubberBandSegmentD(last: BezierPoint, cursor: Point): string {
+  const p0 = last.anchor;
+  const p1 = last.handleOut;
+  const p3 = cursor;
+  if (dist(p0, p1) < 1) {
+    return `M ${p0.x} ${p0.y} L ${p3.x} ${p3.y}`;
+  }
+  const mode = getVertexMode(last);
+  if (mode === "corner") {
+    return `M ${p0.x} ${p0.y} C ${p1.x} ${p1.y} ${p3.x} ${p3.y} ${p3.x} ${p3.y}`;
+  }
+  const p2 = { x: 2 * p3.x - p1.x, y: 2 * p3.y - p1.y };
+  return `M ${p0.x} ${p0.y} C ${p1.x} ${p1.y} ${p2.x} ${p2.y} ${p3.x} ${p3.y}`;
 }
 
 function pathObjToD(obj: PathObject): string {
@@ -2098,6 +2411,89 @@ function renderMaskShapeClipInner(m: ClipMaskShape): React.ReactNode {
   return renderPathClipMaskGeometry(m as PathObject);
 }
 
+/** Silueta de la máscara en local del clip; se compone con el mismo `transform` que el contenedor. Solo guía visual. */
+function renderClipContentIsolationMaskGuide(m: ClipMaskShape, zoom: number): React.ReactNode {
+  const sw = 1 / zoom;
+  const stroke = "rgba(148,163,184,0.5)";
+  const fill = "rgba(148,163,184,0.06)";
+  const common = { fill, stroke, strokeWidth: sw };
+  if (m.type === "image") {
+    const im = m as ImageObject;
+    const transform = buildObjTransform(im);
+    return (
+      <rect
+        x={im.x}
+        y={im.y}
+        width={im.width}
+        height={im.height}
+        {...common}
+        transform={transform}
+      />
+    );
+  }
+  if (m.type === "rect") {
+    const r = m as RectObject;
+    const transform = buildObjTransform(r);
+    return (
+      <rect
+        x={r.x}
+        y={r.y}
+        width={r.width}
+        height={r.height}
+        rx={r.rx ?? 0}
+        {...common}
+        transform={transform}
+      />
+    );
+  }
+  if (m.type === "ellipse") {
+    const e = m as EllipseObject;
+    const transform = buildObjTransform(e);
+    return (
+      <ellipse
+        cx={e.x + e.width / 2}
+        cy={e.y + e.height / 2}
+        rx={e.width / 2}
+        ry={e.height / 2}
+        {...common}
+        transform={transform}
+      />
+    );
+  }
+  const p = m as PathObject;
+  const d = pathObjToD(p);
+  const fr = clipMaskFillRuleForPath(p);
+  const transform = buildObjTransform(p);
+  const hasIntrinsic =
+    p.svgPathIntrinsicW != null &&
+    p.svgPathIntrinsicH != null &&
+    p.svgPathD &&
+    (!p.points || p.points.length < 2);
+  if (hasIntrinsic) {
+    const iw = p.svgPathIntrinsicW!;
+    const ih = p.svgPathIntrinsicH!;
+    const sx = p.width / Math.max(iw, 1e-9);
+    const sy = p.height / Math.max(ih, 1e-9);
+    const inner = (
+      <g transform={`translate(${p.x} ${p.y}) scale(${sx} ${sy})`}>
+        <path d={d} {...common} fillRule={fr} />
+      </g>
+    );
+    return transform ? <g transform={transform}>{inner}</g> : inner;
+  }
+  const imp = p.svgPathMatrix;
+  const innerM = imp ? `matrix(${imp.a},${imp.b},${imp.c},${imp.d},${imp.e},${imp.f})` : undefined;
+  if (innerM) {
+    const inner = (
+      <g transform={innerM}>
+        <path d={d} {...common} fillRule={fr} />
+      </g>
+    );
+    return transform ? <g transform={transform}>{inner}</g> : inner;
+  }
+  return <path d={d} {...common} fillRule={fr} transform={transform} />;
+}
+
 function splitBezierSegment(pts: BezierPoint[], segIdx: number, t: number): BezierPoint[] {
   const j = (segIdx + 1) % pts.length;
   const p0 = pts[segIdx].anchor, cp1 = pts[segIdx].handleOut;
@@ -2134,7 +2530,14 @@ function svgStrokeDashArray(raw: string | undefined): string | undefined {
 
 // ── Render SVG object ───────────────────────────────────────────────────
 
-function renderObj(obj: FreehandObject, allObjects: FreehandObject[]): React.ReactNode {
+type RenderObjOpts = { /** Modo P: sin borde punteado ni «cromo» extra de marcos de texto encadenados. */ canvasZenMode?: boolean };
+
+function renderObj(
+  obj: FreehandObject,
+  allObjects: FreehandObject[],
+  selectedIds?: Set<string>,
+  opts?: RenderObjOpts,
+): React.ReactNode {
   if (!obj.visible || obj.isClipMask) return null;
   const transform = buildObjTransform(obj);
   const fill = migrateFill(obj.fill);
@@ -2155,6 +2558,7 @@ function renderObj(obj: FreehandObject, allObjects: FreehandObject[]): React.Rea
       if (rObj.isImageFrame) {
         const ifc = rObj.imageFrameContent;
         const cid = `imf-clip-${rObj.id}`;
+        const frameSelected = selectedIds == null || selectedIds.has(rObj.id);
         return (
           <g key={rObj.id} transform={transform} opacity={rObj.opacity}>
             <defs>
@@ -2162,7 +2566,17 @@ function renderObj(obj: FreehandObject, allObjects: FreehandObject[]): React.Rea
                 <rect x={rObj.x} y={rObj.y} width={rObj.width} height={rObj.height} rx={rObj.rx} />
               </clipPath>
             </defs>
-            <rect x={rObj.x} y={rObj.y} width={rObj.width} height={rObj.height} rx={rObj.rx} fill={fillAttr} stroke={rObj.stroke} strokeWidth={rObj.strokeWidth} strokeDasharray={svgStrokeDashArray(rObj.strokeDasharray)} />
+            <rect
+              x={rObj.x}
+              y={rObj.y}
+              width={rObj.width}
+              height={rObj.height}
+              rx={rObj.rx}
+              fill={fillAttr}
+              stroke={frameSelected ? rObj.stroke : "none"}
+              strokeWidth={frameSelected ? rObj.strokeWidth : 0}
+              strokeDasharray={frameSelected ? svgStrokeDashArray(rObj.strokeDasharray) : undefined}
+            />
             {ifc?.src ? (
               <image
                 clipPath={`url(#${cid})`}
@@ -2270,17 +2684,40 @@ function renderObj(obj: FreehandObject, allObjects: FreehandObject[]): React.Rea
           if (!span.style || Object.keys(span.style).length === 0) {
             return <React.Fragment key={si}>{span.text}</React.Fragment>;
           }
+          const st = span.style;
           const ss: React.CSSProperties = {};
-          if (span.style.fontWeight) ss.fontWeight = span.style.fontWeight;
-          if (span.style.fontStyle) ss.fontStyle = span.style.fontStyle;
-          if (span.style.textUnderline || span.style.textStrikethrough) {
-            ss.textDecoration = [span.style.textUnderline && "underline", span.style.textStrikethrough && "line-through"].filter(Boolean).join(" ");
+          if (st.fontWeight) ss.fontWeight = st.fontWeight;
+          if (st.fontStyle) ss.fontStyle = st.fontStyle;
+          if (st.textUnderline || st.textStrikethrough) {
+            ss.textDecoration = [st.textUnderline && "underline", st.textStrikethrough && "line-through"].filter(Boolean).join(" ");
           }
-          if (span.style.fontSize != null) ss.fontSize = span.style.fontSize;
-          if (span.style.color) ss.color = span.style.color;
-          if (span.style.fontFamily) ss.fontFamily = span.style.fontFamily;
-          if (span.style.letterSpacing != null) ss.letterSpacing = span.style.letterSpacing;
-          return <span key={si} style={ss}>{span.text}</span>;
+          if (st.fontSize != null) ss.fontSize = st.fontSize;
+          if (st.color) ss.color = st.color;
+          if (st.fontFamily) ss.fontFamily = st.fontFamily;
+          if (st.letterSpacing != null) ss.letterSpacing = st.letterSpacing;
+          if (st.linkHref) {
+            return (
+              <a
+                key={si}
+                href={st.linkHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  ...ss,
+                  color: (ss.color as string) || "#38bdf8",
+                  textDecoration: ss.textDecoration ?? "underline",
+                  pointerEvents: "auto",
+                }}
+              >
+                {span.text}
+              </a>
+            );
+          }
+          return (
+            <span key={si} style={ss}>
+              {span.text}
+            </span>
+          );
         });
       };
       const content = hasRich ? renderRichContent() : (t.text || "\u00a0");
@@ -2342,7 +2779,7 @@ function renderObj(obj: FreehandObject, allObjects: FreehandObject[]): React.Rea
       const textT = textSvgTransform(t);
       return (
         <g key={obj.id} data-fh-text={t.id} transform={textT}>
-          {t.isTextFrame && (
+          {t.isTextFrame && !opts?.canvasZenMode && (
             <rect
               x={t.x} y={t.y} width={foW} height={foH}
               fill="none" stroke="#38bdf8" strokeWidth={0.75}
@@ -2358,11 +2795,33 @@ function renderObj(obj: FreehandObject, allObjects: FreehandObject[]): React.Rea
       );
     }
     case "image":
-      return <image key={obj.id} href={(obj as ImageObject).src} x={obj.x} y={obj.y} width={obj.width} height={obj.height} preserveAspectRatio="xMidYMid meet" transform={transform} opacity={obj.opacity} />;
+      return (
+        <image
+          href={(obj as ImageObject).src}
+          x={obj.x}
+          y={obj.y}
+          width={obj.width}
+          height={obj.height}
+          preserveAspectRatio="xMidYMid meet"
+          transform={transform}
+          opacity={obj.opacity}
+        />
+      );
     case "booleanGroup": {
       const bg = obj as BooleanGroupObject;
       if (bg.cachedResult) {
-        return <image key={obj.id} href={bg.cachedResult} x={obj.x} y={obj.y} width={obj.width} height={obj.height} preserveAspectRatio="none" transform={transform} opacity={obj.opacity} />;
+        return (
+          <image
+            href={bg.cachedResult}
+            x={bg.x}
+            y={bg.y}
+            width={bg.width}
+            height={bg.height}
+            preserveAspectRatio="none"
+            transform={transform}
+            opacity={bg.opacity}
+          />
+        );
       }
       return null;
     }
@@ -2377,7 +2836,11 @@ function renderObj(obj: FreehandObject, allObjects: FreehandObject[]): React.Rea
             <clipPath id={cid} clipPathUnits="userSpaceOnUse">
               {renderMaskShapeClipInner(cc.mask)}
             </clipPath>
-            <g clipPath={`url(#${cid})`}>{cc.content.map((ch) => renderObj(ch, allObjects))}</g>
+            <g clipPath={`url(#${cid})`}>
+              {cc.content.map((ch, idx) => (
+                <g key={`${cc.id}-clipc-${idx}-${ch.id}`}>{renderObj(ch, allObjects, selectedIds, opts)}</g>
+              ))}
+            </g>
           </g>
         </g>
       );
@@ -3110,22 +3573,6 @@ function layerRowIcon(o: FreehandObject) {
   }
 }
 
-function selectionKindLabel(objs: FreehandObject[]): string {
-  if (objs.length === 0) return "No selection";
-  if (objs.length > 1) return `${objs.length} objects selected`;
-  const o = objs[0];
-  switch (o.type) {
-    case "rect": return o.isImageFrame ? "Image Frame" : "Rectangle";
-    case "ellipse": return "Ellipse";
-    case "path": return "Path";
-    case "text": return o.isTextFrame ? "Text Frame" : "Text";
-    case "image": return "Image";
-    case "booleanGroup": return "Boolean group";
-    case "clippingContainer": return "Clipping container";
-    default: return "Object";
-  }
-}
-
 /** Relleno/trazo para la siguiente forma o trazo a pluma, deducidos de un objeto con estilo vectorial. */
 function creationStyleSnapshotFromObject(o: FreehandObject): {
   fillColor: string | null;
@@ -3217,6 +3664,18 @@ export default function FreehandStudio({
   const [penPoints, setPenPoints] = useState<BezierPoint[]>([]);
   const [isPenDrawing, setIsPenDrawing] = useState(false);
   const [penDragging, setPenDragging] = useState(false);
+  /** Posición en lienzo del cursor para la línea guía (tramo siguiente antes de clic). */
+  const [penHoverCanvas, setPenHoverCanvas] = useState<Point | null>(null);
+  /** Cursor dentro del radio de cierre sobre el primer ancla (mismo criterio que el clic). */
+  const penHoverNearPathStart = useMemo(() => {
+    if (!penHoverCanvas || penDragging || !isPenDrawing || penPoints.length < 2) return false;
+    return dist(penHoverCanvas, penPoints[0]!.anchor) < PEN_CLOSE_TO_START_PX / viewport.zoom;
+  }, [penHoverCanvas, penDragging, isPenDrawing, penPoints, viewport.zoom]);
+
+  /** Modal ampliado para editar historia del marco de texto (oculta el panel Propiedades mientras está abierto). */
+  const [designerStoryModalOpen, setDesignerStoryModalOpen] = useState(false);
+  const [designerStoryModalObjectId, setDesignerStoryModalObjectId] = useState<string | null>(null);
+  const [designerStoryModalRect, setDesignerStoryModalRect] = useState({ x: 48, y: 64, w: 760, h: 560 });
 
   // Drag state
   const [dragState, setDragState] = useState<{
@@ -3293,11 +3752,18 @@ export default function FreehandStudio({
 
   /** Designer: edición en lienzo del contenido (límites visibles, pan/escala). */
   const [imageFrameContentEditId, setImageFrameContentEditId] = useState<string | null>(null);
+  /** Pegar dentro / aislamiento de contenido: transformar objeto como bitmap en marco de imagen. */
+  const [clipContentEditId, setClipContentEditId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!imageFrameContentEditId) return;
     if (!selectedIds.has(imageFrameContentEditId)) setImageFrameContentEditId(null);
   }, [selectedIds, imageFrameContentEditId]);
+
+  useEffect(() => {
+    if (!clipContentEditId) return;
+    if (!selectedIds.has(clipContentEditId)) setClipContentEditId(null);
+  }, [selectedIds, clipContentEditId]);
 
   /** Paso de duplicado (⌘D): por defecto 20×20 px mundo; tras Alt+arrastre copia = último desplazamiento. */
   const duplicateStepRef = useRef({ dx: 20, dy: 20 });
@@ -3387,6 +3853,12 @@ export default function FreehandStudio({
   // Isolation mode for BooleanGroups
   const [isolationDepth, setIsolationDepth] = useState(0);
   const isolationStackRef = useRef<IsolationFrame[]>([]);
+
+  const isClipContentIsolation = useMemo(() => {
+    if (isolationDepth === 0) return false;
+    const top = isolationStackRef.current[isolationStackRef.current.length - 1];
+    return !!(top && top.kind === "clipping" && top.editMode === "content");
+  }, [isolationDepth, objects]);
 
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -3582,32 +4054,7 @@ export default function FreehandStudio({
         if (textObjs.length > 0) {
           strRaw = await substituteTextWithOutlinedPathsInSvg(
             strRaw,
-            textObjs.map((tx) => {
-              const f = migrateFill(tx.fill);
-              const fillColor = f.type === "solid" && f.color !== "none" ? f.color : "#000000";
-              return {
-                id: tx.id,
-                name: tx.name,
-                text: tx.text,
-                textMode: tx.textMode,
-                x: tx.x,
-                y: tx.y,
-                width: tx.width,
-                height: tx.height,
-                fontSize: tx.fontSize,
-                fontWeight: tx.fontWeight,
-                lineHeight: tx.lineHeight,
-                letterSpacing: tx.letterSpacing,
-                fontKerning: tx.fontKerning,
-                textAlign: tx.textAlign,
-                paragraphIndent: tx.paragraphIndent,
-                fontFamily: tx.fontFamily,
-                fillColor,
-                stroke: tx.stroke,
-                strokeWidth: tx.strokeWidth,
-                opacity: tx.opacity,
-              };
-            }),
+            textObjs.map(textObjectToVectorPdfOutlineItem),
           );
         }
         return strRaw;
@@ -3910,6 +4357,27 @@ export default function FreehandStudio({
   useEffect(() => {
     if (quickEditMode && selectedIds.size !== 1) setQuickEditMode(null);
   }, [selectedIds, quickEditMode]);
+
+  useEffect(() => {
+    if (!designerStoryModalOpen || !designerStoryModalObjectId) return;
+    if (!firstSelected || firstSelected.id !== designerStoryModalObjectId) {
+      setDesignerStoryModalOpen(false);
+      setDesignerStoryModalObjectId(null);
+    }
+  }, [designerStoryModalOpen, designerStoryModalObjectId, firstSelected]);
+
+  useEffect(() => {
+    if (!designerStoryModalOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setDesignerStoryModalOpen(false);
+        setDesignerStoryModalObjectId(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [designerStoryModalOpen]);
+
   const groupBounds = useMemo(() => getGroupBounds(selectedObjects), [selectedObjects]);
   const selectionFrame = useMemo(() => computeOrientedSelectionFrame(selectedObjects), [selectedObjects]);
 
@@ -3925,6 +4393,20 @@ export default function FreehandStudio({
       Boolean((selectedObjects[0] as RectObject | undefined)?.imageFrameContent?.src),
     [designerMode, imageFrameContentEditId, activeTool, selectedObjects],
   );
+
+  /** Mismo patrón que marco de imagen: contenido pegado dentro de clip (aislamiento contenido). */
+  const suppressSelectionForClipContentEdit = useMemo(
+    () =>
+      isClipContentIsolation &&
+      clipContentEditId != null &&
+      (activeTool === "select" || activeTool === "directSelect") &&
+      selectedObjects.length === 1 &&
+      selectedObjects[0]?.id === clipContentEditId,
+    [isClipContentIsolation, clipContentEditId, activeTool, selectedObjects],
+  );
+
+  const suppressOuterTransformHandles =
+    suppressSelectionForImageContentEdit || suppressSelectionForClipContentEdit;
 
   /** Vertex modes of currently selected anchors (direct select). */
   const selectedAnchorVertexHint = useMemo(() => {
@@ -4186,6 +4668,7 @@ export default function FreehandStudio({
   // ── Pen finish ────────────────────────────────────────────────────
 
   const finishPenPath = useCallback((closed: boolean) => {
+    setPenHoverCanvas(null);
     if (penPoints.length < 2) { setPenPoints([]); setIsPenDrawing(false); return; }
     const bounds = getPathBoundsFromPoints(penPoints);
     const pathObj: PathObject = {
@@ -4202,8 +4685,9 @@ export default function FreehandStudio({
     setObjects(next);
     setSelectedIds(new Set([pathObj.id]));
     setPenPoints([]); setIsPenDrawing(false);
+    if (closed) setActiveTool("select");
     pushHistory(next, new Set([pathObj.id]));
-  }, [penPoints, objects, fillColor, strokeColor, strokeWidth, strokeLinecap, strokeLinejoin, strokeDasharray, pushHistory]);
+  }, [penPoints, objects, fillColor, strokeColor, strokeWidth, strokeLinecap, strokeLinejoin, strokeDasharray, pushHistory, setActiveTool]);
 
   // ── Object mutations ──────────────────────────────────────────────
 
@@ -4376,6 +4860,7 @@ export default function FreehandStudio({
         y: t.y,
         width: t.width,
         height: t.height,
+        fontFamily: t.fontFamily,
         fontSize: t.fontSize,
         fontWeight: t.fontWeight,
         lineHeight: t.lineHeight,
@@ -4852,14 +5337,17 @@ export default function FreehandStudio({
   }, []);
 
   const enterClippingIsolation = useCallback((containerId: string, mode: "content" | "mask" = "content") => {
+    setClipContentEditId(null);
     const objs = objectsRef.current;
     const container = objs.find((o) => o.id === containerId && o.type === "clippingContainer") as ClippingContainerObject | undefined;
     if (!container) return;
+    const root = (p: Point) => localPointToWorld(container, p);
     const entry: IsolationFrame = {
       kind: "clipping",
       containerId,
       editMode: mode,
-      storedContent: mode === "mask" ? container.content.map((c) => ({ ...c })) : null,
+      storedContent:
+        mode === "mask" ? container.content.map((ch) => mapChildToWorldWithChain(root, ch)) : null,
       parentObjects: objs.map((o) => ({ ...o })),
       parentSelectedIds: new Set(selectedIdsRef.current),
       parentHistory: [...historyRef.current],
@@ -4867,11 +5355,12 @@ export default function FreehandStudio({
     };
     isolationStackRef.current.push(entry);
     if (mode === "content") {
-      const children = container.content.map((c) => ({ ...c }));
+      const children = container.content.map((ch) => mapChildToWorldWithChain(root, ch));
       setObjects(children);
       historyRef.current = [{ objects: [...children], sel: [] }];
     } else {
-      const maskOnly: FreehandObject[] = [{ ...container.mask } as FreehandObject];
+      const maskW = mapMaskShapeWithWorldMap(container.mask, root);
+      const maskOnly: FreehandObject[] = [maskW as FreehandObject];
       setObjects(maskOnly);
       historyRef.current = [{ objects: [...maskOnly], sel: [] }];
     }
@@ -4881,6 +5370,7 @@ export default function FreehandStudio({
   }, []);
 
   const switchClippingIsolationMode = useCallback((target: "content" | "mask") => {
+    setClipContentEditId(null);
     const top = isolationStackRef.current[isolationStackRef.current.length - 1];
     if (!top || top.kind !== "clipping") return;
     const parentC = top.parentObjects.find((o) => o.id === top.containerId) as ClippingContainerObject | undefined;
@@ -4890,14 +5380,17 @@ export default function FreehandStudio({
       if (top.editMode !== "content") return;
       top.storedContent = objectsRef.current.map((c) => ({ ...c }));
       top.editMode = "mask";
-      setObjects([{ ...parentC.mask } as FreehandObject]);
+      const r = (p: Point) => localPointToWorld(parentC, p);
+      const maskW = mapMaskShapeWithWorldMap(parentC.mask, r);
+      setObjects([maskW as FreehandObject]);
       setSelectedIds(new Set([parentC.mask.id]));
     } else {
       const m = objectsRef.current[0] as ClipMaskShape | undefined;
       if (!m) return;
       top.editMode = "content";
+      const maskLocal = mapMaskShapeWorldToLocalMap(m, (wp) => worldPointToLocal(parentC, wp));
       top.parentObjects = top.parentObjects.map((o) =>
-        o.id === top.containerId ? { ...(o as ClippingContainerObject), mask: m } : o
+        o.id === top.containerId ? { ...(o as ClippingContainerObject), mask: maskLocal } : o
       );
       const sc = top.storedContent ?? [];
       top.storedContent = null;
@@ -4910,17 +5403,19 @@ export default function FreehandStudio({
     const frame = isolationStackRef.current.pop();
     if (!frame) return;
     if (frame.kind === "clipping") {
+      setClipContentEditId(null);
       const current = objectsRef.current;
       const parentC = frame.parentObjects.find((o) => o.id === frame.containerId) as ClippingContainerObject | undefined;
       if (!parentC) return;
       let mask: ClipMaskShape = parentC.mask;
       let content: FreehandObject[];
+      const outerInv = (wp: Point) => worldPointToLocal(parentC, wp);
       if (frame.editMode === "mask") {
         const m = current[0] as ClipMaskShape | undefined;
         if (m) mask = m;
-        content = (frame.storedContent ?? []).map((c) => ({ ...c }));
+        content = (frame.storedContent ?? []).map((c) => mapChildFromWorldWithChain(outerInv, c));
       } else {
-        content = current.map((c) => ({ ...c }));
+        content = current.map((c) => mapChildFromWorldWithChain(outerInv, c));
       }
       const ub = clipContainerOuterBoundsFromMask(mask);
       const updated: ClippingContainerObject = {
@@ -5422,32 +5917,7 @@ export default function FreehandStudio({
           if (textObjs.length > 0) {
             pdfMarkup = await substituteTextWithOutlinedPathsInSvg(
               strRaw,
-              textObjs.map((tx) => {
-                const f = migrateFill(tx.fill);
-                const fillColor = f.type === "solid" && f.color !== "none" ? f.color : "#000000";
-                return {
-                  id: tx.id,
-                  name: tx.name,
-                  text: tx.text,
-                  textMode: tx.textMode,
-                  x: tx.x,
-                  y: tx.y,
-                  width: tx.width,
-                  height: tx.height,
-                  fontSize: tx.fontSize,
-                  fontWeight: tx.fontWeight,
-                  lineHeight: tx.lineHeight,
-                  letterSpacing: tx.letterSpacing,
-                  fontKerning: tx.fontKerning,
-                  textAlign: tx.textAlign,
-                  paragraphIndent: tx.paragraphIndent,
-                  fontFamily: tx.fontFamily,
-                  fillColor,
-                  stroke: tx.stroke,
-                  strokeWidth: tx.strokeWidth,
-                  opacity: tx.opacity,
-                };
-              }),
+              textObjs.map(textObjectToVectorPdfOutlineItem),
             );
           }
           await downloadSvgAsVectorPdf(pdfMarkup, name);
@@ -5462,32 +5932,7 @@ export default function FreehandStudio({
           const abs = artboardsRef.current;
           const { default: JSZip } = await import("jszip");
           const { svgMarkupToPdfBlob } = await import("./freehand/download-vector-pdf");
-          const mapTextForPdf = (tx: TextObject) => {
-            const f = migrateFill(tx.fill);
-            const fillColor = f.type === "solid" && f.color !== "none" ? f.color : "#000000";
-            return {
-              id: tx.id,
-              name: tx.name,
-              text: tx.text,
-              textMode: tx.textMode,
-              x: tx.x,
-              y: tx.y,
-              width: tx.width,
-              height: tx.height,
-              fontSize: tx.fontSize,
-              fontWeight: tx.fontWeight,
-              lineHeight: tx.lineHeight,
-              letterSpacing: tx.letterSpacing,
-              fontKerning: tx.fontKerning,
-              textAlign: tx.textAlign,
-              paragraphIndent: tx.paragraphIndent,
-              fontFamily: tx.fontFamily,
-              fillColor,
-              stroke: tx.stroke,
-              strokeWidth: tx.strokeWidth,
-              opacity: tx.opacity,
-            };
-          };
+          const mapTextForPdf = (tx: TextObject) => textObjectToVectorPdfOutlineItem(tx);
           const entries: { fname: string; blob: Blob }[] = [];
           const ext =
             opts.format === "svg" ? "svg" : opts.format === "jpg" ? "jpg" : opts.format === "pdf" ? "pdf" : "png";
@@ -5623,6 +6068,7 @@ export default function FreehandStudio({
           return;
         }
         e.preventDefault();
+        setClipContentEditId(null);
         setCanvasZenMode((z) => {
           if (z) scheduleFitAllAfterLayout();
           return !z;
@@ -5765,6 +6211,10 @@ export default function FreehandStudio({
           scheduleFitAllAfterLayout();
           return;
         }
+        if (clipContentEditId) {
+          setClipContentEditId(null);
+          return;
+        }
         if (designerMode && imageFrameContentEditId) {
           setImageFrameContentEditId(null);
           return;
@@ -5816,7 +6266,7 @@ export default function FreehandStudio({
       undo, redo, pushHistory, deleteSelected, duplicateSelected, groupSelected,
       ungroupSelected, bringForward, sendBackward, finishPenPath, deleteSelectedPoints, exitIsolation,
       copySelectedObjects, cutSelectedObjects, pasteClipboardObjects, pasteInside, quickExportSelectionPng, convertTextToOutlines,
-      designerMode, imageFrameContentEditId, canvasZenMode, scheduleFitAllAfterLayout]);
+      designerMode, imageFrameContentEditId, clipContentEditId, canvasZenMode, scheduleFitAllAfterLayout]);
 
   // ── Mouse handlers ────────────────────────────────────────────────
 
@@ -5963,7 +6413,7 @@ export default function FreehandStudio({
         setPenDragging(true);
         setDragState({ type: "penHandle", startX: e.clientX, startY: e.clientY, startCanvas: pos });
       } else {
-        if (penPoints.length > 1 && dist(pos, penPoints[0].anchor) < 12 / viewport.zoom) {
+        if (penPoints.length > 1 && dist(pos, penPoints[0].anchor) < PEN_CLOSE_TO_START_PX / viewport.zoom) {
           finishPenPath(true);
           return;
         }
@@ -6290,14 +6740,73 @@ export default function FreehandStudio({
       }
     }
 
-    const hideFrameHandlesForImageContentEdit =
-      designerMode &&
-      imageFrameContentEditId != null &&
-      selectedIds.size === 1 &&
-      selectedIds.has(imageFrameContentEditId);
+    // Contenido dentro de máscara (aislamiento): pan / escala con mismas esquinas que marco de imagen
+    if (
+      isClipContentIsolation &&
+      clipContentEditId &&
+      activeTool === "select" &&
+      e.button === 0 &&
+      !extendSel
+    ) {
+      const edObj = objects.find((o) => o.id === clipContentEditId);
+      if (edObj && !edObj.locked && edObj.visible && selectedIds.has(clipContentEditId) && selectedIds.size === 1) {
+        const aabb = getVisualAABB(edObj, objects);
+        const hitInner = hitTestInnerContentHandles(pos, aabb, viewport.zoom);
+        if (hitInner === "pan") {
+          const positions = new Map<string, Point>();
+          const pathPointsMap = new Map<string, BezierPoint[]>();
+          positions.set(edObj.id, { x: edObj.x, y: edObj.y });
+          if (edObj.type === "path") {
+            pathPointsMap.set(
+              edObj.id,
+              (edObj as PathObject).points.map((pt) => ({
+                ...pt,
+                anchor: { ...pt.anchor },
+                handleIn: { ...pt.handleIn },
+                handleOut: { ...pt.handleOut },
+              })),
+            );
+          }
+          setDragState({ type: "move", startX: e.clientX, startY: e.clientY, positions, pathPointsMap });
+          return;
+        }
+        if (hitInner === "nw" || hitInner === "ne" || hitInner === "sw" || hitInner === "se") {
+          const f = selectionFrame;
+          if (f && selectedObjects.length > 0) {
+            const allBounds = new Map<string, Rect>();
+            const resizeSnapshot = new Map<string, FreehandObject>();
+            for (const so of selectedObjects) {
+              allBounds.set(so.id, getVisualAABB(so, objects));
+              resizeSnapshot.set(so.id, deepCloneFreehandObjectKeepIds(so));
+            }
+            setDragState({
+              type: "resize",
+              startX: e.clientX,
+              startY: e.clientY,
+              handle: hitInner,
+              bounds: { ...groupBounds },
+              initialOrientedFrame: { ...f },
+              allBounds,
+              resizeSnapshot,
+            });
+            return;
+          }
+        }
+      }
+    }
+
+    const hideFrameHandlesForInnerContent =
+      (designerMode &&
+        imageFrameContentEditId != null &&
+        selectedIds.size === 1 &&
+        selectedIds.has(imageFrameContentEditId)) ||
+      (isClipContentIsolation &&
+        clipContentEditId != null &&
+        selectedIds.size === 1 &&
+        selectedIds.has(clipContentEditId));
 
     // Resize/rotate handles (omitir si se amplía selección: el clic debe llegar al objeto bajo el marco)
-    if (selectedObjects.length > 0 && selectionFrame && !extendSel && !hideFrameHandlesForImageContentEdit) {
+    if (selectedObjects.length > 0 && selectionFrame && !extendSel && !hideFrameHandlesForInnerContent) {
       const f = selectionFrame;
       const handleSize = 8 / viewport.zoom;
       const rotOffset = 14 / viewport.zoom;
@@ -6442,16 +6951,18 @@ export default function FreehandStudio({
     if (!extendSel) {
       setSelectedIds(new Set());
       if (designerMode) setImageFrameContentEditId(null);
+      setClipContentEditId(null);
     }
     setDragState({ type: "marquee", startX: e.clientX, startY: e.clientY, marqueeOrigin: pos, currentCanvas: pos, shiftKey: extendSel });
   }, [activeTool, viewport, spaceHeld, objects, artboards, selectedIds, selectedObjects, groupBounds, selectionFrame,
       screenToCanvas, isPenDrawing, penPoints, finishPenPath, resolveSelection, addPointOnSegment, pushHistory,
-      layoutGuides, showLayoutGuides, designerMode, imageFrameContentEditId, setupGuideWindowListeners]);
+      layoutGuides, showLayoutGuides, designerMode, imageFrameContentEditId, setupGuideWindowListeners,
+      isClipContentIsolation, clipContentEditId]);
 
   const handleMouseMove = useCallback((e: ReactMouseEvent) => {
     if (!dragState) {
+      const pos = screenToCanvas(e.clientX, e.clientY);
       if (activeTool === "select" || activeTool === "directSelect") {
-        const pos = screenToCanvas(e.clientX, e.clientY);
         const threshold = 8 / viewport.zoom;
         let found: string | null = null;
         for (let i = objects.length - 1; i >= 0; i--) {
@@ -6464,6 +6975,11 @@ export default function FreehandStudio({
           }
         }
         setHoverCanvasId((prev) => (prev === found ? prev : found));
+      }
+      if (activeTool === "pen" && isPenDrawing && penPoints.length >= 1 && !penDragging) {
+        setPenHoverCanvas(pos);
+      } else {
+        setPenHoverCanvas((h) => (h == null ? h : null));
       }
       return;
     }
@@ -6591,6 +7107,7 @@ export default function FreehandStudio({
     }
 
     if (dragState.type === "penHandle" && penPoints.length > 0) {
+      setPenHoverCanvas(null);
       const pos = screenToCanvas(e.clientX, e.clientY);
       setPenPoints((prev) => {
         const pts = [...prev];
@@ -7042,7 +7559,7 @@ export default function FreehandStudio({
       );
       return;
     }
-  }, [dragState, viewport, objects, artboards, selectedIds, snapEnabled, screenToCanvas, penPoints.length, activeTool]);
+  }, [dragState, viewport, objects, artboards, selectedIds, snapEnabled, screenToCanvas, penPoints.length, activeTool, isPenDrawing, penDragging]);
 
   const handleMouseUp = useCallback((e: ReactMouseEvent) => {
     const dsUp = dragStateRef.current;
@@ -7747,14 +8264,6 @@ export default function FreehandStudio({
   //  RENDER
   // ═══════════════════════════════════════════════════════════════════
 
-  const studioMode: "Object" | "Edit" | "Mask" =
-    isolationDepth === 0
-      ? "Object"
-      : (() => {
-          const fr = isolationStackRef.current[isolationStackRef.current.length - 1];
-          return fr?.kind === "clipping" && fr.editMode === "mask" ? "Mask" : "Edit";
-        })();
-
   return (
     <div
       ref={studioShellRef}
@@ -7783,31 +8292,92 @@ export default function FreehandStudio({
       />
 
       {!canvasZenMode && (
-      <header className="flex h-14 shrink-0 items-center gap-3 border-b border-white/[0.08] bg-[#12151a] px-4">
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-[13px] font-semibold tracking-tight text-white">Freehand</div>
+      <header className="flex h-14 shrink-0 items-center gap-3 border-b border-white/[0.08] bg-[#12151a] px-3 min-w-0">
+        <div className="min-w-0 shrink">
+          <div className="truncate text-[13px] font-semibold tracking-tight text-white">Designer</div>
           <div className="truncate text-[10px] text-zinc-500">Vector document</div>
         </div>
+        <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-2">
         <div
-          className="hidden items-center gap-1 rounded-lg bg-white/[0.04] p-0.5 sm:flex"
-          title="Editing context"
+          className="flex min-w-0 flex-wrap items-center gap-px rounded-lg border border-white/[0.08] bg-[#0b0d10] px-1 py-0.5"
+          title="Alinear (selecciona 2+ objetos)"
         >
-          {(["Object", "Edit", "Mask"] as const).map((m) => (
-            <span
-              key={m}
-              className={`rounded-md px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors duration-150 ${
-                (m === "Object" && studioMode === "Object") ||
-                (m === "Edit" && studioMode === "Edit") ||
-                (m === "Mask" && studioMode === "Mask")
-                  ? "bg-white/[0.1] text-white"
-                  : "text-zinc-500"
-              }`}
-            >
-              {m}
-            </span>
-          ))}
+          <button
+            type="button"
+            title="Horizontal: izquierda"
+            disabled={selectedObjects.length < 2}
+            onClick={() => alignObjects("left")}
+            className="rounded p-1 text-zinc-300 transition hover:bg-white/[0.08] hover:text-white disabled:pointer-events-none disabled:opacity-30"
+          >
+            <AlignHorizontalJustifyStart size={14} strokeWidth={1.75} />
+          </button>
+          <button
+            type="button"
+            title="Horizontal: centrar"
+            disabled={selectedObjects.length < 2}
+            onClick={() => alignObjects("centerH")}
+            className="rounded p-1 text-zinc-300 transition hover:bg-white/[0.08] hover:text-white disabled:pointer-events-none disabled:opacity-30"
+          >
+            <AlignHorizontalJustifyCenter size={14} strokeWidth={1.75} />
+          </button>
+          <button
+            type="button"
+            title="Horizontal: derecha"
+            disabled={selectedObjects.length < 2}
+            onClick={() => alignObjects("right")}
+            className="rounded p-1 text-zinc-300 transition hover:bg-white/[0.08] hover:text-white disabled:pointer-events-none disabled:opacity-30"
+          >
+            <AlignHorizontalJustifyEnd size={14} strokeWidth={1.75} />
+          </button>
+          <span className="mx-0.5 h-4 w-px shrink-0 bg-white/15" aria-hidden />
+          <button
+            type="button"
+            title="Vertical: arriba"
+            disabled={selectedObjects.length < 2}
+            onClick={() => alignObjects("top")}
+            className="rounded p-1 text-zinc-300 transition hover:bg-white/[0.08] hover:text-white disabled:pointer-events-none disabled:opacity-30"
+          >
+            <AlignVerticalJustifyStart size={14} strokeWidth={1.75} />
+          </button>
+          <button
+            type="button"
+            title="Vertical: centrar"
+            disabled={selectedObjects.length < 2}
+            onClick={() => alignObjects("centerV")}
+            className="rounded p-1 text-zinc-300 transition hover:bg-white/[0.08] hover:text-white disabled:pointer-events-none disabled:opacity-30"
+          >
+            <AlignVerticalJustifyCenter size={14} strokeWidth={1.75} />
+          </button>
+          <button
+            type="button"
+            title="Vertical: abajo"
+            disabled={selectedObjects.length < 2}
+            onClick={() => alignObjects("bottom")}
+            className="rounded p-1 text-zinc-300 transition hover:bg-white/[0.08] hover:text-white disabled:pointer-events-none disabled:opacity-30"
+          >
+            <AlignVerticalJustifyEnd size={14} strokeWidth={1.75} />
+          </button>
+          <span className="mx-0.5 h-4 w-px shrink-0 bg-white/15" aria-hidden />
+          <button
+            type="button"
+            title="Distribuir horizontalmente"
+            disabled={selectedObjects.length < 2}
+            onClick={() => alignObjects("distH")}
+            className="rounded p-1 text-zinc-300 transition hover:bg-white/[0.08] hover:text-white disabled:pointer-events-none disabled:opacity-30"
+          >
+            <AlignHorizontalSpaceBetween size={14} strokeWidth={1.75} />
+          </button>
+          <button
+            type="button"
+            title="Distribuir verticalmente"
+            disabled={selectedObjects.length < 2}
+            onClick={() => alignObjects("distV")}
+            className="rounded p-1 text-zinc-300 transition hover:bg-white/[0.08] hover:text-white disabled:pointer-events-none disabled:opacity-30"
+          >
+            <AlignVerticalSpaceBetween size={14} strokeWidth={1.75} />
+          </button>
         </div>
-        <div className="flex items-center gap-1 rounded-lg border border-white/[0.08] bg-[#0b0d10] px-1 py-0.5">
+        <div className="flex items-center gap-1 rounded-lg border border-white/[0.08] bg-[#0b0d10] px-1 py-0.5 shrink-0">
           <button
             type="button"
             className="rounded px-2 py-1 text-[12px] text-zinc-400 transition-colors duration-150 hover:bg-white/[0.06] hover:text-white"
@@ -7862,11 +8432,20 @@ export default function FreehandStudio({
             setExportModalScope(selectedIds.size > 0 ? "selection" : "full");
             setShowExportModal(true);
           }}
-          className="ml-auto flex items-center gap-2 rounded-lg bg-sky-600 px-3 py-2 text-[12px] font-semibold text-white shadow-lg shadow-sky-900/25 transition-colors duration-150 hover:bg-sky-500"
+          className="flex shrink-0 items-center gap-2 rounded-lg bg-sky-600 px-3 py-2 text-[12px] font-semibold text-white shadow-lg shadow-sky-900/25 transition-colors duration-150 hover:bg-sky-500"
         >
           <Download size={16} strokeWidth={1.5} />
           Export
         </button>
+        <button
+          type="button"
+          onClick={() => void handleCloseStudio()}
+          className="shrink-0 rounded-lg p-2 text-zinc-400 transition-colors duration-150 hover:bg-white/[0.08] hover:text-white"
+          title="Cerrar — guarda la vista previa en el nodo"
+        >
+          <X size={18} strokeWidth={1.5} />
+        </button>
+        </div>
       </header>
       )}
 
@@ -7985,49 +8564,6 @@ export default function FreehandStudio({
           </div>
         )}
 
-        {/* Selection + z-order context bar */}
-        {!canvasZenMode && (
-        <div className="shrink-0 flex items-center gap-2 px-3 py-1.5 border-b border-white/10 bg-zinc-950/95 text-[11px]">
-          <span className="text-zinc-200 font-medium truncate min-w-0 max-w-[min(280px,45vw)]">
-            {isolationDepth === 0 ? (
-              <span className="text-zinc-500 font-normal mr-2">Object mode</span>
-            ) : (
-              <span className="text-amber-400/95 font-bold mr-2 uppercase text-[9px] tracking-wide">
-                {(() => {
-                  const fr = isolationStackRef.current[isolationStackRef.current.length - 1];
-                  if (!fr) return "Isolation";
-                  if (fr.kind === "clipping") return fr.editMode === "mask" ? "Edit mask" : "Edit content";
-                  if (fr.kind === "vectorGroup") return "Edit group";
-                  return "Edit content";
-                })()}
-              </span>
-            )}
-            {selectionKindLabel(selectedObjects)}
-          </span>
-          <div className="flex-1 min-w-0" />
-          {selectedIds.size > 0 && isolationDepth === 0 && !designerMode && (
-            <div className="flex items-center gap-0.5 shrink-0">
-              <button type="button" title="Bring to front" onClick={() => bringToFront()}
-                className="p-1.5 rounded-md hover:bg-white/10 text-zinc-500 hover:text-white transition-colors">
-                <ChevronsUp size={15} strokeWidth={2} />
-              </button>
-              <button type="button" title="Bring forward (⌘])" onClick={() => bringForward()}
-                className="p-1.5 rounded-md hover:bg-white/10 text-zinc-500 hover:text-white transition-colors">
-                <ChevronUp size={15} strokeWidth={2} />
-              </button>
-              <button type="button" title="Send backward (⌘[)" onClick={() => sendBackward()}
-                className="p-1.5 rounded-md hover:bg-white/10 text-zinc-500 hover:text-white transition-colors">
-                <ChevronDown size={15} strokeWidth={2} />
-              </button>
-              <button type="button" title="Send to back" onClick={() => sendToBack()}
-                className="p-1.5 rounded-md hover:bg-white/10 text-zinc-500 hover:text-white transition-colors">
-                <ChevronsDown size={15} strokeWidth={2} />
-              </button>
-            </div>
-          )}
-        </div>
-        )}
-
       <div
         className="flex min-h-0 flex-1 flex-col"
         style={{ cursor }}
@@ -8053,6 +8589,21 @@ export default function FreehandStudio({
             }
           }
           const threshold = 6 / viewport.zoom;
+          const topIso = isolationStackRef.current[isolationStackRef.current.length - 1];
+          const inClipContent = topIso?.kind === "clipping" && topIso.editMode === "content";
+          if (inClipContent && (activeTool === "select" || activeTool === "directSelect")) {
+            for (let i = objects.length - 1; i >= 0; i--) {
+              const obj = objects[i];
+              if (!obj.visible || obj.locked) continue;
+              if (hitTestObject(pos, obj, threshold, objects)) {
+                setSelectedIds(new Set([obj.id]));
+                setPrimarySelectedId(obj.id);
+                setClipContentEditId(obj.id);
+                setImageFrameContentEditId(null);
+                return;
+              }
+            }
+          }
           if (activeTool === "select" || activeTool === "text" || activeTool === "imageFrame") {
             for (let i = objects.length - 1; i >= 0; i--) {
               const obj = objects[i];
@@ -8232,6 +8783,30 @@ export default function FreehandStudio({
                 />
               )}
 
+            {/* Aislamiento «pegar dentro»: silueta de la máscara del contenedor (solo guía, no seleccionable) */}
+            {!canvasZenMode &&
+              isClipContentIsolation &&
+              (() => {
+                const top = isolationStackRef.current[isolationStackRef.current.length - 1];
+                if (!top || top.kind !== "clipping" || top.editMode !== "content") return null;
+                const cc = top.parentObjects.find(
+                  (o) => o.id === top.containerId && o.type === "clippingContainer",
+                ) as ClippingContainerObject | undefined;
+                if (!cc) return null;
+                const innerT = `translate(${cc.x} ${cc.y}) rotate(${cc.rotation} ${cc.width / 2} ${cc.height / 2})`;
+                const z = viewport.zoom;
+                return (
+                  <g
+                    key="clip-content-mask-guide"
+                    data-ui="clip-mask-guide"
+                    pointerEvents="none"
+                    style={{ pointerEvents: "none" }}
+                  >
+                    <g transform={innerT}>{renderClipContentIsolationMaskGuide(cc.mask, z)}</g>
+                  </g>
+                );
+              })()}
+
             {/* Render objects (multi-select: non-primary slightly faded) */}
             {objects.map((obj) => {
               if (obj.isClipMask) return null;
@@ -8242,7 +8817,7 @@ export default function FreehandStudio({
               const op = multi && inSel && !isPrimary ? 0.62 : 1;
               return (
                 <g key={obj.id} opacity={op} data-fh-obj={obj.id}>
-                  {renderObj(obj, objects)}
+                  {renderObj(obj, objects, selectedIds, { canvasZenMode })}
                 </g>
               );
             })}
@@ -8257,7 +8832,7 @@ export default function FreehandStudio({
                   const op = multi && inSel && !isPrimary ? 0.62 : 1;
                   return (
                     <g key={m.id} data-fh-obj={m.id} opacity={op}>
-                      {renderObj(m, objects)}
+                      {renderObj(m, objects, selectedIds, { canvasZenMode })}
                     </g>
                   );
                 })}
@@ -8265,7 +8840,7 @@ export default function FreehandStudio({
             ))}
 
             {/* Hover outline: canvas hover or layers panel hover (sync) */}
-            {(hoverCanvasId || layerHoverId) && (activeTool === "select" || activeTool === "directSelect") && (() => {
+            {(hoverCanvasId || layerHoverId) && !canvasZenMode && (activeTool === "select" || activeTool === "directSelect") && (() => {
               const hid = hoverCanvasId ?? layerHoverId;
               const ho = objects.find((o) => o.id === hid);
               if (!ho || selectedIds.has(ho.id)) return null;
@@ -8283,6 +8858,18 @@ export default function FreehandStudio({
             {/* Pen WIP */}
             {isPenDrawing && penPoints.length > 0 && (
               <>
+                {penHoverCanvas && !penDragging && penPoints.length >= 1 && (
+                  <path
+                    d={penRubberBandSegmentD(penPoints[penPoints.length - 1]!, penHoverCanvas)}
+                    fill="none"
+                    stroke={penHoverNearPathStart ? "rgba(91, 118, 205, 0.82)" : "rgba(99,102,241,0.9)"}
+                    strokeWidth={(penHoverNearPathStart ? 1.3 : 1.25) / viewport.zoom}
+                    strokeDasharray={`${5 / viewport.zoom} ${4 / viewport.zoom}`}
+                    opacity={penHoverNearPathStart ? 0.88 : 0.85}
+                    pointerEvents="none"
+                    data-ui="pen-rubber-guide"
+                  />
+                )}
                 <path d={bezierToSvgD(penPoints, false)} fill="none" stroke={strokeColor} strokeWidth={strokeWidth}
                   strokeDasharray="4 2" opacity={0.7} data-ui="pen-wip" />
                 {penPoints.map((pt, i) => (
@@ -8299,8 +8886,27 @@ export default function FreehandStudio({
                           fill="#fff" stroke="#6366f1" strokeWidth={1 / viewport.zoom} data-ui="pen" />
                       </>
                     )}
-                    <circle cx={pt.anchor.x} cy={pt.anchor.y} r={4 / viewport.zoom}
-                      fill="#6366f1" stroke="#fff" strokeWidth={1.5 / viewport.zoom} data-ui="pen" />
+                    {i === 0 && penPoints.length > 1 && penHoverNearPathStart && (
+                      <circle
+                        cx={pt.anchor.x}
+                        cy={pt.anchor.y}
+                        r={10 / viewport.zoom}
+                        fill="rgba(16,185,129,0.04)"
+                        stroke="rgba(16,185,129,0.32)"
+                        strokeWidth={1 / viewport.zoom}
+                        pointerEvents="none"
+                        data-ui="pen-close-hint-ring"
+                      />
+                    )}
+                    <circle
+                      cx={pt.anchor.x}
+                      cy={pt.anchor.y}
+                      r={(i === 0 && penHoverNearPathStart ? 4.5 : 4) / viewport.zoom}
+                      fill={i === 0 && penHoverNearPathStart ? "#5b6fd4" : "#6366f1"}
+                      stroke="#fff"
+                      strokeWidth={1.5 / viewport.zoom}
+                      data-ui="pen"
+                    />
                   </React.Fragment>
                 ))}
               </>
@@ -8350,7 +8956,7 @@ export default function FreehandStudio({
             )}
 
             {/* Per-object selection outlines (multi-select): primary stronger, secondary lighter */}
-            {selectedObjects.length > 1 && (activeTool === "select" || activeTool === "directSelect") && selectedObjects.map((obj) => {
+            {selectedObjects.length > 1 && !canvasZenMode && (activeTool === "select" || activeTool === "directSelect") && selectedObjects.map((obj) => {
               const ob = getVisualAABB(obj, objects);
               const isPr = primarySelectedId === obj.id || primarySelectedId == null;
               return (
@@ -8365,7 +8971,7 @@ export default function FreehandStudio({
             })}
 
             {/* Selection: oriented bounding box + handles (matches object rotation) */}
-            {activeTool === "select" && selectedObjects.length === 1 && supportsGradientFill(selectedObjects[0]) && (() => {
+            {!canvasZenMode && activeTool === "select" && selectedObjects.length === 1 && supportsGradientFill(selectedObjects[0]) && (() => {
               const o = selectedObjects[0];
               const f = migrateFill(o.fill);
               const hz = 5 / viewport.zoom;
@@ -8402,7 +9008,7 @@ export default function FreehandStudio({
               return null;
             })()}
 
-            {selectedObjects.length > 0 && (activeTool === "select" || activeTool === "directSelect") && selectionFrame && !suppressSelectionForImageContentEdit && (
+            {selectedObjects.length > 0 && !canvasZenMode && (activeTool === "select" || activeTool === "directSelect") && selectionFrame && !suppressOuterTransformHandles && (
               <g data-ui="selection-box" transform={`translate(${selectionFrame.cx},${selectionFrame.cy}) rotate(${selectionFrame.angleDeg})`} filter="url(#fh-selection-shadow)">
                 <rect x={-selectionFrame.w / 2 - 1 / viewport.zoom} y={-selectionFrame.h / 2 - 1 / viewport.zoom}
                   width={selectionFrame.w + 2 / viewport.zoom} height={selectionFrame.h + 2 / viewport.zoom}
@@ -8439,7 +9045,7 @@ export default function FreehandStudio({
             )}
 
             {/* Designer: límites marco (blanco) + bitmap completo (ámbar) + esquinas al editar contenido */}
-            {designerMode && suppressSelectionForImageContentEdit && imageFrameContentEditId && (() => {
+            {designerMode && !canvasZenMode && suppressSelectionForImageContentEdit && imageFrameContentEditId && (() => {
               const o = objects.find((x) => x.id === imageFrameContentEditId) as RectObject | undefined;
               if (!o?.isImageFrame) return null;
               const ifc = o.imageFrameContent;
@@ -8479,8 +9085,64 @@ export default function FreehandStudio({
               );
             })()}
 
-            {/* ── Designer: text frame ports overlay (above selection box) ── */}
-            {designerMode && (() => {
+            {/* Contenido pegado dentro del clip: máscara (blanco) + AABB del objeto (ámbar) + esquinas como marco de imagen */}
+            {!canvasZenMode && suppressSelectionForClipContentEdit && clipContentEditId && (() => {
+              const top = isolationStackRef.current[isolationStackRef.current.length - 1];
+              if (!top || top.kind !== "clipping" || top.editMode !== "content") return null;
+              const container = top.parentObjects.find((o) => o.id === top.containerId) as ClippingContainerObject | undefined;
+              if (!container) return null;
+              const mb = clippingContainerMaskWorldBoundsAabb(container);
+              const ed = objects.find((x) => x.id === clipContentEditId);
+              if (!ed) return null;
+              const ab = getVisualAABB(ed, objects);
+              const z = viewport.zoom;
+              const hz = 6 / z;
+              return (
+                <g key="clip-content-edit-overlay" data-ui="clip-content-edit" pointerEvents="none">
+                  <rect
+                    x={mb.x}
+                    y={mb.y}
+                    width={mb.w}
+                    height={mb.h}
+                    fill="none"
+                    stroke="rgba(255,255,255,0.88)"
+                    strokeWidth={1.25 / z}
+                  />
+                  <rect
+                    x={ab.x}
+                    y={ab.y}
+                    width={ab.w}
+                    height={ab.h}
+                    fill="rgba(251,191,36,0.06)"
+                    stroke="#fbbf24"
+                    strokeWidth={1.5 / z}
+                    strokeDasharray={`${5 / z} ${4 / z}`}
+                  />
+                  {(["nw", "ne", "sw", "se"] as const).map((corner) => {
+                    let cx = ab.x;
+                    let cy = ab.y;
+                    if (corner.includes("e")) cx = ab.x + ab.w;
+                    if (corner.includes("s")) cy = ab.y + ab.h;
+                    return (
+                      <rect
+                        key={corner}
+                        x={cx - hz / 2}
+                        y={cy - hz / 2}
+                        width={hz}
+                        height={hz}
+                        fill="#1a1d24"
+                        stroke="#fbbf24"
+                        strokeWidth={1 / z}
+                        rx={1 / z}
+                      />
+                    );
+                  })}
+                </g>
+              );
+            })()}
+
+            {/* ── Designer: text frame ports overlay (above selection box) — oculto en modo P (pantalla completa lienzo) ── */}
+            {designerMode && !canvasZenMode && (() => {
               const selTfId = selectedObjects.length === 1 && selectedObjects[0].isTextFrame ? selectedObjects[0].id : null;
               return objects.filter(o => o.isTextFrame).map((t) => {
                 const ti = (t as any)._designerThreadInfo as { index: number; total: number } | undefined;
@@ -8555,7 +9217,7 @@ export default function FreehandStudio({
             )}
 
             {/* Direct select: anchor points and handles for selected paths (incl. máscara de clippingContainer) */}
-            {activeTool === "directSelect" &&
+            {activeTool === "directSelect" && !canvasZenMode &&
               (() => {
                 type DsPath = { keyId: string; p: PathObject; selPts: Set<number> | undefined };
                 const list: DsPath[] = [];
@@ -8774,7 +9436,11 @@ export default function FreehandStudio({
                 {isolationStackRef.current.length > 0 && (() => {
                   const f = isolationStackRef.current[isolationStackRef.current.length - 1];
                   const hid = f.kind === "clipping" ? f.containerId : f.groupId;
-                  return f.parentObjects.filter((o) => o.id !== hid).map((o) => renderObj(o, f.parentObjects));
+                  return f.parentObjects
+                    .filter((o) => o.id !== hid)
+                    .map((o) => (
+                      <g key={o.id}>{renderObj(o, f.parentObjects, undefined, { canvasZenMode })}</g>
+                    ));
                 })()}
               </g>
             </svg>
@@ -8804,19 +9470,11 @@ export default function FreehandStudio({
       </div>
 
       {/* ── RIGHT PANEL ──────────────────────────────────────────── */}
-      {!canvasZenMode && (
+      {!canvasZenMode && !designerStoryModalOpen && (
       <div className="flex w-[200px] shrink-0 flex-col min-h-0 overflow-hidden border-l border-white/[0.08] bg-[#12151a]">
         {/* Header */}
-        <div className="flex items-center justify-between px-3 py-2 border-b border-white/10 shrink-0">
-          <span className="text-[11px] font-bold uppercase tracking-widest text-zinc-400">Freehand Studio</span>
-          <button
-            type="button"
-            onClick={() => void handleCloseStudio()}
-            className="text-zinc-500 hover:text-white transition-colors p-1 rounded-md hover:bg-white/10"
-            title="Close — saves preview to the node"
-          >
-            <X size={16} />
-          </button>
+        <div className="px-3 py-2 border-b border-white/10 shrink-0">
+          <span className="text-[11px] font-bold uppercase tracking-widest text-zinc-400">Propiedades</span>
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -9033,77 +9691,38 @@ export default function FreehandStudio({
                 {designerMode && firstSelected.isTextFrame && (() => {
                   const storyId = (firstSelected as any).storyId as string | undefined;
                   const ti = (firstSelected as any)._designerThreadInfo as { index: number; total: number } | undefined;
-                  const hasOverflow = !!(firstSelected as any)._designerOverflow;
-                  const isLinked = ti && ti.total > 1;
                   const canUnlink = ti && ti.index > 0;
                   const storyText = storyId ? designerStoryMap?.get(storyId) ?? "" : "";
-
                   const storyHtml = storyId ? designerStoryHtmlMap?.get(storyId) ?? "" : "";
-                  const richEditorRef = React.createRef<HTMLDivElement>();
-                  const applyRichCmd = (cmd: string) => {
-                    const el = richEditorRef.current;
-                    if (!el) return;
-                    el.focus();
-                    document.execCommand(cmd, false);
-                    if (storyId && onDesignerStoryRichChange) {
-                      onDesignerStoryRichChange(storyId, el.innerHTML);
-                    }
+
+                  const openDesignerStoryModal = () => {
+                    if (typeof window === "undefined" || !storyId) return;
+                    const w = Math.min(820, Math.max(420, window.innerWidth - 96));
+                    const h = Math.min(640, Math.max(300, window.innerHeight - 100));
+                    const x = Math.max(16, (window.innerWidth - w) / 2);
+                    const y = Math.max(36, (window.innerHeight - h) / 2);
+                    setDesignerStoryModalRect({ x, y, w, h });
+                    setDesignerStoryModalObjectId(firstSelected.id);
+                    setDesignerStoryModalOpen(true);
                   };
 
                   return (
                     <div className="border-b border-white/[0.08] px-[14px] py-3 space-y-2.5">
                       <p className="text-[10px] font-bold uppercase tracking-widest text-sky-200/80">Marco de texto</p>
 
-                      {isLinked && (
-                        <p className="text-[10px] leading-relaxed text-zinc-500">
-                          Historia enlazada · Marco {ti.index + 1} de {ti.total} · Puerto OUT (rojo +) para continuar el flujo.
-                        </p>
-                      )}
-
-                      {hasOverflow && (
-                        <div className="flex items-center gap-1.5 rounded-md border border-rose-500/25 bg-rose-500/10 px-2 py-1.5">
-                          <span className="text-[10px] font-medium text-rose-300">⚠ Texto desbordado</span>
-                          <button
-                            type="button"
-                            onClick={() => onDesignerAppendThreadedFrame?.(firstSelected.id)}
-                            className="ml-auto rounded border border-rose-400/30 bg-rose-500/20 px-2 py-0.5 text-[9px] font-bold text-rose-200 transition hover:bg-rose-500/30"
-                          >
-                            + Marco
-                          </button>
-                        </div>
-                      )}
-
                       <label className="block text-[10px] font-medium text-zinc-500">Contenido</label>
-                      {/* Rich text formatting toolbar */}
-                      <div className="flex items-center gap-0.5 rounded-t-[5px] border border-b-0 border-white/[0.08] bg-white/[0.04] px-1.5 py-1">
-                        <button type="button" title="Bold (Ctrl+B)" className="rounded px-1.5 py-0.5 text-[11px] font-bold text-zinc-400 hover:bg-white/10 hover:text-white" onMouseDown={(e) => { e.preventDefault(); applyRichCmd("bold"); }}><b>B</b></button>
-                        <button type="button" title="Italic (Ctrl+I)" className="rounded px-1.5 py-0.5 text-[11px] italic text-zinc-400 hover:bg-white/10 hover:text-white" onMouseDown={(e) => { e.preventDefault(); applyRichCmd("italic"); }}><i>I</i></button>
-                        <button type="button" title="Underline (Ctrl+U)" className="rounded px-1.5 py-0.5 text-[11px] underline text-zinc-400 hover:bg-white/10 hover:text-white" onMouseDown={(e) => { e.preventDefault(); applyRichCmd("underline"); }}><u>U</u></button>
-                        <button type="button" title="Strikethrough" className="rounded px-1.5 py-0.5 text-[11px] line-through text-zinc-400 hover:bg-white/10 hover:text-white" onMouseDown={(e) => { e.preventDefault(); applyRichCmd("strikeThrough"); }}><s>S</s></button>
-                        <div className="mx-1 h-4 w-px bg-white/10" />
-                        <button type="button" title="Remove formatting" className="rounded px-1.5 py-0.5 text-[10px] text-zinc-500 hover:bg-white/10 hover:text-white" onMouseDown={(e) => { e.preventDefault(); applyRichCmd("removeFormat"); }}>T̈</button>
-                      </div>
-                      {/* contentEditable rich text editor in panel */}
-                      <div
-                        key={`rich-${storyId}-${storyText.length}`}
-                        ref={(el) => {
-                          (richEditorRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
-                          if (el && !el.dataset.init) {
-                            el.dataset.init = "1";
-                            el.innerHTML = storyHtml || escapeHtmlStr(storyText) || "";
-                          }
-                        }}
-                        contentEditable
-                        suppressContentEditableWarning
-                        className="mt-0 min-h-[80px] w-full resize-y overflow-y-auto rounded-b-[5px] border border-white/[0.08] bg-white/[0.06] px-2.5 py-2 text-xs leading-relaxed text-zinc-100 outline-none focus:ring-1 focus:ring-sky-500/40 [&_b]:font-bold [&_i]:italic [&_u]:underline [&_s]:line-through"
-                        onInput={(e) => {
-                          if (storyId && onDesignerStoryRichChange) {
-                            onDesignerStoryRichChange(storyId, (e.target as HTMLElement).innerHTML);
-                          }
-                        }}
-                        onKeyDown={(e) => e.stopPropagation()}
-                        spellCheck={false}
-                      />
+                      {storyId && (
+                        <DesignerStoryRichEditorBlock
+                          key={`re-panel-${storyId}`}
+                          storyId={storyId}
+                          storyText={storyText}
+                          storyHtml={storyHtml}
+                          onRichChange={onDesignerStoryRichChange}
+                          compactMaxLines={4}
+                          onRequestOpenFull={openDesignerStoryModal}
+                          editorClassName="mt-0 min-h-0 w-full rounded-b-[5px] border border-white/[0.08] bg-white/[0.06] px-2.5 py-2 text-xs leading-relaxed text-zinc-100 outline-none focus:ring-1 focus:ring-sky-500/40 [&_b]:font-bold [&_i]:italic [&_u]:underline [&_s]:line-through"
+                        />
+                      )}
 
                       {canUnlink && (
                         <button
@@ -9620,18 +10239,24 @@ export default function FreehandStudio({
                 {firstSelected.type === "text" && (() => {
                   const tx = firstSelected as TextObject;
                   const primaryFamily = tx.fontFamily.split(",")[0].replace(/['"]/g, "").trim();
-                  const feaMap = parseOpenTypeFeatureMap(tx.fontFeatureSettings);
-                  const activeOtTags = OPEN_TYPE_PANEL_TAGS.filter((t) => feaMap.get(t) === 1);
-                  const activosLine = activeOtTags.length > 0 ? activeOtTags.join(", ") : "—";
-                  const inp =
-                    "w-full cursor-ew-resize rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 font-mono text-[12px] text-zinc-100";
-                  const lbl = "text-[10px] text-zinc-500 uppercase tracking-wider";
+                  /** Misma línea visual que el bloque Transform (#121417 panel / inputs #1e2024). */
+                  const tfInp =
+                    "w-full cursor-ew-resize rounded-[7px] border border-[#2d2f34] bg-[#1e2024] px-3 py-2 font-mono text-[12px] text-zinc-100";
+                  const tfLbl = "text-[10px] text-[#71717a] uppercase tracking-wider";
+                  const tfSec = "text-[10px] text-[#71717a] uppercase tracking-wider";
+                  const tfField = "space-y-1";
+                  const tfIconMuted = "text-[#71717a]";
                   const pillOn = "border-[#534AB7] bg-[#534AB7] text-white";
-                  const pillOff = "border-white/[0.08] bg-transparent text-zinc-400 hover:text-zinc-200";
+                  const pillOff =
+                    "border-[#2d2f34] bg-[#1e2024] text-[#71717a] hover:border-[#3f4249] hover:text-zinc-200";
+                  const iconToolBtn = `inline-flex h-10 min-w-0 flex-1 items-center justify-center rounded-[7px] border text-[#a1a1aa] transition-colors ${pillOff}`;
+                  const iconToolBtnOn = `inline-flex h-10 min-w-0 flex-1 items-center justify-center rounded-[7px] border text-white transition-colors ${pillOn}`;
+                  const kernOn = (tx.fontKerning ?? "auto") !== "none";
                   return (
-                    <div className="-mx-[14px] space-y-3 border-b border-white/[0.08] px-[14px] py-3">
-                      <div className={lbl}>Typography</div>
-                      <div className="flex gap-1.5">
+                    <div className="-mx-[14px] space-y-4 border-b border-white/[0.08] px-[14px] py-3">
+                      <div className={tfSec}>Typography</div>
+
+                      <div className="flex gap-3">
                         <select
                           value={GOOGLE_FONTS_POPULAR.some((g) => g.family === primaryFamily) ? primaryFamily : ""}
                           onChange={(e) => {
@@ -9639,7 +10264,7 @@ export default function FreehandStudio({
                             if (!v) return;
                             updateSelectedProp("fontFamily", `${v}, system-ui, sans-serif`);
                           }}
-                          className="min-w-0 flex-1 rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1.5 text-[12px] text-zinc-100"
+                          className="min-h-[40px] min-w-0 flex-1 rounded-[7px] border border-[#2d2f34] bg-[#1e2024] px-3 py-2 text-[12px] text-zinc-100"
                         >
                           <option value="">— Font —</option>
                           {GOOGLE_FONTS_POPULAR.map((g) => (
@@ -9650,11 +10275,11 @@ export default function FreehandStudio({
                         </select>
                         <button
                           type="button"
-                          title="Import .ttf / .otf"
+                          title="Importar .ttf · .otf · woff"
                           onClick={() => customFontInputRef.current?.click()}
-                          className="shrink-0 rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1.5 font-mono text-[11px] text-zinc-300"
+                          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-[7px] border border-[#2d2f34] bg-[#1e2024] text-[#71717a] transition hover:border-[#3f4249] hover:text-zinc-200"
                         >
-                          .TTF
+                          <Upload size={16} strokeWidth={2} aria-hidden />
                         </button>
                         <input
                           ref={customFontInputRef}
@@ -9686,12 +10311,16 @@ export default function FreehandStudio({
                         value={tx.fontFamily}
                         onChange={(e) => updateSelectedProp("fontFamily", e.target.value)}
                         spellCheck={false}
-                        className="w-full rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 font-mono text-[12px] text-zinc-100"
+                        className={`${tfInp} text-[11px] placeholder:text-zinc-500`}
                         placeholder="Inter, system-ui, sans-serif"
                       />
-                      <div className="grid grid-cols-3 gap-1.5">
-                        <div className="space-y-0.5">
-                          <label className={lbl}>Size</label>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className={tfField}>
+                          <label className={`flex items-center gap-1.5 ${tfLbl}`} title="Size (px)">
+                            <Type size={11} strokeWidth={2} className={tfIconMuted} aria-hidden />
+                            Size
+                          </label>
                           <ScrubNumberInput
                             value={tx.fontSize}
                             onKeyboardCommit={(n) => updateSelectedProp("fontSize", clamp(Math.round(n), 4, 400))}
@@ -9702,11 +10331,14 @@ export default function FreehandStudio({
                             min={4}
                             max={400}
                             title="Arrastra horizontalmente · Mayús = ×10"
-                            className={inp}
+                            className={tfInp}
                           />
                         </div>
-                        <div className="space-y-0.5">
-                          <label className={lbl}>Weight</label>
+                        <div className={tfField}>
+                          <label className={`flex items-center gap-1.5 ${tfLbl}`} title="Weight">
+                            <Weight size={11} strokeWidth={2} className={tfIconMuted} aria-hidden />
+                            Wgt
+                          </label>
                           <ScrubNumberInput
                             value={tx.fontWeight}
                             onKeyboardCommit={(n) => updateSelectedProp("fontWeight", clamp(Math.round(n), 100, 900))}
@@ -9717,11 +10349,14 @@ export default function FreehandStudio({
                             min={100}
                             max={900}
                             title="Arrastra horizontalmente · Mayús = ×10"
-                            className={inp}
+                            className={tfInp}
                           />
                         </div>
-                        <div className="space-y-0.5">
-                          <label className={lbl}>Leading</label>
+                        <div className={tfField}>
+                          <label className={`flex items-center gap-1.5 ${tfLbl}`} title="Line height">
+                            <BetweenVerticalStart size={11} strokeWidth={2} className={tfIconMuted} aria-hidden />
+                            Lead
+                          </label>
                           <ScrubNumberInput
                             value={tx.lineHeight}
                             onKeyboardCommit={(n) => updateSelectedProp("lineHeight", clamp(Math.round(n * 100) / 100, 0.5, 4))}
@@ -9732,13 +10367,14 @@ export default function FreehandStudio({
                             min={0.5}
                             max={4}
                             title="Arrastra horizontalmente · Mayús = ×10"
-                            className={inp}
+                            className={tfInp}
                           />
                         </div>
-                      </div>
-                      <div className="grid grid-cols-2 gap-1.5">
-                        <div className="space-y-0.5">
-                          <label className={lbl}>Tracking</label>
+                        <div className={tfField}>
+                          <label className={`flex items-center gap-1.5 ${tfLbl}`} title="Letter-spacing (px)">
+                            <BetweenHorizontalStart size={11} strokeWidth={2} className={tfIconMuted} aria-hidden />
+                            Trk
+                          </label>
                           <ScrubNumberInput
                             value={tx.letterSpacing}
                             onKeyboardCommit={(n) => updateSelectedProp("letterSpacing", Math.round(n * 100) / 100)}
@@ -9747,11 +10383,14 @@ export default function FreehandStudio({
                             step={0.05}
                             roundFn={(n) => Math.round(n * 100) / 100}
                             title="Arrastra horizontalmente · Mayús = ×10"
-                            className={inp}
+                            className={tfInp}
                           />
                         </div>
-                        <div className="space-y-0.5">
-                          <label className={lbl}>Indent</label>
+                        <div className={tfField}>
+                          <label className={`flex items-center gap-1.5 ${tfLbl}`} title="Paragraph indent (px)">
+                            <IndentIncrease size={11} strokeWidth={2} className={tfIconMuted} aria-hidden />
+                            Ind
+                          </label>
                           <ScrubNumberInput
                             value={tx.paragraphIndent ?? 0}
                             onKeyboardCommit={(n) => updateSelectedProp("paragraphIndent", clamp(Math.round(n), 0, 200))}
@@ -9762,111 +10401,129 @@ export default function FreehandStudio({
                             min={0}
                             max={200}
                             title="Arrastra horizontalmente · Mayús = ×10"
-                            className={inp}
+                            className={tfInp}
                           />
                         </div>
-                      </div>
-                      <div className="flex items-center justify-between gap-2">
-                        <span className={lbl}>Kerning</span>
-                        <select
-                          value={tx.fontKerning ?? "auto"}
-                          onChange={(e) => updateSelectedProp("fontKerning", e.target.value as "auto" | "none")}
-                          className="min-w-[7rem] rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 text-[12px] text-zinc-100"
-                        >
-                          <option value="auto">Auto</option>
-                          <option value="none">None</option>
-                        </select>
-                      </div>
-                      <div className="flex gap-1.5">
-                        {(["left", "center", "right", "justify"] as const).map((al) => (
-                          <button
-                            key={al}
-                            type="button"
-                            onClick={() => updateSelectedProp("textAlign", al)}
-                            className={`flex-1 rounded-[5px] border py-1 text-[11px] font-bold uppercase transition-colors ${tx.textAlign === al ? pillOn : pillOff}`}
+                        <div className={tfField}>
+                          <label className={`flex items-center gap-1.5 ${tfLbl}`} title="font-kerning: auto aplica pares en la fuente; none los apaga.">
+                            <Link2 size={11} strokeWidth={2} className={tfIconMuted} aria-hidden />
+                            Kern
+                          </label>
+                          <div
+                            className="flex h-10 overflow-hidden rounded-[7px] border border-[#2d2f34] bg-[#1e2024]"
+                            role="group"
+                            aria-label="Kerning de pares"
                           >
-                            {al === "left" ? "LEF" : al === "center" ? "CEN" : al === "right" ? "RIG" : "JUS"}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="flex gap-1.5">
-                        <button
-                          type="button"
-                          title="Small caps"
-                          onClick={() =>
-                            updateSelectedProp("fontVariantCaps", tx.fontVariantCaps === "small-caps" ? "normal" : "small-caps")
-                          }
-                          className={`flex-1 rounded-[5px] border py-1 text-[12px] font-semibold transition-colors ${tx.fontVariantCaps === "small-caps" ? pillOn : pillOff}`}
-                        >
-                          Aa
-                        </button>
-                        <button
-                          type="button"
-                          title="Bold"
-                          onClick={() => updateSelectedProp("fontWeight", tx.fontWeight >= 600 ? 400 : 700)}
-                          className={`flex-1 rounded-[5px] border py-1 text-[12px] font-bold transition-colors ${tx.fontWeight >= 600 ? pillOn : pillOff}`}
-                        >
-                          B
-                        </button>
-                        <button
-                          type="button"
-                          title="Italic"
-                          onClick={() =>
-                            updateSelectedProp("fontStyle", tx.fontStyle === "italic" ? "normal" : "italic")
-                          }
-                          className={`flex-1 rounded-[5px] border py-1 text-[12px] italic transition-colors ${tx.fontStyle === "italic" ? pillOn : pillOff}`}
-                        >
-                          I
-                        </button>
-                        <button
-                          type="button"
-                          title="Underline"
-                          onClick={() => updateSelectedProp("textUnderline", !tx.textUnderline)}
-                          className={`flex-1 rounded-[5px] border py-1 text-[12px] transition-colors ${tx.textUnderline ? pillOn : pillOff}`}
-                        >
-                          U
-                        </button>
-                        <button
-                          type="button"
-                          title="Strikethrough"
-                          onClick={() => updateSelectedProp("textStrikethrough", !tx.textStrikethrough)}
-                          className={`flex-1 rounded-[5px] border py-1 text-[12px] transition-colors ${tx.textStrikethrough ? pillOn : pillOff}`}
-                        >
-                          S
-                        </button>
-                      </div>
-                      <div className="space-y-2 pt-1">
-                        <div className={lbl}>OpenType</div>
-                        <div className="flex flex-wrap gap-1.5">
-                          {OPEN_TYPE_PANEL_TAGS.map((tag) => {
-                            const on = feaMap.get(tag) === 1;
-                            return (
-                              <button
-                                key={tag}
-                                type="button"
-                                onClick={() => {
-                                  const next = parseOpenTypeFeatureMap(tx.fontFeatureSettings);
-                                  if (next.get(tag) === 1) next.delete(tag);
-                                  else next.set(tag, 1);
-                                  updateSelectedProp("fontFeatureSettings", stringifyOpenTypeFeatureMap(next));
-                                }}
-                                className={`rounded-[5px] border px-2 py-1 font-mono text-[11px] transition-colors ${on ? pillOn : "border-white/[0.08] bg-white/[0.06] text-zinc-400 hover:text-zinc-200"}`}
-                              >
-                                {tag}
-                              </button>
-                            );
-                          })}
+                            <button
+                              type="button"
+                              title="Auto (font-kerning: auto)"
+                              onClick={() => updateSelectedProp("fontKerning", "auto")}
+                              className={`flex flex-1 items-center justify-center border-r border-[#2d2f34] transition-colors ${
+                                kernOn ? "bg-[#534AB7] text-white" : "bg-transparent text-[#71717a] hover:bg-[#252830] hover:text-zinc-200"
+                              }`}
+                            >
+                              <Link2 size={15} strokeWidth={2} aria-hidden />
+                            </button>
+                            <button
+                              type="button"
+                              title="None (font-kerning: none)"
+                              onClick={() => updateSelectedProp("fontKerning", "none")}
+                              className={`flex flex-1 items-center justify-center transition-colors ${
+                                !kernOn ? "bg-[#534AB7] text-white" : "bg-transparent text-[#71717a] hover:bg-[#252830] hover:text-zinc-200"
+                              }`}
+                            >
+                              <Unlink2 size={15} strokeWidth={2} aria-hidden />
+                            </button>
+                          </div>
                         </div>
-                        <p className="text-[10px] text-zinc-500">
-                          Activos: {activosLine}
-                        </p>
                       </div>
+
+                      <div className="space-y-2">
+                        <div className={`flex items-center gap-1.5 ${tfLbl}`}>
+                          <AlignStartHorizontal size={11} strokeWidth={2} className={tfIconMuted} aria-hidden />
+                          Align
+                        </div>
+                        <div className="grid grid-cols-4 gap-3">
+                          {(
+                            [
+                              ["left", AlignLeft, "Left"],
+                              ["center", AlignCenter, "Center"],
+                              ["right", AlignRight, "Right"],
+                              ["justify", AlignJustify, "Justify"],
+                            ] as const
+                          ).map(([al, Icon, label]) => (
+                            <button
+                              key={al}
+                              type="button"
+                              title={label}
+                              onClick={() => updateSelectedProp("textAlign", al)}
+                              className={tx.textAlign === al ? iconToolBtnOn : iconToolBtn}
+                            >
+                              <Icon size={16} strokeWidth={2} aria-hidden />
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className={`flex items-center gap-1.5 ${tfLbl}`}>
+                          <Type size={11} strokeWidth={2} className={tfIconMuted} aria-hidden />
+                          Style
+                        </div>
+                        <div className="grid grid-cols-5 gap-3">
+                          <button
+                            type="button"
+                            title="Small caps"
+                            onClick={() =>
+                              updateSelectedProp("fontVariantCaps", tx.fontVariantCaps === "small-caps" ? "normal" : "small-caps")
+                            }
+                            className={tx.fontVariantCaps === "small-caps" ? iconToolBtnOn : iconToolBtn}
+                          >
+                            <CaseSensitive size={16} strokeWidth={2} aria-hidden />
+                          </button>
+                          <button
+                            type="button"
+                            title="Bold"
+                            onClick={() => updateSelectedProp("fontWeight", tx.fontWeight >= 600 ? 400 : 700)}
+                            className={tx.fontWeight >= 600 ? iconToolBtnOn : iconToolBtn}
+                          >
+                            <Bold size={16} strokeWidth={2} aria-hidden />
+                          </button>
+                          <button
+                            type="button"
+                            title="Italic"
+                            onClick={() =>
+                              updateSelectedProp("fontStyle", tx.fontStyle === "italic" ? "normal" : "italic")
+                            }
+                            className={tx.fontStyle === "italic" ? iconToolBtnOn : iconToolBtn}
+                          >
+                            <Italic size={16} strokeWidth={2} aria-hidden />
+                          </button>
+                          <button
+                            type="button"
+                            title="Underline"
+                            onClick={() => updateSelectedProp("textUnderline", !tx.textUnderline)}
+                            className={tx.textUnderline ? iconToolBtnOn : iconToolBtn}
+                          >
+                            <Underline size={16} strokeWidth={2} aria-hidden />
+                          </button>
+                          <button
+                            type="button"
+                            title="Strikethrough"
+                            onClick={() => updateSelectedProp("textStrikethrough", !tx.textStrikethrough)}
+                            className={tx.textStrikethrough ? iconToolBtnOn : iconToolBtn}
+                          >
+                            <Strikethrough size={16} strokeWidth={2} aria-hidden />
+                          </button>
+                        </div>
+                      </div>
+
                       <button
                         type="button"
                         onClick={() => {
                           if (window.confirm("Convert to outlines will make text non-editable. Continue?")) void convertTextToOutlines();
                         }}
-                        className="w-full rounded-[5px] border border-white/[0.08] bg-white/[0.06] py-2 text-[12px] font-medium text-zinc-200 transition-colors hover:bg-white/[0.1]"
+                        className="w-full rounded-[7px] border border-[#2d2f34] bg-[#1e2024] py-2.5 text-[12px] font-medium text-zinc-100 transition hover:border-[#3f4249] hover:bg-[#252830]"
                       >
                         Convert to outlines
                       </button>
@@ -10239,25 +10896,9 @@ export default function FreehandStudio({
               </div>
             ) : null}
 
-          {/* ── Alignment (when multi-selected) ─────────────────── */}
+          {/* ── Multi-selección: grupo / boolean (alinear arriba en modo Designer) ── */}
           {selectedObjects.length >= 2 && (
             <div className="p-3 border-b border-white/10 space-y-2">
-              <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">Align</div>
-              <div className="flex items-center gap-1">
-                <ToolBtn onClick={() => alignObjects("left")} title="Align Left"><AlignStartVertical size={14} /></ToolBtn>
-                <ToolBtn onClick={() => alignObjects("centerH")} title="Align Center H"><AlignCenterVertical size={14} /></ToolBtn>
-                <ToolBtn onClick={() => alignObjects("right")} title="Align Right"><AlignEndVertical size={14} /></ToolBtn>
-                <div className="w-px h-5 bg-white/10 mx-0.5" />
-                <ToolBtn onClick={() => alignObjects("top")} title="Align Top"><AlignStartHorizontal size={14} /></ToolBtn>
-                <ToolBtn onClick={() => alignObjects("centerV")} title="Align Center V"><AlignCenterHorizontal size={14} /></ToolBtn>
-                <ToolBtn onClick={() => alignObjects("bottom")} title="Align Bottom"><AlignEndHorizontal size={14} /></ToolBtn>
-              </div>
-              <div className="flex items-center gap-1">
-                <button type="button" onClick={() => alignObjects("distH")}
-                  className="flex-1 py-1 rounded text-[8px] text-zinc-400 hover:text-white hover:bg-white/10 transition-colors uppercase font-bold tracking-wider">Dist H</button>
-                <button type="button" onClick={() => alignObjects("distV")}
-                  className="flex-1 py-1 rounded text-[8px] text-zinc-400 hover:text-white hover:bg-white/10 transition-colors uppercase font-bold tracking-wider">Dist V</button>
-              </div>
               <div className="flex items-center gap-1">
                 <ToolBtn onClick={groupSelected} title="Group (⌘G)"><Group size={14} /></ToolBtn>
                 <ToolBtn onClick={ungroupSelected} title="Ungroup (⇧⌘G)"><Ungroup size={14} /></ToolBtn>
@@ -10482,6 +11123,145 @@ export default function FreehandStudio({
 
       {/* ── Context menu ─────────────────────────────────────────── */}
       {ctxMenu && <CtxMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenuItems} onClose={() => setCtxMenu(null)} />}
+
+      {designerMode &&
+        designerStoryModalOpen &&
+        designerStoryModalObjectId &&
+        (() => {
+          const modalObj = objects.find((o) => o.id === designerStoryModalObjectId);
+          const sid = modalObj && (modalObj as { storyId?: string }).storyId;
+          if (!modalObj || !modalObj.isTextFrame || !sid) return null;
+          const st = designerStoryMap?.get(sid) ?? "";
+          const sh = designerStoryHtmlMap?.get(sid) ?? "";
+          const ti = (modalObj as { _designerThreadInfo?: { index: number; total: number } })._designerThreadInfo;
+          const hasOverflow = !!(modalObj as { _designerOverflow?: boolean })._designerOverflow;
+          const isLinked = ti != null && ti.total > 1;
+          return createPortal(
+            <div className="fixed inset-0 z-[100100]">
+              <div
+                className="absolute inset-0 bg-black/45"
+                aria-hidden
+                onMouseDown={() => {
+                  setDesignerStoryModalOpen(false);
+                  setDesignerStoryModalObjectId(null);
+                }}
+              />
+              <div
+                className="absolute flex flex-col overflow-hidden rounded-xl border border-white/[0.12] bg-[#12151a] shadow-2xl"
+                style={{
+                  left: designerStoryModalRect.x,
+                  top: designerStoryModalRect.y,
+                  width: designerStoryModalRect.w,
+                  height: designerStoryModalRect.h,
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                <div
+                  className="flex shrink-0 cursor-grab select-none items-center justify-between gap-2 border-b border-white/[0.1] bg-[#161a22] px-3 py-2 active:cursor-grabbing"
+                  onPointerDown={(e) => {
+                    if ((e.target as HTMLElement).closest("button")) return;
+                    if (e.button !== 0) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    let lx = e.clientX;
+                    let ly = e.clientY;
+                    const pid = e.pointerId;
+                    const onMove = (ev: PointerEvent) => {
+                      if (ev.pointerId !== pid) return;
+                      const dx = ev.clientX - lx;
+                      const dy = ev.clientY - ly;
+                      lx = ev.clientX;
+                      ly = ev.clientY;
+                      setDesignerStoryModalRect((r) => ({
+                        ...r,
+                        x: clamp(r.x + dx, 0, Math.max(0, window.innerWidth - 120)),
+                        y: clamp(r.y + dy, 0, Math.max(0, window.innerHeight - 80)),
+                      }));
+                    };
+                    const onUp = (ev: PointerEvent) => {
+                      if (ev.pointerId !== pid) return;
+                      window.removeEventListener("pointermove", onMove);
+                      window.removeEventListener("pointerup", onUp);
+                    };
+                    window.addEventListener("pointermove", onMove);
+                    window.addEventListener("pointerup", onUp);
+                  }}
+                >
+                  <span className="text-[11px] font-bold uppercase tracking-widest text-sky-200/85">Marco de texto · editor ampliado</span>
+                  <button
+                    type="button"
+                    title="Cerrar (Esc)"
+                    className="rounded-md p-1.5 text-zinc-400 transition hover:bg-white/10 hover:text-white"
+                    onClick={() => {
+                      setDesignerStoryModalOpen(false);
+                      setDesignerStoryModalObjectId(null);
+                    }}
+                  >
+                    <X size={16} strokeWidth={2} />
+                  </button>
+                </div>
+                <div className="relative min-h-0 flex-1 overflow-y-auto px-3 pb-9 pt-2">
+                  {isLinked && ti && (
+                    <p className="mb-2 text-[10px] leading-relaxed text-zinc-500">
+                      Historia enlazada · Marco {ti.index + 1} de {ti.total}
+                    </p>
+                  )}
+                  {hasOverflow && (
+                    <div className="mb-2 flex items-center gap-1.5 rounded-md border border-rose-500/25 bg-rose-500/10 px-2 py-1.5">
+                      <span className="text-[10px] font-medium text-rose-300">⚠ Texto desbordado</span>
+                      <button
+                        type="button"
+                        onClick={() => onDesignerAppendThreadedFrame?.(modalObj.id)}
+                        className="ml-auto rounded border border-rose-400/30 bg-rose-500/20 px-2 py-0.5 text-[9px] font-bold text-rose-200 transition hover:bg-rose-500/30"
+                      >
+                        + Marco
+                      </button>
+                    </div>
+                  )}
+                  <label className="mb-1.5 block text-[10px] font-medium text-zinc-500">Contenido</label>
+                  <DesignerStoryRichEditorBlock
+                    key={`re-modal-${sid}`}
+                    storyId={sid}
+                    storyText={st}
+                    storyHtml={sh}
+                    onRichChange={onDesignerStoryRichChange}
+                    enableHyperlink
+                    editorClassName="min-h-[min(400px,calc(100vh-220px))] w-full overflow-y-auto rounded-b-[5px] border border-white/[0.08] bg-white/[0.06] px-3 py-2.5 text-sm leading-relaxed text-zinc-100 outline-none focus:ring-1 focus:ring-sky-500/40 [&_b]:font-bold [&_i]:italic [&_u]:underline [&_s]:line-through [&_a]:text-sky-400 [&_a]:underline"
+                  />
+                </div>
+                <div
+                  className="pointer-events-auto absolute bottom-1.5 right-1.5 h-5 w-5 cursor-nwse-resize rounded border border-white/15 bg-[#1a1f28] hover:bg-white/10"
+                  title="Redimensionar"
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const pid = e.pointerId;
+                    const x0 = e.clientX;
+                    const y0 = e.clientY;
+                    const w0 = designerStoryModalRect.w;
+                    const h0 = designerStoryModalRect.h;
+                    const onMove = (ev: PointerEvent) => {
+                      if (ev.pointerId !== pid) return;
+                      setDesignerStoryModalRect((r) => ({
+                        ...r,
+                        w: clamp(w0 + ev.clientX - x0, 400, window.innerWidth - r.x - 8),
+                        h: clamp(h0 + ev.clientY - y0, 240, window.innerHeight - r.y - 8),
+                      }));
+                    };
+                    const onUp = (ev: PointerEvent) => {
+                      if (ev.pointerId !== pid) return;
+                      window.removeEventListener("pointermove", onMove);
+                      window.removeEventListener("pointerup", onUp);
+                    };
+                    window.addEventListener("pointermove", onMove);
+                    window.addEventListener("pointerup", onUp);
+                  }}
+                />
+              </div>
+            </div>,
+            document.body,
+          );
+        })()}
 
       {showExportModal && (
         <FreehandExportModal

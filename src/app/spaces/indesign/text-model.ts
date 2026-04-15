@@ -47,6 +47,8 @@ export type SpanStyle = {
   color?: string;
   fontFamily?: string;
   letterSpacing?: number;
+  /** Hipervínculo (persistido como <a href> en HTML). */
+  linkHref?: string;
 };
 
 export type SpanNode = {
@@ -138,7 +140,7 @@ export function plainTextToStoryNodes(plain: string): StoryNode[] {
 
 /**
  * Convert HTML from a contentEditable to StoryNodes preserving inline styles.
- * Handles <b>, <strong>, <i>, <em>, <u>, <s>, <span style="...">.
+ * Handles <b>, <strong>, <i>, <em>, <u>, <s>, <a href>, <span style="...">.
  */
 export function htmlToStoryNodes(html: string): StoryNode[] {
   if (typeof document === "undefined") return plainTextToStoryNodes(html);
@@ -173,6 +175,11 @@ export function htmlToStoryNodes(html: string): StoryNode[] {
       if (tag === "i" || tag === "em") style.fontStyle = "italic";
       if (tag === "u") style.textUnderline = true;
       if (tag === "s" || tag === "strike" || tag === "del") style.textStrikethrough = true;
+      if (tag === "a") {
+        const raw = el.getAttribute("href") ?? "";
+        const href = sanitizeStoryLinkHref(raw);
+        if (href) style.linkHref = href;
+      }
       if (el.style.fontWeight) style.fontWeight = el.style.fontWeight;
       if (el.style.fontStyle) style.fontStyle = el.style.fontStyle;
       if (el.style.color) style.color = el.style.color;
@@ -244,7 +251,7 @@ export function storyNodesToHtml(nodes: StoryNode[], baseTypo: Typography): stri
     .map((p) => {
       const inner = p.spans
         .map((span) => {
-          let text = escapeHtml(span.text);
+          const text = escapeHtml(span.text);
           if (!span.style) return text;
           const s = span.style;
           const tags: string[] = [];
@@ -279,7 +286,14 @@ export function storyNodesToHtml(nodes: StoryNode[], baseTypo: Typography): stri
             tags.push(`<span style="${inlineStyles.join(";")}">`);
             closeTags.unshift("</span>");
           }
-          return tags.join("") + text + closeTags.join("");
+          let piece = tags.join("") + text + closeTags.join("");
+          if (s.linkHref) {
+            const href = sanitizeStoryLinkHref(s.linkHref);
+            if (href) {
+              piece = `<a href="${escapeHtmlAttr(href)}" target="_blank" rel="noopener noreferrer">${piece}</a>`;
+            }
+          }
+          return piece;
         })
         .join("");
       return `<div>${inner || "<br>"}</div>`;
@@ -289,6 +303,21 @@ export function storyNodesToHtml(nodes: StoryNode[], baseTypo: Typography): stri
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function escapeHtmlAttr(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+}
+
+/** Evita javascript:/data: y normaliza URLs sueltas para guardar en historia. */
+export function sanitizeStoryLinkHref(raw: string): string {
+  const t = raw.trim();
+  if (!t) return "";
+  const lower = t.toLowerCase();
+  if (lower.startsWith("javascript:") || lower.startsWith("data:") || lower.startsWith("vbscript:")) return "";
+  if (/^https?:\/\//i.test(t) || /^mailto:/i.test(t) || t.startsWith("#") || t.startsWith("/") || t.startsWith("./")) return t;
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(t)) return `https://${t}`;
+  return t;
 }
 
 /**

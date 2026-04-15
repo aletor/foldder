@@ -64,7 +64,7 @@ async function buildMarkedImageWithSharp(
     const H = baseMeta.height || 720;
 
     // Start with the base image (converted to PNG for compositing)
-    let composite = sharp(baseBuffer).ensureAlpha();
+    const composite = sharp(baseBuffer).ensureAlpha();
 
     const overlays: sharp.OverlayOptions[] = [];
 

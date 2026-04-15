@@ -194,7 +194,7 @@ export function mergeAssistantDeltaIntoWorkspace(
     if (typeof id === "string" && id) byEdgeId.set(id, e);
   }
 
-  let edges = Array.from(byEdgeId.values()).filter((e) => {
+  const edges = Array.from(byEdgeId.values()).filter((e) => {
     const s = (e as { source?: string }).source;
     const t = (e as { target?: string }).target;
     return typeof s === "string" && typeof t === "string" && nodeIds.has(s) && nodeIds.has(t);

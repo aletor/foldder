@@ -25,7 +25,7 @@ import { DesignerPagePreview } from "./DesignerPagePreview";
 import { createArtboard, type Artboard } from "./freehand/artboard";
 import { computeFittingLayout } from "./indesign/image-frame-layout";
 import { layoutPageStories } from "./indesign/text-layout";
-import type { Story, TextFrame, SpanStyle } from "./indesign/text-model";
+import type { Story, TextFrame, SpanStyle, Typography } from "./indesign/text-model";
 import {
   serializeStoryContent,
   plainTextToStoryNodes,
@@ -130,6 +130,10 @@ export default function DesignerStudio({
     setDesignerFitToViewNonce((n) => n + 1);
   }, []);
 
+  useEffect(() => {
+    requestDesignerFitToView();
+  }, [requestDesignerFitToView]);
+
   const imageFrameInputRef = useRef<HTMLInputElement>(null);
   const imageFrameTargetIdRef = useRef<string | null>(null);
 
@@ -217,8 +221,80 @@ export default function DesignerStudio({
 
     const editingId = api.getTextEditingId();
 
-    const layouts = layoutPageStories(stories, textFrames);
     const currentObjs = api.getObjects();
+
+    /** El layout debe usar el mismo ancho/alto que el `TextObject` en el lienzo; si no, maxLines queda corto y el texto salta de marco con huecos. */
+    const textFramesForLayout = textFrames.map((tf) => {
+      const o = currentObjs.find((c) => c.id === tf.id && (c as { isTextFrame?: boolean }).isTextFrame);
+      if (!o) return tf;
+      return {
+        ...tf,
+        x: o.x,
+        y: o.y,
+        width: o.width,
+        height: o.height,
+      };
+    });
+
+    /** Si algún marco difiere de Story (p. ej. antes de sincronizar), el reparto vertical debe seguir el lienzo. */
+    const typographyForLayout = (s: Story): Typography => {
+      const typo = s.typography;
+      for (const fid of s.frames) {
+        const o = currentObjs.find((c) => c.id === fid && (c as { isTextFrame?: boolean }).isTextFrame);
+        if (!o) continue;
+        const ox = o as FreehandObject & {
+          fontFamily?: string;
+          fontSize?: number;
+          lineHeight?: number;
+          letterSpacing?: number;
+          textAlign?: string;
+          paragraphIndent?: number;
+          fontKerning?: string;
+          fontVariantCaps?: string;
+          fontWeight?: number | string;
+          fontStyle?: string;
+          fontFeatureSettings?: string;
+          fill?: unknown;
+        };
+        if (
+          ox.fontSize !== typo.fontSize ||
+          ox.fontFamily !== typo.fontFamily ||
+          ox.lineHeight !== typo.lineHeight ||
+          ox.letterSpacing !== typo.letterSpacing
+        ) {
+          const ta = ox.textAlign;
+          const align: Typography["align"] =
+            ta === "left" || ta === "center" || ta === "right" || ta === "justify" ? ta : typo.align;
+          const fillStr =
+            typeof ox.fill === "string"
+              ? ox.fill
+              : (ox.fill as { type?: string; color?: string } | undefined)?.type === "solid"
+                ? (ox.fill as { color?: string }).color
+                : null;
+          const color = fillStr && fillStr !== "none" ? fillStr : typo.color;
+          return {
+            ...typo,
+            fontFamily: ox.fontFamily ?? typo.fontFamily,
+            fontSize: typeof ox.fontSize === "number" ? ox.fontSize : typo.fontSize,
+            lineHeight: typeof ox.lineHeight === "number" ? ox.lineHeight : typo.lineHeight,
+            letterSpacing: typeof ox.letterSpacing === "number" ? ox.letterSpacing : typo.letterSpacing,
+            align,
+            color,
+            fontWeight: ox.fontWeight != null ? String(ox.fontWeight) : typo.fontWeight,
+            fontStyle: ox.fontStyle ?? typo.fontStyle,
+            paragraphIndent: typeof ox.paragraphIndent === "number" ? ox.paragraphIndent : typo.paragraphIndent,
+            fontKerning: (ox.fontKerning === "none" || ox.fontKerning === "auto" ? ox.fontKerning : null) ?? typo.fontKerning,
+            fontVariantCaps:
+              ox.fontVariantCaps === "normal" || ox.fontVariantCaps === "small-caps" ? ox.fontVariantCaps : typo.fontVariantCaps,
+            fontFeatureSettings: ox.fontFeatureSettings ?? typo.fontFeatureSettings,
+          };
+        }
+      }
+      return typo;
+    };
+
+    const storiesForLayout = stories.map((s) => ({ ...s, typography: typographyForLayout(s) }));
+    const layouts = layoutPageStories(storiesForLayout, textFramesForLayout);
 
     // Determine the "source of truth" frame for typography: the selected frame
     // (user may have just changed its properties, before handleUpdateObjects syncs to Story)
@@ -425,11 +501,52 @@ export default function DesignerStudio({
         const p = n[idx];
         if (!p) return prev;
 
+        const fo = frameObj as FreehandObject & {
+          fontFamily?: string;
+          fontSize?: number;
+          lineHeight?: number;
+          letterSpacing?: number;
+          textAlign?: string;
+          fontWeight?: number | string;
+          fontStyle?: string;
+          paragraphIndent?: number;
+          fontKerning?: string;
+          fontVariantCaps?: string;
+          fontFeatureSettings?: string;
+          fill?: unknown;
+        };
+        const ta = fo.textAlign;
+        const align: Typography["align"] =
+          ta === "left" || ta === "center" || ta === "right" || ta === "justify" ? ta : DEFAULT_TYPOGRAPHY.align;
+        const fillStr =
+          typeof fo.fill === "string"
+            ? fo.fill
+            : (fo.fill as { type?: string; color?: string } | undefined)?.type === "solid"
+              ? (fo.fill as { color?: string }).color
+              : null;
         const story: Story = {
           id: storyId,
           content: plainTextToStoryNodes(""),
           frames: [frameId],
-          typography: { ...DEFAULT_TYPOGRAPHY },
+          typography: {
+            ...DEFAULT_TYPOGRAPHY,
+            fontFamily: fo.fontFamily ?? DEFAULT_TYPOGRAPHY.fontFamily,
+            fontSize: typeof fo.fontSize === "number" ? fo.fontSize : DEFAULT_TYPOGRAPHY.fontSize,
+            lineHeight: typeof fo.lineHeight === "number" ? fo.lineHeight : DEFAULT_TYPOGRAPHY.lineHeight,
+            letterSpacing: typeof fo.letterSpacing === "number" ? fo.letterSpacing : DEFAULT_TYPOGRAPHY.letterSpacing,
+            align,
+            color: fillStr && fillStr !== "none" ? fillStr : DEFAULT_TYPOGRAPHY.color,
+            fontWeight: fo.fontWeight != null ? String(fo.fontWeight) : DEFAULT_TYPOGRAPHY.fontWeight,
+            fontStyle: fo.fontStyle ?? DEFAULT_TYPOGRAPHY.fontStyle,
+            paragraphIndent: typeof fo.paragraphIndent === "number" ? fo.paragraphIndent : DEFAULT_TYPOGRAPHY.paragraphIndent,
+            fontKerning:
+              fo.fontKerning === "none" || fo.fontKerning === "auto" ? fo.fontKerning : DEFAULT_TYPOGRAPHY.fontKerning,
+            fontVariantCaps:
+              fo.fontVariantCaps === "normal" || fo.fontVariantCaps === "small-caps"
+                ? fo.fontVariantCaps
+                : DEFAULT_TYPOGRAPHY.fontVariantCaps,
+            fontFeatureSettings: fo.fontFeatureSettings ?? DEFAULT_TYPOGRAPHY.fontFeatureSettings,
+          },
         };
 
         const frame: TextFrame = {

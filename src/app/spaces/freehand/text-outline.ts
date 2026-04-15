@@ -1,4 +1,8 @@
 import opentype from "opentype.js";
+import type { SpanStyle } from "../indesign/text-model";
+import { sanitizeStoryLinkHref } from "../indesign/text-model";
+
+export type VectorPdfTextRun = { text: string; style?: SpanStyle };
 
 export const FONT_CONVERSION_UNAVAILABLE = "Fuente no disponible para conversión";
 
@@ -35,16 +39,75 @@ export function registerUserFontBuffer(primaryFamily: string, fontWeight: number
   userFontBuffers.set(key, buffer.slice(0));
 }
 
-/** TTF conocidos (fallback si hay FontFace pero no tenemos buffer). */
-const FONT_URLS: Record<string, string> = {
-  Inter: "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSans/NotoSans-Regular.ttf",
-  Roboto: "https://github.com/googlefonts/roboto/raw/main/src/hinted/Roboto-Regular.ttf",
-  "Open Sans": "https://cdn.jsdelivr.net/gh/googlefonts/opensans@main/fonts/ttf/OpenSans-Regular.ttf",
-  Lato: "https://cdn.jsdelivr.net/gh/googlefonts/lato@main/fonts/Lato-Regular.ttf",
-  Montserrat: "https://cdn.jsdelivr.net/gh/googlefonts/montserrat@main/fonts/ttf/Montserrat-Regular.ttf",
-  "IBM Plex Sans": "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSans/NotoSans-Regular.ttf",
-  system: "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSans/NotoSans-Regular.ttf",
+/** Fallback tipográfico si no hay URL para la familia (Noto ≈ Inter UI). */
+const NOTO_SANS_REG =
+  "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSans/NotoSans-Regular.ttf";
+const NOTO_SANS_BOLD =
+  "https://cdn.jsdelivr.net/gh/googlefonts/noto-fonts@main/hinted/ttf/NotoSans/NotoSans-Bold.ttf";
+
+/**
+ * Slugs en fonts.bunny.net para nombres del selector (Google Fonts en la app).
+ * Otras familias: `nombre` → slug `nombre-minúsculas-con-guiones`.
+ */
+const BUNNY_FAMILY_SLUG: Record<string, string> = {
+  inter: "inter",
+  roboto: "roboto",
+  "open sans": "open-sans",
+  lato: "lato",
+  montserrat: "montserrat",
+  "ibm plex sans": "ibm-plex-sans",
+  system: "inter",
 };
+
+function normalizeFamilyKey(primary: string): string {
+  return primary.trim().toLowerCase();
+}
+
+function familyToBunnySlug(primary: string): string {
+  const k = normalizeFamilyKey(primary);
+  return BUNNY_FAMILY_SLUG[k] ?? k.replace(/\s+/g, "-");
+}
+
+async function tryFetchArrayBuffer(url: string): Promise<ArrayBuffer | null> {
+  try {
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    return await r.arrayBuffer();
+  } catch {
+    return null;
+  }
+}
+
+/** opentype.js acepta WOFF; probamos pesos cercanos por si falta un corte. */
+function pickLatinFileWeights(requested: number): number[] {
+  const r = Math.min(900, Math.max(100, Math.round(requested / 100) * 100));
+  const order = [r, 400, 500, 600, 700, 300, 800, 200, 900, 100];
+  const seen = new Set<number>();
+  const out: number[] = [];
+  for (const w of order) {
+    if (!seen.has(w)) {
+      seen.add(w);
+      out.push(w);
+    }
+  }
+  return out;
+}
+
+function bunnyLatinWoffUrl(slug: string, fileWeight: number): string {
+  return `https://fonts.bunny.net/${slug}/files/${slug}-latin-${fileWeight}-normal.woff`;
+}
+
+async function fetchFontFromBunnyNet(slug: string, fontWeight: number): Promise<ArrayBuffer | null> {
+  for (const w of pickLatinFileWeights(fontWeight)) {
+    const buf = await tryFetchArrayBuffer(bunnyLatinWoffUrl(slug, w));
+    if (buf) return buf;
+  }
+  return null;
+}
+
+function notoSansFallbackUrl(fontWeight: number): string {
+  return fontWeight >= 600 ? NOTO_SANS_BOLD : NOTO_SANS_REG;
+}
 
 const fontCache = new Map<string, opentype.Font>();
 
@@ -71,16 +134,20 @@ export function isFontFaceAvailableForConversion(primary: string, fontWeight: nu
 
 async function fetchFontBinary(primary: string, fontWeight: number): Promise<ArrayBuffer | null> {
   const uKey = `${primary.toLowerCase()}|${fontWeight}`;
-  const buf = userFontBuffers.get(uKey);
-  if (buf) return buf;
-  const url = FONT_URLS[primary] ?? FONT_URLS.Inter;
-  try {
-    const r = await fetch(url);
-    if (!r.ok) return null;
-    return await r.arrayBuffer();
-  } catch {
-    return null;
+  const userBuf = userFontBuffers.get(uKey);
+  if (userBuf) return userBuf;
+
+  const slug = familyToBunnySlug(primary);
+  const fromBunny = await fetchFontFromBunnyNet(slug, fontWeight);
+  if (fromBunny) return fromBunny;
+
+  const slugAlt = normalizeFamilyKey(primary).replace(/\s+/g, "-");
+  if (slugAlt !== slug) {
+    const alt = await fetchFontFromBunnyNet(slugAlt, fontWeight);
+    if (alt) return alt;
   }
+
+  return await tryFetchArrayBuffer(notoSansFallbackUrl(fontWeight));
 }
 
 export async function loadFontForTextConversion(args: {
@@ -92,7 +159,7 @@ export async function loadFontForTextConversion(args: {
   if (!isFontFaceAvailableForConversion(primary, args.fontWeight, args.fontSize)) {
     return { error: FONT_CONVERSION_UNAVAILABLE };
   }
-  const cacheKey = `${primary}|${args.fontWeight}`;
+  const cacheKey = `${normalizeFamilyKey(primary)}|${args.fontWeight}`;
   if (fontCache.has(cacheKey)) return { font: fontCache.get(cacheKey)! };
 
   const binary = await fetchFontBinary(primary, args.fontWeight);
@@ -102,7 +169,15 @@ export async function loadFontForTextConversion(args: {
     fontCache.set(cacheKey, font);
     return { font };
   } catch {
-    return { error: FONT_CONVERSION_UNAVAILABLE };
+    const fb = await tryFetchArrayBuffer(notoSansFallbackUrl(args.fontWeight));
+    if (!fb) return { error: FONT_CONVERSION_UNAVAILABLE };
+    try {
+      const font = opentype.parse(fb);
+      fontCache.set(cacheKey, font);
+      return { font };
+    } catch {
+      return { error: FONT_CONVERSION_UNAVAILABLE };
+    }
   }
 }
 
@@ -244,9 +319,10 @@ function wrapParagraphToLinesWithFirstIndent(
   useKern: boolean,
   maxWidthInner: number,
   firstLineIndent: number,
-): string[] {
-  if (!paragraph.length) return [""];
+): { lines: string[]; starts: number[] } {
+  if (!paragraph.length) return { lines: [""], starts: [0] };
   const lines: string[] = [];
+  const starts: number[] = [];
   let charIdx = 0;
   let isFirstLineOfParagraph = true;
 
@@ -277,11 +353,12 @@ function wrapParagraphToLinesWithFirstIndent(
       lineEnd = charIdx + 1;
     }
 
+    starts.push(charIdx);
     lines.push(paragraph.slice(charIdx, lineEnd).replace(/\s+$/g, ""));
     charIdx = lineEnd;
   }
 
-  return lines.length > 0 ? lines : [""];
+  return lines.length > 0 ? { lines, starts } : { lines: [""], starts: [0] };
 }
 
 export type TextConversionInput = {
@@ -292,6 +369,7 @@ export type TextConversionInput = {
   y: number;
   width: number;
   height: number;
+  fontFamily: string;
   fontSize: number;
   fontWeight: number;
   lineHeight: number;
@@ -300,6 +378,408 @@ export type TextConversionInput = {
   textAlign: "left" | "center" | "right" | "justify";
   paragraphIndent?: number;
 };
+
+type PhysicalLineMeta = { text: string; addParagraphIndent: boolean; globalTextStart: number };
+
+function computePhysicalLines(t: TextConversionInput, font: opentype.Font): PhysicalLineMeta[] {
+  const pad = t.textMode === "area" ? 4 : 0;
+  const indent = t.paragraphIndent ?? 0;
+  const boxW = t.textMode === "point" ? Math.max(t.width, 32) : t.width;
+  const innerW = Math.max(4, boxW - 2 * pad);
+  const useKern = t.fontKerning !== "none";
+
+  if (t.textMode === "point") {
+    const raw = t.text.split("\n");
+    let acc = 0;
+    return raw.map((text, i) => {
+      const row: PhysicalLineMeta = {
+        text,
+        addParagraphIndent: i === 0,
+        globalTextStart: acc,
+      };
+      acc += text.length + (i < raw.length - 1 ? 1 : 0);
+      return row;
+    });
+  }
+
+  const physicalLines: PhysicalLineMeta[] = [];
+  let fullOff = 0;
+  const paras = t.text.split(/\r?\n/);
+  for (let pi = 0; pi < paras.length; pi++) {
+    const para = paras[pi]!;
+    const { lines, starts } = wrapParagraphToLinesWithFirstIndent(
+      font,
+      para,
+      t.fontSize,
+      t.letterSpacing,
+      useKern,
+      innerW,
+      indent,
+    );
+    for (let wi = 0; wi < lines.length; wi++) {
+      physicalLines.push({
+        text: lines[wi]!,
+        addParagraphIndent: wi === 0,
+        globalTextStart: fullOff + starts[wi]!,
+      });
+    }
+    fullOff += para.length;
+    if (pi < paras.length - 1) fullOff += 1;
+  }
+  return physicalLines;
+}
+
+function effPdfWeight(base: number, st?: SpanStyle): number {
+  if (!st?.fontWeight) return base;
+  const fw = String(st.fontWeight);
+  if (fw === "bold" || fw === "700") return Math.max(base, 700);
+  const n = parseInt(fw, 10);
+  return Number.isFinite(n) ? n : base;
+}
+
+function buildCharStyleMap(text: string, runs: Array<{ text: string; style?: SpanStyle }>): (SpanStyle | undefined)[] {
+  const map: (SpanStyle | undefined)[] = new Array(text.length);
+  let i = 0;
+  for (const r of runs) {
+    for (let k = 0; k < r.text.length && i < text.length; k++) {
+      map[i++] = r.style;
+    }
+  }
+  return map;
+}
+
+function measureLineWidthMixed(
+  line: string,
+  globalLineStart: number,
+  fontSize: number,
+  letterSpacing: number,
+  useKern: boolean,
+  charStyles: (SpanStyle | undefined)[],
+  baseWeight: number,
+  fontForWeight: (w: number) => opentype.Font,
+): number {
+  let w = 0;
+  for (let i = 0; i < line.length; i++) {
+    const gi = globalLineStart + i;
+    const st = charStyles[gi];
+    const weight = effPdfWeight(baseWeight, st);
+    const font = fontForWeight(weight);
+    const glyphs = font.stringToGlyphs(line[i]!);
+    const glyph = glyphs[0];
+    if (!glyph) continue;
+    const scale = fontSize / font.unitsPerEm;
+    let adv = (glyph.advanceWidth ?? 0) * scale;
+    if (useKern && i < line.length - 1) {
+      const gn = font.stringToGlyphs(line[i + 1]!);
+      const g2 = gn[0];
+      if (g2) adv += font.getKerningValue(glyph, g2) * scale;
+    }
+    w += adv;
+    if (i < line.length - 1) w += letterSpacing;
+  }
+  return w;
+}
+
+/** Posición X izquierda de cada carácter en la línea; `lefts[i+1]-lefts[i]` = avance. */
+function measureLineCharLeftEdges(
+  line: string,
+  globalLineStart: number,
+  startX: number,
+  fontSize: number,
+  letterSpacing: number,
+  useKern: boolean,
+  charStyles: (SpanStyle | undefined)[],
+  baseWeight: number,
+  fontForWeight: (w: number) => opentype.Font,
+): number[] {
+  const lefts = new Array<number>(line.length + 1);
+  let x = startX;
+  lefts[0] = x;
+  for (let i = 0; i < line.length; i++) {
+    const gi = globalLineStart + i;
+    const st = charStyles[gi];
+    const weight = effPdfWeight(baseWeight, st);
+    const font = fontForWeight(weight);
+    const ch = line[i]!;
+    if (ch === "\r") {
+      lefts[i + 1] = x;
+      continue;
+    }
+    const glyphs = font.stringToGlyphs(ch);
+    const glyph = glyphs[0];
+    if (!glyph) {
+      x += letterSpacing;
+      lefts[i + 1] = x;
+      continue;
+    }
+    const scale = fontSize / font.unitsPerEm;
+    let adv = (glyph.advanceWidth ?? 0) * scale;
+    if (useKern && i < line.length - 1) {
+      const g2 = font.stringToGlyphs(line[i + 1]!)[0];
+      if (g2) adv += font.getKerningValue(glyph, g2) * scale;
+    }
+    x += adv + letterSpacing;
+    lefts[i + 1] = x;
+  }
+  return lefts;
+}
+
+const PDF_LINK_BLUE = "#38bdf8";
+
+function wantsUnderlineForPdf(st?: SpanStyle): boolean {
+  if (!st) return false;
+  const href = st.linkHref ? sanitizeStoryLinkHref(st.linkHref) : "";
+  if (href.length > 0) return true;
+  return !!st.textUnderline;
+}
+
+function underlineStrokeColor(st: SpanStyle | undefined, defaultFill: string): string {
+  const href = st?.linkHref ? sanitizeStoryLinkHref(st.linkHref) : "";
+  if (href.length > 0) {
+    return st?.color && st.color !== "none" ? st.color : PDF_LINK_BLUE;
+  }
+  if (st?.color && st.color !== "none") return st.color;
+  return defaultFill;
+}
+
+function strikeStrokeColor(st: SpanStyle | undefined, defaultFill: string): string {
+  if (st?.color && st.color !== "none") return st.color;
+  return defaultFill;
+}
+
+function effectiveGlyphFill(
+  st: SpanStyle | undefined,
+  defaultFillColor: string,
+  stroked: boolean,
+): string {
+  if (stroked) return "none";
+  const href = st?.linkHref ? sanitizeStoryLinkHref(st.linkHref) : "";
+  if (href.length > 0) {
+    return st?.color && st.color !== "none" ? st.color : PDF_LINK_BLUE;
+  }
+  if (st?.color && st.color !== "none") return st.color;
+  return defaultFillColor;
+}
+
+/** Caja vertical alrededor del baseline (misma lógica que el layout web) para anotaciones PDF. */
+function linkHitRectFromFontMetrics(
+  font: opentype.Font,
+  fontSize: number,
+  baselineY: number,
+  x1: number,
+  x2: number,
+): { x: number; y: number; width: number; height: number } {
+  const upem = font.unitsPerEm || 1000;
+  const s = fontSize / upem;
+  const asc = (font.ascender ?? 800) * s;
+  const desc = (font.descender ?? -200) * s;
+  const topY = baselineY - asc;
+  const botY = baselineY - desc;
+  const w = Math.max(0, x2 - x1);
+  const h = Math.max(0.25, botY - topY);
+  return { x: x1, y: topY, width: w, height: h };
+}
+
+export type PdfGlyphPaintOp = {
+  d: string;
+  fill: string;
+  strokeAttr: string;
+  op: string;
+  linkHref?: string;
+  /**
+   * Rectángulo alineado a métricas EM (ascender/descender); svg2pdf usa el bbox del `<a>` y los
+   * paths de glifo suelen desalinear el área clic respecto al texto sin este refuerzo.
+   */
+  linkHitRect?: { x: number; y: number; width: number; height: number };
+};
+
+type PdfTextExtras = { stroke?: string; strokeWidth?: number; opacity?: number };
+
+/**
+ * Texto enriquecido (negrita, color, subrayado, enlaces) → paths SVG para PDF vectorial.
+ */
+export async function richTextToGlyphPaintOps(
+  t: TextConversionInput,
+  runs: Array<{ text: string; style?: SpanStyle }>,
+  baseFont: opentype.Font,
+  defaultFillColor: string,
+  extras?: PdfTextExtras,
+): Promise<PdfGlyphPaintOp[]> {
+  const pad = t.textMode === "area" ? 4 : 0;
+  const indent = t.paragraphIndent ?? 0;
+  const boxW = t.textMode === "point" ? Math.max(t.width, 32) : t.width;
+  const lhPx = t.fontSize * t.lineHeight;
+  const useKern = t.fontKerning !== "none";
+  const ta = t.textAlign === "justify" ? "left" : t.textAlign;
+  const charStyles = buildCharStyleMap(t.text, runs);
+  const weights = new Set<number>();
+  weights.add(t.fontWeight);
+  for (let i = 0; i < t.text.length; i++) {
+    weights.add(effPdfWeight(t.fontWeight, charStyles[i]));
+  }
+  const fontByWeight = new Map<number, opentype.Font>();
+  for (const w of weights) {
+    const res = await loadFontForTextConversion({ fontFamily: t.fontFamily, fontSize: t.fontSize, fontWeight: w });
+    if ("error" in res) fontByWeight.set(w, baseFont);
+    else fontByWeight.set(w, res.font);
+  }
+  const pickFont = (w: number) => fontByWeight.get(w) ?? baseFont;
+
+  const physicalLines = computePhysicalLines(t, baseFont);
+  const out: PdfGlyphPaintOp[] = [];
+  const sw = extras?.strokeWidth ?? 0;
+  const strokeAttr =
+    extras?.stroke && extras.stroke !== "none" && sw > 0
+      ? ` stroke="${escapeXml(extras.stroke)}" stroke-width="${sw}"`
+      : "";
+  const op = extras?.opacity != null && extras.opacity !== 1 ? ` opacity="${extras.opacity}"` : "";
+
+  let gIdx = 0;
+  for (let li = 0; li < physicalLines.length; li++) {
+    const { text: line, addParagraphIndent, globalTextStart } = physicalLines[li]!;
+    const baselineY = t.y + pad + t.fontSize + li * lhPx;
+    const lineW = measureLineWidthMixed(
+      line,
+      globalTextStart,
+      t.fontSize,
+      t.letterSpacing,
+      useKern,
+      charStyles,
+      t.fontWeight,
+      pickFont,
+    );
+    const indentPx = addParagraphIndent ? indent : 0;
+
+    let xCursor: number;
+    if (ta === "center") {
+      xCursor = t.x + boxW / 2 - lineW / 2;
+    } else if (ta === "right") {
+      xCursor = t.x + boxW - pad - lineW;
+    } else {
+      xCursor = t.x + pad + indentPx;
+    }
+
+    const lefts = measureLineCharLeftEdges(
+      line,
+      globalTextStart,
+      xCursor,
+      t.fontSize,
+      t.letterSpacing,
+      useKern,
+      charStyles,
+      t.fontWeight,
+      pickFont,
+    );
+
+    const underlineY = baselineY + Math.max(1.5, t.fontSize * 0.105);
+    const strikeY = baselineY - t.fontSize * 0.31;
+    const decoW = Math.max(0.65, Math.min(2.75, t.fontSize * 0.055));
+
+    for (let i = 0; i < line.length; i++) {
+      const gi = globalTextStart + i;
+      const st = charStyles[gi];
+      const weight = effPdfWeight(t.fontWeight, st);
+      const font = pickFont(weight);
+      const stroked = !!(extras?.stroke && extras.stroke !== "none" && sw > 0);
+      const fillColor = effectiveGlyphFill(st, defaultFillColor, stroked);
+
+      const ch = line[i]!;
+      if (ch === "\r") continue;
+      const xAt = lefts[i]!;
+      const glyphs = font.stringToGlyphs(ch);
+      const glyph = glyphs[0];
+      if (!glyph) continue;
+
+      const linkRaw = st?.linkHref ? sanitizeStoryLinkHref(st.linkHref) : "";
+
+      if (!glyph.path || glyph.path.commands.length === 0) continue;
+
+      const path = glyph.getPath(xAt, baselineY, t.fontSize);
+      const payload = pathCommandsToPayload(`${t.name}·${gIdx}`, path, true);
+      if (payload) {
+        const d = payload.svgPathD && payload.svgPathD.length > 0 ? payload.svgPathD : pathPayloadToSvgD(payload);
+        if (d) {
+          const opBase: PdfGlyphPaintOp = {
+            d,
+            fill: fillColor,
+            strokeAttr,
+            op,
+            linkHref: linkRaw || undefined,
+          };
+          if (linkRaw) {
+            opBase.linkHitRect = linkHitRectFromFontMetrics(
+              font,
+              t.fontSize,
+              baselineY,
+              lefts[i]!,
+              lefts[i + 1]!,
+            );
+          }
+          out.push(opBase);
+          gIdx++;
+        }
+      }
+    }
+
+    let ui = 0;
+    while (ui < line.length) {
+      const st = charStyles[globalTextStart + ui];
+      if (!wantsUnderlineForPdf(st)) {
+        ui++;
+        continue;
+      }
+      const c0 = underlineStrokeColor(st, defaultFillColor);
+      let uj = ui + 1;
+      while (uj < line.length) {
+        const stj = charStyles[globalTextStart + uj];
+        if (!wantsUnderlineForPdf(stj)) break;
+        if (underlineStrokeColor(stj, defaultFillColor) !== c0) break;
+        uj++;
+      }
+      const x1 = lefts[ui]!;
+      const x2 = lefts[uj]!;
+      if (x2 - x1 > 0.2) {
+        out.push({
+          d: `M ${x1} ${underlineY} L ${x2} ${underlineY}`,
+          fill: "none",
+          strokeAttr: ` stroke="${escapeXml(c0)}" stroke-width="${decoW}" stroke-linecap="butt"`,
+          op,
+        });
+      }
+      ui = uj;
+    }
+
+    let si = 0;
+    while (si < line.length) {
+      const st = charStyles[globalTextStart + si];
+      if (!st?.textStrikethrough) {
+        si++;
+        continue;
+      }
+      const c0 = strikeStrokeColor(st, defaultFillColor);
+      let sj = si + 1;
+      while (sj < line.length) {
+        const stj = charStyles[globalTextStart + sj];
+        if (!stj?.textStrikethrough) break;
+        if (strikeStrokeColor(stj, defaultFillColor) !== c0) break;
+        sj++;
+      }
+      const x1 = lefts[si]!;
+      const x2 = lefts[sj]!;
+      if (x2 - x1 > 0.2) {
+        out.push({
+          d: `M ${x1} ${strikeY} L ${x2} ${strikeY}`,
+          fill: "none",
+          strokeAttr: ` stroke="${escapeXml(c0)}" stroke-width="${decoW}" stroke-linecap="butt"`,
+          op,
+        });
+      }
+      si = sj;
+    }
+  }
+
+  return out;
+}
 
 /** Un path por glifo (o svgPathD si hay contornos múltiples). */
 export async function textToGlyphPathPayloads(
@@ -310,37 +790,8 @@ export async function textToGlyphPathPayloads(
   const indent = t.paragraphIndent ?? 0;
   const boxW = t.textMode === "point" ? Math.max(t.width, 32) : t.width;
   const lhPx = t.fontSize * t.lineHeight;
-  const innerW = Math.max(4, boxW - 2 * pad);
   const useKern = t.fontKerning !== "none";
-
-  type PhysicalLine = { text: string; addParagraphIndent: boolean };
-  let physicalLines: PhysicalLine[];
-
-  if (t.textMode === "point") {
-    const raw = t.text.split("\n");
-    physicalLines = raw.map((text, i) => ({
-      text,
-      addParagraphIndent: i === 0,
-    }));
-  } else {
-    physicalLines = [];
-    const paras = t.text.split(/\r?\n/);
-    for (const para of paras) {
-      const wrapped = wrapParagraphToLinesWithFirstIndent(
-        font,
-        para,
-        t.fontSize,
-        t.letterSpacing,
-        useKern,
-        innerW,
-        indent,
-      );
-      wrapped.forEach((text, wi) => {
-        physicalLines.push({ text, addParagraphIndent: wi === 0 });
-      });
-    }
-  }
-
+  const physicalLines = computePhysicalLines(t, font);
   const ta = t.textAlign === "justify" ? "left" : t.textAlign;
   const out: GlyphPathPayload[] = [];
   let gIdx = 0;
@@ -414,6 +865,8 @@ export async function substituteTextWithOutlinedPathsInSvg(
     stroke?: string;
     strokeWidth?: number;
     opacity?: number;
+    /** Si viene de Designer (`_designerRichSpans`), conserva negrita/color/enlaces en el PDF. */
+    richRuns?: VectorPdfTextRun[];
   }>,
 ): Promise<string> {
   const parser = new DOMParser();
@@ -432,40 +885,83 @@ export async function substituteTextWithOutlinedPathsInSvg(
       g.querySelectorAll("foreignObject").forEach((el) => el.remove());
       continue;
     }
-    const payloads = await textToGlyphPathPayloads(
-      {
-        name: t.name,
-        text: t.text,
-        textMode: t.textMode,
-        x: t.x,
-        y: t.y,
-        width: t.width,
-        height: t.height,
-        fontSize: t.fontSize,
-        fontWeight: t.fontWeight,
-        lineHeight: t.lineHeight,
-        letterSpacing: t.letterSpacing,
-        fontKerning: t.fontKerning,
-        textAlign: t.textAlign,
-        paragraphIndent: t.paragraphIndent,
-      },
-      fontRes.font,
-    );
+    const conv: TextConversionInput = {
+      name: t.name,
+      text: t.text,
+      textMode: t.textMode,
+      x: t.x,
+      y: t.y,
+      width: t.width,
+      height: t.height,
+      fontFamily: t.fontFamily,
+      fontSize: t.fontSize,
+      fontWeight: t.fontWeight,
+      lineHeight: t.lineHeight,
+      letterSpacing: t.letterSpacing,
+      fontKerning: t.fontKerning,
+      textAlign: t.textAlign,
+      paragraphIndent: t.paragraphIndent,
+    };
     g.replaceChildren();
-    const strokeAttr =
-      t.stroke && t.stroke !== "none" && (t.strokeWidth ?? 0) > 0
-        ? ` stroke="${escapeXml(t.stroke)}" stroke-width="${t.strokeWidth}"`
-        : "";
-    const op = t.opacity != null && t.opacity !== 1 ? ` opacity="${t.opacity}"` : "";
-    for (const p of payloads) {
-      const d = p.svgPathD && p.svgPathD.length > 0 ? p.svgPathD : pathPayloadToSvgD(p);
-      if (!d) continue;
-      const frag = parser.parseFromString(
-        `<svg xmlns="http://www.w3.org/2000/svg"><path d="${escapeXml(d)}" fill="${escapeXml(t.fillColor)}"${strokeAttr}${op}/></svg>`,
-        "image/svg+xml",
-      );
-      const pathEl = frag.querySelector("path");
-      if (pathEl) g.appendChild(pathEl);
+    const useRich = t.richRuns && t.richRuns.length > 0;
+    if (useRich) {
+      const ops = await richTextToGlyphPaintOps(conv, t.richRuns!, fontRes.font, t.fillColor, {
+        stroke: t.stroke,
+        strokeWidth: t.strokeWidth,
+        opacity: t.opacity,
+      });
+      for (const op of ops) {
+        const frag = parser.parseFromString(
+          `<svg xmlns="http://www.w3.org/2000/svg"><path d="${escapeXml(op.d)}" fill="${escapeXml(op.fill)}"${op.strokeAttr}${op.op}/></svg>`,
+          "image/svg+xml",
+        );
+        const pathEl = frag.querySelector("path");
+        if (!pathEl) continue;
+        const pathImported = doc.importNode(pathEl, true);
+        if (op.linkHref) {
+          const aEl = doc.createElementNS("http://www.w3.org/2000/svg", "a");
+          aEl.setAttribute("href", op.linkHref);
+          try {
+            aEl.setAttributeNS("http://www.w3.org/1999/xlink", "href", op.linkHref);
+          } catch {
+            /* ignore */
+          }
+          aEl.setAttribute("target", "_blank");
+          aEl.setAttribute("rel", "noopener noreferrer");
+          if (op.linkHitRect) {
+            const hr = op.linkHitRect;
+            const hit = doc.createElementNS("http://www.w3.org/2000/svg", "rect");
+            hit.setAttribute("x", String(hr.x));
+            hit.setAttribute("y", String(hr.y));
+            hit.setAttribute("width", String(hr.width));
+            hit.setAttribute("height", String(hr.height));
+            hit.setAttribute("fill", "none");
+            hit.setAttribute("stroke", "none");
+            aEl.appendChild(hit);
+          }
+          aEl.appendChild(pathImported);
+          g.appendChild(aEl);
+        } else {
+          g.appendChild(pathImported);
+        }
+      }
+    } else {
+      const payloads = await textToGlyphPathPayloads(conv, fontRes.font);
+      const strokeAttr =
+        t.stroke && t.stroke !== "none" && (t.strokeWidth ?? 0) > 0
+          ? ` stroke="${escapeXml(t.stroke)}" stroke-width="${t.strokeWidth}"`
+          : "";
+      const op = t.opacity != null && t.opacity !== 1 ? ` opacity="${t.opacity}"` : "";
+      for (const p of payloads) {
+        const d = p.svgPathD && p.svgPathD.length > 0 ? p.svgPathD : pathPayloadToSvgD(p);
+        if (!d) continue;
+        const frag = parser.parseFromString(
+          `<svg xmlns="http://www.w3.org/2000/svg"><path d="${escapeXml(d)}" fill="${escapeXml(t.fillColor)}"${strokeAttr}${op}/></svg>`,
+          "image/svg+xml",
+        );
+        const pathEl = frag.querySelector("path");
+        if (pathEl) g.appendChild(doc.importNode(pathEl, true));
+      }
     }
   }
   return new XMLSerializer().serializeToString(doc.documentElement);
@@ -512,6 +1008,7 @@ export async function textToOutlinePaths(
       y: originY - fontSize,
       width: 400,
       height: 40,
+      fontFamily,
       fontSize,
       fontWeight,
       lineHeight: 1.2,

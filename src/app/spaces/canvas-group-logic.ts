@@ -289,7 +289,7 @@ export function recomputeCanvasGroupFrames(nodes: Node[]): Node[] {
 
   return withFixedExpand.map((node) => {
     if (node.type !== "canvasGroup") return node;
-    let n = normalizeCanvasGroupNodeZ(node);
+    const n = normalizeCanvasGroupNodeZ(node);
 
     const gid = n.id;
     const children = withFixedExpand

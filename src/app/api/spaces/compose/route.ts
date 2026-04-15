@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
     console.log(`Active Layers Count: ${layers.length}`);
 
     // 1. Create base image (solid black instead of transparent to verify visibility)
-    let canvas = sharp({
+    const canvas = sharp({
       create: {
         width,
         height,
@@ -88,7 +88,7 @@ export async function POST(req: NextRequest) {
           }
 
           // Resize carefully: ensure the resulting image NEVER exceeds canvas dimensions
-          let resizedImageBuilder = sharp(imageBuffer)
+          const resizedImageBuilder = sharp(imageBuffer)
             .resize({
               width: Math.min(targetWidth, width),
               height: height, // Hard limit for height too

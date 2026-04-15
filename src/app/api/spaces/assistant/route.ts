@@ -75,7 +75,7 @@ export async function POST(req: Request) {
       response_format: { type: "json_object" },
     });
 
-    let result = JSON.parse(response.choices[0].message.content || "{}");
+    const result = JSON.parse(response.choices[0].message.content || "{}");
     console.log("[Assistant] Final GPT Response:", JSON.stringify(result, null, 2));
 
     const u = response.usage;
