@@ -1,5 +1,9 @@
 /**
- * Client-side helpers to remove superseded or deleted S3 objects (server route enforces prefix).
+ * Client-side helpers to delete S3 objects under `knowledge-files/` (server route enforces prefix).
+ *
+ * Política del producto: no borrar objetos al sustituir generaciones o quitar una imagen del lienzo;
+ * los assets se eliminan en bloque al borrar el proyecto (`DELETE /api/spaces` + `deleteFromS3`).
+ * Estas funciones se mantienen por si en el futuro se expone un “papelera / purge” explícito.
  */
 
 const PREFIX = "knowledge-files/";

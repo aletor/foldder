@@ -86,7 +86,6 @@ import { matchesAddSpaceNodeIntent } from '@/lib/assistant-quick-intents';
 import { installAiFetchOverlay } from '@/lib/ai-request-overlay';
 import { readResponseJson } from '@/lib/read-response-json';
 import { hydrateSpacesMapWithFreshUrls } from '@/lib/s3-media-hydrate';
-import { deleteSupersededS3Key } from '@/lib/s3-delete-client';
 import {
   AI_JOB_COMPLETE_EVENT,
   AI_JOB_CANVAS_NODE_ID,
@@ -3993,8 +3992,6 @@ const SpacesContent = () => {
               );
               if (json?.url) {
                 setNodes((nds) => {
-                  const prevKey = nds.find((n) => n.id === nodeId)?.data?.s3Key;
-                  deleteSupersededS3Key(prevKey, json.s3Key);
                   return nds.map((n) =>
                     n.id === nodeId
                       ? {

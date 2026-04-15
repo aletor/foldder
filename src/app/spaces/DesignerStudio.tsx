@@ -24,6 +24,7 @@ import {
 } from "./indesign/page-formats";
 import { DesignerPagePreview } from "./DesignerPagePreview";
 import { createArtboard, type Artboard } from "./freehand/artboard";
+import type { VectorPdfExportOptions } from "./freehand/text-outline";
 import { computeFittingLayout } from "./indesign/image-frame-layout";
 import { layoutPageStories } from "./indesign/text-layout";
 import type { Story, TextFrame, SpanStyle, Typography } from "./indesign/text-model";
@@ -43,7 +44,6 @@ import {
   unlinkFrameAt,
   updateStoryTypography,
 } from "./indesign/text-threading";
-import { deleteSupersededS3Key } from "@/lib/s3-delete-client";
 import { readResponseJson } from "@/lib/read-response-json";
 
 /** Dimensiones intrínsecas del archivo local (evita diferencias S3/CORS/EXIF vs `<Image>` remota). */
@@ -705,10 +705,7 @@ export default function DesignerStudio({
       const frameId = imageFrameTargetIdRef.current;
       if (!frameId) return;
       const api = studioApiRef.current;
-
       const frameObj = api?.getObjects().find((o) => o.id === frameId);
-      const prevKey = (frameObj as { imageFrameContent?: { s3Key?: string } } | undefined)
-        ?.imageFrameContent?.s3Key;
 
       const formData = new FormData();
       formData.append("file", file);
@@ -733,7 +730,6 @@ export default function DesignerStudio({
         alert(`No se pudo guardar la imagen: ${detail}`);
         return;
       }
-      deleteSupersededS3Key(prevKey, json.s3Key);
 
       const persistedUrl = json.url;
       let iw = 100;
@@ -1162,11 +1158,19 @@ export default function DesignerStudio({
   );
 
   const [multiPdfBusy, setMultiPdfBusy] = useState(false);
+  /** Evita doble ejecución. Si `multiPdfBusy` es false, el guard no debería quedar en true (recuperación tras fallos). */
+  const multiPdfExportingRef = useRef(false);
+  useEffect(() => {
+    if (!multiPdfBusy) {
+      multiPdfExportingRef.current = false;
+    }
+  }, [multiPdfBusy]);
 
-  const handleExportMultiPageVectorPdf = useCallback(async () => {
-    if (multiPdfBusy) return;
+  const handleExportMultiPageVectorPdf = useCallback(async (pdfOpts: VectorPdfExportOptions) => {
+    if (multiPdfExportingRef.current) return;
     const pageCount = pagesRef.current.length;
     if (pageCount === 0) return;
+    multiPdfExportingRef.current = true;
     setMultiPdfBusy(true);
     const savedIdx = activeIdxRef.current;
     const markups: string[] = [];
@@ -1180,6 +1184,12 @@ export default function DesignerStudio({
         const expectedKey = `${pg.id}_${i}_${Math.round(pd.width)}_${Math.round(pd.height)}`;
         flushSync(() => {
           setActivePageIndex(i);
+        });
+        // Tras `flushSync`, dar tiempo a que el lienzo (re)monte y el `useEffect` asigne `studioApiRef`.
+        await new Promise<void>((resolve) => {
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => resolve());
+          });
         });
         let api: DesignerStudioApi | null = null;
         for (let t = 0; t < 200; t++) {
@@ -1195,7 +1205,7 @@ export default function DesignerStudio({
         }
         let m = "";
         for (let r = 0; r < 12; r++) {
-          m = await api.getVectorPdfMarkupForCurrentPage();
+          m = await api.getVectorPdfMarkupForCurrentPage(pdfOpts);
           if (m.length > 0) break;
           await new Promise((res) => setTimeout(res, 40));
         }
@@ -1214,9 +1224,10 @@ export default function DesignerStudio({
       flushSync(() => {
         setActivePageIndex(savedIdx);
       });
+      multiPdfExportingRef.current = false;
       setMultiPdfBusy(false);
     }
-  }, [multiPdfBusy]);
+  }, []);
 
   /** Miniatura del nodo en el grafo: siempre la 1.ª página (con imágenes vía raster SVG). */
   const captureFirstPageThumbnail = useCallback(async () => {
@@ -1271,6 +1282,10 @@ export default function DesignerStudio({
         designerSkipAutoNodeExportOnClose
         onDesignerTextFrameCreate={handleDesignerTextFrameCreate}
         onDesignerImageFramePlace={handleDesignerImageFramePlace}
+        onDesignerImageFrameImportFile={(frameId, file) => {
+          imageFrameTargetIdRef.current = frameId;
+          void handleImageFileSelected(file);
+        }}
         studioApiRef={studioApiRef}
         onDesignerTextFrameEdit={handleDesignerTextFrameEdit}
         onDesignerAppendThreadedFrame={handleAppendThreadedFrame}

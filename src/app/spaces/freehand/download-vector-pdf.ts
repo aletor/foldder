@@ -162,7 +162,8 @@ export async function downloadMultiPageVectorPdf(
     const wPt = (w * 72) / 96;
     const hPt = (h * 72) / 96;
     const orientation = wPt >= hPt ? "landscape" : "portrait";
-    if (i === 0) {
+    // Primera página *válida* crea el doc; si las anteriores fallaron el parse, i>0 pero pdf sigue null.
+    if (pdf === null) {
       pdf = new jsPDF({
         unit: "pt",
         format: [wPt, hPt],
@@ -170,9 +171,9 @@ export async function downloadMultiPageVectorPdf(
         compress: true,
       });
     } else {
-      pdf!.addPage([wPt, hPt], orientation);
+      pdf.addPage([wPt, hPt], orientation);
     }
-    await runSvg2pdf(svgRoot, pdf!, { x: 0, y: 0, width: wPt, height: hPt });
+    await runSvg2pdf(svgRoot, pdf, { x: 0, y: 0, width: wPt, height: hPt });
   }
   if (pdf) pdf.save(filename);
 }

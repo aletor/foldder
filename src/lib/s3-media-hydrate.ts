@@ -8,7 +8,9 @@ export function tryExtractKnowledgeFilesKeyFromUrl(url: string): string | null {
   try {
     const u = new URL(url);
     const path = u.pathname.replace(/^\/+/, "");
-    if (path.startsWith("knowledge-files/")) return path;
+    // Virtual-hosted: knowledge-files/… | Path-style: bucket/knowledge-files/…
+    const idx = path.indexOf("knowledge-files/");
+    if (idx >= 0) return path.slice(idx);
     return null;
   } catch {
     return null;

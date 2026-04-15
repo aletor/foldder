@@ -57,6 +57,8 @@ type Props = {
   onApplyHex: (hex: string) => void;
   onReplaceDocumentColor: (fromHex: string, toHex: string) => void;
   onCommitHistory: () => void;
+  /** Dentro del bloque COLOR plegable: sin borde inferior propio (lo envuelve el panel). */
+  embedded?: boolean;
 };
 
 export function FreehandColorPalette({
@@ -68,6 +70,7 @@ export function FreehandColorPalette({
   onApplyHex,
   onReplaceDocumentColor,
   onCommitHistory,
+  embedded = false,
 }: Props) {
   const colorInputRef = useRef<HTMLInputElement>(null);
   const [pickerSession, setPickerSession] = useState<PickerSession>(null);
@@ -168,7 +171,13 @@ export function FreehandColorPalette({
   };
 
   return (
-    <div className="border-b border-white/[0.08] px-[14px] py-3 space-y-3">
+    <div
+      className={
+        embedded
+          ? "px-[14px] pb-3 pt-1 space-y-3"
+          : "border-b border-white/[0.08] px-[14px] py-3 space-y-3"
+      }
+    >
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-zinc-500">
           <Pipette size={12} className="text-zinc-400" strokeWidth={2} />

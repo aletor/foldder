@@ -3,6 +3,7 @@
 import React, { useMemo, useState, useEffect } from "react";
 import { X } from "lucide-react";
 import type { Rect } from "./freehand-export";
+import type { VectorPdfExportOptions } from "./text-outline";
 
 export type ExportFormat = "png" | "svg" | "jpg" | "pdf";
 export type ExportScalePreset = 1 | 2 | 3;
@@ -33,7 +34,7 @@ type Props = {
   designerMultipageVectorPdf?: {
     pageCount: number;
     busy: boolean;
-    onExport: () => void | Promise<void>;
+    onExport: (opts: VectorPdfExportOptions) => void | Promise<void>;
   } | null;
 };
 
@@ -59,6 +60,8 @@ export function FreehandExportModal({
   const [merged, setMerged] = useState(true);
   const [batchAllArtboards, setBatchAllArtboards] = useState(false);
   const [batchSelected, setBatchSelected] = useState<Record<string, boolean>>({});
+  const [pdfMakeUrlsClickable, setPdfMakeUrlsClickable] = useState(false);
+  const [pdfOutlineLinkRects, setPdfOutlineLinkRects] = useState(false);
 
   useEffect(() => {
     if (open) setFilename(defaultFilename.replace(/[^a-z0-9-_]/gi, "_").slice(0, 80));
@@ -220,15 +223,54 @@ export function FreehandExportModal({
               <p className="text-[10px] leading-snug text-zinc-500">
                 PDF vectorial multipágina: una hoja por página del documento (texto como trazados, mismas primitivas que el SVG).
               </p>
+              <label className="flex cursor-pointer items-start gap-2 text-[11px] text-zinc-300">
+                <input
+                  type="checkbox"
+                  checked={pdfMakeUrlsClickable}
+                  onChange={(e) => setPdfMakeUrlsClickable(e.target.checked)}
+                  className="accent-violet-500 mt-0.5"
+                />
+                <span>
+                  Hacer URLs clickeables
+                  <span className="mt-0.5 block text-[10px] font-normal text-zinc-500">
+                    Detecta <code className="text-zinc-400">https://…</code> en el texto y los exporta como enlaces (estilo azul subrayado).
+                  </span>
+                </span>
+              </label>
+              <label className="flex cursor-pointer items-start gap-2 text-[11px] text-zinc-300">
+                <input
+                  type="checkbox"
+                  checked={pdfOutlineLinkRects}
+                  onChange={(e) => setPdfOutlineLinkRects(e.target.checked)}
+                  className="accent-violet-500 mt-0.5"
+                />
+                <span>
+                  Marcar enlaces con recuadro
+                  <span className="mt-0.5 block text-[10px] font-normal text-zinc-500">
+                    Dibuja un borde fino alrededor del área de clic de cada enlace (útil para comprobar la alineación).
+                  </span>
+                </span>
+              </label>
               <button
                 type="button"
                 disabled={designerMultipageVectorPdf.busy}
-                onClick={() => void designerMultipageVectorPdf.onExport()}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  void Promise.resolve(
+                    designerMultipageVectorPdf.onExport({
+                      makeUrlsClickable: pdfMakeUrlsClickable,
+                      outlineLinkRects: pdfOutlineLinkRects,
+                    }),
+                  ).catch((err: unknown) => {
+                    console.error("[Export] PDF multipágina Designer:", err);
+                  });
+                }}
                 className="w-full rounded-lg border border-violet-400/30 bg-violet-600/25 px-3 py-2 text-[11px] font-semibold text-violet-100 transition-colors duration-150 hover:bg-violet-500/35 disabled:pointer-events-none disabled:opacity-45"
               >
                 {designerMultipageVectorPdf.busy
                   ? "Generando PDF…"
-                  : `Descargar PDF (${designerMultipageVectorPdf.pageCount} páginas)`}
+                  : `Descargar PDF (${designerMultipageVectorPdf.pageCount})`}
               </button>
             </div>
           )}

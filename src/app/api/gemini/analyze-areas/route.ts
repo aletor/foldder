@@ -276,6 +276,8 @@ REFERENCIA 2: zonas marcadas en color (trazos reales del usuario) — respetar l
 CRÍTICO: El trazo señala el sitio exacto y su extensión. Si descripción y trazo discrepan, gana el trazo y el encuadre. Incluye SIEMPRE cuadrante, centroide, bbox y tamaño en cada instrucción de zona.
 ANTES DE ENVIAR: cuenta las zonas con trazo en tu respuesta; deben ser exactamente ${zoneChanges.length} (una por color: ${zoneColorNames || "N/A"}).
 
+SALIDA DEL MODELO DE IMAGEN (obligatorio al final de tu prompt): Añade un párrafo que indique que la imagen final NO debe reproducir trazos de color, círculos de guía, líneas de delineación ni marcas superpuestas de REF 2; esas formas son solo referencia espacial y el resultado debe verse limpio y fotorrealista.
+
 Devuelve SOLO el prompt, sin texto adicional.`;
     }
 

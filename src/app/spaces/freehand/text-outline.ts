@@ -4,6 +4,14 @@ import { sanitizeStoryLinkHref } from "../indesign/text-model";
 
 export type VectorPdfTextRun = { text: string; style?: SpanStyle };
 
+/** Opciones solo para PDF multipágina / vector (pasadas desde el modal de export). */
+export type VectorPdfExportOptions = {
+  /** Detecta `https://…` en texto plano y los convierte en enlaces con estilo (azul/subrayado). */
+  makeUrlsClickable?: boolean;
+  /** Dibuja un borde fino alrededor del rectángulo de clic de cada enlace (depuración / claridad). */
+  outlineLinkRects?: boolean;
+};
+
 export const FONT_CONVERSION_UNAVAILABLE = "Fuente no disponible para conversión";
 
 interface Point {
@@ -448,6 +456,39 @@ function buildCharStyleMap(text: string, runs: Array<{ text: string; style?: Spa
   return map;
 }
 
+/** URLs sueltas en el texto (no sustituye enlaces ya definidos en la historia). */
+const AUTO_URL_IN_TEXT_RE = /https?:\/\/[^\s<>"'{}|\\^`[\]()]+/gi;
+
+function trimUrlMatchEnd(raw: string): string {
+  return raw.replace(/[.,;:!?)\]]+$/u, "");
+}
+
+/**
+ * Marca caracteres que coinciden con URL en texto plano. Los `linkHref` existentes tienen prioridad.
+ */
+function applyAutoLinksToCharStyleMap(text: string, map: (SpanStyle | undefined)[]): void {
+  AUTO_URL_IN_TEXT_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = AUTO_URL_IN_TEXT_RE.exec(text)) !== null) {
+    const raw = trimUrlMatchEnd(m[0]);
+    const href = sanitizeStoryLinkHref(raw);
+    if (!href) continue;
+    const a = m.index;
+    const b = Math.min(text.length, a + raw.length);
+    for (let i = a; i < b; i++) {
+      const prevHref = map[i]?.linkHref ? sanitizeStoryLinkHref(map[i]!.linkHref!) : "";
+      if (prevHref.length > 0) continue;
+      const base = map[i] ?? {};
+      map[i] = {
+        ...base,
+        linkHref: href,
+        textUnderline: true,
+        color: base.color && base.color !== "none" ? base.color : PDF_LINK_BLUE,
+      };
+    }
+  }
+}
+
 function measureLineWidthMixed(
   line: string,
   globalLineStart: number,
@@ -561,23 +602,38 @@ function effectiveGlyphFill(
   return defaultFillColor;
 }
 
-/** Caja vertical alrededor del baseline (misma lógica que el layout web) para anotaciones PDF. */
-function linkHitRectFromFontMetrics(
-  font: opentype.Font,
-  fontSize: number,
-  baselineY: number,
-  x1: number,
-  x2: number,
-): { x: number; y: number; width: number; height: number } {
-  const upem = font.unitsPerEm || 1000;
-  const s = fontSize / upem;
-  const asc = (font.ascender ?? 800) * s;
-  const desc = (font.descender ?? -200) * s;
-  const topY = baselineY - asc;
-  const botY = baselineY - desc;
-  const w = Math.max(0, x2 - x1);
-  const h = Math.max(0.25, botY - topY);
-  return { x: x1, y: topY, width: w, height: h };
+/**
+ * Área clic PDF alineada al trazado real del glifo (bbox del path opentype).
+ * Evita el desfase ~20–40px que daban solo ascender/descender de la fuente vs svg2pdf.
+ */
+function linkHitRectFromGlyphPath(path: opentype.Path): { x: number; y: number; width: number; height: number } | null {
+  const bb = path.getBoundingBox();
+  if (bb.isEmpty()) return null;
+  const w = bb.x2 - bb.x1;
+  const h = bb.y2 - bb.y1;
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return null;
+  return { x: bb.x1, y: bb.y1, width: w, height: Math.max(0.25, h) };
+}
+
+function unionLinkHitRects(
+  rects: { x: number; y: number; width: number; height: number }[],
+): { x: number; y: number; width: number; height: number } | null {
+  if (rects.length === 0) return null;
+  let x1 = Infinity;
+  let y1 = Infinity;
+  let x2 = -Infinity;
+  let y2 = -Infinity;
+  for (const r of rects) {
+    x1 = Math.min(x1, r.x);
+    y1 = Math.min(y1, r.y);
+    x2 = Math.max(x2, r.x + r.width);
+    y2 = Math.max(y2, r.y + r.height);
+  }
+  if (!Number.isFinite(x1) || !Number.isFinite(y1)) return null;
+  const w = x2 - x1;
+  const h = y2 - y1;
+  if (w <= 0 || h <= 0) return null;
+  return { x: x1, y: y1, width: w, height: Math.max(0.25, h) };
 }
 
 export type PdfGlyphPaintOp = {
@@ -586,11 +642,13 @@ export type PdfGlyphPaintOp = {
   strokeAttr: string;
   op: string;
   linkHref?: string;
-  /**
-   * Rectángulo alineado a métricas EM (ascender/descender); svg2pdf usa el bbox del `<a>` y los
-   * paths de glifo suelen desalinear el área clic respecto al texto sin este refuerzo.
-   */
+  /** Rectángulo invisible (área clic PDF por glifo); coincide con bbox del path del glifo. */
   linkHitRect?: { x: number; y: number; width: number; height: number };
+  /**
+   * Solo en el primer glifo de un tramo de enlace cuando `outlineLinkRects`: bbox unión de todo el tramo
+   * (palabra/URL completa en la línea), para dibujar un solo recuadro.
+   */
+  linkSpanOutlineRect?: { x: number; y: number; width: number; height: number };
 };
 
 type PdfTextExtras = { stroke?: string; strokeWidth?: number; opacity?: number };
@@ -604,6 +662,7 @@ export async function richTextToGlyphPaintOps(
   baseFont: opentype.Font,
   defaultFillColor: string,
   extras?: PdfTextExtras,
+  pdfOpts?: VectorPdfExportOptions,
 ): Promise<PdfGlyphPaintOp[]> {
   const pad = t.textMode === "area" ? 4 : 0;
   const indent = t.paragraphIndent ?? 0;
@@ -612,6 +671,9 @@ export async function richTextToGlyphPaintOps(
   const useKern = t.fontKerning !== "none";
   const ta = t.textAlign === "justify" ? "left" : t.textAlign;
   const charStyles = buildCharStyleMap(t.text, runs);
+  if (pdfOpts?.makeUrlsClickable) {
+    applyAutoLinksToCharStyleMap(t.text, charStyles);
+  }
   const weights = new Set<number>();
   weights.add(t.fontWeight);
   for (let i = 0; i < t.text.length; i++) {
@@ -671,6 +733,12 @@ export async function richTextToGlyphPaintOps(
       pickFont,
     );
 
+    const linkLineBuf: Array<{
+      outIndex: number;
+      gi: number;
+      hr: { x: number; y: number; width: number; height: number };
+    }> = [];
+
     const underlineY = baselineY + Math.max(1.5, t.fontSize * 0.105);
     const strikeY = baselineY - t.fontSize * 0.31;
     const decoW = Math.max(0.65, Math.min(2.75, t.fontSize * 0.055));
@@ -707,17 +775,47 @@ export async function richTextToGlyphPaintOps(
             linkHref: linkRaw || undefined,
           };
           if (linkRaw) {
-            opBase.linkHitRect = linkHitRectFromFontMetrics(
-              font,
-              t.fontSize,
-              baselineY,
-              lefts[i]!,
-              lefts[i + 1]!,
-            );
+            const hr = linkHitRectFromGlyphPath(path);
+            if (hr) opBase.linkHitRect = hr;
           }
           out.push(opBase);
+          if (pdfOpts?.outlineLinkRects && linkRaw && opBase.linkHitRect) {
+            linkLineBuf.push({ outIndex: out.length - 1, gi, hr: opBase.linkHitRect });
+          }
           gIdx++;
         }
+      }
+    }
+
+    if (pdfOpts?.outlineLinkRects && linkLineBuf.length > 0) {
+      let segCh = 0;
+      while (segCh < line.length) {
+        const gi0 = globalTextStart + segCh;
+        const lr0 = charStyles[gi0]?.linkHref ? sanitizeStoryLinkHref(charStyles[gi0]!.linkHref!) : "";
+        if (!lr0) {
+          segCh++;
+          continue;
+        }
+        let endCh = segCh + 1;
+        while (endCh < line.length) {
+          const lx = charStyles[globalTextStart + endCh]?.linkHref
+            ? sanitizeStoryLinkHref(charStyles[globalTextStart + endCh]!.linkHref!)
+            : "";
+          if (lx !== lr0) break;
+          endCh++;
+        }
+        const gMin = globalTextStart + segCh;
+        const gMax = globalTextStart + endCh;
+        const hrs = linkLineBuf.filter((e) => e.gi >= gMin && e.gi < gMax).map((e) => e.hr);
+        const merged = unionLinkHitRects(hrs);
+        if (merged) {
+          const first = linkLineBuf.find((e) => e.gi >= gMin && e.gi < gMax);
+          if (first) {
+            const glyphOp = out[first.outIndex];
+            if (glyphOp) glyphOp.linkSpanOutlineRect = merged;
+          }
+        }
+        segCh = endCh;
       }
     }
 
@@ -868,6 +966,7 @@ export async function substituteTextWithOutlinedPathsInSvg(
     /** Si viene de Designer (`_designerRichSpans`), conserva negrita/color/enlaces en el PDF. */
     richRuns?: VectorPdfTextRun[];
   }>,
+  pdfOpts?: VectorPdfExportOptions,
 ): Promise<string> {
   const parser = new DOMParser();
   const doc = parser.parseFromString(svgXml, "image/svg+xml");
@@ -903,13 +1002,23 @@ export async function substituteTextWithOutlinedPathsInSvg(
       paragraphIndent: t.paragraphIndent,
     };
     g.replaceChildren();
-    const useRich = t.richRuns && t.richRuns.length > 0;
-    if (useRich) {
-      const ops = await richTextToGlyphPaintOps(conv, t.richRuns!, fontRes.font, t.fillColor, {
-        stroke: t.stroke,
-        strokeWidth: t.strokeWidth,
-        opacity: t.opacity,
-      });
+    const useRich = !!(t.richRuns && t.richRuns.length > 0);
+    const useRichPipeline = useRich || !!pdfOpts?.makeUrlsClickable;
+
+    if (useRichPipeline) {
+      const runs = useRich ? t.richRuns! : [{ text: t.text }];
+      const ops = await richTextToGlyphPaintOps(
+        conv,
+        runs,
+        fontRes.font,
+        t.fillColor,
+        {
+          stroke: t.stroke,
+          strokeWidth: t.strokeWidth,
+          opacity: t.opacity,
+        },
+        pdfOpts,
+      );
       for (const op of ops) {
         const frag = parser.parseFromString(
           `<svg xmlns="http://www.w3.org/2000/svg"><path d="${escapeXml(op.d)}" fill="${escapeXml(op.fill)}"${op.strokeAttr}${op.op}/></svg>`,
@@ -929,14 +1038,22 @@ export async function substituteTextWithOutlinedPathsInSvg(
           aEl.setAttribute("target", "_blank");
           aEl.setAttribute("rel", "noopener noreferrer");
           if (op.linkHitRect) {
-            const hr = op.linkHitRect;
+            const hr = op.linkSpanOutlineRect ?? op.linkHitRect;
             const hit = doc.createElementNS("http://www.w3.org/2000/svg", "rect");
             hit.setAttribute("x", String(hr.x));
             hit.setAttribute("y", String(hr.y));
             hit.setAttribute("width", String(hr.width));
             hit.setAttribute("height", String(hr.height));
             hit.setAttribute("fill", "none");
-            hit.setAttribute("stroke", "none");
+            /** Un solo recuadro visible por tramo de enlace (`linkSpanOutlineRect` solo en el 1.er glifo del tramo). */
+            const outlineVisible = !!(pdfOpts?.outlineLinkRects && op.linkSpanOutlineRect);
+            if (outlineVisible) {
+              hit.setAttribute("stroke", "rgba(37,99,235,0.75)");
+              hit.setAttribute("stroke-width", "0.35");
+              hit.setAttribute("vector-effect", "non-scaling-stroke");
+            } else {
+              hit.setAttribute("stroke", "none");
+            }
             aEl.appendChild(hit);
           }
           aEl.appendChild(pathImported);

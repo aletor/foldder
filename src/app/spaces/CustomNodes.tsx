@@ -110,7 +110,7 @@ import {
 } from '@/lib/ai-hud-generation-progress';
 import { geminiGenerateWithServerProgress } from '@/lib/gemini-generate-stream-client';
 import { isFoldderMediaPreviewAutoFitSuppressed } from '@/lib/media-preview-fit-suppress';
-import { deleteSupersededS3Key } from '@/lib/s3-delete-client';
+import { tryExtractKnowledgeFilesKeyFromUrl } from '@/lib/s3-media-hydrate';
 import { usePreventBrowserPinchZoom } from '@/lib/use-prevent-browser-pinch-zoom';
 import { NODE_REGISTRY } from './nodeRegistry';
 import { useRegisterAssistantNodeRun } from './use-assistant-node-run';
@@ -3595,8 +3595,10 @@ const NanaBananaPaintCanvas = memo(({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !natW || !natH) return;
-    canvas.width  = natW;
+    canvas.width = natW;
     canvas.height = natH;
+    const ctx = canvas.getContext('2d');
+    if (ctx) ctx.clearRect(0, 0, natW, natH);
   }, [natW, natH]);
 
   const getXY = (e: PointerEvent, canvas: HTMLCanvasElement) => {
@@ -3675,6 +3677,16 @@ const hexToRgb = (hex: string): [number, number, number] => {
   return [r, g, b];
 };
 
+/**
+ * REF 2 lleva trazos de color como guía; el modelo de imagen a veces los copia en la salida.
+ * Este bloque lo prohíbe explícitamente (Studio + máscaras).
+ */
+function nanoBananaPromptExcludeZoneGuideArtifacts(prompt: string): string {
+  const block =
+    '\n\n[SALIDA — obligatorio] Los colores, trazos y formas dibujadas en la imagen de referencia de zonas (REF 2 / mapa) son solo guías de posición. La imagen generada NO debe mostrar esas líneas, círculos de contorno, marcas de anotación ni superposición de la guía. Integra los cambios en la escena de forma natural y fotorrealista, sin artefactos de dibujo de referencia.';
+  return prompt.trim() + block;
+}
+
 const NanoBananaStudio = memo(({
   nodeId, initialImage, lastGenerated, modelKey, aspectRatio, resolution,
   thinking, prompt, externalPromptIgnored, onClose, onGenerated, onResolutionChange,
@@ -3718,6 +3730,67 @@ const NanoBananaStudio = memo(({
   const currentImageRef = useRef<string | null>(null);
 
   const [galleryOpen, setGalleryOpen] = useState(true);
+  /** Se incrementa tras generar con éxito para forzar desmontaje de capas de pintura (franjas) sobre la imagen. */
+  const [studioVisualEpoch, setStudioVisualEpoch] = useState(0);
+
+  /** Solo con zona pintada + descripción tiene sentido analyze-areas («Ver llamada»). Sin eso → Generar = imagen + prompt directo. */
+  const hasPaintedZoneWithDescription = useMemo(
+    () => changes.some((c) => !c.isGlobal && !!c.paintData && !!c.description.trim()),
+    [changes],
+  );
+
+  /** Evita re-firmar en bucle tras actualizar URLs; se invalida al cambiar el conjunto de claves S3 del historial. */
+  const lastHistoryKeysSigRef = useRef<string | null>(null);
+
+  /**
+   * Las URLs prefirmadas caducan (~1 h). Al salir y volver a entrar en Studio sin recargar el proyecto,
+   * el historial seguía apuntando a URLs muertas → miniaturas rotas. Renueva contra /api/spaces/s3-presign.
+   */
+  useLayoutEffect(() => {
+    const list = generationHistory;
+    if (!Array.isArray(list) || list.length === 0) return;
+
+    const keysList = list.map((u) => (typeof u === 'string' ? tryExtractKnowledgeFilesKeyFromUrl(u) : null));
+    if (!keysList.some(Boolean)) return;
+
+    const sig = keysList.map((k) => k || '').join('\u0001');
+    if (sig === lastHistoryKeysSigRef.current) return;
+
+    let cancelled = false;
+    void (async () => {
+      const keys = new Set<string>();
+      for (const k of keysList) {
+        if (k) keys.add(k);
+      }
+      try {
+        const res = await fetch('/api/spaces/s3-presign', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ keys: [...keys] }),
+        });
+        if (!res.ok || cancelled) return;
+        const payload = (await res.json()) as { urls?: Record<string, string> };
+        const urls = payload.urls;
+        if (!urls || cancelled) return;
+        const next = list.map((item) => {
+          if (typeof item !== 'string') return item;
+          const kk = tryExtractKnowledgeFilesKeyFromUrl(item);
+          if (kk && urls[kk]) return urls[kk];
+          return item;
+        });
+        const changed = next.some((u, i) => u !== list[i]);
+        if (!cancelled) {
+          if (changed) onGenerationHistoryChange(next);
+          lastHistoryKeysSigRef.current = sig;
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [generationHistory, onGenerationHistoryChange]);
 
   currentImageRef.current = currentImage;
 
@@ -3794,89 +3867,6 @@ const NanoBananaStudio = memo(({
     return () => document.body.classList.remove('nb-studio-open');
   }, []);
 
-  // ── Generate ──────────────────────────────────────────────────────────────
-  const onGenerate = async () => {
-    const graphPrompt = externalPromptIgnored ? '' : String(prompt ?? '');
-    if (!externalPromptIgnored && !graphPrompt.trim()) {
-      return alert('No hay prompt conectado.');
-    }
-    const imageToSend = (generatedOnce && reSendGenerated && currentImage)
-      ? currentImage
-      : initialImage;
-
-    const changeDescriptions = changes.map(c => c.description).filter(Boolean).join('. ');
-    let fullPrompt: string;
-    if (changeDescriptions) {
-      fullPrompt = graphPrompt
-        ? `${graphPrompt}. INSTRUCCIONES DE CAMBIO: ${changeDescriptions}`
-        : `INSTRUCCIONES DE CAMBIO: ${changeDescriptions}`;
-    } else {
-      fullPrompt = graphPrompt;
-    }
-    if (!fullPrompt.trim()) {
-      return alert(
-        externalPromptIgnored
-          ? 'En Studio (modo avanzado) añade instrucciones: cambios globales, zonas, cámara o previsualización.'
-          : 'No hay prompt conectado.'
-      );
-    }
-
-    setGenStatus('running');
-    setProgress(0);
-    aiHudNanoBananaJobStart(nodeId);
-
-    const maskImages = changes.map(c => c.paintData).filter(Boolean) as string[];
-    const refImages = [...(imageToSend ? [imageToSend] : []), ...maskImages];
-
-    let genFinishedOk = false;
-    try {
-      const ok = await runAiJobWithNotification({ nodeId, label: 'Nano Banana Studio' }, async () => {
-        const json = await geminiGenerateWithServerProgress(
-          {
-            prompt: fullPrompt,
-            images: refImages,
-            aspect_ratio: aspectRatio,
-            resolution: isFlash25 ? '1k' : studioResolution,
-            model: studioModelKey,
-            thinking: thinking && isPro,
-          },
-          (pct) => {
-            setProgress(pct);
-            aiHudNanoBananaJobProgress(nodeId, pct);
-          }
-        );
-        const out = json.output;
-        const prev = currentImageRef.current;
-        onGenerationHistoryChange((h) => {
-          const next = [...h];
-          if (prev && prev !== out && !next.includes(prev)) next.push(prev);
-          if (!next.includes(out)) next.push(out);
-          return next;
-        });
-        currentImageRef.current = out;
-        setCurrentImage(out);
-        setGeneratedOnce(true);
-        setReSendGenerated(true);
-        onGenerated(out, typeof json.key === 'string' ? json.key : undefined);
-        genFinishedOk = true;
-      });
-      if (!ok) setGenStatus('error');
-    } catch (e: any) {
-      console.error('[NanoBananaStudio] onGenerate:', e);
-      setGenStatus('error');
-    } finally {
-      if (genFinishedOk) {
-        flushSync(() => {
-          setProgress(100);
-          setGenStatus('success');
-          aiHudNanoBananaJobProgress(nodeId, 100);
-        });
-      }
-      aiHudNanoBananaJobEnd(nodeId);
-      setTimeout(() => setProgress(0), 1000);
-    }
-  };
-
   // ── Changes ───────────────────────────────────────────────────────────────
   const startAddChange = () => {
     if (addingChange) return;
@@ -3941,253 +3931,488 @@ const NanoBananaStudio = memo(({
     pendingPaintRef.current = data;
   }, []);
 
-  // ── Generate Call: build color-map image + full prompt ──────────────────
-  const onGenerateCall = async () => {
-    const validChanges = changes.filter(c => (c.isGlobal ? c.description.trim() : (c.paintData && c.description.trim())));
-    if (validChanges.length === 0) {
-      alert('Añade al menos un cambio con área dibujada y descripción antes de generar la llamada.');
-      return;
-    }
+  /** Limpia chips de cambios, caché de llamada, inputs global/cámara y trazos tras una gen. Studio completa. */
+  const clearStudioEditsAfterSuccessfulGenerate = useCallback(() => {
+    setStudioVisualEpoch((e) => e + 1);
+    setChanges([]);
+    setCachedPromptData(null);
+    setCallPreview(null);
+    setShowGlobalInput(false);
+    setGlobalDesc('');
+    setShowCameraMenu(false);
+    setActiveChangeId(null);
+    setAddingChange(false);
+    pendingPaintRef.current = null;
+  }, []);
 
-    // Build the color-map canvas
-    // We create a canvas matching the display container size
-    // Use the actual image natural dimensions so the color map pixel-matches the base image
-    const W = imgNat.w || 1280;
-    const H = imgNat.h || 720;
-    const offscreen = document.createElement('canvas');
-    offscreen.width  = W;
-    offscreen.height = H;
-    const ctx = offscreen.getContext('2d')!;
+  /**
+   * Misma lógica que «Ver llamada»: mapa de color, analyze-areas, refs y grid.
+   * `notifyAreasJob`: si true, envuelve el análisis en runAiJobWithNotification (botón Ver llamada).
+   */
+  const buildStudioCallPreviewPayload = useCallback(
+    async (opts: { notifyAreasJob: boolean }): Promise<{
+      colorMapUrl: string;
+      fullPrompt: string;
+      markedRef2: string | null;
+      referenceGridUrl: string | null;
+      changesKey: string;
+    } | null> => {
+      const validChanges = changes.filter((c) =>
+        c.isGlobal ? c.description.trim() : c.paintData && c.description.trim(),
+      );
+      if (validChanges.length === 0) return null;
 
-    // Black background
-    ctx.fillStyle = '#000000';
-    ctx.fillRect(0, 0, W, H);
+      const W = imgNat.w || 1280;
+      const H = imgNat.h || 720;
+      const offscreen = document.createElement('canvas');
+      offscreen.width = W;
+      offscreen.height = H;
+      const ctx = offscreen.getContext('2d')!;
 
-    // Render actual user strokes (tinted in assigned color) instead of abstracted ellipses.
-    for (const change of changes) {
-      if (!change.paintData) continue;
-      await new Promise<void>(resolve => {
-        const img = new Image();
-        img.onload = () => {
-          const tmp = document.createElement('canvas');
-          tmp.width = W; tmp.height = H;
-          const tc = tmp.getContext('2d')!;
-          tc.drawImage(img, 0, 0, W, H);
-          const id = tc.getImageData(0, 0, W, H);
-          const hex = change.assignedColor.hex.replace('#', '');
-          const cr = parseInt(hex.slice(0, 2), 16);
-          const cg = parseInt(hex.slice(2, 4), 16);
-          const cb = parseInt(hex.slice(4, 6), 16);
-          for (let i = 0; i < id.data.length; i += 4) {
-            if (id.data[i + 3] > 30) {
-              id.data[i] = cr; id.data[i + 1] = cg; id.data[i + 2] = cb;
-              id.data[i + 3] = 255;
-            }
-          }
-          tc.putImageData(id, 0, 0);
-          ctx.drawImage(tmp, 0, 0);
-          resolve();
-        };
-        img.src = change.paintData!;
-      });
-    }
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, W, H);
 
-    const colorMapUrl = offscreen.toDataURL('image/png');
-
-    // ── Prompt cache: skip AI call if changes haven't changed ──────────────────
-    const changesKey = JSON.stringify(
-      validChanges.map(c => ({
-        id: c.id,
-        desc: c.description,
-        color: c.assignedColor.name,
-        hasPaint: !!c.paintData,
-        isGlobal: !!c.isGlobal,
-      }))
-    );
-    if (cachedPromptData && cachedPromptData.changesKey === changesKey) {
-      // No changes since last call — reuse cached preview (only update colorMap URL)
-      setCallPreview({ colorMapUrl, fullPrompt: cachedPromptData.preview.fullPrompt });
-      return;
-    }
-
-    let fullPrompt = '';
-    let markedRef2DataUrl: string | null = null;
-
-    type PosEntry = { cx: number; cy: number; x1: number; y1: number; x2: number; y2: number; areaPct: number; quadrant: string };
-    let positionData: Record<string, PosEntry> = {};
-
-    await runAiJobWithNotification({ nodeId, label: 'Nano Banana · Áreas' }, async () => {
-      setAnalyzingCall(true);
-      try {
-      const validChanges = changes.filter(c => (c.isGlobal ? c.description.trim() : (c.paintData && c.description.trim())));
-
-      // Build "marked base image" = base image with each paint stroke overlaid in its assigned color
-      // Uses imgRef.current (already loaded in DOM) to avoid CORS issues with S3 presigned URLs.
-      let markedBaseUrl = colorMapUrl; // fallback to abstract color map if ref unavailable
-      const domImg = imgRef.current;
-      if (domImg && domImg.complete && domImg.naturalWidth > 0) {
-        try {
-          const marked = document.createElement('canvas');
-          marked.width = W; marked.height = H;
-          const mc = marked.getContext('2d')!;
-          // Draw base image from the already-loaded DOM element (no CORS fetch needed)
-          mc.drawImage(domImg, 0, 0, W, H);
-          // Draw each paint stroke overlay with assigned color (semi-transparent)
-          for (const change of validChanges) {
-            if (!change.paintData) continue;
-            await new Promise<void>(r2 => {
-              const strokeImg = new Image();
-              strokeImg.onload = () => {
-                // Colorize: draw stroke in assigned color
-                const tmp = document.createElement('canvas');
-                tmp.width = W; tmp.height = H;
-                const tc = tmp.getContext('2d')!;
-                tc.drawImage(strokeImg, 0, 0, W, H);
-                // Tint the stroke pixels with the assigned color
-                const id = tc.getImageData(0, 0, W, H);
-                const [r3, g3, b3] = hexToRgb(change.assignedColor.hex);
-                for (let i = 0; i < id.data.length; i += 4) {
-                  if (id.data[i + 3] > 30) {
-                    id.data[i] = r3; id.data[i + 1] = g3; id.data[i + 2] = b3;
-                    id.data[i + 3] = Math.min(220, id.data[i + 3] * 3);
-                  }
-                }
-                tc.putImageData(id, 0, 0);
-                mc.drawImage(tmp, 0, 0);
-                r2();
-              };
-              strokeImg.src = change.paintData!;
-            });
-          }
-          markedBaseUrl = marked.toDataURL('image/png'); // PNG lossless — preserve quality for AI reference
-        } catch (e) {
-          console.warn('[marked-base] Canvas draw failed, using color map fallback:', e);
-        }
-      }
-
-      // Build rich position metadata: centroid + bbox + area% + quadrant
-      positionData = {};
-      for (const change of validChanges) {
+      for (const change of changes) {
         if (!change.paintData) continue;
-        await new Promise<void>(resolve => {
-          const tmp2 = document.createElement('canvas');
-          tmp2.width = W; tmp2.height = H;
-          const tc2 = tmp2.getContext('2d')!;
-          const img2 = new Image();
-          img2.onload = () => {
-            tc2.drawImage(img2, 0, 0, W, H);
-            const pd2 = tc2.getImageData(0, 0, W, H);
-            let mx = W, my = H, Mx = 0, My = 0, found2 = false;
-            let paintedPixels = 0;
-            for (let y = 0; y < H; y++) {
-              for (let x = 0; x < W; x++) {
-                if (pd2.data[(y * W + x) * 4 + 3] > 30) {
-                  if (x < mx) mx = x; if (y < my) my = y;
-                  if (x > Mx) Mx = x; if (y > My) My = y;
-                  found2 = true;
-                  paintedPixels++;
-                }
+        await new Promise<void>((resolve) => {
+          const img = new Image();
+          img.onload = () => {
+            const tmp = document.createElement('canvas');
+            tmp.width = W;
+            tmp.height = H;
+            const tc = tmp.getContext('2d')!;
+            tc.drawImage(img, 0, 0, W, H);
+            const id = tc.getImageData(0, 0, W, H);
+            const hex = change.assignedColor.hex.replace('#', '');
+            const cr = parseInt(hex.slice(0, 2), 16);
+            const cg = parseInt(hex.slice(2, 4), 16);
+            const cb = parseInt(hex.slice(4, 6), 16);
+            for (let i = 0; i < id.data.length; i += 4) {
+              if (id.data[i + 3] > 30) {
+                id.data[i] = cr;
+                id.data[i + 1] = cg;
+                id.data[i + 2] = cb;
+                id.data[i + 3] = 255;
               }
             }
-            if (found2) {
-              const cx = Math.round(((mx + Mx) / 2 / W) * 100);
-              const cy = Math.round(((my + My) / 2 / H) * 100);
-              const x1 = Math.round((mx / W) * 100);
-              const y1 = Math.round((my / H) * 100);
-              const x2 = Math.round((Mx / W) * 100);
-              const y2 = Math.round((My / H) * 100);
-              const areaPct = Math.round((paintedPixels / (W * H)) * 100 * 10) / 10;
-
-              const row = cy < 33 ? 'superior' : cy > 66 ? 'inferior' : 'central';
-              const col = cx < 33 ? 'izquierdo' : cx > 66 ? 'derecho' : 'central';
-              const quadrant = row === 'central' && col === 'central'
-                ? 'centro de la imagen'
-                : row === col
-                  ? `tercio ${row}`
-                  : `tercio ${row}-${col}`;
-
-              positionData[change.assignedColor.name] = { cx, cy, x1, y1, x2, y2, areaPct, quadrant };
-            }
+            tc.putImageData(id, 0, 0);
+            ctx.drawImage(tmp, 0, 0);
             resolve();
           };
-          img2.src = change.paintData!;
+          img.src = change.paintData!;
         });
       }
 
-      const hasPaintedZones = validChanges.some(c => !c.isGlobal && c.paintData);
-      const aiRes = await fetch('/api/gemini/analyze-areas', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          baseImage: currentImage,
-          // Sin zonas pintadas no enviamos un segundo bitmap (evita duplicar la base o un mapa negro inútil).
-          colorMapImage: hasPaintedZones ? markedBaseUrl : null,
-          changes: validChanges.map(c => {
-            const pd = positionData[c.assignedColor.name];
-            return {
-              color: c.assignedColor.name,
-              description: c.description.trim(),
-              posX: pd?.cx ?? null,
-              posY: pd?.cy ?? null,
-              bboxX1: pd?.x1 ?? null,
-              bboxY1: pd?.y1 ?? null,
-              bboxX2: pd?.x2 ?? null,
-              bboxY2: pd?.y2 ?? null,
-              areaPct: pd?.areaPct ?? null,
-              quadrant: pd?.quadrant ?? null,
-              paintData: c.paintData ?? null,
-              assignedColorHex: c.assignedColor.hex,
-              referenceImageData: c.referenceImage ?? null,
-              isGlobal: !!c.isGlobal,
-            };
-          }),
-        }),
-      });
-      const aiJson = await aiRes.json();
-      if (aiRes.ok && aiJson.prompt) {
-        fullPrompt = aiJson.prompt;
-        // Store the server-built marked image (base+strokes) so generation uses it as ref2
-        if (aiJson.markedImageData) {
-          const mime =
-            typeof aiJson.markedImageMime === "string" && aiJson.markedImageMime
-              ? aiJson.markedImageMime
-              : "image/png";
-          markedRef2DataUrl = `data:${mime};base64,${aiJson.markedImageData}`;
-        }
-      } else {
-        throw new Error(aiJson.error || 'No prompt returned');
+      const colorMapUrl = offscreen.toDataURL('image/png');
+
+      const changesKey = JSON.stringify(
+        validChanges.map((c) => ({
+          id: c.id,
+          desc: c.description,
+          color: c.assignedColor.name,
+          hasPaint: !!c.paintData,
+          isGlobal: !!c.isGlobal,
+        })),
+      );
+
+      if (cachedPromptData && cachedPromptData.changesKey === changesKey) {
+        const referenceGridUrl = await buildReferenceGrid(validChanges);
+        return {
+          colorMapUrl,
+          fullPrompt: cachedPromptData.preview.fullPrompt,
+          markedRef2: null,
+          referenceGridUrl,
+          changesKey,
+        };
       }
-    } catch (e: any) {
-      console.warn('[analyze-areas] AI call failed, using fallback:', e.message);
-      // Fallback: basic prompt without object identification
-      const validChangesFb = changes.filter(c => c.description.trim());
-      fullPrompt = [
-        'REFERENCIA 1: imagen base. Mantén todo lo que no se indica cambiar, conservando composición donde aplique.',
-        'REFERENCIA 2: zonas marcadas en color (trazos reales) — respetar la posición, forma y extensión de cada trazo.',
-        '',
-        ...validChangesFb.filter(c => !c.isGlobal).map(c => {
-          const pd = positionData[c.assignedColor.name];
-          const spatial = pd
-            ? ` (${pd.quadrant}; centroide ${pd.cx}% izq. ${pd.cy}% arriba; bbox ${pd.x1}%-${pd.x2}% horiz., ${pd.y1}%-${pd.y2}% vert.; ~${pd.areaPct}% de la imagen)`
-            : '';
-          return `En la zona del trazo ${c.assignedColor.name} en REF 2${spatial}: ${c.description}`;
-        }),
-        ...validChangesFb.filter(c => c.isGlobal).map(c => `CAMBIO GLOBAL: ${c.description}`),
-      ].join('\n');
-    } finally {
-      setAnalyzingCall(false);
+
+      let fullPrompt = '';
+      let markedRef2DataUrl: string | null = null;
+
+      type PosEntry = {
+        cx: number;
+        cy: number;
+        x1: number;
+        y1: number;
+        x2: number;
+        y2: number;
+        areaPct: number;
+        quadrant: string;
+      };
+      let positionData: Record<string, PosEntry> = {};
+
+      const runAnalyzeBlock = async () => {
+        const vc = changes.filter((c) =>
+          c.isGlobal ? c.description.trim() : c.paintData && c.description.trim(),
+        );
+
+        let markedBaseUrl = colorMapUrl;
+        const domImg = imgRef.current;
+        if (domImg && domImg.complete && domImg.naturalWidth > 0) {
+          try {
+            const marked = document.createElement('canvas');
+            marked.width = W;
+            marked.height = H;
+            const mc = marked.getContext('2d')!;
+            mc.drawImage(domImg, 0, 0, W, H);
+            for (const change of vc) {
+              if (!change.paintData) continue;
+              await new Promise<void>((r2) => {
+                const strokeImg = new Image();
+                strokeImg.onload = () => {
+                  const tmp = document.createElement('canvas');
+                  tmp.width = W;
+                  tmp.height = H;
+                  const tc = tmp.getContext('2d')!;
+                  tc.drawImage(strokeImg, 0, 0, W, H);
+                  const id = tc.getImageData(0, 0, W, H);
+                  const [r3, g3, b3] = hexToRgb(change.assignedColor.hex);
+                  for (let i = 0; i < id.data.length; i += 4) {
+                    if (id.data[i + 3] > 30) {
+                      id.data[i] = r3;
+                      id.data[i + 1] = g3;
+                      id.data[i + 2] = b3;
+                      id.data[i + 3] = Math.min(220, id.data[i + 3] * 3);
+                    }
+                  }
+                  tc.putImageData(id, 0, 0);
+                  mc.drawImage(tmp, 0, 0);
+                  r2();
+                };
+                strokeImg.src = change.paintData!;
+              });
+            }
+            markedBaseUrl = marked.toDataURL('image/png');
+          } catch (e) {
+            console.warn('[marked-base] Canvas draw failed, using color map fallback:', e);
+          }
+        }
+
+        positionData = {};
+        for (const change of vc) {
+          if (!change.paintData) continue;
+          await new Promise<void>((resolve) => {
+            const tmp2 = document.createElement('canvas');
+            tmp2.width = W;
+            tmp2.height = H;
+            const tc2 = tmp2.getContext('2d')!;
+            const img2 = new Image();
+            img2.onload = () => {
+              tc2.drawImage(img2, 0, 0, W, H);
+              const pd2 = tc2.getImageData(0, 0, W, H);
+              let mx = W,
+                my = H,
+                Mx = 0,
+                My = 0,
+                found2 = false;
+              let paintedPixels = 0;
+              for (let y = 0; y < H; y++) {
+                for (let x = 0; x < W; x++) {
+                  if (pd2.data[(y * W + x) * 4 + 3] > 30) {
+                    if (x < mx) mx = x;
+                    if (y < my) my = y;
+                    if (x > Mx) Mx = x;
+                    if (y > My) My = y;
+                    found2 = true;
+                    paintedPixels++;
+                  }
+                }
+              }
+              if (found2) {
+                const cx = Math.round(((mx + Mx) / 2 / W) * 100);
+                const cy = Math.round(((my + My) / 2 / H) * 100);
+                const x1 = Math.round((mx / W) * 100);
+                const y1 = Math.round((my / H) * 100);
+                const x2 = Math.round((Mx / W) * 100);
+                const y2 = Math.round((My / H) * 100);
+                const areaPct = Math.round((paintedPixels / (W * H)) * 100 * 10) / 10;
+
+                const row = cy < 33 ? 'superior' : cy > 66 ? 'inferior' : 'central';
+                const col = cx < 33 ? 'izquierdo' : cx > 66 ? 'derecho' : 'central';
+                const quadrant =
+                  row === 'central' && col === 'central'
+                    ? 'centro de la imagen'
+                    : row === col
+                      ? `tercio ${row}`
+                      : `tercio ${row}-${col}`;
+
+                positionData[change.assignedColor.name] = { cx, cy, x1, y1, x2, y2, areaPct, quadrant };
+              }
+              resolve();
+            };
+            img2.src = change.paintData!;
+          });
+        }
+
+        const hasPaintedZones = vc.some((c) => !c.isGlobal && c.paintData);
+        const aiRes = await fetch('/api/gemini/analyze-areas', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            baseImage: currentImage,
+            colorMapImage: hasPaintedZones ? markedBaseUrl : null,
+            changes: vc.map((c) => {
+              const pd = positionData[c.assignedColor.name];
+              return {
+                color: c.assignedColor.name,
+                description: c.description.trim(),
+                posX: pd?.cx ?? null,
+                posY: pd?.cy ?? null,
+                bboxX1: pd?.x1 ?? null,
+                bboxY1: pd?.y1 ?? null,
+                bboxX2: pd?.x2 ?? null,
+                bboxY2: pd?.y2 ?? null,
+                areaPct: pd?.areaPct ?? null,
+                quadrant: pd?.quadrant ?? null,
+                paintData: c.paintData ?? null,
+                assignedColorHex: c.assignedColor.hex,
+                referenceImageData: c.referenceImage ?? null,
+                isGlobal: !!c.isGlobal,
+              };
+            }),
+          }),
+        });
+        const aiJson = await aiRes.json();
+        if (aiRes.ok && aiJson.prompt) {
+          fullPrompt = aiJson.prompt;
+          if (aiJson.markedImageData) {
+            const mime =
+              typeof aiJson.markedImageMime === 'string' && aiJson.markedImageMime
+                ? aiJson.markedImageMime
+                : 'image/png';
+            markedRef2DataUrl = `data:${mime};base64,${aiJson.markedImageData}`;
+          }
+        } else {
+          throw new Error(aiJson.error || 'No prompt returned');
+        }
+      };
+
+      const wrapAnalyze = async () => {
+        setAnalyzingCall(true);
+        try {
+          try {
+            await runAnalyzeBlock();
+          } catch (e: any) {
+            console.warn('[analyze-areas] AI call failed, using fallback:', e.message);
+            const validChangesFb = changes.filter((c) => c.description.trim());
+            fullPrompt = [
+              'REFERENCIA 1: imagen base. Mantén todo lo que no se indica cambiar, conservando composición donde aplique.',
+              'REFERENCIA 2: zonas marcadas en color (trazos reales) — respetar la posición, forma y extensión de cada trazo.',
+              '',
+              ...validChangesFb
+                .filter((c) => !c.isGlobal)
+                .map((c) => {
+                  const pd = positionData[c.assignedColor.name];
+                  const spatial = pd
+                    ? ` (${pd.quadrant}; centroide ${pd.cx}% izq. ${pd.cy}% arriba; bbox ${pd.x1}%-${pd.x2}% horiz., ${pd.y1}%-${pd.y2}% vert.; ~${pd.areaPct}% de la imagen)`
+                    : '';
+                  return `En la zona del trazo ${c.assignedColor.name} en REF 2${spatial}: ${c.description}`;
+                }),
+              ...validChangesFb.filter((c) => c.isGlobal).map((c) => `CAMBIO GLOBAL: ${c.description}`),
+            ].join('\n');
+          }
+        } finally {
+          setAnalyzingCall(false);
+        }
+      };
+
+      if (opts.notifyAreasJob) {
+        const ok = await runAiJobWithNotification({ nodeId, label: 'Nano Banana · Áreas' }, wrapAnalyze);
+        if (!ok) return null;
+      } else {
+        await wrapAnalyze();
+      }
+
+      const referenceGridUrl = await buildReferenceGrid(validChanges);
+      setCachedPromptData({ changesKey, preview: { colorMapUrl, fullPrompt } });
+      return {
+        colorMapUrl,
+        fullPrompt,
+        markedRef2: markedRef2DataUrl,
+        referenceGridUrl,
+        changesKey,
+      };
+    },
+    [changes, imgNat, cachedPromptData, currentImage, imgRef, nodeId],
+  );
+
+  // ── Generate ──────────────────────────────────────────────────────────────
+  const onGenerate = async () => {
+    /** Con al menos una zona dibujada: analyze-areas + refs (como Ver llamada) y luego generar. Sin zona dibujada: imagen + prompt directo a Nano Banana. */
+    if (hasPaintedZoneWithDescription) {
+      setGenStatus('running');
+      setProgress(0);
+      aiHudNanoBananaJobStart(nodeId);
+
+      let genFinishedOk = false;
+      try {
+        const ok = await runAiJobWithNotification({ nodeId, label: 'Nano Banana Studio' }, async () => {
+          const payload = await buildStudioCallPreviewPayload({ notifyAreasJob: false });
+          if (!payload) {
+            throw new Error('No se pudo preparar la llamada de imagen.');
+          }
+          const ref2 = payload.markedRef2 || payload.colorMapUrl;
+          const refImages = [
+            ...(currentImage ? [currentImage] : []),
+            ref2,
+            ...(payload.referenceGridUrl ? [payload.referenceGridUrl] : []),
+          ];
+          const json = await geminiGenerateWithServerProgress(
+            {
+              prompt: nanoBananaPromptExcludeZoneGuideArtifacts(payload.fullPrompt),
+              images: refImages,
+              aspect_ratio: aspectRatio,
+              resolution: isFlash25 ? '1k' : studioResolution,
+              model: studioModelKey,
+              thinking: thinking && isPro,
+            },
+            (pct) => {
+              setProgress(pct);
+              aiHudNanoBananaJobProgress(nodeId, pct);
+            },
+          );
+          const out = json.output;
+          const prev = currentImageRef.current;
+          onGenerationHistoryChange((h) => {
+            const next = [...h];
+            if (prev && prev !== out && !next.includes(prev)) next.push(prev);
+            if (!next.includes(out)) next.push(out);
+            return next;
+          });
+          currentImageRef.current = out;
+          setCurrentImage(out);
+          setGeneratedOnce(true);
+          setReSendGenerated(true);
+          onGenerated(out, typeof json.key === 'string' ? json.key : undefined);
+          genFinishedOk = true;
+        });
+        if (!ok) setGenStatus('error');
+      } catch (e: any) {
+        console.error('[NanoBananaStudio] onGenerate (studio pipeline):', e);
+        setGenStatus('error');
+      } finally {
+        if (genFinishedOk) {
+          flushSync(() => {
+            clearStudioEditsAfterSuccessfulGenerate();
+            setProgress(100);
+            setGenStatus('success');
+            aiHudNanoBananaJobProgress(nodeId, 100);
+          });
+        }
+        aiHudNanoBananaJobEnd(nodeId);
+        setTimeout(() => setProgress(0), 1000);
+      }
+      return;
     }
-    });
 
-    // Build reference grid from per-change images
-    const referenceGridUrl = await buildReferenceGrid(validChanges);
+    const graphPrompt = externalPromptIgnored ? '' : String(prompt ?? '');
+    if (!externalPromptIgnored && !graphPrompt.trim()) {
+      return alert('No hay prompt conectado.');
+    }
+    const imageToSend = generatedOnce && reSendGenerated && currentImage ? currentImage : initialImage;
 
-    setCallPreview({ colorMapUrl, fullPrompt, markedRef2: markedRef2DataUrl, referenceGridUrl });
-    setCachedPromptData({ changesKey, preview: { colorMapUrl, fullPrompt } });
+    const changeDescriptions = changes.map((c) => c.description).filter(Boolean).join('. ');
+    let fullPrompt: string;
+    if (changeDescriptions) {
+      fullPrompt = graphPrompt
+        ? `${graphPrompt}. INSTRUCCIONES DE CAMBIO: ${changeDescriptions}`
+        : `INSTRUCCIONES DE CAMBIO: ${changeDescriptions}`;
+    } else {
+      fullPrompt = graphPrompt;
+    }
+    if (!fullPrompt.trim()) {
+      return alert(
+        externalPromptIgnored
+          ? 'En Studio (modo avanzado) añade instrucciones: cambios globales, zonas, cámara o previsualización.'
+          : 'No hay prompt conectado.',
+      );
+    }
+
+    setGenStatus('running');
+    setProgress(0);
+    aiHudNanoBananaJobStart(nodeId);
+
+    const maskImages = changes.map((c) => c.paintData).filter(Boolean) as string[];
+    const refImages = [...(imageToSend ? [imageToSend] : []), ...maskImages];
+
+    let genFinishedOkLegacy = false;
+    try {
+      const ok = await runAiJobWithNotification({ nodeId, label: 'Nano Banana Studio' }, async () => {
+        const json = await geminiGenerateWithServerProgress(
+          {
+            prompt:
+              maskImages.length > 0
+                ? nanoBananaPromptExcludeZoneGuideArtifacts(fullPrompt)
+                : fullPrompt,
+            images: refImages,
+            aspect_ratio: aspectRatio,
+            resolution: isFlash25 ? '1k' : studioResolution,
+            model: studioModelKey,
+            thinking: thinking && isPro,
+          },
+          (pct) => {
+            setProgress(pct);
+            aiHudNanoBananaJobProgress(nodeId, pct);
+          },
+        );
+        const out = json.output;
+        const prev = currentImageRef.current;
+        onGenerationHistoryChange((h) => {
+          const next = [...h];
+          if (prev && prev !== out && !next.includes(prev)) next.push(prev);
+          if (!next.includes(out)) next.push(out);
+          return next;
+        });
+        currentImageRef.current = out;
+        setCurrentImage(out);
+        setGeneratedOnce(true);
+        setReSendGenerated(true);
+        onGenerated(out, typeof json.key === 'string' ? json.key : undefined);
+        genFinishedOkLegacy = true;
+      });
+      if (!ok) setGenStatus('error');
+    } catch (e: any) {
+      console.error('[NanoBananaStudio] onGenerate:', e);
+      setGenStatus('error');
+    } finally {
+      if (genFinishedOkLegacy) {
+        flushSync(() => {
+          clearStudioEditsAfterSuccessfulGenerate();
+          setProgress(100);
+          setGenStatus('success');
+          aiHudNanoBananaJobProgress(nodeId, 100);
+        });
+      }
+      aiHudNanoBananaJobEnd(nodeId);
+      setTimeout(() => setProgress(0), 1000);
+    }
   };
 
-    const onGenerateFromCall = async (colorMapUrl: string, customPrompt: string, markedRef2?: string | null, referenceGridUrl?: string | null) => {
-    setCallPreview(null); // close preview
+  // ── Generate Call: vista previa modal (misma preparación que Generar con zonas) ──
+  const onGenerateCall = async () => {
+    if (!hasPaintedZoneWithDescription) {
+      alert(
+        'Añade al menos una zona dibujada con descripción para ver la llamada con mapa de zonas. Si solo usas instrucciones globales o el prompt del grafo, pulsa Generar: se envía la imagen y el texto directamente a Nano Banana.',
+      );
+      return;
+    }
+    const payload = await buildStudioCallPreviewPayload({ notifyAreasJob: true });
+    if (!payload) return;
+    setCallPreview({
+      colorMapUrl: payload.colorMapUrl,
+      fullPrompt: payload.fullPrompt,
+      markedRef2: payload.markedRef2,
+      referenceGridUrl: payload.referenceGridUrl,
+    });
+  };
+
+  const onGenerateFromCall = async (
+    colorMapUrl: string,
+    customPrompt: string,
+    markedRef2?: string | null,
+    referenceGridUrl?: string | null,
+  ) => {
+    setCallPreview(null);
     setGenStatus('running');
     setProgress(0);
     aiHudNanoBananaJobStart(nodeId);
@@ -4204,7 +4429,7 @@ const NanoBananaStudio = memo(({
       const ok = await runAiJobWithNotification({ nodeId, label: 'Nano Banana Studio' }, async () => {
         const json = await geminiGenerateWithServerProgress(
           {
-            prompt: customPrompt,
+            prompt: nanoBananaPromptExcludeZoneGuideArtifacts(customPrompt),
             images: refImages,
             aspect_ratio: aspectRatio,
             resolution: isFlash25 ? '1k' : studioResolution,
@@ -4214,7 +4439,7 @@ const NanoBananaStudio = memo(({
           (pct) => {
             setProgress(pct);
             aiHudNanoBananaJobProgress(nodeId, pct);
-          }
+          },
         );
         const out = json.output;
         const prev = currentImageRef.current;
@@ -4238,6 +4463,7 @@ const NanoBananaStudio = memo(({
     } finally {
       if (genFinishedOk) {
         flushSync(() => {
+          clearStudioEditsAfterSuccessfulGenerate();
           setProgress(100);
           setGenStatus('success');
           aiHudNanoBananaJobProgress(nodeId, 100);
@@ -4384,7 +4610,7 @@ const NanoBananaStudio = memo(({
         <button
           type="button"
           onClick={onGenerateCall}
-          disabled={addingChange || analyzingCall || changes.filter(c=>c.isGlobal ? c.description.trim() : (c.paintData && c.description.trim())).length === 0}
+          disabled={addingChange || analyzingCall || !hasPaintedZoneWithDescription}
           className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[10px] font-black uppercase tracking-wide transition-all disabled:opacity-35 disabled:cursor-not-allowed shadow-sm border"
           style={{
             background: 'rgba(108,92,231,0.2)',
@@ -4397,7 +4623,7 @@ const NanoBananaStudio = memo(({
         <button
           type="button"
           onClick={onGenerate}
-          disabled={genStatus === 'running' || addingChange}
+          disabled={genStatus === 'running' || addingChange || analyzingCall}
           className="flex items-center gap-1.5 px-5 py-2 rounded-xl text-[11px] font-black uppercase tracking-wide transition-all disabled:opacity-45 disabled:cursor-not-allowed shadow-[0_2px_14px_rgba(108,92,231,0.4)] border border-[#6C5CE7]/50"
           style={{ background: 'linear-gradient(135deg,#6C5CE7,#5548c8)', color: '#fafafa' }}
         >
@@ -4532,6 +4758,7 @@ const NanoBananaStudio = memo(({
         {/* Paint overlay */}
         {addingChange && activeChangeId && (
           <NanaBananaPaintCanvas
+            key={`nb-paint-${studioVisualEpoch}-${activeChangeId}`}
             natW={imgNat.w}
             natH={imgNat.h}
             bounds={imgBounds}
@@ -4544,7 +4771,7 @@ const NanoBananaStudio = memo(({
 
         {/* Completed change overlays */}
         {changes.filter(c => c.id !== activeChangeId && c.paintData).map(c => (
-          <img key={c.id} src={c.paintData!} alt=""
+          <img key={`${c.id}-${studioVisualEpoch}`} src={c.paintData!} alt=""
             style={{
               position: 'absolute',
               left: imgBounds.left, top: imgBounds.top,
@@ -5071,9 +5298,7 @@ export const NanoBananaNode = memo(({ id, data, selected }: NodeProps<any>) => {
         setResult(out);
         setNodes(nds => nds.map(n => {
           if (n.id !== id) return n;
-          const prevKey = (n.data as { s3Key?: string }).s3Key;
           const nextKey = typeof json.key === 'string' ? json.key : undefined;
-          deleteSupersededS3Key(prevKey, nextKey);
           const oldVal = typeof n.data?.value === 'string' && n.data.value ? n.data.value : null;
           const h = Array.isArray(n.data.generationHistory) ? [...n.data.generationHistory] : [];
           if (oldVal && oldVal !== out && !h.includes(oldVal)) h.push(oldVal);
@@ -5320,7 +5545,6 @@ export const NanoBananaNode = memo(({ id, data, selected }: NodeProps<any>) => {
               setResult(url);
               setNodes((nds: any) => nds.map((n: any) => {
                 if (n.id !== id) return n;
-                deleteSupersededS3Key((n.data as { s3Key?: string }).s3Key, s3Key);
                 const data: Record<string, unknown> = { ...n.data, value: url, type: 'image' };
                 if (s3Key) data.s3Key = s3Key;
                 else delete data.s3Key;
@@ -7832,9 +8056,6 @@ export const GeminiVideoNode = memo(({ id, data, selected }: NodeProps<any>) => 
         setNodes((nds) =>
           nds.map((n) => {
             if (n.id !== id) return n;
-            const prevKey = (n.data as { s3Key?: string }).s3Key;
-            const nextKey = typeof json.key === 'string' ? json.key : undefined;
-            deleteSupersededS3Key(prevKey, nextKey);
             const versions = captureCurrentOutput(
               n.data as Record<string, unknown>,
               json.output as string,
