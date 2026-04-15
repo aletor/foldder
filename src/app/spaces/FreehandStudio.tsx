@@ -2526,6 +2526,15 @@ function snapCanvasPointTo45From(from: Point, to: Point): Point {
   return { x: nx, y: ny };
 }
 
+/** Sufijo de className para la animación de cambio de página en Designer (`designer-page-slide-in-*` en globals.css). */
+function designerCanvasPageEnterClassSuffix(
+  designerMode: boolean | undefined,
+  direction: "next" | "prev" | null | undefined,
+): string {
+  if (!designerMode || direction == null) return "";
+  return direction === "next" ? " designer-page-slide-in-next" : " designer-page-slide-in-prev";
+}
+
 function computeSnap(
   movingBounds: Rect,
   allObjects: FreehandObject[],
@@ -10056,13 +10065,7 @@ export default function FreehandStudio({
         )}
 
       <div
-        className={`flex min-h-0 flex-1 flex-col min-w-0${
-          designerMode && designerPageEnterDirection === "next"
-            ? " designer-page-slide-in-next"
-            : designerMode && designerPageEnterDirection === "prev"
-              ? " designer-page-slide-in-prev"
-              : ""
-        }`}
+        className={`flex min-h-0 min-w-0 flex-1 flex-col${designerCanvasPageEnterClassSuffix(designerMode, designerPageEnterDirection)}`}
         style={{ cursor }}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}

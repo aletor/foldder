@@ -137,7 +137,7 @@ export default function DesignerStudio({
     setDesignerFitToViewNonce((n) => n + 1);
   }, []);
 
-  /** Dirección de la animación horizontal al cambiar de página (ver `designerPage-slide-in-*` en globals.css). */
+  /** Dirección de la animación horizontal al cambiar de página (clases `designer-page-slide-in-*` en globals.css). */
   const [designerPageEnterDirection, setDesignerPageEnterDirection] = useState<"next" | "prev" | null>(null);
 
   const goToDesignerPage = useCallback(
@@ -160,7 +160,7 @@ export default function DesignerStudio({
       const n = pagesRef.current.length;
       if (n <= 1) return;
       const next = Math.max(0, Math.min(n - 1, i + delta));
-      goToDesignerPage(next, { animate: true });
+      goToDesignerPage(next);
     },
     [goToDesignerPage],
   );
