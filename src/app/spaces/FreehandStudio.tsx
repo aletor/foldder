@@ -13,6 +13,7 @@ import React, {
 } from "react";
 import { createPortal } from "react-dom";
 import { usePreventBrowserPinchZoom } from "@/lib/use-prevent-browser-pinch-zoom";
+import { useClampedFixedPosition } from "@/lib/use-clamped-fixed-position";
 import { fireAndForgetDeleteS3Keys } from "@/lib/s3-delete-client";
 import {
   X,
@@ -512,6 +513,11 @@ interface FreehandStudioProps {
     busy: boolean;
     onExport: () => void | Promise<void>;
   } | null;
+  /**
+   * Designer: el padre (DesignerStudio) genera la miniatura de la 1.ª página al cerrar.
+   * Si true, no se ejecuta el PNG automático del lienzo actual en `handleCloseStudio`.
+   */
+  designerSkipAutoNodeExportOnClose?: boolean;
 }
 
 export interface DesignerStudioApi {
@@ -524,6 +530,8 @@ export interface DesignerStudioApi {
   getVectorPdfMarkupForCurrentPage?: () => Promise<string>;
   /** Same value as `nodeId` / studio key — used to wait until export API matches the active page after remount. */
   getExportSessionKey?: () => string;
+  /** PNG data URL del pliego actual (miniatura escalada) para preview del nodo / rail de páginas. */
+  getNodePreviewPngDataUrl?: (opts?: { maxSide?: number }) => Promise<string | null>;
 }
 
 interface ContextMenuItem {
@@ -1291,13 +1299,11 @@ function degToRad(d: number) { return (d * Math.PI) / 180; }
 
 /** Mayús durante arrastre = control fino (mover / escalar). */
 /**
- * Píxeles de puntero → delta en espacio del lienzo. Con zoom < 1, 1/zoom dispara demasiado el tamaño
- * al redimensionar; amortiguamos solo en resize. El movimiento mantiene 1/zoom para seguir el cursor.
+ * Pantalla → espacio mundo del SVG: el grupo del lienzo aplica `scale(zoom)`, así que 1 px de pantalla
+ * = 1/zoom unidades de mundo. Mismo factor en mover y redimensionar para que handles y cursor coincidan.
  */
-function canvasScaleFromPointer(zoom: number, kind: "move" | "resize"): number {
-  const inv = 1 / zoom;
-  if (kind === "resize" && zoom < 1) return inv * Math.sqrt(zoom);
-  return inv;
+function canvasScaleFromPointer(zoom: number): number {
+  return 1 / zoom;
 }
 
 function isShiftHeld(e: ReactMouseEvent): boolean {
@@ -1999,6 +2005,13 @@ function objectWorldCorners(o: FreehandObject, allObjects?: FreehandObject[]): P
       ];
     }
     return objectWorldCorners(g, allObjects);
+  }
+  if (o.type === "text") {
+    const t = o as TextObject;
+    /** Marco encadenado: caja = tamaño del marco (como hasta ahora). Texto suelto: mismo rect que `textVisualRectLike` / `foreignObject` / escala. */
+    if (t.isTextFrame) return rectWorldCorners(o);
+    const v = textVisualRectLike(t);
+    return rectWorldCorners({ ...t, ...v } as FreehandObject);
   }
   if (o.type === "clippingContainer") {
     return clippingContainerMaskWorldCorners(o as ClippingContainerObject);
@@ -2926,17 +2939,127 @@ function escapeXmlText(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+function measureExportLineWidth(s: string, ctx: CanvasRenderingContext2D, letterSpacingPx: number): number {
+  if (s.length === 0) return 0;
+  let w = ctx.measureText(s).width;
+  if (letterSpacingPx && s.length > 1) {
+    w += letterSpacingPx * (s.length - 1);
+  }
+  return w;
+}
+
+/** Parte palabras largas como hace `word-break: break-word` en el foreignObject. */
+function breakLongWordForExport(
+  word: string,
+  maxWidth: number,
+  ctx: CanvasRenderingContext2D,
+  letterSpacingPx: number,
+): string[] {
+  if (measureExportLineWidth(word, ctx, letterSpacingPx) <= maxWidth) return [word];
+  const chunks: string[] = [];
+  let rest = word;
+  while (rest.length > 0) {
+    let lo = 0;
+    let hi = rest.length;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      const sub = rest.slice(0, mid);
+      if (measureExportLineWidth(sub, ctx, letterSpacingPx) <= maxWidth) lo = mid;
+      else hi = mid - 1;
+    }
+    const n = Math.max(1, lo);
+    chunks.push(rest.slice(0, n));
+    rest = rest.slice(n);
+  }
+  return chunks;
+}
+
+/**
+ * Replica de forma aproximada el ajuste de líneas del lienzo (foreignObject: pre-wrap + break-word).
+ * Sin esto, el PNG de preview usa solo `\n` explícitos y el texto sale en una sola línea larga.
+ */
+function wrapAreaTextToLinesForExport(
+  raw: string,
+  maxWidth: number,
+  ctx: CanvasRenderingContext2D,
+  letterSpacingPx: number,
+): string[] {
+  const paragraphs = raw.split("\n");
+  const out: string[] = [];
+  const ws = /\s+/;
+  for (const para of paragraphs) {
+    if (para === "") {
+      out.push("");
+      continue;
+    }
+    const words = para.split(ws).filter((w) => w.length > 0);
+    let line = "";
+    const pushWords = (wlist: string[]) => {
+      for (const word of wlist) {
+        if (!line) {
+          if (measureExportLineWidth(word, ctx, letterSpacingPx) <= maxWidth) {
+            line = word;
+          } else {
+            const parts = breakLongWordForExport(word, maxWidth, ctx, letterSpacingPx);
+            for (let i = 0; i < parts.length - 1; i++) {
+              out.push(parts[i]!);
+            }
+            line = parts[parts.length - 1]!;
+          }
+          continue;
+        }
+        const trial = `${line} ${word}`;
+        if (measureExportLineWidth(trial, ctx, letterSpacingPx) <= maxWidth) {
+          line = trial;
+        } else {
+          out.push(line);
+          if (measureExportLineWidth(word, ctx, letterSpacingPx) <= maxWidth) {
+            line = word;
+          } else {
+            const parts = breakLongWordForExport(word, maxWidth, ctx, letterSpacingPx);
+            for (let i = 0; i < parts.length - 1; i++) {
+              out.push(parts[i]!);
+            }
+            line = parts[parts.length - 1]!;
+          }
+        }
+      }
+    };
+    pushWords(words);
+    if (line) {
+      out.push(line);
+      line = "";
+    }
+  }
+  return out.length > 0 ? out : [""];
+}
+
 /** Raster export strips `foreignObject` (tainted canvas); emit native SVG text so PNG/node preview shows copy. */
 function textObjectToNativeSvgMarkup(t: TextObject): string {
   const fill = migrateFill(t.fill);
   const gid = gradientDefId(t.id);
   const fillAttr = escapeXmlAttr(fillPaintValue(fill, gid));
   const raw = t.text || "\u00a0";
-  const lines = raw.split("\n");
-  const lhPx = t.fontSize * t.lineHeight;
   const pad = t.textMode === "area" ? 4 : 0;
   const indent = t.paragraphIndent ?? 0;
   const boxW = t.textMode === "point" ? Math.max(t.width, 32) : t.width;
+
+  let lines: string[];
+  if (t.textMode === "area" && typeof document !== "undefined") {
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      const fst = t.fontStyle && t.fontStyle !== "normal" ? `${t.fontStyle} ` : "";
+      ctx.font = `${fst}${t.fontWeight} ${t.fontSize}px ${t.fontFamily}`;
+      const innerW = Math.max(1, boxW - 2 * pad - indent);
+      lines = wrapAreaTextToLinesForExport(raw, innerW, ctx, t.letterSpacing ?? 0);
+    } else {
+      lines = raw.split("\n");
+    }
+  } else {
+    lines = raw.split("\n");
+  }
+  const lhPx = t.fontSize * t.lineHeight;
   const ta = t.textAlign === "justify" ? "left" : t.textAlign;
   let textAnchor: "start" | "middle" | "end" = "start";
   let baseX = t.x + pad;
@@ -2959,17 +3082,20 @@ function textObjectToNativeSvgMarkup(t: TextObject): string {
       ? ` stroke="${escapeXmlAttr(t.stroke)}" stroke-width="${t.strokeWidth}" paint-order="${sp === "under" ? "fill stroke" : "stroke fill"}"`
       : "";
   const tspans = lines.map((line, i) => {
+    // Mismo borde izquierdo del contenido que `paddingLeft: pad + indent` en el foreignObject.
     const xLine =
       ta === "center" || ta === "right"
         ? baseX
-        : t.x + pad + (i === 0 ? indent : 0);
+        : t.x + pad + indent;
+    const lt = line.length === 0 ? "\u00a0" : line;
     if (i === 0) {
-      return `<tspan x="${xLine}" y="${firstY}">${escapeXmlText(line)}</tspan>`;
+      return `<tspan x="${xLine}" y="${firstY}">${escapeXmlText(lt)}</tspan>`;
     }
-    return `<tspan x="${xLine}" dy="${lhPx}">${escapeXmlText(line)}</tspan>`;
+    return `<tspan x="${xLine}" dy="${lhPx}">${escapeXmlText(lt)}</tspan>`;
   });
+  const fs = t.fontStyle && t.fontStyle !== "normal" ? ` font-style="${escapeXmlAttr(t.fontStyle)}"` : "";
   const inner =
-    `<text font-family="${escapeXmlAttr(t.fontFamily)}" font-size="${t.fontSize}" font-weight="${t.fontWeight}" ` +
+    `<text font-family="${escapeXmlAttr(t.fontFamily)}" font-size="${t.fontSize}" font-weight="${t.fontWeight}"${fs} ` +
     `fill="${fillAttr}" text-anchor="${textAnchor}" opacity="${t.opacity}" ` +
     `letter-spacing="${t.letterSpacing}"${strokePart}>${tspans.join("")}</text>`;
   const tt = textSvgTransform(t);
@@ -3226,38 +3352,57 @@ async function rasterHrefToSafeDataUrl(href: string, cache: Map<string, string>)
   const cached = cache.get(resolved);
   if (cached) return cached;
 
-  try {
-    const res = await fetch(resolved, { mode: "cors", credentials: "omit" });
-    if (!res.ok) throw new Error(String(res.status));
-    const blob = await res.blob();
-    const dataUrl = await blobToDataUrl(blob);
+  const fetchToDataUrl = async (url: string): Promise<string | null> => {
+    try {
+      const res = await fetch(url, { mode: "cors", credentials: "omit" });
+      if (!res.ok) return null;
+      const blob = await res.blob();
+      return await blobToDataUrl(blob);
+    } catch {
+      return null;
+    }
+  };
+
+  let dataUrl = await fetchToDataUrl(resolved);
+
+  // S3 u orígenes sin CORS: mismo proxy que el PDF vectorial (`download-vector-pdf.ts`).
+  if (
+    !dataUrl &&
+    (resolved.startsWith("http://") || resolved.startsWith("https://")) &&
+    !resolved.includes("/api/spaces/proxy")
+  ) {
+    const proxy = `/api/spaces/proxy?url=${encodeURIComponent(resolved)}`;
+    dataUrl = await fetchToDataUrl(proxy);
+  }
+
+  if (dataUrl) {
     cache.set(resolved, dataUrl);
     return dataUrl;
+  }
+
+  try {
+    const fromImg = await new Promise<string>((resolve) => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => {
+        try {
+          const c = document.createElement("canvas");
+          c.width = Math.max(1, img.naturalWidth);
+          c.height = Math.max(1, img.naturalHeight);
+          c.getContext("2d")!.drawImage(img, 0, 0);
+          resolve(c.toDataURL("image/png"));
+        } catch {
+          resolve(TRANSPARENT_PIXEL_PNG);
+        }
+      };
+      img.onerror = () => resolve(TRANSPARENT_PIXEL_PNG);
+      img.src = resolved;
+    });
+    cache.set(resolved, fromImg);
+    return fromImg;
   } catch {
-    try {
-      const dataUrl = await new Promise<string>((resolve) => {
-        const img = new Image();
-        img.crossOrigin = "anonymous";
-        img.onload = () => {
-          try {
-            const c = document.createElement("canvas");
-            c.width = Math.max(1, img.naturalWidth);
-            c.height = Math.max(1, img.naturalHeight);
-            c.getContext("2d")!.drawImage(img, 0, 0);
-            resolve(c.toDataURL("image/png"));
-          } catch {
-            resolve(TRANSPARENT_PIXEL_PNG);
-          }
-        };
-        img.onerror = () => resolve(TRANSPARENT_PIXEL_PNG);
-        img.src = resolved;
-      });
-      cache.set(resolved, dataUrl);
-      return dataUrl;
-    } catch {
-      cache.set(resolved, TRANSPARENT_PIXEL_PNG);
-      return TRANSPARENT_PIXEL_PNG;
-    }
+    cache.set(resolved, TRANSPARENT_PIXEL_PNG);
+    return TRANSPARENT_PIXEL_PNG;
   }
 }
 
@@ -3516,27 +3661,53 @@ function ToolBtn({ active, onClick, title, children }: { active?: boolean; onCli
 }
 
 function CtxMenu({ x, y, items, onClose }: { x: number; y: number; items: ContextMenuItem[]; onClose: () => void }) {
+  const remeasureKey = items.map((i) => `${i.label}\0${!!i.disabled}\0${!!i.separator}`).join("|");
+  const { ref, style } = useClampedFixedPosition(x, y, true, remeasureKey);
+
   useEffect(() => {
-    const h = (e: MouseEvent) => { onClose(); };
+    const h = () => {
+      onClose();
+    };
     window.addEventListener("mousedown", h);
     return () => window.removeEventListener("mousedown", h);
   }, [onClose]);
 
   return (
-    <div className="fixed z-[99999] bg-zinc-900/98 border border-white/12 rounded-lg shadow-2xl py-1 min-w-[220px] backdrop-blur-sm" style={{ left: x, top: y }}
-      onMouseDown={(e) => e.stopPropagation()}>
-      {items.map((item, i) => (
-        <React.Fragment key={i}>
-          {item.separator && <div className="h-px bg-white/10 my-1 mx-1" />}
-          <button type="button" disabled={item.disabled}
-            className="w-full flex items-center justify-between gap-6 text-left px-3 py-1.5 text-[11px] text-zinc-200 hover:bg-violet-600 hover:text-white disabled:opacity-25 disabled:pointer-events-none transition-colors"
-            onClick={() => { item.action(); onClose(); }}
-          >
-            <span>{item.label}</span>
-            {item.shortcut ? <span className="text-[9px] text-zinc-500 font-mono tabular-nums shrink-0">{item.shortcut}</span> : null}
-          </button>
-        </React.Fragment>
-      ))}
+    <div
+      ref={ref}
+      className="context-menu !z-[100001] min-w-[220px] max-h-[min(70vh,calc(100vh-24px))] overflow-y-auto overflow-x-hidden"
+      style={{ ...style, position: "fixed", zIndex: 100001 }}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      <div className="mb-1 shrink-0 border-b border-white/5 px-3 py-2 text-[8px] font-black uppercase tracking-widest text-white/30">
+        Acciones
+      </div>
+      {items.map((item, i) => {
+        const isDanger = item.label === "Delete" || item.label.startsWith("Eliminar");
+        return (
+          <React.Fragment key={`${item.label}-${i}`}>
+            {item.separator ? <div className="context-menu-separator" /> : null}
+            <button
+              type="button"
+              disabled={item.disabled}
+              className={`context-menu-item w-full justify-between border-0 bg-transparent font-[inherit] ${
+                isDanger ? "danger" : ""
+              }`}
+              onClick={() => {
+                item.action();
+                onClose();
+              }}
+            >
+              <span>{item.label}</span>
+              {item.shortcut ? (
+                <span className="shrink-0 font-mono text-[9px] font-normal normal-case tracking-normal text-white/35 tabular-nums">
+                  {item.shortcut}
+                </span>
+              ) : null}
+            </button>
+          </React.Fragment>
+        );
+      })}
     </div>
   );
 }
@@ -3638,6 +3809,7 @@ export default function FreehandStudio({
   designerPagesRail,
   designerMultipageVectorPdfExport,
   designerFitToViewNonce = 0,
+  designerSkipAutoNodeExportOnClose = false,
 }: FreehandStudioProps) {
 
   // ── Core state ─────────────────────────────────────────────────────
@@ -4058,6 +4230,29 @@ export default function FreehandStudio({
           );
         }
         return strRaw;
+      },
+      getNodePreviewPngDataUrl: async (opts?: { maxSide?: number }) => {
+        const svg = svgRef.current;
+        if (!svg) return null;
+        const objs = objectsRef.current;
+        const abs = artboardsRef.current;
+        const bounds = resolveSceneExportBounds(objs, abs);
+        if (bounds.w < 1 || bounds.h < 1) return null;
+        const ab = pickPrimaryArtboard(abs, null);
+        const bg: "transparent" | string = ab?.background ?? "transparent";
+        const maxSide = opts?.maxSide ?? 800;
+        const scale = Math.min(1, maxSide / Math.max(bounds.w, bounds.h));
+        const strRaw = buildStandaloneSvgFromCanvasDom(svg, {
+          exportIds: null,
+          bounds,
+          scale,
+          background: bg,
+        });
+        const str = substituteNativeTextForRasterExport(strRaw, objs);
+        const cw = Math.max(1, Math.round(bounds.w * scale));
+        const ch = Math.max(1, Math.round(bounds.h * scale));
+        const canvas = await svgStringToCanvasSafe(str, cw, ch);
+        return canvasToPngDataUrlSafe(canvas);
       },
     };
     return () => {
@@ -5793,19 +5988,21 @@ export default function FreehandStudio({
     if (closeInFlight.current) return;
     closeInFlight.current = true;
     try {
-      const hasVisibleArt = objects.some((o) => o.visible);
-      if (hasVisibleArt) {
-        try {
-          await doExportNode();
-        } catch (err) {
-          console.error("Freehand: export on close failed", err);
+      if (!designerSkipAutoNodeExportOnClose) {
+        const hasVisibleArt = objects.some((o) => o.visible);
+        if (hasVisibleArt) {
+          try {
+            await doExportNode();
+          } catch (err) {
+            console.error("Freehand: export on close failed", err);
+          }
         }
       }
       onClose();
     } finally {
       closeInFlight.current = false;
     }
-  }, [objects, doExportNode, onClose]);
+  }, [objects, doExportNode, onClose, designerSkipAutoNodeExportOnClose]);
 
   const triggerExportFlash = useCallback((b: ExportRect) => {
     setExportFlash(b);
@@ -7212,7 +7409,7 @@ export default function FreehandStudio({
     }
 
     if (dragState.type === "move" && dragState.positions) {
-      const scale = canvasScaleFromPointer(viewport.zoom, "move");
+      const scale = canvasScaleFromPointer(viewport.zoom);
       let mdx = dx * scale, mdy = dy * scale;
 
       if (isShiftHeld(e)) {
@@ -7280,7 +7477,7 @@ export default function FreehandStudio({
     }
 
     if (dragState.type === "resize" && dragState.allBounds && dragState.initialOrientedFrame) {
-      const scale = canvasScaleFromPointer(viewport.zoom, "resize");
+      const scale = canvasScaleFromPointer(viewport.zoom);
       const dCanvas = { x: dx * scale, y: dy * scale };
       const f0 = dragState.initialOrientedFrame;
       const h = dragState.handle!;
@@ -7387,7 +7584,7 @@ export default function FreehandStudio({
     }
 
     if (dragState.type === "resize" && dragState.bounds && dragState.allBounds && !dragState.initialOrientedFrame) {
-      const scale = canvasScaleFromPointer(viewport.zoom, "resize");
+      const scale = canvasScaleFromPointer(viewport.zoom);
       const b = dragState.bounds;
       const h = dragState.handle!;
       let nx = b.x, ny = b.y, nw = b.w, nh = b.h;

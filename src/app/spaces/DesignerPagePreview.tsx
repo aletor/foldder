@@ -1,6 +1,6 @@
 "use client";
 
-import type { FreehandObject } from "./FreehandStudio";
+import type { FreehandObject, RectObject } from "./FreehandStudio";
 
 function looseThumbRect(o: FreehandObject): { x: number; y: number; w: number; h: number } | null {
   if (!o.visible) return null;
@@ -43,7 +43,8 @@ function looseThumbRect(o: FreehandObject): { x: number; y: number; w: number; h
 }
 
 /**
- * Miniatura esquemática del contenido de una página (no es WYSIWYG; solo bloques por objeto).
+ * Miniatura del contenido de una página: marcos de imagen y objetos `image` muestran el raster si hay `src`;
+ * el resto sigue siendo bloques esquemáticos.
  */
 export function DesignerPagePreview({
   objects,
@@ -66,6 +67,63 @@ export function DesignerPagePreview({
     >
       <rect width={pw} height={ph} fill="#fafafa" />
       {objects.map((o) => {
+        if (!o.visible || o.isClipMask) return null;
+
+        if (o.type === "rect" && o.isImageFrame) {
+          const rObj = o as RectObject;
+          const ifc = rObj.imageFrameContent;
+          const cid = `dpp-clip-${rObj.id}`;
+          if (ifc?.src) {
+            return (
+              <g key={o.id}>
+                <defs>
+                  <clipPath id={cid}>
+                    <rect x={rObj.x} y={rObj.y} width={rObj.width} height={rObj.height} rx={rObj.rx} />
+                  </clipPath>
+                </defs>
+                <rect
+                  x={rObj.x}
+                  y={rObj.y}
+                  width={rObj.width}
+                  height={rObj.height}
+                  rx={rObj.rx}
+                  fill="#f4f4f5"
+                  stroke="rgba(99,102,241,0.42)"
+                  strokeWidth={sw}
+                />
+                <image
+                  clipPath={`url(#${cid})`}
+                  href={ifc.src}
+                  x={rObj.x + ifc.offsetX}
+                  y={rObj.y + ifc.offsetY}
+                  width={ifc.originalWidth * ifc.scaleX}
+                  height={ifc.originalHeight * ifc.scaleY}
+                  preserveAspectRatio={
+                    Math.abs(ifc.scaleX - ifc.scaleY) < 1e-5 ? "xMidYMid meet" : "none"
+                  }
+                />
+              </g>
+            );
+          }
+        }
+
+        if (o.type === "image") {
+          const im = o as FreehandObject & { src: string };
+          if (im.src) {
+            return (
+              <image
+                key={o.id}
+                href={im.src}
+                x={im.x}
+                y={im.y}
+                width={im.width}
+                height={im.height}
+                preserveAspectRatio="none"
+              />
+            );
+          }
+        }
+
         const r = looseThumbRect(o);
         if (!r) return null;
         return (

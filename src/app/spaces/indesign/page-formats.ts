@@ -1,5 +1,8 @@
 export type IndesignPageFormatId = "a4v" | "a4h" | "web169" | "story916";
 
+/** Documento Designer nuevo: Web 16:9 horizontal (1920×1080). */
+export const DEFAULT_DESIGNER_PAGE_FORMAT: IndesignPageFormatId = "web169";
+
 export type IndesignPageFormat = {
   id: IndesignPageFormatId;
   label: string;

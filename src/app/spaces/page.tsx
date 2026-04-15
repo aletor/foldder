@@ -21,6 +21,7 @@ import {
   SelectionMode,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import { useClampedFixedPosition } from "@/lib/use-clamped-fixed-position";
 
 import { 
   MediaInputNode, 
@@ -537,6 +538,33 @@ const defaultEdgeOptions = {
 };
 
 const initialEdges: Edge[] = [];
+
+/** Menú contextual del grafo: posición fija ajustada al viewport (mismas clases que `spaces.css`). */
+function GraphContextMenuShell({
+  x,
+  y,
+  remeasureKey,
+  onMouseLeave,
+  children,
+}: {
+  x: number;
+  y: number;
+  remeasureKey: string | number;
+  onMouseLeave: () => void;
+  children: React.ReactNode;
+}) {
+  const { ref, style } = useClampedFixedPosition(x, y, true, remeasureKey);
+  return (
+    <div
+      ref={ref}
+      className="context-menu"
+      style={{ ...style, position: "fixed" }}
+      onMouseLeave={onMouseLeave}
+    >
+      {children}
+    </div>
+  );
+}
 
 const SpacesContent = () => {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
@@ -4486,15 +4514,16 @@ const SpacesContent = () => {
 
         {/* Context Menu */}
         {contextMenu && (
-          <div 
-            className="context-menu"
-            style={{ top: contextMenu.y, left: contextMenu.x }}
+          <GraphContextMenuShell
+            x={contextMenu.x}
+            y={contextMenu.y}
+            remeasureKey={`${contextMenu.nodeId ?? "pane"}-${nodes.length}`}
             onMouseLeave={() => setContextMenu(null)}
           >
-            <div className="px-3 py-2 text-[8px] font-black text-white/30 uppercase tracking-widest border-b border-white/5 mb-1">
+            <div className="mb-1 border-b border-white/5 px-3 py-2 text-[8px] font-black uppercase tracking-widest text-white/30">
               Actions
             </div>
-            
+
             {contextMenu.nodeId ? (
               <>
                 {nodes.find((n) => n.id === contextMenu.nodeId)?.type === "canvasGroup" && (
@@ -4553,9 +4582,9 @@ const SpacesContent = () => {
                 </div>
               </>
             )}
-          </div>
+          </GraphContextMenuShell>
         )}
-        
+
         {windowMode && isAuthenticated && (
           <AgentHUD
             onGenerate={onGenerateAssistant}

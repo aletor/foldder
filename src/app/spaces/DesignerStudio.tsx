@@ -16,6 +16,7 @@ import FreehandStudio, {
 } from "./FreehandStudio";
 import type { DesignerPageState } from "./DesignerNode";
 import {
+  DEFAULT_DESIGNER_PAGE_FORMAT,
   INDESIGN_PAGE_FORMATS,
   type IndesignPageFormatId,
   formatById,
@@ -101,7 +102,7 @@ export default function DesignerStudio({
       : [
           {
             id: dpgUid(),
-            format: "a4v" as IndesignPageFormatId,
+            format: DEFAULT_DESIGNER_PAGE_FORMAT,
             objects: [],
             layoutGuides: [],
             stories: [],
@@ -119,11 +120,17 @@ export default function DesignerStudio({
   const [formatModal, setFormatModal] = useState<
     null | { kind: "add" } | { kind: "resize"; pageIndex: number }
   >(null);
-  const [pendingFormat, setPendingFormat] = useState<IndesignPageFormatId>("a4v");
+  const [pendingFormat, setPendingFormat] = useState<IndesignPageFormatId>(DEFAULT_DESIGNER_PAGE_FORMAT);
 
   const dragPageIndexRef = useRef<number | null>(null);
   /** Evita activar la página al soltar tras un drag HTML5 de reordenación. */
   const suppressPageThumbClickRef = useRef(false);
+
+  /** Miniaturas raster del lienzo real (misma pipeline que el preview del nodo). */
+  const [pageThumbnails, setPageThumbnails] = useState<Record<string, string>>({});
+  /** En el navegador `setTimeout` devuelve `number`; con @types/node a veces choca con `NodeJS.Timeout`. */
+  const railThumbTimerRef = useRef<number | undefined>(undefined);
+  const scheduleRailThumbRef = useRef<() => void>(() => {});
 
   const [designerFitToViewNonce, setDesignerFitToViewNonce] = useState(0);
   const requestDesignerFitToView = useCallback(() => {
@@ -164,6 +171,49 @@ export default function DesignerStudio({
   pagesRef.current = pages;
   const activeIdxRef = useRef(activePageIndex);
   activeIdxRef.current = activePageIndex;
+
+  const studioKey = useMemo(() => {
+    const ap = pages[activePageIndex] ?? pages[0];
+    const d = ap ? getPageDimensions(ap) : { width: 0, height: 0 };
+    return `${ap?.id ?? "none"}_${activePageIndex}_${Math.round(d.width)}_${Math.round(d.height)}`;
+  }, [pages, activePageIndex]);
+
+  const captureRailThumbnailForActivePage = useCallback(async () => {
+    const api = studioApiRef.current;
+    const idx = activeIdxRef.current;
+    const p = pagesRef.current[idx];
+    if (!api?.getNodePreviewPngDataUrl || !p) return;
+    const pd = getPageDimensions(p);
+    const expectedKey = `${p.id}_${idx}_${Math.round(pd.width)}_${Math.round(pd.height)}`;
+    if (api.getExportSessionKey?.() !== expectedKey) return;
+    try {
+      const url = await api.getNodePreviewPngDataUrl({ maxSide: 220 });
+      if (!url) return;
+      setPageThumbnails((prev) => (prev[p.id] === url ? prev : { ...prev, [p.id]: url }));
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const scheduleRailThumbnail = useCallback(() => {
+    if (typeof window === "undefined") return;
+    window.clearTimeout(railThumbTimerRef.current);
+    railThumbTimerRef.current = window.setTimeout(() => {
+      void captureRailThumbnailForActivePage();
+    }, 450);
+  }, [captureRailThumbnailForActivePage]);
+
+  scheduleRailThumbRef.current = scheduleRailThumbnail;
+
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      scheduleRailThumbnail();
+    }, 380);
+    return () => {
+      window.clearTimeout(t);
+      window.clearTimeout(railThumbTimerRef.current);
+    };
+  }, [studioKey, scheduleRailThumbnail]);
 
   const commitPages = useCallback(
     (fn: (prev: DesignerPageState[]) => DesignerPageState[]) => {
@@ -470,6 +520,7 @@ export default function DesignerStudio({
         n[idx] = { ...p, objects, ...(tfChanged ? { textFrames } : {}), ...(storiesChanged ? { stories } : {}) };
         return n;
       });
+      queueMicrotask(() => scheduleRailThumbRef.current());
     },
     [],
   );
@@ -484,6 +535,7 @@ export default function DesignerStudio({
         n[idx] = { ...p, layoutGuides };
         return n;
       });
+      queueMicrotask(() => scheduleRailThumbRef.current());
     },
     [],
   );
@@ -774,6 +826,15 @@ export default function DesignerStudio({
   }, [formatModal, pendingFormat]);
 
   const deletePage = useCallback((idx: number) => {
+    const removedId = pagesRef.current[idx]?.id;
+    if (removedId) {
+      setPageThumbnails((th) => {
+        if (!th[removedId]) return th;
+        const next = { ...th };
+        delete next[removedId];
+        return next;
+      });
+    }
     setPages((prev) => {
       if (prev.length <= 1) return prev;
       const filtered = prev.filter((_, i) => i !== idx);
@@ -1157,12 +1218,44 @@ export default function DesignerStudio({
     }
   }, [multiPdfBusy]);
 
-  /** Incluir tamaño del pliego para que el lienzo (artboard) se regenere al cambiar orientación. */
-  const studioKey = (() => {
-    const ap = activePage ?? pages[0];
-    const d = ap ? getPageDimensions(ap) : { width: 0, height: 0 };
-    return `${ap?.id ?? "none"}_${activePageIndex}_${Math.round(d.width)}_${Math.round(d.height)}`;
-  })();
+  /** Miniatura del nodo en el grafo: siempre la 1.ª página (con imágenes vía raster SVG). */
+  const captureFirstPageThumbnail = useCallback(async () => {
+    const list = pagesRef.current;
+    if (list.length === 0) return;
+    const pg0 = list[0];
+    if (!pg0) return;
+    const pd = getPageDimensions(pg0);
+    const expectedKey = `${pg0.id}_0_${Math.round(pd.width)}_${Math.round(pd.height)}`;
+
+    flushSync(() => {
+      setActivePageIndex(0);
+    });
+
+    let ready = false;
+    for (let t = 0; t < 200; t++) {
+      const api = studioApiRef.current;
+      if (api?.getExportSessionKey?.() === expectedKey && typeof api.getNodePreviewPngDataUrl === "function") {
+        ready = true;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 12));
+    }
+    if (!ready) {
+      console.warn("[Designer] Preview: lienzo de página 1 no listo a tiempo");
+      return;
+    }
+    try {
+      const url = await studioApiRef.current!.getNodePreviewPngDataUrl!();
+      if (url) onExport(url);
+    } catch (e) {
+      console.error("[Designer] Preview página 1:", e);
+    }
+  }, [onExport]);
+
+  const handleCloseWithFirstPagePreview = useCallback(async () => {
+    await captureFirstPageThumbnail();
+    onClose();
+  }, [captureFirstPageThumbnail, onClose]);
 
   return (
     <div className="fixed inset-0 z-[9999] flex flex-col bg-[#0b0d10]">
@@ -1172,11 +1265,12 @@ export default function DesignerStudio({
         initialObjects={activePage?.objects ?? []}
         initialArtboards={initialArtboards}
         initialLayoutGuides={activePage?.layoutGuides}
-        onClose={onClose}
+        onClose={handleCloseWithFirstPagePreview}
         onExport={onExport}
         onUpdateObjects={handleUpdateObjects}
         onUpdateLayoutGuides={handleUpdateLayoutGuides}
         designerMode
+        designerSkipAutoNodeExportOnClose
         onDesignerTextFrameCreate={handleDesignerTextFrameCreate}
         onDesignerImageFramePlace={handleDesignerImageFramePlace}
         studioApiRef={studioApiRef}
@@ -1208,6 +1302,7 @@ export default function DesignerStudio({
                   const pf = formatById(p.format);
                   const active = i === activePageIndex;
                   const resLabel = `${Math.round(pd.width)}×${Math.round(pd.height)}`;
+                  const railThumb = pageThumbnails[p.id];
                   return (
                     <div
                       key={p.id}
@@ -1263,11 +1358,22 @@ export default function DesignerStudio({
                           }}
                         >
                           <div className="flex h-[72px] w-full items-stretch justify-center overflow-hidden rounded-[2px] bg-zinc-950/90 ring-1 ring-inset ring-white/[0.06]">
-                            <DesignerPagePreview
-                              objects={p.objects ?? []}
-                              pageWidth={pd.width}
-                              pageHeight={pd.height}
-                            />
+                            {railThumb ? (
+                              // Data URL del export del lienzo; `<Image>` no aporta aquí.
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={railThumb}
+                                alt=""
+                                className="h-full w-full object-contain"
+                                draggable={false}
+                              />
+                            ) : (
+                              <DesignerPagePreview
+                                objects={p.objects ?? []}
+                                pageWidth={pd.width}
+                                pageHeight={pd.height}
+                              />
+                            )}
                           </div>
                           <span className="font-mono text-[8px] font-bold tabular-nums text-zinc-500">
                             {i + 1}
@@ -1295,7 +1401,7 @@ export default function DesignerStudio({
                           className="rounded-[2px] border border-white/[0.12] bg-white/[0.06] p-0.5 text-white transition hover:bg-white/12"
                           onClick={(e) => {
                             e.stopPropagation();
-                            setPendingFormat(pages[i]?.format ?? "a4v");
+                            setPendingFormat(pages[i]?.format ?? DEFAULT_DESIGNER_PAGE_FORMAT);
                             setFormatModal({ kind: "resize", pageIndex: i });
                           }}
                         >
@@ -1321,7 +1427,7 @@ export default function DesignerStudio({
                   type="button"
                   title="Añadir página"
                   onClick={() => {
-                    setPendingFormat(activePage?.format ?? pages[0]?.format ?? "a4v");
+                    setPendingFormat(activePage?.format ?? pages[0]?.format ?? DEFAULT_DESIGNER_PAGE_FORMAT);
                     setFormatModal({ kind: "add" });
                   }}
                   className="flex w-full items-center justify-center gap-1 rounded-[2px] border border-dashed border-white/18 bg-white/[0.02] py-1.5 text-[10px] font-medium text-zinc-400 transition hover:border-violet-400/35 hover:bg-violet-500/10 hover:text-zinc-200"
