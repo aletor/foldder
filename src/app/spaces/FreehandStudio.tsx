@@ -57,8 +57,6 @@ import {
   Image as ImageIconLucide,
   ChevronUp,
   ChevronDown,
-  ChevronsUp,
-  ChevronsDown,
   FileType2,
   AlignLeft,
   AlignCenter,
@@ -598,6 +596,12 @@ function layoutGuideUid() {
 function createLayoutGuide(orientation: "vertical" | "horizontal", position: number): LayoutGuide {
   return { id: layoutGuideUid(), orientation, position };
 }
+
+/** Visuales de guías en espacio mundo (el grosor se divide por `viewport.zoom` en pantalla). */
+const LAYOUT_GUIDE_STROKE = "rgba(196,181,253,0.59)";
+const LAYOUT_GUIDE_DRAFT_STROKE = "rgba(251,191,36,0.88)";
+const LAYOUT_GUIDE_STROKE_WORLD = 0.58;
+const LAYOUT_GUIDE_DRAFT_STROKE_WORLD = 0.62;
 
 function clamp(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)); }
 function escapeHtmlStr(s: string): string { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>"); }
@@ -9025,65 +9029,45 @@ export default function FreehandStudio({
 
             {/* Guías de diseño encima del contenido (no exportan; data-ui se filtra al exportar) */}
             {showLayoutGuides &&
-              layoutGuides.map((g) =>
-                g.orientation === "vertical" ? (
+              layoutGuides.map((g) => {
+                const vert = g.orientation === "vertical";
+                const p = g.position;
+                const z = viewport.zoom;
+                return (
                   <line
                     key={g.id}
                     data-ui="layout-guide"
-                    x1={g.position}
-                    y1={-5e5}
-                    x2={g.position}
-                    y2={5e5}
-                    stroke="rgba(196,181,253,0.59)"
-                    strokeWidth={0.58 / viewport.zoom}
-                    strokeDasharray={`${5 / viewport.zoom} ${4 / viewport.zoom}`}
+                    x1={vert ? p : -5e5}
+                    y1={vert ? -5e5 : p}
+                    x2={vert ? p : 5e5}
+                    y2={vert ? 5e5 : p}
+                    stroke={LAYOUT_GUIDE_STROKE}
+                    strokeWidth={LAYOUT_GUIDE_STROKE_WORLD / z}
+                    strokeDasharray={`${5 / z} ${4 / z}`}
                     pointerEvents="none"
                   />
-                ) : (
+                );
+              })}
+            {dragState?.type === "guidePull" &&
+              dragState.draftPos != null &&
+              (() => {
+                const vert = dragState.guideOrientation === "vertical";
+                const p = dragState.draftPos!;
+                const z = viewport.zoom;
+                return (
                   <line
-                    key={g.id}
-                    data-ui="layout-guide"
-                    x1={-5e5}
-                    y1={g.position}
-                    x2={5e5}
-                    y2={g.position}
-                    stroke="rgba(196,181,253,0.59)"
-                    strokeWidth={0.58 / viewport.zoom}
-                    strokeDasharray={`${5 / viewport.zoom} ${4 / viewport.zoom}`}
+                    data-ui="layout-guide-draft"
+                    x1={vert ? p : -5e5}
+                    y1={vert ? -5e5 : p}
+                    x2={vert ? p : 5e5}
+                    y2={vert ? 5e5 : p}
+                    stroke={LAYOUT_GUIDE_DRAFT_STROKE}
+                    strokeWidth={LAYOUT_GUIDE_DRAFT_STROKE_WORLD / z}
+                    strokeDasharray={`${5 / z} ${4 / z}`}
                     pointerEvents="none"
                   />
-                ),
-              )}
-            {dragState?.type === "guidePull" &&
-              dragState.guideOrientation === "vertical" &&
-              dragState.draftPos != null && (
-                <line
-                  data-ui="layout-guide-draft"
-                  x1={dragState.draftPos}
-                  y1={-5e5}
-                  x2={dragState.draftPos}
-                  y2={5e5}
-                  stroke="rgba(251,191,36,0.88)"
-                  strokeWidth={0.62 / viewport.zoom}
-                  strokeDasharray={`${5 / viewport.zoom} ${4 / viewport.zoom}`}
-                  pointerEvents="none"
-                />
-              )}
-            {dragState?.type === "guidePull" &&
-              dragState.guideOrientation === "horizontal" &&
-              dragState.draftPos != null && (
-                <line
-                  data-ui="layout-guide-draft"
-                  x1={-5e5}
-                  y1={dragState.draftPos}
-                  x2={5e5}
-                  y2={dragState.draftPos}
-                  stroke="rgba(251,191,36,0.88)"
-                  strokeWidth={0.62 / viewport.zoom}
-                  strokeDasharray={`${5 / viewport.zoom} ${4 / viewport.zoom}`}
-                  pointerEvents="none"
-                />
-              )}
+                );
+              })()}
 
             {/* Hover outline: canvas hover or layers panel hover (sync) */}
             {(hoverCanvasId || layerHoverId) && !canvasZenMode && (activeTool === "select" || activeTool === "directSelect") && (() => {
