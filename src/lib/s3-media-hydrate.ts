@@ -43,6 +43,14 @@ function collectDesignerImageKeysFromPages(d: Record<string, unknown>, keys: Set
       const ifc = o.imageFrameContent;
       if (!ifc || typeof ifc !== "object") continue;
       const row = ifc as Record<string, unknown>;
+      const skHr = row.s3KeyHr;
+      if (typeof skHr === "string" && skHr.startsWith("knowledge-files/")) {
+        keys.add(skHr);
+      }
+      const skOpt = row.s3KeyOpt;
+      if (typeof skOpt === "string" && skOpt.startsWith("knowledge-files/")) {
+        keys.add(skOpt);
+      }
       const sk = row.s3Key;
       if (typeof sk === "string" && sk.startsWith("knowledge-files/")) {
         keys.add(sk);
@@ -163,18 +171,23 @@ function hydrateDesignerPagesInData(d: Record<string, unknown>, urls: Record<str
       const ifc = o.imageFrameContent;
       if (!ifc || typeof ifc !== "object") return obj;
       const row = ifc as Record<string, unknown>;
-      const sk = typeof row.s3Key === "string" ? row.s3Key : null;
+      const skHr = typeof row.s3KeyHr === "string" ? row.s3KeyHr : null;
+      const skLegacy = typeof row.s3Key === "string" ? row.s3Key : null;
       const keyFromUrl = typeof row.src === "string" ? tryExtractKnowledgeFilesKeyFromUrl(row.src) : null;
-      const resolvedKey = sk || keyFromUrl;
-      if (resolvedKey && urls[resolvedKey]) {
+      const resolvedHr = skHr || skLegacy || keyFromUrl;
+      if (resolvedHr && urls[resolvedHr]) {
         any = true;
+        const skOpt = typeof row.s3KeyOpt === "string" ? row.s3KeyOpt : null;
+        const nextRow = {
+          ...row,
+          src: urls[resolvedHr],
+          s3Key: resolvedHr,
+          s3KeyHr: skHr || resolvedHr,
+          ...(skOpt && urls[skOpt] ? { s3KeyOpt: skOpt } : {}),
+        };
         return {
           ...o,
-          imageFrameContent: {
-            ...row,
-            src: urls[resolvedKey],
-            s3Key: resolvedKey,
-          },
+          imageFrameContent: nextRow,
         };
       }
       return obj;

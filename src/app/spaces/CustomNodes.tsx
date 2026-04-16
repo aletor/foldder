@@ -111,6 +111,7 @@ import {
 import { geminiGenerateWithServerProgress } from '@/lib/gemini-generate-stream-client';
 import { isFoldderMediaPreviewAutoFitSuppressed } from '@/lib/media-preview-fit-suppress';
 import { tryExtractKnowledgeFilesKeyFromUrl } from '@/lib/s3-media-hydrate';
+import { fetchBlobViaSpacesProxy } from '@/lib/spaces-proxy-fetch';
 import { usePreventBrowserPinchZoom } from '@/lib/use-prevent-browser-pinch-zoom';
 import { NODE_REGISTRY } from './nodeRegistry';
 import { useRegisterAssistantNodeRun } from './use-assistant-node-run';
@@ -1922,11 +1923,7 @@ const loadCanvasImage = async (url: string): Promise<HTMLImageElement> => {
   }
 
   try {
-    // Force requests through our local proxy to bypass CORS/S3 Signatures issues in the browser
-    const proxyUrl = `/api/spaces/proxy?url=${encodeURIComponent(url)}`;
-    const res = await fetch(proxyUrl);
-    if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-    const blob = await res.blob();
+    const blob = await fetchBlobViaSpacesProxy(url);
     const objectUrl = URL.createObjectURL(blob);
     
     return new Promise((resolve, reject) => {
@@ -8657,27 +8654,43 @@ function containedImageRect(cw: number, ch: number, nw: number, nh: number) {
   return { dw, dh, ox: (cw - dw) / 2, oy: 0 };
 }
 
-/** Evita canvas “tainted” con URLs externas (misma lógica que en otros nodos). */
-function imageUrlForCanvasCrop(src: string): string {
+/** Carga http(s) vía proxy POST (GET ?url= rompe con URLs prefirmadas largas) y devuelve URL lista para <img>. */
+async function resolveImageUrlForCanvasCrop(src: string): Promise<string> {
   const trimmed = src.trim();
-  if (!trimmed) return src;
-  if (trimmed.startsWith('data:') || trimmed.startsWith('blob:')) return trimmed;
-  /** Ya pasó por el proxy — no volver a envolver */
-  if (trimmed.includes('/api/spaces/proxy') && trimmed.includes('url=')) return trimmed;
+  if (!trimmed) return trimmed;
+  if (trimmed.startsWith("data:") || trimmed.startsWith("blob:")) return trimmed;
+  if (trimmed.includes("/api/spaces/proxy") && trimmed.includes("url=")) {
+    try {
+      const u = new URL(trimmed, typeof window !== "undefined" ? window.location.href : "http://localhost");
+      const remote = u.searchParams.get("url");
+      if (remote) {
+        const blob = await fetchBlobViaSpacesProxy(remote);
+        return URL.createObjectURL(blob);
+      }
+    } catch {
+      /* fall through */
+    }
+    return trimmed;
+  }
 
   let abs = trimmed;
-  if (trimmed.startsWith('//') && typeof window !== 'undefined') {
+  if (trimmed.startsWith("//") && typeof window !== "undefined") {
     abs = `${window.location.protocol}${trimmed}`;
   }
 
   try {
-    const u = new URL(abs, typeof window !== 'undefined' ? window.location.href : 'http://localhost');
-    if (typeof window !== 'undefined' && u.origin === window.location.origin) return abs;
+    const u = new URL(abs, typeof window !== "undefined" ? window.location.href : "http://localhost");
+    if (typeof window !== "undefined" && u.origin === window.location.origin) return abs;
   } catch {
     /* ignore */
   }
   if (/^https?:\/\//i.test(abs)) {
-    return `/api/spaces/proxy?url=${encodeURIComponent(abs)}`;
+    try {
+      const blob = await fetchBlobViaSpacesProxy(abs);
+      return URL.createObjectURL(blob);
+    } catch {
+      return abs;
+    }
   }
   return abs;
 }
@@ -8723,75 +8736,95 @@ export const CropNode = memo(({ id, data, selected }: NodeProps<any>) => {
     (rect: { x: number; y: number; w: number; h: number }) => {
       if (!sourceImage || !containerRef.current) return;
 
-      const loadUrl = imageUrlForCanvasCrop(sourceImage);
-      const img = new Image();
-      /** `crossOrigin='anonymous'` hace fallar la carga de muchos `data:` / `blob:` en `Image()`. */
-      if (!loadUrl.startsWith('data:') && !loadUrl.startsWith('blob:')) {
-        img.crossOrigin = 'anonymous';
-      }
-      img.onload = () => {
-        const container = containerRef.current;
-        if (!container) return;
-
-        const cw = container.clientWidth;
-        const ch = container.clientHeight;
-        if (cw < 2 || ch < 2) return;
-
-        const nw = img.naturalWidth;
-        const nh = img.naturalHeight;
-        if (!nw || !nh) return;
-
-        const { dw, dh, ox, oy } = containedImageRect(cw, ch, nw, nh);
-
-        const cropLeft = (rect.x / 100) * cw;
-        const cropTop = (rect.y / 100) * ch;
-        const cropWpx = (rect.w / 100) * cw;
-        const cropHpx = (rect.h / 100) * ch;
-
-        let sx = ((cropLeft - ox) / dw) * nw;
-        let sy = ((cropTop - oy) / dh) * nh;
-        let sw = (cropWpx / dw) * nw;
-        let sh = (cropHpx / dh) * nh;
-
-        sx = Math.max(0, Math.min(nw - 1, Math.round(sx)));
-        sy = Math.max(0, Math.min(nh - 1, Math.round(sy)));
-        sw = Math.max(1, Math.min(nw - sx, Math.round(sw)));
-        sh = Math.max(1, Math.min(nh - sy, Math.round(sh)));
-
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-
-        canvas.width = sw;
-        canvas.height = sh;
-        ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
-
-        let croppedDataUrl: string;
+      void (async () => {
+        let loadUrl: string;
+        let revokeBlob: string | null = null;
         try {
-          croppedDataUrl = canvas.toDataURL('image/png');
-        } catch (e) {
-          console.error('[CropNode] toDataURL failed (CORS/taint?)', e);
+          loadUrl = await resolveImageUrlForCanvasCrop(sourceImage);
+          if (loadUrl.startsWith("blob:")) revokeBlob = loadUrl;
+        } catch {
           return;
         }
 
-        setNodes((nds: any) => nds.map((n: any) => n.id === id ? {
-          ...n,
-          data: {
-            ...n.data,
-            value: croppedDataUrl,
-            type: 'image',
-            cropConfig: rect,
-            aspectRatio,
-          },
-        } : n));
-      };
-      img.onerror = () => {
-        console.warn('[CropNode] could not load image for cropping', {
-          loadUrlPrefix: loadUrl.slice(0, 96),
-          sourcePrefix: sourceImage.slice(0, 96),
-        });
-      };
-      img.src = loadUrl;
+        const img = new Image();
+        if (!loadUrl.startsWith("data:") && !loadUrl.startsWith("blob:")) {
+          img.crossOrigin = "anonymous";
+        }
+        img.onload = () => {
+          if (revokeBlob) {
+            URL.revokeObjectURL(revokeBlob);
+            revokeBlob = null;
+          }
+          const container = containerRef.current;
+          if (!container) return;
+
+          const cw = container.clientWidth;
+          const ch = container.clientHeight;
+          if (cw < 2 || ch < 2) return;
+
+          const nw = img.naturalWidth;
+          const nh = img.naturalHeight;
+          if (!nw || !nh) return;
+
+          const { dw, dh, ox, oy } = containedImageRect(cw, ch, nw, nh);
+
+          const cropLeft = (rect.x / 100) * cw;
+          const cropTop = (rect.y / 100) * ch;
+          const cropWpx = (rect.w / 100) * cw;
+          const cropHpx = (rect.h / 100) * ch;
+
+          let sx = ((cropLeft - ox) / dw) * nw;
+          let sy = ((cropTop - oy) / dh) * nh;
+          let sw = (cropWpx / dw) * nw;
+          let sh = (cropHpx / dh) * nh;
+
+          sx = Math.max(0, Math.min(nw - 1, Math.round(sx)));
+          sy = Math.max(0, Math.min(nh - 1, Math.round(sy)));
+          sw = Math.max(1, Math.min(nw - sx, Math.round(sw)));
+          sh = Math.max(1, Math.min(nh - sy, Math.round(sh)));
+
+          const canvas = document.createElement("canvas");
+          const ctx = canvas.getContext("2d");
+          if (!ctx) return;
+
+          canvas.width = sw;
+          canvas.height = sh;
+          ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+
+          let croppedDataUrl: string;
+          try {
+            croppedDataUrl = canvas.toDataURL("image/png");
+          } catch (e) {
+            console.error("[CropNode] toDataURL failed (CORS/taint?)", e);
+            return;
+          }
+
+          setNodes((nds: any) =>
+            nds.map((n: any) =>
+              n.id === id
+                ? {
+                    ...n,
+                    data: {
+                      ...n.data,
+                      value: croppedDataUrl,
+                      type: "image",
+                      cropConfig: rect,
+                      aspectRatio,
+                    },
+                  }
+                : n,
+            ),
+          );
+        };
+        img.onerror = () => {
+          if (revokeBlob) URL.revokeObjectURL(revokeBlob);
+          console.warn("[CropNode] could not load image for cropping", {
+            loadUrlPrefix: loadUrl.slice(0, 96),
+            sourcePrefix: sourceImage.slice(0, 96),
+          });
+        };
+        img.src = loadUrl;
+      })();
     },
     [sourceImage, id, setNodes, aspectRatio],
   );

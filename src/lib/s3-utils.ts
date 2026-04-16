@@ -1,4 +1,10 @@
-import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+  DeleteObjectCommand,
+  HeadObjectCommand,
+} from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 // Force us-east-1 to match the bucket location and avoid endpoint conflicts
@@ -35,6 +41,39 @@ export async function uploadToS3(filename: string, fileBuffer: Buffer, contentTy
   });
 
   return params.Key;
+}
+
+/** Subida con clave explícita (p. ej. assets Designer `…/designer/{id}_HR.jpg`). */
+export async function uploadBufferToS3Key(key: string, fileBuffer: Buffer, contentType: string): Promise<string> {
+  const params = {
+    Bucket: BUCKET_NAME,
+    Key: key,
+    Body: fileBuffer,
+    ContentType: contentType,
+  };
+  const command = new PutObjectCommand(params);
+  await s3Client.send(command).catch((err: unknown) => {
+    console.error("Error uploading to S3 (explicit key):", err);
+    throw err;
+  });
+  return key;
+}
+
+export async function s3ObjectExists(key: string): Promise<boolean> {
+  try {
+    await s3Client.send(
+      new HeadObjectCommand({
+        Bucket: BUCKET_NAME,
+        Key: key,
+      }),
+    );
+    return true;
+  } catch (e: unknown) {
+    const status = (e as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
+    const name = (e as { name?: string })?.name;
+    if (status === 404 || name === "NotFound") return false;
+    throw e;
+  }
 }
 
 export async function getFromS3(key: string): Promise<Buffer> {

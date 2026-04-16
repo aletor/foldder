@@ -16,6 +16,7 @@ import React, {
 import { createPortal } from "react-dom";
 import { usePreventBrowserPinchZoom } from "@/lib/use-prevent-browser-pinch-zoom";
 import { useClampedFixedPosition } from "@/lib/use-clamped-fixed-position";
+import { fetchBlobViaSpacesProxy } from "@/lib/spaces-proxy-fetch";
 import {
   X,
   MousePointer2,
@@ -59,6 +60,7 @@ import {
   ChevronUp,
   ChevronDown,
   ChevronRight,
+  Loader2,
   FileType2,
   AlignLeft,
   AlignCenter,
@@ -356,6 +358,14 @@ interface FreehandObjectBase {
     src: string;
     /** Persistido en proyecto; URL en `src` se renueva al cargar con hydrate S3. */
     s3Key?: string;
+    /** Alta resolución (origen). Si solo existe `s3Key`, equivale a HR. */
+    s3KeyHr?: string;
+    /** Versión optimizada (misma composición en página; otro fichero en S3). */
+    s3KeyOpt?: string;
+    /** Identificador estable para deduplicar HR/OPT en el mismo proyecto. */
+    designerAssetId?: string;
+    /** HR no está en S3 (p. ej. clave obsoleta); no reintentar auto-OPT hasta reemplazar la imagen. */
+    designerHrSourceMissing?: boolean;
     originalWidth: number;
     originalHeight: number;
     scaleX: number;
@@ -546,12 +556,28 @@ interface FreehandStudioProps {
   designerPageEnterDirection?: "next" | "prev" | null;
   /** Designer: bump to request fit-to-viewport after the active page canvas is shown (e.g. user picked a page). */
   designerFitToViewNonce?: number;
+  /** Designer: modo P (lienzo a pantalla completa) vive en el padre para sobrevivir al remount al cambiar de página. */
+  designerCanvasZenMode?: boolean;
+  onDesignerCanvasZenModeChange?: (zen: boolean) => void;
   /** Designer: multipage vector PDF export (shown in Export modal). */
   designerMultipageVectorPdfExport?: {
     pageCount: number;
     busy: boolean;
     onExport: (opts: VectorPdfExportOptions) => void | Promise<void>;
   } | null;
+  /** Switch “Activar auto-optimización” junto a Export. */
+  designerAutoOptimizeSwitch?: {
+    enabled: boolean;
+    onChange: (enabled: boolean) => void;
+  };
+  /** Progreso de auto-optimización; el HUD visual va dentro del marco (`activeFrameId`). */
+  designerOptimizeProgress?: {
+    visible: boolean;
+    currentFileLabel: string;
+    done: number;
+    total: number;
+    activeFrameId?: string | null;
+  };
   /**
    * Designer: el padre (DesignerStudio) genera la miniatura de la 1.ª página al cerrar.
    * Si true, no se ejecuta el PNG automático del lienzo actual en `handleCloseStudio`.
@@ -2526,12 +2552,14 @@ function snapCanvasPointTo45From(from: Point, to: Point): Point {
   return { x: nx, y: ny };
 }
 
-/** Sufijo de className para la animación de cambio de página en Designer (`designer-page-slide-in-*` en globals.css). */
+/** Sufijo de className para la animación de cambio de página en Designer (`designer-page-slide-in-*` en globals.css). No aplica mientras el lienzo precarga rasters (la animación va al mostrarse la página). */
 function designerCanvasPageEnterClassSuffix(
   designerMode: boolean | undefined,
   direction: "next" | "prev" | null | undefined,
+  rasterPhase: "idle" | "loading",
 ): string {
   if (!designerMode || direction == null) return "";
+  if (rasterPhase === "loading") return "";
   return direction === "next" ? " designer-page-slide-in-next" : " designer-page-slide-in-prev";
 }
 
@@ -3092,6 +3120,60 @@ function pathMarkerDefsAndAttrs(
   return { defs, markerStart, markerEnd };
 }
 
+/** HUD de auto-optimización dentro del marco; fade out al terminar (`show` false). */
+function DesignerImageFrameOptimizeOverlay({
+  x,
+  y,
+  width,
+  height,
+  show,
+}: {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  show: boolean;
+}) {
+  const [mounted, setMounted] = useState(show);
+  const [opacity, setOpacity] = useState(show ? 1 : 0);
+
+  useLayoutEffect(() => {
+    if (show) {
+      setMounted(true);
+      setOpacity(1);
+    }
+  }, [show]);
+
+  useEffect(() => {
+    if (show) return;
+    if (!mounted) return;
+    setOpacity(0);
+    const t = window.setTimeout(() => setMounted(false), 380);
+    return () => window.clearTimeout(t);
+  }, [show, mounted]);
+
+  if (!mounted) return null;
+
+  return (
+    <foreignObject x={x} y={y} width={width} height={height} style={{ pointerEvents: "none" }}>
+      <div
+        {...({ xmlns: "http://www.w3.org/1999/xhtml" } as Record<string, unknown>)}
+        className="flex h-full w-full flex-col items-center justify-center gap-2 px-2 text-center"
+        style={{
+          opacity,
+          transition: "opacity 350ms ease-out",
+          boxSizing: "border-box",
+          backgroundColor: "rgba(0,0,0,0.55)",
+          backdropFilter: "blur(2px)",
+        }}
+      >
+        <Loader2 className="h-4 w-4 shrink-0 animate-spin text-violet-400" strokeWidth={2} aria-hidden />
+        <span className="text-[10px] font-semibold leading-tight text-violet-100">Optimizando imagen</span>
+      </div>
+    </foreignObject>
+  );
+}
+
 // ── Render SVG object ───────────────────────────────────────────────────
 
 type RenderObjOpts = {
@@ -3101,6 +3183,8 @@ type RenderObjOpts = {
   designerMode?: boolean;
   /** Edición en canvas: ocultar el texto duplicado en SVG para que el textarea muestre selección visible. */
   textEditingId?: string | null;
+  /** Designer: marco cuyo asset se está optimizando (HUD con fade en el lienzo). */
+  imageFrameOptimizeShowFrameId?: string | null;
 };
 
 function renderObj(
@@ -3124,6 +3208,10 @@ function renderObj(
         const ifc = rObj.imageFrameContent;
         const cid = `imf-clip-${rObj.id}`;
         const frameSelected = selectedIds == null || selectedIds.has(rObj.id);
+        const optimizeHudShow =
+          !!opts?.designerMode &&
+          opts?.imageFrameOptimizeShowFrameId != null &&
+          opts.imageFrameOptimizeShowFrameId === rObj.id;
         return (
           <g key={rObj.id} transform={transform} opacity={rObj.opacity}>
             <defs>
@@ -3160,6 +3248,15 @@ function renderObj(
                 <line x1={rObj.x + rObj.width} y1={rObj.y} x2={rObj.x} y2={rObj.y + rObj.height} stroke={rObj.stroke || "#888"} strokeWidth={0.5} />
               </g>
             )}
+            {opts?.designerMode ? (
+              <DesignerImageFrameOptimizeOverlay
+                x={rObj.x}
+                y={rObj.y}
+                width={rObj.width}
+                height={rObj.height}
+                show={optimizeHudShow}
+              />
+            ) : null}
           </g>
         );
       }
@@ -3967,26 +4064,39 @@ async function rasterHrefToSafeDataUrl(href: string, cache: Map<string, string>)
     }
   };
 
+  /** S3 prefirmado: POST al proxy (GET con `?url=` rompe con URLs largas → 502). */
+  const fetchRemoteViaProxyPost = async (remoteUrl: string): Promise<string | null> => {
+    try {
+      const blob = await fetchBlobViaSpacesProxy(remoteUrl);
+      return await blobToDataUrl(blob);
+    } catch {
+      return null;
+    }
+  };
+
   let dataUrl: string | null = null;
   if (isLikelyNoBrowserCorsHttps(resolved)) {
-    const proxy = `/api/spaces/proxy?url=${encodeURIComponent(resolved)}`;
-    dataUrl = await fetchToDataUrl(proxy);
+    dataUrl = await fetchRemoteViaProxyPost(resolved);
   } else {
     dataUrl = await fetchToDataUrl(resolved);
-    // Orígenes sin CORS: mismo proxy que el PDF vectorial (`download-vector-pdf.ts`).
     if (
       !dataUrl &&
       (resolved.startsWith("http://") || resolved.startsWith("https://")) &&
       !resolved.includes("/api/spaces/proxy")
     ) {
-      const proxy = `/api/spaces/proxy?url=${encodeURIComponent(resolved)}`;
-      dataUrl = await fetchToDataUrl(proxy);
+      dataUrl = await fetchRemoteViaProxyPost(resolved);
     }
   }
 
   if (dataUrl) {
     cache.set(resolved, dataUrl);
     return dataUrl;
+  }
+
+  // S3 sin CORS en localhost: el proxy ya falló; no usar <img src=s3> (errores CORS + canvas “tainted”).
+  if (isLikelyNoBrowserCorsHttps(resolved)) {
+    cache.set(resolved, TRANSPARENT_PIXEL_PNG);
+    return TRANSPARENT_PIXEL_PNG;
   }
 
   try {
@@ -4489,6 +4599,85 @@ function textTypographyCreationFromObject(o: FreehandObject): TextCreationTypogr
   return null;
 }
 
+/** Objetos de una página Designer al hidratar sin remount. */
+function migrateDesignerPageObjects(raw: FreehandObject[]): FreehandObject[] {
+  if (raw.length === 0) return [];
+  return raw.map((o) => ({ ...o, fill: migrateFill((o as FreehandObject).fill as unknown) })) as FreehandObject[];
+}
+
+/** URLs que deben decodificarse antes de mostrar el lienzo (data:/blob: se consideran instantáneos). */
+function designerRasterUrlNeedsPreload(href: string): boolean {
+  const s = href.trim();
+  if (!s) return false;
+  if (s.startsWith("data:") || s.startsWith("blob:")) return false;
+  if (s.startsWith("http://") || s.startsWith("https://") || s.startsWith("//")) return true;
+  if (s.startsWith("/")) return true;
+  return false;
+}
+
+function collectDesignerRasterPreloadHrefsFromObject(o: FreehandObject, out: Set<string>): void {
+  if (!o.visible) return;
+  switch (o.type) {
+    case "rect": {
+      const r = o as RectObject;
+      if (r.isImageFrame && r.imageFrameContent?.src) {
+        const s = r.imageFrameContent.src.trim();
+        if (designerRasterUrlNeedsPreload(s)) out.add(s);
+      }
+      break;
+    }
+    case "image": {
+      const s = (o as ImageObject).src?.trim() ?? "";
+      if (designerRasterUrlNeedsPreload(s)) out.add(s);
+      break;
+    }
+    case "booleanGroup": {
+      const bg = o as BooleanGroupObject;
+      if (bg.cachedResult) {
+        const s = bg.cachedResult.trim();
+        if (designerRasterUrlNeedsPreload(s)) out.add(s);
+      }
+      for (const c of bg.children) collectDesignerRasterPreloadHrefsFromObject(c, out);
+      break;
+    }
+    case "clippingContainer": {
+      const cc = o as ClippingContainerObject;
+      collectDesignerRasterPreloadHrefsFromObject(cc.mask as FreehandObject, out);
+      for (const c of cc.content) collectDesignerRasterPreloadHrefsFromObject(c, out);
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+function collectDesignerRasterPreloadHrefs(objs: FreehandObject[]): string[] {
+  const out = new Set<string>();
+  for (const o of objs) collectDesignerRasterPreloadHrefsFromObject(o, out);
+  return [...out].sort();
+}
+
+const DESIGNER_RASTER_PRELOAD_TIMEOUT_MS = 15000;
+
+function preloadDesignerRasterUrl(url: string): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof window === "undefined") {
+      resolve();
+      return;
+    }
+    const done = () => {
+      window.clearTimeout(tid);
+      resolve();
+    };
+    const tid = window.setTimeout(done, DESIGNER_RASTER_PRELOAD_TIMEOUT_MS);
+    const img = new Image();
+    img.decoding = "async";
+    img.onload = done;
+    img.onerror = done;
+    img.src = url;
+  });
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 //  MAIN COMPONENT
 // ═══════════════════════════════════════════════════════════════════════════
@@ -4524,15 +4713,15 @@ export default function FreehandStudio({
   designerPageEnterDirection = null,
   designerMultipageVectorPdfExport,
   designerFitToViewNonce = 0,
+  designerAutoOptimizeSwitch,
+  designerOptimizeProgress,
   designerSkipAutoNodeExportOnClose = false,
+  designerCanvasZenMode,
+  onDesignerCanvasZenModeChange,
 }: FreehandStudioProps) {
 
   // ── Core state ─────────────────────────────────────────────────────
-  const [objects, setObjects] = useState<FreehandObject[]>(() =>
-    initialObjects.length > 0
-      ? (initialObjects.map((o) => ({ ...o, fill: migrateFill((o as FreehandObject).fill as unknown) })) as FreehandObject[])
-      : [],
-  );
+  const [objects, setObjects] = useState<FreehandObject[]>(() => migrateDesignerPageObjects(initialObjects));
   /** Un solo pliego por instancia; tamaño lo define el padre (Designer: página activa). */
   const artboards = useMemo((): Artboard[] => {
     const raw = initialArtboards ?? [];
@@ -4572,6 +4761,12 @@ export default function FreehandStudio({
   const [designerStoryModalOpen, setDesignerStoryModalOpen] = useState(false);
   const [designerStoryModalObjectId, setDesignerStoryModalObjectId] = useState<string | null>(null);
   const [designerStoryModalRect, setDesignerStoryModalRect] = useState({ x: 48, y: 64, w: 760, h: 560 });
+  /** Designer: ocultar el lienzo hasta que las imágenes remotas estén listas (barra de progreso centrada). */
+  const [designerCanvasRasterLoad, setDesignerCanvasRasterLoad] = useState<{
+    phase: "idle" | "loading";
+    done: number;
+    total: number;
+  }>({ phase: "idle", done: 0, total: 0 });
 
   const openDesignerStoryModalForFrameId = useCallback((frameObjectId: string) => {
     if (typeof window === "undefined") return;
@@ -4706,8 +4901,22 @@ export default function FreehandStudio({
   const [colorPanelExpanded, setColorPanelExpanded] = useState(false);
   /** Quick fill/stroke popover: which channel is being edited from canvas. */
   const [quickEditMode, setQuickEditMode] = useState<"fill" | "stroke" | null>(null);
-  /** Lienzo a pantalla completa: solo caja de transformación en el SVG; P alterna. */
-  const [canvasZenMode, setCanvasZenMode] = useState(false);
+  /** Lienzo a pantalla completa (P). En Designer el estado vive en `DesignerStudio` para no perderse al cambiar de página. */
+  const [canvasZenInternal, setCanvasZenInternal] = useState(false);
+  const zenControlled = typeof onDesignerCanvasZenModeChange === "function";
+  const canvasZenMode = zenControlled ? !!designerCanvasZenMode : canvasZenInternal;
+  const setCanvasZenMode = useCallback(
+    (next: boolean | ((prev: boolean) => boolean)) => {
+      if (zenControlled) {
+        const prev = !!designerCanvasZenMode;
+        const v = typeof next === "function" ? next(prev) : next;
+        onDesignerCanvasZenModeChange!(v);
+      } else {
+        setCanvasZenInternal(next);
+      }
+    },
+    [zenControlled, designerCanvasZenMode, onDesignerCanvasZenModeChange],
+  );
 
   // Live boolean preview during isolation editing
   const [livePreview, setLivePreview] = useState<{ dataUrl: string; bounds: Rect } | null>(null);
@@ -4719,10 +4928,7 @@ export default function FreehandStudio({
   type HistoryEntry = { objects: FreehandObject[]; sel: string[]; designerSnap?: unknown };
   const historyRef = useRef<HistoryEntry[]>([
     {
-      objects:
-        initialObjects.length > 0
-          ? (initialObjects.map((o) => ({ ...o, fill: migrateFill((o as FreehandObject).fill as unknown) })) as FreehandObject[])
-          : [],
+      objects: migrateDesignerPageObjects(initialObjects),
       sel: [],
     },
   ]);
@@ -4822,6 +5028,8 @@ export default function FreehandStudio({
 
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  /** Capa que anima al cambiar de página (reinicio explícito de @keyframes si la clase no cambia). */
+  const designerPageSlideLayerRef = useRef<HTMLDivElement>(null);
   /** Último tamaño del contenedor del lienzo (recentrar vista al redimensionar / modo P). */
   const lastCanvasContainerSizeRef = useRef({ w: 0, h: 0 });
   /** Hit-test para soltar guías sobre las reglas (Designer). */
@@ -4858,6 +5066,10 @@ export default function FreehandStudio({
   artboardsRef.current = artboards;
   const layoutGuidesRef = useRef<LayoutGuide[]>(layoutGuides);
   layoutGuidesRef.current = layoutGuides;
+
+  /** Props de la página activa (Designer); se lee al cambiar `designerActivePageId` sin depender de la referencia del array. */
+  const designerPagePropsRef = useRef({ objects: initialObjects, layoutGuides: initialLayoutGuides ?? [] });
+  designerPagePropsRef.current = { objects: initialObjects, layoutGuides: initialLayoutGuides ?? [] };
 
   // ── History helpers (using refs to avoid stale closures) ──────────
 
@@ -4957,6 +5169,101 @@ export default function FreehandStudio({
     forceRender((n) => n + 1);
   }, [designerHistoryBridge]);
 
+  /** Designer: al cambiar de página, hidratar el lienzo sin remontar el componente (layout: antes del pintado, evita flash blanco + salto de zoom). */
+  useLayoutEffect(() => {
+    if (!designerMode) {
+      setDesignerCanvasRasterLoad({ phase: "idle", done: 0, total: 0 });
+      return;
+    }
+    if (designerActivePageId == null) {
+      setDesignerCanvasRasterLoad({ phase: "idle", done: 0, total: 0 });
+      return;
+    }
+    let cancelled = false;
+    const { objects: raw, layoutGuides: lg } = designerPagePropsRef.current;
+    const mapped = migrateDesignerPageObjects(raw);
+    setObjects(mapped);
+    setLayoutGuides(lg);
+    isolationStackRef.current = [];
+    setIsolationDepth(0);
+    setClipContentEditId(null);
+    setImageFrameContentEditId(null);
+    setTextEditingId(null);
+    setCtxMenu(null);
+    setQuickEditMode(null);
+    setLivePreview(null);
+    setPenPoints([]);
+    setIsPenDrawing(false);
+    setPenHoverCanvas(null);
+    setPenHoverCanvasRaw(null);
+    setDragState(null);
+    guideGestureRef.current = null;
+    setSelectedIds(new Set());
+    setSelectedPoints(new Map());
+    setPrimarySelectedId(null);
+    setLayerDragId(null);
+    setLayerDropTarget(null);
+    closeDesignerStoryModal();
+    let designerSnap: unknown = undefined;
+    if (designerHistoryBridge) {
+      try {
+        designerSnap = designerHistoryBridge.capture(mapped);
+      } catch {
+        /* noop */
+      }
+    }
+    const frozen = JSON.parse(JSON.stringify(mapped)) as FreehandObject[];
+    historyRef.current = [{ objects: frozen, sel: [], designerSnap }];
+    historyIdxRef.current = 0;
+
+    /** Encajar vista con los datos ya hidratados en este mismo frame (el viewport anterior era de otra página / tamaño de pliego). */
+    const fitEl = containerRef.current;
+    if (fitEl) {
+      const b = resolveFitViewBounds(mapped, artboards);
+      const rw = fitEl.clientWidth;
+      const rh = fitEl.clientHeight;
+      if (b.w >= 2 && b.h >= 2 && rw >= 4 && rh >= 4) {
+        const margin = 40;
+        const zx = (rw - margin * 2) / b.w;
+        const zy = (rh - margin * 2) / b.h;
+        const z = clamp(Math.min(zx, zy), 0.05, 8);
+        setViewport({
+          zoom: z,
+          x: margin - b.x * z + (rw - margin * 2 - b.w * z) / 2,
+          y: margin - b.y * z + (rh - margin * 2 - b.h * z) / 2,
+        });
+      }
+    }
+
+    /** Solo al cambiar de página (hidratar): bloquear el lienzo hasta precargar rasters. No al añadir imágenes en la misma página (p. ej. arrastrar a un marco). */
+    const hrefs = collectDesignerRasterPreloadHrefs(mapped);
+    if (hrefs.length === 0) {
+      setDesignerCanvasRasterLoad({ phase: "idle", done: 0, total: 0 });
+    } else {
+      setDesignerCanvasRasterLoad({ phase: "loading", done: 0, total: hrefs.length });
+      void (async () => {
+        await Promise.all(
+          hrefs.map(async (url) => {
+            await preloadDesignerRasterUrl(url);
+            if (cancelled) return;
+            setDesignerCanvasRasterLoad((p) => {
+              const nextDone = Math.min(p.total, p.done + 1);
+              return {
+                phase: nextDone < p.total ? "loading" : "idle",
+                done: nextDone,
+                total: p.total,
+              };
+            });
+          }),
+        );
+      })();
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [designerMode, designerActivePageId, designerHistoryBridge, closeDesignerStoryModal]);
+
   useEffect(() => {
     if (!studioApiRef) return;
     studioApiRef.current = {
@@ -4995,7 +5302,13 @@ export default function FreehandStudio({
       setSelectedIds: (ids: Set<string>) => {
         queueMicrotask(() => setSelectedIds(ids));
       },
-      getExportSessionKey: () => nodeId,
+      getExportSessionKey: () => {
+        const ab = artboardsRef.current[0];
+        const w = ab ? Math.round(ab.width) : 0;
+        const h = ab ? Math.round(ab.height) : 0;
+        const pid = designerActivePageId ?? "none";
+        return `${nodeId}__${pid}__${w}_${h}`;
+      },
       getVectorPdfMarkupForCurrentPage: async (pdfOpts?: VectorPdfExportOptions) => {
         const svg = svgRef.current;
         if (!svg) return "";
@@ -5053,7 +5366,7 @@ export default function FreehandStudio({
     return () => {
       if (studioApiRef) studioApiRef.current = null;
     };
-  }, [studioApiRef, nodeId]);
+  }, [studioApiRef, nodeId, designerActivePageId]);
 
   // ── Sync to node ──────────────────────────────────────────────────
 
@@ -5495,13 +5808,14 @@ export default function FreehandStudio({
     return new Set(groupMembers);
   }, []);
 
-  const fitAllCanvas = useCallback(() => {
+  /** Encuadre del pliego/contenido en el área del lienzo. `marginPx` pequeño en modo P = máximo aprovechamiento. */
+  const fitAllCanvas = useCallback((marginPx: number = 40) => {
     const b = resolveFitViewBounds(objects, artboards);
     const el = containerRef.current;
     if (!el) return;
     const rw = el.clientWidth, rh = el.clientHeight;
     if (b.w < 2 || b.h < 2) return;
-    const margin = 40;
+    const margin = Math.max(0, marginPx);
     const zx = (rw - margin * 2) / b.w, zy = (rh - margin * 2) / b.h;
     const z = clamp(Math.min(zx, zy), 0.05, 8);
     setViewport({
@@ -5523,13 +5837,10 @@ export default function FreehandStudio({
     });
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!designerMode) return;
     if (designerFitToViewNonce === 0) return;
-    const id = requestAnimationFrame(() => {
-      fitAllCanvasRef.current();
-    });
-    return () => cancelAnimationFrame(id);
+    fitAllCanvasRef.current();
   }, [designerMode, designerFitToViewNonce]);
 
   useEffect(() => {
@@ -5558,31 +5869,26 @@ export default function FreehandStudio({
     };
   }, []);
 
-  /** Entrar en modo P: el área del lienzo crece; centrar el pliego/contenido en pantalla (no solo el píxel que estaba en el centro). */
+  /** Modo P: tras expandir el lienzo (sin cabecera ni barra de herramientas), zoom para llenar el viewport al máximo. */
+  const CANVAS_ZEN_FIT_MARGIN_PX = 10;
+
   useLayoutEffect(() => {
     if (!canvasZenMode) return;
     let cancelled = false;
-    const id = requestAnimationFrame(() => {
+    let raf1 = 0;
+    raf1 = requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        if (cancelled) return;
-        const el = containerRef.current;
-        if (!el) return;
-        const rw = el.clientWidth, rh = el.clientHeight;
-        if (rw < 4 || rh < 4) return;
-        const b = resolveFitViewBounds(objectsRef.current, artboardsRef.current);
-        if (b.w < 2 || b.h < 2) return;
-        const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
-        setViewport((v) => ({
-          ...v,
-          x: rw / 2 - cx * v.zoom,
-          y: rh / 2 - cy * v.zoom,
-        }));
-        lastCanvasContainerSizeRef.current = { w: rw, h: rh };
+        requestAnimationFrame(() => {
+          if (cancelled) return;
+          fitAllCanvasRef.current(CANVAS_ZEN_FIT_MARGIN_PX);
+          const el = containerRef.current;
+          if (el) lastCanvasContainerSizeRef.current = { w: el.clientWidth, h: el.clientHeight };
+        });
       });
     });
     return () => {
       cancelled = true;
-      cancelAnimationFrame(id);
+      cancelAnimationFrame(raf1);
     };
   }, [canvasZenMode]);
 
@@ -9673,6 +9979,27 @@ export default function FreehandStudio({
     return map;
   }, [objects]);
 
+  const imageFrameOptimizeShowFrameId =
+    designerMode && designerOptimizeProgress?.visible && designerOptimizeProgress.activeFrameId
+      ? designerOptimizeProgress.activeFrameId
+      : null;
+
+  /** Vuelve a lanzar la animación horizontal al cambiar de página o al terminar la precarga de rasters (CSS no repite si la clase sigue siendo next/prev). */
+  useLayoutEffect(() => {
+    if (!designerMode || designerPageEnterDirection == null) return;
+    if (designerCanvasRasterLoad.phase === "loading") return;
+    const el = designerPageSlideLayerRef.current;
+    if (!el) return;
+    el.style.animation = "none";
+    void el.offsetHeight;
+    el.style.removeProperty("animation");
+  }, [
+    designerMode,
+    designerActivePageId,
+    designerPageEnterDirection,
+    designerCanvasRasterLoad.phase,
+  ]);
+
   // ═══════════════════════════════════════════════════════════════════
   //  RENDER
   // ═══════════════════════════════════════════════════════════════════
@@ -9840,6 +10167,33 @@ export default function FreehandStudio({
             <Redo2 size={18} strokeWidth={1.5} />
           </button>
         </div>
+        {designerMode && designerAutoOptimizeSwitch && (
+          <div className="flex min-w-0 max-w-full shrink-0 items-center gap-3 rounded-md border border-white/[0.12] bg-[#0b0d10] px-3.5 py-2">
+            <span className="min-w-0 select-none text-[11px] font-medium leading-snug text-zinc-200">
+              Activar auto-optimización
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={designerAutoOptimizeSwitch.enabled}
+              title={
+                designerAutoOptimizeSwitch.enabled
+                  ? "Desactivar auto-optimización"
+                  : "Activar auto-optimización"
+              }
+              onClick={() => designerAutoOptimizeSwitch.onChange(!designerAutoOptimizeSwitch.enabled)}
+              className={`relative box-border h-[22px] w-[40px] shrink-0 overflow-hidden rounded-md transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-500/80 ${
+                designerAutoOptimizeSwitch.enabled ? "bg-violet-600" : "bg-zinc-600"
+              }`}
+            >
+              <span
+                className={`pointer-events-none absolute top-1/2 h-[18px] w-[18px] -translate-y-1/2 rounded-sm bg-white shadow-sm ring-1 ring-black/10 transition-[left] duration-200 ease-out ${
+                  designerAutoOptimizeSwitch.enabled ? "left-[20px]" : "left-[2px]"
+                }`}
+              />
+            </button>
+          </div>
+        )}
         <button
           type="button"
           onClick={() => {
@@ -10082,7 +10436,12 @@ export default function FreehandStudio({
         )}
 
       <div
-        className={`flex min-h-0 min-w-0 flex-1 flex-col${designerCanvasPageEnterClassSuffix(designerMode, designerPageEnterDirection)}`}
+        ref={designerPageSlideLayerRef}
+        className={`flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden${designerCanvasPageEnterClassSuffix(
+          designerMode,
+          designerPageEnterDirection,
+          designerCanvasRasterLoad.phase,
+        )}`}
         style={{ cursor }}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
@@ -10205,7 +10564,36 @@ export default function FreehandStudio({
             />
           )}
           <div ref={containerRef} className="relative min-h-0 flex-1 overflow-hidden">
-        <svg ref={svgRef} className="absolute inset-0 w-full h-full" style={{ userSelect: "none" }}>
+        {designerMode && designerCanvasRasterLoad.phase === "loading" && (
+          <div
+            className="absolute inset-0 z-[200] flex flex-col items-center justify-center bg-[#0b0d10]"
+            style={{ pointerEvents: "auto" }}
+            aria-busy
+            aria-live="polite"
+          >
+            <p className="mb-3 text-[12px] text-zinc-400">Cargando la página…</p>
+            <div className="h-1.5 w-52 max-w-[min(22rem,85vw)] overflow-hidden rounded-full bg-zinc-800">
+              <div
+                className="h-full rounded-full bg-sky-500 transition-[width] duration-200 ease-out"
+                style={{
+                  width: `${designerCanvasRasterLoad.total <= 0 ? 0 : (designerCanvasRasterLoad.done / designerCanvasRasterLoad.total) * 100}%`,
+                }}
+              />
+            </div>
+            <p className="mt-2 tabular-nums text-[10px] text-zinc-500">
+              {designerCanvasRasterLoad.done} / {designerCanvasRasterLoad.total}
+            </p>
+          </div>
+        )}
+        <svg
+          ref={svgRef}
+          className="absolute inset-0 w-full h-full"
+          style={{
+            userSelect: "none",
+            opacity: designerMode && designerCanvasRasterLoad.phase === "loading" ? 0 : 1,
+            pointerEvents: designerMode && designerCanvasRasterLoad.phase === "loading" ? "none" : undefined,
+          }}
+        >
           <defs>
             <pattern id="fh-grid" width={20 * viewport.zoom} height={20 * viewport.zoom} patternUnits="userSpaceOnUse"
               x={viewport.x % (20 * viewport.zoom)} y={viewport.y % (20 * viewport.zoom)}>
@@ -10294,7 +10682,12 @@ export default function FreehandStudio({
                 const op = multi && inSel && !isPrimary ? 0.62 : 1;
                 return (
                   <g key={obj.id} opacity={op} data-fh-obj={obj.id}>
-                    {renderObj(obj, objects, selectedIds, { canvasZenMode, designerMode, textEditingId })}
+                    {renderObj(obj, objects, selectedIds, {
+                      canvasZenMode,
+                      designerMode,
+                      textEditingId,
+                      imageFrameOptimizeShowFrameId,
+                    })}
                   </g>
                 );
               })}
@@ -10309,7 +10702,12 @@ export default function FreehandStudio({
                     const op = multi && inSel && !isPrimary ? 0.62 : 1;
                     return (
                       <g key={m.id} data-fh-obj={m.id} opacity={op}>
-                        {renderObj(m, objects, selectedIds, { canvasZenMode, designerMode, textEditingId })}
+                        {renderObj(m, objects, selectedIds, {
+                        canvasZenMode,
+                        designerMode,
+                        textEditingId,
+                        imageFrameOptimizeShowFrameId,
+                      })}
                       </g>
                     );
                   })}
@@ -10974,7 +11372,14 @@ export default function FreehandStudio({
                   return f.parentObjects
                     .filter((o) => o.id !== hid)
                     .map((o) => (
-                      <g key={o.id}>{renderObj(o, f.parentObjects, undefined, { canvasZenMode, designerMode, textEditingId })}</g>
+                      <g key={o.id}>
+                        {renderObj(o, f.parentObjects, undefined, {
+                          canvasZenMode,
+                          designerMode,
+                          textEditingId,
+                          imageFrameOptimizeShowFrameId,
+                        })}
+                      </g>
                     ));
                 })()}
               </g>
@@ -12718,8 +13123,8 @@ export default function FreehandStudio({
 
           {/* ── Layers (plegable abajo, solo en la columna derecha) ── */}
           <div
-            className={`flex min-h-0 flex-col border-t border-white/[0.08] bg-[#12151a] ${
-              layersPanelExpanded ? "min-h-[120px] flex-1" : "shrink-0"
+            className={`flex min-h-0 shrink-0 flex-col border-t border-white/[0.08] bg-[#12151a] ${
+              layersPanelExpanded ? "max-h-[min(280px,38vh)] min-h-[120px] flex-1" : ""
             }`}
           >
             {layersPanelExpanded ? (
@@ -12896,8 +13301,13 @@ export default function FreehandStudio({
         </div>
 
         {/* Status bar */}
-        <div className="flex shrink-0 items-center justify-between border-t border-white/[0.08] px-3 py-2 text-[9px] text-zinc-500">
-          <span>{objects.length} objects · {selectedIds.size} selected{isolationDepth > 0 ? ` · Isolation (depth ${isolationDepth})` : ""}</span>
+        <div className="flex shrink-0 flex-col gap-1.5 border-t border-white/[0.08] px-3 py-2">
+          <div className="flex items-center justify-between text-[9px] text-zinc-500">
+            <span>
+              {objects.length} objects · {selectedIds.size} selected
+              {isolationDepth > 0 ? ` · Isolation (depth ${isolationDepth})` : ""}
+            </span>
+          </div>
         </div>
       </div>
       )}

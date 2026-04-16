@@ -31,6 +31,8 @@ export type DesignerNodeData = {
   value?: string;
   pages?: DesignerPageState[];
   activePageIndex?: number;
+  /** Auto-optimización de imágenes (HR/OPT en S3); persiste en el nodo. */
+  autoImageOptimization?: boolean;
 };
 
 function DesignerNodeResizer(props: React.ComponentProps<typeof NodeResizer>) {
@@ -113,6 +115,17 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
     [id, setNodes],
   );
 
+  const onAutoImageOptimizationChange = useCallback(
+    (enabled: boolean) => {
+      setNodes((nds) =>
+        nds.map((n) =>
+          n.id === id ? { ...n, data: { ...n.data, autoImageOptimization: enabled } } : n,
+        ),
+      );
+    },
+    [id, setNodes],
+  );
+
   return (
     <div className="custom-node tool-node group/node" style={{ minWidth: 280 }}>
       <DesignerNodeResizer minWidth={280} minHeight={200} maxWidth={520} maxHeight={420} isVisible={selected} />
@@ -176,9 +189,12 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
           <DesignerStudioLazy
             initialPages={pages}
             activePageIndex={activeIdx}
+            designerCanvasInstanceKey={id}
             onClose={() => setIsStudioOpen(false)}
             onExport={onExport}
             onUpdatePages={onUpdatePages}
+            autoImageOptimization={nodeData.autoImageOptimization !== false}
+            onAutoImageOptimizationChange={onAutoImageOptimizationChange}
           />,
           document.body,
         )}
@@ -189,9 +205,12 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
 function DesignerStudioLazy(props: {
   initialPages: DesignerPageState[];
   activePageIndex: number;
+  designerCanvasInstanceKey: string;
   onClose: () => void;
   onExport: (dataUrl: string) => void;
   onUpdatePages: (pages: DesignerPageState[], activeIdx?: number) => void;
+  autoImageOptimization?: boolean;
+  onAutoImageOptimizationChange?: (enabled: boolean) => void;
 }) {
   const [Studio, setStudio] = useState<React.ComponentType<any> | null>(null);
   useEffect(() => {

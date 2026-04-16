@@ -3,6 +3,7 @@
 import { jsPDF } from "jspdf";
 import { svg2pdf } from "svg2pdf.js";
 import { sanitizeSvgNamedEntitiesForXml } from "./freehand-export";
+import { fetchBlobViaSpacesProxy } from "@/lib/spaces-proxy-fetch";
 
 /** 1×1 transparente: último recurso si no podemos incrustar una imagen remota (evita que svg2pdf falle por XHR/CORS). */
 const STUB_IMAGE_DATA_URL =
@@ -96,10 +97,7 @@ async function fetchRemoteImageAsDataUrl(href: string): Promise<string | null> {
   if (url.startsWith("//")) url = `https:${url}`;
   if (!url.startsWith("http://") && !url.startsWith("https://")) return null;
   try {
-    const proxy = `/api/spaces/proxy?url=${encodeURIComponent(url)}`;
-    const res = await fetch(proxy);
-    if (!res.ok) return null;
-    const blob = await res.blob();
+    const blob = await fetchBlobViaSpacesProxy(url);
     const buf = await blob.arrayBuffer();
     const mime = blob.type && blob.type !== "application/octet-stream" ? blob.type : guessMimeFromUrl(url);
     return `data:${mime};base64,${arrayBufferToBase64(buf)}`;

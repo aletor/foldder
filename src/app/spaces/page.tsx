@@ -22,6 +22,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useClampedFixedPosition } from "@/lib/use-clamped-fixed-position";
+import { DesignerSpaceIdContext } from "@/contexts/DesignerSpaceIdContext";
 
 import { 
   MediaInputNode, 
@@ -4315,6 +4316,7 @@ const SpacesContent = () => {
           </div>
         )}
         {/* Wheel: listener global (ratón→zoom, trackpad→pan); panOnScroll false para no solapar con XY Flow. noPanClassName placeholder evita .nopan bloqueando wheel en nodos */}
+        <DesignerSpaceIdContext.Provider value={activeSpaceId === "root" ? null : activeSpaceId}>
         <ReactFlow
           onInit={onCanvasInit}
           nodes={flowNodes}
@@ -4423,6 +4425,7 @@ const SpacesContent = () => {
         >
           <Background color="#111" gap={40} size={1} />
         </ReactFlow>
+        </DesignerSpaceIdContext.Provider>
 
         {isAuthenticated && <HandleTypeLegend />}
 

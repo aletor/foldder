@@ -46,6 +46,15 @@ import {
   updateStoryTypography,
 } from "./indesign/text-threading";
 import { readResponseJson } from "@/lib/read-response-json";
+import { useDesignerSpaceId } from "@/contexts/DesignerSpaceIdContext";
+import { newDesignerAssetId } from "./designer-image-pipeline";
+import {
+  applyDesignerImageDisplayUrls,
+  collectAllDesignerImageS3Keys,
+  collectPendingDesignerOptimizations,
+  createOptVersionForDesignerAsset,
+  presignKnowledgeFileKeys,
+} from "./designer-optimize-scheduler";
 
 /** Dimensiones intrínsecas del archivo local (evita diferencias S3/CORS/EXIF vs `<Image>` remota). */
 async function readImageFilePixelSize(file: File): Promise<{ w: number; h: number }> {
@@ -83,6 +92,21 @@ interface DesignerStudioProps {
   onClose: () => void;
   onExport: (dataUrl: string) => void;
   onUpdatePages: (pages: DesignerPageState[], activeIdx?: number) => void;
+  /** Id estable del nodo en el canvas (React Flow); el lienzo no se remonta al cambiar de página. */
+  designerCanvasInstanceKey: string;
+  /** Persistido en el nodo Designer: auto-optimización de imágenes en background. */
+  autoImageOptimization?: boolean;
+  onAutoImageOptimizationChange?: (enabled: boolean) => void;
+}
+
+/** Debe coincidir con `getExportSessionKey` en FreehandStudio (miniatura, PDF multipágina). */
+export function designerCanvasSessionKey(
+  instanceKey: string,
+  pageId: string,
+  width: number,
+  height: number,
+): string {
+  return `designer-fh-${instanceKey}__${pageId}__${Math.round(width)}_${Math.round(height)}`;
 }
 
 let _dpgSeq = 0;
@@ -220,7 +244,11 @@ export default function DesignerStudio({
   onClose,
   onExport,
   onUpdatePages,
+  designerCanvasInstanceKey,
+  autoImageOptimization = true,
+  onAutoImageOptimizationChange,
 }: DesignerStudioProps) {
+  const designerSpaceId = useDesignerSpaceId();
   const [pages, setPages] = useState<DesignerPageState[]>(() =>
     initialPages.length > 0
       ? initialPages
@@ -327,13 +355,13 @@ export default function DesignerStudio({
   const activeIdxRef = useRef(activePageIndex);
   activeIdxRef.current = activePageIndex;
 
-  const studioKey = useMemo(() => {
-    const ap = pages[activePageIndex] ?? pages[0];
-    const d = ap ? getPageDimensions(ap) : { width: 0, height: 0 };
-    return `${ap?.id ?? "none"}_${activePageIndex}_${Math.round(d.width)}_${Math.round(d.height)}`;
-  }, [pages, activePageIndex]);
+  /** Clave estable: un solo FreehandStudio para todo el documento; el cambio de página hidrata objetos sin remount. */
+  const freehandStudioInstanceKey = useMemo(
+    () => `designer-fh-${designerCanvasInstanceKey}`,
+    [designerCanvasInstanceKey],
+  );
 
-  /** Persiste el scroll del listado de páginas: FreehandStudio se remonta con `key={studioKey}` y sin esto el rail vuelve arriba. */
+  /** Persiste el scroll del listado de páginas: FreehandStudio se remonta con `key={freehandStudioInstanceKey}` y sin esto el rail vuelve arriba. */
   const designerPagesRailScrollTopRef = useRef(0);
   const designerPagesRailScrollElRef = useRef<HTMLDivElement | null>(null);
 
@@ -350,7 +378,7 @@ export default function DesignerStudio({
         designerPagesRailScrollTopRef.current = cur.scrollTop;
       }
     };
-  }, [studioKey, activePageIndex, pages.length]);
+  }, [freehandStudioInstanceKey, activePageIndex, pages.length]);
 
   const captureRailThumbnailForActivePage = useCallback(async () => {
     const api = studioApiRef.current;
@@ -358,7 +386,7 @@ export default function DesignerStudio({
     const p = pagesRef.current[idx];
     if (!api?.getNodePreviewPngDataUrl || !p) return;
     const pd = getPageDimensions(p);
-    const expectedKey = `${p.id}_${idx}_${Math.round(pd.width)}_${Math.round(pd.height)}`;
+    const expectedKey = designerCanvasSessionKey(designerCanvasInstanceKey, p.id, pd.width, pd.height);
     if (api.getExportSessionKey?.() !== expectedKey) return;
     try {
       const url = await api.getNodePreviewPngDataUrl({ maxSide: 220 });
@@ -387,7 +415,7 @@ export default function DesignerStudio({
       window.clearTimeout(t);
       window.clearTimeout(railThumbTimerRef.current);
     };
-  }, [studioKey, scheduleRailThumbnail]);
+  }, [freehandStudioInstanceKey, scheduleRailThumbnail]);
 
   const commitPages = useCallback(
     (fn: (prev: DesignerPageState[]) => DesignerPageState[]) => {
@@ -395,6 +423,144 @@ export default function DesignerStudio({
     },
     [],
   );
+
+  const [designerOptimizeProgress, setDesignerOptimizeProgress] = useState({
+    visible: false,
+    currentFileLabel: "",
+    done: 0,
+    total: 0,
+    activeFrameId: null as string | null,
+  });
+  const optimizeLockRef = useRef(false);
+  const optimizeDoneCountRef = useRef(0);
+  const optimizeBatchTotalRef = useRef(0);
+
+  /** Modo P (lienzo a pantalla completa): estado en el padre para que sobreviva al remount de FreehandStudio al cambiar de página. */
+  const [designerCanvasZenMode, setDesignerCanvasZenMode] = useState(false);
+
+  const applyImageFramesToCanvasPage = useCallback((page: DesignerPageState) => {
+    const api = studioApiRef.current;
+    if (!api) return;
+    const walk = (objs: FreehandObject[]) => {
+      for (const o of objs) {
+        if (o.type === "booleanGroup") walk(o.children);
+        else if (o.type === "clippingContainer") {
+          walk([o.mask as FreehandObject]);
+          walk(o.content);
+        } else if (o.isImageFrame && o.imageFrameContent) {
+          api.patchObject(o.id, { imageFrameContent: { ...o.imageFrameContent } });
+        }
+      }
+    };
+    walk(page.objects ?? []);
+  }, []);
+
+  const refreshDisplayForAllPages = useCallback(
+    async (snapshot: DesignerPageState[], useOpt: boolean) => {
+      const keys = collectAllDesignerImageS3Keys(snapshot);
+      if (keys.length === 0) return;
+      const urls = await presignKnowledgeFileKeys(keys);
+      const next = applyDesignerImageDisplayUrls(snapshot, useOpt, urls);
+      setPages(next);
+      queueMicrotask(() => {
+        const idx = activeIdxRef.current;
+        const pg = next[idx];
+        if (pg) applyImageFramesToCanvasPage(pg);
+      });
+    },
+    [applyImageFramesToCanvasPage],
+  );
+
+  useEffect(() => {
+    void refreshDisplayForAllPages(pagesRef.current, autoImageOptimization);
+  }, [autoImageOptimization, refreshDisplayForAllPages]);
+
+  useEffect(() => {
+    if (!autoImageOptimization) {
+      setDesignerOptimizeProgress({
+        visible: false,
+        currentFileLabel: "",
+        done: 0,
+        total: 0,
+        activeFrameId: null,
+      });
+      optimizeDoneCountRef.current = 0;
+      optimizeBatchTotalRef.current = 0;
+      return;
+    }
+    const id = window.setInterval(() => {
+      void (async () => {
+        if (optimizeLockRef.current) return;
+        const activePid = pagesRef.current[activeIdxRef.current]?.id ?? null;
+        const pending = collectPendingDesignerOptimizations(pagesRef.current, activePid);
+        if (pending.length === 0) {
+          optimizeDoneCountRef.current = 0;
+          optimizeBatchTotalRef.current = 0;
+          setDesignerOptimizeProgress((p) =>
+            p.visible
+              ? { visible: false, currentFileLabel: "", done: 0, total: 0, activeFrameId: null }
+              : p,
+          );
+          return;
+        }
+        if (optimizeBatchTotalRef.current === 0) {
+          optimizeBatchTotalRef.current = pending.length;
+          optimizeDoneCountRef.current = 0;
+        }
+        optimizeLockRef.current = true;
+        const item = pending[0]!;
+        const total = optimizeBatchTotalRef.current;
+        setDesignerOptimizeProgress({
+          visible: true,
+          currentFileLabel: item.label,
+          done: optimizeDoneCountRef.current,
+          total,
+          activeFrameId: item.frameId,
+        });
+        try {
+          const result = await createOptVersionForDesignerAsset(
+            pagesRef.current,
+            item,
+            designerSpaceId,
+            undefined,
+          );
+          if (!result.ok) {
+            console.warn("[Designer] HR no está en el bucket; se omite OPT:", item.hrKey);
+          }
+          await refreshDisplayForAllPages(result.pages, result.ok ? true : autoImageOptimization);
+          optimizeDoneCountRef.current += 1;
+          const still = collectPendingDesignerOptimizations(
+            pagesRef.current,
+            pagesRef.current[activeIdxRef.current]?.id ?? null,
+          ).length;
+          if (still === 0) {
+            optimizeDoneCountRef.current = 0;
+            optimizeBatchTotalRef.current = 0;
+            setDesignerOptimizeProgress({
+              visible: false,
+              currentFileLabel: "",
+              done: 0,
+              total: 0,
+              activeFrameId: null,
+            });
+          } else {
+            setDesignerOptimizeProgress({
+              visible: true,
+              currentFileLabel: item.label,
+              done: optimizeDoneCountRef.current,
+              total,
+              activeFrameId: null,
+            });
+          }
+        } catch (e) {
+          console.error("[Designer] auto-optimize", e);
+        } finally {
+          optimizeLockRef.current = false;
+        }
+      })();
+    }, 900);
+    return () => window.clearInterval(id);
+  }, [autoImageOptimization, designerSpaceId, refreshDisplayForAllPages]);
 
   useEffect(() => {
     onUpdatePages(pages, activePageIndex);
@@ -885,11 +1051,19 @@ export default function DesignerStudio({
       const api = studioApiRef.current;
       const frameObj = api?.getObjects().find((o) => o.id === frameId);
 
+      const assetId = newDesignerAssetId();
+      const extFallback = (file.name.split(".").pop() || "jpg").replace(/[^a-z0-9]/gi, "").toLowerCase() || "jpg";
+
       const formData = new FormData();
       formData.append("file", file);
+      formData.append("assetId", assetId);
+      formData.append("variant", "HR");
+      if (designerSpaceId) formData.append("spaceId", designerSpaceId);
+      formData.append("ext", extFallback);
+
       let uploadRes: Response;
       try {
-        uploadRes = await fetch("/api/runway/upload", { method: "POST", body: formData });
+        uploadRes = await fetch("/api/spaces/designer-asset-upload", { method: "POST", body: formData });
       } catch (e) {
         console.error("[Designer] image upload:", e);
         alert("No se pudo subir la imagen (red). Vuelve a intentarlo.");
@@ -897,7 +1071,7 @@ export default function DesignerStudio({
       }
       const json = await readResponseJson<{ url?: string; s3Key?: string; error?: string }>(
         uploadRes,
-        "POST /api/runway/upload (Designer)",
+        "POST /api/spaces/designer-asset-upload",
       );
       if (!uploadRes.ok || !json?.url || !json?.s3Key) {
         const detail =
@@ -910,6 +1084,7 @@ export default function DesignerStudio({
       }
 
       const persistedUrl = json.url;
+      const hrKey = json.s3Key;
       let iw = 100;
       let ih = 100;
       try {
@@ -934,7 +1109,9 @@ export default function DesignerStudio({
 
       const content = {
         src: persistedUrl,
-        s3Key: json.s3Key,
+        s3Key: hrKey,
+        s3KeyHr: hrKey,
+        designerAssetId: assetId,
         originalWidth: iw,
         originalHeight: ih,
         ...layout,
@@ -954,10 +1131,11 @@ export default function DesignerStudio({
             o.id === frameId ? { ...o, imageFrameContent: content } : o,
           ),
         };
+        queueMicrotask(() => void refreshDisplayForAllPages(n, autoImageOptimization));
         return n;
       });
     },
-    [],
+    [designerSpaceId, refreshDisplayForAllPages, autoImageOptimization],
   );
 
   // ── Page management ──
@@ -1379,9 +1557,8 @@ export default function DesignerStudio({
       for (let i = 0; i < pageCount; i++) {
         const pg = pagesRef.current[i];
         if (!pg) continue;
-        // Debe coincidir con `studioKey` / `nodeId` en FreehandStudio: `${pageId}_${index}_${w}_${h}`
         const pd = getPageDimensions(pg);
-        const expectedKey = `${pg.id}_${i}_${Math.round(pd.width)}_${Math.round(pd.height)}`;
+        const expectedKey = designerCanvasSessionKey(designerCanvasInstanceKey, pg.id, pd.width, pd.height);
         flushSync(() => {
           setDesignerPageEnterDirection(null);
           setActivePageIndex(i);
@@ -1456,7 +1633,7 @@ export default function DesignerStudio({
     const pg0 = list[0];
     if (!pg0) return;
     const pd = getPageDimensions(pg0);
-    const expectedKey = `${pg0.id}_0_${Math.round(pd.width)}_${Math.round(pd.height)}`;
+    const expectedKey = designerCanvasSessionKey(designerCanvasInstanceKey, pg0.id, pd.width, pd.height);
 
     flushSync(() => {
       setDesignerPageEnterDirection(null);
@@ -1480,7 +1657,7 @@ export default function DesignerStudio({
     if (!api?.getNodePreviewPngDataUrl) return;
     const url = await api.getNodePreviewPngDataUrl();
     if (url) onExport(url);
-  }, [onExport]);
+  }, [onExport, designerCanvasInstanceKey]);
 
   const handleCloseWithFirstPagePreview = useCallback(async () => {
     await captureFirstPageThumbnail();
@@ -1490,8 +1667,8 @@ export default function DesignerStudio({
   return (
     <div className="fixed inset-0 z-[9999] flex flex-col bg-[#0b0d10]">
       <FreehandStudio
-        key={studioKey}
-        nodeId={studioKey}
+        key={freehandStudioInstanceKey}
+        nodeId={freehandStudioInstanceKey}
         designerPageEnterDirection={designerPageEnterDirection}
         initialObjects={activePage?.objects ?? []}
         initialArtboards={initialArtboards}
@@ -1527,7 +1704,14 @@ export default function DesignerStudio({
           busy: multiPdfBusy,
           onExport: handleExportMultiPageVectorPdf,
         }}
+        designerAutoOptimizeSwitch={{
+          enabled: autoImageOptimization,
+          onChange: (v) => onAutoImageOptimizationChange?.(v),
+        }}
+        designerOptimizeProgress={designerOptimizeProgress}
         designerFitToViewNonce={designerFitToViewNonce}
+        designerCanvasZenMode={designerCanvasZenMode}
+        onDesignerCanvasZenModeChange={setDesignerCanvasZenMode}
         designerPagesRail={
           <div className="flex h-full min-h-0 flex-col">
             <div className="flex shrink-0 items-center justify-center border-b border-white/[0.08] py-2">
