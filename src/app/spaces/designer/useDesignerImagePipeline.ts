@@ -58,7 +58,7 @@ export function useDesignerImagePipeline({
     if (!api) return;
     const walk = (objs: FreehandObject[]) => {
       for (const o of objs) {
-        if (o.type === "booleanGroup" || o.type === "vectorGroup") walk(o.children);
+        if (o.type === "booleanGroup") walk(o.children);
         else if (o.type === "clippingContainer") {
           walk([o.mask as FreehandObject]);
           walk(o.content);

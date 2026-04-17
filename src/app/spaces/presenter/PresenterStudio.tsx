@@ -19,6 +19,13 @@ import { getPageDimensions } from "../indesign/page-formats";
 import type { DesignerPageState } from "../designer/DesignerNode";
 import { PresenterAnimationsPanel } from "./PresenterAnimationsPanel";
 import { mergeStepsWithPage, presenterStepKey } from "./presenter-group-animations";
+import {
+  applySoftGroupIdToObjects,
+  newPresenterSoftGroupId,
+  objectIdsForSoftGroup,
+  presenterStepKeysToReplaceForIds,
+  stripSoftGroupIdFromObjects,
+} from "./presenter-soft-group";
 import type { PickPointerModifiers, PlayRevealState } from "./DesignerPageCanvasView";
 import type { PresenterGroupEnterId, PresenterRevealStep } from "./presenter-group-animations";
 import { DesignerPageCanvasView } from "./DesignerPageCanvasView";
@@ -170,6 +177,17 @@ export function PresenterStudio({ pages, onClose, shareContext, onPresenterPageP
     });
   }, []);
 
+  const handleMarqueeSelect = useCallback((keys: string[], mods: PickPointerModifiers) => {
+    const multi = mods.ctrlKey || mods.metaKey;
+    setAnimationSelectedKeys((prev) => {
+      if (multi) {
+        if (keys.length === 0) return prev;
+        return Array.from(new Set([...prev, ...keys]));
+      }
+      return keys;
+    });
+  }, []);
+
   const handleAnimationsRowPick = useCallback((stepKey: string, mods: PickPointerModifiers) => {
     const multi = mods.ctrlKey || mods.metaKey;
     setAnimationSelectedKeys((prev) => {
@@ -182,11 +200,29 @@ export function PresenterStudio({ pages, onClose, shareContext, onPresenterPageP
   }, []);
 
   const commitGroupSteps = useCallback(
-    (steps: PresenterRevealStep[]) => {
+    (nextSteps: PresenterRevealStep[]) => {
       if (!currentPage?.id) return;
-      onPresenterPagePatch?.(currentPage.id, { presenterGroupSteps: steps });
+      const prevSteps = mergeStepsWithPage(currentPage);
+      const prevGroupIds = new Set(
+        prevSteps.filter((s): s is PresenterRevealStep & { kind: "group" } => s.kind === "group").map((s) => s.groupId),
+      );
+      const nextGroupIds = new Set(
+        nextSteps.filter((s): s is PresenterRevealStep & { kind: "group" } => s.kind === "group").map((s) => s.groupId),
+      );
+      const removedGroupIds = [...prevGroupIds].filter((id) => !nextGroupIds.has(id));
+
+      let objects = currentPage.objects ?? [];
+      for (const gid of removedGroupIds) {
+        objects = stripSoftGroupIdFromObjects(objects, gid);
+      }
+
+      const patch: Partial<DesignerPageState> = { presenterGroupSteps: nextSteps };
+      if (removedGroupIds.length > 0) {
+        patch.objects = objects;
+      }
+      onPresenterPagePatch?.(currentPage.id, patch);
     },
-    [currentPage?.id, onPresenterPagePatch],
+    [currentPage, onPresenterPagePatch],
   );
 
   const clearEditorEnterPreview = useCallback(() => {
@@ -230,6 +266,32 @@ export function PresenterStudio({ pages, onClose, shareContext, onPresenterPageP
       runOne();
     },
     [clearEditorEnterPreview],
+  );
+
+  const applyEnterToMultiSelection = useCallback(
+    (selectedKeys: string[], enter: PresenterGroupEnterId) => {
+      if (!currentPage || !onPresenterPagePatch) return;
+      const objects = currentPage.objects ?? [];
+      const ids = objectIdsForSoftGroup(selectedKeys, objects);
+      if (ids.size < 2) return;
+      const keysToReplace = presenterStepKeysToReplaceForIds(objects, ids);
+      const newGid = newPresenterSoftGroupId();
+      const nextObjects = applySoftGroupIdToObjects(objects, ids, newGid);
+      const prev = mergeStepsWithPage(currentPage);
+      const filtered = prev.filter((s) => !keysToReplace.has(presenterStepKey(s)));
+      const nextSteps: PresenterRevealStep[] = [
+        ...filtered,
+        { kind: "group", groupId: newGid, enter, exit: "none" },
+      ];
+      onPresenterPagePatch(currentPage.id, {
+        objects: nextObjects,
+        presenterGroupSteps: nextSteps,
+      });
+      const newKey = `group:${newGid}`;
+      setAnimationSelectedKeys([newKey]);
+      runPreviewAfterAssignEnter(nextSteps, [newKey], enter);
+    },
+    [currentPage, onPresenterPagePatch, runPreviewAfterAssignEnter],
   );
 
   useEffect(() => {
@@ -534,13 +596,14 @@ export function PresenterStudio({ pages, onClose, shareContext, onPresenterPageP
                   : {
                       highlightKeys: animationSelectedKeys,
                       onPick: handlePickKey,
+                      onMarqueeSelect: handleMarqueeSelect,
                     }
               }
             />
           </div>
           <p className="mt-2 text-[10px] leading-snug text-zinc-500">
-            Sin animaciones asignadas, todo el slide se ve en Play. Order solo lista lo animado; el resto sigue visible.
-            Ctrl/⌘+clic para varios. Subir/Bajar con un solo paso en la lista.
+            Arrastra en el fondo del slide para marco de selección; Ctrl/⌘+marco añade a la selección. Clic sin arrastre
+            limpia. Varios + preset = una fila Grupo en Order.
           </p>
         </main>
 
@@ -552,6 +615,7 @@ export function PresenterStudio({ pages, onClose, shareContext, onPresenterPageP
             onSelectStepKey={handleAnimationsRowPick}
             onReplaceStepSelection={setAnimationSelectedKeys}
             onChangeSteps={commitGroupSteps}
+            onApplyEnterToMultiSelection={applyEnterToMultiSelection}
             onPreviewEnter={runPreviewAfterAssignEnter}
             onClose={() => setAnimationsOpen(false)}
           />

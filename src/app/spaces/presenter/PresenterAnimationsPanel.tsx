@@ -38,9 +38,7 @@ function rowLabel(s: PresenterRevealStep, objects: FreehandObject[]): string {
               ? "Elipse"
               : typ === "booleanGroup"
                 ? "Compuesto"
-                : typ === "vectorGroup"
-                  ? "Grupo"
-                  : typ === "clippingContainer"
+                : typ === "clippingContainer"
                   ? "Recorte"
                   : typ;
   const id = s.objectId;
@@ -64,6 +62,11 @@ type Props = {
   onSelectStepKey: (stepKey: string, mods: PickPointerModifiers) => void;
   onReplaceStepSelection: (keys: string[]) => void;
   onChangeSteps: (steps: PresenterRevealStep[]) => void;
+  /**
+   * Con 2+ elementos seleccionados en el slide/order: un solo paso en Order, mismo `groupId` en el lienzo,
+   * animación compartida. Si no se pasa, el modo multi añadiría un paso por elemento (no deseado).
+   */
+  onApplyEnterToMultiSelection?: (selectedKeys: string[], enter: PresenterGroupEnterId) => void;
   /** Tras asignar un preset de entrada: vista previa una vez en el lienzo (editor). */
   onPreviewEnter?: (
     nextSteps: PresenterRevealStep[],
@@ -79,6 +82,7 @@ export function PresenterAnimationsPanel({
   onSelectStepKey,
   onReplaceStepSelection,
   onChangeSteps,
+  onApplyEnterToMultiSelection,
   onPreviewEnter,
   onClose,
 }: Props) {
@@ -100,6 +104,10 @@ export function PresenterAnimationsPanel({
 
   const setEnter = (enter: PresenterGroupEnterId) => {
     if (!selectedStepKeys.length) return;
+    if (selectedStepKeys.length >= 2 && onApplyEnterToMultiSelection) {
+      onApplyEnterToMultiSelection(selectedStepKeys, enter);
+      return;
+    }
     let next = [...steps];
     for (const k of selectedStepKeys) {
       const idx = next.findIndex((s) => presenterStepKey(s) === k);
@@ -203,10 +211,10 @@ export function PresenterAnimationsPanel({
               <span className="text-violet-200/90">violeta</span>.
             </p>
             <p className="mb-2 rounded-md border border-violet-500/20 bg-violet-500/[0.08] px-2 py-1.5 text-[10px] leading-snug text-violet-100/95">
-              Selecciona en el slide y elige un preset abajo para{" "}
-              <span className="font-semibold">añadir o cambiar</span> la animación.{" "}
-              <span className="font-mono font-bold">Ctrl</span>/<span className="font-mono font-bold">⌘</span> para
-              varios. Al asignar, se reproduce <span className="font-semibold">una vista previa</span> en el lienzo.
+              <span className="font-semibold">Marco</span> en el fondo del slide para varios a la vez;{" "}
+              <span className="font-mono font-bold">Ctrl</span>/<span className="font-mono font-bold">⌘</span>+clic o
+              +marco para sumar. Con un preset, una fila <span className="font-semibold">Grupo</span> en Order. Vista
+              previa al asignar.
             </p>
 
             <div className="mb-3 grid grid-cols-3 gap-1.5">
@@ -314,7 +322,11 @@ export function PresenterAnimationsPanel({
                           </button>
                           <button
                             type="button"
-                            title="Quitar del orden"
+                            title={
+                              isGroupStep
+                                ? "Quitar animación y desagrupar objetos en el slide"
+                                : "Quitar del orden"
+                            }
                             className="shrink-0 px-1.5 text-zinc-500 hover:bg-rose-500/20 hover:text-rose-300"
                             onClick={() => removeStep(sk)}
                           >

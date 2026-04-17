@@ -53,7 +53,7 @@ export function dpgUid(): string {
 
 function collectIdsFromFreehandObject(o: FreehandObject, ids: Set<string>): void {
   ids.add(o.id);
-  if (o.type === "booleanGroup" || o.type === "vectorGroup") {
+  if (o.type === "booleanGroup") {
     for (const c of o.children) collectIdsFromFreehandObject(c, ids);
   } else if (o.type === "clippingContainer") {
     collectIdsFromFreehandObject(o.mask as FreehandObject, ids);
@@ -122,7 +122,7 @@ export function duplicateDesignerPageState(page: DesignerPageState): DesignerPag
       const gid = remap(o.guidePathId);
       if (gid != null) o.guidePathId = gid;
     }
-    if (o.type === "booleanGroup" || o.type === "vectorGroup") {
+    if (o.type === "booleanGroup") {
       for (const c of o.children) applyFreehandObject(c);
     } else if (o.type === "clippingContainer") {
       applyFreehandObject(o.mask as FreehandObject);

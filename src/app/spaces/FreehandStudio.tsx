@@ -481,12 +481,6 @@ interface BooleanGroupObject extends FreehandObjectBase {
   cachedResult?: string;
 }
 
-/** Grupo vectorial: una sola capa en la lista; los hijos siguen en coordenadas de mundo (como boolean). */
-export interface VectorGroupObject extends FreehandObjectBase {
-  type: "vectorGroup";
-  children: FreehandObject[];
-}
-
 /** Máscara para Pegar dentro: vector cerrado o imagen (p. ej. boolean rasterizado con transparencia). */
 export type ClipMaskShape = RectObject | EllipseObject | PathObject | ImageObject;
 
@@ -505,7 +499,6 @@ export type FreehandObject =
   | TextObject
   | TextOnPathObject
   | BooleanGroupObject
-  | VectorGroupObject
   | ClippingContainerObject;
 
 interface FreehandStudioProps extends DesignerEmbedProps {
@@ -555,14 +548,6 @@ type IsolationFrame =
   | {
       kind: "vectorGroup";
       groupId: string;
-      parentObjects: FreehandObject[];
-      parentSelectedIds: Set<string>;
-      parentHistory: { objects: FreehandObject[]; sel: string[] }[];
-      parentHistoryIdx: number;
-    }
-  | {
-      kind: "vectorGroupContainer";
-      containerId: string;
       parentObjects: FreehandObject[];
       parentSelectedIds: Set<string>;
       parentHistory: { objects: FreehandObject[]; sel: string[] }[];
@@ -1164,7 +1149,7 @@ function worldToLocalBox(o: FreehandObject, p: Point): { lx: number; ly: number 
 
 function supportsGradientFill(o: FreehandObject): boolean {
   if (!o.visible || o.locked) return false;
-  if (o.type === "image" || o.type === "booleanGroup" || o.type === "vectorGroup" || o.type === "clippingContainer") return false;
+  if (o.type === "image" || o.type === "booleanGroup" || o.type === "clippingContainer") return false;
   if (o.type === "textOnPath") return false;
   if (o.type === "path" && !(o as PathObject).closed) return false;
   return true;
@@ -1555,16 +1540,6 @@ function hitTestObject(
       return distToPathSegments(hp, pathObj).dist < threshold;
     }
     case "booleanGroup":
-      return pointInRotatedRect(pos.x, pos.y, obj);
-    case "vectorGroup": {
-      const vg = obj as VectorGroupObject;
-      for (let i = vg.children.length - 1; i >= 0; i--) {
-        const ch = vg.children[i];
-        if (!ch.visible || ch.locked) continue;
-        if (hitTestObject(pos, ch, threshold, allObjects)) return true;
-      }
-      return pointInRotatedRect(pos.x, pos.y, obj);
-    }
     case "rect":
     case "image":
       return pointInRotatedRect(pos.x, pos.y, obj);
@@ -1790,11 +1765,6 @@ function getVisualAABB(o: FreehandObject, allObjects?: FreehandObject[]): Rect {
     case "rect":
     case "image":
     case "booleanGroup":
-    case "vectorGroup": {
-      const ch = (o as VectorGroupObject).children;
-      if (ch.length === 0) return aabbFromPoints(rectWorldCorners(o));
-      return getGroupBounds(ch);
-    }
     default:
       return aabbFromPoints(rectWorldCorners(o));
   }
@@ -1887,7 +1857,7 @@ function offsetObjectWorldToLocal(o: FreehandObject, ox: number, oy: number): Fr
       content: c.content.map((ch) => offsetObjectWorldToLocal(ch, ox, oy)),
     };
   }
-  if (o.type === "booleanGroup" || o.type === "vectorGroup") {
+  if (o.type === "booleanGroup") {
     return { ...o, children: o.children.map((ch) => offsetObjectWorldToLocal(ch, ox, oy)) };
   }
   if (o.type === "path") {
@@ -2035,7 +2005,7 @@ function translateFreehandObject(o: FreehandObject, dx: number, dy: number): Fre
     const c = o as ClippingContainerObject;
     return { ...c, x: c.x + dx, y: c.y + dy };
   }
-  if (o.type === "booleanGroup" || o.type === "vectorGroup") {
+  if (o.type === "booleanGroup") {
     return { ...o, children: o.children.map((ch) => translateFreehandObject(ch, dx, dy)) };
   }
   if (o.type === "path") {
@@ -2091,14 +2061,6 @@ function deepCloneFreehandObject(o: FreehandObject, newId: () => string): Freeha
       cachedResult: g.cachedResult,
     };
   }
-  if (o.type === "vectorGroup") {
-    const g = o as VectorGroupObject;
-    return {
-      ...g,
-      id,
-      children: g.children.map((ch) => deepCloneFreehandObject(ch, newId)),
-    };
-  }
   if (o.type === "clippingContainer") {
     const c = o as ClippingContainerObject;
     return {
@@ -2132,9 +2094,7 @@ export function flattenObjectsForGradientDefs(list: FreehandObject[]): FreehandO
       out.push(c.mask as FreehandObject);
       out.push(...flattenObjectsForGradientDefs(c.content));
     }
-    if (o.type === "booleanGroup" || o.type === "vectorGroup") {
-      out.push(...flattenObjectsForGradientDefs((o as BooleanGroupObject | VectorGroupObject).children));
-    }
+    if (o.type === "booleanGroup") out.push(...flattenObjectsForGradientDefs((o as BooleanGroupObject).children));
   }
   return out;
 }
@@ -2235,18 +2195,6 @@ function mapObjectPointsWithWorld(
       children: o.children.map((ch) => mapObjectPointsWithWorld(ch, mapWorld)),
     };
   }
-  if (o.type === "vectorGroup") {
-    const children = o.children.map((ch) => mapObjectPointsWithWorld(ch, mapWorld));
-    const ub = getGroupBounds(children);
-    return {
-      ...o,
-      children,
-      x: ub.x,
-      y: ub.y,
-      width: ub.w,
-      height: ub.h,
-    };
-  }
   if (o.type === "path") {
     const p = o as PathObject;
     const pts = p.points.map((pt) => ({
@@ -2320,7 +2268,7 @@ function applyRotateAroundSelectionPivot(init: FreehandObject, pivot: Point, ang
       rotation: c.rotation + angleDeltaDeg,
     };
   }
-  if (init.type === "booleanGroup" || init.type === "vectorGroup") {
+  if (init.type === "booleanGroup") {
     const mapWorld = (p: Point) => rotatePointAround(p, pivot, angleDeltaDeg);
     return mapObjectPointsWithWorld(init, mapWorld) as FreehandObject;
   }
@@ -3500,16 +3448,6 @@ export function renderObj(
       }
       return null;
     }
-    case "vectorGroup": {
-      const vg = obj as VectorGroupObject;
-      return (
-        <g key={vg.id} data-fh-obj={vg.id} opacity={vg.opacity}>
-          {vg.children.map((ch) => (
-            <React.Fragment key={ch.id}>{renderObj(ch, allObjects, selectedIds, opts)}</React.Fragment>
-          ))}
-        </g>
-      );
-    }
     case "clippingContainer": {
       const cc = obj as ClippingContainerObject;
       const cid = `clip-cc-${cc.id}`;
@@ -3911,15 +3849,6 @@ function objToSvgStringStatic(obj: FreehandObject, w: number, h: number, ox: num
       const bg = obj as BooleanGroupObject;
       if (bg.cachedResult) {
         parts.push(`<image href="${bg.cachedResult}" x="${obj.x}" y="${obj.y}" width="${obj.width}" height="${obj.height}" preserveAspectRatio="none"/>`);
-      }
-      break;
-    }
-    case "vectorGroup": {
-      const vg = obj as VectorGroupObject;
-      for (const ch of vg.children) {
-        const inner = objToSvgStringStatic(ch, w, h, ox, oy);
-        const m = inner.match(/<svg[^>]*>([\s\S]*)<\/svg>/);
-        if (m) parts.push(m[1]);
       }
       break;
     }
@@ -4478,9 +4407,7 @@ function layerRowIcon(o: FreehandObject) {
       return <Type size={12} className={cls} />;
     }
     case "image": return <ImageIconLucide size={12} className={cls} />;
-    case "booleanGroup":
-    case "vectorGroup":
-      return <Layers size={12} className={cls} />;
+    case "booleanGroup": return <Layers size={12} className={cls} />;
     case "clippingContainer": return <Crop size={12} className={cls} />;
     default: return <Square size={12} className={cls} />;
   }
@@ -4497,7 +4424,7 @@ function creationStyleSnapshotFromObject(o: FreehandObject): {
   strokeLinejoin: FreehandObjectBase["strokeLinejoin"];
   strokeDasharray: string;
 } | null {
-  if (o.type === "image" || o.type === "booleanGroup" || o.type === "vectorGroup" || o.type === "clippingContainer") return null;
+  if (o.type === "image" || o.type === "booleanGroup" || o.type === "clippingContainer") return null;
 
   let fillForCreation = "#6366f1";
   if (o.type === "textOnPath") {
@@ -4641,10 +4568,6 @@ function collectDesignerRasterPreloadHrefsFromObject(o: FreehandObject, out: Set
         if (designerRasterUrlNeedsPreload(s)) out.add(s);
       }
       for (const c of bg.children) collectDesignerRasterPreloadHrefsFromObject(c, out);
-      break;
-    }
-    case "vectorGroup": {
-      for (const c of (o as VectorGroupObject).children) collectDesignerRasterPreloadHrefsFromObject(c, out);
       break;
     }
     case "clippingContainer": {
@@ -5406,21 +5329,6 @@ export default function FreehandStudio({
           fullObjects = frame.parentObjects.map((o) =>
             o.id === frame.containerId ? merged : o
           );
-        } else if (frame.kind === "vectorGroupContainer") {
-          const parentG = frame.parentObjects.find((o) => o.id === frame.containerId) as VectorGroupObject | undefined;
-          if (!parentG) continue;
-          const ub = getGroupBounds(fullObjects);
-          const merged: VectorGroupObject = {
-            ...parentG,
-            children: fullObjects.map((c) => ({ ...c })),
-            x: ub.x,
-            y: ub.y,
-            width: ub.w,
-            height: ub.h,
-          };
-          fullObjects = frame.parentObjects.map((o) =>
-            o.id === frame.containerId ? merged : o
-          );
         } else if (frame.kind === "vectorGroup") {
           fullObjects = frame.parentObjects.map((o) => {
             const u = fullObjects.find((c) => c.id === o.id);
@@ -5454,7 +5362,7 @@ export default function FreehandStudio({
     const stack = isolationStackRef.current;
     if (stack.length === 0) return;
     const frame = stack[stack.length - 1];
-    if (frame.kind === "clipping" || frame.kind === "vectorGroup" || frame.kind === "vectorGroupContainer") {
+    if (frame.kind === "clipping" || frame.kind === "vectorGroup") {
       setLivePreview(null);
       return;
     }
@@ -5634,7 +5542,7 @@ export default function FreehandStudio({
         noVectorStyle: false,
       };
     }
-    if (o.type === "image" || o.type === "booleanGroup" || o.type === "vectorGroup") {
+    if (o.type === "image" || o.type === "booleanGroup") {
       return {
         fillHex: "#3f3f46",
         strokeHex: "#52525b",
@@ -6346,7 +6254,7 @@ export default function FreehandStudio({
         const next = prev.map((o) => {
           if (!sel.has(o.id)) return o;
           if (o.type === "textOnPath") return { ...o, fill: hex };
-          if (o.type === "booleanGroup" || o.type === "vectorGroup" || o.type === "image") return o;
+          if (o.type === "booleanGroup" || o.type === "image") return o;
           return { ...o, fill: solidFill(hex) };
         });
         pushHistory(next, sel);
@@ -6368,7 +6276,7 @@ export default function FreehandStudio({
           const next = prev.map((o) => {
             if (!sel.has(o.id)) return o;
             if (o.type === "textOnPath") return { ...o, fill: "none" };
-            if (o.type === "booleanGroup" || o.type === "vectorGroup" || o.type === "image") return o;
+            if (o.type === "booleanGroup" || o.type === "image") return o;
             return { ...o, fill: solidFill("none") };
           });
           pushHistory(next, sel);
@@ -6380,7 +6288,7 @@ export default function FreehandStudio({
         const next = prev.map((o) => {
           if (!sel.has(o.id)) return o;
           if (o.type === "textOnPath") return { ...o, fill: v };
-          if (o.type === "booleanGroup" || o.type === "vectorGroup" || o.type === "image") return o;
+          if (o.type === "booleanGroup" || o.type === "image") return o;
           return { ...o, fill: solidFill(v) };
         });
         pushHistory(next, sel);
@@ -6702,85 +6610,19 @@ export default function FreehandStudio({
 
   const groupSelected = useCallback(() => {
     const sel = selectedIdsRef.current;
-    if (sel.size < 2) {
-      setToast("Selecciona al menos dos objetos para agrupar (G, ⌘G o Ctrl+G).");
-      window.setTimeout(() => setToast(null), 3200);
-      return;
-    }
-    const newId = uid();
+    if (sel.size < 2) return;
+    const gid = uid();
     setObjects((prev) => {
-      const ordered = prev.filter((o) => sel.has(o.id));
-      if (ordered.length < 2) return prev;
-      const bounds = getGroupBounds(ordered);
-      const n = prev.filter((o) => o.type === "vectorGroup").length;
-      const children: FreehandObject[] = ordered.map((o) => {
-        const { groupId: _g, ...rest } = o;
-        return { ...rest, groupId: undefined } as FreehandObject;
-      });
-      const groupObj: VectorGroupObject = {
-        ...defaultObj({
-          id: newId,
-          name: `Group ${n + 1}`,
-          x: bounds.x,
-          y: bounds.y,
-          width: bounds.w,
-          height: bounds.h,
-          opacity: 1,
-          visible: true,
-          locked: false,
-          rotation: 0,
-        }),
-        type: "vectorGroup",
-        children,
-        fill: solidFill("none"),
-        stroke: "none",
-        strokeWidth: 0,
-      } as VectorGroupObject;
-      const topIdx = prev.reduce((m, o, i) => (sel.has(o.id) ? i : m), -1);
-      const next = prev.filter((o) => !sel.has(o.id));
-      const insertAt = prev.slice(0, topIdx).filter((o) => !sel.has(o.id)).length;
-      next.splice(insertAt, 0, groupObj);
-      pushHistory(next, new Set([newId]));
+      const next = prev.map((o) => sel.has(o.id) ? { ...o, groupId: gid } : o);
+      pushHistory(next, sel);
       return next;
     });
-    setSelectedIds(new Set([newId]));
-  }, [pushHistory, setToast]);
+  }, [pushHistory]);
 
   const ungroupSelected = useCallback(() => {
     const sel = selectedIdsRef.current;
-    if (sel.size === 0) return;
-    const objs = objectsRef.current;
-    const vectorGroups = objs.filter((o) => sel.has(o.id) && o.type === "vectorGroup") as VectorGroupObject[];
-    if (vectorGroups.length > 0) {
-      const flattenIds = new Set(vectorGroups.map((g) => g.id));
-      const childIds = new Set<string>();
-      for (const g of vectorGroups) {
-        for (const c of g.children) childIds.add(c.id);
-      }
-      setObjects((prev) => {
-        const next: FreehandObject[] = [];
-        for (const o of prev) {
-          if (flattenIds.has(o.id) && o.type === "vectorGroup") {
-            next.push(...(o as VectorGroupObject).children.map((c) => ({ ...c })));
-          } else {
-            next.push(o);
-          }
-        }
-        pushHistory(next, childIds);
-        return next;
-      });
-      setSelectedIds(childIds);
-      return;
-    }
     setObjects((prev) => {
-      const gids = new Set<string>();
-      for (const o of prev) {
-        if (sel.has(o.id) && o.groupId) gids.add(o.groupId);
-      }
-      if (gids.size === 0) return prev;
-      const next = prev.map((o) =>
-        o.groupId && gids.has(o.groupId) ? { ...o, groupId: undefined } : o,
-      );
+      const next = prev.map((o) => sel.has(o.id) ? { ...o, groupId: undefined } : o);
       pushHistory(next, sel);
       return next;
     });
@@ -7080,27 +6922,6 @@ export default function FreehandStudio({
     setIsolationDepth((d) => d + 1);
   }, []);
 
-  /** Editar dentro de un `vectorGroup` (contenedor con hijos en mundo). */
-  const enterVectorGroupContainerIsolation = useCallback((containerId: string) => {
-    const objs = objectsRef.current;
-    const group = objs.find((o) => o.id === containerId && o.type === "vectorGroup") as VectorGroupObject | undefined;
-    if (!group || group.children.length === 0) return;
-    isolationStackRef.current.push({
-      kind: "vectorGroupContainer",
-      containerId,
-      parentObjects: objs.map((o) => ({ ...o })),
-      parentSelectedIds: new Set(selectedIdsRef.current),
-      parentHistory: [...historyRef.current],
-      parentHistoryIdx: historyIdxRef.current,
-    });
-    const children = group.children.map((c) => ({ ...c }));
-    setObjects(children);
-    setSelectedIds(new Set());
-    historyRef.current = [{ objects: [...children], sel: [] }];
-    historyIdxRef.current = 0;
-    setIsolationDepth((d) => d + 1);
-  }, []);
-
   const enterClippingIsolation = useCallback((containerId: string, mode: "content" | "mask" = "content") => {
     setClipContentEditId(null);
     const objs = objectsRef.current;
@@ -7192,31 +7013,6 @@ export default function FreehandStudio({
       };
       const restoredObjects = frame.parentObjects.map((o) =>
         o.id === frame.containerId ? updated : o
-      );
-      objectsRef.current = restoredObjects;
-      setObjects(restoredObjects);
-      setSelectedIds(new Set([frame.containerId]));
-      historyRef.current = frame.parentHistory;
-      historyIdxRef.current = frame.parentHistoryIdx;
-      setIsolationDepth((d) => d - 1);
-      setLivePreview(null);
-      return;
-    }
-    if (frame.kind === "vectorGroupContainer") {
-      const current = objectsRef.current;
-      const parentGroup = frame.parentObjects.find((o) => o.id === frame.containerId) as VectorGroupObject | undefined;
-      if (!parentGroup) return;
-      const ub = getGroupBounds(current);
-      const updated: VectorGroupObject = {
-        ...parentGroup,
-        children: current.map((c) => ({ ...c })),
-        x: ub.x,
-        y: ub.y,
-        width: ub.w,
-        height: ub.h,
-      };
-      const restoredObjects = frame.parentObjects.map((o) =>
-        o.id === frame.containerId ? updated : o,
       );
       objectsRef.current = restoredObjects;
       setObjects(restoredObjects);
@@ -7845,8 +7641,6 @@ export default function FreehandStudio({
     const onKeyDown = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
       if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT") return;
-      /** Edición de texto en el lienzo: no robar atajos de agrupación / herramientas. */
-      if (t.closest?.("[data-fh-text-editor]")) return;
 
       e.stopPropagation();
 
@@ -7930,27 +7724,9 @@ export default function FreehandStudio({
       if ((e.metaKey || e.ctrlKey) && (e.key === "Z" || (e.key === "z" && e.shiftKey))) { e.preventDefault(); redo(); return; }
       if ((e.metaKey || e.ctrlKey) && e.key === "a") { e.preventDefault(); setSelectedIds(new Set(objects.map((o) => o.id))); return; }
       if ((e.metaKey || e.ctrlKey) && e.key === "d") { e.preventDefault(); duplicateSelected(); return; }
-      /** Agrupar / desagrupar: `e.code` es estable (Ctrl+G / Ctrl+Shift+G en cualquier layout). */
-      if ((e.metaKey || e.ctrlKey) && e.code === "KeyG") {
-        e.preventDefault();
-        if (e.shiftKey) ungroupSelected();
-        else groupSelected();
-        return;
-      }
-      /** G sin modificadores = agrupar (misma acción que ⌘G / Ctrl+G). */
-      if (
-        e.code === "KeyG" &&
-        !e.metaKey &&
-        !e.ctrlKey &&
-        !e.altKey &&
-        !e.shiftKey &&
-        !textEditingId &&
-        !designerStoryModalOpen
-      ) {
-        e.preventDefault();
-        groupSelected();
-        return;
-      }
+      if ((e.metaKey || e.ctrlKey) && e.key === "g" && !e.shiftKey) { e.preventDefault(); groupSelected(); return; }
+      if ((e.metaKey || e.ctrlKey) && e.key === "g" && e.shiftKey) { e.preventDefault(); ungroupSelected(); return; }
+      if ((e.metaKey || e.ctrlKey) && e.key === "G") { e.preventDefault(); ungroupSelected(); return; }
 
       if ((e.metaKey || e.ctrlKey) && (e.key === "]" || e.key === "}")) { e.preventDefault(); bringForward(); return; }
       if ((e.metaKey || e.ctrlKey) && (e.key === "[" || e.key === "{")) { e.preventDefault(); sendBackward(); return; }
@@ -9219,9 +8995,6 @@ export default function FreehandStudio({
         if (src.type === "clippingContainer") {
           return mapObjectPointsWithWorld(src, mapWorld) as ClippingContainerObject;
         }
-        if (src.type === "vectorGroup") {
-          return mapObjectPointsWithWorld(src, mapWorld) as VectorGroupObject;
-        }
         if (src.type === "text") {
           const t = src as TextObject;
           if (t.isTextFrame) {
@@ -9325,13 +9098,6 @@ export default function FreehandStudio({
             y: ny + (p.y - b.y) * sy,
           });
           return mapObjectPointsWithWorld(src, mapWorld) as ClippingContainerObject;
-        }
-        if (src.type === "vectorGroup") {
-          const mapWorld = (p: Point) => ({
-            x: nx + (p.x - b.x) * sx,
-            y: ny + (p.y - b.y) * sy,
-          });
-          return mapObjectPointsWithWorld(src, mapWorld) as VectorGroupObject;
         }
         if (src.type === "text") {
           const tt = src as TextObject;
@@ -9884,7 +9650,7 @@ export default function FreehandStudio({
         { label: "Duplicate", shortcut: "⌘D", action: duplicateSelected },
         { label: "Delete", action: deleteSelected },
         { label: "Export selection", action: () => { setExportModalScope("selection"); setShowExportModal(true); }, separator: true },
-        { label: "Group", shortcut: "Ctrl+G / ⌘G", action: groupSelected, separator: true },
+        { label: "Group", shortcut: "⌘G", action: groupSelected, separator: true },
         { label: "Align left", action: () => alignObjects("left") },
         { label: "Align center (H)", action: () => alignObjects("centerH") },
         { label: "Align right", action: () => alignObjects("right") },
@@ -9980,17 +9746,6 @@ export default function FreehandStudio({
       ];
     }
 
-    if (single?.type === "vectorGroup") {
-      return [
-        { label: "Edit group", action: () => enterVectorGroupContainerIsolation(single.id) },
-        { label: "Ungroup", shortcut: "Ctrl+Shift+G / ⇧⌘G", action: ungroupSelected, separator: true },
-        { label: "Duplicate", shortcut: "⌘D", action: duplicateSelected },
-        { label: "Export selection", action: () => { setExportModalScope("selection"); setShowExportModal(true); }, separator: true },
-        { label: "Lock / Unlock", action: () => updateSelectedProp("locked", !single.locked) },
-        { label: "Hide / Show", action: () => updateSelectedProp("visible", !single.visible) },
-      ];
-    }
-
     if (single?.type === "booleanGroup") {
       return [
         { label: "Edit boolean group", action: () => enterIsolation(single.id) },
@@ -10043,8 +9798,7 @@ export default function FreehandStudio({
       { label: "Send backward", shortcut: "⌘[", action: sendBackward },
       { label: "Bring to front", action: bringToFront },
       { label: "Send to back", action: sendToBack },
-      { label: "Group", shortcut: "Ctrl+G / ⌘G", action: groupSelected, disabled: !multiSel, separator: true },
-      { label: "Ungroup", shortcut: "Ctrl+Shift+G / ⇧⌘G", action: ungroupSelected, disabled: !selectedObjects.some((o) => o.groupId || o.type === "vectorGroup"), separator: true },
+      { label: "Group", shortcut: "⌘G", action: groupSelected, disabled: !multiSel, separator: true },
       { label: "Lock / Unlock", action: () => { const locked = selectedObjects.every((o) => o.locked); updateSelectedProp("locked", !locked); } },
       { label: "Hide / Show", action: () => { const vis = selectedObjects.every((o) => o.visible); updateSelectedProp("visible", !vis); } },
       { label: "Create clipping mask", action: createClipMask, disabled: selectedIds.size < 2, separator: true },
@@ -10062,15 +9816,6 @@ export default function FreehandStudio({
         disabled: !(single?.groupId && objects.filter((o) => o.groupId === single.groupId).length >= 2),
         separator: true,
       },
-      {
-        label: "Edit object group",
-        action: () => {
-          const vg = selectedObjects.find((o) => o.type === "vectorGroup");
-          if (vg) enterVectorGroupContainerIsolation(vg.id);
-        },
-        disabled: !selectedObjects.some((o) => o.type === "vectorGroup"),
-        separator: true,
-      },
       { label: "Edit boolean group", action: () => { const bg = selectedObjects.find((o) => o.type === "booleanGroup"); if (bg) enterIsolation(bg.id); }, disabled: !hasBoolGroup, separator: true },
       { label: "Forma definitiva (trazo)", action: () => void flattenBooleanToDefinitivePath(), disabled: !hasBoolGroup },
       { label: "Open / close path", action: () => { if (hasPath) togglePathClosed(selectedObjects.find((o) => o.type === "path")!.id); }, disabled: !hasPath, separator: true },
@@ -10083,7 +9828,7 @@ export default function FreehandStudio({
       updateSelectedProp, groupSelected, ungroupSelected, createClipMask, releaseClipMask, togglePathClosed,
       cycleVertexMode, booleanOp, enterIsolation, flattenBooleanToDefinitivePath, exitIsolation, alignObjects, fitAllCanvas,
       resetZoomCanvas, pasteClipboardObjects, pasteInside, cutSelectedObjects, copySelectedObjects, renameSelected,
-      convertTextToOutlines, releaseClippingStructure, enterClippingIsolation, switchClippingIsolationMode, enterVectorGroupIsolation, enterVectorGroupContainerIsolation,
+      convertTextToOutlines, releaseClippingStructure, enterClippingIsolation, switchClippingIsolationMode, enterVectorGroupIsolation,
       layoutGuides.length, showLayoutGuides, openDesignerStoryModalForFrameId]);
 
   // ── Cursor ────────────────────────────────────────────────────────
@@ -10632,18 +10377,12 @@ export default function FreehandStudio({
             <button type="button" onClick={() => exitToLevel(0)}
               className="text-violet-300 hover:text-white transition-colors">Scene</button>
             {isolationStackRef.current.map((frame, i) => {
-              const id =
-                frame.kind === "clipping" || frame.kind === "vectorGroupContainer"
-                  ? frame.containerId
-                  : frame.groupId;
-              const label =
-                frame.kind === "clipping"
-                  ? (frame.parentObjects.find((o) => o.id === frame.containerId)?.name ?? "Clip container")
-                  : frame.kind === "vectorGroup"
-                    ? "Vector group"
-                    : frame.kind === "vectorGroupContainer"
-                      ? (frame.parentObjects.find((o) => o.id === frame.containerId)?.name ?? "Group")
-                      : (frame.parentObjects.find((o) => o.id === frame.groupId)?.name ?? "Boolean Group");
+              const id = frame.kind === "clipping" ? frame.containerId : frame.groupId;
+              const label = frame.kind === "clipping"
+                ? (frame.parentObjects.find((o) => o.id === frame.containerId)?.name ?? "Clip container")
+                : frame.kind === "vectorGroup"
+                  ? "Vector group"
+                  : (frame.parentObjects.find((o) => o.id === frame.groupId)?.name ?? "Boolean Group");
               const sub = frame.kind === "clipping" && frame.editMode === "mask" ? " · mask" : "";
               return (
                 <React.Fragment key={id}>
@@ -10737,10 +10476,6 @@ export default function FreehandStudio({
           if (activeTool !== "select") return;
           for (let i = objects.length - 1; i >= 0; i--) {
             const obj = objects[i];
-            if (obj.type === "vectorGroup" && hitTestObject(pos, obj, threshold, objects)) {
-              enterVectorGroupContainerIsolation(obj.id);
-              return;
-            }
             if (obj.type === "booleanGroup" && hitTestObject(pos, obj, threshold, objects)) {
               enterIsolation(obj.id);
               return;
@@ -11597,8 +11332,7 @@ export default function FreehandStudio({
               <g transform={`translate(${viewport.x}, ${viewport.y}) scale(${viewport.zoom})`}>
                 {isolationStackRef.current.length > 0 && (() => {
                   const f = isolationStackRef.current[isolationStackRef.current.length - 1];
-                  const hid =
-                    f.kind === "clipping" || f.kind === "vectorGroupContainer" ? f.containerId : f.groupId;
+                  const hid = f.kind === "clipping" ? f.containerId : f.groupId;
                   return f.parentObjects
                     .filter((o) => o.id !== hid)
                     .map((o) => (
@@ -11682,13 +11416,11 @@ export default function FreehandStudio({
                     <>
                 {/* Fill */}
                 <div className="border-t border-b border-white/[0.08] py-3 px-[14px] space-y-3">
-                {firstSelected.type === "image" || firstSelected.type === "booleanGroup" || firstSelected.type === "vectorGroup" ? (
+                {firstSelected.type === "image" || firstSelected.type === "booleanGroup" ? (
                   <p className="text-[9px] text-zinc-500 leading-relaxed">
                     {firstSelected.type === "booleanGroup"
                       ? "Boolean preview is rasterized. Gradient fill applies after vector boolean in a future update."
-                      : firstSelected.type === "vectorGroup"
-                        ? "Object group: edit children via double-click or context menu. Fill applies to the group frame in a future update."
-                        : "Bitmap images do not use vector fill."}
+                      : "Bitmap images do not use vector fill."}
                   </p>
                 ) : firstSelected.type === "textOnPath" ? (
                   (() => {
@@ -13325,8 +13057,8 @@ export default function FreehandStudio({
           {selectedObjects.length >= 2 && (
             <div className="p-3 border-b border-white/10 space-y-2">
               <div className="flex items-center gap-1">
-                <ToolBtn onClick={groupSelected} title="Group (Ctrl+G / ⌘G)"><Group size={14} /></ToolBtn>
-                <ToolBtn onClick={ungroupSelected} title="Ungroup (Ctrl+Shift+G / ⇧⌘G)"><Ungroup size={14} /></ToolBtn>
+                <ToolBtn onClick={groupSelected} title="Group (⌘G)"><Group size={14} /></ToolBtn>
+                <ToolBtn onClick={ungroupSelected} title="Ungroup (⇧⌘G)"><Ungroup size={14} /></ToolBtn>
               </div>
               <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mt-2">Boolean</div>
               <div className="grid grid-cols-2 gap-1.5">
@@ -13458,10 +13190,6 @@ export default function FreehandStudio({
                           <span
                             className="flex-1 truncate"
                             onDoubleClick={(e) => {
-                              if (obj.type === "vectorGroup") {
-                                e.stopPropagation();
-                                enterVectorGroupContainerIsolation(obj.id);
-                              }
                               if (obj.type === "booleanGroup") {
                                 e.stopPropagation();
                                 enterIsolation(obj.id);
@@ -13482,11 +13210,6 @@ export default function FreehandStudio({
                             {obj.name}
                             {obj.groupId ? " ◆" : ""}
                             {obj.isClipMask ? " [clip]" : ""}
-                            {obj.type === "vectorGroup" && (
-                              <span className="ml-1 text-[8px] text-sky-400/90">
-                                ▢ group ({(obj as VectorGroupObject).children.length})
-                              </span>
-                            )}
                             {obj.type === "booleanGroup" && (
                               <span className="ml-1 text-[8px] text-violet-400">
                                 ◇{(obj as BooleanGroupObject).operation} ({(obj as BooleanGroupObject).children.length})

@@ -25,7 +25,7 @@ export type DesignerPageState = {
   stories?: Story[];
   textFrames?: TextFrame[];
   imageFrames?: ImageFrameRecord[];
-  /** Presenter: solo pasos con animación definida (el resto del lienzo queda siempre visible en Play). */
+  /** Presenter: pasos de animación en Play (persistido en la página). */
   presenterGroupSteps?: PresenterGroupStep[];
 };
 

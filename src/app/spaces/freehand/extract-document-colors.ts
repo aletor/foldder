@@ -38,8 +38,7 @@ function visitObject(o: any, map: Map<string, number>) {
   if (!o || !o.visible || o.isClipMask) return;
 
   switch (o.type) {
-    case "booleanGroup":
-    case "vectorGroup": {
+    case "booleanGroup": {
       for (const c of o.children as any[]) visitObject(c, map);
       return;
     }
@@ -99,7 +98,6 @@ function mapOne(o: any, from: string, to: string): any {
 
   switch (o.type) {
     case "booleanGroup":
-    case "vectorGroup":
       return { ...o, children: o.children.map((c: any) => mapOne(c, from, to)) };
     case "clippingContainer":
       return {
