@@ -29,6 +29,8 @@ import {
   Unlock,
   Trash2,
   Download,
+  FileDown,
+  FileUp,
   Undo2,
   Redo2,
   Upload,
@@ -564,6 +566,12 @@ interface FreehandStudioProps {
     pageCount: number;
     busy: boolean;
     onExport: (opts: VectorPdfExportOptions) => void | Promise<void>;
+  } | null;
+  /** Designer: fichero autocontenido `.de` (documento + imágenes embebidas). */
+  designerDeDocument?: {
+    onExport: () => void | Promise<void>;
+    onImport: () => void;
+    busy?: boolean;
   } | null;
   /** Switch “Activar auto-optimización” junto a Export. */
   designerAutoOptimizeSwitch?: {
@@ -4712,6 +4720,7 @@ export default function FreehandStudio({
   onDesignerNavigatePage,
   designerPageEnterDirection = null,
   designerMultipageVectorPdfExport,
+  designerDeDocument = null,
   designerFitToViewNonce = 0,
   designerAutoOptimizeSwitch,
   designerOptimizeProgress,
@@ -10167,6 +10176,34 @@ export default function FreehandStudio({
             <Redo2 size={18} strokeWidth={1.5} />
           </button>
         </div>
+        {designerMode && designerDeDocument && (
+          <div className="flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              disabled={!!designerDeDocument.busy}
+              onClick={() => designerDeDocument.onImport()}
+              className="flex shrink-0 items-center gap-1.5 rounded-lg border border-white/[0.12] bg-[#0b0d10] px-2.5 py-2 text-[11px] font-semibold text-zinc-200 transition hover:bg-white/[0.06] hover:text-white disabled:opacity-45"
+              title="Importar documento .de (páginas e imágenes embebidas)"
+            >
+              <FileUp size={15} strokeWidth={1.75} />
+              Importar .de
+            </button>
+            <button
+              type="button"
+              disabled={!!designerDeDocument.busy}
+              onClick={() => void designerDeDocument.onExport()}
+              className="flex shrink-0 items-center gap-1.5 rounded-lg border border-violet-500/35 bg-violet-950/40 px-2.5 py-2 text-[11px] font-semibold text-violet-100 transition hover:bg-violet-900/50 disabled:opacity-45"
+              title="Exportar documento .de (ZIP: JSON + imágenes, sin depender de S3)"
+            >
+              {designerDeDocument.busy ? (
+                <Loader2 size={15} className="animate-spin" strokeWidth={1.75} />
+              ) : (
+                <FileDown size={15} strokeWidth={1.75} />
+              )}
+              Exportar .de
+            </button>
+          </div>
+        )}
         {designerMode && designerAutoOptimizeSwitch && (
           <div className="flex min-w-0 max-w-full shrink-0 items-center gap-3 rounded-md border border-white/[0.12] bg-[#0b0d10] px-3.5 py-2">
             <span className="min-w-0 select-none text-[11px] font-medium leading-snug text-zinc-200">

@@ -321,6 +321,10 @@ function measureLineWidth(
 /**
  * Ajuste de líneas para export PDF/SVG (opentype): mismo criterio que el lienzo en modo área
  * (el texto en memoria suele ser una sola cadena sin \n; el navegador envuelve con CSS).
+ *
+ * El `foreignObject` usa `padding` simétrico + `paddingLeft: pad + paragraphIndent`, así el
+ * ancho de contenido es `width - 2*pad - indent` en **todas** las líneas (no solo la primera).
+ * `firstLineIndent` extra solo aplica si en el futuro se modela sangrado “clásico” solo en 1.ª línea.
  */
 function wrapParagraphToLinesWithFirstIndent(
   font: opentype.Font,
@@ -396,7 +400,8 @@ function computePhysicalLines(t: TextConversionInput, font: opentype.Font): Phys
   const pad = t.textMode === "area" ? 4 : 0;
   const indent = t.paragraphIndent ?? 0;
   const boxW = t.textMode === "point" ? Math.max(t.width, 32) : t.width;
-  const innerW = Math.max(4, boxW - 2 * pad);
+  /** Coincide con `wrapAreaTextToLinesForExport` / `innerW = boxW - 2*pad - indent` en FreehandStudio. */
+  const innerW = Math.max(1, boxW - 2 * pad - indent);
   const useKern = t.fontKerning !== "none";
 
   if (t.textMode === "point") {
@@ -425,7 +430,7 @@ function computePhysicalLines(t: TextConversionInput, font: opentype.Font): Phys
       t.letterSpacing,
       useKern,
       innerW,
-      indent,
+      0,
     );
     for (let wi = 0; wi < lines.length; wi++) {
       physicalLines.push({
@@ -670,9 +675,11 @@ export async function richTextToGlyphPaintOps(
   const pad = t.textMode === "area" ? 4 : 0;
   const indent = t.paragraphIndent ?? 0;
   const boxW = t.textMode === "point" ? Math.max(t.width, 32) : t.width;
+  const contentInnerW = Math.max(1, boxW - 2 * pad - indent);
   const lhPx = t.fontSize * t.lineHeight;
   const useKern = t.fontKerning !== "none";
   const ta = t.textAlign === "justify" ? "left" : t.textAlign;
+  const leftInset = pad + indent;
   const charStyles = buildCharStyleMap(t.text, runs);
   if (pdfOpts?.makeUrlsClickable) {
     applyAutoLinksToCharStyleMap(t.text, charStyles);
@@ -701,7 +708,7 @@ export async function richTextToGlyphPaintOps(
 
   let gIdx = 0;
   for (let li = 0; li < physicalLines.length; li++) {
-    const { text: line, addParagraphIndent, globalTextStart } = physicalLines[li]!;
+    const { text: line, globalTextStart } = physicalLines[li]!;
     const baselineY = t.y + pad + t.fontSize + li * lhPx;
     const lineW = measureLineWidthMixed(
       line,
@@ -713,15 +720,14 @@ export async function richTextToGlyphPaintOps(
       t.fontWeight,
       pickFont,
     );
-    const indentPx = addParagraphIndent ? indent : 0;
 
     let xCursor: number;
     if (ta === "center") {
-      xCursor = t.x + boxW / 2 - lineW / 2;
+      xCursor = t.x + leftInset + contentInnerW / 2 - lineW / 2;
     } else if (ta === "right") {
       xCursor = t.x + boxW - pad - lineW;
     } else {
-      xCursor = t.x + pad + indentPx;
+      xCursor = t.x + leftInset;
     }
 
     const lefts = measureLineCharLeftEdges(
@@ -890,6 +896,8 @@ export async function textToGlyphPathPayloads(
   const pad = t.textMode === "area" ? 4 : 0;
   const indent = t.paragraphIndent ?? 0;
   const boxW = t.textMode === "point" ? Math.max(t.width, 32) : t.width;
+  /** Ancho del bloque de texto entre paddings (mismo que `computePhysicalLines` / foreignObject). */
+  const contentInnerW = Math.max(1, boxW - 2 * pad - indent);
   const lhPx = t.fontSize * t.lineHeight;
   const useKern = t.fontKerning !== "none";
   const physicalLines = computePhysicalLines(t, font);
@@ -898,18 +906,18 @@ export async function textToGlyphPathPayloads(
   let gIdx = 0;
 
   for (let li = 0; li < physicalLines.length; li++) {
-    const { text: line, addParagraphIndent } = physicalLines[li]!;
+    const { text: line } = physicalLines[li]!;
     const baselineY = t.y + pad + t.fontSize + li * lhPx;
     const lineW = measureLineWidth(font, line, t.fontSize, t.letterSpacing, useKern);
-    const indentPx = addParagraphIndent ? indent : 0;
+    const leftInset = pad + indent;
 
     let xCursor: number;
     if (ta === "center") {
-      xCursor = t.x + boxW / 2 - lineW / 2;
+      xCursor = t.x + leftInset + contentInnerW / 2 - lineW / 2;
     } else if (ta === "right") {
       xCursor = t.x + boxW - pad - lineW;
     } else {
-      xCursor = t.x + pad + indentPx;
+      xCursor = t.x + leftInset;
     }
 
     const glyphs = font.stringToGlyphs(line);

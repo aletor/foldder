@@ -55,6 +55,8 @@ import {
   createOptVersionForDesignerAsset,
   presignKnowledgeFileKeys,
 } from "./designer-optimize-scheduler";
+import { exportDesignerDeFile, importDesignerDeFile } from "./designer-document-file";
+import { uploadImportedDesignerBlobUrlsToS3 } from "./designer-de-s3-hydrate";
 
 /** Dimensiones intrínsecas del archivo local (evita diferencias S3/CORS/EXIF vs `<Image>` remota). */
 async function readImageFilePixelSize(file: File): Promise<{ w: number; h: number }> {
@@ -324,6 +326,9 @@ export default function DesignerStudio({
 
   const imageFrameInputRef = useRef<HTMLInputElement>(null);
   const imageFrameTargetIdRef = useRef<string | null>(null);
+  const deImportInputRef = useRef<HTMLInputElement>(null);
+  const [deExportBusy, setDeExportBusy] = useState(false);
+  const [deImportHydrating, setDeImportHydrating] = useState(false);
 
   const studioApiRef = useRef<DesignerStudioApi | null>(null);
   const designerClipboardRef = useRef<FreehandObject[] | null>(null);
@@ -1685,6 +1690,69 @@ export default function DesignerStudio({
     onClose();
   }, [captureFirstPageThumbnail, onClose]);
 
+  const deExportLockRef = useRef(false);
+  const handleExportDe = useCallback(async () => {
+    if (deExportLockRef.current) return;
+    deExportLockRef.current = true;
+    setDeExportBusy(true);
+    try {
+      await exportDesignerDeFile({
+        pages: JSON.parse(JSON.stringify(pagesRef.current)) as DesignerPageState[],
+        activePageIndex: activeIdxRef.current,
+        autoImageOptimization: autoImageOptimization !== false,
+        filenameBase: "diseno-foldder",
+      });
+    } catch (e) {
+      console.error("[Designer] export .de", e);
+      alert(e instanceof Error ? e.message : String(e));
+    } finally {
+      deExportLockRef.current = false;
+      setDeExportBusy(false);
+    }
+  }, [autoImageOptimization]);
+
+  const handleImportDeFile = useCallback(
+    async (file: File) => {
+      try {
+        const result = await importDesignerDeFile(file);
+        setDeImportHydrating(true);
+        let finalPages = result.pages;
+        try {
+          finalPages = await uploadImportedDesignerBlobUrlsToS3(result.pages, {
+            designerSpaceId: designerSpaceId ?? null,
+          });
+        } catch (upErr) {
+          console.error("[Designer] import .de → S3", upErr);
+          alert(
+            upErr instanceof Error
+              ? `Las imágenes no se pudieron subir a la nube: ${upErr.message}`
+              : String(upErr),
+          );
+          return;
+        } finally {
+          setDeImportHydrating(false);
+        }
+        setPages(finalPages);
+        setActivePageIndex(result.activePageIndex);
+        setPageThumbnails({});
+        onAutoImageOptimizationChange?.(result.autoImageOptimization);
+        queueMicrotask(() => {
+          requestDesignerFitToView();
+          void refreshDisplayForAllPages(finalPages, result.autoImageOptimization !== false);
+        });
+      } catch (e) {
+        console.error("[Designer] import .de", e);
+        alert(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [
+      designerSpaceId,
+      onAutoImageOptimizationChange,
+      requestDesignerFitToView,
+      refreshDisplayForAllPages,
+    ],
+  );
+
   return (
     <div className="fixed inset-0 z-[9999] flex flex-col bg-[#0b0d10]">
       <FreehandStudio
@@ -1724,6 +1792,11 @@ export default function DesignerStudio({
           pageCount: pages.length,
           busy: multiPdfBusy,
           onExport: handleExportMultiPageVectorPdf,
+        }}
+        designerDeDocument={{
+          onExport: handleExportDe,
+          onImport: () => deImportInputRef.current?.click(),
+          busy: deExportBusy || deImportHydrating,
         }}
         designerAutoOptimizeSwitch={{
           enabled: autoImageOptimization,
@@ -1911,6 +1984,18 @@ export default function DesignerStudio({
           const f = ev.target.files?.[0];
           ev.target.value = "";
           if (f) await handleImageFileSelected(f);
+        }}
+      />
+      <input
+        ref={deImportInputRef}
+        type="file"
+        accept=".de,application/zip,application/x-zip-compressed"
+        className="hidden"
+        aria-hidden
+        onChange={(ev) => {
+          const f = ev.target.files?.[0];
+          ev.target.value = "";
+          if (f) void handleImportDeFile(f);
         }}
       />
 
