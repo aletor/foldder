@@ -13,6 +13,12 @@ export type VectorPdfExportOptions = {
   outlineLinkRects?: boolean;
   /** Recomprime mapas de bits como JPEG (~72) para PDF más ligero (no afecta SVG embebido como imagen). */
   optimizeImages?: boolean;
+  /**
+   * Añade una capa `<text fill-opacity="0">` con la misma maquetación que los trazados (líneas, alineación),
+   * para que el PDF tenga texto seleccionable/copiable sin cambiar el aspecto visual (los paths siguen encima).
+   * Por defecto activado si no se establece explícitamente a `false`.
+   */
+  selectableText?: boolean;
 };
 
 export const FONT_CONVERSION_UNAVAILABLE = "Fuente no disponible para conversión";
@@ -387,6 +393,8 @@ export type TextConversionInput = {
   fontFamily: string;
   fontSize: number;
   fontWeight: number;
+  /** Coincide con CSS / canvas (p. ej. itálica en PDF). */
+  fontStyle?: "normal" | "italic";
   lineHeight: number;
   letterSpacing: number;
   fontKerning?: "auto" | "none";
@@ -950,6 +958,167 @@ export async function textToGlyphPathPayloads(
   return out;
 }
 
+function effectiveItalicForPdf(st: SpanStyle | undefined, conv: TextConversionInput): boolean {
+  if (st?.fontStyle === "italic") return true;
+  if (st?.fontStyle === "normal") return false;
+  return conv.fontStyle === "italic";
+}
+
+/** Firma de estilo por carácter para agrupar tspans (misma lógica que los trazados). */
+function selectableStyleSig(
+  conv: TextConversionInput,
+  charStyles: (SpanStyle | undefined)[],
+  gi: number,
+): string {
+  const st = charStyles[gi];
+  const w = effPdfWeight(conv.fontWeight, st);
+  const italic = effectiveItalicForPdf(st, conv);
+  const fam = (st?.fontFamily && st.fontFamily.trim()) || conv.fontFamily;
+  return `${fam}\0${w}\0${italic ? 1 : 0}`;
+}
+
+/**
+ * Capa de texto invisible: mismas posiciones X que `measureLineCharLeftEdges` + un `<tspan>` por
+ * tramo con distinto peso/cursiva/fuente que el PDF vectorial (paths). Así el ancho seleccionable
+ * coincide con los glifos (antes un solo `font-weight` acortaba el final de línea).
+ */
+async function appendInvisibleSelectableTextLayerAsync(
+  doc: Document,
+  parentG: Element,
+  conv: TextConversionInput,
+  baseFont: opentype.Font,
+  pdfOpts: VectorPdfExportOptions | undefined,
+  runs: Array<{ text: string; style?: SpanStyle }>,
+): Promise<void> {
+  if (pdfOpts?.selectableText === false) return;
+
+  const pad = conv.textMode === "area" ? 4 : 0;
+  const indent = conv.paragraphIndent ?? 0;
+  const boxW = conv.textMode === "point" ? Math.max(conv.width, 32) : conv.width;
+  const contentInnerW = Math.max(1, boxW - 2 * pad - indent);
+  const leftInset = pad + indent;
+  const lhPx = conv.fontSize * conv.lineHeight;
+  const useKern = conv.fontKerning !== "none";
+  const ta = conv.textAlign === "justify" ? "left" : conv.textAlign;
+
+  let charStyles = buildCharStyleMap(conv.text, runs);
+  if (pdfOpts?.makeUrlsClickable) {
+    applyAutoLinksToCharStyleMap(conv.text, charStyles);
+  }
+
+  const weights = new Set<number>();
+  weights.add(conv.fontWeight);
+  for (let i = 0; i < conv.text.length; i++) {
+    weights.add(effPdfWeight(conv.fontWeight, charStyles[i]));
+  }
+  const fontByWeight = new Map<number, opentype.Font>();
+  for (const w of weights) {
+    const res = await loadFontForTextConversion({
+      fontFamily: conv.fontFamily,
+      fontSize: conv.fontSize,
+      fontWeight: w,
+    });
+    fontByWeight.set(w, "error" in res ? baseFont : res.font);
+  }
+  const pickFont = (w: number) => fontByWeight.get(w) ?? baseFont;
+
+  const physicalLines = computePhysicalLines(conv, baseFont);
+  const NS = "http://www.w3.org/2000/svg";
+
+  for (let li = 0; li < physicalLines.length; li++) {
+    const { text: line, globalTextStart } = physicalLines[li]!;
+    const baselineY = conv.y + pad + conv.fontSize + li * lhPx;
+    const lineW = measureLineWidthMixed(
+      line,
+      globalTextStart,
+      conv.fontSize,
+      conv.letterSpacing,
+      useKern,
+      charStyles,
+      conv.fontWeight,
+      pickFont,
+    );
+
+    let xCursor: number;
+    if (ta === "center") {
+      xCursor = conv.x + leftInset + contentInnerW / 2 - lineW / 2;
+    } else if (ta === "right") {
+      xCursor = conv.x + boxW - pad - lineW;
+    } else {
+      xCursor = conv.x + leftInset;
+    }
+
+    const lefts = measureLineCharLeftEdges(
+      line,
+      globalTextStart,
+      xCursor,
+      conv.fontSize,
+      conv.letterSpacing,
+      useKern,
+      charStyles,
+      conv.fontWeight,
+      pickFont,
+    );
+
+    const textEl = doc.createElementNS(NS, "text");
+    textEl.setAttribute("y", String(baselineY));
+    textEl.setAttribute("font-size", String(conv.fontSize));
+    textEl.setAttribute("fill", "#000000");
+    textEl.setAttribute("fill-opacity", "0");
+    textEl.setAttribute("stroke", "none");
+    textEl.setAttribute("pointer-events", "none");
+    textEl.setAttribute("data-fh-pdf-selectable", "1");
+    /** `lefts` ya incluye letter-spacing; no duplicar en SVG. */
+    textEl.setAttribute("letter-spacing", "0");
+
+    if (line.length === 0) {
+      const ts = doc.createElementNS(NS, "tspan");
+      ts.setAttribute("x", String(xCursor));
+      ts.setAttribute("font-family", conv.fontFamily);
+      ts.setAttribute("font-weight", String(conv.fontWeight));
+      if (conv.fontStyle && conv.fontStyle !== "normal") {
+        ts.setAttribute("font-style", conv.fontStyle);
+      }
+      ts.textContent = "\u00a0";
+      textEl.appendChild(ts);
+      parentG.appendChild(textEl);
+      continue;
+    }
+
+    let i0 = 0;
+    while (i0 < line.length) {
+      const sig0 = selectableStyleSig(conv, charStyles, globalTextStart + i0);
+      let i1 = i0 + 1;
+      while (i1 < line.length && selectableStyleSig(conv, charStyles, globalTextStart + i1) === sig0) {
+        i1++;
+      }
+      const gi = globalTextStart + i0;
+      const st = charStyles[gi];
+      const w = effPdfWeight(conv.fontWeight, st);
+      const fam = (st?.fontFamily && st.fontFamily.trim()) || conv.fontFamily;
+      const italic = effectiveItalicForPdf(st, conv);
+
+      const ts = doc.createElementNS(NS, "tspan");
+      ts.setAttribute("x", String(lefts[i0]!));
+      ts.setAttribute("font-family", fam);
+      ts.setAttribute("font-weight", String(w));
+      if (italic) ts.setAttribute("font-style", "italic");
+      const slice = line.slice(i0, i1);
+      ts.textContent = slice.length > 0 ? slice : "";
+      textEl.appendChild(ts);
+      i0 = i1;
+    }
+
+    /** Una sola rama tipográfica: forzar ancho exacto al de opentype (evita deriva del motor PDF). */
+    if (textEl.childNodes.length === 1) {
+      textEl.setAttribute("textLength", String(lineW));
+      textEl.setAttribute("lengthAdjust", "spacingAndGlyphs");
+    }
+
+    parentG.appendChild(textEl);
+  }
+}
+
 /** PDF: sustituir grupos `data-fh-text` por paths SVG (sin tocar el documento en vivo). */
 export async function substituteTextWithOutlinedPathsInSvg(
   svgXml: string,
@@ -964,6 +1133,7 @@ export async function substituteTextWithOutlinedPathsInSvg(
     height: number;
     fontSize: number;
     fontWeight: number;
+    fontStyle?: "normal" | "italic";
     lineHeight: number;
     letterSpacing: number;
     fontKerning?: "auto" | "none";
@@ -1006,6 +1176,7 @@ export async function substituteTextWithOutlinedPathsInSvg(
       fontFamily: t.fontFamily,
       fontSize: t.fontSize,
       fontWeight: t.fontWeight,
+      fontStyle: t.fontStyle,
       lineHeight: t.lineHeight,
       letterSpacing: t.letterSpacing,
       fontKerning: t.fontKerning,
@@ -1073,6 +1244,14 @@ export async function substituteTextWithOutlinedPathsInSvg(
           g.appendChild(pathImported);
         }
       }
+      await appendInvisibleSelectableTextLayerAsync(
+        doc,
+        g,
+        conv,
+        fontRes.font,
+        pdfOpts,
+        useRich && t.richRuns && t.richRuns.length > 0 ? t.richRuns : [{ text: t.text }],
+      );
     } else {
       const payloads = await textToGlyphPathPayloads(conv, fontRes.font);
       const strokeAttr =
@@ -1090,6 +1269,7 @@ export async function substituteTextWithOutlinedPathsInSvg(
         const pathEl = frag.querySelector("path");
         if (pathEl) g.appendChild(doc.importNode(pathEl, true));
       }
+      await appendInvisibleSelectableTextLayerAsync(doc, g, conv, fontRes.font, pdfOpts, [{ text: t.text }]);
     }
   }
   return sanitizeSvgNamedEntitiesForXml(new XMLSerializer().serializeToString(doc.documentElement));

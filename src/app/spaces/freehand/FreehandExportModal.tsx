@@ -18,6 +18,11 @@ export type ProfessionalExportOptions = {
   batchArtboardIds?: string[] | null;
   /** Solo PDF: recomprime imágenes raster como JPEG (~72) para archivo más pequeño. */
   optimizeImages?: boolean;
+  /**
+   * Solo PDF: capa de texto invisible alineada con los trazados para copiar/pegar en el visor de PDF.
+   * Por defecto true en el modal.
+   */
+  pdfSelectableText?: boolean;
 };
 
 type Props = {
@@ -65,6 +70,7 @@ export function FreehandExportModal({
   const [pdfMakeUrlsClickable, setPdfMakeUrlsClickable] = useState(false);
   const [pdfOutlineLinkRects, setPdfOutlineLinkRects] = useState(false);
   const [pdfOptimizeImages, setPdfOptimizeImages] = useState(false);
+  const [pdfSelectableText, setPdfSelectableText] = useState(true);
 
   useEffect(() => {
     if (open) setFilename(defaultFilename.replace(/[^a-z0-9-_]/gi, "_").slice(0, 80));
@@ -105,6 +111,7 @@ export function FreehandExportModal({
       merged,
       batchArtboardIds: batchIds && batchIds.length > 0 ? batchIds : undefined,
       optimizeImages: format === "pdf" ? pdfOptimizeImages : undefined,
+      pdfSelectableText: format === "pdf" ? pdfSelectableText : undefined,
     });
   };
 
@@ -154,8 +161,24 @@ export function FreehandExportModal({
             {format === "pdf" && (
               <>
                 <p className="text-[10px] leading-snug text-zinc-500">
-                  El PDF exporta el texto como trazados para máxima compatibilidad. Vectorial: mismas primitivas que el SVG.
+                  El aspecto del texto sigue siendo vectorial (trazados); opcionalmente se añade una capa de texto
+                  invisible alineada para poder seleccionar y copiar en el lector PDF.
                 </p>
+                <label className="mt-2 flex cursor-pointer items-start gap-2 text-[11px] text-zinc-300">
+                  <input
+                    type="checkbox"
+                    checked={pdfSelectableText}
+                    onChange={(e) => setPdfSelectableText(e.target.checked)}
+                    className="accent-sky-500 mt-0.5"
+                  />
+                  <span>
+                    Texto seleccionable en PDF
+                    <span className="mt-0.5 block text-[10px] font-normal text-zinc-500">
+                      Misma posición y saltos de línea que en el lienzo; el dibujo visible sigue siendo el trazado
+                      vectorial.
+                    </span>
+                  </span>
+                </label>
                 <label className="mt-2 flex cursor-pointer items-start gap-2 text-[11px] text-zinc-300">
                   <input
                     type="checkbox"
@@ -241,8 +264,24 @@ export function FreehandExportModal({
             <div className="space-y-2 rounded-lg border border-violet-500/20 bg-violet-950/20 p-3">
               <label className="text-[10px] font-medium uppercase tracking-wider text-violet-300/90">Documento (Designer)</label>
               <p className="text-[10px] leading-snug text-zinc-500">
-                PDF vectorial multipágina: una hoja por página del documento (texto como trazados, mismas primitivas que el SVG).
+                PDF vectorial multipágina: una hoja por página (trazados + opción de capa de texto para selección).
               </p>
+              {format !== "pdf" && (
+                <label className="flex cursor-pointer items-start gap-2 text-[11px] text-zinc-300">
+                  <input
+                    type="checkbox"
+                    checked={pdfSelectableText}
+                    onChange={(e) => setPdfSelectableText(e.target.checked)}
+                    className="accent-violet-500 mt-0.5"
+                  />
+                  <span>
+                    Texto seleccionable (misma posición que en el lienzo)
+                    <span className="mt-0.5 block text-[10px] font-normal text-zinc-500">
+                      Misma casilla que bajo «Format: PDF» si el formato es PDF.
+                    </span>
+                  </span>
+                </label>
+              )}
               <label className="flex cursor-pointer items-start gap-2 text-[11px] text-zinc-300">
                 <input
                   type="checkbox"
@@ -298,6 +337,7 @@ export function FreehandExportModal({
                       makeUrlsClickable: pdfMakeUrlsClickable,
                       outlineLinkRects: pdfOutlineLinkRects,
                       optimizeImages: pdfOptimizeImages,
+                      selectableText: pdfSelectableText,
                     }),
                   ).catch((err: unknown) => {
                     console.error("[Export] PDF multipágina Designer:", err);

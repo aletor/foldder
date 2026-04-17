@@ -1424,6 +1424,7 @@ function textObjectToVectorPdfOutlineItem(tx: TextObject) {
     textAlign: tx.textAlign,
     paragraphIndent: tx.paragraphIndent,
     fontFamily: tx.fontFamily,
+    fontStyle: tx.fontStyle,
     fillColor,
     stroke: tx.stroke,
     strokeWidth: tx.strokeWidth,
@@ -7584,6 +7585,9 @@ export default function FreehandStudio({
             pdfMarkup = await substituteTextWithOutlinedPathsInSvg(
               strRaw,
               textObjs.map(textObjectToVectorPdfOutlineItem),
+              {
+                selectableText: opts.pdfSelectableText !== false,
+              },
             );
           }
           await downloadSvgAsVectorPdf(pdfMarkup, name, { optimizeImages: opts.optimizeImages === true });
@@ -7627,7 +7631,9 @@ export default function FreehandStudio({
               let pdfMarkup = strRaw;
               const textObjs = objs.filter((o): o is TextObject => o.type === "text" && o.visible && !o.isClipMask);
               if (textObjs.length > 0) {
-                pdfMarkup = await substituteTextWithOutlinedPathsInSvg(strRaw, textObjs.map(mapTextForPdf));
+                pdfMarkup = await substituteTextWithOutlinedPathsInSvg(strRaw, textObjs.map(mapTextForPdf), {
+                  selectableText: opts.pdfSelectableText !== false,
+                });
               }
               entries.push({
                 fname,
