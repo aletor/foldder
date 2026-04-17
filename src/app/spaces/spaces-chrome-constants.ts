@@ -5,6 +5,7 @@ import { NODE_KEYS } from "./node-shortcuts";
 /** Alineado con la barra inferior y con el `switch` de teclas del lienzo en `page.tsx`. */
 export type EmptyCanvasShortcutNodeType =
   | "designer"
+  | "presenter"
   | "nanoBanana"
   | "geminiVideo"
   | "vfxGenerator";
@@ -17,6 +18,7 @@ export const EMPTY_CANVAS_SHORTCUT_HINT: {
 }[] = (
   [
     { label: "Design", nodeType: "designer" },
+    { label: "Presenter", nodeType: "presenter" },
     { label: "Image", nodeType: "nanoBanana" },
     { label: "Video", nodeType: "geminiVideo" },
     { label: "VFX", nodeType: "vfxGenerator" },

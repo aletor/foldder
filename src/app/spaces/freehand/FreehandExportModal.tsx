@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState, useEffect } from "react";
+import React, { useMemo, useState } from "react";
 import { X } from "lucide-react";
 import type { Rect } from "./freehand-export";
 import type { VectorPdfExportOptions } from "./text-outline";
@@ -63,7 +63,6 @@ export function FreehandExportModal({
   const [useCustomScale, setUseCustomScale] = useState(false);
   const [bgMode, setBgMode] = useState<"transparent" | "custom">("transparent");
   const [bgColor, setBgColor] = useState("#ffffff");
-  const [filename, setFilename] = useState(defaultFilename);
   const [merged, setMerged] = useState(true);
   const [batchAllArtboards, setBatchAllArtboards] = useState(false);
   const [batchSelected, setBatchSelected] = useState<Record<string, boolean>>({});
@@ -71,10 +70,6 @@ export function FreehandExportModal({
   const [pdfOutlineLinkRects, setPdfOutlineLinkRects] = useState(false);
   const [pdfOptimizeImages, setPdfOptimizeImages] = useState(false);
   const [pdfSelectableText, setPdfSelectableText] = useState(true);
-
-  useEffect(() => {
-    if (open) setFilename(defaultFilename.replace(/[^a-z0-9-_]/gi, "_").slice(0, 80));
-  }, [open, defaultFilename]);
 
   const effectiveScale = useMemo(() => {
     if (useCustomScale) {
@@ -94,8 +89,12 @@ export function FreehandExportModal({
 
   if (!open) return null;
 
+  const showDesignerDocumentPdf =
+    designerMultipageVectorPdf != null && designerMultipageVectorPdf.pageCount > 0;
+
   const run = async () => {
-    const base = filename.trim() || "export";
+    const base =
+      (defaultFilename || "export").trim().replace(/[^a-z0-9-_]/gi, "_").slice(0, 80) || "export";
     const ext =
       format === "svg" ? "svg" : format === "jpg" ? "jpg" : format === "pdf" ? "pdf" : "png";
     const safe = `${base.replace(/\.(png|svg|jpg|jpeg|pdf)$/i, "")}.${ext}`;
@@ -142,8 +141,110 @@ export function FreehandExportModal({
         </div>
 
         <div className="space-y-4 px-4 py-4">
+          {showDesignerDocumentPdf && designerMultipageVectorPdf && (
+            <div className="space-y-3 rounded-xl border border-violet-500/25 bg-gradient-to-b from-violet-950/35 to-[#12151a] p-3.5 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04)]">
+              <div>
+                <label className="text-[10px] font-semibold uppercase tracking-wider text-violet-200/95">
+                  PDF del documento (Designer)
+                </label>
+                <p className="mt-1.5 text-[10px] leading-relaxed text-zinc-400">
+                  PDF vectorial multipágina: una hoja por página del documento. Con una sola página obtienes un PDF de una
+                  hoja. Las mismas opciones se aplican si más abajo eliges PDF y pulsas Export (solo la vista actual).
+                </p>
+              </div>
+              <label className="flex cursor-pointer items-start gap-2 text-[11px] text-zinc-200">
+                <input
+                  type="checkbox"
+                  checked={pdfSelectableText}
+                  onChange={(e) => setPdfSelectableText(e.target.checked)}
+                  className="accent-violet-400 mt-0.5"
+                />
+                <span>
+                  Texto seleccionable
+                  <span className="mt-0.5 block text-[10px] font-normal text-zinc-500">
+                    Capa alineada con los trazados para copiar en el visor; el dibujo visible sigue siendo vectorial.
+                  </span>
+                </span>
+              </label>
+              <label className="flex cursor-pointer items-start gap-2 text-[11px] text-zinc-200">
+                <input
+                  type="checkbox"
+                  checked={pdfMakeUrlsClickable}
+                  onChange={(e) => setPdfMakeUrlsClickable(e.target.checked)}
+                  className="accent-violet-400 mt-0.5"
+                />
+                <span>
+                  URLs clickeables
+                  <span className="mt-0.5 block text-[10px] font-normal text-zinc-500">
+                    Detecta <span className="font-mono text-zinc-400">https://…</span> en el texto y los exporta como
+                    enlaces.
+                  </span>
+                </span>
+              </label>
+              <label className="flex cursor-pointer items-start gap-2 text-[11px] text-zinc-200">
+                <input
+                  type="checkbox"
+                  checked={pdfOutlineLinkRects}
+                  onChange={(e) => setPdfOutlineLinkRects(e.target.checked)}
+                  className="accent-violet-400 mt-0.5"
+                />
+                <span>
+                  Recuadro en enlaces
+                  <span className="mt-0.5 block text-[10px] font-normal text-zinc-500">
+                    Borde fino alrededor del área de clic (alineación y revisión).
+                  </span>
+                </span>
+              </label>
+              <label className="flex cursor-pointer items-start gap-2 text-[11px] text-zinc-200">
+                <input
+                  type="checkbox"
+                  checked={pdfOptimizeImages}
+                  onChange={(e) => setPdfOptimizeImages(e.target.checked)}
+                  className="accent-violet-400 mt-0.5"
+                />
+                <span>
+                  Optimizar imágenes (JPEG ~72%)
+                  <span className="mt-0.5 block text-[10px] font-normal text-zinc-500">
+                    PDF más ligero; la transparencia se aplana sobre blanco donde aplique.
+                  </span>
+                </span>
+              </label>
+              <button
+                type="button"
+                disabled={designerMultipageVectorPdf.busy}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  void Promise.resolve(
+                    designerMultipageVectorPdf.onExport({
+                      makeUrlsClickable: pdfMakeUrlsClickable,
+                      outlineLinkRects: pdfOutlineLinkRects,
+                      optimizeImages: pdfOptimizeImages,
+                      selectableText: pdfSelectableText,
+                    }),
+                  ).catch((err: unknown) => {
+                    console.error("[Export] PDF multipágina Designer:", err);
+                  });
+                }}
+                className="w-full rounded-lg border border-violet-400/35 bg-violet-600/30 px-3 py-2.5 text-[11px] font-semibold text-violet-50 shadow-lg shadow-violet-950/40 transition-colors duration-150 hover:bg-violet-500/35 disabled:pointer-events-none disabled:opacity-45"
+              >
+                {designerMultipageVectorPdf.busy
+                  ? "Generando PDF…"
+                  : `Descargar PDF del documento (${designerMultipageVectorPdf.pageCount})`}
+              </button>
+            </div>
+          )}
+
           <div className="space-y-2">
-            <label className="text-[10px] font-medium uppercase tracking-wider text-zinc-500">Format</label>
+            <label className="text-[10px] font-medium uppercase tracking-wider text-zinc-500">
+              {showDesignerDocumentPdf ? "Exportar esta vista" : "Format"}
+            </label>
+            {showDesignerDocumentPdf && (
+              <p className="text-[10px] leading-snug text-zinc-500">
+                Raster o vector de lo que ves en el lienzo (incluido PDF de una sola hoja). No sustituye al bloque de
+                arriba.
+              </p>
+            )}
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               {(["png", "svg", "jpg", "pdf"] as const).map((f) => (
                 <button
@@ -158,7 +259,7 @@ export function FreehandExportModal({
                 </button>
               ))}
             </div>
-            {format === "pdf" && (
+            {format === "pdf" && !showDesignerDocumentPdf && (
               <>
                 <p className="text-[10px] leading-snug text-zinc-500">
                   El aspecto del texto sigue siendo vectorial (trazados); opcionalmente se añade una capa de texto
@@ -194,6 +295,12 @@ export function FreehandExportModal({
                   </span>
                 </label>
               </>
+            )}
+            {format === "pdf" && showDesignerDocumentPdf && (
+              <p className="text-[10px] leading-relaxed text-zinc-500">
+                PDF de <span className="text-zinc-400">una sola hoja</span> con la página visible. Texto seleccionable e
+                imágenes: mismas casillas que en «PDF del documento» arriba.
+              </p>
             )}
           </div>
 
@@ -260,98 +367,6 @@ export function FreehandExportModal({
             )}
           </div>
 
-          {designerMultipageVectorPdf != null && designerMultipageVectorPdf.pageCount > 0 && (
-            <div className="space-y-2 rounded-lg border border-violet-500/20 bg-violet-950/20 p-3">
-              <label className="text-[10px] font-medium uppercase tracking-wider text-violet-300/90">Documento (Designer)</label>
-              <p className="text-[10px] leading-snug text-zinc-500">
-                PDF vectorial multipágina: una hoja por página (trazados + opción de capa de texto para selección).
-              </p>
-              {format !== "pdf" && (
-                <label className="flex cursor-pointer items-start gap-2 text-[11px] text-zinc-300">
-                  <input
-                    type="checkbox"
-                    checked={pdfSelectableText}
-                    onChange={(e) => setPdfSelectableText(e.target.checked)}
-                    className="accent-violet-500 mt-0.5"
-                  />
-                  <span>
-                    Texto seleccionable (misma posición que en el lienzo)
-                    <span className="mt-0.5 block text-[10px] font-normal text-zinc-500">
-                      Misma casilla que bajo «Format: PDF» si el formato es PDF.
-                    </span>
-                  </span>
-                </label>
-              )}
-              <label className="flex cursor-pointer items-start gap-2 text-[11px] text-zinc-300">
-                <input
-                  type="checkbox"
-                  checked={pdfMakeUrlsClickable}
-                  onChange={(e) => setPdfMakeUrlsClickable(e.target.checked)}
-                  className="accent-violet-500 mt-0.5"
-                />
-                <span>
-                  Hacer URLs clickeables
-                  <span className="mt-0.5 block text-[10px] font-normal text-zinc-500">
-                    Detecta <code className="text-zinc-400">https://…</code> en el texto y los exporta como enlaces (estilo azul subrayado).
-                  </span>
-                </span>
-              </label>
-              <label className="flex cursor-pointer items-start gap-2 text-[11px] text-zinc-300">
-                <input
-                  type="checkbox"
-                  checked={pdfOutlineLinkRects}
-                  onChange={(e) => setPdfOutlineLinkRects(e.target.checked)}
-                  className="accent-violet-500 mt-0.5"
-                />
-                <span>
-                  Marcar enlaces con recuadro
-                  <span className="mt-0.5 block text-[10px] font-normal text-zinc-500">
-                    Dibuja un borde fino alrededor del área de clic de cada enlace (útil para comprobar la alineación).
-                  </span>
-                </span>
-              </label>
-              {format !== "pdf" && (
-                <label className="flex cursor-pointer items-start gap-2 text-[11px] text-zinc-300">
-                  <input
-                    type="checkbox"
-                    checked={pdfOptimizeImages}
-                    onChange={(e) => setPdfOptimizeImages(e.target.checked)}
-                    className="accent-violet-500 mt-0.5"
-                  />
-                  <span>
-                    Optimizar imágenes (JPEG ~72%)
-                    <span className="mt-0.5 block text-[10px] font-normal text-zinc-500">
-                      PDF multipágina más ligero; si exportas PDF de una página, usa la casilla bajo el formato PDF.
-                    </span>
-                  </span>
-                </label>
-              )}
-              <button
-                type="button"
-                disabled={designerMultipageVectorPdf.busy}
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  void Promise.resolve(
-                    designerMultipageVectorPdf.onExport({
-                      makeUrlsClickable: pdfMakeUrlsClickable,
-                      outlineLinkRects: pdfOutlineLinkRects,
-                      optimizeImages: pdfOptimizeImages,
-                      selectableText: pdfSelectableText,
-                    }),
-                  ).catch((err: unknown) => {
-                    console.error("[Export] PDF multipágina Designer:", err);
-                  });
-                }}
-                className="w-full rounded-lg border border-violet-400/30 bg-violet-600/25 px-3 py-2 text-[11px] font-semibold text-violet-100 transition-colors duration-150 hover:bg-violet-500/35 disabled:pointer-events-none disabled:opacity-45"
-              >
-                {designerMultipageVectorPdf.busy
-                  ? "Generando PDF…"
-                  : `Descargar PDF (${designerMultipageVectorPdf.pageCount})`}
-              </button>
-            </div>
-          )}
-
           {exportScope === "full" && artboardList.length > 1 && (
             <div className="space-y-2">
               <label className="text-[10px] font-medium uppercase tracking-wider text-zinc-500">Artboards</label>
@@ -391,16 +406,6 @@ export function FreehandExportModal({
               </label>
             </div>
           )}
-
-          <div className="space-y-2">
-            <label className="text-[10px] font-medium uppercase tracking-wider text-zinc-500">File name</label>
-            <input
-              type="text"
-              value={filename}
-              onChange={(e) => setFilename(e.target.value)}
-              className="h-8 w-full rounded-lg border border-white/[0.08] bg-[#0b0d10] px-3 text-[12px] text-white outline-none transition-colors duration-150 focus:border-sky-500/50"
-            />
-          </div>
 
           {bounds && (
             <div className="rounded-lg border border-white/[0.06] bg-[#0b0d10] px-3 py-2 text-[11px] text-zinc-400">

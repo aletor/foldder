@@ -2085,7 +2085,7 @@ function deepCloneFreehandObjectKeepIds(o: FreehandObject): FreehandObject {
   return deepCloneFreehandObject(o, () => o.id);
 }
 
-function flattenObjectsForGradientDefs(list: FreehandObject[]): FreehandObject[] {
+export function flattenObjectsForGradientDefs(list: FreehandObject[]): FreehandObject[] {
   const out: FreehandObject[] = [];
   for (const o of list) {
     out.push(o);
@@ -3106,7 +3106,7 @@ function DesignerImageFrameOptimizeOverlay({
 
 // ── Render SVG object ───────────────────────────────────────────────────
 
-type RenderObjOpts = {
+export type RenderObjOpts = {
   /** Modo P: sin borde punteado ni «cromo» extra de marcos de texto encadenados. */
   canvasZenMode?: boolean;
   /** Designer: el texto de marcos encadenados no se edita en el lienzo (solo modal / panel). */
@@ -3117,7 +3117,7 @@ type RenderObjOpts = {
   imageFrameOptimizeShowFrameId?: string | null;
 };
 
-function renderObj(
+export function renderObj(
   obj: FreehandObject,
   allObjects: FreehandObject[],
   selectedIds?: Set<string>,
@@ -3520,7 +3520,7 @@ function renderObj(
   }
 }
 
-function renderClipDef(clipObj: FreehandObject): React.ReactNode {
+export function renderClipDef(clipObj: FreehandObject): React.ReactNode {
   if (!clipObj.isClipMask) return null;
   let shape: React.ReactNode = null;
   switch (clipObj.type) {
@@ -13469,6 +13469,27 @@ export default function FreehandStudio({
           designerMultipageVectorPdf={designerMultipageVectorPdfExport ?? null}
         />
       )}
+
+      {designerMultipageVectorPdfExport?.busy &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[100050] flex items-center justify-center bg-[#07090c]/85 backdrop-blur-[3px]"
+            role="progressbar"
+            aria-busy="true"
+            aria-valuetext="Generando PDF del documento"
+          >
+            <div className="pointer-events-none mx-6 flex max-w-md flex-col items-center gap-6 rounded-2xl border border-white/[0.09] bg-[#12151a]/96 px-10 py-9 shadow-[0_24px_80px_rgba(0,0,0,0.55)] ring-1 ring-violet-500/25">
+              <div className="text-center">
+                <p className="text-[15px] font-semibold tracking-tight text-white">Generando PDF del documento</p>
+                <p className="mt-2 text-[12px] leading-relaxed text-zinc-400">Preparando las páginas para descarga…</p>
+              </div>
+              <div className="h-[5px] w-[min(360px,85vw)] overflow-hidden rounded-full bg-zinc-800/95 ring-1 ring-white/[0.07]">
+                <div className="designer-pdf-indeterminate-bar h-full min-h-[5px]" />
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
 
       {canvasZenMode && (
         <div className="pointer-events-none fixed bottom-5 left-1/2 z-[100002] -translate-x-1/2 rounded-md border border-white/[0.08] bg-black/45 px-3 py-1.5 text-[10px] text-zinc-500">

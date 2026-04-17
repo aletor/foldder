@@ -7,11 +7,12 @@ import { TOPBAR_GLYPH_BY_NODE_TYPE } from "./TopbarPinIcons";
 export const TOPBAR_PIN_ICON_SIZE = 32;
 
 /**
- * Accesos fijos (no personalizables): Designer → Image → Video → VFX.
+ * Accesos fijos (no personalizables): Designer → Presenter → Image → Video → VFX.
  * Orden estable; no se persiste ni se admite drag-and-drop sobre la barra.
  */
 export const TOPBAR_FIXED_PIN_TYPES = [
   "designer",
+  "presenter",
   "nanoBanana",
   "geminiVideo",
   "vfxGenerator",
@@ -23,6 +24,7 @@ const TOPBAR_PIN_UI: Record<
   { title: string; shortLabel: string }
 > = {
   designer: { title: "Designer Studio", shortLabel: "Design" },
+  presenter: { title: "Presenter", shortLabel: "Present" },
   nanoBanana: { title: "Image Generator", shortLabel: "Image" },
   geminiVideo: { title: "Video Generator", shortLabel: "Video" },
   vfxGenerator: { title: "VFX Generator", shortLabel: "VFX" },
@@ -138,7 +140,7 @@ export function TopbarPins({
               : "flex min-h-[36px] w-full max-w-[min(520px,92vw)] flex-wrap items-center justify-center gap-1.5 rounded-xl border border-white/25 bg-white/[0.08] px-2 py-1 shadow-sm backdrop-blur-xl"
         }
         role="toolbar"
-        aria-label="Accesos directos: Vector, Image, Video, VFX, Layout. Doble clic para añadir al lienzo."
+        aria-label="Accesos directos: Designer, Presenter, Image, Video, VFX. Doble clic para añadir al lienzo."
       >
         {TOPBAR_FIXED_PIN_TYPES.map((type) => {
           const ui = TOPBAR_PIN_UI[type];

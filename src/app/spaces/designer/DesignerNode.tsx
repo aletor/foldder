@@ -179,9 +179,13 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
         </button>
       </div>
 
-      <div className="handle-wrapper handle-right">
+      <div className="handle-wrapper handle-right" style={{ top: "38%", transform: "translateY(-50%)" }}>
         <span className="handle-label">Image</span>
         <FoldderDataHandle type="source" position={Position.Right} id="image" dataType="image" />
+      </div>
+      <div className="handle-wrapper handle-right" style={{ top: "62%", transform: "translateY(-50%)" }}>
+        <span className="handle-label">Document</span>
+        <FoldderDataHandle type="source" position={Position.Right} id="document" dataType="generic" />
       </div>
 
       {isStudioOpen &&

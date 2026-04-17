@@ -129,3 +129,60 @@ input *, textarea *, [contenteditable="true"] * {
     animation: none !important;
   }
 }
+
+/* Designer: multipage PDF export — indeterminate progress bar */
+@keyframes designer-pdf-indeterminate-slide {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+
+.designer-pdf-indeterminate-bar {
+  width: 42%;
+  border-radius: 9999px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgb(167 139 250 / 0.15) 35%,
+    rgb(167 139 250 / 0.95) 50%,
+    rgb(167 139 250 / 0.15) 65%,
+    transparent 100%
+  );
+  animation: designer-pdf-indeterminate-slide 1.45s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .designer-pdf-indeterminate-bar {
+    animation: none !important;
+    transform: translateX(0);
+    width: 100%;
+    opacity: 0.85;
+  }
+}
+
+/* Spaces: borrado de proyecto (S3 + disco) — misma animación, tono rosa */
+.spaces-delete-indeterminate-bar {
+  width: 42%;
+  border-radius: 9999px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgb(251 113 133 / 0.2) 35%,
+    rgb(244 63 94 / 0.95) 50%,
+    rgb(251 113 133 / 0.2) 65%,
+    transparent 100%
+  );
+  animation: designer-pdf-indeterminate-slide 1.45s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spaces-delete-indeterminate-bar {
+    animation: none !important;
+    transform: translateX(0);
+    width: 100%;
+    opacity: 0.88;
+  }
+}

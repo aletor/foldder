@@ -97,6 +97,35 @@ export function TopbarGlyphVideoGenerator({ size = 26, className }: GlyphProps) 
   );
 }
 
+/** Presenter — pantalla de proyección + reproducción (modo presentación). */
+export function TopbarGlyphPresenter({ size = 26, className }: GlyphProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      className={className}
+      aria-hidden
+    >
+      <rect x="3.75" y="5.25" width="16.5" height="11" rx="1.65" stroke="currentColor" strokeWidth={sw} />
+      <path
+        d="M8.25 19.5h7.5M12 16.75v2.75"
+        stroke="currentColor"
+        strokeWidth={1.25}
+        strokeLinecap="round"
+      />
+      <path
+        d="M10.4 10.85l4.2 2.65-4.2 2.65v-5.3z"
+        fill="currentColor"
+        fillOpacity={0.92}
+      />
+      <rect x="5.25" y="7.15" width="5.5" height="0.9" rx="0.35" fill="currentColor" fillOpacity={0.22} />
+      <rect x="5.25" y="9.05" width="8.25" height="0.85" rx="0.35" fill="currentColor" fillOpacity={0.18} />
+    </svg>
+  );
+}
+
 /** Indesign — páginas apiladas + líneas de texto (maquetación editorial). */
 export function TopbarGlyphIndesign({ size = 26, className }: GlyphProps) {
   return (
@@ -173,10 +202,11 @@ export function TopbarGlyphVfxGenerator({ size = 26, className }: GlyphProps) {
 }
 
 export const TOPBAR_GLYPH_BY_NODE_TYPE: Record<
-  "designer" | "nanoBanana" | "geminiVideo" | "vfxGenerator",
+  "designer" | "presenter" | "nanoBanana" | "geminiVideo" | "vfxGenerator",
   React.FC<GlyphProps>
 > = {
   designer: TopbarGlyphIndesign,
+  presenter: TopbarGlyphPresenter,
   nanoBanana: TopbarGlyphImageGenerator,
   geminiVideo: TopbarGlyphVideoGenerator,
   vfxGenerator: TopbarGlyphVfxGenerator,

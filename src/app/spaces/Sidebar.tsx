@@ -254,6 +254,7 @@ const Sidebar = ({
       { type: 'textOverlay',       label: 'Text' },
       { type: 'crop',              label: 'Crop' },
       { type: 'designer',          label: 'Designer' },
+      { type: 'presenter',         label: 'Presenter' },
     ];
 
     return (
@@ -461,6 +462,7 @@ const Sidebar = ({
                   { type: 'crop',          label: 'Crop' },
                   { type: 'bezierMask',    label: 'Bezier' },
                   { type: 'designer',      label: 'Designer' },
+                  { type: 'presenter',     label: 'Presenter' },
                 ].map(item => (
                   <div key={item.type}
                     className="dndnode relative flex flex-col items-center justify-center gap-1 py-3 px-2 !bg-white/20 hover:!bg-white/30 border border-white/25 hover:border-amber-400/50 rounded-2xl cursor-grab active:scale-95 transition-all text-center aspect-square"

@@ -369,13 +369,27 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
     description:
       'Full design studio: vector tools (pen, shapes, text) + page-based layout + threaded text frames + image frames. Combines Freehand vector editing with InDesign-style page management.',
     inputs: [],
-    outputs: [{ id: 'image', label: 'Image Out', type: 'image' as HandleType }],
+    outputs: [
+      { id: 'image', label: 'Image Out', type: 'image' as HandleType },
+      { id: 'document', label: 'Document', type: 'json' as HandleType },
+    ],
     dataSchema: {
       pages:
         'DesignerPageState[] (id, format, objects, layoutGuides, stories, textFrames, imageFrames)',
       activePageIndex: 'number',
       label: 'string',
       value: 'string (exported raster data URL)',
+    },
+  },
+  presenter: {
+    type: 'presenter',
+    label: 'Presenter',
+    description:
+      'Presentation deck: connect Designer Document output to turn each page into a slide. Preview all slides; later: animation steps and image→video swaps (Pitch-style).',
+    inputs: [{ id: 'document', label: 'Designer document', type: 'json' as HandleType, required: true }],
+    outputs: [],
+    dataSchema: {
+      label: 'string',
     },
   },
   canvasGroup: {
@@ -424,6 +438,10 @@ export const ASSISTANT_NODE_DATA_HINTS: Record<string, string> = {
   bezierMask: "points, closed, invert, result_mask, result_rgba",
   textOverlay: "text, fontFamily, fontSize, color, fontWeight, textAlign, canvasW, canvasH",
   backgroundRemover: "threshold, expansion, feather",
+  designer:
+    "pages (DesignerPageState[]), activePageIndex, label, value (export raster), autoImageOptimization; salida document (json) conecta a presenter",
+  presenter:
+    "label; conectar entrada document desde designer; el UI lee pages del Designer vía grafo (slides / Presenter)",
   canvasGroup:
     "label (título del marco), collapsed (plegado), memberIds (ids hijos — sincronizado con parentId). Creación habitual: usuario selecciona 2+ nodos y agrupa en el lienzo (G / menú); el asistente solo debe emitir type canvasGroup si el usuario pide explícitamente un grafo agrupado en JSON: entonces cada hijo lleva parentId=id del grupo y position relativa; data.memberIds debe listar esos ids; style width/height del marco; NO incluir canvasGroup en executeNodeIds (no ejecuta). Si solo piden “organizar en grupo”, mejor devolver nodos/aristas sueltos y decir que agrupen con la UI.",
 };

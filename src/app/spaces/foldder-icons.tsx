@@ -481,6 +481,7 @@ export const NODE_TYPE_TO_FOLDDER_ICON: Record<string, FoldderIconKey> = {
   bezierMask: 'mask',
   canvasGroup: 'layout',
   designer: 'freehand',
+  presenter: 'nano',
 };
 
 export function resolveFoldderNodeState(opts: {

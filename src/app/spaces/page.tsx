@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useCallback, useMemo, useRef, useEffect, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ReactFlow,
   Controls,
@@ -47,6 +48,7 @@ import {
   CropNode,
   BezierMaskNode,
   DesignerNode,
+  PresenterNode,
   TextOverlayNode,
   ButtonEdge 
 } from './CustomNodes';
@@ -73,10 +75,7 @@ import { ApiUsageHud } from './ApiUsageHud';
 import { HandleTypeLegend } from './HandleTypeLegend';
 import { AiRequestHud } from './AiRequestHud';
 import { ExternalApiBlockedModal } from './ExternalApiBlockedModal';
-import {
-  TopbarPins,
-} from './TopbarPins';
-import { TOPBAR_GLYPH_BY_NODE_TYPE } from './TopbarPinIcons';
+import { TopbarPins } from './TopbarPins';
 import {
   resolveHandleMetaForCanvasDrop,
   pickNewNodeTypeForCanvasDrop,
@@ -522,6 +521,7 @@ const nodeTypes: any = {
   crop: CropNode,
   bezierMask: BezierMaskNode,
   designer: DesignerNode,
+  presenter: PresenterNode,
   textOverlay: TextOverlayNode,
   canvasGroup: CanvasGroupNode,
 };
@@ -676,6 +676,12 @@ const SpacesContent = () => {
     totalEurMax: number;
   } | null>(null);
   const [projectToDelete, setProjectToDelete] = useState<any | null>(null);
+  /** Borrado en curso (API + S3); bloquea otras acciones sobre proyectos. */
+  const [projectDeleteInProgress, setProjectDeleteInProgress] = useState<{
+    projectName: string;
+  } | null>(null);
+  /** Evita doble clic en «Delete» antes de que React oculte el diálogo. */
+  const projectDeleteLockRef = useRef(false);
   const [navigationStack, setNavigationStack] = useState<string[]>([]);
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, nodeId?: string } | null>(null);
 
@@ -2013,6 +2019,8 @@ const SpacesContent = () => {
 
         case 'x': addNode('crop'); break;
         case 'z': addNode('bezierMask'); break;
+        /** Presenter — `;` (g ya reservada para agrupar en el lienzo). */
+        case ';': addNode('presenter'); break;
         // ── Canvas actions ───────────────────────────────────────────────
         // F = Designer; Mayús+F = encuadrar todo el grafo. Listado = J.
         case 'f':
@@ -2725,7 +2733,7 @@ const SpacesContent = () => {
       setAssistantCostApproval(null);
       return true;
     }
-    if (showSaveModal || showLoadModal || projectToDelete) return false;
+    if (showSaveModal || showLoadModal || projectToDelete || projectDeleteInProgress) return false;
     if (windowMode) {
       setWindowMode(false);
       setViewerSourceNodeId(null);
@@ -2746,6 +2754,7 @@ const SpacesContent = () => {
     showSaveModal,
     showLoadModal,
     projectToDelete,
+    projectDeleteInProgress,
     windowMode,
     contextMenu,
     activeSpaceId,
@@ -2965,9 +2974,13 @@ const SpacesContent = () => {
     })();
   };
 
-  const deleteProject = async (idToDelete: string) => {
+  const deleteProject = async (idToDelete: string): Promise<boolean> => {
     try {
       const res = await fetch(`/api/spaces?id=${idToDelete}`, { method: 'DELETE' });
+      if (!res.ok) {
+        console.error('[deleteProject] HTTP', res.status, await res.text().catch(() => ''));
+        return false;
+      }
       const data = await readResponseJson<any[]>(res, 'DELETE /api/spaces');
       if (Array.isArray(data)) setSavedProjects(data);
       if (activeProjectId === idToDelete) {
@@ -2976,8 +2989,10 @@ const SpacesContent = () => {
         setCurrentName('');
         setSpacesMap({});
       }
+      return true;
     } catch (err) {
       console.error('Delete error:', err);
+      return false;
     }
   };
 
@@ -4642,25 +4657,8 @@ const SpacesContent = () => {
                   : 'pointer-events-auto flex w-full min-w-0 flex-1 items-center justify-between gap-3'
               }
             >
-              {/* Quick Actions */}
+              {/* Quick Actions — Designer / Presenter / Image / Video / VFX: barra inferior (`TopbarPins`) */}
               <div className="flex shrink-0 gap-1.5">
-                {isAuthenticated && !windowMode && (
-                  <button
-                    type="button"
-                    title="Designer (F). Doble clic para añadir nodo al lienzo."
-                    className="group relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-violet-400/25 bg-violet-500/[0.08] text-slate-700 shadow-sm backdrop-blur-xl transition-all hover:scale-105 hover:border-violet-400/40 hover:bg-violet-500/[0.14] hover:text-slate-900"
-                    onDoubleClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      addNodeFromTopbarPinDoubleClick('designer');
-                    }}
-                  >
-                    {React.createElement(TOPBAR_GLYPH_BY_NODE_TYPE.designer, {
-                      size: 18,
-                      className: 'text-violet-800/90 group-hover:text-violet-950 dark:text-violet-200/95 dark:group-hover:text-violet-100',
-                    })}
-                  </button>
-                )}
                 <div className="flex overflow-hidden rounded-xl border border-white/25 bg-white/[0.08] shadow-sm backdrop-blur-xl">
                   <button
                     type="button"
@@ -4768,20 +4766,26 @@ const SpacesContent = () => {
                   )}
                 </button>
                 <button
-                  onClick={() => setShowLoadModal(true)}
-                  title="My Spaces"
-                  className="group flex h-10 w-10 items-center justify-center rounded-xl border border-white/25 bg-white/[0.08] text-slate-700 shadow-sm backdrop-blur-xl transition-all hover:scale-105 hover:bg-white/[0.15] hover:text-slate-900"
+                  type="button"
+                  onClick={() => !projectDeleteInProgress && setShowLoadModal(true)}
+                  disabled={!!projectDeleteInProgress}
+                  title={projectDeleteInProgress ? 'Espera a que termine el borrado' : 'My Spaces'}
+                  className="group flex h-10 w-10 items-center justify-center rounded-xl border border-white/25 bg-white/[0.08] text-slate-700 shadow-sm backdrop-blur-xl transition-all hover:scale-105 hover:bg-white/[0.15] hover:text-slate-900 disabled:pointer-events-none disabled:opacity-40"
                 >
                   <FolderOpen size={16} className="text-slate-700 group-hover:text-slate-900" />
                 </button>
                 <button
                   type="button"
-                  onClick={() => (activeProjectId ? void saveProject() : setShowSaveModal(true))}
-                  disabled={isSaving}
+                  onClick={() =>
+                    !projectDeleteInProgress && (activeProjectId ? void saveProject() : setShowSaveModal(true))
+                  }
+                  disabled={isSaving || !!projectDeleteInProgress}
                   title={
-                    activeProjectId
-                      ? 'Guardar cambios en el proyecto actual'
-                      : 'Guardar proyecto (elige nombre si es nuevo)'
+                    projectDeleteInProgress
+                      ? 'Espera a que termine el borrado'
+                      : activeProjectId
+                        ? 'Guardar cambios en el proyecto actual'
+                        : 'Guardar proyecto (elige nombre si es nuevo)'
                   }
                   className={`flex h-10 items-center gap-2 rounded-xl border px-4 text-[9px] font-black uppercase tracking-widest shadow-sm backdrop-blur-xl transition-all hover:scale-105 disabled:opacity-50 ${
                     activeProjectId
@@ -4817,7 +4821,7 @@ const SpacesContent = () => {
           )}
         </div>
 
-        {/* Barra inferior: accesos fijos (Designer, imagen, vídeo, VFX) */}
+        {/* Barra inferior: accesos fijos (Designer, Presenter, Image, Video, VFX) */}
         {isAuthenticated && !windowMode && (
           <div
             data-foldder-top-hud
@@ -5090,24 +5094,27 @@ const SpacesContent = () => {
                         <div className="flex shrink-0 items-center gap-1">
                           <button
                             type="button"
-                            onClick={() => duplicateProject(project)}
+                            onClick={() => !projectDeleteInProgress && void duplicateProject(project)}
+                            disabled={!!projectDeleteInProgress}
                             title="Duplicate"
-                            className="rounded-lg border border-white/20 bg-white/12 p-1.5 text-slate-500 transition-all hover:border-sky-400/50 hover:bg-white/35 hover:text-sky-600"
+                            className="rounded-lg border border-white/20 bg-white/12 p-1.5 text-slate-500 transition-all hover:border-sky-400/50 hover:bg-white/35 hover:text-sky-600 disabled:pointer-events-none disabled:opacity-40"
                           >
                             <Copy size={13} />
                           </button>
                           <button
                             type="button"
-                            onClick={() => setProjectToDelete(project)}
+                            onClick={() => !projectDeleteInProgress && setProjectToDelete(project)}
+                            disabled={!!projectDeleteInProgress}
                             title="Delete"
-                            className="rounded-lg border border-white/20 bg-white/12 p-1.5 text-slate-500 transition-all hover:border-rose-400/50 hover:bg-white/35 hover:text-rose-600"
+                            className="rounded-lg border border-white/20 bg-white/12 p-1.5 text-slate-500 transition-all hover:border-rose-400/50 hover:bg-white/35 hover:text-rose-600 disabled:pointer-events-none disabled:opacity-40"
                           >
                             <Trash2 size={13} />
                           </button>
                           <button
                             type="button"
-                            onClick={() => loadProject(project)}
-                            className="rounded-lg border border-white/25 bg-white/35 px-3 py-1.5 text-[9px] font-black uppercase tracking-widest text-slate-800 shadow-sm transition-all hover:border-slate-400/40 hover:bg-white/50"
+                            onClick={() => !projectDeleteInProgress && loadProject(project)}
+                            disabled={!!projectDeleteInProgress}
+                            className="rounded-lg border border-white/25 bg-white/35 px-3 py-1.5 text-[9px] font-black uppercase tracking-widest text-slate-800 shadow-sm transition-all hover:border-slate-400/40 hover:bg-white/50 disabled:pointer-events-none disabled:opacity-40"
                           >
                             Load
                           </button>
@@ -5158,17 +5165,31 @@ const SpacesContent = () => {
                 <button
                   type="button"
                   onClick={() => setProjectToDelete(null)}
-                  className="flex-1 rounded-xl border border-white/25 bg-white/15 py-2 text-[10px] font-black uppercase tracking-widest text-slate-800 transition-all hover:bg-white/35"
+                  disabled={!!projectDeleteInProgress}
+                  className="flex-1 rounded-xl border border-white/25 bg-white/15 py-2 text-[10px] font-black uppercase tracking-widest text-slate-800 transition-all hover:bg-white/35 disabled:opacity-40"
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
                   onClick={() => {
-                    deleteProject(projectToDelete.id);
+                    if (projectDeleteLockRef.current) return;
+                    projectDeleteLockRef.current = true;
+                    const id = projectToDelete.id as string;
+                    const name = String(projectToDelete.name ?? '');
                     setProjectToDelete(null);
+                    setProjectDeleteInProgress({ projectName: name });
+                    void (async () => {
+                      try {
+                        await deleteProject(id);
+                      } finally {
+                        setProjectDeleteInProgress(null);
+                        projectDeleteLockRef.current = false;
+                      }
+                    })();
                   }}
-                  className="flex-1 rounded-xl border border-rose-500/45 bg-rose-600 py-2 text-[10px] font-black uppercase tracking-widest text-white shadow-md shadow-rose-900/20 transition-all hover:bg-rose-500 hover:brightness-105"
+                  disabled={!!projectDeleteInProgress}
+                  className="flex-1 rounded-xl border border-rose-500/45 bg-rose-600 py-2 text-[10px] font-black uppercase tracking-widest text-white shadow-md shadow-rose-900/20 transition-all hover:bg-rose-500 hover:brightness-105 disabled:opacity-50"
                 >
                   Delete
                 </button>
@@ -5176,6 +5197,37 @@ const SpacesContent = () => {
             </div>
           </div>
         )}
+
+        {typeof document !== 'undefined' &&
+          projectDeleteInProgress &&
+          createPortal(
+            <div
+              className="fixed inset-0 z-[100070] flex items-center justify-center bg-[#07090c]/82 backdrop-blur-[3px]"
+              role="alertdialog"
+              aria-busy="true"
+              aria-live="polite"
+              aria-labelledby="spaces-delete-progress-title"
+            >
+              <div className="pointer-events-none mx-6 flex max-w-md flex-col items-center gap-5 rounded-2xl border border-white/[0.09] bg-[#12151a]/96 px-9 py-8 shadow-[0_24px_80px_rgba(0,0,0,0.55)] ring-1 ring-rose-500/25">
+                <div className="text-center">
+                  <p id="spaces-delete-progress-title" className="text-[15px] font-semibold tracking-tight text-white">
+                    Eliminando proyecto
+                  </p>
+                  <p className="mt-1.5 truncate text-[12px] text-zinc-300" title={projectDeleteInProgress.projectName}>
+                    &quot;{projectDeleteInProgress.projectName}&quot;
+                  </p>
+                  <p className="mt-2 max-w-sm text-[11px] leading-relaxed text-zinc-500">
+                    Borrando el proyecto en el servidor y los assets en la nube. Puede tardar un poco; no inicies otro
+                    borrado hasta que termine.
+                  </p>
+                </div>
+                <div className="h-[5px] w-[min(360px,85vw)] overflow-hidden rounded-full bg-zinc-800/95 ring-1 ring-white/[0.07]">
+                  <div className="spaces-delete-indeterminate-bar h-full min-h-[5px]" />
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )}
       </div>
       </div>
     </div>

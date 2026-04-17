@@ -7,6 +7,8 @@ import { NODE_REGISTRY } from "@/app/spaces/nodeRegistry";
 export const HANDLE_DROP_MAP: Record<string, string> = {
   "prompt:source": "enhancer",
   "prompt:target": "promptInput",
+  /** Salida document (json) del Designer → suelta en el lienzo crea Presenter. */
+  "json:source": "presenter",
   "image:source": "imageExport",
   "image:target": "nanoBanana",
   "video:source": "imageExport",
@@ -120,6 +122,8 @@ export function defaultDataForCanvasDropNode(nodeType: string): Record<string, u
         alphaMode: "auto",
         maxResolution: 1080,
       };
+    case "presenter":
+      return { label: "Presenter" };
     default:
       return { label: "" };
   }
