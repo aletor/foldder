@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react";
 import type { DesignerStudioApi, FreehandObject } from "../FreehandStudio";
 import type { DesignerPageState } from "./DesignerNode";
 import {
@@ -20,9 +20,9 @@ export type DesignerOptimizeProgressState = {
 };
 
 type Params = {
-  studioApiRef: React.MutableRefObject<DesignerStudioApi | null>;
-  pagesRef: React.MutableRefObject<DesignerPageState[]>;
-  activeIdxRef: React.MutableRefObject<number>;
+  studioApiRef: MutableRefObject<DesignerStudioApi | null>;
+  pagesRef: MutableRefObject<DesignerPageState[]>;
+  activeIdxRef: MutableRefObject<number>;
   setPages: React.Dispatch<React.SetStateAction<DesignerPageState[]>>;
   designerSpaceId: string | null;
   autoImageOptimization: boolean;

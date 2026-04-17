@@ -58,19 +58,6 @@ export async function presignKnowledgeFileKeys(keys: string[]): Promise<Record<s
   return payload.urls && typeof payload.urls === "object" ? payload.urls : {};
 }
 
-function patchImageContentInObjects(
-  objs: FreehandObject[],
-  predicate: (c: NonNullable<FreehandObject["imageFrameContent"]>) => boolean,
-  patch: (c: NonNullable<FreehandObject["imageFrameContent"]>) => NonNullable<FreehandObject["imageFrameContent"]>,
-): FreehandObject[] {
-  return objs.map((o) => {
-    if (!o.isImageFrame || !o.imageFrameContent) return o;
-    const c = o.imageFrameContent;
-    if (!predicate(c)) return o;
-    return { ...o, imageFrameContent: patch({ ...c }) } as FreehandObject;
-  });
-}
-
 /** Recorre objetos anidados (boolean, clip). */
 function patchAllImageContents(
   objs: FreehandObject[],
