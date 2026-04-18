@@ -239,10 +239,12 @@ function PresenterVideoOverlaySlice({
   pageClipUrl,
   binding,
   target,
+  onPickPresenterTarget,
 }: {
   pageClipUrl: string;
   binding: PresenterImageVideoCanvasBinding;
   target: PresenterImageTarget;
+  onPickPresenterTarget?: (pickKey: string, mods: PickPointerModifiers) => void;
 }) {
   return (
     <g clipPath={pageClipUrl} style={{ pointerEvents: "auto" }}>
@@ -256,6 +258,7 @@ function PresenterVideoOverlaySlice({
         onUpsert={binding.onUpsert}
         onPatch={binding.onPatch}
         onRemove={binding.onRemove}
+        onPickPresenterTarget={onPickPresenterTarget}
       />
     </g>
   );
@@ -515,19 +518,18 @@ export function DesignerPageCanvasView({
               </g>
             </g>
             {presenterImageVideo && vt && (
-              <g clipPath={pageClipUrl} style={{ pointerEvents: "auto" }}>
-                <PresenterImageVideoOverlays
-                  pageId={presenterImageVideo.pageId}
-                  targets={[vt]}
-                  placements={presenterImageVideo.placements}
-                  uiMode={presenterImageVideo.uiMode}
-                  uploadingKey={presenterImageVideo.uploadingKey}
-                  onUploadBusy={presenterImageVideo.onUploadBusy}
-                  onUpsert={presenterImageVideo.onUpsert}
-                  onPatch={presenterImageVideo.onPatch}
-                  onRemove={presenterImageVideo.onRemove}
-                />
-              </g>
+              <PresenterVideoOverlaySlice
+                pageClipUrl={pageClipUrl}
+                binding={presenterImageVideo}
+                target={vt}
+                onPickPresenterTarget={
+                  allowPick && pickInteraction
+                    ? (pickKey, mods) => {
+                        pickInteraction.onPick(pickKey, mods);
+                      }
+                    : undefined
+                }
+              />
             )}
           </Fragment>
         );
@@ -577,6 +579,13 @@ export function DesignerPageCanvasView({
                     pageClipUrl={pageClipUrl}
                     binding={presenterImageVideo}
                     target={mvt}
+                    onPickPresenterTarget={
+                      allowPick && pickInteraction
+                        ? (pickKey, mods) => {
+                            pickInteraction.onPick(pickKey, mods);
+                          }
+                        : undefined
+                    }
                   />
                 );
               })}

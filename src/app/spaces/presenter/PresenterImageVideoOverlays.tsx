@@ -30,6 +30,8 @@ function clampRel(r: PresenterImageVideoRel): PresenterImageVideoRel {
   return { x, y, w, h };
 }
 
+type PickMods = { ctrlKey: boolean; metaKey: boolean };
+
 type Props = {
   pageId: string;
   targets: PresenterImageTarget[];
@@ -40,9 +42,14 @@ type Props = {
   onUpsert: (p: PresenterImageVideoPlacement) => void;
   onPatch: (id: string, patch: Partial<Pick<PresenterImageVideoPlacement, "rel">>) => void;
   onRemove: (id: string) => void;
+  /** Clic sobre el vídeo (sin arrastrar) delega la misma selección que el objeto imagen bajo el overlay. */
+  onPickPresenterTarget?: (pickKey: string, mods: PickMods) => void;
 };
 
 type DragKind = "move" | "resize-se" | "resize-nw";
+
+/** Por debajo de esto se considera «clic» para seleccionar animación; por encima, arrastre del vídeo. */
+const VIDEO_DRAG_THRESHOLD_PX = 5;
 
 export function PresenterImageVideoOverlays({
   pageId,
@@ -54,6 +61,7 @@ export function PresenterImageVideoOverlays({
   onUpsert,
   onPatch,
   onRemove,
+  onPickPresenterTarget,
 }: Props) {
   const fileRef = useRef<HTMLInputElement | null>(null);
   const pendingTargetId = useRef<string | null>(null);
@@ -232,6 +240,50 @@ export function PresenterImageVideoOverlays({
 
   const showEditor = uiMode === "edit";
 
+  const onVideoBodyPointerDown = useCallback(
+    (e: React.PointerEvent, t: PresenterImageTarget, pl: PresenterImageVideoPlacement) => {
+      if (!showEditor) return;
+      e.stopPropagation();
+      const sx = e.clientX;
+      const sy = e.clientY;
+      let dragStarted = false;
+      const pid = e.pointerId;
+      const mods: PickMods = { ctrlKey: e.ctrlKey, metaKey: e.metaKey };
+      const threshold2 = VIDEO_DRAG_THRESHOLD_PX * VIDEO_DRAG_THRESHOLD_PX;
+
+      const onMove = (ev: PointerEvent) => {
+        if (ev.pointerId !== pid) return;
+        const dx = ev.clientX - sx;
+        const dy = ev.clientY - sy;
+        if (!dragStarted && dx * dx + dy * dy > threshold2) {
+          dragStarted = true;
+          window.removeEventListener("pointermove", onMove);
+          window.removeEventListener("pointerup", onUp);
+          window.removeEventListener("pointercancel", onUp);
+          const root = document.getElementById(`pvid-root-${t.id}`) as HTMLDivElement | null;
+          if (root) {
+            bindDrag(root, "move", pl.id, { ...pl.rel }, ev.clientX, ev.clientY);
+          }
+        }
+      };
+
+      const onUp = (ev: PointerEvent) => {
+        if (ev.pointerId !== pid) return;
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        window.removeEventListener("pointercancel", onUp);
+        if (!dragStarted && onPickPresenterTarget) {
+          onPickPresenterTarget(t.pickKey, mods);
+        }
+      };
+
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onUp);
+    },
+    [bindDrag, onPickPresenterTarget, showEditor],
+  );
+
   const fileInputPortal =
     fileInputMounted && typeof document !== "undefined"
       ? createPortal(
@@ -378,13 +430,7 @@ export function PresenterImageVideoOverlays({
                         width: `${pl.rel.w * 100}%`,
                         height: `${pl.rel.h * 100}%`,
                       }}
-                      onPointerDown={(e) => {
-                        if (!showEditor) return;
-                        e.stopPropagation();
-                        const root = document.getElementById(`pvid-root-${t.id}`) as HTMLDivElement | null;
-                        if (!root) return;
-                        bindDrag(root, "move", pl.id, { ...pl.rel }, e.clientX, e.clientY);
-                      }}
+                      onPointerDown={(e) => onVideoBodyPointerDown(e, t, pl)}
                     >
                       <video
                         src={pl.videoUrl}

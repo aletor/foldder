@@ -1,8 +1,11 @@
 import type { FreehandObject } from "../FreehandStudio";
 import { buildObjTransform } from "../FreehandStudio";
+import { revealTargetKey } from "./presenter-group-animations";
 
 export type PresenterImageTarget = {
   id: string;
+  /** Clave de selección / pasos de animación (`object:…` / `group:…`), igual que en el lienzo. */
+  pickKey: string;
   x: number;
   y: number;
   width: number;
@@ -41,6 +44,7 @@ function pushImageLike(
 ): void {
   acc.push({
     id: o.id,
+    pickKey: revealTargetKey(o),
     x,
     y,
     width,
