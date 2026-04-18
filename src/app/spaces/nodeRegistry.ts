@@ -374,6 +374,17 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
       label: 'string (optional title on the card)',
     },
   },
+  projectAssets: {
+    type: 'projectAssets',
+    label: 'Assets',
+    description:
+      'Read-only summary of canvas media (imported vs generated) plus link to the Assets fullscreen library (same as the Assets bottom-bar pin).',
+    inputs: [],
+    outputs: [{ id: 'prompt', label: 'Prompt out', type: 'prompt' as HandleType }],
+    dataSchema: {
+      label: 'string (optional title on the card)',
+    },
+  },
   designer: {
     type: 'designer',
     label: 'Designer',
@@ -451,6 +462,8 @@ export const ASSISTANT_NODE_DATA_HINTS: Record<string, string> = {
   backgroundRemover: "threshold, expansion, feather",
   projectBrain:
     "label (título opcional); salida prompt reservada (sin texto aún); marca y conocimiento en metadata.assets — resume y abre studio",
+  projectAssets:
+    "label (título opcional); salida prompt reservada; inventario de medios desde el grafo — abre panel Assets (biblioteca)",
   designer:
     "pages (DesignerPageState[]), activePageIndex, label, value (export raster), autoImageOptimization; salida document (json) conecta a presenter",
   presenter:

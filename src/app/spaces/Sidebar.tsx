@@ -7,6 +7,7 @@ import { NODE_REGISTRY } from './nodeRegistry';
 import { NodeIcon, NodeIconMono } from './foldder-icons';
 import { SIDEBAR_HOVER_HELP } from './sidebarHoverHelp';
 import { NODE_KEYS } from './node-shortcuts';
+import { TopbarGlyphBrain } from './TopbarPinIcons';
 
 const LIBRARY_TIP_WIDTH = 260;
 /** Altura aproximada del tooltip para decidir si cabe encima del botón */
@@ -75,7 +76,11 @@ type SidebarProps = {
 function SidebarLibraryNodeIcon({ type, size = 25 }: { type: string; size?: number }) {
   return (
     <span className="inline-flex items-center justify-center drop-shadow-[0_1px_3px_rgba(0,0,0,0.5)]">
-      <NodeIcon type={type} size={size} colorOverride="#ffffff" />
+      {type === 'projectBrain' ? (
+        <TopbarGlyphBrain size={size} className="shrink-0 text-white" />
+      ) : (
+        <NodeIcon type={type} size={size} colorOverride="#ffffff" />
+      )}
     </span>
   );
 }
@@ -232,6 +237,7 @@ const Sidebar = ({
   if (windowMode) {
     const allNodes: ({ type: string; label: string } | null)[] = [
       { type: 'projectBrain',      label: 'Brain' },
+      { type: 'projectAssets',     label: 'Assets' },
       { type: 'mediaInput',        label: 'Asset' },
       { type: 'promptInput',       label: 'Prompt' },
       { type: 'background',        label: 'Canvas' },
@@ -366,6 +372,7 @@ const Sidebar = ({
               <div className="grid grid-cols-2 gap-2">
                 {[
                   { type: 'projectBrain', label: 'Brain' },
+                  { type: 'projectAssets', label: 'Assets' },
                   { type: 'mediaInput',  label: 'Asset' },
                   { type: 'promptInput', label: 'Prompt' },
                   { type: 'background',  label: 'Canvas' },

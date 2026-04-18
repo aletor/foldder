@@ -8,6 +8,10 @@ export const SIDEBAR_HOVER_HELP: Record<string, { title: string; line: string }>
     title: 'Brain',
     line: 'Resumen de marca y conocimiento (PDFs, enlaces); abre el studio para editar',
   },
+  projectAssets: {
+    title: 'Assets',
+    line: 'Resumen de medios del grafo (importados / generados); abre la biblioteca fullscreen',
+  },
   mediaInput: {
     title: 'Media Input',
     line: 'Subes archivo como material base',

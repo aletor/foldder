@@ -23,8 +23,8 @@ const DOCK_GAP_PX = 6 * 1.4;
 const DOCK_REST_MS = 300;
 const DOCK_REST_EASE = "cubic-bezier(0.25, 0.1, 0.25, 1)";
 
-/** Clic simple en Brain abre el panel tras esta espera; si es doble clic, se cancela y solo se añade el nodo. */
-const BRAIN_SINGLE_CLICK_OPEN_DELAY_MS = 280;
+/** Clic simple en Brain/Assets abre el panel tras esta espera; si es doble clic, se cancela y solo se añade el nodo. */
+const TOPBAR_PANEL_SINGLE_CLICK_OPEN_DELAY_MS = 280;
 
 /** Alto fijo del strip (tamaño “reposo” ~ icono pequeño); el zoom crece hacia arriba con overflow visible. */
 const DOCK_STRIP_H_SIDEBAR = "min-h-[2.7rem] h-[2.7rem]";
@@ -67,7 +67,7 @@ function dockLayoutSpreadPx(
 
 /**
  * Accesos fijos (no personalizables): Brain → Design → Present → Image → Video → VFX → Assets.
- * Assets no añade nodo; abre panel fullscreen. Brain: clic → panel; doble clic → nodo «Brain» en el lienzo. Orden estable.
+ * Brain y Assets: clic → panel fullscreen (tras breve espera); doble clic → nodo projectBrain / projectAssets en el lienzo. Orden estable.
  */
 export const TOPBAR_FIXED_PIN_TYPES = [
   "brain",
@@ -98,7 +98,7 @@ type TopbarPinsProps = {
   onBrainClick?: () => void;
   /** Clic en «Assets»: biblioteca multimedia (importados / generados). */
   onAssetsClick?: () => void;
-  /** Doble clic: añadir nodo al lienzo en hueco y encuadrar (no aplica a Brain ni Assets). */
+  /** Doble clic: añadir nodo (Brain → projectBrain, Assets → projectAssets, resto → tipo del pin). */
   onPinDoubleClick?: (nodeType: string) => void;
   /** Arrastre desde la librería: sin tooltip hover encima de la barra */
   paletteDragActive?: boolean;
@@ -153,12 +153,13 @@ function TopbarPinChip({
   const Glyph = TOPBAR_GLYPH_BY_NODE_TYPE[type];
   const isBrain = type === "brain";
   const isAssets = type === "files";
-  const isPanelPin = isAssets;
   const brainOpenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const assetsOpenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     return () => {
       if (brainOpenTimerRef.current) clearTimeout(brainOpenTimerRef.current);
+      if (assetsOpenTimerRef.current) clearTimeout(assetsOpenTimerRef.current);
     };
   }, []);
 
@@ -171,7 +172,7 @@ function TopbarPinChip({
           isBrain
             ? `${title}. Clic para abrir studio (marca y conocimiento). Doble clic para añadir el nodo Brain al lienzo.`
             : isAssets
-              ? `${title}. Clic para abrir la biblioteca multimedia del lienzo.`
+              ? `${title}. Clic para abrir la biblioteca multimedia. Doble clic para añadir el nodo Assets al lienzo.`
               : `${title}. Doble clic para añadir al lienzo.`
         }
         onClick={
@@ -191,29 +192,42 @@ function TopbarPinChip({
                 brainOpenTimerRef.current = setTimeout(() => {
                   brainOpenTimerRef.current = null;
                   onBrainClick?.();
-                }, BRAIN_SINGLE_CLICK_OPEN_DELAY_MS);
+                }, TOPBAR_PANEL_SINGLE_CLICK_OPEN_DELAY_MS);
               }
             : isAssets
               ? (e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  onAssetsClick?.();
+                  const detail = e.nativeEvent.detail;
+                  if (detail >= 2) {
+                    if (assetsOpenTimerRef.current) {
+                      clearTimeout(assetsOpenTimerRef.current);
+                      assetsOpenTimerRef.current = null;
+                    }
+                    return;
+                  }
+                  if (assetsOpenTimerRef.current) clearTimeout(assetsOpenTimerRef.current);
+                  assetsOpenTimerRef.current = setTimeout(() => {
+                    assetsOpenTimerRef.current = null;
+                    onAssetsClick?.();
+                  }, TOPBAR_PANEL_SINGLE_CLICK_OPEN_DELAY_MS);
                 }
               : undefined
         }
-        onDoubleClick={
-          isPanelPin
-            ? undefined
-            : (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                if (isBrain && brainOpenTimerRef.current) {
-                  clearTimeout(brainOpenTimerRef.current);
-                  brainOpenTimerRef.current = null;
-                }
-                onPinDoubleClick?.(isBrain ? "projectBrain" : type);
-              }
-        }
+        onDoubleClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (brainOpenTimerRef.current) {
+            clearTimeout(brainOpenTimerRef.current);
+            brainOpenTimerRef.current = null;
+          }
+          if (assetsOpenTimerRef.current) {
+            clearTimeout(assetsOpenTimerRef.current);
+            assetsOpenTimerRef.current = null;
+          }
+          const nodeType = isBrain ? "projectBrain" : isAssets ? "projectAssets" : type;
+          onPinDoubleClick?.(nodeType);
+        }}
       >
         <Glyph size={iconSize} className="shrink-0 text-white" />
         <span className={captionClassName}>{shortLabel}</span>
@@ -352,7 +366,7 @@ export function TopbarPins({
             : {}),
         }}
         role="toolbar"
-        aria-label="Accesos directos: Brain, Design, Present, Image, Video, VFX, Assets. Brain: clic abre el panel; doble clic añade el nodo Brain. Assets abre panel; en el resto, doble clic para añadir al lienzo."
+        aria-label="Accesos directos: Brain, Design, Present, Image, Video, VFX, Assets. Brain y Assets: clic abre el panel; doble clic añade el nodo en el lienzo. En el resto, doble clic para añadir al lienzo."
       >
         {TOPBAR_FIXED_PIN_TYPES.map((type, i) => {
           const ui = TOPBAR_PIN_UI[type];

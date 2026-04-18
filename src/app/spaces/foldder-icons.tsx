@@ -506,6 +506,7 @@ export const NODE_TYPE_TO_FOLDDER_ICON: Record<string, FoldderIconKey> = {
   designer: 'freehand',
   presenter: 'nano',
   projectBrain: 'brain',
+  projectAssets: 'asset',
 };
 
 export function resolveFoldderNodeState(opts: {

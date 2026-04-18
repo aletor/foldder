@@ -9466,4 +9466,5 @@ export const BezierMaskNode = memo(({ id, data, selected }: NodeProps<any>) => {
 export { VfxGeneratorNode } from "./VfxGeneratorNode";
 export { DesignerNode } from "./designer/DesignerNode";
 export { ProjectBrainNode } from "./ProjectBrainNode";
+export { ProjectAssetsNode } from "./ProjectAssetsNode";
 export { PresenterNode } from "./presenter/PresenterNode";

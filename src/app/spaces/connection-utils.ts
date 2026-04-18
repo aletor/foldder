@@ -280,6 +280,7 @@ const DEFAULT_W: Record<string, number> = {
   vfxGenerator: 340,
   space: 320,
   projectBrain: 260,
+  projectAssets: 260,
 };
 
 export function estimateNodeWidth(node: Node): number {
