@@ -231,6 +231,7 @@ const Sidebar = ({
   // ── WINDOW MODE: compact horizontal icon bar ───────────────────────────
   if (windowMode) {
     const allNodes: ({ type: string; label: string } | null)[] = [
+      { type: 'projectBrain',      label: 'Brain' },
       { type: 'mediaInput',        label: 'Asset' },
       { type: 'promptInput',       label: 'Prompt' },
       { type: 'background',        label: 'Canvas' },
@@ -364,6 +365,7 @@ const Sidebar = ({
               </h3>
               <div className="grid grid-cols-2 gap-2">
                 {[
+                  { type: 'projectBrain', label: 'Brain' },
                   { type: 'mediaInput',  label: 'Asset' },
                   { type: 'promptInput', label: 'Prompt' },
                   { type: 'background',  label: 'Canvas' },

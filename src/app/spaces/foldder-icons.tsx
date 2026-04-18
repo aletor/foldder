@@ -29,7 +29,8 @@ export type FoldderIconKey =
   | 'text'
   | 'crop'
   | 'mask'
-  | 'freehand';
+  | 'freehand'
+  | 'brain';
 
 type GlyphProps = {
   state?: FoldderNodeIconState;
@@ -233,6 +234,26 @@ export function FoldderEnhance({ state, className, size }: GlyphProps) {
   );
 }
 
+/** Proyecto: marca + conocimiento (Brain) */
+export function FoldderBrain({ state, className, size }: GlyphProps) {
+  return (
+    <FoldderIcon state={state} className={className} size={size}>
+      <path
+        d="M4.75 7.25c0-1.35 1-2.45 2.35-2.45.35 0 .7.1 1 .25.35-.55.95-.9 1.65-.9.95 0 1.75.75 1.75 1.7 0 .15 0 .3-.05.45.35.2.6.55.75.95.85.15 1.5.85 1.5 1.75 0 .95-.75 1.75-1.7 1.75h-.35c-.2.65-.8 1.1-1.5 1.1-.25 0-.5-.05-.7-.15-.35.45-.9.75-1.55.75-.55 0-1.05-.2-1.4-.55-.35.25-.8.4-1.3.4-1.1 0-2-.85-2-1.95 0-.35.1-.65.25-.95z"
+        opacity={0.92}
+        strokeWidth={1.2}
+        fill="none"
+      />
+      <path
+        d="M9.5 4.35c.55-.35 1.2-.55 1.9-.55 1.65 0 3 1.2 3 2.7 0 1.05-.7 1.95-1.75 2.35.05.2.1.45.1.65 0 1.35-1.15 2.45-2.55 2.45-.75 0-1.45-.35-1.95-.9"
+        opacity={0.88}
+        strokeWidth={1.2}
+        fill="none"
+      />
+    </FoldderIcon>
+  );
+}
+
 /** Structural intelligence — lattice / reasoning */
 export function FoldderGrok({ state, className, size }: GlyphProps) {
   return (
@@ -428,6 +449,7 @@ export const FOLDDER_ICON_COLORS: Record<FoldderIconKey, string> = {
   crop: '#fde68a',
   mask: '#99f6e4',
   freehand: '#22d3ee',
+  brain: '#c084fc',
 };
 
 export const FOLDDER_NODE_ICONS: Record<FoldderIconKey, React.FC<GlyphProps>> = {
@@ -453,6 +475,7 @@ export const FOLDDER_NODE_ICONS: Record<FoldderIconKey, React.FC<GlyphProps>> = 
   crop: FoldderCrop,
   mask: FoldderMask,
   freehand: FoldderFreehand,
+  brain: FoldderBrain,
 };
 
 /** React Flow node `type` → icon grammar */
@@ -482,6 +505,7 @@ export const NODE_TYPE_TO_FOLDDER_ICON: Record<string, FoldderIconKey> = {
   canvasGroup: 'layout',
   designer: 'freehand',
   presenter: 'nano',
+  projectBrain: 'brain',
 };
 
 export function resolveFoldderNodeState(opts: {

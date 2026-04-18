@@ -124,6 +124,8 @@ export function defaultDataForCanvasDropNode(nodeType: string): Record<string, u
       };
     case "presenter":
       return { label: "Presenter" };
+    case "projectBrain":
+      return { label: "Brain" };
     default:
       return { label: "" };
   }

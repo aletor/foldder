@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { TOPBAR_GLYPH_BY_NODE_TYPE } from "./TopbarPinIcons";
 
 /** Iconos en la barra inferior — glyph dedicado + pie de etiqueta (icono predominante). */
@@ -22,6 +22,9 @@ const DOCK_GAP_PX = 6 * 1.4;
 /** Vuelta al reposo del dock (sin transición durante el seguimiento del puntero). */
 const DOCK_REST_MS = 300;
 const DOCK_REST_EASE = "cubic-bezier(0.25, 0.1, 0.25, 1)";
+
+/** Clic simple en Brain abre el panel tras esta espera; si es doble clic, se cancela y solo se añade el nodo. */
+const BRAIN_SINGLE_CLICK_OPEN_DELAY_MS = 280;
 
 /** Alto fijo del strip (tamaño “reposo” ~ icono pequeño); el zoom crece hacia arriba con overflow visible. */
 const DOCK_STRIP_H_SIDEBAR = "min-h-[2.7rem] h-[2.7rem]";
@@ -64,7 +67,7 @@ function dockLayoutSpreadPx(
 
 /**
  * Accesos fijos (no personalizables): Brain → Design → Present → Image → Video → VFX → Assets.
- * Brain y Assets no añaden nodo; abren paneles fullscreen. Orden estable.
+ * Assets no añade nodo; abre panel fullscreen. Brain: clic → panel; doble clic → nodo «Brain» en el lienzo. Orden estable.
  */
 export const TOPBAR_FIXED_PIN_TYPES = [
   "brain",
@@ -150,7 +153,14 @@ function TopbarPinChip({
   const Glyph = TOPBAR_GLYPH_BY_NODE_TYPE[type];
   const isBrain = type === "brain";
   const isAssets = type === "files";
-  const isPanelPin = isBrain || isAssets;
+  const isPanelPin = isAssets;
+  const brainOpenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (brainOpenTimerRef.current) clearTimeout(brainOpenTimerRef.current);
+    };
+  }, []);
 
   return (
     <div className="relative shrink-0 group/pin pt-3 -mt-3 pb-0.5 overflow-visible">
@@ -159,7 +169,7 @@ function TopbarPinChip({
         className={chipClassName}
         aria-label={
           isBrain
-            ? `${title}. Clic para abrir identidad de marca y fuente de conocimiento.`
+            ? `${title}. Clic para abrir studio (marca y conocimiento). Doble clic para añadir el nodo Brain al lienzo.`
             : isAssets
               ? `${title}. Clic para abrir la biblioteca multimedia del lienzo.`
               : `${title}. Doble clic para añadir al lienzo.`
@@ -169,7 +179,19 @@ function TopbarPinChip({
             ? (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                onBrainClick?.();
+                const detail = e.nativeEvent.detail;
+                if (detail >= 2) {
+                  if (brainOpenTimerRef.current) {
+                    clearTimeout(brainOpenTimerRef.current);
+                    brainOpenTimerRef.current = null;
+                  }
+                  return;
+                }
+                if (brainOpenTimerRef.current) clearTimeout(brainOpenTimerRef.current);
+                brainOpenTimerRef.current = setTimeout(() => {
+                  brainOpenTimerRef.current = null;
+                  onBrainClick?.();
+                }, BRAIN_SINGLE_CLICK_OPEN_DELAY_MS);
               }
             : isAssets
               ? (e) => {
@@ -185,7 +207,11 @@ function TopbarPinChip({
             : (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                onPinDoubleClick?.(type);
+                if (isBrain && brainOpenTimerRef.current) {
+                  clearTimeout(brainOpenTimerRef.current);
+                  brainOpenTimerRef.current = null;
+                }
+                onPinDoubleClick?.(isBrain ? "projectBrain" : type);
               }
         }
       >
@@ -326,7 +352,7 @@ export function TopbarPins({
             : {}),
         }}
         role="toolbar"
-        aria-label="Accesos directos: Brain, Design, Present, Image, Video, VFX, Assets. Brain y Assets abren paneles; en el resto, doble clic para añadir al lienzo."
+        aria-label="Accesos directos: Brain, Design, Present, Image, Video, VFX, Assets. Brain: clic abre el panel; doble clic añade el nodo Brain. Assets abre panel; en el resto, doble clic para añadir al lienzo."
       >
         {TOPBAR_FIXED_PIN_TYPES.map((type, i) => {
           const ui = TOPBAR_PIN_UI[type];

@@ -279,6 +279,7 @@ const DEFAULT_W: Record<string, number> = {
   geminiVideo: 340,
   vfxGenerator: 340,
   space: 320,
+  projectBrain: 260,
 };
 
 export function estimateNodeWidth(node: Node): number {

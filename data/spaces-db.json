@@ -8,11 +8,105 @@
         "id": "root",
         "nodes": [
           {
+            "id": "promptInput_1776524949925",
+            "type": "promptInput",
+            "position": {
+              "x": 1698.6170199514443,
+              "y": 543.999694733425
+            },
+            "data": {
+              "label": "",
+              "value": "mujer salta"
+            },
+            "measured": {
+              "width": 260,
+              "height": 66
+            },
+            "selected": false,
+            "zIndex": 8,
+            "style": {
+              "--foldder-node-output-color": "#3b82f6",
+              "--foldder-node-header-tint-color": "#94a3b8"
+            },
+            "dragging": false
+          },
+          {
+            "id": "nanoBanana_1776524959988",
+            "type": "nanoBanana",
+            "position": {
+              "x": 2065.117908224397,
+              "y": 285.5169408359931
+            },
+            "data": {
+              "label": "",
+              "modelKey": "flash31",
+              "aspect_ratio": "16:9",
+              "resolution": "4k",
+              "value": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/1776524996089-gemini_flash31_793f1dd2-5efd-422d-9a2b-0d05cc78535a.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T195624Z&X-Amz-Expires=3600&X-Amz-Signature=31637205a5b4ddf6500db7ab6cebcb3da7fdcf85b68713a8d766432b4c41b8ae&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+              "type": "image",
+              "s3Key": "knowledge-files/1776524996089-gemini_flash31_793f1dd2-5efd-422d-9a2b-0d05cc78535a.png",
+              "generationHistory": [
+                "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/1776524996089-gemini_flash31_793f1dd2-5efd-422d-9a2b-0d05cc78535a.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T195631Z&X-Amz-Expires=3600&X-Amz-Signature=90490b6dae3bd834b8366099b2224b5e2c39841b11de2271f25d9bc29a6ddc2e&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject"
+              ],
+              "_assetVersions": [
+                {
+                  "url": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/1776524996089-gemini_flash31_793f1dd2-5efd-422d-9a2b-0d05cc78535a.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T195624Z&X-Amz-Expires=3600&X-Amz-Signature=31637205a5b4ddf6500db7ab6cebcb3da7fdcf85b68713a8d766432b4c41b8ae&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+                  "source": "graph-run",
+                  "timestamp": 1776524999776,
+                  "s3Key": "knowledge-files/1776524996089-gemini_flash31_793f1dd2-5efd-422d-9a2b-0d05cc78535a.png"
+                }
+              ]
+            },
+            "style": {
+              "width": 853,
+              "height": 480,
+              "--foldder-node-output-color": "#6C5CE7",
+              "--foldder-node-header-tint-color": "#6C5CE7"
+            },
+            "measured": {
+              "width": 853,
+              "height": 480
+            },
+            "selected": true,
+            "dragging": false,
+            "zIndex": 21
+          },
+          {
+            "id": "canvasGroup_1776542115716_dhzcxv",
+            "type": "canvasGroup",
+            "position": {
+              "x": 800.3178114214204,
+              "y": 202.7388749731084
+            },
+            "style": {
+              "width": 805.4625609292426,
+              "height": 354,
+              "--foldder-node-output-color": "#94a3b8",
+              "--foldder-node-header-tint-color": "#94a3b8"
+            },
+            "data": {
+              "label": "Grupo de prompts",
+              "collapsed": false,
+              "memberIds": [
+                "designer_1776264644099",
+                "node_1776447747662_376"
+              ]
+            },
+            "draggable": true,
+            "selectable": true,
+            "selected": false,
+            "measured": {
+              "width": 805,
+              "height": 354
+            },
+            "dragging": false
+          },
+          {
             "id": "designer_1776264644099",
             "type": "designer",
             "position": {
-              "x": 761.6085628059242,
-              "y": 255.7391876102567
+              "x": 28,
+              "y": 68
             },
             "data": {
               "label": "",
@@ -2370,7 +2464,7 @@
                       "rx": 0,
                       "isImageFrame": true,
                       "imageFrameContent": {
-                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776378320250_1_msmff9q_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T123615Z&X-Amz-Expires=3600&X-Amz-Signature=2106619b66116d3b042a3195960bc7bc1e5727e12075902ad8eb67b06507bafb&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776378320250_1_msmff9q_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T195624Z&X-Amz-Expires=3600&X-Amz-Signature=1eeb0aa505d9cff2778ffbbcc03f1331132702a8558c4c191514f2e6a439370f&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
                         "s3Key": "knowledge-files/spaces/orphan/designer/ds_1776378320250_1_msmff9q_OPT.jpg",
                         "s3KeyHr": "knowledge-files/spaces/orphan/designer/ds_1776378320250_1_msmff9q_HR.jpg",
                         "designerAssetId": "ds_1776378320250_1_msmff9q",
@@ -2410,7 +2504,7 @@
                       "rx": 0,
                       "isImageFrame": true,
                       "imageFrameContent": {
-                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776378379294_2_vujrjnx_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T123615Z&X-Amz-Expires=3600&X-Amz-Signature=6694bff16d5f9394b6806cd845002434348205bdff255d54beaef01dfdb97c40&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776378379294_2_vujrjnx_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T195624Z&X-Amz-Expires=3600&X-Amz-Signature=cebc8418bbc0a0390f5d98cc7b0f1cae066a2369bbc4816d16123787f3b976ea&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
                         "s3Key": "knowledge-files/spaces/orphan/designer/ds_1776378379294_2_vujrjnx_OPT.jpg",
                         "s3KeyHr": "knowledge-files/spaces/orphan/designer/ds_1776378379294_2_vujrjnx_HR.jpg",
                         "designerAssetId": "ds_1776378379294_2_vujrjnx",
@@ -4021,7 +4115,7 @@
                       "rx": 0,
                       "isImageFrame": true,
                       "imageFrameContent": {
-                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776378398649_3_sev4l9k_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T123615Z&X-Amz-Expires=3600&X-Amz-Signature=2f7c2fcb1fdc65e48066a791055a76401d2ce902e15759564710661f1f87fb63&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776378398649_3_sev4l9k_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T195624Z&X-Amz-Expires=3600&X-Amz-Signature=ed44aa977f48a8f4227ff09bb101b53256cbf7282f44f4863bc22fa7dda38b43&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
                         "s3Key": "knowledge-files/spaces/orphan/designer/ds_1776378398649_3_sev4l9k_OPT.jpg",
                         "s3KeyHr": "knowledge-files/spaces/orphan/designer/ds_1776378398649_3_sev4l9k_HR.jpg",
                         "designerAssetId": "ds_1776378398649_3_sev4l9k",
@@ -4061,7 +4155,7 @@
                       "rx": 0,
                       "isImageFrame": true,
                       "imageFrameContent": {
-                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776382551115_2_4z5mq9p_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T123615Z&X-Amz-Expires=3600&X-Amz-Signature=dcef61475a7668ca386e687e81af7f3d4c54b7e8f974b12dc202ec21e1a9c252&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776382551115_2_4z5mq9p_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T195624Z&X-Amz-Expires=3600&X-Amz-Signature=f690d09f95f7c46ea387f4996fb759a07157355c18816a8e069bd6ad35a113ec&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
                         "s3Key": "knowledge-files/spaces/orphan/designer/ds_1776382551115_2_4z5mq9p_OPT.jpg",
                         "s3KeyOpt": "knowledge-files/spaces/orphan/designer/ds_1776382551115_2_4z5mq9p_OPT.jpg",
                         "designerAssetId": "ds_1776382551115_2_4z5mq9p",
@@ -4100,7 +4194,7 @@
                       "rx": 0,
                       "isImageFrame": true,
                       "imageFrameContent": {
-                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776378438446_5_4gyp46u_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T123615Z&X-Amz-Expires=3600&X-Amz-Signature=8c3c62b873c21a3969517411ad3f3c18f349d5f6ad5ca1ef4d7bd42c9c86c641&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776378438446_5_4gyp46u_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T195624Z&X-Amz-Expires=3600&X-Amz-Signature=e7e653ffa18796596ddbe36c27cecabf9aad50f7071b19aec96d9f421a2fc1d9&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
                         "s3Key": "knowledge-files/spaces/orphan/designer/ds_1776378438446_5_4gyp46u_OPT.jpg",
                         "s3KeyHr": "knowledge-files/spaces/orphan/designer/ds_1776378438446_5_4gyp46u_HR.png",
                         "designerAssetId": "ds_1776378438446_5_4gyp46u",
@@ -4140,7 +4234,7 @@
                       "rx": 0,
                       "isImageFrame": true,
                       "imageFrameContent": {
-                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776378526733_7_r32j4oy_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T123615Z&X-Amz-Expires=3600&X-Amz-Signature=4219309260c64b82f36cf8121a7bda5c604abcf0c07f66d4e597256cb0859a6b&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776378526733_7_r32j4oy_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T195624Z&X-Amz-Expires=3600&X-Amz-Signature=c9bcf806b2886e0312c8ef45524efe89bb0dde0540d7e618835fd89814cec1e5&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
                         "s3Key": "knowledge-files/spaces/orphan/designer/ds_1776378526733_7_r32j4oy_OPT.jpg",
                         "s3KeyHr": "knowledge-files/spaces/orphan/designer/ds_1776378526733_7_r32j4oy_HR.jpg",
                         "designerAssetId": "ds_1776378526733_7_r32j4oy",
@@ -4180,7 +4274,7 @@
                       "rx": 0,
                       "isImageFrame": true,
                       "imageFrameContent": {
-                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776378499146_6_9uphvyw_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T123615Z&X-Amz-Expires=3600&X-Amz-Signature=af36c22b1055513e763bcce0f678d9a3f58bc014eff257d870d0b755af63741f&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776378499146_6_9uphvyw_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T195624Z&X-Amz-Expires=3600&X-Amz-Signature=960cae01474e7dbb16b88b6b0f4422e49e0b1e31b6bd7332869d340ac056ef07&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
                         "s3Key": "knowledge-files/spaces/orphan/designer/ds_1776378499146_6_9uphvyw_OPT.jpg",
                         "s3KeyHr": "knowledge-files/spaces/orphan/designer/ds_1776378499146_6_9uphvyw_HR.png",
                         "designerAssetId": "ds_1776378499146_6_9uphvyw",
@@ -4220,7 +4314,7 @@
                       "rx": 0,
                       "isImageFrame": true,
                       "imageFrameContent": {
-                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776378413151_4_8b2zo82_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T123615Z&X-Amz-Expires=3600&X-Amz-Signature=4150e94ad9d931fb8f7c7ca249d74758212e54926ec73eaff642401ed54a8599&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776378413151_4_8b2zo82_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T195624Z&X-Amz-Expires=3600&X-Amz-Signature=d25d27b9a7ca0dd3934cc22451098707e8c3acaecb83afdb4bb149efe43325e4&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
                         "s3Key": "knowledge-files/spaces/orphan/designer/ds_1776378413151_4_8b2zo82_OPT.jpg",
                         "s3KeyHr": "knowledge-files/spaces/orphan/designer/ds_1776378413151_4_8b2zo82_HR.jpg",
                         "designerAssetId": "ds_1776378413151_4_8b2zo82",
@@ -4616,7 +4710,7 @@
                       "rx": 0,
                       "isImageFrame": true,
                       "imageFrameContent": {
-                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776379146398_8_mmlq1q1_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T123615Z&X-Amz-Expires=3600&X-Amz-Signature=4ab0291907ff669add84b473a09b7cc5fb355ce2f7ac374aae9f0d3fe2c14441&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776379146398_8_mmlq1q1_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T195624Z&X-Amz-Expires=3600&X-Amz-Signature=a769c97452e80cda221264dc58766bdbbf389b70c484df8c13ba063fb8af3f58&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
                         "s3Key": "knowledge-files/spaces/orphan/designer/ds_1776379146398_8_mmlq1q1_OPT.jpg",
                         "s3KeyHr": "knowledge-files/spaces/orphan/designer/ds_1776379146398_8_mmlq1q1_HR.jpg",
                         "designerAssetId": "ds_1776379146398_8_mmlq1q1",
@@ -5406,7 +5500,7 @@
                       "rx": 0,
                       "isImageFrame": true,
                       "imageFrameContent": {
-                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776379253152_13_uqi4vno_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T123615Z&X-Amz-Expires=3600&X-Amz-Signature=97e640de6a91656e5291515e343f58ca664a014fdcf67d60b5e07090a7ebe70e&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776379253152_13_uqi4vno_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T195624Z&X-Amz-Expires=3600&X-Amz-Signature=aedebe0725e471d92f3f76cae8652fd890cda53b078c646b1cb142fe2faf7561&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
                         "s3Key": "knowledge-files/spaces/orphan/designer/ds_1776379253152_13_uqi4vno_OPT.jpg",
                         "s3KeyHr": "knowledge-files/spaces/orphan/designer/ds_1776379253152_13_uqi4vno_HR.jpg",
                         "designerAssetId": "ds_1776379253152_13_uqi4vno",
@@ -5446,7 +5540,7 @@
                       "rx": 0,
                       "isImageFrame": true,
                       "imageFrameContent": {
-                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776379293874_14_k8uvurz_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T123615Z&X-Amz-Expires=3600&X-Amz-Signature=25c59e034d613047009fd8e694900f712e2485c3b3d505bce99be3974448a34b&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776379293874_14_k8uvurz_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T195624Z&X-Amz-Expires=3600&X-Amz-Signature=1afe5acc4da4b738a5bdf3914f7e0dadea496c75bd378a7c970e902ebac8180a&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
                         "s3Key": "knowledge-files/spaces/orphan/designer/ds_1776379293874_14_k8uvurz_OPT.jpg",
                         "s3KeyHr": "knowledge-files/spaces/orphan/designer/ds_1776379293874_14_k8uvurz_HR.jpg",
                         "designerAssetId": "ds_1776379293874_14_k8uvurz",
@@ -5486,7 +5580,7 @@
                       "rx": 0,
                       "isImageFrame": true,
                       "imageFrameContent": {
-                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776379189081_10_9mxybk2_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T123615Z&X-Amz-Expires=3600&X-Amz-Signature=5993cf1274eccc9b914f2ff0d3c829b983baa07c2514732c52765557fa3c20a8&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776379189081_10_9mxybk2_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T195624Z&X-Amz-Expires=3600&X-Amz-Signature=6b1ba4e5bfb56d162d542c65422d6e1b00645821ebc721684f529e8ab4e4236d&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
                         "s3Key": "knowledge-files/spaces/orphan/designer/ds_1776379189081_10_9mxybk2_OPT.jpg",
                         "s3KeyHr": "knowledge-files/spaces/orphan/designer/ds_1776379189081_10_9mxybk2_HR.jpg",
                         "designerAssetId": "ds_1776379189081_10_9mxybk2",
@@ -5526,7 +5620,7 @@
                       "rx": 0,
                       "isImageFrame": true,
                       "imageFrameContent": {
-                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776379248057_12_a361tju_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T123615Z&X-Amz-Expires=3600&X-Amz-Signature=d7f64b8dd6c51fcac778be057959d4c3459b989b15accf6bebcd37e01e7aa266&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776379248057_12_a361tju_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T195624Z&X-Amz-Expires=3600&X-Amz-Signature=e88fced852f583b938138853b949bd2e061ff55396118880cdbe73115e31699a&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
                         "s3Key": "knowledge-files/spaces/orphan/designer/ds_1776379248057_12_a361tju_OPT.jpg",
                         "s3KeyHr": "knowledge-files/spaces/orphan/designer/ds_1776379248057_12_a361tju_HR.jpg",
                         "designerAssetId": "ds_1776379248057_12_a361tju",
@@ -5566,7 +5660,7 @@
                       "rx": 0,
                       "isImageFrame": true,
                       "imageFrameContent": {
-                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776379210137_11_p9uvdza_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T123615Z&X-Amz-Expires=3600&X-Amz-Signature=92a5e134f2f86401d557bccf3c6d443a88f94a3b9ab3c881bb9a245f03084622&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776379210137_11_p9uvdza_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T195624Z&X-Amz-Expires=3600&X-Amz-Signature=91b88ec35c48ea54178d223c49b737c6693753e9419f4e78107461e8629d290e&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
                         "s3Key": "knowledge-files/spaces/orphan/designer/ds_1776379210137_11_p9uvdza_OPT.jpg",
                         "s3KeyHr": "knowledge-files/spaces/orphan/designer/ds_1776379210137_11_p9uvdza_HR.jpg",
                         "designerAssetId": "ds_1776379210137_11_p9uvdza",
@@ -5606,7 +5700,7 @@
                       "rx": 0,
                       "isImageFrame": true,
                       "imageFrameContent": {
-                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776379165358_9_pgs0h9h_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T123615Z&X-Amz-Expires=3600&X-Amz-Signature=cba13dafc45c899490b627efeda810fb6a49b315ec7088c5ef18153307092b7c&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776379165358_9_pgs0h9h_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T195624Z&X-Amz-Expires=3600&X-Amz-Signature=cddec50b859f219fc1b06cfc70759002921de302c54252e7f51e8075e09c4cd5&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
                         "s3Key": "knowledge-files/spaces/orphan/designer/ds_1776379165358_9_pgs0h9h_OPT.jpg",
                         "s3KeyHr": "knowledge-files/spaces/orphan/designer/ds_1776379165358_9_pgs0h9h_HR.jpg",
                         "designerAssetId": "ds_1776379165358_9_pgs0h9h",
@@ -5930,7 +6024,7 @@
                       "rx": 0,
                       "isImageFrame": true,
                       "imageFrameContent": {
-                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776379368374_15_r3j52ee_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T123615Z&X-Amz-Expires=3600&X-Amz-Signature=c741e7033caf1b44a413c391b788e0e73f1f6fd1eb0b54398c310a2c294a4f6a&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776379368374_15_r3j52ee_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T195624Z&X-Amz-Expires=3600&X-Amz-Signature=1ea6dc29ed2ed3cdc53a457d8c78480e73ff20bc948a0c4e2295916c6a4e9258&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
                         "s3Key": "knowledge-files/spaces/orphan/designer/ds_1776379368374_15_r3j52ee_OPT.jpg",
                         "s3KeyHr": "knowledge-files/spaces/orphan/designer/ds_1776379368374_15_r3j52ee_HR.jpg",
                         "designerAssetId": "ds_1776379368374_15_r3j52ee",
@@ -6744,7 +6838,7 @@
                       "rx": 0,
                       "isImageFrame": true,
                       "imageFrameContent": {
-                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776379439540_20_vbrnxld_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T123615Z&X-Amz-Expires=3600&X-Amz-Signature=a1803150ce85283c41755f75d4e373cc97249072c1ff780e495d4be7dbdd1a3c&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776379439540_20_vbrnxld_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T195624Z&X-Amz-Expires=3600&X-Amz-Signature=a7f5dc8fd40c8570df89c71fb06d2295f29c456442d21d514dce6464a552b591&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
                         "s3Key": "knowledge-files/spaces/orphan/designer/ds_1776379439540_20_vbrnxld_OPT.jpg",
                         "s3KeyHr": "knowledge-files/spaces/orphan/designer/ds_1776379439540_20_vbrnxld_HR.jpg",
                         "designerAssetId": "ds_1776379439540_20_vbrnxld",
@@ -6784,7 +6878,7 @@
                       "rx": 0,
                       "isImageFrame": true,
                       "imageFrameContent": {
-                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776379462493_21_8jbm4q9_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T123615Z&X-Amz-Expires=3600&X-Amz-Signature=c0d311e6a67a4f0c656b1161361cb55a0d5548b73366babaf0da9aafd0a9100a&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776379462493_21_8jbm4q9_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T195624Z&X-Amz-Expires=3600&X-Amz-Signature=74d01aa3b2ce0192af59cd2c72f49f0def8bac8293bc1278ba6660783e2e4b85&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
                         "s3Key": "knowledge-files/spaces/orphan/designer/ds_1776379462493_21_8jbm4q9_OPT.jpg",
                         "s3KeyHr": "knowledge-files/spaces/orphan/designer/ds_1776379462493_21_8jbm4q9_HR.jpg",
                         "designerAssetId": "ds_1776379462493_21_8jbm4q9",
@@ -6824,7 +6918,7 @@
                       "rx": 0,
                       "isImageFrame": true,
                       "imageFrameContent": {
-                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776379414409_18_ryk7yob_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T123615Z&X-Amz-Expires=3600&X-Amz-Signature=9bbb7ddbbf37b66a045bb7cf575fd841562603d9c6129bdfa3c9d5d52f52aef0&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776379414409_18_ryk7yob_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T195624Z&X-Amz-Expires=3600&X-Amz-Signature=156b736f8a1593e825bd946261ddc7074116d7d83711d84477a92c8d92bd93b9&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
                         "s3Key": "knowledge-files/spaces/orphan/designer/ds_1776379414409_18_ryk7yob_OPT.jpg",
                         "s3KeyHr": "knowledge-files/spaces/orphan/designer/ds_1776379414409_18_ryk7yob_HR.jpg",
                         "designerAssetId": "ds_1776379414409_18_ryk7yob",
@@ -6864,7 +6958,7 @@
                       "rx": 0,
                       "isImageFrame": true,
                       "imageFrameContent": {
-                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776379425692_19_lwgr2xu_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T123615Z&X-Amz-Expires=3600&X-Amz-Signature=a1c48d66e045ee6c2abbdf2aeac6a5ebc34470d78b1c4bda0567dbee9ec8f67d&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776379425692_19_lwgr2xu_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T195624Z&X-Amz-Expires=3600&X-Amz-Signature=d8ce9eff701d99c3aecb56206564c4dcb9ad302e7b36a91a94df05fe2bb76c04&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
                         "s3Key": "knowledge-files/spaces/orphan/designer/ds_1776379425692_19_lwgr2xu_OPT.jpg",
                         "s3KeyHr": "knowledge-files/spaces/orphan/designer/ds_1776379425692_19_lwgr2xu_HR.jpg",
                         "designerAssetId": "ds_1776379425692_19_lwgr2xu",
@@ -6904,7 +6998,7 @@
                       "rx": 0,
                       "isImageFrame": true,
                       "imageFrameContent": {
-                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776379404877_16_pm0zk0h_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T123615Z&X-Amz-Expires=3600&X-Amz-Signature=5334fe00d3febfa8721639dab678c32749636d913346a49c71b433c62773c54d&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776379404877_16_pm0zk0h_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T195624Z&X-Amz-Expires=3600&X-Amz-Signature=93b562d4d5f95dac0853d32c0f4f01e0fdbe06cbbc21f6cfc0009e6543b70b69&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
                         "s3Key": "knowledge-files/spaces/orphan/designer/ds_1776379404877_16_pm0zk0h_OPT.jpg",
                         "s3KeyHr": "knowledge-files/spaces/orphan/designer/ds_1776379404877_16_pm0zk0h_HR.jpg",
                         "designerAssetId": "ds_1776379404877_16_pm0zk0h",
@@ -7270,7 +7364,7 @@
                       "rx": 0,
                       "isImageFrame": true,
                       "imageFrameContent": {
-                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776379909272_22_3jnn2ie_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T123615Z&X-Amz-Expires=3600&X-Amz-Signature=a91a9056f0e1749a646986a486b716aa6af330b50037ecaab3894851330b4594&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776379909272_22_3jnn2ie_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T195624Z&X-Amz-Expires=3600&X-Amz-Signature=aadfa9577e0fee4a9d7e87648bd6ef683c221711c144ee1ccf2ad171ca26c45d&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
                         "s3Key": "knowledge-files/spaces/orphan/designer/ds_1776379909272_22_3jnn2ie_OPT.jpg",
                         "s3KeyHr": "knowledge-files/spaces/orphan/designer/ds_1776379909272_22_3jnn2ie_HR.jpg",
                         "designerAssetId": "ds_1776379909272_22_3jnn2ie",
@@ -7990,7 +8084,7 @@
                       "rx": 0,
                       "isImageFrame": true,
                       "imageFrameContent": {
-                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776379943779_23_7843nyp_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T123615Z&X-Amz-Expires=3600&X-Amz-Signature=e3bd10167514e9cd853bca2b02e8ef978fc19a1a0c8377702a91e6d8fcfda435&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776379943779_23_7843nyp_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T195624Z&X-Amz-Expires=3600&X-Amz-Signature=e6362b24a0b1a5f2d86f7784ee85ddb18d0392e830adfbc02b0102dfc4201f69&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
                         "s3Key": "knowledge-files/spaces/orphan/designer/ds_1776379943779_23_7843nyp_OPT.jpg",
                         "s3KeyHr": "knowledge-files/spaces/orphan/designer/ds_1776379943779_23_7843nyp_HR.jpg",
                         "designerAssetId": "ds_1776379943779_23_7843nyp",
@@ -8030,7 +8124,7 @@
                       "rx": 0,
                       "isImageFrame": true,
                       "imageFrameContent": {
-                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776379970577_25_s51n0hs_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T123615Z&X-Amz-Expires=3600&X-Amz-Signature=19962a65dd5a7c8df20786073a987d80d829f52e95c1eadfaa8b25b7c6571c1c&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776379970577_25_s51n0hs_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T195624Z&X-Amz-Expires=3600&X-Amz-Signature=ac7c7c804158e81947dfd4418ab479354d2be44b2693842d8c7583076aa65f99&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
                         "s3Key": "knowledge-files/spaces/orphan/designer/ds_1776379970577_25_s51n0hs_OPT.jpg",
                         "s3KeyHr": "knowledge-files/spaces/orphan/designer/ds_1776379970577_25_s51n0hs_HR.jpg",
                         "designerAssetId": "ds_1776379970577_25_s51n0hs",
@@ -8070,7 +8164,7 @@
                       "rx": 0,
                       "isImageFrame": true,
                       "imageFrameContent": {
-                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776380047608_27_6e144ts_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T123615Z&X-Amz-Expires=3600&X-Amz-Signature=4df415586b5f4b2f77388699a2f92889dba9996036c29f09356a620f0b1e1051&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776380047608_27_6e144ts_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T195624Z&X-Amz-Expires=3600&X-Amz-Signature=64d577ab20a91e7a4230d6520df037f14854c453776d04e1e481b8ab2f60936f&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
                         "s3Key": "knowledge-files/spaces/orphan/designer/ds_1776380047608_27_6e144ts_OPT.jpg",
                         "s3KeyHr": "knowledge-files/spaces/orphan/designer/ds_1776380047608_27_6e144ts_HR.jpg",
                         "designerAssetId": "ds_1776380047608_27_6e144ts",
@@ -8110,7 +8204,7 @@
                       "rx": 0,
                       "isImageFrame": true,
                       "imageFrameContent": {
-                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776379978733_26_mlfcr24_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T123615Z&X-Amz-Expires=3600&X-Amz-Signature=98f3654abf6378de1847568125f20b0f871fda07a78f20ef909bbbadd8145445&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776379978733_26_mlfcr24_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T195624Z&X-Amz-Expires=3600&X-Amz-Signature=67120ba89b835be949ad82e34e1a07b388c0c4de018190e1f86a2afd9c03651f&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
                         "s3Key": "knowledge-files/spaces/orphan/designer/ds_1776379978733_26_mlfcr24_OPT.jpg",
                         "s3KeyHr": "knowledge-files/spaces/orphan/designer/ds_1776379978733_26_mlfcr24_HR.jpg",
                         "designerAssetId": "ds_1776379978733_26_mlfcr24",
@@ -8150,7 +8244,7 @@
                       "rx": 0,
                       "isImageFrame": true,
                       "imageFrameContent": {
-                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776379951562_24_xu5id4r_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T123615Z&X-Amz-Expires=3600&X-Amz-Signature=4095f31c1d620f79da42e8a2308bff0692dace719fc63d400ce3770715f9532d&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776379951562_24_xu5id4r_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T195624Z&X-Amz-Expires=3600&X-Amz-Signature=0f50388e67c381473f8b89c791cfc58e0569800bd71ce146621c9bfa2755dcfc&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
                         "s3Key": "knowledge-files/spaces/orphan/designer/ds_1776379951562_24_xu5id4r_OPT.jpg",
                         "s3KeyHr": "knowledge-files/spaces/orphan/designer/ds_1776379951562_24_xu5id4r_HR.jpg",
                         "designerAssetId": "ds_1776379951562_24_xu5id4r",
@@ -8480,7 +8574,7 @@
                       "rx": 0,
                       "isImageFrame": true,
                       "imageFrameContent": {
-                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776380136595_28_qm1pbp1_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T123615Z&X-Amz-Expires=3600&X-Amz-Signature=b6f534f0c07a5a746dc000227499cbfb9384e508916cf3b9ea77438fe9ebc567&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776380136595_28_qm1pbp1_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T195624Z&X-Amz-Expires=3600&X-Amz-Signature=2793ba9875ca17c2c6568ceb08457261bbad2a9dd05e22464bb0446c26abafd8&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
                         "s3Key": "knowledge-files/spaces/orphan/designer/ds_1776380136595_28_qm1pbp1_OPT.jpg",
                         "s3KeyHr": "knowledge-files/spaces/orphan/designer/ds_1776380136595_28_qm1pbp1_HR.jpg",
                         "designerAssetId": "ds_1776380136595_28_qm1pbp1",
@@ -8520,7 +8614,7 @@
                       "rx": 0,
                       "isImageFrame": true,
                       "imageFrameContent": {
-                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776380179962_29_uoyvoc0_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T123615Z&X-Amz-Expires=3600&X-Amz-Signature=794d1b05e81ba4d8f85633ac7e4668c5793f3396936694d24f80cc76b7773238&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776380179962_29_uoyvoc0_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T195624Z&X-Amz-Expires=3600&X-Amz-Signature=d6604f535cfe6faf104d1b0f9834cf9e9bc0f65f0bf767cf65ae75a77aa2a292&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
                         "s3Key": "knowledge-files/spaces/orphan/designer/ds_1776380179962_29_uoyvoc0_OPT.jpg",
                         "s3KeyHr": "knowledge-files/spaces/orphan/designer/ds_1776380179962_29_uoyvoc0_HR.jpg",
                         "designerAssetId": "ds_1776380179962_29_uoyvoc0",
@@ -8560,7 +8654,7 @@
                       "rx": 0,
                       "isImageFrame": true,
                       "imageFrameContent": {
-                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776380278741_30_g2p9t9m_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T123615Z&X-Amz-Expires=3600&X-Amz-Signature=95c0388546ec2335f81cb56bf3d3739391f48d76bb87edb8f277c930d338a2bd&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776380278741_30_g2p9t9m_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T195624Z&X-Amz-Expires=3600&X-Amz-Signature=1bd53f19123bb32f54483c34aff91bc7420a7b9c404fc0c193ce8f3602dbf304&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
                         "s3Key": "knowledge-files/spaces/orphan/designer/ds_1776380278741_30_g2p9t9m_OPT.jpg",
                         "s3KeyHr": "knowledge-files/spaces/orphan/designer/ds_1776380278741_30_g2p9t9m_HR.jpg",
                         "designerAssetId": "ds_1776380278741_30_g2p9t9m",
@@ -8600,7 +8694,7 @@
                       "rx": 0,
                       "isImageFrame": true,
                       "imageFrameContent": {
-                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776380307064_31_qukj5t1_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T123615Z&X-Amz-Expires=3600&X-Amz-Signature=ecb8b3ab7720bd959a6a1ffc74eb32cd8077812af8244adc7f21a3da7aa46eff&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
+                        "src": "https://content-engine-ai-docs-832666711966.s3.us-east-1.amazonaws.com/knowledge-files/spaces/orphan/designer/ds_1776380307064_31_qukj5t1_OPT.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=AKIA4DXWNW6PO45C3WGO%2F20260418%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260418T195624Z&X-Amz-Expires=3600&X-Amz-Signature=9f858ffc6fc3fb6d76ed0a4a7e677b963d5432db6cb8ef0f56bc50d7f90c375c&X-Amz-SignedHeaders=host&x-amz-checksum-mode=ENABLED&x-id=GetObject",
                         "s3Key": "knowledge-files/spaces/orphan/designer/ds_1776380307064_31_qukj5t1_OPT.jpg",
                         "s3KeyHr": "knowledge-files/spaces/orphan/designer/ds_1776380307064_31_qukj5t1_HR.jpg",
                         "designerAssetId": "ds_1776380307064_31_qukj5t1",
@@ -10570,20 +10664,24 @@
               "width": 360,
               "height": 258
             },
-            "selected": true,
-            "zIndex": 9,
+            "selected": false,
+            "zIndex": 18,
             "style": {
               "--foldder-node-output-color": "#6C5CE7",
               "--foldder-node-header-tint-color": "#94a3b8"
             },
-            "dragging": false
+            "dragging": false,
+            "parentId": "canvasGroup_1776542115716_dhzcxv",
+            "extent": "parent",
+            "expandParent": false,
+            "hidden": false
           },
           {
             "id": "node_1776447747662_376",
             "type": "presenter",
             "position": {
-              "x": 1300.3300285815344,
-              "y": 272.18017964744706
+              "x": 517.4625609292426,
+              "y": 87.95948524050232
             },
             "data": {
               "label": "presenter node",
@@ -10594,11 +10692,28 @@
               "height": 202
             },
             "selected": false,
-            "zIndex": 1,
-            "dragging": false
+            "zIndex": 19,
+            "dragging": false,
+            "style": {
+              "--foldder-node-output-color": "#94a3b8",
+              "--foldder-node-header-tint-color": "#94a3b8"
+            },
+            "parentId": "canvasGroup_1776542115716_dhzcxv",
+            "extent": "parent",
+            "expandParent": false,
+            "hidden": false
           }
         ],
         "edges": [
+          {
+            "id": "ae-promptInput_1776524949925-nanoBanana_1776524959988-prompt-prompt",
+            "source": "promptInput_1776524949925",
+            "sourceHandle": "prompt",
+            "target": "nanoBanana_1776524959988",
+            "targetHandle": "prompt",
+            "type": "buttonEdge",
+            "animated": true
+          },
           {
             "type": "buttonEdge",
             "animated": true,
@@ -10606,15 +10721,19 @@
             "sourceHandle": "document",
             "target": "node_1776447747662_376",
             "targetHandle": "document",
-            "id": "e-designer_1776264644099-node_1776447747662_376-document-document-2sda"
+            "id": "e-designer_1776264644099-node_1776447747662_376-document-document-2sda",
+            "selected": false
           }
         ],
         "outputType": "url",
         "outputValue": null,
         "hasInput": false,
         "hasOutput": false,
-        "internalCategories": [],
-        "updatedAt": "2026-04-18T12:40:15.898Z",
+        "internalCategories": [
+          "prompt",
+          "ai"
+        ],
+        "updatedAt": "2026-04-18T20:01:24.881Z",
         "name": "Space"
       }
     },
@@ -10624,9 +10743,9 @@
         "canvasViewMode": "free",
         "cardsFocusIndex": 0,
         "viewport": {
-          "x": -190.65056917105676,
-          "y": 61.89590369728239,
-          "zoom": 0.7680200246257168
+          "x": -354.45192546082376,
+          "y": 110.79644679174834,
+          "zoom": 0.5415997485936029
         },
         "navigationStack": [],
         "activeSpaceId": "root",
@@ -10634,7 +10753,7 @@
         "windowMode": false,
         "viewerSourceNodeId": null
       },
-      "savedAt": "2026-04-18T12:40:15.902Z",
+      "savedAt": "2026-04-18T20:01:24.882Z",
       "assets": {
         "brand": {
           "logoPositive": "data:image/png;base64,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",
@@ -10652,7 +10771,7 @@
       }
     },
     "createdAt": "2026-04-15T15:06:47.869Z",
-    "updatedAt": "2026-04-18T12:40:15.940Z"
+    "updatedAt": "2026-04-18T20:01:24.917Z"
   },
   {
     "id": "fb902fd6-4e02-4e72-924c-6928df1d668f",

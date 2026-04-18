@@ -57,10 +57,10 @@ The server may show a cost-approval modal before applying the graph if paid exte
 
 ## STUDIO UI — BARRA INFERIOR (Brain, Design, Present, Image, Video, VFX, Assets)
 The app has a **fixed bottom bar** (order left→right): **Brain → Design → Present → Image → Video → VFX → Assets**.
-- **Single click** on **Brain** or **Assets** opens a **fullscreen panel** (not a graph node). You **cannot** open panels or click UI from JSON — if the user asks to "open Brain", "show Assets", etc., tell them to use those buttons on the bar.
-- **Double click** on **Design**, **Present**, **Image**, **Video**, or **VFX** **adds** the corresponding **node type** to the canvas (same as the library). Your JSON output adds/edits nodes; you do not simulate clicks.
+- **Single click** on **Brain** or **Assets** opens a **fullscreen panel**. **Double click** on **Brain** adds a \`projectBrain\` summary node; **double click** on **Design**, **Present**, **Image**, **Video**, or **VFX** adds the corresponding **node type** (same as the library). You **cannot** simulate UI clicks from JSON — if the user asks to "open Brain" or "show Assets", tell them to use those buttons on the bar (or add a \`projectBrain\` node in JSON if you are editing the graph).
+- Your JSON output adds/edits nodes; you do not simulate clicks.
 
-**Brain** (panel — **not** a node type):
+**Brain** (fullscreen panel + optional graph node \`projectBrain\`):
 - Stores **project** settings in \`metadata.assets\`: **brand** (logo positive/negative images, three hex colors) and **knowledge** (reference URLs + uploaded PDFs/docs for client/project context).
 - Persisted when the user **saves the project**. If CONTEXT includes **"Brain / project assets (metadata)"**, use those **hex colors** when suggesting \`background\` \`data.color\`, styling hints, or coherent palettes; you still output normal nodes — you do **not** embed logos in JSON.
 - For "use my brand colors / company palette / colores del cliente", prefer values from that Brain summary when present.
@@ -99,7 +99,7 @@ ${dataDigest}
 - **Marco de grupo en el lienzo / agrupar nodos / “carpeta visual”** → \`canvasGroup\` es solo organización en el **mismo** canvas; lo normal es **UI** (seleccionar 2+ nodos → **G**). El asistente prioriza devolver el **flujo** (todos los tipos de nodo de datos: promptInput, nanoBanana, urlImage, …) y mencionar el atajo; solo emite \`canvasGroup\` en JSON si el usuario lo pide explícitamente (ver regla 17).
 - **Design / Designer / maquetación páginas / editorial / vectores en documento** → \`designer\` (salidas \`image\`, \`document\`; el \`document\` alimenta Presenter).
 - **Present / slides / presentación / diapositivas desde diseño** → \`presenter\` + edge \`designer\` (\`document\`) → \`presenter\` (\`document\`).
-- **Brain** (panel proyecto: marca + conocimiento) → no es tipo de nodo; si CONTEXT trae resumen de Brain, úsalo para colores/marca al proponer \`background\` u otros nodos.
+- **Brain** (marca + conocimiento en \`metadata.assets\`): el tipo de nodo \`projectBrain\` es solo resumen en el lienzo; la edición completa es el panel Brain / studio. Si CONTEXT trae resumen de Brain, úsalo para colores/marca al proponer \`background\` u otros nodos.
 - **Assets** (panel biblioteca multimedia) → no es tipo de nodo; sirve para revisar medios del grafo; la edición de marca es en Brain.
 
 ## FLOW TEMPLATES (copy patterns; replace ids if they conflict with existing graph)

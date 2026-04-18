@@ -363,6 +363,17 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
       canvasH: 'number',
     }
   },
+  projectBrain: {
+    type: 'projectBrain',
+    label: 'Brain',
+    description:
+      'Project identity and knowledge (brand kit + PDFs/links). Canvas card shows counts; full editing is in Brain studio mode (same as the Brain bottom-bar panel).',
+    inputs: [],
+    outputs: [{ id: 'prompt', label: 'Prompt out', type: 'prompt' as HandleType }],
+    dataSchema: {
+      label: 'string (optional title on the card)',
+    },
+  },
   designer: {
     type: 'designer',
     label: 'Designer',
@@ -438,6 +449,8 @@ export const ASSISTANT_NODE_DATA_HINTS: Record<string, string> = {
   bezierMask: "points, closed, invert, result_mask, result_rgba",
   textOverlay: "text, fontFamily, fontSize, color, fontWeight, textAlign, canvasW, canvasH",
   backgroundRemover: "threshold, expansion, feather",
+  projectBrain:
+    "label (título opcional); salida prompt reservada (sin texto aún); marca y conocimiento en metadata.assets — resume y abre studio",
   designer:
     "pages (DesignerPageState[]), activePageIndex, label, value (export raster), autoImageOptimization; salida document (json) conecta a presenter",
   presenter:

@@ -4,6 +4,10 @@ export const SIDEBAR_HOVER_HELP: Record<string, { title: string; line: string }>
     title: 'Prompt',
     line: 'Escribes instrucción para la IA',
   },
+  projectBrain: {
+    title: 'Brain',
+    line: 'Resumen de marca y conocimiento (PDFs, enlaces); abre el studio para editar',
+  },
   mediaInput: {
     title: 'Media Input',
     line: 'Subes archivo como material base',

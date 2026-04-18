@@ -6,6 +6,7 @@ import { NodeResizer, Position, useEdges, useNodes, useReactFlow, type NodeProps
 import { Presentation } from "lucide-react";
 import { FOLDDER_FIT_VIEW_EASE } from "@/lib/fit-view-ease";
 import { FoldderDataHandle } from "../FoldderDataHandle";
+import { NodeLabel, FoldderNodeHeaderTitle } from "../foldder-node-ui";
 import { NodeIcon } from "../foldder-icons";
 import type { DesignerNodeData, DesignerPageState } from "../designer/DesignerNode";
 import type { PresenterImageVideoPlacement } from "./presenter-image-video-types";
@@ -68,15 +69,6 @@ export const PresenterNode = memo(({ id, data, selected }: NodeProps<any>) => {
 
   const slideCount = pages?.length ?? 0;
 
-  const updateLabel = useCallback(
-    (label: string) => {
-      setNodes((nds) =>
-        nds.map((n) => (n.id === id ? { ...n, data: { ...n.data, label } } : n)),
-      );
-    },
-    [id, setNodes],
-  );
-
   const patchDesignerPage = useCallback(
     (pageId: string, patch: Partial<DesignerPageState>) => {
       if (!designerNodeId) return;
@@ -109,52 +101,69 @@ export const PresenterNode = memo(({ id, data, selected }: NodeProps<any>) => {
     <div className="custom-node tool-node group/node" style={{ minWidth: 260 }}>
       <PresenterNodeResizer minWidth={260} minHeight={180} maxWidth={480} maxHeight={360} isVisible={selected} />
 
-      <div className="node-header border-b border-amber-500/15 bg-gradient-to-r from-zinc-900/90 via-zinc-900/70 to-zinc-900/90">
+      <NodeLabel id={id} label={nodeData.label} defaultLabel="Presenter" />
+
+      <div className="node-header">
         <NodeIcon type="presenter" selected={selected} size={16} />
-        <input
-          type="text"
-          className="nodrag min-w-0 flex-1 bg-transparent text-[10px] font-black uppercase tracking-[0.12em] text-zinc-100 outline-none placeholder:text-zinc-600"
-          value={nodeData.label ?? ""}
-          placeholder="Presenter"
-          onChange={(e) => updateLabel(e.target.value)}
-          onPointerDown={(e) => e.stopPropagation()}
-        />
-        <div className="node-badge border-amber-500/30 text-[8px] text-amber-200/90">DECK</div>
+        <FoldderNodeHeaderTitle introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}>
+          PRESENTER
+        </FoldderNodeHeaderTitle>
+        <div className="node-badge">DECK</div>
       </div>
 
-      <div className="node-content relative flex flex-col gap-2" style={{ minHeight: 120 }}>
+      <div
+        className="node-content relative flex min-h-0 min-w-0 flex-col gap-3 px-3 pb-3 pt-2"
+        style={{ minHeight: 120 }}
+      >
         {!connected && (
-          <p className="text-[10px] leading-snug text-zinc-500">
-            Conecta la salida <span className="font-semibold text-amber-200/90">Document</span> del nodo{" "}
-            <span className="text-zinc-300">Designer</span>.
-          </p>
+          <div className="min-w-0">
+            <span className="node-label">Conexión</span>
+            <div className="rounded-xl border border-slate-200/60 bg-slate-50/50 p-3 text-[11px] leading-snug text-slate-700 shadow-inner">
+              Conecta la salida <span className="font-semibold text-slate-900">Document</span> del nodo{" "}
+              <span className="font-medium text-slate-800">Designer</span>.
+            </div>
+          </div>
         )}
         {connected && designerMissing && (
-          <p className="text-[10px] leading-snug text-rose-400/90">
-            La conexión debe venir de un nodo Designer.
-          </p>
+          <div className="min-w-0">
+            <span className="node-label">Conexión</span>
+            <div className="rounded-xl border border-rose-200/70 bg-rose-50/80 p-3 text-[11px] leading-snug text-rose-800 shadow-inner">
+              La conexión debe venir de un nodo Designer.
+            </div>
+          </div>
         )}
         {connected && !designerMissing && slideCount === 0 && (
-          <p className="text-[10px] text-zinc-500">El Designer no tiene páginas aún.</p>
+          <div className="min-w-0">
+            <span className="node-label">Diapositivas</span>
+            <div className="rounded-xl border border-slate-200/60 bg-slate-50/50 p-3 text-[11px] text-slate-600 shadow-inner">
+              El Designer no tiene páginas aún.
+            </div>
+          </div>
         )}
         {connected && !designerMissing && slideCount > 0 && pages && (
-          <button
-            type="button"
-            onClick={() => setStudioOpen(true)}
-            className="flex flex-col items-center justify-center gap-2 rounded-xl border border-amber-500/25 bg-amber-500/[0.07] py-6 transition-colors hover:border-amber-400/40 hover:bg-amber-500/12"
-          >
-            <Presentation className="text-amber-400" size={28} strokeWidth={1.5} />
-            <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-200">
-              Abrir presentación
-            </span>
-            <span className="text-[9px] text-zinc-500">{slideCount} slides</span>
-          </button>
+          <div className="min-w-0">
+            <span className="node-label">Presentación</span>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setStudioOpen(true);
+              }}
+              className="nodrag flex w-full flex-col items-center justify-center gap-2 rounded-xl border border-slate-300/80 bg-white/90 px-3 py-4 text-center shadow-sm transition hover:bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/50"
+            >
+              <Presentation className="text-slate-600" size={26} strokeWidth={1.5} aria-hidden />
+              <span className="text-[11px] font-bold uppercase tracking-wide text-slate-800">
+                Abrir presentación
+              </span>
+              <span className="text-[10px] font-medium text-slate-500">{slideCount} slides</span>
+            </button>
+          </div>
         )}
       </div>
 
-      <div className="handle-wrapper handle-left" style={{ top: "50%", transform: "translateY(-50%)" }}>
-        <span className="handle-label">Document</span>
+      <div className="handle-wrapper handle-left">
         <FoldderDataHandle type="target" position={Position.Left} id="document" dataType="generic" />
+        <span className="handle-label">Document</span>
       </div>
 
       {studioOpen && pages && pages.length > 0 &&

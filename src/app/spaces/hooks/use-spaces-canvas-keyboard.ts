@@ -290,6 +290,7 @@ export function useSpacesCanvasKeyboard(
         case 'm': addNode('mediaInput'); break;
         case 'b': addNode('background'); break;
         case 'u': addNode('urlImage'); break;
+        case '2': addNode('projectBrain'); break;
         // ── Inteligencia ─────────────────────────────────────────────────
         case 'n': addNode('nanoBanana'); break;
         case 'd': addNode('mediaDescriber'); break;

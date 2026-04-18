@@ -22,6 +22,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { DesignerSpaceIdContext } from "@/contexts/DesignerSpaceIdContext";
+import { ProjectBrainCanvasContext } from "./project-brain-canvas-context";
 
 import {
   applyCanvasGroupCollapse,
@@ -260,6 +261,20 @@ export function SpacesContent() {
   const [paletteDragActive, setPaletteDragActive] = useState(false);
   const [projectBrainOpen, setProjectBrainOpen] = useState(false);
   const [projectAssetsOpen, setProjectAssetsOpen] = useState(false);
+
+  const projectBrainCanvasValue = useMemo(
+    () => ({
+      assetsMetadata: metadata.assets,
+      openProjectBrain: () => setProjectBrainOpen(true),
+    }),
+    [metadata.assets],
+  );
+
+  useEffect(() => {
+    const onOpenBrain = () => setProjectBrainOpen(true);
+    window.addEventListener("foldder-open-project-brain", onOpenBrain);
+    return () => window.removeEventListener("foldder-open-project-brain", onOpenBrain);
+  }, []);
 
   const handleLibraryDragStart = useCallback(
     (nodeType: string) => {
@@ -3503,6 +3518,7 @@ export function SpacesContent() {
           </div>
         )}
         {/* Wheel: listener global (ratón→zoom, trackpad→pan); panOnScroll false para no solapar con XY Flow. noPanClassName placeholder evita .nopan bloqueando wheel en nodos */}
+        <ProjectBrainCanvasContext.Provider value={projectBrainCanvasValue}>
         <DesignerSpaceIdContext.Provider value={activeSpaceId === "root" ? null : activeSpaceId}>
         <ReactFlow
           onInit={onCanvasInit}
@@ -3613,6 +3629,7 @@ export function SpacesContent() {
           <Background color="#111" gap={40} size={1} />
         </ReactFlow>
         </DesignerSpaceIdContext.Provider>
+        </ProjectBrainCanvasContext.Provider>
 
         {isAuthenticated && <HandleTypeLegend />}
 
