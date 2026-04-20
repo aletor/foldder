@@ -54,7 +54,6 @@ import {
   Layers,
   Crop,
   Split,
-  Spline,
   Unlink2,
   Type,
   Magnet,
@@ -81,6 +80,9 @@ import {
   List,
   ListOrdered,
   ArrowLeftRight,
+  BoxSelect,
+  Lasso,
+  Spline,
 } from "lucide-react";
 import { ScrubNumberInput } from "./ScrubNumberInput";
 import { FreehandExportModal, type ProfessionalExportOptions } from "./freehand/FreehandExportModal";
@@ -97,6 +99,12 @@ import {
   expandExportIds,
   type Rect as ExportRect,
 } from "./freehand/freehand-export";
+import {
+  mergePhotoPolygonSelection,
+  pointInPolygon as photoPointInPolygon,
+  polylineToSvgPathD,
+  ringToSvgPathD,
+} from "./freehand/photo-marquee-polygon-paper";
 import {
   type FillAppearance,
   migrateFill,
@@ -162,10 +170,26 @@ type Tool =
   | "imageFrame"
   | "eyedropper"
   | "handTool"
-  | "zoomTool";
+  | "zoomTool"
+  /** PhotoRoom: marco rectangular tipo Photoshop (selección raster; fase visual). */
+  | "rectMarquee"
+  /** PhotoRoom: lazo libre (polilínea cerrada). */
+  | "lassoMarquee"
+  /** PhotoRoom: lazo poligonal (vértices en clics). */
+  | "polygonMarquee"
+  /** PhotoRoom: marco elíptico (selección tipo óvalo). */
+  | "ellipseMarquee";
 
 interface Point { x: number; y: number }
 interface Rect { x: number; y: number; w: number; h: number }
+
+/** Elipse de marco PhotoRoom (unidad en coords. de mundo). */
+interface PhotoEllipseMarquee {
+  cx: number;
+  cy: number;
+  rx: number;
+  ry: number;
+}
 
 /** Illustrator-style: smooth = symmetric tangents; cusp = G1 continuous, independent lengths; corner = independent handles (sharp). */
 type VertexMode = "smooth" | "cusp" | "corner";
@@ -296,6 +320,8 @@ interface FreehandObjectBase {
   storyId?: string;
   /** Designer mode: marks this text as a threaded text frame (vs regular text). */
   isTextFrame?: boolean;
+  /** PhotoRoom: capa sincronizada con una imagen conectada al nodo (no eliminable; solo ocultar). */
+  photoRoomInputSlot?: string;
   /** Designer mode: marks this rect as an image frame container. */
   isImageFrame?: boolean;
   /** Designer mode: image content inside an image frame. */
@@ -443,7 +469,7 @@ export type FreehandObject =
   | BooleanGroupObject
   | ClippingContainerObject;
 
-interface FreehandStudioProps extends DesignerEmbedProps {
+export interface FreehandStudioProps extends DesignerEmbedProps {
   nodeId: string;
   initialObjects: FreehandObject[];
   /** Pliego único (tamaño de página / área de exportación); no hay UI de “artboards”. */
@@ -454,6 +480,15 @@ interface FreehandStudioProps extends DesignerEmbedProps {
   onExport: (dataUrl: string) => void;
   onUpdateObjects: (objects: FreehandObject[]) => void;
   onUpdateLayoutGuides?: (guides: LayoutGuide[]) => void;
+  /** Título/subtítulo de la cabecera (por defecto Designer). PhotoRoom u otros embeds pueden personalizar. */
+  studioHeaderTitle?: string;
+  studioHeaderSubtitle?: string;
+  /** Controles extra en la barra superior (p. ej. tamaño de lienzo en px). */
+  studioHeaderAccessory?: React.ReactNode;
+  /** PhotoRoom: entradas de imagen del grafo → capas inferiores (no eliminables; solo ocultar). */
+  photoRoomConnectedInputs?: { slot: string; src: string }[];
+  /** PhotoRoom: bloque de tamaño/orientación del lienzo en el panel Propiedades (sin capa seleccionada). */
+  studioPhotoRoomCanvasPanel?: React.ReactNode;
 }
 
 export interface DesignerStudioApi {
@@ -542,6 +577,11 @@ const LAYOUT_GUIDE_STROKE_WORLD = 0.58;
 const LAYOUT_GUIDE_DRAFT_STROKE_WORLD = 0.62;
 
 function clamp(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)); }
+
+/** Punto en rectángulo en espacio mundo (incluye borde). */
+function pointInWorldRect(p: Point, r: Rect): boolean {
+  return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
+}
 function escapeHtmlStr(s: string): string { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>"); }
 
 /** Texto copiado (ChatGPT, Word, etc.): espacios raros y caracteres invisibles / de formato. */
@@ -1352,20 +1392,23 @@ function inverseObjMatrix(o: FreehandObject): DOMMatrix | null {
   return m.inverse();
 }
 
-/** Mundo → coordenadas locales del objeto (antes de rotación/espejo del `<g>`). */
+/**
+ * Mundo → coordenadas locales del marco del objeto (origen esquina sup. izq., 0…width × 0…height).
+ * El `<image>` está en (o.x,o.y) y el `transform` solo rota/espeja alrededor del centro; hay que restar el origen del marco.
+ */
 function worldPointToObjLocal(world: Point, o: FreehandObject): Point {
   const inv = inverseObjMatrix(o);
-  if (!inv) return world;
+  if (!inv) return { x: world.x - o.x, y: world.y - o.y };
   const t = inv.transformPoint(new DOMPoint(world.x, world.y));
-  return { x: t.x, y: t.y };
+  return { x: t.x - o.x, y: t.y - o.y };
 }
 
-/** Local del objeto → mundo (para dibujar overlays alineados con el marco). */
+/** Local del marco (0…width × 0…height) → mundo. */
 function objLocalToWorldPoint(local: Point, o: FreehandObject): Point {
   const inv = inverseObjMatrix(o);
-  if (!inv) return local;
+  if (!inv) return { x: local.x + o.x, y: local.y + o.y };
   const fwd = inv.inverse();
-  const t = fwd.transformPoint(new DOMPoint(local.x, local.y));
+  const t = fwd.transformPoint(new DOMPoint(o.x + local.x, o.y + local.y));
   return { x: t.x, y: t.y };
 }
 
@@ -1606,8 +1649,32 @@ function canvasScaleFromPointer(zoom: number): number {
 }
 
 function isShiftHeld(e: ReactMouseEvent): boolean {
-  return e.shiftKey || (typeof e.getModifierState === "function" && e.getModifierState("Shift"));
+  if (e.shiftKey) return true;
+  const ne = e.nativeEvent as MouseEvent;
+  return typeof ne.getModifierState === "function" && ne.getModifierState("Shift");
 }
+
+/** Marco PhotoRoom: sumar — Ctrl/⌘ (no cuenta si Alt/Option: eso es restar). */
+function isPhotoMarqueeAdditivePointerHeld(e: ReactMouseEvent): boolean {
+  if (e.altKey) return false;
+  const ne = e.nativeEvent as MouseEvent;
+  if (typeof ne.getModifierState === "function" && ne.getModifierState("Alt")) return false;
+  if (e.ctrlKey || e.metaKey) return true;
+  if (typeof ne.getModifierState !== "function") return false;
+  return ne.getModifierState("Control") || ne.getModifierState("Meta");
+}
+
+/** Marco PhotoRoom: restar área — Alt / Option. */
+function isPhotoMarqueeSubtractPointerHeld(e: ReactMouseEvent): boolean {
+  if (e.altKey) return true;
+  const ne = e.nativeEvent as MouseEvent;
+  return typeof ne.getModifierState === "function" && ne.getModifierState("Alt");
+}
+
+/** Muestreo de puntos en lazo libre (canvas world). */
+const PHOTO_LASSO_SAMPLE_PX = 4;
+/** Clic cerca del primer vértice para cerrar polígono (se divide por zoom). */
+const PHOTO_POLY_CLOSE_PX = 14;
 
 /** Mayús al crear rectángulo/elipse: segunda esquina para un cuadrado / círculo perfecto (lado = max(|dx|,|dy|)). */
 function oppositeCornerForSquareDrag(origin: Point, pointer: Point): Point {
@@ -2390,6 +2457,590 @@ function getGroupBounds(objs: FreehandObject[]): Rect {
 
 function rectsIntersect(a: Rect, b: Rect): boolean {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+/** Partes de `r` alineadas a ejes que quedan fuera de `cut` (diferencia AABB). */
+function subtractRectFromRect(r: Rect, cut: Rect): Rect[] {
+  if (!rectsIntersect(r, cut)) return [{ ...r }];
+  const ix1 = Math.max(r.x, cut.x);
+  const iy1 = Math.max(r.y, cut.y);
+  const ix2 = Math.min(r.x + r.w, cut.x + cut.w);
+  const iy2 = Math.min(r.y + r.h, cut.y + cut.h);
+  if (ix2 <= ix1 || iy2 <= iy1) return [{ ...r }];
+  const out: Rect[] = [];
+  if (iy1 > r.y) {
+    const h = iy1 - r.y;
+    if (h > 0 && r.w > 0) out.push({ x: r.x, y: r.y, w: r.w, h });
+  }
+  if (iy2 < r.y + r.h) {
+    const h = r.y + r.h - iy2;
+    if (h > 0 && r.w > 0) out.push({ x: r.x, y: iy2, w: r.w, h });
+  }
+  const midH = iy2 - iy1;
+  if (midH > 0) {
+    if (ix1 > r.x) {
+      const w = ix1 - r.x;
+      if (w > 0) out.push({ x: r.x, y: iy1, w, h: midH });
+    }
+    if (ix2 < r.x + r.w) {
+      const w = r.x + r.w - ix2;
+      if (w > 0) out.push({ x: ix2, y: iy1, w, h: midH });
+    }
+  }
+  return out;
+}
+
+/** Rectángulo de marco PhotoRoom → anillo CCW para operaciones con polígonos (Paper). */
+function rectToPhotoMarqueeRing(r: Rect): Point[] {
+  return [
+    { x: r.x, y: r.y },
+    { x: r.x + r.w, y: r.y },
+    { x: r.x + r.w, y: r.y + r.h },
+    { x: r.x, y: r.y + r.h },
+  ];
+}
+
+function pointInPhotoEllipse(p: Point, e: PhotoEllipseMarquee): boolean {
+  if (e.rx <= 0 || e.ry <= 0) return false;
+  const dx = (p.x - e.cx) / e.rx;
+  const dy = (p.y - e.cy) / e.ry;
+  return dx * dx + dy * dy <= 1;
+}
+
+/** Anillo para Paper.js (aprox. círculo/elipse). */
+function ellipseToPhotoMarqueeRing(e: PhotoEllipseMarquee, segments = 64): Point[] {
+  const { cx, cy, rx, ry } = e;
+  if (rx <= 0 || ry <= 0) return [];
+  const out: Point[] = [];
+  for (let i = 0; i < segments; i++) {
+    const t = (i / segments) * Math.PI * 2;
+    out.push({ x: cx + rx * Math.cos(t), y: cy + ry * Math.sin(t) });
+  }
+  return out;
+}
+
+/** Base poligonal para sumar/restar: polígonos + rectángulos + elipses como anillos. `replace` → []. */
+function buildPhotoMarqueePolyBase(
+  prevPoly: Point[][],
+  prevRects: Rect[],
+  prevEllipses: PhotoEllipseMarquee[],
+  mode: "replace" | "add" | "subtract",
+): Point[][] {
+  if (mode === "replace") return [];
+  let acc = prevPoly;
+  for (const r of prevRects) {
+    acc = mergePhotoPolygonSelection(acc, rectToPhotoMarqueeRing(r), "add");
+  }
+  for (const el of prevEllipses) {
+    const ring = ellipseToPhotoMarqueeRing(el);
+    if (ring.length >= 3) acc = mergePhotoPolygonSelection(acc, ring, "add");
+  }
+  return acc;
+}
+
+function photoMarqueePointInsideCommitted(
+  pos: Point,
+  rects: Rect[],
+  polys: Point[][],
+  ellipses: PhotoEllipseMarquee[],
+): boolean {
+  if (rects.some((r) => pointInWorldRect(pos, r))) return true;
+  if (polys.some((ring) => photoPointInPolygon(pos, ring))) return true;
+  if (ellipses.some((el) => pointInPhotoEllipse(pos, el))) return true;
+  return false;
+}
+
+/** Traslada en mundo la selección PhotoRoom confirmada (rect / polígono / elipse). */
+function translatePhotoMarqueeCommitted(
+  dx: number,
+  dy: number,
+  rects: Rect[],
+  polys: Point[][],
+  ellipses: PhotoEllipseMarquee[],
+): { rects: Rect[]; polys: Point[][]; ellipses: PhotoEllipseMarquee[] } {
+  return {
+    rects: rects.map((r) => ({ ...r, x: r.x + dx, y: r.y + dy })),
+    polys: polys.map((ring) => ring.map((p) => ({ x: p.x + dx, y: p.y + dy }))),
+    ellipses: ellipses.map((e) => ({ ...e, cx: e.cx + dx, cy: e.cy + dy })),
+  };
+}
+
+/** AABB en mundo que envuelve toda la selección (para pegar / UI). */
+function unionPhotoMarqueeWorldBounds(
+  rects: Rect[],
+  polys: Point[][],
+  ellipses: PhotoEllipseMarquee[],
+): Rect | null {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  const expand = (x: number, y: number) => {
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+  };
+  for (const r of rects) {
+    expand(r.x, r.y);
+    expand(r.x + r.w, r.y + r.h);
+  }
+  for (const ring of polys) {
+    for (const p of ring) expand(p.x, p.y);
+  }
+  for (const e of ellipses) {
+    expand(e.cx - e.rx, e.cy - e.ry);
+    expand(e.cx + e.rx, e.cy + e.ry);
+  }
+  if (!Number.isFinite(minX)) return null;
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
+/**
+ * Selección raster “comprometida”: ligada a una capa imagen y a un recorte en píxeles del bitmap natural.
+ * No incluye píxeles; sirve para saber de qué capa sale y dónde cae el AABB en mundo sin recomputar desde los arrays del marquee.
+ */
+type ActivePixelSelection = {
+  sourceLayerId: string;
+  naturalWidth: number;
+  naturalHeight: number;
+  pixelCrop: { minIx: number; minIy: number; maxIx: number; maxIy: number };
+  /** AABB en mundo del recorte (mapeo meet, mismas esquinas que al extraer). */
+  worldBounds: Rect;
+};
+
+/** Portapapeles interno PhotoRoom: PNG + metadatos de `ActivePixelSelection` para pegar sin rescalar mal ni perder el vínculo con la capa origen. */
+type PhotoMarqueeRasterClip = ActivePixelSelection & {
+  dataUrl: string;
+  cropW: number;
+  cropH: number;
+};
+
+/** Exactamente una capa `image` visible y no bloqueada en la selección (p. ej. grupo con formas + foto). */
+function findSingleSelectedImageForPhotoMarquee(
+  sel: Set<string>,
+  objs: readonly FreehandObject[],
+): ImageObject | undefined {
+  let found: ImageObject | undefined;
+  for (const id of sel) {
+    const o = objs.find((x) => x.id === id);
+    if (o?.type !== "image" || !o.visible || o.locked) continue;
+    if (found) return undefined;
+    found = o as ImageObject;
+  }
+  return found;
+}
+
+/**
+ * Coherente con `<image preserveAspectRatio="xMidYMid meet">` en el render del lienzo:
+ * el bitmap encaja dentro de la caja sin deformar (bandas si el aspecto no coincide).
+ */
+function imageMeetPixelCenterToObjectLocal(
+  imgObj: ImageObject,
+  iw: number,
+  ih: number,
+  ix: number,
+  iy: number,
+): Point {
+  const boxW = imgObj.width;
+  const boxH = imgObj.height;
+  const scale = Math.min(boxW / Math.max(iw, 1), boxH / Math.max(ih, 1));
+  const dw = iw * scale;
+  const dh = ih * scale;
+  const ox = (boxW - dw) / 2;
+  const oy = (boxH - dh) / 2;
+  return {
+    x: ox + ((ix + 0.5) / Math.max(iw, 1)) * dw,
+    y: oy + ((iy + 0.5) / Math.max(ih, 1)) * dh,
+  };
+}
+
+/** Esquinas en espacio local del objeto del rectángulo de píxeles [ix0,ix1)×[iy0,iy1) (índices exclusivos al final). */
+function imageMeetPixelRectCornersObjectLocal(
+  imgObj: ImageObject,
+  iw: number,
+  ih: number,
+  ix0: number,
+  iy0: number,
+  ix1: number,
+  iy1: number,
+): Point[] {
+  const boxW = imgObj.width;
+  const boxH = imgObj.height;
+  const scale = Math.min(boxW / Math.max(iw, 1), boxH / Math.max(ih, 1));
+  const dw = iw * scale;
+  const dh = ih * scale;
+  const ox = (boxW - dw) / 2;
+  const oy = (boxH - dh) / 2;
+  const xl = ox + (ix0 / Math.max(iw, 1)) * dw;
+  const xr = ox + (ix1 / Math.max(iw, 1)) * dw;
+  const yt = oy + (iy0 / Math.max(ih, 1)) * dh;
+  const yb = oy + (iy1 / Math.max(ih, 1)) * dh;
+  return [
+    { x: xl, y: yt },
+    { x: xr, y: yt },
+    { x: xl, y: yb },
+    { x: xr, y: yb },
+  ];
+}
+
+/** Local objeto (0…width × 0…height) → coordenadas de píxel fraccionarias en el bitmap natural (coherente con meet). */
+function objectLocalToImagePixelFloat(
+  imgObj: ImageObject,
+  iw: number,
+  ih: number,
+  lx: number,
+  ly: number,
+): { ix: number; iy: number } | null {
+  const boxW = imgObj.width;
+  const boxH = imgObj.height;
+  const scale = Math.min(boxW / Math.max(iw, 1), boxH / Math.max(ih, 1));
+  const dw = iw * scale;
+  const dh = ih * scale;
+  const ox = (boxW - dw) / 2;
+  const oy = (boxH - dh) / 2;
+  if (dw < 1e-12 || dh < 1e-12) return null;
+  return {
+    ix: ((lx - ox) / dw) * iw,
+    iy: ((ly - oy) / dh) * ih,
+  };
+}
+
+function worldPointToImagePixelFloat(
+  imgObj: ImageObject,
+  iw: number,
+  ih: number,
+  wp: Point,
+): { ix: number; iy: number } | null {
+  const lp = worldPointToObjLocal(wp, imgObj);
+  return objectLocalToImagePixelFloat(imgObj, iw, ih, lp.x, lp.y);
+}
+
+const PHOTO_MARQUEE_BBOX_PAD_PX = 1;
+/** Desplazamiento por cada pegado repetido del mismo recorte raster (alineado con paste de objetos). */
+const PHOTO_MARQUEE_PASTE_STAGGER_PX = 24;
+
+/** BBox en índices de píxel [minIx,maxIx] inclusivo a partir de vértices/muestras de la selección en mundo. */
+function computePhotoMarqueeImagePixelBBox(
+  imgObj: ImageObject,
+  iw: number,
+  ih: number,
+  rects: Rect[],
+  polys: Point[][],
+  ellipses: PhotoEllipseMarquee[],
+): { minIx: number; minIy: number; maxIx: number; maxIy: number } | null {
+  let minF = Infinity, minG = Infinity, maxF = -Infinity, maxG = -Infinity;
+  const add = (wp: Point) => {
+    const f = worldPointToImagePixelFloat(imgObj, iw, ih, wp);
+    if (!f) return;
+    minF = Math.min(minF, f.ix);
+    minG = Math.min(minG, f.iy);
+    maxF = Math.max(maxF, f.ix);
+    maxG = Math.max(maxG, f.iy);
+  };
+  for (const r of rects) {
+    add({ x: r.x, y: r.y });
+    add({ x: r.x + r.w, y: r.y });
+    add({ x: r.x + r.w, y: r.y + r.h });
+    add({ x: r.x, y: r.y + r.h });
+  }
+  for (const ring of polys) {
+    for (const p of ring) add(p);
+  }
+  for (const e of ellipses) {
+    const segs = 48;
+    for (let i = 0; i <= segs; i++) {
+      const t = (i / segs) * Math.PI * 2;
+      add({ x: e.cx + e.rx * Math.cos(t), y: e.cy + e.ry * Math.sin(t) });
+    }
+  }
+  if (!Number.isFinite(minF)) return null;
+  const pad = PHOTO_MARQUEE_BBOX_PAD_PX;
+  const minIx = Math.max(0, Math.floor(minF) - pad);
+  const minIy = Math.max(0, Math.floor(minG) - pad);
+  const maxIx = Math.min(iw - 1, Math.ceil(maxF) + pad);
+  const maxIy = Math.min(ih - 1, Math.ceil(maxG) + pad);
+  if (minIx > maxIx || minIy > maxIy) return null;
+  return { minIx, minIy, maxIx, maxIy };
+}
+
+/**
+ * Recorta los píxeles de la capa imagen según la selección PhotoRoom (mundo).
+ * Solo procesa el bbox en espacio de píxeles + máscara por canvas (sin barrer iw×ih).
+ */
+async function extractPhotoMarqueeRasterFromImage(
+  imgObj: ImageObject,
+  rects: Rect[],
+  polys: Point[][],
+  ellipses: PhotoEllipseMarquee[],
+): Promise<PhotoMarqueeRasterClip | null> {
+  if (typeof document === "undefined") return null;
+  const load = await new Promise<HTMLImageElement | null>((res) => {
+    const im = new Image();
+    im.onload = () => res(im);
+    im.onerror = () => res(null);
+    im.src = imgObj.src;
+  });
+  if (!load || !load.complete) return null;
+  const iw = load.naturalWidth || 1;
+  const ih = load.naturalHeight || 1;
+
+  const bbox = computePhotoMarqueeImagePixelBBox(imgObj, iw, ih, rects, polys, ellipses);
+  if (!bbox) return null;
+  const { minIx, minIy, maxIx, maxIy } = bbox;
+  const cw = maxIx - minIx + 1;
+  const ch = maxIy - minIy + 1;
+
+  const rgb = document.createElement("canvas");
+  rgb.width = cw;
+  rgb.height = ch;
+  const rctx = rgb.getContext("2d");
+  if (!rctx) return null;
+  rctx.drawImage(load, minIx, minIy, cw, ch, 0, 0, cw, ch);
+
+  const mask = document.createElement("canvas");
+  mask.width = cw;
+  mask.height = ch;
+  const mctx = mask.getContext("2d");
+  if (!mctx) return null;
+
+  const toCrop = (wp: Point): { x: number; y: number } | null => {
+    const f = worldPointToImagePixelFloat(imgObj, iw, ih, wp);
+    if (!f) return null;
+    return { x: f.ix - minIx, y: f.iy - minIy };
+  };
+
+  mctx.fillStyle = "#fff";
+  mctx.beginPath();
+  for (const r of rects) {
+    const c0 = toCrop({ x: r.x, y: r.y });
+    const c1 = toCrop({ x: r.x + r.w, y: r.y });
+    const c2 = toCrop({ x: r.x + r.w, y: r.y + r.h });
+    const c3 = toCrop({ x: r.x, y: r.y + r.h });
+    if (c0 && c1 && c2 && c3) {
+      mctx.moveTo(c0.x, c0.y);
+      mctx.lineTo(c1.x, c1.y);
+      mctx.lineTo(c2.x, c2.y);
+      mctx.lineTo(c3.x, c3.y);
+      mctx.closePath();
+    }
+  }
+  for (const ring of polys) {
+    if (ring.length < 3) continue;
+    const p0 = toCrop(ring[0]!);
+    if (!p0) continue;
+    mctx.moveTo(p0.x, p0.y);
+    for (let i = 1; i < ring.length; i++) {
+      const p = toCrop(ring[i]!);
+      if (p) mctx.lineTo(p.x, p.y);
+    }
+    mctx.closePath();
+  }
+  for (const e of ellipses) {
+    if (e.rx <= 0 || e.ry <= 0) continue;
+    const segs = 48;
+    let first: { x: number; y: number } | null = null;
+    for (let i = 0; i <= segs; i++) {
+      const t = (i / segs) * Math.PI * 2;
+      const wp = { x: e.cx + e.rx * Math.cos(t), y: e.cy + e.ry * Math.sin(t) };
+      const c = toCrop(wp);
+      if (!c) continue;
+      if (!first) {
+        first = c;
+        mctx.moveTo(c.x, c.y);
+      } else {
+        mctx.lineTo(c.x, c.y);
+      }
+    }
+    if (first) mctx.closePath();
+  }
+  mctx.fill("evenodd");
+
+  const out = document.createElement("canvas");
+  out.width = cw;
+  out.height = ch;
+  const octx = out.getContext("2d");
+  if (!octx) return null;
+  octx.drawImage(rgb, 0, 0);
+  octx.globalCompositeOperation = "destination-in";
+  octx.drawImage(mask, 0, 0);
+  octx.globalCompositeOperation = "source-over";
+
+  let dataUrl: string;
+  try {
+    dataUrl = out.toDataURL("image/png");
+  } catch {
+    return null;
+  }
+
+  const corners = imageMeetPixelRectCornersObjectLocal(
+    imgObj,
+    iw,
+    ih,
+    minIx,
+    minIy,
+    maxIx + 1,
+    maxIy + 1,
+  ).map((lp) => objLocalToWorldPoint(lp, imgObj));
+  let wx0 = Infinity, wy0 = Infinity, wx1 = -Infinity, wy1 = -Infinity;
+  for (const c of corners) {
+    wx0 = Math.min(wx0, c.x);
+    wy0 = Math.min(wy0, c.y);
+    wx1 = Math.max(wx1, c.x);
+    wy1 = Math.max(wy1, c.y);
+  }
+  const worldBounds: Rect = { x: wx0, y: wy0, w: Math.max(1e-6, wx1 - wx0), h: Math.max(1e-6, wy1 - wy0) };
+  return {
+    sourceLayerId: imgObj.id,
+    naturalWidth: iw,
+    naturalHeight: ih,
+    pixelCrop: { minIx, minIy, maxIx, maxIy },
+    worldBounds,
+    dataUrl,
+    cropW: cw,
+    cropH: ch,
+  };
+}
+
+const PHOTO_MARQUEE_PT_EPS = 1e-9;
+
+function photoMarqueePtKey(p: { x: number; y: number }): string {
+  return `${p.x},${p.y}`;
+}
+
+function photoMarqueeSamePt(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+): boolean {
+  return Math.abs(a.x - b.x) < PHOTO_MARQUEE_PT_EPS && Math.abs(a.y - b.y) < PHOTO_MARQUEE_PT_EPS;
+}
+
+/** Celda [x1,x2]×[y1,y2] intersecta algún rect de la lista (unión de AABB). */
+function cellOverlapsRectUnion(x1: number, x2: number, y1: number, y2: number, rects: Rect[]): boolean {
+  for (const r of rects) {
+    if (x2 <= r.x || x1 >= r.x + r.w || y2 <= r.y || y1 >= r.y + r.h) continue;
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Contorno ortogonal de la unión de rectángulos alineados a ejes: un solo trazo por componente
+ * conexa (sin aristas internas donde los rectángulos se solapan o comparten lado).
+ */
+function rectUnionBoundarySvgPathDs(rects: Rect[]): string[] {
+  const valid = rects.filter((r) => r.w > 0 && r.h > 0);
+  if (valid.length === 0) return [];
+
+  const xs = new Set<number>();
+  const ys = new Set<number>();
+  for (const r of valid) {
+    xs.add(r.x);
+    xs.add(r.x + r.w);
+    ys.add(r.y);
+    ys.add(r.y + r.h);
+  }
+  const xsa = [...xs].sort((a, b) => a - b);
+  const ysa = [...ys].sort((a, b) => a - b);
+  const nx = xsa.length - 1;
+  const ny = ysa.length - 1;
+  if (nx <= 0 || ny <= 0) return [];
+
+  const filled = new Array<boolean>(nx * ny);
+  const fi = (i: number, j: number) => i + j * nx;
+  for (let j = 0; j < ny; j++) {
+    for (let i = 0; i < nx; i++) {
+      filled[fi(i, j)] = cellOverlapsRectUnion(xsa[i], xsa[i + 1], ysa[j], ysa[j + 1], valid);
+    }
+  }
+
+  type Pt = { x: number; y: number };
+  type Seg = { a: Pt; b: Pt; id: number };
+  const segs: Seg[] = [];
+  let sid = 0;
+
+  for (let vi = 0; vi <= nx; vi++) {
+    const x = xsa[vi];
+    for (let j = 0; j < ny; j++) {
+      const L = vi > 0 && filled[fi(vi - 1, j)];
+      const R = vi < nx && filled[fi(vi, j)];
+      if (L !== R) {
+        const a = { x, y: ysa[j] };
+        const b = { x, y: ysa[j + 1] };
+        segs.push({ a, b, id: sid++ });
+      }
+    }
+  }
+
+  for (let hj = 0; hj <= ny; hj++) {
+    const y = ysa[hj];
+    for (let i = 0; i < nx; i++) {
+      const B = hj > 0 && filled[fi(i, hj - 1)];
+      const T = hj < ny && filled[fi(i, hj)];
+      if (B !== T) {
+        const a = { x: xsa[i], y };
+        const b = { x: xsa[i + 1], y };
+        segs.push({ a, b, id: sid++ });
+      }
+    }
+  }
+
+  if (segs.length === 0) return [];
+
+  const adj = new Map<string, { other: Pt; id: number }[]>();
+  const addAdj = (u: Pt, v: Pt, id: number) => {
+    const ku = photoMarqueePtKey(u);
+    const kv = photoMarqueePtKey(v);
+    if (!adj.has(ku)) adj.set(ku, []);
+    if (!adj.has(kv)) adj.set(kv, []);
+    adj.get(ku)!.push({ other: v, id });
+    adj.get(kv)!.push({ other: u, id });
+  };
+  for (const s of segs) {
+    addAdj(s.a, s.b, s.id);
+  }
+
+  const used = new Set<number>();
+  const loops: Pt[][] = [];
+
+  for (const s of segs) {
+    if (used.has(s.id)) continue;
+    const trial = new Set<number>([s.id]);
+    let cur = s.b;
+    let lastSeg = s.id;
+    const loop: Pt[] = [s.a, s.b];
+    let guard = 0;
+    let closed = false;
+    while (guard++ <= segs.length + 4) {
+      const list = adj.get(photoMarqueePtKey(cur));
+      if (!list) break;
+      const nbrs = list.filter((n) => n.id !== lastSeg);
+      if (nbrs.length !== 1) break;
+      const nbr = nbrs[0];
+      trial.add(nbr.id);
+      lastSeg = nbr.id;
+      cur = nbr.other;
+      if (photoMarqueeSamePt(cur, s.a)) {
+        closed = true;
+        break;
+      }
+      loop.push(cur);
+    }
+    if (closed && loop.length >= 3) {
+      trial.forEach((id) => used.add(id));
+      loops.push(loop);
+    } else {
+      trial.forEach((id) => used.add(id));
+    }
+  }
+
+  return loops.map((loop) => {
+    if (loop.length < 2) return "";
+    const p0 = loop[0];
+    let d = `M ${p0.x} ${p0.y}`;
+    for (let i = 1; i < loop.length; i++) {
+      d += ` L ${loop[i].x} ${loop[i].y}`;
+    }
+    d += " Z";
+    return d;
+  }).filter(Boolean);
 }
 
 // ── Snap ────────────────────────────────────────────────────────────────
@@ -3979,6 +4630,17 @@ function buildExportBounds(objects: FreehandObject[]): Rect {
   return { x: x1 - pad, y: y1 - pad, w: x2 - x1 + pad * 2, h: y2 - y1 + pad * 2 };
 }
 
+function svgIdSafeSegment(s: string): string {
+  return s.replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
+/** Lienzo con fondo transparente: en pantalla se muestra tablero (el export raster puede seguir respetando alpha). */
+function artboardBackgroundIsTransparentForDisplay(bg: string | undefined): boolean {
+  if (bg == null || bg === "") return false;
+  const t = bg.trim().toLowerCase();
+  return t === "transparent" || t === "none";
+}
+
 function resolveSceneExportBounds(objects: FreehandObject[], artboards: Artboard[]): Rect {
   const ab = pickPrimaryArtboard(artboards, null);
   if (ab) return artboardToRect(ab);
@@ -4390,6 +5052,67 @@ function ToolBtn({ active, onClick, title, children }: { active?: boolean; onCli
   );
 }
 
+/** Grupo estilo Photoshop: icono principal + flecha; panel a la derecha con el resto de herramientas del grupo. */
+function ToolFlyoutGroup({
+  groupId,
+  flyoutOpen,
+  setFlyoutOpen,
+  active,
+  mainTitle,
+  onMainClick,
+  mainIcon,
+  children,
+}: {
+  groupId: string;
+  flyoutOpen: string | null;
+  setFlyoutOpen: (id: string | null) => void;
+  active: boolean;
+  mainTitle: string;
+  onMainClick: () => void;
+  mainIcon: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  const open = flyoutOpen === groupId;
+  return (
+    <div className="relative h-10 w-10 shrink-0" data-tool-flyout-root>
+      <button
+        type="button"
+        title={mainTitle}
+        onClick={onMainClick}
+        className={`relative flex h-full w-full items-center justify-center rounded-lg pr-2 pb-2 transition-all duration-150 ease-out ${
+          active
+            ? "bg-white/[0.12] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.14)]"
+            : "text-zinc-500 hover:bg-white/[0.06] hover:text-white"
+        }`}
+      >
+        {mainIcon}
+      </button>
+      <button
+        type="button"
+        title="Más herramientas del grupo"
+        aria-expanded={open}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setFlyoutOpen(open ? null : groupId);
+        }}
+        className="absolute bottom-0.5 right-0.5 z-10 flex h-4 w-4 items-center justify-center rounded text-zinc-400 transition hover:bg-white/[0.12] hover:text-white"
+      >
+        <ChevronRight className="h-3 w-3 opacity-80" strokeWidth={2} />
+      </button>
+      {open && (
+        <div
+          className="absolute left-full top-0 z-[130] ml-1 flex min-w-[42px] flex-col gap-0.5 rounded-lg border border-white/[0.1] bg-[#15181f] p-1 shadow-[0_8px_28px_rgba(0,0,0,0.55)]"
+          data-tool-flyout-panel
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CtxMenu({ x, y, items, onClose }: { x: number; y: number; items: ContextMenuItem[]; onClose: () => void }) {
   const remeasureKey = items.map((i) => `${i.label}\0${!!i.disabled}\0${!!i.separator}`).join("|");
   const { ref, style } = useClampedFixedPosition(x, y, true, remeasureKey);
@@ -4596,6 +5319,119 @@ function migrateDesignerPageObjects(raw: FreehandObject[]): FreehandObject[] {
   return raw.map((o) => ({ ...o, fill: migrateFill((o as FreehandObject).fill as unknown) })) as FreehandObject[];
 }
 
+/** Id estable por slot para capas de entrada PhotoRoom (coincide con `nodeId` del FreehandStudio). */
+function photoRoomInputLayerId(nodeId: string, slot: string): string {
+  return `${nodeId}__pr_in_${slot}`;
+}
+
+function fitPhotoRoomImageRect(iw: number, ih: number, aw: number, ah: number) {
+  const margin = 0.06;
+  const maxW = aw * (1 - 2 * margin);
+  const maxH = ah * (1 - 2 * margin);
+  const s = Math.min(maxW / Math.max(iw, 1), maxH / Math.max(ih, 1), 1);
+  const width = iw * s;
+  const height = ih * s;
+  const x = (aw - width) / 2;
+  const y = (ah - height) / 2;
+  return { x, y, width, height, intrinsicRatio: iw / Math.max(ih, 1) };
+}
+
+function buildPhotoRoomInputImage(
+  nodeId: string,
+  slot: string,
+  src: string,
+  aw: number,
+  ah: number,
+  existing: ImageObject | undefined,
+): ImageObject {
+  const id = photoRoomInputLayerId(nodeId, slot);
+  const m = /^in_(\d+)$/.exec(slot);
+  const idxNum = m ? Number(m[1]) : NaN;
+  const label = Number.isFinite(idxNum) ? `Entrada imagen ${idxNum + 1}` : `Entrada ${slot}`;
+
+  if (existing && existing.src === src) {
+    return {
+      ...existing,
+      id,
+      type: "image",
+      src,
+      photoRoomInputSlot: slot,
+      name: existing.name || label,
+    } as ImageObject;
+  }
+
+  const iw = 1920;
+  const ih = 1080;
+  const { x, y, width, height, intrinsicRatio } = fitPhotoRoomImageRect(iw, ih, aw, ah);
+  const base = defaultObj({
+    id,
+    name: label,
+    visible: true,
+    locked: false,
+  });
+  return {
+    ...base,
+    type: "image",
+    x,
+    y,
+    width,
+    height,
+    fill: solidFill("none"),
+    stroke: "none",
+    strokeWidth: 0,
+    src,
+    intrinsicRatio,
+    opacity: 1,
+    rotation: 0,
+    photoRoomInputSlot: slot,
+  } as ImageObject;
+}
+
+/** PhotoRoom: mantiene al fondo las capas de imágenes conectadas (orden por slot); el resto no se toca. */
+function mergePhotoRoomInputLayers(
+  prev: FreehandObject[],
+  inputs: { slot: string; src: string }[],
+  nodeId: string,
+  aw: number,
+  ah: number,
+): FreehandObject[] {
+  const inputBySlot = new Map(inputs.map((i) => [i.slot, i.src] as const));
+  const userOnly = prev.filter((o) => !o.photoRoomInputSlot);
+
+  const existingBySlot = new Map<string, ImageObject>();
+  for (const o of prev) {
+    if (o.photoRoomInputSlot && o.type === "image" && inputBySlot.has(o.photoRoomInputSlot)) {
+      existingBySlot.set(o.photoRoomInputSlot, o as ImageObject);
+    }
+  }
+
+  const sortedSlots = [...inputBySlot.keys()].sort((a, b) => {
+    const na = parseInt(a.replace(/\D/g, ""), 10) || 0;
+    const nb = parseInt(b.replace(/\D/g, ""), 10) || 0;
+    return na - nb;
+  });
+
+  const inputLayers: ImageObject[] = sortedSlots.map((slot) => {
+    const src = inputBySlot.get(slot)!;
+    const existing = existingBySlot.get(slot);
+    return buildPhotoRoomInputImage(nodeId, slot, src, aw, ah, existing);
+  });
+
+  return [...inputLayers, ...userOnly];
+}
+
+function computeStudioInitialObjects(
+  initialObjects: FreehandObject[],
+  photoRoomConnectedInputs: { slot: string; src: string }[] | undefined,
+  nodeId: string,
+  aw: number,
+  ah: number,
+): FreehandObject[] {
+  const migrated = migrateDesignerPageObjects(initialObjects);
+  if (photoRoomConnectedInputs === undefined) return migrated;
+  return mergePhotoRoomInputLayers(migrated, photoRoomConnectedInputs, nodeId, aw, ah);
+}
+
 /** URLs que deben decodificarse antes de mostrar el lienzo (data:/blob: se consideran instantáneos). */
 function designerRasterUrlNeedsPreload(href: string): boolean {
   const s = href.trim();
@@ -4670,10 +5506,10 @@ function preloadDesignerRasterUrl(url: string): Promise<void> {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  MAIN COMPONENT
+//  MAIN COMPONENT (lienzo compartido; Designer importa el default, PhotoRoom usa PhotoRoomFreehandStudio)
 // ═══════════════════════════════════════════════════════════════════════════
 
-export default function FreehandStudio({
+export function FreehandStudioCanvas({
   nodeId,
   initialObjects,
   initialArtboards,
@@ -4682,6 +5518,11 @@ export default function FreehandStudio({
   onExport,
   onUpdateObjects,
   onUpdateLayoutGuides,
+  studioHeaderTitle = "Designer",
+  studioHeaderSubtitle = "Vector document",
+  studioHeaderAccessory,
+  photoRoomConnectedInputs,
+  studioPhotoRoomCanvasPanel,
   designerMode,
   onDesignerTextFrameCreate,
   onDesignerImageFramePlace,
@@ -4713,7 +5554,12 @@ export default function FreehandStudio({
 }: FreehandStudioProps) {
 
   // ── Core state ─────────────────────────────────────────────────────
-  const [objects, setObjects] = useState<FreehandObject[]>(() => migrateDesignerPageObjects(initialObjects));
+  const [objects, setObjects] = useState<FreehandObject[]>(() => {
+    const rawAb = initialArtboards ?? [];
+    const aw = rawAb[0]?.width ?? 595;
+    const ah = rawAb[0]?.height ?? 842;
+    return computeStudioInitialObjects(initialObjects, photoRoomConnectedInputs, nodeId, aw, ah);
+  });
   /** Un solo pliego por instancia; tamaño lo define el padre (Designer: página activa). */
   const artboards = useMemo((): Artboard[] => {
     const raw = initialArtboards ?? [];
@@ -4729,8 +5575,157 @@ export default function FreehandStudio({
     return unionRects(artboards.map(artboardToRect));
   }, [artboards]);
 
+  const onUpdateObjectsRef = useRef(onUpdateObjects);
+  onUpdateObjectsRef.current = onUpdateObjects;
+
+  const photoRoomInputsSig = useMemo(() => {
+    if (photoRoomConnectedInputs === undefined) return "";
+    return photoRoomConnectedInputs.map((c) => `${c.slot}:${c.src}`).join("|");
+  }, [photoRoomConnectedInputs]);
+
+  const photoRoomSizedRef = useRef<Set<string>>(new Set());
+
+  /** PhotoRoom: marco rectangular confirmado (coordenadas mundo); fase A = preview / hormigas, sin píxeles aún. */
+  const [photoRectMarqueeSelection, setPhotoRectMarqueeSelection] = useState<Rect[]>([]);
+  /** PhotoRoom: selección por polígono(s) cerrado(s); excluye rectángulos (se limpia al confirmar el otro modo). */
+  const [photoPolygonMarqueeSelection, setPhotoPolygonMarqueeSelection] = useState<Point[][]>([]);
+  /** PhotoRoom: marcos elípticos confirmados. */
+  const [photoEllipseMarqueeSelection, setPhotoEllipseMarqueeSelection] = useState<PhotoEllipseMarquee[]>([]);
+  /** Refs síncronos para atajos/teclado (evita cierres obsoletos sobre la selección). */
+  const photoRectMarqueeSelectionRef = useRef(photoRectMarqueeSelection);
+  const photoPolygonMarqueeSelectionRef = useRef(photoPolygonMarqueeSelection);
+  const photoEllipseMarqueeSelectionRef = useRef(photoEllipseMarqueeSelection);
+  photoRectMarqueeSelectionRef.current = photoRectMarqueeSelection;
+  photoPolygonMarqueeSelectionRef.current = photoPolygonMarqueeSelection;
+  photoEllipseMarqueeSelectionRef.current = photoEllipseMarqueeSelection;
+  /** Clic dentro del marco confirmado: no arrancar drag hasta superar umbral (así un clic suelto no quita las hormigas). */
+  const photoRectMarqueePendingRef = useRef<{ clientX: number; clientY: number } | null>(null);
+
+  /** Studio del nodo PhotoRoom (incluye solo imágenes importadas en el lienzo; no exige cables al grafo). */
+  const isPhotoRoomStudioEmbed = studioPhotoRoomCanvasPanel != null;
+
+  const artboardW = artboards[0]?.width ?? 1920;
+  const artboardH = artboards[0]?.height ?? 1080;
+
+  useLayoutEffect(() => {
+    if (photoRoomConnectedInputs === undefined) return;
+    photoRoomSizedRef.current.clear();
+    setObjects((prev) => {
+      const next = mergePhotoRoomInputLayers(prev, photoRoomConnectedInputs, nodeId, artboardW, artboardH);
+      queueMicrotask(() => onUpdateObjectsRef.current(next));
+      return next;
+    });
+  }, [photoRoomInputsSig, nodeId, artboardW, artboardH]);
+
+  const photoRoomInputsSigPrevRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (photoRoomConnectedInputs === undefined) {
+      photoRoomInputsSigPrevRef.current = null;
+      return;
+    }
+    const prev = photoRoomInputsSigPrevRef.current;
+    photoRoomInputsSigPrevRef.current = photoRoomInputsSig;
+    if (prev !== null && prev !== photoRoomInputsSig) {
+      setPhotoRectMarqueeSelection([]);
+      setPhotoPolygonMarqueeSelection([]);
+      setPhotoEllipseMarqueeSelection([]);
+    }
+  }, [photoRoomInputsSig, photoRoomConnectedInputs]);
+
+  useEffect(() => {
+    if (photoRoomConnectedInputs === undefined || photoRoomConnectedInputs.length === 0) return;
+    let cancelled = false;
+    void (async () => {
+      const results = await Promise.all(
+        photoRoomConnectedInputs.map(
+          ({ slot, src }) =>
+            new Promise<{ slot: string; src: string; iw: number; ih: number }>((res) => {
+              const im = new Image();
+              im.decoding = "async";
+              im.onload = () => res({ slot, src, iw: im.naturalWidth || 1, ih: im.naturalHeight || 1 });
+              im.onerror = () => res({ slot, src, iw: 1600, ih: 900 });
+              im.src = src;
+            }),
+        ),
+      );
+      if (cancelled) return;
+      setObjects((prev) => {
+        let changed = false;
+        const next = prev.map((o) => {
+          if (o.type !== "image" || !o.photoRoomInputSlot) return o;
+          const img = o as ImageObject;
+          const m = results.find((r) => r.slot === img.photoRoomInputSlot && r.src === img.src);
+          if (!m) return o;
+          const key = `${img.id}|${img.src}`;
+          if (photoRoomSizedRef.current.has(key)) return o;
+          photoRoomSizedRef.current.add(key);
+          changed = true;
+          const fitted = fitPhotoRoomImageRect(m.iw, m.ih, artboardW, artboardH);
+          return { ...img, ...fitted };
+        });
+        if (!changed) return prev;
+        const out = next as FreehandObject[];
+        queueMicrotask(() => onUpdateObjectsRef.current(out));
+        return out;
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [photoRoomInputsSig, nodeId, artboardW, artboardH]);
+
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [activeTool, setActiveTool] = useState<Tool>("select");
+
+  /** Indicadores Ctrl/⌘ (+) y Alt/Option (−) en marco PhotoRoom; refs evitan desfase con React. */
+  const [photoRectMarqueeAddModHeld, setPhotoRectMarqueeAddModHeld] = useState(false);
+  const [photoRectMarqueeAltModHeld, setPhotoRectMarqueeAltModHeld] = useState(false);
+  const photoRectMarqueeAddModRef = useRef(false);
+  const photoRectMarqueeAltModRef = useRef(false);
+  useEffect(() => {
+    const photoMarqueeLike =
+      activeTool === "rectMarquee" ||
+      activeTool === "ellipseMarquee" ||
+      activeTool === "lassoMarquee" ||
+      activeTool === "polygonMarquee";
+    if (!isPhotoRoomStudioEmbed || !photoMarqueeLike) {
+      setPhotoRectMarqueeAddModHeld(false);
+      setPhotoRectMarqueeAltModHeld(false);
+      photoRectMarqueeAddModRef.current = false;
+      photoRectMarqueeAltModRef.current = false;
+      return;
+    }
+    const sync = (e: KeyboardEvent | MouseEvent) => {
+      const ne = e as KeyboardEvent & MouseEvent;
+      const alt = !!(ne.altKey ||
+        (typeof ne.getModifierState === "function" && ne.getModifierState("Alt")));
+      const add = !alt &&
+        !!(ne.ctrlKey || ne.metaKey ||
+          (typeof ne.getModifierState === "function" &&
+            (ne.getModifierState("Control") || ne.getModifierState("Meta"))));
+      photoRectMarqueeAltModRef.current = alt;
+      photoRectMarqueeAddModRef.current = add;
+      setPhotoRectMarqueeAltModHeld(alt);
+      setPhotoRectMarqueeAddModHeld(add);
+    };
+    const onBlur = () => {
+      photoRectMarqueeAddModRef.current = false;
+      photoRectMarqueeAltModRef.current = false;
+      setPhotoRectMarqueeAddModHeld(false);
+      setPhotoRectMarqueeAltModHeld(false);
+    };
+    window.addEventListener("keydown", sync as EventListener);
+    window.addEventListener("keyup", sync as EventListener);
+    window.addEventListener("mousemove", sync);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", sync as EventListener);
+      window.removeEventListener("keyup", sync as EventListener);
+      window.removeEventListener("mousemove", sync);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, [isPhotoRoomStudioEmbed, activeTool]);
+
   const [viewport, setViewport] = useState({ x: 0, y: 0, zoom: 1 });
   const studioShellRef = useRef<HTMLDivElement>(null);
   usePreventBrowserPinchZoom(studioShellRef);
@@ -4782,7 +5777,7 @@ export default function FreehandStudio({
 
   // Drag state
   const [dragState, setDragState] = useState<{
-    type: "move" | "resize" | "pan" | "create" | "createText" | "createTextFrame" | "createImageFrame" | "directSelect" | "marquee" | "penHandle" | "rotate" | "gradient" | "guideMove" | "guidePull" | "imageContentPan" | "imageContentResize";
+    type: "move" | "resize" | "pan" | "create" | "createText" | "createTextFrame" | "createImageFrame" | "directSelect" | "marquee" | "photoRectMarquee" | "photoEllipseMarquee" | "photoLassoMarquee" | "photoPolygonMarquee" | "photoMarqueeNudge" | "penHandle" | "rotate" | "gradient" | "guideMove" | "guidePull" | "imageContentPan" | "imageContentResize";
     startX: number;
     startY: number;
     startCanvas?: Point;
@@ -4811,6 +5806,18 @@ export default function FreehandStudio({
     marqueeOrigin?: Point;
     snapDelta?: Point;
     shiftKey?: boolean;
+    /** Solo `photoRectMarquee`: sumar rectángulo (Ctrl/⌘ al iniciar el trazo). */
+    photoMarqueeAdditive?: boolean;
+    /** Solo `photoRectMarquee`: restar rectángulo (Alt/Option al iniciar el trazo). */
+    photoMarqueeSubtract?: boolean;
+    /** Solo `photoLassoMarquee`: puntos del trazo (mundo). */
+    photoLassoPoints?: Point[];
+    /** Solo `photoPolygonMarquee`: vértices colocados; `currentCanvas` = rubber band al cursor. */
+    photoPolygonVertices?: Point[];
+    /** Instantánea al inicio del gesto (mover selección PhotoRoom con la herramienta V). */
+    photoMarqueeSnapRects?: Rect[];
+    photoMarqueeSnapPolys?: Point[][];
+    photoMarqueeSnapEllipses?: PhotoEllipseMarquee[];
     rotateCenter?: Point;
     rotateStartAngle?: number;
     rotateInitialRotations?: Map<string, number>;
@@ -4920,7 +5927,12 @@ export default function FreehandStudio({
   type HistoryEntry = { objects: FreehandObject[]; sel: string[]; designerSnap?: unknown };
   const historyRef = useRef<HistoryEntry[]>([
     {
-      objects: migrateDesignerPageObjects(initialObjects),
+      objects: (() => {
+        const rawAb = initialArtboards ?? [];
+        const aw = rawAb[0]?.width ?? 595;
+        const ah = rawAb[0]?.height ?? 842;
+        return computeStudioInitialObjects(initialObjects, photoRoomConnectedInputs, nodeId, aw, ah);
+      })(),
       sel: [],
     },
   ]);
@@ -5005,6 +6017,8 @@ export default function FreehandStudio({
   /** Popover de color en la barra de herramientas izquierda (fill / stroke). */
   const [leftToolbarColorTarget, setLeftToolbarColorTarget] = useState<null | "fill" | "stroke">(null);
   const [leftToolbarColorPos, setLeftToolbarColorPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  /** Submenú de grupos de herramientas (barra izquierda, estilo Photoshop). */
+  const [leftToolbarToolFlyout, setLeftToolbarToolFlyout] = useState<string | null>(null);
   const leftToolbarSwatchDockRef = useRef<HTMLDivElement>(null);
   const leftToolbarColorPopoverRef = useRef<HTMLDivElement>(null);
 
@@ -5144,10 +6158,16 @@ export default function FreehandStudio({
     if (entry.designerSnap != null && designerHistoryBridge) {
       designerHistoryBridge.restore(entry.designerSnap);
     }
-    setObjects([...entry.objects]);
+    const aw = artboardsRef.current[0]?.width ?? 1920;
+    const ah = artboardsRef.current[0]?.height ?? 1080;
+    let next = [...entry.objects] as FreehandObject[];
+    if (photoRoomConnectedInputs !== undefined) {
+      next = mergePhotoRoomInputLayers(next, photoRoomConnectedInputs, nodeId, aw, ah);
+    }
+    setObjects(next);
     setSelectedIds(new Set(entry.sel));
     forceRender((n) => n + 1);
-  }, [designerHistoryBridge]);
+  }, [designerHistoryBridge, photoRoomConnectedInputs, nodeId]);
 
   const redo = useCallback(() => {
     if (historyIdxRef.current >= historyRef.current.length - 1) return;
@@ -5156,10 +6176,16 @@ export default function FreehandStudio({
     if (entry.designerSnap != null && designerHistoryBridge) {
       designerHistoryBridge.restore(entry.designerSnap);
     }
-    setObjects([...entry.objects]);
+    const aw = artboardsRef.current[0]?.width ?? 1920;
+    const ah = artboardsRef.current[0]?.height ?? 1080;
+    let next = [...entry.objects] as FreehandObject[];
+    if (photoRoomConnectedInputs !== undefined) {
+      next = mergePhotoRoomInputLayers(next, photoRoomConnectedInputs, nodeId, aw, ah);
+    }
+    setObjects(next);
     setSelectedIds(new Set(entry.sel));
     forceRender((n) => n + 1);
-  }, [designerHistoryBridge]);
+  }, [designerHistoryBridge, photoRoomConnectedInputs, nodeId]);
 
   /** Designer: al cambiar de página, hidratar el lienzo sin remontar el componente (layout: antes del pintado, evita flash blanco + salto de zoom). */
   useLayoutEffect(() => {
@@ -6406,6 +7432,24 @@ export default function FreehandStudio({
     };
   }, [leftToolbarColorTarget]);
 
+  useEffect(() => {
+    if (!leftToolbarToolFlyout) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setLeftToolbarToolFlyout(null);
+    };
+    const onDown = (e: MouseEvent) => {
+      const el = e.target as HTMLElement;
+      if (el.closest?.("[data-tool-flyout-root]")) return;
+      setLeftToolbarToolFlyout(null);
+    };
+    window.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onDown, true);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onDown, true);
+    };
+  }, [leftToolbarToolFlyout]);
+
   const updateSelectedFill = useCallback((updater: (f: FillAppearance) => FillAppearance) => {
     const sel = selectedIdsRef.current;
     if (sel.size === 0) return;
@@ -6433,10 +7477,93 @@ export default function FreehandStudio({
   }, []);
 
   const objectClipboardRef = useRef<FreehandObject[] | null>(null);
+  /** PhotoRoom: recorte raster copiado con la selección (capa imagen). */
+  const photoMarqueeRasterClipboardRef = useRef<PhotoMarqueeRasterClip | null>(null);
+  /** Misma información que el clip, sin bitmap: vínculo capa + recorte píxel + AABB mundo. */
+  const activePixelSelectionRef = useRef<ActivePixelSelection | null>(null);
+  /** Índice de pegados consecutivos del mismo clip (0 = sin offset, 1 = +24, …). Se resetea en cada copy raster. */
+  const photoMarqueePasteStaggerRef = useRef(0);
+
+  const copyPhotoMarqueeRasterSelection = useCallback(async () => {
+    const sel = selectedIdsRef.current;
+    const img = findSingleSelectedImageForPhotoMarquee(sel, objectsRef.current);
+    if (!img) return;
+    const rects = photoRectMarqueeSelectionRef.current;
+    const polys = photoPolygonMarqueeSelectionRef.current;
+    const ellipses = photoEllipseMarqueeSelectionRef.current;
+    const hasMarquee = rects.length > 0 || polys.length > 0 || ellipses.length > 0;
+    if (!hasMarquee) return;
+    try {
+      const clip = await extractPhotoMarqueeRasterFromImage(
+        img,
+        rects,
+        polys,
+        ellipses,
+      );
+      if (!clip) {
+        setToast("No hay píxeles en la selección");
+        window.setTimeout(() => setToast(null), 2400);
+        return;
+      }
+      photoMarqueeRasterClipboardRef.current = clip;
+      photoMarqueePasteStaggerRef.current = 0;
+      activePixelSelectionRef.current = {
+        sourceLayerId: clip.sourceLayerId,
+        naturalWidth: clip.naturalWidth,
+        naturalHeight: clip.naturalHeight,
+        pixelCrop: clip.pixelCrop,
+        worldBounds: clip.worldBounds,
+      };
+      objectClipboardRef.current = null;
+      if (designerClipboardRef) designerClipboardRef.current = null;
+    } catch {
+      setToast("No se pudo copiar la imagen (CORS o origen bloqueado)");
+      window.setTimeout(() => setToast(null), 3200);
+    }
+  }, [designerClipboardRef]);
+
+  const pastePhotoMarqueeRaster = useCallback(() => {
+    const clip = photoMarqueeRasterClipboardRef.current;
+    if (!clip) return false;
+    const r0 = photoRectMarqueeSelectionRef.current;
+    const p0 = photoPolygonMarqueeSelectionRef.current;
+    const e0 = photoEllipseMarqueeSelectionRef.current;
+    const hasMarquee = r0.length > 0 || p0.length > 0 || e0.length > 0;
+    const ub = hasMarquee ? unionPhotoMarqueeWorldBounds(r0, p0, e0) : null;
+    const wb =
+      ub && ub.w > 1e-6 && ub.h > 1e-6 ? ub : clip.worldBounds;
+    const stagger = photoMarqueePasteStaggerRef.current;
+    const off = stagger * PHOTO_MARQUEE_PASTE_STAGGER_PX;
+    photoMarqueePasteStaggerRef.current = stagger + 1;
+    const newObj: ImageObject = {
+      ...defaultObj({ name: `Selección ${objectsRef.current.filter((o) => o.type === "image").length + 1}` }),
+      type: "image",
+      x: wb.x + off,
+      y: wb.y + off,
+      width: Math.max(1e-6, wb.w),
+      height: Math.max(1e-6, wb.h),
+      fill: solidFill("none"),
+      stroke: "none",
+      strokeWidth: 0,
+      src: clip.dataUrl,
+      intrinsicRatio: clip.cropW / Math.max(clip.cropH, 1),
+    } as ImageObject;
+    const next = [...objectsRef.current, newObj];
+    /** Reseleccionar la capa imagen de origen: el marquee sigue en mundo sobre ella; si dejáramos la capa pegada, Cmd+C volvería a mapear mal y el recorte fallaría al repetir. */
+    const ns = new Set([clip.sourceLayerId]);
+    setObjects(next);
+    setSelectedIds(ns);
+    pushHistory(next, ns);
+    /** No vaciar el portapapeles: Cmd+V puede repetirse (mismo clip hasta un nuevo copy u otro tipo de copia). */
+    return true;
+  }, [pushHistory]);
 
   const copySelectedObjects = useCallback(() => {
+    photoMarqueeRasterClipboardRef.current = null;
+    activePixelSelectionRef.current = null;
+    photoMarqueePasteStaggerRef.current = 0;
     const sel = selectedIdsRef.current;
-    const objs = objectsRef.current.filter((o) => sel.has(o.id));
+    const objs = objectsRef.current.filter((o) => sel.has(o.id) && !o.photoRoomInputSlot);
     if (objs.length === 0) return;
     const cloned = objs.map((o) => deepCloneFreehandObject(o, uid));
     objectClipboardRef.current = cloned;
@@ -6449,6 +7576,9 @@ export default function FreehandStudio({
   }, [designerMode, designerClipboardRef, designerClipboardSourcePageIdRef, designerActivePageId]);
 
   const pasteClipboardObjects = useCallback(() => {
+    if (photoMarqueeRasterClipboardRef.current) {
+      if (pastePhotoMarqueeRaster()) return;
+    }
     const designerClip = designerClipboardRef?.current;
     const usedDesignerClip = !!(designerMode && designerClip && designerClip.length > 0);
     const clip = usedDesignerClip ? designerClip : objectClipboardRef.current;
@@ -6481,6 +7611,7 @@ export default function FreehandStudio({
     designerClipboardRef,
     designerClipboardSourcePageIdRef,
     designerActivePageId,
+    pastePhotoMarqueeRaster,
   ]);
 
   const convertTextToOutlines = useCallback(async () => {
@@ -6584,7 +7715,11 @@ export default function FreehandStudio({
     const sel = selectedIdsRef.current;
     if (sel.size === 0) return;
     setObjects((prev) => {
-      const next = prev.filter((o) => !sel.has(o.id));
+      const next = prev.filter((o) => {
+        if (!sel.has(o.id)) return true;
+        if (o.photoRoomInputSlot) return true;
+        return false;
+      });
       pushHistory(next, new Set());
       return next;
     });
@@ -6596,7 +7731,11 @@ export default function FreehandStudio({
     const sel = selectedIdsRef.current;
     if (sel.size === 0) return;
     setObjects((prev) => {
-      const next = prev.filter((o) => !sel.has(o.id));
+      const next = prev.filter((o) => {
+        if (!sel.has(o.id)) return true;
+        if (o.photoRoomInputSlot) return true;
+        return false;
+      });
       pushHistory(next, new Set());
       return next;
     });
@@ -6608,8 +7747,9 @@ export default function FreehandStudio({
     const objs = objectsRef.current;
     if (sel.size === 0) return;
     const { dx, dy } = duplicateStepRef.current;
-    const dupes = objs.filter((o) => sel.has(o.id))
+    const dupes = objs.filter((o) => sel.has(o.id) && !o.photoRoomInputSlot)
       .map((o) => translateFreehandObject(deepCloneFreehandObject(o, uid), dx, dy));
+    if (dupes.length === 0) return;
     const next = [...objs, ...dupes];
     const ns = new Set(dupes.map((d) => d.id));
     setObjects(next); setSelectedIds(ns);
@@ -6618,9 +7758,15 @@ export default function FreehandStudio({
 
   const bringForward = useCallback(() => {
     const sel = selectedIdsRef.current;
+    const movable = Array.from(sel).filter((id) => {
+      const o = objectsRef.current.find((x) => x.id === id);
+      return o && !o.photoRoomInputSlot;
+    });
+    if (movable.length === 0) return;
+    const movableSet = new Set(movable);
     setObjects((prev) => {
       const next = [...prev];
-      const ids = Array.from(sel);
+      const ids = Array.from(movableSet);
       for (let j = ids.length - 1; j >= 0; j--) {
         const idx = next.findIndex((o) => o.id === ids[j]);
         if (idx < next.length - 1) [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
@@ -6632,9 +7778,15 @@ export default function FreehandStudio({
 
   const sendBackward = useCallback(() => {
     const sel = selectedIdsRef.current;
+    const movable = Array.from(sel).filter((id) => {
+      const o = objectsRef.current.find((x) => x.id === id);
+      return o && !o.photoRoomInputSlot;
+    });
+    if (movable.length === 0) return;
+    const movableSet = new Set(movable);
     setObjects((prev) => {
       const next = [...prev];
-      for (const sid of sel) {
+      for (const sid of movableSet) {
         const idx = next.findIndex((o) => o.id === sid);
         if (idx > 0) [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
       }
@@ -6647,8 +7799,9 @@ export default function FreehandStudio({
     const sel = selectedIdsRef.current;
     if (sel.size === 0) return;
     setObjects((prev) => {
-      const rest = prev.filter((o) => !sel.has(o.id));
-      const moved = prev.filter((o) => sel.has(o.id));
+      const moved = prev.filter((o) => sel.has(o.id) && !o.photoRoomInputSlot);
+      if (moved.length === 0) return prev;
+      const rest = prev.filter((o) => !(sel.has(o.id) && !o.photoRoomInputSlot));
       const next = [...rest, ...moved];
       pushHistory(next, sel);
       return next;
@@ -6659,8 +7812,9 @@ export default function FreehandStudio({
     const sel = selectedIdsRef.current;
     if (sel.size === 0) return;
     setObjects((prev) => {
-      const moved = prev.filter((o) => sel.has(o.id));
-      const rest = prev.filter((o) => !sel.has(o.id));
+      const moved = prev.filter((o) => sel.has(o.id) && !o.photoRoomInputSlot);
+      if (moved.length === 0) return prev;
+      const rest = prev.filter((o) => !(sel.has(o.id) && !o.photoRoomInputSlot));
       const next = [...moved, ...rest];
       pushHistory(next, sel);
       return next;
@@ -6671,11 +7825,16 @@ export default function FreehandStudio({
 
   const groupSelected = useCallback(() => {
     const sel = selectedIdsRef.current;
-    if (sel.size < 2) return;
+    const movable = Array.from(sel).filter((id) => {
+      const o = objectsRef.current.find((x) => x.id === id);
+      return o && !o.photoRoomInputSlot;
+    });
+    if (movable.length < 2) return;
     const gid = uid();
+    const movableSet = new Set(movable);
     setObjects((prev) => {
-      const next = prev.map((o) => sel.has(o.id) ? { ...o, groupId: gid } : o);
-      pushHistory(next, sel);
+      const next = prev.map((o) => (movableSet.has(o.id) ? { ...o, groupId: gid } : o));
+      pushHistory(next, movableSet);
       return next;
     });
   }, [pushHistory]);
@@ -7702,6 +8861,7 @@ export default function FreehandStudio({
     const onKeyDown = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
       if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT") return;
+      if (t.isContentEditable || t.closest?.("[contenteditable='true']")) return;
 
       e.stopPropagation();
 
@@ -7714,6 +8874,21 @@ export default function FreehandStudio({
       // Plain V = select tool; must not steal Ctrl/Meta+V (paste) or Ctrl+Shift+V (paste inside)
       if ((e.key === "v" || e.key === "V") && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault(); setActiveTool("select"); return;
+      }
+      if ((e.key === "m" || e.key === "M") && !e.metaKey && !e.ctrlKey && !e.altKey && isPhotoRoomStudioEmbed) {
+        e.preventDefault();
+        setActiveTool("rectMarquee");
+        return;
+      }
+      if ((e.key === "l" || e.key === "L") && !e.metaKey && !e.ctrlKey && !e.altKey && isPhotoRoomStudioEmbed) {
+        e.preventDefault();
+        setActiveTool(e.shiftKey ? "polygonMarquee" : "lassoMarquee");
+        return;
+      }
+      if ((e.key === "o" || e.key === "O") && !e.metaKey && !e.ctrlKey && !e.altKey && isPhotoRoomStudioEmbed) {
+        e.preventDefault();
+        setActiveTool("ellipseMarquee");
+        return;
       }
       if (e.key === "a" && !e.metaKey && !e.ctrlKey) { e.preventDefault(); setActiveTool("directSelect"); return; }
       // P = modo lienzo a pantalla completa; ⇧P = lápiz
@@ -7765,9 +8940,47 @@ export default function FreehandStudio({
         return;
       }
 
-      if ((e.metaKey || e.ctrlKey) && e.key === "c") { e.preventDefault(); copySelectedObjects(); return; }
-      if ((e.metaKey || e.ctrlKey) && e.key === "x") { e.preventDefault(); cutSelectedObjects(); return; }
-      if ((e.metaKey || e.ctrlKey) && (e.key === "v" || e.key === "V")) {
+      if ((e.metaKey || e.ctrlKey) && e.code === "KeyC") {
+        e.preventDefault();
+        const srcImg = findSingleSelectedImageForPhotoMarquee(
+          selectedIdsRef.current,
+          objectsRef.current,
+        );
+        if (
+          srcImg &&
+          (photoRectMarqueeSelectionRef.current.length > 0 ||
+            photoPolygonMarqueeSelectionRef.current.length > 0 ||
+            photoEllipseMarqueeSelectionRef.current.length > 0)
+        ) {
+          void copyPhotoMarqueeRasterSelection();
+          return;
+        }
+        copySelectedObjects();
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.code === "KeyX") {
+        e.preventDefault();
+        const srcImg = findSingleSelectedImageForPhotoMarquee(
+          selectedIdsRef.current,
+          objectsRef.current,
+        );
+        if (
+          srcImg &&
+          (photoRectMarqueeSelectionRef.current.length > 0 ||
+            photoPolygonMarqueeSelectionRef.current.length > 0 ||
+            photoEllipseMarqueeSelectionRef.current.length > 0)
+        ) {
+          void copyPhotoMarqueeRasterSelection().then(() => {
+            setPhotoRectMarqueeSelection([]);
+            setPhotoPolygonMarqueeSelection([]);
+            setPhotoEllipseMarqueeSelection([]);
+          });
+          return;
+        }
+        cutSelectedObjects();
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.code === "KeyV") {
         e.preventDefault();
         if (e.shiftKey) pasteInside();
         else pasteClipboardObjects();
@@ -7828,9 +9041,38 @@ export default function FreehandStudio({
         else if (e.key === "ArrowRight") mdx = step;
         else if (e.key === "ArrowUp") mdy = -step;
         else mdy = step;
+        const mult = e.shiftKey ? 10 : 1;
+        mdx *= mult;
+        mdy *= mult;
 
         const sel = selectedIdsRef.current;
         const sp = selectedPointsRef.current;
+        const marqueeSrcImg = findSingleSelectedImageForPhotoMarquee(sel, objectsRef.current);
+
+        if (
+          marqueeSrcImg &&
+          (activeTool === "select" ||
+            activeTool === "rectMarquee" ||
+            activeTool === "ellipseMarquee" ||
+            activeTool === "lassoMarquee" ||
+            activeTool === "polygonMarquee") &&
+          (photoRectMarqueeSelectionRef.current.length > 0 ||
+            photoPolygonMarqueeSelectionRef.current.length > 0 ||
+            photoEllipseMarqueeSelectionRef.current.length > 0)
+        ) {
+          e.preventDefault();
+          const t = translatePhotoMarqueeCommitted(
+            mdx,
+            mdy,
+            photoRectMarqueeSelectionRef.current,
+            photoPolygonMarqueeSelectionRef.current,
+            photoEllipseMarqueeSelectionRef.current,
+          );
+          setPhotoRectMarqueeSelection(t.rects);
+          setPhotoPolygonMarqueeSelection(t.polys);
+          setPhotoEllipseMarqueeSelection(t.ellipses);
+          return;
+        }
 
         if (activeTool === "directSelect" && sp.size > 0) {
           e.preventDefault();
@@ -7889,6 +9131,42 @@ export default function FreehandStudio({
 
       if (e.key === "Escape") {
         e.preventDefault();
+        photoRectMarqueePendingRef.current = null;
+        const dsEsc = dragStateRef.current?.type;
+        if (dsEsc === "photoMarqueeNudge") {
+          const dsn = dragStateRef.current;
+          if (dsn?.type === "photoMarqueeNudge" && dsn.photoMarqueeSnapRects) {
+            setPhotoRectMarqueeSelection(dsn.photoMarqueeSnapRects.map((r) => ({ ...r })));
+            setPhotoPolygonMarqueeSelection(
+              (dsn.photoMarqueeSnapPolys ?? []).map((ring) => ring.map((p) => ({ ...p }))),
+            );
+            setPhotoEllipseMarqueeSelection(
+              (dsn.photoMarqueeSnapEllipses ?? []).map((el) => ({ ...el })),
+            );
+          }
+          setDragState(null);
+          return;
+        }
+        if (
+          isPhotoRoomStudioEmbed &&
+          (dsEsc === "photoRectMarquee" ||
+            dsEsc === "photoEllipseMarquee" ||
+            dsEsc === "photoLassoMarquee" ||
+            dsEsc === "photoPolygonMarquee")
+        ) {
+          setDragState(null);
+          return;
+        }
+        if (
+          photoRectMarqueeSelectionRef.current.length > 0 ||
+          photoPolygonMarqueeSelectionRef.current.length > 0 ||
+          photoEllipseMarqueeSelectionRef.current.length > 0
+        ) {
+          setPhotoRectMarqueeSelection([]);
+          setPhotoPolygonMarqueeSelection([]);
+          setPhotoEllipseMarqueeSelection([]);
+          return;
+        }
         if (canvasZenMode) {
           setCanvasZenMode(false);
           scheduleFitAllAfterLayout();
@@ -7949,7 +9227,9 @@ export default function FreehandStudio({
       undo, redo, pushHistory, deleteSelected, duplicateSelected, groupSelected,
       ungroupSelected, bringForward, sendBackward, finishPenPath, deleteSelectedPoints, exitIsolation,
       copySelectedObjects, cutSelectedObjects, pasteClipboardObjects, pasteInside, quickExportSelectionPng, convertTextToOutlines,
-      designerMode, onDesignerNavigatePage, designerStoryModalOpen, imageFrameContentEditId, clipContentEditId, canvasZenMode, scheduleFitAllAfterLayout]);
+      copyPhotoMarqueeRasterSelection,
+      designerMode, onDesignerNavigatePage, designerStoryModalOpen, imageFrameContentEditId, clipContentEditId, canvasZenMode, scheduleFitAllAfterLayout,
+      isPhotoRoomStudioEmbed]);
 
   // ── Mouse handlers ────────────────────────────────────────────────
 
@@ -8027,6 +9307,268 @@ export default function FreehandStudio({
         return;
       }
       setActiveTool("select");
+      return;
+    }
+
+    // ── PhotoRoom: lazo poligonal — continuar (vértices / cerrar) ─
+    if (isPhotoRoomStudioEmbed && e.button === 0 && dragStateRef.current?.type === "photoPolygonMarquee") {
+      e.preventDefault();
+      const ds = dragStateRef.current;
+      const verts = ds.photoPolygonVertices ?? [];
+      if (verts.length < 1) {
+        dragStateRef.current = null;
+        setDragState(null);
+        return;
+      }
+      const posPoly = screenToCanvas(e.clientX, e.clientY);
+      const closePx = PHOTO_POLY_CLOSE_PX / viewport.zoom;
+      const commitPoly = (ring: Point[]) => {
+        const additive = !!ds.photoMarqueeAdditive;
+        const subtract = !!ds.photoMarqueeSubtract;
+        const mode = subtract ? "subtract" : additive ? "add" : "replace";
+        dragStateRef.current = null;
+        setDragState(null);
+        const prevRects = photoRectMarqueeSelection;
+        const prevPoly = photoPolygonMarqueeSelection;
+        const prevEllipses = photoEllipseMarqueeSelection;
+        const base = buildPhotoMarqueePolyBase(prevPoly, prevRects, prevEllipses, mode);
+        const next = mergePhotoPolygonSelection(base, ring, mode);
+        setPhotoRectMarqueeSelection([]);
+        setPhotoEllipseMarqueeSelection([]);
+        setPhotoPolygonMarqueeSelection(next);
+      };
+      if (e.detail >= 2) {
+        const ring =
+          verts.length >= 3 ? verts : verts.length >= 2 ? [...verts, posPoly] : [...verts, posPoly];
+        if (ring.length >= 3) commitPoly(ring);
+        return;
+      }
+      if (verts.length >= 3) {
+        const d0 = Math.hypot(posPoly.x - verts[0]!.x, posPoly.y - verts[0]!.y);
+        if (d0 <= closePx) {
+          commitPoly(verts);
+          return;
+        }
+      }
+      const nextVerts = [...verts, posPoly];
+      const nextr = {
+        ...ds,
+        photoPolygonVertices: nextVerts,
+        currentCanvas: posPoly,
+      };
+      dragStateRef.current = nextr;
+      setDragState(nextr);
+      return;
+    }
+
+    // ── PhotoRoom: Ctrl/⌘ suma, Alt resta, sin modificador sustituye; ver indicadores +/− ─
+    if (isPhotoRoomStudioEmbed && activeTool === "rectMarquee" && e.button === 0) {
+      e.preventDefault();
+      setSelectedPoints(new Map());
+      photoRectMarqueePendingRef.current = null;
+      const committed = photoRectMarqueeSelection;
+      const insideAny = photoMarqueePointInsideCommitted(
+        pos,
+        committed,
+        photoPolygonMarqueeSelection,
+        photoEllipseMarqueeSelection,
+      );
+      const hasSelection =
+        committed.length > 0 ||
+        photoPolygonMarqueeSelection.length > 0 ||
+        photoEllipseMarqueeSelection.length > 0;
+      const subtractPointer = isPhotoMarqueeSubtractPointerHeld(e);
+      const additivePointer = isPhotoMarqueeAdditivePointerHeld(e);
+      const restarSeleccion =
+        hasSelection && (subtractPointer || photoRectMarqueeAltModRef.current);
+      const sumarSeleccion =
+        hasSelection &&
+        !restarSeleccion &&
+        (additivePointer || photoRectMarqueeAddModRef.current);
+      if (insideAny && !sumarSeleccion && !restarSeleccion) {
+        photoRectMarqueePendingRef.current = { clientX: e.clientX, clientY: e.clientY };
+        return;
+      }
+      const prDrag = {
+        type: "photoRectMarquee" as const,
+        startX: e.clientX,
+        startY: e.clientY,
+        marqueeOrigin: pos,
+        currentCanvas: pos,
+        photoMarqueeSubtract: restarSeleccion || (!hasSelection && subtractPointer),
+        photoMarqueeAdditive: restarSeleccion
+          ? false
+          : hasSelection
+            ? sumarSeleccion
+            : additivePointer,
+      };
+      /** Mismo tick que el primer mousemove: si no, `handleMouseMove` ve dragState=null en el closure y aborta el trazo. */
+      dragStateRef.current = prDrag;
+      setDragState(prDrag);
+      const pe = e.nativeEvent as PointerEvent;
+      if (typeof pe.pointerId === "number") {
+        try {
+          (e.currentTarget as HTMLElement).setPointerCapture(pe.pointerId);
+        } catch {
+          /* noop */
+        }
+      }
+      return;
+    }
+
+    // ── PhotoRoom: marco elíptico (⇧ = círculo perfecto al arrastrar) ─
+    if (isPhotoRoomStudioEmbed && activeTool === "ellipseMarquee" && e.button === 0) {
+      e.preventDefault();
+      setSelectedPoints(new Map());
+      photoRectMarqueePendingRef.current = null;
+      const insideAny = photoMarqueePointInsideCommitted(
+        pos,
+        photoRectMarqueeSelection,
+        photoPolygonMarqueeSelection,
+        photoEllipseMarqueeSelection,
+      );
+      const hasSelection =
+        photoRectMarqueeSelection.length > 0 ||
+        photoPolygonMarqueeSelection.length > 0 ||
+        photoEllipseMarqueeSelection.length > 0;
+      const subtractPointer = isPhotoMarqueeSubtractPointerHeld(e);
+      const additivePointer = isPhotoMarqueeAdditivePointerHeld(e);
+      const restarSeleccion =
+        hasSelection && (subtractPointer || photoRectMarqueeAltModRef.current);
+      const sumarSeleccion =
+        hasSelection &&
+        !restarSeleccion &&
+        (additivePointer || photoRectMarqueeAddModRef.current);
+      if (insideAny && !sumarSeleccion && !restarSeleccion) {
+        photoRectMarqueePendingRef.current = { clientX: e.clientX, clientY: e.clientY };
+        return;
+      }
+      const prDrag = {
+        type: "photoEllipseMarquee" as const,
+        startX: e.clientX,
+        startY: e.clientY,
+        marqueeOrigin: pos,
+        currentCanvas: pos,
+        photoMarqueeSubtract: restarSeleccion || (!hasSelection && subtractPointer),
+        photoMarqueeAdditive: restarSeleccion
+          ? false
+          : hasSelection
+            ? sumarSeleccion
+            : additivePointer,
+      };
+      dragStateRef.current = prDrag;
+      setDragState(prDrag);
+      const pe = e.nativeEvent as PointerEvent;
+      if (typeof pe.pointerId === "number") {
+        try {
+          (e.currentTarget as HTMLElement).setPointerCapture(pe.pointerId);
+        } catch {
+          /* noop */
+        }
+      }
+      return;
+    }
+
+    // ── PhotoRoom: lazo libre ─
+    if (isPhotoRoomStudioEmbed && activeTool === "lassoMarquee" && e.button === 0) {
+      e.preventDefault();
+      setSelectedPoints(new Map());
+      photoRectMarqueePendingRef.current = null;
+      const hasSelection =
+        photoRectMarqueeSelection.length > 0 ||
+        photoPolygonMarqueeSelection.length > 0 ||
+        photoEllipseMarqueeSelection.length > 0;
+      const insideAny = photoMarqueePointInsideCommitted(
+        pos,
+        photoRectMarqueeSelection,
+        photoPolygonMarqueeSelection,
+        photoEllipseMarqueeSelection,
+      );
+      const subtractPointer = isPhotoMarqueeSubtractPointerHeld(e);
+      const additivePointer = isPhotoMarqueeAdditivePointerHeld(e);
+      const restarSeleccion =
+        hasSelection && (subtractPointer || photoRectMarqueeAltModRef.current);
+      const sumarSeleccion =
+        hasSelection &&
+        !restarSeleccion &&
+        (additivePointer || photoRectMarqueeAddModRef.current);
+      if (insideAny && !sumarSeleccion && !restarSeleccion) {
+        photoRectMarqueePendingRef.current = { clientX: e.clientX, clientY: e.clientY };
+        return;
+      }
+      const prDrag = {
+        type: "photoLassoMarquee" as const,
+        startX: e.clientX,
+        startY: e.clientY,
+        photoLassoPoints: [pos],
+        currentCanvas: pos,
+        photoMarqueeSubtract: restarSeleccion || (!hasSelection && subtractPointer),
+        photoMarqueeAdditive: restarSeleccion
+          ? false
+          : hasSelection
+            ? sumarSeleccion
+            : additivePointer,
+      };
+      dragStateRef.current = prDrag;
+      setDragState(prDrag);
+      const pe = e.nativeEvent as PointerEvent;
+      if (typeof pe.pointerId === "number") {
+        try {
+          (e.currentTarget as HTMLElement).setPointerCapture(pe.pointerId);
+        } catch {
+          /* noop */
+        }
+      }
+      return;
+    }
+
+    // ── PhotoRoom: lazo poligonal (primer clic; el resto en `photoPolygonMarquee`) ─
+    if (
+      isPhotoRoomStudioEmbed &&
+      activeTool === "polygonMarquee" &&
+      e.button === 0 &&
+      dragStateRef.current?.type !== "photoPolygonMarquee"
+    ) {
+      e.preventDefault();
+      setSelectedPoints(new Map());
+      photoRectMarqueePendingRef.current = null;
+      const hasSelection =
+        photoRectMarqueeSelection.length > 0 ||
+        photoPolygonMarqueeSelection.length > 0 ||
+        photoEllipseMarqueeSelection.length > 0;
+      const insideAny = photoMarqueePointInsideCommitted(
+        pos,
+        photoRectMarqueeSelection,
+        photoPolygonMarqueeSelection,
+        photoEllipseMarqueeSelection,
+      );
+      const subtractPointer = isPhotoMarqueeSubtractPointerHeld(e);
+      const additivePointer = isPhotoMarqueeAdditivePointerHeld(e);
+      const restarSeleccion =
+        hasSelection && (subtractPointer || photoRectMarqueeAltModRef.current);
+      const sumarSeleccion =
+        hasSelection &&
+        !restarSeleccion &&
+        (additivePointer || photoRectMarqueeAddModRef.current);
+      if (insideAny && !sumarSeleccion && !restarSeleccion) {
+        photoRectMarqueePendingRef.current = { clientX: e.clientX, clientY: e.clientY };
+        return;
+      }
+      const prDrag = {
+        type: "photoPolygonMarquee" as const,
+        startX: e.clientX,
+        startY: e.clientY,
+        photoPolygonVertices: [pos],
+        currentCanvas: pos,
+        photoMarqueeSubtract: restarSeleccion || (!hasSelection && subtractPointer),
+        photoMarqueeAdditive: restarSeleccion
+          ? false
+          : hasSelection
+            ? sumarSeleccion
+            : additivePointer,
+      };
+      dragStateRef.current = prDrag;
+      setDragState(prDrag);
       return;
     }
 
@@ -8564,6 +10106,41 @@ export default function FreehandStudio({
       if (hitTestObject(pos, o, threshold, objects)) hits.push(o);
     }
 
+    if (
+      activeTool === "select" &&
+      e.button === 0 &&
+      !extendSel &&
+      !e.altKey &&
+      (photoRectMarqueeSelectionRef.current.length > 0 ||
+        photoPolygonMarqueeSelectionRef.current.length > 0 ||
+        photoEllipseMarqueeSelectionRef.current.length > 0) &&
+      selectedIds.size === 1
+    ) {
+      const soleId = Array.from(selectedIds)[0]!;
+      const sole = objects.find((o) => o.id === soleId);
+      if (sole?.type === "image" && sole.visible && !sole.locked) {
+        const inside = photoMarqueePointInsideCommitted(
+          pos,
+          photoRectMarqueeSelectionRef.current,
+          photoPolygonMarqueeSelectionRef.current,
+          photoEllipseMarqueeSelectionRef.current,
+        );
+        const top = hits[0];
+        const topOk = !top || top.id === sole.id;
+        if (inside && topOk) {
+          setDragState({
+            type: "photoMarqueeNudge",
+            startX: e.clientX,
+            startY: e.clientY,
+            photoMarqueeSnapRects: photoRectMarqueeSelectionRef.current.map((r) => ({ ...r })),
+            photoMarqueeSnapPolys: photoPolygonMarqueeSelectionRef.current.map((ring) => ring.map((p) => ({ ...p }))),
+            photoMarqueeSnapEllipses: photoEllipseMarqueeSelectionRef.current.map((el) => ({ ...el })),
+          });
+          return;
+        }
+      }
+    }
+
     if (hits.length > 0) {
       const vecIsoGid = vectorIsolationGroupId(isolationStackRef.current);
       const obj = pickHitForExtendSelection(hits, extendSel, selectedIdsRef.current, objects, vecIsoGid) ?? hits[0];
@@ -8654,9 +10231,77 @@ export default function FreehandStudio({
   }, [activeTool, viewport, spaceHeld, objects, artboards, selectedIds, selectedObjects, groupBounds, selectionFrame,
       screenToCanvas, isPenDrawing, penPoints, finishPenPath, resolveSelection, addPointOnSegment, pushHistory,
       layoutGuides, showLayoutGuides, designerMode, imageFrameContentEditId, setupGuideWindowListeners,
-      isClipContentIsolation, clipContentEditId]);
+      isClipContentIsolation, clipContentEditId, isPhotoRoomStudioEmbed, photoRectMarqueeSelection,
+      photoPolygonMarqueeSelection, photoEllipseMarqueeSelection]);
 
   const handleMouseMove = useCallback((e: ReactMouseEvent) => {
+    /** Ref sincrónico; el state de React puede no haber hecho commit tras mousedown/setDragState. */
+    const dragState = dragStateRef.current;
+    const prPending = photoRectMarqueePendingRef.current;
+    if (
+      prPending &&
+      (e.buttons & 1) &&
+      !dragState &&
+      isPhotoRoomStudioEmbed &&
+      (activeTool === "rectMarquee" ||
+        activeTool === "ellipseMarquee" ||
+        activeTool === "lassoMarquee" ||
+        activeTool === "polygonMarquee")
+    ) {
+      const dist = Math.hypot(e.clientX - prPending.clientX, e.clientY - prPending.clientY);
+      if (dist > 3) {
+        photoRectMarqueePendingRef.current = null;
+        const subtractFromPending =
+          photoRectMarqueeAltModRef.current || isPhotoMarqueeSubtractPointerHeld(e);
+        const additiveFromPending =
+          !subtractFromPending &&
+          (photoRectMarqueeAddModRef.current || isPhotoMarqueeAdditivePointerHeld(e));
+        if (!additiveFromPending && !subtractFromPending) {
+          setPhotoRectMarqueeSelection([]);
+          setPhotoPolygonMarqueeSelection([]);
+          setPhotoEllipseMarqueeSelection([]);
+        }
+        const origin = screenToCanvas(prPending.clientX, prPending.clientY);
+        const cur = screenToCanvas(e.clientX, e.clientY);
+        const common = {
+          startX: prPending.clientX,
+          startY: prPending.clientY,
+          photoMarqueeSubtract: subtractFromPending,
+          photoMarqueeAdditive: additiveFromPending,
+        };
+        const prNext =
+          activeTool === "rectMarquee"
+            ? ({
+                type: "photoRectMarquee" as const,
+                ...common,
+                marqueeOrigin: origin,
+                currentCanvas: cur,
+              })
+            : activeTool === "ellipseMarquee"
+              ? ({
+                  type: "photoEllipseMarquee" as const,
+                  ...common,
+                  marqueeOrigin: origin,
+                  currentCanvas: cur,
+                })
+              : activeTool === "lassoMarquee"
+                ? ({
+                    type: "photoLassoMarquee" as const,
+                    ...common,
+                    photoLassoPoints: [origin, cur],
+                    currentCanvas: cur,
+                  })
+                : ({
+                    type: "photoPolygonMarquee" as const,
+                    ...common,
+                    photoPolygonVertices: [origin],
+                    currentCanvas: cur,
+                  });
+        dragStateRef.current = prNext;
+        setDragState(prNext);
+        return;
+      }
+    }
     if (!dragState) {
       const pos = screenToCanvas(e.clientX, e.clientY);
       if (activeTool === "select" || activeTool === "directSelect") {
@@ -8687,6 +10332,31 @@ export default function FreehandStudio({
     const dy = e.clientY - dragState.startY;
 
     if (dragState.type === "guidePull" || dragState.type === "guideMove") {
+      return;
+    }
+
+    if (
+      dragState.type === "photoMarqueeNudge" &&
+      dragState.photoMarqueeSnapRects != null
+    ) {
+      const scale = canvasScaleFromPointer(viewport.zoom);
+      let mdx = dx * scale, mdy = dy * scale;
+      if (isShiftHeld(e)) {
+        const c = snapDeltaTo45(mdx, mdy);
+        mdx = c.x;
+        mdy = c.y;
+      }
+      const sn = dragState;
+      const t = translatePhotoMarqueeCommitted(
+        mdx,
+        mdy,
+        sn.photoMarqueeSnapRects!,
+        sn.photoMarqueeSnapPolys ?? [],
+        sn.photoMarqueeSnapEllipses ?? [],
+      );
+      setPhotoRectMarqueeSelection(t.rects);
+      setPhotoPolygonMarqueeSelection(t.polys);
+      setPhotoEllipseMarqueeSelection(t.ellipses);
       return;
     }
 
@@ -8822,6 +10492,53 @@ export default function FreehandStudio({
     if (dragState.type === "marquee" && dragState.marqueeOrigin) {
       const pos = screenToCanvas(e.clientX, e.clientY);
       setDragState((prev) => prev ? { ...prev, currentCanvas: pos } : null);
+      return;
+    }
+
+    if (dragState.type === "photoRectMarquee" && dragState.marqueeOrigin) {
+      const pos = screenToCanvas(e.clientX, e.clientY);
+      setDragState((prev) => {
+        const next = prev ? { ...prev, currentCanvas: pos } : null;
+        dragStateRef.current = next;
+        return next;
+      });
+      return;
+    }
+
+    if (dragState.type === "photoEllipseMarquee" && dragState.marqueeOrigin) {
+      const raw = screenToCanvas(e.clientX, e.clientY);
+      const o = dragState.marqueeOrigin;
+      const pos = isShiftHeld(e) ? oppositeCornerForSquareDrag(o, raw) : raw;
+      setDragState((prev) => {
+        const next = prev ? { ...prev, currentCanvas: pos } : null;
+        dragStateRef.current = next;
+        return next;
+      });
+      return;
+    }
+
+    if (dragState.type === "photoLassoMarquee" && dragState.photoLassoPoints) {
+      const pos = screenToCanvas(e.clientX, e.clientY);
+      const ds = dragStateRef.current;
+      if (!ds || ds.type !== "photoLassoMarquee" || !ds.photoLassoPoints) return;
+      const pts = ds.photoLassoPoints;
+      const last = pts[pts.length - 1]!;
+      const sample = PHOTO_LASSO_SAMPLE_PX / viewport.zoom;
+      const nextPts =
+        Math.hypot(pos.x - last.x, pos.y - last.y) >= sample ? [...pts, pos] : pts;
+      const nextr = { ...ds, photoLassoPoints: nextPts, currentCanvas: pos };
+      dragStateRef.current = nextr;
+      setDragState(nextr);
+      return;
+    }
+
+    if (dragState.type === "photoPolygonMarquee") {
+      const pos = screenToCanvas(e.clientX, e.clientY);
+      setDragState((prev) => {
+        const next = prev && prev.type === "photoPolygonMarquee" ? { ...prev, currentCanvas: pos } : null;
+        dragStateRef.current = next;
+        return next;
+      });
       return;
     }
 
@@ -9260,25 +10977,192 @@ export default function FreehandStudio({
       );
       return;
     }
-  }, [dragState, viewport, objects, artboards, selectedIds, snapEnabled, screenToCanvas, penPoints, activeTool, isPenDrawing, penDragging]);
+  }, [viewport, objects, artboards, selectedIds, snapEnabled, screenToCanvas, penPoints, activeTool, isPenDrawing, penDragging, isPhotoRoomStudioEmbed]);
 
   const handleMouseUp = useCallback((e: ReactMouseEvent) => {
+    photoRectMarqueePendingRef.current = null;
     const dsUp = dragStateRef.current;
     if (guideGestureRef.current || dsUp?.type === "guidePull" || dsUp?.type === "guideMove") {
       finishGuideGesture(e.clientX, e.clientY);
       return;
     }
-    if (!dragState) return;
+    const ds = dragStateRef.current;
+    if (!ds) return;
     setSnapGuides([]);
 
-    if (dragState.type === "penHandle") {
+    if (ds.type === "penHandle") {
       setPenDragging(false);
       setDragState(null);
       return;
     }
 
-    if (dragState.type === "marquee" && dragState.marqueeOrigin && dragState.currentCanvas) {
-      const o = dragState.marqueeOrigin, c = dragState.currentCanvas;
+    if (ds.type === "photoMarqueeNudge") {
+      setDragState(null);
+      return;
+    }
+
+    if (ds.type === "photoLassoMarquee" && ds.photoLassoPoints && ds.currentCanvas) {
+      const additive = !!ds.photoMarqueeAdditive;
+      const subtract = !!ds.photoMarqueeSubtract;
+      const mode = subtract ? "subtract" : additive ? "add" : "replace";
+      dragStateRef.current = null;
+      setDragState(null);
+      let ring = [...ds.photoLassoPoints];
+      const first = ring[0]!;
+      const la = ring[ring.length - 1]!;
+      const closeTol = 3 / viewport.zoom;
+      if (Math.hypot(la.x - first.x, la.y - first.y) > closeTol) {
+        ring.push({ ...first });
+      }
+      const prevRects = photoRectMarqueeSelection;
+      const prevPoly = photoPolygonMarqueeSelection;
+      const prevEllipses = photoEllipseMarqueeSelection;
+      const base = buildPhotoMarqueePolyBase(prevPoly, prevRects, prevEllipses, mode);
+      const next = mergePhotoPolygonSelection(base, ring, mode);
+      setPhotoRectMarqueeSelection([]);
+      setPhotoEllipseMarqueeSelection([]);
+      setPhotoPolygonMarqueeSelection(next);
+      return;
+    }
+
+    if (ds.type === "photoEllipseMarquee" && ds.marqueeOrigin && ds.currentCanvas) {
+      const o = ds.marqueeOrigin;
+      const raw = ds.currentCanvas;
+      const c = e.shiftKey ? oppositeCornerForSquareDrag(o, raw) : raw;
+      const mx = Math.min(o.x, c.x), my = Math.min(o.y, c.y);
+      const mw = Math.abs(c.x - o.x), mh = Math.abs(c.y - o.y);
+      const additive = !!ds.photoMarqueeAdditive;
+      const subtract = !!ds.photoMarqueeSubtract;
+      dragStateRef.current = null;
+      setDragState(null);
+      if (mw > 2 && mh > 2) {
+        const newEl: PhotoEllipseMarquee = {
+          cx: mx + mw / 2,
+          cy: my + mh / 2,
+          rx: mw / 2,
+          ry: mh / 2,
+        };
+        const ring = ellipseToPhotoMarqueeRing(newEl);
+        const prevRects = photoRectMarqueeSelection;
+        const prevPoly = photoPolygonMarqueeSelection;
+        const prevEllipses = photoEllipseMarqueeSelection;
+        const hasRects = prevRects.length > 0;
+        const hasPoly = prevPoly.length > 0;
+        const hasEllipses = prevEllipses.length > 0;
+        const mode = subtract ? "subtract" : additive ? "add" : "replace";
+        const useRingMerge = hasPoly || hasEllipses || (hasRects && (hasPoly || hasEllipses));
+
+        if (useRingMerge) {
+          const base = buildPhotoMarqueePolyBase(prevPoly, prevRects, prevEllipses, mode);
+          const next = mergePhotoPolygonSelection(base, ring, mode);
+          setPhotoRectMarqueeSelection([]);
+          setPhotoEllipseMarqueeSelection([]);
+          setPhotoPolygonMarqueeSelection(next);
+          return;
+        }
+
+        if (hasRects && !hasPoly && !hasEllipses) {
+          setPhotoEllipseMarqueeSelection([]);
+          let base: Point[][] = [];
+          for (const r of prevRects) {
+            base = mergePhotoPolygonSelection(base, rectToPhotoMarqueeRing(r), "add");
+          }
+          const next = mergePhotoPolygonSelection(base, ring, mode);
+          setPhotoRectMarqueeSelection([]);
+          setPhotoPolygonMarqueeSelection(next);
+          return;
+        }
+
+        if (hasEllipses && !hasPoly && !hasRects) {
+          setPhotoRectMarqueeSelection([]);
+          setPhotoPolygonMarqueeSelection([]);
+          if (subtract && prevEllipses.length > 0) {
+            let base: Point[][] = [];
+            for (const el of prevEllipses) {
+              base = mergePhotoPolygonSelection(base, ellipseToPhotoMarqueeRing(el), "add");
+            }
+            const next = mergePhotoPolygonSelection(base, ring, "subtract");
+            setPhotoEllipseMarqueeSelection([]);
+            setPhotoPolygonMarqueeSelection(next);
+            return;
+          }
+          if (additive && prevEllipses.length > 0) {
+            setPhotoEllipseMarqueeSelection([...prevEllipses, newEl]);
+            return;
+          }
+          setPhotoEllipseMarqueeSelection([newEl]);
+          return;
+        }
+
+        setPhotoPolygonMarqueeSelection([]);
+        setPhotoEllipseMarqueeSelection([newEl]);
+        setPhotoRectMarqueeSelection([]);
+        return;
+      }
+      if (!additive && !subtract) {
+        setPhotoEllipseMarqueeSelection([]);
+      }
+      return;
+    }
+
+    if (ds.type === "photoRectMarquee" && ds.marqueeOrigin && ds.currentCanvas) {
+      const o = ds.marqueeOrigin, c = ds.currentCanvas;
+      const mx = Math.min(o.x, c.x), my = Math.min(o.y, c.y);
+      const mw = Math.abs(c.x - o.x), mh = Math.abs(c.y - o.y);
+      const additive = !!ds.photoMarqueeAdditive;
+      const subtract = !!ds.photoMarqueeSubtract;
+      dragStateRef.current = null;
+      setDragState(null);
+      if (mw > 2 && mh > 2) {
+        const newRect: Rect = { x: mx, y: my, w: mw, h: mh };
+        const ring = rectToPhotoMarqueeRing(newRect);
+        const prevRects = photoRectMarqueeSelection;
+        const prevPoly = photoPolygonMarqueeSelection;
+        const prevEllipses = photoEllipseMarqueeSelection;
+        const hasRects = prevRects.length > 0;
+        const hasPoly = prevPoly.length > 0;
+        const hasEllipses = prevEllipses.length > 0;
+        const mode = subtract ? "subtract" : additive ? "add" : "replace";
+        const useRingMerge = hasPoly || hasEllipses || (hasRects && (hasPoly || hasEllipses));
+
+        if (useRingMerge) {
+          const base = buildPhotoMarqueePolyBase(prevPoly, prevRects, prevEllipses, mode);
+          const next = mergePhotoPolygonSelection(base, ring, mode);
+          setPhotoRectMarqueeSelection([]);
+          setPhotoEllipseMarqueeSelection([]);
+          setPhotoPolygonMarqueeSelection(next);
+          return;
+        }
+
+        if (hasRects && !hasPoly && !hasEllipses) {
+          setPhotoPolygonMarqueeSelection([]);
+          setPhotoEllipseMarqueeSelection([]);
+          setPhotoRectMarqueeSelection((prev) => {
+            if (subtract && prev.length > 0) {
+              return prev
+                .flatMap((r) => subtractRectFromRect(r, newRect))
+                .filter((r) => r.w > 1e-6 && r.h > 1e-6);
+            }
+            if (subtract && prev.length === 0) return [];
+            if (additive && prev.length > 0) return [...prev, newRect];
+            return [newRect];
+          });
+          return;
+        }
+
+        setPhotoPolygonMarqueeSelection([]);
+        setPhotoEllipseMarqueeSelection([]);
+        setPhotoRectMarqueeSelection([newRect]);
+        return;
+      }
+      if (!additive && !subtract) {
+        setPhotoRectMarqueeSelection([]);
+      }
+      return;
+    }
+
+    if (ds.type === "marquee" && ds.marqueeOrigin && ds.currentCanvas) {
+      const o = ds.marqueeOrigin, c = ds.currentCanvas;
       const mx = Math.min(o.x, c.x), my = Math.min(o.y, c.y);
       const mw = Math.abs(c.x - o.x), mh = Math.abs(c.y - o.y);
       if (mw > 2 && mh > 2) {
@@ -9333,7 +11217,7 @@ export default function FreehandStudio({
               else marqueeSel.add(obj.id);
             }
           }
-          if (dragState.shiftKey) {
+          if (ds.shiftKey) {
             setSelectedIds((prev) => {
               const merged = new Set(prev);
               marqueeSel.forEach((id) => merged.add(id));
@@ -9348,8 +11232,8 @@ export default function FreehandStudio({
       return;
     }
 
-    if (dragState.type === "createText" && dragState.createOrigin && dragState.currentCanvas) {
-      const o = dragState.createOrigin, c = dragState.currentCanvas;
+    if (ds.type === "createText" && ds.createOrigin && ds.currentCanvas) {
+      const o = ds.createOrigin, c = ds.currentCanvas;
       const tc = creationTextTypography;
       const dx = c.x - o.x, dy = c.y - o.y;
       const dragLen = Math.hypot(dx, dy);
@@ -9434,8 +11318,8 @@ export default function FreehandStudio({
     }
 
     // ── Designer: Text Frame creation ────────────────────────────
-    if (dragState.type === "createTextFrame" && dragState.createOrigin && dragState.currentCanvas) {
-      const o = dragState.createOrigin, c = dragState.currentCanvas;
+    if (ds.type === "createTextFrame" && ds.createOrigin && ds.currentCanvas) {
+      const o = ds.createOrigin, c = ds.currentCanvas;
       const tc = creationTextTypography;
       const x = Math.min(o.x, c.x), y = Math.min(o.y, c.y);
       const w = Math.max(Math.abs(c.x - o.x), 80), h = Math.max(Math.abs(c.y - o.y), 40);
@@ -9482,8 +11366,8 @@ export default function FreehandStudio({
     }
 
     // ── Designer: Image Frame creation ───────────────────────────
-    if (dragState.type === "createImageFrame" && dragState.createOrigin && dragState.currentCanvas) {
-      const o = dragState.createOrigin, c = dragState.currentCanvas;
+    if (ds.type === "createImageFrame" && ds.createOrigin && ds.currentCanvas) {
+      const o = ds.createOrigin, c = ds.currentCanvas;
       const x = Math.min(o.x, c.x), y = Math.min(o.y, c.y);
       const w = Math.max(Math.abs(c.x - o.x), 40), h = Math.max(Math.abs(c.y - o.y), 40);
       const newObj: RectObject = {
@@ -9510,10 +11394,10 @@ export default function FreehandStudio({
       setActiveTool("select");
     }
 
-    if (dragState.type === "create" && dragState.createOrigin && dragState.currentCanvas) {
-      const o = dragState.createOrigin;
+    if (ds.type === "create" && ds.createOrigin && ds.currentCanvas) {
+      const o = ds.createOrigin;
       const raw = screenToCanvas(e.clientX, e.clientY);
-      const ct = dragState.createType;
+      const ct = ds.createType;
       const c =
         (ct === "rect" || ct === "ellipse") && isShiftHeld(e)
           ? oppositeCornerForSquareDrag(o, raw)
@@ -9521,7 +11405,7 @@ export default function FreehandStudio({
       const x = Math.min(o.x, c.x), y = Math.min(o.y, c.y);
       const w = Math.max(Math.abs(c.x - o.x), 4), h = Math.max(Math.abs(c.y - o.y), 4);
 
-      const newObj: FreehandObject = dragState.createType === "ellipse"
+      const newObj: FreehandObject = ds.createType === "ellipse"
         ? { ...defaultObj({ name: `Ellipse ${objects.length + 1}` }), type: "ellipse", x, y, width: w, height: h, fill: solidFill(fillColor), stroke: strokeColor, strokeWidth, strokeLinecap, strokeLinejoin, strokeDasharray } as EllipseObject
         : { ...defaultObj({ name: `Rect ${objects.length + 1}` }), type: "rect", x, y, width: w, height: h, fill: solidFill(fillColor), stroke: strokeColor, strokeWidth, strokeLinecap, strokeLinejoin, strokeDasharray, rx: 0 } as RectObject;
 
@@ -9534,14 +11418,14 @@ export default function FreehandStudio({
     }
 
     if (
-      dragState.type === "move" &&
-      dragState.duplicateMove &&
-      dragState.positions &&
-      dragState.positions.size > 0
+      ds.type === "move" &&
+      ds.duplicateMove &&
+      ds.positions &&
+      ds.positions.size > 0
     ) {
-      const firstId = Array.from(dragState.positions.keys())[0];
+      const firstId = Array.from(ds.positions.keys())[0];
       if (firstId) {
-        const init = dragState.positions.get(firstId);
+        const init = ds.positions.get(firstId);
         const cur = objects.find((o) => o.id === firstId);
         if (init && cur) {
           duplicateStepRef.current = { dx: cur.x - init.x, dy: cur.y - init.y };
@@ -9550,13 +11434,13 @@ export default function FreehandStudio({
     }
 
     if (
-      dragState.type === "move" ||
-      dragState.type === "resize" ||
-      dragState.type === "directSelect" ||
-      dragState.type === "rotate" ||
-      dragState.type === "gradient" ||
-      dragState.type === "imageContentPan" ||
-      dragState.type === "imageContentResize"
+      ds.type === "move" ||
+      ds.type === "resize" ||
+      ds.type === "directSelect" ||
+      ds.type === "rotate" ||
+      ds.type === "gradient" ||
+      ds.type === "imageContentPan" ||
+      ds.type === "imageContentResize"
     ) {
       pushHistory(objects, selectedIds);
     }
@@ -9579,6 +11463,9 @@ export default function FreehandStudio({
     screenToCanvas,
     viewport.zoom,
     finishGuideGesture,
+    photoRectMarqueeSelection,
+    photoPolygonMarqueeSelection,
+    photoEllipseMarqueeSelection,
   ]);
 
   const handleWheel = useCallback((e: ReactWheelEvent) => {
@@ -9636,6 +11523,10 @@ export default function FreehandStudio({
   const ctxMenuItems = useMemo((): ContextMenuItem[] => {
     if (!ctxMenu) return [];
     const hasSel = selectedIds.size > 0;
+    const hasDeletableSelection = Array.from(selectedIds).some((id) => {
+      const o = objects.find((x) => x.id === id);
+      return o && !o.photoRoomInputSlot;
+    });
     const multiSel = selectedIds.size >= 2;
     const single = selectedIds.size === 1 ? selectedObjects[0] : null;
     const hasClip = selectedObjects.some((o) => o.clipMaskId || o.isClipMask);
@@ -9655,7 +11546,7 @@ export default function FreehandStudio({
           : []),
         { label: "Export selection", action: () => { setExportModalScope("selection"); setShowExportModal(true); }, disabled: !hasSel, separator: true },
         { label: "Duplicate", shortcut: "⌘D", action: duplicateSelected, disabled: !hasSel },
-        { label: "Delete", action: deleteSelected, disabled: !hasSel },
+        { label: "Delete", action: deleteSelected, disabled: !hasSel || !hasDeletableSelection },
       ];
     }
 
@@ -9709,7 +11600,7 @@ export default function FreehandStudio({
         { label: "Copy", shortcut: "⌘C", action: copySelectedObjects },
         { label: "Paste", shortcut: "⌘V", action: pasteClipboardObjects, separator: true },
         { label: "Duplicate", shortcut: "⌘D", action: duplicateSelected },
-        { label: "Delete", action: deleteSelected },
+        { label: "Delete", action: deleteSelected, disabled: !hasDeletableSelection },
         { label: "Export selection", action: () => { setExportModalScope("selection"); setShowExportModal(true); }, separator: true },
         { label: "Group", shortcut: "⌘G", action: groupSelected, separator: true },
         { label: "Align left", action: () => alignObjects("left") },
@@ -9738,7 +11629,7 @@ export default function FreehandStudio({
           { label: "Romper enlace entrante", action: () => onDesignerUnlinkTextFrame?.(single.id), separator: true },
         ] : []),
         { label: "Duplicate", shortcut: "⌘D", action: duplicateSelected, separator: !canUnlinkTf },
-        { label: "Delete", action: deleteSelected },
+        { label: "Delete", action: deleteSelected, disabled: !hasDeletableSelection },
         { label: "Bring to front", action: bringToFront, separator: true },
         { label: "Send to back", action: sendToBack },
         { label: "Lock / Unlock", action: () => updateSelectedProp("locked", !single.locked) },
@@ -9750,7 +11641,7 @@ export default function FreehandStudio({
         { label: "Edit text", action: () => setTextEditingId(single.id), shortcut: "dbl-click" },
         { label: "Convert to outlines", action: () => { void convertTextToOutlines(); }, separator: true },
         { label: "Duplicate", shortcut: "⌘D", action: duplicateSelected },
-        { label: "Delete", action: deleteSelected },
+        { label: "Delete", action: deleteSelected, disabled: !hasDeletableSelection },
         { label: "Export selection", action: () => { setExportModalScope("selection"); setShowExportModal(true); }, separator: true },
         { label: "Bring to front", action: bringToFront, separator: true },
         { label: "Send to back", action: sendToBack },
@@ -9800,7 +11691,7 @@ export default function FreehandStudio({
         ...fittingItems,
         { label: `Auto-Fit: ${autoFitOn ? "On ✓" : "Off"}`, action: () => updateSelectedProp("imageFrameAutoFit", !autoFitOn), separator: true },
         { label: "Duplicate", shortcut: "⌘D", action: duplicateSelected },
-        { label: "Delete", action: deleteSelected, separator: true },
+        { label: "Delete", action: deleteSelected, disabled: !hasDeletableSelection, separator: true },
         { label: "Bring to front", action: bringToFront },
         { label: "Send to back", action: sendToBack },
         { label: "Lock / Unlock", action: () => updateSelectedProp("locked", !single.locked) },
@@ -9825,7 +11716,7 @@ export default function FreehandStudio({
         { label: "Edit mask", action: () => enterClippingIsolation(cc.id, "mask") },
         { label: "Release clipping", action: releaseClippingStructure, separator: true },
         { label: "Duplicate", shortcut: "⌘D", action: duplicateSelected },
-        { label: "Delete", action: deleteSelected },
+        { label: "Delete", action: deleteSelected, disabled: !hasDeletableSelection },
         { label: "Export selection", action: () => { setExportModalScope("selection"); setShowExportModal(true); }, separator: true },
         { label: "Lock / Unlock", action: () => updateSelectedProp("locked", !cc.locked) },
         { label: "Hide / Show", action: () => updateSelectedProp("visible", !cc.visible) },
@@ -9836,7 +11727,7 @@ export default function FreehandStudio({
       return [
         { label: "Release clipping mask", action: releaseClipMask, separator: true },
         { label: "Duplicate", action: duplicateSelected },
-        { label: "Delete", action: deleteSelected },
+        { label: "Delete", action: deleteSelected, disabled: !hasDeletableSelection },
         { label: "Export selection", action: () => { setExportModalScope("selection"); setShowExportModal(true); }, separator: true },
       ];
     }
@@ -9852,7 +11743,7 @@ export default function FreehandStudio({
       { label: "Paste", shortcut: "⌘V", action: pasteClipboardObjects },
       { label: "Paste inside", shortcut: "⇧⌘V / Ctrl+⇧V", action: pasteInside, disabled: !canPasteInsideMenu, separator: true },
       { label: "Duplicate", shortcut: "⌘D", action: duplicateSelected },
-      { label: "Delete", action: deleteSelected },
+      { label: "Delete", action: deleteSelected, disabled: !hasDeletableSelection },
       { label: "Export selection", action: () => { setExportModalScope("selection"); setShowExportModal(true); }, separator: true },
       { label: "Rename…", action: renameSelected, separator: true },
       { label: "Bring forward", shortcut: "⌘]", action: bringForward },
@@ -9914,7 +11805,20 @@ export default function FreehandStudio({
     }
     if (dragState?.type === "rotate") return "grab";
     if (dragState?.type === "move") return "move";
-    if (activeTool === "pen" || activeTool === "rect" || activeTool === "ellipse" || activeTool === "text" || activeTool === "textFrame" || activeTool === "imageFrame") return "crosshair";
+    if (
+      activeTool === "pen" ||
+      activeTool === "rect" ||
+      activeTool === "ellipse" ||
+      activeTool === "text" ||
+      activeTool === "textFrame" ||
+      activeTool === "imageFrame" ||
+      activeTool === "rectMarquee" ||
+      activeTool === "ellipseMarquee" ||
+      activeTool === "lassoMarquee" ||
+      activeTool === "polygonMarquee"
+    ) {
+      return "crosshair";
+    }
     return "default";
   }, [activeTool, spaceHeld, dragState]);
 
@@ -9934,6 +11838,80 @@ export default function FreehandStudio({
     const o = dragState.marqueeOrigin, c = dragState.currentCanvas;
     return { x: Math.min(o.x, c.x), y: Math.min(o.y, c.y), w: Math.abs(c.x - o.x), h: Math.abs(c.y - o.y) };
   }, [dragState]);
+
+  /** PhotoRoom: arrastre del marco rectangular (preview). */
+  const photoRectMarqueeDragRect = useMemo(() => {
+    if (!dragState || dragState.type !== "photoRectMarquee" || !dragState.marqueeOrigin || !dragState.currentCanvas) return null;
+    const o = dragState.marqueeOrigin, c = dragState.currentCanvas;
+    return { x: Math.min(o.x, c.x), y: Math.min(o.y, c.y), w: Math.abs(c.x - o.x), h: Math.abs(c.y - o.y) };
+  }, [dragState]);
+
+  const photoRectMarqueeDragSubtract = useMemo(
+    () => dragState?.type === "photoRectMarquee" && !!dragState.photoMarqueeSubtract,
+    [dragState],
+  );
+
+  /** PhotoRoom: arrastre del marco elíptico (preview). */
+  const photoEllipseMarqueeDragEllipse = useMemo(() => {
+    if (!dragState || dragState.type !== "photoEllipseMarquee" || !dragState.marqueeOrigin || !dragState.currentCanvas) {
+      return null;
+    }
+    const o = dragState.marqueeOrigin, c = dragState.currentCanvas;
+    const mx = Math.min(o.x, c.x), my = Math.min(o.y, c.y);
+    const mw = Math.abs(c.x - o.x), mh = Math.abs(c.y - o.y);
+    if (mw < 2 || mh < 2) return null;
+    return { cx: mx + mw / 2, cy: my + mh / 2, rx: mw / 2, ry: mh / 2 };
+  }, [dragState]);
+
+  const photoEllipseMarqueeDragSubtract = useMemo(
+    () => dragState?.type === "photoEllipseMarquee" && !!dragState.photoMarqueeSubtract,
+    [dragState],
+  );
+
+  /** Un solo contorno (hormigas) para la unión de rectángulos PhotoRoom, sin aristas dobles internas. */
+  const photoMarqueeSelectionOutlinePaths = useMemo(
+    () => rectUnionBoundarySvgPathDs(photoRectMarqueeSelection),
+    [photoRectMarqueeSelection],
+  );
+
+  const photoPolygonMarqueeOutlineDs = useMemo(
+    () => photoPolygonMarqueeSelection.map((ring) => ringToSvgPathD(ring)).filter(Boolean),
+    [photoPolygonMarqueeSelection],
+  );
+
+  const photoLassoDragPreviewD = useMemo(() => {
+    if (!dragState || dragState.type !== "photoLassoMarquee" || !dragState.photoLassoPoints?.length) return null;
+    const pts = dragState.photoLassoPoints;
+    const cur = dragState.currentCanvas;
+    if (!cur) return polylineToSvgPathD(pts);
+    const extended = [...pts];
+    const last = extended[extended.length - 1]!;
+    if (Math.hypot(cur.x - last.x, cur.y - last.y) > 1e-9) extended.push(cur);
+    return polylineToSvgPathD(extended);
+  }, [dragState]);
+
+  const photoPolygonDragPreviewD = useMemo(() => {
+    if (!dragState || dragState.type !== "photoPolygonMarquee") return null;
+    const verts = dragState.photoPolygonVertices ?? [];
+    const cur = dragState.currentCanvas;
+    if (verts.length === 0 || !cur) return null;
+    let d = polylineToSvgPathD(verts);
+    const lv = verts[verts.length - 1]!;
+    if (Math.hypot(cur.x - lv.x, cur.y - lv.y) > 1e-9) {
+      d += ` L ${cur.x} ${cur.y}`;
+    }
+    return d;
+  }, [dragState]);
+
+  const photoLassoDragSubtract = useMemo(
+    () => dragState?.type === "photoLassoMarquee" && !!dragState.photoMarqueeSubtract,
+    [dragState],
+  );
+
+  const photoPolygonDragSubtract = useMemo(
+    () => dragState?.type === "photoPolygonMarquee" && !!dragState.photoMarqueeSubtract,
+    [dragState],
+  );
 
   // Create preview rect
   const createPreviewRect = useMemo(() => {
@@ -10032,9 +12010,12 @@ export default function FreehandStudio({
       {!canvasZenMode && (
       <header className="flex h-14 shrink-0 items-center gap-3 border-b border-white/[0.08] bg-[#12151a] px-3 min-w-0">
         <div className="min-w-0 shrink">
-          <div className="truncate text-[13px] font-semibold tracking-tight text-white">Designer</div>
-          <div className="truncate text-[10px] text-zinc-500">Vector document</div>
+          <div className="truncate text-[13px] font-semibold tracking-tight text-white">{studioHeaderTitle}</div>
+          <div className="truncate text-[10px] text-zinc-500">{studioHeaderSubtitle}</div>
         </div>
+        {studioHeaderAccessory ? (
+          <div className="flex min-w-0 shrink items-center gap-2">{studioHeaderAccessory}</div>
+        ) : null}
         <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-2">
         <div
           className="flex min-w-0 flex-wrap items-center gap-px rounded-lg border border-white/[0.08] bg-[#0b0d10] px-1 py-0.5"
@@ -10248,39 +12229,271 @@ export default function FreehandStudio({
         <ToolBtn active={activeTool === "select"} onClick={() => { setActiveTool("select"); setSelectedPoints(new Map()); }} title="Selection (V)">
           <MousePointer2 size={20} strokeWidth={1.5} />
         </ToolBtn>
-        <ToolBtn active={activeTool === "directSelect"} onClick={() => setActiveTool("directSelect")} title="Direct Selection (A)">
-          <MousePointer2 size={20} strokeWidth={1.5} className="opacity-60" />
-        </ToolBtn>
-        <ToolBtn active={activeTool === "pen"} onClick={() => setActiveTool("pen")} title="Pen (⇧P)">
-          <PenTool size={20} strokeWidth={1.5} />
-        </ToolBtn>
-        <ToolBtn active={activeTool === "rect"} onClick={() => setActiveTool("rect")} title="Rectangle (R)">
-          <Square size={20} strokeWidth={1.5} />
-        </ToolBtn>
-        <ToolBtn active={activeTool === "ellipse"} onClick={() => setActiveTool("ellipse")} title={designerMode ? "Ellipse (E)" : "Ellipse (C o E)"}>
-          <Circle size={20} strokeWidth={1.5} />
-        </ToolBtn>
-        <ToolBtn active={activeTool === "text"} onClick={() => setActiveTool("text")} title="Text (T)">
-          <Type size={20} strokeWidth={1.5} />
-        </ToolBtn>
-        {designerMode && (
+        <ToolFlyoutGroup
+          groupId="tf-pen"
+          flyoutOpen={leftToolbarToolFlyout}
+          setFlyoutOpen={setLeftToolbarToolFlyout}
+          active={activeTool === "directSelect" || activeTool === "pen"}
+          mainTitle={activeTool === "pen" ? "Pluma (⇧P)" : "Selección directa (A)"}
+          onMainClick={() => setActiveTool(activeTool === "pen" ? "pen" : "directSelect")}
+          mainIcon={
+            activeTool === "pen" ? (
+              <PenTool size={20} strokeWidth={1.5} />
+            ) : (
+              <MousePointer2 size={20} strokeWidth={1.5} className="opacity-60" />
+            )
+          }
+        >
+          <button
+            type="button"
+            title="Selección directa (A)"
+            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md transition ${
+              activeTool === "directSelect" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
+            }`}
+            onClick={() => {
+              setActiveTool("directSelect");
+              setLeftToolbarToolFlyout(null);
+            }}
+          >
+            <MousePointer2 size={18} strokeWidth={1.5} className="opacity-60" />
+          </button>
+          <button
+            type="button"
+            title="Pluma (⇧P)"
+            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md transition ${
+              activeTool === "pen" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
+            }`}
+            onClick={() => {
+              setActiveTool("pen");
+              setLeftToolbarToolFlyout(null);
+            }}
+          >
+            <PenTool size={18} strokeWidth={1.5} />
+          </button>
+        </ToolFlyoutGroup>
+
+        <ToolFlyoutGroup
+          groupId="tf-shape"
+          flyoutOpen={leftToolbarToolFlyout}
+          setFlyoutOpen={setLeftToolbarToolFlyout}
+          active={activeTool === "rect" || activeTool === "ellipse"}
+          mainTitle={activeTool === "ellipse" ? (designerMode ? "Elipse (E)" : "Elipse (C o E)") : "Rectángulo (R)"}
+          onMainClick={() => setActiveTool(activeTool === "ellipse" ? "ellipse" : "rect")}
+          mainIcon={activeTool === "ellipse" ? <Circle size={20} strokeWidth={1.5} /> : <Square size={20} strokeWidth={1.5} />}
+        >
+          <button
+            type="button"
+            title="Rectángulo (R)"
+            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md transition ${
+              activeTool === "rect" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
+            }`}
+            onClick={() => {
+              setActiveTool("rect");
+              setLeftToolbarToolFlyout(null);
+            }}
+          >
+            <Square size={18} strokeWidth={1.5} />
+          </button>
+          <button
+            type="button"
+            title={designerMode ? "Elipse (E)" : "Elipse (C o E)"}
+            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md transition ${
+              activeTool === "ellipse" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
+            }`}
+            onClick={() => {
+              setActiveTool("ellipse");
+              setLeftToolbarToolFlyout(null);
+            }}
+          >
+            <Circle size={18} strokeWidth={1.5} />
+          </button>
+        </ToolFlyoutGroup>
+
+        {isPhotoRoomStudioEmbed && (
+          <ToolFlyoutGroup
+            groupId="tf-photo-marquee"
+            flyoutOpen={leftToolbarToolFlyout}
+            setFlyoutOpen={setLeftToolbarToolFlyout}
+            active={
+              activeTool === "rectMarquee" ||
+              activeTool === "ellipseMarquee" ||
+              activeTool === "lassoMarquee" ||
+              activeTool === "polygonMarquee"
+            }
+            mainTitle="Selección PhotoRoom: rectángulo (M), elipse (O), lazo (L), poligonal (⇧L). Ctrl/⌘ suma; Alt resta."
+            onMainClick={() => {
+              setActiveTool("rectMarquee");
+              setLeftToolbarToolFlyout(null);
+            }}
+            mainIcon={
+              activeTool === "lassoMarquee" ? (
+                <Lasso size={20} strokeWidth={1.5} />
+              ) : activeTool === "polygonMarquee" ? (
+                <Spline size={20} strokeWidth={1.5} />
+              ) : activeTool === "ellipseMarquee" ? (
+                <Circle size={20} strokeWidth={1.5} />
+              ) : (
+                <BoxSelect size={20} strokeWidth={1.5} />
+              )
+            }
+          >
+            <button
+              type="button"
+              title="Marco rectangular (M)"
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md transition ${
+                activeTool === "rectMarquee" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
+              }`}
+              onClick={() => {
+                setActiveTool("rectMarquee");
+                setLeftToolbarToolFlyout(null);
+              }}
+            >
+              <BoxSelect size={18} strokeWidth={1.5} />
+            </button>
+            <button
+              type="button"
+              title="Marco elíptico (O). ⇧ al arrastrar = círculo. Ctrl/⌘ suma; Alt resta."
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md transition ${
+                activeTool === "ellipseMarquee" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
+              }`}
+              onClick={() => {
+                setActiveTool("ellipseMarquee");
+                setLeftToolbarToolFlyout(null);
+              }}
+            >
+              <Circle size={18} strokeWidth={1.5} />
+            </button>
+            <button
+              type="button"
+              title="Lazo libre (L)"
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md transition ${
+                activeTool === "lassoMarquee" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
+              }`}
+              onClick={() => {
+                setActiveTool("lassoMarquee");
+                setLeftToolbarToolFlyout(null);
+              }}
+            >
+              <Lasso size={18} strokeWidth={1.5} />
+            </button>
+            <button
+              type="button"
+              title="Lazo poligonal (⇧L)"
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md transition ${
+                activeTool === "polygonMarquee" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
+              }`}
+              onClick={() => {
+                setActiveTool("polygonMarquee");
+                setLeftToolbarToolFlyout(null);
+              }}
+            >
+              <Spline size={18} strokeWidth={1.5} />
+            </button>
+          </ToolFlyoutGroup>
+        )}
+        {designerMode ? (
           <>
-            <ToolBtn active={activeTool === "textFrame"} onClick={() => setActiveTool("textFrame")} title="Marco de texto encadenado (C)">
-              <svg width={20} height={20} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
-                <rect x="2" y="3" width="16" height="14" rx="1.5" strokeDasharray="3 2" />
-                <path d="M6 7.5h8M6 10h8M6 12.5h4" />
-              </svg>
-            </ToolBtn>
-            <ToolBtn onClick={() => fileInputRef.current?.click()} title="Importar imagen">
-              <ImageIconLucide size={20} strokeWidth={1.5} />
-            </ToolBtn>
-            <ToolBtn active={activeTool === "imageFrame"} onClick={() => setActiveTool("imageFrame")} title="Image Frame — marco de imagen">
-              <svg width={20} height={20} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
-                <rect x="2" y="3" width="16" height="14" rx="1.5" />
-                <line x1="2" y1="3" x2="18" y2="17" opacity={0.5} />
-                <line x1="18" y1="3" x2="2" y2="17" opacity={0.5} />
-              </svg>
-            </ToolBtn>
+            <ToolFlyoutGroup
+              groupId="tf-text"
+              flyoutOpen={leftToolbarToolFlyout}
+              setFlyoutOpen={setLeftToolbarToolFlyout}
+              active={activeTool === "text" || activeTool === "textFrame"}
+              mainTitle={activeTool === "textFrame" ? "Marco de texto encadenado (C)" : "Texto (T)"}
+              onMainClick={() => setActiveTool(activeTool === "textFrame" ? "textFrame" : "text")}
+              mainIcon={
+                activeTool === "textFrame" ? (
+                  <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="2" y="3" width="16" height="14" rx="1.5" strokeDasharray="3 2" />
+                    <path d="M6 7.5h8M6 10h8M6 12.5h4" />
+                  </svg>
+                ) : (
+                  <Type size={20} strokeWidth={1.5} />
+                )
+              }
+            >
+              <button
+                type="button"
+                title="Texto (T)"
+                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md transition ${
+                  activeTool === "text" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
+                }`}
+                onClick={() => {
+                  setActiveTool("text");
+                  setLeftToolbarToolFlyout(null);
+                }}
+              >
+                <Type size={18} strokeWidth={1.5} />
+              </button>
+              <button
+                type="button"
+                title="Marco de texto encadenado (C)"
+                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md transition ${
+                  activeTool === "textFrame" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
+                }`}
+                onClick={() => {
+                  setActiveTool("textFrame");
+                  setLeftToolbarToolFlyout(null);
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="2" y="3" width="16" height="14" rx="1.5" strokeDasharray="3 2" />
+                  <path d="M6 7.5h8M6 10h8M6 12.5h4" />
+                </svg>
+              </button>
+            </ToolFlyoutGroup>
+
+            <ToolFlyoutGroup
+              groupId="tf-img"
+              flyoutOpen={leftToolbarToolFlyout}
+              setFlyoutOpen={setLeftToolbarToolFlyout}
+              active={activeTool === "imageFrame"}
+              mainTitle={activeTool === "imageFrame" ? "Marco de imagen" : "Importar imagen"}
+              onMainClick={() => {
+                if (activeTool === "imageFrame") setActiveTool("imageFrame");
+                else fileInputRef.current?.click();
+              }}
+              mainIcon={
+                activeTool === "imageFrame" ? (
+                  <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="2" y="3" width="16" height="14" rx="1.5" />
+                    <line x1="2" y1="3" x2="18" y2="17" opacity={0.5} />
+                    <line x1="18" y1="3" x2="2" y2="17" opacity={0.5} />
+                  </svg>
+                ) : (
+                  <ImageIconLucide size={20} strokeWidth={1.5} />
+                )
+              }
+            >
+              <button
+                type="button"
+                title="Importar imagen"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-zinc-500 transition hover:bg-white/[0.08] hover:text-white"
+                onClick={() => {
+                  fileInputRef.current?.click();
+                  setLeftToolbarToolFlyout(null);
+                }}
+              >
+                <ImageIconLucide size={18} strokeWidth={1.5} />
+              </button>
+              <button
+                type="button"
+                title="Marco de imagen"
+                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md transition ${
+                  activeTool === "imageFrame" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
+                }`}
+                onClick={() => {
+                  setActiveTool("imageFrame");
+                  setLeftToolbarToolFlyout(null);
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="2" y="3" width="16" height="14" rx="1.5" />
+                  <line x1="2" y1="3" x2="18" y2="17" opacity={0.5} />
+                  <line x1="18" y1="3" x2="2" y2="17" opacity={0.5} />
+                </svg>
+              </button>
+            </ToolFlyoutGroup>
+
             <ToolBtn onClick={() => svgInputRef.current?.click()} title="Importar SVG">
               <svg width={20} height={20} viewBox="0 0 20 20" fill="none" aria-hidden className="text-current">
                 <path
@@ -10304,6 +12517,10 @@ export default function FreehandStudio({
               </svg>
             </ToolBtn>
           </>
+        ) : (
+          <ToolBtn active={activeTool === "text"} onClick={() => setActiveTool("text")} title="Text (T)">
+            <Type size={20} strokeWidth={1.5} />
+          </ToolBtn>
         )}
 
         <div className="my-1 h-px w-6 bg-white/[0.08]" />
@@ -10589,6 +12806,45 @@ export default function FreehandStudio({
             />
           )}
           <div ref={containerRef} className="relative min-h-0 flex-1 overflow-hidden">
+        {isPhotoRoomStudioEmbed &&
+          (activeTool === "rectMarquee" ||
+            activeTool === "ellipseMarquee" ||
+            activeTool === "lassoMarquee" ||
+            activeTool === "polygonMarquee") &&
+          (photoRectMarqueeSelection.length > 0 ||
+            photoPolygonMarqueeSelection.length > 0 ||
+            photoEllipseMarqueeSelection.length > 0) &&
+          photoRectMarqueeAddModHeld && (
+            <div
+              className="pointer-events-none absolute bottom-5 left-1/2 z-[120] flex -translate-x-1/2 items-center gap-2 rounded-full border border-orange-400/35 bg-[#0f1217]/95 px-3 py-1.5 text-[12px] text-orange-100 shadow-lg shadow-black/40"
+              data-ui="photo-marquee-add-hint"
+            >
+              <span className="flex h-6 w-6 items-center justify-center rounded-md bg-orange-500/25 text-[18px] font-light leading-none text-orange-50">
+                +
+              </span>
+              <span className="max-w-[min(20rem,85vw)] text-[11px] text-zinc-300">
+                Con Ctrl (Windows/Linux) o ⌘ (Mac) pulsado, el siguiente trazo suma a la selección. Sin modificador, sustituye la selección. Alt/Option resta área.
+              </span>
+            </div>
+          )}
+        {isPhotoRoomStudioEmbed &&
+          (activeTool === "rectMarquee" ||
+            activeTool === "ellipseMarquee" ||
+            activeTool === "lassoMarquee" ||
+            activeTool === "polygonMarquee") &&
+          photoRectMarqueeAltModHeld && (
+            <div
+              className="pointer-events-none absolute bottom-[4.25rem] left-1/2 z-[120] flex -translate-x-1/2 items-center gap-2 rounded-full border border-fuchsia-500/35 bg-[#0f1217]/95 px-3 py-1.5 text-[12px] text-fuchsia-100 shadow-lg shadow-black/40"
+              data-ui="photo-marquee-subtract-hint"
+            >
+              <span className="flex h-6 w-6 items-center justify-center rounded-md bg-fuchsia-600/25 text-[18px] font-light leading-none text-fuchsia-50">
+                −
+              </span>
+              <span className="max-w-[min(20rem,85vw)] text-[11px] text-zinc-300">
+                Con Alt (Windows/Linux) u Option (Mac) pulsado, el siguiente trazo resta de la selección.
+              </span>
+            </div>
+          )}
         {designerMode && designerCanvasRasterLoad.phase === "loading" && (
           <div
             className="absolute inset-0 z-[200] flex flex-col items-center justify-center bg-[#0b0d10]"
@@ -10642,6 +12898,25 @@ export default function FreehandStudio({
             <filter id="fh-selection-shadow" x="-40%" y="-40%" width="180%" height="180%">
               <feDropShadow dx="0" dy="2" stdDeviation="3" floodColor="#000" floodOpacity="0.35" />
             </filter>
+            {artboards
+              .filter((ab) => artboardBackgroundIsTransparentForDisplay(ab.background))
+              .map((ab) => {
+                const pid = `fh-transp-${svgIdSafeSegment(ab.id)}`;
+                return (
+                  <pattern
+                    key={pid}
+                    id={pid}
+                    width={12}
+                    height={12}
+                    patternUnits="userSpaceOnUse"
+                  >
+                    <rect width={6} height={6} fill="#2a2d33" />
+                    <rect x={6} width={6} height={6} fill="#1e2128" />
+                    <rect y={6} width={6} height={6} fill="#1e2128" />
+                    <rect x={6} y={6} width={6} height={6} fill="#2a2d33" />
+                  </pattern>
+                );
+              })}
           </defs>
           {showGrid ? (
             <rect width="100%" height="100%" fill="url(#fh-grid)" data-ui="grid" />
@@ -10653,7 +12928,17 @@ export default function FreehandStudio({
             {/* Pliego (página): fondo detrás de objetos; borde solo ayuda visual (data-ui se quita al exportar). */}
             {artboards.map((ab) => (
               <g key={ab.id} data-fh-artboard={ab.id}>
-                <rect x={ab.x} y={ab.y} width={ab.width} height={ab.height} fill={ab.background} />
+                <rect
+                  x={ab.x}
+                  y={ab.y}
+                  width={ab.width}
+                  height={ab.height}
+                  fill={
+                    artboardBackgroundIsTransparentForDisplay(ab.background)
+                      ? `url(#fh-transp-${svgIdSafeSegment(ab.id)})`
+                      : ab.background
+                  }
+                />
                 <rect
                   x={ab.x}
                   y={ab.y}
@@ -10905,6 +13190,135 @@ export default function FreehandStudio({
               <rect x={marqueeRect.x} y={marqueeRect.y} width={marqueeRect.w} height={marqueeRect.h}
                 fill="rgba(99,102,241,0.08)" stroke="#6366f1" strokeWidth={1 / viewport.zoom}
                 strokeDasharray={`${3 / viewport.zoom}`} data-ui="marquee" />
+            )}
+
+            {/* PhotoRoom: marco rectangular (arrastre + selección con hormigas) */}
+            {photoRectMarqueeDragRect && photoRectMarqueeDragRect.w > 2 && photoRectMarqueeDragRect.h > 2 && (
+              <rect
+                x={photoRectMarqueeDragRect.x}
+                y={photoRectMarqueeDragRect.y}
+                width={photoRectMarqueeDragRect.w}
+                height={photoRectMarqueeDragRect.h}
+                fill={photoRectMarqueeDragSubtract ? "rgba(217,70,239,0.12)" : "rgba(251,146,60,0.1)"}
+                stroke={photoRectMarqueeDragSubtract ? "#d946ef" : "#fb923c"}
+                strokeWidth={1 / viewport.zoom}
+                strokeDasharray={`${4 / viewport.zoom} ${3 / viewport.zoom}`}
+                pointerEvents="none"
+                data-ui="photo-marquee-drag"
+              />
+            )}
+            {photoEllipseMarqueeDragEllipse &&
+              photoEllipseMarqueeDragEllipse.rx > 1 &&
+              photoEllipseMarqueeDragEllipse.ry > 1 && (
+                <ellipse
+                  cx={photoEllipseMarqueeDragEllipse.cx}
+                  cy={photoEllipseMarqueeDragEllipse.cy}
+                  rx={photoEllipseMarqueeDragEllipse.rx}
+                  ry={photoEllipseMarqueeDragEllipse.ry}
+                  fill={photoEllipseMarqueeDragSubtract ? "rgba(217,70,239,0.12)" : "rgba(251,146,60,0.1)"}
+                  stroke={photoEllipseMarqueeDragSubtract ? "#d946ef" : "#fb923c"}
+                  strokeWidth={1 / viewport.zoom}
+                  strokeDasharray={`${4 / viewport.zoom} ${3 / viewport.zoom}`}
+                  pointerEvents="none"
+                  data-ui="photo-ellipse-marquee-drag"
+                />
+              )}
+            {photoLassoDragPreviewD && (
+              <path
+                d={photoLassoDragPreviewD}
+                fill="none"
+                stroke={photoLassoDragSubtract ? "#d946ef" : "#fb923c"}
+                strokeWidth={1 / viewport.zoom}
+                strokeDasharray={`${4 / viewport.zoom} ${3 / viewport.zoom}`}
+                strokeLinejoin="round"
+                strokeLinecap="round"
+                pointerEvents="none"
+                data-ui="photo-lasso-drag"
+              />
+            )}
+            {photoPolygonDragPreviewD && (
+              <path
+                d={photoPolygonDragPreviewD}
+                fill="none"
+                stroke={photoPolygonDragSubtract ? "#d946ef" : "#fb923c"}
+                strokeWidth={1 / viewport.zoom}
+                strokeDasharray={`${4 / viewport.zoom} ${3 / viewport.zoom}`}
+                strokeLinejoin="miter"
+                pointerEvents="none"
+                data-ui="photo-polygon-drag"
+              />
+            )}
+            {photoMarqueeSelectionOutlinePaths.map((d, pi) => (
+              <path
+                key={`photo-marquee-sel-${pi}`}
+                d={d}
+                fill="none"
+                stroke="#f8fafc"
+                strokeWidth={1.75}
+                vectorEffect="nonScalingStroke"
+                strokeDasharray="5 4"
+                strokeLinejoin="miter"
+                strokeLinecap="butt"
+                pointerEvents="none"
+                data-ui="photo-marquee-selection"
+              >
+                <animate
+                  attributeName="stroke-dashoffset"
+                  from="0"
+                  to="-9"
+                  dur="0.4s"
+                  repeatCount="indefinite"
+                />
+              </path>
+            ))}
+            {photoPolygonMarqueeOutlineDs.map((d, pi) => (
+              <path
+                key={`photo-poly-sel-${pi}`}
+                d={d}
+                fill="none"
+                stroke="#f8fafc"
+                strokeWidth={1.75}
+                vectorEffect="nonScalingStroke"
+                strokeDasharray="5 4"
+                strokeLinejoin="miter"
+                strokeLinecap="butt"
+                pointerEvents="none"
+                data-ui="photo-marquee-polygon-selection"
+              >
+                <animate
+                  attributeName="stroke-dashoffset"
+                  from="0"
+                  to="-9"
+                  dur="0.4s"
+                  repeatCount="indefinite"
+                />
+              </path>
+            ))}
+            {photoEllipseMarqueeSelection.map((el, ei) =>
+              el.rx > 0 && el.ry > 0 ? (
+                <ellipse
+                  key={`photo-ellipse-sel-${ei}`}
+                  cx={el.cx}
+                  cy={el.cy}
+                  rx={el.rx}
+                  ry={el.ry}
+                  fill="none"
+                  stroke="#f8fafc"
+                  strokeWidth={1.75}
+                  vectorEffect="nonScalingStroke"
+                  strokeDasharray="5 4"
+                  pointerEvents="none"
+                  data-ui="photo-marquee-ellipse-selection"
+                >
+                  <animate
+                    attributeName="stroke-dashoffset"
+                    from="0"
+                    to="-9"
+                    dur="0.4s"
+                    repeatCount="indefinite"
+                  />
+                </ellipse>
+              ) : null,
             )}
 
             {/* Per-object selection outlines (multi-select): primary stronger, secondary lighter */}
@@ -11444,6 +13858,16 @@ export default function FreehandStudio({
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <div className="min-h-0 flex-1 overflow-y-auto">
+            {photoRoomConnectedInputs !== undefined &&
+              studioPhotoRoomCanvasPanel != null &&
+              selectedObjects.length === 0 && (
+                <div className="border-b border-white/[0.08] px-[14px] py-3">
+                  <div className="mb-2.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                    Lienzo
+                  </div>
+                  {studioPhotoRoomCanvasPanel}
+                </div>
+              )}
             {/* Color: paleta + fill + stroke (plegable, plegado por defecto) */}
             <div className="border-b border-white/[0.08]">
               <button
@@ -13170,11 +15594,13 @@ export default function FreehandStudio({
                     {[...objects].reverse().map((obj) => {
                       const isSel = selectedIds.has(obj.id);
                       const isDropTarget = layerDropTarget === obj.id;
+                      const isPrInput = !!obj.photoRoomInputSlot;
                       return (
                         <div
                           key={obj.id}
-                          draggable
+                          draggable={!isPrInput}
                           onDragStart={(e) => {
+                            if (isPrInput) return;
                             e.dataTransfer.effectAllowed = "move";
                             setLayerDragId(obj.id);
                           }}
@@ -13190,6 +15616,11 @@ export default function FreehandStudio({
                             e.preventDefault();
                             if (layerDragId && layerDragId !== obj.id) {
                               setObjects((prev) => {
+                                const fromObj = prev.find((o) => o.id === layerDragId);
+                                const toObj = prev.find((o) => o.id === obj.id);
+                                if (fromObj?.photoRoomInputSlot || toObj?.photoRoomInputSlot) {
+                                  return prev;
+                                }
                                 const fromIdx = prev.findIndex((o) => o.id === layerDragId);
                                 const toIdx = prev.findIndex((o) => o.id === obj.id);
                                 if (fromIdx < 0 || toIdx < 0) return prev;
@@ -13209,7 +15640,7 @@ export default function FreehandStudio({
                           }}
                           onMouseEnter={() => setLayerHoverId(obj.id)}
                           onMouseLeave={() => setLayerHoverId((h) => (h === obj.id ? null : h))}
-                          className={`flex cursor-grab items-center gap-1.5 rounded-md border border-transparent px-2 py-1.5 text-[10px] transition-colors ${
+                          className={`flex ${isPrInput ? "cursor-default" : "cursor-grab"} items-center gap-1.5 rounded-md border border-transparent px-2 py-1.5 text-[10px] transition-colors ${
                             isSel ? "border-violet-500/25 bg-violet-600/30 text-white" : "text-zinc-400 hover:bg-white/5"
                           } ${obj.isClipMask ? "italic opacity-50" : ""} ${isDropTarget ? "ring-1 ring-violet-400" : ""} ${layerDragId === obj.id ? "opacity-40" : ""} ${
                             (hoverCanvasId === obj.id || layerHoverId === obj.id) && !isSel ? "bg-sky-500/10 ring-1 ring-sky-500/50" : ""
@@ -13282,26 +15713,30 @@ export default function FreehandStudio({
                               </span>
                             )}
                           </span>
-                          <button
-                            type="button"
-                            title="Delete"
-                            className="shrink-0 hover:text-red-400"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setObjects((p) => {
-                                const n = p.filter((o) => o.id !== obj.id);
-                                pushHistory(n, new Set());
-                                return n;
-                              });
-                              setSelectedIds((s) => {
-                                const ns = new Set(s);
-                                ns.delete(obj.id);
-                                return ns;
-                              });
-                            }}
-                          >
-                            <Trash2 size={11} />
-                          </button>
+                          {!isPrInput ? (
+                            <button
+                              type="button"
+                              title="Delete"
+                              className="shrink-0 hover:text-red-400"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setObjects((p) => {
+                                  const n = p.filter((o) => o.id !== obj.id);
+                                  pushHistory(n, new Set());
+                                  return n;
+                                });
+                                setSelectedIds((s) => {
+                                  const ns = new Set(s);
+                                  ns.delete(obj.id);
+                                  return ns;
+                                });
+                              }}
+                            >
+                              <Trash2 size={11} />
+                            </button>
+                          ) : (
+                            <span className="inline-flex w-3 shrink-0" aria-hidden />
+                          )}
                         </div>
                       );
                     })}
@@ -13566,3 +16001,6 @@ export default function FreehandStudio({
     </div>
   );
 }
+
+/** Entrada estable para Designer y el resto de embeds que no son PhotoRoom. */
+export default FreehandStudioCanvas;

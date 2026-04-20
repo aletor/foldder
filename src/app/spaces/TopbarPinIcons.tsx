@@ -279,6 +279,39 @@ export function TopbarGlyphFiles({ size = 26, className }: GlyphProps) {
   );
 }
 
+/** PhotoRoom — marco de imagen + varita / retoque (alineado con foldder-icons). */
+export function TopbarGlyphPhotoRoom({ size = 26, className }: GlyphProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      className={className}
+      aria-hidden
+    >
+      <rect x="3.25" y="5" width="12.5" height="10" rx="1.35" stroke="currentColor" strokeWidth={sw} />
+      <circle cx="7.1" cy="9.35" r="1.15" fill="currentColor" opacity={0.28} />
+      <path
+        d="M14.2 4.35 L15.85 6 L16.35 7.85"
+        stroke="currentColor"
+        strokeWidth={1.35}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path d="M14.05 10.25 L17.35 13.55" stroke="currentColor" strokeWidth={1.45} strokeLinecap="round" />
+      <path
+        d="M17.85 14.15 L18.75 15.05 M18.35 13.85 L18.75 14.25 M18.75 13.85 L18.35 14.25"
+        stroke="currentColor"
+        strokeWidth={1.1}
+        strokeLinecap="round"
+        opacity={0.75}
+      />
+      <circle cx="18.05" cy="14.85" r="0.7" fill="currentColor" />
+    </svg>
+  );
+}
+
 /** VFX Generator — capas apiladas + onda / impacto (efectos sobre vídeo). */
 export function TopbarGlyphVfxGenerator({ size = 26, className }: GlyphProps) {
   return (
@@ -323,8 +356,8 @@ export function TopbarGlyphVfxGenerator({ size = 26, className }: GlyphProps) {
 export const TOPBAR_GLYPH_BY_NODE_TYPE: Record<
   | "brain"
   | "designer"
-  | "presenter"
   | "nanoBanana"
+  | "photoRoom"
   | "geminiVideo"
   | "vfxGenerator"
   | "files",
@@ -332,8 +365,8 @@ export const TOPBAR_GLYPH_BY_NODE_TYPE: Record<
 > = {
   brain: TopbarGlyphBrain,
   designer: TopbarGlyphIndesign,
-  presenter: TopbarGlyphPresenter,
   nanoBanana: TopbarGlyphImageGenerator,
+  photoRoom: TopbarGlyphPhotoRoom,
   geminiVideo: TopbarGlyphVideoGenerator,
   vfxGenerator: TopbarGlyphVfxGenerator,
   files: TopbarGlyphFiles,

@@ -257,6 +257,7 @@ const Sidebar = ({
       { type: 'space',             label: 'Space' },
       null,
       { type: 'imageComposer',     label: 'Layout' },
+      { type: 'photoRoom',         label: 'PhotoRoom' },
       { type: 'imageExport',       label: 'Export' },
       { type: 'painter',           label: 'Painter' },
       { type: 'textOverlay',       label: 'Text' },
@@ -467,6 +468,7 @@ const Sidebar = ({
               <div className="grid grid-cols-2 gap-2">
                 {[
                   { type: 'imageComposer', label: 'Layout' },
+                  { type: 'photoRoom',     label: 'PhotoRoom' },
                   { type: 'imageExport',   label: 'Export' },
                   { type: 'painter',       label: 'Painter' },
                   { type: 'textOverlay',   label: 'Text' },

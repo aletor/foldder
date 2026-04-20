@@ -32,6 +32,7 @@ import {
   TextOverlayNode,
   ButtonEdge,
 } from "./CustomNodes";
+import { PhotoRoomNode } from "./photo-room/PhotoRoomNode";
 import { CanvasGroupNode } from "./CanvasGroupNode";
 
 export const spacesInitialNodes: Node[] = [];
@@ -63,6 +64,7 @@ export const spacesNodeTypes: Record<string, ComponentType<any>> = {
   projectBrain: ProjectBrainNode,
   projectAssets: ProjectAssetsNode,
   presenter: PresenterNode,
+  photoRoom: PhotoRoomNode,
   textOverlay: TextOverlayNode,
   canvasGroup: CanvasGroupNode,
 };

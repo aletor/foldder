@@ -109,6 +109,9 @@ const MULTI_SLOT_NODES: Record<string, Record<string, string[]>> = {
   imageComposer: {
     image: ['layer_0', 'layer_1', 'layer_2', 'layer_3', 'layer_4', 'layer_5', 'layer_6', 'layer_7'],
   },
+  photoRoom: {
+    image: ['in_0', 'in_1', 'in_2', 'in_3', 'in_4', 'in_5', 'in_6', 'in_7'],
+  },
   vfxGenerator: { prompt: ['prompt'] },
 };
 
@@ -273,9 +276,11 @@ const DEFAULT_W: Record<string, number> = {
   background: 320,
   urlImage: 340,
   imageComposer: 360,
+  photoRoom: 280,
   imageExport: 320,
   grokProcessor: 320,
-  nanoBanana: 280,
+  /** Lienzo real suele ser ≥ minWidth 320 tras layout; usado para estimar huecos al cablear. */
+  nanoBanana: 380,
   geminiVideo: 340,
   vfxGenerator: 340,
   space: 320,

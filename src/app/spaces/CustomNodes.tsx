@@ -5456,7 +5456,7 @@ export const NanoBananaNode = memo(({ id, data, selected }: NodeProps<any>) => {
     <div className={`custom-node processor-node group/node ${isActivelyGenerating ? 'node-glow-running' : ''}`}
          style={{ minWidth: 240, maxHeight: 600 }}>
       <FoldderNodeResizer minWidth={240} minHeight={180} maxWidth={960} maxHeight={600} isVisible={selected} />
-      <NodeLabel id={id} label={nodeData.label} defaultLabel="CREACION DE IMAGEN (Gemini 3 - Nano Banana)" />
+      <NodeLabel id={id} label={nodeData.label} defaultLabel="CREACION DE IMAGEN" />
 
       {/* ── Handles ── */}
       {REF_SLOTS.map((slot, i) => (
@@ -5491,7 +5491,7 @@ export const NanoBananaNode = memo(({ id, data, selected }: NodeProps<any>) => {
           className="min-w-0 flex-1 uppercase leading-tight tracking-tight line-clamp-3"
           introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}
         >
-          CREACION DE IMAGEN (Gemini 3 - Nano Banana)
+          CREACION DE IMAGEN
         </FoldderNodeHeaderTitle>
         <div className="flex shrink-0 flex-col items-end gap-0.5 text-[8px] font-mono font-light uppercase leading-none">
           <span

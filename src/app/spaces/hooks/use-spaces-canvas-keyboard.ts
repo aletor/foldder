@@ -292,6 +292,7 @@ export function useSpacesCanvasKeyboard(
         case 'u': addNode('urlImage'); break;
         case '2': addNode('projectBrain'); break;
         case '3': addNode('projectAssets'); break;
+        case '1': addNode('photoRoom'); break;
         // ── Inteligencia ─────────────────────────────────────────────────
         case 'n': addNode('nanoBanana'); break;
         case 'd': addNode('mediaDescriber'); break;

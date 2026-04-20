@@ -49,6 +49,20 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
       selectedLayerId: 'string (id of the active layer for interaction)'
     }
   },
+  photoRoom: {
+    type: 'photoRoom',
+    label: 'PhotoRoom',
+    description:
+      'Retoque y composición de imagen: varias entradas de imagen (ranuras dinámicas); salida imagen. Studio en evolución.',
+    inputs: [{ id: 'in-n', label: 'Imágenes', type: 'image' }],
+    outputs: [{ id: 'image', label: 'Imagen', type: 'image' }],
+    dataSchema: {
+      studioObjects: 'FreehandObject[] (vector en studio)',
+      studioLayoutGuides: 'LayoutGuide[]',
+      studioArtboard: '{ id, width, height, background? } px — por defecto 1920×1080',
+      value: 'string (preview PNG / salida)',
+    },
+  },
   urlImage: {
     type: 'urlImage',
     label: 'URL Image / Carousel',
@@ -467,6 +481,8 @@ export const ASSISTANT_NODE_DATA_HINTS: Record<string, string> = {
     "conectar promptInput (o salida prompt) al handle prompt — el texto es la búsqueda; pins[], selectedIndex, value (URL imagen); PINTEREST_ACCESS_TOKEN en servidor",
   imageExport: "format (png|jpeg), label",
   imageComposer: "layersConfig, selectedLayerId",
+  photoRoom:
+    "studioObjects, studioLayoutGuides, studioArtboard (px); value/salida imagen; label; entradas in_0… por cable",
   space: "label, hasInput, hasOutput, value",
   spaceInput: "label",
   spaceOutput: "label",

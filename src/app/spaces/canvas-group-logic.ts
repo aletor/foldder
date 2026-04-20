@@ -36,7 +36,7 @@ function layoutDimsForBounds(n: Node): { w: number; h: number } {
     if (t === "geminiVideo" || t === "vfxGenerator") {
       if (!hasW) w = sw ?? 380;
       if (!hasH) h = sh ?? 560;
-    } else if (t === "nanoBanana" || t === "imageComposer" || t === "grokProcessor") {
+    } else if (t === "nanoBanana" || t === "imageComposer" || t === "photoRoom" || t === "grokProcessor") {
       if (!hasW) w = sw ?? 400;
       if (!hasH) h = sh ?? 420;
     } else if (t === "promptInput" || t === "mediaInput") {
@@ -560,6 +560,9 @@ export function resolveHandleDataType(
     return "prompt";
   }
   if (flow === "in" && handleId.startsWith("layer_") && nodeType === "imageComposer") {
+    return "image";
+  }
+  if (flow === "in" && /^in_\d+$/.test(handleId) && nodeType === "photoRoom") {
     return "image";
   }
   return undefined;

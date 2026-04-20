@@ -66,14 +66,14 @@ function dockLayoutSpreadPx(
 }
 
 /**
- * Accesos fijos (no personalizables): Brain → Design → Present → Image → Video → VFX → Assets.
- * Brain y Assets: clic → panel fullscreen (tras breve espera); doble clic → nodo projectBrain / projectAssets en el lienzo. Orden estable.
+ * Accesos fijos (no personalizables): Brain → Design → Image → PhotoRoom → Video → VFX → Assets. (Presenter solo en la librería.)
+ * Brain y Assets: clic → panel fullscreen (tras breve espera); doble clic → nodo projectBrain / projectAssets en el lienzo. Resto: doble clic añade el nodo del pin. Orden estable.
  */
 export const TOPBAR_FIXED_PIN_TYPES = [
   "brain",
   "designer",
-  "presenter",
   "nanoBanana",
+  "photoRoom",
   "geminiVideo",
   "vfxGenerator",
   "files",
@@ -86,8 +86,8 @@ const TOPBAR_PIN_UI: Record<
 > = {
   brain: { title: "Brain — marca y conocimiento", shortLabel: "Brain" },
   designer: { title: "Designer Studio", shortLabel: "Design" },
-  presenter: { title: "Presenter", shortLabel: "Present" },
   nanoBanana: { title: "Image Generator", shortLabel: "Image" },
+  photoRoom: { title: "PhotoRoom — retoque de imagen", shortLabel: "Room" },
   geminiVideo: { title: "Video Generator", shortLabel: "Video" },
   vfxGenerator: { title: "VFX Generator", shortLabel: "VFX" },
   files: { title: "Assets — multimedia del proyecto", shortLabel: "Assets" },
@@ -366,7 +366,7 @@ export function TopbarPins({
             : {}),
         }}
         role="toolbar"
-        aria-label="Accesos directos: Brain, Design, Present, Image, Video, VFX, Assets. Brain y Assets: clic abre el panel; doble clic añade el nodo en el lienzo. En el resto, doble clic para añadir al lienzo."
+        aria-label="Accesos directos: Brain, Design, Image, PhotoRoom, Video, VFX, Assets. Brain y Assets: clic abre el panel; doble clic añade el nodo en el lienzo. En el resto, doble clic para añadir al lienzo."
       >
         {TOPBAR_FIXED_PIN_TYPES.map((type, i) => {
           const ui = TOPBAR_PIN_UI[type];

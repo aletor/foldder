@@ -419,7 +419,9 @@ export function SpacesContent() {
     return () => clearTimeout(t);
   }, [canvasViewMode, cardsFocusIndex, nodes, fitViewToNodeIds]);
 
-  const [showWelcome, setShowWelcome] = useState(false); // triggered after auth
+  const [showWelcome, setShowWelcome] = useState(false); // solo tras crear proyecto nuevo (post-login)
+  /** Tras la clave: obliga a elegir proyecto o crear uno nuevo antes de cerrar el modal de proyectos. */
+  const [postAuthProjectsGate, setPostAuthProjectsGate] = useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -454,6 +456,7 @@ export function SpacesContent() {
       enhancer:     { prompt: ['p0','p1','p2','p3','p4','p5','p6','p7','p8','p9','p10','p11','p12','p13','p14','p15'] },
       vfxGenerator: { prompt: ['prompt'] },
       imageComposer: { image: ['layer_0','layer_1','layer_2','layer_3','layer_4','layer_5','layer_6','layer_7'] },
+      photoRoom: { image: ['in_0','in_1','in_2','in_3','in_4','in_5','in_6','in_7'] },
     };
     // Per-handle-type slot counters, reset per new node creation
     const slotCounters: Record<string, number> = {};
@@ -1457,8 +1460,9 @@ export function SpacesContent() {
     setPasscode(val);
     if (val === '6666') {
       setIsAuthenticated(true);
-      // Trigger welcome splash — output node appears when splash finishes
-      setShowWelcome(true);
+      setShowWelcome(false);
+      setShowLoadModal(true);
+      setPostAuthProjectsGate(true);
       // Mismo gesto que el input: intentar lienzo a pantalla completa (puede fallar en iOS / si el usuario lo bloqueó).
       void enterFullscreen(document.documentElement).catch(() => undefined);
     } else if (val.length === 4) {
@@ -1846,7 +1850,15 @@ export function SpacesContent() {
       setAssistantCostApproval(null);
       return true;
     }
-    if (showNewProjectModal || showLoadModal || projectToDelete || projectDeleteInProgress) return false;
+    if (showNewProjectModal) {
+      if (!isSaving) setShowNewProjectModal(false);
+      return true;
+    }
+    if (showLoadModal) {
+      if (!postAuthProjectsGate) setShowLoadModal(false);
+      return true;
+    }
+    if (projectToDelete || projectDeleteInProgress) return false;
     if (canvasViewMode === 'cards') {
       exitCardsViewMode();
       return true;
@@ -1869,6 +1881,8 @@ export function SpacesContent() {
     assistantCostApproval,
     showNewProjectModal,
     showLoadModal,
+    postAuthProjectsGate,
+    isSaving,
     projectToDelete,
     projectDeleteInProgress,
     canvasViewMode,
@@ -1897,7 +1911,7 @@ export function SpacesContent() {
     return () => clearTimeout(timer);
   }, [nodes, edges, activeSpaceId, spacesMap, syncCurrentSpaceState]); 
 
-  // Fetch saved projects on mount
+  // Lista de proyectos al montar y al validar la clave (lista actualizada al entrar)
   useEffect(() => {
     (async () => {
       try {
@@ -1908,7 +1922,7 @@ export function SpacesContent() {
         console.error('Fetch error:', err);
       }
     })();
-  }, []);
+  }, [isAuthenticated]);
 
   const saveProject = async (
     nameToSave?: string,
@@ -2078,8 +2092,13 @@ export function SpacesContent() {
     if (ok) {
       setShowNewProjectModal(false);
       setNewProjectNameInput('');
+      if (postAuthProjectsGate) {
+        setPostAuthProjectsGate(false);
+        setShowLoadModal(false);
+        setShowWelcome(true);
+      }
     }
-  }, [newProjectNameInput, projectDeleteInProgress, setNodes, setEdges]);
+  }, [newProjectNameInput, projectDeleteInProgress, postAuthProjectsGate, setNodes, setEdges]);
 
   const loadProject = (project: any) => {
     void (async () => {
@@ -2171,6 +2190,7 @@ export function SpacesContent() {
         setCardsFocusIndex(0);
       }
 
+      setPostAuthProjectsGate(false);
       setShowLoadModal(false);
 
       setTimeout(() => {
@@ -2558,9 +2578,17 @@ export function SpacesContent() {
       nodeId: fromNodeId,
       screenToFlowPosition,
     });
-    /** Separación horizontal entre centros de conectores (coords flujo). */
-    const HANDLE_GAP = 76;
-    const defaultWidthHint = 280;
+    /** Separación horizontal entre centros de conectores (coords flujo). PhotoRoom: más margen para que Nano no roce el marco. */
+    const HANDLE_GAP_BASE = 76;
+    const handleGap =
+      srcNodeType === "photoRoom" &&
+      fromType === "target" &&
+      /^in_\d+$/.test(fromHandleId)
+        ? 120
+        : HANDLE_GAP_BASE;
+    /** Nano Banana: ancho típico en lienzo > minWidth 240; evita primer frame solapado con PhotoRoom. */
+    const defaultWidthHint =
+      newType === "nanoBanana" && srcNodeType === "photoRoom" && fromType === "target" ? 400 : 280;
     /** Heurística offset handle izquierdo → esquina sup. izq. del nodo nuevo (el snap afina). */
     const newNodeLeftInsetHint = 56;
     /** Primera Y: cercana al ancla; snapNewNodeToAnchor corrige al centro real del handle en el siguiente frame. */
@@ -2569,9 +2597,9 @@ export function SpacesContent() {
           x:
             fromType === 'source'
               ? fromNodeFlowRect
-                ? fromNodeFlowRect.right + HANDLE_GAP - newNodeLeftInsetHint
-                : anchor.x + HANDLE_GAP
-              : anchor.x - HANDLE_GAP - defaultWidthHint,
+                ? fromNodeFlowRect.right + HANDLE_GAP_BASE - newNodeLeftInsetHint
+                : anchor.x + HANDLE_GAP_BASE
+              : anchor.x - handleGap - defaultWidthHint,
           y: anchor.y - 48,
         }
       : { x: pointerFlow.x - 160, y: pointerFlow.y - 80 };
@@ -2605,14 +2633,26 @@ export function SpacesContent() {
         const handleOffsetX = newH.x - n.position.x;
         let desiredX: number;
         if (fromType === 'source') {
-          const handleToHandle = anchorFlow.x + HANDLE_GAP;
+          const handleToHandle = anchorFlow.x + HANDLE_GAP_BASE;
           const clearSourceBody =
             srcRectNow != null
-              ? srcRectNow.right + HANDLE_GAP + handleOffsetX
+              ? srcRectNow.right + HANDLE_GAP_BASE + handleOffsetX
               : handleToHandle;
           desiredX = Math.max(handleToHandle, clearSourceBody);
         } else {
-          desiredX = anchorFlow.x - HANDLE_GAP;
+          /** Entrada (p. ej. PhotoRoom): nodo fuente a la izquierda; alinear handles y asegurar que el cuerpo no invada PhotoRoom. */
+          desiredX = anchorFlow.x - handleGap;
+          const nbRect = getNodeFlowRect({
+            nodeId: newNodeId,
+            screenToFlowPosition,
+          });
+          if (srcNodeType === "photoRoom" && srcRectNow != null && nbRect != null) {
+            const bodyPad = 32;
+            const limitRight = srcRectNow.left - bodyPad;
+            if (nbRect.right > limitRight) {
+              desiredX -= nbRect.right - limitRight;
+            }
+          }
         }
         const desiredY = anchorFlow.y;
         return nds.map((node: any) => {
@@ -4286,7 +4326,7 @@ export function SpacesContent() {
 
         {/* Modals — mismo estilo que tarjetas Lógica en Sidebar (borde blanco /25, fondo white/20, slate-700) */}
         {showNewProjectModal && (
-          <div className="fixed inset-0 z-[10004] flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-[10006] flex items-center justify-center p-4">
             <div
               className="absolute inset-0 bg-black/45 backdrop-blur-xl"
               onClick={() => !isSaving && setShowNewProjectModal(false)}
@@ -4347,32 +4387,53 @@ export function SpacesContent() {
           <div className="fixed inset-0 z-[10004] flex items-center justify-center p-3 sm:p-4">
             <div
               className="absolute inset-0 bg-black/45 backdrop-blur-xl"
-              onClick={() => setShowLoadModal(false)}
+              onClick={() => {
+                if (!postAuthProjectsGate) setShowLoadModal(false);
+              }}
               aria-hidden
             />
             <div className="relative z-10 flex max-h-[min(85vh,560px)] w-full max-w-lg flex-col rounded-2xl border border-white/25 bg-white/20 p-4 shadow-2xl shadow-black/20 backdrop-blur-xl sm:p-5">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <h2 className="flex items-center gap-2 text-sm font-black uppercase tracking-wide text-slate-800">
-                  <FolderOpen size={16} className="shrink-0 text-rose-500" /> Your Projects
+                  <FolderOpen size={16} className="shrink-0 text-rose-500" /> Tus proyectos
                 </h2>
-                <button
-                  type="button"
-                  onClick={() => setShowLoadModal(false)}
-                  className="shrink-0 rounded-full p-1 text-slate-500 transition-colors hover:bg-white/40 hover:text-slate-800"
-                  aria-label="Close"
-                >
-                  <X size={14} />
-                </button>
+                {!postAuthProjectsGate && (
+                  <button
+                    type="button"
+                    onClick={() => setShowLoadModal(false)}
+                    className="shrink-0 rounded-full p-1 text-slate-500 transition-colors hover:bg-white/40 hover:text-slate-800"
+                    aria-label="Cerrar"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
               </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (projectDeleteInProgress) return;
+                  setNewProjectNameInput('');
+                  setShowNewProjectModal(true);
+                }}
+                disabled={!!projectDeleteInProgress}
+                className="mb-3 flex w-full items-center justify-center gap-2 rounded-xl border border-blue-500/40 bg-blue-600/90 px-4 py-3 text-[11px] font-black uppercase tracking-widest text-white shadow-md shadow-blue-900/20 transition-all hover:bg-blue-500 disabled:pointer-events-none disabled:opacity-40"
+              >
+                <FolderPlus size={16} strokeWidth={2.5} aria-hidden />
+                Comenzar un proyecto nuevo
+              </button>
+
               <p className="mb-3 text-[11px] leading-snug text-slate-600">
-                Select a configuration to restore it to the canvas.
+                {postAuthProjectsGate
+                  ? 'Abre un proyecto guardado o crea uno nuevo para continuar.'
+                  : 'Elige un proyecto para cargarlo en el lienzo.'}
               </p>
 
               <div className="custom-scrollbar min-h-0 max-h-[min(52vh,340px)] flex-1 overflow-y-auto -mx-1 px-1 pb-1 sm:max-h-[min(48vh,380px)]">
                 {savedProjects.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-white/30 bg-white/10 py-10 text-center backdrop-blur-sm">
                     <FolderOpen className="mx-auto mb-2 text-slate-400" size={28} />
-                    <p className="text-xs font-bold text-slate-600">No saved projects yet.</p>
+                    <p className="text-xs font-bold text-slate-600">Aún no hay proyectos guardados.</p>
                   </div>
                 ) : (
                   <div className="flex flex-col gap-1.5">
@@ -4452,7 +4513,7 @@ export function SpacesContent() {
                             disabled={!!projectDeleteInProgress}
                             className="rounded-lg border border-white/25 bg-white/35 px-3 py-1.5 text-[9px] font-black uppercase tracking-widest text-slate-800 shadow-sm transition-all hover:border-slate-400/40 hover:bg-white/50 disabled:pointer-events-none disabled:opacity-40"
                           >
-                            Load
+                            Abrir
                           </button>
                         </div>
                       </div>

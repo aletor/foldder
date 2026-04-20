@@ -60,6 +60,10 @@ export const SIDEBAR_HOVER_HELP: Record<string, { title: string; line: string }>
     title: 'Image Composer',
     line: 'Combina imágenes en capas',
   },
+  photoRoom: {
+    title: 'PhotoRoom',
+    line: 'Retoque de imagen: varias entradas; salida imagen (Studio en evolución)',
+  },
   painter: {
     title: 'Painter',
     line: 'Dibuja manualmente sobre el lienzo',
