@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useLayoutEffect, useMemo, useState } from "react";
 import type { NewDocumentConfig } from "./new-document-model";
 
 export interface NewDocumentPanelProps {
@@ -221,7 +221,7 @@ export function PhotoRoomNewDocumentPanel({
 
   const canCreate = widthNum > 0 && heightNum > 0;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!isResize || !onCanvasPreviewChange || !canCreate) return;
     onCanvasPreviewChange({ width: widthNum, height: heightNum, background });
   }, [isResize, onCanvasPreviewChange, canCreate, widthNum, heightNum, background]);

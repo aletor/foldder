@@ -3643,6 +3643,38 @@ function findSingleSelectedImageForPhotoMarquee(
   return found;
 }
 
+function pickTopVisibleObjectForCursor(pos: Point, objs: FreehandObject[], threshold: number): FreehandObject | null {
+  for (let i = objs.length - 1; i >= 0; i--) {
+    const obj = objs[i];
+    if (!obj.visible || obj.locked) continue;
+    if (obj.isClipMask || obj.clipMaskId) continue;
+    if (hitTestObject(pos, obj, threshold, objs)) return obj;
+  }
+  return null;
+}
+
+/** Tampón: solo capas imagen “locales” (`pickTopImageForBrush`); cursor prohibido sobre el resto. */
+function photoRoomCloneStampCursorBlocked(pos: Point, objs: FreehandObject[], threshold: number): boolean {
+  const top = pickTopVisibleObjectForCursor(pos, objs, threshold);
+  if (!top) return false;
+  return pickTopImageForBrush(pos, objs) == null;
+}
+
+/** Marcos PhotoRoom: requieren una única imagen activa; si la selección no es eso o el hover cae en no-imagen, inactivo. */
+function photoRoomMarqueeToolCursorBlocked(
+  pos: Point,
+  sel: Set<string>,
+  objs: FreehandObject[],
+  threshold: number,
+): boolean {
+  const sole = findSingleSelectedImageForPhotoMarquee(sel, objs);
+  if (sole) return false;
+  if (sel.size > 0) return true;
+  const top = pickTopVisibleObjectForCursor(pos, objs, threshold);
+  if (!top) return false;
+  return top.type !== "image";
+}
+
 /**
  * Coherente con `<image preserveAspectRatio="xMidYMid meet">` en el render del lienzo:
  * el bitmap encaja dentro de la caja sin deformar (bandas si el aspecto no coincide).
@@ -6166,22 +6198,18 @@ function resolveSceneExportBounds(objects: FreehandObject[], artboards: Artboard
 }
 
 function resolveFitViewBounds(objects: FreehandObject[], artboards: Artboard[]): Rect {
-  const visible = objects.filter((o) => o.visible && !o.isClipMask);
   const abRects = artboards.map(artboardToRect);
-
-  // Sin contenido, no usar el placeholder 1920×1080 de buildExportBounds: al unirlo con un
-  // pliego vertical domina el ancho y el encuadre deja la página como una franja pequeña.
-  if (visible.length === 0) {
-    if (abRects.length > 0) {
-      const u = unionRects(abRects);
-      if (u) return u;
-    }
-    return { x: 0, y: 0, w: 1920, h: 1080 };
+  /** Encuadre “fit” (doble clic en vacío, Fit all, modo P…): solo el pliego definido, no contenido que sobresalga. */
+  if (abRects.length > 0) {
+    const u = unionRects(abRects);
+    if (u) return u;
   }
 
-  const ob = buildExportBounds(objects);
-  if (artboards.length === 0) return ob;
-  return unionRects([ob, ...abRects]) ?? ob;
+  const visible = objects.filter((o) => o.visible && !o.isClipMask);
+  if (visible.length === 0) {
+    return { x: 0, y: 0, w: 1920, h: 1080 };
+  }
+  return buildExportBounds(objects);
 }
 
 /** Evita canvas “tainted” al exportar: las <image> con http(s) deben ir como data URLs antes de rasterizar. */
@@ -6560,7 +6588,7 @@ function svgStringToCanvas(svgStr: string, w: number, h: number, bgColor?: strin
 
 const TOOLBAR_ICON_STROKE = 1.75 as const;
 /** Pulsación mantenida sobre el icono del grupo para abrir el submenú (rollout). */
-const TOOLBAR_FLYOUT_PRESS_MS = 200;
+const TOOLBAR_FLYOUT_PRESS_MS = 50;
 
 /**
  * Herramienta Pincel — referencia del usuario: mango alargado (arriba-dcha) y cabeza en lágrima (abajo-izq),
@@ -6616,7 +6644,7 @@ function ToolBtn({ active, onClick, title, children }: { active?: boolean; onCli
   );
 }
 
-/** Grupo estilo Photoshop: icono + ▸; mantén pulsado un instante (rollout) o usa ▸. Suelta sobre una opción para elegirla. */
+/** Grupo estilo Photoshop: icono + chevron decorativo; mantén pulsado un instante (rollout). Suelta sobre una opción para elegirla. */
 function ToolFlyoutGroup({
   groupId,
   flyoutOpen,
@@ -6711,7 +6739,7 @@ function ToolFlyoutGroup({
     [onMainClick],
   );
 
-  const mainHint = `${mainTitle} — Mantén pulsado un instante y arrastra hasta una herramienta, o pulsa ▸.`;
+  const mainHint = `${mainTitle} — Mantén pulsado un instante y arrastra hasta una herramienta.`;
 
   return (
     <div className="relative h-9 w-9 shrink-0" data-tool-flyout-root>
@@ -6731,20 +6759,12 @@ function ToolFlyoutGroup({
         }`}
       >
         {mainIcon}
-      </button>
-      <button
-        type="button"
-        title="Más herramientas del grupo"
-        aria-expanded={open}
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          rolloutFromMainHoldRef.current = false;
-          setFlyoutOpen(open ? null : groupId);
-        }}
-        className="absolute bottom-0.5 right-0.5 z-10 flex h-3.5 w-3.5 items-center justify-center rounded-[2px] text-zinc-400 transition hover:bg-white/[0.12] hover:text-white"
-      >
-        <ChevronRight className="h-2.5 w-2.5 opacity-90" strokeWidth={2.25} />
+        <span
+          className="pointer-events-none absolute bottom-0.5 right-0.5 flex h-3.5 w-3.5 items-center justify-center text-zinc-400"
+          aria-hidden
+        >
+          <ChevronRight className="h-2.5 w-2.5 opacity-90" strokeWidth={2.25} />
+        </span>
       </button>
       {open && (
         <div
@@ -7042,7 +7062,10 @@ function buildPhotoRoomInputImage(
   } as ImageObject;
 }
 
-/** PhotoRoom: mantiene al fondo las capas de imágenes conectadas (orden por slot); el resto no se toca. */
+/**
+ * PhotoRoom: sincroniza capas conectadas por ranura y conserva el orden del listado (incl. intercalar
+ * con capas de usuario). Las ranuras nuevas se añaden al final en orden in_0, in_1, …
+ */
 function mergePhotoRoomInputLayers(
   prev: FreehandObject[],
   inputs: { slot: string; src: string }[],
@@ -7058,28 +7081,34 @@ function mergePhotoRoomInputLayers(
     return na - nb;
   });
 
-  /**
-   * Tras «Rasterizar», la capa puede seguir usando el id canónico `…__pr_in_in_n` pero ya sin
-   * `photoRoomInputSlot`. Si el grafo aún reporta esa ranura un fotograma, no debe quedar también
-   * en `userOnly` o React ve dos hijos con la misma `key`.
-   */
   const reservedCanonicalIds = new Set(sortedSlots.map((s) => photoRoomInputLayerId(nodeId, s)));
-  const userOnly = prev.filter((o) => !o.photoRoomInputSlot && !reservedCanonicalIds.has(o.id));
+  const seenSlots = new Set<string>();
+  const next: FreehandObject[] = [];
 
-  const existingBySlot = new Map<string, ImageObject>();
   for (const o of prev) {
-    if (o.photoRoomInputSlot && o.type === "image" && inputBySlot.has(o.photoRoomInputSlot)) {
-      existingBySlot.set(o.photoRoomInputSlot, o as ImageObject);
+    if (o.type === "image" && o.photoRoomInputSlot && inputBySlot.has(o.photoRoomInputSlot)) {
+      const slot = o.photoRoomInputSlot;
+      const src = inputBySlot.get(slot)!;
+      next.push(buildPhotoRoomInputImage(nodeId, slot, src, aw, ah, o as ImageObject));
+      seenSlots.add(slot);
+      continue;
+    }
+    if (o.photoRoomInputSlot && !inputBySlot.has(o.photoRoomInputSlot)) {
+      continue;
+    }
+    if (!o.photoRoomInputSlot && !reservedCanonicalIds.has(o.id)) {
+      next.push(o);
     }
   }
 
-  const inputLayers: ImageObject[] = sortedSlots.map((slot) => {
-    const src = inputBySlot.get(slot)!;
-    const existing = existingBySlot.get(slot);
-    return buildPhotoRoomInputImage(nodeId, slot, src, aw, ah, existing);
-  });
+  for (const slot of sortedSlots) {
+    if (!seenSlots.has(slot)) {
+      const src = inputBySlot.get(slot)!;
+      next.push(buildPhotoRoomInputImage(nodeId, slot, src, aw, ah, undefined));
+    }
+  }
 
-  return [...inputLayers, ...userOnly];
+  return next;
 }
 
 function computeStudioInitialObjects(
@@ -7553,6 +7582,8 @@ export function FreehandStudioCanvas({
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [activeTool, setActiveTool] = useState<Tool>("select");
+  const [prToolCursorBlocked, setPrToolCursorBlocked] = useState(false);
+  const prToolCursorBlockedRef = useRef(false);
 
   useEffect(() => {
     if (activeTool === "brush" && !studioCaps.toolBrush) {
@@ -7573,6 +7604,11 @@ export function FreehandStudioCanvas({
       setActiveTool("select");
     }
   }, [activeTool, studioCaps]);
+
+  useEffect(() => {
+    prToolCursorBlockedRef.current = false;
+    setPrToolCursorBlocked(false);
+  }, [activeTool]);
 
   /**
    * Entradas del grafo: no poner `photoRoomConnectedInputs` ni `initialObjects` en deps — en React Flow `nodes`/arrays
@@ -7841,8 +7877,8 @@ export function FreehandStudioCanvas({
   const [hoverCanvasId, setHoverCanvasId] = useState<string | null>(null);
   /** Layer row hover (panel). */
   const [layerHoverId, setLayerHoverId] = useState<string | null>(null);
-  /** Panel de capas: plegado por defecto abajo en la columna derecha. */
-  const [layersPanelExpanded, setLayersPanelExpanded] = useState(false);
+  /** Panel de capas: desplegado por defecto abajo en la columna derecha. */
+  const [layersPanelExpanded, setLayersPanelExpanded] = useState(true);
   /** Desplegable modo de fusión encima del listado de capas. */
   const [layerBlendMenuOpen, setLayerBlendMenuOpen] = useState(false);
   const layerBlendMenuWrapRef = useRef<HTMLDivElement | null>(null);
@@ -8837,12 +8873,14 @@ export function FreehandStudioCanvas({
     if (o.type === "image" || o.type === "booleanGroup") {
       const fNone = fillColor === "none";
       const sNone = strokeColor === "none";
+      /** Pincel sobre máscara de capa: el color sale de `fillColor` (no del fill vectorial de la imagen). */
+      const allowSwatchesForMaskBrush = o.type === "image" && maskEditObjectId === o.id;
       return {
         fillHex: fNone ? "#6366f1" : fillColor,
         strokeHex: sNone ? "#71717a" : strokeColor,
         fillNone: fNone,
         strokeNone: sNone,
-        noVectorStyle: true,
+        noVectorStyle: !allowSwatchesForMaskBrush,
       };
     }
     let fillHex = "#6366f1";
@@ -8864,7 +8902,7 @@ export function FreehandStudioCanvas({
     const strokeNone = o.stroke === "none";
     const strokeHex = strokeNone ? "#71717a" : o.stroke;
     return { fillHex, strokeHex, fillNone, strokeNone, noVectorStyle: false };
-  }, [firstSelected, fillColor, strokeColor]);
+  }, [firstSelected, fillColor, strokeColor, maskEditObjectId]);
 
   const leftToolbarPickerInitialHex = useMemo(() => {
     if (!leftToolbarColorTarget) return "#000000";
@@ -14182,6 +14220,28 @@ export function FreehandStudioCanvas({
         }
         setHoverCanvasId((prev) => (prev === found ? prev : found));
       }
+      if (isPhotoRoomStudioEmbed && !spaceHeld) {
+        const th = 8 / viewport.zoom;
+        let blocked = false;
+        if (studioCaps.toolCloneStamp && activeTool === "cloneStamp") {
+          blocked = photoRoomCloneStampCursorBlocked(pos, objectsRef.current, th);
+        } else if (
+          studioCaps.toolPhotoMarquee &&
+          (activeTool === "rectMarquee" ||
+            activeTool === "ellipseMarquee" ||
+            activeTool === "lassoMarquee" ||
+            activeTool === "polygonMarquee")
+        ) {
+          blocked = photoRoomMarqueeToolCursorBlocked(pos, selectedIdsRef.current, objectsRef.current, th);
+        }
+        if (prToolCursorBlockedRef.current !== blocked) {
+          prToolCursorBlockedRef.current = blocked;
+          setPrToolCursorBlocked(blocked);
+        }
+      } else if (prToolCursorBlockedRef.current) {
+        prToolCursorBlockedRef.current = false;
+        setPrToolCursorBlocked(false);
+      }
       if (activeTool === "pen" && isPenDrawing && penPoints.length >= 1 && !penDragging) {
         const lastA = penPoints[penPoints.length - 1]!.anchor;
         setPenHoverCanvasRaw(pos);
@@ -15305,6 +15365,7 @@ export function FreehandStudioCanvas({
     finishBrushStroke,
     isPhotoRoomStudioEmbed,
     studioCaps.toolPhotoMarquee,
+    studioCaps.toolCloneStamp,
   ]);
 
   const handleWheel = useCallback(
@@ -15663,6 +15724,17 @@ export function FreehandStudioCanvas({
     if (dragState?.type === "rotate") return "grab";
     if (dragState?.type === "move") return "move";
     if (
+      !dragState &&
+      prToolCursorBlocked &&
+      (activeTool === "cloneStamp" ||
+        activeTool === "rectMarquee" ||
+        activeTool === "ellipseMarquee" ||
+        activeTool === "lassoMarquee" ||
+        activeTool === "polygonMarquee")
+    ) {
+      return "not-allowed";
+    }
+    if (
       activeTool === "pen" ||
       activeTool === "brush" ||
       activeTool === "cloneStamp" ||
@@ -15679,7 +15751,7 @@ export function FreehandStudioCanvas({
       return "crosshair";
     }
     return "default";
-  }, [activeTool, spaceHeld, dragState]);
+  }, [activeTool, spaceHeld, dragState, prToolCursorBlocked]);
 
   const quickEditPos = useMemo(() => {
     if (!quickEditMode || !selectionFrame || typeof window === "undefined") return null;
@@ -16683,6 +16755,8 @@ export function FreehandStudioCanvas({
         onMouseUp={handleMouseUp}
         onMouseLeave={() => {
           setHoverCanvasId(null);
+          prToolCursorBlockedRef.current = false;
+          setPrToolCursorBlocked(false);
           cancelBrushCursorOverlayRaf();
           brushPreviewRingRef.current = null;
           brushPreviewLastWorldRef.current = null;
@@ -20455,12 +20529,13 @@ export function FreehandStudioCanvas({
                       const isSel = selectedIds.has(obj.id);
                       const isDropTarget = layerDropTarget === obj.id;
                       const isPrInput = !!obj.photoRoomInputSlot;
+                      const layerRowDraggable = !isPrInput || isPhotoRoomStudioEmbed;
                       return (
                         <div
                           key={obj.id}
-                          draggable={!isPrInput}
+                          draggable={layerRowDraggable}
                           onDragStart={(e) => {
-                            if (isPrInput) return;
+                            if (!layerRowDraggable) return;
                             e.dataTransfer.effectAllowed = "copyMove";
                             setLayerDragId(obj.id);
                           }}
@@ -20478,7 +20553,10 @@ export function FreehandStudioCanvas({
                               setObjects((prev) => {
                                 const fromObj = prev.find((o) => o.id === layerDragId);
                                 const toObj = prev.find((o) => o.id === obj.id);
-                                if (fromObj?.photoRoomInputSlot || toObj?.photoRoomInputSlot) {
+                                if (
+                                  (fromObj?.photoRoomInputSlot || toObj?.photoRoomInputSlot) &&
+                                  !isPhotoRoomStudioEmbed
+                                ) {
                                   return prev;
                                 }
                                 const fromIdx = prev.findIndex((o) => o.id === layerDragId);
@@ -20500,7 +20578,7 @@ export function FreehandStudioCanvas({
                           }}
                           onMouseEnter={() => setLayerHoverId(obj.id)}
                           onMouseLeave={() => setLayerHoverId((h) => (h === obj.id ? null : h))}
-                          className={`flex ${isPrInput ? "cursor-default" : "cursor-grab"} items-center gap-1.5 rounded-md border border-transparent px-2 py-1.5 text-[10px] transition-colors ${
+                          className={`flex ${layerRowDraggable ? "cursor-grab" : "cursor-default"} items-center gap-1.5 rounded-md border border-transparent px-2 py-1.5 text-[10px] transition-colors ${
                             isSel ? "border-violet-500/25 bg-violet-600/30 text-white" : "text-zinc-400 hover:bg-white/5"
                           } ${obj.isClipMask ? "italic opacity-50" : ""} ${isDropTarget ? "ring-1 ring-violet-400" : ""} ${layerDragId === obj.id ? "opacity-40" : ""} ${
                             (hoverCanvasId === obj.id || layerHoverId === obj.id) && !isSel ? "bg-sky-500/10 ring-1 ring-sky-500/50" : ""

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import { LayoutGrid, Monitor, Smartphone } from "lucide-react";
 import PhotoRoomFreehandStudio from "./studio/PhotoRoomFreehandStudio";
 import type { DesignerStudioApi, FreehandObject, LayoutGuide } from "../FreehandStudio";
@@ -265,17 +265,19 @@ export default function PhotoRoomStudio({
         resolution: internal.resolution,
         colorMode: internal.colorMode,
       };
-      onPersist({
-        photoRoomDocSetupDone: true,
-        photoRoomDocMeta: meta,
-        studioArtboard: {
-          id: artboard.id,
-          width: clampDim(config.width),
-          height: clampDim(config.height),
-          background: newDocumentBackgroundToCss(config.background),
-        },
+      flushSync(() => {
+        onPersist({
+          photoRoomDocSetupDone: true,
+          photoRoomDocMeta: meta,
+          studioArtboard: {
+            id: artboard.id,
+            width: clampDim(Number(config.width)),
+            height: clampDim(Number(config.height)),
+            background: newDocumentBackgroundToCss(config.background),
+          },
+        });
       });
-      setStudioBootNonce((n) => n + 1);
+      setTimeout(() => setStudioBootNonce((n) => n + 1), 0);
     },
     [artboard.id, onPersist],
   );
@@ -287,9 +289,14 @@ export default function PhotoRoomStudio({
 
   const openCanvasPresetModal = useCallback(() => {
     setCanvasPresetModalKey((k) => k + 1);
-    setCanvasResizePreview(null);
+    /** Semilla explícita: si el preview queda en null un ciclo, el lienzo no refleja el modal hasta el effect del panel. */
+    setCanvasResizePreview({
+      width: clampDim(artboard.width),
+      height: clampDim(artboard.height),
+      background: artboardCssToDocumentBackground(artboard.background),
+    });
     setCanvasPresetModalOpen(true);
-  }, []);
+  }, [artboard]);
 
   const handleCanvasPreviewFromModal = useCallback(
     (partial: { width: number; height: number; background: NewDocumentConfig["background"] }) => {
@@ -303,23 +310,29 @@ export default function PhotoRoomStudio({
       const internal = createPhotoRoomDocument(config);
       const nextBoard: PhotoRoomArtboardState = {
         id: artboard.id,
-        width: clampDim(config.width),
-        height: clampDim(config.height),
+        width: clampDim(Number(config.width)),
+        height: clampDim(Number(config.height)),
         background: newDocumentBackgroundToCss(config.background),
       };
-      onPersist({
-        photoRoomDocMeta: {
-          name: internal.name,
-          resolution: internal.resolution,
-          colorMode: internal.colorMode,
-        },
-        studioArtboard: nextBoard,
+      /** `flushSync`: el grafo debe tener ya `studioArtboard` antes de remontar el lienzo. */
+      flushSync(() => {
+        onPersist({
+          photoRoomDocMeta: {
+            name: internal.name,
+            resolution: internal.resolution,
+            colorMode: internal.colorMode,
+          },
+          studioArtboard: nextBoard,
+        });
       });
       setCanvasPresetModalOpen(false);
-      setStudioBootNonce((n) => n + 1);
-      /** Tras el commit del nodo (setNodes); si se limpia antes, `liveArtboard` usa el artboard viejo y el fondo parece revertirse. */
+      /**
+       * Remount en el mismo tick que `setNodes` puede montar Freehand con `artboard` del nodo aún
+       * desactualizado (tamaño vuelve a 1920×1080). Diferimos nonce + limpieza de preview un macrotask.
+       */
       setTimeout(() => {
         setCanvasResizePreview(null);
+        setStudioBootNonce((n) => n + 1);
       }, 0);
     },
     [artboard.id, onPersist],

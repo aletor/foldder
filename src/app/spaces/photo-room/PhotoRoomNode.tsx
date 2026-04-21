@@ -149,13 +149,17 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
 
   const studioArtboard = useMemo(() => {
     const ab = nodeData.studioArtboard;
+    const wRaw = ab?.width;
+    const hRaw = ab?.height;
+    const w = typeof wRaw === "number" ? wRaw : Number(wRaw);
+    const h = typeof hRaw === "number" ? hRaw : Number(hRaw);
     return {
       id: typeof ab?.id === "string" && ab.id.length > 0 ? ab.id : `pr_ab_${id}`,
-      width: typeof ab?.width === "number" && ab.width > 0 ? ab.width : 1920,
-      height: typeof ab?.height === "number" && ab.height > 0 ? ab.height : 1080,
+      width: Number.isFinite(w) && w > 0 ? Math.round(w) : 1920,
+      height: Number.isFinite(h) && h > 0 ? Math.round(h) : 1080,
       background: typeof ab?.background === "string" ? ab.background : "#ffffff",
     };
-  }, [id, nodeData.studioArtboard]);
+  }, [id, nodeData.studioArtboard?.id, nodeData.studioArtboard?.width, nodeData.studioArtboard?.height, nodeData.studioArtboard?.background]);
 
   const studioObjects = useMemo(
     () => (Array.isArray(nodeData.studioObjects) ? nodeData.studioObjects : []),
