@@ -15,6 +15,13 @@ export type FreehandStudioCapabilities = {
   toolPhotoMarquee: boolean;
   /** Panel «Convertir en selección» desde forma vectorial → marco PhotoRoom. */
   photoMarqueeFromVector: boolean;
+  /**
+   * Panel grafo PhotoRoom: «Modificar imagen con IA», «Rasterizar imagen» (entrada conectada).
+   * Solo aplica si el host pasa los callbacks; en Designer sigue desactivado por defecto.
+   */
+  photoRoomGraphActions: boolean;
+  /** Panel Propiedades: «Combinar capas» (rasterizar selección / visibles / todo). Solo PhotoRoom por defecto. */
+  combineRasterLayers: boolean;
 };
 
 const CAPS_DESIGNER: FreehandStudioCapabilities = {
@@ -22,6 +29,8 @@ const CAPS_DESIGNER: FreehandStudioCapabilities = {
   toolCloneStamp: false,
   toolPhotoMarquee: false,
   photoMarqueeFromVector: false,
+  photoRoomGraphActions: false,
+  combineRasterLayers: false,
 };
 
 const CAPS_PHOTOROOM: FreehandStudioCapabilities = {
@@ -29,6 +38,8 @@ const CAPS_PHOTOROOM: FreehandStudioCapabilities = {
   toolCloneStamp: true,
   toolPhotoMarquee: true,
   photoMarqueeFromVector: true,
+  photoRoomGraphActions: true,
+  combineRasterLayers: true,
 };
 
 /** Entorno sin Designer ni panel PhotoRoom: mismo perfil conservador que Designer. */

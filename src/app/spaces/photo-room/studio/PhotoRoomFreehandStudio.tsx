@@ -9,7 +9,8 @@ import { FreehandStudioCanvas, type FreehandStudioProps } from "../../FreehandSt
  *
  * Capacidades del lienzo: por defecto `FreehandStudio` infiere PhotoRoom vs Designer
  * (`studioPhotoRoomCanvasPanel`, `designerMode`) y aplica allowlists en
- * `freehand/studio-capabilities.ts`. Para casos raros, el padre puede pasar `studioCapabilities`.
+ * `freehand/studio-capabilities.ts` (p. ej. `toolPhotoMarquee`, `photoRoomGraphActions`, `combineRasterLayers`).
+ * Para casos raros, el padre puede pasar `studioCapabilities`.
  */
 export default function PhotoRoomFreehandStudio(props: FreehandStudioProps) {
   return <FreehandStudioCanvas {...props} />;
