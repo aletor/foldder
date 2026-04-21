@@ -325,6 +325,25 @@ function layerMixBlendStyle(bm: LayerBlendMode | undefined): React.CSSProperties
   return { mixBlendMode: bm };
 }
 
+/**
+ * Overlay de Layer Style (rect enmascarado): mezcla sobre el bitmap de la capa.
+ * Todo en `style` (no atributo `opacity` del rect) para que `mix-blend-mode` componga bien en SVG (Chromium/WebKit).
+ */
+function layerStyleEffectRectStyle(
+  blendMode: LayerBlendMode,
+  opacity01: number,
+): React.CSSProperties {
+  const o = clamp(opacity01, 0, 1);
+  const mode = blendMode === "normal" ? "normal" : blendMode;
+  const mix = mode as React.CSSProperties["mixBlendMode"];
+  return {
+    mixBlendMode: mix,
+    opacity: o,
+    // WebKit: refuerzo cuando hay máscara + geometría SVG (tipos CSS no declaran el prefijo).
+    ...({ WebkitMixBlendMode: mix } as Record<string, string>),
+  };
+}
+
 const LAYER_BLEND_MENU_GROUPS: { items: { mode: LayerBlendMode; label: string }[] }[] = [
   { items: [{ mode: "normal", label: "Normal" }] },
   {
@@ -4908,8 +4927,7 @@ function RasterLayerEffectOverlays(props: {
           height={h}
           fill={co.color}
           mask={`url(#${maskId})`}
-          opacity={clamp(co.opacity, 0, 1)}
-          style={layerMixBlendStyle(co.blendMode as LayerBlendMode)}
+          style={layerStyleEffectRectStyle(co.blendMode as LayerBlendMode, co.opacity)}
         />
       ) : null}
       {goOn && go ? (
@@ -4920,8 +4938,7 @@ function RasterLayerEffectOverlays(props: {
           height={h}
           fill={`url(#${gradId})`}
           mask={`url(#${maskId})`}
-          opacity={clamp(go.opacity, 0, 1)}
-          style={layerMixBlendStyle(go.blendMode as LayerBlendMode)}
+          style={layerStyleEffectRectStyle(go.blendMode as LayerBlendMode, go.opacity)}
         />
       ) : null}
     </>

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import type { LayerEffectBlendMode, LayerEffects } from "./layer-effects-types";
@@ -44,9 +44,20 @@ export function LayerStylesModal({
   onReset: () => void;
 }) {
   const [tab, setTab] = useState<EffectTab>("colorOverlay");
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const dragSessionRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    origX: number;
+    origY: number;
+  } | null>(null);
 
   useEffect(() => {
-    if (open) setTab("colorOverlay");
+    if (open) {
+      setTab("colorOverlay");
+      setDragOffset({ x: 0, y: 0 });
+    }
   }, [open]);
 
   const co = draft.colorOverlay!;
@@ -105,6 +116,39 @@ export function LayerStylesModal({
   );
 
   if (!open || typeof document === "undefined") return null;
+
+  const onDragHandlePointerDown = (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    dragSessionRef.current = {
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      origX: dragOffset.x,
+      origY: dragOffset.y,
+    };
+  };
+
+  const onDragHandlePointerMove = (e: React.PointerEvent) => {
+    const s = dragSessionRef.current;
+    if (!s || e.pointerId !== s.pointerId) return;
+    setDragOffset({
+      x: s.origX + (e.clientX - s.startX),
+      y: s.origY + (e.clientY - s.startY),
+    });
+  };
+
+  const endDrag = (e: React.PointerEvent) => {
+    const s = dragSessionRef.current;
+    if (!s || e.pointerId !== s.pointerId) return;
+    dragSessionRef.current = null;
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+  };
 
   const panel =
     tab === "colorOverlay" ? (
@@ -417,20 +461,32 @@ export function LayerStylesModal({
     >
       <div
         className="flex max-h-[90vh] w-full max-w-[720px] flex-col overflow-hidden rounded-xl border border-white/[0.12] bg-[#0f1115] shadow-2xl shadow-black/60"
+        style={{ transform: `translate(${dragOffset.x}px, ${dragOffset.y}px)` }}
         onClick={(e) => e.stopPropagation()}
       >
-        <header className="flex shrink-0 items-center justify-between border-b border-white/[0.08] px-4 py-3">
-          <h2 id="fh-layer-style-title" className="text-[13px] font-semibold tracking-wide text-zinc-100">
-            Layer Style
-          </h2>
-          <button
-            type="button"
-            className="rounded-md p-1 text-zinc-500 hover:bg-white/10 hover:text-white"
-            aria-label="Cerrar"
-            onClick={onCancel}
+        <header className="flex shrink-0 items-stretch border-b border-white/[0.08]">
+          <div
+            className="flex min-w-0 flex-1 cursor-grab touch-none select-none items-center px-4 py-3 active:cursor-grabbing"
+            onPointerDown={onDragHandlePointerDown}
+            onPointerMove={onDragHandlePointerMove}
+            onPointerUp={endDrag}
+            onPointerCancel={endDrag}
           >
-            <X size={18} strokeWidth={2} />
-          </button>
+            <h2 id="fh-layer-style-title" className="text-[13px] font-semibold tracking-wide text-zinc-100">
+              Layer Style
+            </h2>
+          </div>
+          <div className="flex shrink-0 items-center pr-2">
+            <button
+              type="button"
+              className="rounded-md p-1 text-zinc-500 hover:bg-white/10 hover:text-white"
+              aria-label="Cerrar"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={onCancel}
+            >
+              <X size={18} strokeWidth={2} />
+            </button>
+          </div>
         </header>
         <div className="flex min-h-0 flex-1 overflow-hidden">
           {sidebar}
