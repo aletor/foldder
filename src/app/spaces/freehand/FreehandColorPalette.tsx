@@ -499,9 +499,6 @@ export function ColorPickerModal({
                 className="w-full rounded-md border border-white/[0.1] bg-white/[0.06] px-2 py-1.5 font-mono text-[12px] text-zinc-100 outline-none focus:border-violet-500/50"
                 placeholder="#000000"
               />
-              <p className="text-[9px] leading-snug text-zinc-500">
-                Ajusta el color aquí; se aplica al lienzo solo al pulsar «{confirmLabel}» o Enter.
-              </p>
             </div>
           </div>
           <div className="flex justify-end gap-2 pt-1">
@@ -652,9 +649,7 @@ export function FreehandColorPalette({
       <div>
         <div className="mb-1 text-[8px] font-bold uppercase tracking-wider text-zinc-600">En uso</div>
         <div className="flex flex-wrap gap-1">
-          {inUse.length === 0 ? (
-            <p className="text-[9px] text-zinc-600">Los colores del lienzo aparecen aquí.</p>
-          ) : (
+          {inUse.length === 0 ? null : (
             inUse.map(({ hex, count }) => (
               <button
                 key={hex}

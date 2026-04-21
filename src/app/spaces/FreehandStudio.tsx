@@ -117,6 +117,19 @@ import {
   isLayerMaskVisible,
   isLayerMaskRasterEligible,
 } from "./freehand/layer-mask-types";
+import {
+  applyLinearGradientToImageData,
+  applyRadialGradientToImageData,
+  computeLinearWorldEndpoints,
+  gradientDragToInitialAngleScale,
+  computeRadialLocalParams,
+  gradientHexFromStrokeFill,
+  twoStopGradientParams,
+  type PhotoGradientRuntimeSession,
+  type PhotoRasterGradientPersistV1,
+  type PhotoRasterGradientStyle,
+  type PhotoRasterGradientTarget,
+} from "./freehand/photo-raster-gradient";
 import { LayerStylesModal } from "./freehand/LayerStylesModal";
 import {
   buildStandaloneSvgFromCanvasDom,
@@ -214,6 +227,8 @@ type Tool =
   | "brush"
   /** Tampón de clonación: mismo pincel; Alt+clic define el origen; clona manteniendo el offset (modo alineado). */
   | "cloneStamp"
+  /** PhotoRoom: degradado lineal raster (arrastre en capa o máscara). */
+  | "photoGradient"
   /** PhotoRoom: marco rectangular tipo Photoshop (selección raster; fase visual). */
   | "rectMarquee"
   /** PhotoRoom: lazo libre (polilínea cerrada). */
@@ -448,6 +463,10 @@ interface FreehandObjectBase {
   layerEffects?: LayerEffects;
   /** Máscara de capa (bitmap gris) misma resolución que el raster; solo capas de imagen / booleano con caché. */
   layerMask?: LayerMaskData | null;
+  /** PhotoRoom: degradado raster sobre píxeles de la capa (re-editable desde Propiedades). */
+  photoRasterGradientLayer?: PhotoRasterGradientPersistV1 | null;
+  /** PhotoRoom: degradado raster sobre la máscara de capa. */
+  photoRasterGradientMask?: PhotoRasterGradientPersistV1 | null;
   rotation: number;
   /** Espejo horizontal/vertical (escala −1 en el eje local respecto al centro del recto de selección). */
   flipX?: boolean;
@@ -1992,6 +2011,61 @@ function pickTopImageForBrush(pos: Point, objects: FreehandObject[]): ImageObjec
   }
   return null;
 }
+
+/** Capa imagen o máscara raster bajo el cursor (coherente con pincel / máscara). */
+function pickTopRasterForPhotoGradient(
+  pos: Point,
+  objects: FreehandObject[],
+  target: "layer" | "mask",
+  maskEditObjectId: string | null,
+): FreehandObject | null {
+  if (target === "layer") {
+    return pickTopImageForBrush(pos, objects);
+  }
+  if (maskEditObjectId) {
+    const mo = objects.find((x) => x.id === maskEditObjectId);
+    if (
+      mo &&
+      mo.visible &&
+      !mo.locked &&
+      isLayerMaskRasterEligible(mo) &&
+      hasLayerMaskBlock(mo) &&
+      hitTestObject(pos, mo, 0, objects)
+    ) {
+      return mo;
+    }
+  }
+  for (let i = objects.length - 1; i >= 0; i--) {
+    const o = objects[i];
+    if (!o.visible || o.locked) continue;
+    if (!isLayerMaskRasterEligible(o) || !hasLayerMaskBlock(o)) continue;
+    if (o.type === "image" && (o as ImageObject).photoRoomInputSlot) continue;
+    if (hitTestObject(pos, o, 0, objects)) return o;
+  }
+  return null;
+}
+
+/** Destino del trazo: máscara si estamos editando máscara; si no, capa raster. */
+function photoGradientDrawSurface(
+  layerMaskCap: boolean,
+  maskEditObjectId: string | null,
+): PhotoRasterGradientTarget {
+  return layerMaskCap && maskEditObjectId ? "mask" : "layer";
+}
+
+function photoRoomGradientToolCursorBlocked(
+  pos: Point,
+  objs: FreehandObject[],
+  threshold: number,
+  target: "layer" | "mask",
+  maskEditObjectId: string | null,
+): boolean {
+  const top = pickTopVisibleObjectForCursor(pos, objs, threshold);
+  if (!top) return false;
+  return pickTopRasterForPhotoGradient(pos, objs, target, maskEditObjectId) == null;
+}
+
+const PHOTO_GRADIENT_VERTEX_HIT_PX = 10;
 
 const BRUSH_PREVIEW_RING_SEGMENTS = 48;
 /** Separación en px pantalla del anillo oscuro exterior respecto al borde del pincel (anti-claro). */
@@ -6669,6 +6743,8 @@ function ToolFlyoutGroup({
   const skipMainClickRef = useRef(false);
   const rolloutFromMainHoldRef = useRef(false);
   const flyoutPanelRef = useRef<HTMLDivElement | null>(null);
+  const mainBtnRef = useRef<HTMLButtonElement | null>(null);
+  const [flyoutFixedPos, setFlyoutFixedPos] = useState<{ left: number; top: number } | null>(null);
 
   const clearLongPress = useCallback(() => {
     if (longPressTimerRef.current != null) {
@@ -6677,19 +6753,21 @@ function ToolFlyoutGroup({
     }
   }, []);
 
-  useEffect(() => () => clearLongPress(), [clearLongPress]);
-
-  const handleMainPointerDown = useCallback(() => {
-    skipMainClickRef.current = false;
-    rolloutFromMainHoldRef.current = false;
-    clearLongPress();
-    longPressTimerRef.current = window.setTimeout(() => {
-      longPressTimerRef.current = null;
-      skipMainClickRef.current = true;
-      rolloutFromMainHoldRef.current = true;
-      setFlyoutOpen(groupId);
-    }, TOOLBAR_FLYOUT_PRESS_MS);
-  }, [clearLongPress, groupId, setFlyoutOpen]);
+  const handleMainPointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      if (e.button !== 0) return;
+      skipMainClickRef.current = false;
+      rolloutFromMainHoldRef.current = false;
+      clearLongPress();
+      longPressTimerRef.current = window.setTimeout(() => {
+        longPressTimerRef.current = null;
+        skipMainClickRef.current = true;
+        rolloutFromMainHoldRef.current = true;
+        setFlyoutOpen(groupId);
+      }, TOOLBAR_FLYOUT_PRESS_MS);
+    },
+    [clearLongPress, groupId, setFlyoutOpen],
+  );
 
   const handleMainPointerEnd = useCallback(() => {
     clearLongPress();
@@ -6727,6 +6805,27 @@ function ToolFlyoutGroup({
     return () => window.removeEventListener("pointerup", onPointerUpCapture, true);
   }, [open, setFlyoutOpen]);
 
+  useLayoutEffect(() => {
+    if (!open) {
+      setFlyoutFixedPos(null);
+      return;
+    }
+    const update = () => {
+      const btn = mainBtnRef.current;
+      if (!btn) return;
+      const r = btn.getBoundingClientRect();
+      const gap = 6;
+      setFlyoutFixedPos({ left: r.right + gap, top: r.top });
+    };
+    update();
+    window.addEventListener("scroll", update, true);
+    window.addEventListener("resize", update);
+    return () => {
+      window.removeEventListener("scroll", update, true);
+      window.removeEventListener("resize", update);
+    };
+  }, [open]);
+
   const handleMainClick = useCallback(
     (e: React.MouseEvent<HTMLButtonElement>) => {
       if (skipMainClickRef.current) {
@@ -6744,6 +6843,7 @@ function ToolFlyoutGroup({
   return (
     <div className="relative h-9 w-9 shrink-0" data-tool-flyout-root>
       <button
+        ref={mainBtnRef}
         type="button"
         title={mainHint}
         aria-haspopup="menu"
@@ -6766,15 +6866,20 @@ function ToolFlyoutGroup({
           <ChevronRight className="h-2.5 w-2.5 opacity-90" strokeWidth={2.25} />
         </span>
       </button>
-      {open && (
-        <div
-          ref={flyoutPanelRef}
-          className="left-toolbar-flyout-panel absolute left-full top-0 z-[130] ml-1.5 flex min-w-[44px] flex-col gap-1 rounded-[2px] border border-white/[0.09] bg-[#15181f] p-1.5 shadow-[0_8px_28px_rgba(0,0,0,0.55)]"
-          data-tool-flyout-panel
-        >
-          {children}
-        </div>
-      )}
+      {open &&
+        flyoutFixedPos != null &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            ref={flyoutPanelRef}
+            className="left-toolbar-flyout-panel fixed z-[100045] flex min-w-[44px] flex-col gap-1 rounded-[2px] border border-white/[0.09] bg-[#15181f] p-1.5 shadow-[0_8px_28px_rgba(0,0,0,0.55)]"
+            style={{ left: flyoutFixedPos.left, top: flyoutFixedPos.top }}
+            data-tool-flyout-panel
+          >
+            {children}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
@@ -7594,6 +7699,10 @@ export function FreehandStudioCanvas({
       setActiveTool("select");
       return;
     }
+    if (activeTool === "photoGradient" && !studioCaps.toolPhotoGradient) {
+      setActiveTool("select");
+      return;
+    }
     if (
       (activeTool === "rectMarquee" ||
         activeTool === "ellipseMarquee" ||
@@ -7750,7 +7859,7 @@ export function FreehandStudioCanvas({
 
   // Drag state
   const [dragState, setDragState] = useState<{
-    type: "move" | "resize" | "pan" | "create" | "createText" | "createTextFrame" | "createImageFrame" | "directSelect" | "marquee" | "photoRectMarquee" | "photoEllipseMarquee" | "photoLassoMarquee" | "photoPolygonMarquee" | "photoMarqueeNudge" | "photoMarqueeFloatRotate" | "photoMarqueeFloatResize" | "penHandle" | "rotate" | "gradient" | "guideMove" | "guidePull" | "imageContentPan" | "imageContentResize" | "brushPaint";
+    type: "move" | "resize" | "pan" | "create" | "createText" | "createTextFrame" | "createImageFrame" | "directSelect" | "marquee" | "photoRectMarquee" | "photoEllipseMarquee" | "photoLassoMarquee" | "photoPolygonMarquee" | "photoMarqueeNudge" | "photoMarqueeFloatRotate" | "photoMarqueeFloatResize" | "penHandle" | "rotate" | "gradient" | "guideMove" | "guidePull" | "imageContentPan" | "imageContentResize" | "brushPaint" | "photoGradientLine" | "photoGradientVertex";
     startX: number;
     startY: number;
     startCanvas?: Point;
@@ -7822,6 +7931,11 @@ export function FreehandStudioCanvas({
     photoMarqueeFloatResizeKind?: "corner" | "ns" | "ew";
     /** Pincel: último punto en coords. de píxel del canvas del bitmap. */
     brushLastPixel?: Point;
+    /** Degradado raster: capa objetivo del gesto. */
+    photoGradientObjectId?: string;
+    photoGradientVertexRole?: "start" | "end";
+    photoGradientSnapStartWorld?: Point;
+    photoGradientSnapEndWorld?: Point;
   } | null>(null);
 
   const dragStateRef = useRef(dragState);
@@ -7945,6 +8059,26 @@ export function FreehandStudioCanvas({
   useEffect(() => {
     maskEditObjectIdRef.current = maskEditObjectId;
   }, [maskEditObjectId]);
+
+  /** Degradado raster (PhotoRoom): colores = trazo → relleno de la paleta; opciones en Propiedades. */
+  const [photoGradientSession, setPhotoGradientSession] = useState<PhotoGradientRuntimeSession | null>(null);
+  const photoGradientSessionRef = useRef(photoGradientSession);
+  photoGradientSessionRef.current = photoGradientSession;
+  const photoGradientHydrateSelKeyRef = useRef("");
+  const [photoGradientHoverVertex, setPhotoGradientHoverVertex] = useState<null | "start" | "end">(null);
+  const [photoGradientPickerOpen, setPhotoGradientPickerOpen] = useState<null | "start" | "end">(null);
+  const photoGradientApplyGenRef = useRef(0);
+  /** Última aplicación async durante scrub numérico (panel degradado). */
+  const photoRasterGradientScrubApplyRef = useRef<Promise<void> | null>(null);
+
+  useEffect(() => {
+    if (activeTool !== "photoGradient") {
+      setPhotoGradientSession(null);
+      setPhotoGradientHoverVertex(null);
+      setPhotoGradientPickerOpen(null);
+    }
+  }, [activeTool]);
+
   const previewLayerEffectsById = useMemo(() => {
     if (!layerStylesUi.open || !layerStylesUi.targetId || !layerStylesUi.draft) return undefined;
     return new Map<string, LayerEffects>([[layerStylesUi.targetId, layerStylesUi.draft]]);
@@ -8000,6 +8134,10 @@ export function FreehandStudioCanvas({
   const [strokeLinecap, setStrokeLinecap] = useState<"butt" | "round" | "square">("round");
   const [strokeLinejoin, setStrokeLinejoin] = useState<"miter" | "round" | "bevel">("round");
   const [strokeDasharray, setStrokeDasharray] = useState("");
+  const gradientStrokeColorRef = useRef(strokeColor);
+  const gradientFillColorRef = useRef(fillColor);
+  gradientStrokeColorRef.current = strokeColor;
+  gradientFillColorRef.current = fillColor;
 
   /** Tipografía para nuevos textos / marcos de texto (sincronizada con texto seleccionado). */
   const [creationTextTypography, setCreationTextTypography] = useState<TextCreationTypography>(
@@ -8124,6 +8262,53 @@ export function FreehandStudioCanvas({
   cloneSourceRef.current = cloneSource;
   const artboardsRef = useRef(artboards);
   artboardsRef.current = artboards;
+
+  useEffect(() => {
+    if (activeTool !== "photoGradient") {
+      photoGradientHydrateSelKeyRef.current = "";
+      return;
+    }
+    const oid = primarySelectedId;
+    const maskId = maskEditObjectId;
+    const key = `${oid ?? ""}|${maskId ?? ""}`;
+    if (key === photoGradientHydrateSelKeyRef.current) return;
+    photoGradientHydrateSelKeyRef.current = key;
+    if (!oid) {
+      setPhotoGradientSession(null);
+      return;
+    }
+    const o = objectsRef.current.find((x) => x.id === oid);
+    if (!o) {
+      setPhotoGradientSession(null);
+      return;
+    }
+    const editingMaskForSelection = !!studioCaps.layerMask && maskId != null && maskId === oid;
+    const expectSurface: PhotoRasterGradientTarget = editingMaskForSelection ? "mask" : "layer";
+    const p = editingMaskForSelection
+      ? (o as FreehandObjectBase).photoRasterGradientMask
+      : (o as FreehandObjectBase).photoRasterGradientLayer;
+    if (!p || p.surface !== expectSurface) {
+      const cur = photoGradientSessionRef.current;
+      if (cur && cur.objectId === oid) return;
+      setPhotoGradientSession(null);
+      return;
+    }
+    setPhotoGradientSession({
+      objectId: oid,
+      surface: p.surface,
+      baseSnapshotUrl: p.baseSnapshotUrl,
+      basePixelW: p.basePixelW,
+      basePixelH: p.basePixelH,
+      startWorld: { ...p.startWorld },
+      endWorld: { ...p.endWorld },
+      style: p.style,
+      angleDeg: p.angleDeg,
+      scalePct: p.scalePct,
+      reverse: p.reverse,
+      opacityPct: p.opacityPct,
+    });
+  }, [activeTool, primarySelectedId, maskEditObjectId, studioCaps.layerMask]);
+
   const layoutGuidesRef = useRef<LayoutGuide[]>(layoutGuides);
   layoutGuidesRef.current = layoutGuides;
 
@@ -9808,6 +9993,135 @@ export function FreehandStudioCanvas({
     setDragState(null);
   }, [cancelBrushPreviewRaf, cancelCloneAlignedBrushOverlayRaf, pushHistory]);
 
+  const applyPhotoRasterGradientSession = useCallback(
+    async (
+      sess: PhotoGradientRuntimeSession,
+      opts?: {
+        startHex?: string;
+        endHex?: string;
+        opacityPct?: number;
+        reverse?: boolean;
+        style?: PhotoRasterGradientStyle;
+        angleDeg?: number;
+        scalePct?: number;
+        /** false = solo actualizar lienzo (p. ej. scrub); un solo `pushHistory` al soltar. */
+        recordHistory?: boolean;
+      },
+    ) => {
+      const { startHex: sh, endHex: eh } = gradientHexFromStrokeFill(
+        gradientStrokeColorRef.current,
+        gradientFillColorRef.current,
+      );
+      const startHex = opts?.startHex ?? sh;
+      const endHex = opts?.endHex ?? eh;
+      const opacityPct = opts?.opacityPct ?? sess.opacityPct;
+      const reverse = opts?.reverse ?? sess.reverse;
+      const style = opts?.style ?? sess.style;
+      const angleDeg = opts?.angleDeg ?? sess.angleDeg;
+      const scalePct = opts?.scalePct ?? sess.scalePct;
+      const recordHistory = opts?.recordHistory !== false;
+      const gen = ++photoGradientApplyGenRef.current;
+      const o = objectsRef.current.find((x) => x.id === sess.objectId);
+      if (!o || !isLayerMaskRasterEligible(o)) return;
+      if (sess.surface === "mask") {
+        if (!hasLayerMaskBlock(o)) return;
+      } else if (o.type !== "image" || (o as ImageObject).photoRoomInputSlot) {
+        return;
+      }
+      try {
+        const { canvas, ctx } = await loadImageToBrushCanvas(sess.baseSnapshotUrl, o.width, o.height);
+        if (gen !== photoGradientApplyGenRef.current) return;
+        const cw = canvas.width;
+        const ch = canvas.height;
+        const objW = o.width;
+        const objH = o.height;
+        const pixelToLocal = (ix: number, iy: number) => ({
+          x: ((ix + 0.5) / Math.max(cw, 1e-9)) * objW,
+          y: ((iy + 0.5) / Math.max(ch, 1e-9)) * objH,
+        });
+        const imgData = ctx.getImageData(0, 0, cw, ch);
+        const params = twoStopGradientParams(opacityPct / 100, reverse, sess.surface);
+        if (style === "linear") {
+          const { startWorld: ws0, endWorld: ws1 } = computeLinearWorldEndpoints(
+            sess.startWorld,
+            sess.endWorld,
+            angleDeg,
+            scalePct,
+          );
+          const startL = worldPointToObjLocal(ws0, o);
+          const endL = worldPointToObjLocal(ws1, o);
+          applyLinearGradientToImageData(imgData, cw, ch, pixelToLocal, startL, endL, params, startHex, endHex);
+        } else {
+          const startL = worldPointToObjLocal(sess.startWorld, o);
+          const endL = worldPointToObjLocal(sess.endWorld, o);
+          const { cx, cy, r } = computeRadialLocalParams(startL, endL, scalePct);
+          applyRadialGradientToImageData(imgData, cw, ch, pixelToLocal, cx, cy, r, params, startHex, endHex);
+        }
+        ctx.putImageData(imgData, 0, 0);
+        const url = canvas.toDataURL("image/png");
+        if (gen !== photoGradientApplyGenRef.current) return;
+        const oid = sess.objectId;
+        const rast = o;
+        const persistSlice: PhotoRasterGradientPersistV1 = {
+          surface: sess.surface,
+          baseSnapshotUrl: sess.baseSnapshotUrl,
+          basePixelW: sess.basePixelW,
+          basePixelH: sess.basePixelH,
+          startWorld: { ...sess.startWorld },
+          endWorld: { ...sess.endWorld },
+          style,
+          angleDeg,
+          scalePct,
+          reverse,
+          opacityPct,
+        };
+        const gradKey = sess.surface === "mask" ? "photoRasterGradientMask" : "photoRasterGradientLayer";
+        if (sess.surface === "mask") {
+          setObjects((prev) => {
+            const next = prev.map((obj) => {
+              if (obj.id !== oid) return obj;
+              const lm0 = obj.layerMask;
+              if (!lm0) return obj;
+              return {
+                ...obj,
+                layerMask: { ...lm0, src: url, pixelW: cw, pixelH: ch },
+                [gradKey]: persistSlice,
+              } as FreehandObject;
+            });
+            if (recordHistory) pushHistory(next, new Set([oid]));
+            return next;
+          });
+        } else {
+          setObjects((prev) => {
+            const next = prev.map((obj) =>
+              obj.id === oid && obj.type === "image"
+                ? ({
+                    ...obj,
+                    src: url,
+                    x: rast.x,
+                    y: rast.y,
+                    width: rast.width,
+                    height: rast.height,
+                    [gradKey]: persistSlice,
+                  } as ImageObject)
+                : obj,
+            );
+            if (recordHistory) pushHistory(next, new Set([oid]));
+            return next;
+          });
+        }
+      } catch {
+        /* decode / canvas errors: skip */
+      }
+    },
+    [pushHistory],
+  );
+
+  useEffect(() => {
+    if (activeTool !== "photoGradient" || !photoGradientSessionRef.current) return;
+    void applyPhotoRasterGradientSession(photoGradientSessionRef.current, {});
+  }, [strokeColor, fillColor, activeTool, applyPhotoRasterGradientSession]);
+
   useEffect(() => {
     if (dragState?.type === "brushPaint" && dragState.brushLastPixel != null) {
       const s = brushSessionRef.current;
@@ -10183,6 +10497,7 @@ export function FreehandStudioCanvas({
     const onDown = (e: MouseEvent) => {
       const el = e.target as HTMLElement;
       if (el.closest?.("[data-tool-flyout-root]")) return;
+      if (el.closest?.("[data-tool-flyout-panel]")) return;
       setLeftToolbarToolFlyout(null);
     };
     window.addEventListener("keydown", onKey);
@@ -11951,6 +12266,18 @@ export function FreehandStudioCanvas({
         setActiveTool("cloneStamp");
         return;
       }
+      if (
+        (e.key === "g" || e.key === "G") &&
+        e.shiftKey &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        studioCaps.toolPhotoGradient
+      ) {
+        e.preventDefault();
+        setActiveTool("photoGradient");
+        return;
+      }
       // P = modo lienzo a pantalla completa; ⇧P = lápiz
       if ((e.key === "p" || e.key === "P") && !e.metaKey && !e.ctrlKey) {
         if (e.shiftKey) {
@@ -12258,6 +12585,19 @@ export function FreehandStudioCanvas({
         e.preventDefault();
         if (dragStateRef.current?.type === "brushPaint") {
           finishBrushStroke();
+          return;
+        }
+        if (
+          dragStateRef.current?.type === "photoGradientLine" ||
+          dragStateRef.current?.type === "photoGradientVertex"
+        ) {
+          setDragState(null);
+          return;
+        }
+        if (activeToolRef.current === "photoGradient" && photoGradientSessionRef.current) {
+          setPhotoGradientSession(null);
+          photoGradientSessionRef.current = null;
+          setDragState(null);
           return;
         }
         if (maskEditObjectIdRef.current) {
@@ -13042,6 +13382,78 @@ export function FreehandStudioCanvas({
         setDragState(nextCloneDrag);
         scheduleCloneAlignedBrushOverlay();
         scheduleBrushPreview();
+      });
+      return;
+    }
+
+    // ── Degradado lineal raster (PhotoRoom) ─────────────────────────
+    if (
+      isPhotoRoomStudioEmbed &&
+      activeTool === "photoGradient" &&
+      e.button === 0 &&
+      studioCaps.toolPhotoGradient
+    ) {
+      const pos = screenToCanvas(e.clientX, e.clientY);
+      const zth = PHOTO_GRADIENT_VERTEX_HIT_PX / viewport.zoom;
+      const sess = photoGradientSessionRef.current;
+      if (sess && dragStateRef.current == null && e.detail !== 2) {
+        if (dist(pos, sess.startWorld) < zth) {
+          e.preventDefault();
+          setSelectedPoints(new Map());
+          setDragState({
+            type: "photoGradientVertex",
+            startX: e.clientX,
+            startY: e.clientY,
+            photoGradientObjectId: sess.objectId,
+            photoGradientVertexRole: "start",
+            photoGradientSnapStartWorld: { ...sess.startWorld },
+            photoGradientSnapEndWorld: { ...sess.endWorld },
+            currentCanvas: { ...sess.startWorld },
+          });
+          return;
+        }
+        if (dist(pos, sess.endWorld) < zth) {
+          e.preventDefault();
+          setSelectedPoints(new Map());
+          setDragState({
+            type: "photoGradientVertex",
+            startX: e.clientX,
+            startY: e.clientY,
+            photoGradientObjectId: sess.objectId,
+            photoGradientVertexRole: "end",
+            photoGradientSnapStartWorld: { ...sess.startWorld },
+            photoGradientSnapEndWorld: { ...sess.endWorld },
+            currentCanvas: { ...sess.endWorld },
+          });
+          return;
+        }
+      }
+      if (e.detail === 2) {
+        return;
+      }
+      e.preventDefault();
+      setSelectedPoints(new Map());
+      const tgt = photoGradientDrawSurface(studioCaps.layerMask, maskEditObjectIdRef.current);
+      const hit = pickTopRasterForPhotoGradient(pos, objects, tgt, maskEditObjectIdRef.current);
+      if (tgt === "mask") {
+        if (!hit || !hasLayerMaskBlock(hit)) {
+          setToast("Coloca el degradado sobre una capa con máscara de capa.");
+          window.setTimeout(() => setToast(null), 2800);
+          return;
+        }
+      }
+      if (tgt === "layer" && hit && hit.type !== "image") {
+        setToast("El degradado en capa solo aplica a imágenes raster.");
+        window.setTimeout(() => setToast(null), 2600);
+        return;
+      }
+      setDragState({
+        type: "photoGradientLine",
+        startX: e.clientX,
+        startY: e.clientY,
+        marqueeOrigin: pos,
+        currentCanvas: pos,
+        photoGradientObjectId: hit?.id,
       });
       return;
     }
@@ -14225,6 +14637,14 @@ export function FreehandStudioCanvas({
         let blocked = false;
         if (studioCaps.toolCloneStamp && activeTool === "cloneStamp") {
           blocked = photoRoomCloneStampCursorBlocked(pos, objectsRef.current, th);
+        } else if (studioCaps.toolPhotoGradient && activeTool === "photoGradient") {
+          blocked = photoRoomGradientToolCursorBlocked(
+            pos,
+            objectsRef.current,
+            th,
+            photoGradientDrawSurface(studioCaps.layerMask, maskEditObjectIdRef.current),
+            maskEditObjectIdRef.current,
+          );
         } else if (
           studioCaps.toolPhotoMarquee &&
           (activeTool === "rectMarquee" ||
@@ -14278,6 +14698,23 @@ export function FreehandStudioCanvas({
         brushPreviewLastWorldRef.current = null;
         setBrushPreviewRings((prev) => (prev == null ? prev : null));
         setCloneStampBrushPreview(null);
+      }
+      if (
+        activeTool === "photoGradient" &&
+        studioCaps.toolPhotoGradient &&
+        !spaceHeld &&
+        isPhotoRoomStudioEmbed
+      ) {
+        const s = photoGradientSessionRef.current;
+        if (s) {
+          const zth = PHOTO_GRADIENT_VERTEX_HIT_PX / viewport.zoom;
+          let hv: null | "start" | "end" = null;
+          if (dist(pos, s.startWorld) < zth) hv = "start";
+          else if (dist(pos, s.endWorld) < zth) hv = "end";
+          setPhotoGradientHoverVertex((prev) => (prev === hv ? prev : hv));
+        } else {
+          setPhotoGradientHoverVertex((prev) => (prev == null ? prev : null));
+        }
       }
       return;
     }
@@ -14492,6 +14929,23 @@ export function FreehandStudioCanvas({
           };
         }),
       );
+      return;
+    }
+
+    if (dragState.type === "photoGradientLine" && dragState.marqueeOrigin) {
+      const pos = screenToCanvas(e.clientX, e.clientY);
+      setDragState((prev) => (prev && prev.type === "photoGradientLine" ? { ...prev, currentCanvas: pos } : prev));
+      return;
+    }
+
+    if (
+      dragState.type === "photoGradientVertex" &&
+      dragState.photoGradientVertexRole &&
+      dragState.photoGradientSnapStartWorld &&
+      dragState.photoGradientSnapEndWorld
+    ) {
+      const pos = screenToCanvas(e.clientX, e.clientY);
+      setDragState((prev) => (prev && prev.type === "photoGradientVertex" ? { ...prev, currentCanvas: pos } : prev));
       return;
     }
 
@@ -14794,6 +15248,8 @@ export function FreehandStudioCanvas({
     penDragging,
     isPhotoRoomStudioEmbed,
     studioCaps.toolPhotoMarquee,
+    studioCaps.toolPhotoGradient,
+    studioCaps.layerMask,
     fillColor,
     brushPaintRgb,
     brushSize,
@@ -14853,6 +15309,120 @@ export function FreehandStudioCanvas({
 
     if (ds.type === "brushPaint") {
       finishBrushStroke();
+      return;
+    }
+
+    if (ds.type === "photoGradientLine" && ds.marqueeOrigin && ds.currentCanvas) {
+      const origin = ds.marqueeOrigin;
+      const end = ds.currentCanvas;
+      const minLen = 2 / viewport.zoom;
+      if (Math.hypot(end.x - origin.x, end.y - origin.y) < minLen) {
+        dragStateRef.current = null;
+        setDragState(null);
+        return;
+      }
+      const tgt = photoGradientDrawSurface(studioCaps.layerMask, maskEditObjectIdRef.current);
+      let oid = ds.photoGradientObjectId;
+
+      const startApplyForObject = (o: FreehandObject, baseUrl: string) => {
+        void loadImageToBrushCanvas(baseUrl, o.width, o.height).then(({ canvas }) => {
+          const { angleDeg, scalePct } = gradientDragToInitialAngleScale(origin, end);
+          const sess: PhotoGradientRuntimeSession = {
+            objectId: o.id,
+            surface: tgt,
+            baseSnapshotUrl: baseUrl,
+            basePixelW: canvas.width,
+            basePixelH: canvas.height,
+            startWorld: { ...origin },
+            endWorld: { ...end },
+            style: "linear",
+            angleDeg,
+            scalePct,
+            reverse: false,
+            opacityPct: 100,
+          };
+          setPhotoGradientSession(sess);
+          photoGradientSessionRef.current = sess;
+          dragStateRef.current = null;
+          setDragState(null);
+          void applyPhotoRasterGradientSession(sess, {});
+        });
+      };
+
+      if (!oid && tgt === "layer") {
+        const ab = pickPrimaryArtboard(artboardsRef.current, null);
+        const r = ab ? artboardToRect(ab) : { x: 0, y: 0, w: 1920, h: 1080 };
+        const cw = Math.max(1, Math.ceil(r.w));
+        const ch = Math.max(1, Math.ceil(r.h));
+        const canvas = document.createElement("canvas");
+        canvas.width = cw;
+        canvas.height = ch;
+        const ctx = canvas.getContext("2d")!;
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, cw, ch);
+        const src = canvas.toDataURL("image/png");
+        const imgObj = {
+          ...defaultObj({ name: `Degradado ${objectsRef.current.length + 1}`, x: r.x, y: r.y, width: r.w, height: r.h }),
+          type: "image" as const,
+          fill: solidFill("none"),
+          stroke: "none",
+          strokeWidth: 0,
+          src,
+          intrinsicRatio: r.w / Math.max(r.h, 1),
+        } as ImageObject;
+        setObjects((prev) => [...prev, imgObj]);
+        setSelectedIds(new Set([imgObj.id]));
+        setPrimarySelectedId(imgObj.id);
+        startApplyForObject(imgObj, src);
+        return;
+      }
+
+      if (!oid) {
+        dragStateRef.current = null;
+        setDragState(null);
+        return;
+      }
+
+      const o = objectsRef.current.find((x) => x.id === oid);
+      if (
+        !o ||
+        !isLayerMaskRasterEligible(o) ||
+        (tgt === "mask" && !hasLayerMaskBlock(o)) ||
+        (tgt === "layer" && (o.type !== "image" || (o as ImageObject).photoRoomInputSlot))
+      ) {
+        dragStateRef.current = null;
+        setDragState(null);
+        return;
+      }
+      const baseUrl =
+        tgt === "mask" ? (o as FreehandObjectBase).layerMask!.src : (o as ImageObject).src;
+      startApplyForObject(o, baseUrl);
+      return;
+    }
+
+    if (ds.type === "photoGradientVertex" && ds.currentCanvas && ds.photoGradientVertexRole) {
+      const cur = photoGradientSessionRef.current;
+      if (!cur || ds.photoGradientObjectId !== cur.objectId) {
+        dragStateRef.current = null;
+        setDragState(null);
+        return;
+      }
+      const role = ds.photoGradientVertexRole;
+      const nextS = role === "start" ? ds.currentCanvas : cur.startWorld;
+      const nextE = role === "end" ? ds.currentCanvas : cur.endWorld;
+      const ang = gradientDragToInitialAngleScale(nextS, nextE);
+      const nextSession: PhotoGradientRuntimeSession = {
+        ...cur,
+        startWorld: { ...nextS },
+        endWorld: { ...nextE },
+        angleDeg: ang.angleDeg,
+        scalePct: ang.scalePct,
+      };
+      setPhotoGradientSession(nextSession);
+      photoGradientSessionRef.current = nextSession;
+      dragStateRef.current = null;
+      setDragState(null);
+      void applyPhotoRasterGradientSession(nextSession, {});
       return;
     }
 
@@ -15366,6 +15936,9 @@ export function FreehandStudioCanvas({
     isPhotoRoomStudioEmbed,
     studioCaps.toolPhotoMarquee,
     studioCaps.toolCloneStamp,
+    studioCaps.toolPhotoGradient,
+    studioCaps.layerMask,
+    applyPhotoRasterGradientSession,
   ]);
 
   const handleWheel = useCallback(
@@ -15727,6 +16300,7 @@ export function FreehandStudioCanvas({
       !dragState &&
       prToolCursorBlocked &&
       (activeTool === "cloneStamp" ||
+        activeTool === "photoGradient" ||
         activeTool === "rectMarquee" ||
         activeTool === "ellipseMarquee" ||
         activeTool === "lassoMarquee" ||
@@ -15738,6 +16312,7 @@ export function FreehandStudioCanvas({
       activeTool === "pen" ||
       activeTool === "brush" ||
       activeTool === "cloneStamp" ||
+      activeTool === "photoGradient" ||
       activeTool === "rect" ||
       activeTool === "ellipse" ||
       activeTool === "text" ||
@@ -15798,6 +16373,46 @@ export function FreehandStudioCanvas({
     () => dragState?.type === "photoEllipseMarquee" && !!dragState.photoMarqueeSubtract,
     [dragState],
   );
+
+  /** Eje del degradado raster (preview + sesión). */
+  const photoGradientOverlayLine = useMemo(() => {
+    if (activeTool !== "photoGradient" || !studioCaps.toolPhotoGradient) return null;
+    const ds = dragState;
+    if (ds?.type === "photoGradientLine" && ds.marqueeOrigin && ds.currentCanvas) {
+      return {
+        a: ds.marqueeOrigin,
+        b: ds.currentCanvas,
+        objectId: ds.photoGradientObjectId,
+      };
+    }
+    if (
+      ds?.type === "photoGradientVertex" &&
+      ds.photoGradientVertexRole &&
+      ds.photoGradientSnapStartWorld &&
+      ds.photoGradientSnapEndWorld &&
+      ds.currentCanvas &&
+      ds.photoGradientObjectId
+    ) {
+      if (ds.photoGradientVertexRole === "start") {
+        return { a: ds.currentCanvas, b: ds.photoGradientSnapEndWorld, objectId: ds.photoGradientObjectId };
+      }
+      return { a: ds.photoGradientSnapStartWorld, b: ds.currentCanvas, objectId: ds.photoGradientObjectId };
+    }
+    if (photoGradientSession) {
+      const s = photoGradientSession;
+      if (s.style === "linear") {
+        const { startWorld: a, endWorld: b } = computeLinearWorldEndpoints(
+          s.startWorld,
+          s.endWorld,
+          s.angleDeg,
+          s.scalePct,
+        );
+        return { a, b, objectId: s.objectId };
+      }
+      return { a: s.startWorld, b: s.endWorld, objectId: s.objectId };
+    }
+    return null;
+  }, [activeTool, studioCaps.toolPhotoGradient, dragState, photoGradientSession]);
 
   /** Un solo contorno (hormigas) para la unión de rectángulos PhotoRoom, sin aristas dobles internas. */
   const photoMarqueeSelectionOutlinePaths = useMemo(
@@ -16200,7 +16815,8 @@ export function FreehandStudioCanvas({
 
       <div className={`flex min-h-0 min-w-0 flex-1 flex-row${canvasZenMode ? " w-full" : ""}`}>
       {!canvasZenMode && (
-      <div className="flex w-[52px] shrink-0 flex-col items-center gap-0.5 border-r border-white/[0.08] bg-[#12151a] px-1.5 py-2.5">
+      // Flyouts render in a body portal (`fixed`); keep this column above the canvas for chevrons/hover stacking.
+      <div className="relative z-30 flex w-[52px] shrink-0 flex-col items-center gap-0.5 overflow-y-auto border-r border-white/[0.08] bg-[#12151a] px-1.5 py-2.5">
         <ToolBtn active={activeTool === "select"} onClick={() => { setActiveTool("select"); setSelectedPoints(new Map()); }} title="Selection (V)">
           <MousePointer2 size={19} strokeWidth={TOOLBAR_ICON_STROKE} />
         </ToolBtn>
@@ -16530,6 +17146,16 @@ export function FreehandStudioCanvas({
           </>
         )}
 
+        {studioCaps.toolPhotoGradient && isPhotoRoomStudioEmbed && (
+          <ToolBtn
+            active={activeTool === "photoGradient"}
+            onClick={() => setActiveTool("photoGradient")}
+            title="Degradado (⇧G) — arrastra en capa o máscara (modo máscara = destino máscara); ajustes en Propiedades; doble clic en vértice = color"
+          >
+            <Blend size={19} strokeWidth={TOOLBAR_ICON_STROKE} />
+          </ToolBtn>
+        )}
+
         <div
           ref={leftToolbarSwatchDockRef}
           className="relative mt-1 flex w-full flex-col items-center"
@@ -16768,6 +17394,25 @@ export function FreehandStudioCanvas({
           if ((e.target as HTMLElement).closest?.("[data-fh-text-editor]")) return;
           const pos = screenToCanvas(e.clientX, e.clientY);
           const dsTh = 8 / viewport.zoom;
+          if (
+            activeTool === "photoGradient" &&
+            studioCaps.toolPhotoGradient &&
+            isPhotoRoomStudioEmbed &&
+            photoGradientSession
+          ) {
+            const zth = PHOTO_GRADIENT_VERTEX_HIT_PX / viewport.zoom;
+            const s = photoGradientSession;
+            if (dist(pos, s.startWorld) < zth) {
+              e.preventDefault();
+              setPhotoGradientPickerOpen("start");
+              return;
+            }
+            if (dist(pos, s.endWorld) < zth) {
+              e.preventDefault();
+              setPhotoGradientPickerOpen("end");
+              return;
+            }
+          }
           if (activeTool === "directSelect") {
             const hit = findTopAnchorHitForDirectSelectDelete(pos, dsTh, objects);
             if (hit) {
@@ -17285,6 +17930,58 @@ export function FreehandStudioCanvas({
                       stroke="rgba(255,255,255,0.95)"
                       strokeWidth={swW}
                       strokeLinecap="round"
+                    />
+                  </g>
+                );
+              })()}
+
+            {activeTool === "photoGradient" &&
+              studioCaps.toolPhotoGradient &&
+              !spaceHeld &&
+              photoGradientOverlayLine &&
+              (() => {
+                const ln = photoGradientOverlayLine;
+                const z = viewport.zoom;
+                const r = 5.25 / z;
+                const swLine = 1.15 / z;
+                const dragV = dragState?.type === "photoGradientVertex" ? dragState.photoGradientVertexRole : null;
+                const selStart =
+                  dragV === "start" || (dragV == null && photoGradientHoverVertex === "start");
+                const selEnd = dragV === "end" || (dragV == null && photoGradientHoverVertex === "end");
+                return (
+                  <g data-ui="photo-raster-gradient-overlay" pointerEvents="none">
+                    <line
+                      x1={ln.a.x}
+                      y1={ln.a.y}
+                      x2={ln.b.x}
+                      y2={ln.b.y}
+                      stroke="rgba(255,255,255,0.92)"
+                      strokeWidth={swLine}
+                      strokeDasharray={`${4 / z} ${3 / z}`}
+                    />
+                    <line
+                      x1={ln.a.x}
+                      y1={ln.a.y}
+                      x2={ln.b.x}
+                      y2={ln.b.y}
+                      stroke="rgba(15,23,42,0.55)"
+                      strokeWidth={swLine * 0.35}
+                    />
+                    <circle
+                      cx={ln.a.x}
+                      cy={ln.a.y}
+                      r={r}
+                      fill={strokeColor === "none" ? "#1a1a1a" : strokeColor}
+                      stroke={selStart ? "rgba(96,165,250,0.98)" : "rgba(255,255,255,0.85)"}
+                      strokeWidth={(selStart ? 2.2 : 1.2) / z}
+                    />
+                    <circle
+                      cx={ln.b.x}
+                      cy={ln.b.y}
+                      r={r}
+                      fill={fillColor === "none" ? "#2a2d33" : fillColor}
+                      stroke={selEnd ? "rgba(96,165,250,0.98)" : "rgba(255,255,255,0.85)"}
+                      strokeWidth={(selEnd ? 2.2 : 1.2) / z}
                     />
                   </g>
                 );
@@ -18311,11 +19008,6 @@ export function FreehandStudioCanvas({
                                 }}
                               />
                             </ColorDropTarget>
-                            <span className="min-w-0 text-[10px] leading-snug text-zinc-500">
-                              {fillColor === "none"
-                                ? "Relleno «ninguno» → pincel negro. Elige un color en el panel Color (relleno)."
-                                : `Sigue el relleno activo: ${fillColor}`}
-                            </span>
                           </div>
                         ) : (
                           <ColorDropTarget
@@ -18337,22 +19029,6 @@ export function FreehandStudioCanvas({
                       </div>
                     </div>
                   ) : null}
-                  <p className="text-[9px] leading-relaxed text-zinc-500">
-                    <span className="block text-zinc-500/90">Ctrl + rueda: tamaño del pincel.</span>
-                    {activeTool === "cloneStamp" ? (
-                      <>
-                        Alt+clic en la capa imagen fija el <span className="text-zinc-400">origen</span>
-                        {cloneSource
-                          ? " (origen ya definido en una capa; debe coincidir con la capa que pintas)."
-                          : " (aún sin origen). "}
-                        Luego pinta sobre la <span className="text-zinc-400">misma</span> capa (también fuera de su marco): la capa se amplía y se copian píxeles con el mismo desplazamiento (modo alineado tipo Photoshop).
-                      </>
-                    ) : (
-                      <>
-                        Pinta sobre una capa imagen o crea una nueva en el pliego con un clic en vacío. El color depende de la opción de arriba (relleno de la paleta o color propio).
-                      </>
-                    )}
-                  </p>
                 </div>
               </div>
             )}
@@ -18391,9 +19067,6 @@ export function FreehandStudioCanvas({
                       Deseleccionar
                     </button>
                   </div>
-                  <p className="mt-2 text-[9px] leading-relaxed text-zinc-500">
-                    Invertir usa el rectángulo de la capa imagen seleccionada; si no hay ninguna, el pliego activo.
-                  </p>
                 </div>
               )}
             {isPhotoRoomStudioEmbed &&
@@ -18423,11 +19096,6 @@ export function FreehandStudioCanvas({
                   >
                     Modificar imagen con IA
                   </button>
-                  <p className="mt-2 text-[9px] leading-relaxed text-zinc-500">
-                    Crea Media y Nano Banana en el espacio del proyecto, conectados a este PhotoRoom. Sustituye la capa
-                    por una entrada conectada en el mismo sitio y tamaño (la anterior se elimina). Conecta un Prompt al
-                    Nano para ejecutar.
-                  </p>
                 </div>
               )}
             {isPhotoRoomStudioEmbed &&
@@ -18517,23 +19185,6 @@ export function FreehandStudioCanvas({
                       Rasterizar imagen
                     </button>
                   </div>
-                  {photoRoomOnOpenConnectedNanoStudio ? (
-                    <p className="mt-2 text-[9px] leading-relaxed text-zinc-500">
-                      <span className="block">
-                        <span className="text-zinc-400">IA:</span> abre el Nano Banana que ya está cableado a esta ranura
-                        (no crea nodos). Cierra con «Volver a PhotoRoom» para regresar al lienzo.
-                      </span>
-                      <span className="mt-1.5 block">
-                        <span className="text-zinc-400">Rasterizar:</span> quita el cable y deja la capa como imagen local
-                        en este documento.
-                      </span>
-                    </p>
-                  ) : (
-                    <p className="mt-2 text-[9px] leading-relaxed text-zinc-500">
-                      Quita el cable a esta ranura en el grafo (los nodos siguen en el lienzo) y convierte la capa en imagen
-                      local: podrás usar marco, píxeles y borrado como en el resto del documento.
-                    </p>
-                  )}
                 </div>
               )}
             {canConvertSelectionToPhotoMarquee && (
@@ -18548,9 +19199,6 @@ export function FreehandStudioCanvas({
                 >
                   Convertir en selección
                 </button>
-                <p className="mt-2 text-[9px] leading-relaxed text-zinc-500">
-                  Crea el marco de selección tipo lazo con el contorno del objeto (rectángulo, elipse o trazo cerrado). Sustituye la selección PhotoRoom actual. Trazos abiertos o importados solo con SVG: se usa el rectángulo envolvente.
-                </p>
               </div>
             )}
             {studioCaps.combineRasterLayers && selectedIds.size >= 2 && (
@@ -18590,9 +19238,6 @@ export function FreehandStudioCanvas({
                     Combinar todas las capas
                   </button>
                 </div>
-                <p className="mt-2 text-[9px] leading-relaxed text-zinc-500">
-                  Convierte el contenido indicado en una única capa de píxeles; las capas de origen se eliminan del documento.
-                </p>
               </div>
             )}
             {/* Color: paleta + fill + stroke (plegable, plegado por defecto) */}
@@ -18625,14 +19270,9 @@ export function FreehandStudioCanvas({
                   {firstSelected && (
                     <>
                 {/* Fill */}
+                {firstSelected.type !== "image" && firstSelected.type !== "booleanGroup" ? (
                 <div className="border-t border-b border-white/[0.08] py-3 px-[14px] space-y-3">
-                {firstSelected.type === "image" || firstSelected.type === "booleanGroup" ? (
-                  <p className="text-[9px] text-zinc-500 leading-relaxed">
-                    {firstSelected.type === "booleanGroup"
-                      ? "Boolean preview is rasterized. Gradient fill applies after vector boolean in a future update."
-                      : "Bitmap images do not use vector fill."}
-                  </p>
-                ) : firstSelected.type === "textOnPath" ? (
+                {firstSelected.type === "textOnPath" ? (
                   (() => {
                     const top = firstSelected as TextOnPathObject;
                     const noFillTp = top.fill === "none" || top.fill === "transparent";
@@ -18986,13 +19626,6 @@ export function FreehandStudioCanvas({
                         </div>
                       );
                     })()}
-                    {(() => {
-                      const ft = mf.type;
-                      const isGrad = ft === "gradient-linear" || ft === "gradient-radial";
-                      return isGrad && !supportsGradientFill(firstSelected) ? (
-                        <p className="text-[9px] text-amber-400/90">This layer cannot use on-canvas gradient handles; adjust gradient in the panel or pick another shape.</p>
-                      ) : null;
-                    })()}
                     </>
                     ) : null}
                   </div>
@@ -19000,6 +19633,7 @@ export function FreehandStudioCanvas({
                   })()
                 )}
                 </div>
+                ) : null}
 
                 {/* Stroke — swatches; opciones al elegir color */}
                 {(() => {
@@ -19338,9 +19972,6 @@ export function FreehandStudioCanvas({
                           <Link2 size={14} strokeWidth={2} aria-hidden />
                         </button>
                       </div>
-                      {pathSel.closed ? (
-                        <p className="text-[8px] text-zinc-600 leading-snug">Los marcadores solo se muestran en trazos abiertos.</p>
-                      ) : null}
                     </div>
                   ) : null}
 
@@ -19390,6 +20021,138 @@ export function FreehandStudioCanvas({
                     onToggle={() => setImageInfoPanelExpanded((v) => !v)}
                   />
                 )}
+                {isPhotoRoomStudioEmbed &&
+                  studioCaps.toolPhotoGradient &&
+                  (() => {
+                    const isMaskCtx =
+                      !!studioCaps.layerMask && maskEditObjectId === firstSelected.id;
+                    const meta = isMaskCtx
+                      ? (firstSelected as FreehandObjectBase).photoRasterGradientMask
+                      : (firstSelected as FreehandObjectBase).photoRasterGradientLayer;
+                    if (!meta) return null;
+                    const fromObject: PhotoGradientRuntimeSession = {
+                      ...meta,
+                      objectId: firstSelected.id,
+                    };
+                    const displaySession =
+                      photoGradientSession?.objectId === firstSelected.id
+                        ? photoGradientSession
+                        : fromObject;
+                    const reapply = (patch: Partial<PhotoRasterGradientPersistV1>, recordHistory = true) => {
+                      const merged: PhotoGradientRuntimeSession = {
+                        ...displaySession,
+                        ...patch,
+                        objectId: firstSelected.id,
+                      };
+                      setPhotoGradientSession(merged);
+                      photoGradientSessionRef.current = merged;
+                      const p = applyPhotoRasterGradientSession(merged, { recordHistory });
+                      photoRasterGradientScrubApplyRef.current = p;
+                      void p;
+                    };
+                    const angleVal = Number.isFinite(displaySession.angleDeg) ? displaySession.angleDeg : 0;
+                    const scaleVal = Number.isFinite(displaySession.scalePct) ? displaySession.scalePct : 100;
+                    const gradScrubEnd = () => {
+                      void photoRasterGradientScrubApplyRef.current?.then(() => commitHistoryAfterScrub());
+                    };
+                    const styleActive = "border-[#534AB7] bg-[#534AB7]/25 text-white";
+                    const styleIdle =
+                      "border-white/[0.08] bg-white/[0.05] text-zinc-400 hover:bg-white/[0.08] hover:text-zinc-200";
+                    return (
+                      <div className="border-b border-white/[0.08] px-[14px] py-3">
+                        <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                          Degradado raster
+                        </div>
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Estilo</span>
+                            <div className="flex shrink-0 gap-1">
+                              <button
+                                type="button"
+                                title="Lineal"
+                                className={`flex h-7 w-7 items-center justify-center rounded-[5px] border transition-colors ${
+                                  displaySession.style === "linear" ? styleActive : styleIdle
+                                }`}
+                                onClick={() => reapply({ style: "linear" })}
+                              >
+                                <span className="block h-3.5 w-3.5 rounded-[2px] bg-gradient-to-b from-zinc-900 to-zinc-100 ring-1 ring-white/15" />
+                              </button>
+                              <button
+                                type="button"
+                                title="Radial"
+                                className={`flex h-7 w-7 items-center justify-center rounded-[5px] border transition-colors ${
+                                  displaySession.style === "radial" ? styleActive : styleIdle
+                                }`}
+                                onClick={() => reapply({ style: "radial" })}
+                              >
+                                <span
+                                  className="block h-3.5 w-3.5 rounded-full ring-1 ring-white/15"
+                                  style={{
+                                    background: "radial-gradient(circle, rgb(244 244 245) 0%, rgb(24 24 27) 72%)",
+                                  }}
+                                />
+                              </button>
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Ángulo</span>
+                            <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
+                              <ScrubNumberInput
+                                value={Math.round(angleVal * 100) / 100}
+                                onKeyboardCommit={(n) => {
+                                  if (!Number.isFinite(n)) return;
+                                  reapply({ angleDeg: n });
+                                }}
+                                onScrubLive={(n) => {
+                                  if (!Number.isFinite(n)) return;
+                                  reapply({ angleDeg: Math.round(n * 100) / 100 }, false);
+                                }}
+                                onScrubEnd={gradScrubEnd}
+                                step={0.1}
+                                roundFn={(n) => Math.round(n * 100) / 100}
+                                title="Arrastra horizontalmente · Mayús = ×10"
+                                className="min-w-0 max-w-[7rem] flex-1 cursor-ew-resize rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 font-mono text-[12px] text-zinc-100"
+                              />
+                              <span className="shrink-0 text-[10px] text-zinc-500">°</span>
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Escala</span>
+                            <div className="flex min-w-0 flex-1 items-center justify-end gap-1">
+                              <ScrubNumberInput
+                                value={Math.round(scaleVal)}
+                                onKeyboardCommit={(n) => {
+                                  if (!Number.isFinite(n)) return;
+                                  reapply({ scalePct: Math.max(1, Math.min(800, Math.round(n))) });
+                                }}
+                                onScrubLive={(n) => {
+                                  if (!Number.isFinite(n)) return;
+                                  reapply({ scalePct: Math.max(1, Math.min(800, Math.round(n))) }, false);
+                                }}
+                                onScrubEnd={gradScrubEnd}
+                                step={1}
+                                roundFn={(n) => Math.round(n)}
+                                min={1}
+                                max={800}
+                                title="Arrastra horizontalmente · Mayús = ×10"
+                                className="min-w-0 max-w-[7rem] flex-1 cursor-ew-resize rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 font-mono text-[12px] text-zinc-100"
+                              />
+                              <span className="shrink-0 text-[10px] text-zinc-500">%</span>
+                            </div>
+                          </div>
+                          <label className="flex cursor-pointer items-center justify-between gap-2 text-[10px] text-zinc-400">
+                            <span className="uppercase tracking-wider">Invertir</span>
+                            <input
+                              type="checkbox"
+                              className="rounded-[3px] border-white/20 bg-zinc-800"
+                              checked={displaySession.reverse}
+                              onChange={(ev) => reapply({ reverse: ev.target.checked })}
+                            />
+                          </label>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 {((studioCaps.layerStyles && isLayerStylesEligible(firstSelected)) ||
                   (studioCaps.layerMask && isLayerMaskRasterEligible(firstSelected))) ? (
                   <div className="border-b border-white/[0.08] px-[14px] py-3">
@@ -19460,9 +20223,6 @@ export function FreehandStudioCanvas({
                                     Borrar
                                   </button>
                                 </div>
-                                <p className="text-[9px] text-zinc-500 leading-snug">
-                                  Pincel (B) con edición de máscara encendida en el panel de capas.
-                                </p>
                               </div>
                             </>
                           )}
@@ -20293,9 +21053,6 @@ export function FreehandStudioCanvas({
                 {activeTool === "directSelect" && selectedAnchorVertexHint && (
                   <div className="space-y-1.5 pt-2 border-t border-white/10">
                     <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">Punto de ancla (Bezier)</div>
-                    {selectedAnchorVertexHint.modes.length > 1 && (
-                      <div className="text-[9px] text-amber-400/90">Selección mixta — elige un modo para aplicar a todos</div>
-                    )}
                     <div className="flex items-center gap-1 flex-wrap">
                       {([
                         { mode: "smooth" as const, Icon: Spline, title: "Continuo en curva (tangentes simétricas)", label: "Suave" },
@@ -20320,7 +21077,6 @@ export function FreehandStudioCanvas({
                 {activeTool === "directSelect" && firstSelected?.type === "path" && (
                   <div className="space-y-1.5 pt-2 border-t border-white/10">
                     <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">Puntos del trazado</div>
-                    <p className="text-[8px] text-zinc-500">Clic en un segmento añade un punto. También puedes usar los botones o Suprimir con puntos seleccionados.</p>
                     <div className="flex gap-1">
                       <button type="button" onClick={addMidAnchorToSelectedPath}
                         className="flex-1 rounded border border-white/10 bg-white/5 py-1.5 text-[8px] font-bold uppercase text-zinc-200 hover:bg-white/10">
@@ -20361,9 +21117,6 @@ export function FreehandStudioCanvas({
                       title="Aplica el boolean de forma destructiva: un solo trazo vectorial. Luego usa Pegar dentro (⇧⌘V) con este trazo como máscara.">
                       Forma definitiva (trazo)
                     </button>
-                    <p className="text-[8px] leading-snug text-zinc-600">
-                      Convierte el grupo booleano en un <span className="text-zinc-500">path</span> cerrado. Sirve como máscara para <span className="text-zinc-500">Pegar dentro</span>.
-                    </p>
                   </div>
                 )}
                 </div>
@@ -20503,11 +21256,6 @@ export function FreehandStudioCanvas({
                   </div>
                 </div>
               </div>
-              {layerPanelTarget && selectedObjects.length > 1 ? (
-                <p className="text-[8px] leading-tight text-zinc-500">
-                  Varias capas: fusión y opacidad se aplican a la capa activa (primaria o la primera seleccionada).
-                </p>
-              ) : null}
             </div>
             {layersPanelExpanded ? (
               <>
@@ -20816,9 +21564,7 @@ export function FreehandStudioCanvas({
           if (!modalObj || !modalObj.isTextFrame || !sid) return null;
           const st = designerStoryMap?.get(sid) ?? "";
           const sh = designerStoryHtmlMap?.get(sid) ?? "";
-          const ti = (modalObj as { _designerThreadInfo?: { index: number; total: number } })._designerThreadInfo;
           const hasOverflow = !!(modalObj as { _designerOverflow?: boolean })._designerOverflow;
-          const isLinked = ti != null && ti.total > 1;
           return createPortal(
             <div className="fixed inset-0 z-[100100]">
               <div
@@ -20883,11 +21629,6 @@ export function FreehandStudioCanvas({
                   </button>
                 </div>
                 <div className="relative min-h-0 flex-1 overflow-y-auto px-3 pb-9 pt-2">
-                  {isLinked && ti && (
-                    <p className="mb-2 text-[10px] leading-relaxed text-zinc-500">
-                      Historia enlazada · Marco {ti.index + 1} de {ti.total}
-                    </p>
-                  )}
                   {hasOverflow && (
                     <div className="mb-2 flex items-center gap-1.5 rounded-md border border-rose-500/25 bg-rose-500/10 px-2 py-1.5">
                       <span className="text-[10px] font-medium text-rose-300">⚠ Texto desbordado</span>
@@ -20912,10 +21653,7 @@ export function FreehandStudioCanvas({
                     editorClassName="min-h-[min(400px,calc(100vh-220px))] w-full overflow-y-auto rounded-b-[5px] border border-white/[0.08] bg-white/[0.06] px-3 py-2.5 text-sm font-light leading-relaxed text-zinc-100 outline-none focus:ring-1 focus:ring-sky-500/40 [&_b]:font-bold [&_strong]:font-bold [&_i]:italic [&_u]:underline [&_s]:line-through [&_a]:text-sky-400 [&_a]:underline [&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:marker:text-zinc-400 [&_li]:my-0.5"
                   />
                 </div>
-                <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-white/[0.08] bg-[#161a22] px-3 py-2.5">
-                  <p className="min-w-0 flex-1 text-[10px] leading-snug text-zinc-500">
-                    El texto del marco se guarda en el documento al pulsar <span className="text-zinc-400">Guardar</span>, al cerrar esta ventana o con Esc (mismo efecto).
-                  </p>
+                <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-white/[0.08] bg-[#161a22] px-3 py-2.5">
                   <button
                     type="button"
                     className="shrink-0 rounded-lg border border-sky-500/35 bg-sky-600/25 px-3 py-1.5 text-[11px] font-semibold text-sky-100 transition hover:bg-sky-600/40"
@@ -21017,6 +21755,34 @@ export function FreehandStudioCanvas({
           P o Esc · salir del modo lienzo
         </div>
       )}
+
+      {photoGradientPickerOpen ? (
+        <ColorPickerModal
+          open
+          title={
+            photoGradientPickerOpen === "start"
+              ? "Trazo (inicio del degradado)"
+              : "Relleno (fin del degradado)"
+          }
+          confirmLabel="Aplicar"
+          initialHex={
+            photoGradientPickerOpen === "start"
+              ? strokeColor === "none"
+                ? "#000000"
+                : normalizeHexColor(strokeColor) ?? "#000000"
+              : fillColor === "none"
+                ? "#ffffff"
+                : normalizeHexColor(fillColor) ?? "#ffffff"
+          }
+          onClose={() => setPhotoGradientPickerOpen(null)}
+          onConfirm={(hex) => {
+            const n = normalizeHexColor(hex) ?? hex;
+            if (photoGradientPickerOpen === "start") setStrokeColor(n);
+            else setFillColor(n);
+            setPhotoGradientPickerOpen(null);
+          }}
+        />
+      ) : null}
 
       {layerStylesUi.open && layerStylesUi.draft ? (
         <LayerStylesModal

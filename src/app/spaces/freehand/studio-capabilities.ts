@@ -11,6 +11,8 @@ export type FreehandStudioCapabilities = {
   toolBrush: boolean;
   /** Tampón de clon (toolbar + tecla S). */
   toolCloneStamp: boolean;
+  /** Degradado lineal raster (arrastre en lienzo; capa o máscara). Solo PhotoRoom por defecto. */
+  toolPhotoGradient: boolean;
   /** Marcos lazo / rect / elipse / poligonal tipo PhotoRoom (toolbar + M/L/O…). */
   toolPhotoMarquee: boolean;
   /** Panel «Convertir en selección» desde forma vectorial → marco PhotoRoom. */
@@ -31,6 +33,7 @@ export type FreehandStudioCapabilities = {
 const CAPS_DESIGNER: FreehandStudioCapabilities = {
   toolBrush: false,
   toolCloneStamp: false,
+  toolPhotoGradient: false,
   toolPhotoMarquee: false,
   photoMarqueeFromVector: false,
   photoRoomGraphActions: false,
@@ -42,6 +45,7 @@ const CAPS_DESIGNER: FreehandStudioCapabilities = {
 const CAPS_PHOTOROOM: FreehandStudioCapabilities = {
   toolBrush: true,
   toolCloneStamp: true,
+  toolPhotoGradient: true,
   toolPhotoMarquee: true,
   photoMarqueeFromVector: true,
   photoRoomGraphActions: true,
