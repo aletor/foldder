@@ -131,6 +131,17 @@ export type PhotoRoomStudioProps = {
   onExportPreview: (dataUrl: string) => void;
   /** Ref al API del lienzo (export PNG para miniatura del nodo en el grafo). */
   studioApiRef?: React.MutableRefObject<DesignerStudioApi | null>;
+  /** Crear Media + Nano Banana en el grafo y enlazar la capa como entrada conectada. */
+  onPhotoRoomModificarImagenIA?: (payload: {
+    imageObjectId: string;
+    imageSrc: string;
+    studioNodeKey: string;
+  }) => void;
+  onPhotoRoomRasterizeInputImage?: (payload: {
+    imageObjectId: string;
+    photoRoomInputSlot: string;
+    studioObjects: FreehandObject[];
+  }) => void;
 };
 
 /**
@@ -149,6 +160,8 @@ export default function PhotoRoomStudio({
   onPersist,
   onExportPreview,
   studioApiRef,
+  onPhotoRoomModificarImagenIA,
+  onPhotoRoomRasterizeInputImage,
 }: PhotoRoomStudioProps) {
   /** ≥1 para que FreehandStudio ejecute fit al montar (`designerFitToViewNonce === 0` no hace encuadre). */
   const [fitNonce, setFitNonce] = useState(1);
@@ -353,6 +366,8 @@ export default function PhotoRoomStudio({
           onUpdateLayoutGuides={handleUpdateLayoutGuides}
           photoRoomConnectedInputs={connectedImageInputs}
           studioApiRef={studioApiRef}
+          photoRoomOnModificarImagenIA={onPhotoRoomModificarImagenIA}
+          photoRoomOnRasterizeInputImage={onPhotoRoomRasterizeInputImage}
         />
       )}
       {canvasPresetModalOpen && !showNewDocumentWizard && (

@@ -35,6 +35,7 @@ import {
   recomputeCanvasGroupFrames,
   removeEmptyCanvasGroups,
   filterEdgesForCollapsedCanvasGroups,
+  edgeTargetsMemberInput,
 } from "./canvas-group-logic";
 
 import Sidebar from "./Sidebar";
@@ -1899,6 +1900,66 @@ export function SpacesContent() {
     window.addEventListener('enter-space', handleEnterSpace);
     return () => window.removeEventListener('enter-space', handleEnterSpace);
   }, [handleEnterSpace]);
+
+  // PhotoRoom rasterize disconnect: custom nodes' useReactFlow().setEdges does not update
+  // the canvas when edges are controlled via useEdgesState in this component (xyflow #4750).
+  useEffect(() => {
+    const handler = (ev: Event) => {
+      const ce = ev as CustomEvent<{
+        photoRoomNodeId?: string;
+        slot?: string;
+        studioObjects?: unknown[];
+      }>;
+      const photoRoomNodeId = ce.detail?.photoRoomNodeId;
+      const slot = typeof ce.detail?.slot === 'string' ? ce.detail.slot.trim() : '';
+      if (!photoRoomNodeId || !slot) return;
+
+      const studioObjectsNext = Array.isArray(ce.detail?.studioObjects) ? ce.detail.studioObjects : null;
+
+      const dropEdge = (e: Edge) => edgeTargetsMemberInput(e as any, photoRoomNodeId, slot);
+
+      setEdges((eds) => eds.filter((e) => !dropEdge(e)));
+
+      setNodes((nds) =>
+        nds.map((n: any) => {
+          if (n.type === 'canvasGroup') {
+            const bak = n.data?.collapseBackup as
+              | { crossingEdges?: Edge[]; internalEdges?: Edge[] }
+              | undefined;
+            if (!bak) return n;
+            const crossing0 = Array.isArray(bak.crossingEdges) ? bak.crossingEdges : [];
+            const internal0 = Array.isArray(bak.internalEdges) ? bak.internalEdges : [];
+            const crossing = crossing0.filter((e) => !dropEdge(e as Edge));
+            const internal = internal0.filter((e) => !dropEdge(e as Edge));
+            if (crossing.length === crossing0.length && internal.length === internal0.length) return n;
+            return {
+              ...n,
+              data: {
+                ...n.data,
+                collapseBackup: { ...bak, crossingEdges: crossing, internalEdges: internal },
+              },
+            };
+          }
+          if (n.id !== photoRoomNodeId) return n;
+          if (studioObjectsNext) {
+            return { ...n, data: { ...n.data, studioObjects: studioObjectsNext } };
+          }
+          const objs = n.data?.studioObjects;
+          if (!Array.isArray(objs)) return n;
+          const cleaned = objs.filter(
+            (o: { type?: string; photoRoomInputSlot?: string }) =>
+              !(o?.type === 'image' && o?.photoRoomInputSlot === slot),
+          );
+          if (cleaned.length === objs.length) return n;
+          return { ...n, data: { ...n.data, studioObjects: cleaned } };
+        }),
+      );
+
+      requestAnimationFrame(() => updateNodeInternals(photoRoomNodeId));
+    };
+    window.addEventListener('foldder-photoroom-disconnect-slot', handler);
+    return () => window.removeEventListener('foldder-photoroom-disconnect-slot', handler);
+  }, [setEdges, setNodes, updateNodeInternals]);
 
   // Reactive Propagation Bridge: Sync current space structure to map and parents on change
   useEffect(() => {

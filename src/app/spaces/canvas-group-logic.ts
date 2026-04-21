@@ -91,6 +91,21 @@ export function parseCanvasGroupOutHandle(
 }
 
 /**
+ * True if the edge lands on this member's input handle: either `target === memberId` with
+ * `targetHandle === inputHandleId`, or a `canvasGroup` proxy (`g_in_*` must match the encoded member id).
+ */
+export function edgeTargetsMemberInput(
+  edge: Pick<Edge, "target" | "targetHandle">,
+  memberId: string,
+  inputHandleId: string
+): boolean {
+  if (edge.target === memberId && edge.targetHandle === inputHandleId) return true;
+  const p = parseCanvasGroupInHandle(edge.targetHandle);
+  if (!p || p.handleId !== inputHandleId) return false;
+  return p.memberId === memberId.replace(/@/g, "_");
+}
+
+/**
  * `data.value` del nodo que alimenta una arista (texto prompt, URL de imagen, etc.).
  * Si el origen es un `canvasGroup` plegado, la arista usa `sourceHandle` `g_out_*` apuntando al
  * miembro; el nodo grupo no tiene `value` — hay que leer del hijo.

@@ -238,6 +238,39 @@ export function mergePhotoPolygonSelection(
   }
 }
 
+/**
+ * Un solo trazo SVG del perímetro de la unión de varios polígonos (p. ej. lazos concatenados con Ctrl).
+ * Sin esto, varios anillos superpuestos dibujan aristas internas; la unión booleana deja solo contorno exterior + agujeros.
+ */
+export function ringsUnionOutlineSvgD(rings: PhotoPolyPoint[][]): string {
+  const valid = rings.map((r) => sanitizeRing(r)).filter((r) => r.length >= 3);
+  if (valid.length === 0) return "";
+  if (valid.length === 1) return ringToSvgPathD(valid[0]!);
+
+  const paper = ensurePaper();
+  if (!paper) {
+    return valid.map((r) => ringToSvgPathD(r)).filter((d) => d.length > 0).join(" ");
+  }
+
+  try {
+    const uni = uniteRings(paper, valid);
+    if (!uni) {
+      return valid.map((r) => ringToSvgPathD(r)).filter((d) => d.length > 0).join(" ");
+    }
+    const outRings = itemToRings(paper, uni);
+    (uni as InstanceType<PaperLib["Item"]>).remove();
+    return outRings.map((r) => ringToSvgPathD(r)).filter((d) => d.length > 0).join(" ");
+  } catch {
+    return valid.map((r) => ringToSvgPathD(r)).filter((d) => d.length > 0).join(" ");
+  } finally {
+    try {
+      paper.project.clear();
+    } catch {
+      /* noop */
+    }
+  }
+}
+
 /** `d` de un único anillo (cerrado). */
 export function ringToSvgPathD(ring: PhotoPolyPoint[]): string {
   const r = sanitizeRing(ring);

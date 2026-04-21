@@ -4,6 +4,7 @@ import React, { memo, Suspense, useCallback, useEffect, useMemo, useRef, useStat
 import {
   NodeResizer,
   Position,
+  addEdge,
   useEdges,
   useNodeId,
   useNodes,
@@ -13,11 +14,17 @@ import {
 } from "@xyflow/react";
 import { ImageIcon, Maximize2 } from "lucide-react";
 import { FOLDDER_FIT_VIEW_EASE } from "@/lib/fit-view-ease";
+import { defaultDataForCanvasDropNode } from "@/lib/canvas-connect-end-drop";
 import { FoldderDataHandle } from "../FoldderDataHandle";
 import { NodeIcon, resolveFoldderNodeState } from "../foldder-icons";
 import { NodeLabel, FoldderNodeHeaderTitle } from "../foldder-node-ui";
-import { resolvePromptValueFromEdgeSource } from "../canvas-group-logic";
-import type { DesignerStudioApi } from "../FreehandStudio";
+import {
+  edgeTargetsMemberInput,
+  nodeBoundsForLayout,
+  resolvePromptValueFromEdgeSource,
+} from "../canvas-group-logic";
+import { withFoldderCanvasIntro } from "../spaces-canvas-intro";
+import type { DesignerStudioApi, FreehandObject } from "../FreehandStudio";
 import type { PhotoRoomNodeStudioData } from "./photo-room-types";
 
 const NODE_RESIZE_END_FIT_PADDING = 0.8;
@@ -121,7 +128,7 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const nodeData = data as PhotoRoomNodeData;
   const nodes = useNodes();
   const edges = useEdges();
-  const { setNodes } = useReactFlow();
+  const { setNodes, setEdges, getNodes, getEdges, fitView } = useReactFlow();
   const updateNodeInternals = useUpdateNodeInternals();
   const [showStudio, setShowStudio] = useState(false);
   const studioApiRef = useRef<DesignerStudioApi | null>(null);
@@ -162,10 +169,152 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
     [persistStudio],
   );
 
+  const handlePhotoRoomModificarImagenIA = useCallback(
+    (payload: { imageObjectId: string; imageSrc: string; studioNodeKey: string }) => {
+      const { imageObjectId, imageSrc, studioNodeKey } = payload;
+      const trimmed = imageSrc.trim();
+      if (!trimmed) return;
+
+      const flowPhotoRoomId = id;
+      const edgesNow = getEdges();
+      let slot: string | null = null;
+      for (const sid of SLOT_IDS) {
+        if (!edgesNow.some((e: any) => edgeTargetsMemberInput(e, flowPhotoRoomId, sid))) {
+          slot = sid;
+          break;
+        }
+      }
+      if (!slot) {
+        window.alert(
+          "Todas las entradas de imagen de PhotoRoom están ocupadas. Desconecta una para continuar.",
+        );
+        return;
+      }
+
+      const idx = studioObjects.findIndex((o) => o.id === imageObjectId);
+      if (idx === -1) return;
+      const oldLayer = studioObjects[idx]!;
+      if (oldLayer.type !== "image") return;
+      if ((oldLayer as { photoRoomInputSlot?: string }).photoRoomInputSlot) return;
+
+      const nodesNow = getNodes() as any[];
+      const prFlowNode = nodesNow.find((n) => n.id === flowPhotoRoomId);
+      if (!prFlowNode) return;
+
+      const ts = Date.now();
+      const mediaId = `mediaInput_${ts}`;
+      const nanoId = `nanoBanana_${ts}`;
+      /** Media → Nano Banana → PhotoRoom, alineados en Y al centro del nodo PhotoRoom; hueco según anchos estimados. */
+      const FLOW_GAP = 56;
+      const prDims = nodeBoundsForLayout(prFlowNode as any);
+      const nanoDims = nodeBoundsForLayout({ type: "nanoBanana", position: { x: 0, y: 0 } } as any);
+      const mediaDims = nodeBoundsForLayout({ type: "mediaInput", position: { x: 0, y: 0 } } as any);
+      const nanoX = prFlowNode.position.x - FLOW_GAP - nanoDims.w;
+      const nanoY = prFlowNode.position.y + (prDims.h - nanoDims.h) / 2;
+      const mediaPos = {
+        x: nanoX - FLOW_GAP - mediaDims.w,
+        y: prFlowNode.position.y + (prDims.h - mediaDims.h) / 2,
+      };
+      const nanoPos = { x: nanoX, y: nanoY };
+
+      const nanoDefaults = defaultDataForCanvasDropNode("nanoBanana") as Record<string, unknown>;
+      const mediaNode = {
+        id: mediaId,
+        type: "mediaInput" as const,
+        position: mediaPos,
+        data: withFoldderCanvasIntro("mediaInput", {
+          value: trimmed,
+          type: "image",
+          label: "IA · capa PhotoRoom",
+        }),
+      };
+      const nanoNode = {
+        id: nanoId,
+        type: "nanoBanana" as const,
+        position: nanoPos,
+        data: withFoldderCanvasIntro("nanoBanana", {
+          ...nanoDefaults,
+          value: trimmed,
+          type: "image",
+        }),
+      };
+
+      const edgeMN = {
+        id: `e_${mediaId}_${nanoId}_${ts}`,
+        source: mediaId,
+        target: nanoId,
+        sourceHandle: "media",
+        targetHandle: "image",
+        type: "buttonEdge" as const,
+      };
+      const edgeNP = {
+        id: `e_${nanoId}_${flowPhotoRoomId}_${ts}`,
+        source: nanoId,
+        target: flowPhotoRoomId,
+        sourceHandle: "image",
+        targetHandle: slot,
+        type: "buttonEdge" as const,
+      };
+
+      const newLayerId = `${studioNodeKey}__pr_in_${slot}`;
+      const newImg = {
+        ...oldLayer,
+        id: newLayerId,
+        src: trimmed,
+        photoRoomInputSlot: slot,
+        photoRoomPreserveInputFrame: true,
+      };
+      const nextStudioObjects = [...studioObjects.slice(0, idx), newImg, ...studioObjects.slice(idx + 1)];
+
+      setNodes((nds: any) => {
+        const withNew = [...nds, mediaNode, nanoNode];
+        return withNew.map((n: any) =>
+          n.id === flowPhotoRoomId ? { ...n, data: { ...n.data, studioObjects: nextStudioObjects } } : n,
+        );
+      });
+      setEdges((eds: any) => addEdge(edgeNP, addEdge(edgeMN, eds)));
+
+      requestAnimationFrame(() => {
+        updateNodeInternals(flowPhotoRoomId);
+        updateNodeInternals(mediaId);
+        updateNodeInternals(nanoId);
+        void fitView({
+          nodes: [{ id: mediaId }, { id: nanoId }, { id: flowPhotoRoomId }],
+          padding: 0.45,
+          duration: 560,
+          interpolate: "smooth",
+          ...FOLDDER_FIT_VIEW_EASE,
+        });
+        queueMicrotask(() => {
+          studioApiRef.current?.setSelectedIds(new Set([newLayerId]));
+        });
+      });
+    },
+    [id, getEdges, getNodes, setNodes, setEdges, studioObjects, updateNodeInternals, fitView, studioApiRef],
+  );
+
+  /**
+   * Desconectar el cable y limpiar backup/grupo: debe hacerse en SpacesContent vía evento, porque
+   * `useEdgesState` controla las aristas allí y `useReactFlow().setEdges` desde este nodo no las actualiza.
+   */
+  const handlePhotoRoomRasterizeInputImage = useCallback(
+    (payload: { imageObjectId: string; photoRoomInputSlot: string; studioObjects: FreehandObject[] }) => {
+      const slot = payload.photoRoomInputSlot.trim();
+      if (!slot) return;
+      if (!Array.isArray(payload.studioObjects)) return;
+      window.dispatchEvent(
+        new CustomEvent("foldder-photoroom-disconnect-slot", {
+          detail: { photoRoomNodeId: id, slot, studioObjects: payload.studioObjects },
+        }),
+      );
+    },
+    [id],
+  );
+
   const connectedBySlot = useMemo(() => {
     const m: Record<string, boolean> = {};
     for (const sid of SLOT_IDS) {
-      m[sid] = edges.some((e: any) => e.target === id && e.targetHandle === sid);
+      m[sid] = edges.some((e: any) => edgeTargetsMemberInput(e, id, sid));
     }
     return m;
   }, [edges, id]);
@@ -185,7 +334,7 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
 
   const previewUrl = useMemo(() => {
     for (const sid of SLOT_IDS) {
-      const e = edges.find((ed: any) => ed.target === id && ed.targetHandle === sid);
+      const e = edges.find((ed: any) => edgeTargetsMemberInput(ed, id, sid));
       if (!e) continue;
       const v = resolvePromptValueFromEdgeSource(e, nodes as any);
       if (typeof v === "string" && v) return v;
@@ -194,7 +343,7 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
   }, [edges, id, nodes]);
 
   const anyInputEdge = useMemo(
-    () => SLOT_IDS.some((sid) => edges.some((e: any) => e.target === id && e.targetHandle === sid)),
+    () => SLOT_IDS.some((sid) => edges.some((e: any) => edgeTargetsMemberInput(e, id, sid))),
     [edges, id],
   );
 
@@ -202,7 +351,7 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const photoRoomConnectedInputs = useMemo(() => {
     const out: { slot: string; src: string }[] = [];
     for (const sid of SLOT_IDS) {
-      const e = edges.find((ed: any) => ed.target === id && ed.targetHandle === sid);
+      const e = edges.find((ed: any) => edgeTargetsMemberInput(ed, id, sid));
       if (!e) continue;
       const v = resolvePromptValueFromEdgeSource(e, nodes as any);
       if (typeof v === "string" && v.trim().length > 0) {
@@ -372,6 +521,8 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
             docSetupDone={!!nodeData.photoRoomDocSetupDone}
             connectedImageInputs={photoRoomConnectedInputs}
             studioApiRef={studioApiRef}
+            onPhotoRoomModificarImagenIA={handlePhotoRoomModificarImagenIA}
+            onPhotoRoomRasterizeInputImage={handlePhotoRoomRasterizeInputImage}
             onPersist={persistStudio}
             onExportPreview={handleStudioExportPreview}
             onClose={() => setShowStudio(false)}
