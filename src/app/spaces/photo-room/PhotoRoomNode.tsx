@@ -1,6 +1,7 @@
 "use client";
 
 import React, { memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import {
   NodeResizer,
   Position,
@@ -19,13 +20,26 @@ import { FoldderDataHandle } from "../FoldderDataHandle";
 import { NodeIcon, resolveFoldderNodeState } from "../foldder-icons";
 import { NodeLabel, FoldderNodeHeaderTitle } from "../foldder-node-ui";
 import {
+  applyCanvasGroupExpand,
+  createCanvasGroupFromNodeIds,
   edgeTargetsMemberInput,
   nodeBoundsForLayout,
+  parseCanvasGroupOutHandle,
   resolvePromptValueFromEdgeSource,
 } from "../canvas-group-logic";
 import { withFoldderCanvasIntro } from "../spaces-canvas-intro";
 import type { DesignerStudioApi, FreehandObject } from "../FreehandStudio";
 import type { PhotoRoomNodeStudioData } from "./photo-room-types";
+import { registerPendingNanoStudioOpenFromPhotoRoom } from "./photo-room-nano-open-pending";
+
+/** Tras `flushSync`, el `useEffect` del Nano aún puede no haber registrado el listener; `requestAnimationFrame` va después. */
+function dispatchOpenNanoStudioFromPhotoRoom(nanoNodeId: string, photoRoomNodeId: string) {
+  window.dispatchEvent(
+    new CustomEvent("foldder-open-nano-studio-from-photo-room", {
+      detail: { nanoNodeId, photoRoomNodeId },
+    }),
+  );
+}
 
 const NODE_RESIZE_END_FIT_PADDING = 0.8;
 
@@ -266,31 +280,67 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
       };
       const nextStudioObjects = [...studioObjects.slice(0, idx), newImg, ...studioObjects.slice(idx + 1)];
 
-      setNodes((nds: any) => {
-        const withNew = [...nds, mediaNode, nanoNode];
-        return withNew.map((n: any) =>
-          n.id === flowPhotoRoomId ? { ...n, data: { ...n.data, studioObjects: nextStudioObjects } } : n,
-        );
+      const nextPrIndex = (() => {
+        let max = 0;
+        for (const n of nodesNow) {
+          if (n.type !== "canvasGroup") continue;
+          const lab = String((n.data as { label?: string })?.label ?? "").trim();
+          const m = /^imagen_(\d+)_PR$/i.exec(lab);
+          if (m) max = Math.max(max, parseInt(m[1]!, 10));
+        }
+        return max + 1;
+      })();
+      const groupLabel = `imagen_${nextPrIndex}_PR`;
+
+      const withTwo = [...nodesNow, mediaNode, nanoNode];
+      const grouped = createCanvasGroupFromNodeIds([mediaId, nanoId], withTwo, groupLabel);
+      if (!grouped) return;
+
+      const beforeIds = new Set(nodesNow.map((n: { id: string }) => n.id));
+      const groupMeta = grouped.nodes.find(
+        (n: any) => n.type === "canvasGroup" && !beforeIds.has(n.id),
+      ) as { id: string } | undefined;
+      const groupId = groupMeta?.id;
+      if (!groupId) return;
+
+      const mergedNodes = grouped.nodes.map((n: any) =>
+        n.id === flowPhotoRoomId ? { ...n, data: { ...n.data, studioObjects: nextStudioObjects } } : n,
+      );
+
+      /**
+       * Grupo expandido al crear: si se aplica `applyCanvasGroupCollapse` aquí, XYFlow pone `hidden` en los
+       * hijos y `NodeWrapper` hace `return null` — el Nano no monta y no puede abrir Studio (pending ni evento).
+       * El marco `imagen_N_PR` se pliega al cerrar el Nano Studio (`CustomNodes` → `closeNanoStudio`).
+       */
+      const edgesWithChains = addEdge(edgeNP, addEdge(edgeMN, edgesNow as any));
+
+      registerPendingNanoStudioOpenFromPhotoRoom(nanoId, flowPhotoRoomId);
+
+      flushSync(() => {
+        setShowStudio(false);
+        setNodes(mergedNodes as any);
+        setEdges(edgesWithChains as any);
       });
-      setEdges((eds: any) => addEdge(edgeNP, addEdge(edgeMN, eds)));
 
       requestAnimationFrame(() => {
         updateNodeInternals(flowPhotoRoomId);
+        updateNodeInternals(groupId);
         updateNodeInternals(mediaId);
         updateNodeInternals(nanoId);
         void fitView({
-          nodes: [{ id: mediaId }, { id: nanoId }, { id: flowPhotoRoomId }],
+          nodes: [{ id: groupId }, { id: flowPhotoRoomId }],
           padding: 0.45,
           duration: 560,
           interpolate: "smooth",
           ...FOLDDER_FIT_VIEW_EASE,
         });
+        dispatchOpenNanoStudioFromPhotoRoom(nanoId, flowPhotoRoomId);
         queueMicrotask(() => {
           studioApiRef.current?.setSelectedIds(new Set([newLayerId]));
         });
       });
     },
-    [id, getEdges, getNodes, setNodes, setEdges, studioObjects, updateNodeInternals, fitView, studioApiRef],
+    [id, getEdges, getNodes, setNodes, setEdges, studioObjects, updateNodeInternals, fitView, studioApiRef, setShowStudio],
   );
 
   /**
@@ -309,6 +359,70 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
       );
     },
     [id],
+  );
+
+  /** Capa con ranura: abrir el Nano Banana que alimenta ese cable (mismo evento que tras crear el flujo desde capa local). */
+  const handlePhotoRoomOpenConnectedNanoStudio = useCallback(
+    (payload: { photoRoomInputSlot: string }) => {
+      const slot = payload.photoRoomInputSlot.trim();
+      if (!slot) return;
+      const edgesNow = getEdges();
+      const nodesNow = getNodes() as any[];
+      const incoming = edgesNow.find((ed: any) => edgeTargetsMemberInput(ed, id, slot));
+      if (!incoming?.source) {
+        window.alert(
+          "No hay conexión a esta ranura en el grafo. Comprueba el cable o crea el flujo desde «Modificar imagen con IA» en una capa local.",
+        );
+        return;
+      }
+      const src = nodesNow.find((n: any) => n.id === incoming.source);
+      let nanoFlowId: string | null = null;
+      if (src?.type === "nanoBanana") {
+        nanoFlowId = incoming.source;
+      } else if (src?.type === "canvasGroup" && incoming.sourceHandle?.startsWith("g_out_")) {
+        const p = parseCanvasGroupOutHandle(incoming.sourceHandle);
+        if (p) {
+          const inner = nodesNow.find((n: any) => n.id === p.memberId);
+          if (inner?.type === "nanoBanana") nanoFlowId = p.memberId;
+        }
+      }
+      if (!nanoFlowId) {
+        window.alert(
+          "Esta entrada no viene de un Nano Banana (p. ej. grupo plegado o otro tipo de nodo). Expande el marco del grupo o conecta la salida de imagen de un Nano a esta ranura.",
+        );
+        return;
+      }
+
+      registerPendingNanoStudioOpenFromPhotoRoom(nanoFlowId, id);
+
+      let nextNodes = nodesNow;
+      let nextEdges = edgesNow as any[];
+      const nanoN = nodesNow.find((n: any) => n.id === nanoFlowId);
+      const parentId = nanoN?.parentId as string | undefined;
+      if (parentId) {
+        const parent = nodesNow.find((n: any) => n.id === parentId && n.type === "canvasGroup");
+        if (parent && (parent.data as { collapsed?: boolean })?.collapsed) {
+          const expanded = applyCanvasGroupExpand(parentId, nodesNow as any, edgesNow as any);
+          if (expanded) {
+            nextNodes = expanded.nodes as any[];
+            nextEdges = expanded.edges as any[];
+          }
+        }
+      }
+
+      flushSync(() => {
+        setShowStudio(false);
+        if (nextNodes !== nodesNow) {
+          setNodes(nextNodes as any);
+          setEdges(nextEdges as any);
+        }
+      });
+
+      requestAnimationFrame(() => {
+        dispatchOpenNanoStudioFromPhotoRoom(nanoFlowId, id);
+      });
+    },
+    [id, getEdges, getNodes, setNodes, setEdges, setShowStudio],
   );
 
   const connectedBySlot = useMemo(() => {
@@ -331,6 +445,17 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
   useEffect(() => {
     updateNodeInternals(id);
   }, [id, visibleSlots.join(","), updateNodeInternals]);
+
+  /** Volver desde Nano Banana Studio (flujo «Modificar imagen con IA»): reabrir este PhotoRoom en Studio. */
+  useEffect(() => {
+    const openStudio = (ev: Event) => {
+      const d = (ev as CustomEvent<{ photoRoomNodeId: string }>).detail;
+      if (d?.photoRoomNodeId !== id) return;
+      setShowStudio(true);
+    };
+    window.addEventListener("foldder-open-photo-room-studio", openStudio as EventListener);
+    return () => window.removeEventListener("foldder-open-photo-room-studio", openStudio as EventListener);
+  }, [id]);
 
   const previewUrl = useMemo(() => {
     for (const sid of SLOT_IDS) {
@@ -523,6 +648,7 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
             studioApiRef={studioApiRef}
             onPhotoRoomModificarImagenIA={handlePhotoRoomModificarImagenIA}
             onPhotoRoomRasterizeInputImage={handlePhotoRoomRasterizeInputImage}
+            onPhotoRoomOpenConnectedNanoStudio={handlePhotoRoomOpenConnectedNanoStudio}
             onPersist={persistStudio}
             onExportPreview={handleStudioExportPreview}
             onClose={() => setShowStudio(false)}

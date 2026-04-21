@@ -142,6 +142,8 @@ export type PhotoRoomStudioProps = {
     photoRoomInputSlot: string;
     studioObjects: FreehandObject[];
   }) => void;
+  /** Abrir Studio del Nano Banana ya cableado a la ranura (sin crear nodos). */
+  onPhotoRoomOpenConnectedNanoStudio?: (payload: { photoRoomInputSlot: string }) => void;
 };
 
 /**
@@ -162,6 +164,7 @@ export default function PhotoRoomStudio({
   studioApiRef,
   onPhotoRoomModificarImagenIA,
   onPhotoRoomRasterizeInputImage,
+  onPhotoRoomOpenConnectedNanoStudio,
 }: PhotoRoomStudioProps) {
   /** ≥1 para que FreehandStudio ejecute fit al montar (`designerFitToViewNonce === 0` no hace encuadre). */
   const [fitNonce, setFitNonce] = useState(1);
@@ -368,6 +371,7 @@ export default function PhotoRoomStudio({
           studioApiRef={studioApiRef}
           photoRoomOnModificarImagenIA={onPhotoRoomModificarImagenIA}
           photoRoomOnRasterizeInputImage={onPhotoRoomRasterizeInputImage}
+          photoRoomOnOpenConnectedNanoStudio={onPhotoRoomOpenConnectedNanoStudio}
         />
       )}
       {canvasPresetModalOpen && !showNewDocumentWizard && (

@@ -7,6 +7,7 @@ import React, {
   useCallback,
   useRef,
   useMemo,
+  useId,
   forwardRef,
   useImperativeHandle,
   type MouseEvent as ReactMouseEvent,
@@ -84,8 +85,6 @@ import {
   BoxSelect,
   Lasso,
   Spline,
-  Paintbrush,
-  Copy,
   Plus,
 } from "lucide-react";
 import { ScrubNumberInput } from "./ScrubNumberInput";
@@ -480,6 +479,14 @@ interface ImageObject extends FreehandObjectBase {
   src: string;
   /** Natural aspect w/h for proportional scaling */
   intrinsicRatio?: number;
+  /** Metadatos del archivo al importar desde disco (p. ej. nombre y peso originales). */
+  imageAssetMeta?: {
+    fileName: string;
+    mimeType: string;
+    byteSize: number;
+    pixelWidth: number;
+    pixelHeight: number;
+  };
 }
 
 interface TextObject extends FreehandObjectBase {
@@ -599,6 +606,11 @@ export interface FreehandStudioProps extends DesignerEmbedProps {
     /** Documento ya transformado (capa local sin ranura); debe persistirse junto con la desconexión. */
     studioObjects: FreehandObject[];
   }) => void;
+  /**
+   * PhotoRoom: capa con `photoRoomInputSlot` — abre el Studio del Nano Banana que alimenta esa ranura.
+   * No crea Media/Nano nuevos; el host resuelve el nodo por el grafo.
+   */
+  photoRoomOnOpenConnectedNanoStudio?: (payload: { photoRoomInputSlot: string }) => void;
   /**
    * Herramientas y acciones permitidas en esta instancia (allowlist).
    * Si se omite, se infiere de `designerMode` y del panel PhotoRoom (`studioPhotoRoomCanvasPanel`).
@@ -1552,6 +1564,19 @@ function worldToImageCanvasPixelsUnbounded(world: Point, img: ImageObject, cw: n
   };
 }
 
+/** Píxeles del bitmap de capa → local del marco (0…w × 0…h), inverso de `worldToImageCanvasPixels`. */
+function imageCanvasPixelToObjLocal(p: Point, img: ImageObject, cw: number, ch: number): Point {
+  return {
+    x: (p.x / Math.max(cw, 1e-9)) * img.width,
+    y: (p.y / Math.max(ch, 1e-9)) * img.height,
+  };
+}
+
+/** Píxeles del bitmap → mundo (cruz de origen del tampón, etc.). */
+function imageCanvasPixelToWorld(p: Point, img: ImageObject, cw: number, ch: number): Point {
+  return objLocalToWorldPoint(imageCanvasPixelToObjLocal(p, img, cw, ch), img);
+}
+
 type BrushRasterSession = {
   imageId: string;
   canvas: HTMLCanvasElement;
@@ -1676,6 +1701,65 @@ function brushRadiusInImagePixels(brushSizeWorld: number, canvasPixelWidth: numb
 }
 
 /**
+ * Textura circular para la vista previa del tampón en modo alineado: centro de muestreo = origen + (punto actual − inicio del trazo).
+ * Misma lógica que `paintCloneStrokeSegment` (`src = S + (D − D0)`).
+ */
+function buildCloneStampAlignedPreviewDataUrl(
+  canvas: HTMLCanvasElement,
+  image: ImageObject,
+  brushSizeWorld: number,
+  cloneSourcePixel: Point,
+  cloneStrokeOriginPixel: Point,
+  currentPixel: Point,
+): string | null {
+  const cw = canvas.width;
+  const rPx = brushRadiusInImagePixels(brushSizeWorld, cw, image.width);
+  const cx = cloneSourcePixel.x + (currentPixel.x - cloneStrokeOriginPixel.x);
+  const cy = cloneSourcePixel.y + (currentPixel.y - cloneStrokeOriginPixel.y);
+  const sw = Math.max(1, Math.ceil(2 * rPx));
+  const srcX = cx - rPx;
+  const srcY = cy - rPx;
+  const out = document.createElement("canvas");
+  out.width = sw;
+  out.height = sw;
+  const ctx = out.getContext("2d");
+  if (!ctx) return null;
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(sw / 2, sw / 2, rPx, 0, Math.PI * 2);
+  ctx.clip();
+  try {
+    ctx.drawImage(canvas, srcX, srcY, sw, sw, 0, 0, sw, sw);
+  } catch {
+    ctx.restore();
+    return null;
+  }
+  ctx.restore();
+  try {
+    return out.toDataURL("image/png");
+  } catch {
+    return null;
+  }
+}
+
+/** Reutilizado por `stampCloneCircle`: evita crear un canvas por cada dab (miles por trazo). */
+let cloneStampScratch: { c: HTMLCanvasElement; ctx: CanvasRenderingContext2D; dim: number } | null =
+  null;
+
+function ensureCloneStampScratch(dim: number): { c: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null {
+  const d = Math.max(1, Math.ceil(dim));
+  if (!cloneStampScratch || cloneStampScratch.dim < d) {
+    const c = document.createElement("canvas");
+    c.width = d;
+    c.height = d;
+    const ctx = c.getContext("2d");
+    if (!ctx) return null;
+    cloneStampScratch = { c, ctx, dim: d };
+  }
+  return { c: cloneStampScratch.c, ctx: cloneStampScratch.ctx };
+}
+
+/**
  * Tampón de clonación: copia un disco del bitmap (centrado en `srcCenterX/Y`) y lo deposita con borde suave
  * para que el centro de la muestra coincida con `destX/Y` (offset fijo tipo Photoshop “Alineado”).
  */
@@ -1701,11 +1785,10 @@ function stampCloneCircle(
   const ox = destX - srcCenterX + sx0;
   const oy = destY - srcCenterY + sy0;
 
-  const tmp = document.createElement("canvas");
-  tmp.width = d;
-  tmp.height = d;
-  const tctx = tmp.getContext("2d");
-  if (!tctx) return;
+  const scratch = ensureCloneStampScratch(d);
+  if (!scratch) return;
+  const tmp = scratch.c;
+  const tctx = scratch.ctx;
   try {
     tctx.drawImage(canvas, sx0, sy0, d, d, 0, 0, d, d);
   } catch {
@@ -1726,7 +1809,7 @@ function stampCloneCircle(
 
   destCtx.save();
   destCtx.globalAlpha = alphaMul;
-  destCtx.drawImage(tmp, ox, oy);
+  destCtx.drawImage(tmp, 0, 0, d, d, ox, oy, d, d);
   destCtx.restore();
 }
 
@@ -3231,6 +3314,21 @@ function invertPhotoMarqueePolysWithinBounds(
   bounds: Rect,
 ): Point[][] {
   if (bounds.w < 1e-9 || bounds.h < 1e-9) return [];
+
+  /**
+   * Solo rectángulos alineados a ejes: diferencia exacta sin Paper.js (evita fallos booleanos / fallback que dejaba `bounds` entero).
+   */
+  if (polys.length === 0 && ellipses.length === 0 && rects.length > 0) {
+    let pieces: Rect[] = [{ ...bounds }];
+    for (const s of rects) {
+      pieces = pieces.flatMap((p) => subtractRectFromRect(p, s));
+    }
+    return pieces
+      .filter((r) => r.w > 1e-9 && r.h > 1e-9)
+      .map((r) => rectToPhotoMarqueeRing(r))
+      .filter((ring) => ring.length >= 3);
+  }
+
   let acc: Point[][] = [rectToPhotoMarqueeRing(bounds)];
   for (const r of rects) {
     acc = mergePhotoPolygonSelection(acc, rectToPhotoMarqueeRing(r), "subtract");
@@ -5994,6 +6092,48 @@ const TOOLBAR_ICON_STROKE = 1.75 as const;
 /** Pulsación mantenida sobre el icono del grupo para abrir el submenú (rollout). */
 const TOOLBAR_FLYOUT_PRESS_MS = 200;
 
+/**
+ * Herramienta Pincel — referencia del usuario: mango alargado (arriba-dcha) y cabeza en lágrima (abajo-izq),
+ * dos siluetas con hueco entre ellas (como el PNG).
+ */
+function PhotoBrushToolIcon({ size = 19, className }: { size?: number; className?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className} aria-hidden>
+      <g fill="currentColor">
+        <path d="M4.2 18.5C3.75 16.85 4.3 15.1 5.55 13.8 6.8 12.5 8.6 11.65 10.5 11.35 11.9 11.15 13.35 11.35 14.65 11.9 15.1 12.35 14.85 13.1 14.1 13.6 12.35 14.95 9.9 16.15 7.45 16.95 6.25 17.3 5.15 17.85 4.2 18.5z" />
+        <path d="M20.9 3.15C21.45 3.6 21.5 4.45 21.1 5.15 20.2 6.95 18.7 8.55 17.05 9.95 16 10.8 14.85 11.5 13.6 12 13.05 12.2 12.45 11.85 12.25 11.25 12.1 10.85 12.25 10.35 12.55 10 14.1 8.2 15.65 6.35 17.1 4.5 17.9 3.5 18.65 2.55 19.75 2.05 20.25 1.85 20.8 2.1 21.05 2.55 21.2 2.85 21.15 3.15 20.9 3.15z" />
+      </g>
+    </svg>
+  );
+}
+
+/**
+ * Tampón de clonación — silueta de sello manual (mango redondo, cuello, cuerpo, base de goma),
+ * alineada con el icono de referencia del usuario.
+ */
+function PhotoCloneStampToolIcon({ size = 19, className }: { size?: number; className?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className} aria-hidden>
+      <g fill="currentColor">
+        <circle cx="12" cy="5.6" r="3.35" />
+        <rect x="10.25" y="8.85" width="3.5" height="2.05" rx="0.35" />
+        <rect x="4.85" y="10.75" width="14.3" height="6.65" rx="0.45" />
+        <rect x="6.1" y="18.05" width="11.8" height="2.35" rx="0.35" />
+      </g>
+      <g
+        stroke="currentColor"
+        strokeWidth={1.35}
+        strokeLinecap="round"
+        fill="none"
+      >
+        <path d="M8.15 3.35 Q6.9 3.9 6.2 5.15" />
+        <path d="M3.6 10.9h2.35" />
+        <path d="M20.35 12.9q0.85 1.35 0.35 2.85" />
+      </g>
+    </svg>
+  );
+}
+
 function ToolBtn({ active, onClick, title, children }: { active?: boolean; onClick: () => void; title: string; children: React.ReactNode }) {
   return (
     <button type="button" title={title} onClick={onClick}
@@ -6557,6 +6697,172 @@ function preloadDesignerRasterUrl(url: string): Promise<void> {
   });
 }
 
+function mimeTypeToImageFormatLabel(mime: string): string {
+  const m = mime.toLowerCase().split(";")[0]!.trim();
+  if (m === "image/png") return "PNG";
+  if (m === "image/jpeg" || m === "image/jpg") return "JPEG";
+  if (m === "image/webp") return "WebP";
+  if (m === "image/gif") return "GIF";
+  if (m === "image/svg+xml") return "SVG";
+  if (m === "image/bmp" || m === "image/x-ms-bmp") return "BMP";
+  if (m.startsWith("image/")) return m.slice("image/".length).toUpperCase() || "—";
+  return "—";
+}
+
+function inferImageFormatFromSrc(src: string): string {
+  if (!src) return "—";
+  if (src.startsWith("data:")) {
+    const semi = src.indexOf(";");
+    if (semi > 5) return mimeTypeToImageFormatLabel(src.slice(5, semi));
+  }
+  if (src.startsWith("blob:")) return "Raster";
+  try {
+    const path = new URL(src, "https://local.invalid").pathname;
+    const ext = path.split(".").pop()?.toLowerCase();
+    if (ext === "png") return "PNG";
+    if (ext === "jpg" || ext === "jpeg") return "JPEG";
+    if (ext === "webp") return "WebP";
+    if (ext === "gif") return "GIF";
+    if (ext === "svg" || ext === "svgz") return "SVG";
+    if (ext === "bmp") return "BMP";
+  } catch {
+    /* ignore */
+  }
+  return "Desconocido";
+}
+
+function estimateBytesFromDataUrl(src: string): number | null {
+  const i = src.indexOf("base64,");
+  if (i === -1) return null;
+  const b64 = src.slice(i + 7).replace(/\s/g, "");
+  return Math.floor((b64.length * 3) / 4);
+}
+
+function formatByteSizeForPanel(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return "—";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function ImagePropertiesInfoSection({
+  image,
+  expanded,
+  onToggle,
+}: {
+  image: ImageObject;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const meta = image.imageAssetMeta;
+  const src = (image.src ?? "").trim();
+
+  const [naturalWH, setNaturalWH] = useState<{ w: number; h: number } | null>(() =>
+    meta ? { w: meta.pixelWidth, h: meta.pixelHeight } : null,
+  );
+  const [blobBytes, setBlobBytes] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (meta) {
+      setNaturalWH({ w: meta.pixelWidth, h: meta.pixelHeight });
+      return;
+    }
+    if (!src) {
+      setNaturalWH(null);
+      return;
+    }
+    let cancelled = false;
+    const im = new Image();
+    im.onload = () => {
+      if (!cancelled) setNaturalWH({ w: im.naturalWidth, h: im.naturalHeight });
+    };
+    im.onerror = () => {
+      if (!cancelled) setNaturalWH(null);
+    };
+    im.src = src;
+    return () => {
+      cancelled = true;
+    };
+  }, [src, meta]);
+
+  useEffect(() => {
+    if (meta?.byteSize != null) {
+      setBlobBytes(null);
+      return;
+    }
+    if (!src.startsWith("blob:")) {
+      setBlobBytes(null);
+      return;
+    }
+    let cancelled = false;
+    void fetch(src)
+      .then((r) => r.blob())
+      .then((b) => {
+        if (!cancelled) setBlobBytes(b.size);
+      })
+      .catch(() => {
+        if (!cancelled) setBlobBytes(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [src, meta?.byteSize]);
+
+  const formatLabel = meta ? mimeTypeToImageFormatLabel(meta.mimeType) : inferImageFormatFromSrc(src);
+  const name = (meta?.fileName || image.name || "").trim() || "—";
+  const bytes = meta?.byteSize ?? blobBytes ?? estimateBytesFromDataUrl(src) ?? null;
+  const sizeLabel = bytes != null ? formatByteSizeForPanel(bytes) : "—";
+  const dimLabel =
+    naturalWH != null && naturalWH.w > 0 && naturalWH.h > 0
+      ? `${naturalWH.w} × ${naturalWH.h} px`
+      : "—";
+
+  const rowCls = "flex justify-between gap-3";
+  const dtCls = "shrink-0 text-[10px] text-zinc-500 uppercase tracking-wider";
+  const ddCls = "min-w-0 text-right font-mono text-[11px] text-zinc-200 break-all";
+
+  return (
+    <div className="border-b border-white/[0.08] px-[14px] py-3">
+      <button
+        type="button"
+        className="flex w-full items-center justify-between gap-2 text-left transition-colors hover:bg-white/[0.04] -mx-1 rounded-md px-1 py-0.5"
+        title={expanded ? "Plegar información" : "Desplegar información"}
+        aria-expanded={expanded}
+        onClick={onToggle}
+      >
+        <span className="text-[10px] text-zinc-500 uppercase tracking-wider">INFO</span>
+        {expanded ? (
+          <ChevronDown size={14} strokeWidth={2} className="shrink-0 text-zinc-500" />
+        ) : (
+          <ChevronRight size={14} strokeWidth={2} className="shrink-0 text-zinc-500" />
+        )}
+      </button>
+      {expanded && (
+        <dl className="mt-2 space-y-2">
+          <div className={rowCls}>
+            <dt className={dtCls}>Formato</dt>
+            <dd className={ddCls}>{formatLabel}</dd>
+          </div>
+          <div className={rowCls}>
+            <dt className={dtCls}>Nombre</dt>
+            <dd className={ddCls} title={name !== "—" ? name : undefined}>
+              {name}
+            </dd>
+          </div>
+          <div className={rowCls}>
+            <dt className={dtCls}>Peso</dt>
+            <dd className={ddCls}>{sizeLabel}</dd>
+          </div>
+          <div className={rowCls}>
+            <dt className={dtCls}>Tamaño</dt>
+            <dd className={ddCls}>{dimLabel}</dd>
+          </div>
+        </dl>
+      )}
+    </div>
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 //  MAIN COMPONENT (lienzo compartido; Designer importa el default, PhotoRoom usa PhotoRoomFreehandStudio)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -6577,6 +6883,7 @@ export function FreehandStudioCanvas({
   studioPhotoRoomCanvasPanel,
   photoRoomOnModificarImagenIA,
   photoRoomOnRasterizeInputImage,
+  photoRoomOnOpenConnectedNanoStudio,
   studioCapabilities,
   designerMode,
   onDesignerTextFrameCreate,
@@ -7075,8 +7382,23 @@ export function FreehandStudioCanvas({
   const [brushHardnessPct, setBrushHardnessPct] = useState(78);
   const [brushOpacityPct, setBrushOpacityPct] = useState(100);
   const [brushFlowPct, setBrushFlowPct] = useState(72);
-  /** Origen del tampón de clon (píxeles del bitmap de esa capa); Alt+clic en la imagen. */
-  const [cloneSource, setCloneSource] = useState<{ imageId: string; pixel: Point } | null>(null);
+  /** Origen del tampón de clon (píxeles del bitmap de esa capa); Alt+clic en la imagen. Incluye tamaño del canvas al fijar para mapeo mundo. */
+  const [cloneSource, setCloneSource] = useState<{
+    imageId: string;
+    pixel: Point;
+    canvasW: number;
+    canvasH: number;
+  } | null>(null);
+  /** Previsualización circular dentro del pincel (textura tomada alrededor del origen del clon). */
+  const [cloneStampBrushPreview, setCloneStampBrushPreview] = useState<{
+    dataUrl: string;
+    centerWorld: Point;
+    sizeWorld: number;
+  } | null>(null);
+  const cloneStampPreviewGenRef = useRef(0);
+  /** Primer punto del trazo (píxeles canvas) para cruz/preview alineados: S + (D − D0). Se sincroniza con la sesión y persiste entre trazos. */
+  const cloneStampAlignOriginD0Ref = useRef<Point | null>(null);
+  const cloneStampBrushClipPathId = useId().replace(/:/g, "");
   const brushSessionRef = useRef<{
     imageId: string;
     canvas: HTMLCanvasElement;
@@ -7089,11 +7411,17 @@ export function FreehandStudioCanvas({
   } | null>(null);
   const brushPreviewRafRef = useRef<number | null>(null);
   const brushCursorOverlayRafRef = useRef<number | null>(null);
+  /** Coalesce preview alineado del tampón durante el trazo (evita toDataURL en cada mousemove). */
+  const cloneAlignedBrushOverlayRafRef = useRef<number | null>(null);
   const brushPreviewRingRef = useRef<{ inner: Point[]; outer: Point[] } | null>(null);
   const brushPreviewLastWorldRef = useRef<Point | null>(null);
   const [brushPreviewRings, setBrushPreviewRings] = useState<{ inner: Point[]; outer: Point[] } | null>(null);
   /** Bloque Transform en propiedades: plegado por defecto. */
   const [transformPanelExpanded, setTransformPanelExpanded] = useState(false);
+  const [imageInfoPanelExpanded, setImageInfoPanelExpanded] = useState(false);
+  useEffect(() => {
+    setImageInfoPanelExpanded(false);
+  }, [primarySelectedId]);
   /** Bloque Color (paleta + fill + stroke): plegado por defecto. */
   const [colorPanelExpanded, setColorPanelExpanded] = useState(false);
   /** Quick fill/stroke popover: which channel is being edited from canvas. */
@@ -7270,6 +7598,12 @@ export function FreehandStudioCanvas({
   selectedPointsRef.current = selectedPoints;
   const objectsRef = useRef(objects);
   objectsRef.current = objects;
+  const activeToolRef = useRef(activeTool);
+  activeToolRef.current = activeTool;
+  const brushSizeRef = useRef(brushSize);
+  brushSizeRef.current = brushSize;
+  const cloneSourceRef = useRef(cloneSource);
+  cloneSourceRef.current = cloneSource;
   const artboardsRef = useRef(artboards);
   artboardsRef.current = artboards;
   const layoutGuidesRef = useRef<LayoutGuide[]>(layoutGuides);
@@ -8226,8 +8560,9 @@ export function FreehandStudioCanvas({
         }
         const ox = at?.x ?? 200;
         const oy = at?.y ?? 200;
+        const dataMime = /^data:([^;,]+)/.exec(src)?.[1]?.trim() ?? "";
         const newObj: ImageObject = {
-          ...defaultObj({ name: `Image ${objectsRef.current.length + 1}` }),
+          ...defaultObj({ name: file.name?.trim() || `Image ${objectsRef.current.length + 1}` }),
           type: "image",
           x: ox - w / 2,
           y: oy - h / 2,
@@ -8236,6 +8571,13 @@ export function FreehandStudioCanvas({
           fill: solidFill("none"), stroke: "none", strokeWidth: 0,
           src,
           intrinsicRatio: img.width / Math.max(img.height, 1),
+          imageAssetMeta: {
+            fileName: file.name?.trim() || "Imagen",
+            mimeType: (file.type && file.type.trim()) || dataMime || "image/*",
+            byteSize: file.size,
+            pixelWidth: img.naturalWidth || img.width,
+            pixelHeight: img.naturalHeight || img.height,
+          },
         } as ImageObject;
         setObjects((prev) => {
           const next = [...prev, newObj];
@@ -8561,6 +8903,109 @@ export function FreehandStudioCanvas({
     }
   }, []);
 
+  const cancelCloneAlignedBrushOverlayRaf = useCallback(() => {
+    if (cloneAlignedBrushOverlayRafRef.current != null) {
+      cancelAnimationFrame(cloneAlignedBrushOverlayRafRef.current);
+      cloneAlignedBrushOverlayRafRef.current = null;
+    }
+  }, []);
+
+  const flushCloneAlignedBrushOverlay = useCallback(() => {
+    const ds = dragStateRef.current;
+    if (ds?.type !== "brushPaint" || ds.brushLastPixel == null) return;
+    const s = brushSessionRef.current;
+    if (s?.cloneSourcePixel == null || s?.cloneStrokeOriginPixel == null) return;
+    cancelBrushCursorOverlayRaf();
+    const posW = imageCanvasPixelToWorld(ds.brushLastPixel, s.image, s.canvas.width, s.canvas.height);
+    const z = viewportRef.current.zoom;
+    const sizeW = brushSizeRef.current;
+    setBrushPreviewRings(buildBrushPreviewRingsWorld(posW, sizeW, objectsRef.current, z));
+    const url = buildCloneStampAlignedPreviewDataUrl(
+      s.canvas,
+      s.image,
+      sizeW,
+      s.cloneSourcePixel,
+      s.cloneStrokeOriginPixel,
+      ds.brushLastPixel,
+    );
+    if (url) {
+      setCloneStampBrushPreview({ dataUrl: url, centerWorld: { ...posW }, sizeWorld: sizeW });
+    }
+  }, [cancelBrushCursorOverlayRaf]);
+
+  const scheduleCloneAlignedBrushOverlay = useCallback(() => {
+    if (cloneAlignedBrushOverlayRafRef.current != null) return;
+    cloneAlignedBrushOverlayRafRef.current = requestAnimationFrame(() => {
+      cloneAlignedBrushOverlayRafRef.current = null;
+      flushCloneAlignedBrushOverlay();
+    });
+  }, [flushCloneAlignedBrushOverlay]);
+
+  /** Muestra dentro del círculo del pincel la textura que se clonaría (origen ± radio), estilo Photoshop. */
+  const rebuildCloneStampBrushPreview = useCallback((centerWorld: Point, pointerWorld: Point) => {
+    const cs = cloneSourceRef.current;
+    if (!cs || activeToolRef.current !== "cloneStamp") {
+      setCloneStampBrushPreview(null);
+      return;
+    }
+    const hit = pickTopImageForBrush(pointerWorld, objectsRef.current);
+    if (!hit || hit.id !== cs.imageId) {
+      setCloneStampBrushPreview(null);
+      return;
+    }
+    const img = hit as ImageObject;
+    const gen = ++cloneStampPreviewGenRef.current;
+    const sizeW = brushSizeRef.current;
+    void loadImageToBrushCanvas(img.src, img.width, img.height).then(({ canvas }) => {
+      if (gen !== cloneStampPreviewGenRef.current) return;
+      if (activeToolRef.current !== "cloneStamp" || !cloneSourceRef.current) {
+        setCloneStampBrushPreview(null);
+        return;
+      }
+      const S = cloneSourceRef.current.pixel;
+      const d0Align = cloneStampAlignOriginD0Ref.current;
+      const ptrPx = worldToImageCanvasPixelsUnbounded(pointerWorld, img, canvas.width, img.height);
+      const sampleCenter =
+        d0Align != null
+          ? { x: S.x + (ptrPx.x - d0Align.x), y: S.y + (ptrPx.y - d0Align.y) }
+          : { ...S };
+      const rPx = brushRadiusInImagePixels(sizeW, canvas.width, img.width);
+      const sw = Math.max(1, Math.ceil(2 * rPx));
+      const sh = sw;
+      const srcX = sampleCenter.x - rPx;
+      const srcY = sampleCenter.y - rPx;
+      const out = document.createElement("canvas");
+      out.width = sw;
+      out.height = sh;
+      const ctx = out.getContext("2d");
+      if (!ctx) {
+        setCloneStampBrushPreview(null);
+        return;
+      }
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(sw / 2, sh / 2, rPx, 0, Math.PI * 2);
+      ctx.clip();
+      try {
+        ctx.drawImage(canvas, srcX, srcY, sw, sh, 0, 0, sw, sh);
+      } catch {
+        ctx.restore();
+        setCloneStampBrushPreview(null);
+        return;
+      }
+      ctx.restore();
+      let dataUrl: string;
+      try {
+        dataUrl = out.toDataURL("image/png");
+      } catch {
+        setCloneStampBrushPreview(null);
+        return;
+      }
+      if (gen !== cloneStampPreviewGenRef.current) return;
+      setCloneStampBrushPreview({ dataUrl, centerWorld: { ...centerWorld }, sizeWorld: sizeW });
+    });
+  }, []);
+
   const scheduleBrushPreview = useCallback(() => {
     cancelBrushPreviewRaf();
     brushPreviewRafRef.current = requestAnimationFrame(() => {
@@ -8571,16 +9016,29 @@ export function FreehandStudioCanvas({
 
   const finishBrushStroke = useCallback(() => {
     cancelBrushPreviewRaf();
+    cancelCloneAlignedBrushOverlayRaf();
     const s = brushSessionRef.current;
     const imageId = s?.imageId;
     if (s && imageId) {
       const url = s.canvas.toDataURL("image/png");
       const im = s.image;
       const clonePx = s.cloneSourcePixel;
+      if (s.cloneStrokeOriginPixel) {
+        cloneStampAlignOriginD0Ref.current = { ...s.cloneStrokeOriginPixel };
+      } else {
+        cloneStampAlignOriginD0Ref.current = null;
+      }
       brushSessionRef.current = null;
       if (clonePx) {
         setCloneSource((prev) =>
-          prev && prev.imageId === imageId ? { ...prev, pixel: { ...clonePx } } : prev,
+          prev && prev.imageId === imageId
+            ? {
+                ...prev,
+                pixel: { ...clonePx },
+                canvasW: s.canvas.width,
+                canvasH: s.canvas.height,
+              }
+            : prev,
         );
       }
       setObjects((prev) => {
@@ -8596,28 +9054,71 @@ export function FreehandStudioCanvas({
       brushSessionRef.current = null;
     }
     setDragState(null);
-  }, [cancelBrushPreviewRaf, pushHistory]);
+  }, [cancelBrushPreviewRaf, cancelCloneAlignedBrushOverlayRaf, pushHistory]);
 
   useEffect(() => {
+    if (dragState?.type === "brushPaint" && dragState.brushLastPixel != null) {
+      const s = brushSessionRef.current;
+      if (s?.cloneSourcePixel != null && s.cloneStrokeOriginPixel != null) {
+        cancelBrushCursorOverlayRaf();
+        return;
+      }
+    }
     if (dragState != null) {
       cancelBrushCursorOverlayRaf();
+      cancelCloneAlignedBrushOverlayRaf();
       brushPreviewRingRef.current = null;
       brushPreviewLastWorldRef.current = null;
       setBrushPreviewRings(null);
+      setCloneStampBrushPreview(null);
+    } else {
+      setCloneStampBrushPreview(null);
     }
-  }, [dragState, cancelBrushCursorOverlayRaf]);
+  }, [dragState, brushSize, viewport.zoom, cancelBrushCursorOverlayRaf, cancelCloneAlignedBrushOverlayRaf]);
+
+  useEffect(() => {
+    cloneStampPreviewGenRef.current++;
+    setCloneStampBrushPreview(null);
+  }, [brushSize]);
+
+  useEffect(() => {
+    cloneStampPreviewGenRef.current++;
+    setCloneStampBrushPreview(null);
+  }, [cloneSource]);
+
+  useEffect(() => {
+    if (activeTool !== "cloneStamp") {
+      cloneStampAlignOriginD0Ref.current = null;
+    }
+  }, [activeTool]);
 
   useEffect(() => {
     if (activeTool !== "brush" && activeTool !== "cloneStamp") {
       cancelBrushCursorOverlayRaf();
+      cancelCloneAlignedBrushOverlayRaf();
       brushPreviewRingRef.current = null;
       brushPreviewLastWorldRef.current = null;
       setBrushPreviewRings(null);
+      setCloneStampBrushPreview(null);
       return;
     }
-    if (spaceHeld || dragState != null) {
+    const cloneBrushPainting =
+      dragState?.type === "brushPaint" && brushSessionRef.current?.cloneSourcePixel != null;
+    if (spaceHeld) {
       cancelBrushCursorOverlayRaf();
+      cancelCloneAlignedBrushOverlayRaf();
       setBrushPreviewRings(null);
+      setCloneStampBrushPreview(null);
+      return;
+    }
+    if (dragState != null && !cloneBrushPainting) {
+      cancelBrushCursorOverlayRaf();
+      cancelCloneAlignedBrushOverlayRaf();
+      setBrushPreviewRings(null);
+      setCloneStampBrushPreview(null);
+      return;
+    }
+    if (cloneBrushPainting) {
       return;
     }
     const last = brushPreviewLastWorldRef.current;
@@ -8625,7 +9126,15 @@ export function FreehandStudioCanvas({
     const rings = buildBrushPreviewRingsWorld(last, brushSize, objectsRef.current, viewport.zoom);
     brushPreviewRingRef.current = rings;
     setBrushPreviewRings(rings);
-  }, [brushSize, activeTool, spaceHeld, dragState, cancelBrushCursorOverlayRaf, viewport.zoom]);
+  }, [
+    brushSize,
+    activeTool,
+    spaceHeld,
+    dragState,
+    cancelBrushCursorOverlayRaf,
+    cancelCloneAlignedBrushOverlayRaf,
+    viewport.zoom,
+  ]);
 
   /** Al elegir color de trazo, si el grosor es 0 se pone a 2 para que se vea el borde. Otros valores no se tocan. */
   const applyStrokeColorWithVisibleWidth = useCallback(
@@ -8990,26 +9499,20 @@ export function FreehandStudioCanvas({
 
   const invertPhotoMarqueeFromPanel = useCallback(() => {
     if (!isPhotoRoomStudioEmbed || !studioCaps.toolPhotoMarquee) return;
-    const hasSel =
-      photoRectMarqueeSelection.length > 0 ||
-      photoPolygonMarqueeSelection.length > 0 ||
-      photoEllipseMarqueeSelection.length > 0;
-    if (!hasSel) return;
+    const rectsSnap = photoRectMarqueeSelectionRef.current.map((r) => ({ ...r }));
+    const polysSnap = photoPolygonMarqueeSelectionRef.current.map((ring) => ring.map((p) => ({ ...p })));
+    const ellipsesSnap = photoEllipseMarqueeSelectionRef.current.map((e) => ({ ...e }));
+    if (!rectsSnap.length && !polysSnap.length && !ellipsesSnap.length) return;
     void (async () => {
       await (commitPhotoMarqueeFloatToSourceRef.current?.() ?? Promise.resolve(false));
-      const img = findSingleSelectedImageForPhotoMarquee(selectedIds, objects);
+      const img = findSingleSelectedImageForPhotoMarquee(selectedIdsRef.current, objectsRef.current);
       const ab = pickPrimaryArtboard(artboards, null);
       const bounds: Rect = img
         ? { x: img.x, y: img.y, w: img.width, h: img.height }
         : ab
           ? artboardToRect(ab)
           : { x: 0, y: 0, w: artboards[0]?.width ?? 1920, h: artboards[0]?.height ?? 1080 };
-      const nextPolys = invertPhotoMarqueePolysWithinBounds(
-        photoRectMarqueeSelection,
-        photoPolygonMarqueeSelection,
-        photoEllipseMarqueeSelection,
-        bounds,
-      );
+      const nextPolys = invertPhotoMarqueePolysWithinBounds(rectsSnap, polysSnap, ellipsesSnap, bounds);
       setPhotoMarqueeFloatLift(null);
       photoMarqueeFloatLiftRef.current = null;
       setPhotoMarqueeFloatTf({ rotationDeg: 0, scaleX: 1, scaleY: 1 });
@@ -9023,16 +9526,7 @@ export function FreehandStudioCanvas({
       setPhotoEllipseMarqueeSelection([]);
       setPhotoPolygonMarqueeSelection(nextPolys);
     })();
-  }, [
-    isPhotoRoomStudioEmbed,
-    studioCaps.toolPhotoMarquee,
-    selectedIds,
-    objects,
-    artboards,
-    photoRectMarqueeSelection,
-    photoPolygonMarqueeSelection,
-    photoEllipseMarqueeSelection,
-  ]);
+  }, [isPhotoRoomStudioEmbed, studioCaps.toolPhotoMarquee, artboards]);
 
   useEffect(() => {
     if (!isPhotoRoomStudioEmbed || !studioCaps.toolPhotoMarquee) return;
@@ -11526,12 +12020,14 @@ export function FreehandStudioCanvas({
         brushSessionRef.current = { imageId: img.id, canvas, ctx, image: img };
         const radiusPx = brushRadiusInImagePixels(brushSize, canvas.width, img.width);
         stampBrushCircle(ctx, lp.x, lp.y, radiusPx, h01, o01, f01, rgb);
-        setDragState({
-          type: "brushPaint",
+        const nextBrushDrag = {
+          type: "brushPaint" as const,
           startX: e.clientX,
           startY: e.clientY,
           brushLastPixel: lp,
-        });
+        };
+        dragStateRef.current = nextBrushDrag;
+        setDragState(nextBrushDrag);
         scheduleBrushPreview();
       };
       if (hit) {
@@ -11592,7 +12088,13 @@ export function FreehandStudioCanvas({
             window.setTimeout(() => setToast(null), 2600);
             return;
           }
-          setCloneSource({ imageId: hitImg.id, pixel: { ...lp } });
+          setCloneSource({
+            imageId: hitImg.id,
+            pixel: { ...lp },
+            canvasW: canvas.width,
+            canvasH: canvas.height,
+          });
+          cloneStampAlignOriginD0Ref.current = null;
           setToast("Origen de clon definido. Pinta sobre la misma capa para clonar.");
           window.setTimeout(() => setToast(null), 3200);
         });
@@ -11642,15 +12144,26 @@ export function FreehandStudioCanvas({
           break;
         }
         const radiusPx = brushRadiusInImagePixels(brushSize, s.canvas.width, s.image.width);
-        s = { ...s, cloneStrokeOriginPixel: { ...lp } };
+        /** Origen de muestreo = donde está la cruz al hacer clic (no el Alt fijo tras el primer trazo). */
+        const altAdj = s.cloneSourcePixel!;
+        const d0Prev = cloneStampAlignOriginD0Ref.current;
+        const crossAtClick =
+          d0Prev != null
+            ? { x: altAdj.x + (lp.x - d0Prev.x), y: altAdj.y + (lp.y - d0Prev.y) }
+            : { x: altAdj.x, y: altAdj.y };
+        s = { ...s, cloneSourcePixel: { ...crossAtClick }, cloneStrokeOriginPixel: { ...lp } };
         brushSessionRef.current = s;
+        cloneStampAlignOriginD0Ref.current = { x: lp.x, y: lp.y };
         stampCloneCircle(s.ctx, lp.x, lp.y, s.cloneSourcePixel!.x, s.cloneSourcePixel!.y, radiusPx, h01, o01, f01);
-        setDragState({
-          type: "brushPaint",
+        const nextCloneDrag = {
+          type: "brushPaint" as const,
           startX: e.clientX,
           startY: e.clientY,
           brushLastPixel: { ...lp },
-        });
+        };
+        dragStateRef.current = nextCloneDrag;
+        setDragState(nextCloneDrag);
+        scheduleCloneAlignedBrushOverlay();
         scheduleBrushPreview();
       });
       return;
@@ -12351,6 +12864,7 @@ export function FreehandStudioCanvas({
       isClipContentIsolation, clipContentEditId, isPhotoRoomStudioEmbed, photoRectMarqueeSelection,
       photoPolygonMarqueeSelection, photoEllipseMarqueeSelection,
       fillColor, brushSize, brushHardnessPct, brushOpacityPct, brushFlowPct, scheduleBrushPreview,
+      scheduleCloneAlignedBrushOverlay,
       cloneSource, setToast, studioCaps]);
 
   const flushSelectionGeometryGesture = useCallback(() => {
@@ -12845,6 +13359,12 @@ export function FreehandStudioCanvas({
           brushCursorOverlayRafRef.current = requestAnimationFrame(() => {
             brushCursorOverlayRafRef.current = null;
             setBrushPreviewRings(brushPreviewRingRef.current);
+            const last = brushPreviewLastWorldRef.current;
+            if (last && activeToolRef.current === "cloneStamp") {
+              rebuildCloneStampBrushPreview(last, last);
+            } else {
+              setCloneStampBrushPreview(null);
+            }
           });
         }
       } else {
@@ -12852,6 +13372,7 @@ export function FreehandStudioCanvas({
         brushPreviewRingRef.current = null;
         brushPreviewLastWorldRef.current = null;
         setBrushPreviewRings((prev) => (prev == null ? prev : null));
+        setCloneStampBrushPreview(null);
       }
       return;
     }
@@ -13088,6 +13609,9 @@ export function FreehandStudioCanvas({
           if (ex.changed) {
             brushSessionRef.current = session;
             prevAdj = { x: prevAdj.x + ex.padL, y: prevAdj.y + ex.padT };
+            if (session.cloneStrokeOriginPixel) {
+              cloneStampAlignOriginD0Ref.current = { ...session.cloneStrokeOriginPixel };
+            }
             cur = worldToImageCanvasPixelsUnbounded(pos, session.image, session.canvas.width, session.canvas.height);
             continue;
           }
@@ -13109,6 +13633,7 @@ export function FreehandStudioCanvas({
           const nextDrag = { ...dragState, brushLastPixel: cur };
           dragStateRef.current = nextDrag;
           setDragState(nextDrag);
+          scheduleCloneAlignedBrushOverlay();
           scheduleBrushPreview();
           return;
         }
@@ -13366,8 +13891,10 @@ export function FreehandStudioCanvas({
     brushOpacityPct,
     brushFlowPct,
     scheduleBrushPreview,
+    scheduleCloneAlignedBrushOverlay,
     spaceHeld,
     cancelBrushCursorOverlayRaf,
+    rebuildCloneStampBrushPreview,
   ]);
 
   const handleMouseUp = useCallback((e: ReactMouseEvent) => {
@@ -14841,7 +15368,7 @@ export function FreehandStudioCanvas({
           onClick={() => setActiveTool("brush")}
           title="Pincel (B) — pinta en capas imagen; clic en vacío crea capa del tamaño del pliego"
         >
-          <Paintbrush size={19} strokeWidth={TOOLBAR_ICON_STROKE} />
+          <PhotoBrushToolIcon size={19} />
         </ToolBtn>
         )}
         {studioCaps.toolCloneStamp && (
@@ -14850,7 +15377,7 @@ export function FreehandStudioCanvas({
           onClick={() => setActiveTool("cloneStamp")}
           title="Tampón de clon (S) — Alt+clic en la imagen = origen; pinta clonando con el mismo tamaño/dureza/opacidad/flow"
         >
-          <Copy size={19} strokeWidth={TOOLBAR_ICON_STROKE} />
+          <PhotoCloneStampToolIcon size={19} />
         </ToolBtn>
         )}
 
@@ -15630,11 +16157,27 @@ export function FreehandStudioCanvas({
 
             {(activeTool === "brush" || activeTool === "cloneStamp") &&
               !spaceHeld &&
-              dragState == null &&
               brushPreviewRings &&
               brushPreviewRings.inner.length >= 3 &&
-              brushPreviewRings.outer.length >= 3 && (
+              brushPreviewRings.outer.length >= 3 &&
+              (activeTool === "brush"
+                ? dragState == null
+                : dragState == null ||
+                  (dragState?.type === "brushPaint" &&
+                    brushSessionRef.current?.cloneSourcePixel != null &&
+                    brushSessionRef.current?.cloneStrokeOriginPixel != null)) && (
                 <>
+                  {activeTool === "cloneStamp" && cloneStampBrushPreview && (
+                    <defs>
+                      <clipPath id={cloneStampBrushClipPathId} clipPathUnits="userSpaceOnUse">
+                        <circle
+                          cx={cloneStampBrushPreview.centerWorld.x}
+                          cy={cloneStampBrushPreview.centerWorld.y}
+                          r={cloneStampBrushPreview.sizeWorld / 2}
+                        />
+                      </clipPath>
+                    </defs>
+                  )}
                   <polygon
                     points={brushPreviewRings.outer.map((p) => `${p.x},${p.y}`).join(" ")}
                     fill="none"
@@ -15644,9 +16187,26 @@ export function FreehandStudioCanvas({
                     pointerEvents="none"
                     data-ui="brush-size-preview-outline"
                   />
+                  {activeTool === "cloneStamp" && cloneStampBrushPreview && (
+                    <image
+                      href={cloneStampBrushPreview.dataUrl}
+                      x={cloneStampBrushPreview.centerWorld.x - cloneStampBrushPreview.sizeWorld / 2}
+                      y={cloneStampBrushPreview.centerWorld.y - cloneStampBrushPreview.sizeWorld / 2}
+                      width={cloneStampBrushPreview.sizeWorld}
+                      height={cloneStampBrushPreview.sizeWorld}
+                      clipPath={`url(#${cloneStampBrushClipPathId})`}
+                      opacity={0.9}
+                      pointerEvents="none"
+                      data-ui="clone-stamp-brush-preview"
+                    />
+                  )}
                   <polygon
                     points={brushPreviewRings.inner.map((p) => `${p.x},${p.y}`).join(" ")}
-                    fill="rgba(255,255,255,0.06)"
+                    fill={
+                      activeTool === "cloneStamp" && cloneStampBrushPreview
+                        ? "none"
+                        : "rgba(255,255,255,0.06)"
+                    }
                     stroke="rgba(255,255,255,0.55)"
                     strokeWidth={1 / viewport.zoom}
                     strokeLinejoin="round"
@@ -15655,6 +16215,83 @@ export function FreehandStudioCanvas({
                   />
                 </>
               )}
+
+            {activeTool === "cloneStamp" &&
+              cloneSource &&
+              !spaceHeld &&
+              (dragState == null || dragState.type === "brushPaint") &&
+              (() => {
+                const img = objects.find(
+                  (o) => o.id === cloneSource.imageId && o.type === "image",
+                ) as ImageObject | undefined;
+                if (!img) return null;
+                const sess = brushSessionRef.current;
+                const paintingClone =
+                  dragState?.type === "brushPaint" &&
+                  sess?.cloneSourcePixel != null &&
+                  sess?.cloneStrokeOriginPixel != null;
+                const imgForWorld = paintingClone ? sess!.image : img;
+                const S = paintingClone ? sess!.cloneSourcePixel! : cloneSource.pixel;
+                const cw = paintingClone ? sess!.canvas.width : cloneSource.canvasW;
+                const ch = paintingClone ? sess!.canvas.height : cloneSource.canvasH;
+                const D0 = paintingClone ? sess!.cloneStrokeOriginPixel! : cloneStampAlignOriginD0Ref.current;
+                let D: Point | null = null;
+                if (paintingClone && dragState?.type === "brushPaint" && dragState.brushLastPixel) {
+                  D = dragState.brushLastPixel;
+                } else {
+                  const lastW = brushPreviewLastWorldRef.current;
+                  if (lastW) {
+                    D = worldToImageCanvasPixelsUnbounded(lastW, imgForWorld, cw, ch);
+                  }
+                }
+                const crossPx =
+                  D0 && D ? { x: S.x + (D.x - D0.x), y: S.y + (D.y - D0.y) } : S;
+                const wx = imageCanvasPixelToWorld(crossPx, imgForWorld, cw, ch);
+                const z = viewport.zoom;
+                const arm = 7 / z;
+                const swB = 2.75 / z;
+                const swW = 1.05 / z;
+                return (
+                  <g pointerEvents="none" data-ui="clone-source-crosshair">
+                    <line
+                      x1={wx.x - arm}
+                      y1={wx.y}
+                      x2={wx.x + arm}
+                      y2={wx.y}
+                      stroke="rgba(0,0,0,0.88)"
+                      strokeWidth={swB}
+                      strokeLinecap="round"
+                    />
+                    <line
+                      x1={wx.x}
+                      y1={wx.y - arm}
+                      x2={wx.x}
+                      y2={wx.y + arm}
+                      stroke="rgba(0,0,0,0.88)"
+                      strokeWidth={swB}
+                      strokeLinecap="round"
+                    />
+                    <line
+                      x1={wx.x - arm}
+                      y1={wx.y}
+                      x2={wx.x + arm}
+                      y2={wx.y}
+                      stroke="rgba(255,255,255,0.95)"
+                      strokeWidth={swW}
+                      strokeLinecap="round"
+                    />
+                    <line
+                      x1={wx.x}
+                      y1={wx.y - arm}
+                      x2={wx.x}
+                      y2={wx.y + arm}
+                      stroke="rgba(255,255,255,0.95)"
+                      strokeWidth={swW}
+                      strokeLinecap="round"
+                    />
+                  </g>
+                );
+              })()}
 
             {/* Hover outline: canvas hover or layers panel hover (sync) */}
             {(hoverCanvasId || layerHoverId) && !canvasZenMode && (activeTool === "select" || activeTool === "directSelect") && (() => {
@@ -16745,68 +17382,98 @@ export function FreehandStudioCanvas({
                   <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
                     Entrada conectada
                   </div>
-                  <button
-                    type="button"
-                    onMouseDown={(e) => e.stopPropagation()}
-                    onClick={() => {
-                      void (async () => {
-                        const im = firstSelected as ImageObject;
-                        const slot = String(im.photoRoomInputSlot ?? "").trim();
-                        if (!slot) return;
-                        const rawSrc = String(im.src ?? "").trim();
-                        const cache = new Map<string, string>();
-                        const bakedSrc =
-                          rawSrc.startsWith("data:") || rawSrc.startsWith("blob:")
-                            ? rawSrc
-                            : await rasterHrefToSafeDataUrl(rawSrc, cache);
-                        if (
-                          rawSrc.length > 0 &&
-                          !rawSrc.startsWith("data:") &&
-                          !rawSrc.startsWith("blob:") &&
-                          bakedSrc === TRANSPARENT_PIXEL_PNG
-                        ) {
-                          setToast(
-                            "No se pudo volcar la imagen a bitmap local (red, CORS o URL no accesible). Prueba otra fuente o exporta a archivo.",
-                          );
-                          window.setTimeout(() => setToast(null), 4200);
-                          return;
-                        }
-                        /** Id nuevo: el canónico `…__pr_in_*` queda libre si el grafo tarda un frame en desconectar. */
-                        const newId = `fh_pr_rs_${Date.now()}_${Math.floor(Math.random() * 1e9)}`;
-                        let next: FreehandObject[] = [];
-                        setObjects((prev) => {
-                          next = prev.map((o) =>
-                            o.id === im.id && o.type === "image"
-                              ? ({
-                                  ...o,
-                                  id: newId,
-                                  src: bakedSrc,
-                                  photoRoomInputSlot: undefined,
-                                  photoRoomPreserveInputFrame: undefined,
-                                } as FreehandObject)
-                              : o,
-                          );
-                          queueMicrotask(() => {
-                            setSelectedIds(new Set([newId]));
+                  <div className="flex flex-col gap-1.5">
+                    {photoRoomOnOpenConnectedNanoStudio && (
+                      <button
+                        type="button"
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onClick={() => {
+                          const im = firstSelected as ImageObject;
+                          const slot = String(im.photoRoomInputSlot ?? "").trim();
+                          if (!slot) return;
+                          photoRoomOnOpenConnectedNanoStudio({ photoRoomInputSlot: slot });
+                        }}
+                        className="w-full rounded-[5px] border border-violet-500/25 bg-violet-500/10 px-2.5 py-1.5 text-left text-[11px] text-violet-100 transition-colors hover:bg-violet-500/15"
+                      >
+                        Modificar imagen con IA
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onClick={() => {
+                        void (async () => {
+                          const im = firstSelected as ImageObject;
+                          const slot = String(im.photoRoomInputSlot ?? "").trim();
+                          if (!slot) return;
+                          const rawSrc = String(im.src ?? "").trim();
+                          const cache = new Map<string, string>();
+                          const bakedSrc =
+                            rawSrc.startsWith("data:") || rawSrc.startsWith("blob:")
+                              ? rawSrc
+                              : await rasterHrefToSafeDataUrl(rawSrc, cache);
+                          if (
+                            rawSrc.length > 0 &&
+                            !rawSrc.startsWith("data:") &&
+                            !rawSrc.startsWith("blob:") &&
+                            bakedSrc === TRANSPARENT_PIXEL_PNG
+                          ) {
+                            setToast(
+                              "No se pudo volcar la imagen a bitmap local (red, CORS o URL no accesible). Prueba otra fuente o exporta a archivo.",
+                            );
+                            window.setTimeout(() => setToast(null), 4200);
+                            return;
+                          }
+                          /** Id nuevo: el canónico `…__pr_in_*` queda libre si el grafo tarda un frame en desconectar. */
+                          const newId = `fh_pr_rs_${Date.now()}_${Math.floor(Math.random() * 1e9)}`;
+                          let next: FreehandObject[] = [];
+                          setObjects((prev) => {
+                            next = prev.map((o) =>
+                              o.id === im.id && o.type === "image"
+                                ? ({
+                                    ...o,
+                                    id: newId,
+                                    src: bakedSrc,
+                                    photoRoomInputSlot: undefined,
+                                    photoRoomPreserveInputFrame: undefined,
+                                  } as FreehandObject)
+                                : o,
+                            );
+                            queueMicrotask(() => {
+                              setSelectedIds(new Set([newId]));
+                            });
+                            return next;
                           });
-                          return next;
-                        });
-                        /** Persistencia en el nodo la hace SpacesContent con el snapshot (evita carrera con el filtro que quitaba la capa). */
-                        photoRoomOnRasterizeInputImage?.({
-                          imageObjectId: newId,
-                          photoRoomInputSlot: slot,
-                          studioObjects: next,
-                        });
-                      })();
-                    }}
-                    className="w-full rounded-[5px] border border-amber-500/25 bg-amber-500/10 px-2.5 py-1.5 text-left text-[11px] text-amber-100 transition-colors hover:bg-amber-500/15"
-                  >
-                    Rasterizar imagen
-                  </button>
-                  <p className="mt-2 text-[9px] leading-relaxed text-zinc-500">
-                    Quita el cable a esta ranura en el grafo (los nodos siguen en el lienzo) y convierte la capa en imagen
-                    local: podrás usar marco, píxeles y borrado como en el resto del documento.
-                  </p>
+                          /** Persistencia en el nodo la hace SpacesContent con el snapshot (evita carrera con el filtro que quitaba la capa). */
+                          photoRoomOnRasterizeInputImage?.({
+                            imageObjectId: newId,
+                            photoRoomInputSlot: slot,
+                            studioObjects: next,
+                          });
+                        })();
+                      }}
+                      className="w-full rounded-[5px] border border-amber-500/25 bg-amber-500/10 px-2.5 py-1.5 text-left text-[11px] text-amber-100 transition-colors hover:bg-amber-500/15"
+                    >
+                      Rasterizar imagen
+                    </button>
+                  </div>
+                  {photoRoomOnOpenConnectedNanoStudio ? (
+                    <p className="mt-2 text-[9px] leading-relaxed text-zinc-500">
+                      <span className="block">
+                        <span className="text-zinc-400">IA:</span> abre el Nano Banana que ya está cableado a esta ranura
+                        (no crea nodos). Cierra con «Volver a PhotoRoom» para regresar al lienzo.
+                      </span>
+                      <span className="mt-1.5 block">
+                        <span className="text-zinc-400">Rasterizar:</span> quita el cable y deja la capa como imagen local
+                        en este documento.
+                      </span>
+                    </p>
+                  ) : (
+                    <p className="mt-2 text-[9px] leading-relaxed text-zinc-500">
+                      Quita el cable a esta ranura en el grafo (los nodos siguen en el lienzo) y convierte la capa en imagen
+                      local: podrás usar marco, píxeles y borrado como en el resto del documento.
+                    </p>
+                  )}
                 </div>
               )}
             {canConvertSelectionToPhotoMarquee && (
@@ -17624,6 +18291,13 @@ export function FreehandStudioCanvas({
 
             {firstSelected ? (
               <>
+                {firstSelected.type === "image" && (
+                  <ImagePropertiesInfoSection
+                    image={firstSelected as ImageObject}
+                    expanded={imageInfoPanelExpanded}
+                    onToggle={() => setImageInfoPanelExpanded((v) => !v)}
+                  />
+                )}
                 {/* Transform (plegable, plegado por defecto) */}
                 <div className="border-b border-white/[0.08] px-[14px] py-3">
                   <button

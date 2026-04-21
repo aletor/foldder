@@ -99,6 +99,7 @@ function solidColorToPngDataUrl(hex: string): string {
 }
 
 import './spaces.css';
+import { takePendingNanoStudioOpenFromPhotoRoom } from './photo-room/photo-room-nano-open-pending';
 import { FOLDDER_FIT_VIEW_EASE } from '@/lib/fit-view-ease';
 import { readResponseJson } from '@/lib/read-response-json';
 import { estimateVideoGeneratorPreviewUsd } from '@/lib/pricing-config';
@@ -125,7 +126,11 @@ import {
   type FoldderIconKey,
 } from './foldder-icons';
 import { NodeLabel, FoldderNodeHeaderTitle } from "./foldder-node-ui";
-import { applyPromptValueToEdgeSource, resolvePromptValueFromEdgeSource } from './canvas-group-logic';
+import {
+  applyCanvasGroupCollapse,
+  applyPromptValueToEdgeSource,
+  resolvePromptValueFromEdgeSource,
+} from './canvas-group-logic';
 import {
   buildDirectorEnhancementSuffix,
   buildPhysicsFlagsFromNodeData,
@@ -3650,6 +3655,8 @@ interface NanoBananaStudioProps {
    * solo instrucciones / cámara / zonas configuradas dentro del Studio.
    */
   externalPromptIgnored?: boolean;
+  /** Solo entrada desde PhotoRoom «Modificar imagen con IA»: botón superior = volver al PhotoRoom. */
+  topBarCloseMode?: 'default' | 'returnPhotoRoom';
   onClose: () => void;
   onGenerated: (dataUrl: string, s3Key?: string) => void;
   onResolutionChange?: (resolution: '1k' | '2k' | '4k') => void;
@@ -3770,7 +3777,7 @@ function nanoBananaPromptExcludeZoneGuideArtifacts(prompt: string): string {
 
 const NanoBananaStudio = memo(({
   nodeId, initialImage, lastGenerated, modelKey, aspectRatio, resolution,
-  thinking, prompt, externalPromptIgnored, onClose, onGenerated, onResolutionChange,
+  thinking, prompt, externalPromptIgnored, topBarCloseMode = 'default', onClose, onGenerated, onResolutionChange,
   generationHistory, onGenerationHistoryChange,
 }: NanoBananaStudioProps) => {
   // ── Generation state ────────────────────────────────────────────────────
@@ -4725,15 +4732,27 @@ const NanoBananaStudio = memo(({
           }
         </button>
 
-        {/* Close */}
-        <button
-          type="button"
-          onClick={onClose}
-          className="ml-1 w-9 h-9 rounded-xl flex items-center justify-center text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.08] border border-transparent hover:border-[#6C5CE7]/35 transition-all shrink-0"
-          title="Cerrar Studio"
-        >
-          <X size={16} strokeWidth={2.5} />
-        </button>
+        {/* Close — desde PhotoRoom: volver al nodo PhotoRoom; resto: X */}
+        {topBarCloseMode === 'returnPhotoRoom' ? (
+          <button
+            type="button"
+            onClick={onClose}
+            className="ml-1 flex h-9 shrink-0 items-center gap-1.5 rounded-xl border border-[#6C5CE7]/40 bg-[#6C5CE7]/15 px-3 text-[10px] font-black uppercase tracking-wide text-violet-100 transition-all hover:border-[#6C5CE7]/55 hover:bg-[#6C5CE7]/25"
+            title="Cerrar Nano Banana Studio y volver al PhotoRoom"
+          >
+            <ChevronLeft size={14} className="shrink-0" strokeWidth={2.5} />
+            Volver a PhotoRoom
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onClose}
+            className="ml-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-transparent text-zinc-400 transition-all hover:border-[#6C5CE7]/35 hover:bg-white/[0.08] hover:text-zinc-100"
+            title="Cerrar Studio"
+          >
+            <X size={16} strokeWidth={2.5} />
+          </button>
+        )}
       </div>
 
       {/* ══ Galería (historial) + lienzo ═════════════════════════════════════════ */}
@@ -5292,12 +5311,83 @@ export const NanoBananaNode = memo(({ id, data, selected }: NodeProps<any>) => {
   };
   const nodes = useNodes();
   const edges = useEdges();
-  const { setNodes } = useReactFlow();
+  const { setNodes, setEdges, fitView, getNodes, getEdges } = useReactFlow();
   const [status, setStatus] = useState('idle');
   const [progress, setProgress] = useState(0);
   const [result, setResult] = useState<string | null>(null);
   const [showFullSize, setShowFullSize] = useState(false);
   const [showStudio, setShowStudio] = useState(false);
+  /** Al abrir Studio desde PhotoRoom «Modificar imagen con IA»: id del nodo PhotoRoom para fitView + reabrir su Studio. */
+  const photoRoomReturnTargetRef = useRef<string | null>(null);
+  const [nanoStudioTopBarCloseMode, setNanoStudioTopBarCloseMode] = useState<'default' | 'returnPhotoRoom'>('default');
+
+  const openNanoStudioNormal = useCallback(() => {
+    photoRoomReturnTargetRef.current = null;
+    setNanoStudioTopBarCloseMode('default');
+    setShowStudio(true);
+  }, []);
+
+  const closeNanoStudio = useCallback(() => {
+    const prFlowId = photoRoomReturnTargetRef.current;
+    photoRoomReturnTargetRef.current = null;
+    setNanoStudioTopBarCloseMode('default');
+    setShowStudio(false);
+
+    const graphNodes = getNodes() as Node[];
+    const graphEdges = getEdges();
+    const self = graphNodes.find((n) => n.id === id);
+    const parentId = self?.parentId;
+    if (parentId) {
+      const parent = graphNodes.find((n) => n.id === parentId && n.type === 'canvasGroup');
+      const lab = String((parent?.data as { label?: string })?.label ?? '').trim();
+      const isPrBundle = /^imagen_\d+_PR$/i.test(lab);
+      const alreadyCollapsed = !!(parent?.data as { collapsed?: boolean })?.collapsed;
+      if (parent && isPrBundle && !alreadyCollapsed) {
+        const collapsed = applyCanvasGroupCollapse(parentId, graphNodes, graphEdges);
+        if (collapsed) {
+          setNodes(collapsed.nodes as any);
+          setEdges(collapsed.edges as any);
+        }
+      }
+    }
+
+    if (prFlowId) {
+      requestAnimationFrame(() => {
+        void fitView({
+          nodes: [{ id: prFlowId }],
+          padding: 0.45,
+          duration: 560,
+          interpolate: 'smooth',
+          ...FOLDDER_FIT_VIEW_EASE,
+        });
+        window.dispatchEvent(
+          new CustomEvent('foldder-open-photo-room-studio', { detail: { photoRoomNodeId: prFlowId } }),
+        );
+      });
+    }
+  }, [fitView, getNodes, getEdges, setNodes, setEdges, id]);
+
+  useEffect(() => {
+    const onOpenFromPhotoRoom = (ev: Event) => {
+      const e = ev as CustomEvent<{ nanoNodeId: string; photoRoomNodeId: string }>;
+      if (e.detail?.nanoNodeId !== id) return;
+      photoRoomReturnTargetRef.current = e.detail.photoRoomNodeId;
+      setNanoStudioTopBarCloseMode('returnPhotoRoom');
+      setShowStudio(true);
+    };
+    window.addEventListener('foldder-open-nano-studio-from-photo-room', onOpenFromPhotoRoom as EventListener);
+    return () =>
+      window.removeEventListener('foldder-open-nano-studio-from-photo-room', onOpenFromPhotoRoom as EventListener);
+  }, [id]);
+
+  /** Creación reciente desde PhotoRoom: consume registro síncrono al montar (antes que `useEffect` del listener). */
+  useLayoutEffect(() => {
+    const pending = takePendingNanoStudioOpenFromPhotoRoom(id);
+    if (!pending) return;
+    photoRoomReturnTargetRef.current = pending.photoRoomNodeId;
+    setNanoStudioTopBarCloseMode('returnPhotoRoom');
+    setShowStudio(true);
+  }, [id]);
 
   const persistedGenerationHistory = Array.isArray(nodeData.generationHistory)
     ? nodeData.generationHistory
@@ -5567,7 +5657,7 @@ export const NanoBananaNode = memo(({ id, data, selected }: NodeProps<any>) => {
         )}
 
         {/* Siempre visible: al quedar el estado «generando» por carrera, el usuario puede reabrir Studio */}
-        <NanoBananaStudioModeButton onClick={() => setShowStudio(true)} />
+        <NanoBananaStudioModeButton onClick={openNanoStudioNormal} />
 
         {/* INPUT image badge — bottom-left corner overlay (always visible when connected) */}
         {refImgPreview && outputImage && (
@@ -5631,9 +5721,10 @@ export const NanoBananaNode = memo(({ id, data, selected }: NodeProps<any>) => {
             thinking={!!nodeData.thinking}
             prompt={promptVal}
             externalPromptIgnored
+            topBarCloseMode={nanoStudioTopBarCloseMode}
             generationHistory={persistedGenerationHistory}
             onGenerationHistoryChange={onGenerationHistoryChange}
-            onClose={() => setShowStudio(false)}
+            onClose={closeNanoStudio}
             onGenerated={(url, s3Key) => {
               setResult(url);
               setNodes((nds: any) => nds.map((n: any) => {
