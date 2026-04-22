@@ -82,8 +82,6 @@ import {
   List,
   ListOrdered,
   ArrowLeftRight,
-  BoxSelect,
-  Lasso,
   Spline,
   Plus,
   Sparkles,
@@ -242,6 +240,47 @@ type Tool =
   | "polygonMarquee"
   /** PhotoRoom: marco elíptico (selección tipo óvalo). */
   | "ellipseMarquee";
+
+type ToolFlyoutGroupId = "tf-pen" | "tf-shape" | "tf-photo-marquee" | "tf-text" | "tf-img";
+
+type ToolFlyoutPrimaryState = {
+  "tf-pen": "directSelect" | "pen";
+  "tf-shape": "rect" | "ellipse";
+  "tf-photo-marquee": "rectMarquee" | "ellipseMarquee" | "lassoMarquee" | "polygonMarquee";
+  "tf-text": "text" | "textFrame";
+  "tf-img": "importImage" | "imageFrame";
+};
+
+const DEFAULT_TOOL_FLYOUT_PRIMARY: ToolFlyoutPrimaryState = {
+  "tf-pen": "directSelect",
+  "tf-shape": "rect",
+  "tf-photo-marquee": "rectMarquee",
+  "tf-text": "text",
+  "tf-img": "importImage",
+};
+
+function toolFlyoutGroupForTool(tool: Tool): ToolFlyoutGroupId | null {
+  switch (tool) {
+    case "directSelect":
+    case "pen":
+      return "tf-pen";
+    case "rect":
+    case "ellipse":
+      return "tf-shape";
+    case "rectMarquee":
+    case "ellipseMarquee":
+    case "lassoMarquee":
+    case "polygonMarquee":
+      return "tf-photo-marquee";
+    case "text":
+    case "textFrame":
+      return "tf-text";
+    case "imageFrame":
+      return "tf-img";
+    default:
+      return null;
+  }
+}
 
 interface Point { x: number; y: number }
 interface Rect { x: number; y: number; w: number; h: number }
@@ -536,7 +575,24 @@ interface FreehandObjectBase {
   }>;
 }
 
-export interface RectObject extends FreehandObjectBase { type: "rect"; rx: number }
+export interface RectangleCornerRadius {
+  topLeft: number;
+  topRight: number;
+  bottomRight: number;
+  bottomLeft: number;
+}
+
+export interface RectObject extends FreehandObjectBase {
+  type: "rect";
+  /**
+   * Legacy uniform radius (kept for backward compatibility with older docs/importers).
+   * New geometry uses `cornerRadius`.
+   */
+  rx?: number;
+  cornerRadius?: Partial<RectangleCornerRadius>;
+  /** UI helper: whether corners are currently linked in the properties panel. */
+  cornersLinked?: boolean;
+}
 export interface EllipseObject extends FreehandObjectBase { type: "ellipse" }
 export interface PathObject extends FreehandObjectBase {
   type: "path";
@@ -784,6 +840,186 @@ const LAYOUT_GUIDE_STROKE_WORLD = 0.58;
 const LAYOUT_GUIDE_DRAFT_STROKE_WORLD = 0.62;
 
 function clamp(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)); }
+
+const ZERO_CORNER_RADIUS: RectangleCornerRadius = {
+  topLeft: 0,
+  topRight: 0,
+  bottomRight: 0,
+  bottomLeft: 0,
+};
+
+function safeRadiusValue(v: unknown): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.max(0, n) : 0;
+}
+
+export function clampCornerRadius(
+  cornerRadius: Partial<RectangleCornerRadius> | null | undefined,
+  width: number,
+  height: number,
+): RectangleCornerRadius {
+  const maxR = Math.max(0, Math.min(Math.abs(width), Math.abs(height)) / 2);
+  return {
+    topLeft: clamp(safeRadiusValue(cornerRadius?.topLeft), 0, maxR),
+    topRight: clamp(safeRadiusValue(cornerRadius?.topRight), 0, maxR),
+    bottomRight: clamp(safeRadiusValue(cornerRadius?.bottomRight), 0, maxR),
+    bottomLeft: clamp(safeRadiusValue(cornerRadius?.bottomLeft), 0, maxR),
+  };
+}
+
+export function normalizeCornerRadius(
+  value: number | Partial<RectangleCornerRadius> | null | undefined,
+  width: number,
+  height: number,
+): RectangleCornerRadius {
+  if (typeof value === "number") {
+    const r = safeRadiusValue(value);
+    return clampCornerRadius(
+      { topLeft: r, topRight: r, bottomRight: r, bottomLeft: r },
+      width,
+      height,
+    );
+  }
+  return clampCornerRadius(value, width, height);
+}
+
+export function areCornersLinkedEquivalent(
+  cornerRadius: Partial<RectangleCornerRadius> | null | undefined,
+  epsilon = 1e-3,
+): boolean {
+  if (!cornerRadius) return true;
+  const tl = safeRadiusValue(cornerRadius.topLeft);
+  const tr = safeRadiusValue(cornerRadius.topRight);
+  const br = safeRadiusValue(cornerRadius.bottomRight);
+  const bl = safeRadiusValue(cornerRadius.bottomLeft);
+  return (
+    Math.abs(tl - tr) <= epsilon &&
+    Math.abs(tl - br) <= epsilon &&
+    Math.abs(tl - bl) <= epsilon
+  );
+}
+
+function rectCornerRadiusObject(r: RectObject): RectangleCornerRadius {
+  const source = r.cornerRadius ?? (r.rx != null ? r.rx : 0);
+  return normalizeCornerRadius(source, r.width, r.height);
+}
+
+function rectCornersLinked(r: RectObject): boolean {
+  if (r.cornersLinked != null) return !!r.cornersLinked;
+  return areCornersLinkedEquivalent(rectCornerRadiusObject(r));
+}
+
+function rectObjectWithNormalizedCorners(r: RectObject): RectObject {
+  const corners = rectCornerRadiusObject(r);
+  return {
+    ...r,
+    cornerRadius: corners,
+    cornersLinked: rectCornersLinked(r),
+    rx: corners.topLeft,
+  };
+}
+
+function hasRoundedCorners(cornerRadius: RectangleCornerRadius): boolean {
+  return (
+    cornerRadius.topLeft > 1e-6 ||
+    cornerRadius.topRight > 1e-6 ||
+    cornerRadius.bottomRight > 1e-6 ||
+    cornerRadius.bottomLeft > 1e-6
+  );
+}
+
+function arcSegment(
+  endX: number,
+  endY: number,
+  r: number,
+): string {
+  const rr = Math.max(0, r);
+  if (rr <= 1e-9) return `L ${endX} ${endY}`;
+  return `A ${rr} ${rr} 0 0 1 ${endX} ${endY}`;
+}
+
+export function rectangleToRoundedPath(
+  rect: { x: number; y: number; width: number; height: number },
+  cornerRadius: Partial<RectangleCornerRadius> | null | undefined,
+): string {
+  const w = Math.max(0, rect.width);
+  const h = Math.max(0, rect.height);
+  const x = rect.x;
+  const y = rect.y;
+  if (w <= 1e-9 || h <= 1e-9) {
+    return `M ${x} ${y} L ${x + w} ${y} L ${x + w} ${y + h} L ${x} ${y + h} Z`;
+  }
+  const c = clampCornerRadius(cornerRadius, w, h);
+  const tl = c.topLeft;
+  const tr = c.topRight;
+  const br = c.bottomRight;
+  const bl = c.bottomLeft;
+  return [
+    `M ${x + tl} ${y}`,
+    `L ${x + w - tr} ${y}`,
+    arcSegment(x + w, y + tr, tr),
+    `L ${x + w} ${y + h - br}`,
+    arcSegment(x + w - br, y + h, br),
+    `L ${x + bl} ${y + h}`,
+    arcSegment(x, y + h - bl, bl),
+    `L ${x} ${y + tl}`,
+    arcSegment(x + tl, y, tl),
+    "Z",
+  ].join(" ");
+}
+
+function roundedRectPathDataFromRectObject(r: RectObject): string {
+  return rectangleToRoundedPath(
+    { x: r.x, y: r.y, width: r.width, height: r.height },
+    rectCornerRadiusObject(r),
+  );
+}
+
+function pointInRoundedRectLocal(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  cornerRadius: RectangleCornerRadius,
+): boolean {
+  if (x < 0 || y < 0 || x > width || y > height) return false;
+  const tl = cornerRadius.topLeft;
+  const tr = cornerRadius.topRight;
+  const br = cornerRadius.bottomRight;
+  const bl = cornerRadius.bottomLeft;
+
+  if (x < tl && y < tl && tl > 0) {
+    const dx = x - tl;
+    const dy = y - tl;
+    return dx * dx + dy * dy <= tl * tl;
+  }
+  if (x > width - tr && y < tr && tr > 0) {
+    const dx = x - (width - tr);
+    const dy = y - tr;
+    return dx * dx + dy * dy <= tr * tr;
+  }
+  if (x > width - br && y > height - br && br > 0) {
+    const dx = x - (width - br);
+    const dy = y - (height - br);
+    return dx * dx + dy * dy <= br * br;
+  }
+  if (x < bl && y > height - bl && bl > 0) {
+    const dx = x - bl;
+    const dy = y - (height - bl);
+    return dx * dx + dy * dy <= bl * bl;
+  }
+  return true;
+}
+
+function cornerRadiusHandleWorldPoints(r: RectObject): Record<keyof RectangleCornerRadius, Point> {
+  const c = rectCornerRadiusObject(r);
+  return {
+    topLeft: objLocalToWorldPoint({ x: c.topLeft, y: c.topLeft }, r),
+    topRight: objLocalToWorldPoint({ x: r.width - c.topRight, y: c.topRight }, r),
+    bottomRight: objLocalToWorldPoint({ x: r.width - c.bottomRight, y: r.height - c.bottomRight }, r),
+    bottomLeft: objLocalToWorldPoint({ x: c.bottomLeft, y: r.height - c.bottomLeft }, r),
+  };
+}
 
 /** Punto en rectángulo en espacio mundo (incluye borde). */
 function pointInWorldRect(p: Point, r: Rect): boolean {
@@ -2179,14 +2415,24 @@ function objLocalToWorldPoint(local: Point, o: FreehandObject): Point {
   return { x: t.x, y: t.y };
 }
 
+function pointWorldToObjectRectLocal(px: number, py: number, obj: FreehandObject): Point {
+  return worldPointToObjLocal({ x: px, y: py }, obj);
+}
+
 function pointInRotatedRect(px: number, py: number, obj: FreehandObject): boolean {
-  const rad = (-obj.rotation * Math.PI) / 180;
-  const cx = obj.x + obj.width / 2;
-  const cy = obj.y + obj.height / 2;
-  const dx = px - cx, dy = py - cy;
-  const rx = dx * Math.cos(rad) - dy * Math.sin(rad) + obj.width / 2;
-  const ry = dx * Math.sin(rad) + dy * Math.cos(rad) + obj.height / 2;
-  return rx >= 0 && rx <= obj.width && ry >= 0 && ry <= obj.height;
+  const p = pointWorldToObjectRectLocal(px, py, obj);
+  return p.x >= 0 && p.x <= obj.width && p.y >= 0 && p.y <= obj.height;
+}
+
+function pointInRoundedRectObject(px: number, py: number, obj: RectObject): boolean {
+  const p = pointWorldToObjectRectLocal(px, py, obj);
+  return pointInRoundedRectLocal(
+    p.x,
+    p.y,
+    obj.width,
+    obj.height,
+    rectCornerRadiusObject(obj),
+  );
 }
 
 function pointInEllipse(px: number, py: number, obj: FreehandObject): boolean {
@@ -2330,7 +2576,12 @@ function colorDropPreferStroke(pos: Point, obj: FreehandObject, allObjects: Free
       if (!pointInRotatedRect(pos.x, pos.y, co)) return dBorder <= pad;
       return dBorder <= band;
     }
-    case "rect":
+    case "rect": {
+      if (!("width" in obj) || !("height" in obj)) return false;
+      const dBorder = distWorldToRotatedRectBorder(pos.x, pos.y, obj);
+      if (!pointInRoundedRectObject(pos.x, pos.y, obj as RectObject)) return dBorder <= pad;
+      return dBorder <= band;
+    }
     default: {
       if (!("width" in obj) || !("height" in obj)) return false;
       const dBorder = distWorldToRotatedRectBorder(pos.x, pos.y, obj);
@@ -2387,9 +2638,10 @@ function hitTestObject(
       return distToPathSegments(hp, pathObj).dist < threshold;
     }
     case "booleanGroup":
-    case "rect":
     case "image":
       return pointInRotatedRect(pos.x, pos.y, obj);
+    case "rect":
+      return pointInRoundedRectObject(pos.x, pos.y, obj as RectObject);
     case "clippingContainer": {
       const c = obj as ClippingContainerObject;
       const lp = worldPointToLocal(c, pos);
@@ -2401,7 +2653,7 @@ function hitTestObject(
         }
         if (m.type === "rect") {
           const pseudo = { ...m, rotation: 0 } as RectObject;
-          return pointInRotatedRect(lp.x, lp.y, pseudo);
+          return pointInRoundedRectObject(lp.x, lp.y, pseudo);
         }
         if (m.type === "image") {
           const im = m as ImageObject;
@@ -4959,11 +5211,10 @@ export function renderPresenterVideoClipShapeWorld(o: FreehandObject): React.Rea
   if (!o.visible) return null;
   if (o.type === "rect") {
     const r = o as RectObject;
-    if (r.rx < 0.01) return null;
+    const cr = rectCornerRadiusObject(r);
+    if (!hasRoundedCorners(cr)) return null;
     const transform = buildObjTransform(o);
-    return (
-      <rect x={r.x} y={r.y} width={r.width} height={r.height} rx={r.rx} fill="#fff" transform={transform} />
-    );
+    return <path d={roundedRectPathDataFromRectObject(r)} fill="#fff" transform={transform} />;
   }
   if (o.type === "ellipse") {
     const e = o as EllipseObject;
@@ -5006,9 +5257,7 @@ function renderMaskShapeClipInner(m: ClipMaskShape): React.ReactNode {
   if (m.type === "rect") {
     const r = m as RectObject;
     const transform = buildObjTransform(r);
-    return (
-      <rect x={r.x} y={r.y} width={r.width} height={r.height} rx={r.rx} fill="#000" transform={transform} />
-    );
+    return <path d={roundedRectPathDataFromRectObject(r)} fill="#000" transform={transform} />;
   }
   if (m.type === "ellipse") {
     const e = m as EllipseObject;
@@ -5051,15 +5300,7 @@ function renderClipContentIsolationMaskGuide(m: ClipMaskShape, zoom: number): Re
     const r = m as RectObject;
     const transform = buildObjTransform(r);
     return (
-      <rect
-        x={r.x}
-        y={r.y}
-        width={r.width}
-        height={r.height}
-        rx={r.rx ?? 0}
-        {...common}
-        transform={transform}
-      />
+      <path d={roundedRectPathDataFromRectObject(r)} {...common} transform={transform} />
     );
   }
   if (m.type === "ellipse") {
@@ -5919,7 +6160,8 @@ export function renderObj(
 
   switch (obj.type) {
     case "rect": {
-      const rObj = obj as RectObject;
+      const rObj = rectObjectWithNormalizedCorners(obj as RectObject);
+      const rectPathD = roundedRectPathDataFromRectObject(rObj);
       if (rObj.isImageFrame) {
         const ifc = rObj.imageFrameContent;
         const cid = `imf-clip-${rObj.id}`;
@@ -5933,15 +6175,11 @@ export function renderObj(
           <g key={rObj.id} transform={transform} opacity={rObj.opacity}>
             <defs>
               <clipPath id={cid}>
-                <rect x={rObj.x} y={rObj.y} width={rObj.width} height={rObj.height} rx={rObj.rx} />
+                <path d={rectPathD} />
               </clipPath>
             </defs>
-            <rect
-              x={rObj.x}
-              y={rObj.y}
-              width={rObj.width}
-              height={rObj.height}
-              rx={rObj.rx}
+            <path
+              d={rectPathD}
               fill={suppressPresenterBitmap ? "none" : fillAttr}
               stroke={frameSelected ? rObj.stroke : "none"}
               strokeWidth={frameSelected ? rObj.strokeWidth : 0}
@@ -5985,12 +6223,8 @@ export function renderObj(
       const hasVisStroke =
         rObj.strokeWidth > 0 && rObj.stroke != null && rObj.stroke !== "none";
       const silhouetteRect = (
-        <rect
-          x={rObj.x}
-          y={rObj.y}
-          width={rObj.width}
-          height={rObj.height}
-          rx={rObj.rx}
+        <path
+          d={rectPathD}
           fill={!suppressPresenterRectFill && fillHasPaint(fill) ? "white" : "none"}
           stroke={hasVisStroke ? "white" : "none"}
           strokeWidth={hasVisStroke ? rObj.strokeWidth : 0}
@@ -6019,12 +6253,8 @@ export function renderObj(
               effects={leRect}
               alphaSource={silhouetteRect}
             >
-              <rect
-                x={rObj.x}
-                y={rObj.y}
-                width={rObj.width}
-                height={rObj.height}
-                rx={rObj.rx}
+              <path
+                d={rectPathD}
                 fill={suppressPresenterRectFill ? "none" : fillAttr}
                 {...strokePaint}
                 {...(suppressPresenterRectFill ? { pointerEvents: "all" as const } : {})}
@@ -6034,13 +6264,9 @@ export function renderObj(
         );
       }
       return (
-        <rect
+        <path
           key={obj.id}
-          x={obj.x}
-          y={obj.y}
-          width={obj.width}
-          height={obj.height}
-          rx={rObj.rx}
+          d={rectPathD}
           fill={suppressPresenterRectFill ? "none" : fillAttr}
           transform={transform}
           {...strokeProps}
@@ -6636,7 +6862,7 @@ export function renderClipDef(clipObj: FreehandObject): React.ReactNode {
   let shape: React.ReactNode = null;
   switch (clipObj.type) {
     case "rect":
-      shape = <rect x={clipObj.x} y={clipObj.y} width={clipObj.width} height={clipObj.height} rx={(clipObj as RectObject).rx} />;
+      shape = <path d={roundedRectPathDataFromRectObject(rectObjectWithNormalizedCorners(clipObj as RectObject))} />;
       break;
     case "ellipse":
       shape = <ellipse cx={clipObj.x + clipObj.width / 2} cy={clipObj.y + clipObj.height / 2} rx={clipObj.width / 2} ry={clipObj.height / 2} />;
@@ -6916,7 +7142,7 @@ function objToSvgStringStatic(obj: FreehandObject, w: number, h: number, ox: num
   const capJoin = ` stroke-linecap="${obj.strokeLinecap}" stroke-linejoin="${obj.strokeLinejoin}"${mlAttr}${dashOffAttr}`;
   switch (obj.type) {
     case "rect":
-      parts.push(`<rect x="${obj.x}" y="${obj.y}" width="${obj.width}" height="${obj.height}" rx="${(obj as RectObject).rx}" fill="${escapeXmlAttr(fillAttr)}" stroke="${obj.stroke}" stroke-width="${obj.strokeWidth}"${capJoin}${dashAttr} ${transform}/>`);
+      parts.push(`<path d="${escapeXmlAttr(roundedRectPathDataFromRectObject(rectObjectWithNormalizedCorners(obj as RectObject)))}" fill="${escapeXmlAttr(fillAttr)}" stroke="${obj.stroke}" stroke-width="${obj.strokeWidth}"${capJoin}${dashAttr} ${transform}/>`);
       break;
     case "ellipse":
       parts.push(`<ellipse cx="${obj.x + obj.width / 2}" cy="${obj.y + obj.height / 2}" rx="${obj.width / 2}" ry="${obj.height / 2}" fill="${escapeXmlAttr(fillAttr)}" stroke="${obj.stroke}" stroke-width="${obj.strokeWidth}"${capJoin}${dashAttr} ${transform}/>`);
@@ -7190,6 +7416,8 @@ async function freehandObjectsFromSvgImportShapes(shapes: SvgImportShape[]): Pro
         width: s.width,
         height: s.height,
         rx: s.rx,
+        cornerRadius: normalizeCornerRadius(s.rx, s.width, s.height),
+        cornersLinked: true,
         fill,
         stroke: s.stroke,
         strokeWidth: s.strokeWidth,
@@ -7437,7 +7665,7 @@ function svgStringToCanvas(svgStr: string, w: number, h: number, bgColor?: strin
 
 const TOOLBAR_ICON_STROKE = 1.75 as const;
 /** Pulsación mantenida sobre el icono del grupo para abrir el submenú (rollout). */
-const TOOLBAR_FLYOUT_PRESS_MS = 50;
+const TOOLBAR_FLYOUT_PRESS_MS = 220;
 
 /**
  * Herramienta Pincel — referencia del usuario: mango alargado (arriba-dcha) y cabeza en lágrima (abajo-izq),
@@ -7477,6 +7705,59 @@ function PhotoCloneStampToolIcon({ size = 19, className }: { size?: number; clas
         <path d="M3.6 10.9h2.35" />
         <path d="M20.35 12.9q0.85 1.35 0.35 2.85" />
       </g>
+    </svg>
+  );
+}
+
+function MarqueeRectToolIcon({ size = 19, className }: { size?: number; className?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 20 20" fill="none" className={className} aria-hidden>
+      <rect x="2.75" y="3.25" width="14.5" height="13.5" rx="1.6" stroke="currentColor" strokeWidth={1.7} strokeDasharray="2.3 2" />
+    </svg>
+  );
+}
+
+function MarqueeEllipseToolIcon({ size = 19, className }: { size?: number; className?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 20 20" fill="none" className={className} aria-hidden>
+      <ellipse cx="10" cy="10" rx="7" ry="6.3" stroke="currentColor" strokeWidth={1.7} strokeDasharray="2.1 1.8" />
+    </svg>
+  );
+}
+
+function MarqueeLassoToolIcon({ size = 19, className }: { size?: number; className?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 20 20" fill="none" className={className} aria-hidden>
+      <path d="M4 10.8c0-3.25 2.75-5.75 6.4-5.75 3.2 0 5.6 1.95 5.6 4.75 0 2.35-1.45 4.45-3.8 5.4-.95.4-1.1 1.7-.25 2.25l.55.35" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeDasharray="2 2" />
+      <circle cx="12.95" cy="17.2" r="1.1" fill="currentColor" />
+    </svg>
+  );
+}
+
+function MarqueePolygonToolIcon({ size = 19, className }: { size?: number; className?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 20 20" fill="none" className={className} aria-hidden>
+      <path d="M3.2 13.8 5.6 5.4 14.4 4.2 16.8 12.4 9.8 16.2Z" stroke="currentColor" strokeWidth={1.65} strokeLinejoin="round" strokeDasharray="2 1.8" />
+      <circle cx="5.6" cy="5.4" r="1.05" fill="currentColor" />
+      <circle cx="14.4" cy="4.2" r="1.05" fill="currentColor" />
+      <circle cx="16.8" cy="12.4" r="1.05" fill="currentColor" />
+      <circle cx="9.8" cy="16.2" r="1.05" fill="currentColor" />
+      <circle cx="3.2" cy="13.8" r="1.05" fill="currentColor" />
+    </svg>
+  );
+}
+
+function PhotoGradientToolIcon({ size = 19, className }: { size?: number; className?: string }) {
+  const gid = useId();
+  return (
+    <svg width={size} height={size} viewBox="0 0 20 20" fill="none" className={className} aria-hidden>
+      <defs>
+        <linearGradient id={gid} x1="2.5" y1="10" x2="17.5" y2="10" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#2f2f34" />
+          <stop offset="1" stopColor="#d9d9dc" />
+        </linearGradient>
+      </defs>
+      <rect x="2.5" y="3.2" width="15" height="13.6" rx="1.5" fill={`url(#${gid})`} stroke="currentColor" strokeWidth={1.2} />
     </svg>
   );
 }
@@ -7627,6 +7908,7 @@ function ToolFlyoutGroup({
         onPointerDown={handleMainPointerDown}
         onPointerUp={handleMainPointerEnd}
         onPointerCancel={handleMainPointerEnd}
+        onPointerLeave={handleMainPointerEnd}
         className={`relative flex h-full w-full items-center justify-center rounded-[2px] pr-1.5 pb-1.5 transition-all duration-150 ease-out ${
           active
             ? "bg-white/[0.11] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.12)]"
@@ -7864,11 +8146,15 @@ function migrateDesignerPageObjects(raw: FreehandObject[]): FreehandObject[] {
   if (raw.length === 0) return [];
   return raw.map((o) => {
     const base = o as FreehandObjectBase;
-    return {
+    const withBase = {
       ...o,
       fill: migrateFill((o as FreehandObject).fill as unknown),
       blendMode: (base.blendMode ?? "normal") as LayerBlendMode,
-    };
+    } as FreehandObject;
+    if (withBase.type === "rect") {
+      return rectObjectWithNormalizedCorners(withBase as RectObject);
+    }
+    return withBase;
   }) as FreehandObject[];
 }
 
@@ -8466,6 +8752,9 @@ export function FreehandStudioCanvas({
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [activeTool, setActiveTool] = useState<Tool>("select");
+  const [toolFlyoutPrimary, setToolFlyoutPrimary] = useState<ToolFlyoutPrimaryState>(
+    DEFAULT_TOOL_FLYOUT_PRIMARY,
+  );
   const [prToolCursorBlocked, setPrToolCursorBlocked] = useState(false);
   const prToolCursorBlockedRef = useRef(false);
 
@@ -8496,6 +8785,16 @@ export function FreehandStudioCanvas({
   useEffect(() => {
     prToolCursorBlockedRef.current = false;
     setPrToolCursorBlocked(false);
+  }, [activeTool]);
+
+  useEffect(() => {
+    const gid = toolFlyoutGroupForTool(activeTool);
+    if (!gid) return;
+    setToolFlyoutPrimary((prev) => {
+      const nextTool = activeTool as ToolFlyoutPrimaryState[typeof gid];
+      if (prev[gid] === nextTool) return prev;
+      return { ...prev, [gid]: nextTool };
+    });
   }, [activeTool]);
 
   /**
@@ -8638,7 +8937,7 @@ export function FreehandStudioCanvas({
 
   // Drag state
   const [dragState, setDragState] = useState<{
-    type: "move" | "resize" | "pan" | "create" | "createText" | "createTextFrame" | "createImageFrame" | "directSelect" | "marquee" | "photoRectMarquee" | "photoEllipseMarquee" | "photoLassoMarquee" | "photoPolygonMarquee" | "photoMarqueeNudge" | "photoMarqueeFloatRotate" | "photoMarqueeFloatResize" | "penHandle" | "rotate" | "gradient" | "guideMove" | "guidePull" | "imageContentPan" | "imageContentResize" | "brushPaint" | "photoGradientLine" | "photoGradientVertex";
+    type: "move" | "resize" | "pan" | "create" | "createText" | "createTextFrame" | "createImageFrame" | "directSelect" | "marquee" | "photoRectMarquee" | "photoEllipseMarquee" | "photoLassoMarquee" | "photoPolygonMarquee" | "photoMarqueeNudge" | "photoMarqueeFloatRotate" | "photoMarqueeFloatResize" | "penHandle" | "rotate" | "gradient" | "guideMove" | "guidePull" | "imageContentPan" | "imageContentResize" | "brushPaint" | "photoGradientLine" | "photoGradientVertex" | "cornerRadius";
     startX: number;
     startY: number;
     startCanvas?: Point;
@@ -8715,6 +9014,10 @@ export function FreehandStudioCanvas({
     photoGradientVertexRole?: "start" | "end";
     photoGradientSnapStartWorld?: Point;
     photoGradientSnapEndWorld?: Point;
+    cornerRadiusObjectId?: string;
+    cornerRadiusCorner?: keyof RectangleCornerRadius;
+    cornerRadiusStartValue?: number;
+    cornerRadiusSnapshot?: RectangleCornerRadius;
   } | null>(null);
 
   const dragStateRef = useRef(dragState);
@@ -8770,6 +9073,8 @@ export function FreehandStudioCanvas({
   const [hoverCanvasId, setHoverCanvasId] = useState<string | null>(null);
   /** Layer row hover (panel). */
   const [layerHoverId, setLayerHoverId] = useState<string | null>(null);
+  /** Corner radius handle hovered on selected rectangle. */
+  const [hoverCornerRadiusHandle, setHoverCornerRadiusHandle] = useState<keyof RectangleCornerRadius | null>(null);
   /** Panel de capas: desplegado por defecto abajo en la columna derecha. */
   const [layersPanelExpanded, setLayersPanelExpanded] = useState(true);
   /** Desplegable modo de fusión encima del listado de capas. */
@@ -9788,6 +10093,8 @@ export function FreehandStudioCanvas({
         stroke: "none",
         strokeWidth: 0,
         rx: 0,
+        cornerRadius: { ...ZERO_CORNER_RADIUS },
+        cornersLinked: true,
       };
       newId = newObj.id;
       const next = [...prev, newObj];
@@ -9942,7 +10249,10 @@ export function FreehandStudioCanvas({
   }, [selectedIds]);
 
   useEffect(() => {
-    if (dragState) setHoverCanvasId(null);
+    if (dragState) {
+      setHoverCanvasId(null);
+      setHoverCornerRadiusHandle(null);
+    }
   }, [dragState]);
 
   useEffect(() => {
@@ -11049,6 +11359,52 @@ export function FreehandStudioCanvas({
     if (sel.size === 0) return;
     setObjects((prev) => prev.map((o) => (sel.has(o.id) ? { ...o, [key]: value } : o)));
   }, []);
+
+  const updateSelectedRectCornerRadius = useCallback(
+    (
+      patch: number | Partial<RectangleCornerRadius>,
+      opts?: { corner?: keyof RectangleCornerRadius; linked?: boolean; silent?: boolean },
+    ) => {
+      const sel = selectedIdsRef.current;
+      if (sel.size === 0) return;
+      const silent = opts?.silent === true;
+      setObjects((prev) => {
+        const next = prev.map((o) => {
+          if (!sel.has(o.id) || o.type !== "rect") return o;
+          const r = rectObjectWithNormalizedCorners(o as RectObject);
+          let corners: RectangleCornerRadius;
+          if (typeof patch === "number") {
+            corners = normalizeCornerRadius(patch, r.width, r.height);
+          } else if (opts?.corner) {
+            corners = clampCornerRadius(
+              { ...rectCornerRadiusObject(r), [opts.corner]: safeRadiusValue((patch as Partial<RectangleCornerRadius>)[opts.corner]) },
+              r.width,
+              r.height,
+            );
+          } else {
+            corners = clampCornerRadius(
+              {
+                ...rectCornerRadiusObject(r),
+                ...(patch as Partial<RectangleCornerRadius>),
+              },
+              r.width,
+              r.height,
+            );
+          }
+          const linked = opts?.linked ?? areCornersLinkedEquivalent(corners);
+          return {
+            ...r,
+            cornerRadius: corners,
+            cornersLinked: linked,
+            rx: corners.topLeft,
+          };
+        });
+        if (!silent) pushHistory(next, sel);
+        return next;
+      });
+    },
+    [pushHistory],
+  );
 
   /** Un solo paso de deshacer al terminar un gesto de scrub. */
   const commitHistoryAfterScrub = useCallback(() => {
@@ -14665,6 +15021,34 @@ export function FreehandStudioCanvas({
         selectedIds.size === 1 &&
         selectedIds.has(clipContentEditId));
 
+    if (
+      !hideFrameHandlesForInnerContent &&
+      selectedObjects.length === 1 &&
+      activeTool === "select"
+    ) {
+      const so = selectedObjects[0];
+      if (so.type === "rect" && so.visible && !so.locked) {
+        const rObj = rectObjectWithNormalizedCorners(so as RectObject);
+        const handles = cornerRadiusHandleWorldPoints(rObj);
+        const hitR = 10 / viewport.zoom;
+        const order: (keyof RectangleCornerRadius)[] = ["topLeft", "topRight", "bottomRight", "bottomLeft"];
+        for (const key of order) {
+          if (dist(pos, handles[key]) <= hitR) {
+            setDragState({
+              type: "cornerRadius",
+              startX: e.clientX,
+              startY: e.clientY,
+              cornerRadiusObjectId: rObj.id,
+              cornerRadiusCorner: key,
+              cornerRadiusStartValue: rectCornerRadiusObject(rObj)[key],
+              cornerRadiusSnapshot: rectCornerRadiusObject(rObj),
+            });
+            return;
+          }
+        }
+      }
+    }
+
     // Resize/rotate handles. Mayús no bloquea asas (proporciones al arrastrar); extendSel solo afecta a clics fuera de handles.
     if (selectedObjects.length > 0 && selectionFrame && !hideFrameHandlesForInnerContent) {
       const f = selectionFrame;
@@ -15464,6 +15848,24 @@ export function FreehandStudioCanvas({
           }
         }
         setHoverCanvasId((prev) => (prev === found ? prev : found));
+        if (selectedObjects.length === 1 && selectedObjects[0]?.type === "rect") {
+          const r = rectObjectWithNormalizedCorners(selectedObjects[0] as RectObject);
+          const handles = cornerRadiusHandleWorldPoints(r);
+          const hitR = 10 / viewport.zoom;
+          const order: (keyof RectangleCornerRadius)[] = ["topLeft", "topRight", "bottomRight", "bottomLeft"];
+          let hit: keyof RectangleCornerRadius | null = null;
+          for (const key of order) {
+            if (dist(pos, handles[key]) <= hitR) {
+              hit = key;
+              break;
+            }
+          }
+          setHoverCornerRadiusHandle((prev) => (prev === hit ? prev : hit));
+        } else {
+          setHoverCornerRadiusHandle((prev) => (prev == null ? prev : null));
+        }
+      } else {
+        setHoverCornerRadiusHandle((prev) => (prev == null ? prev : null));
       }
       if (isPhotoRoomStudioEmbed && !spaceHeld) {
         const th = 8 / viewport.zoom;
@@ -16001,6 +16403,52 @@ export function FreehandStudioCanvas({
       return;
     }
 
+    if (
+      dragState.type === "cornerRadius" &&
+      dragState.cornerRadiusObjectId &&
+      dragState.cornerRadiusCorner
+    ) {
+      const pos = screenToCanvas(e.clientX, e.clientY);
+      const altHeld = e.altKey || e.nativeEvent.getModifierState?.("Alt");
+      const linkedEdit = !altHeld;
+      const cornerKey = dragState.cornerRadiusCorner as keyof RectangleCornerRadius;
+      setObjects((prev) =>
+        prev.map((o) => {
+          if (o.id !== dragState.cornerRadiusObjectId || o.type !== "rect") return o;
+          const r = rectObjectWithNormalizedCorners(o as RectObject);
+          const loc = worldPointToObjLocal(pos, r);
+          const maxR = Math.max(0, Math.min(r.width, r.height) / 2);
+          const raw =
+            cornerKey === "topLeft"
+              ? Math.min(loc.x, loc.y)
+              : cornerKey === "topRight"
+                ? Math.min(r.width - loc.x, loc.y)
+                : cornerKey === "bottomRight"
+                  ? Math.min(r.width - loc.x, r.height - loc.y)
+                  : Math.min(loc.x, r.height - loc.y);
+          let nextValue = clamp(raw, 0, maxR);
+          if (isShiftHeld(e)) nextValue = Math.round(nextValue);
+          let corners: RectangleCornerRadius;
+          if (linkedEdit) {
+            corners = normalizeCornerRadius(nextValue, r.width, r.height);
+          } else {
+            corners = clampCornerRadius(
+              { ...(dragState.cornerRadiusSnapshot ?? rectCornerRadiusObject(r)), [cornerKey]: nextValue },
+              r.width,
+              r.height,
+            );
+          }
+          return {
+            ...r,
+            cornerRadius: corners,
+            cornersLinked: linkedEdit && areCornersLinkedEquivalent(corners),
+            rx: corners.topLeft,
+          };
+        }),
+      );
+      return;
+    }
+
     const useSelectionGeometryRaf =
       (dragState.type === "move" && !!dragState.positions) ||
       (dragState.type === "rotate" &&
@@ -16073,6 +16521,7 @@ export function FreehandStudioCanvas({
     objects,
     artboards,
     selectedIds,
+    selectedObjects,
     snapEnabled,
     screenToCanvas,
     penPoints,
@@ -16669,6 +17118,8 @@ export function FreehandStudioCanvas({
         strokeWidth: 1,
         strokeDasharray: `${6} ${4}`,
         rx: 0,
+        cornerRadius: { ...ZERO_CORNER_RADIUS },
+        cornersLinked: true,
         isImageFrame: true,
         imageFrameContent: null,
         imageFrameAutoFit: true,
@@ -16695,7 +17146,23 @@ export function FreehandStudioCanvas({
 
       const newObj: FreehandObject = ds.createType === "ellipse"
         ? { ...defaultObj({ name: `Ellipse ${objects.length + 1}` }), type: "ellipse", x, y, width: w, height: h, fill: solidFill(fillColor), stroke: strokeColor, strokeWidth, strokeLinecap, strokeLinejoin, strokeDasharray } as EllipseObject
-        : { ...defaultObj({ name: `Rect ${objects.length + 1}` }), type: "rect", x, y, width: w, height: h, fill: solidFill(fillColor), stroke: strokeColor, strokeWidth, strokeLinecap, strokeLinejoin, strokeDasharray, rx: 0 } as RectObject;
+        : {
+            ...defaultObj({ name: `Rect ${objects.length + 1}` }),
+            type: "rect",
+            x,
+            y,
+            width: w,
+            height: h,
+            fill: solidFill(fillColor),
+            stroke: strokeColor,
+            strokeWidth,
+            strokeLinecap,
+            strokeLinejoin,
+            strokeDasharray,
+            rx: 0,
+            cornerRadius: { ...ZERO_CORNER_RADIUS },
+            cornersLinked: true,
+          } as RectObject;
 
       const next = [...objects, newObj];
       setObjects(next);
@@ -16728,7 +17195,8 @@ export function FreehandStudioCanvas({
       ds.type === "rotate" ||
       ds.type === "gradient" ||
       ds.type === "imageContentPan" ||
-      ds.type === "imageContentResize"
+      ds.type === "imageContentResize" ||
+      ds.type === "cornerRadius"
     ) {
       const prox = selectionGestureProxyByIdRef.current;
       let snapshot = objectsRef.current;
@@ -17112,6 +17580,7 @@ export function FreehandStudioCanvas({
   const cursor = useMemo(() => {
     if (spaceHeld || dragState?.type === "pan") return "grab";
     if (dragState?.type === "imageContentPan") return "move";
+    if (dragState?.type === "cornerRadius") return "nwse-resize";
     if (dragState?.type === "imageContentResize" && dragState.imageCorner) {
       const m: Record<string, string> = {
         nw: "nwse-resize", ne: "nesw-resize", sw: "nesw-resize", se: "nwse-resize",
@@ -17129,6 +17598,7 @@ export function FreehandStudioCanvas({
     }
     if (dragState?.type === "rotate") return "grab";
     if (dragState?.type === "move") return "move";
+    if (!dragState && hoverCornerRadiusHandle) return "nwse-resize";
     if (
       !dragState &&
       prToolCursorBlocked &&
@@ -17159,7 +17629,7 @@ export function FreehandStudioCanvas({
       return "crosshair";
     }
     return "default";
-  }, [activeTool, spaceHeld, dragState, prToolCursorBlocked]);
+  }, [activeTool, spaceHeld, dragState, prToolCursorBlocked, hoverCornerRadiusHandle]);
 
   const quickEditPos = useMemo(() => {
     if (!quickEditMode || !selectionFrame || typeof window === "undefined") return null;
@@ -17400,6 +17870,12 @@ export function FreehandStudioCanvas({
   // ═══════════════════════════════════════════════════════════════════
   //  RENDER
   // ═══════════════════════════════════════════════════════════════════
+
+  const primaryPenTool = toolFlyoutPrimary["tf-pen"];
+  const primaryShapeTool = toolFlyoutPrimary["tf-shape"];
+  const primaryPhotoMarqueeTool = toolFlyoutPrimary["tf-photo-marquee"];
+  const primaryTextTool = toolFlyoutPrimary["tf-text"];
+  const primaryImageTool = toolFlyoutPrimary["tf-img"];
 
   return (
     <div
@@ -17653,15 +18129,98 @@ export function FreehandStudioCanvas({
         <ToolBtn active={activeTool === "select"} onClick={() => { setActiveTool("select"); setSelectedPoints(new Map()); }} title="Selection (V)">
           <MousePointer2 size={19} strokeWidth={TOOLBAR_ICON_STROKE} />
         </ToolBtn>
+        {studioCaps.toolPhotoMarquee && (
+          <ToolFlyoutGroup
+            groupId="tf-photo-marquee"
+            flyoutOpen={leftToolbarToolFlyout}
+            setFlyoutOpen={setLeftToolbarToolFlyout}
+            active={
+              activeTool === "rectMarquee" ||
+              activeTool === "ellipseMarquee" ||
+              activeTool === "lassoMarquee" ||
+              activeTool === "polygonMarquee"
+            }
+            mainTitle="Selección PhotoRoom: rectángulo (M), elipse (O), lazo (L), poligonal (⇧L). Ctrl/⌘ suma; Alt resta."
+            onMainClick={() => {
+              setActiveTool(primaryPhotoMarqueeTool);
+              setLeftToolbarToolFlyout(null);
+            }}
+            mainIcon={
+              primaryPhotoMarqueeTool === "lassoMarquee" ? (
+                <MarqueeLassoToolIcon size={19} />
+              ) : primaryPhotoMarqueeTool === "polygonMarquee" ? (
+                <MarqueePolygonToolIcon size={19} />
+              ) : primaryPhotoMarqueeTool === "ellipseMarquee" ? (
+                <MarqueeEllipseToolIcon size={19} />
+              ) : (
+                <MarqueeRectToolIcon size={19} />
+              )
+            }
+          >
+            <button
+              type="button"
+              title="Marco rectangular (M)"
+              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] transition ${
+                activeTool === "rectMarquee" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
+              }`}
+              onClick={() => {
+                setActiveTool("rectMarquee");
+                setLeftToolbarToolFlyout(null);
+              }}
+            >
+              <MarqueeRectToolIcon size={17} />
+            </button>
+            <button
+              type="button"
+              title="Marco elíptico (O). ⇧ al arrastrar = círculo. Ctrl/⌘ suma; Alt resta."
+              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] transition ${
+                activeTool === "ellipseMarquee" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
+              }`}
+              onClick={() => {
+                setActiveTool("ellipseMarquee");
+                setLeftToolbarToolFlyout(null);
+              }}
+            >
+              <MarqueeEllipseToolIcon size={17} />
+            </button>
+            <button
+              type="button"
+              title="Lazo libre (L)"
+              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] transition ${
+                activeTool === "lassoMarquee" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
+              }`}
+              onClick={() => {
+                setActiveTool("lassoMarquee");
+                setLeftToolbarToolFlyout(null);
+              }}
+            >
+              <MarqueeLassoToolIcon size={17} />
+            </button>
+            <button
+              type="button"
+              title="Lazo poligonal (⇧L)"
+              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] transition ${
+                activeTool === "polygonMarquee" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
+              }`}
+              onClick={() => {
+                setActiveTool("polygonMarquee");
+                setLeftToolbarToolFlyout(null);
+              }}
+            >
+              <MarqueePolygonToolIcon size={17} />
+            </button>
+          </ToolFlyoutGroup>
+        )}
+
         <ToolFlyoutGroup
           groupId="tf-pen"
           flyoutOpen={leftToolbarToolFlyout}
           setFlyoutOpen={setLeftToolbarToolFlyout}
           active={activeTool === "directSelect" || activeTool === "pen"}
-          mainTitle={activeTool === "pen" ? "Pluma (⇧P)" : "Selección directa (A)"}
-          onMainClick={() => setActiveTool(activeTool === "pen" ? "pen" : "directSelect")}
+          mainTitle={primaryPenTool === "pen" ? "Pluma (⇧P)" : "Selección directa (A)"}
+          onMainClick={() => setActiveTool(primaryPenTool)}
           mainIcon={
-            activeTool === "pen" ? (
+            primaryPenTool === "pen" ? (
               <PenTool size={19} strokeWidth={TOOLBAR_ICON_STROKE} />
             ) : (
               <MousePointer2 size={19} strokeWidth={TOOLBAR_ICON_STROKE} className="opacity-60" />
@@ -17701,9 +18260,9 @@ export function FreehandStudioCanvas({
           flyoutOpen={leftToolbarToolFlyout}
           setFlyoutOpen={setLeftToolbarToolFlyout}
           active={activeTool === "rect" || activeTool === "ellipse"}
-          mainTitle={activeTool === "ellipse" ? (designerMode ? "Elipse (E)" : "Elipse (C o E)") : "Rectángulo (R)"}
-          onMainClick={() => setActiveTool(activeTool === "ellipse" ? "ellipse" : "rect")}
-          mainIcon={activeTool === "ellipse" ? <Circle size={19} strokeWidth={TOOLBAR_ICON_STROKE} /> : <Square size={19} strokeWidth={TOOLBAR_ICON_STROKE} />}
+          mainTitle={primaryShapeTool === "ellipse" ? (designerMode ? "Elipse (E)" : "Elipse (C o E)") : "Rectángulo (R)"}
+          onMainClick={() => setActiveTool(primaryShapeTool)}
+          mainIcon={primaryShapeTool === "ellipse" ? <Circle size={19} strokeWidth={TOOLBAR_ICON_STROKE} /> : <Square size={19} strokeWidth={TOOLBAR_ICON_STROKE} />}
         >
           <button
             type="button"
@@ -17751,89 +18310,6 @@ export function FreehandStudioCanvas({
           <PhotoBrushToolIcon size={19} />
         </ToolBtn>
         )}
-
-        {studioCaps.toolPhotoMarquee && (
-          <ToolFlyoutGroup
-            groupId="tf-photo-marquee"
-            flyoutOpen={leftToolbarToolFlyout}
-            setFlyoutOpen={setLeftToolbarToolFlyout}
-            active={
-              activeTool === "rectMarquee" ||
-              activeTool === "ellipseMarquee" ||
-              activeTool === "lassoMarquee" ||
-              activeTool === "polygonMarquee"
-            }
-            mainTitle="Selección PhotoRoom: rectángulo (M), elipse (O), lazo (L), poligonal (⇧L). Ctrl/⌘ suma; Alt resta."
-            onMainClick={() => {
-              setActiveTool("rectMarquee");
-              setLeftToolbarToolFlyout(null);
-            }}
-            mainIcon={
-              activeTool === "lassoMarquee" ? (
-                <Lasso size={19} strokeWidth={TOOLBAR_ICON_STROKE} />
-              ) : activeTool === "polygonMarquee" ? (
-                <Spline size={19} strokeWidth={TOOLBAR_ICON_STROKE} />
-              ) : activeTool === "ellipseMarquee" ? (
-                <Circle size={19} strokeWidth={TOOLBAR_ICON_STROKE} />
-              ) : (
-                <BoxSelect size={19} strokeWidth={TOOLBAR_ICON_STROKE} />
-              )
-            }
-          >
-            <button
-              type="button"
-              title="Marco rectangular (M)"
-              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] transition ${
-                activeTool === "rectMarquee" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
-              }`}
-              onClick={() => {
-                setActiveTool("rectMarquee");
-                setLeftToolbarToolFlyout(null);
-              }}
-            >
-              <BoxSelect size={17} strokeWidth={TOOLBAR_ICON_STROKE} />
-            </button>
-            <button
-              type="button"
-              title="Marco elíptico (O). ⇧ al arrastrar = círculo. Ctrl/⌘ suma; Alt resta."
-              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] transition ${
-                activeTool === "ellipseMarquee" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
-              }`}
-              onClick={() => {
-                setActiveTool("ellipseMarquee");
-                setLeftToolbarToolFlyout(null);
-              }}
-            >
-              <Circle size={17} strokeWidth={TOOLBAR_ICON_STROKE} />
-            </button>
-            <button
-              type="button"
-              title="Lazo libre (L)"
-              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] transition ${
-                activeTool === "lassoMarquee" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
-              }`}
-              onClick={() => {
-                setActiveTool("lassoMarquee");
-                setLeftToolbarToolFlyout(null);
-              }}
-            >
-              <Lasso size={17} strokeWidth={TOOLBAR_ICON_STROKE} />
-            </button>
-            <button
-              type="button"
-              title="Lazo poligonal (⇧L)"
-              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] transition ${
-                activeTool === "polygonMarquee" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
-              }`}
-              onClick={() => {
-                setActiveTool("polygonMarquee");
-                setLeftToolbarToolFlyout(null);
-              }}
-            >
-              <Spline size={17} strokeWidth={TOOLBAR_ICON_STROKE} />
-            </button>
-          </ToolFlyoutGroup>
-        )}
         {designerMode ? (
           <>
             <ToolFlyoutGroup
@@ -17841,10 +18317,10 @@ export function FreehandStudioCanvas({
               flyoutOpen={leftToolbarToolFlyout}
               setFlyoutOpen={setLeftToolbarToolFlyout}
               active={activeTool === "text" || activeTool === "textFrame"}
-              mainTitle={activeTool === "textFrame" ? "Marco de texto encadenado (C)" : "Texto (T)"}
-              onMainClick={() => setActiveTool(activeTool === "textFrame" ? "textFrame" : "text")}
+              mainTitle={primaryTextTool === "textFrame" ? "Marco de texto encadenado (C)" : "Texto (T)"}
+              onMainClick={() => setActiveTool(primaryTextTool)}
               mainIcon={
-                activeTool === "textFrame" ? (
+                primaryTextTool === "textFrame" ? (
                   <svg width="19" height="19" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={TOOLBAR_ICON_STROKE} strokeLinecap="round" strokeLinejoin="round">
                     <rect x="2.5" y="3" width="15" height="14" rx="1.25" strokeDasharray="2.5 2" />
                     <path d="M6 7.5h8M6 10h8M6 12.5h4" />
@@ -17890,13 +18366,13 @@ export function FreehandStudioCanvas({
               flyoutOpen={leftToolbarToolFlyout}
               setFlyoutOpen={setLeftToolbarToolFlyout}
               active={activeTool === "imageFrame"}
-              mainTitle={activeTool === "imageFrame" ? "Marco de imagen" : "Importar imagen"}
+              mainTitle={primaryImageTool === "imageFrame" ? "Marco de imagen" : "Importar imagen"}
               onMainClick={() => {
-                if (activeTool === "imageFrame") setActiveTool("imageFrame");
+                if (primaryImageTool === "imageFrame") setActiveTool("imageFrame");
                 else fileInputRef.current?.click();
               }}
               mainIcon={
-                activeTool === "imageFrame" ? (
+                primaryImageTool === "imageFrame" ? (
                   <svg width="19" height="19" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={TOOLBAR_ICON_STROKE} strokeLinecap="round" strokeLinejoin="round">
                     <rect x="2.5" y="3" width="15" height="14" rx="1.25" />
                     <line x1="2.5" y1="3" x2="17.5" y2="17" opacity={0.45} strokeWidth={1.25} />
@@ -17912,6 +18388,7 @@ export function FreehandStudioCanvas({
                 title="Importar imagen"
                 className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] text-zinc-500 transition hover:bg-white/[0.08] hover:text-white"
                 onClick={() => {
+                  setToolFlyoutPrimary((prev) => ({ ...prev, "tf-img": "importImage" }));
                   fileInputRef.current?.click();
                   setLeftToolbarToolFlyout(null);
                 }}
@@ -17985,7 +18462,7 @@ export function FreehandStudioCanvas({
             onClick={() => setActiveTool("photoGradient")}
             title="Degradado (⇧G) — arrastra en capa o máscara (modo máscara = destino máscara); ajustes en Propiedades; doble clic en vértice = color"
           >
-            <Blend size={19} strokeWidth={TOOLBAR_ICON_STROKE} />
+            <PhotoGradientToolIcon size={19} />
           </ToolBtn>
         )}
 
@@ -19302,6 +19779,49 @@ export function FreehandStudioCanvas({
               </g>
             )}
 
+            {!canvasZenMode &&
+              (activeTool === "select" || activeTool === "directSelect") &&
+              selectedObjects.length === 1 &&
+              selectedObjects[0]?.type === "rect" &&
+              (() => {
+                const r = rectObjectWithNormalizedCorners(selectedObjects[0] as RectObject);
+                const suppressForInner =
+                  (designerMode &&
+                    imageFrameContentEditId != null &&
+                    selectedIds.size === 1 &&
+                    selectedIds.has(imageFrameContentEditId)) ||
+                  (isClipContentIsolation &&
+                    clipContentEditId != null &&
+                    selectedIds.size === 1 &&
+                    selectedIds.has(clipContentEditId));
+                if (suppressForInner) return null;
+                const hs = cornerRadiusHandleWorldPoints(r);
+                const rr = 4.4 / viewport.zoom;
+                const sw = 1.2 / viewport.zoom;
+                const corners: (keyof RectangleCornerRadius)[] = ["topLeft", "topRight", "bottomRight", "bottomLeft"];
+                return (
+                  <g data-ui="corner-radius-handles" pointerEvents="none">
+                    {corners.map((k) => {
+                      const p = hs[k];
+                      const isActive =
+                        (dragState?.type === "cornerRadius" && dragState.cornerRadiusCorner === k) ||
+                        hoverCornerRadiusHandle === k;
+                      return (
+                        <circle
+                          key={`crh-${k}`}
+                          cx={p.x}
+                          cy={p.y}
+                          r={rr}
+                          fill={isActive ? "#5b6fd4" : "#101722"}
+                          stroke="rgba(255,255,255,0.95)"
+                          strokeWidth={sw}
+                        />
+                      );
+                    })}
+                  </g>
+                );
+              })()}
+
             {/* Designer: límites marco (blanco) + bitmap completo (ámbar) + esquinas al editar contenido */}
             {designerMode && !canvasZenMode && suppressSelectionForImageContentEdit && imageFrameContentEditId && (() => {
               const o = objects.find((x) => x.id === imageFrameContentEditId) as RectObject | undefined;
@@ -19316,9 +19836,11 @@ export function FreehandStudioCanvas({
               return (
                 <g key="image-content-edit-overlay" data-ui="image-content-edit" pointerEvents="none">
                   <g transform={tf}>
-                    <rect
-                      x={o.x} y={o.y} width={o.width} height={o.height} rx={o.rx ?? 0}
-                      fill="none" stroke="rgba(255,255,255,0.9)" strokeWidth={1.25 / z}
+                    <path
+                      d={roundedRectPathDataFromRectObject(rectObjectWithNormalizedCorners(o))}
+                      fill="none"
+                      stroke="rgba(255,255,255,0.9)"
+                      strokeWidth={1.25 / z}
                     />
                     <rect
                       x={o.x + ifc.offsetX} y={o.y + ifc.offsetY} width={iw} height={ih}
@@ -21250,6 +21772,117 @@ export function FreehandStudioCanvas({
                     </div>
                   )}
                 </div>
+
+                {firstSelected.type === "rect" && (() => {
+                  const r = rectObjectWithNormalizedCorners(firstSelected as RectObject);
+                  const corners = rectCornerRadiusObject(r);
+                  const linked = rectCornersLinked(r);
+                  const maxR = Math.round((Math.min(r.width, r.height) / 2) * 100) / 100;
+                  const inputClass =
+                    "w-full cursor-ew-resize rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 font-mono text-[12px] text-zinc-100";
+                  const setSingleCorner = (corner: keyof RectangleCornerRadius, value: number, silent = false) => {
+                    const clamped = clamp(value, 0, maxR);
+                    updateSelectedRectCornerRadius({ [corner]: clamped }, { corner, linked: false, silent });
+                  };
+                  return (
+                    <div className="border-b border-white/[0.08] px-[14px] py-3">
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Corner Radius</span>
+                        <button
+                          type="button"
+                          title={linked ? "Desenlazar esquinas" : "Enlazar esquinas"}
+                          onClick={() => {
+                            if (linked) {
+                              updateSelectedRectCornerRadius(corners, { linked: false });
+                              return;
+                            }
+                            updateSelectedRectCornerRadius(corners.topLeft, { linked: true });
+                          }}
+                          className={`rounded-[5px] border p-1.5 transition-colors ${linked ? "border-[#534AB7] bg-[#534AB7] text-white" : "border-white/[0.08] text-zinc-400 hover:bg-white/[0.06]"}`}
+                        >
+                          {linked ? <Link2 size={14} strokeWidth={2} aria-hidden /> : <Unlink2 size={14} strokeWidth={2} aria-hidden />}
+                        </button>
+                      </div>
+                      {linked ? (
+                        <ScrubNumberInput
+                          value={Math.round(corners.topLeft * 100) / 100}
+                          onKeyboardCommit={(n) => updateSelectedRectCornerRadius(clamp(n, 0, maxR), { linked: true })}
+                          onScrubLive={(n) => updateSelectedRectCornerRadius(clamp(n, 0, maxR), { linked: true, silent: true })}
+                          onScrubEnd={commitHistoryAfterScrub}
+                          step={1}
+                          roundFn={(n) => Math.round(clamp(n, 0, maxR) * 100) / 100}
+                          min={0}
+                          max={maxR}
+                          title={PROP_PANEL_SCRUB_HINT}
+                          className={inputClass}
+                        />
+                      ) : (
+                        <div className="grid grid-cols-2 gap-1.5">
+                          <div className="space-y-0.5">
+                            <span className="text-[9px] text-zinc-500 uppercase tracking-wider">Top Left</span>
+                            <ScrubNumberInput
+                              value={Math.round(corners.topLeft * 100) / 100}
+                              onKeyboardCommit={(n) => setSingleCorner("topLeft", n)}
+                              onScrubLive={(n) => setSingleCorner("topLeft", n, true)}
+                              onScrubEnd={commitHistoryAfterScrub}
+                              step={1}
+                              roundFn={(n) => Math.round(clamp(n, 0, maxR) * 100) / 100}
+                              min={0}
+                              max={maxR}
+                              title={PROP_PANEL_SCRUB_HINT}
+                              className={inputClass}
+                            />
+                          </div>
+                          <div className="space-y-0.5">
+                            <span className="text-[9px] text-zinc-500 uppercase tracking-wider">Top Right</span>
+                            <ScrubNumberInput
+                              value={Math.round(corners.topRight * 100) / 100}
+                              onKeyboardCommit={(n) => setSingleCorner("topRight", n)}
+                              onScrubLive={(n) => setSingleCorner("topRight", n, true)}
+                              onScrubEnd={commitHistoryAfterScrub}
+                              step={1}
+                              roundFn={(n) => Math.round(clamp(n, 0, maxR) * 100) / 100}
+                              min={0}
+                              max={maxR}
+                              title={PROP_PANEL_SCRUB_HINT}
+                              className={inputClass}
+                            />
+                          </div>
+                          <div className="space-y-0.5">
+                            <span className="text-[9px] text-zinc-500 uppercase tracking-wider">Bottom Right</span>
+                            <ScrubNumberInput
+                              value={Math.round(corners.bottomRight * 100) / 100}
+                              onKeyboardCommit={(n) => setSingleCorner("bottomRight", n)}
+                              onScrubLive={(n) => setSingleCorner("bottomRight", n, true)}
+                              onScrubEnd={commitHistoryAfterScrub}
+                              step={1}
+                              roundFn={(n) => Math.round(clamp(n, 0, maxR) * 100) / 100}
+                              min={0}
+                              max={maxR}
+                              title={PROP_PANEL_SCRUB_HINT}
+                              className={inputClass}
+                            />
+                          </div>
+                          <div className="space-y-0.5">
+                            <span className="text-[9px] text-zinc-500 uppercase tracking-wider">Bottom Left</span>
+                            <ScrubNumberInput
+                              value={Math.round(corners.bottomLeft * 100) / 100}
+                              onKeyboardCommit={(n) => setSingleCorner("bottomLeft", n)}
+                              onScrubLive={(n) => setSingleCorner("bottomLeft", n, true)}
+                              onScrubEnd={commitHistoryAfterScrub}
+                              step={1}
+                              roundFn={(n) => Math.round(clamp(n, 0, maxR) * 100) / 100}
+                              min={0}
+                              max={maxR}
+                              title={PROP_PANEL_SCRUB_HINT}
+                              className={inputClass}
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* ── Designer: Marco de imagen ── */}
                 {designerMode && firstSelected.isImageFrame && (() => {

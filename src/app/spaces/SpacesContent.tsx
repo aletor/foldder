@@ -4079,31 +4079,18 @@ export function SpacesContent() {
           className="pointer-events-none flex min-w-0 flex-col gap-2"
           style={windowMode
             ? { position: 'fixed', top: 8, left: 16, right: 16, zIndex: 100 }
-            : { position: 'absolute', top: 24, left: 24, right: 24, zIndex: 100 }}
+            : {
+                position: 'absolute',
+                top: 24,
+                left: isAuthenticated ? 84 : 24,
+                right: 24,
+                zIndex: 100,
+              }}
         >
           <div className="relative flex w-full min-w-0 max-w-full items-center gap-2 sm:gap-3">
             {isAuthenticated && !windowMode && (
               <>
                 <div className="pointer-events-auto relative z-[5] flex min-h-[40px] min-w-0 shrink-0 items-center gap-2 sm:gap-3 md:gap-4">
-                  <div className="flex shrink-0 items-center self-center" aria-hidden>
-                    <svg
-                      width={34}
-                      height={34}
-                      viewBox="0 0 60 60"
-                      fill="none"
-                      xmlns="http://www.w3.org/2000/svg"
-                      className="block shrink-0 drop-shadow-md"
-                    >
-                      <path
-                        d="M4 8 Q4 4 8 4 L48 4 L56 12 L56 52 Q56 56 52 56 L8 56 Q4 56 4 52 Z"
-                        fill="#6C5CE7"
-                      />
-                      <path d="M48 4 L56 12 L48 12 Z" fill="rgba(0,0,0,0.25)" />
-                      <rect x="17" y="18" width="5" height="24" rx="2" fill="white" />
-                      <rect x="17" y="18" width="20" height="5" rx="2" fill="white" />
-                      <rect x="17" y="28" width="15" height="5" rx="2" fill="white" />
-                    </svg>
-                  </div>
                   {/* +20% ancho respecto a 18rem / 20rem / 22rem */}
                   <div className="flex min-h-[40px] w-full min-w-0 max-w-[min(100%,21.6rem)] shrink sm:max-w-[24rem] md:max-w-[26.5rem] items-center rounded-xl border border-white/25 bg-white/[0.08] px-2 py-1 shadow-sm backdrop-blur-xl">
                     <AgentHUD

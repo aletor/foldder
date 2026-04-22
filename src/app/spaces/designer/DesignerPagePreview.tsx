@@ -1,6 +1,11 @@
 "use client";
 
-import type { FreehandObject, RectObject } from "../FreehandStudio";
+import {
+  type FreehandObject,
+  type RectObject,
+  rectangleToRoundedPath,
+  normalizeCornerRadius,
+} from "../FreehandStudio";
 
 function looseThumbRect(o: FreehandObject): { x: number; y: number; w: number; h: number } | null {
   if (!o.visible) return null;
@@ -71,6 +76,11 @@ export function DesignerPagePreview({
 
         if (o.type === "rect" && o.isImageFrame) {
           const rObj = o as RectObject;
+          const corners = normalizeCornerRadius(rObj.cornerRadius ?? rObj.rx ?? 0, rObj.width, rObj.height);
+          const d = rectangleToRoundedPath(
+            { x: rObj.x, y: rObj.y, width: rObj.width, height: rObj.height },
+            corners,
+          );
           const ifc = rObj.imageFrameContent;
           const cid = `dpp-clip-${rObj.id}`;
           if (ifc?.src) {
@@ -78,15 +88,11 @@ export function DesignerPagePreview({
               <g key={o.id}>
                 <defs>
                   <clipPath id={cid}>
-                    <rect x={rObj.x} y={rObj.y} width={rObj.width} height={rObj.height} rx={rObj.rx} />
+                    <path d={d} />
                   </clipPath>
                 </defs>
-                <rect
-                  x={rObj.x}
-                  y={rObj.y}
-                  width={rObj.width}
-                  height={rObj.height}
-                  rx={rObj.rx}
+                <path
+                  d={d}
                   fill="#f4f4f5"
                   stroke="rgba(99,102,241,0.42)"
                   strokeWidth={sw}

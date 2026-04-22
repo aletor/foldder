@@ -3,7 +3,13 @@
  */
 
 import paper from "paper";
-import type { PathObject, RectObject, EllipseObject } from "../FreehandStudio";
+import {
+  type PathObject,
+  type RectObject,
+  type EllipseObject,
+  rectangleToRoundedPath,
+  normalizeCornerRadius,
+} from "../FreehandStudio";
 
 type BezierPoint = NonNullable<PathObject["points"]>[number];
 
@@ -61,6 +67,21 @@ function applyObjTransformToItem(
   if (fx !== 1 || fy !== 1) item.scale(fx, fy, c);
 }
 
+function stripRectProps(r: RectObject): Omit<RectObject, "type" | "rx" | "cornerRadius" | "cornersLinked"> {
+  const out = { ...r } as Partial<RectObject>;
+  delete out.type;
+  delete out.rx;
+  delete out.cornerRadius;
+  delete out.cornersLinked;
+  return out as Omit<RectObject, "type" | "rx" | "cornerRadius" | "cornersLinked">;
+}
+
+function stripEllipseProps(e: EllipseObject): Omit<EllipseObject, "type"> {
+  const out = { ...e } as Partial<EllipseObject>;
+  delete out.type;
+  return out as Omit<EllipseObject, "type">;
+}
+
 function buildPathFromShape(shape: paper.Shape, source: RectObject | EllipseObject): PathObject | null {
   applyObjTransformToItem(shape, source);
   const path = shape.toPath(false);
@@ -73,14 +94,8 @@ function buildPathFromShape(shape: paper.Shape, source: RectObject | EllipseObje
 
   const stripped =
     source.type === "rect"
-      ? (() => {
-          const { rx: _rx, type: _t, ...rest } = source as RectObject;
-          return rest;
-        })()
-      : (() => {
-          const { type: _t, ...rest } = source as EllipseObject;
-          return rest;
-        })();
+      ? stripRectProps(source as RectObject)
+      : stripEllipseProps(source as EllipseObject);
 
   return {
     ...stripped,
@@ -106,11 +121,38 @@ export function bakeRectToPath(r: RectObject): PathObject | null {
   const canvas = document.createElement("canvas");
   paper.setup(canvas);
 
-  const rect = new paper.Rectangle(r.x, r.y, r.width, r.height);
-  const rx = Math.min(r.rx ?? 0, r.width / 2, r.height / 2);
-  const shape = rx > 0 ? new paper.Shape.Rectangle(rect, new paper.Size(rx, rx)) : new paper.Shape.Rectangle(rect);
-
-  const out = buildPathFromShape(shape, r);
+  const corners = normalizeCornerRadius(r.cornerRadius ?? r.rx ?? 0, r.width, r.height);
+  const d = rectangleToRoundedPath(
+    { x: r.x, y: r.y, width: r.width, height: r.height },
+    corners,
+  );
+  const compound = new paper.CompoundPath(d);
+  const shape = compound.children[0] as paper.Path | undefined;
+  if (!shape || shape.segments.length < 2) {
+    paper.project.clear();
+    return null;
+  }
+  applyObjTransformToItem(shape, r);
+  const rings = [pathItemToRing(shape)];
+  const { points, contourStarts } = ringsToFlat(rings);
+  const pb = boundsFromBezierPoints(points);
+  const name = r.name.endsWith("(trazo)") ? r.name : `${r.name} (trazo)`;
+  const rest = stripRectProps(r);
+  const out = {
+    ...rest,
+    type: "path",
+    name,
+    x: pb.x,
+    y: pb.y,
+    width: pb.w,
+    height: pb.h,
+    rotation: 0,
+    flipX: false,
+    flipY: false,
+    points,
+    contourStarts: contourStarts.length > 1 ? contourStarts : undefined,
+    closed: true,
+  } as PathObject;
   paper.project.clear();
   return out;
 }

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="foldderSymbolTop" x1="0" y1="0" x2="56" y2="20" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#A06BEE" />
+      <stop offset="1" stop-color="#CAA4F7" />
+    </linearGradient>
+    <linearGradient id="foldderSymbolMid" x1="0" y1="20" x2="50" y2="40" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5F2EEA" />
+      <stop offset="1" stop-color="#B187F4" />
+    </linearGradient>
+    <linearGradient id="foldderSymbolBot" x1="0" y1="40" x2="30" y2="60" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2A1DC7" />
+      <stop offset="1" stop-color="#4E37EE" />
+    </linearGradient>
+  </defs>
+
+  <rect x="4" y="4" width="56" height="16" rx="4" fill="url(#foldderSymbolTop)" />
+  <rect x="4" y="24" width="48" height="16" rx="4" fill="url(#foldderSymbolMid)" />
+  <rect x="4" y="44" width="22" height="16" rx="4" fill="url(#foldderSymbolBot)" />
+  <path d="M4 48 C5.2 44.8 8.2 44 12 44 H22 L26 48 Z" fill="rgba(0,0,0,0.24)" />
+</svg>

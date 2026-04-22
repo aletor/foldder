@@ -48,14 +48,24 @@ function FoldderLogoFMark({ size = 40 }: { size?: number }) {
       className="drop-shadow-lg"
       aria-hidden
     >
-      <path
-        d="M4 8 Q4 4 8 4 L48 4 L56 12 L56 52 Q56 56 52 56 L8 56 Q4 56 4 52 Z"
-        fill="#6C5CE7"
-      />
-      <path d="M48 4 L56 12 L48 12 Z" fill="rgba(0,0,0,0.25)" />
-      <rect x="17" y="18" width="5" height="24" rx="2" fill="white" />
-      <rect x="17" y="18" width="20" height="5" rx="2" fill="white" />
-      <rect x="17" y="28" width="15" height="5" rx="2" fill="white" />
+      <defs>
+        <linearGradient id="sidebarFoldderFTop" x1="0" y1="0" x2="56" y2="20" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#A06BEE" />
+          <stop offset="1" stopColor="#CAA4F7" />
+        </linearGradient>
+        <linearGradient id="sidebarFoldderFMid" x1="0" y1="20" x2="50" y2="40" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#5F2EEA" />
+          <stop offset="1" stopColor="#B187F4" />
+        </linearGradient>
+        <linearGradient id="sidebarFoldderFBot" x1="0" y1="40" x2="30" y2="60" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#2A1DC7" />
+          <stop offset="1" stopColor="#4E37EE" />
+        </linearGradient>
+      </defs>
+      <rect x="4" y="4" width="56" height="16" rx="4" fill="url(#sidebarFoldderFTop)" />
+      <rect x="4" y="24" width="48" height="16" rx="4" fill="url(#sidebarFoldderFMid)" />
+      <rect x="4" y="44" width="22" height="16" rx="4" fill="url(#sidebarFoldderFBot)" />
+      <path d="M4 48 C5.2 44.8 8.2 44 12 44 H22 L26 48 Z" fill="rgba(0,0,0,0.24)" />
     </svg>
   );
 }
