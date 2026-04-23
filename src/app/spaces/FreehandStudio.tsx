@@ -9240,11 +9240,13 @@ export function FreehandStudioCanvas({
       string,
       {
         tried: boolean;
+        loading: boolean;
         suggestions: Array<{ id: string; label: string; prompt: string; src: string }>;
         error: string | null;
       }
     >
   >({});
+  const brainImageInFlightRef = useRef<Record<string, boolean>>({});
   /** Quick fill/stroke popover: which channel is being edited from canvas. */
   const [quickEditMode, setQuickEditMode] = useState<"fill" | "stroke" | null>(null);
   /** Lienzo a pantalla completa (P). En Designer el estado vive en `DesignerStudio` para no perderse al cambiar de página. */
@@ -10211,14 +10213,27 @@ export function FreehandStudioCanvas({
     }
 
     const cached = brainImageSuggestionsCacheRef.current[targetId];
-    if (cached?.tried) {
+    if (cached?.tried && !cached.loading) {
       setBrainImageSuggestions(cached.suggestions);
       setBrainImageLoading(false);
       setBrainImageError(cached.error);
       return;
     }
+    if (cached?.loading || brainImageInFlightRef.current[targetId]) {
+      setBrainImageSuggestions(cached?.suggestions ?? []);
+      setBrainImageLoading(true);
+      setBrainImageError(null);
+      return;
+    }
 
     let cancelled = false;
+    brainImageInFlightRef.current[targetId] = true;
+    brainImageSuggestionsCacheRef.current[targetId] = {
+      tried: true,
+      loading: true,
+      suggestions: cached?.suggestions ?? [],
+      error: null,
+    };
     setBrainImageLoading(true);
     setBrainImageError(null);
 
@@ -10251,19 +10266,34 @@ export function FreehandStudioCanvas({
         }
       }
 
-      if (cancelled) return;
       const error = created.length === 0 ? "No se pudo generar sugerencia visual con Brain." : null;
       brainImageSuggestionsCacheRef.current[targetId] = {
         tried: true,
+        loading: false,
         suggestions: created,
         error,
       };
+      brainImageInFlightRef.current[targetId] = false;
+      if (cancelled) return;
       setBrainImageSuggestions(created);
       setBrainImageLoading(false);
       setBrainImageError(error);
     };
 
-    void run();
+    void run().catch(() => {
+      const fallback = "No se pudo generar sugerencia visual con Brain.";
+      brainImageSuggestionsCacheRef.current[targetId] = {
+        tried: true,
+        loading: false,
+        suggestions: [],
+        error: fallback,
+      };
+      brainImageInFlightRef.current[targetId] = false;
+      if (cancelled) return;
+      setBrainImageSuggestions([]);
+      setBrainImageLoading(false);
+      setBrainImageError(fallback);
+    });
     return () => {
       cancelled = true;
     };
