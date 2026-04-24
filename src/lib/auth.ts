@@ -9,6 +9,8 @@ const hasGoogleProvider = Boolean(googleClientId && googleClientSecret);
 const authSecret =
   process.env.AUTH_SECRET ||
   process.env.NEXTAUTH_SECRET ||
+  process.env.AWS_SECRET_ACCESS_KEY ||
+  process.env.OPENAI_API_KEY ||
   (process.env.NODE_ENV !== "production" ? "foldder-dev-auth-secret" : undefined);
 
 export const { handlers, auth } = NextAuth({
