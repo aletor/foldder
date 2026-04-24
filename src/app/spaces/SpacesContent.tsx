@@ -1543,10 +1543,13 @@ export function SpacesContent() {
     }
   }, []);
 
-  const devBypassHeaders = useMemo<Record<string, string>>(
-    () => (passcodeBypass ? { "x-foldder-dev-passcode": "6666" } : {}),
-    [passcodeBypass],
-  );
+  const devBypassHeaders = useMemo<Record<string, string>>(() => {
+    const headers: Record<string, string> = {};
+    if (passcodeBypass) {
+      headers["x-foldder-dev-passcode"] = "6666";
+    }
+    return headers;
+  }, [passcodeBypass]);
 
   useEffect(() => {
     if (!isAuthenticated) return;

@@ -14,7 +14,7 @@ export type ProjectAssetsNodeData = {
   label?: string;
 };
 
-export const ProjectAssetsNode = memo(({ id, data, selected }: NodeProps<Record<string, unknown>>) => {
+export const ProjectAssetsNode = memo(({ id, data, selected }: NodeProps) => {
   const nodeData = data as ProjectAssetsNodeData;
   const ctx = useProjectAssetsCanvas();
 
