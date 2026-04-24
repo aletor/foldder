@@ -447,9 +447,27 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
     return out;
   }, [connectedBySlot]);
 
+  const refreshHandleGeometry = useCallback(() => {
+    const run = () => updateNodeInternals(id);
+    requestAnimationFrame(() => {
+      run();
+      requestAnimationFrame(run);
+    });
+    window.setTimeout(run, 140);
+  }, [id, updateNodeInternals]);
+
   useEffect(() => {
-    updateNodeInternals(id);
-  }, [id, visibleSlots.join(","), updateNodeInternals]);
+    refreshHandleGeometry();
+  }, [refreshHandleGeometry, visibleSlots.join(",")]);
+
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => refreshHandleGeometry());
+    const t = window.setTimeout(() => refreshHandleGeometry(), 180);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(t);
+    };
+  }, [refreshHandleGeometry, brainConnected, showStudio, studioObjects.length, nodeData.value]);
 
   /** Volver desde Nano Banana Studio (flujo «Modificar imagen con IA»): reabrir este PhotoRoom en Studio. */
   useEffect(() => {
@@ -625,7 +643,13 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
         style={{ minHeight: 120 }}
       >
         {displayUrl ? (
-          <img src={displayUrl} alt="" className="max-h-full max-w-full h-auto w-auto object-contain" />
+          <img
+            src={displayUrl}
+            alt=""
+            className="max-h-full max-w-full h-auto w-auto object-contain"
+            onLoad={refreshHandleGeometry}
+            onError={refreshHandleGeometry}
+          />
         ) : (
           <div className="flex w-full flex-col items-center justify-center gap-2 py-8">
             <ImageIcon size={28} className="text-zinc-400/50" />

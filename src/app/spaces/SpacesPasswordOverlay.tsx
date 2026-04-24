@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import Image from "next/image";
 import { AUTH_HIGHLIGHTS } from "./spaces-chrome-constants";
 import { Loader2 } from "lucide-react";
 
@@ -27,26 +28,14 @@ export function SpacesPasswordOverlay({
       <div className="relative z-10 flex w-full max-w-xl flex-col items-center gap-8 px-6">
         <div className="flex w-full max-w-sm flex-col items-center gap-2">
           <div className="mb-4 flex flex-col items-center gap-1">
-            <svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <defs>
-                <linearGradient id="overlayFoldderFTop" x1="0" y1="0" x2="56" y2="20" gradientUnits="userSpaceOnUse">
-                  <stop offset="0" stopColor="#A06BEE" />
-                  <stop offset="1" stopColor="#CAA4F7" />
-                </linearGradient>
-                <linearGradient id="overlayFoldderFMid" x1="0" y1="20" x2="50" y2="40" gradientUnits="userSpaceOnUse">
-                  <stop offset="0" stopColor="#5F2EEA" />
-                  <stop offset="1" stopColor="#B187F4" />
-                </linearGradient>
-                <linearGradient id="overlayFoldderFBot" x1="0" y1="40" x2="30" y2="60" gradientUnits="userSpaceOnUse">
-                  <stop offset="0" stopColor="#2A1DC7" />
-                  <stop offset="1" stopColor="#4E37EE" />
-                </linearGradient>
-              </defs>
-              <rect x="4" y="4" width="56" height="16" rx="4" fill="url(#overlayFoldderFTop)" />
-              <rect x="4" y="24" width="48" height="16" rx="4" fill="url(#overlayFoldderFMid)" />
-              <rect x="4" y="44" width="22" height="16" rx="4" fill="url(#overlayFoldderFBot)" />
-              <path d="M4 48 C5.2 44.8 8.2 44 12 44 H22 L26 48 Z" fill="rgba(0,0,0,0.24)" />
-            </svg>
+            <Image
+              src="/logo_line_bl.svg"
+              alt=""
+              width={64}
+              height={64}
+              className="h-16 w-16 object-contain"
+              aria-hidden
+            />
           </div>
           <h1 className="mr-[-8px] text-2xl font-black uppercase tracking-[8px] text-white">Foldder</h1>
           <p className="text-[10px] font-bold uppercase tracking-[4px] text-violet-400 opacity-80">Studio Access</p>

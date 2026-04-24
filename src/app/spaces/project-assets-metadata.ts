@@ -109,6 +109,65 @@ export type BrainGeneratedPiece = {
   notes?: string;
 };
 
+export type BrainVisualStyleSlotKey = "protagonist" | "environment" | "textures" | "people";
+
+export type BrainVisualStyleSlot = {
+  key: BrainVisualStyleSlotKey;
+  title: string;
+  description: string;
+  imageUrl: string | null;
+  imageS3Key?: string;
+  prompt?: string;
+  source?: "auto" | "manual";
+};
+
+export type BrainVisualStyle = Record<BrainVisualStyleSlotKey, BrainVisualStyleSlot>;
+
+export function defaultBrainVisualStyle(): BrainVisualStyle {
+  return {
+    protagonist: {
+      key: "protagonist",
+      title: "Protagonista",
+      description:
+        "El protagonista debe ser el núcleo de valor de la marca: el producto o activo principal en primer plano, con lectura inmediata y foco visual claro.",
+      imageUrl: null,
+      imageS3Key: undefined,
+      prompt: "",
+      source: "auto",
+    },
+    environment: {
+      key: "environment",
+      title: "Entorno",
+      description:
+        "El entorno debe contextualizar el uso real: escena creíble, profesional y coherente con la audiencia objetivo, sin distracciones ni estética genérica.",
+      imageUrl: null,
+      imageS3Key: undefined,
+      prompt: "",
+      source: "auto",
+    },
+    textures: {
+      key: "textures",
+      title: "Texturas",
+      description:
+        "Las texturas deben reforzar identidad visual y jerarquía: acabado editorial limpio, materiales consistentes y contraste controlado con la paleta de marca.",
+      imageUrl: null,
+      imageS3Key: undefined,
+      prompt: "",
+      source: "auto",
+    },
+    people: {
+      key: "people",
+      title: "Personas",
+      description:
+        "Las personas deben representar al público real de la marca en situaciones auténticas, con actitud y estilo alineados al posicionamiento.",
+      imageUrl: null,
+      imageS3Key: undefined,
+      prompt: "",
+      source: "auto",
+    },
+  };
+}
+
 export type BrainStrategy = {
   voiceExamples: BrainVoiceExample[];
   tabooPhrases: string[];
@@ -126,6 +185,7 @@ export type BrainStrategy = {
   generatedPieces: BrainGeneratedPiece[];
   approvedPatterns: string[];
   rejectedPatterns: string[];
+  visualStyle: BrainVisualStyle;
 };
 
 export const AUDIENCE_PERSONA_CATALOG: BrainPersona[] = [
@@ -327,6 +387,7 @@ const DEFAULT_STRATEGY: BrainStrategy = {
   generatedPieces: [],
   approvedPatterns: [],
   rejectedPatterns: [],
+  visualStyle: defaultBrainVisualStyle(),
 };
 
 export const MAX_LOGO_BYTES = 2 * 1024 * 1024;
@@ -357,6 +418,7 @@ export function defaultProjectAssets(): ProjectAssetsMetadata {
       generatedPieces: [],
       approvedPatterns: [],
       rejectedPatterns: [],
+      visualStyle: defaultBrainVisualStyle(),
     },
   };
 }
@@ -473,6 +535,7 @@ export function normalizeProjectAssets(raw: unknown): ProjectAssetsMetadata {
     generatedPieces: [],
     approvedPatterns: [],
     rejectedPatterns: [],
+    visualStyle: defaultBrainVisualStyle(),
   };
 
   if (strategyIn && typeof strategyIn === "object") {
@@ -634,6 +697,38 @@ export function normalizeProjectAssets(raw: unknown): ProjectAssetsMetadata {
     if (Array.isArray(s.rejectedPatterns)) {
       strategy.rejectedPatterns = s.rejectedPatterns.filter((x): x is string => typeof x === "string");
     }
+    if (s.visualStyle && typeof s.visualStyle === "object") {
+      const visualIn = s.visualStyle as Record<string, unknown>;
+      const baseVisual = defaultBrainVisualStyle();
+      const parseSlot = (
+        key: BrainVisualStyleSlotKey,
+        fallbackTitle: string,
+      ): BrainVisualStyleSlot => {
+        const raw = visualIn[key];
+        if (!raw || typeof raw !== "object") {
+          return {
+            ...baseVisual[key],
+            title: fallbackTitle,
+          };
+        }
+        const r = raw as Record<string, unknown>;
+        return {
+          key,
+          title: typeof r.title === "string" && r.title.trim() ? r.title : fallbackTitle,
+          description: typeof r.description === "string" ? r.description : "",
+          imageUrl: typeof r.imageUrl === "string" && r.imageUrl.trim() ? r.imageUrl : null,
+          imageS3Key: typeof r.imageS3Key === "string" ? r.imageS3Key : undefined,
+          prompt: typeof r.prompt === "string" ? r.prompt : "",
+          source: r.source === "manual" ? "manual" : "auto",
+        };
+      };
+      strategy.visualStyle = {
+        protagonist: parseSlot("protagonist", "Protagonista"),
+        environment: parseSlot("environment", "Entorno"),
+        textures: parseSlot("textures", "Texturas"),
+        people: parseSlot("people", "Personas"),
+      };
+    }
   }
 
   return { brand, knowledge, strategy };
@@ -654,5 +749,6 @@ export function summarizeProjectAssetsForAssistant(raw: unknown): string {
     `Personas: ${a.strategy.personas.length}.`,
     `Voice examples: ${a.strategy.voiceExamples.length}.`,
     `Facts & evidence: ${a.strategy.factsAndEvidence.length}.`,
+    `Visual style: protagonist="${a.strategy.visualStyle.protagonist.description || "-"}"; environment="${a.strategy.visualStyle.environment.description || "-"}"; textures="${a.strategy.visualStyle.textures.description || "-"}"; people="${a.strategy.visualStyle.people.description || "-"}".`,
   ].join(" ");
 }

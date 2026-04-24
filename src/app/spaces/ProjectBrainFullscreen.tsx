@@ -28,6 +28,8 @@ import {
   MAX_KNOWLEDGE_DOC_BYTES,
   MAX_LOGO_BYTES,
   normalizeProjectAssets,
+  defaultBrainVisualStyle,
+  type BrainVisualStyleSlotKey,
   type BrainGeneratedPiece,
   type BrainPersona,
   type BrainVoiceExample,
@@ -36,6 +38,7 @@ import {
 } from "./project-assets-metadata";
 import { readResponseJson } from "@/lib/read-response-json";
 import { fireAndForgetDeleteS3Keys } from "@/lib/s3-delete-client";
+import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
 
 type Props = {
   open: boolean;
@@ -79,6 +82,34 @@ function readFileDataUrl(file: File, maxBytes: number): Promise<string> {
     r.onload = () => resolve(String(r.result));
     r.onerror = () => reject(new Error("READ_ERROR"));
     r.readAsDataURL(file);
+  });
+}
+
+async function rasterizeDataUrlToPng(dataUrl: string, maxSide = 1024): Promise<string | null> {
+  if (typeof window === "undefined") return null;
+  return await new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const w0 = Math.max(1, img.naturalWidth || img.width || 1);
+        const h0 = Math.max(1, img.naturalHeight || img.height || 1);
+        const scale = Math.min(1, maxSide / Math.max(w0, h0));
+        const w = Math.max(1, Math.round(w0 * scale));
+        const h = Math.max(1, Math.round(h0 * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return resolve(null);
+        ctx.clearRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL("image/png"));
+      } catch {
+        resolve(null);
+      }
+    };
+    img.onerror = () => resolve(null);
+    img.src = dataUrl;
   });
 }
 
@@ -313,6 +344,11 @@ export function ProjectBrainFullscreen({
 }: Props) {
   const assets = useMemo(() => normalizeProjectAssets(assetsMetadata), [assetsMetadata]);
   const adn = useMemo(() => computeAdnScore(assets), [assets]);
+  const assetsMetadataRef = useRef<unknown>(assetsMetadata);
+
+  useEffect(() => {
+    assetsMetadataRef.current = assetsMetadata;
+  }, [assetsMetadata]);
 
   const [activeTab, setActiveTab] = useState<BrainTab>("knowledge");
 
@@ -388,6 +424,13 @@ export function ProjectBrainFullscreen({
   const [pieceFeedbackNote, setPieceFeedbackNote] = useState("");
   const [factsVerificationFilter, setFactsVerificationFilter] = useState<"all" | "verified" | "interpreted">("verified");
   const [factsStrengthFilter, setFactsStrengthFilter] = useState<"all" | "fuerte" | "media" | "debil">("fuerte");
+  const [visualStyleLoadingBySlot, setVisualStyleLoadingBySlot] = useState<
+    Partial<Record<BrainVisualStyleSlotKey, boolean>>
+  >({});
+  const [visualStyleRefreshing, setVisualStyleRefreshing] = useState(false);
+  const visualAutoFillAttemptedRef = useRef(false);
+  const visualPresignRefreshRef = useRef<{ signature: string; at: number } | null>(null);
+  const visualStyleRef = useRef(assets.strategy.visualStyle);
 
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -405,10 +448,10 @@ export function ProjectBrainFullscreen({
 
   const patch = useCallback(
     (fn: (a: ProjectAssetsMetadata) => ProjectAssetsMetadata) => {
-      const base = normalizeProjectAssets(assetsMetadata);
+      const base = normalizeProjectAssets(assetsMetadataRef.current);
       onAssetsMetadataChange(fn(base));
     },
-    [assetsMetadata, onAssetsMetadataChange],
+    [onAssetsMetadataChange],
   );
 
   const setBrand = useCallback(
@@ -456,11 +499,312 @@ export function ProjectBrainFullscreen({
           generatedPieces: next.generatedPieces ?? a.strategy.generatedPieces,
           approvedPatterns: next.approvedPatterns ?? a.strategy.approvedPatterns,
           rejectedPatterns: next.rejectedPatterns ?? a.strategy.rejectedPatterns,
+          visualStyle: next.visualStyle ?? a.strategy.visualStyle,
         },
       }));
     },
     [patch],
   );
+
+  const setVisualStyleSlot = useCallback(
+    (
+      key: BrainVisualStyleSlotKey,
+      patchSlot: Partial<ProjectAssetsMetadata["strategy"]["visualStyle"][BrainVisualStyleSlotKey]>,
+    ) => {
+      patch((a) => ({
+        ...a,
+        strategy: {
+          ...a.strategy,
+          visualStyle: {
+            ...a.strategy.visualStyle,
+            [key]: {
+              ...a.strategy.visualStyle[key],
+              ...patchSlot,
+              key,
+            },
+          },
+        },
+      }));
+    },
+    [patch],
+  );
+
+  const visualPresignSignature = useMemo(() => {
+    const keys = new Set<string>();
+    const slotKeys: BrainVisualStyleSlotKey[] = ["protagonist", "environment", "textures", "people"];
+    for (const k of slotKeys) {
+      const slot = assets.strategy.visualStyle?.[k];
+      if (slot?.imageS3Key) {
+        keys.add(slot.imageS3Key);
+        continue;
+      }
+      const url = slot?.imageUrl?.trim();
+      if (!url) continue;
+      const parsed = tryExtractKnowledgeFilesKeyFromUrl(url);
+      if (parsed) keys.add(parsed);
+    }
+    return Array.from(keys).sort().join("|");
+  }, [assets.strategy.visualStyle]);
+
+  useEffect(() => {
+    visualStyleRef.current = assets.strategy.visualStyle;
+  }, [assets.strategy.visualStyle]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (!visualPresignSignature) return;
+    const now = Date.now();
+    if (
+      visualPresignRefreshRef.current &&
+      visualPresignRefreshRef.current.signature === visualPresignSignature &&
+      now - visualPresignRefreshRef.current.at < 60_000
+    ) {
+      return;
+    }
+    visualPresignRefreshRef.current = { signature: visualPresignSignature, at: now };
+    let cancelled = false;
+    const keys = new Set<string>();
+    const slotKeys: BrainVisualStyleSlotKey[] = ["protagonist", "environment", "textures", "people"];
+    for (const k of slotKeys) {
+      const slot = visualStyleRef.current?.[k];
+      if (slot?.imageS3Key) {
+        keys.add(slot.imageS3Key);
+        continue;
+      }
+      const url = slot?.imageUrl?.trim();
+      if (!url) continue;
+      const parsed = tryExtractKnowledgeFilesKeyFromUrl(url);
+      if (parsed) keys.add(parsed);
+    }
+    if (keys.size === 0) return;
+    setVisualStyleRefreshing(true);
+    (async () => {
+      try {
+        const res = await fetch("/api/spaces/s3-presign", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ keys: Array.from(keys) }),
+        });
+        const data = await readResponseJson<{ urls?: Record<string, string> }>(
+          res,
+          "POST /api/spaces/s3-presign",
+        );
+        if (!res.ok || !data?.urls || cancelled) return;
+        const refreshed = data.urls;
+        const nextVisual = { ...visualStyleRef.current };
+        let changed = false;
+        for (const k of slotKeys) {
+          const slot = nextVisual[k];
+          const key = slot.imageS3Key || (slot.imageUrl ? tryExtractKnowledgeFilesKeyFromUrl(slot.imageUrl) : null);
+          if (!key || !refreshed[key] || refreshed[key] === slot.imageUrl) continue;
+          changed = true;
+          nextVisual[k] = { ...slot, imageUrl: refreshed[key], imageS3Key: key };
+        }
+        if (changed) {
+          setStrategy({ visualStyle: nextVisual });
+        }
+      } catch {
+        // noop
+      } finally {
+        if (!cancelled) setVisualStyleRefreshing(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, setStrategy, visualPresignSignature]);
+
+  const uploadLocalImageForVisualStyle = useCallback(async (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await fetch("/api/runway/upload", { method: "POST", body: fd });
+    const data = await readResponseJson<{ url?: string; s3Key?: string; error?: string }>(
+      res,
+      "POST /api/runway/upload",
+    );
+    if (!res.ok || !data?.url) throw new Error(data?.error || "No se pudo subir la imagen.");
+    return { url: data.url, s3Key: data.s3Key };
+  }, []);
+
+  const prepareLogoRefsForNano = useCallback(async (): Promise<string[]> => {
+    const refs: string[] = [];
+    const push = (v?: string | null) => {
+      if (typeof v !== "string") return;
+      const t = v.trim();
+      if (!t) return;
+      if (!refs.includes(t)) refs.push(t);
+    };
+    const logos = [assets.brand.logoPositive, assets.brand.logoNegative];
+    for (const logo of logos) {
+      if (!logo) continue;
+      if (logo.startsWith("data:image/svg+xml") || logo.startsWith("data:image/svg+xml;")) {
+        const png = await rasterizeDataUrlToPng(logo, 1024);
+        if (png) push(png);
+      } else {
+        push(logo);
+      }
+    }
+    return refs.slice(0, 2);
+  }, [assets.brand.logoNegative, assets.brand.logoPositive]);
+
+  const buildVisualPrompt = useCallback(
+    (slotKey: BrainVisualStyleSlotKey, description: string) => {
+      const slotLabel =
+        slotKey === "protagonist"
+          ? "Protagonista"
+          : slotKey === "environment"
+            ? "Entorno"
+            : slotKey === "textures"
+              ? "Texturas"
+              : "Personas";
+      const voiceHints = (assets.strategy.languageTraits || []).slice(0, 6).join(", ");
+      const termsHints = (assets.strategy.preferredTerms || []).slice(0, 8).join(", ");
+      const msgHints = (assets.strategy.approvedPhrases || []).slice(0, 5).join(" | ");
+      return [
+        `Genera una imagen de referencia de dirección de arte para la marca.`,
+        `Bloque: ${slotLabel}.`,
+        `Descripción objetivo: ${description || "Mantener coherencia visual de marca."}`,
+        `Paleta obligatoria: primaria ${assets.brand.colorPrimary}, secundaria ${assets.brand.colorSecondary}, acento ${assets.brand.colorAccent}.`,
+        `Rasgos de tono de marca: ${voiceHints || "profesional, claro, contemporáneo"}.`,
+        `Términos clave: ${termsHints || "producto, flujo, control creativo"}.`,
+        `Mensajes aprobados: ${msgHints || "narrativa enfocada en valor real y claridad"}.`,
+        `Estilo visual: editorial premium, composición limpia, luz natural/cinemática controlada, sin clichés de stock.`,
+        `No incluyas texto largo en la imagen ni marcas de agua.`,
+      ].join("\n");
+    },
+    [
+      assets.brand.colorAccent,
+      assets.brand.colorPrimary,
+      assets.brand.colorSecondary,
+      assets.strategy.approvedPhrases,
+      assets.strategy.languageTraits,
+      assets.strategy.preferredTerms,
+    ],
+  );
+
+  const generateVisualStyleSlotImage = useCallback(
+    async (
+      key: BrainVisualStyleSlotKey,
+      force = false,
+      descriptionOverride?: string,
+      options?: { silentError?: boolean; retryOnFailure?: boolean },
+    ): Promise<boolean> => {
+      const slot = assets.strategy.visualStyle[key];
+      if (!force && slot.imageUrl) return true;
+      const description = (descriptionOverride ?? slot.description ?? "").trim();
+      if (!description) return false;
+      setVisualStyleLoadingBySlot((prev) => ({ ...prev, [key]: true }));
+      try {
+        const logoRefs = await prepareLogoRefsForNano();
+        const prompt = buildVisualPrompt(key, description);
+        const maxAttempts = options?.retryOnFailure ? 2 : 1;
+        let outputUrl: string | null = null;
+        let outputKey: string | undefined;
+        let lastError: unknown = null;
+
+        const tryReq = async (images: string[]) => {
+          const res = await fetch("/api/gemini/generate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              prompt,
+              images,
+              model: "flash31",
+              resolution: "0.5k",
+              aspect_ratio: "16:9",
+            }),
+          });
+          const data = await readResponseJson<{ output?: string; key?: string; error?: string }>(
+            res,
+            "POST /api/gemini/generate",
+          );
+          if (!res.ok || !data?.output) throw new Error(data?.error || "No se pudo generar imagen.");
+          outputUrl = data.output;
+          outputKey = data.key;
+        };
+
+        for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+          try {
+            try {
+              await tryReq(logoRefs);
+            } catch {
+              await tryReq([]);
+            }
+            break;
+          } catch (err) {
+            lastError = err;
+            if (attempt < maxAttempts - 1) {
+              await new Promise((resolve) => setTimeout(resolve, 1200));
+              continue;
+            }
+          }
+        }
+        if (!outputUrl) throw (lastError instanceof Error ? lastError : new Error("No se recibió imagen de Nano Banana."));
+        setVisualStyleSlot(key, {
+          imageUrl: outputUrl,
+          imageS3Key: outputKey,
+          prompt,
+          source: "auto",
+        });
+        return true;
+      } catch (error) {
+        if (!options?.silentError) {
+          showToast(error instanceof Error ? error.message : "No se pudo generar la imagen de estilo.", "error");
+        }
+        return false;
+      } finally {
+        setVisualStyleLoadingBySlot((prev) => ({ ...prev, [key]: false }));
+      }
+    },
+    [assets.strategy.visualStyle, buildVisualPrompt, prepareLogoRefsForNano, setVisualStyleSlot, showToast],
+  );
+
+  const autoGenerateMissingVisualSlots = useCallback(
+    async (
+      visualOverride?: ProjectAssetsMetadata["strategy"]["visualStyle"],
+      force = false,
+    ) => {
+      const visual = visualOverride || assets.strategy.visualStyle || defaultBrainVisualStyle();
+      const keys: BrainVisualStyleSlotKey[] = ["protagonist", "people", "environment", "textures"];
+      let failed = 0;
+      for (const key of keys) {
+        const slot = visual[key];
+        const description = (slot?.description || "").trim();
+        if (!description) continue;
+        if (!force && slot?.imageUrl) continue;
+        const ok = await generateVisualStyleSlotImage(key, force, description, {
+          silentError: true,
+          retryOnFailure: true,
+        });
+        if (!ok) failed += 1;
+      }
+      if (failed > 0) {
+        showToast(
+          `No se pudieron generar ${failed} bloque(s) visual(es) automáticamente. Puedes regenerarlos manualmente.`,
+          "info",
+        );
+      }
+    },
+    [assets.strategy.visualStyle, generateVisualStyleSlotImage, showToast],
+  );
+
+  useEffect(() => {
+    if (!open) {
+      visualAutoFillAttemptedRef.current = false;
+      return;
+    }
+    if (visualAutoFillAttemptedRef.current) return;
+    const visual = assets.strategy.visualStyle || defaultBrainVisualStyle();
+    const hasMissing = (["protagonist", "environment", "textures", "people"] as BrainVisualStyleSlotKey[]).some(
+      (k) => {
+        const slot = visual[k];
+        return !!slot?.description?.trim() && !slot?.imageUrl;
+      },
+    );
+    if (!hasMissing) return;
+    visualAutoFillAttemptedRef.current = true;
+    void autoGenerateMissingVisualSlots(visual, false);
+  }, [open, assets.strategy.visualStyle, autoGenerateMissingVisualSlots]);
 
   const filteredFactsForGeneration = useMemo(
     () =>
@@ -629,6 +973,8 @@ export function ProjectBrainFullscreen({
         if (!briefPersonaId && data.strategy.personas[0]?.id) {
           setBriefPersonaId(data.strategy.personas[0].id);
         }
+        const visual = data.strategy.visualStyle || defaultBrainVisualStyle();
+        void autoGenerateMissingVisualSlots(visual, false);
       }
       showToast(data?.message || "Análisis completado", "success");
     } catch (error) {
@@ -636,7 +982,15 @@ export function ProjectBrainFullscreen({
     } finally {
       setAnalyzing(false);
     }
-  }, [assets.knowledge.documents, assets.strategy, briefPersonaId, setKnowledge, setStrategy, showToast]);
+  }, [
+    assets.knowledge.documents,
+    assets.strategy,
+    autoGenerateMissingVisualSlots,
+    briefPersonaId,
+    setKnowledge,
+    setStrategy,
+    showToast,
+  ]);
 
   const handleOpenOriginal = useCallback(
     async (doc: KnowledgeDocumentEntry) => {
@@ -1434,6 +1788,106 @@ export function ProjectBrainFullscreen({
                     </div>
                   </div>
                 </div>
+
+                <section className="mt-5 rounded-2xl border border-zinc-200 bg-white p-4">
+                  <div className="mb-3 flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-[12px] font-black uppercase tracking-[0.12em] text-zinc-900">
+                        Estilo gráfico (ADN visual)
+                      </h3>
+                      <p className="mt-1 text-[11px] text-zinc-600">
+                        Se autogenera desde documentos analizados: protagonista, entorno, texturas y personas.
+                      </p>
+                    </div>
+                    {visualStyleRefreshing && (
+                      <span className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-zinc-50 px-2 py-1 text-[10px] font-semibold text-zinc-600">
+                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                        refrescando
+                      </span>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+                    {(["protagonist", "environment", "textures", "people"] as BrainVisualStyleSlotKey[]).map(
+                      (key) => {
+                        const slot = assets.strategy.visualStyle[key];
+                        const loading = Boolean(visualStyleLoadingBySlot[key]);
+                        const description = slot.description || "";
+                        return (
+                          <article key={key} className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+                            <p className="text-[10px] font-black uppercase tracking-wide text-zinc-600">
+                              {slot.title}
+                            </p>
+                            <div className="mt-2 overflow-hidden rounded-lg border border-zinc-200 bg-white">
+                              {slot.imageUrl ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={slot.imageUrl}
+                                  alt={slot.title}
+                                  className="h-36 w-full object-cover"
+                                />
+                              ) : (
+                                <div className="flex h-36 w-full items-center justify-center text-[11px] text-zinc-500">
+                                  Sin imagen aún
+                                </div>
+                              )}
+                            </div>
+                            <textarea
+                              value={description}
+                              onChange={(e) =>
+                                setVisualStyleSlot(key, {
+                                  description: e.target.value,
+                                  source: slot.source === "manual" ? "manual" : "auto",
+                                })
+                              }
+                              placeholder="Describe qué debe representarse en este eje visual..."
+                              className="mt-2 h-20 w-full rounded-xl border border-zinc-200 bg-white p-2 text-[12px] text-zinc-800"
+                            />
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => void generateVisualStyleSlotImage(key, true)}
+                                disabled={loading || !description.trim()}
+                                className="rounded-lg border border-zinc-800 bg-zinc-900 px-2.5 py-1.5 text-[10px] font-black uppercase tracking-wide text-white disabled:opacity-50"
+                              >
+                                {loading ? "Generando..." : slot.imageUrl ? "Regenerar" : "Generar imagen"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const input = document.createElement("input");
+                                  input.type = "file";
+                                  input.accept = "image/png,image/jpeg,image/webp,image/svg+xml";
+                                  input.onchange = async () => {
+                                    const file = input.files?.[0];
+                                    if (!file) return;
+                                    try {
+                                      const uploaded = await uploadLocalImageForVisualStyle(file);
+                                      setVisualStyleSlot(key, {
+                                        imageUrl: uploaded.url,
+                                        imageS3Key: uploaded.s3Key,
+                                        source: "manual",
+                                      });
+                                      showToast("Imagen manual aplicada al ADN visual.", "success");
+                                    } catch (error) {
+                                      showToast(
+                                        error instanceof Error ? error.message : "No se pudo subir la imagen.",
+                                        "error",
+                                      );
+                                    }
+                                  };
+                                  input.click();
+                                }}
+                                className="rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wide text-zinc-700 hover:bg-zinc-100"
+                              >
+                                Sustituir desde disco
+                              </button>
+                            </div>
+                          </article>
+                        );
+                      },
+                    )}
+                  </div>
+                </section>
 
                 <section className="mt-5 rounded-2xl border border-zinc-200 bg-white p-4">
                   <div className="mb-3 flex flex-wrap items-center justify-between gap-3">

@@ -23,7 +23,7 @@ const DOCK_GAP_PX = 6 * 1.4;
 const DOCK_REST_MS = 300;
 const DOCK_REST_EASE = "cubic-bezier(0.25, 0.1, 0.25, 1)";
 
-/** Clic simple en Brain/Assets abre el panel tras esta espera; si es doble clic, se cancela y solo se añade el nodo. */
+/** Clic simple en Brain/Foldder abre el panel tras esta espera; si es doble clic, se cancela y solo se añade el nodo. */
 const TOPBAR_PANEL_SINGLE_CLICK_OPEN_DELAY_MS = 280;
 
 /** Alto fijo del strip (tamaño “reposo” ~ icono pequeño); el zoom crece hacia arriba con overflow visible. */
@@ -66,8 +66,8 @@ function dockLayoutSpreadPx(
 }
 
 /**
- * Accesos fijos (no personalizables): Brain → Design → Image → PhotoRoom → Video → VFX → Assets. (Presenter solo en la librería.)
- * Brain y Assets: clic → panel fullscreen (tras breve espera); doble clic → nodo projectBrain / projectAssets en el lienzo. Resto: doble clic añade el nodo del pin. Orden estable.
+ * Accesos fijos (no personalizables): Brain → Design → Image → PhotoRoom → Video → VFX → Foldder. (Presenter solo en la librería.)
+ * Brain y Foldder: clic → panel fullscreen (tras breve espera); doble clic → nodo projectBrain / projectAssets en el lienzo. Resto: doble clic añade el nodo del pin. Orden estable.
  */
 export const TOPBAR_FIXED_PIN_TYPES = [
   "brain",
@@ -90,7 +90,7 @@ const TOPBAR_PIN_UI: Record<
   photoRoom: { title: "PhotoRoom — retoque de imagen", shortLabel: "Room" },
   geminiVideo: { title: "Video Generator", shortLabel: "Video" },
   vfxGenerator: { title: "VFX Generator", shortLabel: "VFX" },
-  files: { title: "Assets — multimedia del proyecto", shortLabel: "Assets" },
+  files: { title: "Foldder — multimedia del proyecto", shortLabel: "Foldder" },
 };
 
 type TopbarPinsProps = {
@@ -167,12 +167,17 @@ function TopbarPinChip({
     <div className="relative shrink-0 group/pin pt-3 -mt-3 pb-0.5 overflow-visible">
       <button
         type="button"
-        className={chipClassName}
+        className={
+          isAssets
+            ? `${chipClassName} !bg-transparent !border-[#b081f1] hover:!bg-transparent active:!bg-transparent focus:!bg-transparent hover:!border-[#b081f1] hover:ring-[#b081f1]/60`
+            : chipClassName
+        }
+        style={isAssets ? { backgroundColor: "transparent" } : undefined}
         aria-label={
           isBrain
             ? `${title}. Clic para abrir studio (marca y conocimiento). Doble clic para añadir el nodo Brain al lienzo.`
             : isAssets
-              ? `${title}. Clic para abrir la biblioteca multimedia. Doble clic para añadir el nodo Assets al lienzo.`
+              ? `${title}. Clic para abrir la biblioteca multimedia. Doble clic para añadir el nodo Foldder al lienzo.`
               : `${title}. Doble clic para añadir al lienzo.`
         }
         onClick={
@@ -229,7 +234,7 @@ function TopbarPinChip({
           onPinDoubleClick?.(nodeType);
         }}
       >
-        <Glyph size={iconSize} className="shrink-0 text-white" />
+        <Glyph size={iconSize} className={isAssets ? "shrink-0" : "shrink-0 text-white"} />
         <span className={captionClassName}>{shortLabel}</span>
       </button>
       {!paletteDragActive && <PinHoverCard label={title} />}
@@ -316,7 +321,7 @@ export function TopbarPins({
     "mt-0.5 max-w-[4rem] text-center text-[6px] font-medium leading-none tracking-wide text-white uppercase sm:text-[6.5px]";
 
   const chipEmbedded =
-    "flex min-h-[3.85rem] min-w-[3.85rem] max-w-[4.25rem] cursor-pointer flex-col items-center justify-center gap-0.5 rounded-2xl border border-white/30 !bg-white/15 px-1 py-1.5 transition-all duration-150 hover:!bg-white/25 hover:ring-2 hover:ring-inset hover:ring-white/45 select-none";
+    "flex min-h-[3.85rem] min-w-[3.85rem] max-w-[4.25rem] cursor-pointer flex-col items-center justify-center gap-0.5 rounded-2xl border border-white/30 bg-white/15 px-1 py-1.5 transition-all duration-150 hover:bg-white/25 hover:ring-2 hover:ring-inset hover:ring-white/45 select-none";
   const chipDefault =
     "flex min-h-[3.75rem] min-w-[3.75rem] max-w-[4.1rem] cursor-pointer flex-col items-center justify-center gap-0.5 rounded-xl border border-white/20 bg-white/[0.12] px-1 py-1.5 transition-all duration-150 hover:bg-white/[0.2] hover:ring-2 hover:ring-inset hover:ring-white/40 select-none";
 
@@ -366,7 +371,7 @@ export function TopbarPins({
             : {}),
         }}
         role="toolbar"
-        aria-label="Accesos directos: Brain, Design, Image, PhotoRoom, Video, VFX, Assets. Brain y Assets: clic abre el panel; doble clic añade el nodo en el lienzo. En el resto, doble clic para añadir al lienzo."
+        aria-label="Accesos directos: Brain, Design, Image, PhotoRoom, Video, VFX, Foldder. Brain y Foldder: clic abre el panel; doble clic añade el nodo en el lienzo. En el resto, doble clic para añadir al lienzo."
       >
         {TOPBAR_FIXED_PIN_TYPES.map((type, i) => {
           const ui = TOPBAR_PIN_UI[type];

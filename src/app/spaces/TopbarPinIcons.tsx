@@ -279,6 +279,22 @@ export function TopbarGlyphFiles({ size = 26, className }: GlyphProps) {
   );
 }
 
+/** Foldder app mark (color corporativo). */
+export function TopbarGlyphFoldderApp({ size = 26, className }: GlyphProps) {
+  const scaled = Math.round(size * 0.9);
+  return (
+    <img
+      src="/logo_topbar.svg"
+      alt=""
+      width={scaled}
+      height={scaled}
+      className={[className, "object-contain mx-auto block"].filter(Boolean).join(" ")}
+      aria-hidden
+      draggable={false}
+    />
+  );
+}
+
 /** PhotoRoom — marco de imagen + varita / retoque (alineado con foldder-icons). */
 export function TopbarGlyphPhotoRoom({ size = 26, className }: GlyphProps) {
   return (
@@ -369,5 +385,5 @@ export const TOPBAR_GLYPH_BY_NODE_TYPE: Record<
   photoRoom: TopbarGlyphPhotoRoom,
   geminiVideo: TopbarGlyphVideoGenerator,
   vfxGenerator: TopbarGlyphVfxGenerator,
-  files: TopbarGlyphFiles,
+  files: TopbarGlyphFoldderApp,
 };

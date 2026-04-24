@@ -2,7 +2,7 @@
 
 import React, { memo, useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { NodeResizer, Position, useEdges, useReactFlow, type NodeProps } from "@xyflow/react";
+import { NodeResizer, Position, useEdges, useReactFlow, useUpdateNodeInternals, type NodeProps } from "@xyflow/react";
 import { Pencil } from "lucide-react";
 import { FOLDDER_FIT_VIEW_EASE } from "@/lib/fit-view-ease";
 import { FoldderDataHandle } from "../FoldderDataHandle";
@@ -60,6 +60,7 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const nodeData = data as DesignerNodeData;
   const edges = useEdges();
   const { setNodes } = useReactFlow();
+  const updateNodeInternals = useUpdateNodeInternals();
   const [isStudioOpen, setIsStudioOpen] = useState(false);
   const brainConnected = edges.some((e) => e.target === id && e.targetHandle === "brain");
 
@@ -84,12 +85,29 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
   );
 
   const firstPageDims = pages[0] ? getPageDimensions(pages[0]) : null;
+  const refreshHandleGeometry = useCallback(() => {
+    const run = () => updateNodeInternals(id);
+    requestAnimationFrame(() => {
+      run();
+      requestAnimationFrame(run);
+    });
+    window.setTimeout(run, 140);
+  }, [id, updateNodeInternals]);
 
   useEffect(() => {
     if (isStudioOpen) document.body.classList.add("nb-studio-open");
     else document.body.classList.remove("nb-studio-open");
     return () => document.body.classList.remove("nb-studio-open");
   }, [isStudioOpen]);
+
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => refreshHandleGeometry());
+    const t = window.setTimeout(() => refreshHandleGeometry(), 160);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(t);
+    };
+  }, [refreshHandleGeometry, nodeData.value, pages.length, firstPageDims?.width, firstPageDims?.height]);
 
   const onUpdatePages = useCallback(
     (next: DesignerPageState[], nextActiveIdx?: number) => {
@@ -152,6 +170,8 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
             alt="Designer preview — página 1"
             className="w-full rounded-lg bg-zinc-950/80"
             style={{ maxHeight: 180, objectFit: "contain" }}
+            onLoad={refreshHandleGeometry}
+            onError={refreshHandleGeometry}
           />
         ) : pages[0] && (pages[0].objects?.length ?? 0) > 0 && firstPageDims ? (
           <div

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from 'react';
+import Image from 'next/image';
 import { Sparkles, Loader2, Star } from 'lucide-react';
 
 interface AgentHUDProps {
@@ -36,8 +37,8 @@ export const AgentHUD = ({
           : 'pointer-events-auto px-2.5 pt-1 pb-0.5'
       }
     >
-      <img
-        src="/foldder-logo.svg"
+      <Image
+        src="/logo-folder.png"
         alt="Foldder"
         width={200}
         height={60}

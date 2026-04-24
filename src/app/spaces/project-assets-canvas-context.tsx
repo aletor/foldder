@@ -7,6 +7,8 @@ export type ProjectAssetsCanvasContextValue = {
   /** Nodos del grafo actual (para inventario multimedia en la tarjeta). */
   flowNodes: Node[];
   assetsMetadata: unknown;
+  /** Aislamiento por proyecto para evitar mezclar assets/caché entre proyectos. */
+  projectScopeId: string;
   openProjectAssets: () => void;
 };
 

@@ -67,6 +67,14 @@ export function buildStandaloneSvgFromCanvasDom(
   const exportIds = opts.exportIds;
 
   if (exportIds) {
+    // Selection export must not include artboard/page background layers.
+    clone.querySelectorAll("g[data-fh-artboard]").forEach((g) => g.remove());
+    // Avoid clipping selection by page bounds when exporting isolated assets.
+    clone.querySelectorAll("g[data-fh-page-content]").forEach((g) => {
+      g.removeAttribute("clip-path");
+      g.removeAttribute("clipPath");
+    });
+
     clone.querySelectorAll("g[data-fh-obj]").forEach((g) => {
       const id = g.getAttribute("data-fh-obj");
       if (id && !exportIds.has(id)) g.remove();

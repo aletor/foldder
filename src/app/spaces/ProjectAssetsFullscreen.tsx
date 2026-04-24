@@ -1,11 +1,13 @@
 "use client";
 
-import React, { useEffect, useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Node } from "@xyflow/react";
 import { FolderOpen, X } from "lucide-react";
 import { collectProjectMedia, type ProjectMediaItem } from "./project-media-inventory";
 import { normalizeProjectAssets } from "./project-assets-metadata";
+import { listAllBrainGeneratedSuggestionUrls } from "./brain-image-suggestions-cache";
+import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
 
 type Props = {
   open: boolean;
@@ -13,6 +15,8 @@ type Props = {
   nodes: Node[];
   /** Solo lectura: logos y colores definidos en Brain (`metadata.assets`). */
   assetsMetadata: unknown;
+  /** Scope del proyecto activo para aislar caché y listados. */
+  projectScopeId: string;
 };
 
 function MediaTile({ item }: { item: ProjectMediaItem }) {
@@ -157,8 +161,81 @@ function BrandReadonlyStrip({ assetsMetadata }: { assetsMetadata: unknown }) {
   );
 }
 
-export function ProjectAssetsFullscreen({ open, onClose, nodes, assetsMetadata }: Props) {
-  const { imported, generated } = useMemo(() => collectProjectMedia(nodes), [nodes]);
+export function ProjectAssetsFullscreen({ open, onClose, nodes, assetsMetadata, projectScopeId }: Props) {
+  const { imported, generated } = useMemo(() => {
+    const base = collectProjectMedia(nodes);
+    const seen = new Set(base.generated.map((g) => g.url.trim()).filter(Boolean));
+    const extra: ProjectMediaItem[] = [];
+    for (const url of listAllBrainGeneratedSuggestionUrls(projectScopeId)) {
+      const key = url.trim();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      extra.push({
+        id: `brain-generated-${seen.size}-${key.slice(0, 32)}`,
+        url: key,
+        kind: "image",
+        sourceLabel: "Brain · sugerencia IA",
+        nodeId: "brain-cache",
+      });
+    }
+    return { imported: base.imported, generated: [...base.generated, ...extra] };
+  }, [nodes, projectScopeId]);
+  const [refreshedUrls, setRefreshedUrls] = useState<Record<string, string>>({});
+  const viewImported = useMemo(
+    () =>
+      imported.map((it) => {
+        const key = tryExtractKnowledgeFilesKeyFromUrl(it.url.trim());
+        if (!key || !refreshedUrls[key]) return it;
+        return { ...it, url: refreshedUrls[key] };
+      }),
+    [imported, refreshedUrls],
+  );
+  const viewGenerated = useMemo(
+    () =>
+      generated.map((it) => {
+        const key = tryExtractKnowledgeFilesKeyFromUrl(it.url.trim());
+        if (!key || !refreshedUrls[key]) return it;
+        return { ...it, url: refreshedUrls[key] };
+      }),
+    [generated, refreshedUrls],
+  );
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    const all = [...imported, ...generated];
+    const keyByUrl = new Map<string, string>();
+    const keys = new Set<string>();
+    for (const item of all) {
+      const url = item.url.trim();
+      const key = tryExtractKnowledgeFilesKeyFromUrl(url);
+      if (!key) continue;
+      keyByUrl.set(url, key);
+      keys.add(key);
+    }
+    if (keys.size === 0) return;
+
+    (async () => {
+      try {
+        const res = await fetch("/api/spaces/s3-presign", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ keys: Array.from(keys) }),
+        });
+        if (!res.ok) return;
+        const payload = (await res.json()) as { urls?: Record<string, string> };
+        const urls = payload.urls;
+        if (!urls || cancelled) return;
+        setRefreshedUrls((prev) => ({ ...prev, ...urls }));
+      } catch {
+        // Keep stale URLs silently; caller can close/reopen to retry.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, imported, generated]);
 
   useEffect(() => {
     if (!open) return;
@@ -191,7 +268,7 @@ export function ProjectAssetsFullscreen({ open, onClose, nodes, assetsMetadata }
           </span>
           <div className="min-w-0">
             <h1 id="project-assets-media-title" className="text-base font-black uppercase tracking-wide text-zinc-100">
-              Assets
+              Foldder
             </h1>
             <p className="text-[11px] text-zinc-500">
               Vista de marca (solo lectura) y multimedia del lienzo
@@ -215,13 +292,13 @@ export function ProjectAssetsFullscreen({ open, onClose, nodes, assetsMetadata }
           <MediaSection
             title="Importados"
             subtitle="Archivos que has añadido: subidas, URLs, contenido en Designer/Presenter, etc."
-            items={imported}
+            items={viewImported}
             emptyHint="Aún no hay elementos importados visibles en este proyecto."
           />
           <MediaSection
             title="Generados"
             subtitle="Salidas del sistema: Image/Video/VFX, Grok, historial graph-run, etc."
-            items={generated}
+            items={viewGenerated}
             emptyHint="Aún no hay elementos generados en este proyecto."
           />
           </div>

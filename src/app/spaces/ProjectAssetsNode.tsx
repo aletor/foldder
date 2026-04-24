@@ -8,20 +8,22 @@ import { NodeIcon } from "./foldder-icons";
 import { NodeLabel, FoldderNodeHeaderTitle } from "./foldder-node-ui";
 import { collectProjectMedia } from "./project-media-inventory";
 import { useProjectAssetsCanvas } from "./project-assets-canvas-context";
+import { listAllBrainGeneratedSuggestionUrls } from "./brain-image-suggestions-cache";
 
 export type ProjectAssetsNodeData = {
   label?: string;
 };
 
-export const ProjectAssetsNode = memo(({ id, data, selected }: NodeProps<any>) => {
+export const ProjectAssetsNode = memo(({ id, data, selected }: NodeProps<Record<string, unknown>>) => {
   const nodeData = data as ProjectAssetsNodeData;
   const ctx = useProjectAssetsCanvas();
 
   const { nImported, nGenerated } = useMemo(() => {
     const list = ctx?.flowNodes ?? [];
     const { imported, generated } = collectProjectMedia(list);
-    return { nImported: imported.length, nGenerated: generated.length };
-  }, [ctx?.flowNodes]);
+    const extraBrain = listAllBrainGeneratedSuggestionUrls(ctx?.projectScopeId).length;
+    return { nImported: imported.length, nGenerated: generated.length + extraBrain };
+  }, [ctx?.flowNodes, ctx?.projectScopeId]);
 
   const openLibrary = useCallback(() => {
     if (ctx?.openProjectAssets) {
@@ -35,12 +37,12 @@ export const ProjectAssetsNode = memo(({ id, data, selected }: NodeProps<any>) =
 
   return (
     <div className="custom-node tool-node" style={{ minWidth: 260 }}>
-      <NodeLabel id={id} label={nodeData.label} defaultLabel="Assets" />
+      <NodeLabel id={id} label={nodeData.label} defaultLabel="Foldder" />
 
       <div className="node-header">
         <NodeIcon type="projectAssets" selected={selected} size={16} />
         <FoldderNodeHeaderTitle introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}>
-          ASSETS
+          FOLDDER
         </FoldderNodeHeaderTitle>
         <div className="node-badge">LIBRARY</div>
       </div>

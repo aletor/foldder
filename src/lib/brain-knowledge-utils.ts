@@ -22,6 +22,14 @@ export type BrainDnaExtraction = {
   data_relevante_numerica: string[];
   diferencial_competitivo?: string;
   tono_marca?: string;
+  visual_signals?: {
+    protagonist: string[];
+    environment: string[];
+    textures: string[];
+    people: string[];
+    tone: string[];
+    evidence_text: string[];
+  };
 };
 
 const DNA_JSON_SHAPE = `{
@@ -39,7 +47,15 @@ const DNA_JSON_SHAPE = `{
   },
   "data_relevante_numerica": [],
   "diferencial_competitivo": "",
-  "tono_marca": ""
+  "tono_marca": "",
+  "visual_signals": {
+    "protagonist": [],
+    "environment": [],
+    "textures": [],
+    "people": [],
+    "tone": [],
+    "evidence_text": []
+  }
 }`;
 
 function defaultDna(): BrainDnaExtraction {
@@ -59,6 +75,14 @@ function defaultDna(): BrainDnaExtraction {
     data_relevante_numerica: [],
     diferencial_competitivo: "",
     tono_marca: "",
+    visual_signals: {
+      protagonist: [],
+      environment: [],
+      textures: [],
+      people: [],
+      tone: [],
+      evidence_text: [],
+    },
   };
 }
 
@@ -126,6 +150,35 @@ function normalizeIndicadores(input: unknown): BrainDnaExtraction["mercado"]["in
     });
 }
 
+function normalizeStringArray(input: unknown, max = 24): string[] {
+  if (!Array.isArray(input)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of input) {
+    if (typeof item !== "string") continue;
+    const v = item.replace(/\s+/g, " ").trim();
+    if (!v) continue;
+    const key = v.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(v);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+function normalizeVisualSignals(input: unknown): NonNullable<BrainDnaExtraction["visual_signals"]> {
+  const obj = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  return {
+    protagonist: normalizeStringArray(obj.protagonist, 12),
+    environment: normalizeStringArray(obj.environment, 12),
+    textures: normalizeStringArray(obj.textures, 12),
+    people: normalizeStringArray(obj.people, 12),
+    tone: normalizeStringArray(obj.tone, 10),
+    evidence_text: normalizeStringArray(obj.evidence_text, 20),
+  };
+}
+
 export function safeParseDna(raw: string): BrainDnaExtraction {
   try {
     const parsed = JSON.parse(raw);
@@ -145,6 +198,7 @@ export function safeParseDna(raw: string): BrainDnaExtraction {
       data_relevante_numerica: Array.isArray(parsed?.data_relevante_numerica)
         ? parsed.data_relevante_numerica.filter((x: unknown): x is string => typeof x === "string")
         : [],
+      visual_signals: normalizeVisualSignals(parsed?.visual_signals),
     };
   } catch {
     return defaultDna();
@@ -343,7 +397,11 @@ export async function extractDnaFromImageRobust(
   mimeType: string,
 ): Promise<BrainDnaExtraction> {
   const userContent = [
-    { type: "text" as const, text: "Extract corporate DNA from this image." },
+    {
+      type: "text" as const,
+      text:
+        "Analiza esta imagen como director/a de estrategia de marca. No te limites al texto visible: interpreta composición, producto protagonista, entorno, texturas/materiales, personas y tono.",
+    },
     { type: "image_url" as const, image_url: { url: `data:${mimeType};base64,${base64Image}` } },
   ];
 
@@ -353,10 +411,20 @@ export async function extractDnaFromImageRobust(
     messages: [
       {
         role: "system",
-        content: `You are an expert strategic marketing AI.
-Extract corporate DNA from any text/logo/message visible in this image.
+        content: `You are an expert strategic marketing AI with visual brand analysis skills.
+Extract corporate DNA from the full visual scene (not only OCR text).
 Return JSON only and strictly using this shape: ${DNA_JSON_SHAPE}
-Capture any numeric and market references explicitly.`,
+Rules:
+1) Identify hero product/model when possible (e.g. "Engine A 26") and preserve literal strings from image/OCR.
+2) Fill visual_signals with concise, concrete phrases:
+   - protagonist: what is visually central (product/model/object)
+   - environment: scene/place/style
+   - textures: materials/surfaces/colors/patterns
+   - people: number/type/action/posture/mood
+   - tone: brand mood and art direction
+3) Keep values evidence-based and specific; avoid vague generic text.
+4) Capture any numeric and market references explicitly.
+5) If uncertain, provide best plausible hypothesis but never leave visual_signals empty.`,
       },
       {
         role: "user",
@@ -365,7 +433,11 @@ Capture any numeric and market references explicitly.`,
     ],
   });
   const parsed = safeParseDna(completion.choices[0]?.message?.content || "{}");
-  return enrichWithNumericSignals("", parsed);
+  const visualEvidence = [
+    ...(parsed.visual_signals?.evidence_text || []),
+    ...(parsed.visual_signals?.protagonist || []),
+  ].join("\n");
+  return enrichWithNumericSignals(visualEvidence, parsed);
 }
 
 export function buildReadableCorporateContext(
@@ -392,4 +464,3 @@ export function buildReadableCorporateContext(
     })
     .join("\n\n");
 }
-

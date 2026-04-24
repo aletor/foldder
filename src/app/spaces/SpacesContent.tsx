@@ -217,6 +217,32 @@ export function SpacesContent() {
   const { browserFullscreen, togglePageFullscreen } = useSpacesBrowserFullscreen();
 
   const fitViewToNodeIds = useSpacesFitViewToNodeIds();
+  const scheduleNodeInternalsRefresh = useCallback((nodeIds: string[]) => {
+    if (!Array.isArray(nodeIds) || nodeIds.length === 0) return;
+    const uniq = Array.from(new Set(nodeIds.filter((id) => typeof id === "string" && id.length > 0)));
+    if (uniq.length === 0) return;
+    const run = () => {
+      for (const id of uniq) updateNodeInternals(id);
+    };
+    requestAnimationFrame(() => {
+      run();
+      requestAnimationFrame(run);
+    });
+    window.setTimeout(run, 180);
+    window.setTimeout(run, 420);
+    window.setTimeout(run, 900);
+  }, [updateNodeInternals]);
+  const scheduleEdgeGeometryRefresh = useCallback(() => {
+    const run = () => {
+      setEdges((eds) => eds.map((e) => ({ ...e })));
+    };
+    requestAnimationFrame(() => {
+      requestAnimationFrame(run);
+    });
+    window.setTimeout(run, 200);
+    window.setTimeout(run, 480);
+    window.setTimeout(run, 980);
+  }, [setEdges]);
 
   // Persistence state
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
@@ -288,22 +314,25 @@ export function SpacesContent() {
   const [paletteDragActive, setPaletteDragActive] = useState(false);
   const [projectBrainOpen, setProjectBrainOpen] = useState(false);
   const [projectAssetsOpen, setProjectAssetsOpen] = useState(false);
+  const projectScopeId = activeProjectId || "__local__";
 
   const projectBrainCanvasValue = useMemo(
     () => ({
       assetsMetadata: metadata.assets,
+      projectScopeId,
       openProjectBrain: () => setProjectBrainOpen(true),
     }),
-    [metadata.assets],
+    [metadata.assets, projectScopeId],
   );
 
   const projectAssetsCanvasValue = useMemo(
     () => ({
       flowNodes: nodes,
       assetsMetadata: metadata.assets,
+      projectScopeId,
       openProjectAssets: () => setProjectAssetsOpen(true),
     }),
-    [nodes, metadata.assets],
+    [nodes, metadata.assets, projectScopeId],
   );
 
   useEffect(() => {
@@ -873,10 +902,17 @@ export function SpacesContent() {
       if (idx >= 0) setCardsFocusIndex(idx);
       return;
     }
-    lastClickedRef.current = (lastClickedRef.current ?? 0) + 1;
-    const nextZ = lastClickedRef.current;
-    setNodes((nds) =>
-      nds.map((n) => {
+    setNodes((nds) => {
+      const target = nds.find((n) => n.id === node.id);
+      if (!target) return nds;
+      const styleSrc = target.style as Record<string, unknown> | undefined;
+      const hasLegacyStyleZ = !!styleSrc && Object.prototype.hasOwnProperty.call(styleSrc, "zIndex");
+      const maxZ = nds.reduce((m, n) => Math.max(m, Number.isFinite(n.zIndex as number) ? (n.zIndex as number) : 0), 0);
+      const currentZ = Number.isFinite(target.zIndex as number) ? (target.zIndex as number) : 0;
+      if (!hasLegacyStyleZ && currentZ >= maxZ) return nds;
+      lastClickedRef.current = Math.max(lastClickedRef.current ?? 0, maxZ) + 1;
+      const nextZ = lastClickedRef.current;
+      return nds.map((n) => {
         if (n.id !== node.id) return n;
         const style = n.style ? { ...(n.style as Record<string, unknown>) } : {};
         delete (style as { zIndex?: number }).zIndex;
@@ -885,8 +921,8 @@ export function SpacesContent() {
           zIndex: nextZ,
           style: Object.keys(style).length > 0 ? (style as React.CSSProperties) : undefined,
         };
-      })
-    );
+      });
+    });
   }, [setNodes]);
 
   /** Clic en el vacío: migrar `style.zIndex` legado → `node.zIndex` en todos los nodos. */
@@ -1856,13 +1892,16 @@ export function SpacesContent() {
             }
           : updatedSpacesMap;
       setSpacesMap(mapToCommit);
-      setNodes([...targetSpace.nodes]);
+      const nextSpaceNodes = [...targetSpace.nodes];
+      setNodes(nextSpaceNodes);
       setEdges([...(targetSpace.edges || [])]);
+      scheduleNodeInternalsRefresh(nextSpaceNodes.map((n: any) => String(n.id)));
+      scheduleEdgeGeometryRefresh();
       setNavigationStack(prev => [...prev, currentId]);
       setActiveSpaceId(targetSpaceId);
       setTimeout(() => fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(800), ...FOLDDER_FIT_VIEW_EASE }), 100);
     }
-  }, [activeSpaceId, nodes, edges, spacesMap, setNodes, setEdges, fitView, syncCurrentSpaceState]);
+  }, [activeSpaceId, nodes, edges, spacesMap, setNodes, setEdges, fitView, syncCurrentSpaceState, scheduleNodeInternalsRefresh, scheduleEdgeGeometryRefresh]);
 
   /** Vuelve al lienzo root con sync; fit a todo el grafo tras aplicar nodos (doble rAF = tras pintar). */
   const goToRootCanvas = useCallback(() => {
@@ -1871,8 +1910,11 @@ export function SpacesContent() {
     const rootSpace = updatedSpacesMap['root'];
     if (!rootSpace) return;
     setSpacesMap(updatedSpacesMap);
-    setNodes([...rootSpace.nodes]);
+    const nextRootNodes = [...rootSpace.nodes];
+    setNodes(nextRootNodes);
     setEdges([...(rootSpace.edges || [])]);
+    scheduleNodeInternalsRefresh(nextRootNodes.map((n: any) => String(n.id)));
+    scheduleEdgeGeometryRefresh();
     setActiveSpaceId('root');
     setNavigationStack([]);
     requestAnimationFrame(() => {
@@ -1880,7 +1922,7 @@ export function SpacesContent() {
         void fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(480), interpolate: 'smooth', ...FOLDDER_FIT_VIEW_EASE });
       });
     });
-  }, [activeSpaceId, nodes, edges, spacesMap, setNodes, setEdges, fitView, syncCurrentSpaceState]);
+  }, [activeSpaceId, nodes, edges, spacesMap, setNodes, setEdges, fitView, syncCurrentSpaceState, scheduleNodeInternalsRefresh, scheduleEdgeGeometryRefresh]);
 
   const handleEscapeNavigation = useCallback((): boolean => {
     if (assistantClarify) {
@@ -2297,6 +2339,8 @@ export function SpacesContent() {
 
       setNodes(nextNodes);
       setEdges(nextEdges);
+      scheduleNodeInternalsRefresh(nextNodes.map((n: any) => String(n.id)));
+      scheduleEdgeGeometryRefresh();
       setActiveProjectId(project.id);
       setActiveSpaceId(targetSpaceId);
       setCurrentName(project.name || projectMeta.name);
@@ -2466,6 +2510,8 @@ export function SpacesContent() {
 
     setNodes(validatedNodes);
     setEdges(Array.isArray(data.edges) ? data.edges : []);
+    scheduleNodeInternalsRefresh(validatedNodes.map((n: any) => String(n.id)));
+    scheduleEdgeGeometryRefresh();
 
     setTimeout(() => {
       fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(800), ...FOLDDER_FIT_VIEW_EASE });
@@ -4395,6 +4441,7 @@ export function SpacesContent() {
             onClose={() => setProjectAssetsOpen(false)}
             nodes={nodes}
             assetsMetadata={metadata.assets}
+            projectScopeId={projectScopeId}
           />
         )}
 

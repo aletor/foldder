@@ -6,8 +6,14 @@ const googleClientId =
 const googleClientSecret =
   process.env.AUTH_GOOGLE_SECRET || process.env.GOOGLE_CLIENT_SECRET || "";
 const hasGoogleProvider = Boolean(googleClientId && googleClientSecret);
+const authSecret =
+  process.env.AUTH_SECRET ||
+  process.env.NEXTAUTH_SECRET ||
+  (process.env.NODE_ENV !== "production" ? "foldder-dev-auth-secret" : undefined);
 
 export const { handlers, auth } = NextAuth({
+  secret: authSecret,
+  trustHost: true,
   providers: hasGoogleProvider
     ? [
         Google({

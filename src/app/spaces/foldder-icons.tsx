@@ -9,6 +9,7 @@ export type FoldderNodeIconState = 'idle' | 'active' | 'processing' | 'done' | '
 
 export type FoldderIconKey =
   | 'asset'
+  | 'foldderApp'
   | 'prompt'
   | 'canvas'
   | 'web'
@@ -153,6 +154,17 @@ export function FoldderAsset({ state, className, size }: GlyphProps) {
       <rect x="8" y="8" width="4.75" height="4.75" rx="0.65" opacity={0.92} />
       <path d="M4 5.25 H7.25" opacity={0.55} strokeWidth={1.25} />
       <path d="M4 6.75 H6.5" opacity={0.4} strokeWidth={1.25} />
+    </FoldderIcon>
+  );
+}
+
+/** Foldder app mark (F bars) */
+export function FoldderAppMark({ state, className, size }: GlyphProps) {
+  return (
+    <FoldderIcon state={state} className={className} size={size}>
+      <rect x="2.75" y="2.75" width="10.5" height="3.05" rx="0.9" />
+      <rect x="2.75" y="6.95" width="9.1" height="3.05" rx="0.9" />
+      <rect x="2.75" y="11.15" width="4.1" height="2.1" rx="0.75" />
     </FoldderIcon>
   );
 }
@@ -451,6 +463,7 @@ export function FoldderFreehand({ state, className, size = 16 }: GlyphProps) {
 /** Category colors — stroke-driven; no icon backgrounds */
 export const FOLDDER_ICON_COLORS: Record<FoldderIconKey, string> = {
   asset: '#22d3ee',
+  foldderApp: '#a78bfa',
   prompt: '#38bdf8',
   canvas: '#06b6d4',
   web: '#2dd4bf',
@@ -478,6 +491,7 @@ export const FOLDDER_ICON_COLORS: Record<FoldderIconKey, string> = {
 
 export const FOLDDER_NODE_ICONS: Record<FoldderIconKey, React.FC<GlyphProps>> = {
   asset: FoldderAsset,
+  foldderApp: FoldderAppMark,
   prompt: FoldderPrompt,
   canvas: FoldderCanvas,
   web: FoldderWeb,
@@ -532,7 +546,7 @@ export const NODE_TYPE_TO_FOLDDER_ICON: Record<string, FoldderIconKey> = {
   presenter: 'nano',
   photoRoom: 'photoRoom',
   projectBrain: 'brain',
-  projectAssets: 'asset',
+  projectAssets: 'foldderApp',
   pinterestSearch: 'web',
 };
 

@@ -56,6 +56,12 @@ type BrainStrategy = {
     verified: boolean;
     interpreted: boolean;
   }>;
+  visualStyle?: {
+    protagonist?: { description?: string };
+    environment?: { description?: string };
+    textures?: { description?: string };
+    people?: { description?: string };
+  };
 };
 
 function cosineSimilarity(vecA: number[], vecB: number[]): number {
@@ -248,6 +254,12 @@ ${[...(strategy.forbiddenTerms || []), ...taboo].map((x) => `- ${x}`).join("\n")
 
 Claims absolutos permitidos:
 ${strategy.allowAbsoluteClaims ? "Sí, permitidos si están respaldados por evidencia." : "No permitidos. Evitar 'el mejor', 'siempre', 'nunca', etc."}
+
+Guía de estilo gráfico (ADN visual):
+- Protagonista: ${strategy.visualStyle?.protagonist?.description || "(sin definir)"}
+- Entorno: ${strategy.visualStyle?.environment?.description || "(sin definir)"}
+- Texturas: ${strategy.visualStyle?.textures?.description || "(sin definir)"}
+- Personas: ${strategy.visualStyle?.people?.description || "(sin definir)"}
 
 Contexto CORE (verdad de marca):
 ${coreContext || "(sin contexto core disponible)"}

@@ -24,15 +24,19 @@ const GENERATOR_NODE_TYPES = new Set([
 
 const IMPORT_NODE_TYPES = new Set(["mediaInput", "urlImage", "spaceInput"]);
 
-function isLikelyHttpUrl(s: string): boolean {
+function isLikelyMediaRef(s: string): boolean {
   const t = s.trim();
   if (t.length < 8) return false;
-  if (t.startsWith("data:")) return false;
-  return /^https?:\/\//i.test(t);
+  if (/^https?:\/\//i.test(t)) return true;
+  if (/^data:(image|video|audio)\//i.test(t)) return true;
+  return false;
 }
 
 function guessKind(url: string, dataType?: string): ProjectMediaKind {
   const u = url.toLowerCase();
+  if (u.startsWith("data:image/")) return "image";
+  if (u.startsWith("data:video/")) return "video";
+  if (u.startsWith("data:audio/")) return "audio";
   if (dataType === "video" || /\.(mp4|webm|mov|m4v|ogv)(\?|#|$)/i.test(u)) return "video";
   if (dataType === "audio" || /\.(mp3|wav|aac|ogg|m4a)(\?|#|$)/i.test(u)) return "audio";
   if (dataType === "image" || /\.(png|jpe?g|gif|webp|avif|svg)(\?|#|$)/i.test(u)) return "image";
@@ -50,13 +54,14 @@ function pushUnique(
   sourceLabel: string,
   nodeId: string,
 ) {
-  if (!isLikelyHttpUrl(url)) return;
-  const key = `${url}`;
+  if (!isLikelyMediaRef(url)) return;
+  const normalized = url.trim();
+  const key = normalized;
   if (seen.has(key)) return;
   seen.add(key);
   list.push({
     id: `${nodeId}::${seen.size}::${key.slice(0, 48)}`,
-    url: url.trim(),
+    url: normalized,
     kind,
     sourceLabel,
     nodeId,
@@ -68,19 +73,19 @@ function extractFromNodeData(
   into: string[],
 ) {
   const v = data.value;
-  if (typeof v === "string" && isLikelyHttpUrl(v)) into.push(v);
+  if (typeof v === "string" && isLikelyMediaRef(v)) into.push(v);
 
   const urls = data.urls;
   if (Array.isArray(urls)) {
     for (const u of urls) {
-      if (typeof u === "string" && isLikelyHttpUrl(u)) into.push(u);
+      if (typeof u === "string" && isLikelyMediaRef(u)) into.push(u);
     }
   }
 
   const gh = data.generationHistory;
   if (Array.isArray(gh)) {
     for (const u of gh) {
-      if (typeof u === "string" && isLikelyHttpUrl(u)) into.push(u);
+      if (typeof u === "string" && isLikelyMediaRef(u)) into.push(u);
     }
   }
 
@@ -89,15 +94,22 @@ function extractFromNodeData(
     for (const ent of av) {
       if (!ent || typeof ent !== "object") continue;
       const url = (ent as { url?: string }).url;
-      if (typeof url === "string" && isLikelyHttpUrl(url)) into.push(url);
+      if (typeof url === "string" && isLikelyMediaRef(url)) into.push(url);
     }
   }
 
   const lastGen = data.lastGenerated;
-  if (typeof lastGen === "string" && isLikelyHttpUrl(lastGen)) into.push(lastGen);
+  if (typeof lastGen === "string" && isLikelyMediaRef(lastGen)) into.push(lastGen);
 }
 
-function walkDesignerPagesForUrls(pages: unknown, into: string[]) {
+type DesignerPageMedia = {
+  url: string;
+  kind: ProjectMediaKind;
+  generated: boolean;
+  sourceLabel: string;
+};
+
+function walkDesignerPagesForMedia(pages: unknown, into: DesignerPageMedia[]) {
   if (!Array.isArray(pages)) return;
   for (const p of pages) {
     const objects = (p as { objects?: unknown }).objects;
@@ -105,12 +117,48 @@ function walkDesignerPagesForUrls(pages: unknown, into: string[]) {
     for (const o of objects) {
       if (!o || typeof o !== "object") continue;
       const ob = o as Record<string, unknown>;
-      if (ob.type === "image" && typeof ob.src === "string") into.push(ob.src);
-      if (ob.type === "rect") {
-        const ifc = ob.imageFrameContent as { src?: string } | null | undefined;
-        if (ifc?.src && typeof ifc.src === "string") into.push(ifc.src);
+      if (Array.isArray(ob.aiGeneratedMediaRefs)) {
+        for (const raw of ob.aiGeneratedMediaRefs) {
+          if (typeof raw !== "string" || !isLikelyMediaRef(raw)) continue;
+          into.push({
+            url: raw,
+            kind: guessKind(raw, "image"),
+            generated: true,
+            sourceLabel: "Designer · IA",
+          });
+        }
       }
-      if (ob.type === "booleanGroup" && typeof ob.cachedResult === "string") into.push(ob.cachedResult);
+      if (ob.type === "image" && typeof ob.src === "string") {
+        const imgMeta = ob.imageAssetMeta as { generatedByAi?: boolean; generatedByAiSource?: string } | undefined;
+        into.push({
+          url: ob.src,
+          kind: guessKind(ob.src, "image"),
+          generated: !!imgMeta?.generatedByAi,
+          sourceLabel: imgMeta?.generatedByAi ? (imgMeta.generatedByAiSource || "Designer · IA") : "Designer",
+        });
+      }
+      if (ob.type === "rect") {
+        const ifc = ob.imageFrameContent as
+          | { src?: string; generatedByAi?: boolean; generatedByAiSource?: string }
+          | null
+          | undefined;
+        if (ifc?.src && typeof ifc.src === "string") {
+          into.push({
+            url: ifc.src,
+            kind: guessKind(ifc.src, "image"),
+            generated: !!ifc.generatedByAi,
+            sourceLabel: ifc.generatedByAi ? (ifc.generatedByAiSource || "Designer frame · IA") : "Designer frame",
+          });
+        }
+      }
+      if (ob.type === "booleanGroup" && typeof ob.cachedResult === "string") {
+        into.push({
+          url: ob.cachedResult,
+          kind: guessKind(ob.cachedResult, "image"),
+          generated: false,
+          sourceLabel: "Designer boolean",
+        });
+      }
     }
   }
 }
@@ -121,7 +169,7 @@ function presenterVideoUrls(data: Record<string, unknown>, into: string[]) {
   for (const p of pl) {
     if (!p || typeof p !== "object") continue;
     const u = (p as { videoUrl?: string }).videoUrl;
-    if (typeof u === "string" && isLikelyHttpUrl(u)) into.push(u);
+    if (typeof u === "string" && isLikelyMediaRef(u)) into.push(u);
   }
 }
 
@@ -146,10 +194,14 @@ export function collectProjectMedia(nodes: Node[]): {
     const dataType = typeof data.type === "string" ? data.type : undefined;
 
     if (nodeType === "designer") {
-      const urls: string[] = [];
-      walkDesignerPagesForUrls(data.pages, urls);
-      for (const url of urls) {
-        pushUnique(imported, seenI, url, guessKind(url, "image"), "Designer", nodeId);
+      const media: DesignerPageMedia[] = [];
+      walkDesignerPagesForMedia(data.pages, media);
+      for (const ent of media) {
+        if (ent.generated) {
+          pushUnique(generated, seenG, ent.url, ent.kind, ent.sourceLabel, nodeId);
+        } else {
+          pushUnique(imported, seenI, ent.url, ent.kind, ent.sourceLabel, nodeId);
+        }
       }
       continue;
     }
@@ -176,7 +228,7 @@ export function collectProjectMedia(nodes: Node[]): {
         if (!ent || typeof ent !== "object") continue;
         const urlEnt = (ent as { url?: string; source?: string }).url;
         const source = (ent as { source?: string }).source;
-        if (typeof urlEnt === "string" && isLikelyHttpUrl(urlEnt) && source === "graph-run") {
+        if (typeof urlEnt === "string" && isLikelyMediaRef(urlEnt) && source === "graph-run") {
           graphRunUrls.push(urlEnt);
         }
       }

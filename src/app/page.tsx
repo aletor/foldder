@@ -125,7 +125,7 @@ export default function Home() {
       <main className="mx-auto flex w-full max-w-5xl flex-col px-4 pb-16 pt-12 sm:px-8 sm:pt-20">
         <section className="mx-auto flex w-full max-w-2xl flex-col items-center text-center">
           <Image
-            src="/foldder-symbol.svg"
+            src="/logo-folder.png"
             alt="Foldder"
             width={118}
             height={118}

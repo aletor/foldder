@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
+import Image from 'next/image';
 import { createPortal } from 'react-dom';
 import { ChevronRight } from 'lucide-react';
 import { NODE_REGISTRY } from './nodeRegistry';
@@ -36,37 +37,32 @@ function libraryTooltipPosition(el: HTMLElement): {
     placement,
   };
 }
-/** Icon-only mark from /public/foldder-logo.svg — shown when sidebar is collapsed */
+/** Icon-only mark from /public/logo_bl.svg — shown when sidebar is collapsed */
 function FoldderLogoFMark({ size = 40 }: { size?: number }) {
+  const scaled = Math.round(size);
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 60 60"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      className="drop-shadow-lg"
+    <Image
+      src="/logo_bl.svg"
+      alt=""
+      width={scaled}
+      height={scaled}
+      className="drop-shadow-lg object-contain"
       aria-hidden
-    >
-      <defs>
-        <linearGradient id="sidebarFoldderFTop" x1="0" y1="0" x2="56" y2="20" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor="#A06BEE" />
-          <stop offset="1" stopColor="#CAA4F7" />
-        </linearGradient>
-        <linearGradient id="sidebarFoldderFMid" x1="0" y1="20" x2="50" y2="40" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor="#5F2EEA" />
-          <stop offset="1" stopColor="#B187F4" />
-        </linearGradient>
-        <linearGradient id="sidebarFoldderFBot" x1="0" y1="40" x2="30" y2="60" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor="#2A1DC7" />
-          <stop offset="1" stopColor="#4E37EE" />
-        </linearGradient>
-      </defs>
-      <rect x="4" y="4" width="56" height="16" rx="4" fill="url(#sidebarFoldderFTop)" />
-      <rect x="4" y="24" width="48" height="16" rx="4" fill="url(#sidebarFoldderFMid)" />
-      <rect x="4" y="44" width="22" height="16" rx="4" fill="url(#sidebarFoldderFBot)" />
-      <path d="M4 48 C5.2 44.8 8.2 44 12 44 H22 L26 48 Z" fill="rgba(0,0,0,0.24)" />
-    </svg>
+    />
+  );
+}
+
+function FoldderAppTileGlyph({ size = 25 }: { size?: number }) {
+  const scaled = Math.round(size * 1.30);
+  return (
+    <Image
+      src="/logo-folder.png"
+      alt=""
+      width={scaled}
+      height={scaled}
+      className="drop-shadow-[0_1px_3px_rgba(0,0,0,0.45)] object-contain"
+      aria-hidden
+    />
   );
 }
 
@@ -88,6 +84,8 @@ function SidebarLibraryNodeIcon({ type, size = 25 }: { type: string; size?: numb
     <span className="inline-flex items-center justify-center drop-shadow-[0_1px_3px_rgba(0,0,0,0.5)]">
       {type === 'projectBrain' ? (
         <TopbarGlyphBrain size={size} className="shrink-0 text-white" />
+      ) : type === 'projectAssets' ? (
+        <FoldderAppTileGlyph size={size} />
       ) : (
         <NodeIcon type={type} size={size} colorOverride="#ffffff" />
       )}
@@ -247,7 +245,7 @@ const Sidebar = ({
   if (windowMode) {
     const allNodes: ({ type: string; label: string } | null)[] = [
       { type: 'projectBrain',      label: 'Brain' },
-      { type: 'projectAssets',     label: 'Assets' },
+      { type: 'projectAssets',     label: 'Foldder' },
       { type: 'mediaInput',        label: 'Asset' },
       { type: 'promptInput',       label: 'Prompt' },
       { type: 'background',        label: 'Canvas' },
@@ -290,10 +288,17 @@ const Sidebar = ({
         }}
         className="[&::-webkit-scrollbar]:hidden"
       >
-        {allNodes.map((item, idx) =>
-          item === null ? (
-            <div key={`sep-${idx}`} style={{ width: 1, height: 24, flexShrink: 0, background: 'rgba(255,255,255,0.12)', marginInline: 4 }} />
-          ) : (
+        {allNodes.map((item, idx) => {
+          if (item === null) {
+            return (
+              <div
+                key={`sep-${idx}`}
+                style={{ width: 1, height: 24, flexShrink: 0, background: 'rgba(255,255,255,0.12)', marginInline: 4 }}
+              />
+            );
+          }
+          const isFoldderTile = item.type === 'projectAssets';
+          return (
             <div
               key={item.type}
               draggable
@@ -317,12 +322,16 @@ const Sidebar = ({
                 justifyContent: 'center',
                 gap: 2,
                 borderRadius: 8,
-                border: '1px solid rgba(255,255,255,0.06)',
-                background: 'rgba(255,255,255,0.04)',
+                border: isFoldderTile ? '1px solid #b081f1' : '1px solid rgba(255,255,255,0.06)',
+                background: isFoldderTile ? 'transparent' : 'rgba(255,255,255,0.04)',
                 cursor: 'grab',
                 transition: 'all 0.15s',
               }}
-              className="relative hover:bg-white/10 hover:border-white/20 active:scale-95"
+              className={
+                isFoldderTile
+                  ? "relative hover:bg-transparent hover:border-[#b081f1] active:scale-95"
+                  : "relative hover:bg-white/10 hover:border-white/20 active:scale-95"
+              }
             >
               <KeyBadge nodeType={item.type} />
               <SidebarLibraryNodeIcon type={item.type} size={28} />
@@ -330,8 +339,8 @@ const Sidebar = ({
                 {item.label}
               </span>
             </div>
-          )
-        )}
+          );
+        })}
       </div>
       {libraryTipPortal}
       </>
@@ -384,7 +393,7 @@ const Sidebar = ({
               <div className="grid grid-cols-2 gap-2">
                 {[
                   { type: 'projectBrain', label: 'Brain' },
-                  { type: 'projectAssets', label: 'Assets' },
+                  { type: 'projectAssets', label: 'Foldder' },
                   { type: 'mediaInput',  label: 'Asset' },
                   { type: 'promptInput', label: 'Prompt' },
                   { type: 'background',  label: 'Canvas' },
@@ -392,7 +401,11 @@ const Sidebar = ({
                   { type: 'pinterestSearch', label: 'Pinterest' },
                 ].map(item => (
                   <div key={item.type}
-                    className="dndnode relative flex flex-col items-center justify-center gap-1 py-3 px-2 !bg-white/20 hover:!bg-white/30 border border-white/25 hover:border-emerald-400/50 rounded-2xl cursor-grab active:scale-95 transition-all text-center aspect-square"
+                    className={`dndnode relative flex flex-col items-center justify-center gap-1 py-3 px-2 border rounded-2xl cursor-grab active:scale-95 transition-all text-center aspect-square ${
+                      item.type === 'projectAssets'
+                        ? '!bg-transparent hover:!bg-transparent border-[#b081f1] hover:border-[#b081f1]'
+                        : '!bg-white/20 hover:!bg-white/30 border-white/25 hover:border-emerald-400/50'
+                    }`}
                     onDragStart={(e) => onDragStart(e, item.type)} onDragEnd={() => onLibraryDragEnd?.()} draggable
                     onMouseEnter={(e) => onLibraryTileEnter(e, item.type)}
                     onMouseLeave={onLibraryTileLeave}

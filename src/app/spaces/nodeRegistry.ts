@@ -409,9 +409,9 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
   },
   projectAssets: {
     type: 'projectAssets',
-    label: 'Assets',
+    label: 'Foldder',
     description:
-      'Read-only summary of canvas media (imported vs generated) plus link to the Assets fullscreen library (same as the Assets bottom-bar pin).',
+      'Read-only summary of canvas media (imported vs generated) plus link to the Foldder fullscreen library (same as the Foldder bottom-bar pin).',
     inputs: [],
     outputs: [{ id: 'prompt', label: 'Prompt out', type: 'prompt' as HandleType }],
     dataSchema: {
@@ -500,7 +500,7 @@ export const ASSISTANT_NODE_DATA_HINTS: Record<string, string> = {
   projectBrain:
     "label (título opcional); salida prompt reservada (sin texto aún); marca y conocimiento en metadata.assets — resume y abre studio",
   projectAssets:
-    "label (título opcional); salida prompt reservada; inventario de medios desde el grafo — abre panel Assets (biblioteca)",
+    "label (título opcional); salida prompt reservada; inventario de medios desde el grafo — abre panel Foldder (biblioteca)",
   designer:
     "pages (DesignerPageState[]), activePageIndex, label, value (export raster), autoImageOptimization; salida document (json) conecta a presenter",
   presenter:

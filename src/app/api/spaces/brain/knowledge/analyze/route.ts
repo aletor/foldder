@@ -14,7 +14,10 @@ import {
   type BrainMessageBlueprint,
   type BrainPersona,
   type BrainStrategy,
+  type BrainVisualStyle,
+  type BrainVisualStyleSlotKey,
   type BrainVoiceExample,
+  defaultBrainVisualStyle,
 } from "@/app/spaces/project-assets-metadata";
 
 type BrainDoc = {
@@ -58,6 +61,7 @@ type StrategyAutofill = {
   messageBlueprints: BrainMessageBlueprint[];
   factsAndEvidence: BrainFactEvidence[];
   personaIds: string[];
+  visualStyle: BrainVisualStyle;
 };
 
 const FUNNEL_STAGES: BrainFunnelMessage["stage"][] = [
@@ -331,6 +335,333 @@ function normalizePersonaIds(raw: unknown, docs: BrainDoc[]): string[] {
   return ids.length > 0 ? [...new Set(ids)].slice(0, 8) : selectPersonaIdsFallback(docs);
 }
 
+function cleanVisualDescription(value: unknown): string {
+  return cleanText(value, 220);
+}
+
+type VisualEvidenceBag = {
+  protagonist: string[];
+  environment: string[];
+  textures: string[];
+  people: string[];
+  tone: string[];
+  models: string[];
+  snippets: string[];
+};
+
+function extractLikelyModels(text: string): string[] {
+  const normalized = text.replace(/\s+/g, " ");
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const directEngine = normalized.match(/\bengine\s*a\s*\d{1,3}\b/gi) || [];
+  const generic =
+    normalized.match(
+      /\b(?:[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\s+[A-Z]?\s?\d{1,4}[A-Za-z]?|[A-Z]{2,8}\s?\d{2,4})\b/g,
+    ) || [];
+  for (const raw of [...directEngine, ...generic]) {
+    const value = cleanText(raw, 80);
+    if (!value) continue;
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(value);
+    if (out.length >= 8) break;
+  }
+  return out;
+}
+
+function collectVisualEvidence(docs: BrainDoc[]): VisualEvidenceBag {
+  const bag: VisualEvidenceBag = {
+    protagonist: [],
+    environment: [],
+    textures: [],
+    people: [],
+    tone: [],
+    models: [],
+    snippets: [],
+  };
+  const pushUnique = (target: string[], values: string[], max = 16) => {
+    for (const value of values) {
+      const v = cleanText(value, 180);
+      if (!v) continue;
+      if (target.some((x) => x.toLowerCase() === v.toLowerCase())) continue;
+      target.push(v);
+      if (target.length >= max) break;
+    }
+  };
+  const analyzed = docs.filter((d) => d.status === "Analizado");
+  for (const doc of analyzed) {
+    const parsed = parseExtractedContext(doc.extractedContext || "");
+    if (parsed) {
+      const visualSignals =
+        parsed.visual_signals && typeof parsed.visual_signals === "object"
+          ? (parsed.visual_signals as Record<string, unknown>)
+          : null;
+      pushUnique(
+        bag.protagonist,
+        visualSignals
+          ? readStringArray(visualSignals, "protagonist")
+          : readStringArray(
+              parsed.producto && typeof parsed.producto === "object"
+                ? (parsed.producto as Record<string, unknown>)
+                : null,
+              "funcionalidades",
+            ),
+        14,
+      );
+      pushUnique(
+        bag.environment,
+        visualSignals
+          ? readStringArray(visualSignals, "environment")
+          : readStringArray(
+              parsed.audiencia && typeof parsed.audiencia === "object"
+                ? (parsed.audiencia as Record<string, unknown>)
+                : null,
+              "necesidades",
+            ),
+        14,
+      );
+      pushUnique(bag.textures, visualSignals ? readStringArray(visualSignals, "textures") : [], 14);
+      pushUnique(bag.people, visualSignals ? readStringArray(visualSignals, "people") : [], 14);
+      pushUnique(
+        bag.tone,
+        [
+          cleanText(parsed.tono_marca, 120),
+          ...(visualSignals ? readStringArray(visualSignals, "tone") : []),
+        ].filter(Boolean) as string[],
+        10,
+      );
+      pushUnique(
+        bag.snippets,
+        visualSignals ? readStringArray(visualSignals, "evidence_text") : [],
+        20,
+      );
+      pushUnique(
+        bag.models,
+        extractLikelyModels(
+          JSON.stringify({
+            name: doc.name,
+            protagonista: visualSignals ? readStringArray(visualSignals, "protagonist") : [],
+            beneficios:
+              parsed.producto && typeof parsed.producto === "object"
+                ? readStringArray(parsed.producto as Record<string, unknown>, "beneficios")
+                : [],
+            funcionalidades:
+              parsed.producto && typeof parsed.producto === "object"
+                ? readStringArray(parsed.producto as Record<string, unknown>, "funcionalidades")
+                : [],
+            evidence: visualSignals ? readStringArray(visualSignals, "evidence_text") : [],
+          }),
+        ),
+        8,
+      );
+    }
+    pushUnique(bag.models, extractLikelyModels(doc.name), 8);
+    if (doc.extractedContext) {
+      pushUnique(bag.models, extractLikelyModels(doc.extractedContext), 8);
+    }
+  }
+  return bag;
+}
+
+function buildFallbackVisualStyle(docs: BrainDoc[]): BrainVisualStyle {
+  const base = defaultBrainVisualStyle();
+  const visual = collectVisualEvidence(docs);
+  const allText = docs
+    .filter((d) => d.status === "Analizado")
+    .map((d) => `${d.name}\n${d.extractedContext || ""}`)
+    .join("\n")
+    .toLowerCase();
+
+  const hasPeople = /\b(equipo|personas|clientes|creador|agencia|freelancer|audiencia|usuarios)\b/i.test(allText);
+  const hasInterface = /\b(app|plataforma|software|dashboard|editor|lienzo|workflow|sistema)\b/i.test(allText);
+  const hasMarket = /\b(mercado|competencia|benchmark|sam|som|tam)\b/i.test(allText);
+
+  const parsed = docs
+    .filter((d) => d.status === "Analizado" && typeof d.extractedContext === "string")
+    .map((d) => parseExtractedContext(d.extractedContext || ""))
+    .filter((x): x is Record<string, unknown> => Boolean(x));
+
+  const features = uniqueStrings(
+    parsed.flatMap((p) =>
+      readStringArray(
+        p.producto && typeof p.producto === "object" ? (p.producto as Record<string, unknown>) : null,
+        "funcionalidades",
+      ),
+    ),
+    3,
+  );
+  const audiences = uniqueStrings(
+    parsed
+      .map((p) =>
+        cleanText(
+          p.audiencia && typeof p.audiencia === "object"
+            ? (p.audiencia as Record<string, unknown>).perfil_cliente
+            : "",
+          120,
+        ),
+      )
+      .filter(Boolean) as string[],
+    2,
+  );
+  const tones = uniqueStrings(
+    parsed.map((p) => cleanText(p.tono_marca, 100)).filter(Boolean) as string[],
+    2,
+  );
+  const differentiators = uniqueStrings(
+    parsed
+      .map((p) => cleanText(p.diferencial_competitivo, 140))
+      .filter(Boolean) as string[],
+    2,
+  );
+  const protagonistHint = uniqueStrings(
+    [...visual.models, ...visual.protagonist, ...features],
+    3,
+  );
+  const environmentHint = uniqueStrings([...visual.environment], 3);
+  const texturesHint = uniqueStrings([...visual.textures], 3);
+  const peopleHint = uniqueStrings([...visual.people], 3);
+  const toneStrongHint = uniqueStrings([...visual.tone, ...tones], 2);
+
+  const featureHint = features.length ? `con foco en ${features.join(", ")}` : "con foco claro en valor de producto";
+  const audienceHint = audiences.length ? audiences.join(" y ") : "equipos creativos y perfiles profesionales";
+  const toneHint = toneStrongHint.length ? toneStrongHint.join(" · ") : "profesional, claro y contemporáneo";
+  const diffHint = differentiators.length
+    ? `La escena debe sugerir ${differentiators.join(" y ")}`
+    : "La escena debe transmitir control, coherencia y ejecución integrada";
+
+  return {
+    ...base,
+    protagonist: {
+      ...base.protagonist,
+      description:
+        protagonistHint.length > 0
+          ? `El protagonista visual debe ser ${protagonistHint.join(" / ")}, mostrado en primer plano con detalle de producto y lectura inmediata de marca.`
+          : hasInterface
+            ? `El protagonista visual debe ser el producto/interfaz principal, en primer plano y ${featureHint}.`
+            : `El protagonista visual debe ser el activo central de la marca, con jerarquía clara y ${featureHint}.`,
+      prompt:
+        protagonistHint.length > 0
+          ? `Hero shot editorial de ${protagonistHint.join(", ")}, encuadre limpio, énfasis en diseño y rendimiento, iluminación controlada.`
+          : base.protagonist.prompt,
+    },
+    environment: {
+      ...base.environment,
+      description:
+        environmentHint.length > 0
+          ? `El entorno recomendado es ${environmentHint.join(" / ")}, con lenguaje visual minimalista y deportivo que no compita con el producto.`
+          : hasMarket
+            ? `El entorno debe ser profesional y creíble, conectado a mercado real y contexto de uso diario de ${audienceHint}.`
+            : `El entorno debe apoyar el uso real del producto por ${audienceHint}, con composición limpia y funcional.`,
+      prompt:
+        environmentHint.length > 0
+          ? `Escena ${environmentHint.join(", ")}, composición sobria, profundidad corta, atmósfera premium deportiva.`
+          : base.environment.prompt,
+    },
+    textures: {
+      ...base.textures,
+      description:
+        texturesHint.length > 0
+          ? `Texturas clave: ${texturesHint.join(" / ")}. Priorizar materiales reales y contraste táctil para reforzar percepción de calidad.`
+          : `Texturas sutiles con acabado editorial limpio, contraste controlado y tono visual ${toneHint}.`,
+      prompt:
+        texturesHint.length > 0
+          ? `Detalle macro de ${texturesHint.join(", ")}, alta nitidez de material, lookbook comercial premium.`
+          : base.textures.prompt,
+    },
+    people: {
+      ...base.people,
+      description:
+        peopleHint.length > 0
+          ? `Personas sugeridas: ${peopleHint.join(" / ")}, en acción real y gesto serio/enfocado para sostener narrativa de rendimiento.`
+          : hasPeople
+            ? `Personas reales del público objetivo en acción, colaborando de forma natural y mostrando ${diffHint.toLowerCase()}.`
+            : `Incluir personas de forma creíble y no forzada para humanizar la escena y reforzar ${diffHint.toLowerCase()}.`,
+      prompt:
+        peopleHint.length > 0
+          ? `Retrato/action shot de ${peopleHint.join(", ")}, postura atlética, actitud concentrada, integración natural con producto.`
+          : base.people.prompt,
+    },
+  };
+}
+
+function sanitizeVisualStyle(raw: unknown, docs: BrainDoc[]): BrainVisualStyle {
+  const base = buildFallbackVisualStyle(docs);
+  if (!raw || typeof raw !== "object") return base;
+  const r = raw as Record<string, unknown>;
+  const read = (key: BrainVisualStyleSlotKey, title: string): BrainVisualStyle[BrainVisualStyleSlotKey] => {
+    const x = r[key];
+    const inObj = x && typeof x === "object" ? (x as Record<string, unknown>) : null;
+    const description = cleanVisualDescription(inObj?.description ?? x);
+    const prompt = cleanText(inObj?.prompt, 520);
+    return {
+      ...base[key],
+      title,
+      description: description || base[key].description,
+      prompt: prompt || base[key].prompt || description || base[key].description,
+      source: "auto",
+    };
+  };
+  return {
+    protagonist: read("protagonist", "Protagonista"),
+    environment: read("environment", "Entorno"),
+    textures: read("textures", "Texturas"),
+    people: read("people", "Personas"),
+  };
+}
+
+async function inferVisualStyleWithLlm(
+  docs: BrainDoc[],
+  fallback: BrainVisualStyle,
+): Promise<BrainVisualStyle> {
+  const analyzed = docs.filter((d) => d.status === "Analizado" && typeof d.extractedContext === "string");
+  if (analyzed.length === 0) return fallback;
+
+  const coreContext = analyzed
+    .filter((d) => d.scope !== "context")
+    .slice(0, 10)
+    .map((d) => `### ${d.name}\n${(d.extractedContext || "").slice(0, 3200)}`)
+    .join("\n\n");
+  const contextOnly = analyzed
+    .filter((d) => d.scope === "context")
+    .slice(0, 8)
+    .map((d) => `### ${d.name}\n${(d.extractedContext || "").slice(0, 2200)}`)
+    .join("\n\n");
+  const visualEvidence = collectVisualEvidence(docs);
+  const visualSummary = {
+    models: visualEvidence.models.slice(0, 6),
+    protagonist: visualEvidence.protagonist.slice(0, 8),
+    environment: visualEvidence.environment.slice(0, 8),
+    textures: visualEvidence.textures.slice(0, 8),
+    people: visualEvidence.people.slice(0, 8),
+    tone: visualEvidence.tone.slice(0, 6),
+    snippets: visualEvidence.snippets.slice(0, 10),
+  };
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o",
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content:
+            "Eres director/a de arte senior en branding deportivo. Extrae ADN visual accionable y específico. Devuelve SOLO JSON con shape: {\"visualStyle\":{\"protagonist\":{\"description\":\"string\",\"prompt\":\"string\"},\"environment\":{\"description\":\"string\",\"prompt\":\"string\"},\"textures\":{\"description\":\"string\",\"prompt\":\"string\"},\"people\":{\"description\":\"string\",\"prompt\":\"string\"}},\"toneSummary\":\"string\"}. Reglas críticas: 1) Nunca dejes descripciones vacías. 2) Cada description es un párrafo corto (1-2 frases), concreto, sin humo. 3) Si detectas nombre de producto/modelo, inclúyelo literal (ej. Engine A 26). 4) Prioriza señales repetidas en evidencias CORE e imágenes analizadas. 5) CONTEXTO externo no debe contaminar identidad de marca; úsalo solo como apoyo visual. 6) Si hay poca evidencia, da la mejor hipótesis plausible y explícita. 7) Si hay suficiente evidencia visual, evita respuestas genéricas.",
+        },
+        {
+          role: "user",
+          content: `EVIDENCIAS CORE:\n${coreContext || "(sin core)"}\n\nEVIDENCIAS CONTEXTO:\n${contextOnly || "(sin contexto)"}\n\nEVIDENCIAS VISUALES CONSOLIDADAS:\n${JSON.stringify(visualSummary, null, 2)}\n\nFALLBACK ACTUAL:\n${JSON.stringify(fallback, null, 2)}`,
+        },
+      ],
+    });
+    const raw = completion.choices[0]?.message?.content || "{}";
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return sanitizeVisualStyle(parsed.visualStyle, docs);
+  } catch {
+    return fallback;
+  }
+}
+
 async function buildAutofillStrategy(docs: BrainDoc[]): Promise<StrategyAutofill> {
   const analyzed = docs.filter((d) => d.status === "Analizado" && typeof d.extractedContext === "string");
   if (analyzed.length === 0) {
@@ -348,6 +679,7 @@ async function buildAutofillStrategy(docs: BrainDoc[]): Promise<StrategyAutofill
       messageBlueprints: [],
       factsAndEvidence: computeFactsAndEvidence(docs),
       personaIds: selectPersonaIdsFallback(docs),
+      visualStyle: buildFallbackVisualStyle(docs),
     };
   }
 
@@ -380,7 +712,7 @@ async function buildAutofillStrategy(docs: BrainDoc[]): Promise<StrategyAutofill
         {
           role: "system",
           content:
-            "Eres estratega de marca. Debes autocompletar VOZ, PERSONAS y MENSAJES tras analizar documentos. Devuelve SOLO JSON con este shape: {\"voiceExamples\":[{\"kind\":\"approved_voice|forbidden_voice|good_piece|bad_piece\",\"label\":\"string\",\"text\":\"string\"}],\"tabooPhrases\":[\"string\"],\"approvedPhrases\":[\"string\"],\"languageTraits\":[\"string\"],\"syntaxPatterns\":[\"string\"],\"preferredTerms\":[\"string\"],\"forbiddenTerms\":[\"string\"],\"channelIntensity\":[{\"channel\":\"string\",\"intensity\":0}],\"allowAbsoluteClaims\":false,\"funnelMessages\":[{\"stage\":\"awareness|consideration|conversion|retention\",\"text\":\"string\"}],\"messageBlueprints\":[{\"claim\":\"string\",\"support\":\"string\",\"audience\":\"string\",\"channel\":\"string\",\"stage\":\"awareness|consideration|conversion|retention\",\"cta\":\"string\",\"evidence\":[\"string\"]}],\"personaIds\":[\"string\"]}. Reglas: 1) El tono sale de CORE, no de CONTEXTO. 2) CONTEXTO solo aporta mercado/benchmark. 3) Si faltan datos, deja arrays vacíos, no inventes claims.",
+            "Eres estratega de marca. Debes autocompletar VOZ, PERSONAS, MENSAJES y ESTILO VISUAL tras analizar documentos. Devuelve SOLO JSON con este shape: {\"voiceExamples\":[{\"kind\":\"approved_voice|forbidden_voice|good_piece|bad_piece\",\"label\":\"string\",\"text\":\"string\"}],\"tabooPhrases\":[\"string\"],\"approvedPhrases\":[\"string\"],\"languageTraits\":[\"string\"],\"syntaxPatterns\":[\"string\"],\"preferredTerms\":[\"string\"],\"forbiddenTerms\":[\"string\"],\"channelIntensity\":[{\"channel\":\"string\",\"intensity\":0}],\"allowAbsoluteClaims\":false,\"funnelMessages\":[{\"stage\":\"awareness|consideration|conversion|retention\",\"text\":\"string\"}],\"messageBlueprints\":[{\"claim\":\"string\",\"support\":\"string\",\"audience\":\"string\",\"channel\":\"string\",\"stage\":\"awareness|consideration|conversion|retention\",\"cta\":\"string\",\"evidence\":[\"string\"]}],\"personaIds\":[\"string\"],\"visualStyle\":{\"protagonist\":{\"description\":\"string\",\"prompt\":\"string\"},\"environment\":{\"description\":\"string\",\"prompt\":\"string\"},\"textures\":{\"description\":\"string\",\"prompt\":\"string\"},\"people\":{\"description\":\"string\",\"prompt\":\"string\"}}}. Reglas: 1) El tono sale de CORE, no de CONTEXTO. 2) CONTEXTO solo aporta mercado/benchmark. 3) Si faltan datos, devuelve frases conservadoras y concretas (no inventes datos). 4) Cada description debe ser un párrafo corto (1-2 frases) y nunca vacío. 5) Si la evidencia es limitada, produce la mejor hipótesis visual plausible y explícita.",
         },
         {
           role: "user",
@@ -391,6 +723,8 @@ async function buildAutofillStrategy(docs: BrainDoc[]): Promise<StrategyAutofill
 
     const raw = completion.choices[0]?.message?.content || "{}";
     const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const visualFallback = sanitizeVisualStyle(parsed.visualStyle, docs);
+    const visualEnhanced = await inferVisualStyleWithLlm(docs, visualFallback);
     return {
       voiceExamples: sanitizeVoiceExamples(parsed.voiceExamples),
       tabooPhrases: uniqueStrings(Array.isArray(parsed.tabooPhrases) ? (parsed.tabooPhrases as string[]) : [], 24),
@@ -428,9 +762,12 @@ async function buildAutofillStrategy(docs: BrainDoc[]): Promise<StrategyAutofill
       messageBlueprints: sanitizeBlueprints(parsed.messageBlueprints),
       factsAndEvidence: computeFactsAndEvidence(docs),
       personaIds: normalizePersonaIds(parsed.personaIds, docs),
+      visualStyle: visualEnhanced,
     };
   } catch (error) {
     console.error("[brain/knowledge/analyze] strategy autofill failed, using fallback:", error);
+    const visualFallback = buildFallbackVisualStyle(docs);
+    const visualEnhanced = await inferVisualStyleWithLlm(docs, visualFallback);
     return {
       voiceExamples: [],
       tabooPhrases: [],
@@ -445,6 +782,7 @@ async function buildAutofillStrategy(docs: BrainDoc[]): Promise<StrategyAutofill
       messageBlueprints: [],
       factsAndEvidence: computeFactsAndEvidence(docs),
       personaIds: selectPersonaIdsFallback(docs),
+      visualStyle: visualEnhanced,
     };
   }
 }
@@ -467,6 +805,7 @@ function mergeStrategy(existing: BrainStrategy | undefined, autofill: StrategyAu
     generatedPieces: [],
     approvedPatterns: [],
     rejectedPatterns: [],
+    visualStyle: defaultBrainVisualStyle(),
   };
 
   const catalogMap = new Map(AUDIENCE_PERSONA_CATALOG.map((p) => [p.id, p]));
@@ -503,6 +842,48 @@ function mergeStrategy(existing: BrainStrategy | undefined, autofill: StrategyAu
     factByKey.set(key, item);
   }
 
+  const defaultVisual = defaultBrainVisualStyle();
+  const visualFromPrev = previous.visualStyle || defaultVisual;
+  const visualFromAuto = autofill.visualStyle || defaultVisual;
+  const mergedVisual: BrainVisualStyle = {
+    protagonist: {
+      ...visualFromPrev.protagonist,
+      ...visualFromAuto.protagonist,
+      key: "protagonist",
+      title: "Protagonista",
+      imageUrl: visualFromPrev.protagonist?.imageUrl || null,
+      imageS3Key: visualFromPrev.protagonist?.imageS3Key,
+      source: visualFromPrev.protagonist?.source || "auto",
+    },
+    environment: {
+      ...visualFromPrev.environment,
+      ...visualFromAuto.environment,
+      key: "environment",
+      title: "Entorno",
+      imageUrl: visualFromPrev.environment?.imageUrl || null,
+      imageS3Key: visualFromPrev.environment?.imageS3Key,
+      source: visualFromPrev.environment?.source || "auto",
+    },
+    textures: {
+      ...visualFromPrev.textures,
+      ...visualFromAuto.textures,
+      key: "textures",
+      title: "Texturas",
+      imageUrl: visualFromPrev.textures?.imageUrl || null,
+      imageS3Key: visualFromPrev.textures?.imageS3Key,
+      source: visualFromPrev.textures?.source || "auto",
+    },
+    people: {
+      ...visualFromPrev.people,
+      ...visualFromAuto.people,
+      key: "people",
+      title: "Personas",
+      imageUrl: visualFromPrev.people?.imageUrl || null,
+      imageS3Key: visualFromPrev.people?.imageS3Key,
+      source: visualFromPrev.people?.source || "auto",
+    },
+  };
+
   return {
     ...previous,
     voiceExamples: [...voiceByKey.values()].slice(0, 24),
@@ -520,7 +901,25 @@ function mergeStrategy(existing: BrainStrategy | undefined, autofill: StrategyAu
     funnelMessages: [...msgByKey.values()].slice(0, 20),
     messageBlueprints: [...blueprintByKey.values()].slice(0, 40),
     factsAndEvidence: [...factByKey.values()].slice(0, 80),
+    visualStyle: mergedVisual,
   };
+}
+
+function requiresVisualSignalsUpgrade(doc: BrainDoc): boolean {
+  const isImage = doc.type === "image" || doc.format === "image" || doc.mime.startsWith("image/");
+  if (!isImage || doc.status !== "Analizado" || !doc.extractedContext) return false;
+  const parsed = parseExtractedContext(doc.extractedContext);
+  if (!parsed) return true;
+  const visualSignals =
+    parsed.visual_signals && typeof parsed.visual_signals === "object"
+      ? (parsed.visual_signals as Record<string, unknown>)
+      : null;
+  if (!visualSignals) return true;
+  const protagonist = readStringArray(visualSignals, "protagonist");
+  const environment = readStringArray(visualSignals, "environment");
+  const textures = readStringArray(visualSignals, "textures");
+  const people = readStringArray(visualSignals, "people");
+  return protagonist.length + environment.length + textures.length + people.length === 0;
 }
 
 export async function POST(req: NextRequest) {
@@ -531,7 +930,10 @@ export async function POST(req: NextRequest) {
 
     const pendingIdx = nextDocs
       .map((doc, idx) => ({ doc, idx }))
-      .filter(({ doc }) => doc.status === "Subido" || doc.status === "Error");
+      .filter(
+        ({ doc }) =>
+          doc.status === "Subido" || doc.status === "Error" || requiresVisualSignalsUpgrade(doc),
+      );
 
     if (pendingIdx.length === 0) {
       const autofill = await buildAutofillStrategy(nextDocs);
