@@ -41,13 +41,14 @@ function libraryTooltipPosition(el: HTMLElement): {
 function FoldderLogoFMark({ size = 40 }: { size?: number }) {
   const scaled = Math.round(size);
   return (
-    <Image
+    <img
       src="/logo_bl.svg"
       alt=""
       width={scaled}
       height={scaled}
       className="drop-shadow-lg object-contain"
       aria-hidden
+      draggable={false}
     />
   );
 }

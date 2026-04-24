@@ -82,8 +82,31 @@ async function readDdbProjectById(id: string): Promise<ProjectRecord | null> {
   return readDdbProjectByIdStore(spacesTableName(), id);
 }
 
-async function writeDdbProject(project: ProjectRecord): Promise<void> {
-  await upsertDdbProjectStore(spacesTableName(), project);
+async function readProjectByIdResilient(id: string): Promise<ProjectRecord | null> {
+  if (!isSpacesDdbEnabled()) {
+    return (await readProjects()).find((row) => row.id === id) ?? null;
+  }
+
+  try {
+    const direct = await readDdbProjectById(id);
+    if (direct) return direct;
+  } catch (error) {
+    console.error(`[spaces] direct Dynamo read failed for project ${id}:`, error);
+  }
+
+  try {
+    return (await readProjects()).find((row) => row.id === id) ?? null;
+  } catch (error) {
+    console.error(`[spaces] fallback scan read failed for project ${id}:`, error);
+    return null;
+  }
+}
+
+async function writeDdbProject(
+  project: ProjectRecord,
+  options?: { allowProjectIdMetaScan?: boolean },
+): Promise<void> {
+  await upsertDdbProjectStore(spacesTableName(), project, options);
 }
 
 async function deleteDdbProject(id: string): Promise<void> {
@@ -198,16 +221,14 @@ export async function GET(req: Request) {
     const ownerEmail = authState.user.email;
 
     const { searchParams } = new URL(req.url);
-    const id = searchParams.get("id")?.trim();
+    const id = searchParams.get("id");
     const wantsFull = searchParams.get("full") === "1";
     const wantsMeta = searchParams.get("meta") === "1";
     const limitRaw = Number(searchParams.get("limit") ?? "");
     const cursor = searchParams.get("cursor");
 
-    if (id) {
-      const project = isSpacesDdbEnabled()
-        ? await readDdbProjectById(id)
-        : (await readProjects()).find((row) => row.id === id) ?? null;
+    if (id && id.length > 0) {
+      const project = await readProjectByIdResilient(id);
       if (!project || !projectBelongsToOwner(project, ownerEmail)) {
         return NextResponse.json({ error: "Project not found" }, { status: 404 });
       }
@@ -266,7 +287,7 @@ export async function POST(req: Request) {
     if (isSpacesDdbEnabled()) {
       const { id, name, rootSpaceId, spaces, metadata } = body;
       if (id) {
-        const existing = await readDdbProjectById(id);
+        const existing = await readProjectByIdResilient(id);
         if (!existing || !projectBelongsToOwner(existing, ownerEmail)) {
           return NextResponse.json({ error: "Project not found" }, { status: 404 });
         }
@@ -288,9 +309,6 @@ export async function POST(req: Request) {
         return NextResponse.json(savedProject);
       }
 
-      const allProjectsMeta = (await readProjects()).filter((p) =>
-        projectBelongsToOwner(p, ownerEmail),
-      );
       const projectId = uuidv4();
       const initialSpaceId = uuidv4();
       const resolvedRoot =
@@ -303,7 +321,7 @@ export async function POST(req: Request) {
       const timestamp = new Date().toISOString();
       const newProject: ProjectRecord = {
         id: projectId,
-        name: name || `New Project ${allProjectsMeta.length + 1}`,
+        name: name || "New Project",
         rootSpaceId: resolvedRoot,
         spaces:
           spaces || {
@@ -324,7 +342,7 @@ export async function POST(req: Request) {
         updatedAt: timestamp,
       };
 
-      await writeDdbProject(newProject);
+      await writeDdbProject(newProject, { allowProjectIdMetaScan: false });
       spacesGetCache = null;
       spacesMetaGetCache = null;
       return NextResponse.json(newProject);
@@ -423,10 +441,10 @@ export async function DELETE(req: Request) {
 
     const { searchParams } = new URL(req.url);
     const id = searchParams.get("id");
-    if (!id) return NextResponse.json({ error: "ID required" }, { status: 400 });
+    if (!id || id.length === 0) return NextResponse.json({ error: "ID required" }, { status: 400 });
 
     if (isSpacesDdbEnabled()) {
-      const projectToDelete = await readDdbProjectById(id);
+      const projectToDelete = await readProjectByIdResilient(id);
       if (!projectToDelete || !projectBelongsToOwner(projectToDelete, ownerEmail)) {
         return NextResponse.json({ error: "Project not found" }, { status: 404 });
       }

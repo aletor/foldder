@@ -2284,6 +2284,14 @@ export function SpacesContent() {
         project = await fetchProjectDetailById(projectMeta.id);
       } catch (error) {
         console.error('[loadProject] detail fetch failed:', error);
+        const msg = error instanceof Error ? error.message : String(error ?? "");
+        if (/404|Project not found/i.test(msg)) {
+          // Si el listado trae una entrada obsoleta, refrescamos y evitamos reintentos sobre ese id.
+          await refreshProjectsList().catch(() => undefined);
+          setSavedProjects((prev) => prev.filter((p) => p.id !== projectMeta.id));
+          alert('Este proyecto ya no está disponible en servidor. Se actualizó la lista.');
+          return;
+        }
         alert('Error: could not fetch this project from server.');
         return;
       }
