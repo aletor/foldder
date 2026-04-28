@@ -18,6 +18,7 @@ import {
   LayoutDashboard,
   MessageSquareText,
   Network,
+  Palette,
   Plus,
   RefreshCw,
   Save,
@@ -33,10 +34,10 @@ import {
   MAX_LOGO_BYTES,
   normalizeProjectAssets,
   defaultBrainVisualStyle,
+  defaultProjectAssets,
   type BrainVisualImageAnalysis,
   type BrainVisualImageUserOverride,
   type BrainVisualReferenceLayer,
-  type BrainVisualStyleSlotKey,
   type BrainGeneratedPiece,
   type BrainPersona,
   type BrainVoiceExample,
@@ -45,6 +46,14 @@ import {
   type VisualImageClassification,
 } from "./project-assets-metadata";
 import { BRAIN_ADN_COMPLETENESS_TOOLTIP_ES, computeAdnScore } from "@/lib/brain/brain-adn-score";
+import {
+  getBrainFreshnessSummary,
+  getBrainVersion,
+  markBrainStale,
+  normalizeBrainMeta,
+  touchBrainMetaAfterVisualAnalysis,
+} from "@/lib/brain/brain-meta";
+import { BRAIN_STALE_REASON } from "@/lib/brain/brain-stale-reasons";
 import type { BrandSummaryBadge, BrandSummarySection } from "@/lib/brain/brain-brand-summary";
 import {
   buildBrainBrandSummary,
@@ -75,10 +84,6 @@ import {
   isExcludedFromVisualDna,
   reanalyzeVisualReferences,
 } from "@/lib/brain/brain-visual-analysis";
-import {
-  buildBrainVisualPromptContext,
-  composeBrainVisualStyleSlotPrompt,
-} from "@/lib/brain/build-brain-visual-prompt-context";
 import type { LearningResolutionAction, StoredLearningCandidate } from "@/lib/brain/learning-candidate-schema";
 import {
   listDownstreamBrainClients,
@@ -99,8 +104,23 @@ import type { VisualReanalyzeDiagnosticRow } from "@/lib/brain/brain-visual-rean
 import { fetchBrainTelemetrySummaryByNodeId } from "@/lib/brain/fetch-brain-telemetry-summary";
 import { applyLearningCandidateToProjectAssets } from "@/lib/brain/brain-apply-learning-candidate";
 import { BrandSummarySourcesPanel, type BrandSummaryNavTab } from "./brand-summary-sources-panel";
+import { BrainStudioKnowledgeIngestStrip } from "./BrainStudioKnowledgeIngestStrip";
+import { BrandVisualDnaPanel } from "./BrandVisualDnaPanel";
+import type { BrandVisualDnaStoredBundle } from "@/lib/brain/brand-visual-dna/types";
 import { fireAndForgetDeleteS3Keys } from "@/lib/s3-delete-client";
-import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
+import { geminiGenerateWithServerProgress } from "@/lib/gemini-generate-stream-client";
+import {
+  appendKnowledgeImageVisualDnaSlots,
+  normalizeVisualDnaSlotSuppressedSourceIds,
+} from "@/lib/brain/visual-dna-slot/slot-sync";
+import {
+  applyMosaicFailureToSlot,
+  applyMosaicSuccessToSlot,
+  generateVisualDnaSlotMosaic,
+} from "@/lib/brain/visual-dna-slot/generate-mosaic";
+import { normalizeVisualDnaSlots, removeVisualDnaSlot, updateVisualDnaSlot } from "@/lib/brain/visual-dna-slot/normalize";
+import { VisualDnaSlotsLibrary } from "./VisualDnaSlotsLibrary";
+import { hydrateKnowledgeImageDocumentsWithViewUrlsClient } from "@/lib/brain/brain-knowledge-image-view-urls-client";
 
 function visualReferenceRowMeta(
   analysis: BrainVisualImageAnalysis | null,
@@ -220,6 +240,7 @@ export type BrainMainSection =
   | "overview"
   | "dna"
   | "visual_refs"
+  | "brand_visual_dna"
   | "knowledge"
   | "connected_nodes"
   | "review"
@@ -245,6 +266,8 @@ type Props = {
   /** Análisis visual reanalizado en memoria; falta guardar `metadata.assets` en el servidor. */
   visualReferenceAnalysisDirty?: boolean;
   onVisualReferenceAnalysisDirty?: () => void;
+  /** Tras reiniciar Brain por completo (p. ej. limpiar bandera de análisis visual sin guardar). */
+  onBrainAssetsFullReset?: () => void;
   /** Persistir proyecto (incluye capa visual); mismo flujo que guardar en el lienzo. */
   onSaveProjectFromBrain?: () => Promise<boolean>;
   isSavingProject?: boolean;
@@ -284,34 +307,6 @@ function readFileDataUrl(file: File, maxBytes: number): Promise<string> {
   });
 }
 
-async function rasterizeDataUrlToPng(dataUrl: string, maxSide = 1024): Promise<string | null> {
-  if (typeof window === "undefined") return null;
-  return await new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      try {
-        const w0 = Math.max(1, img.naturalWidth || img.width || 1);
-        const h0 = Math.max(1, img.naturalHeight || img.height || 1);
-        const scale = Math.min(1, maxSide / Math.max(w0, h0));
-        const w = Math.max(1, Math.round(w0 * scale));
-        const h = Math.max(1, Math.round(h0 * scale));
-        const canvas = document.createElement("canvas");
-        canvas.width = w;
-        canvas.height = h;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return resolve(null);
-        ctx.clearRect(0, 0, w, h);
-        ctx.drawImage(img, 0, 0, w, h);
-        resolve(canvas.toDataURL("image/png"));
-      } catch {
-        resolve(null);
-      }
-    };
-    img.onerror = () => resolve(null);
-    img.src = dataUrl;
-  });
-}
-
 function tryNormalizeUrl(raw: string): string | null {
   const t = raw.trim();
   if (!t) return null;
@@ -330,7 +325,15 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024).toFixed(1)} KB`;
 }
 
-function labelVisualClassification(cls: VisualImageClassification | "EXCLUDED"): string {
+/** Lista de texto segura para filas de análisis (legacy o JSON pueden no ser arrays). */
+function brainAnalysisTextArray(v: unknown): string[] {
+  if (Array.isArray(v)) return v.filter((x): x is string => typeof x === "string").map((s) => s.trim()).filter(Boolean);
+  if (typeof v === "string" && v.trim()) return [v.trim()];
+  return [];
+}
+
+function labelVisualClassification(cls: VisualImageClassification | "EXCLUDED" | undefined): string {
+  if (cls == null) return "—";
   if (cls === "EXCLUDED") return "EXCLUIDA";
   switch (cls) {
     case "CORE_VISUAL_DNA":
@@ -463,7 +466,7 @@ function LogoDropSlot({
         onDragLeave={() => setDragOver(false)}
         onDrop={onDrop}
         className={`relative flex cursor-pointer flex-col items-center justify-center overflow-hidden border-2 border-dashed transition ${
-          compact ? "min-h-[76px] rounded-lg" : "min-h-[140px] rounded-2xl"
+          compact ? "min-h-[76px] rounded-[5px]" : "min-h-[140px] rounded-[5px]"
         } ${
           dragOver
             ? "border-amber-400 bg-amber-50"
@@ -497,7 +500,7 @@ function LogoDropSlot({
                 e.stopPropagation();
                 onClear(slotId);
               }}
-              className={`absolute rounded-md border border-zinc-200 bg-white text-zinc-600 shadow-sm transition hover:bg-zinc-100 hover:text-zinc-900 ${
+              className={`absolute rounded-[5px] border border-zinc-200 bg-white text-zinc-600 shadow-sm transition hover:bg-zinc-100 hover:text-zinc-900 ${
                 compact ? "right-1 top-1 p-1" : "right-2 top-2 p-1.5"
               }`}
               aria-label="Quitar logo"
@@ -536,16 +539,16 @@ function ColorField({
   compact,
 }: {
   label: string;
-  value: string;
-  onChange: (hex: string) => void;
+  value: string | null;
+  onChange: (hex: string | null) => void;
   compact?: boolean;
 }) {
   const id = React.useId();
-  const [text, setText] = useState(value);
+  const [text, setText] = useState(value ?? "");
   useEffect(() => {
-    setText(value);
+    setText(value ?? "");
   }, [value]);
-  const pickerValue = /^#[0-9A-Fa-f]{6}$/i.test(value) ? value : "#000000";
+  const pickerValue = value && /^#[0-9A-Fa-f]{6}$/i.test(value) ? value : "#ffffff";
 
   return (
     <div className={`flex min-w-0 flex-col ${compact ? "gap-1" : "flex-1 gap-1.5"}`}>
@@ -556,14 +559,14 @@ function ColorField({
         {label}
       </label>
       <div
-        className={`flex items-center gap-1.5 border border-zinc-200 bg-white ${compact ? "rounded-lg px-1.5 py-1" : "gap-2 rounded-xl px-2 py-1.5"}`}
+        className={`flex items-center gap-1.5 border border-zinc-200 bg-white ${compact ? "rounded-[5px] px-1.5 py-1" : "gap-2 rounded-[5px] px-2 py-1.5"}`}
       >
         <input
           id={id}
           type="color"
           value={pickerValue}
           onChange={(e) => onChange(e.target.value)}
-          className={`cursor-pointer shrink-0 overflow-hidden rounded border border-zinc-200 bg-transparent p-0 ${
+          className={`cursor-pointer shrink-0 overflow-hidden rounded-[5px] border border-zinc-200 bg-transparent p-0 ${
             compact ? "h-7 w-8" : "h-9 w-11"
           }`}
           aria-label={label}
@@ -574,11 +577,15 @@ function ColorField({
           onChange={(e) => setText(e.target.value)}
           onBlur={() => {
             const raw = text.trim();
+            if (!raw) {
+              onChange(null);
+              return;
+            }
             const v = raw.startsWith("#") ? raw : `#${raw}`;
             if (/^#[0-9A-Fa-f]{6}$/i.test(v)) {
               onChange(`#${v.slice(1).toLowerCase()}`);
             } else {
-              setText(value);
+              setText(value ?? "");
             }
           }}
           className={`min-w-0 flex-1 bg-transparent font-mono text-zinc-900 outline-none placeholder:text-zinc-400 ${
@@ -592,6 +599,12 @@ function ColorField({
   );
 }
 
+/** Cola secuencial de ingesta (subida, URL, análisis). Sin reintentos automáticos. */
+type KnowledgeIngestJob =
+  | { kind: "upload"; scope: "core" | "context"; files: File[] }
+  | { kind: "url"; scope: "core" | "context"; url: string }
+  | { kind: "analyze" };
+
 export function ProjectBrainFullscreen({
   open,
   onClose,
@@ -604,6 +617,7 @@ export function ProjectBrainFullscreen({
   initialSection = null,
   visualReferenceAnalysisDirty = false,
   onVisualReferenceAnalysisDirty,
+  onBrainAssetsFullReset,
   onSaveProjectFromBrain,
   isSavingProject = false,
 }: Props) {
@@ -655,15 +669,6 @@ export function ProjectBrainFullscreen({
     };
   }, [assets.strategy.languageTraits, assets.strategy.funnelMessages, assets.strategy.voiceExamples]);
 
-  /** Píxeles accesibles para i2i (mismo inventario que visión); máx. 4 por límite Gemini flash. */
-  const visualRefUrlsForSlotGen = useMemo(() => {
-    const refs = collectVisualImageAssetRefs(assets);
-    return refs
-      .map((r) => r.imageUrlForVision?.trim())
-      .filter((u): u is string => typeof u === "string" && (u.startsWith("https://") || u.startsWith("data:image")))
-      .slice(0, 4);
-  }, [assets]);
-
   const adn = useMemo(() => computeAdnScore(assets), [assets]);
   const brainClients = useMemo(
     () => listDownstreamBrainClients(canvasNodes ?? undefined, canvasEdges ?? undefined),
@@ -701,6 +706,10 @@ export function ProjectBrainFullscreen({
   }, [open, projectId, loadPendingLearnings]);
 
   const [activeTab, setActiveTab] = useState<BrainMainSection>("overview");
+  /** Métricas detalladas del sidebar izquierdo (7 barras); colapsado reduce scroll vertical. */
+  const [brainStudioSidebarMetricsOpen, setBrainStudioSidebarMetricsOpen] = useState(false);
+  /** Tarjeta «Contexto de marca» en ADN: vista corta + Ver más. */
+  const [dnaBrandContextExpanded, setDnaBrandContextExpanded] = useState(false);
   const [brandSummarySectionSourcesKey, setBrandSummarySectionSourcesKey] = useState<BrandSummarySection["key"] | null>(
     null,
   );
@@ -713,15 +722,23 @@ export function ProjectBrainFullscreen({
     prevOpenRef.current = open;
   }, [open, initialSection]);
 
+  useEffect(() => {
+    if (activeTab !== "dna") setDnaBrandContextExpanded(false);
+  }, [activeTab]);
+
   const [urlDraftCore, setUrlDraftCore] = useState("");
   const [urlDraftContext, setUrlDraftContext] = useState("");
-  const [coreFiles, setCoreFiles] = useState<File[]>([]);
-  const [contextFiles, setContextFiles] = useState<File[]>([]);
   const [isDraggingCoreFiles, setIsDraggingCoreFiles] = useState(false);
   const [isDraggingContextFiles, setIsDraggingContextFiles] = useState(false);
-  const [uploadingScope, setUploadingScope] = useState<"core" | "context" | null>(null);
-
-  const [analyzing, setAnalyzing] = useState(false);
+  const knowledgeIngestQueueRef = useRef<KnowledgeIngestJob[]>([]);
+  const knowledgeIngestPumpRunningRef = useRef(false);
+  /** Tras subir imágenes al pozo, tras el análisis de conocimiento se llama a visión remota (sin pulsar «Reanalizar imágenes»). */
+  const visionAfterKnowledgeIngestRef = useRef(false);
+  const [knowledgePipelineBusy, setKnowledgePipelineBusy] = useState(false);
+  const [knowledgePipelineQueued, setKnowledgePipelineQueued] = useState(0);
+  /** Paso actual de la cola de ingesta (subida, análisis, visión); visible en la bandeja de documentación. */
+  const [knowledgePipelineDetail, setKnowledgePipelineDetail] = useState("");
+  const knowledgeIngestLocked = knowledgePipelineBusy || knowledgePipelineQueued > 0;
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
   const [expandedDocs, setExpandedDocs] = useState<Set<string>>(new Set());
   const [activeFilter, setActiveFilter] = useState("all");
@@ -846,13 +863,6 @@ export function ProjectBrainFullscreen({
   const [pieceFeedbackNote, setPieceFeedbackNote] = useState("");
   const [factsVerificationFilter, setFactsVerificationFilter] = useState<"all" | "verified" | "interpreted">("verified");
   const [factsStrengthFilter, setFactsStrengthFilter] = useState<"all" | "fuerte" | "media" | "debil">("fuerte");
-  const [visualStyleLoadingBySlot, setVisualStyleLoadingBySlot] = useState<
-    Partial<Record<BrainVisualStyleSlotKey, boolean>>
-  >({});
-  const [visualStyleRefreshing, setVisualStyleRefreshing] = useState(false);
-  const visualAutoFillAttemptedRef = useRef(false);
-  const visualPresignRefreshRef = useRef<{ signature: string; at: number } | null>(null);
-  const visualStyleRef = useRef(assets.strategy.visualStyle);
 
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -965,7 +975,14 @@ export function ProjectBrainFullscreen({
             action,
           );
           if (applied) {
-            onAssetsMetadataChange(nextAssets);
+            const staleReasons: string[] = [BRAIN_STALE_REASON.STRATEGY_MANUALLY_CHANGED];
+            if (changedPaths.some((p) => p.includes("visualReference") || p.includes("confirmedVisualPatterns"))) {
+              staleReasons.push(BRAIN_STALE_REASON.VISUAL_REFERENCE_CHANGED);
+            }
+            onAssetsMetadataChange({
+              ...nextAssets,
+              brainMeta: markBrainStale(normalizeBrainMeta(nextAssets.brainMeta), staleReasons),
+            });
             onVisualReferenceAnalysisDirty?.();
             const human =
               changedPaths.includes("strategy.languageTraits")
@@ -1151,74 +1168,123 @@ export function ProjectBrainFullscreen({
   }, []);
 
   const patch = useCallback(
-    (fn: (a: ProjectAssetsMetadata) => ProjectAssetsMetadata) => {
+    (fn: (a: ProjectAssetsMetadata) => ProjectAssetsMetadata, staleReasons?: string[]) => {
       const base = normalizeProjectAssets(assetsMetadataRef.current);
-      onAssetsMetadataChange(fn(base));
+      let next = fn(base);
+      if (staleReasons?.length) {
+        next = {
+          ...next,
+          brainMeta: markBrainStale(normalizeBrainMeta(next.brainMeta), staleReasons),
+        };
+      }
+      const normalized = normalizeProjectAssets(next);
+      assetsMetadataRef.current = normalized;
+      onAssetsMetadataChange(normalized);
     },
     [onAssetsMetadataChange],
   );
 
+  const saveBrandVisualDnaBundle = useCallback(
+    (bundle: BrandVisualDnaStoredBundle) => {
+      patch(
+        (a) => {
+          const layer = a.strategy.visualReferenceAnalysis ?? { analyses: [] };
+          return {
+            ...a,
+            strategy: {
+              ...a.strategy,
+              visualReferenceAnalysis: { ...layer, brandVisualDnaBundle: bundle },
+            },
+          };
+        },
+        [BRAIN_STALE_REASON.VISUAL_REFERENCE_CHANGED, BRAIN_STALE_REASON.CONTENT_DNA_LAYER_CHANGED],
+      );
+      onVisualReferenceAnalysisDirty?.();
+    },
+    [patch, onVisualReferenceAnalysisDirty],
+  );
+
   const stripLegacyDemoStrategyCopy = useCallback(() => {
-    patch((a) => ({
-      ...a,
-      strategy: {
-        ...a.strategy,
-        funnelMessages: filterLegacyFunnelMessages(a.strategy.funnelMessages),
-        languageTraits: filterLegacyLanguageTraits(a.strategy.languageTraits),
-      },
-    }));
+    patch(
+      (a) => ({
+        ...a,
+        strategy: {
+          ...a.strategy,
+          funnelMessages: filterLegacyFunnelMessages(a.strategy.funnelMessages),
+          languageTraits: filterLegacyLanguageTraits(a.strategy.languageTraits),
+        },
+      }),
+      [BRAIN_STALE_REASON.STRATEGY_MANUALLY_CHANGED],
+    );
     showToast("Se eliminaron del proyecto los mensajes demo del embudo y los rasgos EN demo (Professional/Collaborative/Innovative).", "success");
   }, [patch, showToast]);
 
   const setBrand = useCallback(
     (partial: Partial<ProjectAssetsMetadata["brand"]>) => {
-      patch((a) => ({ ...a, brand: { ...a.brand, ...partial } }));
+      const reasons: string[] = [];
+      if ("logoPositive" in partial || "logoNegative" in partial) reasons.push(BRAIN_STALE_REASON.LOGO_CHANGED);
+      if ("colorPrimary" in partial || "colorSecondary" in partial || "colorAccent" in partial) {
+        reasons.push(BRAIN_STALE_REASON.BRAND_PALETTE_CHANGED);
+      }
+      patch((a) => ({ ...a, brand: { ...a.brand, ...partial } }), reasons.length ? reasons : undefined);
     },
     [patch],
   );
 
   const setKnowledge = useCallback(
-    (next: Partial<ProjectAssetsMetadata["knowledge"]>) => {
-      patch((a) => ({
-        ...a,
-        knowledge: {
-          ...a.knowledge,
-          ...next,
-          urls: next.urls ?? a.knowledge.urls,
-          documents: next.documents ?? a.knowledge.documents,
-        },
-      }));
+    (next: Partial<ProjectAssetsMetadata["knowledge"]>, staleReasons?: string[]) => {
+      patch(
+        (a) => ({
+          ...a,
+          knowledge: {
+            ...a.knowledge,
+            ...next,
+            urls: next.urls ?? a.knowledge.urls,
+            documents: next.documents ?? a.knowledge.documents,
+          },
+        }),
+        staleReasons,
+      );
     },
     [patch],
   );
 
   const setStrategy = useCallback(
-    (next: Partial<ProjectAssetsMetadata["strategy"]>) => {
-      patch((a) => ({
-        ...a,
-        strategy: {
-          ...a.strategy,
-          ...next,
-          voiceExamples: next.voiceExamples ?? a.strategy.voiceExamples,
-          tabooPhrases: next.tabooPhrases ?? a.strategy.tabooPhrases,
-          approvedPhrases: next.approvedPhrases ?? a.strategy.approvedPhrases,
-          languageTraits: next.languageTraits ?? a.strategy.languageTraits,
-          syntaxPatterns: next.syntaxPatterns ?? a.strategy.syntaxPatterns,
-          preferredTerms: next.preferredTerms ?? a.strategy.preferredTerms,
-          forbiddenTerms: next.forbiddenTerms ?? a.strategy.forbiddenTerms,
-          channelIntensity: next.channelIntensity ?? a.strategy.channelIntensity,
-          allowAbsoluteClaims: next.allowAbsoluteClaims ?? a.strategy.allowAbsoluteClaims,
-          personas: next.personas ?? a.strategy.personas,
-          funnelMessages: next.funnelMessages ?? a.strategy.funnelMessages,
-          messageBlueprints: next.messageBlueprints ?? a.strategy.messageBlueprints,
-          factsAndEvidence: next.factsAndEvidence ?? a.strategy.factsAndEvidence,
-          generatedPieces: next.generatedPieces ?? a.strategy.generatedPieces,
-          approvedPatterns: next.approvedPatterns ?? a.strategy.approvedPatterns,
-          rejectedPatterns: next.rejectedPatterns ?? a.strategy.rejectedPatterns,
-          visualStyle: next.visualStyle ?? a.strategy.visualStyle,
-          visualReferenceAnalysis: next.visualReferenceAnalysis ?? a.strategy.visualReferenceAnalysis,
-        },
-      }));
+    (next: Partial<ProjectAssetsMetadata["strategy"]>, staleReasons?: string[]) => {
+      patch(
+        (a) => ({
+          ...a,
+          strategy: {
+            ...a.strategy,
+            ...next,
+            voiceExamples: next.voiceExamples ?? a.strategy.voiceExamples,
+            tabooPhrases: next.tabooPhrases ?? a.strategy.tabooPhrases,
+            approvedPhrases: next.approvedPhrases ?? a.strategy.approvedPhrases,
+            languageTraits: next.languageTraits ?? a.strategy.languageTraits,
+            syntaxPatterns: next.syntaxPatterns ?? a.strategy.syntaxPatterns,
+            preferredTerms: next.preferredTerms ?? a.strategy.preferredTerms,
+            forbiddenTerms: next.forbiddenTerms ?? a.strategy.forbiddenTerms,
+            channelIntensity: next.channelIntensity ?? a.strategy.channelIntensity,
+            allowAbsoluteClaims: next.allowAbsoluteClaims ?? a.strategy.allowAbsoluteClaims,
+            personas: next.personas ?? a.strategy.personas,
+            funnelMessages: next.funnelMessages ?? a.strategy.funnelMessages,
+            messageBlueprints: next.messageBlueprints ?? a.strategy.messageBlueprints,
+            factsAndEvidence: next.factsAndEvidence ?? a.strategy.factsAndEvidence,
+            generatedPieces: next.generatedPieces ?? a.strategy.generatedPieces,
+            approvedPatterns: next.approvedPatterns ?? a.strategy.approvedPatterns,
+            rejectedPatterns: next.rejectedPatterns ?? a.strategy.rejectedPatterns,
+            visualStyle: next.visualStyle ?? a.strategy.visualStyle,
+            visualReferenceAnalysis: next.visualReferenceAnalysis ?? a.strategy.visualReferenceAnalysis,
+            brandVisualDna: next.brandVisualDna ?? a.strategy.brandVisualDna,
+            contentDna: next.contentDna ?? a.strategy.contentDna,
+            safeCreativeRules: next.safeCreativeRules ?? a.strategy.safeCreativeRules,
+            visualDnaSlots: next.visualDnaSlots ?? a.strategy.visualDnaSlots,
+            visualDnaSlotSuppressedSourceIds:
+              next.visualDnaSlotSuppressedSourceIds ?? a.strategy.visualDnaSlotSuppressedSourceIds,
+          },
+        }),
+        staleReasons,
+      );
     },
     [patch],
   );
@@ -1242,6 +1308,207 @@ export function ProjectBrainFullscreen({
     return refs.map((ref) => ({ ref, analysis: byId.get(ref.id) ?? null }));
   }, [assets]);
 
+  const slotMosaicBusyRef = useRef(new Set<string>());
+  const [visualDnaSlotBusy, setVisualDnaSlotBusy] = useState<Record<string, boolean>>({});
+
+  const runSingleVisualDnaSlotMosaic = useCallback(
+    async (slotId: string, opts?: { force?: boolean }) => {
+      if (slotMosaicBusyRef.current.has(slotId)) return;
+      const rawAssets = normalizeProjectAssets(assetsMetadataRef.current);
+      let assetsLoop = rawAssets;
+      try {
+        assetsLoop = await hydrateKnowledgeImageDocumentsWithViewUrlsClient(rawAssets);
+      } catch {
+        assetsLoop = rawAssets;
+      }
+      const slot = normalizeVisualDnaSlots(assetsLoop.strategy.visualDnaSlots).find((s) => s.id === slotId);
+      if (!slot) return;
+      if (!opts?.force && slot.status === "ready" && slot.mosaic?.imageUrl?.trim()) return;
+
+      const byId = new Map(
+        (assetsLoop.strategy.visualReferenceAnalysis?.analyses ?? []).map((x) => [x.sourceAssetId, x]),
+      );
+      const rows = collectVisualImageAssetRefs(assetsLoop).map((ref) => ({
+        ref,
+        analysis: byId.get(ref.id) ?? null,
+      }));
+      const docId = slot.sourceDocumentId;
+      if (!docId) return;
+      let row = rows.find((r) => r.ref.id === docId && r.ref.sourceKind === "knowledge_document");
+      if (!row?.analysis) return;
+      if (row.analysis.analysisStatus === "failed") return;
+      const slotSrc = slot.sourceImageUrl?.trim();
+      if (!row.ref.imageUrlForVision?.trim() && slotSrc) {
+        row = { ...row, ref: { ...row.ref, imageUrlForVision: slotSrc } };
+      }
+      if (!row.ref.imageUrlForVision?.trim()) {
+        patch((a) => ({
+          ...a,
+          strategy: {
+            ...a.strategy,
+            visualDnaSlots: updateVisualDnaSlot(a.strategy.visualDnaSlots ?? [], slotId, {
+              status: "failed",
+              lastError: "Sin URL/data de imagen para el tablero por slot",
+              updatedAt: new Date().toISOString(),
+            }),
+          },
+        }));
+        return;
+      }
+
+      slotMosaicBusyRef.current.add(slotId);
+      setVisualDnaSlotBusy((p) => ({ ...p, [slotId]: true }));
+      patch((a) => ({
+        ...a,
+        strategy: {
+          ...a.strategy,
+          visualDnaSlots: updateVisualDnaSlot(a.strategy.visualDnaSlots ?? [], slotId, {
+            status: "generating",
+            updatedAt: new Date().toISOString(),
+          }),
+        },
+      }));
+
+      try {
+        const slotNow =
+          normalizeProjectAssets(assetsMetadataRef.current).strategy.visualDnaSlots?.find((s) => s.id === slotId) ??
+          slot;
+        const result = await generateVisualDnaSlotMosaic({
+          slot: slotNow,
+          row,
+          assets: assetsLoop,
+          generateImage: (body) => geminiGenerateWithServerProgress(body, () => {}),
+        });
+
+        patch((a) => {
+          const cur =
+            normalizeVisualDnaSlots(a.strategy.visualDnaSlots).find((s) => s.id === slotId) ?? slotNow;
+          const nextSlot = result.ok
+            ? applyMosaicSuccessToSlot(cur, {
+                imageUrl: result.imageUrl,
+                mosaicPrompt: result.mosaicPrompt,
+                diagnostics: result.diagnostics,
+                safeRulesDigest: result.safeRulesDigest,
+              })
+            : applyMosaicFailureToSlot(cur, result.error);
+          return {
+            ...a,
+            strategy: {
+              ...a.strategy,
+              visualDnaSlots: updateVisualDnaSlot(a.strategy.visualDnaSlots ?? [], slotId, nextSlot),
+            },
+          };
+        });
+      } finally {
+        slotMosaicBusyRef.current.delete(slotId);
+        setVisualDnaSlotBusy((p) => {
+          const n = { ...p };
+          delete n[slotId];
+          return n;
+        });
+      }
+    },
+    [patch],
+  );
+
+  const syncVisualDnaSlotsAndGenerateMosaics = useCallback(async () => {
+    const rawSnap = normalizeProjectAssets(assetsMetadataRef.current);
+    let assetsSnap = rawSnap;
+    try {
+      assetsSnap = await hydrateKnowledgeImageDocumentsWithViewUrlsClient(rawSnap);
+    } catch {
+      assetsSnap = rawSnap;
+    }
+    const { nextSlots, appended } = appendKnowledgeImageVisualDnaSlots(assetsSnap);
+    if (appended.length) {
+      patch(
+        (a) => ({
+          ...a,
+          strategy: { ...a.strategy, visualDnaSlots: nextSlots },
+        }),
+        [BRAIN_STALE_REASON.VISUAL_REFERENCE_CHANGED],
+      );
+    }
+    const list = normalizeProjectAssets(assetsMetadataRef.current).strategy.visualDnaSlots ?? [];
+    for (const s of list) {
+      const hasMosaic = Boolean(s.mosaic?.imageUrl?.trim());
+      if (hasMosaic && s.status === "ready") continue;
+      if (s.status === "failed") continue;
+      if (s.status === "stale") continue;
+      await runSingleVisualDnaSlotMosaic(s.id);
+    }
+  }, [patch, runSingleVisualDnaSlotMosaic]);
+
+  const visualDnaSlotsNorm = useMemo(
+    () => normalizeVisualDnaSlots(assets.strategy.visualDnaSlots),
+    [assets.strategy.visualDnaSlots],
+  );
+
+  /** Clave estable para sync de slots (evita bucles al cambiar solo `visualDnaSlots`). */
+  const visualSlotSyncKey = useMemo(() => {
+    const imgDocs = assets.knowledge.documents
+      .filter((d) => d.mime.startsWith("image/") || d.type === "image" || d.format === "image")
+      .map((d) => `${d.id}:${d.s3Path ? "s3" : ""}:${d.dataUrl ? "d" : ""}:${d.originalSourceUrl ? "u" : ""}`);
+    const ax = assets.strategy.visualReferenceAnalysis?.analyses ?? [];
+    const axSig = ax.map((a) => `${a.sourceAssetId}:${a.analysisStatus ?? ""}`).join(",");
+    return `${imgDocs.join(",")}|${axSig}`;
+  }, [assets.knowledge.documents, assets.strategy.visualReferenceAnalysis?.analyses]);
+
+  const handleRegenerateVisualDnaSlot = useCallback(
+    (slotId: string) => void runSingleVisualDnaSlotMosaic(slotId, { force: true }),
+    [runSingleVisualDnaSlotMosaic],
+  );
+
+  const handleDeleteVisualDnaSlot = useCallback(
+    (slotId: string) => {
+      patch((a) => {
+        const slots = normalizeVisualDnaSlots(a.strategy.visualDnaSlots ?? []);
+        const victim = slots.find((s) => s.id === slotId);
+        const docId = victim?.sourceDocumentId?.trim();
+        const knowledgeDocIds = new Set(a.knowledge.documents.map((d) => d.id));
+        const prevSup = normalizeVisualDnaSlotSuppressedSourceIds(
+          a.strategy.visualDnaSlotSuppressedSourceIds,
+          knowledgeDocIds,
+        );
+        const nextSup =
+          docId && knowledgeDocIds.has(docId) && !prevSup.includes(docId) ? [...prevSup, docId] : prevSup;
+        return {
+          ...a,
+          strategy: {
+            ...a.strategy,
+            visualDnaSlots: removeVisualDnaSlot(slots, slotId),
+            visualDnaSlotSuppressedSourceIds: nextSup.length > 0 ? nextSup : undefined,
+          },
+        };
+      });
+    },
+    [patch],
+  );
+
+  const handleRenameVisualDnaSlot = useCallback(
+    (slotId: string, label: string) => {
+      patch((a) => ({
+        ...a,
+        strategy: {
+          ...a.strategy,
+          visualDnaSlots: updateVisualDnaSlot(a.strategy.visualDnaSlots ?? [], slotId, {
+            label: label.slice(0, 240),
+            updatedAt: new Date().toISOString(),
+          }),
+        },
+      }));
+    },
+    [patch],
+  );
+
+  /** Slots ADN por imagen: sincronizar al cambiar el inventario visual (no hace falta abrir la pestaña de referencias). */
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      void syncVisualDnaSlotsAndGenerateMosaics();
+    }, 1000);
+    return () => window.clearTimeout(t);
+  }, [visualSlotSyncKey, syncVisualDnaSlotsAndGenerateMosaics]);
+
   const pendingVisualAnalysisCount = useMemo(() => {
     const refIds = new Set(collectVisualImageAssetRefs(assets).map((r) => r.id));
     const analyzed = new Set(assets.strategy.visualReferenceAnalysis?.analyses.map((a) => a.sourceAssetId) ?? []);
@@ -1259,69 +1526,97 @@ export function ProjectBrainFullscreen({
   const patchVisualAnalysisOverride = useCallback(
     (sourceAssetId: string, override: BrainVisualImageUserOverride | undefined) => {
       onVisualReferenceAnalysisDirty?.();
-      patch((a) => {
-        const layer = a.strategy.visualReferenceAnalysis ?? { analyses: [] };
-        const list = layer.analyses.map((row) => {
-          if (row.sourceAssetId !== sourceAssetId) return row;
-          if (override === undefined) {
-            const { userVisualOverride: _omit, ...rest } = row;
-            return rest as BrainVisualImageAnalysis;
-          }
-          return { ...row, userVisualOverride: override };
-        });
-        const aggregated = aggregateVisualPatterns(list);
-        return {
-          ...a,
-          strategy: {
-            ...a.strategy,
-            visualReferenceAnalysis: {
-              ...layer,
-              analyses: list,
-              aggregated,
+      patch(
+        (a) => {
+          const layer = a.strategy.visualReferenceAnalysis ?? { analyses: [] };
+          const list = layer.analyses.map((row) => {
+            if (row.sourceAssetId !== sourceAssetId) return row;
+            if (override === undefined) {
+              const { userVisualOverride: _omit, ...rest } = row;
+              return rest as BrainVisualImageAnalysis;
+            }
+            return { ...row, userVisualOverride: override };
+          });
+          const aggregated = aggregateVisualPatterns(list);
+          return {
+            ...a,
+            strategy: {
+              ...a.strategy,
+              visualReferenceAnalysis: {
+                ...layer,
+                analyses: list,
+                aggregated,
+              },
             },
-          },
-        };
-      });
+          };
+        },
+        [BRAIN_STALE_REASON.VISUAL_REFERENCE_CHANGED],
+      );
     },
     [patch, onVisualReferenceAnalysisDirty],
   );
 
   const runVisualReferenceReanalysis = useCallback(
-    (baseAssets: ReturnType<typeof normalizeProjectAssets>) => {
+    (
+      baseAssets: ReturnType<typeof normalizeProjectAssets>,
+      extraStaleReasons?: string[],
+    ) => {
       const pid = (projectId?.trim() || "__local__").trim();
       const nextLayer = reanalyzeVisualReferences(pid, baseAssets);
-      setStrategy({ visualReferenceAnalysis: nextLayer });
+      setStrategy(
+        { visualReferenceAnalysis: nextLayer },
+        [BRAIN_STALE_REASON.VISUAL_REFERENCE_CHANGED, ...(extraStaleReasons ?? [])],
+      );
       return nextLayer;
     },
     [projectId, setStrategy],
   );
 
-  const handleReanalyzeVisualRefs = useCallback(async () => {
+  const handleReanalyzeVisualRefs = useCallback(async (opts?: { assetsSnapshot?: ProjectAssetsMetadata }) => {
     setVisualReanalyzing(true);
     setVisualReanalyzeDiagnostics([]);
+    const requestAssetsRaw = opts?.assetsSnapshot ?? assetsMetadataRef.current;
+    const base = normalizeProjectAssets(requestAssetsRaw);
     try {
-      const base = normalizeProjectAssets(assetsMetadataRef.current);
       const pid = (projectId?.trim() || "__local__").trim();
       const debug = process.env.NODE_ENV === "development";
       const res = await fetch("/api/spaces/brain/visual/reanalyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId: pid, assets: assetsMetadataRef.current, debug }),
+        body: JSON.stringify({ projectId: pid, assets: requestAssetsRaw, debug }),
       });
       const json = (await readResponseJson<{
         visualReferenceAnalysis?: ProjectAssetsMetadata["strategy"]["visualReferenceAnalysis"];
+        brandVisualDna?: ProjectAssetsMetadata["strategy"]["brandVisualDna"];
         provider?: string;
         diagnostics?: VisualReanalyzeDiagnosticRow[];
         batch?: { candidatesCreated?: number };
         error?: string;
       }>(res, "brain/visual/reanalyze")) ?? { error: "Sin respuesta JSON" };
       if (res.ok && json.visualReferenceAnalysis) {
-        const cur = normalizeProjectAssets(assetsMetadataRef.current);
-        const derived = buildVisualStyleFromVisionAnalyses(json.visualReferenceAnalysis.analyses ?? []);
-        const visualStyle = derived
-          ? mergeVisualStyleWithVisionDerivedDescriptions(cur.strategy.visualStyle, derived)
-          : cur.strategy.visualStyle;
-        setStrategy({ visualReferenceAnalysis: json.visualReferenceAnalysis, visualStyle });
+        const nextVisualLayer = json.visualReferenceAnalysis;
+        patch((a) => {
+          const derived = buildVisualStyleFromVisionAnalyses(nextVisualLayer.analyses ?? []);
+          const visualStyle = derived
+            ? mergeVisualStyleWithVisionDerivedDescriptions(a.strategy.visualStyle, derived)
+            : a.strategy.visualStyle;
+          let meta = touchBrainMetaAfterVisualAnalysis(a.brainMeta, {
+            synthesizedBrandVisualDna: Boolean(json.brandVisualDna),
+          });
+          if (json.provider === "mock") {
+            meta = markBrainStale(meta, [BRAIN_STALE_REASON.REMOTE_ANALYSIS_FAILED_FALLBACK_USED]);
+          }
+          return {
+            ...a,
+            strategy: {
+              ...a.strategy,
+              visualReferenceAnalysis: nextVisualLayer,
+              visualStyle,
+              ...(json.brandVisualDna ? { brandVisualDna: json.brandVisualDna } : {}),
+            },
+            brainMeta: meta,
+          };
+        });
         onVisualReferenceAnalysisDirty?.();
         if (json.provider === "mock" || json.provider === "gemini-vision" || json.provider === "openai-vision") {
           setServerVisionProviderId(json.provider);
@@ -1350,7 +1645,7 @@ export function ProjectBrainFullscreen({
         }
         return;
       }
-      runVisualReferenceReanalysis(base);
+      runVisualReferenceReanalysis(base, [BRAIN_STALE_REASON.REMOTE_ANALYSIS_FAILED_FALLBACK_USED]);
       onVisualReferenceAnalysisDirty?.();
       showToast(
         json.error
@@ -1360,8 +1655,7 @@ export function ProjectBrainFullscreen({
       );
     } catch {
       try {
-        const base = normalizeProjectAssets(assetsMetadataRef.current);
-        runVisualReferenceReanalysis(base);
+        runVisualReferenceReanalysis(base, [BRAIN_STALE_REASON.REMOTE_ANALYSIS_FAILED_FALLBACK_USED]);
         onVisualReferenceAnalysisDirty?.();
       } catch {
         /* ignore */
@@ -1372,8 +1666,9 @@ export function ProjectBrainFullscreen({
       );
     } finally {
       setVisualReanalyzing(false);
+      void syncVisualDnaSlotsAndGenerateMosaics();
     }
-  }, [projectId, runVisualReferenceReanalysis, setStrategy, showToast, onVisualReferenceAnalysisDirty]);
+  }, [projectId, runVisualReferenceReanalysis, showToast, onVisualReferenceAnalysisDirty, patch, syncVisualDnaSlotsAndGenerateMosaics]);
 
   const handleSaveVisualAnalysis = useCallback(async () => {
     if (!onSaveProjectFromBrain) {
@@ -1394,7 +1689,7 @@ export function ProjectBrainFullscreen({
     let layer = base.strategy.visualReferenceAnalysis;
     if (!layer?.analyses?.length) {
       layer = reanalyzeVisualReferences(projectId.trim(), base);
-      setStrategy({ visualReferenceAnalysis: layer });
+      setStrategy({ visualReferenceAnalysis: layer }, [BRAIN_STALE_REASON.VISUAL_REFERENCE_CHANGED]);
       onVisualReferenceAnalysisDirty?.();
     }
     const analyses = layer.analyses;
@@ -1413,6 +1708,9 @@ export function ProjectBrainFullscreen({
           projectId: projectId.trim(),
           workspaceId: workspaceId?.trim() || undefined,
           candidates,
+          brainVersion: getBrainVersion(base.brainMeta),
+          sourceAnalysisId: base.strategy.visualReferenceAnalysis?.lastAnalyzedAt,
+          createdFromAnalysisVersion: base.strategy.visualReferenceAnalysis?.analyzerVersion,
         }),
       });
       const json = await readResponseJson<{ error?: string }>(res, "brain/learning/candidates");
@@ -1429,309 +1727,6 @@ export function ProjectBrainFullscreen({
       setVisualQueueBusy(false);
     }
   }, [projectId, workspaceId, showToast, setStrategy, loadPendingLearnings, onVisualReferenceAnalysisDirty]);
-
-  const setVisualStyleSlot = useCallback(
-    (
-      key: BrainVisualStyleSlotKey,
-      patchSlot: Partial<ProjectAssetsMetadata["strategy"]["visualStyle"][BrainVisualStyleSlotKey]>,
-    ) => {
-      patch((a) => ({
-        ...a,
-        strategy: {
-          ...a.strategy,
-          visualStyle: {
-            ...a.strategy.visualStyle,
-            [key]: {
-              ...a.strategy.visualStyle[key],
-              ...patchSlot,
-              key,
-            },
-          },
-        },
-      }));
-    },
-    [patch],
-  );
-
-  const visualPresignSignature = useMemo(() => {
-    const keys = new Set<string>();
-    const slotKeys: BrainVisualStyleSlotKey[] = ["protagonist", "environment", "textures", "people"];
-    for (const k of slotKeys) {
-      const slot = assets.strategy.visualStyle?.[k];
-      if (slot?.imageS3Key) {
-        keys.add(slot.imageS3Key);
-        continue;
-      }
-      const url = slot?.imageUrl?.trim();
-      if (!url) continue;
-      const parsed = tryExtractKnowledgeFilesKeyFromUrl(url);
-      if (parsed) keys.add(parsed);
-    }
-    return Array.from(keys).sort().join("|");
-  }, [assets.strategy.visualStyle]);
-
-  useEffect(() => {
-    visualStyleRef.current = assets.strategy.visualStyle;
-  }, [assets.strategy.visualStyle]);
-
-  useEffect(() => {
-    if (!open) return;
-    if (!visualPresignSignature) return;
-    const now = Date.now();
-    if (
-      visualPresignRefreshRef.current &&
-      visualPresignRefreshRef.current.signature === visualPresignSignature &&
-      now - visualPresignRefreshRef.current.at < 60_000
-    ) {
-      return;
-    }
-    visualPresignRefreshRef.current = { signature: visualPresignSignature, at: now };
-    let cancelled = false;
-    const keys = new Set<string>();
-    const slotKeys: BrainVisualStyleSlotKey[] = ["protagonist", "environment", "textures", "people"];
-    for (const k of slotKeys) {
-      const slot = visualStyleRef.current?.[k];
-      if (slot?.imageS3Key) {
-        keys.add(slot.imageS3Key);
-        continue;
-      }
-      const url = slot?.imageUrl?.trim();
-      if (!url) continue;
-      const parsed = tryExtractKnowledgeFilesKeyFromUrl(url);
-      if (parsed) keys.add(parsed);
-    }
-    if (keys.size === 0) return;
-    setVisualStyleRefreshing(true);
-    (async () => {
-      try {
-        const res = await fetch("/api/spaces/s3-presign", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ keys: Array.from(keys) }),
-        });
-        const data = await readResponseJson<{ urls?: Record<string, string> }>(
-          res,
-          "POST /api/spaces/s3-presign",
-        );
-        if (!res.ok || !data?.urls || cancelled) return;
-        const refreshed = data.urls;
-        const nextVisual = { ...visualStyleRef.current };
-        let changed = false;
-        for (const k of slotKeys) {
-          const slot = nextVisual[k];
-          const key = slot.imageS3Key || (slot.imageUrl ? tryExtractKnowledgeFilesKeyFromUrl(slot.imageUrl) : null);
-          if (!key || !refreshed[key] || refreshed[key] === slot.imageUrl) continue;
-          changed = true;
-          nextVisual[k] = { ...slot, imageUrl: refreshed[key], imageS3Key: key };
-        }
-        if (changed) {
-          setStrategy({ visualStyle: nextVisual });
-        }
-      } catch {
-        // noop
-      } finally {
-        if (!cancelled) setVisualStyleRefreshing(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [open, setStrategy, visualPresignSignature]);
-
-  const uploadLocalImageForVisualStyle = useCallback(async (file: File) => {
-    const fd = new FormData();
-    fd.append("file", file);
-    const res = await fetch("/api/runway/upload", { method: "POST", body: fd });
-    const data = await readResponseJson<{ url?: string; s3Key?: string; error?: string }>(
-      res,
-      "POST /api/runway/upload",
-    );
-    if (!res.ok || !data?.url) throw new Error(data?.error || "No se pudo subir la imagen.");
-    return { url: data.url, s3Key: data.s3Key };
-  }, []);
-
-  const prepareLogoRefsForNano = useCallback(async (): Promise<string[]> => {
-    const refs: string[] = [];
-    const push = (v?: string | null) => {
-      if (typeof v !== "string") return;
-      const t = v.trim();
-      if (!t) return;
-      if (!refs.includes(t)) refs.push(t);
-    };
-    const logos = [assets.brand.logoPositive, assets.brand.logoNegative];
-    for (const logo of logos) {
-      if (!logo) continue;
-      if (logo.startsWith("data:image/svg+xml") || logo.startsWith("data:image/svg+xml;")) {
-        const png = await rasterizeDataUrlToPng(logo, 1024);
-        if (png) push(png);
-      } else {
-        push(logo);
-      }
-    }
-    return refs.slice(0, 2);
-  }, [assets.brand.logoNegative, assets.brand.logoPositive]);
-
-  const buildVisualPrompt = useCallback(
-    (slotKey: BrainVisualStyleSlotKey, description: string) => {
-      const ctx = buildBrainVisualPromptContext(assets, { slotKey });
-      const voiceHints = filterLegacyLanguageTraits(assets.strategy.languageTraits || [])
-        .slice(0, 6)
-        .join(", ");
-      const termsHints = (assets.strategy.preferredTerms || []).slice(0, 8).join(", ");
-      const msgHints = (assets.strategy.approvedPhrases || []).slice(0, 5).join(" | ");
-      return composeBrainVisualStyleSlotPrompt({
-        context: ctx,
-        slotKey,
-        slotDescription: description,
-        colorPrimary: assets.brand.colorPrimary,
-        colorSecondary: assets.brand.colorSecondary,
-        colorAccent: assets.brand.colorAccent,
-        voiceHints,
-        termsHints,
-        msgHints,
-      });
-    },
-    [assets],
-  );
-
-  const generateVisualStyleSlotImage = useCallback(
-    async (
-      key: BrainVisualStyleSlotKey,
-      force = false,
-      descriptionOverride?: string,
-      options?: { silentError?: boolean; retryOnFailure?: boolean },
-    ): Promise<boolean> => {
-      const slot = assets.strategy.visualStyle[key];
-      if (!force && slot.imageUrl) return true;
-      const description = (descriptionOverride ?? slot.description ?? "").trim();
-      if (!description) return false;
-      setVisualStyleLoadingBySlot((prev) => ({ ...prev, [key]: true }));
-      try {
-        const logoRefs = await prepareLogoRefsForNano();
-        const prompt = buildVisualPrompt(key, description);
-        const maxAttempts = options?.retryOnFailure ? 2 : 1;
-        let outputUrl: string | null = null;
-        let outputKey: string | undefined;
-        let lastError: unknown = null;
-
-        const tryReq = async (images: string[]) => {
-          const res = await fetch("/api/gemini/generate", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              prompt,
-              images,
-              model: "flash31",
-              resolution: "0.5k",
-              aspect_ratio: "16:9",
-            }),
-          });
-          const data = await readResponseJson<{ output?: string; key?: string; error?: string }>(
-            res,
-            "POST /api/gemini/generate",
-          );
-          if (!res.ok || !data?.output) throw new Error(data?.error || "No se pudo generar imagen.");
-          outputUrl = data.output;
-          outputKey = data.key;
-        };
-
-        const refUrls = visualRefUrlsForSlotGen;
-        const mergedRefs = [...logoRefs, ...refUrls].filter(Boolean);
-        const primaryImages = mergedRefs.length ? mergedRefs.slice(0, 4) : logoRefs;
-
-        for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-          try {
-            try {
-              await tryReq(primaryImages.length ? primaryImages : logoRefs);
-            } catch {
-              try {
-                await tryReq(logoRefs);
-              } catch {
-                await tryReq([]);
-              }
-            }
-            break;
-          } catch (err) {
-            lastError = err;
-            if (attempt < maxAttempts - 1) {
-              await new Promise((resolve) => setTimeout(resolve, 1200));
-              continue;
-            }
-          }
-        }
-        if (!outputUrl) throw (lastError instanceof Error ? lastError : new Error("No se recibió imagen de Nano Banana."));
-        setVisualStyleSlot(key, {
-          imageUrl: outputUrl,
-          imageS3Key: outputKey,
-          prompt,
-          source: "auto",
-        });
-        return true;
-      } catch (error) {
-        if (!options?.silentError) {
-          showToast(error instanceof Error ? error.message : "No se pudo generar la imagen de estilo.", "error");
-        }
-        return false;
-      } finally {
-        setVisualStyleLoadingBySlot((prev) => ({ ...prev, [key]: false }));
-      }
-    },
-    [
-      assets.strategy.visualStyle,
-      buildVisualPrompt,
-      prepareLogoRefsForNano,
-      setVisualStyleSlot,
-      showToast,
-      visualRefUrlsForSlotGen,
-    ],
-  );
-
-  const autoGenerateMissingVisualSlots = useCallback(
-    async (
-      visualOverride?: ProjectAssetsMetadata["strategy"]["visualStyle"],
-      force = false,
-    ) => {
-      const visual = visualOverride || assets.strategy.visualStyle || defaultBrainVisualStyle();
-      const keys: BrainVisualStyleSlotKey[] = ["protagonist", "people", "environment", "textures"];
-      let failed = 0;
-      for (const key of keys) {
-        const slot = visual[key];
-        const description = (slot?.description || "").trim();
-        if (!description) continue;
-        if (!force && slot?.imageUrl) continue;
-        const ok = await generateVisualStyleSlotImage(key, force, description, {
-          silentError: true,
-          retryOnFailure: true,
-        });
-        if (!ok) failed += 1;
-      }
-      if (failed > 0) {
-        showToast(
-          `No se pudieron generar ${failed} bloque(s) visual(es) automáticamente. Puedes regenerarlos manualmente.`,
-          "info",
-        );
-      }
-    },
-    [assets.strategy.visualStyle, generateVisualStyleSlotImage, showToast],
-  );
-
-  useEffect(() => {
-    if (!open) {
-      visualAutoFillAttemptedRef.current = false;
-      return;
-    }
-    if (visualAutoFillAttemptedRef.current) return;
-    const visual = assets.strategy.visualStyle || defaultBrainVisualStyle();
-    const hasMissing = (["protagonist", "environment", "textures", "people"] as BrainVisualStyleSlotKey[]).some(
-      (k) => {
-        const slot = visual[k];
-        return !!slot?.description?.trim() && !slot?.imageUrl;
-      },
-    );
-    if (!hasMissing) return;
-    visualAutoFillAttemptedRef.current = true;
-    void autoGenerateMissingVisualSlots(visual, false);
-  }, [open, assets.strategy.visualStyle, autoGenerateMissingVisualSlots]);
 
   const filteredFactsForGeneration = useMemo(
     () =>
@@ -1773,174 +1768,308 @@ export function ProjectBrainFullscreen({
     [setBrand],
   );
 
-  const handleUpload = useCallback(
-    async (scope: "core" | "context") => {
-      const files = scope === "core" ? coreFiles : contextFiles;
-      if (files.length === 0) return;
-      setUploadingScope(scope);
-      setMessage({ text: "", type: "" });
-      const formData = new FormData();
-      files.forEach((f) => formData.append("file", f));
-      formData.append("scope", scope);
-      if (scope === "context") formData.append("contextKind", "general");
-
-      try {
-        const response = await fetch("/api/spaces/brain/knowledge/upload", {
-          method: "POST",
-          body: formData,
-        });
-        const data = await readResponseJson<{
-          message?: string;
-          documents?: KnowledgeDocumentEntry[];
-          rejected?: Array<{ name?: string; reason?: string }>;
-          error?: string;
-        }>(response, "POST /api/spaces/brain/knowledge/upload");
-        if (!response.ok) throw new Error(data?.error || "Error subiendo archivos");
-        const added = data?.documents || [];
-        const nextDocs = [...assets.knowledge.documents, ...added];
-        const addedImages = added.some((d) => (d.mime || "").toLowerCase().startsWith("image/"));
-        if (addedImages) {
-          patch((a) => {
-            const mergedDocs = [...a.knowledge.documents, ...added];
-            const temp: ProjectAssetsMetadata = { ...a, knowledge: { ...a.knowledge, documents: mergedDocs } };
-            const pid = (projectId?.trim() || "__local__").trim();
-            return {
-              ...a,
-              knowledge: { ...a.knowledge, documents: mergedDocs },
-              strategy: {
-                ...a.strategy,
-                visualReferenceAnalysis: reanalyzeVisualReferences(pid, temp),
+  const runKnowledgeIngestPump = useCallback(async () => {
+    if (knowledgeIngestPumpRunningRef.current) return;
+    knowledgeIngestPumpRunningRef.current = true;
+    setKnowledgePipelineBusy(true);
+    setMessage({ text: "", type: "" });
+    setKnowledgePipelineDetail("");
+    try {
+      while (knowledgeIngestQueueRef.current.length > 0) {
+        setKnowledgePipelineQueued(knowledgeIngestQueueRef.current.length);
+        const job = knowledgeIngestQueueRef.current.shift()!;
+        setKnowledgePipelineQueued(knowledgeIngestQueueRef.current.length);
+        try {
+          if (job.kind === "upload") {
+            const nFiles = job.files.length;
+            const nImages = job.files.filter((f) => f.type.startsWith("image/")).length;
+            const scopeLabel = job.scope === "core" ? "empresa (CORE)" : "contexto (mercado)";
+            const imgHint = nImages > 0 ? ` · ${nImages} imagen${nImages === 1 ? "" : "es"}` : "";
+            setKnowledgePipelineDetail(
+              `Subiendo ${nFiles} archivo${nFiles === 1 ? "" : "s"} al pozo de ${scopeLabel}${imgHint}…`,
+            );
+            const formData = new FormData();
+            job.files.forEach((f) => formData.append("file", f));
+            formData.append("scope", job.scope);
+            if (job.scope === "context") formData.append("contextKind", "general");
+            const response = await fetch("/api/spaces/brain/knowledge/upload", {
+              method: "POST",
+              body: formData,
+            });
+            const data = await readResponseJson<{
+              message?: string;
+              documents?: KnowledgeDocumentEntry[];
+              rejected?: Array<{ name?: string; reason?: string }>;
+              error?: string;
+            }>(response, "POST /api/spaces/brain/knowledge/upload");
+            if (!response.ok) throw new Error(data?.error || "Error subiendo archivos");
+            const added = data?.documents || [];
+            if (added.length) {
+              setKnowledgePipelineDetail(
+                `Servidor aceptó ${added.length} documento(s). Guardando en el pozo y enlazando con el proyecto…`,
+              );
+            }
+            const meta = normalizeProjectAssets(assetsMetadataRef.current);
+            const nextDocs = [...meta.knowledge.documents, ...added];
+            const addedImages = added.some((d) => (d.mime || "").toLowerCase().startsWith("image/"));
+            if (addedImages) {
+              setKnowledgePipelineDetail(
+                "Hay imágenes nuevas: actualizando inventario visual y referencias locales antes del análisis…",
+              );
+              patch(
+                (a) => {
+                  const mergedDocs = [...a.knowledge.documents, ...added];
+                  const temp: ProjectAssetsMetadata = { ...a, knowledge: { ...a.knowledge, documents: mergedDocs } };
+                  const pid = (projectId?.trim() || "__local__").trim();
+                  return {
+                    ...a,
+                    knowledge: { ...a.knowledge, documents: mergedDocs },
+                    strategy: {
+                      ...a.strategy,
+                      visualReferenceAnalysis: reanalyzeVisualReferences(pid, temp),
+                    },
+                  };
+                },
+                [BRAIN_STALE_REASON.NEW_IMAGE_UPLOADED, BRAIN_STALE_REASON.VISUAL_REFERENCE_CHANGED],
+              );
+              void syncVisualDnaSlotsAndGenerateMosaics();
+            } else {
+              setKnowledge({ documents: nextDocs }, [BRAIN_STALE_REASON.NEW_DOCUMENT_UPLOADED]);
+            }
+            const skipped = data?.rejected?.length || 0;
+            if ((data?.documents?.length || 0) === 0 && skipped > 0) {
+              showToast(`Ningún archivo compatible. ${skipped} omitido(s).`, "error");
+            } else if (skipped > 0) {
+              showToast(`${data?.message || "Archivos subidos"} (${skipped} omitido(s)).`, "info");
+            } else {
+              showToast(data?.message || "Archivos subidos", "success");
+            }
+            if (added.length > 0) {
+              if (addedImages) visionAfterKnowledgeIngestRef.current = true;
+              knowledgeIngestQueueRef.current.push({ kind: "analyze" });
+              setKnowledgePipelineQueued(knowledgeIngestQueueRef.current.length);
+              const q = knowledgeIngestQueueRef.current.length;
+              setKnowledgePipelineDetail(
+                `Encolando análisis de contenido (quedan ${q} paso${q === 1 ? "" : "s"} en esta cola)…`,
+              );
+            } else if (skipped > 0) {
+              setKnowledgePipelineDetail("Ningún archivo entró al pozo (formato o tamaño). Revisa el aviso.");
+            } else {
+              setKnowledgePipelineDetail("Subida completada: no hay documentos nuevos que analizar.");
+            }
+          } else if (job.kind === "url") {
+            const snap = normalizeProjectAssets(assetsMetadataRef.current);
+            if (snap.knowledge.urls.includes(job.url)) {
+              setKnowledgePipelineDetail("Esa URL ya está en el pozo; se omite.");
+              showToast("Esa URL ya está en la lista.", "info");
+              continue;
+            }
+            const host = (() => {
+              try {
+                return new URL(job.url).hostname;
+              } catch {
+                return "URL";
+              }
+            })();
+            setKnowledgePipelineDetail(
+              `Extrayendo contenido de ${host} (${job.scope === "core" ? "CORE" : "contexto"})…`,
+            );
+            const response = await fetch("/api/spaces/brain/knowledge/url", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                url: job.url,
+                scope: job.scope,
+                contextKind: job.scope === "context" ? "general" : undefined,
+              }),
+            });
+            const data = await readResponseJson<{ error?: string; document?: KnowledgeDocumentEntry }>(
+              response,
+              "POST /api/spaces/brain/knowledge/url",
+            );
+            if (!response.ok) throw new Error(data?.error || "Error al procesar URL");
+            const urlDoc = data?.document;
+            const urlIsImage =
+              !!urlDoc &&
+              (String(urlDoc.mime || "").toLowerCase().startsWith("image/") ||
+                urlDoc.format === "image" ||
+                urlDoc.type === "image");
+            setKnowledge(
+              {
+                urls: [...snap.knowledge.urls, job.url],
+                documents: data?.document ? [...snap.knowledge.documents, data.document] : snap.knowledge.documents,
               },
-            };
-          });
-        } else {
-          setKnowledge({ documents: nextDocs });
+              [
+                BRAIN_STALE_REASON.URL_ADDED,
+                ...(urlIsImage ? [BRAIN_STALE_REASON.NEW_IMAGE_UPLOADED] : []),
+              ],
+            );
+            if (job.scope === "core") setUrlDraftCore("");
+            else setUrlDraftContext("");
+            showToast("URL añadida con éxito", "success");
+            if (urlIsImage) visionAfterKnowledgeIngestRef.current = true;
+            knowledgeIngestQueueRef.current.push({ kind: "analyze" });
+            setKnowledgePipelineQueued(knowledgeIngestQueueRef.current.length);
+            const qAfterUrl = knowledgeIngestQueueRef.current.length;
+            setKnowledgePipelineDetail(
+              `URL integrada. Encolando análisis del pozo (${qAfterUrl} paso${qAfterUrl === 1 ? "" : "s"})…`,
+            );
+            if (urlIsImage && data?.document) {
+              const pid = (projectId?.trim() || "__local__").trim();
+              patch(
+                (a) => {
+                  const temp: ProjectAssetsMetadata = normalizeProjectAssets(a);
+                  return {
+                    ...a,
+                    strategy: {
+                      ...a.strategy,
+                      visualReferenceAnalysis: reanalyzeVisualReferences(pid, temp),
+                    },
+                  };
+                },
+                [BRAIN_STALE_REASON.NEW_IMAGE_UPLOADED, BRAIN_STALE_REASON.VISUAL_REFERENCE_CHANGED],
+              );
+              void syncVisualDnaSlotsAndGenerateMosaics();
+            }
+          } else {
+            const runVisionAfter = visionAfterKnowledgeIngestRef.current;
+            const snap = normalizeProjectAssets(assetsMetadataRef.current);
+            const pendingDocs = snap.knowledge.documents.filter((d) => d.status !== "Analizado").length;
+            setKnowledgePipelineDetail(
+              `Analizando conocimiento con IA: ${snap.knowledge.documents.length} documento(s) en pozo · ${pendingDocs} pendiente(s) de “Analizado”…`,
+            );
+            let mergedForVision: ProjectAssetsMetadata = snap;
+            try {
+              const response = await fetch("/api/spaces/brain/knowledge/analyze", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  documents: snap.knowledge.documents,
+                  strategy: snap.strategy,
+                  brainMeta: snap.brainMeta,
+                }),
+              });
+              const data = await readResponseJson<{
+                error?: string;
+                message?: string;
+                documents?: KnowledgeDocumentEntry[];
+                corporateContext?: string;
+                strategy?: ProjectAssetsMetadata["strategy"];
+                brainMeta?: ProjectAssetsMetadata["brainMeta"];
+              }>(response, "POST /api/spaces/brain/knowledge/analyze");
+              if (!response.ok) throw new Error(data?.error || "Error analizando documentos");
+              setKnowledgePipelineDetail(
+                "Fusionando resultados con tu estrategia (voz, hechos, ADN editorial, reglas seguras)…",
+              );
+              const mergedDocs = data?.documents || snap.knowledge.documents;
+              const mergedCc = data?.corporateContext || "";
+              setKnowledge({
+                documents: mergedDocs,
+                corporateContext: mergedCc,
+              });
+              if (data?.strategy) {
+                const derived = buildVisualStyleFromVisionAnalyses(snap.strategy.visualReferenceAnalysis?.analyses);
+                const baseVs = data.strategy.visualStyle ?? defaultBrainVisualStyle();
+                const visualStyle = derived ? mergeVisualStyleWithVisionDerivedDescriptions(baseVs, derived) : baseVs;
+                setStrategy({
+                  ...data.strategy,
+                  visualStyle,
+                });
+                mergedForVision = normalizeProjectAssets({
+                  ...snap,
+                  knowledge: { ...snap.knowledge, documents: mergedDocs, corporateContext: mergedCc },
+                  strategy: {
+                    ...snap.strategy,
+                    ...data.strategy,
+                    visualStyle,
+                  },
+                  ...(data.brainMeta ? { brainMeta: normalizeBrainMeta(data.brainMeta) } : {}),
+                });
+                if (data.brainMeta) {
+                  patch((a) => ({ ...a, brainMeta: normalizeBrainMeta(data.brainMeta) }));
+                }
+                if (!briefPersonaId && data.strategy.personas[0]?.id) {
+                  setBriefPersonaId(data.strategy.personas[0].id);
+                }
+              } else {
+                mergedForVision = normalizeProjectAssets({
+                  ...snap,
+                  knowledge: { ...snap.knowledge, documents: mergedDocs, corporateContext: mergedCc },
+                  ...(data?.brainMeta ? { brainMeta: normalizeBrainMeta(data.brainMeta) } : {}),
+                });
+                if (data?.brainMeta) {
+                  patch((a) => ({ ...a, brainMeta: normalizeBrainMeta(data.brainMeta) }));
+                }
+              }
+              showToast(data?.message || "Análisis completado", "success");
+            } finally {
+              if (runVisionAfter) {
+                visionAfterKnowledgeIngestRef.current = false;
+                setKnowledgePipelineDetail(
+                  "Imágenes en el pozo: analizando referencias con visión remota (Gemini/OpenAI o simulado si no hay API)…",
+                );
+                await handleReanalyzeVisualRefs({ assetsSnapshot: mergedForVision });
+                setKnowledgePipelineDetail("Referencias visuales actualizadas.");
+              }
+            }
+          }
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          showToast(msg, "error");
+          setMessage({ text: msg, type: "error" });
         }
-        if (scope === "core") setCoreFiles([]);
-        else setContextFiles([]);
-        const skipped = data?.rejected?.length || 0;
-        if ((data?.documents?.length || 0) === 0 && skipped > 0) {
-          showToast(`Ningún archivo compatible. ${skipped} omitido(s).`, "error");
-        } else if (skipped > 0) {
-          showToast(`${data?.message || "Archivos subidos"} (${skipped} omitido(s)).`, "info");
-        } else {
-          showToast(data?.message || "Archivos subidos", "success");
-        }
-      } catch (error) {
-        showToast(error instanceof Error ? error.message : "Falló la subida de archivos", "error");
-      } finally {
-        setUploadingScope(null);
       }
+    } finally {
+      knowledgeIngestPumpRunningRef.current = false;
+      setKnowledgePipelineBusy(false);
+      setKnowledgePipelineQueued(0);
+      setKnowledgePipelineDetail("");
+    }
+  }, [
+    briefPersonaId,
+    handleReanalyzeVisualRefs,
+    patch,
+    projectId,
+    setBriefPersonaId,
+    setKnowledge,
+    setStrategy,
+    setUrlDraftContext,
+    setUrlDraftCore,
+    showToast,
+    syncVisualDnaSlotsAndGenerateMosaics,
+  ]);
+
+  const enqueueKnowledgeUpload = useCallback(
+    (scope: "core" | "context", files: File[]) => {
+      if (!files.length) return;
+      knowledgeIngestQueueRef.current.push({ kind: "upload", scope, files: [...files] });
+      setKnowledgePipelineQueued(knowledgeIngestQueueRef.current.length);
+      void runKnowledgeIngestPump();
     },
-    [assets.knowledge.documents, contextFiles, coreFiles, patch, projectId, setKnowledge, showToast],
+    [runKnowledgeIngestPump],
   );
 
   const handleAddUrl = useCallback(
-    async (scope: "core" | "context") => {
+    (scope: "core" | "context") => {
       const draft = scope === "core" ? urlDraftCore : urlDraftContext;
       const normalized = tryNormalizeUrl(draft);
       if (!normalized) {
         showToast("Introduce una URL válida (https://…)", "error");
         return;
       }
-
-      if (assets.knowledge.urls.includes(normalized)) {
-        showToast("Esa URL ya está en la lista.", "info");
-        return;
-      }
-
-      setUploadingScope(scope);
-      setMessage({ text: "Extrayendo contenido de la URL...", type: "info" });
-      try {
-        const response = await fetch("/api/spaces/brain/knowledge/url", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            url: normalized,
-            scope,
-            contextKind: scope === "context" ? "general" : undefined,
-          }),
-        });
-        const data = await readResponseJson<{ error?: string; document?: KnowledgeDocumentEntry }>(
-          response,
-          "POST /api/spaces/brain/knowledge/url",
-        );
-        if (!response.ok) throw new Error(data?.error || "Error al procesar URL");
-        setKnowledge({
-          urls: [...assets.knowledge.urls, normalized],
-          documents: data?.document ? [...assets.knowledge.documents, data.document] : assets.knowledge.documents,
-        });
-        if (scope === "core") setUrlDraftCore("");
-        else setUrlDraftContext("");
-        showToast("URL añadida con éxito", "success");
-      } catch (error) {
-        showToast(error instanceof Error ? error.message : "Error al procesar URL", "error");
-      } finally {
-        setUploadingScope(null);
-      }
+      knowledgeIngestQueueRef.current.push({ kind: "url", scope, url: normalized });
+      setKnowledgePipelineQueued(knowledgeIngestQueueRef.current.length);
+      void runKnowledgeIngestPump();
     },
-    [
-      assets.knowledge.documents,
-      assets.knowledge.urls,
-      setKnowledge,
-      showToast,
-      urlDraftContext,
-      urlDraftCore,
-    ],
+    [runKnowledgeIngestPump, showToast, urlDraftContext, urlDraftCore],
   );
 
-  const handleAnalyze = useCallback(async () => {
-    setAnalyzing(true);
-    setMessage({ text: "Analizando documentos con IA...", type: "info" });
-    try {
-      const response = await fetch("/api/spaces/brain/knowledge/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          documents: assets.knowledge.documents,
-          strategy: assets.strategy,
-        }),
-      });
-      const data = await readResponseJson<{
-        error?: string;
-        message?: string;
-        documents?: KnowledgeDocumentEntry[];
-        corporateContext?: string;
-        strategy?: ProjectAssetsMetadata["strategy"];
-      }>(response, "POST /api/spaces/brain/knowledge/analyze");
-      if (!response.ok) throw new Error(data?.error || "Error analizando documentos");
-      setKnowledge({
-        documents: data?.documents || assets.knowledge.documents,
-        corporateContext: data?.corporateContext || "",
-      });
-      if (data?.strategy) {
-        const derived = buildVisualStyleFromVisionAnalyses(assets.strategy.visualReferenceAnalysis?.analyses);
-        const baseVs = data.strategy.visualStyle ?? defaultBrainVisualStyle();
-        const visualStyle = derived ? mergeVisualStyleWithVisionDerivedDescriptions(baseVs, derived) : baseVs;
-        setStrategy({
-          ...data.strategy,
-          visualStyle,
-        });
-        if (!briefPersonaId && data.strategy.personas[0]?.id) {
-          setBriefPersonaId(data.strategy.personas[0].id);
-        }
-        void autoGenerateMissingVisualSlots(visualStyle, false);
-      }
-      showToast(data?.message || "Análisis completado", "success");
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : "Error analizando documentos.", "error");
-    } finally {
-      setAnalyzing(false);
-    }
-  }, [
-    assets.knowledge.documents,
-    assets.strategy,
-    autoGenerateMissingVisualSlots,
-    briefPersonaId,
-    setKnowledge,
-    setStrategy,
-    showToast,
-  ]);
+  /** Encola análisis del pozo (p. ej. tras borrar o vaciar); la UI ya no expone botón manual. */
+  const enqueueKnowledgeAnalyzeJob = useCallback(() => {
+    knowledgeIngestQueueRef.current.push({ kind: "analyze" });
+    setKnowledgePipelineQueued(knowledgeIngestQueueRef.current.length);
+    void runKnowledgeIngestPump();
+  }, [runKnowledgeIngestPump]);
 
   const handleOpenOriginal = useCallback(
     async (doc: KnowledgeDocumentEntry) => {
@@ -1972,16 +2101,93 @@ export function ProjectBrainFullscreen({
       try {
         const doc = assets.knowledge.documents.find((d) => d.id === id);
         if (doc?.s3Path) fireAndForgetDeleteS3Keys([doc.s3Path]);
-        setKnowledge({ documents: assets.knowledge.documents.filter((d) => d.id !== id) });
-        showToast("Documento eliminado", "success");
+        const remaining = assets.knowledge.documents.filter((d) => d.id !== id);
+        const isImg = (d: KnowledgeDocumentEntry) =>
+          d.type === "image" ||
+          d.format === "image" ||
+          (typeof d.mime === "string" && d.mime.toLowerCase().startsWith("image/"));
+        const deletedWasImage = doc ? isImg(doc) : false;
+        const anyRemainingImage = remaining.some(isImg);
+        setKnowledge({ documents: remaining }, [BRAIN_STALE_REASON.NEW_DOCUMENT_UPLOADED]);
+        if (deletedWasImage || anyRemainingImage) visionAfterKnowledgeIngestRef.current = true;
+        enqueueKnowledgeAnalyzeJob();
+        showToast("Documento eliminado; actualizando conocimiento…", "success");
       } catch {
         showToast("No se pudo eliminar el documento", "error");
       } finally {
         setIsDeleting(null);
       }
     },
-    [assets.knowledge.documents, setKnowledge, showToast],
+    [assets.knowledge.documents, enqueueKnowledgeAnalyzeJob, setKnowledge, showToast],
   );
+
+  const handleClearKnowledgeSources = useCallback(() => {
+    if (
+      !confirm(
+        "Se vaciará el pozo de conocimiento: se borrarán todos los documentos e imágenes subidos, los enlaces guardados y el resumen corporativo extraído. El análisis visual por referencia no se borra aquí (sigue en «Referencias visuales» hasta que lo cambies). ¿Continuar?",
+      )
+    ) {
+      return;
+    }
+    const keys = assets.knowledge.documents.map((d) => d.s3Path).filter((k): k is string => Boolean(k?.trim()));
+    if (keys.length) fireAndForgetDeleteS3Keys(keys);
+    const hadImages = assets.knowledge.documents.some(
+      (d) =>
+        d.type === "image" ||
+        d.format === "image" ||
+        (typeof d.mime === "string" && d.mime.toLowerCase().startsWith("image/")),
+    );
+    setKnowledge({ documents: [], urls: [], corporateContext: "" }, [BRAIN_STALE_REASON.BRAIN_RESET]);
+    if (hadImages) visionAfterKnowledgeIngestRef.current = true;
+    enqueueKnowledgeAnalyzeJob();
+    showToast("Pozo vaciado; actualizando conocimiento…", "success");
+  }, [assets.knowledge.documents, enqueueKnowledgeAnalyzeJob, setKnowledge, showToast]);
+
+  const handleResetBrainCompletely = useCallback(() => {
+    if (knowledgeIngestLocked) {
+      showToast("Espera a que termine la cola de ingesta antes de reiniciar.", "info");
+      return;
+    }
+    if (
+      !confirm(
+        "Esto reiniciará marca, documentos, referencias visuales, estrategia y chat local del Brain. Los aprendizajes pendientes asociados al proyecto pueden seguir existiendo en el servidor hasta que se revisen o eliminen desde «Por revisar». Se intentarán eliminar los archivos del pozo en almacenamiento. No hay deshacer. ¿Continuar?",
+      )
+    ) {
+      return;
+    }
+    const keys = assets.knowledge.documents.map((d) => d.s3Path).filter((k): k is string => Boolean(k?.trim()));
+    if (keys.length) fireAndForgetDeleteS3Keys(keys);
+    knowledgeIngestQueueRef.current = [];
+    visionAfterKnowledgeIngestRef.current = false;
+    knowledgeIngestPumpRunningRef.current = false;
+    setKnowledgePipelineBusy(false);
+    setKnowledgePipelineQueued(0);
+    const cleared = defaultProjectAssets();
+    onAssetsMetadataChange({
+      ...cleared,
+      brainMeta: { ...normalizeBrainMeta(cleared.brainMeta), lastResetAt: new Date().toISOString() },
+    });
+    onBrainAssetsFullReset?.();
+    setChatMessages([
+      {
+        id: "brain-chat-welcome",
+        role: "assistant",
+        text:
+          "Soy Brain Copilot. Preguntame sobre el contenido que hayas subido y analizado. Si falta contexto, te sugerire que documentos o URLs subir.",
+      },
+    ]);
+    setExpandedDocs(new Set());
+    setEditingDocId(null);
+    setVisualReanalyzeDiagnostics([]);
+    setMessage({ text: "", type: "" });
+    showToast("Brain reiniciado en memoria. Guarda el proyecto en el espacio para persistir.", "success");
+  }, [
+    assets.knowledge.documents,
+    knowledgeIngestLocked,
+    onAssetsMetadataChange,
+    onBrainAssetsFullReset,
+    showToast,
+  ]);
 
   const toggleExpand = useCallback((id: string) => {
     setExpandedDocs((prev) => {
@@ -2015,10 +2221,13 @@ export function ProjectBrainFullscreen({
           corporateContext?: string;
         }>(response, "POST /api/spaces/brain/knowledge/update");
         if (!response.ok) throw new Error(data?.error || "No se pudo guardar ADN");
-        setKnowledge({
-          documents: data?.documents || assets.knowledge.documents,
-          corporateContext: data?.corporateContext || assets.knowledge.corporateContext || "",
-        });
+        setKnowledge(
+          {
+            documents: data?.documents || assets.knowledge.documents,
+            corporateContext: data?.corporateContext || assets.knowledge.corporateContext || "",
+          },
+          [BRAIN_STALE_REASON.STRATEGY_MANUALLY_CHANGED],
+        );
         setEditingDocId(null);
         showToast("Cerebro corporativo actualizado", "success");
       } catch (e) {
@@ -2092,13 +2301,15 @@ export function ProjectBrainFullscreen({
           ? "Prohibido"
           : undefined,
     };
-    setStrategy({ voiceExamples: [...assets.strategy.voiceExamples, next] });
+    setStrategy({ voiceExamples: [...assets.strategy.voiceExamples, next] }, [BRAIN_STALE_REASON.BRAND_VOICE_CHANGED]);
     setVoiceText("");
   }, [assets.strategy.voiceExamples, setStrategy, voiceKind, voiceText]);
 
   const removeVoiceExample = useCallback(
     (id: string) => {
-      setStrategy({ voiceExamples: assets.strategy.voiceExamples.filter((v) => v.id !== id) });
+      setStrategy({ voiceExamples: assets.strategy.voiceExamples.filter((v) => v.id !== id) }, [
+        BRAIN_STALE_REASON.BRAND_VOICE_CHANGED,
+      ]);
     },
     [assets.strategy.voiceExamples, setStrategy],
   );
@@ -2109,10 +2320,12 @@ export function ProjectBrainFullscreen({
       if (!text) return;
       if (kind === "taboo") {
         if (assets.strategy.tabooPhrases.includes(text)) return;
-        setStrategy({ tabooPhrases: [...assets.strategy.tabooPhrases, text] });
+        setStrategy({ tabooPhrases: [...assets.strategy.tabooPhrases, text] }, [BRAIN_STALE_REASON.BRAND_VOICE_CHANGED]);
       } else {
         if (assets.strategy.approvedPhrases.includes(text)) return;
-        setStrategy({ approvedPhrases: [...assets.strategy.approvedPhrases, text] });
+        setStrategy({ approvedPhrases: [...assets.strategy.approvedPhrases, text] }, [
+          BRAIN_STALE_REASON.BRAND_VOICE_CHANGED,
+        ]);
       }
     },
     [assets.strategy.approvedPhrases, assets.strategy.tabooPhrases, setStrategy],
@@ -2121,9 +2334,13 @@ export function ProjectBrainFullscreen({
   const removeTagItem = useCallback(
     (kind: "taboo" | "approved", idx: number) => {
       if (kind === "taboo") {
-        setStrategy({ tabooPhrases: assets.strategy.tabooPhrases.filter((_, i) => i !== idx) });
+        setStrategy({ tabooPhrases: assets.strategy.tabooPhrases.filter((_, i) => i !== idx) }, [
+          BRAIN_STALE_REASON.BRAND_VOICE_CHANGED,
+        ]);
       } else {
-        setStrategy({ approvedPhrases: assets.strategy.approvedPhrases.filter((_, i) => i !== idx) });
+        setStrategy({ approvedPhrases: assets.strategy.approvedPhrases.filter((_, i) => i !== idx) }, [
+          BRAIN_STALE_REASON.BRAND_VOICE_CHANGED,
+        ]);
       }
     },
     [assets.strategy.approvedPhrases, assets.strategy.tabooPhrases, setStrategy],
@@ -2135,7 +2352,7 @@ export function ProjectBrainFullscreen({
       if (!text) return;
       const current = assets.strategy[kind] || [];
       if (current.includes(text)) return;
-      setStrategy({ [kind]: [...current, text] });
+      setStrategy({ [kind]: [...current, text] }, [BRAIN_STALE_REASON.STRATEGY_MANUALLY_CHANGED]);
     },
     [assets.strategy, setStrategy],
   );
@@ -2143,7 +2360,7 @@ export function ProjectBrainFullscreen({
   const removeStringListItem = useCallback(
     (kind: "languageTraits" | "syntaxPatterns" | "preferredTerms" | "forbiddenTerms", idx: number) => {
       const current = assets.strategy[kind] || [];
-      setStrategy({ [kind]: current.filter((_, i) => i !== idx) });
+      setStrategy({ [kind]: current.filter((_, i) => i !== idx) }, [BRAIN_STALE_REASON.STRATEGY_MANUALLY_CHANGED]);
     },
     [assets.strategy, setStrategy],
   );
@@ -2155,14 +2372,16 @@ export function ProjectBrainFullscreen({
     const others = (assets.strategy.channelIntensity || []).filter(
       (x) => x.channel.toLowerCase() !== channel.toLowerCase(),
     );
-    setStrategy({ channelIntensity: [...others, { channel, intensity }] });
+    setStrategy({ channelIntensity: [...others, { channel, intensity }] }, [BRAIN_STALE_REASON.STRATEGY_MANUALLY_CHANGED]);
     setChannelIntensityName("");
     setChannelIntensityValue(60);
   }, [assets.strategy.channelIntensity, channelIntensityName, channelIntensityValue, setStrategy]);
 
   const removeChannelIntensity = useCallback(
     (idx: number) => {
-      setStrategy({ channelIntensity: assets.strategy.channelIntensity.filter((_, i) => i !== idx) });
+      setStrategy({ channelIntensity: assets.strategy.channelIntensity.filter((_, i) => i !== idx) }, [
+        BRAIN_STALE_REASON.STRATEGY_MANUALLY_CHANGED,
+      ]);
     },
     [assets.strategy.channelIntensity, setStrategy],
   );
@@ -2184,7 +2403,7 @@ export function ProjectBrainFullscreen({
       attentionTriggers: personaAttentionTriggers.split(",").map((x) => x.trim()).filter(Boolean),
       marketSophistication: personaMarketSophistication.trim() || undefined,
     };
-    setStrategy({ personas: [...assets.strategy.personas, persona] });
+    setStrategy({ personas: [...assets.strategy.personas, persona] }, [BRAIN_STALE_REASON.STRATEGY_MANUALLY_CHANGED]);
     setPersonaName("");
     setPersonaPain("");
     setPersonaChannel("");
@@ -2211,7 +2430,7 @@ export function ProjectBrainFullscreen({
   const addCatalogPersona = useCallback(
     (persona: BrainPersona) => {
       if (assets.strategy.personas.some((p) => p.id === persona.id)) return;
-      setStrategy({ personas: [...assets.strategy.personas, persona] });
+      setStrategy({ personas: [...assets.strategy.personas, persona] }, [BRAIN_STALE_REASON.STRATEGY_MANUALLY_CHANGED]);
       if (!briefPersonaId) setBriefPersonaId(persona.id);
     },
     [assets.strategy.personas, briefPersonaId, setStrategy],
@@ -2219,7 +2438,9 @@ export function ProjectBrainFullscreen({
 
   const removePersona = useCallback(
     (id: string) => {
-      setStrategy({ personas: assets.strategy.personas.filter((p) => p.id !== id) });
+      setStrategy({ personas: assets.strategy.personas.filter((p) => p.id !== id) }, [
+        BRAIN_STALE_REASON.STRATEGY_MANUALLY_CHANGED,
+      ]);
       if (briefPersonaId === id) setBriefPersonaId("");
     },
     [assets.strategy.personas, briefPersonaId, setStrategy],
@@ -2228,18 +2449,23 @@ export function ProjectBrainFullscreen({
   const addFunnelMessage = useCallback(() => {
     const text = funnelTextDraft.trim();
     if (!text) return;
-    setStrategy({
-      funnelMessages: [
-        ...assets.strategy.funnelMessages,
-        { id: crypto.randomUUID(), stage: funnelStageDraft, text },
-      ],
-    });
+    setStrategy(
+      {
+        funnelMessages: [
+          ...assets.strategy.funnelMessages,
+          { id: crypto.randomUUID(), stage: funnelStageDraft, text },
+        ],
+      },
+      [BRAIN_STALE_REASON.STRATEGY_MANUALLY_CHANGED],
+    );
     setFunnelTextDraft("");
   }, [assets.strategy.funnelMessages, funnelStageDraft, funnelTextDraft, setStrategy]);
 
   const removeFunnelMessage = useCallback(
     (id: string) => {
-      setStrategy({ funnelMessages: assets.strategy.funnelMessages.filter((m) => m.id !== id) });
+      setStrategy({ funnelMessages: assets.strategy.funnelMessages.filter((m) => m.id !== id) }, [
+        BRAIN_STALE_REASON.STRATEGY_MANUALLY_CHANGED,
+      ]);
     },
     [assets.strategy.funnelMessages, setStrategy],
   );
@@ -2247,24 +2473,27 @@ export function ProjectBrainFullscreen({
   const addMessageBlueprint = useCallback(() => {
     const claim = messageClaimDraft.trim();
     if (!claim) return;
-    setStrategy({
-      messageBlueprints: [
-        ...assets.strategy.messageBlueprints,
-        {
-          id: crypto.randomUUID(),
-          claim,
-          support: messageSupportDraft.trim(),
-          audience: messageAudienceDraft.trim(),
-          channel: messageChannelDraft.trim(),
-          stage: funnelStageDraft,
-          cta: messageCtaDraft.trim(),
-          evidence: messageEvidenceDraft
-            .split(",")
-            .map((x) => x.trim())
-            .filter(Boolean),
-        },
-      ],
-    });
+    setStrategy(
+      {
+        messageBlueprints: [
+          ...assets.strategy.messageBlueprints,
+          {
+            id: crypto.randomUUID(),
+            claim,
+            support: messageSupportDraft.trim(),
+            audience: messageAudienceDraft.trim(),
+            channel: messageChannelDraft.trim(),
+            stage: funnelStageDraft,
+            cta: messageCtaDraft.trim(),
+            evidence: messageEvidenceDraft
+              .split(",")
+              .map((x) => x.trim())
+              .filter(Boolean),
+          },
+        ],
+      },
+      [BRAIN_STALE_REASON.STRATEGY_MANUALLY_CHANGED],
+    );
     setMessageClaimDraft("");
     setMessageSupportDraft("");
     setMessageAudienceDraft("");
@@ -2285,9 +2514,12 @@ export function ProjectBrainFullscreen({
 
   const removeMessageBlueprint = useCallback(
     (id: string) => {
-      setStrategy({
-        messageBlueprints: assets.strategy.messageBlueprints.filter((m) => m.id !== id),
-      });
+      setStrategy(
+        {
+          messageBlueprints: assets.strategy.messageBlueprints.filter((m) => m.id !== id),
+        },
+        [BRAIN_STALE_REASON.STRATEGY_MANUALLY_CHANGED],
+      );
     },
     [assets.strategy.messageBlueprints, setStrategy],
   );
@@ -2390,12 +2622,15 @@ export function ProjectBrainFullscreen({
         label: decision === "approved" ? "Pieza aprobada" : "Pieza rechazada",
       });
 
-      setStrategy({
-        generatedPieces: [piece, ...assets.strategy.generatedPieces].slice(0, 60),
-        approvedPatterns: [...new Set(approvedPatterns)].slice(0, 120),
-        rejectedPatterns: [...new Set(rejectedPatterns)].slice(0, 120),
-        voiceExamples,
-      });
+      setStrategy(
+        {
+          generatedPieces: [piece, ...assets.strategy.generatedPieces].slice(0, 60),
+          approvedPatterns: [...new Set(approvedPatterns)].slice(0, 120),
+          rejectedPatterns: [...new Set(rejectedPatterns)].slice(0, 120),
+          voiceExamples,
+        },
+        [BRAIN_STALE_REASON.STRATEGY_MANUALLY_CHANGED, BRAIN_STALE_REASON.BRAND_VOICE_CHANGED],
+      );
 
       setPieceFeedbackNote("");
       showToast(
@@ -2462,7 +2697,7 @@ export function ProjectBrainFullscreen({
     return (
       <article
         key={row.id}
-        className="flex flex-col gap-3 rounded-[20px] border border-zinc-200 bg-white p-5 shadow-sm"
+        className="flex flex-col gap-3 rounded-[5px] border border-zinc-200 bg-white p-5 shadow-sm"
       >
         <div className="flex flex-wrap items-center gap-2">
           <span className="rounded-full border border-violet-200 bg-violet-50 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-violet-800">
@@ -2511,7 +2746,7 @@ export function ProjectBrainFullscreen({
           {reasoningOpen ? "Ocultar razonamiento" : "Ver razonamiento"}
         </button>
         {reasoningOpen && (
-          <p className="rounded-xl border border-zinc-100 bg-zinc-50 px-3 py-2 text-[11px] leading-relaxed text-zinc-700">
+          <p className="rounded-[5px] border border-zinc-100 bg-zinc-50 px-3 py-2 text-[11px] leading-relaxed text-zinc-700">
             {c.reasoning}
           </p>
         )}
@@ -2537,7 +2772,7 @@ export function ProjectBrainFullscreen({
             type="button"
             disabled={busy}
             onClick={() => void resolvePendingItem(row, "PROMOTE_TO_DNA")}
-            className="rounded-lg border border-violet-600 bg-violet-600 px-2.5 py-1.5 text-[10px] font-black uppercase tracking-wide text-white disabled:opacity-50"
+            className="rounded-[5px] border border-violet-600 bg-violet-600 px-2.5 py-1.5 text-[10px] font-black uppercase tracking-wide text-white disabled:opacity-50"
           >
             {visualNodeBundle ? "Guardar en ADN visual" : "Guardar en ADN"}
           </button>
@@ -2545,7 +2780,7 @@ export function ProjectBrainFullscreen({
             type="button"
             disabled={busy}
             onClick={() => void resolvePendingItem(row, "KEEP_IN_PROJECT")}
-            className="rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-[10px] font-black uppercase tracking-wide text-zinc-800 disabled:opacity-50"
+            className="rounded-[5px] border border-zinc-300 bg-white px-2.5 py-1.5 text-[10px] font-black uppercase tracking-wide text-zinc-800 disabled:opacity-50"
           >
             Solo este proyecto
           </button>
@@ -2553,7 +2788,7 @@ export function ProjectBrainFullscreen({
             type="button"
             disabled={busy}
             onClick={() => void resolvePendingItem(row, "SAVE_AS_CONTEXT")}
-            className="rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-[10px] font-black uppercase tracking-wide text-zinc-800 disabled:opacity-50"
+            className="rounded-[5px] border border-zinc-300 bg-white px-2.5 py-1.5 text-[10px] font-black uppercase tracking-wide text-zinc-800 disabled:opacity-50"
           >
             {visualNodeBundle ? "Guardar como contexto visual" : "Guardar como contexto puntual"}
           </button>
@@ -2561,7 +2796,7 @@ export function ProjectBrainFullscreen({
             type="button"
             disabled={busy}
             onClick={() => void resolvePendingItem(row, "DISMISS")}
-            className="rounded-lg border border-zinc-200 bg-zinc-100 px-2.5 py-1.5 text-[10px] font-black uppercase tracking-wide text-zinc-600 disabled:opacity-50"
+            className="rounded-[5px] border border-zinc-200 bg-zinc-100 px-2.5 py-1.5 text-[10px] font-black uppercase tracking-wide text-zinc-600 disabled:opacity-50"
           >
             Descartar
           </button>
@@ -2572,7 +2807,7 @@ export function ProjectBrainFullscreen({
               setActiveTab("voice");
               showToast("Edita en Voz / Mensajes y vuelve aquí para confirmar.", "info");
             }}
-            className="rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-[10px] font-black uppercase tracking-wide text-zinc-800 disabled:opacity-50"
+            className="rounded-[5px] border border-zinc-300 bg-white px-2.5 py-1.5 text-[10px] font-black uppercase tracking-wide text-zinc-800 disabled:opacity-50"
           >
             Editar antes de guardar
           </button>
@@ -2604,65 +2839,95 @@ export function ProjectBrainFullscreen({
     pendingLearnings.length,
     assets.strategy.generatedPieces.length,
   );
-  const imageDocCount = assets.knowledge.documents.filter(
-    (d) => d.mime.toLowerCase().startsWith("image/") || d.format === "image" || d.type === "image",
-  ).length;
+  const imageKnowledgeDocs = assets.knowledge.documents.filter(
+    (d) =>
+      String(d.mime || "")
+        .toLowerCase()
+        .startsWith("image/") ||
+      d.format === "image" ||
+      d.type === "image",
+  );
+  const imageDocCount = imageKnowledgeDocs.length;
+  const imageKnowledgeAnalyzed = imageKnowledgeDocs.filter((d) => d.status === "Analizado").length;
+  const pdfDocEntriesForSummary = assets.knowledge.documents.filter((d) => {
+    const fmt = String(d.format || "").toLowerCase();
+    const mime = String(d.mime || "").toLowerCase();
+    return fmt === "pdf" || mime.includes("pdf");
+  });
+  const pdfDocCountForSummary = pdfDocEntriesForSummary.length;
+  const pdfAnalyzedForSummary = pdfDocEntriesForSummary.filter((d) => d.status === "Analizado").length;
   const visualPendingProposals = pendingLearnings.filter(
     (p) => p.candidate.evidence.evidenceSource === "visual_reference",
   ).length;
 
   const shell = (
     <div
-      className="fixed inset-0 z-[100080] flex flex-col bg-white"
+      className="fixed inset-0 z-[100080] flex flex-col bg-zinc-100"
       role="dialog"
       aria-modal="true"
       aria-labelledby="project-brain-title"
     >
-      <header className="flex h-[72px] shrink-0 items-center justify-between gap-4 border-b border-zinc-200 bg-white px-6">
-        <div className="flex min-w-0 items-center gap-3">
-          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-violet-200 bg-violet-50">
-            <Brain className="h-6 w-6 text-violet-700" strokeWidth={1.75} aria-hidden />
+      <header className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-zinc-200/80 bg-white/95 px-4 backdrop-blur-sm supports-[backdrop-filter]:bg-white/80">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[5px] border border-violet-200/80 bg-violet-50">
+            <Brain className="h-4 w-4 text-violet-700" strokeWidth={1.75} aria-hidden />
           </span>
-          <div className="min-w-0">
-            <h1 id="project-brain-title" className="text-[15px] font-black uppercase tracking-wide text-zinc-900">
+          <div className="min-w-0 leading-tight">
+            <h1 id="project-brain-title" className="text-[13px] font-semibold tracking-tight text-zinc-900">
               Brain
             </h1>
-            <p className="text-[11px] text-zinc-500">Memoria creativa · ADN · conocimiento · aprendizaje</p>
+            <p className="truncate text-[10px] text-zinc-500">Memoria creativa del proyecto</p>
           </div>
         </div>
-        <div className="hidden min-w-0 flex-1 items-center justify-center gap-3 text-center text-[11px] font-semibold text-zinc-600 md:flex">
+        <div className="hidden min-w-0 flex-1 items-center justify-center gap-2 text-[10px] font-medium text-zinc-600 md:flex">
           <span
             title={BRAIN_ADN_COMPLETENESS_TOOLTIP_ES}
-            className="rounded-full border border-violet-100 bg-violet-50 px-3 py-1 text-violet-900"
+            className="rounded-[5px] border border-violet-100 bg-violet-50/90 px-2 py-0.5 tabular-nums text-violet-900"
           >
             ADN {adn.total}/100
           </span>
           <span className="text-zinc-300">·</span>
           <span
             title="Cola de aprendizajes pendientes de decisión; la procedencia (visión real, telemetría, etc.) se indica en cada tarjeta."
-            className="rounded-full border border-amber-100 bg-amber-50 px-3 py-1 text-amber-900"
+            className="rounded-[5px] border border-amber-100 bg-amber-50/90 px-2 py-0.5 tabular-nums text-amber-900"
           >
             {pendingLearnings.length} por revisar
           </span>
           <span className="text-zinc-300">·</span>
-          <span className="rounded-full border border-sky-100 bg-sky-50 px-3 py-1 text-sky-900">
-            {brainClients.length} nodos conectados
+          <span className="rounded-[5px] border border-sky-100 bg-sky-50/90 px-2 py-0.5 tabular-nums text-sky-900">
+            {brainClients.length} nodos
           </span>
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="flex shrink-0 items-center gap-2 rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-2 text-[12px] font-bold uppercase tracking-wide text-zinc-800 transition hover:bg-zinc-100"
-        >
-          <X className="h-4 w-4" strokeWidth={2} aria-hidden />
-          Cerrar
-        </button>
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+          <button
+            type="button"
+            disabled={knowledgeIngestLocked}
+            onClick={() => handleResetBrainCompletely()}
+            title={
+              knowledgeIngestLocked
+                ? "Espera a que termine la ingesta"
+                : "Borra marca, pozo, estrategia y todo análisis (memoria local hasta guardar)"
+            }
+            className="inline-flex items-center gap-1.5 rounded-[5px] border-2 border-rose-700 bg-rose-600 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-white shadow-sm transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Trash2 className="h-3.5 w-3.5 shrink-0" strokeWidth={2.25} aria-hidden />
+            Reiniciar Brain
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex shrink-0 items-center gap-1.5 rounded-[5px] border border-zinc-200 bg-white px-3 py-1.5 text-[11px] font-medium text-zinc-800 transition hover:bg-zinc-50"
+          >
+            <X className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+            Cerrar
+          </button>
+        </div>
       </header>
 
       {message.text && (
         <div
           role="status"
-          className={`fixed left-1/2 top-[4.5rem] z-[100090] max-w-[min(460px,92vw)] -translate-x-1/2 rounded-xl border px-4 py-2.5 text-center text-[12px] font-semibold shadow-lg ${
+          className={`fixed left-1/2 top-14 z-[100090] max-w-[min(460px,92vw)] -translate-x-1/2 rounded-[5px] border px-3 py-2 text-center text-[11px] font-medium shadow-lg ${
             message.type === "error"
               ? "border-rose-200 bg-rose-50 text-rose-700"
               : message.type === "success"
@@ -2674,53 +2939,76 @@ export function ProjectBrainFullscreen({
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1 gap-6 overflow-hidden px-6 pb-6 pt-5">
-        <aside className="flex w-[280px] shrink-0 flex-col gap-5 overflow-y-auto pr-1">
-          <section className="rounded-[22px] border border-zinc-200 bg-gradient-to-b from-violet-50/90 to-white p-4 shadow-sm">
-            <p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">Salud del Brain</p>
-            <p className="mt-2 text-3xl font-black text-violet-800" title={BRAIN_ADN_COMPLETENESS_TOOLTIP_ES}>
-              {adn.total}
-              <span className="text-sm font-semibold text-zinc-500">/100</span>
-            </p>
-            <p className="mt-1 text-[10px] leading-snug text-zinc-500">
-              Heurística de completitud (voz, personas, mensajes, contexto analizado)
-            </p>
-            <div className="mt-4 space-y-2.5">
-              {[
-                ["Identidad visual", skinIdentityScore, "bg-fuchsia-500"],
-                ["Voz y tono", adn.voiceScore, "bg-violet-500"],
-                ["Personas", adn.personasScore, "bg-amber-500"],
-                ["Mensajes", adn.msgScore, "bg-sky-500"],
-                ["Datos / pruebas", skinFactsScore, "bg-rose-500"],
-                [
-                  "Imágenes con visión remota",
-                  skinVisualRefScore,
-                  "bg-indigo-500",
-                  "Cuántas imágenes de referencia tienen análisis remoto (Gemini/OpenAI) sin fallback, frente al inventario total.",
-                ],
-                ["Aprendizaje de nodos", skinNodeLearningScore, "bg-emerald-500"],
-              ].map((row) => {
-                const label = String(row[0]);
-                const value = Number(row[1]);
-                const klass = String(row[2]);
-                const barTitle = row.length > 3 ? String(row[3]) : undefined;
-                return (
-                  <div key={label} title={barTitle}>
-                    <div className="mb-1 flex items-center justify-between text-[10px] text-zinc-600">
-                      <span>{label}</span>
-                      <span>{value}%</span>
-                    </div>
-                    <div className="h-1.5 rounded-full bg-zinc-200">
-                      <div className={`h-1.5 rounded-full ${klass}`} style={{ width: `${value}%` }} />
-                    </div>
-                  </div>
-                );
-              })}
+      <div className="flex min-h-0 flex-1 gap-3 overflow-hidden px-3 pb-3 pt-2.5 sm:gap-4 sm:px-4">
+        <aside className="flex w-[200px] shrink-0 flex-col gap-2 overflow-y-auto overflow-x-hidden overscroll-y-contain pr-0.5 min-h-0 sm:w-[220px]">
+          <section className="rounded-[5px] border border-zinc-200/90 bg-white p-2.5 shadow-sm">
+            <div className="flex items-start justify-between gap-1">
+              <p className="text-[9px] font-semibold uppercase tracking-wider text-zinc-500">Salud</p>
+              <button
+                type="button"
+                onClick={() => setBrainStudioSidebarMetricsOpen((o) => !o)}
+                className="shrink-0 rounded-[5px] px-1 py-0.5 text-[9px] font-medium text-violet-600 hover:bg-violet-50"
+              >
+                {brainStudioSidebarMetricsOpen ? "Ocultar" : "Desglose"}
+              </button>
             </div>
+            <p className="mt-0.5 text-xl font-semibold tabular-nums text-violet-800" title={BRAIN_ADN_COMPLETENESS_TOOLTIP_ES}>
+              {adn.total}
+              <span className="text-xs font-normal text-zinc-500">/100</span>
+            </p>
+            {!brainStudioSidebarMetricsOpen ? (
+              <p className="mt-1 text-[9px] leading-snug text-zinc-500">
+                Voz, referencias, nodos… Pulsa «Desglose» para las 7 barras.
+              </p>
+            ) : (
+              <p className="mt-1 text-[9px] leading-snug text-zinc-500">
+                Heurística de completitud (voz, personas, mensajes, contexto analizado)
+              </p>
+            )}
+            {brainStudioSidebarMetricsOpen ? (
+              <div className="mt-2.5 space-y-2">
+                {[
+                  ["Identidad visual", skinIdentityScore, "bg-fuchsia-500"],
+                  ["Voz y tono", adn.voiceScore, "bg-violet-500"],
+                  ["Personas", adn.personasScore, "bg-amber-500"],
+                  ["Mensajes", adn.msgScore, "bg-sky-500"],
+                  ["Datos / pruebas", skinFactsScore, "bg-rose-500"],
+                  [
+                    "Imágenes con visión remota",
+                    skinVisualRefScore,
+                    "bg-indigo-500",
+                    "Cuántas imágenes de referencia tienen análisis remoto (Gemini/OpenAI) sin fallback, frente al inventario total.",
+                  ],
+                  ["Aprendizaje de nodos", skinNodeLearningScore, "bg-emerald-500"],
+                ].map((row) => {
+                  const label = String(row[0]);
+                  const value = Number(row[1]);
+                  const klass = String(row[2]);
+                  const barTitle = row.length > 3 ? String(row[3]) : undefined;
+                  return (
+                    <div key={label} title={barTitle}>
+                      <div className="mb-0.5 flex items-center justify-between text-[9px] text-zinc-600">
+                        <span className="min-w-0 truncate">{label}</span>
+                        <span className="shrink-0 tabular-nums">{value}%</span>
+                      </div>
+                      <div className="h-1 rounded-full bg-zinc-100">
+                        <div className={`h-1 rounded-full ${klass}`} style={{ width: `${value}%` }} />
+                      </div>
+                    </div>
+                  );
+                })}
+                <p
+                  className="mt-2 break-words text-[8px] leading-snug text-zinc-500"
+                  title="Versión y frescura del Brain (dev / desglose)"
+                >
+                  {getBrainFreshnessSummary(assets.brainMeta)}
+                </p>
+              </div>
+            ) : null}
           </section>
 
-          <section className="rounded-[22px] border border-zinc-200 bg-zinc-50/90 p-4">
-            <p className="mb-2 text-[10px] font-black uppercase tracking-[0.12em] text-zinc-600">Identidad visual</p>
+          <section className="rounded-[5px] border border-zinc-200/90 bg-white p-2.5">
+            <p className="mb-1.5 text-[9px] font-semibold uppercase tracking-wider text-zinc-500">Identidad visual</p>
             <LogoDropSlot
               compact
               label="Logo +"
@@ -2746,23 +3034,39 @@ export function ProjectBrainFullscreen({
                 Paleta
               </span>
               <div className="space-y-2">
-                <ColorField compact label="Primario" value={assets.brand.colorPrimary} onChange={(h) => setBrand({ colorPrimary: h })} />
-                <ColorField compact label="Secundario" value={assets.brand.colorSecondary} onChange={(h) => setBrand({ colorSecondary: h })} />
-                <ColorField compact label="Acento" value={assets.brand.colorAccent} onChange={(h) => setBrand({ colorAccent: h })} />
+                <ColorField
+                  compact
+                  label="Primario"
+                  value={assets.brand.colorPrimary}
+                  onChange={(h) => setBrand({ colorPrimary: h })}
+                />
+                <ColorField
+                  compact
+                  label="Secundario"
+                  value={assets.brand.colorSecondary}
+                  onChange={(h) => setBrand({ colorSecondary: h })}
+                />
+                <ColorField
+                  compact
+                  label="Acento"
+                  value={assets.brand.colorAccent}
+                  onChange={(h) => setBrand({ colorAccent: h })}
+                />
               </div>
             </div>
             <button
               type="button"
               onClick={() => setActiveTab("knowledge")}
-              className="mt-3 w-full rounded-xl border border-zinc-300 bg-white py-2 text-[10px] font-black uppercase tracking-wide text-zinc-700 hover:bg-zinc-100"
+              className="mt-2 w-full rounded-[5px] border border-zinc-200 bg-zinc-50 py-1.5 text-[9px] font-semibold uppercase tracking-wide text-zinc-700 hover:bg-zinc-100"
             >
               Editar identidad
             </button>
           </section>
 
-          <section className="rounded-[22px] border border-zinc-200 bg-white p-4 shadow-sm">
-            <p className="text-[10px] font-black uppercase tracking-[0.12em] text-zinc-500">Fuentes de conocimiento</p>
-            <ul className="mt-3 space-y-2 text-[11px] text-zinc-700">
+          <section className="rounded-[5px] border border-zinc-200/90 bg-white p-2.5 shadow-sm">
+            <p className="text-[9px] font-semibold uppercase tracking-wider text-zinc-500">Conocimiento</p>
+            <p className="mt-1 text-[8px] leading-snug text-zinc-500">Ingesta fija arriba del panel.</p>
+            <ul className="mt-1.5 space-y-1 text-[10px] text-zinc-700">
               <li className="flex justify-between">
                 <span>Documentos</span>
                 <span className="font-bold text-zinc-900">{assets.knowledge.documents.length}</span>
@@ -2792,9 +3096,9 @@ export function ProjectBrainFullscreen({
             </ul>
           </section>
 
-          <section className="rounded-[22px] border border-zinc-200 bg-white p-4 shadow-sm">
-            <p className="text-[10px] font-black uppercase tracking-[0.12em] text-zinc-500">Estado de aprendizaje</p>
-            <ul className="mt-3 space-y-2 text-[11px] text-zinc-700">
+          <section className="rounded-[5px] border border-zinc-200/90 bg-white p-2.5 shadow-sm">
+            <p className="text-[9px] font-semibold uppercase tracking-wider text-zinc-500">Aprendizaje</p>
+            <ul className="mt-1.5 space-y-1 text-[10px] text-zinc-700">
               <li className="flex justify-between">
                 <span>Por revisar</span>
                 <span className="font-bold text-amber-700">{pendingLearnings.length}</span>
@@ -2811,21 +3115,57 @@ export function ProjectBrainFullscreen({
             <button
               type="button"
               onClick={() => setActiveTab("review")}
-              className="mt-3 w-full rounded-xl border border-violet-600 bg-violet-600 py-2 text-[10px] font-black uppercase tracking-wide text-white hover:bg-violet-700"
+              className="mt-2 w-full rounded-[5px] border border-violet-600 bg-violet-600 py-1.5 text-[9px] font-semibold uppercase tracking-wide text-white hover:bg-violet-700"
             >
-              Ir a por revisar
+              Por revisar
             </button>
           </section>
         </aside>
 
-        <main className="min-w-0 flex-1 overflow-y-auto rounded-[22px] border border-zinc-200 bg-zinc-50/60 p-5 shadow-inner sm:p-6">
-          <div className="mb-5 flex flex-col gap-3">
-            <div className="flex flex-wrap gap-2">
+        <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-y-contain rounded-[5px] border border-zinc-200/90 bg-white p-3 shadow-sm sm:p-4">
+          <BrainStudioKnowledgeIngestStrip
+            pipelineLocked={knowledgeIngestLocked}
+            pipelineQueueCount={knowledgePipelineQueued}
+            pipelineDetail={knowledgePipelineDetail}
+            onClearPozo={handleClearKnowledgeSources}
+            clearDisabled={
+              knowledgeIngestLocked ||
+              (assets.knowledge.documents.length === 0 && assets.knowledge.urls.length === 0)
+            }
+            imageDocCount={imageDocCount}
+            imageKnowledgeAnalyzed={imageKnowledgeAnalyzed}
+            pdfDocCount={pdfDocCountForSummary}
+            pdfAnalyzed={pdfAnalyzedForSummary}
+            documentTotal={assets.knowledge.documents.length}
+            urlCount={assets.knowledge.urls.length}
+            isDraggingCoreFiles={isDraggingCoreFiles}
+            setIsDraggingCoreFiles={setIsDraggingCoreFiles}
+            isDraggingContextFiles={isDraggingContextFiles}
+            setIsDraggingContextFiles={setIsDraggingContextFiles}
+            onCoreFilesSelected={(files) => enqueueKnowledgeUpload("core", files)}
+            onContextFilesSelected={(files) => enqueueKnowledgeUpload("context", files)}
+            urlDraftCore={urlDraftCore}
+            setUrlDraftCore={setUrlDraftCore}
+            urlDraftContext={urlDraftContext}
+            setUrlDraftContext={setUrlDraftContext}
+            onAddUrl={(scope) => handleAddUrl(scope)}
+          />
+          <VisualDnaSlotsLibrary
+            belowIngest
+            slots={visualDnaSlotsNorm}
+            busySlotIds={visualDnaSlotBusy}
+            onRegenerate={handleRegenerateVisualDnaSlot}
+            onDelete={handleDeleteVisualDnaSlot}
+            onRename={handleRenameVisualDnaSlot}
+          />
+          <div className="mb-3 flex flex-col gap-2 border-b border-zinc-100 pb-3">
+            <div className="flex min-w-0 flex-wrap items-center gap-1">
               {(
                 [
                   ["overview", "Resumen", LayoutDashboard],
                   ["dna", "ADN de marca", Sparkles],
                   ["visual_refs", "Referencias visuales", ImageIcon],
+                  ["brand_visual_dna", "ADN visual (clusters)", Palette],
                   ["knowledge", "Conocimiento", BookOpen],
                   ["connected_nodes", "Nodos conectados", Network],
                   ["review", "Por revisar", MessageSquareText],
@@ -2846,19 +3186,20 @@ export function ProjectBrainFullscreen({
                             : undefined
                   }
                   onClick={() => setActiveTab(id)}
-                  className={`inline-flex items-center gap-2 rounded-2xl border px-3.5 py-2 text-[11px] font-black uppercase tracking-wide ${
+                  className={`inline-flex items-center gap-1 rounded-[5px] border px-2 py-1 text-[9px] font-semibold uppercase tracking-wide ${
                     activeTab === id
-                      ? "border-violet-700 bg-violet-700 text-white shadow-sm"
-                      : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-100"
+                      ? "border-violet-600 bg-violet-600 text-white"
+                      : "border-transparent bg-zinc-50 text-zinc-600 hover:bg-zinc-100"
                   }`}
                 >
-                  <Icon className="h-3.5 w-3.5 opacity-80" aria-hidden />
+                  <Icon className="h-3 w-3 opacity-80" aria-hidden />
                   {label}
                 </button>
               ))}
-            </div>
-            <div className="flex flex-wrap gap-2 border-t border-zinc-200/80 pt-3">
-              <span className="py-1 text-[10px] font-black uppercase tracking-wide text-zinc-400">Editoriales</span>
+              <span className="mx-0.5 hidden h-4 w-px bg-zinc-200 sm:inline-block" aria-hidden />
+              <span className="w-full py-0.5 text-[8px] font-medium uppercase tracking-wider text-zinc-400 sm:w-auto sm:py-0">
+                Editorial
+              </span>
               {(
                 [
                   ["voice", "Voz y tono"],
@@ -2871,10 +3212,10 @@ export function ProjectBrainFullscreen({
                   key={id}
                   type="button"
                   onClick={() => setActiveTab(id)}
-                  className={`rounded-xl border px-3 py-1.5 text-[10px] font-black uppercase tracking-wide ${
+                  className={`rounded-[5px] border px-2 py-1 text-[9px] font-semibold uppercase tracking-wide ${
                     activeTab === id
-                      ? "border-zinc-900 bg-zinc-900 text-white"
-                      : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-100"
+                      ? "border-zinc-800 bg-zinc-800 text-white"
+                      : "border-transparent bg-zinc-50 text-zinc-600 hover:bg-zinc-100"
                   }`}
                 >
                   {label}
@@ -2886,7 +3227,7 @@ export function ProjectBrainFullscreen({
             {activeTab === "overview" && (
               <div className="space-y-6">
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                  <div className="flex min-h-[120px] flex-col justify-between rounded-[20px] border border-violet-200 bg-white p-4 shadow-sm">
+                  <div className="flex min-h-[120px] flex-col justify-between rounded-[5px] border border-violet-200 bg-white p-4 shadow-sm">
                     <p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">ADN de marca</p>
                     <p className="mt-2 text-3xl font-black text-violet-800" title={BRAIN_ADN_COMPLETENESS_TOOLTIP_ES}>
                       {adn.total}
@@ -2907,7 +3248,7 @@ export function ProjectBrainFullscreen({
                       Ver ADN
                     </button>
                   </div>
-                  <div className="flex min-h-[120px] flex-col justify-between rounded-[20px] border border-indigo-200 bg-white p-4 shadow-sm">
+                  <div className="flex min-h-[120px] flex-col justify-between rounded-[5px] border border-indigo-200 bg-white p-4 shadow-sm">
                     <p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">Referencias imagen</p>
                     <p
                       className="mt-2 text-3xl font-black text-indigo-800"
@@ -2923,7 +3264,7 @@ export function ProjectBrainFullscreen({
                     </p>
                     <p className="mt-2 text-[11px] leading-snug text-zinc-600">
                       {visualImageRefCount === 0
-                        ? "Sube imágenes de referencia; el inventario no implica análisis remoto hasta reanalizar."
+                        ? "Sube imágenes de referencia en la bandeja; el análisis remoto se encadena al procesar el pozo."
                         : `${visualImageRefCount} en inventario · ${visualDisposition.realRemoteAnalyzed} con visión remota · ${pendingVisualAnalysisCount} sin fila · ${visualDisposition.fallbackOrMockAnalyzed} mock/fallback · ${visualDisposition.failed} errores.`}
                     </p>
                     <button
@@ -2934,7 +3275,7 @@ export function ProjectBrainFullscreen({
                       Revisar
                     </button>
                   </div>
-                  <div className="flex min-h-[120px] flex-col justify-between rounded-[20px] border border-sky-200 bg-white p-4 shadow-sm">
+                  <div className="flex min-h-[120px] flex-col justify-between rounded-[5px] border border-sky-200 bg-white p-4 shadow-sm">
                     <p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">Nodos conectados</p>
                     <p className="mt-2 text-3xl font-black text-sky-800">{brainClients.length}</p>
                     <p className="mt-2 text-[11px] leading-snug text-zinc-600">
@@ -2950,7 +3291,7 @@ export function ProjectBrainFullscreen({
                       Ver nodos
                     </button>
                   </div>
-                  <div className="flex min-h-[120px] flex-col justify-between rounded-[20px] border border-amber-200 bg-amber-50/50 p-4 shadow-sm">
+                  <div className="flex min-h-[120px] flex-col justify-between rounded-[5px] border border-amber-200 bg-amber-50/50 p-4 shadow-sm">
                     <p className="text-[10px] font-black uppercase tracking-[0.14em] text-amber-900">Por revisar</p>
                     <p className="mt-2 text-3xl font-black text-amber-900">{pendingLearnings.length}</p>
                     <p className="mt-2 text-[11px] leading-snug text-amber-950/80">
@@ -2966,14 +3307,14 @@ export function ProjectBrainFullscreen({
                   </div>
                 </div>
 
-                <div className="min-h-[120px] rounded-[22px] border border-zinc-200 bg-white p-5 shadow-sm">
+                <div className="min-h-[120px] rounded-[5px] border border-zinc-200 bg-white p-5 shadow-sm">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">Brain resume así tu marca</p>
                     <div className="flex flex-wrap items-center gap-2">
                       <button
                         type="button"
                         onClick={() => stripLegacyDemoStrategyCopy()}
-                        className="rounded-lg border border-rose-300 bg-rose-50 px-2 py-1 text-[9px] font-black uppercase tracking-wide text-rose-900 hover:bg-rose-100"
+                        className="rounded-[5px] border border-rose-300 bg-rose-50 px-2 py-1 text-[9px] font-black uppercase tracking-wide text-rose-900 hover:bg-rose-100"
                       >
                         Quitar copy demo (embudo + tono EN)
                       </button>
@@ -2986,7 +3327,7 @@ export function ProjectBrainFullscreen({
                             console.log("[Brain summary diagnostics]", brandSummary.diagnostics);
                             showToast("Diagnostics JSON en consola del navegador.", "info");
                           }}
-                          className="rounded-lg border border-zinc-300 bg-zinc-50 px-2 py-1 text-[9px] font-black uppercase tracking-wide text-zinc-600 hover:bg-zinc-100"
+                          className="rounded-[5px] border border-zinc-300 bg-zinc-50 px-2 py-1 text-[9px] font-black uppercase tracking-wide text-zinc-600 hover:bg-zinc-100"
                         >
                           Log JSON (dev)
                         </button>
@@ -3000,13 +3341,13 @@ export function ProjectBrainFullscreen({
                       brandSummary.messages,
                       brandSummary.visualDirection,
                     ].map((sec) => (
-                      <li key={sec.key} className="rounded-lg border border-transparent p-1">
+                      <li key={sec.key} className="rounded-[5px] border border-transparent p-1">
                         <div className="flex flex-wrap items-start justify-between gap-2">
                           <div className="min-w-0 flex-1">
                             <span className="inline-flex flex-wrap items-center gap-2">
                               <span className="font-bold text-zinc-900">{sec.labelEs}:</span>
                               <span
-                                className={`rounded-md border px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wide ${brandSummaryBadgeClass(sec.badge)}`}
+                                className={`rounded-[5px] border px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wide ${brandSummaryBadgeClass(sec.badge)}`}
                                 title="Indicador de procedencia del resumen (cliente)."
                               >
                                 {sec.badge}
@@ -3029,7 +3370,7 @@ export function ProjectBrainFullscreen({
                             onClick={() =>
                               setBrandSummarySectionSourcesKey((k) => (k === sec.key ? null : sec.key))
                             }
-                            className="nodrag flex shrink-0 items-center gap-1 rounded-lg border border-zinc-200 bg-white px-2 py-1 text-[9px] font-black uppercase tracking-wide text-zinc-700 shadow-sm hover:border-violet-300 hover:bg-violet-50 hover:text-violet-900"
+                            className="nodrag flex shrink-0 items-center gap-1 rounded-[5px] border border-zinc-200 bg-white px-2 py-1 text-[9px] font-black uppercase tracking-wide text-zinc-700 shadow-sm hover:border-violet-300 hover:bg-violet-50 hover:text-violet-900"
                           >
                             <CircleHelp className="h-3.5 w-3.5" aria-hidden />
                             Fuentes
@@ -3043,16 +3384,10 @@ export function ProjectBrainFullscreen({
                               fieldProvenance={assets.strategy.fieldProvenance}
                               pendingLearningsCount={pendingLearnings.length}
                               lastRestudyCompletedIso={lastRestudyCompletedIso}
-                              analyzingKnowledge={analyzing}
-                              visualReanalyzing={visualReanalyzing}
-                              restudyBusy={restudyBusy}
                               onNavigate={(tab: BrandSummaryNavTab) => {
                                 setActiveTab(tab);
                                 setBrandSummarySectionSourcesKey(null);
                               }}
-                              onAnalyzeKnowledge={() => void handleAnalyze()}
-                              onReanalyzeVisualRefs={() => void handleReanalyzeVisualRefs()}
-                              onBrainRestudy={() => void handleBrainRestudy()}
                               onStripLegacyDemo={() => {
                                 stripLegacyDemoStrategyCopy();
                                 setBrandSummarySectionSourcesKey(null);
@@ -3065,7 +3400,7 @@ export function ProjectBrainFullscreen({
                   </ul>
                 </div>
 
-                <div className="rounded-[22px] border border-zinc-200 bg-zinc-50/80 p-5">
+                <div className="rounded-[5px] border border-zinc-200 bg-zinc-50/80 p-5">
                   <p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">Señales recientes por nodo</p>
                   <p className="mt-1 text-[11px] leading-relaxed text-zinc-600">
                     Información recibida desde el lienzo, agrupada por nodo a partir de señales recientes en el servidor.
@@ -3153,7 +3488,7 @@ export function ProjectBrainFullscreen({
                         status: assets.knowledge.corporateContext?.trim() ? "Confirmado" : "Incompleto",
                         body:
                           assets.knowledge.corporateContext?.trim() ||
-                          "Analiza documentos CORE o resume la marca en conocimiento.",
+                          "Sube CORE arriba del panel (se analiza solo al soltar o elegir archivos), o resume la marca en Conocimiento.",
                         tab: "knowledge" as BrainMainSection,
                         footnote: null as string | null,
                       },
@@ -3184,8 +3519,16 @@ export function ProjectBrainFullscreen({
                       },
                       {
                         title: "Colores de marca",
-                        status: "Confirmado",
-                        body: `${assets.brand.colorPrimary} · ${assets.brand.colorSecondary} · ${assets.brand.colorAccent}`,
+                        status:
+                          [assets.brand.colorPrimary, assets.brand.colorSecondary, assets.brand.colorAccent].some(
+                            (c) => typeof c === "string" && /^#[0-9A-Fa-f]{6}$/i.test(c.trim()),
+                          )
+                            ? "Confirmado"
+                            : "Incompleto",
+                        body:
+                          [assets.brand.colorPrimary, assets.brand.colorSecondary, assets.brand.colorAccent]
+                            .filter((c): c is string => typeof c === "string" && c.trim().length > 0)
+                            .join(" · ") || "Sin colores definidos.",
                         tab: "knowledge",
                         footnote: null as string | null,
                       },
@@ -3213,32 +3556,55 @@ export function ProjectBrainFullscreen({
                         footnote: null as string | null,
                       },
                     ] as const
-                  ).map((card) => (
-                    <article
-                      key={card.title}
-                      className="flex min-h-[120px] flex-col rounded-[20px] border border-zinc-200 bg-white p-4 shadow-sm"
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <p className="text-[11px] font-black uppercase tracking-wide text-zinc-900">{card.title}</p>
-                        <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-zinc-600">
-                          {card.status}
-                        </span>
-                      </div>
-                      <p className="mt-2 flex-1 text-[12px] leading-relaxed text-zinc-700">{card.body}</p>
-                      {card.footnote ? (
-                        <p className="mt-2 text-[10px] leading-snug text-amber-900/90">{card.footnote}</p>
-                      ) : null}
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setActiveTab(card.tab)}
-                          className="rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-[10px] font-black uppercase tracking-wide text-zinc-800 hover:bg-zinc-100"
-                        >
-                          Editar
-                        </button>
-                      </div>
-                    </article>
-                  ))}
+                  ).map((card) => {
+                    const isBrandContextCard = card.title === "Contexto de marca";
+                    const bodyFull = card.body;
+                    const brandContextPreviewChars = 200;
+                    const brandContextNeedsMore =
+                      isBrandContextCard &&
+                      typeof bodyFull === "string" &&
+                      bodyFull.trim().length > brandContextPreviewChars;
+                    const bodyDisplay =
+                      brandContextNeedsMore && !dnaBrandContextExpanded
+                        ? `${bodyFull.slice(0, brandContextPreviewChars).trimEnd()}…`
+                        : bodyFull;
+
+                    return (
+                      <article
+                        key={card.title}
+                        className="flex min-h-[120px] flex-col rounded-[5px] border border-zinc-200 bg-white p-4 shadow-sm"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-[11px] font-black uppercase tracking-wide text-zinc-900">{card.title}</p>
+                          <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-zinc-600">
+                            {card.status}
+                          </span>
+                        </div>
+                        <p className="mt-2 flex-1 text-[12px] leading-relaxed text-zinc-700">{bodyDisplay}</p>
+                        {isBrandContextCard && brandContextNeedsMore ? (
+                          <button
+                            type="button"
+                            onClick={() => setDnaBrandContextExpanded((v) => !v)}
+                            className="mt-1.5 w-fit text-left text-[11px] font-semibold text-violet-700 underline decoration-violet-300 underline-offset-2 hover:text-violet-900"
+                          >
+                            {dnaBrandContextExpanded ? "Ver menos" : "Ver más"}
+                          </button>
+                        ) : null}
+                        {card.footnote ? (
+                          <p className="mt-2 text-[10px] leading-snug text-amber-900/90">{card.footnote}</p>
+                        ) : null}
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setActiveTab(card.tab)}
+                            className="rounded-[5px] border border-zinc-300 bg-white px-2.5 py-1.5 text-[10px] font-black uppercase tracking-wide text-zinc-800 hover:bg-zinc-100"
+                          >
+                            Editar
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -3253,7 +3619,7 @@ export function ProjectBrainFullscreen({
                   </p>
                 </div>
                 {brainClients.length === 0 ? (
-                  <p className="rounded-[20px] border border-dashed border-zinc-300 bg-zinc-50 px-4 py-8 text-center text-[12px] leading-relaxed text-zinc-600">
+                  <p className="rounded-[5px] border border-dashed border-zinc-300 bg-zinc-50 px-4 py-8 text-center text-[12px] leading-relaxed text-zinc-600">
                     Aún no hay nodos enlazados. En el lienzo, conecta la salida Brain de este nodo al puerto Brain de
                     Designer, Photoroom u otros creativos.
                   </p>
@@ -3282,7 +3648,7 @@ export function ProjectBrainFullscreen({
                       return (
                         <article
                           key={client.id}
-                          className={`flex min-h-[320px] flex-col rounded-[22px] border p-5 shadow-sm ${accent}`}
+                          className={`flex min-h-[320px] flex-col rounded-[5px] border p-5 shadow-sm ${accent}`}
                         >
                           <div className="flex flex-wrap items-start justify-between gap-2">
                             <div>
@@ -3298,7 +3664,7 @@ export function ProjectBrainFullscreen({
                               {client.canvasType}
                             </span>
                           </div>
-                          <div className="mt-4 rounded-xl border border-zinc-200/80 bg-white/70 p-3">
+                          <div className="mt-4 rounded-[5px] border border-zinc-200/80 bg-white/70 p-3">
                             <p className="text-[10px] font-black uppercase tracking-wide text-zinc-500">
                               Señales recientes (resumen)
                             </p>
@@ -3307,7 +3673,7 @@ export function ProjectBrainFullscreen({
                               <p className="mt-1 text-[11px] text-zinc-500">{lastSignalLine}</p>
                             ) : null}
                           </div>
-                          <div className="mt-3 rounded-xl border border-zinc-200/80 bg-white/70 p-3">
+                          <div className="mt-3 rounded-[5px] border border-zinc-200/80 bg-white/70 p-3">
                             <p className="text-[10px] font-black uppercase tracking-wide text-zinc-500">
                               Aprendizajes en revisión
                             </p>
@@ -3334,21 +3700,21 @@ export function ProjectBrainFullscreen({
                             <button
                               type="button"
                               onClick={() => setSignalModalClient(client)}
-                              className="rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-[10px] font-black uppercase tracking-wide text-white hover:bg-black"
+                              className="rounded-[5px] border border-zinc-800 bg-zinc-900 px-3 py-2 text-[10px] font-black uppercase tracking-wide text-white hover:bg-black"
                             >
                               Ver señales
                             </button>
                             <button
                               type="button"
                               onClick={() => showToast("Próximamente: pausar solo este nodo.", "info")}
-                              className="rounded-xl border border-zinc-300 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-wide text-zinc-700 hover:bg-zinc-100"
+                              className="rounded-[5px] border border-zinc-300 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-wide text-zinc-700 hover:bg-zinc-100"
                             >
                               Pausar aprendizaje
                             </button>
                             <button
                               type="button"
                               onClick={() => void refreshConnectedSignals()}
-                              className="rounded-xl border border-zinc-300 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-wide text-zinc-700 hover:bg-zinc-100"
+                              className="rounded-[5px] border border-zinc-300 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-wide text-zinc-700 hover:bg-zinc-100"
                             >
                               Refrescar señales
                             </button>
@@ -3357,7 +3723,7 @@ export function ProjectBrainFullscreen({
                               onClick={() =>
                                 showToast("Desconecta el cable Brain en el lienzo para dejar de recibir señales.", "info")
                               }
-                              className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[10px] font-black uppercase tracking-wide text-rose-800 hover:bg-rose-100"
+                              className="rounded-[5px] border border-rose-200 bg-rose-50 px-3 py-2 text-[10px] font-black uppercase tracking-wide text-rose-800 hover:bg-rose-100"
                             >
                               Cómo desconectar
                             </button>
@@ -3375,7 +3741,7 @@ export function ProjectBrainFullscreen({
 
             {activeTab === "review" && (
               <div className="space-y-4">
-                <div className="rounded-2xl border border-violet-200 bg-violet-50/60 p-4">
+                <div className="rounded-[5px] border border-violet-200 bg-violet-50/60 p-4">
                   <h2 className="text-sm font-black uppercase tracking-[0.12em] text-violet-900">Por revisar</h2>
                   <p className="mt-1 text-[12px] leading-relaxed text-violet-950/80">
                     Propuestas a partir de señales recientes e información recibida en el lienzo. Nada cambia en la
@@ -3383,25 +3749,25 @@ export function ProjectBrainFullscreen({
                   </p>
                 </div>
                 {!projectId?.trim() ? (
-                  <p className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50 px-4 py-6 text-center text-[12px] text-zinc-500">
+                  <p className="rounded-[5px] border border-dashed border-zinc-200 bg-zinc-50 px-4 py-6 text-center text-[12px] text-zinc-500">
                     Guarda el proyecto con sesión iniciada para ver pendientes aquí.
                   </p>
                 ) : pendingLoading ? (
                   <p className="text-center text-[12px] text-zinc-500">Cargando…</p>
                 ) : pendingLearnings.length === 0 ? (
-                  <p className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50 px-4 py-6 text-center text-[12px] text-zinc-500">
+                  <p className="rounded-[5px] border border-dashed border-zinc-200 bg-zinc-50 px-4 py-6 text-center text-[12px] text-zinc-500">
                     Brain está al día. No hay aprendizajes pendientes por revisar.
                   </p>
                 ) : pendingFiltered.length === 0 ? (
-                  <p className="rounded-xl border border-dashed border-amber-200 bg-amber-50/60 px-4 py-6 text-center text-[12px] text-amber-950">
+                  <p className="rounded-[5px] border border-dashed border-amber-200 bg-amber-50/60 px-4 py-6 text-center text-[12px] text-amber-950">
                     No hay elementos con este filtro. Cambia el filtro en el panel derecho o vuelve a «Todos».
                   </p>
                 ) : (
                   <div className="space-y-4">
                     {pendingReviewSplit.anchored.length === 0 && pendingReviewSplit.orphans.length > 0 ? (
-                      <p className="rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 text-[11px] leading-relaxed text-amber-950">
+                      <p className="rounded-[5px] border border-amber-200 bg-amber-50/70 px-4 py-3 text-[11px] leading-relaxed text-amber-950">
                         No hay pendientes con nodo de lienzo anclado para este filtro. Los que siguen carecen de un{" "}
-                        <code className="rounded bg-amber-100 px-1">nodeId</code> fiable; no deben mostrarse dentro de
+                        <code className="rounded-[5px] bg-amber-100 px-1">nodeId</code> fiable; no deben mostrarse dentro de
                         tarjetas Photoroom/Designer hasta corregir la evidencia.
                       </p>
                     ) : null}
@@ -3424,17 +3790,62 @@ export function ProjectBrainFullscreen({
             )}
 
             {activeTab === "visual_refs" && (
-              <div className="space-y-5">
-                <div>
-                  <h2 className="text-sm font-black uppercase tracking-[0.12em] text-zinc-900">Referencias visuales</h2>
-                  <p className="mt-1 max-w-2xl text-[12px] leading-relaxed text-zinc-600">
-                    Inventario de imágenes reutilizables y, cuando exista, la capa interpretada arriba. Los contadores
-                    separan inventario total, filas con visión remota fiable (Gemini/OpenAI sin fallback), mock o
-                    heurística local, errores y referencias aún sin fila de análisis.
-                  </p>
+              <div className="space-y-4">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <h2 className="text-sm font-black uppercase tracking-[0.12em] text-zinc-900">Referencias visuales</h2>
+                    <p className="mt-0.5 max-w-2xl text-[11px] leading-snug text-zinc-600">
+                      Mood board 1024×1024 (Nano Banana), inventario de visión y señales agregadas por referencia. La
+                      ingesta de PDF/imágenes CORE está siempre arriba del Brain.
+                    </p>
+                  </div>
+                  <div
+                    className={`shrink-0 rounded-[5px] border px-2.5 py-1.5 text-[10px] leading-snug ${
+                      !serverVisionProbeDone
+                        ? "border-sky-200 bg-sky-50 text-sky-950"
+                        : serverVisionProviderId === null
+                          ? "border-amber-200 bg-amber-50 text-amber-950"
+                          : serverVisionProviderId === "mock"
+                            ? "border-amber-200 bg-amber-50 text-amber-950"
+                            : "border-emerald-200 bg-emerald-50/90 text-emerald-950"
+                    }`}
+                  >
+                    {!serverVisionProbeDone ? (
+                      <span className="font-semibold">Comprobando visión en servidor…</span>
+                    ) : serverVisionProviderId === null ? (
+                      <span className="font-semibold">No se pudo comprobar visión (sesión o red).</span>
+                    ) : serverVisionProviderId === "mock" ? (
+                      <span>
+                        <span className="font-semibold">Visión remota inactiva (mock).</span> Configura{" "}
+                        <code className="rounded-[5px] bg-amber-100 px-1">GEMINI_API_KEY</code> /{" "}
+                        <code className="rounded-[5px] bg-amber-100 px-1">OPENAI_API_KEY</code>; al subir o cambiar
+                        imágenes en el pozo se intentará de nuevo solo.
+                      </span>
+                    ) : (
+                      <span>
+                        <span className="font-semibold">
+                          Visión remota:{" "}
+                          {serverVisionProviderId === "gemini-vision"
+                            ? "Gemini"
+                            : serverVisionProviderId === "openai-vision"
+                              ? "OpenAI"
+                              : "—"}
+                        </span>
+                        {isVisualMockAnalyzer ? (
+                          <span className="mt-0.5 block text-[9px] font-semibold text-amber-900">
+                            Metadatos aún mock: se alinearán al siguiente ciclo de ingesta o guardando el proyecto.
+                          </span>
+                        ) : (
+                          <span className="mt-0.5 block text-[9px] text-emerald-900/90">
+                            Filas con fallback se marcan en la tabla inferior.
+                          </span>
+                        )}
+                      </span>
+                    )}
+                  </div>
                 </div>
                 {visualReferenceAnalysisDirty ? (
-                  <div className="rounded-xl border border-sky-400 bg-sky-50 px-4 py-3 text-[11px] leading-relaxed text-sky-950">
+                  <div className="rounded-[5px] border border-sky-400 bg-sky-50 px-4 py-3 text-[11px] leading-relaxed text-sky-950">
                     <p className="font-semibold text-sky-950">
                       Análisis visual actualizado. Guarda el proyecto para conservarlo.
                     </p>
@@ -3443,7 +3854,7 @@ export function ProjectBrainFullscreen({
                         type="button"
                         disabled={isSavingProject}
                         onClick={() => void handleSaveVisualAnalysis()}
-                        className="inline-flex items-center gap-2 rounded-lg border border-sky-800 bg-sky-800 px-3 py-1.5 text-[10px] font-black uppercase tracking-wide text-white disabled:cursor-not-allowed disabled:opacity-50"
+                        className="inline-flex items-center gap-2 rounded-[5px] border border-sky-800 bg-sky-800 px-3 py-1.5 text-[10px] font-black uppercase tracking-wide text-white disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {isSavingProject ? (
                           <RefreshCw className="h-3.5 w-3.5 animate-spin" aria-hidden />
@@ -3456,63 +3867,8 @@ export function ProjectBrainFullscreen({
                     </div>
                   </div>
                 ) : null}
-                {!serverVisionProbeDone ? (
-                  <div className="rounded-xl border border-sky-200 bg-sky-50/90 px-4 py-3 text-[11px] leading-relaxed text-sky-950">
-                    <p className="font-semibold text-sky-950">Comprobando visión en el servidor…</p>
-                    <p className="mt-1 text-[10px] text-sky-900/90">
-                      El aviso amarillo anterior miraba solo los datos guardados del proyecto; ahora se consulta la
-                      configuración real (variables de entorno).
-                    </p>
-                  </div>
-                ) : serverVisionProviderId === null ? (
-                  <div className="rounded-xl border border-amber-200 bg-amber-50/90 px-4 py-3 text-[11px] leading-relaxed text-amber-950">
-                    <p className="font-semibold text-amber-950">
-                      No se pudo comprobar la visión en el servidor (¿sesión cerrada o error de red?).
-                    </p>
-                    <p className="mt-1 text-[10px] text-amber-900/90">
-                      Inicia sesión y recarga Brain Studio. El aviso amarillo antiguo se basaba solo en datos
-                      guardados; sin comprobación remota no sabemos si hay claves en el proceso de Next.
-                    </p>
-                  </div>
-                ) : serverVisionProviderId === "mock" ? (
-                  <div className="rounded-xl border border-amber-200 bg-amber-50/90 px-4 py-3 text-[11px] leading-relaxed text-amber-950">
-                    <p className="font-semibold text-amber-950">
-                      El servidor no tiene visión remota activa (mock). Revisa claves y reinicia{" "}
-                      <code className="rounded bg-amber-100 px-1">npm run dev</code>.
-                    </p>
-                    <p className="mt-1 text-[10px] text-amber-900/90">
-                      Configura <code className="rounded bg-amber-100 px-1">GEMINI_API_KEY</code> u{" "}
-                      <code className="rounded bg-amber-100 px-1">OPENAI_API_KEY</code> y opcionalmente{" "}
-                      <code className="rounded bg-amber-100 px-1">BRAIN_VISION_PROVIDER=gemini|openai</code>. Si
-                      «Análisis simulado» venía solo de datos viejos, tras configurar y reiniciar pulsa «Reanalizar
-                      imágenes».
-                    </p>
-                  </div>
-                ) : (
-                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/90 px-4 py-3 text-[11px] leading-relaxed text-emerald-950">
-                    <p className="font-semibold text-emerald-950">
-                      Servidor con visión remota:{" "}
-                      {serverVisionProviderId === "gemini-vision"
-                        ? "Gemini"
-                        : serverVisionProviderId === "openai-vision"
-                          ? "OpenAI"
-                          : "—"}
-                      .
-                    </p>
-                    <p className="mt-1 text-[10px] text-emerald-900/90">
-                      Cada fila muestra su proveedor real y si hubo fallback. Si el proyecto guardó análisis mock antes
-                      de configurar claves, pulsa «Reanalizar imágenes» para regenerar la capa.
-                    </p>
-                    {isVisualMockAnalyzer ? (
-                      <p className="mt-2 text-[10px] font-semibold text-amber-900">
-                        Los metadatos guardados aún marcan el último lote como mock: usa «Reanalizar imágenes» para
-                        alinearlos con el servidor actual.
-                      </p>
-                    ) : null}
-                  </div>
-                )}
                 {process.env.NODE_ENV === "development" && projectId?.trim() ? (
-                  <div className="rounded-xl border border-zinc-300 bg-zinc-100/90 px-4 py-3 text-[10px] leading-relaxed text-zinc-800">
+                  <div className="rounded-[5px] border border-zinc-300 bg-zinc-100/90 px-4 py-3 text-[10px] leading-relaxed text-zinc-800">
                     <p className="font-black uppercase tracking-[0.1em] text-zinc-600">Herramientas dev · pendientes</p>
                     <p className="mt-1 text-zinc-600">
                       Limpia la cola en memoria del servidor para este proyecto (no afecta assets guardados).
@@ -3521,21 +3877,21 @@ export function ProjectBrainFullscreen({
                       <button
                         type="button"
                         onClick={() => void devClearPendingLearnings("all")}
-                        className="rounded-lg border border-zinc-400 bg-white px-3 py-1.5 text-[9px] font-black uppercase tracking-wide text-zinc-800 hover:bg-zinc-50"
+                        className="rounded-[5px] border border-zinc-400 bg-white px-3 py-1.5 text-[9px] font-black uppercase tracking-wide text-zinc-800 hover:bg-zinc-50"
                       >
                         Limpiar todos los pendientes
                       </button>
                       <button
                         type="button"
                         onClick={() => void devClearPendingLearnings("orphan")}
-                        className="rounded-lg border border-amber-400 bg-amber-50 px-3 py-1.5 text-[9px] font-black uppercase tracking-wide text-amber-950 hover:bg-amber-100"
+                        className="rounded-[5px] border border-amber-400 bg-amber-50 px-3 py-1.5 text-[9px] font-black uppercase tracking-wide text-amber-950 hover:bg-amber-100"
                       >
                         Limpiar sin nodo
                       </button>
                       <button
                         type="button"
                         onClick={() => void devClearPendingLearnings("visual_reference")}
-                        className="rounded-lg border border-violet-400 bg-violet-50 px-3 py-1.5 text-[9px] font-black uppercase tracking-wide text-violet-950 hover:bg-violet-100"
+                        className="rounded-[5px] border border-violet-400 bg-violet-50 px-3 py-1.5 text-[9px] font-black uppercase tracking-wide text-violet-950 hover:bg-violet-100"
                       >
                         Limpiar cola referencias visuales
                       </button>
@@ -3543,13 +3899,13 @@ export function ProjectBrainFullscreen({
                         type="button"
                         disabled={restudyBusy}
                         onClick={() => void handleBrainRestudy()}
-                        className="rounded-lg border border-emerald-500 bg-emerald-600 px-3 py-1.5 text-[9px] font-black uppercase tracking-wide text-white hover:bg-emerald-700 disabled:opacity-50"
+                        className="rounded-[5px] border border-emerald-500 bg-emerald-600 px-3 py-1.5 text-[9px] font-black uppercase tracking-wide text-white hover:bg-emerald-700 disabled:opacity-50"
                       >
                         {restudyBusy ? "Re-estudiando…" : "Reestudiar Brain completo"}
                       </button>
                     </div>
                     {restudyLast ? (
-                      <div className="mt-3 space-y-2 rounded-lg border border-zinc-200 bg-white p-3 text-[10px] text-zinc-800">
+                      <div className="mt-3 space-y-2 rounded-[5px] border border-zinc-200 bg-white p-3 text-[10px] text-zinc-800">
                         <p className="font-black uppercase tracking-wide text-zinc-600">Último re-estudio</p>
                         <div className="grid gap-2 sm:grid-cols-2">
                           <div>
@@ -3573,7 +3929,7 @@ export function ProjectBrainFullscreen({
                           </div>
                         </div>
                         {restudyLast.devValidation?.samples?.length ? (
-                          <div className="rounded border border-amber-100 bg-amber-50/80 p-2 text-[9px] text-amber-950">
+                          <div className="rounded-[5px] border border-amber-100 bg-amber-50/80 p-2 text-[9px] text-amber-950">
                             <p className="font-semibold">Validación 3 imágenes (dev)</p>
                             <p className="mt-1">
                               {restudyLast.devValidation.passed ? "OK: al menos una muestra no genérica." : restudyLast.devValidation.warning ?? "Muestra genérica."}
@@ -3588,7 +3944,7 @@ export function ProjectBrainFullscreen({
                           </div>
                         ) : null}
                         {restudyLast.warnings.length ? (
-                          <div className="max-h-28 overflow-y-auto rounded border border-amber-200 bg-amber-50/90 p-2 text-[9px] text-amber-950">
+                          <div className="max-h-28 overflow-y-auto rounded-[5px] border border-amber-200 bg-amber-50/90 p-2 text-[9px] text-amber-950">
                             {restudyLast.warnings.slice(0, 12).map((w, i) => (
                               <p key={i}>{w}</p>
                             ))}
@@ -3598,7 +3954,7 @@ export function ProjectBrainFullscreen({
                           <button
                             type="button"
                             onClick={() => setRestudyTraceOpen(true)}
-                            className="rounded-lg border border-zinc-400 bg-zinc-50 px-3 py-1.5 text-[9px] font-black uppercase tracking-wide text-zinc-800 hover:bg-zinc-100"
+                            className="rounded-[5px] border border-zinc-400 bg-zinc-50 px-3 py-1.5 text-[9px] font-black uppercase tracking-wide text-zinc-800 hover:bg-zinc-100"
                           >
                             Ver trazabilidad del resumen
                           </button>
@@ -3613,7 +3969,7 @@ export function ProjectBrainFullscreen({
                     role="dialog"
                     aria-modal="true"
                   >
-                    <div className="max-h-[85vh] w-full max-w-3xl overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-xl">
+                    <div className="max-h-[85vh] w-full max-w-3xl overflow-hidden rounded-[5px] border border-zinc-200 bg-white shadow-xl">
                       <div className="flex items-center justify-between border-b border-zinc-200 px-4 py-3">
                         <p className="text-[12px] font-black uppercase tracking-wide text-zinc-800">
                           Trazabilidad del resumen (re-estudio)
@@ -3621,7 +3977,7 @@ export function ProjectBrainFullscreen({
                         <button
                           type="button"
                           onClick={() => setRestudyTraceOpen(false)}
-                          className="rounded-lg border border-zinc-200 px-2 py-1 text-[10px] font-bold text-zinc-700 hover:bg-zinc-50"
+                          className="rounded-[5px] border border-zinc-200 px-2 py-1 text-[10px] font-bold text-zinc-700 hover:bg-zinc-50"
                         >
                           Cerrar
                         </button>
@@ -3634,7 +3990,7 @@ export function ProjectBrainFullscreen({
                 ) : null}
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
                   <div
-                    className="rounded-2xl border border-violet-200 bg-white p-4 shadow-sm"
+                    className="rounded-[5px] border border-violet-200 bg-white p-4 shadow-sm"
                     title="Imágenes detectadas en el proyecto como referencia o recurso visual (inventario)."
                   >
                     <p className="text-[10px] font-black uppercase tracking-[0.12em] text-zinc-500">Referencias totales</p>
@@ -3642,7 +3998,7 @@ export function ProjectBrainFullscreen({
                     <p className="mt-1 text-[10px] text-zinc-500">Inventario en Brain</p>
                   </div>
                   <div
-                    className="rounded-2xl border border-emerald-200 bg-emerald-50/40 p-4 shadow-sm"
+                    className="rounded-[5px] border border-emerald-200 bg-emerald-50/40 p-4 shadow-sm"
                     title="Filas con Gemini u OpenAI sin mock ni fallback (según metadatos guardados)."
                   >
                     <p className="text-[10px] font-black uppercase tracking-[0.12em] text-emerald-900">Visión remota</p>
@@ -3650,7 +4006,7 @@ export function ProjectBrainFullscreen({
                     <p className="mt-1 text-[10px] text-emerald-900/90">Analizadas con API de visión</p>
                   </div>
                   <div
-                    className="rounded-2xl border border-sky-200 bg-sky-50/50 p-4 shadow-sm"
+                    className="rounded-[5px] border border-sky-200 bg-sky-50/50 p-4 shadow-sm"
                     title="Análisis simulado, fallback heurístico o metadatos que no cuentan como visión remota fiable."
                   >
                     <p className="text-[10px] font-black uppercase tracking-[0.12em] text-sky-900">Mock / fallback</p>
@@ -3658,7 +4014,7 @@ export function ProjectBrainFullscreen({
                     <p className="mt-1 text-[10px] text-sky-900/85">Heurística o simulado</p>
                   </div>
                   <div
-                    className="rounded-2xl border border-rose-200 bg-rose-50/50 p-4 shadow-sm"
+                    className="rounded-[5px] border border-rose-200 bg-rose-50/50 p-4 shadow-sm"
                     title="Filas cuyo último intento de análisis quedó en error."
                   >
                     <p className="text-[10px] font-black uppercase tracking-[0.12em] text-rose-900">Errores</p>
@@ -3666,8 +4022,8 @@ export function ProjectBrainFullscreen({
                     <p className="mt-1 text-[10px] text-rose-900/85">Estado fallido</p>
                   </div>
                   <div
-                    className="rounded-2xl border border-amber-200 bg-amber-50/50 p-4 shadow-sm"
-                    title="Referencias del inventario sin ninguna fila en la capa de análisis; pulsa Reanalizar."
+                    className="rounded-[5px] border border-amber-200 bg-amber-50/50 p-4 shadow-sm"
+                    title="Referencias del inventario sin fila en la capa de análisis; suele resolverse al procesar el pozo o al guardar."
                   >
                     <p className="text-[10px] font-black uppercase tracking-[0.12em] text-amber-800">Sin capa aún</p>
                     <p className="mt-1 text-2xl font-black text-amber-900">{pendingVisualAnalysisCount}</p>
@@ -3680,7 +4036,7 @@ export function ProjectBrainFullscreen({
                 </p>
                 {visualAggregatedResolved && visualAnalyzedCount > 0 ? (
                   <>
-                    <div className="rounded-2xl border border-zinc-200 bg-zinc-50/80 p-4">
+                    <div className="rounded-[5px] border border-zinc-200 bg-zinc-50/80 p-4">
                       <p className="mb-2 text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">
                         Resumen Core / contexto / raw
                       </p>
@@ -3701,7 +4057,7 @@ export function ProjectBrainFullscreen({
                     </div>
                     <div className="grid gap-4 lg:grid-cols-2">
                       <div className="space-y-3">
-                        <div className="rounded-2xl border border-zinc-200 bg-white p-4">
+                        <div className="rounded-[5px] border border-zinc-200 bg-white p-4">
                           <p className="mb-2 text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">
                             Estilo y mood
                           </p>
@@ -3718,7 +4074,7 @@ export function ProjectBrainFullscreen({
                               : "—"}
                           </p>
                         </div>
-                        <div className="rounded-2xl border border-zinc-200 bg-white p-4">
+                        <div className="rounded-[5px] border border-zinc-200 bg-white p-4">
                           <p className="mb-2 text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">
                             Composición y sujetos
                           </p>
@@ -3734,7 +4090,7 @@ export function ProjectBrainFullscreen({
                               : "—"}
                           </p>
                         </div>
-                        <div className="rounded-2xl border border-zinc-200 bg-white p-4">
+                        <div className="rounded-[5px] border border-zinc-200 bg-white p-4">
                           <p className="mb-2 text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">
                             Personas y ropa / styling
                           </p>
@@ -3746,7 +4102,7 @@ export function ProjectBrainFullscreen({
                         </div>
                       </div>
                       <div className="space-y-3">
-                        <div className="rounded-2xl border border-zinc-200 bg-white p-4">
+                        <div className="rounded-[5px] border border-zinc-200 bg-white p-4">
                           <p className="mb-2 text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">
                             Paleta dominante y secundaria
                           </p>
@@ -3777,7 +4133,7 @@ export function ProjectBrainFullscreen({
                             ) : null}
                           </div>
                         </div>
-                        <div className="rounded-2xl border border-zinc-200 bg-white p-4">
+                        <div className="rounded-[5px] border border-zinc-200 bg-white p-4">
                           <p className="mb-2 text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">
                             Estilo gráfico
                           </p>
@@ -3787,7 +4143,7 @@ export function ProjectBrainFullscreen({
                               : "—"}
                           </p>
                         </div>
-                        <div className="rounded-2xl border border-violet-100 bg-violet-50/60 p-4">
+                        <div className="rounded-[5px] border border-violet-100 bg-violet-50/60 p-4">
                           <p className="mb-2 text-[10px] font-black uppercase tracking-[0.14em] text-violet-900">
                             Mensaje implícito de marca
                           </p>
@@ -3799,7 +4155,7 @@ export function ProjectBrainFullscreen({
                         </div>
                       </div>
                     </div>
-                    <div className="rounded-2xl border border-zinc-200 bg-white p-4">
+                    <div className="rounded-[5px] border border-zinc-200 bg-white p-4">
                       <p className="mb-3 text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">
                         Cada referencia
                       </p>
@@ -3849,7 +4205,7 @@ export function ProjectBrainFullscreen({
                           return (
                             <div
                               key={ref.id}
-                              className="flex flex-col gap-2 rounded-xl border border-zinc-200 bg-zinc-50/80 p-3 sm:flex-row sm:items-start sm:justify-between"
+                              className="flex flex-col gap-2 rounded-[5px] border border-zinc-200 bg-zinc-50/80 p-3 sm:flex-row sm:items-start sm:justify-between"
                             >
                               <div className="min-w-0 flex-1">
                                 <p className="truncate text-[12px] font-semibold text-zinc-900">{ref.label ?? ref.name}</p>
@@ -3900,7 +4256,7 @@ export function ProjectBrainFullscreen({
                                   </p>
                                 ) : null}
                                 {process.env.NODE_ENV === "development" && diag ? (
-                                  <details className="mt-2 rounded-lg border border-zinc-200 bg-white px-2 py-1.5">
+                                  <details className="mt-2 rounded-[5px] border border-zinc-200 bg-white px-2 py-1.5">
                                     <summary className="cursor-pointer text-[9px] font-black uppercase tracking-wide text-zinc-600">
                                       Ver diagnóstico (dev)
                                     </summary>
@@ -3929,49 +4285,67 @@ export function ProjectBrainFullscreen({
                                     ) : null}
                                   </p>
                                 ) : null}
-                                {analysis?.subjectTags?.length ? (
-                                  <p className="mt-1 text-[10px] leading-snug text-zinc-600">
-                                    <span className="font-semibold text-zinc-800">Sujetos:</span>{" "}
-                                    {analysis.subjectTags.slice(0, 10).join(" · ")}
-                                  </p>
-                                ) : null}
-                                {analysis?.visualStyle?.length ? (
-                                  <p className="mt-1 text-[10px] leading-snug text-zinc-600">
-                                    <span className="font-semibold text-zinc-800">Estilo:</span>{" "}
-                                    {analysis.visualStyle.slice(0, 8).join(" · ")}
-                                  </p>
-                                ) : null}
-                                {analysis?.mood?.length ? (
-                                  <p className="mt-1 text-[10px] leading-snug text-zinc-600">
-                                    <span className="font-semibold text-zinc-800">Mood:</span>{" "}
-                                    {analysis.mood.slice(0, 10).join(" · ")}
-                                  </p>
-                                ) : null}
-                                {analysis?.composition?.length ? (
-                                  <p className="mt-1 text-[10px] leading-snug text-zinc-600">
-                                    <span className="font-semibold text-zinc-800">Composición:</span>{" "}
-                                    {analysis.composition.slice(0, 10).join(" · ")}
-                                  </p>
-                                ) : null}
-                                {analysis?.colorPalette?.dominant?.length ? (
-                                  <p className="mt-1 text-[10px] leading-snug text-zinc-600">
-                                    <span className="font-semibold text-zinc-800">Paleta dominante:</span>{" "}
-                                    {analysis.colorPalette.dominant.slice(0, 12).join(", ")}
-                                  </p>
-                                ) : null}
-                                {analysis?.visualMessage?.length ? (
-                                  <p className="mt-1 text-[10px] leading-snug text-zinc-600">
-                                    <span className="font-semibold text-zinc-800">Mensaje visual:</span>{" "}
-                                    {analysis.visualMessage.slice(0, 5).join(" · ")}
-                                  </p>
-                                ) : null}
+                                {(() => {
+                                  const subjectTags = brainAnalysisTextArray(analysis?.subjectTags);
+                                  return subjectTags.length ? (
+                                    <p className="mt-1 text-[10px] leading-snug text-zinc-600">
+                                      <span className="font-semibold text-zinc-800">Sujetos:</span>{" "}
+                                      {subjectTags.slice(0, 10).join(" · ")}
+                                    </p>
+                                  ) : null;
+                                })()}
+                                {(() => {
+                                  const styles = brainAnalysisTextArray(analysis?.visualStyle);
+                                  return styles.length ? (
+                                    <p className="mt-1 text-[10px] leading-snug text-zinc-600">
+                                      <span className="font-semibold text-zinc-800">Estilo:</span>{" "}
+                                      {styles.slice(0, 8).join(" · ")}
+                                    </p>
+                                  ) : null;
+                                })()}
+                                {(() => {
+                                  const moods = brainAnalysisTextArray(analysis?.mood);
+                                  return moods.length ? (
+                                    <p className="mt-1 text-[10px] leading-snug text-zinc-600">
+                                      <span className="font-semibold text-zinc-800">Mood:</span>{" "}
+                                      {moods.slice(0, 10).join(" · ")}
+                                    </p>
+                                  ) : null;
+                                })()}
+                                {(() => {
+                                  const comp = brainAnalysisTextArray(analysis?.composition);
+                                  return comp.length ? (
+                                    <p className="mt-1 text-[10px] leading-snug text-zinc-600">
+                                      <span className="font-semibold text-zinc-800">Composición:</span>{" "}
+                                      {comp.slice(0, 10).join(" · ")}
+                                    </p>
+                                  ) : null;
+                                })()}
+                                {(() => {
+                                  const dom = brainAnalysisTextArray(analysis?.colorPalette?.dominant);
+                                  return dom.length ? (
+                                    <p className="mt-1 text-[10px] leading-snug text-zinc-600">
+                                      <span className="font-semibold text-zinc-800">Paleta dominante:</span>{" "}
+                                      {dom.slice(0, 12).join(", ")}
+                                    </p>
+                                  ) : null;
+                                })()}
+                                {(() => {
+                                  const msgs = brainAnalysisTextArray(analysis?.visualMessage);
+                                  return msgs.length ? (
+                                    <p className="mt-1 text-[10px] leading-snug text-zinc-600">
+                                      <span className="font-semibold text-zinc-800">Mensaje visual:</span>{" "}
+                                      {msgs.slice(0, 5).join(" · ")}
+                                    </p>
+                                  ) : null;
+                                })()}
                               </div>
                               <div className="flex flex-shrink-0 flex-wrap gap-1.5 sm:justify-end">
                                 <button
                                   type="button"
                                   disabled={!analysis}
                                   onClick={() => patchVisualAnalysisOverride(ref.id, "CORE_VISUAL_DNA")}
-                                  className="rounded-lg border border-violet-500 bg-violet-600 px-2 py-1 text-[9px] font-black uppercase text-white disabled:cursor-not-allowed disabled:opacity-40"
+                                  className="rounded-[5px] border border-violet-500 bg-violet-600 px-2 py-1 text-[9px] font-black uppercase text-white disabled:cursor-not-allowed disabled:opacity-40"
                                 >
                                   Core
                                 </button>
@@ -3979,7 +4353,7 @@ export function ProjectBrainFullscreen({
                                   type="button"
                                   disabled={!analysis}
                                   onClick={() => patchVisualAnalysisOverride(ref.id, "PROJECT_VISUAL_REFERENCE")}
-                                  className="rounded-lg border border-sky-300 bg-sky-50 px-2 py-1 text-[9px] font-black uppercase text-sky-900 disabled:cursor-not-allowed disabled:opacity-40"
+                                  className="rounded-[5px] border border-sky-300 bg-sky-50 px-2 py-1 text-[9px] font-black uppercase text-sky-900 disabled:cursor-not-allowed disabled:opacity-40"
                                 >
                                   Proyecto
                                 </button>
@@ -3987,7 +4361,7 @@ export function ProjectBrainFullscreen({
                                   type="button"
                                   disabled={!analysis}
                                   onClick={() => patchVisualAnalysisOverride(ref.id, "CONTEXTUAL_VISUAL_MEMORY")}
-                                  className="rounded-lg border border-amber-300 bg-amber-50 px-2 py-1 text-[9px] font-black uppercase text-amber-900 disabled:cursor-not-allowed disabled:opacity-40"
+                                  className="rounded-[5px] border border-amber-300 bg-amber-50 px-2 py-1 text-[9px] font-black uppercase text-amber-900 disabled:cursor-not-allowed disabled:opacity-40"
                                 >
                                   Contexto
                                 </button>
@@ -3995,7 +4369,7 @@ export function ProjectBrainFullscreen({
                                   type="button"
                                   disabled={!analysis}
                                   onClick={() => patchVisualAnalysisOverride(ref.id, "EXCLUDED")}
-                                  className="rounded-lg border border-zinc-300 bg-white px-2 py-1 text-[9px] font-black uppercase text-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
+                                  className="rounded-[5px] border border-zinc-300 bg-white px-2 py-1 text-[9px] font-black uppercase text-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
                                 >
                                   Excluir
                                 </button>
@@ -4003,7 +4377,7 @@ export function ProjectBrainFullscreen({
                                   type="button"
                                   disabled={!analysis || !analysis.userVisualOverride}
                                   onClick={() => patchVisualAnalysisOverride(ref.id, undefined)}
-                                  className="rounded-lg border border-zinc-200 bg-zinc-100 px-2 py-1 text-[9px] font-black uppercase text-zinc-600 disabled:cursor-not-allowed disabled:opacity-40"
+                                  className="rounded-[5px] border border-zinc-200 bg-zinc-100 px-2 py-1 text-[9px] font-black uppercase text-zinc-600 disabled:cursor-not-allowed disabled:opacity-40"
                                 >
                                   Reset
                                 </button>
@@ -4015,33 +4389,24 @@ export function ProjectBrainFullscreen({
                     </div>
                   </>
                 ) : (
-                  <p className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50 px-4 py-6 text-center text-[12px] text-zinc-500">
-                    Sube imágenes en Conocimiento o completa slots visuales; luego pulsa «Reanalizar imágenes» para
-                    generar la capa interpretada.
+                  <p className="rounded-[5px] border border-dashed border-zinc-200 bg-zinc-50 px-4 py-6 text-center text-[12px] text-zinc-500">
+                    Sube imágenes desde la bandeja superior (CORE/contexto) o en el lienzo: al terminar el análisis del
+                    pozo se actualiza la visión remota sola cuando haga falta.
                   </p>
                 )}
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
-                    disabled={visualReanalyzing || visualImageRefCount === 0}
-                    onClick={() => void handleReanalyzeVisualRefs()}
-                    className="inline-flex items-center gap-2 rounded-xl border border-violet-700 bg-violet-700 px-4 py-2 text-[11px] font-black uppercase tracking-wide text-white disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {visualReanalyzing ? <RefreshCw className="h-4 w-4 animate-spin" aria-hidden /> : null}
-                    Reanalizar imágenes
-                  </button>
-                  <button
-                    type="button"
                     onClick={() => setActiveTab("knowledge")}
-                    className="rounded-xl border border-zinc-300 bg-white px-4 py-2 text-[11px] font-black uppercase tracking-wide text-zinc-800 hover:bg-zinc-50"
+                    className="rounded-[5px] border border-zinc-300 bg-white px-4 py-2 text-[11px] font-black uppercase tracking-wide text-zinc-800 hover:bg-zinc-50"
                   >
-                    Ver imágenes
+                    Inventario Conocimiento
                   </button>
                   <button
                     type="button"
                     disabled={visualQueueBusy || visualImageRefCount === 0}
                     onClick={() => void handleQueueVisualLearnings()}
-                    className="rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-2 text-[11px] font-black uppercase tracking-wide text-white disabled:cursor-not-allowed disabled:opacity-50"
+                    className="rounded-[5px] border border-zinc-800 bg-zinc-900 px-4 py-2 text-[11px] font-black uppercase tracking-wide text-white disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {visualQueueBusy ? "Enviando…" : "Revisar aprendizajes visuales"}
                   </button>
@@ -4049,321 +4414,24 @@ export function ProjectBrainFullscreen({
               </div>
             )}
 
+            {activeTab === "brand_visual_dna" && (
+              <BrandVisualDnaPanel
+                assets={assets}
+                projectId={projectId ?? null}
+                savedBundle={visualLayer?.brandVisualDnaBundle}
+                onSaveBundleToBrain={saveBrandVisualDnaBundle}
+                onDirty={() => onVisualReferenceAnalysisDirty?.()}
+              />
+            )}
+
             {activeTab === "knowledge" && (
               <>
-                <div className="mb-4 flex flex-wrap items-start gap-3 border-b border-zinc-200 pb-3">
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-zinc-200 bg-white">
-                    <BookOpen className="h-5 w-5 text-sky-600" strokeWidth={1.5} aria-hidden />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <h2 className="text-sm font-black uppercase tracking-[0.14em] text-zinc-900">Pozo de conocimiento</h2>
-                    <p className="mt-1 text-[12px] leading-relaxed text-zinc-600">
-                      Ingesta CORE y CONTEXTO + extracción de ADN con data numérica.
-                    </p>
-                  </div>
-                  <button
-                    onClick={handleAnalyze}
-                    disabled={analyzing}
-                    className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-[11px] font-black uppercase tracking-wide shadow ${
-                      analyzing
-                        ? "cursor-not-allowed border border-zinc-200 bg-zinc-100 text-zinc-400"
-                        : "border border-zinc-800 bg-zinc-900 text-white hover:bg-black"
-                    }`}
-                  >
-                    {analyzing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Bot className="h-4 w-4" />}
-                    {analyzing ? "Analizando..." : "Extraer ADN"}
-                  </button>
-                </div>
+                <p className="mb-4 rounded-[5px] border border-zinc-200 bg-zinc-50/80 px-3 py-2.5 text-[11px] leading-relaxed text-zinc-700">
+                  La bandeja de <strong>ingesta y el resumen recibido</strong> están fijas arriba del panel
+                  (visibles en todas las pestañas). Aquí gestionas cada archivo, su ADN extraído y el chat con Brain.
+                </p>
 
-                <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-                  <div className="rounded-2xl border border-sky-200 bg-white p-4">
-                    <p className="mb-1 text-[11px] font-black uppercase tracking-wide text-sky-700">Ingesta empresa (CORE)</p>
-                    <p className="mb-3 text-[11px] text-zinc-600">Documentos propios · tono · verdad de marca</p>
-                    <div
-                      onDragOver={(e) => {
-                        e.preventDefault();
-                        setIsDraggingCoreFiles(true);
-                      }}
-                      onDragLeave={() => setIsDraggingCoreFiles(false)}
-                      onDrop={(e) => {
-                        e.preventDefault();
-                        setIsDraggingCoreFiles(false);
-                        if (e.dataTransfer.files?.length) {
-                          setCoreFiles((prev) => [...prev, ...Array.from(e.dataTransfer.files || [])]);
-                        }
-                      }}
-                      onClick={() => {
-                        const input = document.createElement("input");
-                        input.type = "file";
-                        input.multiple = true;
-                        input.accept = ".pdf,.docx,.txt,.md,.rtf,.jpg,.jpeg,.png,.webp";
-                        input.onchange = () => {
-                          if (input.files?.length) {
-                            setCoreFiles((prev) => [...prev, ...Array.from(input.files || [])]);
-                          }
-                        };
-                        input.click();
-                      }}
-                      className={`flex min-h-[120px] cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed px-4 py-6 text-center ${
-                        isDraggingCoreFiles
-                          ? "border-sky-400 bg-sky-50"
-                          : "border-zinc-200 bg-zinc-50 hover:border-zinc-300"
-                      }`}
-                    >
-                      <Plus className="mb-2 h-7 w-7 text-zinc-400" />
-                      <span className="text-[12px] font-semibold text-zinc-700">Arrastra documentos CORE</span>
-                      <span className="mt-1 text-[11px] text-zinc-500">PDF · DOCX · TXT · MD · JPG · WEBP · máx {Math.round(MAX_KNOWLEDGE_DOC_BYTES / 1024 / 1024)} MB</span>
-                    </div>
-                    {coreFiles.length > 0 && (
-                      <div className="mt-3 space-y-2">
-                        {coreFiles.map((f, i) => (
-                          <div key={`${f.name}-${i}`} className="flex items-center justify-between rounded-lg border border-zinc-200 bg-zinc-50 px-2 py-1.5">
-                            <div className="min-w-0">
-                              <p className="truncate text-[12px] font-medium text-zinc-800">{f.name}</p>
-                              <p className="text-[10px] text-zinc-500">{formatSize(f.size)}</p>
-                            </div>
-                            <button onClick={() => setCoreFiles((p) => p.filter((_, idx) => idx !== i))} className="rounded p-1 text-zinc-500 hover:bg-zinc-200 hover:text-rose-600">
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        ))}
-                        <button onClick={() => void handleUpload("core")} disabled={uploadingScope !== null} className="w-full rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-2 text-[11px] font-black uppercase tracking-wide text-white disabled:opacity-50">
-                          {uploadingScope === "core" ? "Subiendo..." : "Sincronizar Core"}
-                        </button>
-                      </div>
-                    )}
-                    <div className="mt-3 flex gap-2">
-                      <input value={urlDraftCore} onChange={(e) => setUrlDraftCore(e.target.value)} onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), void handleAddUrl("core"))} placeholder="https://web-empresa.com/recurso" className="min-w-0 flex-1 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]" />
-                      <button onClick={() => void handleAddUrl("core")} disabled={!urlDraftCore || uploadingScope !== null} className="rounded-xl border border-sky-500/50 bg-sky-50 px-3 py-2 text-[11px] font-bold uppercase text-sky-800 disabled:opacity-50">Añadir</button>
-                    </div>
-                  </div>
-
-                  <div className="rounded-2xl border border-amber-200 bg-white p-4">
-                    <p className="mb-1 text-[11px] font-black uppercase tracking-wide text-amber-700">Ingesta contexto (mercado)</p>
-                    <p className="mb-3 text-[11px] text-zinc-600">Benchmarks · competencia · informes (no contamina tono)</p>
-                    <div
-                      onDragOver={(e) => {
-                        e.preventDefault();
-                        setIsDraggingContextFiles(true);
-                      }}
-                      onDragLeave={() => setIsDraggingContextFiles(false)}
-                      onDrop={(e) => {
-                        e.preventDefault();
-                        setIsDraggingContextFiles(false);
-                        if (e.dataTransfer.files?.length) {
-                          setContextFiles((prev) => [...prev, ...Array.from(e.dataTransfer.files || [])]);
-                        }
-                      }}
-                      onClick={() => {
-                        const input = document.createElement("input");
-                        input.type = "file";
-                        input.multiple = true;
-                        input.accept = ".pdf,.docx,.txt,.md,.rtf,.jpg,.jpeg,.png,.webp";
-                        input.onchange = () => {
-                          if (input.files?.length) {
-                            setContextFiles((prev) => [...prev, ...Array.from(input.files || [])]);
-                          }
-                        };
-                        input.click();
-                      }}
-                      className={`flex min-h-[120px] cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed px-4 py-6 text-center ${
-                        isDraggingContextFiles
-                          ? "border-amber-400 bg-amber-50"
-                          : "border-zinc-200 bg-zinc-50 hover:border-zinc-300"
-                      }`}
-                    >
-                      <Plus className="mb-2 h-7 w-7 text-zinc-400" />
-                      <span className="text-[12px] font-semibold text-zinc-700">Arrastra documentos contexto</span>
-                      <span className="mt-1 text-[11px] text-zinc-500">Informes mercado/competencia · máx {Math.round(MAX_KNOWLEDGE_DOC_BYTES / 1024 / 1024)} MB</span>
-                    </div>
-                    {contextFiles.length > 0 && (
-                      <div className="mt-3 space-y-2">
-                        {contextFiles.map((f, i) => (
-                          <div key={`${f.name}-${i}`} className="flex items-center justify-between rounded-lg border border-zinc-200 bg-zinc-50 px-2 py-1.5">
-                            <div className="min-w-0">
-                              <p className="truncate text-[12px] font-medium text-zinc-800">{f.name}</p>
-                              <p className="text-[10px] text-zinc-500">{formatSize(f.size)}</p>
-                            </div>
-                            <button onClick={() => setContextFiles((p) => p.filter((_, idx) => idx !== i))} className="rounded p-1 text-zinc-500 hover:bg-zinc-200 hover:text-rose-600">
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        ))}
-                        <button onClick={() => void handleUpload("context")} disabled={uploadingScope !== null} className="w-full rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-2 text-[11px] font-black uppercase tracking-wide text-white disabled:opacity-50">
-                          {uploadingScope === "context" ? "Subiendo..." : "Sincronizar Contexto"}
-                        </button>
-                      </div>
-                    )}
-                    <div className="mt-3 flex gap-2">
-                      <input value={urlDraftContext} onChange={(e) => setUrlDraftContext(e.target.value)} onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), void handleAddUrl("context"))} placeholder="https://informe-mercado.com/recurso" className="min-w-0 flex-1 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]" />
-                      <button onClick={() => void handleAddUrl("context")} disabled={!urlDraftContext || uploadingScope !== null} className="rounded-xl border border-amber-500/50 bg-amber-50 px-3 py-2 text-[11px] font-bold uppercase text-amber-800 disabled:opacity-50">Añadir</button>
-                    </div>
-                  </div>
-                </div>
-
-                <section className="mt-5 rounded-2xl border border-zinc-200 bg-white p-4">
-                  <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <h3 className="text-[12px] font-black uppercase tracking-[0.12em] text-zinc-900">
-                        Dirección visual aprendida
-                      </h3>
-                      <p className="mt-1 max-w-2xl text-[11px] leading-relaxed text-zinc-600">
-                        Estas cuatro miniaturas{" "}
-                        <span className="font-semibold text-zinc-800">
-                          no son copias de tus referencias subidas
-                        </span>
-                        : son{" "}
-                        <span className="font-semibold text-zinc-800">
-                          imágenes generadas (Gemini)
-                        </span>{" "}
-                        a partir del texto de cada bloque, la paleta, la voz (filtrada) y, si hay URLs accesibles, hasta
-                        cuatro referencias como guía visual. Tus ~20 fotos analizadas viven en{" "}
-                        <button
-                          type="button"
-                          onClick={() => setActiveTab("visual_refs")}
-                          className="font-bold text-violet-700 underline decoration-violet-300 underline-offset-2 hover:text-violet-900"
-                        >
-                          Referencias visuales
-                        </button>{" "}
-                        (tabla + agregados). Tras cambiar referencias o textos, pulsa Regenerar o sube imagen manual.
-                      </p>
-                    </div>
-                    {visualStyleRefreshing && (
-                      <span className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-zinc-50 px-2 py-1 text-[10px] font-semibold text-zinc-600">
-                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                        refrescando
-                      </span>
-                    )}
-                  </div>
-                  <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-                    {(["protagonist", "environment", "textures", "people"] as BrainVisualStyleSlotKey[]).map(
-                      (key) => {
-                        const slot = assets.strategy.visualStyle[key];
-                        const loading = Boolean(visualStyleLoadingBySlot[key]);
-                        const description = slot.description || "";
-                        return (
-                          <article key={key} className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
-                            <p className="text-[10px] font-black uppercase tracking-wide text-zinc-600">
-                              {slot.title}
-                            </p>
-                            <div className="mt-2 overflow-hidden rounded-lg border border-zinc-200 bg-white">
-                              {slot.imageUrl ? (
-                                // eslint-disable-next-line @next/next/no-img-element
-                                <img
-                                  src={slot.imageUrl}
-                                  alt={slot.title}
-                                  className="h-36 w-full object-cover"
-                                />
-                              ) : (
-                                <div className="flex h-36 w-full items-center justify-center text-[11px] text-zinc-500">
-                                  Sin imagen aún
-                                </div>
-                              )}
-                            </div>
-                            <textarea
-                              value={description}
-                              onChange={(e) =>
-                                setVisualStyleSlot(key, {
-                                  description: e.target.value,
-                                  source: "manual",
-                                })
-                              }
-                              placeholder="Describe qué debe representarse en este eje visual..."
-                              className="mt-2 h-20 w-full rounded-xl border border-zinc-200 bg-white p-2 text-[12px] text-zinc-800"
-                            />
-                            <div className="mt-2 flex flex-wrap gap-2">
-                              <button
-                                type="button"
-                                onClick={() => void generateVisualStyleSlotImage(key, true)}
-                                disabled={loading || !description.trim()}
-                                className="rounded-lg border border-zinc-800 bg-zinc-900 px-2.5 py-1.5 text-[10px] font-black uppercase tracking-wide text-white disabled:opacity-50"
-                              >
-                                {loading ? "Generando..." : slot.imageUrl ? "Regenerar" : "Generar imagen"}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const input = document.createElement("input");
-                                  input.type = "file";
-                                  input.accept = "image/png,image/jpeg,image/webp,image/svg+xml";
-                                  input.onchange = async () => {
-                                    const file = input.files?.[0];
-                                    if (!file) return;
-                                    try {
-                                      const uploaded = await uploadLocalImageForVisualStyle(file);
-                                      setVisualStyleSlot(key, {
-                                        imageUrl: uploaded.url,
-                                        imageS3Key: uploaded.s3Key,
-                                        source: "manual",
-                                      });
-                                      showToast("Imagen manual aplicada al ADN visual.", "success");
-                                    } catch (error) {
-                                      showToast(
-                                        error instanceof Error ? error.message : "No se pudo subir la imagen.",
-                                        "error",
-                                      );
-                                    }
-                                  };
-                                  input.click();
-                                }}
-                                className="rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wide text-zinc-700 hover:bg-zinc-100"
-                              >
-                                Sustituir desde disco
-                              </button>
-                            </div>
-                          </article>
-                        );
-                      },
-                    )}
-                  </div>
-                  {visualAggregatedResolved && visualAnalyzedCount > 0 ? (
-                    <div className="mt-4 rounded-xl border border-violet-100 bg-violet-50/50 p-4">
-                      <p className="text-[10px] font-black uppercase tracking-[0.14em] text-violet-900">
-                        Señales agregadas desde referencias visuales
-                      </p>
-                      <div className="mt-3 grid gap-3 text-[11px] leading-snug text-violet-950/90 sm:grid-cols-2 lg:grid-cols-4">
-                        <p>
-                          <span className="font-bold">Protagonista / sujetos:</span>{" "}
-                          {visualAggregatedResolved.frequentSubjects.slice(0, 4).join(", ") || "—"}
-                        </p>
-                        <p>
-                          <span className="font-bold">Entorno / composición:</span>{" "}
-                          {visualAggregatedResolved.compositionNotes.slice(0, 4).join(" · ") || "—"}
-                        </p>
-                        <p>
-                          <span className="font-bold">Personas / ropa:</span>{" "}
-                          {visualAggregatedResolved.peopleClothingNotes.join(" · ") || "—"}
-                        </p>
-                        <p>
-                          <span className="font-bold">Texturas (lectura agregada):</span>{" "}
-                          {visualAggregatedResolved.recurringStyles.filter((s) =>
-                            /textura|material|superficie|acabado/i.test(s),
-                          ).join(", ") || "—"}
-                        </p>
-                        <p>
-                          <span className="font-bold">Paleta:</span>{" "}
-                          {visualAggregatedResolved.dominantPalette.slice(0, 6).join(" ") || "—"}
-                        </p>
-                        <p>
-                          <span className="font-bold">Mood:</span>{" "}
-                          {visualAggregatedResolved.dominantMoods.slice(0, 5).join(", ") || "—"}
-                        </p>
-                        <p>
-                          <span className="font-bold">Estilo gráfico:</span>{" "}
-                          {(visualAggregatedResolved.graphicStyleNotes ?? []).slice(0, 4).join(" · ") || "—"}
-                        </p>
-                        <p className="sm:col-span-2 lg:col-span-4">
-                          <span className="font-bold">Mensaje visual implícito:</span>{" "}
-                          {(visualAggregatedResolved.implicitBrandMessages ?? []).join(" ") ||
-                            visualAggregatedResolved.narrativeSummary ||
-                            "—"}
-                        </p>
-                      </div>
-                    </div>
-                  ) : null}
-                </section>
-
-                <section className="mt-5 rounded-2xl border border-zinc-200 bg-white p-4">
+                <section className="mt-5 rounded-[5px] border border-zinc-200 bg-white p-4">
                   <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                     <h3 className="text-[12px] font-black uppercase tracking-[0.12em] text-zinc-900">Inventario de sabiduría · {assets.knowledge.documents.length} activos</h3>
                     <div className="flex flex-wrap gap-2">
@@ -4375,28 +4443,28 @@ export function ProjectBrainFullscreen({
                     </div>
                   </div>
                   {docsFiltered.length === 0 ? (
-                    <p className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50 px-3 py-8 text-center text-[12px] text-zinc-500">Bandeja vacía.</p>
+                    <p className="rounded-[5px] border border-dashed border-zinc-200 bg-zinc-50 px-3 py-8 text-center text-[12px] text-zinc-500">Bandeja vacía.</p>
                   ) : (
                     <ul className="space-y-3">
                       {docsFiltered.map((doc) => (
-                        <li key={doc.id} className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+                        <li key={doc.id} className="rounded-[5px] border border-zinc-200 bg-zinc-50 p-3">
                           <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
                             <div className="min-w-0">
                               <div className="flex items-center gap-2">
                                 {doc.format === "image" ? <ImageIcon className="h-4 w-4 text-zinc-500" /> : doc.format === "url" ? <Globe className="h-4 w-4 text-zinc-500" /> : <FileText className="h-4 w-4 text-zinc-500" />}
                                 <p className="truncate text-[12px] font-semibold text-zinc-900">{doc.name}</p>
-                                <span className="rounded-md border border-zinc-200 bg-white px-1.5 py-0.5 text-[9px] font-black uppercase text-zinc-500">{doc.format || "doc"}</span>
-                                <span className={`rounded-md border px-1.5 py-0.5 text-[9px] font-black uppercase ${doc.scope === "context" ? "border-amber-200 bg-amber-50 text-amber-700" : "border-sky-200 bg-sky-50 text-sky-700"}`}>{doc.scope === "context" ? "Contexto" : "Core"}</span>
+                                <span className="rounded-[5px] border border-zinc-200 bg-white px-1.5 py-0.5 text-[9px] font-black uppercase text-zinc-500">{doc.format || "doc"}</span>
+                                <span className={`rounded-[5px] border px-1.5 py-0.5 text-[9px] font-black uppercase ${doc.scope === "context" ? "border-amber-200 bg-amber-50 text-amber-700" : "border-sky-200 bg-sky-50 text-sky-700"}`}>{doc.scope === "context" ? "Contexto" : "Core"}</span>
                               </div>
                               <p className="mt-1 text-[10px] text-zinc-500">{doc.uploadedAt ? new Date(doc.uploadedAt).toLocaleDateString("es-ES") : "sin fecha"} · {formatSize(doc.size)} · status: {doc.status || "Subido"}</p>
                               {doc.errorMessage && <p className="mt-1 text-[10px] text-rose-600">{doc.errorMessage}</p>}
                             </div>
                             <div className="flex items-center gap-2">
-                              <button onClick={() => void handleOpenOriginal(doc)} className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-zinc-700 hover:bg-zinc-100"><span className="inline-flex items-center gap-1"><ExternalLink className="h-3.5 w-3.5" />Original</span></button>
+                              <button onClick={() => void handleOpenOriginal(doc)} className="rounded-[5px] border border-zinc-200 bg-white px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-zinc-700 hover:bg-zinc-100"><span className="inline-flex items-center gap-1"><ExternalLink className="h-3.5 w-3.5" />Original</span></button>
                               {doc.status === "Analizado" && doc.extractedContext && (
-                                <button onClick={() => toggleExpand(doc.id)} className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-zinc-700 hover:bg-zinc-100"><span className="inline-flex items-center gap-1">{expandedDocs.has(doc.id) ? <>Colapsar ADN <ChevronUp className="h-3.5 w-3.5" /></> : <>Ver ADN <ChevronDown className="h-3.5 w-3.5" /></>}</span></button>
+                                <button onClick={() => toggleExpand(doc.id)} className="rounded-[5px] border border-zinc-200 bg-white px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-zinc-700 hover:bg-zinc-100"><span className="inline-flex items-center gap-1">{expandedDocs.has(doc.id) ? <>Colapsar ADN <ChevronUp className="h-3.5 w-3.5" /></> : <>Ver ADN <ChevronDown className="h-3.5 w-3.5" /></>}</span></button>
                               )}
-                              <button onClick={() => void handleDelete(doc.id)} disabled={isDeleting === doc.id} className="rounded-lg border border-zinc-200 bg-white p-1.5 text-zinc-600 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50" aria-label="Eliminar">{isDeleting === doc.id ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}</button>
+                              <button onClick={() => void handleDelete(doc.id)} disabled={isDeleting === doc.id} className="rounded-[5px] border border-zinc-200 bg-white p-1.5 text-zinc-600 hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50" aria-label="Eliminar">{isDeleting === doc.id ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}</button>
                             </div>
                           </div>
                           {doc.status === "Analizado" && doc.extractedContext && expandedDocs.has(doc.id) && (
@@ -4406,34 +4474,34 @@ export function ProjectBrainFullscreen({
                                   <div className="flex items-center justify-between">
                                     <p className="text-[10px] font-black uppercase tracking-wide text-zinc-600">Editando ADN</p>
                                     <div className="flex gap-2">
-                                      <button onClick={() => setEditingDocId(null)} className="rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-zinc-600 hover:bg-zinc-100"><span className="inline-flex items-center gap-1"><XIcon className="h-3.5 w-3.5" />Cancelar</span></button>
-                                      <button onClick={() => void handleSaveAdn(doc.id)} className="rounded-lg border border-zinc-800 bg-zinc-900 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-white hover:bg-black"><span className="inline-flex items-center gap-1"><Save className="h-3.5 w-3.5" />Guardar</span></button>
+                                      <button onClick={() => setEditingDocId(null)} className="rounded-[5px] border border-zinc-200 bg-white px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-zinc-600 hover:bg-zinc-100"><span className="inline-flex items-center gap-1"><XIcon className="h-3.5 w-3.5" />Cancelar</span></button>
+                                      <button onClick={() => void handleSaveAdn(doc.id)} className="rounded-[5px] border border-zinc-800 bg-zinc-900 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-white hover:bg-black"><span className="inline-flex items-center gap-1"><Save className="h-3.5 w-3.5" />Guardar</span></button>
                                     </div>
                                   </div>
-                                  <textarea value={JSON.stringify(editForm, null, 2)} onChange={(e) => { try { setEditForm(JSON.parse(e.target.value)); } catch { setEditForm({ raw: e.target.value }); } }} className="h-56 w-full rounded-xl border border-zinc-200 bg-white p-3 font-mono text-[12px] text-zinc-900 outline-none focus:border-sky-500" />
+                                  <textarea value={JSON.stringify(editForm, null, 2)} onChange={(e) => { try { setEditForm(JSON.parse(e.target.value)); } catch { setEditForm({ raw: e.target.value }); } }} className="h-56 w-full rounded-[5px] border border-zinc-200 bg-white p-3 font-mono text-[12px] text-zinc-900 outline-none focus:border-sky-500" />
                                 </div>
                               ) : (
                                 <div>
                                   <div className="mb-2 flex justify-end">
-                                    <button onClick={() => startEditing(doc)} className="rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-zinc-600 hover:bg-zinc-100"><span className="inline-flex items-center gap-1"><Edit3 className="h-3.5 w-3.5" />Editar matriz</span></button>
+                                    <button onClick={() => startEditing(doc)} className="rounded-[5px] border border-zinc-200 bg-white px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-zinc-600 hover:bg-zinc-100"><span className="inline-flex items-center gap-1"><Edit3 className="h-3.5 w-3.5" />Editar matriz</span></button>
                                   </div>
                                   {doc.insights && (
                                     <div className="mb-3 grid grid-cols-1 gap-2 lg:grid-cols-2">
-                                      <article className="rounded-xl border border-zinc-200 bg-white p-2.5">
+                                      <article className="rounded-[5px] border border-zinc-200 bg-white p-2.5">
                                         <p className="text-[10px] font-black uppercase tracking-wide text-zinc-500">Claims extraídos</p>
                                         <div className="mt-1 flex flex-wrap gap-1">
                                           {doc.insights.claims.length === 0 && <span className="text-[10px] text-zinc-500">Sin claims</span>}
                                           {doc.insights.claims.map((x, i) => <span key={`${doc.id}-c-${i}`} className="rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] text-sky-800">{x}</span>)}
                                         </div>
                                       </article>
-                                      <article className="rounded-xl border border-zinc-200 bg-white p-2.5">
+                                      <article className="rounded-[5px] border border-zinc-200 bg-white p-2.5">
                                         <p className="text-[10px] font-black uppercase tracking-wide text-zinc-500">Métricas detectadas</p>
                                         <div className="mt-1 flex flex-wrap gap-1">
                                           {doc.insights.metrics.length === 0 && <span className="text-[10px] text-zinc-500">Sin métricas</span>}
                                           {doc.insights.metrics.map((x, i) => <span key={`${doc.id}-m-${i}`} className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] text-emerald-800">{x}</span>)}
                                         </div>
                                       </article>
-                                      <article className="rounded-xl border border-zinc-200 bg-white p-2.5 lg:col-span-2">
+                                      <article className="rounded-[5px] border border-zinc-200 bg-white p-2.5 lg:col-span-2">
                                         <p className="text-[10px] font-black uppercase tracking-wide text-zinc-500">Uso potencial · frescura · fiabilidad · piezas usadas</p>
                                         <p className="mt-1 text-[11px] text-zinc-700">
                                           Uso: {(doc.insights.potentialUse || []).join(" · ") || "No definido"}.
@@ -4445,7 +4513,7 @@ export function ProjectBrainFullscreen({
                                     </div>
                                   )}
                                   <p className="mb-1 text-[10px] font-black uppercase tracking-wide text-zinc-500">JSON ADN</p>
-                                  <pre className="whitespace-pre-wrap rounded-xl border border-zinc-200 bg-white p-3 font-mono text-[11px] leading-relaxed text-zinc-800">{doc.extractedContext}</pre>
+                                  <pre className="whitespace-pre-wrap rounded-[5px] border border-zinc-200 bg-white p-3 font-mono text-[11px] leading-relaxed text-zinc-800">{doc.extractedContext}</pre>
                                 </div>
                               )}
                             </div>
@@ -4456,30 +4524,30 @@ export function ProjectBrainFullscreen({
                   )}
                 </section>
 
-                <section className="mt-5 rounded-2xl border border-zinc-200 bg-white p-4">
+                <section className="mt-5 rounded-[5px] border border-zinc-200 bg-white p-4">
                   <div className="mb-3 flex items-start gap-2">
-                    <span className="mt-0.5 rounded-lg border border-zinc-200 bg-zinc-50 p-1.5 text-zinc-600"><MessageSquareText className="h-4 w-4" /></span>
+                    <span className="mt-0.5 rounded-[5px] border border-zinc-200 bg-zinc-50 p-1.5 text-zinc-600"><MessageSquareText className="h-4 w-4" /></span>
                     <div>
                       <h3 className="text-[12px] font-black uppercase tracking-[0.12em] text-zinc-900">Conversar con Brain</h3>
                       <p className="mt-1 text-[11px] text-zinc-600">Responde solo con contenido subido y analizado.</p>
                     </div>
                   </div>
 
-                  <div className="max-h-[300px] space-y-2 overflow-auto rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+                  <div className="max-h-[300px] space-y-2 overflow-auto rounded-[5px] border border-zinc-200 bg-zinc-50 p-3">
                     {chatMessages.map((m) => (
-                      <article key={m.id} className={`rounded-xl border px-3 py-2 ${m.role === "user" ? "ml-8 border-sky-200 bg-sky-50" : "mr-8 border-zinc-200 bg-white"}`}>
+                      <article key={m.id} className={`rounded-[5px] border px-3 py-2 ${m.role === "user" ? "ml-8 border-sky-200 bg-sky-50" : "mr-8 border-zinc-200 bg-white"}`}>
                         <p className="text-[11px] font-black uppercase tracking-wide text-zinc-500">{m.role === "user" ? "Tú" : "Brain"}</p>
                         <p className="mt-1 whitespace-pre-wrap text-[12px] leading-relaxed text-zinc-800">{m.text}</p>
-                        {m.sources && m.sources.length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{m.sources.map((s) => <span key={`${m.id}-${s.id}`} className="rounded-md border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[9px] font-semibold text-zinc-600">{s.name}</span>)}</div>}
-                        {m.suggestedUploads && m.suggestedUploads.length > 0 && <div className="mt-2"><p className="text-[10px] font-black uppercase tracking-wide text-zinc-500">Ideas para subir más</p><div className="mt-1 flex flex-wrap gap-1.5">{m.suggestedUploads.map((s, idx) => <span key={`${m.id}-${idx}`} className="rounded-md border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[9px] font-semibold text-amber-700">{s}</span>)}</div></div>}
+                        {m.sources && m.sources.length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{m.sources.map((s) => <span key={`${m.id}-${s.id}`} className="rounded-[5px] border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[9px] font-semibold text-zinc-600">{s.name}</span>)}</div>}
+                        {m.suggestedUploads && m.suggestedUploads.length > 0 && <div className="mt-2"><p className="text-[10px] font-black uppercase tracking-wide text-zinc-500">Ideas para subir más</p><div className="mt-1 flex flex-wrap gap-1.5">{m.suggestedUploads.map((s, idx) => <span key={`${m.id}-${idx}`} className="rounded-[5px] border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[9px] font-semibold text-amber-700">{s}</span>)}</div></div>}
                       </article>
                     ))}
-                    {chatLoading && <article className="mr-8 rounded-xl border border-zinc-200 bg-white px-3 py-2"><p className="text-[11px] font-black uppercase tracking-wide text-zinc-500">Brain</p><p className="mt-1 inline-flex items-center gap-2 text-[12px] text-zinc-700"><RefreshCw className="h-3.5 w-3.5 animate-spin" />Pensando...</p></article>}
+                    {chatLoading && <article className="mr-8 rounded-[5px] border border-zinc-200 bg-white px-3 py-2"><p className="text-[11px] font-black uppercase tracking-wide text-zinc-500">Brain</p><p className="mt-1 inline-flex items-center gap-2 text-[12px] text-zinc-700"><RefreshCw className="h-3.5 w-3.5 animate-spin" />Pensando...</p></article>}
                   </div>
 
                   <div className="mt-3 flex gap-2">
-                    <input type="text" value={chatInput} onChange={(e) => setChatInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), void submitChatQuestion())} placeholder="Pregunta sobre el contenido de Brain..." className="min-w-0 flex-1 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-[13px]" />
-                    <button onClick={() => void submitChatQuestion()} disabled={chatLoading || !chatInput.trim()} className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-white disabled:opacity-50"><Send className="h-3.5 w-3.5" />Enviar</button>
+                    <input type="text" value={chatInput} onChange={(e) => setChatInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), void submitChatQuestion())} placeholder="Pregunta sobre el contenido de Brain..." className="min-w-0 flex-1 rounded-[5px] border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-[13px]" />
+                    <button onClick={() => void submitChatQuestion()} disabled={chatLoading || !chatInput.trim()} className="inline-flex items-center gap-1.5 rounded-[5px] border border-zinc-800 bg-zinc-900 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-white disabled:opacity-50"><Send className="h-3.5 w-3.5" />Enviar</button>
                   </div>
                 </section>
               </>
@@ -4487,23 +4555,23 @@ export function ProjectBrainFullscreen({
 
             {activeTab === "voice" && (
               <div className="space-y-5">
-                <section className="rounded-2xl border border-zinc-200 bg-white p-4">
+                <section className="rounded-[5px] border border-zinc-200 bg-white p-4">
                   <h3 className="text-[13px] font-black uppercase tracking-[0.12em] text-zinc-900">Ejemplos reales de voz</h3>
                   <p className="mt-1 text-[12px] text-zinc-600">El modelo aprende por analogía: ejemplos aprobados/prohibidos y piezas reales.</p>
                   <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-                    <select value={voiceKind} onChange={(e) => setVoiceKind(e.target.value as BrainVoiceExample["kind"])} className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]">
+                    <select value={voiceKind} onChange={(e) => setVoiceKind(e.target.value as BrainVoiceExample["kind"])} className="rounded-[5px] border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]">
                       <option value="approved_voice">Voz aprobada</option>
                       <option value="forbidden_voice">Voz prohibida</option>
                       <option value="good_piece">Pieza que sí suena</option>
                       <option value="bad_piece">Pieza que NO suena</option>
                     </select>
-                    <input value={voiceText} onChange={(e) => setVoiceText(e.target.value)} placeholder="Añade frase o ejemplo real" className="min-w-0 flex-1 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]" />
-                    <button onClick={addVoiceExample} className="rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-white">Añadir</button>
+                    <input value={voiceText} onChange={(e) => setVoiceText(e.target.value)} placeholder="Añade frase o ejemplo real" className="min-w-0 flex-1 rounded-[5px] border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]" />
+                    <button onClick={addVoiceExample} className="rounded-[5px] border border-zinc-800 bg-zinc-900 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-white">Añadir</button>
                   </div>
                   <div className="mt-3 space-y-2">
                     {assets.strategy.voiceExamples.length === 0 && <p className="text-[12px] text-zinc-500">Aún no hay ejemplos guardados.</p>}
                     {assets.strategy.voiceExamples.map((v) => (
-                      <div key={v.id} className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+                      <div key={v.id} className="rounded-[5px] border border-zinc-200 bg-zinc-50 p-3">
                         <div className="flex items-center justify-between gap-3">
                           <span className="text-[10px] font-black uppercase tracking-wide text-zinc-500">{v.kind}</span>
                           <button onClick={() => removeVoiceExample(v.id)} className="rounded p-1 text-zinc-500 hover:bg-zinc-200 hover:text-rose-600"><Trash2 className="h-3.5 w-3.5" /></button>
@@ -4514,86 +4582,93 @@ export function ProjectBrainFullscreen({
                   </div>
                 </section>
 
-                <section className="rounded-2xl border border-zinc-200 bg-white p-4">
+                <section className="rounded-[5px] border border-zinc-200 bg-white p-4">
                   <h3 className="text-[13px] font-black uppercase tracking-[0.12em] text-zinc-900">Tabús y frases aprobadas</h3>
                   <div className="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-2">
                     <div>
                       <p className="mb-2 text-[11px] font-black uppercase tracking-wide text-zinc-600">Tabú de marca</p>
                       <div className="flex gap-2">
-                        <input value={newTaboo} onChange={(e) => setNewTaboo(e.target.value)} placeholder="frase a evitar" className="min-w-0 flex-1 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]" />
-                        <button onClick={() => { addTagItem("taboo", newTaboo); setNewTaboo(""); }} className="rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-white">Añadir</button>
+                        <input value={newTaboo} onChange={(e) => setNewTaboo(e.target.value)} placeholder="frase a evitar" className="min-w-0 flex-1 rounded-[5px] border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]" />
+                        <button onClick={() => { addTagItem("taboo", newTaboo); setNewTaboo(""); }} className="rounded-[5px] border border-zinc-800 bg-zinc-900 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-white">Añadir</button>
                       </div>
                       <div className="mt-2 flex flex-wrap gap-1.5">{assets.strategy.tabooPhrases.map((x, i) => <button key={`${x}-${i}`} onClick={() => removeTagItem("taboo", i)} className="rounded-full border border-rose-200 bg-rose-50 px-2 py-1 text-[10px] font-semibold text-rose-700">{x} ×</button>)}</div>
                     </div>
                     <div>
                       <p className="mb-2 text-[11px] font-black uppercase tracking-wide text-zinc-600">Frases aprobadas</p>
                       <div className="flex gap-2">
-                        <input value={newApprovedPhrase} onChange={(e) => setNewApprovedPhrase(e.target.value)} placeholder="frase aprobada" className="min-w-0 flex-1 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]" />
-                        <button onClick={() => { addTagItem("approved", newApprovedPhrase); setNewApprovedPhrase(""); }} className="rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-white">Añadir</button>
+                        <input value={newApprovedPhrase} onChange={(e) => setNewApprovedPhrase(e.target.value)} placeholder="frase aprobada" className="min-w-0 flex-1 rounded-[5px] border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]" />
+                        <button onClick={() => { addTagItem("approved", newApprovedPhrase); setNewApprovedPhrase(""); }} className="rounded-[5px] border border-zinc-800 bg-zinc-900 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-white">Añadir</button>
                       </div>
                       <div className="mt-2 flex flex-wrap gap-1.5">{assets.strategy.approvedPhrases.map((x, i) => <button key={`${x}-${i}`} onClick={() => removeTagItem("approved", i)} className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700">{x} ×</button>)}</div>
                     </div>
                   </div>
                 </section>
 
-                <section className="rounded-2xl border border-zinc-200 bg-white p-4">
+                <section className="rounded-[5px] border border-zinc-200 bg-white p-4">
                   <h3 className="text-[13px] font-black uppercase tracking-[0.12em] text-zinc-900">Ingeniería de voz (funcional)</h3>
                   <div className="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-2">
                     <div>
                       <p className="mb-2 text-[11px] font-black uppercase tracking-wide text-zinc-600">Rasgos de lenguaje</p>
                       <div className="flex gap-2">
-                        <input value={newLanguageTrait} onChange={(e) => setNewLanguageTrait(e.target.value)} placeholder="ej: directo, preciso, anti-humo" className="min-w-0 flex-1 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]" />
-                        <button onClick={() => { addStringListItem("languageTraits", newLanguageTrait); setNewLanguageTrait(""); }} className="rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-white">Añadir</button>
+                        <input value={newLanguageTrait} onChange={(e) => setNewLanguageTrait(e.target.value)} placeholder="ej: directo, preciso, anti-humo" className="min-w-0 flex-1 rounded-[5px] border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]" />
+                        <button onClick={() => { addStringListItem("languageTraits", newLanguageTrait); setNewLanguageTrait(""); }} className="rounded-[5px] border border-zinc-800 bg-zinc-900 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-white">Añadir</button>
                       </div>
                       <div className="mt-2 flex flex-wrap gap-1.5">{assets.strategy.languageTraits.map((x, i) => <button key={`${x}-${i}`} onClick={() => removeStringListItem("languageTraits", i)} className="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-1 text-[10px] text-indigo-700">{x} ×</button>)}</div>
                     </div>
                     <div>
                       <p className="mb-2 text-[11px] font-black uppercase tracking-wide text-zinc-600">Patrones de sintaxis</p>
                       <div className="flex gap-2">
-                        <input value={newSyntaxPattern} onChange={(e) => setNewSyntaxPattern(e.target.value)} placeholder="ej: frases cortas + cierre accionable" className="min-w-0 flex-1 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]" />
-                        <button onClick={() => { addStringListItem("syntaxPatterns", newSyntaxPattern); setNewSyntaxPattern(""); }} className="rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-white">Añadir</button>
+                        <input value={newSyntaxPattern} onChange={(e) => setNewSyntaxPattern(e.target.value)} placeholder="ej: frases cortas + cierre accionable" className="min-w-0 flex-1 rounded-[5px] border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]" />
+                        <button onClick={() => { addStringListItem("syntaxPatterns", newSyntaxPattern); setNewSyntaxPattern(""); }} className="rounded-[5px] border border-zinc-800 bg-zinc-900 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-white">Añadir</button>
                       </div>
                       <div className="mt-2 flex flex-wrap gap-1.5">{assets.strategy.syntaxPatterns.map((x, i) => <button key={`${x}-${i}`} onClick={() => removeStringListItem("syntaxPatterns", i)} className="rounded-full border border-blue-200 bg-blue-50 px-2 py-1 text-[10px] text-blue-700">{x} ×</button>)}</div>
                     </div>
                     <div>
                       <p className="mb-2 text-[11px] font-black uppercase tracking-wide text-zinc-600">Términos preferidos</p>
                       <div className="flex gap-2">
-                        <input value={newPreferredTerm} onChange={(e) => setNewPreferredTerm(e.target.value)} placeholder="ej: control creativo, flujo unificado" className="min-w-0 flex-1 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]" />
-                        <button onClick={() => { addStringListItem("preferredTerms", newPreferredTerm); setNewPreferredTerm(""); }} className="rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-white">Añadir</button>
+                        <input value={newPreferredTerm} onChange={(e) => setNewPreferredTerm(e.target.value)} placeholder="ej: control creativo, flujo unificado" className="min-w-0 flex-1 rounded-[5px] border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]" />
+                        <button onClick={() => { addStringListItem("preferredTerms", newPreferredTerm); setNewPreferredTerm(""); }} className="rounded-[5px] border border-zinc-800 bg-zinc-900 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-white">Añadir</button>
                       </div>
                       <div className="mt-2 flex flex-wrap gap-1.5">{assets.strategy.preferredTerms.map((x, i) => <button key={`${x}-${i}`} onClick={() => removeStringListItem("preferredTerms", i)} className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] text-emerald-700">{x} ×</button>)}</div>
                     </div>
                     <div>
                       <p className="mb-2 text-[11px] font-black uppercase tracking-wide text-zinc-600">Términos prohibidos</p>
                       <div className="flex gap-2">
-                        <input value={newForbiddenTerm} onChange={(e) => setNewForbiddenTerm(e.target.value)} placeholder="ej: mejor del mundo, garantía total" className="min-w-0 flex-1 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]" />
-                        <button onClick={() => { addStringListItem("forbiddenTerms", newForbiddenTerm); setNewForbiddenTerm(""); }} className="rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-white">Añadir</button>
+                        <input value={newForbiddenTerm} onChange={(e) => setNewForbiddenTerm(e.target.value)} placeholder="ej: mejor del mundo, garantía total" className="min-w-0 flex-1 rounded-[5px] border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]" />
+                        <button onClick={() => { addStringListItem("forbiddenTerms", newForbiddenTerm); setNewForbiddenTerm(""); }} className="rounded-[5px] border border-zinc-800 bg-zinc-900 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-white">Añadir</button>
                       </div>
                       <div className="mt-2 flex flex-wrap gap-1.5">{assets.strategy.forbiddenTerms.map((x, i) => <button key={`${x}-${i}`} onClick={() => removeStringListItem("forbiddenTerms", i)} className="rounded-full border border-rose-200 bg-rose-50 px-2 py-1 text-[10px] text-rose-700">{x} ×</button>)}</div>
                     </div>
                   </div>
                   <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
-                    <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+                    <div className="rounded-[5px] border border-zinc-200 bg-zinc-50 p-3">
                       <p className="text-[11px] font-black uppercase tracking-wide text-zinc-600">Intensidad por canal</p>
                       <div className="mt-2 flex items-center gap-2">
-                        <input value={channelIntensityName} onChange={(e) => setChannelIntensityName(e.target.value)} placeholder="LinkedIn, Email, Instagram..." className="min-w-0 flex-1 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-[12px]" />
-                        <input type="number" min={0} max={100} value={channelIntensityValue} onChange={(e) => setChannelIntensityValue(Number(e.target.value) || 0)} className="w-20 rounded-xl border border-zinc-200 bg-white px-2 py-2 text-[12px]" />
-                        <button onClick={addChannelIntensity} className="rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-white">Añadir</button>
+                        <input value={channelIntensityName} onChange={(e) => setChannelIntensityName(e.target.value)} placeholder="LinkedIn, Email, Instagram..." className="min-w-0 flex-1 rounded-[5px] border border-zinc-200 bg-white px-3 py-2 text-[12px]" />
+                        <input type="number" min={0} max={100} value={channelIntensityValue} onChange={(e) => setChannelIntensityValue(Number(e.target.value) || 0)} className="w-20 rounded-[5px] border border-zinc-200 bg-white px-2 py-2 text-[12px]" />
+                        <button onClick={addChannelIntensity} className="rounded-[5px] border border-zinc-800 bg-zinc-900 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-white">Añadir</button>
                       </div>
                       <div className="mt-2 space-y-1.5">
                         {assets.strategy.channelIntensity.map((x, i) => (
-                          <div key={`${x.channel}-${i}`} className="flex items-center justify-between rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-[11px]">
+                          <div key={`${x.channel}-${i}`} className="flex items-center justify-between rounded-[5px] border border-zinc-200 bg-white px-2 py-1.5 text-[11px]">
                             <span>{x.channel}</span>
                             <span className="inline-flex items-center gap-2"><strong>{x.intensity}%</strong><button onClick={() => removeChannelIntensity(i)} className="text-rose-600">×</button></span>
                           </div>
                         ))}
                       </div>
                     </div>
-                    <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+                    <div className="rounded-[5px] border border-zinc-200 bg-zinc-50 p-3">
                       <p className="text-[11px] font-black uppercase tracking-wide text-zinc-600">Claims absolutos</p>
-                      <div className="mt-2 flex items-center justify-between rounded-lg border border-zinc-200 bg-white px-3 py-2">
+                      <div className="mt-2 flex items-center justify-between rounded-[5px] border border-zinc-200 bg-white px-3 py-2">
                         <span className="text-[12px] text-zinc-700">Permitir absolutos (“el mejor”, “siempre”)</span>
-                        <button onClick={() => setStrategy({ allowAbsoluteClaims: !assets.strategy.allowAbsoluteClaims })} className={`rounded-full border px-3 py-1 text-[10px] font-black uppercase ${assets.strategy.allowAbsoluteClaims ? "border-emerald-300 bg-emerald-100 text-emerald-700" : "border-zinc-300 bg-zinc-100 text-zinc-700"}`}>
+                        <button
+                          onClick={() =>
+                            setStrategy({ allowAbsoluteClaims: !assets.strategy.allowAbsoluteClaims }, [
+                              BRAIN_STALE_REASON.STRATEGY_MANUALLY_CHANGED,
+                            ])
+                          }
+                          className={`rounded-full border px-3 py-1 text-[10px] font-black uppercase ${assets.strategy.allowAbsoluteClaims ? "border-emerald-300 bg-emerald-100 text-emerald-700" : "border-zinc-300 bg-zinc-100 text-zinc-700"}`}
+                        >
                           {assets.strategy.allowAbsoluteClaims ? "Permitidos" : "Bloqueados"}
                         </button>
                       </div>
@@ -4605,13 +4680,13 @@ export function ProjectBrainFullscreen({
 
             {activeTab === "personas" && (
               <div className="space-y-5">
-                <section className="rounded-2xl border border-zinc-200 bg-white p-4">
+                <section className="rounded-[5px] border border-zinc-200 bg-white p-4">
                   <h3 className="text-[13px] font-black uppercase tracking-[0.12em] text-zinc-900">Personas de audiencia</h3>
                   <p className="mt-1 text-[12px] text-zinc-600">Mostramos solo las personas relevantes para este proyecto. El resto está en “+ Nueva persona”.</p>
                   <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
                     {assets.strategy.personas.length === 0 && <p className="text-[12px] text-zinc-500">No hay personas aún.</p>}
                     {assets.strategy.personas.map((p) => (
-                      <article key={p.id} className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+                      <article key={p.id} className="rounded-[5px] border border-zinc-200 bg-zinc-50 p-3">
                         <div className="flex items-start justify-between gap-2">
                           <h4 className="text-[13px] font-black text-zinc-900">{p.name}</h4>
                           <button onClick={() => removePersona(p.id)} className="rounded p-1 text-zinc-500 hover:bg-zinc-200 hover:text-rose-600"><Trash2 className="h-3.5 w-3.5" /></button>
@@ -4629,7 +4704,7 @@ export function ProjectBrainFullscreen({
                     <button
                       type="button"
                       onClick={() => setPersonaModalOpen(true)}
-                      className="flex min-h-[182px] items-center justify-center rounded-xl border-2 border-dashed border-zinc-300 bg-zinc-50 text-lg font-semibold text-zinc-500 transition hover:border-zinc-400 hover:text-zinc-700"
+                      className="flex min-h-[182px] items-center justify-center rounded-[5px] border-2 border-dashed border-zinc-300 bg-zinc-50 text-lg font-semibold text-zinc-500 transition hover:border-zinc-400 hover:text-zinc-700"
                     >
                       + Nueva persona
                     </button>
@@ -4638,13 +4713,13 @@ export function ProjectBrainFullscreen({
 
                 {personaModalOpen && (
                   <div className="fixed inset-0 z-[100120] flex items-center justify-center bg-black/40 p-4">
-                    <div className="max-h-[85vh] w-full max-w-5xl overflow-auto rounded-2xl border border-zinc-200 bg-white p-4 sm:p-5">
+                    <div className="max-h-[85vh] w-full max-w-5xl overflow-auto rounded-[5px] border border-zinc-200 bg-white p-4 sm:p-5">
                       <div className="mb-4 flex items-center justify-between gap-3">
                         <div>
                           <h4 className="text-sm font-black uppercase tracking-[0.12em] text-zinc-900">Añadir Nueva Persona</h4>
                           <p className="mt-1 text-[12px] text-zinc-600">Selecciona del catálogo restante o crea una persona manual.</p>
                         </div>
-                        <button onClick={() => setPersonaModalOpen(false)} className="rounded-lg border border-zinc-200 bg-white p-2 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700">
+                        <button onClick={() => setPersonaModalOpen(false)} className="rounded-[5px] border border-zinc-200 bg-white p-2 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700">
                           <XIcon className="h-4 w-4" />
                         </button>
                       </div>
@@ -4654,12 +4729,12 @@ export function ProjectBrainFullscreen({
                           <p className="text-[12px] text-zinc-500">No quedan perfiles predefinidos por adjuntar.</p>
                         )}
                         {personaCatalogRemaining.map((persona) => (
-                          <article key={persona.id} className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+                          <article key={persona.id} className="rounded-[5px] border border-zinc-200 bg-zinc-50 p-3">
                             <div className="flex items-start justify-between gap-2">
                               <h5 className="text-[13px] font-black text-zinc-900">{persona.name}</h5>
                               <button
                                 onClick={() => addCatalogPersona(persona)}
-                                className="rounded-lg border border-zinc-300 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wide text-zinc-700 hover:bg-zinc-100"
+                                className="rounded-[5px] border border-zinc-300 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wide text-zinc-700 hover:bg-zinc-100"
                               >
                                 Adjuntar
                               </button>
@@ -4676,21 +4751,21 @@ export function ProjectBrainFullscreen({
                         ))}
                       </div>
 
-                      <section className="mt-5 rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+                      <section className="mt-5 rounded-[5px] border border-zinc-200 bg-zinc-50 p-3">
                         <h5 className="text-[12px] font-black uppercase tracking-[0.12em] text-zinc-900">Creación manual (opción B)</h5>
                         <div className="mt-3 grid grid-cols-1 gap-2 lg:grid-cols-2">
-                          <input value={personaName} onChange={(e) => setPersonaName(e.target.value)} placeholder="Nombre persona" className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-[12px]" />
-                          <input value={personaPain} onChange={(e) => setPersonaPain(e.target.value)} placeholder="Dolor principal" className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-[12px]" />
-                          <input value={personaChannel} onChange={(e) => setPersonaChannel(e.target.value)} placeholder="Canal principal" className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-[12px]" />
-                          <input value={personaSophistication} onChange={(e) => setPersonaSophistication(e.target.value)} placeholder="Nivel de sofisticación" className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-[12px]" />
-                          <input value={personaMarketSophistication} onChange={(e) => setPersonaMarketSophistication(e.target.value)} placeholder="Sofisticación del mercado" className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-[12px]" />
-                          <input value={personaTags} onChange={(e) => setPersonaTags(e.target.value)} placeholder="Tags (coma separada)" className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-[12px] lg:col-span-2" />
-                          <input value={personaObjections} onChange={(e) => setPersonaObjections(e.target.value)} placeholder="Objeciones (coma separada)" className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-[12px] lg:col-span-2" />
-                          <input value={personaProofNeeded} onChange={(e) => setPersonaProofNeeded(e.target.value)} placeholder="Prueba que necesita (coma separada)" className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-[12px] lg:col-span-2" />
-                          <input value={personaAttentionTriggers} onChange={(e) => setPersonaAttentionTriggers(e.target.value)} placeholder="Disparadores de atención (coma separada)" className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-[12px] lg:col-span-2" />
+                          <input value={personaName} onChange={(e) => setPersonaName(e.target.value)} placeholder="Nombre persona" className="rounded-[5px] border border-zinc-200 bg-white px-3 py-2 text-[12px]" />
+                          <input value={personaPain} onChange={(e) => setPersonaPain(e.target.value)} placeholder="Dolor principal" className="rounded-[5px] border border-zinc-200 bg-white px-3 py-2 text-[12px]" />
+                          <input value={personaChannel} onChange={(e) => setPersonaChannel(e.target.value)} placeholder="Canal principal" className="rounded-[5px] border border-zinc-200 bg-white px-3 py-2 text-[12px]" />
+                          <input value={personaSophistication} onChange={(e) => setPersonaSophistication(e.target.value)} placeholder="Nivel de sofisticación" className="rounded-[5px] border border-zinc-200 bg-white px-3 py-2 text-[12px]" />
+                          <input value={personaMarketSophistication} onChange={(e) => setPersonaMarketSophistication(e.target.value)} placeholder="Sofisticación del mercado" className="rounded-[5px] border border-zinc-200 bg-white px-3 py-2 text-[12px]" />
+                          <input value={personaTags} onChange={(e) => setPersonaTags(e.target.value)} placeholder="Tags (coma separada)" className="rounded-[5px] border border-zinc-200 bg-white px-3 py-2 text-[12px] lg:col-span-2" />
+                          <input value={personaObjections} onChange={(e) => setPersonaObjections(e.target.value)} placeholder="Objeciones (coma separada)" className="rounded-[5px] border border-zinc-200 bg-white px-3 py-2 text-[12px] lg:col-span-2" />
+                          <input value={personaProofNeeded} onChange={(e) => setPersonaProofNeeded(e.target.value)} placeholder="Prueba que necesita (coma separada)" className="rounded-[5px] border border-zinc-200 bg-white px-3 py-2 text-[12px] lg:col-span-2" />
+                          <input value={personaAttentionTriggers} onChange={(e) => setPersonaAttentionTriggers(e.target.value)} placeholder="Disparadores de atención (coma separada)" className="rounded-[5px] border border-zinc-200 bg-white px-3 py-2 text-[12px] lg:col-span-2" />
                         </div>
                         <div className="mt-3 flex justify-end">
-                          <button onClick={addPersona} className="rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-white">Añadir persona manual</button>
+                          <button onClick={addPersona} className="rounded-[5px] border border-zinc-800 bg-zinc-900 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-white">Añadir persona manual</button>
                         </div>
                       </section>
                     </div>
@@ -4701,29 +4776,29 @@ export function ProjectBrainFullscreen({
 
             {activeTab === "messages" && (
               <div className="space-y-5">
-                <section className="rounded-2xl border border-zinc-200 bg-white p-4">
+                <section className="rounded-[5px] border border-zinc-200 bg-white p-4">
                   <h3 className="text-[13px] font-black uppercase tracking-[0.12em] text-zinc-900">Matriz de mensajes (claim + soporte)</h3>
                   <div className="mt-3 grid grid-cols-1 gap-2 lg:grid-cols-2">
-                    <input value={messageClaimDraft} onChange={(e) => setMessageClaimDraft(e.target.value)} placeholder="Claim" className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]" />
-                    <input value={messageSupportDraft} onChange={(e) => setMessageSupportDraft(e.target.value)} placeholder="Soporte" className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]" />
-                    <input value={messageAudienceDraft} onChange={(e) => setMessageAudienceDraft(e.target.value)} placeholder="Audiencia" className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]" />
-                    <input value={messageChannelDraft} onChange={(e) => setMessageChannelDraft(e.target.value)} placeholder="Canal" className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]" />
-                    <select value={funnelStageDraft} onChange={(e) => setFunnelStageDraft(e.target.value as "awareness" | "consideration" | "conversion" | "retention")} className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]">
+                    <input value={messageClaimDraft} onChange={(e) => setMessageClaimDraft(e.target.value)} placeholder="Claim" className="rounded-[5px] border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]" />
+                    <input value={messageSupportDraft} onChange={(e) => setMessageSupportDraft(e.target.value)} placeholder="Soporte" className="rounded-[5px] border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]" />
+                    <input value={messageAudienceDraft} onChange={(e) => setMessageAudienceDraft(e.target.value)} placeholder="Audiencia" className="rounded-[5px] border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]" />
+                    <input value={messageChannelDraft} onChange={(e) => setMessageChannelDraft(e.target.value)} placeholder="Canal" className="rounded-[5px] border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]" />
+                    <select value={funnelStageDraft} onChange={(e) => setFunnelStageDraft(e.target.value as "awareness" | "consideration" | "conversion" | "retention")} className="rounded-[5px] border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]">
                       <option value="awareness">Awareness</option>
                       <option value="consideration">Consideración</option>
                       <option value="conversion">Conversión</option>
                       <option value="retention">Retención</option>
                     </select>
-                    <input value={messageCtaDraft} onChange={(e) => setMessageCtaDraft(e.target.value)} placeholder="CTA" className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]" />
-                    <input value={messageEvidenceDraft} onChange={(e) => setMessageEvidenceDraft(e.target.value)} placeholder="Evidencia asociada (coma separada)" className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px] lg:col-span-2" />
+                    <input value={messageCtaDraft} onChange={(e) => setMessageCtaDraft(e.target.value)} placeholder="CTA" className="rounded-[5px] border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]" />
+                    <input value={messageEvidenceDraft} onChange={(e) => setMessageEvidenceDraft(e.target.value)} placeholder="Evidencia asociada (coma separada)" className="rounded-[5px] border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px] lg:col-span-2" />
                   </div>
                   <div className="mt-3 flex flex-wrap gap-2">
-                    <button onClick={addMessageBlueprint} className="rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-white">Añadir fila de matriz</button>
-                    <button onClick={addFunnelMessage} className="rounded-xl border border-zinc-300 bg-white px-3 py-2 text-[11px] font-black uppercase tracking-wide text-zinc-700">Añadir mensaje simple</button>
+                    <button onClick={addMessageBlueprint} className="rounded-[5px] border border-zinc-800 bg-zinc-900 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-white">Añadir fila de matriz</button>
+                    <button onClick={addFunnelMessage} className="rounded-[5px] border border-zinc-300 bg-white px-3 py-2 text-[11px] font-black uppercase tracking-wide text-zinc-700">Añadir mensaje simple</button>
                   </div>
                   <div className="mt-3 space-y-2">
                     {assets.strategy.messageBlueprints.map((m) => (
-                      <div key={m.id} className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+                      <div key={m.id} className="rounded-[5px] border border-zinc-200 bg-zinc-50 p-3">
                         <div className="flex items-center justify-between gap-2">
                           <span className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[10px] font-semibold uppercase text-zinc-600">{m.stage}</span>
                           <button onClick={() => removeMessageBlueprint(m.id)} className="rounded p-1 text-zinc-500 hover:bg-zinc-200 hover:text-rose-600"><Trash2 className="h-3.5 w-3.5" /></button>
@@ -4736,11 +4811,11 @@ export function ProjectBrainFullscreen({
                       </div>
                     ))}
                     {assets.strategy.funnelMessages.length > 0 && (
-                      <details className="rounded-xl border border-zinc-200 bg-white p-2.5">
+                      <details className="rounded-[5px] border border-zinc-200 bg-white p-2.5">
                         <summary className="cursor-pointer text-[11px] font-semibold text-zinc-700">Mensajes simples legacy ({assets.strategy.funnelMessages.length})</summary>
                         <div className="mt-2 space-y-2">
                           {assets.strategy.funnelMessages.map((m) => (
-                            <div key={m.id} className="rounded-lg border border-zinc-200 bg-zinc-50 p-2">
+                            <div key={m.id} className="rounded-[5px] border border-zinc-200 bg-zinc-50 p-2">
                               <div className="flex items-center justify-between gap-2">
                                 <span className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[10px] font-semibold uppercase text-zinc-600">{m.stage}</span>
                                 <button onClick={() => removeFunnelMessage(m.id)} className="rounded p-1 text-zinc-500 hover:bg-zinc-200 hover:text-rose-600"><Trash2 className="h-3.5 w-3.5" /></button>
@@ -4754,78 +4829,78 @@ export function ProjectBrainFullscreen({
                   </div>
                 </section>
 
-                <section className="rounded-2xl border border-zinc-200 bg-white p-4">
+                <section className="rounded-[5px] border border-zinc-200 bg-white p-4">
                   <h3 className="text-[13px] font-black uppercase tracking-[0.12em] text-zinc-900">Briefing estructurado (antes de generar)</h3>
                   <p className="mt-1 text-[11px] text-zinc-600">
                     Fuentes oficiales activas para generación: {filteredFactsForGeneration.length} (según filtros de “Hechos y pruebas”).
                   </p>
                   <div className="mt-3 grid grid-cols-1 gap-2 lg:grid-cols-2">
-                    <input value={briefObjective} onChange={(e) => setBriefObjective(e.target.value)} placeholder="Objetivo de la pieza" className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]" />
-                    <input value={briefChannel} onChange={(e) => setBriefChannel(e.target.value)} placeholder="Canal (LinkedIn, blog, etc.)" className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]" />
-                    <select value={briefPersonaId} onChange={(e) => setBriefPersonaId(e.target.value)} className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]">
+                    <input value={briefObjective} onChange={(e) => setBriefObjective(e.target.value)} placeholder="Objetivo de la pieza" className="rounded-[5px] border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]" />
+                    <input value={briefChannel} onChange={(e) => setBriefChannel(e.target.value)} placeholder="Canal (LinkedIn, blog, etc.)" className="rounded-[5px] border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]" />
+                    <select value={briefPersonaId} onChange={(e) => setBriefPersonaId(e.target.value)} className="rounded-[5px] border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]">
                       <option value="">Selecciona persona</option>
                       {assets.strategy.personas.map((p) => (
                         <option key={p.id} value={p.id}>{p.name}</option>
                       ))}
                     </select>
-                    <select value={briefFunnel} onChange={(e) => setBriefFunnel(e.target.value as "awareness" | "consideration" | "conversion" | "retention")} className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]">
+                    <select value={briefFunnel} onChange={(e) => setBriefFunnel(e.target.value as "awareness" | "consideration" | "conversion" | "retention")} className="rounded-[5px] border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]">
                       <option value="awareness">Awareness</option>
                       <option value="consideration">Consideración</option>
                       <option value="conversion">Conversión</option>
                       <option value="retention">Retención</option>
                     </select>
-                    <textarea value={briefAsk} onChange={(e) => setBriefAsk(e.target.value)} placeholder="Instrucción adicional (opcional)" className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px] lg:col-span-2" rows={3} />
+                    <textarea value={briefAsk} onChange={(e) => setBriefAsk(e.target.value)} placeholder="Instrucción adicional (opcional)" className="rounded-[5px] border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px] lg:col-span-2" rows={3} />
                   </div>
-                  <button onClick={() => void generateWithBriefing()} disabled={generatingPiece} className="mt-3 rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-white disabled:opacity-50">{generatingPiece ? "Generando..." : "Crear pieza con este ADN"}</button>
+                  <button onClick={() => void generateWithBriefing()} disabled={generatingPiece} className="mt-3 rounded-[5px] border border-zinc-800 bg-zinc-900 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-white disabled:opacity-50">{generatingPiece ? "Generando..." : "Crear pieza con este ADN"}</button>
                 </section>
 
                 {generatedPreview && (
-                  <section className="rounded-2xl border border-zinc-200 bg-white p-4">
+                  <section className="rounded-[5px] border border-zinc-200 bg-white p-4">
                     <div className="mb-2 flex items-center justify-between gap-2">
                       <h3 className="text-[13px] font-black uppercase tracking-[0.12em] text-zinc-900">Modo crítico automático</h3>
                       <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-semibold text-zinc-600">Score {generatedPreview.score}/100</span>
                     </div>
                     {generatedPreview.issues.length > 0 && <div className="mb-2 flex flex-wrap gap-1.5">{generatedPreview.issues.map((i, idx) => <span key={`${i}-${idx}`} className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] text-amber-700">{i}</span>)}</div>}
                     <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-                      <article className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+                      <article className="rounded-[5px] border border-zinc-200 bg-zinc-50 p-3">
                         <p className="mb-1 text-[10px] font-black uppercase tracking-wide text-zinc-500">Borrador inicial</p>
                         <pre className="whitespace-pre-wrap text-[12px] leading-relaxed text-zinc-800">{generatedPreview.draft}</pre>
                       </article>
-                      <article className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+                      <article className="rounded-[5px] border border-zinc-200 bg-zinc-50 p-3">
                         <p className="mb-1 text-[10px] font-black uppercase tracking-wide text-zinc-500">Versión revisada</p>
                         <pre className="whitespace-pre-wrap text-[12px] leading-relaxed text-zinc-800">{generatedPreview.revised}</pre>
                       </article>
                     </div>
-                    <article className="mt-3 rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+                    <article className="mt-3 rounded-[5px] border border-zinc-200 bg-zinc-50 p-3">
                       <p className="mb-1 text-[10px] font-black uppercase tracking-wide text-zinc-500">Crítica</p>
                       <p className="text-[12px] leading-relaxed text-zinc-800">{generatedPreview.critique}</p>
                     </article>
                     <div className="mt-3">
-                      <textarea value={pieceFeedbackNote} onChange={(e) => setPieceFeedbackNote(e.target.value)} placeholder="Nota del equipo (opcional)" className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]" rows={2} />
+                      <textarea value={pieceFeedbackNote} onChange={(e) => setPieceFeedbackNote(e.target.value)} placeholder="Nota del equipo (opcional)" className="w-full rounded-[5px] border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]" rows={2} />
                       <div className="mt-2 flex flex-wrap gap-2">
-                        <button onClick={() => registerLearning("approved")} className="rounded-xl border border-emerald-600 bg-emerald-600 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-white">Aprobar y aprender</button>
-                        <button onClick={() => registerLearning("rejected")} className="rounded-xl border border-rose-600 bg-rose-600 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-white">Rechazar y aprender</button>
+                        <button onClick={() => registerLearning("approved")} className="rounded-[5px] border border-emerald-600 bg-emerald-600 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-white">Aprobar y aprender</button>
+                        <button onClick={() => registerLearning("rejected")} className="rounded-[5px] border border-rose-600 bg-rose-600 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-white">Rechazar y aprender</button>
                       </div>
                     </div>
                   </section>
                 )}
 
-                <section className="rounded-2xl border border-zinc-200 bg-white p-4">
+                <section className="rounded-[5px] border border-zinc-200 bg-white p-4">
                   <h3 className="text-[13px] font-black uppercase tracking-[0.12em] text-zinc-900">Bucle de aprendizaje</h3>
                   <p className="mt-1 text-[12px] text-zinc-600">Lo aprobado y rechazado vuelve al ADN para afinar futuras piezas.</p>
                   <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
-                    <article className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+                    <article className="rounded-[5px] border border-zinc-200 bg-zinc-50 p-3">
                       <p className="text-[10px] font-black uppercase tracking-wide text-zinc-500">Patrones aprobados</p>
                       <div className="mt-2 flex flex-wrap gap-1.5">{assets.strategy.approvedPatterns.slice(0, 20).map((p, i) => <span key={`${p}-${i}`} className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] text-emerald-700">{p}</span>)}</div>
                     </article>
-                    <article className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+                    <article className="rounded-[5px] border border-zinc-200 bg-zinc-50 p-3">
                       <p className="text-[10px] font-black uppercase tracking-wide text-zinc-500">Patrones a evitar</p>
                       <div className="mt-2 flex flex-wrap gap-1.5">{assets.strategy.rejectedPatterns.slice(0, 20).map((p, i) => <span key={`${p}-${i}`} className="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] text-rose-700">{p}</span>)}</div>
                     </article>
                   </div>
                   <div className="mt-3 space-y-2">
                     {assets.strategy.generatedPieces.slice(0, 8).map((g) => (
-                      <article key={g.id} className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+                      <article key={g.id} className="rounded-[5px] border border-zinc-200 bg-zinc-50 p-3">
                         <div className="flex items-center justify-between gap-2">
                           <p className="text-[11px] font-semibold text-zinc-800">{g.objective || "Pieza"}</p>
                           <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${g.status === "approved" ? "border border-emerald-200 bg-emerald-50 text-emerald-700" : g.status === "rejected" ? "border border-rose-200 bg-rose-50 text-rose-700" : "border border-zinc-200 bg-white text-zinc-600"}`}>{g.status}</span>
@@ -4840,7 +4915,7 @@ export function ProjectBrainFullscreen({
 
             {activeTab === "facts" && (
               <div className="space-y-5">
-                <section className="rounded-2xl border border-zinc-200 bg-white p-4">
+                <section className="rounded-[5px] border border-zinc-200 bg-white p-4">
                   <h3 className="text-[13px] font-black uppercase tracking-[0.12em] text-zinc-900">Hechos y pruebas</h3>
                   <p className="mt-1 text-[12px] text-zinc-600">
                     Este módulo separa afirmaciones verificadas vs interpretadas y muestra el respaldo documental.
@@ -4849,7 +4924,7 @@ export function ProjectBrainFullscreen({
                     <select
                       value={factsVerificationFilter}
                       onChange={(e) => setFactsVerificationFilter(e.target.value as "all" | "verified" | "interpreted")}
-                      className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]"
+                      className="rounded-[5px] border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]"
                     >
                       <option value="all">Verificación: Todas</option>
                       <option value="verified">Verificación: Solo verificadas</option>
@@ -4858,7 +4933,7 @@ export function ProjectBrainFullscreen({
                     <select
                       value={factsStrengthFilter}
                       onChange={(e) => setFactsStrengthFilter(e.target.value as "all" | "fuerte" | "media" | "debil")}
-                      className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]"
+                      className="rounded-[5px] border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px]"
                     >
                       <option value="all">Fuerza: Todas</option>
                       <option value="fuerte">Fuerza: Fuerte</option>
@@ -4867,19 +4942,19 @@ export function ProjectBrainFullscreen({
                     </select>
                     <button
                       onClick={() => { setFactsVerificationFilter("verified"); setFactsStrengthFilter("fuerte"); }}
-                      className="rounded-xl border border-zinc-300 bg-white px-3 py-2 text-[11px] font-black uppercase tracking-wide text-zinc-700"
+                      className="rounded-[5px] border border-zinc-300 bg-white px-3 py-2 text-[11px] font-black uppercase tracking-wide text-zinc-700"
                     >
                       Reset recomendado
                     </button>
                   </div>
                   <div className="mt-3 grid grid-cols-1 gap-3">
                     {filteredFactsForGeneration.length === 0 && (
-                      <p className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50 px-3 py-6 text-center text-[12px] text-zinc-500">
-                        Aún no hay hechos detectados. Ejecuta “Analizar documentos”.
+                      <p className="rounded-[5px] border border-dashed border-zinc-200 bg-zinc-50 px-3 py-6 text-center text-[12px] text-zinc-500">
+                        Aún no hay hechos detectados. Sube fuentes desde la bandeja superior (se procesan solas).
                       </p>
                     )}
                     {filteredFactsForGeneration.map((f) => (
-                      <article key={f.id} className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+                      <article key={f.id} className="rounded-[5px] border border-zinc-200 bg-zinc-50 p-3">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${f.verified ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}`}>
                             {f.verified ? "Verificado" : "Interpretado"}
@@ -4903,7 +4978,7 @@ export function ProjectBrainFullscreen({
             )}
         </main>
 
-        <aside className="hidden w-[min(380px,34vw)] shrink-0 flex-col gap-4 overflow-y-auto rounded-[22px] border border-zinc-200 bg-gradient-to-b from-white to-zinc-50/90 p-5 shadow-sm xl:flex">
+        <aside className="hidden min-h-0 w-[min(280px,30vw)] shrink-0 flex-col gap-2 overflow-y-auto overscroll-y-contain rounded-[5px] border border-zinc-200/90 bg-white p-3 shadow-sm xl:flex">
           {activeTab === "overview" && (
             <div className="space-y-4">
               <p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">Próximas acciones</p>
@@ -4911,26 +4986,26 @@ export function ProjectBrainFullscreen({
                 <button
                   type="button"
                   onClick={() => setActiveTab("review")}
-                  className="rounded-xl border border-violet-600 bg-violet-600 py-2.5 text-left text-[11px] font-black uppercase tracking-wide text-white px-3"
+                  className="rounded-[5px] border border-violet-600 bg-violet-600 py-2.5 text-left text-[11px] font-black uppercase tracking-wide text-white px-3"
                 >
                   Revisar bandeja · {pendingLearnings.length}
                 </button>
                 <button
                   type="button"
                   onClick={() => setActiveTab("visual_refs")}
-                  className="rounded-xl border border-zinc-300 bg-white py-2.5 text-left text-[11px] font-bold text-zinc-800 px-3 hover:bg-zinc-50"
+                  className="rounded-[5px] border border-zinc-300 bg-white py-2.5 text-left text-[11px] font-bold text-zinc-800 px-3 hover:bg-zinc-50"
                 >
                   Completar referencias visuales
                 </button>
                 <button
                   type="button"
                   onClick={() => setActiveTab("knowledge")}
-                  className="rounded-xl border border-zinc-300 bg-white py-2.5 text-left text-[11px] font-bold text-zinc-800 px-3 hover:bg-zinc-50"
+                  className="rounded-[5px] border border-zinc-300 bg-white py-2.5 text-left text-[11px] font-bold text-zinc-800 px-3 hover:bg-zinc-50"
                 >
-                  Subir o analizar fuentes CORE
+                  Subir fuentes CORE
                 </button>
               </div>
-              <div className="rounded-xl border border-amber-100 bg-amber-50/70 p-3">
+              <div className="rounded-[5px] border border-amber-100 bg-amber-50/70 p-3">
                 <p className="text-[10px] font-black uppercase tracking-wide text-amber-900">Tres focos que suben el ADN</p>
                 <ul className="mt-2 space-y-1.5 text-[11px] leading-snug text-amber-950/90">
                   <li>· Añade hechos verificados y mensajes con evidencia.</li>
@@ -4953,6 +5028,15 @@ export function ProjectBrainFullscreen({
               </p>
             </div>
           )}
+          {activeTab === "brand_visual_dna" && (
+            <div className="space-y-3">
+              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">Brand Visual DNA</p>
+              <p className="text-[11px] leading-relaxed text-zinc-600">
+                Análisis técnico + clusters; la IA interpreta solo agregados. Usa la vista principal para exportar o
+                enviar al Brain.
+              </p>
+            </div>
+          )}
           {activeTab === "visual_refs" && (
             <div className="space-y-3">
               <p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">Paleta dominante (agregada)</p>
@@ -4966,17 +5050,9 @@ export function ProjectBrainFullscreen({
                   />
                 ))}
                 {!visualAggregatedResolved?.dominantPalette?.length && (
-                  <p className="text-[11px] text-zinc-500">Analiza referencias para ver swatches.</p>
+                  <p className="text-[11px] text-zinc-500">Los swatches aparecen cuando haya referencias analizadas.</p>
                 )}
               </div>
-              <button
-                type="button"
-                disabled={visualReanalyzing || visualImageRefCount === 0}
-                onClick={() => void handleReanalyzeVisualRefs()}
-                className="w-full rounded-xl border border-zinc-900 bg-zinc-900 py-2.5 text-[11px] font-black uppercase tracking-wide text-white disabled:opacity-50"
-              >
-                {visualReanalyzing ? "Reanalizando…" : "Reanalizar referencias"}
-              </button>
               {visualReferenceAnalysisDirty ? (
                 <p className="text-[10px] leading-snug text-amber-900">
                   Análisis actualizado en memoria — guarda el proyecto para conservarlo.
@@ -4998,7 +5074,7 @@ export function ProjectBrainFullscreen({
                     expanded: true,
                   });
                   return (
-                    <li key={c.id} className="rounded-lg border border-zinc-200 bg-white px-3 py-2">
+                    <li key={c.id} className="rounded-[5px] border border-zinc-200 bg-white px-3 py-2">
                       <span className="font-bold text-zinc-900">{c.label}</span>
                       <span className="text-zinc-500"> · {labelForBrainNodeSource(c.brainNodeType)}</span>
                       <span className="mt-1 block text-[10px] text-zinc-600" title={BRAIN_RECENT_SIGNALS_TOOLTIP_ES}>
@@ -5061,7 +5137,7 @@ export function ProjectBrainFullscreen({
                 {analyzedCount} fuentes analizadas de {assets.knowledge.documents.length} activas.
               </p>
               <p className="text-[11px] text-zinc-600">
-                Sube PDFs CORE para tono y ADN; usa contexto para mercado sin mezclar voz.
+                La ingesta y el resumen están arriba del panel principal. Aquí revisas cada documento y el chat.
               </p>
             </div>
           )}
@@ -5089,7 +5165,7 @@ export function ProjectBrainFullscreen({
               role="dialog"
               aria-modal="true"
               aria-labelledby="brain-signals-title"
-              className="max-h-[min(520px,86vh)] w-full max-w-lg overflow-y-auto rounded-[22px] border border-zinc-200 bg-white p-5 shadow-2xl"
+              className="max-h-[min(520px,86vh)] w-full max-w-lg overflow-y-auto rounded-[5px] border border-zinc-200 bg-white p-5 shadow-2xl"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-start justify-between gap-3">
@@ -5103,7 +5179,7 @@ export function ProjectBrainFullscreen({
                 <button
                   type="button"
                   onClick={() => setSignalModalClient(null)}
-                  className="rounded-xl border border-zinc-200 p-2 text-zinc-600 hover:bg-zinc-100"
+                  className="rounded-[5px] border border-zinc-200 p-2 text-zinc-600 hover:bg-zinc-100"
                   aria-label="Cerrar"
                 >
                   <X className="h-4 w-4" />
@@ -5154,7 +5230,7 @@ export function ProjectBrainFullscreen({
                         setSignalModalClient(null);
                         setActiveTab("review");
                       }}
-                      className="w-full rounded-xl border border-violet-600 bg-violet-600 py-2.5 text-[11px] font-black uppercase tracking-wide text-white hover:bg-violet-700"
+                      className="w-full rounded-[5px] border border-violet-600 bg-violet-600 py-2.5 text-[11px] font-black uppercase tracking-wide text-white hover:bg-violet-700"
                     >
                       Ir a Por revisar
                     </button>
@@ -5173,12 +5249,13 @@ export function ProjectBrainFullscreen({
         )}
       </div>
 
-      <footer className="flex shrink-0 items-center justify-between border-t border-zinc-200 bg-zinc-50 px-4 py-3 text-[11px] text-zinc-600 sm:px-6">
-        <p>
-          <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />{" "}
-          {analyzedCount} activos analizados · ADN listo para generación
+      <footer className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-zinc-200/80 bg-white px-3 py-2 text-[10px] text-zinc-500 sm:px-4">
+        <p className="flex items-center gap-1.5">
+          <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" aria-hidden />
+          <span>
+            {analyzedCount} analizados · guardar proyecto persiste Brain
+          </span>
         </p>
-        <p>Los datos de Brain se guardan con el proyecto al pulsar Guardar.</p>
       </footer>
     </div>
   );

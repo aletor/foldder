@@ -19,6 +19,9 @@ export async function POST(req: NextRequest) {
       nodeId?: string;
       sourceSessionIds?: string[];
       telemetryNodeType?: BrainNodeType;
+      brainVersion?: number;
+      sourceAnalysisId?: string;
+      createdFromAnalysisVersion?: string;
     };
     const projectId = body.projectId ?? "";
     const candidates = body.candidates;
@@ -30,6 +33,9 @@ export async function POST(req: NextRequest) {
       nodeId: body.nodeId,
       sourceSessionIds: body.sourceSessionIds,
       telemetryNodeType: body.telemetryNodeType,
+      brainVersion: body.brainVersion,
+      sourceAnalysisId: body.sourceAnalysisId,
+      createdFromAnalysisVersion: body.createdFromAnalysisVersion,
     });
     return NextResponse.json({ ok: true, ids });
   } catch (e) {

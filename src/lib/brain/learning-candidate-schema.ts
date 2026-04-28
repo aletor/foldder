@@ -142,6 +142,11 @@ export type StoredLearningCandidate = {
   createdAt: string;
   updatedAt?: string;
   resolutionAction?: LearningResolutionAction;
+  /** Versión de Brain del proyecto al generar el candidato (revalidación si cambia). */
+  brainVersion?: number;
+  sourceImageId?: string;
+  sourceAnalysisId?: string;
+  createdFromAnalysisVersion?: string;
 };
 
 export interface LearningCandidateStore {

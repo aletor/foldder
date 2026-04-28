@@ -215,6 +215,53 @@ function normalizeSuggestion(item: unknown, index: number): BrainImageSuggestion
       fallbackDefaultUsed: !!v.fallbackDefaultUsed,
       textOnlyGeneration: !!v.textOnlyGeneration,
       secondaryBrandProductCopy: !!v.secondaryBrandProductCopy,
+      ...(typeof v.familyUsed === "string" ? { familyUsed: v.familyUsed as BrainImageSuggestionDiagnostics["familyUsed"] } : {}),
+      ...(typeof v.varietyMode === "string" ? { varietyMode: v.varietyMode as BrainImageSuggestionDiagnostics["varietyMode"] } : {}),
+      ...(typeof v.repeatedElementsAvoided === "boolean" ? { repeatedElementsAvoided: v.repeatedElementsAvoided } : {}),
+      ...(v.chosenVariationAxes && typeof v.chosenVariationAxes === "object"
+        ? { chosenVariationAxes: v.chosenVariationAxes as BrainImageSuggestionDiagnostics["chosenVariationAxes"] }
+        : {}),
+      ...(Array.isArray(v.coreLockedFields) ? { coreLockedFields: v.coreLockedFields as BrainImageSuggestionDiagnostics["coreLockedFields"] } : {}),
+      ...(typeof v.visualTerritory === "string"
+        ? { visualTerritory: v.visualTerritory as BrainImageSuggestionDiagnostics["visualTerritory"] }
+        : {}),
+      ...(typeof v.axisPoolUsed === "string" ? { axisPoolUsed: v.axisPoolUsed } : {}),
+      ...(typeof v.excludedAxesNote === "string" ? { excludedAxesNote: v.excludedAxesNote } : {}),
+      ...(Array.isArray(v.incompatibleAxesWarnings)
+        ? { incompatibleAxesWarnings: v.incompatibleAxesWarnings as string[] }
+        : {}),
+      ...(typeof v.corporateContextTruncatedForVisual === "boolean"
+        ? { corporateContextTruncatedForVisual: v.corporateContextTruncatedForVisual }
+        : {}),
+      ...(typeof v.variationValidationAttempts === "number"
+        ? { variationValidationAttempts: v.variationValidationAttempts }
+        : {}),
+      ...(typeof v.dominantPeopleSignals === "string" ? { dominantPeopleSignals: v.dominantPeopleSignals } : {}),
+      ...(typeof v.dominantSpaceSignals === "string" ? { dominantSpaceSignals: v.dominantSpaceSignals } : {}),
+      ...(typeof v.dominantClothingSignals === "string" ? { dominantClothingSignals: v.dominantClothingSignals } : {}),
+      ...(typeof v.dominantObjectSignals === "string" ? { dominantObjectSignals: v.dominantObjectSignals } : {}),
+      ...(typeof v.dominantTextureSignals === "string" ? { dominantTextureSignals: v.dominantTextureSignals } : {}),
+      ...(typeof v.dominantLightingSignals === "string" ? { dominantLightingSignals: v.dominantLightingSignals } : {}),
+      ...(typeof v.dominantCompositionSignals === "string"
+        ? { dominantCompositionSignals: v.dominantCompositionSignals }
+        : {}),
+      ...(typeof v.dominantCulturalSignals === "string" ? { dominantCulturalSignals: v.dominantCulturalSignals } : {}),
+      ...(typeof v.dominantActivitySignals === "string" ? { dominantActivitySignals: v.dominantActivitySignals } : {}),
+      ...(Array.isArray(v.dangerousWordsRemoved) ? { dangerousWordsRemoved: v.dangerousWordsRemoved as string[] } : {}),
+      ...(typeof v.promptLength === "number" ? { promptLength: v.promptLength } : {}),
+      ...(Array.isArray(v.dangerousWordsRemovedInPrompt)
+        ? { dangerousWordsRemovedInPrompt: v.dangerousWordsRemovedInPrompt as string[] }
+        : {}),
+      ...(typeof v.corporateContextUsed === "boolean" ? { corporateContextUsed: v.corporateContextUsed } : {}),
+      ...(typeof v.corporateContextLength === "number" ? { corporateContextLength: v.corporateContextLength } : {}),
+      ...(typeof v.numberOfRequiredObjects === "number" ? { numberOfRequiredObjects: v.numberOfRequiredObjects } : {}),
+      ...(typeof v.variationFocus === "string" ? { variationFocus: v.variationFocus } : {}),
+      ...(Array.isArray(v.contaminationWarnings)
+        ? { contaminationWarnings: v.contaminationWarnings as string[] }
+        : {}),
+      ...(typeof v.finalPromptWasRewritten === "boolean" ? { finalPromptWasRewritten: v.finalPromptWasRewritten } : {}),
+      ...(typeof v.promptBeforeSanitize === "string" ? { promptBeforeSanitize: v.promptBeforeSanitize } : {}),
+      ...(Array.isArray(v.visualAvoidUsed) ? { visualAvoidUsed: v.visualAvoidUsed as string[] } : {}),
     };
   }
   return {
@@ -394,8 +441,43 @@ function scopePrefix(scopeId?: string | null): string {
   return `scope:${normalizeScopeId(scopeId)}::`;
 }
 
-export function brainSuggestionsKeyForField(scopeId: string | null | undefined, nodeId: string, fieldId: string): string {
-  return `${scopePrefix(scopeId)}${nodeId}::${fieldId}`;
+function fnv1a32Hex(parts: readonly string[]): string {
+  const raw = parts.join("\n---\n");
+  let h = 2166136261;
+  for (let i = 0; i < raw.length; i++) {
+    h ^= raw.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0).toString(36);
+}
+
+/** Huella del texto final de planes (tests / depuración); no usar sola como clave de caché (incluye rotación de variedad). */
+export function fingerprintBrainImagePromptPlans(
+  plans: ReadonlyArray<{ id: string; prompt: string }>,
+): string {
+  if (!plans.length) return "empty";
+  return fnv1a32Hex(plans.map((p) => `${String(p.id)}\n${String(p.prompt)}`));
+}
+
+/**
+ * Huella estable para clave de caché de sugerencias: ADN visual + contexto de página + opciones de generación.
+ * Debe ignorar el historial de combinaciones de variedad y cambios de identidad de arrays por re-render.
+ */
+export function fingerprintBrainImageSuggestionStablePayload(parts: readonly string[]): string {
+  if (!parts.length) return "empty";
+  return fnv1a32Hex(parts);
+}
+
+export function brainSuggestionsKeyForField(
+  scopeId: string | null | undefined,
+  nodeId: string,
+  fieldId: string,
+  promptPlansFingerprint?: string | null,
+): string {
+  const fp = (promptPlansFingerprint ?? "").trim();
+  const safeFp = fp.replace(/[^\w-]+/g, "_").slice(0, 40);
+  const tail = safeFp && safeFp !== "empty" ? `${nodeId}::${fieldId}::p_${safeFp}` : `${nodeId}::${fieldId}`;
+  return `${scopePrefix(scopeId)}${tail}`;
 }
 
 export function getBrainImageSuggestionEntry(key: string): BrainImageSuggestionEntry | undefined {

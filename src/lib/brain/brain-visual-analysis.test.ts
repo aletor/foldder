@@ -324,6 +324,34 @@ describe("aggregateVisualPatterns", () => {
     expect(agg.outlierSourceAssetIds?.length).toBeGreaterThan(0);
     expect(agg.patternSummary?.length).toBeGreaterThan(10);
   });
+
+  it("no lanza si listas legacy vienen como string (p. ej. JSON antiguo)", () => {
+    const row = {
+      id: "legacy-1",
+      sourceAssetId: "legacy-1",
+      sourceKind: "knowledge_document",
+      subject: "mesa, luz",
+      subjectTags: "libros, café" as unknown as string[],
+      visualStyle: "editorial documental" as unknown as string[],
+      mood: ["cálido"],
+      colorPalette: { dominant: ["#111"], secondary: [] },
+      composition: ["centro"],
+      people: "",
+      clothingStyle: "",
+      graphicStyle: undefined as unknown as string,
+      brandSignals: [],
+      possibleUse: [],
+      classification: "PROJECT_VISUAL_REFERENCE",
+      coherenceScore: 0.75,
+      analyzedAt: "2026-01-01T00:00:00.000Z",
+      analysisStatus: "analyzed",
+      visionProviderId: "gemini-vision" as const,
+      fallbackUsed: false,
+    } as BrainVisualImageAnalysis;
+    expect(() => aggregateVisualPatterns([row])).not.toThrow();
+    const agg = aggregateVisualPatterns([row]);
+    expect(agg.frequentSubjects.length).toBeGreaterThan(0);
+  });
 });
 
 describe("createVisualLearningCandidates", () => {

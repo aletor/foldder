@@ -286,11 +286,12 @@ import { ImageFrameFittingGlyph } from "./freehand/ImageFrameFittingGlyph";
 import { normalizeProjectAssets } from "./project-assets-metadata";
 import { useProjectBrainCanvas } from "./project-brain-canvas-context";
 import { useProjectAssetsCanvas } from "./project-assets-canvas-context";
-import { collectProjectMedia, type ProjectMediaItem } from "./project-media-inventory";
+import { collectProjectMedia, projectMediaDedupeKey, type ProjectMediaItem } from "./project-media-inventory";
 import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
 import {
   brainSuggestionsKeyForField,
   ensureBrainImageSuggestions,
+  fingerprintBrainImageSuggestionStablePayload,
   getBrainImageSuggestionEntry,
   getBrainImageSuggestionForceCooldownMs,
   listAllBrainGeneratedSuggestionUrls,
@@ -298,9 +299,12 @@ import {
   type BrainImageSuggestionEntry,
 } from "./brain-image-suggestions-cache";
 import {
+  buildBrainImagePromptDevTrace,
   buildBrainVisualPromptContext,
   composeBrainDesignerImagePrompt,
 } from "@/lib/brain/build-brain-visual-prompt-context";
+import type { BrainDesignerVarietyInput, BrainVarietyMode, VariationFingerprint } from "@/lib/brain/brain-visual-variety";
+import { fingerprintFromChoice } from "@/lib/brain/brain-visual-variety";
 import type { TelemetryImageSource } from "@/lib/brain/brain-models";
 import { trackDesignerImageImported, trackDesignerImageUsed } from "./designer/designer-image-telemetry";
 import {
@@ -8731,9 +8735,9 @@ export function FreehandStudioCanvas({
     const out: ProjectMediaItem[] = [];
     const seen = new Set<string>();
     const push = (item: ProjectMediaItem) => {
-      const key = item.url.trim();
-      if (!key || seen.has(key)) return;
-      seen.add(key);
+      const dedupe = projectMediaDedupeKey(item.url.trim());
+      if (!dedupe || seen.has(dedupe)) return;
+      seen.add(dedupe);
       out.push(item);
     };
     for (const item of all) {
@@ -8794,21 +8798,26 @@ export function FreehandStudioCanvas({
   const foldderGeneratedUrlSet = useMemo(() => {
     const nodes = Array.isArray(projectAssetsCtx?.flowNodes) ? projectAssetsCtx.flowNodes : [];
     const media = collectProjectMedia(nodes);
-    const out = new Set<string>(media.generated.map((x) => x.url.trim()).filter(Boolean));
+    const out = new Set<string>();
+    const add = (u: string) => {
+      const k = projectMediaDedupeKey(u.trim());
+      if (k) out.add(k);
+    };
+    for (const x of media.generated) add(x.url);
     for (const obj of objects) {
       if (Array.isArray(obj.aiGeneratedMediaRefs)) {
         for (const raw of obj.aiGeneratedMediaRefs) {
           const t = typeof raw === "string" ? raw.trim() : "";
-          if (t) out.add(t);
+          if (t) add(t);
         }
       }
       if (obj.type === "image") {
         const src = (obj as ImageObject).src?.trim();
-        if (src && (obj as ImageObject).imageAssetMeta?.generatedByAi) out.add(src);
+        if (src && (obj as ImageObject).imageAssetMeta?.generatedByAi) add(src);
       } else if (obj.type === "rect" && (obj as RectObject).isImageFrame) {
         const ifc = (obj as RectObject).imageFrameContent;
         const src = ifc?.src?.trim();
-        if (src && ifc?.generatedByAi) out.add(src);
+        if (src && ifc?.generatedByAi) add(src);
       }
     }
     return out;
@@ -9410,6 +9419,25 @@ export function FreehandStudioCanvas({
   const [brainImageError, setBrainImageError] = useState<string | null>(null);
   const [brainForceCooldownMs, setBrainForceCooldownMs] = useState(0);
   const [brainImageWhyId, setBrainImageWhyId] = useState<string | null>(null);
+  /** Panel dev bajo «Ver por qué» (copiar prompt pre/post y trazabilidad). */
+  const [brainImagePromptDevOpen, setBrainImagePromptDevOpen] = useState(false);
+  useEffect(() => {
+    setBrainImagePromptDevOpen(false);
+  }, [brainImageWhyId]);
+  const [brainImagePromptModalOpen, setBrainImagePromptModalOpen] = useState(false);
+  const [brainImagePromptModalForce, setBrainImagePromptModalForce] = useState(false);
+  const [brainImageVarietyMode, setBrainImageVarietyMode] = useState<BrainVarietyMode>("balanced");
+  const [brainImageLockPalette, setBrainImageLockPalette] = useState(false);
+  const [brainImageLockLight, setBrainImageLockLight] = useState(false);
+  const [brainImageLockTone, setBrainImageLockTone] = useState(false);
+  const [brainImageLockRealism, setBrainImageLockRealism] = useState(false);
+  const [brainImageVarySubjects, setBrainImageVarySubjects] = useState(true);
+  const [brainImageVaryFraming, setBrainImageVaryFraming] = useState(true);
+  const [brainImageVaryScene, setBrainImageVaryScene] = useState(true);
+  const [brainImageVaryActivity, setBrainImageVaryActivity] = useState(true);
+  const [brainImageVaryProps, setBrainImageVaryProps] = useState(true);
+  const brainVariationHistoryRef = useRef<VariationFingerprint[]>([]);
+  const brainImageGenerateForceRef = useRef(false);
   const brainSuggestionsSigRef = useRef("");
   const brainImageLoadingRef = useRef(false);
   const brainImageErrorRef = useRef<string | null>(null);
@@ -10507,6 +10535,9 @@ export function FreehandStudioCanvas({
     [brainAssets],
   );
 
+  /** Contenido estable (no la identidad del array) para deps de planes y huella de caché. */
+  const brainNearbyTextContentKey = brainNearbyText.join("\u001f");
+
   const brainImagePromptPlans = useMemo(() => {
     const claim = brainClaims[0] ?? "Narrativa con evidencia";
     const claimB = brainClaims[1] ?? "Sistema creativo conectado";
@@ -10520,6 +10551,24 @@ export function FreehandStudioCanvas({
         ? "Usar el logo de referencia adjunto con presencia sutil y coherente de marca."
         : "No incluir logotipo explícito.";
 
+    const varietyInput: BrainDesignerVarietyInput = {
+      varietyMode: brainImageVarietyMode,
+      lockCore: {
+        palette: brainImageLockPalette,
+        light: brainImageLockLight,
+        tone: brainImageLockTone,
+        realism: brainImageLockRealism,
+      },
+      varyAxes: {
+        subjects: brainImageVarySubjects,
+        framing: brainImageVaryFraming,
+        scene: brainImageVaryScene,
+        activity: brainImageVaryActivity,
+        props: brainImageVaryProps,
+      },
+      historyFingerprints: brainVariationHistoryRef.current,
+    };
+
     const editorial = composeBrainDesignerImagePrompt({
       context: brainVisualPromptContext,
       pieceMessage: claim,
@@ -10529,6 +10578,8 @@ export function FreehandStudioCanvas({
       featureLine: featureLine || undefined,
       differentiatorsLine: diffLine || undefined,
       metricsLine: metricsLine || undefined,
+      variety: varietyInput,
+      varietyPlanSeed: "brain-img-1",
     });
     const performance = composeBrainDesignerImagePrompt({
       context: brainVisualPromptContext,
@@ -10539,6 +10590,8 @@ export function FreehandStudioCanvas({
       featureLine: featureLine || undefined,
       differentiatorsLine: diffLine || undefined,
       metricsLine: metricsLine || undefined,
+      variety: varietyInput,
+      varietyPlanSeed: "brain-img-2",
     });
 
     return [
@@ -10559,13 +10612,90 @@ export function FreehandStudioCanvas({
     brainVisualPromptContext,
     brainClaims,
     brainPageContextText,
-    brainNearbyText,
+    brainNearbyTextContentKey,
     selectedTextValue,
     brainBrandColorLine,
     brainLogoReferences,
     brainFeatureHints,
     brainDifferentiators,
     brainMarketSignals,
+    brainImageVarietyMode,
+    brainImageLockPalette,
+    brainImageLockLight,
+    brainImageLockTone,
+    brainImageLockRealism,
+    brainImageVarySubjects,
+    brainImageVaryFraming,
+    brainImageVaryScene,
+    brainImageVaryActivity,
+    brainImageVaryProps,
+  ]);
+
+  const brainImageSuggestionStableFingerprint = useMemo(() => {
+    const ctx = brainVisualPromptContext;
+    const core = ctx.visualCore;
+    const coreSlice = {
+      generalTone: core.generalTone,
+      styleSummary: core.styleSummary,
+      paletteAndMaterials: core.paletteAndMaterials,
+      lightingCharacter: core.lightingCharacter,
+      brandFeeling: core.brandFeeling,
+      confirmedPatternsBrief: core.confirmedPatternsBrief ?? "",
+      visualAvoid: core.visualAvoid,
+    };
+    return fingerprintBrainImageSuggestionStablePayload([
+      ctx.visualTerritory,
+      ctx.axisPoolId,
+      ctx.visualDirection,
+      ctx.sourceQuality,
+      String(ctx.textOnlyGeneration),
+      String(ctx.visualContextWeak),
+      String(ctx.visualReferenceAnalysisRealCount),
+      String(ctx.patternSummaryUsed),
+      String(ctx.fallbackDefaultUsed),
+      JSON.stringify(coreSlice),
+      ctx.colorPalette.join(","),
+      ctx.subjects.join(","),
+      ctx.visualStyleTags.join(","),
+      ctx.visualMessage.slice(0, 8).join(","),
+      brainClaims.join("¦"),
+      brainPageContextText,
+      brainNearbyTextContentKey,
+      (selectedTextValue || "").trim(),
+      brainBrandColorLine,
+      String(brainLogoReferences.length),
+      brainFeatureHints.join("¦"),
+      brainDifferentiators.join("¦"),
+      brainMarketSignals.join("¦"),
+      brainImageAspectRatio,
+      brainImageVarietyMode,
+      [brainImageLockPalette, brainImageLockLight, brainImageLockTone, brainImageLockRealism].map(String).join(""),
+      [brainImageVarySubjects, brainImageVaryFraming, brainImageVaryScene, brainImageVaryActivity, brainImageVaryProps]
+        .map(String)
+        .join(""),
+    ]);
+  }, [
+    brainVisualPromptContext,
+    brainClaims,
+    brainPageContextText,
+    brainNearbyTextContentKey,
+    selectedTextValue,
+    brainBrandColorLine,
+    brainLogoReferences.length,
+    brainFeatureHints,
+    brainDifferentiators,
+    brainMarketSignals,
+    brainImageAspectRatio,
+    brainImageVarietyMode,
+    brainImageLockPalette,
+    brainImageLockLight,
+    brainImageLockTone,
+    brainImageLockRealism,
+    brainImageVarySubjects,
+    brainImageVaryFraming,
+    brainImageVaryScene,
+    brainImageVaryActivity,
+    brainImageVaryProps,
   ]);
 
   const prepareBrainLogoRefsForGemini = useCallback(
@@ -10621,11 +10751,14 @@ export function FreehandStudioCanvas({
     });
   }, []);
 
+  const brainImagePromptPlansRef = useRef(brainImagePromptPlans);
+  brainImagePromptPlansRef.current = brainImagePromptPlans;
+
   const brainSuggestionFieldKey = useMemo(() => {
     const targetId = singleSelected?.id;
     if (!targetId || !nodeId) return null;
-    return brainSuggestionsKeyForField(projectScopeId, nodeId, targetId);
-  }, [projectScopeId, nodeId, singleSelected?.id]);
+    return brainSuggestionsKeyForField(projectScopeId, nodeId, targetId, brainImageSuggestionStableFingerprint);
+  }, [projectScopeId, nodeId, singleSelected?.id, brainImageSuggestionStableFingerprint]);
 
   useEffect(() => {
     if (!supportsBrainImageSuggestions || !brainSuggestionFieldKey || !singleSelected?.id) {
@@ -10665,6 +10798,17 @@ export function FreehandStudioCanvas({
       if (brainSuggestionsSigRef.current !== nextSig) {
         brainSuggestionsSigRef.current = nextSig;
         setBrainImageSuggestions(suggestions);
+        if (!entry.loading && suggestions.length > 0) {
+          for (const s of suggestions) {
+            const ax = s.visualDiagnostics?.chosenVariationAxes;
+            if (ax) {
+              const fp = fingerprintFromChoice(ax);
+              const list = brainVariationHistoryRef.current;
+              list.push(fp);
+              brainVariationHistoryRef.current = list.slice(-16);
+            }
+          }
+        }
       }
       const nextLoading = !!entry.loading;
       if (brainImageLoadingRef.current !== nextLoading) {
@@ -10693,17 +10837,6 @@ export function FreehandStudioCanvas({
     };
     window.addEventListener("foldder-brain-image-suggestions-updated", onUpdate);
 
-    const start = async () => {
-      const logoRefsForGemini = await prepareBrainLogoRefsForGemini(brainLogoReferences);
-      await ensureBrainImageSuggestions({
-        key: brainSuggestionFieldKey,
-        plans: brainImagePromptPlans,
-        aspectRatio: brainImageAspectRatio,
-        logoRefs: logoRefsForGemini,
-      });
-    };
-    void start();
-
     return () => {
       window.removeEventListener("foldder-brain-image-suggestions-updated", onUpdate);
     };
@@ -10711,7 +10844,6 @@ export function FreehandStudioCanvas({
     supportsBrainImageSuggestions,
     brainSuggestionFieldKey,
     singleSelected?.id,
-    brainImagePromptPlans,
     brainImageAspectRatio,
     brainLogoReferences,
     prepareBrainLogoRefsForGemini,
@@ -10738,23 +10870,40 @@ export function FreehandStudioCanvas({
     return () => window.clearInterval(t);
   }, [brainSuggestionFieldKey]);
 
-  const requestAnotherBrainImages = useCallback(async () => {
+  useEffect(() => {
+    if (!brainSuggestionFieldKey || !supportsBrainImageSuggestions) {
+      setBrainImagePromptModalOpen(false);
+    }
+  }, [brainSuggestionFieldKey, supportsBrainImageSuggestions]);
+
+  const openBrainImagePromptModal = useCallback((force: boolean) => {
+    brainImageGenerateForceRef.current = force;
+    setBrainImagePromptModalForce(force);
+    setBrainImagePromptModalOpen(true);
+  }, []);
+
+  const confirmBrainImageGenerationFromModal = useCallback(async () => {
     if (!brainSuggestionFieldKey) return;
+    const force = brainImageGenerateForceRef.current;
+    setBrainImagePromptModalOpen(false);
     const logoRefsForGemini = await prepareBrainLogoRefsForGemini(brainLogoReferences);
     await ensureBrainImageSuggestions({
       key: brainSuggestionFieldKey,
-      plans: brainImagePromptPlans,
+      plans: brainImagePromptPlansRef.current,
       aspectRatio: brainImageAspectRatio,
       logoRefs: logoRefsForGemini,
-      force: true,
+      force,
     });
   }, [
     brainSuggestionFieldKey,
     prepareBrainLogoRefsForGemini,
     brainLogoReferences,
-    brainImagePromptPlans,
     brainImageAspectRatio,
   ]);
+
+  const requestAnotherBrainImages = useCallback(() => {
+    openBrainImagePromptModal(true);
+  }, [openBrainImagePromptModal]);
 
   const brainPaletteColors = useMemo(() => {
     const out: string[] = [];
@@ -11693,7 +11842,7 @@ export function FreehandStudioCanvas({
     async (src: string) => {
       const target = foldderImagePickerTarget;
       if (!target) return;
-      const aiGenerated = foldderGeneratedUrlSet.has(src.trim());
+      const aiGenerated = foldderGeneratedUrlSet.has(projectMediaDedupeKey(src.trim()));
       const natural = await loadImageNaturalSize(src);
       setObjects((prev) => {
         const idx = prev.findIndex((o) => o.id === target.targetId);
@@ -22233,13 +22382,125 @@ export function FreehandStudioCanvas({
                   {supportsBrainImageSuggestions && (
                     <div className="space-y-1.5 rounded-[8px] border border-white/[0.08] bg-white/[0.03] p-2">
                       <div className="text-[10px] uppercase tracking-wider text-zinc-500">Imagen</div>
+                      <div className="space-y-1.5 rounded-[6px] border border-white/[0.06] bg-black/25 p-2">
+                        <div className="text-[9px] font-semibold uppercase tracking-wide text-zinc-500">
+                          Variedad (Brain)
+                        </div>
+                        <label className="block text-[9px] text-zinc-400">
+                          <span className="mb-0.5 block text-zinc-500">Modo</span>
+                          <select
+                            value={brainImageVarietyMode}
+                            onChange={(e) => setBrainImageVarietyMode(e.target.value as BrainVarietyMode)}
+                            className="nodrag w-full rounded border border-white/10 bg-[#141820] px-1.5 py-1 text-[10px] text-zinc-200"
+                          >
+                            <option value="conservative">Conservadora</option>
+                            <option value="balanced">Equilibrada</option>
+                            <option value="exploratory">Explorar dentro de marca</option>
+                          </select>
+                        </label>
+                        <div className="text-[8px] font-semibold uppercase tracking-wide text-zinc-600">
+                          Bloquear núcleo
+                        </div>
+                        <div className="flex flex-wrap gap-x-2 gap-y-1 text-[9px] text-zinc-300">
+                          <label className="nodrag flex cursor-pointer items-center gap-1">
+                            <input
+                              type="checkbox"
+                              checked={brainImageLockPalette}
+                              onChange={(e) => setBrainImageLockPalette(e.target.checked)}
+                            />
+                            Paleta
+                          </label>
+                          <label className="nodrag flex cursor-pointer items-center gap-1">
+                            <input
+                              type="checkbox"
+                              checked={brainImageLockLight}
+                              onChange={(e) => setBrainImageLockLight(e.target.checked)}
+                            />
+                            Luz
+                          </label>
+                          <label className="nodrag flex cursor-pointer items-center gap-1">
+                            <input
+                              type="checkbox"
+                              checked={brainImageLockTone}
+                              onChange={(e) => setBrainImageLockTone(e.target.checked)}
+                            />
+                            Tono
+                          </label>
+                          <label className="nodrag flex cursor-pointer items-center gap-1">
+                            <input
+                              type="checkbox"
+                              checked={brainImageLockRealism}
+                              onChange={(e) => setBrainImageLockRealism(e.target.checked)}
+                            />
+                            Realismo
+                          </label>
+                        </div>
+                        <div className="text-[8px] font-semibold uppercase tracking-wide text-zinc-600">
+                          Dejar variar
+                        </div>
+                        <div className="flex flex-wrap gap-x-2 gap-y-1 text-[9px] text-zinc-300">
+                          <label className="nodrag flex cursor-pointer items-center gap-1">
+                            <input
+                              type="checkbox"
+                              checked={brainImageVarySubjects}
+                              onChange={(e) => setBrainImageVarySubjects(e.target.checked)}
+                            />
+                            Sujetos
+                          </label>
+                          <label className="nodrag flex cursor-pointer items-center gap-1">
+                            <input
+                              type="checkbox"
+                              checked={brainImageVaryFraming}
+                              onChange={(e) => setBrainImageVaryFraming(e.target.checked)}
+                            />
+                            Encuadre
+                          </label>
+                          <label className="nodrag flex cursor-pointer items-center gap-1">
+                            <input
+                              type="checkbox"
+                              checked={brainImageVaryScene}
+                              onChange={(e) => setBrainImageVaryScene(e.target.checked)}
+                            />
+                            Escena
+                          </label>
+                          <label className="nodrag flex cursor-pointer items-center gap-1">
+                            <input
+                              type="checkbox"
+                              checked={brainImageVaryActivity}
+                              onChange={(e) => setBrainImageVaryActivity(e.target.checked)}
+                            />
+                            Actividad
+                          </label>
+                          <label className="nodrag flex cursor-pointer items-center gap-1">
+                            <input
+                              type="checkbox"
+                              checked={brainImageVaryProps}
+                              onChange={(e) => setBrainImageVaryProps(e.target.checked)}
+                            />
+                            Props
+                          </label>
+                        </div>
+                      </div>
                       {brainImageLoading ? (
                         <div className="rounded-[6px] border border-white/[0.08] bg-[#171a21] px-2.5 py-2 text-[10px] text-zinc-400">
                           Generando sugerencias visuales con Nano Banana…
                         </div>
                       ) : brainImageSuggestions.length === 0 ? (
-                        <div className="rounded-[6px] border border-white/[0.08] bg-[#171a21] px-2.5 py-2 text-[10px] text-zinc-400">
-                          {brainImageError ?? "No hay sugerencias visuales disponibles."}
+                        <div className="space-y-2 rounded-[6px] border border-white/[0.08] bg-[#171a21] px-2.5 py-2 text-[10px] text-zinc-400">
+                          <p>
+                            No se generan solas: abre el modal, revisa el texto que se envía a Gemini y confirma para
+                            obtener las 2 muestras.
+                          </p>
+                          {brainImageError ? (
+                            <p className="text-amber-300/90">{brainImageError}</p>
+                          ) : null}
+                          <button
+                            type="button"
+                            onClick={() => openBrainImagePromptModal(false)}
+                            className="w-full rounded-[5px] border border-violet-500/35 bg-violet-600/20 px-2 py-1.5 text-[10px] font-semibold text-violet-100 transition-colors hover:bg-violet-600/30"
+                          >
+                            Revisar prompt y generar 2 sugerencias
+                          </button>
                         </div>
                       ) : (
                         <div className="grid grid-cols-2 gap-2">
@@ -22286,9 +22547,217 @@ export function FreehandStudioCanvas({
                                       {d.confirmedVisualDnaUsed ? "sí" : "no"} · fallback/default:{" "}
                                       {d.fallbackDefaultUsed ? "sí" : "no"}
                                     </p>
-                                    <pre className="max-h-36 overflow-auto whitespace-pre-wrap break-words text-[8px] text-zinc-400">
-                                      {d.finalPromptUsed}
-                                    </pre>
+                                    {d.familyUsed ? (
+                                      <p className="mb-1 font-mono text-[8px] text-zinc-500">
+                                        familia: {d.familyUsed} · variedad: {d.varietyMode ?? "—"} · repetición
+                                        evitada: {d.repeatedElementsAvoided ? "sí" : "no"}
+                                        {d.coreLockedFields?.length
+                                          ? ` · núcleo bloqueado: ${d.coreLockedFields.join(",")}`
+                                          : ""}
+                                      </p>
+                                    ) : null}
+                                    {d.chosenVariationAxes ? (
+                                      <p className="mb-1 font-mono text-[8px] text-zinc-500">
+                                        ejes: {d.chosenVariationAxes.subjectMode} · {d.chosenVariationAxes.framing} ·{" "}
+                                        {d.chosenVariationAxes.environment} · {d.chosenVariationAxes.activity} ·{" "}
+                                        {d.chosenVariationAxes.propCluster} · mood {d.chosenVariationAxes.moodShift}
+                                      </p>
+                                    ) : null}
+                                    {d.visualTerritory || d.axisPoolUsed ? (
+                                      <p className="mb-1 font-mono text-[8px] text-zinc-500">
+                                        territorio: {d.visualTerritory ?? "—"} · pool: {d.axisPoolUsed ?? "—"}
+                                        {d.excludedAxesNote ? ` · excluidos: ${d.excludedAxesNote}` : ""}
+                                        {d.corporateContextTruncatedForVisual ? " · corporate recortado: sí" : ""}
+                                        {typeof d.variationValidationAttempts === "number" &&
+                                        d.variationValidationAttempts > 0
+                                          ? ` · reintentos validación: ${d.variationValidationAttempts}`
+                                          : ""}
+                                      </p>
+                                    ) : null}
+                                    {d.dominantPeopleSignals || d.dominantSpaceSignals ? (
+                                      <p className="mb-1 font-mono text-[8px] text-zinc-500">
+                                        señales: personas {d.dominantPeopleSignals ?? "—"} · espacio{" "}
+                                        {d.dominantSpaceSignals ?? "—"}
+                                        {d.dominantCulturalSignals ? ` · cultura ${d.dominantCulturalSignals}` : ""}
+                                        {d.dominantActivitySignals ? ` · actividad ${d.dominantActivitySignals}` : ""}
+                                      </p>
+                                    ) : null}
+                                    {d.dangerousWordsRemoved && d.dangerousWordsRemoved.length > 0 ? (
+                                      <p className="mb-1 font-mono text-[8px] text-amber-300/85">
+                                        ejes filtrados: {d.dangerousWordsRemoved.join(", ")}
+                                      </p>
+                                    ) : null}
+                                    {typeof d.promptLength === "number" ? (
+                                      <p className="mb-1 font-mono text-[8px] text-zinc-500">
+                                        prompt: {d.promptLength} caracteres
+                                        {d.corporateContextUsed != null
+                                          ? ` · corporate en prompt: ${d.corporateContextUsed ? "sí" : "no"}`
+                                          : ""}
+                                        {typeof d.corporateContextLength === "number"
+                                          ? ` (${d.corporateContextLength})`
+                                          : ""}
+                                        {d.finalPromptWasRewritten ? " · reescrito: sí" : ""}
+                                      </p>
+                                    ) : null}
+                                    {d.variationFocus ? (
+                                      <p className="mb-1 font-mono text-[8px] text-zinc-500">
+                                        foco variación: {d.variationFocus.slice(0, 200)}
+                                        {d.variationFocus.length > 200 ? "…" : ""}
+                                      </p>
+                                    ) : null}
+                                    {d.contaminationWarnings && d.contaminationWarnings.length > 0 ? (
+                                      <p className="mb-1 text-[8px] text-amber-300/90">
+                                        contaminación: {d.contaminationWarnings.join(" · ")}
+                                      </p>
+                                    ) : null}
+                                    {d.incompatibleAxesWarnings && d.incompatibleAxesWarnings.length > 0 ? (
+                                      <p className="mb-1 text-[8px] text-amber-300/90">
+                                        Avisos: {d.incompatibleAxesWarnings.join(" · ")}
+                                      </p>
+                                    ) : null}
+                                    <button
+                                      type="button"
+                                      onClick={() => setBrainImagePromptDevOpen((o) => !o)}
+                                      className="mb-1 w-full rounded-[4px] border border-white/[0.1] bg-zinc-800/80 px-1.5 py-1 text-left text-[8px] font-medium text-zinc-300 hover:bg-zinc-700/90"
+                                    >
+                                      {brainImagePromptDevOpen ? "▼" : "▶"} Dev / log prompt (A–F, copiar
+                                      trazabilidad)
+                                    </button>
+                                    {brainImagePromptDevOpen ? (
+                                      <div className="mb-2 space-y-1.5 rounded-[5px] border border-violet-500/20 bg-[#0d0f14] p-2">
+                                        <div className="flex flex-wrap gap-1">
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              void navigator.clipboard?.writeText(d.finalPromptUsed);
+                                            }}
+                                            className="rounded bg-violet-600/35 px-1.5 py-0.5 text-[8px] text-violet-50 hover:bg-violet-600/50"
+                                          >
+                                            1 · Final
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              void navigator.clipboard?.writeText(
+                                                d.promptBeforeSanitize ?? "(no disponible)",
+                                              );
+                                            }}
+                                            className="rounded bg-violet-600/35 px-1.5 py-0.5 text-[8px] text-violet-50 hover:bg-violet-600/50"
+                                          >
+                                            2 · Pre-sanitize
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              const diff = [
+                                                "=== DIFERENCIAS ===",
+                                                "Sustituciones / filtros (ejes + sanitización del prompt):",
+                                                [
+                                                  ...(d.dangerousWordsRemoved ?? []),
+                                                  ...(d.dangerousWordsRemovedInPrompt ?? []),
+                                                ].join(", ") || "(ninguna)",
+                                                "",
+                                                "Warnings (validación + ejes):",
+                                                [
+                                                  ...(d.contaminationWarnings ?? []),
+                                                  ...(d.incompatibleAxesWarnings ?? []),
+                                                ].join("\n") || "(ninguno)",
+                                                "",
+                                                "Corporate / contexto:",
+                                                typeof d.corporateContextUsed === "boolean"
+                                                  ? `Bloque F con texto corporate: ${d.corporateContextUsed ? "sí" : "no"}`
+                                                  : "",
+                                                typeof d.corporateContextLength === "number"
+                                                  ? `Longitud corporate en metadata: ${d.corporateContextLength} caracteres`
+                                                  : "",
+                                                `Corporate recortado al construir contexto visual: ${d.corporateContextTruncatedForVisual ? "sí" : "no"}`,
+                                                typeof d.finalPromptWasRewritten === "boolean"
+                                                  ? `Pipeline reescribió o truncó el prompt: ${d.finalPromptWasRewritten ? "sí" : "no"}`
+                                                  : "",
+                                                typeof d.promptLength === "number"
+                                                  ? `Longitud prompt final: ${d.promptLength} caracteres`
+                                                  : "",
+                                              ]
+                                                .filter((line) => line !== "")
+                                                .join("\n");
+                                              void navigator.clipboard?.writeText(diff);
+                                            }}
+                                            className="rounded bg-violet-600/35 px-1.5 py-0.5 text-[8px] text-violet-50 hover:bg-violet-600/50"
+                                          >
+                                            3 · Delta
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              void navigator.clipboard?.writeText(
+                                                [
+                                                  `territorio: ${d.visualTerritory ?? "—"}`,
+                                                  d.axisPoolUsed ? `pool: ${d.axisPoolUsed}` : "",
+                                                  d.variationFocus ? `foco: ${d.variationFocus}` : "",
+                                                  d.chosenVariationAxes
+                                                    ? `ejes: ${JSON.stringify(d.chosenVariationAxes)}`
+                                                    : "",
+                                                ]
+                                                  .filter(Boolean)
+                                                  .join("\n"),
+                                              );
+                                            }}
+                                            className="rounded bg-violet-600/35 px-1.5 py-0.5 text-[8px] text-violet-50 hover:bg-violet-600/50"
+                                          >
+                                            4–5 · Territorio + variación
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              void navigator.clipboard?.writeText(
+                                                d.visualAvoidUsed?.length
+                                                  ? d.visualAvoidUsed.join("\n")
+                                                  : "(no listado)",
+                                              );
+                                            }}
+                                            className="rounded bg-violet-600/35 px-1.5 py-0.5 text-[8px] text-violet-50 hover:bg-violet-600/50"
+                                          >
+                                            6 · visualAvoid
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              void navigator.clipboard?.writeText(buildBrainImagePromptDevTrace(d));
+                                            }}
+                                            className="rounded border border-violet-400/40 bg-transparent px-1.5 py-0.5 text-[8px] text-violet-200 hover:bg-violet-500/15"
+                                          >
+                                            Copiar informe completo
+                                          </button>
+                                        </div>
+                                        <p className="text-[7px] leading-snug text-zinc-500">
+                                          Si la imagen falla: revisa territorio (4), plan D (5), delta (3) o si el
+                                          modelo ignora el final (1).
+                                        </p>
+                                        <div className="grid max-h-40 grid-cols-1 gap-1 sm:grid-cols-2">
+                                          <div>
+                                            <div className="mb-0.5 text-[7px] font-semibold uppercase text-zinc-500">
+                                              Pre-sanitize
+                                            </div>
+                                            <pre className="max-h-32 overflow-auto whitespace-pre-wrap break-words rounded border border-white/[0.06] bg-black/40 p-1 text-[7px] text-zinc-400">
+                                              {d.promptBeforeSanitize ?? "—"}
+                                            </pre>
+                                          </div>
+                                          <div>
+                                            <div className="mb-0.5 text-[7px] font-semibold uppercase text-zinc-500">
+                                              Final
+                                            </div>
+                                            <pre className="max-h-32 overflow-auto whitespace-pre-wrap break-words rounded border border-white/[0.06] bg-black/40 p-1 text-[7px] text-zinc-400">
+                                              {d.finalPromptUsed}
+                                            </pre>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    ) : null}
+                                    {!brainImagePromptDevOpen ? (
+                                      <pre className="max-h-36 overflow-auto whitespace-pre-wrap break-words text-[8px] text-zinc-400">
+                                        {d.finalPromptUsed}
+                                      </pre>
+                                    ) : null}
                                   </div>
                                 ) : null}
                               </div>
@@ -22298,15 +22767,13 @@ export function FreehandStudioCanvas({
                       )}
                       <button
                         type="button"
-                        onClick={() => {
-                          void requestAnotherBrainImages();
-                        }}
+                        onClick={() => requestAnotherBrainImages()}
                         disabled={brainImageLoading || brainForceCooldownMs > 0}
                         className="w-full rounded-[5px] border border-white/[0.12] bg-white/[0.04] px-2 py-1.5 text-[10px] font-semibold text-zinc-200 transition-colors hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-55"
                       >
                         {brainForceCooldownMs > 0
                           ? `Solicitar otra imagen (${Math.ceil(brainForceCooldownMs / 1000)}s)`
-                          : "Solicitar otra imagen"}
+                          : "Revisar prompt y solicitar otras 2 imágenes"}
                       </button>
                     </div>
                   )}
@@ -24783,6 +25250,110 @@ export function FreehandStudioCanvas({
 
       {/* ── Context menu ─────────────────────────────────────────── */}
       {ctxMenu && <CtxMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenuItems} onClose={() => setCtxMenu(null)} />}
+
+      {designerMode &&
+        supportsBrainImageSuggestions &&
+        brainImagePromptModalOpen &&
+        brainSuggestionFieldKey &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div className="fixed inset-0 z-[100120] flex items-center justify-center p-4">
+            <button
+              type="button"
+              aria-label="Cerrar"
+              className="absolute inset-0 bg-black/60"
+              disabled={brainImageLoading}
+              onClick={() => {
+                if (brainImageLoading) return;
+                setBrainImagePromptModalOpen(false);
+              }}
+            />
+            <div
+              className="relative z-10 flex max-h-[min(92vh,880px)] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-white/[0.12] bg-[#12151a] shadow-2xl select-text"
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <div className="flex shrink-0 items-center justify-between gap-3 border-b border-white/[0.1] px-4 py-3 select-text">
+                <div>
+                  <h2 className="text-sm font-semibold text-zinc-100">
+                    {brainImagePromptModalForce
+                      ? "Regenerar: prompts para Gemini"
+                      : "Generar 2 sugerencias: prompts para Gemini"}
+                  </h2>
+                  <p className="mt-0.5 text-[10px] text-zinc-500">
+                    Ámbito de caché / aislamiento: <span className="font-mono text-zinc-400">{projectScopeId}</span>
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={brainImageLoading}
+                  onClick={() => setBrainImagePromptModalOpen(false)}
+                  className="rounded-lg px-2 py-1 text-[11px] text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-200 disabled:opacity-40"
+                >
+                  Cerrar
+                </button>
+              </div>
+              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3 select-text">
+                <div className="rounded-lg border border-amber-500/25 bg-amber-500/[0.07] px-3 py-2 text-[10px] leading-snug text-amber-100/95 select-text">
+                  <p className="font-semibold text-amber-200/95">Qué puede contaminar la escena (y qué no)</p>
+                  <ul className="mt-1.5 list-disc space-y-1 pl-4 text-amber-100/85">
+                    <li>
+                      <strong>No</strong> debería mezclar otro proyecto: el texto sale de{" "}
+                      <code className="rounded bg-black/30 px-1">metadata.assets</code> de este espacio y del texto
+                      cercano en el lienzo; la caché del navegador va por{" "}
+                      <code className="rounded bg-black/30 px-1">projectScopeId</code> + marco seleccionado.
+                    </li>
+                    <li>
+                      <strong>Sí</strong> puede sesgar el modelo el código genérico: ejes de variedad por defecto
+                      (workspace, equipo, reunión…), familias visuales por defecto y frases del compositor en{" "}
+                      <code className="rounded bg-black/30 px-1">composeBrainDesignerImagePrompt</code>. Con poco ADN
+                      visual analizado, el modelo tiende a «reunión en mesa»; el bloque E y{" "}
+                      <code className="rounded bg-black/30 px-1">visualAvoid</code> lo contrarrestan cuando el contexto
+                      es débil.
+                    </li>
+                  </ul>
+                  <p className="mt-2 font-mono text-[9px] text-amber-200/80">
+                    Señal visual: refs remotas {brainVisualPromptContext.visualReferenceAnalysisRealCount} · débil:{" "}
+                    {brainVisualPromptContext.visualContextWeak ? "sí" : "no"} · solo texto:{" "}
+                    {brainVisualPromptContext.textOnlyGeneration ? "sí" : "no"} · fallback default:{" "}
+                    {brainVisualPromptContext.fallbackDefaultUsed ? "sí" : "no"}
+                  </p>
+                </div>
+                {brainImagePromptPlans.map((plan) => (
+                  <div key={plan.id} className="space-y-1 select-text">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">{plan.label}</div>
+                    <textarea
+                      readOnly
+                      spellCheck={false}
+                      value={plan.prompt}
+                      aria-label={`Prompt: ${plan.label}`}
+                      className="max-h-56 min-h-[10rem] w-full cursor-text resize-y overflow-auto whitespace-pre-wrap break-words rounded-lg border border-white/[0.08] bg-[#0d1016] p-2.5 font-mono text-[9px] leading-relaxed text-zinc-300 outline-none ring-violet-500/40 focus-visible:ring-2"
+                      onMouseDown={(e) => e.stopPropagation()}
+                    />
+                  </div>
+                ))}
+              </div>
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-white/[0.08] px-4 py-3">
+                <button
+                  type="button"
+                  disabled={brainImageLoading}
+                  onClick={() => setBrainImagePromptModalOpen(false)}
+                  className="rounded-lg border border-white/[0.12] px-3 py-1.5 text-[11px] text-zinc-300 hover:bg-white/[0.05] disabled:opacity-40"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  disabled={brainImageLoading}
+                  onClick={() => void confirmBrainImageGenerationFromModal()}
+                  className="rounded-lg bg-violet-600 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-violet-500 disabled:opacity-40"
+                >
+                  {brainImagePromptModalForce ? "Confirmar regeneración (2)" : "Enviar a Gemini (2)"}
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
 
       {designerMode &&
         designerStoryModalOpen &&

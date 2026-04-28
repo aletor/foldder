@@ -24,7 +24,26 @@ import {
   type BrainVisualStyleSlotKey,
   type BrainVoiceExample,
   defaultBrainVisualStyle,
+  type KnowledgeDocumentEntry,
 } from "@/app/spaces/project-assets-metadata";
+import { enrichStrategyCreativeMemory } from "@/lib/brain/brain-strategy-creative-enrich";
+import {
+  markBrainStale,
+  normalizeBrainMeta,
+  touchBrainMetaAfterKnowledgeAnalysis,
+} from "@/lib/brain/brain-meta";
+import { BRAIN_STALE_REASON } from "@/lib/brain/brain-stale-reasons";
+import {
+  mergeBlueprintsPreferPrevious,
+  mergeFactsAndEvidenceWithPriority,
+  mergeFunnelMessagesPreferPrevious,
+  mergeStringListsOrdered,
+  mergeVoiceExamplesPreferPrevious,
+} from "@/lib/brain/brain-merge-strategy-priority";
+import { hasTrustedRemoteVisionAnalyses } from "@/lib/brain/brain-merge-signals";
+import { buildEmbeddingInputForAnalyzedDocument, robustDnaJsonToBrainExtractedContext } from "@/lib/brain/brain-robust-dna-bridge";
+import { shouldAnalyzeBrainDocument } from "@/lib/brain/brain-document-status";
+import type { BrainExtractedContext } from "@/lib/brain/brain-creative-memory-types";
 
 type BrainDoc = {
   id: string;
@@ -36,6 +55,17 @@ type BrainDoc = {
   type?: "document" | "image";
   format?: "pdf" | "docx" | "txt" | "html" | "url" | "image";
   status?: "Subido" | "Analizado" | "Error";
+  workflowStatus?: string;
+  retryCount?: number;
+  maxRetries?: number;
+  lastError?: string;
+  lastAttemptAt?: string;
+  analyzedAt?: string;
+  analysisProvider?: "openai" | "gemini" | "internal" | "none";
+  analysisOrigin?: "remote_ai" | "local_heuristic" | "fallback" | "mock" | "manual";
+  analysisReliability?: "high" | "medium" | "low";
+  isReliableForGeneration?: boolean;
+  extractedContextStructured?: BrainExtractedContext;
   uploadedAt?: string;
   extractedContext?: string;
   originalSourceUrl?: string;
@@ -480,6 +510,10 @@ function collectVisualEvidence(docs: BrainDoc[]): VisualEvidenceBag {
 }
 
 function buildFallbackVisualStyle(docs: BrainDoc[]): BrainVisualStyle {
+  const analyzedForVisual = docs.filter((d) => d.status === "Analizado" && typeof d.extractedContext === "string");
+  if (analyzedForVisual.length === 0) {
+    return defaultBrainVisualStyle();
+  }
   const base = defaultBrainVisualStyle();
   const visual = collectVisualEvidence(docs);
   const allText = docs
@@ -695,6 +729,14 @@ async function inferVisualStyleWithLlm(
   }
 }
 
+/**
+ * Autofill de estrategia (voz, mensajes, hechos, estilo visual inferido por texto).
+ * Separación conceptual (helpers dedicados en `brain-strategy-creative-enrich` y tipos en `brain-creative-memory-types`):
+ * - Knowledge DNA: hechos, claims, métricas, producto, empresa, evidencias.
+ * - Voice DNA: tono, frases, tabúes, idioma, intensidad por canal, términos.
+ * - Visual DNA textual: señales desde documentos; no debe sustituir `visualReferenceAnalysis` remoto (ver `mergeStrategy`).
+ * - Content DNA / Safe rules / Brand visual síntesis: se materializan tras merge vía `enrichStrategyCreativeMemory`.
+ */
 async function buildAutofillStrategy(
   docs: BrainDoc[],
   usageQueue: AnalyzeUsageQueue | null,
@@ -867,93 +909,59 @@ function mergeStrategy(existing: BrainStrategy | undefined, autofill: StrategyAu
     .filter((x): x is BrainPersona => Boolean(x));
   const existingCustom = previous.personas.filter((p) => !catalogMap.has(p.id));
 
-  const voiceByKey = new Map<string, BrainVoiceExample>();
-  for (const item of [...autofill.voiceExamples, ...previous.voiceExamples]) {
-    const key = `${item.kind}:${item.text.trim().toLowerCase()}`;
-    if (!item.text.trim() || voiceByKey.has(key)) continue;
-    voiceByKey.set(key, item);
-  }
-
-  const msgByKey = new Map<string, BrainFunnelMessage>();
-  for (const item of [...autofill.funnelMessages, ...previous.funnelMessages]) {
-    const key = `${item.stage}:${item.text.trim().toLowerCase()}`;
-    if (!item.text.trim() || msgByKey.has(key)) continue;
-    msgByKey.set(key, item);
-  }
-
-  const blueprintByKey = new Map<string, BrainMessageBlueprint>();
-  for (const item of [...autofill.messageBlueprints, ...previous.messageBlueprints]) {
-    const key = `${item.claim.trim().toLowerCase()}|${item.channel.trim().toLowerCase()}|${item.stage}`;
-    if (!item.claim.trim() || blueprintByKey.has(key)) continue;
-    blueprintByKey.set(key, item);
-  }
-
-  const factByKey = new Map<string, BrainFactEvidence>();
-  for (const item of [...autofill.factsAndEvidence, ...previous.factsAndEvidence]) {
-    const key = item.claim.trim().toLowerCase();
-    if (!item.claim.trim() || factByKey.has(key)) continue;
-    factByKey.set(key, item);
-  }
+  const mergedVoice = mergeVoiceExamplesPreferPrevious(autofill.voiceExamples, previous.voiceExamples);
+  const mergedFunnel = mergeFunnelMessagesPreferPrevious(autofill.funnelMessages, previous.funnelMessages);
+  const mergedBlueprints = mergeBlueprintsPreferPrevious(autofill.messageBlueprints, previous.messageBlueprints);
+  const mergedFacts = mergeFactsAndEvidenceWithPriority(previous.factsAndEvidence, autofill.factsAndEvidence);
 
   const defaultVisual = defaultBrainVisualStyle();
   const visualFromPrev = previous.visualStyle || defaultVisual;
   const visualFromAuto = autofill.visualStyle || defaultVisual;
-  const mergedVisual: BrainVisualStyle = {
-    protagonist: {
-      ...visualFromPrev.protagonist,
-      ...visualFromAuto.protagonist,
-      key: "protagonist",
-      title: "Protagonista",
-      imageUrl: visualFromPrev.protagonist?.imageUrl || null,
-      imageS3Key: visualFromPrev.protagonist?.imageS3Key,
-      source: visualFromPrev.protagonist?.source || "auto",
-    },
-    environment: {
-      ...visualFromPrev.environment,
-      ...visualFromAuto.environment,
-      key: "environment",
-      title: "Entorno",
-      imageUrl: visualFromPrev.environment?.imageUrl || null,
-      imageS3Key: visualFromPrev.environment?.imageS3Key,
-      source: visualFromPrev.environment?.source || "auto",
-    },
-    textures: {
-      ...visualFromPrev.textures,
-      ...visualFromAuto.textures,
-      key: "textures",
-      title: "Texturas",
-      imageUrl: visualFromPrev.textures?.imageUrl || null,
-      imageS3Key: visualFromPrev.textures?.imageS3Key,
-      source: visualFromPrev.textures?.source || "auto",
-    },
-    people: {
-      ...visualFromPrev.people,
-      ...visualFromAuto.people,
-      key: "people",
-      title: "Personas",
-      imageUrl: visualFromPrev.people?.imageUrl || null,
-      imageS3Key: visualFromPrev.people?.imageS3Key,
-      source: visualFromPrev.people?.source || "auto",
-    },
+  const trustVision = hasTrustedRemoteVisionAnalyses(previous);
+  const mergeSlot = (key: BrainVisualStyleSlotKey) => {
+    const prev = visualFromPrev[key];
+    const auto = visualFromAuto[key];
+    const prevDesc = (prev.description || "").trim();
+    const autoDesc = (auto.description || "").trim();
+    const description =
+      trustVision && prevDesc.length >= 16 ? prevDesc : autoDesc || prevDesc || autoDesc;
+    return {
+      ...prev,
+      ...auto,
+      key,
+      title: prev.title || auto.title,
+      description,
+      imageUrl: prev.imageUrl || null,
+      imageS3Key: prev.imageS3Key,
+      source: prev.source || "auto",
+    };
   };
+  const mergedVisual: BrainVisualStyle = {
+    protagonist: mergeSlot("protagonist"),
+    environment: mergeSlot("environment"),
+    textures: mergeSlot("textures"),
+    people: mergeSlot("people"),
+  };
+
+  const channelMerged = [...previous.channelIntensity, ...autofill.channelIntensity]
+    .filter((x, i, arr) => arr.findIndex((y) => y.channel.toLowerCase() === x.channel.toLowerCase()) === i)
+    .slice(0, 12);
 
   return {
     ...previous,
-    voiceExamples: [...voiceByKey.values()].slice(0, 24),
-    tabooPhrases: uniqueStrings([...autofill.tabooPhrases, ...previous.tabooPhrases], 30),
-    approvedPhrases: uniqueStrings([...autofill.approvedPhrases, ...previous.approvedPhrases], 30),
-    languageTraits: uniqueStrings([...autofill.languageTraits, ...previous.languageTraits], 20),
-    syntaxPatterns: uniqueStrings([...autofill.syntaxPatterns, ...previous.syntaxPatterns], 20),
-    preferredTerms: uniqueStrings([...autofill.preferredTerms, ...previous.preferredTerms], 30),
-    forbiddenTerms: uniqueStrings([...autofill.forbiddenTerms, ...previous.forbiddenTerms], 30),
-    channelIntensity: [...autofill.channelIntensity, ...previous.channelIntensity]
-      .filter((x, i, arr) => arr.findIndex((y) => y.channel.toLowerCase() === x.channel.toLowerCase()) === i)
-      .slice(0, 12),
+    voiceExamples: mergedVoice,
+    tabooPhrases: mergeStringListsOrdered(previous.tabooPhrases, autofill.tabooPhrases, 30),
+    approvedPhrases: mergeStringListsOrdered(previous.approvedPhrases, autofill.approvedPhrases, 30),
+    languageTraits: mergeStringListsOrdered(previous.languageTraits, autofill.languageTraits, 20),
+    syntaxPatterns: mergeStringListsOrdered(previous.syntaxPatterns, autofill.syntaxPatterns, 20),
+    preferredTerms: mergeStringListsOrdered(previous.preferredTerms, autofill.preferredTerms, 30),
+    forbiddenTerms: mergeStringListsOrdered(previous.forbiddenTerms, autofill.forbiddenTerms, 30),
+    channelIntensity: channelMerged,
     allowAbsoluteClaims: autofill.allowAbsoluteClaims || previous.allowAbsoluteClaims,
     personas: [...selectedCatalog, ...existingCustom].slice(0, 20),
-    funnelMessages: [...msgByKey.values()].slice(0, 20),
-    messageBlueprints: [...blueprintByKey.values()].slice(0, 40),
-    factsAndEvidence: [...factByKey.values()].slice(0, 80),
+    funnelMessages: mergedFunnel,
+    messageBlueprints: mergedBlueprints,
+    factsAndEvidence: mergedFacts,
     visualStyle: mergedVisual,
   };
 }
@@ -986,6 +994,7 @@ export async function POST(req: NextRequest) {
       strategy?: BrainStrategy;
       projectId?: string;
       workspaceId?: string;
+      brainMeta?: unknown;
     };
     const docs = Array.isArray(body.documents) ? body.documents : [];
     const nextDocs = [...docs];
@@ -997,9 +1006,14 @@ export async function POST(req: NextRequest) {
 
     const pendingIdx = nextDocs
       .map((doc, idx) => ({ doc, idx }))
-      .filter(
-        ({ doc }) =>
-          doc.status === "Subido" || doc.status === "Error" || requiresVisualSignalsUpgrade(doc),
+      .filter(({ doc }) =>
+        shouldAnalyzeBrainDocument({
+          workflowStatus: doc.workflowStatus,
+          legacyStatus: doc.status,
+          requiresUpgrade: requiresVisualSignalsUpgrade(doc),
+          retryCount: doc.retryCount,
+          maxRetries: doc.maxRetries,
+        }),
       );
 
     const onExtractUsage: BrainOpenAiChatUsageHook = (model, u) => {
@@ -1021,13 +1035,21 @@ export async function POST(req: NextRequest) {
 
     if (pendingIdx.length === 0) {
       const autofill = await buildAutofillStrategy(nextDocs, usageTasks, ctx);
-      const strategy = mergeStrategy(body.strategy, autofill);
+      const meta = normalizeBrainMeta(body.brainMeta);
+      const corporateContext = buildReadableCorporateContext(nextDocs);
+      let strategy = mergeStrategy(body.strategy, autofill);
+      strategy = enrichStrategyCreativeMemory(strategy, {
+        brainMeta: meta,
+        knowledgeDocuments: nextDocs as KnowledgeDocumentEntry[],
+        corporateContext,
+      });
       await Promise.all(usageTasks);
       return NextResponse.json({
         message: "No pending documents to analyze.",
         documents: nextDocs,
-        corporateContext: buildReadableCorporateContext(nextDocs),
+        corporateContext,
         strategy,
+        brainMeta: meta,
       });
     }
 
@@ -1056,11 +1078,19 @@ export async function POST(req: NextRequest) {
         }
 
         const extractedJsonString = JSON.stringify(extractedData, null, 2);
+        const structured = robustDnaJsonToBrainExtractedContext(extractedData, {
+          id: doc.id,
+          name: doc.name,
+          format: doc.format,
+          type: doc.type,
+          mime: doc.mime,
+        });
+        const embeddingInput = buildEmbeddingInputForAnalyzedDocument(extractedJsonString, extractedData);
         let embedding: number[] | undefined;
         try {
           const embResponse = await openai.embeddings.create({
             model: "text-embedding-3-small",
-            input: extractedJsonString,
+            input: embeddingInput,
           });
           embedding = embResponse.data[0]?.embedding;
           const eu = embResponse.usage;
@@ -1087,24 +1117,55 @@ export async function POST(req: NextRequest) {
         nextDocs[idx] = {
           ...doc,
           status: "Analizado",
+          workflowStatus: "analyzed",
+          analyzedAt: new Date().toISOString(),
+          retryCount: 0,
+          lastError: undefined,
           extractedContext: extractedJsonString,
+          extractedContextStructured: structured,
           insights: buildDocInsights(doc, extractedData),
           embedding,
           errorMessage: undefined,
+          analysisProvider: "openai",
+          analysisOrigin: "remote_ai",
+          analysisReliability: "high",
+          isReliableForGeneration: true,
         };
         analyzedDocIds.push(doc.id);
       } catch (docError) {
+        const rc = typeof doc.retryCount === "number" ? doc.retryCount : 0;
+        const mr = typeof doc.maxRetries === "number" ? doc.maxRetries : 3;
+        const nextRc = rc + 1;
+        const terminal = nextRc >= mr;
         nextDocs[idx] = {
           ...doc,
           status: "Error",
+          workflowStatus: terminal ? "failed_final" : "failed_retryable",
+          retryCount: nextRc,
+          maxRetries: mr,
+          lastError: docError instanceof Error ? docError.message.slice(0, 2000) : "Unknown analysis error",
+          lastAttemptAt: new Date().toISOString(),
           errorMessage: docError instanceof Error ? docError.message : "Unknown analysis error",
+          analysisProvider: "openai",
+          analysisOrigin: "fallback",
+          analysisReliability: "low",
+          isReliableForGeneration: false,
         };
       }
     }
 
     const corporateContext = buildReadableCorporateContext(nextDocs);
     const autofill = await buildAutofillStrategy(nextDocs, usageTasks, ctx);
-    const strategy = mergeStrategy(body.strategy, autofill);
+    let meta = touchBrainMetaAfterKnowledgeAnalysis(normalizeBrainMeta(body.brainMeta), analyzedDocIds.length);
+    if (nextDocs.some((d) => d.status === "Error")) {
+      meta = markBrainStale(meta, [BRAIN_STALE_REASON.REMOTE_ANALYSIS_FAILED_FALLBACK_USED]);
+    }
+    let strategy = mergeStrategy(body.strategy, autofill);
+    strategy = enrichStrategyCreativeMemory(strategy, {
+      brainMeta: meta,
+      knowledgeDocuments: nextDocs as KnowledgeDocumentEntry[],
+      corporateContext,
+    });
     await Promise.all(usageTasks);
     return NextResponse.json({
       message: `Analyzed ${analyzedDocIds.length} documents.`,
@@ -1112,6 +1173,7 @@ export async function POST(req: NextRequest) {
       documents: nextDocs,
       corporateContext,
       strategy,
+      brainMeta: meta,
     });
   } catch (error) {
     if (error instanceof ApiServiceDisabledError) {

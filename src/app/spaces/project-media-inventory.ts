@@ -1,6 +1,19 @@
 import type { Node } from "@xyflow/react";
+import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
 
 export type ProjectMediaKind = "image" | "video" | "audio" | "unknown";
+
+/**
+ * Clave estable para deduplicar la misma pieza en Foldder cuando la misma clave S3
+ * aparece con distintas prefirmas (caducidad/firma distinta).
+ */
+export function projectMediaDedupeKey(url: string): string {
+  const trimmed = (url || "").trim();
+  if (!trimmed) return "";
+  const s3Key = tryExtractKnowledgeFilesKeyFromUrl(trimmed);
+  if (s3Key) return `s3:${s3Key}`;
+  return trimmed;
+}
 
 export type ProjectMediaItem = {
   /** Estable por URL + categoría */
@@ -56,11 +69,11 @@ function pushUnique(
 ) {
   if (!isLikelyMediaRef(url)) return;
   const normalized = url.trim();
-  const key = normalized;
-  if (seen.has(key)) return;
-  seen.add(key);
+  const dedupe = projectMediaDedupeKey(normalized);
+  if (!dedupe || seen.has(dedupe)) return;
+  seen.add(dedupe);
   list.push({
-    id: `${nodeId}::${seen.size}::${key.slice(0, 48)}`,
+    id: `${nodeId}::${seen.size}::${dedupe.slice(0, 48)}`,
     url: normalized,
     kind,
     sourceLabel,
@@ -252,8 +265,8 @@ export function collectProjectMedia(nodes: Node[]): {
     }
   }
 
-  const genUrlSet = new Set(generated.map((g) => g.url));
-  const importedDeduped = imported.filter((i) => !genUrlSet.has(i.url));
+  const genUrlSet = new Set(generated.map((g) => projectMediaDedupeKey(g.url)));
+  const importedDeduped = imported.filter((i) => !genUrlSet.has(projectMediaDedupeKey(i.url)));
 
   return { imported: importedDeduped, generated };
 }

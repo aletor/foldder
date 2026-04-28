@@ -100,7 +100,7 @@ describe("ProjectBrainFullscreen — pestaña Por revisar", () => {
     const asideHeading = within(dialog).getAllByText(/^Identidad visual$/i)[0];
     expect(asideHeading).toBeInTheDocument();
     await user.click(screen.getByTestId("brain-tab-knowledge"));
-    expect(await within(dialog).findByText(/Pozo de conocimiento/i)).toBeInTheDocument();
+    expect(await within(dialog).findByText(/Resumen recibido en el pozo/i)).toBeInTheDocument();
   });
 
   it("muestra vacío cuando no hay pendientes", async () => {

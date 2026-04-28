@@ -378,6 +378,9 @@ export class BrainService implements LearningCandidateStore {
       nodeId?: string | null;
       sourceSessionIds?: string[];
       telemetryNodeType?: import("./brain-telemetry").BrainNodeType;
+      brainVersion?: number;
+      sourceAnalysisId?: string;
+      createdFromAnalysisVersion?: string;
     },
   ): Promise<{ ids: string[] }> {
     const pid = projectId.trim();
@@ -400,6 +403,9 @@ export class BrainService implements LearningCandidateStore {
         workspaceId: wid === "__root__" ? undefined : wid,
         nodeId,
         ...(telemetryNodeType ? { telemetryNodeType } : {}),
+        ...(typeof opts?.brainVersion === "number" ? { brainVersion: opts.brainVersion } : {}),
+        ...(opts?.sourceAnalysisId ? { sourceAnalysisId: opts.sourceAnalysisId } : {}),
+        ...(opts?.createdFromAnalysisVersion ? { createdFromAnalysisVersion: opts.createdFromAnalysisVersion } : {}),
         status: "PENDING_REVIEW",
         candidate: {
           ...c,

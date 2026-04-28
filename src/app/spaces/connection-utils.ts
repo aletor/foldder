@@ -131,7 +131,7 @@ function targetHandleSlotIndex(nodeType: string, targetHandle: string | null | u
     }
   }
   if (nodeType === 'nanoBanana') {
-    const order = ['prompt', 'image', 'image2', 'image3', 'image4'];
+    const order = ['brain', 'prompt', 'image', 'image2', 'image3', 'image4'];
     const idx = order.indexOf(targetHandle);
     if (idx !== -1) return idx;
   }

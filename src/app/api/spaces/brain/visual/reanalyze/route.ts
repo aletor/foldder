@@ -9,6 +9,8 @@ import { reanalyzeVisualReferencesAsync } from "@/lib/brain/brain-vision-analyze
 import { createDefaultBrainVisionProvider } from "@/lib/brain/brain-vision-providers-impl";
 import { hydrateProjectAssetsForBrainVision } from "@/lib/brain/brain-visual-assets-hydrate";
 import { ApiServiceDisabledError, assertApiServiceEnabled } from "@/lib/api-usage-controls";
+import { buildBrandVisualDnaFromVisualReferenceAnalysis } from "@/lib/brain/brain-brand-visual-dna-synthesis";
+import { getBrainVersion } from "@/lib/brain/brain-meta";
 
 export const runtime = "nodejs";
 
@@ -54,6 +56,11 @@ export async function POST(req: NextRequest) {
     const aggregated = layer.aggregated ?? aggregateVisualPatterns(analyses);
     const candidates = createVisualLearningCandidates(projectId, analyses, aggregated);
     const candidatesCreated = candidates.length;
+    const brainVersion = getBrainVersion(assets.brainMeta);
+    const brandVisualDna = buildBrandVisualDnaFromVisualReferenceAnalysis(
+      { ...layer, aggregated },
+      { brainVersion },
+    );
     if (diagnostics?.length) {
       for (const row of diagnostics) {
         row.candidatesCreated = candidatesCreated;
@@ -61,6 +68,7 @@ export async function POST(req: NextRequest) {
     }
     return NextResponse.json({
       visualReferenceAnalysis: { ...layer, aggregated },
+      brandVisualDna: brandVisualDna ?? undefined,
       candidates,
       provider: providerId,
       ...(debug && diagnostics?.length

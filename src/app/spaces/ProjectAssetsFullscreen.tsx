@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Node } from "@xyflow/react";
 import { FolderOpen, X } from "lucide-react";
-import { collectProjectMedia, type ProjectMediaItem } from "./project-media-inventory";
+import { collectProjectMedia, projectMediaDedupeKey, type ProjectMediaItem } from "./project-media-inventory";
 import { normalizeProjectAssets } from "./project-assets-metadata";
 import { listAllBrainGeneratedSuggestionUrls } from "./brain-image-suggestions-cache";
 import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
@@ -144,17 +144,20 @@ function BrandReadonlyStrip({ assetsMetadata }: { assetsMetadata: unknown }) {
               { key: "sec", label: "Sec.", hex: brand.colorSecondary },
               { key: "acc", label: "Acento", hex: brand.colorAccent },
             ] as const
-          ).map(({ key, label, hex }) => (
-            <div key={key} className="flex flex-col items-center gap-1">
-              <span className="text-[8px] font-medium uppercase tracking-wide text-zinc-500">{label}</span>
-              <span
-                className="h-7 w-7 shrink-0 rounded-md border border-white/15 shadow-inner ring-1 ring-black/20"
-                style={{ backgroundColor: hex }}
-                title={hex}
-              />
-              <span className="font-mono text-[8px] leading-none text-zinc-500">{hex}</span>
-            </div>
-          ))}
+          ).map(({ key, label, hex }) => {
+            const ok = typeof hex === "string" && /^#[0-9A-Fa-f]{6}$/i.test(hex.trim());
+            return (
+              <div key={key} className="flex flex-col items-center gap-1">
+                <span className="text-[8px] font-medium uppercase tracking-wide text-zinc-500">{label}</span>
+                <span
+                  className="h-7 w-7 shrink-0 rounded-md border border-white/15 shadow-inner ring-1 ring-black/20"
+                  style={{ backgroundColor: ok ? hex : "transparent" }}
+                  title={ok ? hex : "Sin color"}
+                />
+                <span className="font-mono text-[8px] leading-none text-zinc-500">{ok ? hex : "—"}</span>
+              </div>
+            );
+          })}
         </div>
       </div>
     </section>
@@ -164,12 +167,15 @@ function BrandReadonlyStrip({ assetsMetadata }: { assetsMetadata: unknown }) {
 export function ProjectAssetsFullscreen({ open, onClose, nodes, assetsMetadata, projectScopeId }: Props) {
   const { imported, generated } = useMemo(() => {
     const base = collectProjectMedia(nodes);
-    const seen = new Set(base.generated.map((g) => g.url.trim()).filter(Boolean));
+    const seen = new Set(
+      base.generated.map((g) => projectMediaDedupeKey(g.url.trim())).filter(Boolean),
+    );
     const extra: ProjectMediaItem[] = [];
     for (const url of listAllBrainGeneratedSuggestionUrls(projectScopeId)) {
       const key = url.trim();
-      if (!key || seen.has(key)) continue;
-      seen.add(key);
+      const dedupe = projectMediaDedupeKey(key);
+      if (!key || !dedupe || seen.has(dedupe)) continue;
+      seen.add(dedupe);
       extra.push({
         id: `brain-generated-${seen.size}-${key.slice(0, 32)}`,
         url: key,

@@ -4,6 +4,22 @@ import type {
   BrainSourceTier,
   BrainStrategyFieldProvenance,
 } from "@/lib/brain/brain-field-provenance";
+import type { BrandVisualDnaStoredBundle } from "@/lib/brain/brand-visual-dna/types";
+import { parseBrandVisualDnaBundle } from "@/lib/brain/brand-visual-dna/normalize-bundle";
+import type {
+  BrainBrandVisualDna,
+  BrainExtractedContext,
+  BrainMeta,
+  ContentDna,
+  SafeCreativeRules,
+} from "@/lib/brain/brain-creative-memory-types";
+import type { VisualDnaSlot } from "@/lib/brain/visual-dna-slot/types";
+import { normalizeVisualDnaSlots } from "@/lib/brain/visual-dna-slot/normalize";
+import { normalizeVisualDnaSlotSuppressedSourceIds } from "@/lib/brain/visual-dna-slot/slot-sync";
+import { normalizeBrandVisualDna } from "@/lib/brain/brain-brand-visual-dna-synthesis";
+import { normalizeSafeCreativeRules } from "@/lib/brain/brain-safe-creative-rules";
+import { normalizeBrainMeta } from "@/lib/brain/brain-meta";
+import { normalizeKnowledgeUrlsFromDocuments } from "@/lib/brain/brain-knowledge-urls";
 
 /**
  * Datos de «Assets» del proyecto (marca + fuente de conocimiento).
@@ -21,8 +37,24 @@ export type KnowledgeDocumentEntry = {
   type?: "document" | "image";
   format?: "pdf" | "docx" | "txt" | "html" | "url" | "image";
   status?: "Subido" | "Analizado" | "Error";
+  /** Flujo extendido (inglés); convive con `status` legado para UI. */
+  workflowStatus?: "uploaded" | "queued" | "analyzing" | "analyzed" | "failed_retryable" | "failed_final" | "stale";
+  retryCount?: number;
+  maxRetries?: number;
+  lastError?: string;
+  lastAttemptAt?: string;
+  analyzedAt?: string;
+  analysisVersion?: string;
+  staleReasons?: string[];
+  requiresUpgrade?: boolean;
+  analysisOrigin?: "remote_ai" | "local_heuristic" | "fallback" | "mock" | "manual";
+  analysisProvider?: "openai" | "gemini" | "internal" | "none";
+  analysisReliability?: "high" | "medium" | "low";
+  isReliableForGeneration?: boolean;
   uploadedAt?: string;
   extractedContext?: string;
+  /** Vista materializada del contexto (no reemplaza el JSON en `extractedContext` mientras migran clientes). */
+  extractedContextStructured?: BrainExtractedContext;
   originalSourceUrl?: string;
   embedding?: number[];
   errorMessage?: string;
@@ -43,9 +75,10 @@ export type ProjectBrandKit = {
   logoPositive: string | null;
   /** data URL imagen logo en negativo (fondo oscuro) */
   logoNegative: string | null;
-  colorPrimary: string;
-  colorSecondary: string;
-  colorAccent: string;
+  /** Hex `#RRGGBB` o null si el usuario aún no definió el color */
+  colorPrimary: string | null;
+  colorSecondary: string | null;
+  colorAccent: string | null;
 };
 
 /** Memoria explícita solo para este proyecto (p. ej. tras KEEP_IN_PROJECT). */
@@ -312,6 +345,16 @@ export type BrainVisualReferenceLayer = {
   lastVisionProviderId?: BrainVisionProviderId;
   /** Patrones visuales confirmados por el usuario (p. ej. promoción desde «Por revisar»). */
   confirmedVisualPatterns?: string[];
+  /**
+   * Mood board único generado con Nano Banana (Gemini imagen) a partir del agregado + referencias.
+   * Data URL o URL https; se invalida cuando cambia `dnaCollageSourceFingerprint`.
+   */
+  dnaCollageImageDataUrl?: string;
+  /** Huella de análisis / referencias usada para decidir si regenerar el tablero. */
+  dnaCollageSourceFingerprint?: string;
+  dnaCollageGeneratedAt?: string;
+  /** ADN visual por clusters (técnico + IA sobre agregados); transversal a nodos creativos. */
+  brandVisualDnaBundle?: BrandVisualDnaStoredBundle;
 };
 
 export function defaultBrainVisualStyle(): BrainVisualStyle {
@@ -319,8 +362,7 @@ export function defaultBrainVisualStyle(): BrainVisualStyle {
     protagonist: {
       key: "protagonist",
       title: "Protagonista",
-      description:
-        "El protagonista debe ser el núcleo de valor de la marca: el producto o activo principal en primer plano, con lectura inmediata y foco visual claro.",
+      description: "",
       imageUrl: null,
       imageS3Key: undefined,
       prompt: "",
@@ -329,8 +371,7 @@ export function defaultBrainVisualStyle(): BrainVisualStyle {
     environment: {
       key: "environment",
       title: "Entorno",
-      description:
-        "El entorno debe contextualizar el uso real: escena creíble, profesional y coherente con la audiencia objetivo, sin distracciones ni estética genérica.",
+      description: "",
       imageUrl: null,
       imageS3Key: undefined,
       prompt: "",
@@ -339,8 +380,7 @@ export function defaultBrainVisualStyle(): BrainVisualStyle {
     textures: {
       key: "textures",
       title: "Texturas",
-      description:
-        "Las texturas deben reforzar identidad visual y jerarquía: acabado editorial limpio, materiales consistentes y contraste controlado con la paleta de marca.",
+      description: "",
       imageUrl: null,
       imageS3Key: undefined,
       prompt: "",
@@ -349,8 +389,7 @@ export function defaultBrainVisualStyle(): BrainVisualStyle {
     people: {
       key: "people",
       title: "Personas",
-      description:
-        "Las personas deben representar al público real de la marca en situaciones auténticas, con actitud y estilo alineados al posicionamiento.",
+      description: "",
       imageUrl: null,
       imageS3Key: undefined,
       prompt: "",
@@ -379,6 +418,19 @@ export type BrainStrategy = {
   visualStyle: BrainVisualStyle;
   /** Análisis visual de referencias (moodboards, slots, logos); opcional para compatibilidad. */
   visualReferenceAnalysis?: BrainVisualReferenceLayer;
+  /** Síntesis oficial de ADN visual (prioriza visión remota frente a señales inferidas por documento). */
+  brandVisualDna?: BrainBrandVisualDna;
+  /** Capa editorial para nodos de contenido / guionista. */
+  contentDna?: ContentDna;
+  /** Reglas seguras transversales (imagen, texto, compliance). */
+  safeCreativeRules?: SafeCreativeRules;
+  /** ADN visual por imagen (tableros independientes; no sustituye brandVisualDna ni visualReferenceAnalysis). */
+  visualDnaSlots?: VisualDnaSlot[];
+  /**
+   * IDs de documentos de conocimiento (imagen) cuyo slot se eliminó a mano.
+   * El sync automático no vuelve a crear slots para estos documentos mientras existan en el pozo.
+   */
+  visualDnaSlotSuppressedSourceIds?: string[];
   /** Procedencia por bloques (resumen / ADN) tras analizar o promover aprendizajes. */
   fieldProvenance?: BrainStrategyFieldProvenance;
 };
@@ -550,14 +602,16 @@ export type ProjectAssetsMetadata = {
   brand: ProjectBrandKit;
   knowledge: ProjectKnowledgeSource;
   strategy: BrainStrategy;
+  /** Versionado y frescura global del Brain (persistido con assets). */
+  brainMeta?: BrainMeta;
 };
 
 const DEFAULT_BRAND: ProjectBrandKit = {
   logoPositive: null,
   logoNegative: null,
-  colorPrimary: "#0f172a",
-  colorSecondary: "#64748b",
-  colorAccent: "#f59e0b",
+  colorPrimary: null,
+  colorSecondary: null,
+  colorAccent: null,
 };
 
 const DEFAULT_KNOWLEDGE: ProjectKnowledgeSource = {
@@ -596,6 +650,7 @@ export function defaultProjectAssets(): ProjectAssetsMetadata {
       documents: [],
       corporateContext: "",
     },
+    brainMeta: normalizeBrainMeta(undefined),
     strategy: {
       voiceExamples: [],
       tabooPhrases: [],
@@ -625,6 +680,7 @@ export function normalizeProjectAssets(raw: unknown): ProjectAssetsMetadata {
   const brandIn = o.brand;
   const knowIn = o.knowledge;
   const strategyIn = o.strategy;
+  const brainMeta = normalizeBrainMeta(o.brainMeta ?? base.brainMeta);
 
   const brand = { ...base.brand };
   if (brandIn && typeof brandIn === "object") {
@@ -632,7 +688,9 @@ export function normalizeProjectAssets(raw: unknown): ProjectAssetsMetadata {
     if (b.logoPositive === null || typeof b.logoPositive === "string") brand.logoPositive = b.logoPositive as string | null;
     if (b.logoNegative === null || typeof b.logoNegative === "string") brand.logoNegative = b.logoNegative as string | null;
     for (const key of ["colorPrimary", "colorSecondary", "colorAccent"] as const) {
-      if (typeof b[key] === "string" && /^#[0-9A-Fa-f]{6}$/.test(b[key] as string)) {
+      if (b[key] === null) {
+        brand[key] = null;
+      } else if (typeof b[key] === "string" && /^#[0-9A-Fa-f]{6}$/.test(b[key] as string)) {
         brand[key] = b[key] as string;
       }
     }
@@ -705,6 +763,61 @@ export function normalizeProjectAssets(raw: unknown): ProjectAssetsMetadata {
                     : [],
                 }
               : undefined,
+          ...(typeof (d as { workflowStatus?: string }).workflowStatus === "string"
+            ? { workflowStatus: (d as { workflowStatus: KnowledgeDocumentEntry["workflowStatus"] }).workflowStatus }
+            : {}),
+          ...(typeof (d as { retryCount?: number }).retryCount === "number"
+            ? { retryCount: Math.max(0, Math.floor((d as { retryCount: number }).retryCount)) }
+            : {}),
+          ...(typeof (d as { maxRetries?: number }).maxRetries === "number"
+            ? { maxRetries: Math.max(1, Math.floor((d as { maxRetries: number }).maxRetries)) }
+            : {}),
+          ...(typeof (d as { lastError?: string }).lastError === "string"
+            ? { lastError: (d as { lastError: string }).lastError.slice(0, 2000) }
+            : {}),
+          ...(typeof (d as { lastAttemptAt?: string }).lastAttemptAt === "string"
+            ? { lastAttemptAt: (d as { lastAttemptAt: string }).lastAttemptAt }
+            : {}),
+          ...(typeof (d as { analyzedAt?: string }).analyzedAt === "string"
+            ? { analyzedAt: (d as { analyzedAt: string }).analyzedAt }
+            : {}),
+          ...(typeof (d as { analysisVersion?: string }).analysisVersion === "string"
+            ? { analysisVersion: (d as { analysisVersion: string }).analysisVersion }
+            : {}),
+          ...(Array.isArray((d as { staleReasons?: string[] }).staleReasons)
+            ? {
+                staleReasons: (d as { staleReasons: string[] }).staleReasons
+                  .filter((x): x is string => typeof x === "string")
+                  .map((x) => x.trim())
+                  .filter(Boolean),
+              }
+            : {}),
+          ...((d as { requiresUpgrade?: boolean }).requiresUpgrade === true ? { requiresUpgrade: true } : {}),
+          ...(typeof (d as { analysisOrigin?: string }).analysisOrigin === "string"
+            ? {
+                analysisOrigin: (d as { analysisOrigin: NonNullable<KnowledgeDocumentEntry["analysisOrigin"]> })
+                  .analysisOrigin,
+              }
+            : {}),
+          ...(typeof (d as { analysisProvider?: string }).analysisProvider === "string"
+            ? {
+                analysisProvider: (d as { analysisProvider: NonNullable<KnowledgeDocumentEntry["analysisProvider"]> })
+                  .analysisProvider,
+              }
+            : {}),
+          ...(typeof (d as { analysisReliability?: string }).analysisReliability === "string"
+            ? {
+                analysisReliability: (d as { analysisReliability: NonNullable<KnowledgeDocumentEntry["analysisReliability"]> })
+                  .analysisReliability,
+              }
+            : {}),
+          ...((d as { isReliableForGeneration?: boolean }).isReliableForGeneration === true ||
+          (d as { isReliableForGeneration?: boolean }).isReliableForGeneration === false
+            ? { isReliableForGeneration: Boolean((d as { isReliableForGeneration: boolean }).isReliableForGeneration) }
+            : {}),
+          ...(d.extractedContextStructured && typeof d.extractedContextStructured === "object"
+            ? { extractedContextStructured: d.extractedContextStructured as BrainExtractedContext }
+            : {}),
         }));
     }
     if (typeof k.corporateContext === "string") {
@@ -735,6 +848,7 @@ export function normalizeProjectAssets(raw: unknown): ProjectAssetsMetadata {
         }))
         .filter((e) => e.topic.trim() || e.value.trim());
     }
+    knowledge.urls = normalizeKnowledgeUrlsFromDocuments(knowledge.documents, knowledge.urls);
   }
 
   const strategy: BrainStrategy = {
@@ -1153,6 +1267,19 @@ export function normalizeProjectAssets(raw: unknown): ProjectAssetsMetadata {
       const confirmedVisualPatterns = Array.isArray(v.confirmedVisualPatterns)
         ? v.confirmedVisualPatterns.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
         : undefined;
+      const dnaCollageImageDataUrl =
+        typeof v.dnaCollageImageDataUrl === "string" && v.dnaCollageImageDataUrl.trim().length > 0
+          ? v.dnaCollageImageDataUrl.trim()
+          : undefined;
+      const dnaCollageSourceFingerprint =
+        typeof v.dnaCollageSourceFingerprint === "string" && v.dnaCollageSourceFingerprint.trim().length > 0
+          ? v.dnaCollageSourceFingerprint.trim()
+          : undefined;
+      const dnaCollageGeneratedAt =
+        typeof v.dnaCollageGeneratedAt === "string" && v.dnaCollageGeneratedAt.trim().length > 0
+          ? v.dnaCollageGeneratedAt.trim()
+          : undefined;
+      const brandVisualDnaBundle = parseBrandVisualDnaBundle(v.brandVisualDnaBundle);
       strategy.visualReferenceAnalysis = {
         analyses,
         aggregated,
@@ -1160,7 +1287,55 @@ export function normalizeProjectAssets(raw: unknown): ProjectAssetsMetadata {
         analyzerVersion: typeof v.analyzerVersion === "string" ? v.analyzerVersion : undefined,
         ...(lastProv ? { lastVisionProviderId: lastProv } : {}),
         ...(confirmedVisualPatterns?.length ? { confirmedVisualPatterns } : {}),
+        ...(dnaCollageImageDataUrl ? { dnaCollageImageDataUrl } : {}),
+        ...(dnaCollageSourceFingerprint ? { dnaCollageSourceFingerprint } : {}),
+        ...(dnaCollageGeneratedAt ? { dnaCollageGeneratedAt } : {}),
+        ...(brandVisualDnaBundle ? { brandVisualDnaBundle } : {}),
       };
+    }
+    const brandVisualSynth = normalizeBrandVisualDna(s.brandVisualDna);
+    if (brandVisualSynth) strategy.brandVisualDna = brandVisualSynth;
+    if (s.contentDna && typeof s.contentDna === "object") {
+      const c = s.contentDna as ContentDna;
+      strategy.contentDna = {
+        ...c,
+        audienceProfiles: Array.isArray(c.audienceProfiles) ? c.audienceProfiles : [],
+        contentPillars: Array.isArray(c.contentPillars) ? c.contentPillars.filter((x): x is string => typeof x === "string") : [],
+        topics: Array.isArray(c.topics) ? c.topics.filter((x): x is string => typeof x === "string") : [],
+        trendOpportunities: Array.isArray(c.trendOpportunities)
+          ? c.trendOpportunities.filter((x): x is string => typeof x === "string")
+          : [],
+        preferredFormats: Array.isArray(c.preferredFormats)
+          ? c.preferredFormats.filter((x): x is string => typeof x === "string")
+          : [],
+        articleStructures: Array.isArray(c.articleStructures)
+          ? c.articleStructures.filter((x): x is string => typeof x === "string")
+          : [],
+        forbiddenClaims: Array.isArray(c.forbiddenClaims)
+          ? c.forbiddenClaims.filter((x): x is string => typeof x === "string")
+          : [],
+        approvedClaims: Array.isArray(c.approvedClaims)
+          ? c.approvedClaims.filter((x): x is string => typeof x === "string")
+          : [],
+        writingDo: Array.isArray(c.writingDo) ? c.writingDo.filter((x): x is string => typeof x === "string") : [],
+        writingAvoid: Array.isArray(c.writingAvoid) ? c.writingAvoid.filter((x): x is string => typeof x === "string") : [],
+        narrativeAngles: Array.isArray(c.narrativeAngles)
+          ? c.narrativeAngles.filter((x): x is string => typeof x === "string")
+          : [],
+        evidence: Array.isArray(c.evidence) ? c.evidence : [],
+        confidence: typeof c.confidence === "number" ? c.confidence : 0.5,
+      };
+    }
+    const safeRules = normalizeSafeCreativeRules(s.safeCreativeRules);
+    if (safeRules) strategy.safeCreativeRules = safeRules;
+    if (Array.isArray(s.visualDnaSlots)) {
+      strategy.visualDnaSlots = normalizeVisualDnaSlots(s.visualDnaSlots);
+    }
+    {
+      const docIds = new Set(knowledge.documents.map((d) => d.id));
+      const suppressed = normalizeVisualDnaSlotSuppressedSourceIds(s.visualDnaSlotSuppressedSourceIds, docIds);
+      if (suppressed.length) strategy.visualDnaSlotSuppressedSourceIds = suppressed;
+      else delete strategy.visualDnaSlotSuppressedSourceIds;
     }
     if (s.fieldProvenance && typeof s.fieldProvenance === "object") {
       const fp = s.fieldProvenance as Record<string, unknown>;
@@ -1213,7 +1388,7 @@ export function normalizeProjectAssets(raw: unknown): ProjectAssetsMetadata {
     }
   }
 
-  return { brand, knowledge, strategy };
+  return { brand, knowledge, strategy, brainMeta };
 }
 
 /** Texto compacto para el asistente del lienzo (sin data URLs de logos). */

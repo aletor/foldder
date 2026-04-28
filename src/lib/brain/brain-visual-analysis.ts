@@ -1,5 +1,6 @@
 import type {
   AggregatedVisualPatterns,
+  BrainVisualAnalysisStatus,
   BrainVisionProviderId,
   BrainVisualImageAnalysis,
   BrainVisualReferenceLayer,
@@ -33,7 +34,32 @@ export function getEffectiveClassification(a: BrainVisualImageAnalysis): VisualI
   if (a.userVisualOverride && a.userVisualOverride !== "EXCLUDED") {
     return a.userVisualOverride as VisualImageClassification;
   }
-  return a.classification;
+  const c = a.classification;
+  if (
+    c === "CORE_VISUAL_DNA" ||
+    c === "PROJECT_VISUAL_REFERENCE" ||
+    c === "CONTEXTUAL_VISUAL_MEMORY" ||
+    c === "RAW_ASSET_ONLY"
+  ) {
+    return c;
+  }
+  return "PROJECT_VISUAL_REFERENCE";
+}
+
+function isVisualRowMockOrFallback(a: BrainVisualImageAnalysis): boolean {
+  if (a.fallbackUsed === true) return true;
+  if (a.visionProviderId === "mock") return true;
+  if (!a.visionProviderId && String(a.analyzerVersion ?? "").toLowerCase().startsWith("mock")) return true;
+  return false;
+}
+
+/** Solo filas con visión real analizada alimentan agregados (no mock ni pendientes). */
+export function contributesToVisualAggregate(a: BrainVisualImageAnalysis): boolean {
+  if (isExcludedFromVisualDna(a)) return false;
+  const st: BrainVisualAnalysisStatus = a.analysisStatus ?? "analyzed";
+  if (st !== "analyzed") return false;
+  if (isVisualRowMockOrFallback(a)) return false;
+  return true;
 }
 
 /** Entrada mínima para análisis (sin binarios pesados): metadatos + nombre. */
@@ -375,153 +401,52 @@ export function buildDesignerTelemetryImageAssetRefs(nodeId: string, batches: Te
   });
 }
 
-/** Mock determinista + señales densas (sustituir por Gemini/OpenAI Vision vía provider). */
-function buildRichMockBrainVisualImageAnalysis(
-  _projectId: string,
+/**
+ * Fila mínima sin contenido simulado: hasta que Gemini/OpenAI Vision analicen de verdad,
+ * no rellenamos sujetos/paletas ficticios (evita contaminar agregados y prompts).
+ */
+export function buildEmptyBrainVisualAnalysisShell(
   asset: BrainVisualAssetRef,
   dedupeKey: string,
+  opts: {
+    analysisStatus: BrainVisualAnalysisStatus;
+    visionProviderId?: BrainVisionProviderId;
+    analyzerVersion?: string;
+    reasoning?: string;
+    failureReason?: string;
+    fallbackUsed?: boolean;
+    visionProviderAttempted?: BrainVisionProviderId;
+    fallbackProvider?: BrainVisualImageAnalysis["fallbackProvider"];
+  },
 ): BrainVisualImageAnalysis {
-  const name = asset.name.toLowerCase();
-  const isLogo = name.includes("logo") || asset.sourceKind === "brand_logo";
-  const isMood = name.includes("mood") || name.includes("board") || name.includes("referencia");
-  const isProduct = name.includes("product") || name.includes("pack") || name.includes("bottle");
-  const studioCraft =
-    /studio|estudio|moodboard|craft|artesan|editorial|documental|trabajo|equipo|reuni|taller/i.test(name);
-
-  const premiumHint =
-    name.includes("luxury") ||
-    name.includes("lujo") ||
-    name.includes("editorial") ||
-    name.includes("lookbook") ||
-    studioCraft;
-  const urbanHint = name.includes("urban") || name.includes("street") || name.includes("city");
-
-  const visualStyle = studioCraft
-    ? ["editorial", "documental", "artesanal", "premium discreto", "humano"]
-    : [
-        premiumHint ? "editorial premium" : "minimalista contemporáneo",
-        urbanHint ? "urbano" : "estudio limpio",
-        isProduct ? "producto protagonista" : "lifestyle",
-      ].filter(Boolean);
-
-  const mood = studioCraft
-    ? ["humano", "creativo", "concentrado", "cercano", "artesanal"]
-    : premiumHint
-      ? ["sofisticación", "confianza", "exclusividad"]
-      : ["calma", "cercanía", isProduct ? "innovación" : "humanidad"].filter(Boolean);
-
-  const subjectTags = studioCraft
-    ? ["personas", "estudio creativo", "moodboard", "materiales visuales", "proceso"]
-    : isProduct
-      ? ["producto", "packaging"]
-      : isLogo
-        ? ["identidad", "logo"]
-        : isMood
-          ? ["referencia visual", "ambiente"]
-          : ["personas", "contexto"];
-
-  const dominant = studioCraft
-    ? ["beige", "marrón cálido", "blanco roto", "negro suave"]
-    : premiumHint
-      ? ["#f5f5f0", "#1a1a1a", "#94a3b8"]
-      : ["#fafafa", "#334155", "#0ea5e9"];
-  const classification: VisualImageClassification = isLogo
-    ? "RAW_ASSET_ONLY"
-    : isMood && premiumHint
-      ? "CORE_VISUAL_DNA"
-      : isMood || studioCraft
-        ? "PROJECT_VISUAL_REFERENCE"
-        : urbanHint && !premiumHint
-          ? "CONTEXTUAL_VISUAL_MEMORY"
-          : "PROJECT_VISUAL_REFERENCE";
-
-  const peopleDetail =
-    isLogo || isProduct
-      ? { present: false }
-      : {
-          present: true,
-          description: studioCraft
-            ? "Personas en entorno de trabajo creativo"
-            : "Presencia humana natural en contexto de marca",
-          attitude: studioCraft ? ["concentrada", "colaborativa", "natural"] : ["relajada", "auténtica"],
-          pose: studioCraft ? ["trabajando", "observando materiales"] : ["de pie", "interacción suave"],
-          energy: studioCraft ? ["calma", "precisión", "atención"] : ["positiva", "equilibrada"],
-          relationToCamera: "no posan directamente",
-        };
-
-  const clothingDetail =
-    isLogo || isProduct
-      ? { present: false }
-      : {
-          present: true,
-          style: studioCraft ? ["casual premium", "sobrio", "contemporáneo"] : ["casual contemporáneo"],
-          colors: studioCraft ? ["negro", "blanco", "tonos neutros"] : ["azul", "gris", "blanco"],
-          textures: studioCraft ? ["algodón", "tejidos mate"] : ["denim", "punto"],
-          formality: "casual_premium" as const,
-        };
-
-  const graphicDetail =
-    isLogo || isProduct
-      ? { present: false }
-      : {
-          present: true,
-          typography: [],
-          shapes: studioCraft ? ["rectángulos de papel", "composiciones de moodboard"] : ["bloques limpios"],
-          iconography: [],
-          layout: studioCraft ? ["collage físico", "referencias superpuestas"] : ["rejilla suave"],
-          texture: studioCraft ? ["papel", "cartón", "material impreso"] : ["superficies mate"],
-        };
-
-  const visualMessage = studioCraft
-    ? ["la marca trabaja con criterio visual y proceso creativo real"]
-    : premiumHint
-      ? ["control visual alto y propuesta aspiracional"]
-      : ["cercanía y modernidad sin perder solidez"];
-
+  const hasPixels = Boolean(
+    typeof asset.imageUrlForVision === "string" &&
+      (asset.imageUrlForVision.startsWith("data:image") || /^https:\/\//i.test(asset.imageUrlForVision.trim())),
+  );
   return {
     id: newAnalysisId(),
     sourceAssetId: asset.id,
     sourceKind: asset.sourceKind,
     sourceLabel: asset.label ?? asset.name,
-    subject: subjectTags.join(", "),
-    subjectTags,
-    visualStyle,
-    mood,
+    subject: "",
+    subjectTags: [],
+    visualStyle: [],
+    mood: [],
     colorPalette: {
-      dominant,
-      secondary: premiumHint || studioCraft ? ["#c4a574", "gris suave"] : ["#64748b"],
-      temperature: studioCraft || premiumHint ? "warm" : "neutral",
-      saturation: studioCraft || premiumHint ? "low" : "medium",
-      contrast: studioCraft ? "medium" : premiumHint ? "alto" : "medio",
+      dominant: [],
+      secondary: [],
+      temperature: "neutral",
+      saturation: "low",
+      contrast: "low",
     },
-    composition: studioCraft
-      ? ["plano medio", "entorno real", "materiales en primer plano", "luz natural"]
-      : premiumHint
-        ? ["mucho aire", "sujeto centrado", "fondos limpios"]
-        : ["plano medio", "fondo contextual"],
-    people: isProduct ? "sin protagonismo humano fuerte" : "presencia natural, poco posada",
-    clothingStyle: premiumHint || studioCraft ? "casual premium, tonos neutros" : "casual contemporánea",
-    graphicStyle: isLogo ? "logotipo vectorial o marca" : studioCraft ? "moodboard físico, collage editorial" : "fotografía con jerarquía clara",
-    brandSignals: studioCraft
-      ? ["creatividad", "criterio", "proceso artesanal", "premium humano"]
-      : premiumHint
-        ? ["premium", "seria", "institucional suave"]
-        : ["accesible", "moderna"],
-    implicitBrandMessage: studioCraft
-      ? "Marca percibida como cercana al proceso creativo real, con estética editorial y humana."
-      : premiumHint
-        ? "Marca percibida como aspiracional, contenida y con control visual alto."
-        : "Marca percibida como cercana, moderna y accesible sin perder solidez.",
-    visualMessage,
-    possibleUse: [
-      "moodboard",
-      "dirección de arte",
-      "referencia para Designer",
-      "referencia para Photoroom",
-      "referencia para generación IA",
-    ],
-    classification,
-    coherenceScore: classification === "CONTEXTUAL_VISUAL_MEMORY" ? 0.38 : studioCraft ? 0.82 : 0.72,
+    composition: [],
+    people: "",
+    clothingStyle: "",
+    graphicStyle: "",
+    brandSignals: [],
+    possibleUse: [],
+    classification: "PROJECT_VISUAL_REFERENCE",
+    coherenceScore: 0,
     analyzedAt: new Date().toISOString(),
     analysisDedupeKey: dedupeKey,
     assetRef: asset.assetRef,
@@ -533,40 +458,52 @@ function buildRichMockBrainVisualImageAnalysis(
     pageId: asset.pageId,
     frameId: asset.frameId,
     fileName: asset.fileName,
-    peopleDetail,
-    clothingDetail,
-    graphicDetail,
-    reasoning: studioCraft
-      ? "La imagen refuerza un estilo creativo humano y editorial, útil para dirección visual."
-      : "Patrón coherente con referencias de marca y uso en piezas digitales.",
-    analysisStatus: "analyzed",
-    visionProviderId: "mock",
-    analyzerVersion: "mock-1",
-    fallbackUsed: false,
-    imageUrlForVisionAvailable: Boolean(
-      typeof asset.imageUrlForVision === "string" &&
-        (asset.imageUrlForVision.startsWith("data:image") || /^https:\/\//i.test(asset.imageUrlForVision.trim())),
-    ),
+    peopleDetail: { present: false },
+    clothingDetail: { present: false },
+    graphicDetail: { present: false },
+    reasoning:
+      opts.reasoning ??
+      (opts.analysisStatus === "pending"
+        ? "Pendiente de análisis con visión remota (Gemini/OpenAI). No hay datos simulados."
+        : ""),
+    analysisStatus: opts.analysisStatus,
+    visionProviderId: opts.visionProviderId,
+    analyzerVersion: opts.analyzerVersion ?? "none-1",
+    fallbackUsed: opts.fallbackUsed,
+    visionProviderAttempted: opts.visionProviderAttempted,
+    fallbackProvider: opts.fallbackProvider,
+    failureReason: opts.failureReason,
+    imageUrlForVisionAvailable: hasPixels,
   };
 }
 
-/** Baseline heurístico (mismo criterio que el mock sincrónico) para fusionar JSON de visión real. */
-export function buildBrainVisualMockAnalysisFromAsset(projectId: string, asset: BrainVisualAssetRef): BrainVisualImageAnalysis {
-  return buildRichMockBrainVisualImageAnalysis(projectId, asset, analysisDedupeKeyFromRef(asset));
+/** Base vacía para tests o fusión JSON; no inventa escena ni paleta. */
+export function buildBrainVisualMockAnalysisFromAsset(_projectId: string, asset: BrainVisualAssetRef): BrainVisualImageAnalysis {
+  const k = analysisDedupeKeyFromRef(asset);
+  return buildEmptyBrainVisualAnalysisShell(asset, k, {
+    analysisStatus: "analyzed",
+    visionProviderId: "mock",
+    analyzerVersion: "mock-1",
+    reasoning: "Proveedor mock explícito (solo tests); sin señales simuladas.",
+  });
 }
 
 /**
- * Analiza una imagen (mock local por defecto). Si ya existe análisis con la misma clave de dedupe, lo reutiliza.
+ * Sin visión remota configurada solo registramos la referencia en estado pendiente.
+ * Si ya existe análisis con la misma clave de dedupe, lo reutiliza (salvo fallos).
  */
 export function analyzeBrainImageAsset(
-  projectId: string,
+  _projectId: string,
   asset: BrainVisualAssetRef,
   existing?: readonly BrainVisualImageAnalysis[],
 ): BrainVisualImageAnalysis {
   const k = analysisDedupeKeyFromRef(asset);
   const hit = existing?.find((a) => analysisDedupeKeyFromAnalysis(a) === k);
   if (hit && hit.analysisStatus !== "failed") return { ...hit };
-  return buildRichMockBrainVisualImageAnalysis(projectId, asset, k);
+  return buildEmptyBrainVisualAnalysisShell(asset, k, {
+    analysisStatus: "pending",
+    reasoning: "Sin análisis automático simulado. Usa «Reanalizar imágenes» con visión remota o sube referencias y vuelve a analizar.",
+  });
 }
 
 export type AnalyzeBrainImageBatchOptions = {
@@ -610,23 +547,32 @@ function topN(m: Map<string, number>, n: number): string[] {
     .map(([k]) => k);
 }
 
+function asStringList(v: unknown): string[] {
+  if (Array.isArray(v)) return v.filter((x): x is string => typeof x === "string").map((s) => s.trim()).filter(Boolean);
+  if (typeof v === "string") return v.trim() ? [v.trim()] : [];
+  return [];
+}
+
 export function aggregateVisualPatterns(analyses: BrainVisualImageAnalysis[]): AggregatedVisualPatterns {
   const excludedFromVisualDnaCount = analyses.filter((a) => isExcludedFromVisualDna(a)).length;
-  const active = analyses.filter((a) => !isExcludedFromVisualDna(a));
+  const active = analyses.filter(contributesToVisualAggregate);
 
-  const styleTally = countStrings(active.flatMap((a) => a.visualStyle));
-  const moodTally = countStrings(active.flatMap((a) => a.mood));
+  const styleTally = countStrings(active.flatMap((a) => asStringList(a.visualStyle)));
+  const moodTally = countStrings(active.flatMap((a) => asStringList(a.mood)));
   const subjectTally = countStrings(
-    active.flatMap((a) =>
-      a.subjectTags?.length ? a.subjectTags : a.subject.split(/[,;]/g).map((s) => s.trim()).filter(Boolean),
-    ),
+    active.flatMap((a) => {
+      const tags = asStringList(a.subjectTags);
+      if (tags.length) return tags;
+      const subj = typeof a.subject === "string" ? a.subject : "";
+      return subj.split(/[,;]/g).map((s) => s.trim()).filter(Boolean);
+    }),
   );
-  const composition = countStrings(active.flatMap((a) => a.composition));
-  const palettes = active.flatMap((a) => a.colorPalette.dominant);
-  const secondaries = active.flatMap((a) => a.colorPalette.secondary ?? []);
+  const composition = countStrings(active.flatMap((a) => asStringList(a.composition)));
+  const palettes = active.flatMap((a) => asStringList(a.colorPalette?.dominant));
+  const secondaries = active.flatMap((a) => asStringList(a.colorPalette?.secondary));
 
   const graphicPieces = active.flatMap((a) =>
-    a.graphicStyle
+    String(a.graphicStyle ?? "")
       .split(/[,;·]/g)
       .map((s) => s.trim())
       .filter(Boolean),
@@ -650,7 +596,7 @@ export function aggregateVisualPatterns(analyses: BrainVisualImageAnalysis[]): A
   const peopleClothingNotes = topN(
     countStrings(
       active.flatMap((a) =>
-        `${a.people}; ${a.clothingStyle}`
+        `${String(a.people ?? "")}; ${String(a.clothingStyle ?? "")}`
           .split(";")
           .flatMap((x) => x.split(","))
           .map((s) => s.trim())
@@ -960,6 +906,11 @@ export function mergeVisualReferenceLayer(
     lastAnalyzedAt: new Date().toISOString(),
     analyzerVersion,
     lastVisionProviderId: opts?.visionProviderId ?? prev?.lastVisionProviderId,
+    ...(prev?.confirmedVisualPatterns?.length ? { confirmedVisualPatterns: prev.confirmedVisualPatterns } : {}),
+    ...(prev?.dnaCollageImageDataUrl ? { dnaCollageImageDataUrl: prev.dnaCollageImageDataUrl } : {}),
+    ...(prev?.dnaCollageSourceFingerprint ? { dnaCollageSourceFingerprint: prev.dnaCollageSourceFingerprint } : {}),
+    ...(prev?.dnaCollageGeneratedAt ? { dnaCollageGeneratedAt: prev.dnaCollageGeneratedAt } : {}),
+    ...(prev?.brandVisualDnaBundle ? { brandVisualDnaBundle: prev.brandVisualDnaBundle } : {}),
   };
 }
 
@@ -1039,8 +990,8 @@ export function reanalyzeVisualReferences(projectId: string, assets: ProjectAsse
   const existing = assets.strategy.visualReferenceAnalysis?.analyses ?? [];
   const analyses = analyzeBrainImageBatch(projectId, refs, { existingAnalyses: existing });
   const aggregated = aggregateVisualPatterns(analyses);
-  return mergeVisualReferenceLayer(assets.strategy.visualReferenceAnalysis, analyses, aggregated, "mock-1", {
-    visionProviderId: "mock",
+  return mergeVisualReferenceLayer(assets.strategy.visualReferenceAnalysis, analyses, aggregated, "client-pending-v1", {
+    visionProviderId: undefined,
   });
 }
 

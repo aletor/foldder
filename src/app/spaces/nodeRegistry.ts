@@ -196,6 +196,7 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
     label: 'Nano Banana 2',
     description: 'Generates images and supports image-to-image transformations.',
     inputs: [
+      { id: 'brain',   label: 'Brain',         type: 'brain' },
       { id: 'prompt',  label: 'Prompt Input',  type: 'prompt' },
       { id: 'image',   label: 'Ref 1 (Base)',  type: 'image' },
       { id: 'image2',  label: 'Ref 2',          type: 'image' },
@@ -469,7 +470,7 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
 export const ASSISTANT_NODE_DATA_HINTS: Record<string, string> = {
   promptInput: "value (texto del prompt), label (título visible encima del nodo — obligatorio si el usuario pide nombres/etiquetas por nodo)",
   nanoBanana:
-    "modelKey (flash31|flash25|pro3), aspect_ratio, resolution (1k|2k|4k), thinking (bool), value/s3Key (salida), label",
+    "modelKey (flash31|flash25|pro3), aspect_ratio, resolution (1k|2k|4k), thinking (bool), value/s3Key (salida), label; entrada brain desde projectBrain mezcla ADN visual (metadata.assets) con el prompt del usuario",
   grokProcessor: "duration (number, 5|10), resolution, aspect_ratio, value (salida vídeo URL), type ('video'), label",
   geminiVideo:
     "videoModel (veo31|seedance2), videoFormat (16:9|9:16|1:1), resolution (720p|1080p|4K Veo), duration (s), audio (bool), seed, negativePrompt, animationPrompt, cameraPreset, value (salida vídeo URL), type ('video'), s3Key, label",

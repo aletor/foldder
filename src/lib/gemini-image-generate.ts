@@ -18,6 +18,9 @@ export const GEMINI_IMAGE_MODELS = {
   flash25: "gemini-2.5-flash-image",
 } as const;
 
+/** Solo el tablero Nano Banana de Referencias visuales (Brain): mensajes ES y detección explícita de copyright. */
+export type GeminiImageClientContext = "brain_visual_dna_collage";
+
 export type GeminiImageGenerateBody = {
   prompt: string;
   images?: string[];
@@ -26,6 +29,11 @@ export type GeminiImageGenerateBody = {
   resolution?: string;
   model?: string;
   thinking?: boolean;
+  /**
+   * Metadato interno (no se envía a Google). Si es `brain_visual_dna_collage`, se aplican mensajes y códigos
+   * orientados a copyright en fallos sin imagen. El resto de llamadas conservan el comportamiento genérico.
+   */
+  geminiClientContext?: GeminiImageClientContext;
 };
 
 export type GeminiImageGenerateResult = {
@@ -51,6 +59,47 @@ export class GeminiGenerateError extends Error {
     super(message);
     this.name = "GeminiGenerateError";
   }
+}
+
+/** Texto de API o modelo que suele indicar bloqueo por copyright / recitación / contenido protegido. */
+const COPYRIGHT_OR_POLICY_HINT =
+  /copyright|recit|recitation|protected content|intellectual property|third[- ]party|licensed material|watermark|dmca|content policy|blocked for policy|image_safety|trademark/i;
+
+const MSG_COPYRIGHT_ES =
+  "Generación detenida: el modelo bloqueó la salida por posible derechos de autor o contenido protegido (referencias o texto demasiado cercanos a material ajeno). Cambia las imágenes de referencia, evita logotipos o capturas reconocibles y vuelve a intentarlo.";
+
+const MSG_SAFETY_ES =
+  "Generación detenida: el modelo aplicó filtros de seguridad al prompt o a las imágenes de entrada. Usa referencias más neutras o un prompt más genérico.";
+
+function looksCopyrightOrRecitationPolicy(text: string): boolean {
+  const t = text.trim();
+  return t.length > 0 && COPYRIGHT_OR_POLICY_HINT.test(t);
+}
+
+function classifyNoImageFailure(params: {
+  finishReason: string;
+  promptBlockReason?: string;
+  textResponse: string;
+}): { userMessage: string; status: number } {
+  const fr = String(params.finishReason || "UNKNOWN").trim();
+  const frU = fr.toUpperCase();
+  const pb = String(params.promptBlockReason || "").trim();
+  const pbU = pb.toUpperCase();
+  const text = `${params.textResponse || ""} ${fr} ${pb}`;
+
+  if (frU === "RECITATION" || looksCopyrightOrRecitationPolicy(text)) {
+    return { userMessage: MSG_COPYRIGHT_ES, status: 422 };
+  }
+  if (frU === "SAFETY" || frU === "IMAGE_SAFETY" || pbU === "SAFETY" || pbU === "BLOCKED_REASON_SAFETY") {
+    return { userMessage: MSG_SAFETY_ES, status: 422 };
+  }
+  if (frU === "OTHER" || frU === "IMAGE_OTHER" || pbU === "OTHER" || pbU === "BLOCKED_REASON_OTHER") {
+    return { userMessage: MSG_COPYRIGHT_ES, status: 422 };
+  }
+  return {
+    userMessage: "No se generó imagen. Prueba con otras referencias o un prompt más corto y genérico.",
+    status: 500,
+  };
 }
 
 function expectedGeminiWaitMs(modelKey: string, thinking: boolean): number {
@@ -82,7 +131,10 @@ export async function geminiImageGenerate(
     resolution,
     model: modelKey = "flash31",
     thinking = false,
+    geminiClientContext,
   } = raw;
+
+  const dnaCollageCopyrightUi = geminiClientContext === "brain_visual_dna_collage";
 
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   if (!apiKey) throw new GeminiGenerateError("API Key not configured", 500);
@@ -195,17 +247,23 @@ export async function geminiImageGenerate(
 
   if (data.error) {
     const isQuota = response.status === 429;
+    const detail = String(data.error?.message || JSON.stringify(data));
+    if (dnaCollageCopyrightUi && !isQuota && looksCopyrightOrRecitationPolicy(detail)) {
+      throw new GeminiGenerateError(MSG_COPYRIGHT_ES, 422, detail);
+    }
     throw new GeminiGenerateError(
       isQuota ? "Google API Quota Reached (429)" : `Gemini Error (${response.status})`,
       response.status || 500,
-      data.error?.message || JSON.stringify(data)
+      detail,
     );
   }
 
   report(84, "parse");
 
   const candidate = data.candidates?.[0];
-  const finishReason = candidate?.finishReason || data.promptFeedback?.blockReason || "UNKNOWN";
+  const promptBlockReason =
+    typeof data.promptFeedback?.blockReason === "string" ? data.promptFeedback.blockReason : undefined;
+  const finishReason = candidate?.finishReason || promptBlockReason || "UNKNOWN";
 
   let imageBuffer: Buffer | null = null;
   for (const part of candidate?.content?.parts || []) {
@@ -218,16 +276,28 @@ export async function geminiImageGenerate(
 
   if (!imageBuffer) {
     const textResponse = (candidate?.content?.parts || []).find((p: { text?: string }) => p.text)?.text || "";
-    const msgMap: Record<string, string> = {
-      SAFETY: "Safety violation: Prompt or content blocked.",
-      OTHER: "Content blocked (copyright/safety filter). Try a more generic prompt.",
-      UNKNOWN: "No image was generated. Try a different prompt.",
-    };
-    throw new GeminiGenerateError(
-      msgMap[finishReason] || msgMap.UNKNOWN,
-      500,
-      textResponse || `Finish Reason: ${finishReason}`
-    );
+    const detail =
+      textResponse.trim() ||
+      (promptBlockReason ? `promptFeedback: ${promptBlockReason}` : "") ||
+      `finishReason: ${finishReason}`;
+    if (!dnaCollageCopyrightUi) {
+      const msgMap: Record<string, string> = {
+        SAFETY: "Safety violation: Prompt or content blocked.",
+        OTHER: "Content blocked (copyright/safety filter). Try a more generic prompt.",
+        UNKNOWN: "No image was generated. Try a different prompt.",
+      };
+      throw new GeminiGenerateError(
+        msgMap[finishReason] || msgMap.UNKNOWN,
+        500,
+        detail || undefined,
+      );
+    }
+    const { userMessage, status } = classifyNoImageFailure({
+      finishReason,
+      promptBlockReason,
+      textResponse,
+    });
+    throw new GeminiGenerateError(userMessage, status, detail || undefined);
   }
 
   report(90, "s3");

@@ -163,6 +163,13 @@ import {
   useSpacesCanvasKeyboard,
 } from "./hooks";
 
+function newLocalWorkspaceScopeId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `lw_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+}
+
 type SavedProjectMeta = {
   createdAt?: string;
   id: string;
@@ -318,7 +325,9 @@ export function SpacesContent() {
   const [projectBrainOpen, setProjectBrainOpen] = useState(false);
   const [brainInitialSection, setBrainInitialSection] = useState<BrainMainSection | null>(null);
   const [projectAssetsOpen, setProjectAssetsOpen] = useState(false);
-  const projectScopeId = activeProjectId || "__local__";
+  /** Aísla caché (p. ej. sugerencias de imagen) cuando aún no hay `activeProjectId`; evita reutilizar `__local__` entre borradores. */
+  const [localWorkspaceScopeId, setLocalWorkspaceScopeId] = useState(() => newLocalWorkspaceScopeId());
+  const projectScopeId = activeProjectId ?? localWorkspaceScopeId;
 
   const projectBrainCanvasValue = useMemo(
     () => ({
@@ -2295,6 +2304,7 @@ export function SpacesContent() {
       setNavigationStack([]);
       setSpacesMap({});
       setActiveProjectId(null);
+      setLocalWorkspaceScopeId(newLocalWorkspaceScopeId());
       setMetadata({});
       setVisualReferenceAnalysisDirty(false);
       setCurrentName(trimmed);
@@ -2452,6 +2462,7 @@ export function SpacesContent() {
       await refreshProjectsList();
       if (activeProjectId === idToDelete) {
         setActiveProjectId(null);
+        setLocalWorkspaceScopeId(newLocalWorkspaceScopeId());
         setActiveSpaceId('root');
         setCurrentName('');
         setSpacesMap({});
@@ -2720,6 +2731,15 @@ export function SpacesContent() {
       takeSnapshot();
       const edgeId = `e-${params.source}-${params.target}-${params.sourceHandle || 'def'}-${params.targetHandle || 'def'}-${Math.random().toString(36).substring(2, 6)}`;
       setEdges((eds) => addEdge({ ...params, id: edgeId, type: 'buttonEdge' }, eds));
+      const srcNode = liveNodesRef.current.find((n: { id: string }) => n.id === params.source);
+      if (
+        srcNode?.type === "nanoBanana" &&
+        (params.sourceHandle === "image" || params.sourceHandle == null || params.sourceHandle === "")
+      ) {
+        window.dispatchEvent(
+          new CustomEvent("foldder-nano-banana-output-wired", { detail: { nodeId: params.source } }),
+        );
+      }
       queueMicrotask(() => {
         updateNodeInternals(params.source);
         updateNodeInternals(params.target);
@@ -2739,7 +2759,7 @@ export function SpacesContent() {
       }, 50);
       fitViewToNodeIds([params.target], 600);
     },
-    [setEdges, takeSnapshot, fitViewToNodeIds, updateNodeInternals]
+    [setEdges, takeSnapshot, fitViewToNodeIds, updateNodeInternals, liveNodesRef]
   );
 
   // ── Handle→Node: soltar conexión en el lienzo vacío crea el nodo más probable (ver canvas-connect-end-drop).
@@ -4493,6 +4513,7 @@ export function SpacesContent() {
             initialSection={brainInitialSection}
             visualReferenceAnalysisDirty={visualReferenceAnalysisDirty}
             onVisualReferenceAnalysisDirty={() => setVisualReferenceAnalysisDirty(true)}
+            onBrainAssetsFullReset={() => setVisualReferenceAnalysisDirty(false)}
             onSaveProjectFromBrain={() => saveProject(undefined, { silentError: true })}
             isSavingProject={isSaving}
             onAssetsMetadataChange={(next) =>

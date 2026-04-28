@@ -12,6 +12,7 @@ export type BrandSummaryNavTab =
   | "overview"
   | "dna"
   | "visual_refs"
+  | "brand_visual_dna"
   | "knowledge"
   | "connected_nodes"
   | "review"
@@ -88,13 +89,7 @@ export type BrandSummarySourcesPanelProps = {
   pendingLearningsCount: number;
   /** ISO; último re-estudio completado en esta sesión (cliente). */
   lastRestudyCompletedIso: string | null;
-  analyzingKnowledge: boolean;
-  visualReanalyzing: boolean;
-  restudyBusy: boolean;
   onNavigate: (tab: BrandSummaryNavTab) => void;
-  onAnalyzeKnowledge: () => void;
-  onReanalyzeVisualRefs: () => void;
-  onBrainRestudy: () => void;
   onStripLegacyDemo: () => void;
 };
 
@@ -104,13 +99,7 @@ export function BrandSummarySourcesPanel({
   fieldProvenance,
   pendingLearningsCount,
   lastRestudyCompletedIso,
-  analyzingKnowledge,
-  visualReanalyzing,
-  restudyBusy,
   onNavigate,
-  onAnalyzeKnowledge,
-  onReanalyzeVisualRefs,
-  onBrainRestudy,
   onStripLegacyDemo,
 }: BrandSummarySourcesPanelProps) {
   const { inventory, documents, funnel, toneTraits, identity, visualRows, visualLastAnalyzedAt } = diagnostics;
@@ -280,23 +269,13 @@ export function BrandSummarySourcesPanel({
   const actions = (
     <div className="mt-3 flex flex-wrap gap-2 border-t border-zinc-100 pt-3">
       {section.key === "identityNarrative" ? (
-        <>
-          <button
-            type="button"
-            className="rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wide text-violet-900 hover:bg-violet-100"
-            onClick={() => onNavigate("knowledge")}
-          >
-            Ir a Conocimiento
-          </button>
-          <button
-            type="button"
-            disabled={analyzingKnowledge}
-            className="rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wide text-zinc-800 hover:bg-zinc-50 disabled:opacity-50"
-            onClick={() => onAnalyzeKnowledge()}
-          >
-            {analyzingKnowledge ? "Analizando…" : "Analizar conocimiento"}
-          </button>
-        </>
+        <button
+          type="button"
+          className="rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wide text-violet-900 hover:bg-violet-100"
+          onClick={() => onNavigate("knowledge")}
+        >
+          Ir a Conocimiento
+        </button>
       ) : null}
       {section.key === "tone" ? (
         <>
@@ -306,14 +285,6 @@ export function BrandSummarySourcesPanel({
             onClick={() => onNavigate("voice")}
           >
             Ir a Voz y tono
-          </button>
-          <button
-            type="button"
-            disabled={analyzingKnowledge}
-            className="rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wide text-zinc-800 hover:bg-zinc-50 disabled:opacity-50"
-            onClick={() => onAnalyzeKnowledge()}
-          >
-            {analyzingKnowledge ? "Analizando…" : "Analizar conocimiento"}
           </button>
           <button
             type="button"
@@ -335,14 +306,6 @@ export function BrandSummarySourcesPanel({
           </button>
           <button
             type="button"
-            disabled={analyzingKnowledge}
-            className="rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wide text-zinc-800 hover:bg-zinc-50 disabled:opacity-50"
-            onClick={() => onAnalyzeKnowledge()}
-          >
-            {analyzingKnowledge ? "Analizando…" : "Analizar conocimiento"}
-          </button>
-          <button
-            type="button"
             className="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wide text-rose-900 hover:bg-rose-100"
             onClick={() => onStripLegacyDemo()}
           >
@@ -361,19 +324,10 @@ export function BrandSummarySourcesPanel({
           </button>
           <button
             type="button"
-            disabled={visualReanalyzing}
-            className="rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wide text-zinc-800 hover:bg-zinc-50 disabled:opacity-50"
-            onClick={() => onReanalyzeVisualRefs()}
+            className="rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wide text-violet-900 hover:bg-violet-100"
+            onClick={() => onNavigate("brand_visual_dna")}
           >
-            {visualReanalyzing ? "Reanalizando…" : "Reanalizar referencias (visión)"}
-          </button>
-          <button
-            type="button"
-            disabled={restudyBusy}
-            className="rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-wide text-zinc-800 hover:bg-zinc-50 disabled:opacity-50"
-            onClick={() => onBrainRestudy()}
-          >
-            {restudyBusy ? "Re-estudiando…" : "Re-estudio Brain completo"}
+            Ir a ADN visual (clusters)
           </button>
         </>
       ) : null}
@@ -495,11 +449,14 @@ export function BrandSummarySourcesPanel({
         <div className="mt-2 border-t border-zinc-100 pt-2">
           <p className="text-[10px] font-black uppercase tracking-wide text-zinc-500">Todas las claves fieldProvenance</p>
           <ul className="mt-1 max-h-32 space-y-1 overflow-y-auto text-[9px] text-zinc-700">
-            {fpAllEntries.map(([k, info]) => (
-              <li key={k} className="truncate font-mono" title={formatProvenanceRow(info)}>
-                <span className="font-semibold text-zinc-900">{k}</span>: {info.label} ({info.sourceTier})
-              </li>
-            ))}
+            {fpAllEntries.map(([k, info]) => {
+              if (!info) return null;
+              return (
+                <li key={k} className="truncate font-mono" title={formatProvenanceRow(info)}>
+                  <span className="font-semibold text-zinc-900">{k}</span>: {info.label} ({info.sourceTier})
+                </li>
+              );
+            })}
           </ul>
         </div>
       ) : null}

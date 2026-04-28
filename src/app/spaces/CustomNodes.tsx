@@ -117,6 +117,13 @@ import { fetchBlobViaSpacesProxy } from '@/lib/spaces-proxy-fetch';
 import { usePreventBrowserPinchZoom } from '@/lib/use-prevent-browser-pinch-zoom';
 import { NODE_REGISTRY } from './nodeRegistry';
 import { useRegisterAssistantNodeRun } from './use-assistant-node-run';
+import { useProjectBrainCanvas } from "./project-brain-canvas-context";
+import { normalizeProjectAssets } from "./project-assets-metadata";
+import {
+  composeBrainImageGeneratorPromptWithRuntime,
+  type BrainImageGeneratorPromptDiagnostics,
+} from "@/lib/brain/build-brain-visual-prompt-context";
+import { useBrainNodeTelemetry } from "@/lib/brain/use-brain-node-telemetry";
 import { DEFAULT_EDGE_COLOR, FOLDDER_LOGO_BLUE, HANDLE_COLORS } from './handle-type-colors';
 import {
   NodeIcon,
@@ -3655,6 +3662,15 @@ interface NanoBananaStudioProps {
    * solo instrucciones / cámara / zonas configuradas dentro del Studio.
    */
   externalPromptIgnored?: boolean;
+  /**
+   * Con Brain conectado al nodo: compone tema de usuario + ADN visual Brain.
+   * Si devuelve null, se mantiene el prompt tal cual (mismo comportamiento que sin Brain).
+   */
+  composeBrainImageGeneratorPrompt?: (
+    userThemePrompt: string,
+  ) => { prompt: string; diagnostics: BrainImageGeneratorPromptDiagnostics } | null;
+  /** Última composición Brain aplicada en Studio (para «Ver por qué» en el nodo). */
+  onBrainImageGeneratorDiagnostics?: (d: BrainImageGeneratorPromptDiagnostics | null) => void;
   /** Solo entrada desde PhotoRoom «Modificar imagen con IA»: botón superior = volver al PhotoRoom. */
   topBarCloseMode?: 'default' | 'returnPhotoRoom';
   onClose: () => void;
@@ -3775,9 +3791,29 @@ function nanoBananaPromptExcludeZoneGuideArtifacts(prompt: string): string {
   return prompt.trim() + block;
 }
 
+function mergeNanoBananaStudioPromptWithBrain(
+  compose: NonNullable<NanoBananaStudioProps["composeBrainImageGeneratorPrompt"]> | undefined,
+  onDiag: NanoBananaStudioProps["onBrainImageGeneratorDiagnostics"] | undefined,
+  userTheme: string,
+  body: string,
+  sectionTitle: string,
+): string {
+  if (!compose) return body;
+  const pack = compose(userTheme.trim() || "Generación en Nano Banana Studio.");
+  if (!pack) {
+    onDiag?.(null);
+    return body;
+  }
+  onDiag?.(pack.diagnostics);
+  return `${pack.prompt}\n\n--- ${sectionTitle} ---\n${body}`.trim();
+}
+
 const NanoBananaStudio = memo(({
   nodeId, initialImage, lastGenerated, modelKey, aspectRatio, resolution,
-  thinking, prompt, externalPromptIgnored, topBarCloseMode = 'default', onClose, onGenerated, onResolutionChange,
+  thinking, prompt, externalPromptIgnored,
+  composeBrainImageGeneratorPrompt: composeBrainImageGeneratorPromptProp,
+  onBrainImageGeneratorDiagnostics,
+  topBarCloseMode = 'default', onClose, onGenerated, onResolutionChange,
   generationHistory, onGenerationHistoryChange,
 }: NanoBananaStudioProps) => {
   // ── Generation state ────────────────────────────────────────────────────
@@ -4356,9 +4392,18 @@ const NanoBananaStudio = memo(({
             ref2,
             ...(payload.referenceGridUrl ? [payload.referenceGridUrl] : []),
           ];
+          const graphPromptForBrain = externalPromptIgnored ? "" : String(prompt ?? "");
+          const zoneBody = payload.fullPrompt;
+          const mergedZone = mergeNanoBananaStudioPromptWithBrain(
+            composeBrainImageGeneratorPromptProp,
+            onBrainImageGeneratorDiagnostics,
+            graphPromptForBrain.trim() || "Edición guiada por zonas sobre la imagen.",
+            zoneBody,
+            "DETALLE POR ZONAS Y MAPA (prioridad local de máscaras; estética global según bloque Brain anterior)",
+          );
           const json = await geminiGenerateWithServerProgress(
             {
-              prompt: nanoBananaPromptExcludeZoneGuideArtifacts(payload.fullPrompt),
+              prompt: nanoBananaPromptExcludeZoneGuideArtifacts(mergedZone),
               images: refImages,
               aspect_ratio: aspectRatio,
               resolution: isFlash25 ? '1k' : studioResolution,
@@ -4427,6 +4472,17 @@ const NanoBananaStudio = memo(({
       );
     }
 
+    let promptForModel = fullPrompt;
+    if (composeBrainImageGeneratorPromptProp) {
+      const pack = composeBrainImageGeneratorPromptProp(fullPrompt.trim());
+      if (pack) {
+        promptForModel = pack.prompt;
+        onBrainImageGeneratorDiagnostics?.(pack.diagnostics);
+      } else {
+        onBrainImageGeneratorDiagnostics?.(null);
+      }
+    }
+
     setGenStatus('running');
     setProgress(0);
     aiHudNanoBananaJobStart(nodeId);
@@ -4441,8 +4497,8 @@ const NanoBananaStudio = memo(({
           {
             prompt:
               maskImages.length > 0
-                ? nanoBananaPromptExcludeZoneGuideArtifacts(fullPrompt)
-                : fullPrompt,
+                ? nanoBananaPromptExcludeZoneGuideArtifacts(promptForModel)
+                : promptForModel,
             images: refImages,
             aspect_ratio: aspectRatio,
             resolution: isFlash25 ? '1k' : studioResolution,
@@ -4523,12 +4579,21 @@ const NanoBananaStudio = memo(({
       ...(referenceGridUrl ? [referenceGridUrl] : []),
     ];
 
+    const graphPromptForCall = externalPromptIgnored ? "" : String(prompt ?? "");
+    const mergedCall = mergeNanoBananaStudioPromptWithBrain(
+      composeBrainImageGeneratorPromptProp,
+      onBrainImageGeneratorDiagnostics,
+      graphPromptForCall.trim() || "Generación desde vista previa de zonas.",
+      customPrompt,
+      "DETALLE POR ZONAS Y MAPA",
+    );
+
     let genFinishedOk = false;
     try {
       const ok = await runAiJobWithNotification({ nodeId, label: 'Nano Banana Studio' }, async () => {
         const json = await geminiGenerateWithServerProgress(
           {
-            prompt: nanoBananaPromptExcludeZoneGuideArtifacts(customPrompt),
+            prompt: nanoBananaPromptExcludeZoneGuideArtifacts(mergedCall),
             images: refImages,
             aspect_ratio: aspectRatio,
             resolution: isFlash25 ? '1k' : studioResolution,
@@ -5321,6 +5386,87 @@ export const NanoBananaNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const photoRoomReturnTargetRef = useRef<string | null>(null);
   const [nanoStudioTopBarCloseMode, setNanoStudioTopBarCloseMode] = useState<'default' | 'returnPhotoRoom'>('default');
 
+  const updateNodeInternals = useUpdateNodeInternals();
+  const brainCanvasCtx = useProjectBrainCanvas();
+  const brainTelemetry = useBrainNodeTelemetry({ canvasNodeId: id, nodeType: "IMAGE_GENERATOR" });
+  const [brainImageDiag, setBrainImageDiag] = useState<BrainImageGeneratorPromptDiagnostics | null>(null);
+  const [showBrainWhy, setShowBrainWhy] = useState(false);
+  const brainDiagRef = useRef<BrainImageGeneratorPromptDiagnostics | null>(null);
+  const setBrainImageDiagSync = useCallback((d: BrainImageGeneratorPromptDiagnostics | null) => {
+    brainDiagRef.current = d;
+    setBrainImageDiag(d);
+  }, []);
+
+  const brainConnected = useMemo(
+    () =>
+      edges.some((e: { target: string; targetHandle?: string | null; source: string }) => {
+        if (e.target !== id || e.targetHandle !== "brain") return false;
+        const src = nodes.find((n: Node) => n.id === e.source);
+        return src?.type === "projectBrain";
+      }),
+    [edges, id, nodes],
+  );
+
+  const composeBrainForStudio = useMemo(() => {
+    if (!brainConnected || !brainCanvasCtx?.assetsMetadata) return undefined;
+    return (userThemePrompt: string): { prompt: string; diagnostics: BrainImageGeneratorPromptDiagnostics } | null => {
+      try {
+        const assets = normalizeProjectAssets(brainCanvasCtx.assetsMetadata);
+        return composeBrainImageGeneratorPromptWithRuntime({ assets, userThemePrompt, targetNodeId: id });
+      } catch {
+        return null;
+      }
+    };
+  }, [brainConnected, brainCanvasCtx?.assetsMetadata]);
+
+  const refreshNanoHandleGeometry = useCallback(() => {
+    const run = () => updateNodeInternals(id);
+    requestAnimationFrame(() => {
+      run();
+      requestAnimationFrame(run);
+    });
+    window.setTimeout(run, 140);
+  }, [id, updateNodeInternals]);
+
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => refreshNanoHandleGeometry());
+    const t = window.setTimeout(() => refreshNanoHandleGeometry(), 180);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(t);
+    };
+  }, [refreshNanoHandleGeometry, brainConnected]);
+
+  useEffect(() => {
+    const onViewerDl = (ev: Event) => {
+      const nid = (ev as CustomEvent<{ nodeId?: string }>).detail?.nodeId;
+      if (nid !== id) return;
+      brainTelemetry.track({
+        kind: "CONTENT_EXPORTED",
+        artifactType: "image",
+        exportFormat: "viewer_download",
+        custom: { surface: "spaces_viewer" },
+      });
+      void brainTelemetry.flushTelemetry("manual");
+    };
+    const onWired = (ev: Event) => {
+      const nid = (ev as CustomEvent<{ nodeId?: string }>).detail?.nodeId;
+      if (nid !== id) return;
+      brainTelemetry.track({
+        kind: "CONTENT_EXPORTED",
+        artifactType: "image",
+        exportFormat: "output_edge",
+        custom: { surface: "downstream_wired" },
+      });
+    };
+    window.addEventListener("foldder-spaces-viewer-download", onViewerDl as EventListener);
+    window.addEventListener("foldder-nano-banana-output-wired", onWired as EventListener);
+    return () => {
+      window.removeEventListener("foldder-spaces-viewer-download", onViewerDl as EventListener);
+      window.removeEventListener("foldder-nano-banana-output-wired", onWired as EventListener);
+    };
+  }, [id, brainTelemetry]);
+
   const openNanoStudioNormal = useCallback(() => {
     photoRoomReturnTargetRef.current = null;
     setNanoStudioTopBarCloseMode('default');
@@ -5452,6 +5598,24 @@ export const NanoBananaNode = memo(({ id, data, selected }: NodeProps<any>) => {
     const prompt = promptEdge ? resolvePromptValueFromEdgeSource(promptEdge, nodes) : '';
     if (!prompt) return alert("Connect a prompt node!");
 
+    const userPromptRaw = String(prompt ?? "");
+    let promptToSend = userPromptRaw;
+    let diagForRun: BrainImageGeneratorPromptDiagnostics | null = null;
+    if (brainConnected && brainCanvasCtx?.assetsMetadata) {
+      try {
+        const assets = normalizeProjectAssets(brainCanvasCtx.assetsMetadata);
+        const pack = composeBrainImageGeneratorPromptWithRuntime({
+          assets,
+          userThemePrompt: userPromptRaw,
+          targetNodeId: id,
+        });
+        promptToSend = pack.prompt;
+        diagForRun = pack.diagnostics;
+      } catch {
+        promptToSend = userPromptRaw;
+        diagForRun = null;
+      }
+    }
     const refImages = getRefImages().filter(Boolean) as string[];
 
     const epoch = ++graphGenEpochRef.current;
@@ -5464,7 +5628,7 @@ export const NanoBananaNode = memo(({ id, data, selected }: NodeProps<any>) => {
       const ok = await runAiJobWithNotification({ nodeId: id, label: 'Nano Banana' }, async () => {
         const json = await geminiGenerateWithServerProgress(
           {
-            prompt,
+            prompt: promptToSend,
             images: refImages,
             aspect_ratio: nodeData.aspect_ratio || '16:9',
             resolution: isFlash25 ? '1k' : normalizeNanoBananaResolution(nodeData.resolution),
@@ -5500,6 +5664,23 @@ export const NanoBananaNode = memo(({ id, data, selected }: NodeProps<any>) => {
           };
         }));
         genFinishedOk = true;
+        setBrainImageDiagSync(diagForRun);
+        brainTelemetry.track({
+          kind: "IMAGE_GENERATED",
+          artifactType: "image",
+          custom: {
+            brainConnected,
+            confirmedVisualPatternsUsed: diagForRun?.confirmedVisualPatternsUsed ?? false,
+            trustedVisualAnalysisCount: diagForRun?.trustedVisualAnalysisCount ?? 0,
+            textOnlyGeneration: diagForRun?.textOnlyGeneration ?? false,
+            usedBrainVisualCompose: Boolean(diagForRun),
+          },
+        });
+        brainTelemetry.track({
+          kind: "IMAGE_USED",
+          artifactType: "image",
+          custom: { surface: "graph_output_committed" },
+        });
       });
       if (!ok && graphGenEpochRef.current === epoch) setStatus('error');
     } finally {
@@ -5549,6 +5730,17 @@ export const NanoBananaNode = memo(({ id, data, selected }: NodeProps<any>) => {
       <NodeLabel id={id} label={nodeData.label} defaultLabel="CREACION DE IMAGEN" />
 
       {/* ── Handles ── */}
+      <div className="handle-wrapper handle-left" style={{ top: "2%" }}>
+        <FoldderDataHandle type="target" position={Position.Left} id="brain" dataType="brain" />
+        <span
+          className="handle-label"
+          style={{
+            color: brainConnected ? "#a78bfa" : undefined,
+          }}
+        >
+          {brainConnected ? "✓ Brain" : "Brain"}
+        </span>
+      </div>
       {REF_SLOTS.map((slot, i) => (
         <div key={slot.id} className="handle-wrapper handle-left"
              style={{ top: slot.top, opacity: i === 0 || connectedSlots[i - 1] ? 1 : 0.35 }}>
@@ -5700,6 +5892,62 @@ export const NanoBananaNode = memo(({ id, data, selected }: NodeProps<any>) => {
         </div>
       )}
 
+      {brainConnected && !showStudio && (
+        <div className="nodrag flex shrink-0 flex-col gap-1 border-t border-black/[0.06] bg-violet-950/15 px-2 py-1.5">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowBrainWhy((s) => !s);
+            }}
+            className="text-left text-[8px] font-black uppercase tracking-wider text-violet-200/90 hover:text-violet-100"
+          >
+            {showBrainWhy ? "Ocultar por qué" : "Ver por qué · Brain"}
+          </button>
+          {showBrainWhy &&
+            (brainImageDiag ? (
+              <div className="max-h-40 overflow-y-auto rounded border border-white/10 bg-black/45 px-2 py-1.5 text-[7px] leading-relaxed text-zinc-200">
+                <div className="mb-1 font-bold uppercase tracking-wide text-violet-200/90">Última composición</div>
+                <div>finalPromptUsed (recorte):</div>
+                <pre className="mt-0.5 max-h-24 overflow-y-auto whitespace-pre-wrap break-words text-zinc-400">
+                  {brainImageDiag.finalPromptUsed.length > 1600
+                    ? `${brainImageDiag.finalPromptUsed.slice(0, 1600)}…`
+                    : brainImageDiag.finalPromptUsed}
+                </pre>
+                <div className="mt-1 border-t border-white/10 pt-1 text-zinc-300">
+                  confirmedVisualPatterns: {String(brainImageDiag.confirmedVisualPatternsUsed)}
+                </div>
+                <div>trusted visual analyses: {brainImageDiag.trustedVisualAnalysisCount}</div>
+                <div>textOnlyGeneration: {String(brainImageDiag.textOnlyGeneration)}</div>
+                {brainImageDiag.varietyMode ? (
+                  <div className="mt-0.5 text-zinc-400">
+                    variedad: {brainImageDiag.varietyMode}
+                    {brainImageDiag.familyUsed ? ` · familia: ${brainImageDiag.familyUsed}` : ""}
+                    {brainImageDiag.repeatedElementsAvoided != null
+                      ? ` · repetición evitada: ${String(brainImageDiag.repeatedElementsAvoided)}`
+                      : ""}
+                  </div>
+                ) : null}
+                {brainImageDiag.chosenVariationAxes ? (
+                  <div className="mt-0.5 text-zinc-500">
+                    ejes: {brainImageDiag.chosenVariationAxes.subjectMode} ·{" "}
+                    {brainImageDiag.chosenVariationAxes.framing} · {brainImageDiag.chosenVariationAxes.environment}
+                  </div>
+                ) : null}
+                <div className="mt-0.5">visualAvoid (muestra):</div>
+                <pre className="max-h-14 overflow-y-auto whitespace-pre-wrap text-zinc-500">
+                  {brainImageDiag.visualAvoid.slice(0, 12).join("; ")}
+                  {brainImageDiag.visualAvoid.length > 12 ? "…" : ""}
+                </pre>
+              </div>
+            ) : (
+              <p className="text-[7px] text-zinc-500">
+                Genera desde el botón o Studio para ver el prompt enviado y las señales Brain.
+              </p>
+            ))}
+        </div>
+      )}
+
 
 
       {/* ── NanoBanana Studio ── */}
@@ -5721,11 +5969,30 @@ export const NanoBananaNode = memo(({ id, data, selected }: NodeProps<any>) => {
             thinking={!!nodeData.thinking}
             prompt={promptVal}
             externalPromptIgnored
+            composeBrainImageGeneratorPrompt={composeBrainForStudio}
+            onBrainImageGeneratorDiagnostics={setBrainImageDiagSync}
             topBarCloseMode={nanoStudioTopBarCloseMode}
             generationHistory={persistedGenerationHistory}
             onGenerationHistoryChange={onGenerationHistoryChange}
             onClose={closeNanoStudio}
             onGenerated={(url, s3Key) => {
+              const d = brainDiagRef.current;
+              brainTelemetry.track({
+                kind: "IMAGE_GENERATED",
+                artifactType: "image",
+                custom: {
+                  studio: true,
+                  brainConnected,
+                  confirmedVisualPatternsUsed: d?.confirmedVisualPatternsUsed ?? false,
+                  trustedVisualAnalysisCount: d?.trustedVisualAnalysisCount ?? 0,
+                  textOnlyGeneration: d?.textOnlyGeneration ?? false,
+                },
+              });
+              brainTelemetry.track({
+                kind: "IMAGE_USED",
+                artifactType: "image",
+                custom: { surface: "studio_output_committed" },
+              });
               setResult(url);
               setNodes((nds: any) => nds.map((n: any) => {
                 if (n.id !== id) return n;

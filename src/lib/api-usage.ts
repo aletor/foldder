@@ -61,6 +61,11 @@ export const USAGE_SERVICES = [
   { id: "gemini-analyze", label: "Gemini · Análisis de áreas (2.5 Flash)", category: "visual-analysis" as const },
   { id: "gemini-search-verify", label: "Gemini · Verificación imágenes (búsqueda web)", category: "visual-analysis" as const },
   { id: "gemini-vision-analysis", label: "Gemini · Análisis visual Brain (referencias / Designer)", category: "visual-analysis" as const },
+  {
+    id: "gemini-brand-visual-dna",
+    label: "Gemini · Brand Visual DNA (interpretación por clusters)",
+    category: "visual-analysis" as const,
+  },
   { id: "openai-vision-analysis", label: "OpenAI · Análisis visual Brain (referencias / Designer)", category: "visual-analysis" as const },
   { id: "openai-assistant", label: "OpenAI · Asistente del lienzo (GPT-4o mini)", category: "ia-text" as const },
   { id: "openai-enhance", label: "OpenAI · Mejorar prompt (GPT-4o)", category: "ia-text" as const },
@@ -190,6 +195,7 @@ export function inferServiceIdFromRecord(r: UsageRecordLine): UsageServiceId {
   if (routePath.includes("/runway/status")) return "runway-status";
   if (routePath.includes("/video-matte")) return "replicate-vmatte";
   if (routePath.includes("/matte")) return "replicate-bg";
+  if (routePath.includes("/brain/brand-visual-dna/analyze")) return "gemini-brand-visual-dna";
   if (routePath.includes("/brain/knowledge/analyze")) return "openai-brain-analyze";
   if (routePath.includes("/brain/knowledge/chat")) return "openai-brain-chat";
   if (routePath.includes("/brain/content/generate")) return "openai-brain-content";

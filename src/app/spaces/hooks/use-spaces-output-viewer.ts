@@ -143,7 +143,12 @@ export function useSpacesOutputViewer(nodes: Node[]) {
         window.open(url, "_blank");
       }
     }
-  }, [finalMedia]);
+    if (viewerSourceNodeId) {
+      window.dispatchEvent(
+        new CustomEvent("foldder-spaces-viewer-download", { detail: { nodeId: viewerSourceNodeId } }),
+      );
+    }
+  }, [finalMedia, viewerSourceNodeId]);
 
   useEffect(() => {
     const onOpen = (e: Event) => {

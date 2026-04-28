@@ -51,12 +51,16 @@ export async function geminiGenerateWithServerProgress(
     model?: string;
     time?: number;
     error?: string;
+    details?: string;
   }) => {
     if (msg.type === "phase" && typeof msg.progress === "number") {
       lastProgress = msg.progress;
       onProgress(msg.progress, msg.stage || "");
     }
     if (msg.type === "done" && typeof msg.output === "string") {
+      if (!msg.output.trim()) {
+        throw new Error("Salida vacía del generador (posible bloqueo de política o copyright).");
+      }
       if (lastProgress < 100) {
         onProgress(100, "complete");
       }
@@ -68,7 +72,10 @@ export async function geminiGenerateWithServerProgress(
       };
     }
     if (msg.type === "error") {
-      throw new Error(msg.error || "Error en generación");
+      const main = typeof msg.error === "string" && msg.error.trim() ? msg.error.trim() : "Error en generación";
+      const det =
+        typeof msg.details === "string" && msg.details.trim() ? msg.details.trim().slice(0, 600) : "";
+      throw new Error(det ? `${main} — ${det}` : main);
     }
   };
 

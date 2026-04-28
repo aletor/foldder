@@ -3,7 +3,9 @@ import OpenAI from "openai";
 import type { BrainVisionProviderId, BrainVisualImageAnalysis } from "@/app/spaces/project-assets-metadata";
 import { recordApiUsage, parseGeminiUsageMetadata } from "@/lib/api-usage";
 import {
+  analysisDedupeKeyFromRef,
   buildBrainVisualMockAnalysisFromAsset,
+  buildEmptyBrainVisualAnalysisShell,
   mergeVisionJsonIntoAnalysis,
   type BrainVisualAssetRef,
 } from "./brain-visual-analysis";
@@ -22,27 +24,21 @@ function normalizeVisionImageUrl(url: string | undefined): string | null {
 }
 
 function visionFailureFallback(
-  projectId: string,
+  _projectId: string,
   asset: BrainVisualAssetRef,
   message: string,
   attempted: BrainVisionProviderId,
 ): BrainVisualImageAnalysis {
-  const base = buildBrainVisualMockAnalysisFromAsset(projectId, asset);
-  const hasPixels = Boolean(normalizeVisionImageUrl(asset.imageUrlForVision));
-  return {
-    ...base,
+  const dedupe = analysisDedupeKeyFromRef(asset);
+  return buildEmptyBrainVisualAnalysisShell(asset, dedupe, {
     analysisStatus: "failed",
-    visionProviderId: "mock",
     visionProviderAttempted: attempted === "mock" ? undefined : attempted,
     fallbackUsed: true,
     fallbackProvider: "mock",
-    analyzerVersion: "mock-1",
+    analyzerVersion: `${attempted}-failed`,
     failureReason: message.slice(0, 500),
-    imageUrlForVisionAvailable: hasPixels,
-    coherenceScore: Math.min(0.52, base.coherenceScore ?? 0.52),
-    reasoning: `Fallback heurístico (no es visión real). ${message}`.trim().slice(0, 800),
-    analyzedAt: new Date().toISOString(),
-  };
+    reasoning: `Visión remota no disponible o error al analizar. ${message}`.trim().slice(0, 800),
+  });
 }
 
 export function createMockBrainVisionProvider(): BrainVisionProvider {
@@ -68,7 +64,10 @@ export function createOpenAiBrainVisionProvider(): BrainVisionProvider {
     id: "openai-vision",
     async analyzeImage({ projectId, asset, imageUrl, userEmail, route }) {
       const safeUrl = normalizeVisionImageUrl(imageUrl ?? asset.imageUrlForVision);
-      const base = buildBrainVisualMockAnalysisFromAsset(projectId, asset);
+      const base = buildEmptyBrainVisualAnalysisShell(asset, analysisDedupeKeyFromRef(asset), {
+        analysisStatus: "pending",
+        analyzerVersion: "pre-openai-vision",
+      });
       if (!safeUrl) {
         return visionFailureFallback(
           projectId,
@@ -148,7 +147,10 @@ export function createGeminiBrainVisionProvider(): BrainVisionProvider {
     id: "gemini-vision",
     async analyzeImage({ projectId, asset, imageUrl, userEmail, route }) {
       const safeUrl = normalizeVisionImageUrl(imageUrl ?? asset.imageUrlForVision);
-      const base = buildBrainVisualMockAnalysisFromAsset(projectId, asset);
+      const base = buildEmptyBrainVisualAnalysisShell(asset, analysisDedupeKeyFromRef(asset), {
+        analysisStatus: "pending",
+        analyzerVersion: "pre-gemini-vision",
+      });
       if (!safeUrl) {
         return visionFailureFallback(
           projectId,

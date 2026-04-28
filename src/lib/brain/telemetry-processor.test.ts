@@ -223,7 +223,7 @@ describe("TelemetryProcessor.processStreamEvent", () => {
     const visual = pending.find((p) => p.candidate.type === "VISUAL_MEMORY");
     expect(visual).toBeTruthy();
     expect(visual?.candidate.value.toLowerCase()).not.toMatch(/^brain\s+ha\s+detectado/);
-    expect(visual?.candidate.value.toLowerCase()).toMatch(/esta pieza usa imágenes/);
+    expect(visual?.candidate.value.toLowerCase()).toMatch(/esta pieza .*imágenes/);
     expect(visual?.candidate.evidence.examples?.some((x) => x.startsWith("Basado en: Designer"))).toBe(true);
     expect(visual?.candidate.evidence.eventCounts?.[VISUAL_NODE_REVIEW_BUNDLE_KEY]).toBe(1);
     expect(visual?.candidate.evidence.eventCounts?.designer_user_upload_used).toBe(1);

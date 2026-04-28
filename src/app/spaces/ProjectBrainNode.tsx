@@ -24,6 +24,7 @@ import { readResponseJson } from "@/lib/read-response-json";
 import { FoldderDataHandle } from "./FoldderDataHandle";
 import { NodeLabel } from "./foldder-node-ui";
 import { normalizeProjectAssets } from "./project-assets-metadata";
+import { getBrainVersion, isBrainAnalysisStale } from "@/lib/brain/brain-meta";
 import { useProjectBrainCanvas } from "./project-brain-canvas-context";
 
 export type ProjectBrainNodeData = {
@@ -40,31 +41,31 @@ function BrainNodeHeader({
   introActive: boolean;
 }) {
   return (
-    <header className="flex items-start justify-between gap-2 border-b border-zinc-200/80 pb-3">
-      <div className="flex min-w-0 items-center gap-2.5">
+    <header className="flex items-center justify-between gap-2 border-b border-zinc-200/70 pb-2">
+      <div className="flex min-w-0 items-center gap-2">
         <span
-          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-violet-200 bg-violet-50 ${
-            introActive ? "ring-2 ring-cyan-400/50" : ""
+          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[5px] border border-violet-200/80 bg-violet-50 ${
+            introActive ? "ring-2 ring-cyan-400/45" : ""
           }`}
         >
-          <Brain className="h-4 w-4 text-violet-700" strokeWidth={1.75} aria-hidden />
+          <Brain className="h-3.5 w-3.5 text-violet-700" strokeWidth={1.75} aria-hidden />
         </span>
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-baseline gap-2">
-            <h2 className="text-[12px] font-black uppercase tracking-[0.08em] text-zinc-900">Brain</h2>
-            <span className="rounded-md border border-zinc-200 bg-zinc-100 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wide text-zinc-600">
+        <div className="min-w-0 leading-tight">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <h2 className="text-[11px] font-semibold tracking-tight text-zinc-900">Brain</h2>
+            <span className="rounded-[5px] border border-zinc-200/90 bg-zinc-50 px-1 py-px text-[7px] font-semibold uppercase tracking-wide text-zinc-500">
               Project
             </span>
           </div>
-          <p className="text-[10px] font-medium text-zinc-500">Memoria creativa</p>
+          <p className="text-[9px] text-zinc-500">Memoria creativa</p>
         </div>
       </div>
       <div
-        className="shrink-0 rounded-xl border border-violet-100 bg-violet-50 px-2.5 py-1 text-center"
+        className="shrink-0 rounded-[5px] border border-violet-100 bg-violet-50/90 px-2 py-0.5 text-center tabular-nums"
         title={BRAIN_ADN_COMPLETENESS_TOOLTIP_ES}
       >
-        <p className="text-[8px] font-black uppercase tracking-wide text-violet-700">ADN</p>
-        <p className="text-lg font-black leading-none text-violet-900">{adnTotal}</p>
+        <p className="text-[7px] font-semibold uppercase tracking-wide text-violet-700">ADN</p>
+        <p className="text-base font-semibold leading-none text-violet-900">{adnTotal}</p>
       </div>
     </header>
   );
@@ -73,10 +74,10 @@ function BrainNodeHeader({
 function BrainQuickStats({ activos, nodos, pendientes }: { activos: number; nodos: number; pendientes: number }) {
   return (
     <p
-      className="text-[11px] font-semibold tabular-nums leading-snug text-zinc-800"
+      className="text-[10px] font-medium tabular-nums leading-snug text-zinc-700"
       title="Activos = documentos y enlaces en conocimiento. Nodos = creativos enlazados al Brain. Por revisar = cola de aprendizajes pendientes (ver procedencia en Studio)."
     >
-      {activos} activos · {nodos} nodos · {pendientes} por revisar
+      {activos} activos · {nodos} nodos · {pendientes} pendientes
     </p>
   );
 }
@@ -95,36 +96,36 @@ function BrainBrandChips({
   visionRealCount: number;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
+    <div className="flex flex-wrap items-center gap-1">
       {hasLogo ? (
-        <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-emerald-900">
+        <span className="rounded-[5px] border border-emerald-200/80 bg-emerald-50/90 px-1.5 py-px text-[8px] font-semibold uppercase tracking-wide text-emerald-900">
           Logo
         </span>
       ) : null}
       {hasPalette ? (
-        <span className="rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-sky-900">
+        <span className="rounded-[5px] border border-sky-200/80 bg-sky-50/90 px-1.5 py-px text-[8px] font-semibold uppercase tracking-wide text-sky-900">
           Paleta
         </span>
       ) : null}
       {hasVoice ? (
-        <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-violet-900">
+        <span className="rounded-[5px] border border-violet-200/80 bg-violet-50/90 px-1.5 py-px text-[8px] font-semibold uppercase tracking-wide text-violet-900">
           Voz
         </span>
       ) : null}
       {imageCount > 0 ? (
         <span
           title={BRAIN_IMAGE_INVENTORY_NODE_TOOLTIP_ES}
-          className="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-indigo-900"
+          className="rounded-[5px] border border-indigo-200/80 bg-indigo-50/90 px-1.5 py-px text-[8px] font-semibold uppercase tracking-wide text-indigo-900"
         >
-          {imageCount} imágenes
+          {imageCount} img
         </span>
       ) : null}
       {visionRealCount > 0 ? (
         <span
           title={BRAIN_VISION_REAL_COUNT_NODE_TOOLTIP_ES}
-          className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-emerald-900"
+          className="rounded-[5px] border border-emerald-200/80 bg-emerald-50/90 px-1.5 py-px text-[8px] font-semibold uppercase tracking-wide text-emerald-900"
         >
-          {visionRealCount} analizadas
+          {visionRealCount} visión
         </span>
       ) : null}
     </div>
@@ -144,13 +145,13 @@ function BrainConnectedNodesSummary({
 }) {
   if (clients.length === 0) {
     return (
-      <p className="text-[10px] leading-snug text-zinc-500">
-        Ningún nodo enlazado al puerto Brain. Conecta Designer, Photoroom u otros creativos.
+      <p className="text-[9px] leading-snug text-zinc-500">
+        Sin enlaces al puerto Brain. Conecta Designer, Photoroom u otros creativos.
       </p>
     );
   }
   return (
-    <ul className="space-y-2">
+    <ul className="space-y-1.5">
       {clients.map((c) => {
         const tel = telemetryByNodeId[c.id];
         const pendN = pendingByNodeId.get(c.id) ?? 0;
@@ -162,9 +163,9 @@ function BrainConnectedNodesSummary({
           expanded,
         });
         return (
-          <li key={c.id} className="text-[10px] leading-snug text-zinc-800">
-            <div className="font-bold text-zinc-900">{c.label}</div>
-            <div className="text-[9px] font-semibold uppercase tracking-wide text-zinc-500">{typeLabel}</div>
+          <li key={c.id} className="text-[9px] leading-snug text-zinc-800">
+            <div className="font-semibold text-zinc-900">{c.label}</div>
+            <div className="text-[8px] font-medium uppercase tracking-wide text-zinc-500">{typeLabel}</div>
             <div className="mt-0.5 text-zinc-800" title={BRAIN_RECENT_SIGNALS_TOOLTIP_ES}>
               {signalsLine}
             </div>
@@ -173,7 +174,7 @@ function BrainConnectedNodesSummary({
                 {pendingLine}
               </div>
             ) : null}
-            {lastSignalLine ? <div className="mt-0.5 text-zinc-500">{lastSignalLine}</div> : null}
+            {lastSignalLine ? <div className="mt-0.5 text-[8px] text-zinc-500">{lastSignalLine}</div> : null}
           </li>
         );
       })}
@@ -190,18 +191,18 @@ function BrainPendingSummary({
 }) {
   if (count === 0) {
     return (
-      <p className="text-[11px] font-semibold text-emerald-800" title={BRAIN_PENDING_QUEUE_TOOLTIP_ES}>
+      <p className="text-[9px] font-medium text-emerald-800" title={BRAIN_PENDING_QUEUE_TOOLTIP_ES}>
         Sin pendientes
       </p>
     );
   }
   return (
-    <div className="space-y-1" title={BRAIN_PENDING_QUEUE_TOOLTIP_ES}>
-      <p className="text-[11px] font-bold text-amber-900">
-        {count} {count === 1 ? "aprendizaje pendiente" : "aprendizajes pendientes"}
+    <div className="space-y-0.5" title={BRAIN_PENDING_QUEUE_TOOLTIP_ES}>
+      <p className="text-[9px] font-semibold text-amber-900">
+        {count} {count === 1 ? "pendiente" : "pendientes"}
       </p>
       {samples.length > 0 && (
-        <ul className="space-y-0.5 text-[10px] leading-snug text-amber-950/90">
+        <ul className="space-y-0.5 text-[8px] leading-snug text-amber-950/90">
           {samples.map((s, i) => (
             <li key={i} className="truncate">
               · {s}
@@ -251,6 +252,8 @@ export const ProjectBrainNode = memo(({ id, data, selected }: NodeProps<any>) =>
 
   const [pendingRows, setPendingRows] = useState<StoredLearningCandidate[]>([]);
   const [telemetryByNodeId, setTelemetryByNodeId] = useState<Record<string, TelemetryRowUi>>({});
+  /** Evita scroll interno: lista acotada + «Ver todos» al expandir el nodo. */
+  const [showAllBrainClients, setShowAllBrainClients] = useState(false);
 
   const projectId = ctx?.projectScopeId && ctx.projectScopeId !== "__local__" ? ctx.projectScopeId : null;
 
@@ -343,34 +346,51 @@ export const ProjectBrainNode = memo(({ id, data, selected }: NodeProps<any>) =>
   const introActive = !!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro;
   const expanded = Boolean(selected);
 
+  useEffect(() => {
+    setShowAllBrainClients(false);
+  }, [expanded]);
+
+  const brainClientsVisibleCap = expanded ? (showAllBrainClients ? brainClients.length : 5) : 2;
+  const brainClientsVisible = useMemo(
+    () => brainClients.slice(0, brainClientsVisibleCap),
+    [brainClients, brainClientsVisibleCap],
+  );
+  const brainClientsHasMore = expanded && brainClients.length > brainClientsVisibleCap;
+
   return (
     <div
-      className={`custom-node tool-node rounded-[22px] border ${shellClass} ${
+      className={`custom-node tool-node rounded-[5px] border ${shellClass} ${
         expanded ? "shadow-lg ring-2 ring-violet-400/35" : "shadow-sm"
       }`}
-      style={{ width: 340, minHeight: expanded ? 300 : 228, padding: "16px 17px" }}
+      style={{ width: 300, minHeight: expanded ? 260 : 200, padding: "11px 12px" }}
     >
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Brain" />
 
-      <div className="flex min-w-0 flex-col gap-3">
+      <div className="flex min-w-0 flex-col gap-2">
         <BrainNodeHeader adnTotal={adn.total} introActive={introActive} />
 
         <BrainQuickStats activos={totalActives} nodos={brainClients.length} pendientes={pendingCount} />
 
-        <section className="rounded-xl border border-zinc-200/80 bg-zinc-50/60 px-3 py-2">
-          <p className="text-[8px] font-black uppercase tracking-[0.12em] text-zinc-500">Conocimiento</p>
-          <p className="mt-1 text-[10px] font-semibold leading-snug text-zinc-800">
-            {coreCount} fuentes core · {pdfCount} PDF{pdfCount === 1 ? "" : "s"} · {assetLikeCount} assets
+        {isBrainAnalysisStale(assets.brainMeta) ? (
+          <p className="rounded-[5px] border border-amber-200/80 bg-amber-50/90 px-2 py-1 text-[8px] font-medium text-amber-900">
+            Material o análisis desactualizado: revisa Brain Studio.
+          </p>
+        ) : null}
+
+        <section className="rounded-[5px] border border-zinc-200/70 bg-zinc-50/50 px-2 py-1.5">
+          <p className="text-[8px] font-semibold uppercase tracking-wider text-zinc-500">Conocimiento</p>
+          <p className="mt-0.5 text-[9px] font-medium leading-snug text-zinc-800">
+            {coreCount} core · {pdfCount} PDF{pdfCount === 1 ? "" : "s"} · {assetLikeCount} assets
             {linkCount > 0 ? ` · ${linkCount} enlaces` : ""}
           </p>
-          <p className="mt-0.5 text-[10px] text-zinc-600">
-            {contextCount > 0 ? `${contextCount} fuentes de contexto` : "Sin contexto externo"}
+          <p className="mt-0.5 text-[9px] text-zinc-600">
+            {contextCount > 0 ? `${contextCount} contexto` : "Sin contexto externo"}
           </p>
         </section>
 
-        <section className="rounded-xl border border-zinc-200/80 bg-white/80 px-3 py-2">
-          <p className="text-[8px] font-black uppercase tracking-[0.12em] text-zinc-500">Marca en Brain</p>
-          <div className="mt-1.5">
+        <section className="rounded-[5px] border border-zinc-200/70 bg-white/90 px-2 py-1.5">
+          <p className="text-[8px] font-semibold uppercase tracking-wider text-zinc-500">Marca</p>
+          <div className="mt-1">
             <BrainBrandChips
               hasLogo={hasLogo}
               hasPalette={hasPalette}
@@ -381,42 +401,71 @@ export const ProjectBrainNode = memo(({ id, data, selected }: NodeProps<any>) =>
           </div>
         </section>
 
-        <section className="rounded-xl border border-zinc-200/80 bg-zinc-50/50 px-3 py-2">
-          <div className="flex items-center gap-1.5">
-            <Link2 className="h-3 w-3 shrink-0 text-zinc-400" aria-hidden />
-            <p className="text-[8px] font-black uppercase tracking-[0.12em] text-zinc-500">Nodos conectados</p>
+        <section className="rounded-[5px] border border-zinc-200/70 bg-zinc-50/40 px-2 py-1.5">
+          <div className="flex items-center gap-1">
+            <Link2 className="h-2.5 w-2.5 shrink-0 text-zinc-400" aria-hidden />
+            <p className="text-[8px] font-semibold uppercase tracking-wider text-zinc-500">Nodos</p>
           </div>
-          <p className="mt-1 text-[9px] leading-snug text-zinc-500">
-            Señales recientes e información recibida por cada nodo conectado.
-          </p>
-          <div className="mt-1.5 max-h-[120px] overflow-y-auto pr-0.5">
+          <p className="mt-0.5 text-[8px] leading-snug text-zinc-500">Señales y colas por nodo enlazado.</p>
+          <div className="mt-1">
             <BrainConnectedNodesSummary
-              clients={brainClients}
+              clients={brainClientsVisible}
               expanded={expanded}
               pendingByNodeId={pendingByNodeId}
               telemetryByNodeId={telemetryByNodeId}
             />
           </div>
+          {brainClientsHasMore && !showAllBrainClients ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowAllBrainClients(true);
+              }}
+              className="nodrag mt-1 w-full rounded-[5px] border border-zinc-200/80 bg-white py-1 text-center text-[8px] font-medium text-violet-700 hover:bg-violet-50"
+            >
+              Ver todos ({brainClients.length})
+            </button>
+          ) : null}
+          {expanded && showAllBrainClients && brainClients.length > 5 ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowAllBrainClients(false);
+              }}
+              className="nodrag mt-1 w-full rounded-[5px] border border-transparent py-0.5 text-center text-[8px] font-medium text-zinc-500 hover:text-zinc-800"
+            >
+              Mostrar menos
+            </button>
+          ) : null}
+          {!expanded && brainClients.length > 2 ? (
+            <p className="mt-1 text-[8px] text-zinc-500">Selecciona el nodo para ver más detalle.</p>
+          ) : null}
           {process.env.NODE_ENV === "development" ? (
-            <p className="mt-1.5 text-[8px] leading-snug text-zinc-400">{BRAIN_TELEMETRY_EPHEMERAL_DEV_NOTE_ES}</p>
+            <p className="mt-1 text-[7px] leading-snug text-zinc-400">{BRAIN_TELEMETRY_EPHEMERAL_DEV_NOTE_ES}</p>
           ) : null}
         </section>
 
-        <section className="rounded-xl border border-zinc-200/80 bg-white/80 px-3 py-2">
-          <p className="text-[8px] font-black uppercase tracking-[0.12em] text-zinc-500">Pendientes</p>
-          <div className="mt-1">
+        <section className="rounded-[5px] border border-zinc-200/70 bg-white/90 px-2 py-1.5">
+          <p className="text-[8px] font-semibold uppercase tracking-wider text-zinc-500">Pendientes</p>
+          <div className="mt-0.5">
             <BrainPendingSummary count={pendingCount} samples={pendingSamples} />
           </div>
         </section>
 
-        <footer className="mt-auto flex flex-col gap-2 border-t border-zinc-200/80 pt-3">
+        {expanded && process.env.NODE_ENV === "development" ? (
+          <p className="text-[7px] leading-snug text-zinc-400">Brain v{getBrainVersion(assets.brainMeta)}</p>
+        ) : null}
+
+        <footer className="mt-auto flex flex-col gap-1.5 border-t border-zinc-200/70 pt-2">
           <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
               openStudio();
             }}
-            className="nodrag w-full rounded-xl border border-violet-600 bg-violet-600 py-2 text-center text-[11px] font-black uppercase tracking-wide text-white shadow-sm transition hover:bg-violet-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60"
+            className="nodrag w-full rounded-[5px] border border-violet-600 bg-violet-600 py-1.5 text-center text-[10px] font-semibold uppercase tracking-wide text-white transition hover:bg-violet-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60"
           >
             Abrir Brain
           </button>
@@ -427,7 +476,7 @@ export const ProjectBrainNode = memo(({ id, data, selected }: NodeProps<any>) =>
                 e.stopPropagation();
                 openReview();
               }}
-              className="nodrag w-full rounded-xl border border-amber-400 bg-amber-50 py-2 text-center text-[10px] font-black uppercase tracking-wide text-amber-950 transition hover:bg-amber-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/50"
+              className="nodrag w-full rounded-[5px] border border-amber-300/90 bg-amber-50/90 py-1.5 text-center text-[9px] font-semibold uppercase tracking-wide text-amber-950 transition hover:bg-amber-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/50"
             >
               Revisar pendientes
             </button>
