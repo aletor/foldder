@@ -23,6 +23,11 @@ Añade en Vercel → Settings → Environment Variables las que uses (Production
 | `VOLCENGINE_ARK_API_KEY` o `SEEDANCE_API_KEY` | `/api/seedance/video` |
 | `BEEBLE_API_KEY` | Proxy `/api/beeble/*` |
 | `PINTEREST_ACCESS_TOKEN` | `/api/pinterest/search` |
+| `AUTH_SECRET` | Secreto obligatorio de Auth.js/NextAuth para firmar sesión JWT/cookies |
+| `AUTH_GOOGLE_ID` | Client ID de Google OAuth |
+| `AUTH_GOOGLE_SECRET` | Client Secret de Google OAuth |
+| `AUTH_TRUST_HOST` | `true` detrás de proxy/reverse proxy (en Vercel suele inferirse) |
+| `AUTH_URL` | Opcional en v5; URL base pública cuando haga falta forzarla |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `AWS_S3_BUCKET_NAME` | Subidas, URLs firmadas y persistencia durable |
 | `FOLDDER_SPACES_DB_S3_KEY` | Opcional. Clave S3 para proyectos (`spaces-db.json`) |
 | `FOLDDER_PRESENTER_SHARES_S3_KEY` | Opcional. Clave S3 para enlaces presenter |
@@ -65,6 +70,20 @@ Sugerencia de claves:
 - La app usa `maxDuration = 300` en las rutas de vídeo largas. En Vercel eso encaja con 300 s por defecto cuando Fluid Compute está activo.
 - Presenter ya no envía el código de acceso al navegador; la verificación se hace contra `/api/presenter-share/verify`.
 - La fuente global ya no depende de `next/font/google`, así que el build no necesita salir a Google Fonts.
+
+## Google OAuth (producción)
+
+Checklist mínimo para activar login Google en producción:
+
+1. En Google Cloud Console, añade como Authorized redirect URI:
+   - `https://TU_DOMINIO/api/auth/callback/google`
+2. Si usas dev y prod, usa OAuth apps separadas o múltiples redirect URIs.
+3. En Vercel Production define:
+   - `AUTH_SECRET` (aleatorio, >=32 chars)
+   - `AUTH_GOOGLE_ID`
+   - `AUTH_GOOGLE_SECRET`
+   - `AUTH_TRUST_HOST=true` (si aplica)
+4. No reutilizar claves de otros servicios como secreto de auth.
 
 ## Proyecto hermano (marketing)
 
