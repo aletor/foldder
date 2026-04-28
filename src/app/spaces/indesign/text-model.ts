@@ -128,12 +128,12 @@ export function flattenStoryContent(nodes: StoryNode[]): FlatRun[] {
     if (pi > 0) runs.push({ text: "\n" });
     const p = paragraphs[pi]!;
     if (p.listStyle === "disc") {
-      runs.push({ text: "\u2022 " });
+      runs.push({ text: "\u2022  " });
     } else if (p.listStyle === "decimal") {
       let start = pi;
       while (start > 0 && paragraphs[start - 1]!.listStyle === "decimal") start--;
       const n = pi - start + 1;
-      runs.push({ text: `${n}. ` });
+      runs.push({ text: `${n}.  ` });
     }
     for (const span of p.spans) {
       if (span.text.length > 0) {
@@ -202,6 +202,13 @@ export function htmlToStoryNodes(html: string): StoryNode[] {
   const blocksRaw =
     container.childNodes.length === 0 ? [container] : Array.from(container.childNodes);
   const blocks = unwrapEditorContentEditableBlocks(blocksRaw);
+
+  const isInlineTopLevel = (n: Node): boolean => {
+    if (n.nodeType === Node.TEXT_NODE) return true;
+    if (n.nodeType !== Node.ELEMENT_NODE) return true;
+    const tag = (n as HTMLElement).tagName.toLowerCase();
+    return !["div", "p", "ul", "ol", "li"].includes(tag);
+  };
 
   function extractSpans(node: Node): SpanNode[] {
     const spans: SpanNode[] = [];
@@ -294,12 +301,20 @@ export function htmlToStoryNodes(html: string): StoryNode[] {
     }
   }
 
-  for (const block of blocks) {
-    if (block.nodeType === Node.TEXT_NODE) {
-      const text = block.textContent ?? "";
-      const lines = text.split("\n");
-      for (const line of lines) {
-        paragraphs.push({
+  /**
+   * Robustez para contentEditable inline:
+   * si la raíz queda como secuencia de nodos inline (`text`, `<b>`, `<i>`, `<span>`, `<a>`, `<br>`),
+   * deben parsearse como UN solo párrafo (no un párrafo por nodo), o aparecen saltos de línea espurios.
+   */
+  if (blocks.length > 0 && blocks.every(isInlineTopLevel)) {
+    processBlock(container);
+  } else {
+    for (const block of blocks) {
+      if (block.nodeType === Node.TEXT_NODE) {
+        const text = block.textContent ?? "";
+        const lines = text.split("\n");
+        for (const line of lines) {
+          paragraphs.push({
           type: "paragraph",
           id: uid("p"),
           spans: [{ id: uid("s"), text: line }],
@@ -343,8 +358,9 @@ export function htmlToStoryNodes(html: string): StoryNode[] {
         }
       }
       processBlock(el);
-    } else {
-      processBlock(el);
+      } else {
+        processBlock(el);
+      }
     }
   }
 
@@ -480,8 +496,8 @@ function orderedItemIndex1Based(paragraphs: ParagraphNode[], pi: number): number
 /** Longitud en caracteres del prefijo de lista en el plano `flattenStoryContent` (viñeta o `n. `). */
 function listPrefixFlatLength(paragraphs: ParagraphNode[], pi: number): number {
   const p = paragraphs[pi]!;
-  if (p.listStyle === "disc") return 2;
-  if (p.listStyle === "decimal") return `${orderedItemIndex1Based(paragraphs, pi)}. `.length;
+  if (p.listStyle === "disc") return 3;
+  if (p.listStyle === "decimal") return `${orderedItemIndex1Based(paragraphs, pi)}.  `.length;
   return 0;
 }
 

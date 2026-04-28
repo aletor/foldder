@@ -18,12 +18,13 @@ import { createArtboard, type Artboard } from "../freehand/artboard";
 import type { VectorPdfExportOptions } from "../freehand/text-outline";
 import { computeFittingLayout } from "../indesign/image-frame-layout";
 import { layoutPageStories } from "../indesign/text-layout";
-import type { Story, TextFrame, Typography } from "../indesign/text-model";
+import type { Story, StoryNode, TextFrame, Typography } from "../indesign/text-model";
 import {
   serializeStoryContent,
   plainTextToStoryNodes,
   htmlToStoryNodes,
   storyNodesToHtml,
+  flattenStoryContent,
   sliceStoryContent,
   DEFAULT_TYPOGRAPHY,
 } from "../indesign/text-model";
@@ -85,6 +86,21 @@ export default function DesignerStudio({
   onAutoImageOptimizationChange,
   brainConnected = false,
 }: DesignerStudioProps) {
+  const normalizeInlineRichNodes = useCallback((nodes: StoryNode[]): StoryNode[] => {
+    return nodes.map((node) => ({
+      ...node,
+      spans: node.spans.map((sp) => {
+        if (!sp.style) return sp;
+        const nextStyle = { ...sp.style };
+        delete nextStyle.fontSize;
+        delete nextStyle.fontFamily;
+        delete nextStyle.letterSpacing;
+        const hasAny = Object.keys(nextStyle).length > 0;
+        return hasAny ? { ...sp, style: nextStyle } : { ...sp, style: undefined };
+      }),
+    }));
+  }, []);
+
   const designerSpaceId = useDesignerSpaceId();
   const brainTelemetry = useBrainNodeTelemetry({
     canvasNodeId: designerCanvasInstanceKey,
@@ -190,7 +206,7 @@ export default function DesignerStudio({
         setPages(snap as DesignerPageState[]);
       },
     }),
-    [],
+    [normalizeInlineRichNodes],
   );
 
   const pagesRef = useRef(pages);
@@ -488,54 +504,66 @@ export default function DesignerStudio({
   const handleDesignerTextFrameEdit = useCallback(
     (frameId: string, storyId: string, newText: string, richHtml?: string) => {
       const idx = activeIdxRef.current;
-      const p = pagesRef.current[idx];
-      if (!p) return;
-
-      const stories = p.stories ?? [];
-      const textFrames = p.textFrames ?? [];
-      const story = stories.find(s => s.id === storyId);
-      if (!story) return;
-
-      // Parse rich HTML into StoryNodes if provided
-      const newNodes = richHtml ? htmlToStoryNodes(richHtml) : plainTextToStoryNodes(newText);
-
-      let updatedStories: Story[];
-
-      if (story.frames.length <= 1) {
-        updatedStories = stories.map(s =>
-          s.id === storyId ? { ...s, content: newNodes } : s,
-        );
-      } else {
-        const layouts = layoutPageStories(stories, textFrames);
-        const frameLayout = layouts.find(l => l.frameId === frameId);
-
-        if (frameLayout) {
-          const before = sliceStoryContent(story.content, 0, frameLayout.contentRange.start);
-          const fullText = serializeStoryContent(story.content);
-          const after = sliceStoryContent(story.content, frameLayout.contentRange.end, fullText.length);
-          const merged = [...before, ...newNodes, ...after];
-          updatedStories = stories.map(s =>
-            s.id === storyId ? { ...s, content: merged } : s,
-          );
-        } else {
-          updatedStories = stories.map(s =>
-            s.id === storyId ? { ...s, content: newNodes } : s,
-          );
-        }
-      }
-
+      let updatedStories: Story[] | null = null;
+      let textFramesForPatch: TextFrame[] = [];
       setPages((prev) => {
         const n = [...prev];
-        n[idx] = { ...prev[idx]!, stories: updatedStories };
+        const p = n[idx];
+        if (!p) return prev;
+
+        const stories = p.stories ?? [];
+        const textFrames = p.textFrames ?? [];
+        const story = stories.find((s) => s.id === storyId);
+        if (!story) return prev;
+
+        const newNodes = richHtml
+          ? normalizeInlineRichNodes(htmlToStoryNodes(richHtml))
+          : plainTextToStoryNodes(newText);
+
+        let nextStories: Story[];
+        if (story.frames.length <= 1) {
+          nextStories = stories.map((s) =>
+            s.id === storyId ? { ...s, content: newNodes } : s,
+          );
+        } else {
+          const layouts = layoutPageStories(stories, textFrames);
+          const frameLayout = layouts.find((l) => l.frameId === frameId);
+          if (frameLayout) {
+            const before = sliceStoryContent(story.content, 0, frameLayout.contentRange.start);
+            const currentRangeLen = Math.max(0, frameLayout.contentRange.end - frameLayout.contentRange.start);
+            const nextRangeLen = flattenStoryContent(newNodes).reduce((sum, run) => sum + run.text.length, 0);
+            /**
+             * Si el frame se encoge por reflow (p.ej. salto manual de línea), parte del texto que el editor todavía tiene
+             * ya puede haberse movido al siguiente frame. Extendemos el corte del "after" para evitar solape/duplicado.
+             */
+            const overlapCompensatedEnd =
+              frameLayout.contentRange.end + Math.max(0, nextRangeLen - currentRangeLen);
+            const after = sliceStoryContent(story.content, overlapCompensatedEnd, Number.MAX_SAFE_INTEGER);
+            const merged = [...before, ...newNodes, ...after];
+            nextStories = stories.map((s) =>
+              s.id === storyId ? { ...s, content: merged } : s,
+            );
+          } else {
+            nextStories = stories.map((s) =>
+              s.id === storyId ? { ...s, content: newNodes } : s,
+            );
+          }
+        }
+
+        updatedStories = nextStories;
+        textFramesForPatch = textFrames;
+        n[idx] = { ...p, stories: nextStories };
         return n;
       });
 
+      const storiesForPatch = (updatedStories ?? []) as Story[];
+      if (storiesForPatch.length === 0) return;
       const api = studioApiRef.current;
       if (api) {
-        const newLayouts = layoutPageStories(updatedStories, textFrames);
+        const newLayouts = layoutPageStories(storiesForPatch, textFramesForPatch);
         for (const fl of newLayouts) {
           if (fl.storyId !== storyId) continue;
-          const st = updatedStories.find(s => s.id === fl.storyId);
+          const st = storiesForPatch.find((s) => s.id === fl.storyId);
           if (!st) continue;
           const frameContent = sliceStoryContent(st.content, fl.contentRange.start, fl.contentRange.end);
           const ft = serializeStoryContent(frameContent);
@@ -548,7 +576,7 @@ export default function DesignerStudio({
         }
       }
     },
-    [],
+    [normalizeInlineRichNodes],
   );
 
   // ── Image frame placement ──
@@ -977,12 +1005,14 @@ export default function DesignerStudio({
             if (fl.storyId !== storyId) continue;
             const st = updatedStories.find(s => s.id === fl.storyId);
             if (!st) continue;
-            const fullTxt = serializeStoryContent(st.content);
-            const frameTxt = fullTxt.slice(fl.contentRange.start, fl.contentRange.end);
+            const frameContent = sliceStoryContent(st.content, fl.contentRange.start, fl.contentRange.end);
+            const frameTxt = serializeStoryContent(frameContent);
+            const richSpans = buildRichSpansForFrame(frameContent);
             api.patchObject(fl.frameId, {
               text: frameTxt,
               _designerOverflow: fl.hasOverflow,
               _designerThreadInfo: { index: Math.max(0, st.frames.indexOf(fl.frameId)), total: st.frames.length },
+              _designerRichSpans: richSpans,
             });
           }
         } else if (story && story.frames.length === 1) {
@@ -1010,7 +1040,7 @@ export default function DesignerStudio({
       const stories = p.stories ?? [];
       const textFrames = p.textFrames ?? [];
 
-      const newNodes = htmlToStoryNodes(richHtml);
+      const newNodes = normalizeInlineRichNodes(htmlToStoryNodes(richHtml));
       const updatedStories = stories.map(s =>
         s.id === storyId ? { ...s, content: newNodes } : s,
       );
@@ -1039,7 +1069,7 @@ export default function DesignerStudio({
         }
       }
     },
-    [],
+    [normalizeInlineRichNodes],
   );
 
   // ── Unlink text frame ──

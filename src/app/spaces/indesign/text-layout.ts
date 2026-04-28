@@ -35,6 +35,9 @@ let layoutCanvas: HTMLCanvasElement | null = null;
 /**
  * Pequeño margen sobre el ancho útil: el canvas y el DOM no coinciden al 100 % tras medir por subcadenas.
  */
+/**
+ * Small tolerance over available width. Keep near 1 to avoid premature wraps.
+ */
 const LINE_WRAP_WIDTH_FUDGE = 1.008;
 
 /**
@@ -84,7 +87,8 @@ function resolveRunTypo(base: Typography, style?: SpanStyle): Typography {
 function measureText(ctx: CanvasRenderingContext2D, text: string, typo: Typography): number {
   if (!text.length) return 0;
   ctx.font = fontStringFromTypography(typo);
-  const extra = typo.letterSpacing * typo.fontSize;
+  // `letterSpacing` in our model is already in px (same as CSS letter-spacing numeric in React style).
+  const extra = typo.letterSpacing;
   let w = 0;
   for (let i = 0; i < text.length; i++) {
     w += ctx.measureText(text[i]!).width + (i < text.length - 1 ? extra : 0);
@@ -121,11 +125,11 @@ function measureLineCharRange(
   while (k < to) {
     if (k > from) {
       const tGap = resolveRunTypo(baseTypo, chars[k]!.style);
-      w += tGap.letterSpacing * tGap.fontSize;
+      w += tGap.letterSpacing;
     }
     const t0 = resolveRunTypo(baseTypo, chars[k]!.style);
     ctx.font = fontStringFromTypography(t0);
-    const extra0 = t0.letterSpacing * t0.fontSize;
+    const extra0 = t0.letterSpacing;
     let j = k + 1;
     while (j < to && resolvedTypoEqualForMeasure(resolveRunTypo(baseTypo, chars[j]!.style), t0)) {
       j++;
@@ -141,6 +145,25 @@ function measureLineCharRange(
     k = j;
   }
   return w;
+}
+
+/**
+ * Width for line-break decisions only (style-invariant):
+ * inline styles (bold/italic/strike/underline) must not reflow text across lines/frames.
+ */
+function measureLineBreakRange(
+  ctx: CanvasRenderingContext2D,
+  chars: { ch: string; style?: SpanStyle }[],
+  from: number,
+  to: number,
+  baseTypo: Typography,
+): number {
+  if (from >= to) return 0;
+  const text = chars
+    .slice(from, to)
+    .map((c) => c.ch)
+    .join("");
+  return measureText(ctx, text, baseTypo);
 }
 
 /**
@@ -196,7 +219,7 @@ export function layoutRichTextInFrame(
       if (c.ch === "\n") break;
 
       const candidateEnd = lineEnd + 1;
-      const w = measureLineCharRange(ctx, chars, charIdx, candidateEnd, baseTypo);
+      const w = measureLineBreakRange(ctx, chars, charIdx, candidateEnd, baseTypo);
 
       if (w > wrapW && lineEnd > charIdx) {
         if (lastWordBreak > charIdx) {

@@ -1159,6 +1159,63 @@ function pointInWorldRect(p: Point, r: Rect): boolean {
 }
 function escapeHtmlStr(s: string): string { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>"); }
 
+function richSpansToInlineHtml(
+  spans: Array<{
+    text: string;
+    style?: {
+      fontWeight?: string;
+      fontStyle?: string;
+      textUnderline?: boolean;
+      textStrikethrough?: boolean;
+      fontSize?: number;
+      color?: string;
+      fontFamily?: string;
+      letterSpacing?: number;
+      linkHref?: string;
+    };
+  }> | undefined,
+  fallbackPlain: string,
+): string {
+  if (!spans || spans.length === 0) {
+    const base = escapeHtmlStr(fallbackPlain || "");
+    return `<div>${base || "<br>"}</div>`;
+  }
+  const wrapTag = (tag: string, inner: string) => `<${tag}>${inner}</${tag}>`;
+  const out = spans
+    .map((sp) => {
+      let inner = escapeHtmlStr(sp.text || "");
+      const st = sp.style;
+      if (!st) return inner;
+      if (st.textUnderline) inner = wrapTag("u", inner);
+      if (st.textStrikethrough) inner = wrapTag("s", inner);
+      if (st.fontStyle === "italic") inner = wrapTag("i", inner);
+      if (st.fontWeight && (String(st.fontWeight) === "bold" || Number(st.fontWeight) >= 600)) inner = wrapTag("b", inner);
+      if (st.linkHref) {
+        const href = sanitizeStoryLinkHref(st.linkHref);
+        if (href) inner = `<a href="${href}" target="_blank" rel="noopener noreferrer">${inner}</a>`;
+      }
+      return inner;
+    })
+    .join("");
+  const base = out || escapeHtmlStr(fallbackPlain || "");
+  return `<div>${base || "<br>"}</div>`;
+}
+
+function normalizeInlineFrameRichHtml(html: string): string {
+  if (typeof document === "undefined") return html;
+  const c = document.createElement("div");
+  c.innerHTML = html || "";
+  const children = Array.from(c.childNodes);
+  if (children.length === 0) return "<div><br></div>";
+  const hasBlock = children.some((n) => {
+    if (n.nodeType !== Node.ELEMENT_NODE) return false;
+    const tag = (n as HTMLElement).tagName.toLowerCase();
+    return tag === "div" || tag === "p" || tag === "ul" || tag === "ol";
+  });
+  if (hasBlock) return html;
+  return `<div>${html || "<br>"}</div>`;
+}
+
 /** Texto copiado (ChatGPT, Word, etc.): espacios raros y caracteres invisibles / de formato. */
 function normalizeClipboardPlainText(raw: string): string {
   let t = raw.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
@@ -9555,6 +9612,32 @@ export function FreehandStudioCanvas({
   const [textEditingId, setTextEditingId] = useState<string | null>(null);
   const textEditingIdRef = useRef(textEditingId);
   textEditingIdRef.current = textEditingId;
+  const inlineFrameEditorRef = useRef<HTMLDivElement | null>(null);
+  const inlineFrameEditorObjectIdRef = useRef<string | null>(null);
+  const inlineFrameEditorFocusedForIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!textEditingId) {
+      inlineFrameEditorRef.current = null;
+      inlineFrameEditorObjectIdRef.current = null;
+      inlineFrameEditorFocusedForIdRef.current = null;
+      return;
+    }
+    if (inlineFrameEditorFocusedForIdRef.current === textEditingId) return;
+    const o = objects.find((x) => x.id === textEditingId);
+    if (!(o?.type === "text") || !(o as TextObject).isTextFrame) return;
+    const el = inlineFrameEditorRef.current;
+    if (!el) return;
+    el.focus();
+    const sel = window.getSelection();
+    if (sel) {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      range.collapse(false);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+    inlineFrameEditorFocusedForIdRef.current = textEditingId;
+  }, [textEditingId, objects]);
 
   const [showGrid, setShowGrid] = useState(true);
   const [layoutGuides, setLayoutGuides] = useState<LayoutGuide[]>(() => initialLayoutGuides ?? []);
@@ -18724,6 +18807,7 @@ export function FreehandStudioCanvas({
       setSelectedIds(ns);
       pushHistory(next, ns);
       onDesignerTextFrameCreate?.(newObj);
+      setTextEditingId(newObj.id);
       setActiveTool("select");
     }
 
@@ -22003,7 +22087,7 @@ export function FreehandStudioCanvas({
             left,
             top,
             width: w,
-            minHeight: h,
+            height: h,
             fontFamily: to.fontFamily,
             fontSize: Math.max(8, to.fontSize * z),
             fontWeight: to.fontWeight,
@@ -22011,7 +22095,13 @@ export function FreehandStudioCanvas({
             letterSpacing: to.letterSpacing !== undefined ? `${to.letterSpacing * z}px` : undefined,
             textAlign: to.textAlign,
             fontFeatureSettings: to.fontFeatureSettings ?? '"kern" 1, "liga" 1',
+            fontVariantLigatures: to.fontVariantLigatures ?? "common-ligatures",
+            ...(to.fontVariantCaps === "small-caps" ? { fontVariantCaps: "small-caps" as const } : {}),
             fontKerning: to.fontKerning === "none" ? "none" : undefined,
+            textDecoration:
+              [to.textUnderline && "underline", to.textStrikethrough && "line-through"]
+                .filter(Boolean)
+                .join(" ") || undefined,
             paddingTop: (to.textMode === "area" ? 4 : 0) * z,
             paddingRight: (to.textMode === "area" ? 4 : 0) * z,
             paddingBottom: (to.textMode === "area" ? 4 : 0) * z,
@@ -22020,9 +22110,88 @@ export function FreehandStudioCanvas({
             color: caretColor,
             WebkitTextFillColor: caretColor,
             caretColor,
+            opacity: to.opacity,
+            whiteSpace: to.textMode === "point" ? "pre" : "pre-wrap",
+            wordBreak: to.textMode === "area" ? ("break-word" as const) : "normal",
             transform: rot ? `rotate(${rot}deg)` : undefined,
             transformOrigin: `${(foW / 2) * z}px ${(foH / 2) * z}px`,
           };
+
+          const isThreadedFrame = !!(designerMode && to.isTextFrame && to.storyId);
+
+          if (isThreadedFrame) {
+            const frameHtml = richSpansToInlineHtml((to as any)._designerRichSpans, to.text);
+            return (
+              <div
+                ref={(node) => {
+                  inlineFrameEditorRef.current = node;
+                  if (!node) return;
+                  if (inlineFrameEditorObjectIdRef.current !== to.id) {
+                    node.innerHTML = frameHtml;
+                    inlineFrameEditorObjectIdRef.current = to.id;
+                  }
+                }}
+                data-fh-text-editor
+                contentEditable
+                suppressContentEditableWarning
+                spellCheck
+                className="absolute z-[10001] overflow-hidden border-0 bg-transparent p-0 shadow-none outline-none ring-0 [text-rendering:optimizeLegibility] [&::selection]:bg-sky-500/35 [&_b]:font-bold [&_strong]:font-bold [&_i]:italic [&_u]:underline [&_s]:line-through [&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-0.5"
+                style={editorStyle}
+                onMouseDown={(ev) => {
+                  ev.stopPropagation();
+                }}
+                onPointerDown={(ev) => {
+                  ev.stopPropagation();
+                }}
+                onInput={(ev) => {
+                  const el = ev.currentTarget;
+                  const plain = el.innerText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+                  const richHtml = normalizeInlineFrameRichHtml(el.innerHTML);
+                  setObjects((prev) =>
+                    prev.map((o) => {
+                      if (o.id !== to.id || o.type !== "text") return o;
+                      const t = o as TextObject;
+                      return { ...t, text: plain };
+                    }),
+                  );
+                  if (to.storyId && onDesignerTextFrameEdit) {
+                    onDesignerTextFrameEdit(to.id, to.storyId, plain, richHtml);
+                  }
+                }}
+                onKeyDown={(ev) => {
+                  if (ev.key === "Escape") {
+                    (ev.currentTarget as HTMLDivElement).blur();
+                    ev.stopPropagation();
+                    return;
+                  }
+                  const mod = ev.metaKey || ev.ctrlKey;
+                  if (!mod) return;
+                  const k = ev.key.toLowerCase();
+                  if (k === "b" || k === "i" || k === "u") {
+                    ev.preventDefault();
+                    document.execCommand(k === "b" ? "bold" : k === "i" ? "italic" : "underline", false);
+                  }
+                }}
+                onBlur={(ev) => {
+                  const richHtml = normalizeInlineFrameRichHtml(ev.currentTarget.innerHTML);
+                  const plain = ev.currentTarget.innerText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+                  setObjects((prev) =>
+                    prev.map((o) => {
+                      if (o.id !== to.id || o.type !== "text") return o;
+                      const t = o as TextObject;
+                      return { ...t, text: plain };
+                    }),
+                  );
+                  const editedObj = objectsRef.current.find((o) => o.id === to.id) as TextObject | undefined;
+                  pushHistory(objectsRef.current, selectedIdsRef.current);
+                  if (editedObj?.isTextFrame && onDesignerTextFrameEdit && editedObj.storyId) {
+                    onDesignerTextFrameEdit(editedObj.id, editedObj.storyId, plain, richHtml);
+                  }
+                  setTextEditingId(null);
+                }}
+              />
+            );
+          }
 
           return (
             <textarea
@@ -24472,6 +24641,35 @@ export function FreehandStudioCanvas({
                   const iconToolBtn = `inline-flex h-7 min-w-0 flex-1 items-center justify-center rounded-[6px] border text-[#a1a1aa] transition-colors ${pillOff}`;
                   const iconToolBtnOn = `inline-flex h-7 min-w-0 flex-1 items-center justify-center rounded-[6px] border text-white transition-colors ${pillOn}`;
                   const kernOn = (tx.fontKerning ?? "auto") !== "none";
+                  const applyInlineRichCommand = (cmd: string): boolean => {
+                    if (typeof window === "undefined" || typeof document === "undefined") return false;
+                    const activeEl = document.activeElement as HTMLElement | null;
+                    const editor = activeEl?.closest?.("[data-fh-text-editor]") as HTMLDivElement | null;
+                    if (!editor || editor.getAttribute("contenteditable") !== "true") return false;
+                    editor.focus();
+                    const sel = window.getSelection();
+                    const hasSelectionInEditor =
+                      !!sel &&
+                      sel.rangeCount > 0 &&
+                      !sel.isCollapsed &&
+                      editor.contains(sel.anchorNode) &&
+                      editor.contains(sel.focusNode);
+                    if (!hasSelectionInEditor && sel) {
+                      const r = document.createRange();
+                      r.selectNodeContents(editor);
+                      sel.removeAllRanges();
+                      sel.addRange(r);
+                    }
+                    document.execCommand(cmd, false);
+                    return true;
+                  };
+                  const applyTextStyleCommand = (
+                    cmd: "bold" | "italic" | "underline" | "strikeThrough" | "insertUnorderedList" | "insertOrderedList",
+                    fallback: () => void,
+                  ) => {
+                    if (applyInlineRichCommand(cmd)) return;
+                    fallback();
+                  };
                   return (
                     <div className="-mx-[14px] space-y-2.5 border-b border-white/[0.08] px-[14px] py-2">
                       <div className={tfSec}>Typography</div>
@@ -24689,10 +24887,11 @@ export function FreehandStudioCanvas({
                           <Type size={10} strokeWidth={2} className={tfIconMuted} aria-hidden />
                           Style
                         </div>
-                        <div className="grid grid-cols-5 gap-1.5">
+                        <div className="grid grid-cols-7 gap-1.5">
                           <button
                             type="button"
                             title="Small caps"
+                            onMouseDown={(e) => e.preventDefault()}
                             onClick={() =>
                               updateSelectedProp("fontVariantCaps", tx.fontVariantCaps === "small-caps" ? "normal" : "small-caps")
                             }
@@ -24703,7 +24902,12 @@ export function FreehandStudioCanvas({
                           <button
                             type="button"
                             title="Bold"
-                            onClick={() => updateSelectedProp("fontWeight", tx.fontWeight >= 600 ? 400 : 700)}
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() =>
+                              applyTextStyleCommand("bold", () =>
+                                updateSelectedProp("fontWeight", tx.fontWeight >= 600 ? 400 : 700),
+                              )
+                            }
                             className={tx.fontWeight >= 600 ? iconToolBtnOn : iconToolBtn}
                           >
                             <Bold size={14} strokeWidth={2} aria-hidden />
@@ -24711,8 +24915,11 @@ export function FreehandStudioCanvas({
                           <button
                             type="button"
                             title="Italic"
+                            onMouseDown={(e) => e.preventDefault()}
                             onClick={() =>
-                              updateSelectedProp("fontStyle", tx.fontStyle === "italic" ? "normal" : "italic")
+                              applyTextStyleCommand("italic", () =>
+                                updateSelectedProp("fontStyle", tx.fontStyle === "italic" ? "normal" : "italic"),
+                              )
                             }
                             className={tx.fontStyle === "italic" ? iconToolBtnOn : iconToolBtn}
                           >
@@ -24721,7 +24928,12 @@ export function FreehandStudioCanvas({
                           <button
                             type="button"
                             title="Underline"
-                            onClick={() => updateSelectedProp("textUnderline", !tx.textUnderline)}
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() =>
+                              applyTextStyleCommand("underline", () =>
+                                updateSelectedProp("textUnderline", !tx.textUnderline),
+                              )
+                            }
                             className={tx.textUnderline ? iconToolBtnOn : iconToolBtn}
                           >
                             <Underline size={14} strokeWidth={2} aria-hidden />
@@ -24729,10 +24941,33 @@ export function FreehandStudioCanvas({
                           <button
                             type="button"
                             title="Strikethrough"
-                            onClick={() => updateSelectedProp("textStrikethrough", !tx.textStrikethrough)}
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() =>
+                              applyTextStyleCommand("strikeThrough", () =>
+                                updateSelectedProp("textStrikethrough", !tx.textStrikethrough),
+                              )
+                            }
                             className={tx.textStrikethrough ? iconToolBtnOn : iconToolBtn}
                           >
                             <Strikethrough size={14} strokeWidth={2} aria-hidden />
+                          </button>
+                          <button
+                            type="button"
+                            title="Bulleted list"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => applyTextStyleCommand("insertUnorderedList", () => undefined)}
+                            className={iconToolBtn}
+                          >
+                            <List size={14} strokeWidth={2} aria-hidden />
+                          </button>
+                          <button
+                            type="button"
+                            title="Numbered list"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => applyTextStyleCommand("insertOrderedList", () => undefined)}
+                            className={iconToolBtn}
+                          >
+                            <ListOrdered size={14} strokeWidth={2} aria-hidden />
                           </button>
                         </div>
                       </div>
