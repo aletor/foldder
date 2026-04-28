@@ -116,7 +116,6 @@ export default function DesignerStudio({
   const [formatModal, setFormatModal] = useState<DesignerFormatModalState>(null);
   const [pendingFormat, setPendingFormat] = useState<IndesignPageFormatId>(DEFAULT_DESIGNER_PAGE_FORMAT);
 
-  const dragPageIndexRef = useRef<number | null>(null);
   /** Evita activar la página al soltar tras un drag HTML5 de reordenación. */
   const suppressPageThumbClickRef = useRef(false);
 
@@ -784,6 +783,21 @@ export default function DesignerStudio({
     [commitPages],
   );
 
+  const addPageFromLast = useCallback(() => {
+    const lastIdx = Math.max(0, pagesRef.current.length - 1);
+    const source = pagesRef.current[lastIdx];
+    if (!source) return;
+    const dup = duplicateDesignerPageState(source);
+    commitPages((prev) => {
+      const next = [...prev, dup];
+      queueMicrotask(() => {
+        setDesignerPageEnterDirection("next");
+        setActivePageIndex(next.length - 1);
+      });
+      return next;
+    });
+  }, [commitPages]);
+
   const movePage = useCallback(
     (fromIndex: number, toIndex: number) => {
       if (fromIndex === toIndex) return;
@@ -1379,17 +1393,13 @@ export default function DesignerStudio({
         onRailScroll={(top) => {
           designerPagesRailScrollTopRef.current = top;
         }}
-        dragPageIndexRef={dragPageIndexRef}
         suppressPageThumbClickRef={suppressPageThumbClickRef}
         goToDesignerPage={goToDesignerPage}
         movePage={movePage}
         swapOrientation={swapOrientation}
         duplicatePage={duplicatePage}
         deletePage={deletePage}
-        onRequestAddPageModal={() => {
-          setPendingFormat(activePage?.format ?? pages[0]?.format ?? DEFAULT_DESIGNER_PAGE_FORMAT);
-          setFormatModal({ kind: "add" });
-        }}
+        onAddPage={addPageFromLast}
         onRequestResizePageModal={(i) => {
           setPendingFormat(pages[i]?.format ?? DEFAULT_DESIGNER_PAGE_FORMAT);
           setFormatModal({ kind: "resize", pageIndex: i });

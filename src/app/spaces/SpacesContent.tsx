@@ -266,6 +266,11 @@ export function SpacesContent() {
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
   const [newProjectNameInput, setNewProjectNameInput] = useState('');
   const [showLoadModal, setShowLoadModal] = useState(false);
+  const [projectsListLoading, setProjectsListLoading] = useState(false);
+  const [projectsListError, setProjectsListError] = useState<string | null>(null);
+  const [projectLoadingId, setProjectLoadingId] = useState<string | null>(null);
+  const [projectLoadingStage, setProjectLoadingStage] = useState<string>("");
+  const [projectLoadingError, setProjectLoadingError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
   const [isGeneratingAssistant, setIsGeneratingAssistant] = useState(false);
@@ -1536,22 +1541,6 @@ export function SpacesContent() {
     return () => window.removeEventListener(AI_JOB_COMPLETE_EVENT, handler as EventListener);
   }, []);
 
-  // Access Security
-  const prevAuthRef = useRef(false);
-  useEffect(() => {
-    if (!isAuthenticated) {
-      prevAuthRef.current = false;
-      return;
-    }
-    if (prevAuthRef.current) return;
-    prevAuthRef.current = true;
-    setShowWelcome(false);
-    setShowLoadModal(true);
-    setPostAuthProjectsGate(true);
-    // Intento de fullscreen tras login (puede ser bloqueado por navegador).
-    void enterFullscreen(document.documentElement).catch(() => undefined);
-  }, [isAuthenticated]);
-
   const handleTempPasscode = useCallback((val: string) => {
     setPasscode(val);
     if (val === "6666") {
@@ -2083,17 +2072,33 @@ export function SpacesContent() {
     return () => clearTimeout(timer);
   }, [nodes, edges, activeSpaceId, spacesMap, syncCurrentSpaceState]); 
 
-  const refreshProjectsList = useCallback(async () => {
-    const res = await fetch('/api/spaces?meta=1', {
-      headers: devBypassHeaders,
-      cache: 'no-store',
-    });
-    const data = await readResponseJson<unknown[]>(res, 'GET /api/spaces?meta=1');
-    if (Array.isArray(data)) {
-      setSavedProjects(data as SavedProjectMeta[]);
-      return data as SavedProjectMeta[];
+  const refreshProjectsList = useCallback(async (opts?: { withLoader?: boolean }) => {
+    const withLoader = opts?.withLoader ?? true;
+    if (withLoader) setProjectsListLoading(true);
+    setProjectsListError(null);
+    try {
+      const res = await fetch('/api/spaces?meta=1', {
+        headers: devBypassHeaders,
+        cache: 'no-store',
+      });
+      const data = await readResponseJson<unknown[]>(res, 'GET /api/spaces?meta=1');
+      if (Array.isArray(data)) {
+        setSavedProjects(data as SavedProjectMeta[]);
+        return data as SavedProjectMeta[];
+      }
+      setSavedProjects([]);
+      setProjectsListError("Respuesta inválida al cargar el listado de proyectos.");
+      return [];
+    } catch (err) {
+      console.error('[refreshProjectsList] error:', err);
+      setSavedProjects([]);
+      setProjectsListError(
+        err instanceof Error && err.message ? err.message : "No se pudo cargar el listado de proyectos."
+      );
+      return [];
+    } finally {
+      if (withLoader) setProjectsListLoading(false);
     }
-    return [];
   }, [devBypassHeaders]);
 
   const upsertSavedProjectMeta = useCallback((project: SavedProjectMeta) => {
@@ -2135,10 +2140,8 @@ export function SpacesContent() {
       setSavedProjects([]);
     }
 
-    void refreshProjectsList().catch((err) => {
-      console.error('Fetch error:', err);
-    });
-  }, [isAuthenticated, projectsListOwnerKey, refreshProjectsList]);
+    void refreshProjectsList({ withLoader: showLoadModal });
+  }, [isAuthenticated, projectsListOwnerKey, refreshProjectsList, showLoadModal]);
 
   const saveProject = async (
     nameToSave?: string,
@@ -2240,6 +2243,8 @@ export function SpacesContent() {
   saveProjectRef.current = saveProject;
   const isSavingRef = useRef(false);
   isSavingRef.current = isSaving;
+  const brainAssetsAutosaveTimerRef = useRef<number | null>(null);
+  const hasSeenBrainAssetsChangeRef = useRef(false);
 
   const autosaveGateRef = useRef({
     authenticated: false,
@@ -2290,6 +2295,37 @@ export function SpacesContent() {
     };
   }, []);
 
+  /**
+   * Brain: persistencia defensiva de `metadata.assets` poco después de cambios relevantes
+   * (subidas, análisis visual, ADN por imagen), para no perder progreso ante refresh inesperado.
+   */
+  useEffect(() => {
+    if (!isAuthenticated || !activeProjectId) return;
+    if (!hasSeenBrainAssetsChangeRef.current) {
+      hasSeenBrainAssetsChangeRef.current = true;
+      return;
+    }
+    if (brainAssetsAutosaveTimerRef.current) {
+      window.clearTimeout(brainAssetsAutosaveTimerRef.current);
+      brainAssetsAutosaveTimerRef.current = null;
+    }
+    brainAssetsAutosaveTimerRef.current = window.setTimeout(() => {
+      brainAssetsAutosaveTimerRef.current = null;
+      const g = autosaveGateRef.current;
+      if (g.openLoad || g.openNew || g.deleting || isSavingRef.current) return;
+      void saveProjectRef.current(undefined, { silentError: true });
+    }, 5000);
+  }, [metadata.assets, isAuthenticated, activeProjectId]);
+
+  useEffect(() => {
+    return () => {
+      if (brainAssetsAutosaveTimerRef.current) {
+        window.clearTimeout(brainAssetsAutosaveTimerRef.current);
+        brainAssetsAutosaveTimerRef.current = null;
+      }
+    };
+  }, []);
+
   const submitNewProject = useCallback(async () => {
     const trimmed = newProjectNameInput.trim();
     if (!trimmed) {
@@ -2324,9 +2360,34 @@ export function SpacesContent() {
     }
   }, [newProjectNameInput, projectDeleteInProgress, postAuthProjectsGate, setNodes, setEdges]);
 
+  const openLoadProjectsModal = useCallback(() => {
+    setShowLoadModal(true);
+    setProjectLoadingError(null);
+    void refreshProjectsList({ withLoader: true });
+  }, [refreshProjectsList]);
+
+  // Access Security
+  const prevAuthRef = useRef(false);
+  useEffect(() => {
+    if (!isAuthenticated) {
+      prevAuthRef.current = false;
+      return;
+    }
+    if (prevAuthRef.current) return;
+    prevAuthRef.current = true;
+    setShowWelcome(false);
+    openLoadProjectsModal();
+    setPostAuthProjectsGate(true);
+    // Intento de fullscreen tras login (puede ser bloqueado por navegador).
+    void enterFullscreen(document.documentElement).catch(() => undefined);
+  }, [isAuthenticated, openLoadProjectsModal]);
+
   const loadProject = (projectMeta: SavedProjectMeta) => {
     void (async () => {
       let project: SavedProjectDetail;
+      setProjectLoadingError(null);
+      setProjectLoadingId(projectMeta.id);
+      setProjectLoadingStage("Solicitando datos del proyecto al servidor…");
       try {
         project = await fetchProjectDetailById(projectMeta.id);
       } catch (error) {
@@ -2334,12 +2395,16 @@ export function SpacesContent() {
         const msg = error instanceof Error ? error.message : String(error ?? "");
         if (/404|Project not found/i.test(msg)) {
           // Si el listado trae una entrada obsoleta, refrescamos y evitamos reintentos sobre ese id.
-          await refreshProjectsList().catch(() => undefined);
+          await refreshProjectsList({ withLoader: true }).catch(() => undefined);
           setSavedProjects((prev) => prev.filter((p) => p.id !== projectMeta.id));
-          alert('Este proyecto ya no está disponible en servidor. Se actualizó la lista.');
+          setProjectLoadingError('Este proyecto ya no está disponible en servidor. Se actualizó la lista.');
+          setProjectLoadingId(null);
+          setProjectLoadingStage("");
           return;
         }
-        alert('Error: could not fetch this project from server.');
+        setProjectLoadingError('No se pudo leer el proyecto desde el servidor.');
+        setProjectLoadingId(null);
+        setProjectLoadingStage("");
         return;
       }
 
@@ -2348,12 +2413,16 @@ export function SpacesContent() {
 
       if (!rootSpace) {
         console.error('Root space not found for project:', project.id);
-        alert('Error: could not find the main space for this project.');
+        setProjectLoadingError('No se encontró el espacio principal del proyecto.');
+        setProjectLoadingId(null);
+        setProjectLoadingStage("");
         return;
       }
 
+      setProjectLoadingStage("Preparando estructura de espacios…");
       let spaces: Record<string, unknown> = project.spaces || {};
       try {
+        setProjectLoadingStage("Actualizando URLs de medios desde S3…");
         spaces = await hydrateSpacesMapWithFreshUrls(spaces);
       } catch (e) {
         console.error('[loadProject] hydrate S3 URLs:', e);
@@ -2395,6 +2464,7 @@ export function SpacesContent() {
       });
       const nextEdges = stripEdgesToFinal([...(targetSpace?.edges || [])]);
 
+      setProjectLoadingStage("Montando nodos y conexiones en el lienzo…");
       setNodes(nextNodes);
       setEdges(nextEdges);
       scheduleNodeInternalsRefresh(nextNodes.map((n: any) => String(n.id)));
@@ -2436,6 +2506,9 @@ export function SpacesContent() {
 
       setPostAuthProjectsGate(false);
       setShowLoadModal(false);
+      setProjectLoadingStage("Ajustando vista final del proyecto…");
+      setProjectLoadingId(null);
+      setProjectLoadingStage("");
 
       setTimeout(() => {
         void fitView({
@@ -2445,7 +2518,14 @@ export function SpacesContent() {
           ...FOLDDER_FIT_VIEW_EASE,
         });
       }, 100);
-    })();
+    })().catch((err) => {
+      console.error('[loadProject] unexpected error:', err);
+      setProjectLoadingError(
+        err instanceof Error && err.message ? err.message : "Error inesperado cargando el proyecto."
+      );
+      setProjectLoadingId(null);
+      setProjectLoadingStage("");
+    });
   };
 
   const deleteProject = async (idToDelete: string): Promise<boolean> => {
@@ -4384,7 +4464,7 @@ export function SpacesContent() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => !projectDeleteInProgress && setShowLoadModal(true)}
+                  onClick={() => !projectDeleteInProgress && openLoadProjectsModal()}
                   disabled={!!projectDeleteInProgress}
                   title={projectDeleteInProgress ? 'Espera a que termine el borrado' : 'My Spaces'}
                   className="group flex h-10 w-10 items-center justify-center rounded-xl border border-white/25 bg-white/[0.08] text-slate-700 shadow-sm backdrop-blur-xl transition-all hover:scale-105 hover:bg-white/[0.15] hover:text-slate-900 disabled:pointer-events-none disabled:opacity-40"
@@ -4754,8 +4834,51 @@ export function SpacesContent() {
                   : 'Elige un proyecto para cargarlo en el lienzo.'}
               </p>
 
+              {(projectsListLoading || projectsListError || projectLoadingId || projectLoadingError) && (
+                <div className="mb-3 space-y-2">
+                  {projectsListLoading && (
+                    <div className="flex items-center gap-2 rounded-xl border border-white/25 bg-white/20 px-3 py-2 text-[11px] font-semibold text-slate-700">
+                      <Loader2 size={13} className="animate-spin text-blue-600" />
+                      Cargando listado de proyectos…
+                    </div>
+                  )}
+                  {projectsListError && (
+                    <div className="flex items-start gap-2 rounded-xl border border-rose-300/60 bg-rose-50/70 px-3 py-2 text-[11px] font-semibold text-rose-700">
+                      <AlertCircle size={13} className="mt-0.5 shrink-0" />
+                      <div className="min-w-0 flex-1">
+                        <p className="break-words">{projectsListError}</p>
+                        <button
+                          type="button"
+                          onClick={() => void refreshProjectsList({ withLoader: true })}
+                          className="mt-1 rounded-lg border border-rose-300/60 bg-white/80 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-rose-700 hover:bg-white"
+                        >
+                          Reintentar
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {projectLoadingId && (
+                    <div className="flex items-start gap-2 rounded-xl border border-blue-300/50 bg-blue-50/70 px-3 py-2 text-[11px] font-semibold text-blue-800">
+                      <Loader2 size={13} className="mt-0.5 shrink-0 animate-spin" />
+                      <div className="min-w-0">
+                        <p>Cargando proyecto…</p>
+                        <p className="mt-0.5 text-[10px] font-bold text-blue-700/90">
+                          {projectLoadingStage || "Preparando datos…"}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                  {projectLoadingError && !projectLoadingId && (
+                    <div className="flex items-start gap-2 rounded-xl border border-rose-300/60 bg-rose-50/70 px-3 py-2 text-[11px] font-semibold text-rose-700">
+                      <AlertCircle size={13} className="mt-0.5 shrink-0" />
+                      <p className="break-words">{projectLoadingError}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="custom-scrollbar min-h-0 max-h-[min(52vh,340px)] flex-1 overflow-y-auto -mx-1 px-1 pb-1 sm:max-h-[min(48vh,380px)]">
-                {savedProjects.length === 0 ? (
+                {!projectsListLoading && savedProjects.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-white/30 bg-white/10 py-10 text-center backdrop-blur-sm">
                     <FolderOpen className="mx-auto mb-2 text-slate-400" size={28} />
                     <p className="text-xs font-bold text-slate-600">Aún no hay proyectos guardados.</p>
@@ -4836,11 +4959,18 @@ export function SpacesContent() {
                           </button>
                           <button
                             type="button"
-                            onClick={() => !projectDeleteInProgress && loadProject(project)}
-                            disabled={!!projectDeleteInProgress}
+                            onClick={() => !projectDeleteInProgress && !projectLoadingId && loadProject(project)}
+                            disabled={!!projectDeleteInProgress || !!projectLoadingId}
                             className="rounded-lg border border-white/25 bg-white/35 px-3 py-1.5 text-[9px] font-black uppercase tracking-widest text-slate-800 shadow-sm transition-all hover:border-slate-400/40 hover:bg-white/50 disabled:pointer-events-none disabled:opacity-40"
                           >
-                            Abrir
+                            {projectLoadingId === project.id ? (
+                              <span className="inline-flex items-center gap-1">
+                                <Loader2 size={11} className="animate-spin" />
+                                Cargando
+                              </span>
+                            ) : (
+                              'Abrir'
+                            )}
                           </button>
                         </div>
                       </div>

@@ -12,14 +12,13 @@ export type DesignerPagesRailProps = {
   pageThumbnails: Record<string, string>;
   scrollElRef: React.RefObject<HTMLDivElement | null>;
   onRailScroll: (scrollTop: number) => void;
-  dragPageIndexRef: React.MutableRefObject<number | null>;
   suppressPageThumbClickRef: React.MutableRefObject<boolean>;
   goToDesignerPage: (i: number) => void;
   movePage: (fromIndex: number, toIndex: number) => void;
   swapOrientation: (idx: number) => void;
   duplicatePage: (idx: number) => void;
   deletePage: (idx: number) => void;
-  onRequestAddPageModal: () => void;
+  onAddPage: () => void;
   onRequestResizePageModal: (pageIndex: number) => void;
 };
 
@@ -29,20 +28,52 @@ export function DesignerPagesRail({
   pageThumbnails,
   scrollElRef,
   onRailScroll,
-  dragPageIndexRef,
   suppressPageThumbClickRef,
   goToDesignerPage,
   movePage,
   swapOrientation,
   duplicatePage,
   deletePage,
-  onRequestAddPageModal,
+  onAddPage,
   onRequestResizePageModal,
 }: DesignerPagesRailProps) {
+  const mouseDragFromRef = React.useRef<number | null>(null);
+  const mouseDragActiveRef = React.useRef(false);
+  const [mouseDragHoverIndex, setMouseDragHoverIndex] = React.useState<number | null>(null);
+
+  const endMouseDrag = React.useCallback((commit: boolean) => {
+    void commit;
+    mouseDragActiveRef.current = false;
+    mouseDragFromRef.current = null;
+    setMouseDragHoverIndex(null);
+  }, []);
+
+  React.useEffect(() => {
+    const onMouseUp = () => endMouseDrag(true);
+    const onWindowBlur = () => endMouseDrag(false);
+    window.addEventListener("mouseup", onMouseUp);
+    window.addEventListener("blur", onWindowBlur);
+    return () => {
+      window.removeEventListener("mouseup", onMouseUp);
+      window.removeEventListener("blur", onWindowBlur);
+    };
+  }, [endMouseDrag]);
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 items-center justify-center border-b border-white/[0.08] py-2">
         <Layers className="h-3.5 w-3.5 text-violet-300/70" strokeWidth={2} />
+      </div>
+      <div className="shrink-0 border-b border-white/[0.08] px-1 py-1.5">
+        <button
+          type="button"
+          title="Añadir página"
+          onClick={onAddPage}
+          className="flex w-full items-center justify-center gap-1 rounded-[2px] border border-dashed border-white/18 bg-white/[0.02] py-1.5 text-[10px] font-medium text-zinc-400 transition hover:border-violet-400/35 hover:bg-violet-500/10 hover:text-zinc-200"
+        >
+          <Plus className="h-3.5 w-3.5" strokeWidth={2} />
+          Nueva
+        </button>
       </div>
       <div
         ref={scrollElRef}
@@ -62,42 +93,31 @@ export function DesignerPagesRail({
               <div
                 key={p.id}
                 data-designer-rail-index={i}
-                className="rounded-[2px] border border-white/[0.08] bg-black/15 px-0.5 py-1"
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  e.dataTransfer.dropEffect = "move";
-                }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  const raw = e.dataTransfer.getData("text/plain");
-                  const from = dragPageIndexRef.current ?? (raw ? Number.parseInt(raw, 10) : NaN);
-                  dragPageIndexRef.current = null;
-                  if (Number.isNaN(from) || from === i) return;
-                  movePage(from, i);
+                className={`rounded-[2px] border bg-black/15 px-0.5 py-1 ${
+                  mouseDragHoverIndex === i ? "border-violet-400/60" : "border-white/[0.08]"
+                }`}
+                onMouseEnter={() => {
+                  if (!mouseDragActiveRef.current) return;
+                  const from = mouseDragFromRef.current;
+                  if (from == null) return;
+                  if (from !== i) {
+                    movePage(from, i);
+                    mouseDragFromRef.current = i;
+                  }
+                  setMouseDragHoverIndex(i);
+                  suppressPageThumbClickRef.current = true;
                 }}
               >
                 <div className="flex w-full flex-col gap-0.5">
-                  <button
-                    type="button"
-                    draggable
+                  <div
+                    role="button"
+                    tabIndex={0}
                     title={`${i + 1}. ${pf.label} · ${resLabel} — arrastra para reordenar; clic para ver en pantalla`}
                     className={`relative flex w-full cursor-grab touch-none flex-col items-center gap-0.5 rounded-[2px] border px-0.5 py-0.5 text-left transition active:cursor-grabbing ${
                       active
                         ? "border-violet-400/45 bg-violet-950/35 shadow-[0_0_0_1px_rgba(167,139,250,0.15)]"
                         : "border-white/[0.08] bg-black/20 hover:border-white/15"
                     }`}
-                    onDragStart={(e) => {
-                      suppressPageThumbClickRef.current = false;
-                      dragPageIndexRef.current = i;
-                      e.dataTransfer.setData("text/plain", String(i));
-                      e.dataTransfer.effectAllowed = "move";
-                    }}
-                    onDrag={() => {
-                      suppressPageThumbClickRef.current = true;
-                    }}
-                    onDragEnd={() => {
-                      dragPageIndexRef.current = null;
-                    }}
                     onClick={() => {
                       if (suppressPageThumbClickRef.current) {
                         suppressPageThumbClickRef.current = false;
@@ -110,7 +130,22 @@ export function DesignerPagesRail({
                       suppressPageThumbClickRef.current = false;
                       goToDesignerPage(i);
                     }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        goToDesignerPage(i);
+                      }
+                    }}
                   >
+                    <div
+                      className="absolute inset-0 z-10"
+                      onMouseDown={(e) => {
+                        if (e.button !== 0) return;
+                        mouseDragActiveRef.current = true;
+                        mouseDragFromRef.current = i;
+                        setMouseDragHoverIndex(i);
+                      }}
+                    />
                     <div className="flex h-[72px] w-full items-stretch justify-center overflow-hidden rounded-[2px] bg-zinc-950/90 ring-1 ring-inset ring-white/[0.06]">
                       {railThumb ? (
                         // Data URL del export del lienzo; `<Image>` no aporta aquí.
@@ -133,7 +168,7 @@ export function DesignerPagesRail({
                     <span className="max-w-full truncate px-0.5 text-center font-mono text-[6px] leading-tight text-zinc-500">
                       {resLabel}
                     </span>
-                  </button>
+                  </div>
                 </div>
                 <div className="mt-1 flex w-full justify-center gap-0.5">
                   <button
@@ -185,15 +220,6 @@ export function DesignerPagesRail({
               </div>
             );
           })}
-          <button
-            type="button"
-            title="Añadir página"
-            onClick={onRequestAddPageModal}
-            className="flex w-full items-center justify-center gap-1 rounded-[2px] border border-dashed border-white/18 bg-white/[0.02] py-1.5 text-[10px] font-medium text-zinc-400 transition hover:border-violet-400/35 hover:bg-violet-500/10 hover:text-zinc-200"
-          >
-            <Plus className="h-3.5 w-3.5" strokeWidth={2} />
-            Nueva
-          </button>
         </div>
       </div>
     </div>

@@ -61,6 +61,7 @@ import {
   Image as ImageIconLucide,
   ChevronUp,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Check,
   Loader2,
@@ -326,6 +327,7 @@ type Tool =
   | "directSelect"
   | "pen"
   | "rect"
+  | "line"
   | "ellipse"
   | "text"
   | "textFrame"
@@ -352,7 +354,7 @@ type ToolFlyoutGroupId = "tf-pen" | "tf-shape" | "tf-photo-marquee" | "tf-text" 
 
 type ToolFlyoutPrimaryState = {
   "tf-pen": "directSelect" | "pen";
-  "tf-shape": "rect" | "ellipse";
+  "tf-shape": "rect" | "line" | "ellipse";
   "tf-photo-marquee": "rectMarquee" | "ellipseMarquee" | "lassoMarquee" | "polygonMarquee";
   "tf-text": "text" | "textFrame";
   "tf-img": "importImage" | "imageFrame";
@@ -372,6 +374,7 @@ function toolFlyoutGroupForTool(tool: Tool): ToolFlyoutGroupId | null {
     case "pen":
       return "tf-pen";
     case "rect":
+    case "line":
     case "ellipse":
       return "tf-shape";
     case "rectMarquee":
@@ -709,6 +712,8 @@ export interface RectObject extends FreehandObjectBase {
 export interface EllipseObject extends FreehandObjectBase { type: "ellipse" }
 export interface PathObject extends FreehandObjectBase {
   type: "path";
+  /** true cuando se creó con la herramienta Línea (sin relleno). */
+  isLineTool?: boolean;
   points: BezierPoint[];
   closed: boolean;
   /** Índices donde empieza cada subtrazo cerrado (p. ej. marco + agujero). Si falta, un solo anillo = `points`. */
@@ -1705,6 +1710,10 @@ function supportsGradientFill(o: FreehandObject): boolean {
   if (o.type === "textOnPath") return false;
   if (o.type === "path" && !(o as PathObject).closed) return false;
   return true;
+}
+
+function isLineToolPath(o: FreehandObject | null | undefined): o is PathObject {
+  return !!o && o.type === "path" && (o as PathObject).isLineTool === true;
 }
 
 const DEFAULT_STROKE_PROPS = {
@@ -7414,6 +7423,9 @@ function resolveFitViewBounds(objects: FreehandObject[], artboards: Artboard[]):
   return buildExportBounds(objects);
 }
 
+/** Doble click cuando ya está en fit: zoom = zoom actual * factor. */
+const DOUBLE_CLICK_ZOOM_IN_FIT_FACTOR = 2;
+
 /** Evita canvas “tainted” al exportar: las <image> con http(s) deben ir como data URLs antes de rasterizar. */
 const TRANSPARENT_PIXEL_PNG =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
@@ -8988,6 +9000,7 @@ export function FreehandStudioCanvas({
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [activeTool, setActiveTool] = useState<Tool>("select");
+  const [transformHandlesArmed, setTransformHandlesArmed] = useState(false);
   const [toolFlyoutPrimary, setToolFlyoutPrimary] = useState<ToolFlyoutPrimaryState>(
     DEFAULT_TOOL_FLYOUT_PRIMARY,
   );
@@ -9175,7 +9188,7 @@ export function FreehandStudioCanvas({
 
   // Drag state
   const [dragState, setDragState] = useState<{
-    type: "move" | "resize" | "pan" | "create" | "createText" | "createTextFrame" | "createImageFrame" | "directSelect" | "marquee" | "photoRectMarquee" | "photoEllipseMarquee" | "photoLassoMarquee" | "photoPolygonMarquee" | "photoMarqueeNudge" | "photoMarqueeFloatRotate" | "photoMarqueeFloatResize" | "penHandle" | "rotate" | "gradient" | "guideMove" | "guidePull" | "imageContentPan" | "imageContentResize" | "brushPaint" | "photoGradientLine" | "photoGradientVertex" | "cornerRadius";
+    type: "move" | "resize" | "textBoxResize" | "pan" | "create" | "createText" | "createTextFrame" | "createImageFrame" | "directSelect" | "marquee" | "photoRectMarquee" | "photoEllipseMarquee" | "photoLassoMarquee" | "photoPolygonMarquee" | "photoMarqueeNudge" | "photoMarqueeFloatRotate" | "photoMarqueeFloatResize" | "penHandle" | "rotate" | "gradient" | "guideMove" | "guidePull" | "imageContentPan" | "imageContentResize" | "brushPaint" | "photoGradientLine" | "photoGradientVertex" | "cornerRadius";
     startX: number;
     startY: number;
     startCanvas?: Point;
@@ -9189,8 +9202,11 @@ export function FreehandStudioCanvas({
     initialOrientedFrame?: OrientedSelectionFrame;
     /** Deep copy of selected objects at resize start — transforms must not compound per frame. */
     resizeSnapshot?: Map<string, FreehandObject>;
+    textBoxResizeObjectId?: string;
+    textBoxResizeHandle?: "nw" | "ne" | "se" | "sw" | "n" | "e" | "s" | "w";
+    textBoxResizeStart?: { x: number; y: number; w: number; h: number };
     allBounds?: Map<string, Rect>;
-    createType?: "rect" | "ellipse";
+    createType?: "rect" | "line" | "ellipse";
     createOrigin?: Point;
     gradientHandle?: "linA" | "linB" | "radC" | "radR" | "stop";
     gradientPrimaryId?: string;
@@ -9500,6 +9516,11 @@ export function FreehandStudioCanvas({
   const [fillColor, setFillColor] = useState("#6366f1");
   const [strokeColor, setStrokeColor] = useState("#ffffff");
   const [strokeWidth, setStrokeWidth] = useState(2);
+  const ensureVisibleDrawStroke = useCallback(() => {
+    if (strokeColor !== "none") return;
+    setStrokeColor("#000000");
+    setStrokeWidth(2);
+  }, [strokeColor]);
   const [strokeLinecap, setStrokeLinecap] = useState<"butt" | "round" | "square">("round");
   const [strokeLinejoin, setStrokeLinejoin] = useState<"miter" | "round" | "bevel">("round");
   const [strokeDasharray, setStrokeDasharray] = useState("");
@@ -9535,15 +9556,6 @@ export function FreehandStudioCanvas({
   const textEditingIdRef = useRef(textEditingId);
   textEditingIdRef.current = textEditingId;
 
-  /** Los marcos encadenados no usan el textarea flotante del lienzo; solo modal / panel. */
-  useEffect(() => {
-    if (!textEditingId || !designerMode) return;
-    const o = objects.find((x) => x.id === textEditingId);
-    if (o?.type === "text" && (o as TextObject).isTextFrame) {
-      setTextEditingId(null);
-    }
-  }, [textEditingId, designerMode, objects]);
-
   const [showGrid, setShowGrid] = useState(true);
   const [layoutGuides, setLayoutGuides] = useState<LayoutGuide[]>(() => initialLayoutGuides ?? []);
   const [showLayoutGuides, setShowLayoutGuides] = useState(true);
@@ -9561,6 +9573,9 @@ export function FreehandStudioCanvas({
   const [leftToolbarColorTarget, setLeftToolbarColorTarget] = useState<null | "fill" | "stroke">(null);
   const [leftToolbarColorPos, setLeftToolbarColorPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
   const [leftToolbarAdvancedPickerOpen, setLeftToolbarAdvancedPickerOpen] = useState(false);
+  const [leftToolbarEyeBusy, setLeftToolbarEyeBusy] = useState(false);
+  const leftToolbarEyeAbortRef = useRef<AbortController | null>(null);
+  const [propertiesPanelCollapsed, setPropertiesPanelCollapsed] = useState(false);
   /** Submenú de grupos de herramientas (barra izquierda, estilo Photoshop). */
   const [leftToolbarToolFlyout, setLeftToolbarToolFlyout] = useState<string | null>(null);
   const leftToolbarSwatchDockRef = useRef<HTMLDivElement>(null);
@@ -9719,6 +9734,10 @@ export function FreehandStudioCanvas({
   pushHistoryRef.current = pushHistory;
 
   const directSelectBakeKey = useMemo(() => Array.from(selectedIds).sort().join(","), [selectedIds]);
+
+  useEffect(() => {
+    setTransformHandlesArmed(false);
+  }, [directSelectBakeKey, activeTool]);
 
   /** Trazo solo-`svgPathD`, rectángulo o elipse → puntos Bézier al usar Selección directa (A). */
   useLayoutEffect(() => {
@@ -11309,6 +11328,7 @@ export function FreehandStudioCanvas({
   /** Vista previa de relleno/trazo en los muestreos de la barra izquierda (estilo Illustrator). */
   const leftToolbarSwatchPreview = useMemo(() => {
     const o = firstSelected;
+    const hideFillForLine = isLineToolPath(o);
     if (!o) {
       const fillNone = fillColor === "none";
       const strokeNone = strokeColor === "none";
@@ -11318,6 +11338,7 @@ export function FreehandStudioCanvas({
         fillNone,
         strokeNone,
         noVectorStyle: false,
+        hideFillForLine,
       };
     }
     if (o.type === "image" || o.type === "booleanGroup") {
@@ -11331,6 +11352,7 @@ export function FreehandStudioCanvas({
         fillNone: fNone,
         strokeNone: sNone,
         noVectorStyle: !allowSwatchesForMaskBrush,
+        hideFillForLine,
       };
     }
     let fillHex = "#6366f1";
@@ -11351,7 +11373,7 @@ export function FreehandStudioCanvas({
     }
     const strokeNone = o.stroke === "none";
     const strokeHex = strokeNone ? "#71717a" : o.stroke;
-    return { fillHex, strokeHex, fillNone, strokeNone, noVectorStyle: false };
+    return { fillHex, strokeHex, fillNone, strokeNone, noVectorStyle: false, hideFillForLine };
   }, [firstSelected, fillColor, strokeColor, maskEditObjectId]);
 
   const leftToolbarPickerInitialHex = useMemo(() => {
@@ -11570,22 +11592,28 @@ export function FreehandStudioCanvas({
     return new Set(groupMembers);
   }, []);
 
-  /** Encuadre del pliego/contenido en el área del lienzo. `marginPx` pequeño en modo P = máximo aprovechamiento. */
-  const fitAllCanvas = useCallback((marginPx: number = 40) => {
+  const computeFitViewport = useCallback((marginPx: number = 40): { x: number; y: number; zoom: number } | null => {
     const b = resolveFitViewBounds(objects, artboards);
     const el = containerRef.current;
-    if (!el) return;
+    if (!el) return null;
     const rw = el.clientWidth, rh = el.clientHeight;
-    if (b.w < 2 || b.h < 2) return;
+    if (b.w < 2 || b.h < 2) return null;
     const margin = Math.max(0, marginPx);
     const zx = (rw - margin * 2) / b.w, zy = (rh - margin * 2) / b.h;
     const z = clamp(Math.min(zx, zy), 0.05, 8);
-    setViewport({
+    return {
       zoom: z,
       x: margin - b.x * z + (rw - margin * 2 - b.w * z) / 2,
       y: margin - b.y * z + (rh - margin * 2 - b.h * z) / 2,
-    });
+    };
   }, [objects, artboards]);
+
+  /** Encuadre del pliego/contenido en el área del lienzo. `marginPx` pequeño en modo P = máximo aprovechamiento. */
+  const fitAllCanvas = useCallback((marginPx: number = 40) => {
+    const next = computeFitViewport(marginPx);
+    if (!next) return;
+    setViewport(next);
+  }, [computeFitViewport]);
 
   const fitAllCanvasRef = useRef(fitAllCanvas);
   fitAllCanvasRef.current = fitAllCanvas;
@@ -12230,12 +12258,14 @@ export function FreehandStudioCanvas({
     setPenHoverCanvasRaw(null);
     if (penPoints.length < 2) { setPenPoints([]); setIsPenDrawing(false); return; }
     const bounds = getPathBoundsFromPoints(penPoints);
+    const effectiveStrokeColor = strokeColor === "none" ? "#000000" : strokeColor;
+    const effectiveStrokeWidth = strokeColor === "none" ? 2 : strokeWidth;
     const pathObj: PathObject = {
       ...defaultObj({ name: `Path ${objects.length + 1}` }),
       type: "path",
       x: bounds.x, y: bounds.y, width: bounds.w, height: bounds.h,
       fill: closed ? solidFill(fillColor) : solidFill("none"),
-      stroke: strokeColor, strokeWidth,
+      stroke: effectiveStrokeColor, strokeWidth: effectiveStrokeWidth,
       strokeLinecap, strokeLinejoin, strokeDasharray,
       points: penPoints.map((p) => ({ ...p, vertexMode: p.vertexMode ?? "smooth" })),
       closed,
@@ -12950,6 +12980,8 @@ export function FreehandStudioCanvas({
   );
 
   const closeLeftToolbarColorUI = useCallback(() => {
+    leftToolbarEyeAbortRef.current?.abort();
+    leftToolbarEyeAbortRef.current = null;
     setLeftToolbarAdvancedPickerOpen(false);
     setLeftToolbarColorTarget(null);
   }, []);
@@ -14893,7 +14925,12 @@ export function FreehandStudioCanvas({
         if (!e.repeat) shapeShortcutKeyDownAtRef.current.KeyE = Date.now();
         return;
       }
-      if (e.key === "t" || e.key === "T") {
+      if ((e.metaKey || e.ctrlKey) && (e.key === "t" || e.key === "T")) {
+        e.preventDefault();
+        if (selectedIdsRef.current.size > 0) setTransformHandlesArmed(true);
+        return;
+      }
+      if ((e.key === "t" || e.key === "T") && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
         setActiveTool("text");
         if (!e.repeat) shapeShortcutKeyDownAtRef.current.KeyT = Date.now();
@@ -16049,6 +16086,7 @@ export function FreehandStudioCanvas({
 
     // ── Pen tool ──────────────────────────────────────────────────
     if (activeTool === "pen") {
+      ensureVisibleDrawStroke();
       if (e.button === 0) e.preventDefault();
       let anchorPos = pos;
       if (isPenDrawing && penPoints.length >= 1 && isShiftHeld(e)) {
@@ -16079,7 +16117,8 @@ export function FreehandStudioCanvas({
     }
 
     // ── Create shapes ─────────────────────────────────────────────
-    if (activeTool === "rect" || activeTool === "ellipse") {
+    if (activeTool === "rect" || activeTool === "line" || activeTool === "ellipse") {
+      if (activeTool === "line") ensureVisibleDrawStroke();
       setDragState({ type: "create", startX: e.clientX, startY: e.clientY, createType: activeTool, createOrigin: pos, currentCanvas: pos });
       return;
     }
@@ -16227,63 +16266,9 @@ export function FreehandStudioCanvas({
         }
       }
 
-      // Transform handles (same as selection tool) so rect/ellipse scale from corners in Direct Selection.
-      // Mayús no debe bloquear asas: la ampliación de selección aplica a clics en el cuerpo del objeto, no en handles.
-      if (selectedObjects.length > 0 && selectionFrame) {
-        const f = selectionFrame;
-        const handleSize = 8 / viewport.zoom;
-        const rotOffset = 14 / viewport.zoom;
-        const hw = f.w / 2, hh = f.h / 2;
-        const rotLocal = [{ x: hw + rotOffset, y: -hh - rotOffset }];
-        for (const rl of rotLocal) {
-          const rc = localToWorldOBB(rl, f.cx, f.cy, f.angleDeg);
-          if (dist(pos, rc) < handleSize) {
-            const startAngle = Math.atan2(pos.y - f.cy, pos.x - f.cx);
-            const initRots = new Map<string, number>();
-            const initSnaps = new Map<string, FreehandObject>();
-            for (const so of selectedObjects) {
-              initRots.set(so.id, so.rotation);
-              initSnaps.set(so.id, deepCloneFreehandObjectKeepIds(so));
-            }
-            setDragState({
-              type: "rotate", startX: e.clientX, startY: e.clientY,
-              rotateCenter: { x: f.cx, y: f.cy }, rotateStartAngle: startAngle, rotateInitialRotations: initRots,
-              rotateInitialSnapshots: initSnaps,
-            });
-            return;
-          }
-        }
-        const hDefs: { id: string; lx: number; ly: number }[] = [
-          { id: "nw", lx: -hw, ly: -hh }, { id: "ne", lx: hw, ly: -hh },
-          { id: "se", lx: hw, ly: hh }, { id: "sw", lx: -hw, ly: hh },
-          { id: "n", lx: 0, ly: -hh }, { id: "e", lx: hw, ly: 0 },
-          { id: "s", lx: 0, ly: hh }, { id: "w", lx: -hw, ly: 0 },
-        ];
-        for (const hi of hDefs) {
-          const hp = localToWorldOBB({ x: hi.lx, y: hi.ly }, f.cx, f.cy, f.angleDeg);
-          if (dist(pos, hp) < handleSize) {
-            const allBounds = new Map<string, Rect>();
-            const resizeSnapshot = new Map<string, FreehandObject>();
-            for (const so of selectedObjects) {
-              allBounds.set(so.id, getVisualAABB(so, objects));
-              resizeSnapshot.set(so.id, deepCloneFreehandObjectKeepIds(so));
-            }
-            setDragState({
-              type: "resize", startX: e.clientX, startY: e.clientY,
-              handle: hi.id,
-              bounds: { ...groupBounds },
-              initialOrientedFrame: { ...f },
-              allBounds,
-              resizeSnapshot,
-            });
-            return;
-          }
-        }
-      }
-
-      // Click on empty → marquee
+      // Click fuera en selección directa: volver inmediatamente a herramienta Selección (V).
       setSelectedPoints(new Map());
-      setDragState({ type: "marquee", startX: e.clientX, startY: e.clientY, marqueeOrigin: pos, currentCanvas: pos });
+      setActiveTool("select");
       return;
     }
 
@@ -16456,10 +16441,18 @@ export function FreehandStudioCanvas({
         clipContentEditId != null &&
         selectedIds.size === 1 &&
         selectedIds.has(clipContentEditId));
+    const isSingleTextSelection =
+      selectedObjects.length === 1 &&
+      selectedObjects[0]?.type === "text";
 
     // Resize/rotate handles. Mayús no bloquea asas (proporciones al arrastrar); extendSel solo afecta a clics fuera de handles.
     // Importante UX: la prioridad de esquinas es escalar. Corner radius no debe secuestrar los handles de transformación.
-    if (selectedObjects.length > 0 && selectionFrame && !hideFrameHandlesForInnerContent) {
+    if (
+      transformHandlesArmed &&
+      selectedObjects.length > 0 &&
+      selectionFrame &&
+      !hideFrameHandlesForInnerContent
+    ) {
       const f = selectionFrame;
       const handleSize = 8 / viewport.zoom;
       const rotOffset = 14 / viewport.zoom;
@@ -16514,6 +16507,40 @@ export function FreehandStudioCanvas({
     }
 
     if (
+      !transformHandlesArmed &&
+      !hideFrameHandlesForInnerContent &&
+      activeTool === "select" &&
+      isSingleTextSelection
+    ) {
+      const t = selectedObjects[0] as TextObject;
+      const f = selectionFrame ?? computeOrientedSelectionFrame(selectedObjects);
+      if (f) {
+        const handleSize = 8 / viewport.zoom;
+        const hw = f.w / 2, hh = f.h / 2;
+        const hDefs: { id: "nw" | "ne" | "se" | "sw" | "n" | "e" | "s" | "w"; lx: number; ly: number }[] = [
+          { id: "nw", lx: -hw, ly: -hh }, { id: "ne", lx: hw, ly: -hh },
+          { id: "se", lx: hw, ly: hh }, { id: "sw", lx: -hw, ly: hh },
+          { id: "n", lx: 0, ly: -hh }, { id: "e", lx: hw, ly: 0 },
+          { id: "s", lx: 0, ly: hh }, { id: "w", lx: -hw, ly: 0 },
+        ];
+        for (const hi of hDefs) {
+          const hp = localToWorldOBB({ x: hi.lx, y: hi.ly }, f.cx, f.cy, f.angleDeg);
+          if (dist(pos, hp) < handleSize) {
+            setDragState({
+              type: "textBoxResize",
+              startX: e.clientX,
+              startY: e.clientY,
+              textBoxResizeObjectId: t.id,
+              textBoxResizeHandle: hi.id,
+              textBoxResizeStart: { x: t.x, y: t.y, w: t.width, h: t.height },
+            });
+            return;
+          }
+        }
+      }
+    }
+
+    if (
       !hideFrameHandlesForInnerContent &&
       selectedObjects.length === 1 &&
       activeTool === "select"
@@ -16522,8 +16549,8 @@ export function FreehandStudioCanvas({
       if (so.type === "rect" && so.visible && !so.locked) {
         const rObj = rectObjectWithNormalizedCorners(so as RectObject);
         const handles = cornerRadiusHandleWorldPoints(rObj);
-        const hitR = 10 / viewport.zoom;
-        const order: (keyof RectangleCornerRadius)[] = ["topLeft", "topRight", "bottomRight", "bottomLeft"];
+        const hitR = 7 / viewport.zoom;
+        const order: (keyof RectangleCornerRadius)[] = ["topRight"];
         for (const key of order) {
           if (dist(pos, handles[key]) <= hitR) {
             setDragState({
@@ -16773,7 +16800,7 @@ export function FreehandStudioCanvas({
       photoPolygonMarqueeSelection, photoEllipseMarqueeSelection,
       fillColor, brushPaintRgb, brushSize, brushHardnessPct, brushOpacityPct, brushFlowPct, scheduleBrushPreview,
       scheduleCloneAlignedBrushOverlay,
-      cloneSource, setToast, studioCaps]);
+      cloneSource, setToast, studioCaps, transformHandlesArmed]);
 
   const flushSelectionGeometryGesture = useCallback(() => {
     const dragState = dragStateRef.current;
@@ -17113,6 +17140,45 @@ export function FreehandStudioCanvas({
       return;
     }
 
+    if (
+      dragState.type === "textBoxResize" &&
+      dragState.textBoxResizeObjectId &&
+      dragState.textBoxResizeHandle &&
+      dragState.textBoxResizeStart
+    ) {
+      const scale = canvasScaleFromPointer(viewport.zoom);
+      const h = dragState.textBoxResizeHandle;
+      const s = dragState.textBoxResizeStart;
+      let nx = s.x;
+      let ny = s.y;
+      let nw = s.w;
+      let nh = s.h;
+      if (h.includes("e")) nw = Math.max(20, s.w + dx * scale);
+      if (h.includes("s")) nh = Math.max(20, s.h + dy * scale);
+      if (h.includes("w")) {
+        nw = Math.max(20, s.w - dx * scale);
+        nx = s.x + (s.w - nw);
+      }
+      if (h.includes("n")) {
+        nh = Math.max(20, s.h - dy * scale);
+        ny = s.y + (s.h - nh);
+      }
+      setObjects((prev) =>
+        prev.map((o) => {
+          if (o.id !== dragState.textBoxResizeObjectId || o.type !== "text") return o;
+          const tx = o as TextObject;
+          return {
+            ...tx,
+            x: nx,
+            y: ny,
+            width: nw,
+            height: nh,
+          };
+        }),
+      );
+      return;
+    }
+
     if (dragState.type === "rotate" && dragState.rotateCenter && dragState.rotateStartAngle != null) {
       const pos = screenToCanvasRef.current(tail.clientX, tail.clientY);
       const pivot = dragState.rotateCenter;
@@ -17376,8 +17442,8 @@ export function FreehandStudioCanvas({
         if (selectedObjects.length === 1 && selectedObjects[0]?.type === "rect" && !overTransformHandle) {
           const r = rectObjectWithNormalizedCorners(selectedObjects[0] as RectObject);
           const handles = cornerRadiusHandleWorldPoints(r);
-          const hitR = 10 / viewport.zoom;
-          const order: (keyof RectangleCornerRadius)[] = ["topLeft", "topRight", "bottomRight", "bottomLeft"];
+          const hitR = 7 / viewport.zoom;
+          const order: (keyof RectangleCornerRadius)[] = ["topRight"];
           let hit: keyof RectangleCornerRadius | null = null;
           for (const key of order) {
             if (dist(pos, handles[key]) <= hitR) {
@@ -17868,10 +17934,20 @@ export function FreehandStudioCanvas({
       const pos = screenToCanvas(e.clientX, e.clientY);
       const o = dragState.createOrigin;
       const ct = dragState.createType;
-      const next =
-        (ct === "rect" || ct === "ellipse") && isShiftHeld(e)
+      const next = (() => {
+        if (ct === "line" && isShiftHeld(e)) {
+          const dx = pos.x - o.x;
+          const dy = pos.y - o.y;
+          const len = Math.hypot(dx, dy);
+          if (len < 1e-6) return pos;
+          const angle = Math.atan2(dy, dx);
+          const snapped = Math.round(angle / (Math.PI / 4)) * (Math.PI / 4);
+          return { x: o.x + Math.cos(snapped) * len, y: o.y + Math.sin(snapped) * len };
+        }
+        return (ct === "rect" || ct === "ellipse") && isShiftHeld(e)
           ? oppositeCornerForSquareDrag(o, pos)
           : pos;
+      })();
       setDragState((prev) => prev ? { ...prev, currentCanvas: next } : null);
       return;
     }
@@ -18002,7 +18078,8 @@ export function FreehandStudioCanvas({
       (dragState.type === "rotate" &&
         dragState.rotateCenter != null &&
         dragState.rotateStartAngle != null) ||
-      (dragState.type === "resize" && !!dragState.allBounds);
+      (dragState.type === "resize" && !!dragState.allBounds) ||
+      dragState.type === "textBoxResize";
     if (useSelectionGeometryRaf) {
       selectionPointerTailRef.current = {
         clientX: e.clientX,
@@ -18685,14 +18762,57 @@ export function FreehandStudioCanvas({
       const o = ds.createOrigin;
       const raw = screenToCanvas(e.clientX, e.clientY);
       const ct = ds.createType;
-      const c =
-        (ct === "rect" || ct === "ellipse") && isShiftHeld(e)
+      const c = ct === "line"
+        ? (() => {
+            if (!isShiftHeld(e)) return raw;
+            const dx = raw.x - o.x;
+            const dy = raw.y - o.y;
+            const len = Math.hypot(dx, dy);
+            if (len < 1e-6) return raw;
+            const angle = Math.atan2(dy, dx);
+            const snapped = Math.round(angle / (Math.PI / 4)) * (Math.PI / 4);
+            return { x: o.x + Math.cos(snapped) * len, y: o.y + Math.sin(snapped) * len };
+          })()
+        : (ct === "rect" || ct === "ellipse") && isShiftHeld(e)
           ? oppositeCornerForSquareDrag(o, raw)
           : raw;
       const x = Math.min(o.x, c.x), y = Math.min(o.y, c.y);
       const w = Math.max(Math.abs(c.x - o.x), 4), h = Math.max(Math.abs(c.y - o.y), 4);
 
-      const newObj: FreehandObject = ds.createType === "ellipse"
+      const lineDx = c.x - o.x;
+      const lineDy = c.y - o.y;
+      const lineLen = Math.hypot(lineDx, lineDy);
+      const lineEnd = lineLen < 0.5 ? { x: o.x + 48, y: o.y } : c;
+      const effectiveLineStrokeColor = strokeColor === "none" ? "#000000" : strokeColor;
+      const effectiveLineStrokeWidth = strokeColor === "none" ? 2 : strokeWidth;
+
+      const newObj: FreehandObject = ds.createType === "line"
+        ? ({
+            ...defaultObj({ name: `Line ${objects.length + 1}` }),
+            type: "path",
+            x: Math.min(o.x, lineEnd.x),
+            y: Math.min(o.y, lineEnd.y),
+            width: Math.max(Math.abs(lineEnd.x - o.x), 1),
+            height: Math.max(Math.abs(lineEnd.y - o.y), 1),
+            fill: solidFill("none"),
+            stroke: effectiveLineStrokeColor,
+            strokeWidth: effectiveLineStrokeWidth,
+            strokeLinecap,
+            strokeLinejoin,
+            strokeDasharray,
+            closed: false,
+            isLineTool: true,
+            points: [
+              { anchor: { x: o.x, y: o.y }, handleIn: { x: o.x, y: o.y }, handleOut: { x: o.x, y: o.y }, vertexMode: "corner" },
+              {
+                anchor: { x: lineEnd.x, y: lineEnd.y },
+                handleIn: { x: lineEnd.x, y: lineEnd.y },
+                handleOut: { x: lineEnd.x, y: lineEnd.y },
+                vertexMode: "corner",
+              },
+            ],
+          } as PathObject)
+        : ds.createType === "ellipse"
         ? { ...defaultObj({ name: `Ellipse ${objects.length + 1}` }), type: "ellipse", x, y, width: w, height: h, fill: solidFill(fillColor), stroke: strokeColor, strokeWidth, strokeLinecap, strokeLinejoin, strokeDasharray } as EllipseObject
         : {
             ...defaultObj({ name: `Rect ${objects.length + 1}` }),
@@ -18739,6 +18859,7 @@ export function FreehandStudioCanvas({
     if (
       ds.type === "move" ||
       ds.type === "resize" ||
+      ds.type === "textBoxResize" ||
       ds.type === "directSelect" ||
       ds.type === "rotate" ||
       ds.type === "gradient" ||
@@ -19144,6 +19265,15 @@ export function FreehandStudioCanvas({
       };
       return map[h] ?? "default";
     }
+    if (dragState?.type === "textBoxResize" && dragState.textBoxResizeHandle) {
+      const h = dragState.textBoxResizeHandle;
+      const map: Record<string, string> = {
+        nw: "nwse-resize", n: "ns-resize", ne: "nesw-resize",
+        e: "ew-resize", w: "ew-resize",
+        se: "nwse-resize", s: "ns-resize", sw: "nesw-resize",
+      };
+      return map[h] ?? "default";
+    }
     if (dragState?.type === "rotate") return "grab";
     if (dragState?.type === "move") return "move";
     if (!dragState && hoverCornerRadiusHandle) return "nwse-resize";
@@ -19165,6 +19295,7 @@ export function FreehandStudioCanvas({
       activeTool === "cloneStamp" ||
       activeTool === "photoGradient" ||
       activeTool === "rect" ||
+      activeTool === "line" ||
       activeTool === "ellipse" ||
       activeTool === "text" ||
       activeTool === "textFrame" ||
@@ -19356,9 +19487,16 @@ export function FreehandStudioCanvas({
   // Create preview rect
   const createPreviewRect = useMemo(() => {
     if (!dragState || dragState.type !== "create" || !dragState.createOrigin || !dragState.currentCanvas) return null;
+    if (dragState.createType === "line") return null;
     const o = dragState.createOrigin, c = dragState.currentCanvas;
     const base = { x: Math.min(o.x, c.x), y: Math.min(o.y, c.y), w: Math.abs(c.x - o.x), h: Math.abs(c.y - o.y) };
     return { ...base, type: dragState.createType };
+  }, [dragState]);
+
+  const createPreviewLine = useMemo(() => {
+    if (!dragState || dragState.type !== "create" || !dragState.createOrigin || !dragState.currentCanvas) return null;
+    if (dragState.createType !== "line") return null;
+    return { a: dragState.createOrigin, b: dragState.currentCanvas };
   }, [dragState]);
 
   const createTextPreviewRect = useMemo(() => {
@@ -19819,7 +19957,7 @@ export function FreehandStudioCanvas({
           groupId="tf-shape"
           flyoutOpen={leftToolbarToolFlyout}
           setFlyoutOpen={setLeftToolbarToolFlyout}
-          active={activeTool === "rect" || activeTool === "ellipse"}
+          active={activeTool === "rect" || activeTool === "line" || activeTool === "ellipse"}
           mainTitle={primaryShapeTool === "ellipse" ? (designerMode ? "Elipse (E)" : "Elipse (C o E)") : "Rectángulo (R)"}
           onMainClick={() => setActiveTool(primaryShapeTool)}
           mainIcon={primaryShapeTool === "ellipse" ? <Circle size={19} strokeWidth={TOOLBAR_ICON_STROKE} /> : <Square size={19} strokeWidth={TOOLBAR_ICON_STROKE} />}
@@ -19849,6 +19987,19 @@ export function FreehandStudioCanvas({
             }}
           >
             <Circle size={17} strokeWidth={TOOLBAR_ICON_STROKE} />
+          </button>
+          <button
+            type="button"
+            title="Línea"
+            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] transition ${
+              activeTool === "line" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
+            }`}
+            onClick={() => {
+              setActiveTool("line");
+              setLeftToolbarToolFlyout(null);
+            }}
+          >
+            <Minus size={17} strokeWidth={TOOLBAR_ICON_STROKE} />
           </button>
         </ToolFlyoutGroup>
 
@@ -20057,31 +20208,33 @@ export function FreehandStudioCanvas({
                 />
               )}
             </button>
-            <button
-              type="button"
-              disabled={leftToolbarSwatchPreview.noVectorStyle}
-              onClick={openLeftToolbarColorPicker("fill")}
-              {...(!leftToolbarSwatchPreview.noVectorStyle
-                ? { onDragOver: leftToolbarSwatchDragOver, onDrop: leftToolbarDropFill }
-                : {})}
-              className={`absolute bottom-0 right-0 z-10 flex h-[18px] w-[18px] items-center justify-center rounded-[3px] border-2 border-sky-500/45 bg-[#2a2d33] shadow-md transition hover:brightness-110 ${
-                leftToolbarSwatchPreview.noVectorStyle ? "cursor-not-allowed opacity-40" : ""
-              }`}
-              title="Relleno — elegir color o sin relleno"
-              aria-label="Color de relleno"
-              aria-expanded={leftToolbarColorTarget === "fill"}
-            >
-              {leftToolbarSwatchPreview.fillNone ? (
-                <span className="relative block h-[14px] w-[14px] overflow-hidden rounded-[2px] bg-white">
-                  <span className="absolute inset-y-0.5 left-1/2 w-0.5 -translate-x-1/2 rounded-full bg-red-500" />
-                </span>
-              ) : (
-                <span
-                  className="block h-[14px] w-[14px] rounded-[2px]"
-                  style={{ backgroundColor: leftToolbarSwatchPreview.fillHex }}
-                />
-              )}
-            </button>
+            {!leftToolbarSwatchPreview.hideFillForLine && (
+              <button
+                type="button"
+                disabled={leftToolbarSwatchPreview.noVectorStyle}
+                onClick={openLeftToolbarColorPicker("fill")}
+                {...(!leftToolbarSwatchPreview.noVectorStyle
+                  ? { onDragOver: leftToolbarSwatchDragOver, onDrop: leftToolbarDropFill }
+                  : {})}
+                className={`absolute bottom-0 right-0 z-10 flex h-[18px] w-[18px] items-center justify-center rounded-[3px] border-2 border-sky-500/45 bg-[#2a2d33] shadow-md transition hover:brightness-110 ${
+                  leftToolbarSwatchPreview.noVectorStyle ? "cursor-not-allowed opacity-40" : ""
+                }`}
+                title="Relleno — elegir color o sin relleno"
+                aria-label="Color de relleno"
+                aria-expanded={leftToolbarColorTarget === "fill"}
+              >
+                {leftToolbarSwatchPreview.fillNone ? (
+                  <span className="relative block h-[14px] w-[14px] overflow-hidden rounded-[2px] bg-white">
+                    <span className="absolute inset-y-0.5 left-1/2 w-0.5 -translate-x-1/2 rounded-full bg-red-500" />
+                  </span>
+                ) : (
+                  <span
+                    className="block h-[14px] w-[14px] rounded-[2px]"
+                    style={{ backgroundColor: leftToolbarSwatchPreview.fillHex }}
+                  />
+                )}
+              </button>
+            )}
           </div>
         </div>
 
@@ -20094,6 +20247,38 @@ export function FreehandStudioCanvas({
               className="fixed z-[100050] max-h-[min(420px,calc(100vh-24px))] w-[232px] overflow-y-auto rounded-[6px] border border-white/[0.08] bg-[#12151a] p-3.5 shadow-xl"
               style={{ top: leftToolbarColorPos.top, left: leftToolbarColorPos.left }}
               onMouseDown={(e) => e.stopPropagation()}
+              onMouseEnter={() => {
+                leftToolbarEyeAbortRef.current?.abort();
+                leftToolbarEyeAbortRef.current = null;
+                setLeftToolbarEyeBusy(false);
+              }}
+              onMouseLeave={() => {
+                if (leftToolbarAdvancedPickerOpen || leftToolbarEyeBusy) return;
+                if (typeof window === "undefined" || !(window as any).EyeDropper) return;
+                if (!leftToolbarColorTarget) return;
+                void (async () => {
+                  setLeftToolbarEyeBusy(true);
+                  const ac = new AbortController();
+                  leftToolbarEyeAbortRef.current = ac;
+                  try {
+                    const Ctor = (window as any).EyeDropper as new () => {
+                      open: (opts?: { signal?: AbortSignal }) => Promise<{ sRGBHex: string }>;
+                    };
+                    const ed = new Ctor();
+                    const picked = await ed.open({ signal: ac.signal });
+                    const hex = normalizeHexColor(picked.sRGBHex) ?? picked.sRGBHex;
+                    if (leftToolbarColorTarget === "fill") applyLeftToolbarFill(hex);
+                    else applyLeftToolbarStroke(hex);
+                    setLeftToolbarAdvancedPickerOpen(false);
+                    setLeftToolbarColorTarget(null);
+                  } catch {
+                    /* cancelado o bloqueado */
+                  } finally {
+                    if (leftToolbarEyeAbortRef.current === ac) leftToolbarEyeAbortRef.current = null;
+                    setLeftToolbarEyeBusy(false);
+                  }
+                })();
+              }}
             >
               <div className="mb-2.5 text-[10px] font-medium uppercase tracking-wider text-zinc-500">
                 {leftToolbarColorTarget === "fill" ? "Relleno" : "Trazo"}
@@ -20348,18 +20533,26 @@ export function FreehandStudioCanvas({
               if (obj.type === "text" && hitTestObject(pos, obj, threshold, objects)) {
                 setSelectedIds(new Set([obj.id]));
                 setPrimarySelectedId(obj.id);
-                const tfo = obj as TextObject;
-                if (designerMode && tfo.isTextFrame && tfo.storyId) {
-                  e.preventDefault();
-                  openDesignerStoryModalForFrameId(obj.id);
-                } else {
-                  setTextEditingId(obj.id);
-                }
+                setTextEditingId(obj.id);
                 return;
               }
             }
           }
           if (activeTool !== "select") return;
+          for (let i = objects.length - 1; i >= 0; i--) {
+            const obj = objects[i];
+            if (!obj.visible || obj.locked) continue;
+            if (obj.isClipMask || obj.clipMaskId) continue;
+            if (
+              (obj.type === "path" || obj.type === "rect" || obj.type === "ellipse") &&
+              hitTestObject(pos, obj, threshold, objects)
+            ) {
+              setSelectedIds(new Set([obj.id]));
+              setPrimarySelectedId(obj.id);
+              setActiveTool("directSelect");
+              return;
+            }
+          }
           for (let i = objects.length - 1; i >= 0; i--) {
             const obj = objects[i];
             if (obj.type === "booleanGroup" && hitTestObject(pos, obj, threshold, objects)) {
@@ -20390,7 +20583,31 @@ export function FreehandStudioCanvas({
             }
           }
           if (isolationStackRef.current.length > 0) exitIsolation();
-          if (activeTool === "select") fitAllCanvas();
+          if (activeTool === "select") {
+            const fitTarget = computeFitViewport();
+            if (!fitTarget) {
+              fitAllCanvas();
+              return;
+            }
+            const cur = viewportRef.current;
+            const nearFit =
+              Math.abs(cur.zoom - fitTarget.zoom) <= 0.0001 &&
+              Math.abs(cur.x - fitTarget.x) <= 1 &&
+              Math.abs(cur.y - fitTarget.y) <= 1;
+            if (!nearFit) {
+              fitAllCanvas();
+              return;
+            }
+            const rect = containerRef.current?.getBoundingClientRect();
+            if (!rect) return;
+            const mx = e.clientX - rect.left;
+            const my = e.clientY - rect.top;
+            setViewport((v) => {
+              const nz = clamp(v.zoom * DOUBLE_CLICK_ZOOM_IN_FIT_FACTOR, 0.05, 20);
+              const ratio = nz / v.zoom;
+              return { zoom: nz, x: mx - (mx - v.x) * ratio, y: my - (my - v.y) * ratio };
+            });
+          }
         }}
       >
         {designerMode && !canvasZenMode && (
@@ -20592,18 +20809,13 @@ export function FreehandStudioCanvas({
               clipPath={pageContentClipRect ? "url(#fh-page-content-clip)" : undefined}
               data-fh-page-content="1"
             >
-              {/* Render objects (multi-select: non-primary slightly faded) */}
+              {/* Render objects */}
               {objects.map((obj) => {
                 if (obj.isClipMask) return null;
                 if (obj.clipMaskId) return null;
-                const inSel = selectedIds.has(obj.id);
-                const multi = selectedIds.size > 1;
-                const isPrimary = !multi || !inSel || primarySelectedId === obj.id || primarySelectedId == null;
-                const op = multi && inSel && !isPrimary ? 0.62 : 1;
                 return (
                   <g
                     key={obj.id}
-                    opacity={op}
                     data-fh-obj={obj.id}
                     style={layerMixBlendStyle((obj as FreehandObjectBase).blendMode)}
                   >
@@ -20622,15 +20834,10 @@ export function FreehandStudioCanvas({
               {Array.from(clippedGroups.entries()).map(([clipId, members]) => (
                 <g key={`cg-${clipId}`} data-fh-clip-root={clipId} clipPath={`url(#clip-${clipId})`}>
                   {members.map((m) => {
-                    const inSel = selectedIds.has(m.id);
-                    const multi = selectedIds.size > 1;
-                    const isPrimary = !multi || !inSel || primarySelectedId === m.id || primarySelectedId == null;
-                    const op = multi && inSel && !isPrimary ? 0.62 : 1;
                     return (
                       <g
                         key={m.id}
                         data-fh-obj={m.id}
-                        opacity={op}
                         style={layerMixBlendStyle((m as FreehandObjectBase).blendMode)}
                       >
                         {renderObj(m, objects, selectedIds, {
@@ -20970,6 +21177,19 @@ export function FreehandStudioCanvas({
                 : <rect x={createPreviewRect.x} y={createPreviewRect.y} width={createPreviewRect.w} height={createPreviewRect.h}
                     fill={fillColor} stroke={strokeColor} strokeWidth={strokeWidth} opacity={0.5} data-ui="preview" />
             )}
+            {createPreviewLine && (
+              <line
+                x1={createPreviewLine.a.x}
+                y1={createPreviewLine.a.y}
+                x2={createPreviewLine.b.x}
+                y2={createPreviewLine.b.y}
+                fill="none"
+                stroke={strokeColor}
+                strokeWidth={strokeWidth}
+                opacity={0.8}
+                data-ui="preview-line"
+              />
+            )}
 
             {createTextPreviewRect && createTextPreviewRect.w > 1 && createTextPreviewRect.h > 1 && (
               <rect x={createTextPreviewRect.x} y={createTextPreviewRect.y} width={createTextPreviewRect.w} height={createTextPreviewRect.h}
@@ -21272,16 +21492,15 @@ export function FreehandStudioCanvas({
                 );
               })()}
 
-            {/* Per-object selection outlines (multi-select): primary stronger, secondary lighter */}
-            {selectedObjects.length > 1 && !canvasZenMode && (activeTool === "select" || activeTool === "directSelect") && selectedObjects.map((obj) => {
+            {/* Per-object selection outlines (single + multi): all equal */}
+            {selectedObjects.length > 0 && !canvasZenMode && (activeTool === "select" || activeTool === "directSelect") && selectedObjects.map((obj) => {
               const ob = getVisualAABB(obj, objects);
-              const isPr = primarySelectedId === obj.id || primarySelectedId == null;
               return (
                 <rect key={`sel-outline-${obj.id}`} x={ob.x} y={ob.y} width={ob.w} height={ob.h}
                   fill="none"
-                  stroke={isPr ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.42)"}
-                  strokeWidth={(isPr ? 1.1 : 0.9) / viewport.zoom}
-                  strokeDasharray={isPr ? undefined : `${3 / viewport.zoom}`}
+                  stroke="rgba(203,213,225,0.9)"
+                  strokeWidth={0.9 / viewport.zoom}
+                  strokeDasharray={`${3 / viewport.zoom} ${2 / viewport.zoom}`}
                   pointerEvents="none"
                   data-ui="per-sel" />
               );
@@ -21325,7 +21544,12 @@ export function FreehandStudioCanvas({
               return null;
             })()}
 
-            {selectedObjects.length > 0 && !canvasZenMode && (activeTool === "select" || activeTool === "directSelect") && selectionFrame && !suppressOuterTransformHandles && (
+            {selectedObjects.length > 0 &&
+              !canvasZenMode &&
+              activeTool === "select" &&
+              transformHandlesArmed &&
+              selectionFrame &&
+              !suppressOuterTransformHandles && (
               <g data-ui="selection-box" transform={`translate(${selectionFrame.cx},${selectionFrame.cy}) rotate(${selectionFrame.angleDeg})`} filter="url(#fh-selection-shadow)">
                 <rect x={-selectionFrame.w / 2 - 1 / viewport.zoom} y={-selectionFrame.h / 2 - 1 / viewport.zoom}
                   width={selectionFrame.w + 2 / viewport.zoom} height={selectionFrame.h + 2 / viewport.zoom}
@@ -21362,6 +21586,53 @@ export function FreehandStudioCanvas({
             )}
 
             {!canvasZenMode &&
+              activeTool === "select" &&
+              !transformHandlesArmed &&
+              selectedObjects.length === 1 &&
+              selectedObjects[0]?.type === "text" &&
+              selectionFrame &&
+              (() => {
+                const f = selectionFrame;
+                const z = viewport.zoom;
+                const sz = 6 / z;
+                const hw = f.w / 2, hh = f.h / 2;
+                const handles: { id: string; x: number; y: number }[] = [
+                  { id: "nw", x: -hw, y: -hh }, { id: "ne", x: hw, y: -hh },
+                  { id: "se", x: hw, y: hh }, { id: "sw", x: -hw, y: hh },
+                  { id: "n", x: 0, y: -hh }, { id: "e", x: hw, y: 0 },
+                  { id: "s", x: 0, y: hh }, { id: "w", x: -hw, y: 0 },
+                ];
+                return (
+                  <g data-ui="text-box-resize" transform={`translate(${f.cx},${f.cy}) rotate(${f.angleDeg})`}>
+                    <rect
+                      x={-hw - 1 / z}
+                      y={-hh - 1 / z}
+                      width={f.w + 2 / z}
+                      height={f.h + 2 / z}
+                      fill="rgba(255,255,255,0.02)"
+                      stroke="rgba(203,213,225,0.85)"
+                      strokeWidth={1 / z}
+                      pointerEvents="none"
+                    />
+                    {handles.map((h) => (
+                      <rect
+                        key={`txh-${h.id}`}
+                        x={h.x - sz / 2}
+                        y={h.y - sz / 2}
+                        width={sz}
+                        height={sz}
+                        rx={1.5 / z}
+                        fill="rgba(226,232,240,0.95)"
+                        stroke="rgba(203,213,225,1)"
+                        strokeWidth={1 / z}
+                        pointerEvents="none"
+                      />
+                    ))}
+                  </g>
+                );
+              })()}
+
+            {!canvasZenMode &&
               (activeTool === "select" || activeTool === "directSelect") &&
               selectedObjects.length === 1 &&
               selectedObjects[0]?.type === "rect" &&
@@ -21378,9 +21649,9 @@ export function FreehandStudioCanvas({
                     selectedIds.has(clipContentEditId));
                 if (suppressForInner) return null;
                 const hs = cornerRadiusHandleWorldPoints(r);
-                const rr = 4.4 / viewport.zoom;
+                const rr = 3.1 / viewport.zoom;
                 const sw = 1.2 / viewport.zoom;
-                const corners: (keyof RectangleCornerRadius)[] = ["topLeft", "topRight", "bottomRight", "bottomLeft"];
+                const corners: (keyof RectangleCornerRadius)[] = ["topRight"];
                 return (
                   <g data-ui="corner-radius-handles" pointerEvents="none">
                     {corners.map((k) => {
@@ -21711,7 +21982,6 @@ export function FreehandStudioCanvas({
         {textEditingId && (() => {
           const to = objects.find((o) => o.id === textEditingId) as TextObject | undefined;
           if (!to) return null;
-          if (designerMode && to.isTextFrame) return null;
           if (!containerRef.current) return null;
           const { w: foW, h: foH } = textLayoutDims(to);
           const rcx = to.x + foW / 2;
@@ -21852,14 +22122,25 @@ export function FreehandStudioCanvas({
 
       {/* ── RIGHT PANEL ──────────────────────────────────────────── */}
       {!canvasZenMode && !designerStoryModalOpen && (
-      <div className="flex w-[260px] shrink-0 flex-col min-h-0 overflow-hidden border-l border-white/[0.08] bg-[#12151a]">
+      <div className={`relative flex h-full min-h-0 shrink-0 ${propertiesPanelCollapsed ? "w-0" : ""}`}>
+        <button
+          type="button"
+          onClick={() => setPropertiesPanelCollapsed((v) => !v)}
+          className="absolute -left-3 top-3 z-40 flex h-6 w-6 items-center justify-center rounded-md border border-white/[0.12] bg-[#12151a] text-zinc-300 shadow-lg transition hover:bg-[#1a1f28] hover:text-white"
+          title={propertiesPanelCollapsed ? "Mostrar propiedades" : "Ocultar propiedades"}
+          aria-label={propertiesPanelCollapsed ? "Mostrar propiedades" : "Ocultar propiedades"}
+        >
+          {propertiesPanelCollapsed ? <ChevronRight size={14} strokeWidth={2} /> : <ChevronLeft size={14} strokeWidth={2} />}
+        </button>
+      {!propertiesPanelCollapsed && (
+      <div className="flex h-full w-[260px] shrink-0 flex-col min-h-0 overflow-hidden border-l border-white/[0.08] bg-[#12151a]">
         {/* Header */}
         <div className="px-3 py-2 border-b border-white/10 shrink-0">
           <span className="text-[11px] font-bold uppercase tracking-widest text-zinc-400">Propiedades</span>
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
             {(activeTool === "brush" || activeTool === "cloneStamp") && (
               <div className="border-b border-white/[0.08] px-[14px] py-3">
                 <div className="mb-2.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
@@ -22812,7 +23093,9 @@ export function FreehandStudioCanvas({
                   {firstSelected && (
                     <>
                 {/* Fill */}
-                {firstSelected.type !== "image" && firstSelected.type !== "booleanGroup" ? (
+                {firstSelected.type !== "image" &&
+                firstSelected.type !== "booleanGroup" &&
+                !isLineToolPath(firstSelected) ? (
                 <div className="border-t border-b border-white/[0.08] py-3 px-[14px] space-y-3">
                 {firstSelected.type === "textOnPath" ? (
                   (() => {
@@ -25238,6 +25521,8 @@ export function FreehandStudioCanvas({
             </span>
           </div>
         </div>
+      </div>
+      )}
       </div>
       )}
 

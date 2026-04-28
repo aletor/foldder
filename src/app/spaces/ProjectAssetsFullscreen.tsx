@@ -184,8 +184,23 @@ export function ProjectAssetsFullscreen({ open, onClose, nodes, assetsMetadata, 
         nodeId: "brain-cache",
       });
     }
+    const assets = normalizeProjectAssets(assetsMetadata);
+    const visualDnaSlots = assets.strategy.visualDnaSlots ?? [];
+    for (const slot of visualDnaSlots) {
+      const key = slot.mosaic?.imageUrl?.trim();
+      const dedupe = key ? projectMediaDedupeKey(key) : "";
+      if (!key || !dedupe || seen.has(dedupe)) continue;
+      seen.add(dedupe);
+      extra.push({
+        id: `brain-visual-dna-slot-${slot.id}`,
+        url: key,
+        kind: "image",
+        sourceLabel: `Brain · ADN por imagen (${slot.label || "slot"})`,
+        nodeId: "brain-visual-dna-slot",
+      });
+    }
     return { imported: base.imported, generated: [...base.generated, ...extra] };
-  }, [nodes, projectScopeId]);
+  }, [nodes, projectScopeId, assetsMetadata]);
   const [refreshedUrls, setRefreshedUrls] = useState<Record<string, string>>({});
   const viewImported = useMemo(
     () =>

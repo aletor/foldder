@@ -118,9 +118,34 @@ import {
   applyMosaicSuccessToSlot,
   generateVisualDnaSlotMosaic,
 } from "@/lib/brain/visual-dna-slot/generate-mosaic";
+import type { VisualDnaSlot } from "@/lib/brain/visual-dna-slot/types";
 import { normalizeVisualDnaSlots, removeVisualDnaSlot, updateVisualDnaSlot } from "@/lib/brain/visual-dna-slot/normalize";
 import { VisualDnaSlotsLibrary } from "./VisualDnaSlotsLibrary";
 import { hydrateKnowledgeImageDocumentsWithViewUrlsClient } from "@/lib/brain/brain-knowledge-image-view-urls-client";
+
+function pickNewestVisualDnaSlot(a: VisualDnaSlot, b: VisualDnaSlot): VisualDnaSlot {
+  const ta = Date.parse(a.updatedAt || a.createdAt || "");
+  const tb = Date.parse(b.updatedAt || b.createdAt || "");
+  if (Number.isFinite(ta) && Number.isFinite(tb)) return tb >= ta ? b : a;
+  if (Number.isFinite(tb)) return b;
+  return a;
+}
+
+function dedupeVisualDnaSlotsBySourceDocument(slots: VisualDnaSlot[]): VisualDnaSlot[] {
+  const norm = normalizeVisualDnaSlots(slots);
+  const byDoc = new Map<string, VisualDnaSlot>();
+  const noDoc: VisualDnaSlot[] = [];
+  for (const s of norm) {
+    const docId = s.sourceDocumentId?.trim();
+    if (!docId) {
+      noDoc.push(s);
+      continue;
+    }
+    const prev = byDoc.get(docId);
+    byDoc.set(docId, prev ? pickNewestVisualDnaSlot(prev, s) : s);
+  }
+  return [...noDoc, ...Array.from(byDoc.values())];
+}
 
 function visualReferenceRowMeta(
   analysis: BrainVisualImageAnalysis | null,
@@ -696,14 +721,29 @@ export function ProjectBrainFullscreen({
       setPendingLoading(false);
     }
   }, [projectId]);
+  const pendingLoadInFlightRef = useRef<Promise<void> | null>(null);
+  const pendingLoadLastAtRef = useRef(0);
+  const loadPendingLearningsStable = useCallback(async () => {
+    const now = Date.now();
+    if (pendingLoadInFlightRef.current) return pendingLoadInFlightRef.current;
+    if (now - pendingLoadLastAtRef.current < 1200) return;
+    const run = loadPendingLearnings()
+      .catch(() => undefined)
+      .finally(() => {
+        pendingLoadInFlightRef.current = null;
+        pendingLoadLastAtRef.current = Date.now();
+      });
+    pendingLoadInFlightRef.current = run;
+    return run;
+  }, [loadPendingLearnings]);
 
   useEffect(() => {
     if (!open || !projectId?.trim()) {
       setPendingLearnings([]);
       return;
     }
-    void loadPendingLearnings();
-  }, [open, projectId, loadPendingLearnings]);
+    void loadPendingLearningsStable();
+  }, [open, projectId, loadPendingLearningsStable]);
 
   const [activeTab, setActiveTab] = useState<BrainMainSection>("overview");
   /** Métricas detalladas del sidebar izquierdo (7 barras); colapsado reduce scroll vertical. */
@@ -804,8 +844,8 @@ export function ProjectBrainFullscreen({
   }, [open, refreshTelemetrySummary]);
 
   const refreshConnectedSignals = useCallback(async () => {
-    await Promise.all([loadPendingLearnings(), refreshTelemetrySummary()]);
-  }, [loadPendingLearnings, refreshTelemetrySummary]);
+    await Promise.all([loadPendingLearningsStable(), refreshTelemetrySummary()]);
+  }, [loadPendingLearningsStable, refreshTelemetrySummary]);
 
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
@@ -1049,7 +1089,7 @@ export function ProjectBrainFullscreen({
           (await readResponseJson<{ removed?: number; error?: string }>(res, "brain/pending DELETE")) ?? {};
         if (res.ok && typeof json.removed === "number") {
           showToast(`Pendientes eliminados (${mode}): ${json.removed}`, "success");
-          await loadPendingLearnings();
+          await loadPendingLearningsStable();
         } else {
           showToast(json.error ?? "No se pudo limpiar", "error");
         }
@@ -1057,7 +1097,7 @@ export function ProjectBrainFullscreen({
         showToast("No se pudo limpiar pendientes.", "error");
       }
     },
-    [projectId, loadPendingLearnings, showToast],
+    [projectId, loadPendingLearningsStable, showToast],
   );
 
   const handleBrainRestudy = useCallback(async () => {
@@ -1142,7 +1182,7 @@ export function ProjectBrainFullscreen({
           ...(json.devValidation ? { devValidation: json.devValidation } : {}),
         });
       }
-      await loadPendingLearnings();
+      await loadPendingLearningsStable();
       showToast(
         json.ok ? "Re-estudio Brain completado. Revisa el panel de diagnóstico." : "Re-estudio con advertencias.",
         json.ok ? "success" : "info",
@@ -1158,7 +1198,7 @@ export function ProjectBrainFullscreen({
     showToast,
     onAssetsMetadataChange,
     onVisualReferenceAnalysisDirty,
-    loadPendingLearnings,
+    loadPendingLearningsStable,
   ]);
 
   useEffect(() => {
@@ -1386,6 +1426,7 @@ export function ProjectBrainFullscreen({
           const nextSlot = result.ok
             ? applyMosaicSuccessToSlot(cur, {
                 imageUrl: result.imageUrl,
+                s3Path: result.s3Path,
                 mosaicPrompt: result.mosaicPrompt,
                 diagnostics: result.diagnostics,
                 safeRulesDigest: result.safeRulesDigest,
@@ -1411,7 +1452,17 @@ export function ProjectBrainFullscreen({
     [patch],
   );
 
+  const syncVisualDnaSlotsRunningRef = useRef(false);
+  const syncVisualDnaSlotsRerunRef = useRef(false);
   const syncVisualDnaSlotsAndGenerateMosaics = useCallback(async () => {
+    if (syncVisualDnaSlotsRunningRef.current) {
+      syncVisualDnaSlotsRerunRef.current = true;
+      return;
+    }
+    syncVisualDnaSlotsRunningRef.current = true;
+    try {
+      do {
+        syncVisualDnaSlotsRerunRef.current = false;
     const rawSnap = normalizeProjectAssets(assetsMetadataRef.current);
     let assetsSnap = rawSnap;
     try {
@@ -1419,17 +1470,90 @@ export function ProjectBrainFullscreen({
     } catch {
       assetsSnap = rawSnap;
     }
-    const { nextSlots, appended } = appendKnowledgeImageVisualDnaSlots(assetsSnap);
+    const hydratedSlots = normalizeVisualDnaSlots(assetsSnap.strategy.visualDnaSlots);
+    const currentSlots = normalizeVisualDnaSlots(rawSnap.strategy.visualDnaSlots);
+    const docsHydrated = assetsSnap.knowledge.documents;
+    const docsCurrent = rawSnap.knowledge.documents;
+    if (JSON.stringify(docsHydrated) !== JSON.stringify(docsCurrent)) {
+      patch((a) => ({
+        ...a,
+        knowledge: {
+          ...a.knowledge,
+          documents: docsHydrated,
+        },
+      }));
+    }
+    if (
+      hydratedSlots.length > 0 &&
+      JSON.stringify(hydratedSlots) !== JSON.stringify(currentSlots)
+    ) {
+      patch((a) => ({
+        ...a,
+        strategy: {
+          ...a.strategy,
+          visualDnaSlots: (() => {
+            const live = normalizeVisualDnaSlots(a.strategy.visualDnaSlots);
+            const byId = new Map(live.map((s) => [s.id, s]));
+            for (const hs of hydratedSlots) {
+              const prev = byId.get(hs.id);
+              if (!prev) {
+                byId.set(hs.id, hs);
+                continue;
+              }
+              byId.set(hs.id, {
+                ...prev,
+                ...hs,
+                mosaic: {
+                  ...prev.mosaic,
+                  ...hs.mosaic,
+                },
+              });
+            }
+            return dedupeVisualDnaSlotsBySourceDocument(Array.from(byId.values()));
+          })(),
+        },
+      }));
+    }
+    const { appended } = appendKnowledgeImageVisualDnaSlots(assetsSnap);
     if (appended.length) {
       patch(
         (a) => ({
           ...a,
-          strategy: { ...a.strategy, visualDnaSlots: nextSlots },
+          strategy: {
+            ...a.strategy,
+            visualDnaSlots: (() => {
+              const live = normalizeVisualDnaSlots(a.strategy.visualDnaSlots);
+              const byId = new Set(live.map((s) => s.id));
+              const byDoc = new Set(live.map((s) => s.sourceDocumentId).filter(Boolean));
+              const merged = [...live];
+              for (const slot of appended) {
+                if (byId.has(slot.id)) continue;
+                const docId = slot.sourceDocumentId?.trim();
+                if (docId && byDoc.has(docId)) continue;
+                merged.push(slot);
+                byId.add(slot.id);
+                if (docId) byDoc.add(docId);
+              }
+              return dedupeVisualDnaSlotsBySourceDocument(merged);
+            })(),
+          },
         }),
         [BRAIN_STALE_REASON.VISUAL_REFERENCE_CHANGED],
       );
     }
-    const list = normalizeProjectAssets(assetsMetadataRef.current).strategy.visualDnaSlots ?? [];
+    const list = dedupeVisualDnaSlotsBySourceDocument(
+      normalizeProjectAssets(assetsMetadataRef.current).strategy.visualDnaSlots ?? [],
+    );
+    const liveBefore = normalizeProjectAssets(assetsMetadataRef.current).strategy.visualDnaSlots ?? [];
+    if (normalizeVisualDnaSlots(liveBefore).length !== list.length) {
+      patch((a) => ({
+        ...a,
+        strategy: {
+          ...a.strategy,
+          visualDnaSlots: dedupeVisualDnaSlotsBySourceDocument(a.strategy.visualDnaSlots ?? []),
+        },
+      }));
+    }
     for (const s of list) {
       const hasMosaic = Boolean(s.mosaic?.imageUrl?.trim());
       if (hasMosaic && s.status === "ready") continue;
@@ -1437,12 +1561,25 @@ export function ProjectBrainFullscreen({
       if (s.status === "stale") continue;
       await runSingleVisualDnaSlotMosaic(s.id);
     }
+      } while (syncVisualDnaSlotsRerunRef.current);
+    } finally {
+      syncVisualDnaSlotsRunningRef.current = false;
+    }
   }, [patch, runSingleVisualDnaSlotMosaic]);
 
   const visualDnaSlotsNorm = useMemo(
-    () => normalizeVisualDnaSlots(assets.strategy.visualDnaSlots),
+    () => dedupeVisualDnaSlotsBySourceDocument(normalizeVisualDnaSlots(assets.strategy.visualDnaSlots)),
     [assets.strategy.visualDnaSlots],
   );
+  const visualDnaSlotsDisplay = visualDnaSlotsNorm;
+  const analysisStatusBySourceDocumentId = useMemo(() => {
+    const out: Record<string, "queued" | "pending" | "analyzing" | "analyzed" | "failed" | undefined> = {};
+    for (const row of assets.strategy.visualReferenceAnalysis?.analyses ?? []) {
+      if (row.sourceKind !== "knowledge_document") continue;
+      out[row.sourceAssetId] = row.analysisStatus;
+    }
+    return out;
+  }, [assets.strategy.visualReferenceAnalysis?.analyses]);
 
   /** Clave estable para sync de slots (evita bucles al cambiar solo `visualDnaSlots`). */
   const visualSlotSyncKey = useMemo(() => {
@@ -1461,9 +1598,24 @@ export function ProjectBrainFullscreen({
 
   const handleDeleteVisualDnaSlot = useCallback(
     (slotId: string) => {
+      let keysToDelete: string[] = [];
       patch((a) => {
         const slots = normalizeVisualDnaSlots(a.strategy.visualDnaSlots ?? []);
         const victim = slots.find((s) => s.id === slotId);
+        if (victim) {
+          const maybeKeys = [
+            victim.mosaic?.s3Path,
+            victim.people?.same?.s3Path,
+            victim.people?.similar?.s3Path,
+            victim.objects?.same?.s3Path,
+            victim.objects?.similar?.s3Path,
+            victim.environments?.same?.s3Path,
+            victim.environments?.similar?.s3Path,
+            victim.textures?.same?.s3Path,
+            victim.textures?.similar?.s3Path,
+          ];
+          keysToDelete = [...new Set(maybeKeys.filter((k): k is string => typeof k === "string" && k.startsWith("knowledge-files/")))];
+        }
         const docId = victim?.sourceDocumentId?.trim();
         const knowledgeDocIds = new Set(a.knowledge.documents.map((d) => d.id));
         const prevSup = normalizeVisualDnaSlotSuppressedSourceIds(
@@ -1481,6 +1633,7 @@ export function ProjectBrainFullscreen({
           },
         };
       });
+      if (keysToDelete.length) fireAndForgetDeleteS3Keys(keysToDelete);
     },
     [patch],
   );
@@ -1718,7 +1871,7 @@ export function ProjectBrainFullscreen({
         showToast(json?.error ?? "No se pudieron crear las sugerencias.", "error");
         return;
       }
-      await loadPendingLearnings();
+      await loadPendingLearningsStable();
       setActiveTab("review");
       showToast("Aprendizajes visuales enviados a «Por revisar».", "success");
     } catch {
@@ -1726,7 +1879,7 @@ export function ProjectBrainFullscreen({
     } finally {
       setVisualQueueBusy(false);
     }
-  }, [projectId, workspaceId, showToast, setStrategy, loadPendingLearnings, onVisualReferenceAnalysisDirty]);
+  }, [projectId, workspaceId, showToast, setStrategy, loadPendingLearningsStable, onVisualReferenceAnalysisDirty]);
 
   const filteredFactsForGeneration = useMemo(
     () =>
@@ -3152,8 +3305,9 @@ export function ProjectBrainFullscreen({
           />
           <VisualDnaSlotsLibrary
             belowIngest
-            slots={visualDnaSlotsNorm}
+            slots={visualDnaSlotsDisplay}
             busySlotIds={visualDnaSlotBusy}
+            analysisStatusBySourceDocumentId={analysisStatusBySourceDocumentId}
             onRegenerate={handleRegenerateVisualDnaSlot}
             onDelete={handleDeleteVisualDnaSlot}
             onRename={handleRenameVisualDnaSlot}

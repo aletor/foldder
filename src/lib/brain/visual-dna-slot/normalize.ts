@@ -204,6 +204,21 @@ function confidenceFromAnalysis(a: BrainVisualImageAnalysis): number {
   return Math.max(0, Math.min(1, c));
 }
 
+function compactUniqueTextParts(parts: Array<string | undefined>, maxChars = 2000): string | undefined {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of parts) {
+    const t = (raw ?? "").trim();
+    if (!t) continue;
+    const key = t.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(t);
+  }
+  if (!out.length) return undefined;
+  return out.join(" · ").slice(0, maxChars);
+}
+
 /**
  * Crea un slot nuevo para una imagen de conocimiento ya analizada (no persiste solo; usar patch).
  */
@@ -218,6 +233,21 @@ export function createVisualDnaSlotFromImage(input: {
   const secondary = [...(input.analysis.colorPalette?.secondary ?? [])].filter(Boolean).slice(0, 3);
   const paletteColors = [...new Set([...dom, ...secondary])].slice(0, 6);
   const srcUrl = input.ref.imageUrlForVision?.trim();
+  const objectsNotes = compactUniqueTextParts([
+    ...(input.analysis.subjectTags ?? []).slice(0, 8),
+    ...(input.analysis.possibleUse ?? []).slice(0, 6),
+  ]);
+  const environmentsNotes = compactUniqueTextParts([
+    ...input.analysis.composition
+      .filter((x) => /entorno|fondo|escena|calle|mercado|interior|exterior|paisaje|ambient|environment/i.test(x))
+      .slice(0, 8),
+    input.analysis.subject,
+  ]);
+  const texturesNotes = compactUniqueTextParts([
+    input.analysis.graphicStyle,
+    input.analysis.clothingStyle,
+    ...input.analysis.visualStyle.slice(0, 6),
+  ]);
 
   return normalizeVisualDnaSlot({
     id: newId(),
@@ -250,6 +280,9 @@ export function createVisualDnaSlotFromImage(input: {
       avoid: input.analysis.brandSignals?.slice(0, 12),
     },
     people: { notes: input.analysis.peopleDetail?.present ? input.analysis.people : undefined },
+    objects: { notes: objectsNotes },
+    environments: { notes: environmentsNotes },
+    textures: { notes: texturesNotes },
     confidence: confidenceFromAnalysis(input.analysis),
     analysisOrigin: analysisOriginFromVision(input.analysis),
   })!;

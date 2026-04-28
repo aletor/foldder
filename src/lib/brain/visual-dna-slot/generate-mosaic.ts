@@ -15,13 +15,14 @@ export type GenerateVisualDnaSlotMosaicParams = {
   row: BrainVisualCollageInventoryRow;
   assets: ProjectAssetsMetadata;
   /** Debe invocar la misma API que el tablero global (p. ej. geminiGenerateWithServerProgress). */
-  generateImage: (body: Record<string, unknown>) => Promise<{ output?: string }>;
+  generateImage: (body: Record<string, unknown>) => Promise<{ output?: string; key?: string }>;
 };
 
 export type GenerateVisualDnaSlotMosaicResult =
   | {
       ok: true;
       imageUrl: string;
+      s3Path?: string;
       mosaicPrompt: string;
       safeRulesDigest: string[];
       diagnostics: {
@@ -59,6 +60,7 @@ export async function generateVisualDnaSlotMosaic(
     return {
       ok: true,
       imageUrl: out,
+      s3Path: typeof json.key === "string" && json.key.trim() ? json.key.trim() : undefined,
       mosaicPrompt: prompt,
       safeRulesDigest,
       diagnostics: {
@@ -79,6 +81,7 @@ export function applyMosaicSuccessToSlot(
   slot: VisualDnaSlot,
   input: {
     imageUrl: string;
+    s3Path?: string;
     mosaicPrompt: string;
     diagnostics?: unknown;
     safeRulesDigest: string[];
@@ -93,6 +96,7 @@ export function applyMosaicSuccessToSlot(
     mosaic: {
       ...slot.mosaic,
       imageUrl: input.imageUrl,
+      ...(input.s3Path ? { s3Path: input.s3Path } : {}),
       provider: "nano_banana",
       prompt: input.mosaicPrompt,
       diagnostics: input.diagnostics,

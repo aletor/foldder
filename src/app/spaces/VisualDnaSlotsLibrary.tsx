@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef, useState, type CSSProperties } from "react";
 import { ChevronLeft, ChevronRight, ImageIcon, Loader2, RefreshCw, Trash2, AlertTriangle } from "lucide-react";
 import type { VisualDnaSlot } from "@/lib/brain/visual-dna-slot/types";
+import type { BrainVisualImageAnalysis } from "@/app/spaces/project-assets-metadata";
 
 export type VisualDnaSlotsLibraryProps = {
   slots: VisualDnaSlot[];
@@ -10,6 +11,7 @@ export type VisualDnaSlotsLibraryProps = {
   onRegenerate: (slotId: string) => void;
   onDelete: (slotId: string) => void;
   onRename: (slotId: string, label: string) => void;
+  analysisStatusBySourceDocumentId?: Readonly<Record<string, BrainVisualImageAnalysis["analysisStatus"] | undefined>>;
   /** true = rail bajo la franja de ingesta (siempre visible). false = bloque ancho en otra sección. */
   belowIngest?: boolean;
 };
@@ -20,12 +22,26 @@ function thumb(src?: string) {
   return u;
 }
 
+function resolvePaletteSwatchStyle(colorLabel: string): CSSProperties {
+  const t = (colorLabel || "").trim();
+  const hexMatch = t.match(/#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})\b/);
+  if (hexMatch?.[0]) return { backgroundColor: hexMatch[0] };
+  const hasCssSupports = typeof window !== "undefined" && typeof window.CSS !== "undefined" && typeof window.CSS.supports === "function";
+  const isValidCssColor = hasCssSupports ? window.CSS.supports("color", t) : /^#[0-9A-Fa-f]{6}$/.test(t);
+  if (isValidCssColor) return { backgroundColor: t };
+  return {
+    background:
+      "linear-gradient(135deg, rgba(244,244,245,1) 0%, rgba(228,228,231,1) 45%, rgba(212,212,216,1) 100%)",
+  };
+}
+
 export function VisualDnaSlotsLibrary({
   slots,
   busySlotIds,
   onRegenerate,
   onDelete,
   onRename,
+  analysisStatusBySourceDocumentId,
   belowIngest = false,
 }: VisualDnaSlotsLibraryProps) {
   const [openId, setOpenId] = useState<string | null>(null);
@@ -83,6 +99,21 @@ export function VisualDnaSlotsLibrary({
             const src = thumb(slot.sourceImageUrl);
             const mos = thumb(slot.mosaic.imageUrl);
             const busy = Boolean(busySlotIds[slot.id]);
+            const analysisStatus = slot.sourceDocumentId
+              ? analysisStatusBySourceDocumentId?.[slot.sourceDocumentId]
+              : undefined;
+            const statusDetail =
+              busy
+                ? "Generando tablero ADN…"
+                : analysisStatus === "queued"
+                  ? "En cola de análisis visual…"
+                  : analysisStatus === "pending"
+                    ? "Preparando análisis visual…"
+                    : analysisStatus === "analyzing"
+                      ? "Analizando imagen con visión remota…"
+                      : slot.status === "generating"
+                        ? "Generando tablero ADN…"
+                        : null;
             return (
               <li
                 key={slot.id}
@@ -128,8 +159,10 @@ export function VisualDnaSlotsLibrary({
                         {busy ? (
                           <span className="flex items-center gap-1 font-medium text-violet-800">
                             <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-                            Generando tablero…
+                            {statusDetail ?? "Generando tablero…"}
                           </span>
+                        ) : statusDetail ? (
+                          <span className="text-violet-800">{statusDetail}</span>
                         ) : slot.status === "failed" ? (
                           <span className="text-rose-700">{slot.lastError?.slice(0, 72) ?? "Error"}</span>
                         ) : (
@@ -225,8 +258,8 @@ export function VisualDnaSlotsLibrary({
               </button>
             </div>
             <div className="max-h-[calc(90vh-48px)] overflow-y-auto p-3">
-              <div className="grid gap-3 lg:grid-cols-2">
-                <div>
+              <div className="grid gap-3 lg:grid-cols-12">
+                <div className="lg:col-span-4">
                   <p className="mb-1 text-[9px] font-black uppercase text-zinc-500">Imagen fuente</p>
                   <div className="overflow-hidden rounded-[5px] border border-zinc-200 bg-zinc-50">
                     {thumb(open.sourceImageUrl) ? (
@@ -237,7 +270,7 @@ export function VisualDnaSlotsLibrary({
                     )}
                   </div>
                 </div>
-                <div>
+                <div className="lg:col-span-8">
                   <p className="mb-1 text-[9px] font-black uppercase text-zinc-500">Mosaico de sugerencias</p>
                   <div className="overflow-hidden rounded-[5px] border border-zinc-200 bg-zinc-50">
                     {thumb(open.mosaic.imageUrl) ? (
@@ -253,12 +286,12 @@ export function VisualDnaSlotsLibrary({
                 <section className="rounded-[5px] border border-zinc-100 bg-zinc-50/80 p-2">
                   <p className="text-[9px] font-black uppercase text-zinc-600">Paleta</p>
                   <ul className="mt-1 flex flex-wrap gap-1">
-                    {open.palette.dominantColors.map((c) => (
-                      <li key={c} className="flex items-center gap-1 text-[10px]">
-                        <span className="h-5 w-5 rounded border border-zinc-200" style={{ backgroundColor: c }} />
+                  {open.palette.dominantColors.map((c) => (
+                    <li key={c} className="flex items-center gap-1 text-[10px]">
+                        <span className="h-5 w-5 rounded border border-zinc-200" style={resolvePaletteSwatchStyle(c)} />
                         {c}
-                      </li>
-                    ))}
+                    </li>
+                  ))}
                   </ul>
                   {open.palette.colorNotes ? (
                     <p className="mt-1 text-[10px] text-zinc-600">{open.palette.colorNotes}</p>

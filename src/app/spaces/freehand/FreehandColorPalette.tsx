@@ -341,7 +341,7 @@ export function ColorPickerModal({
     }
   }, []);
 
-  const runEyeDropper = useCallback(async () => {
+  const runEyeDropper = useCallback(async (opts?: { applyDirect?: boolean }) => {
     if (!hasEyeDropperApi()) return;
     setEyeBusy(true);
     try {
@@ -354,12 +354,16 @@ export function ColorPickerModal({
       setS(ss);
       setV(vv);
       setHexDraft(n);
+      if (opts?.applyDirect) {
+        onConfirm(n);
+        onClose();
+      }
     } catch {
       /* usuario canceló o error */
     } finally {
       setEyeBusy(false);
     }
-  }, []);
+  }, [onClose, onConfirm]);
 
   const handleConfirm = useCallback(() => {
     const n = normalizeHexColor(hexDraft) ?? hsvToHex(h, s, v);
@@ -390,6 +394,10 @@ export function ColorPickerModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="fh-color-modal-title"
+        onMouseLeave={() => {
+          if (!eyeSupported || eyeBusy) return;
+          void runEyeDropper({ applyDirect: true });
+        }}
       >
         <div
           className="mb-3 flex cursor-grab select-none items-center gap-2 border-b border-white/[0.06] pb-2.5 active:cursor-grabbing"

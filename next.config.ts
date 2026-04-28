@@ -16,11 +16,22 @@ const nextConfig: NextConfig = {
    * disparen recompilaciones en cadena. Con Turbopack (`next dev` por defecto) esta opción no aplica
    * al bundler principal; usa `npm run dev` (webpack) para beneficiarte de esto.
    */
-  webpack: (config, { dev }) => {
+  webpack: (config, { dev, isServer }) => {
     if (dev) {
       config.watchOptions = {
         ...config.watchOptions,
         ignored: ["**/node_modules/**", "**/data/**", "**/.git/**"],
+      };
+    }
+    if (!isServer) {
+      config.resolve = config.resolve || {};
+      config.resolve.fallback = {
+        ...(config.resolve.fallback || {}),
+        canvas: false,
+      };
+      config.resolve.alias = {
+        ...(config.resolve.alias || {}),
+        "paper/dist/node/canvas.js": false,
       };
     }
     return config;
