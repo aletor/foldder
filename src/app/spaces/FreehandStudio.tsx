@@ -9209,6 +9209,8 @@ export function FreehandStudioCanvas({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [activeTool, setActiveTool] = useState<Tool>("select");
   const [transformHandlesArmed, setTransformHandlesArmed] = useState(false);
+  const commandTapCandidateRef = useRef(false);
+  const commandChordUsedRef = useRef(false);
   const [toolFlyoutPrimary, setToolFlyoutPrimary] = useState<ToolFlyoutPrimaryState>(
     DEFAULT_TOOL_FLYOUT_PRIMARY,
   );
@@ -10012,8 +10014,10 @@ export function FreehandStudioCanvas({
   const directSelectBakeKey = useMemo(() => Array.from(selectedIds).sort().join(","), [selectedIds]);
 
   useEffect(() => {
-    setTransformHandlesArmed(false);
-  }, [directSelectBakeKey, activeTool]);
+    if (activeTool !== "select" || selectedIds.size === 0) {
+      setTransformHandlesArmed(false);
+    }
+  }, [directSelectBakeKey, activeTool, selectedIds.size]);
 
   /** Trazo solo-`svgPathD`, rectángulo o elipse → puntos Bézier al usar Selección directa (A). */
   useLayoutEffect(() => {
@@ -15360,10 +15364,13 @@ export function FreehandStudioCanvas({
         if (!e.repeat) shapeShortcutKeyDownAtRef.current.KeyE = Date.now();
         return;
       }
-      if ((e.metaKey || e.ctrlKey) && (e.key === "t" || e.key === "T")) {
-        e.preventDefault();
-        if (selectedIdsRef.current.size > 0) setTransformHandlesArmed(true);
+      if (e.key === "Meta" && !e.repeat && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+        commandTapCandidateRef.current = true;
+        commandChordUsedRef.current = false;
         return;
+      }
+      if (e.metaKey && commandTapCandidateRef.current && e.key !== "Meta") {
+        commandChordUsedRef.current = true;
       }
       if ((e.key === "t" || e.key === "T") && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
@@ -15740,6 +15747,18 @@ export function FreehandStudioCanvas({
 
     const onKeyUp = (e: KeyboardEvent) => {
       e.stopPropagation();
+      if (e.key === "Meta") {
+        const shouldToggle = commandTapCandidateRef.current && !commandChordUsedRef.current;
+        commandTapCandidateRef.current = false;
+        commandChordUsedRef.current = false;
+        if (shouldToggle) {
+          if (activeToolRef.current === "select" && selectedIdsRef.current.size > 0) {
+            setTransformHandlesArmed((prev) => !prev);
+          } else {
+            setTransformHandlesArmed(false);
+          }
+        }
+      }
       if (e.code === "Space") setSpaceHeld(false);
 
       const tgt = e.target as HTMLElement;
@@ -15769,9 +15788,21 @@ export function FreehandStudioCanvas({
       setActiveTool("select");
     };
 
+    const onBlur = () => {
+      commandTapCandidateRef.current = false;
+      commandChordUsedRef.current = false;
+      setTransformHandlesArmed(false);
+      setSpaceHeld(false);
+    };
+
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
-    return () => { window.removeEventListener("keydown", onKeyDown); window.removeEventListener("keyup", onKeyUp); };
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
+    };
   }, [objects, selectedIds, selectedPoints, isPenDrawing, penPoints, activeTool, textEditingId, viewport.zoom, dragState,
       undo, redo, pushHistory, deleteSelected, duplicateSelected, groupSelected,
       ungroupSelected, bringForward, sendBackward, finishPenPath, deleteSelectedPoints, exitIsolation,

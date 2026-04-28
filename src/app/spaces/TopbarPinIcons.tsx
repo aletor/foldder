@@ -161,6 +161,63 @@ export function TopbarGlyphIndesign({ size = 26, className }: GlyphProps) {
 }
 
 /**
+ * Designer Studio (nuevo):
+ * contenedor tipo mesa de trabajo + curva Bézier viva + anclas + chispa creativa.
+ * Pensado para que se reconozca “diseño + precisión” incluso en tamaño pequeño del dock.
+ */
+export function TopbarGlyphDesignerStudio({ size = 26, className }: GlyphProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      className={className}
+      aria-hidden
+    >
+      <path
+        d="M7.1 4.75h9.8l3.05 2.05v10.4l-3.05 2.05H7.1L4.05 17.2V6.8z"
+        stroke="currentColor"
+        strokeWidth={sw}
+        strokeLinejoin="round"
+      />
+      <rect
+        x="7.15"
+        y="7.05"
+        width="9.7"
+        height="9.9"
+        rx="1.25"
+        stroke="currentColor"
+        strokeWidth={1.15}
+        opacity={0.45}
+      />
+
+      <path
+        d="M8.35 14.4C10.2 10.1 12.9 9.55 16.05 8.95"
+        stroke="currentColor"
+        strokeWidth={1.35}
+        strokeLinecap="round"
+      />
+      <circle cx="8.35" cy="14.4" r="1.25" stroke="currentColor" strokeWidth={1.1} />
+      <circle cx="16.05" cy="8.95" r="1.25" stroke="currentColor" strokeWidth={1.1} />
+
+      <path
+        d="M14.95 7.1l2.15 2.15-1 1-2.15-2.15z"
+        fill="currentColor"
+        fillOpacity={0.95}
+      />
+      <path
+        d="M6.05 9.05v1.25M5.4 9.7h1.3M17.9 13.35v1.05M17.35 13.88h1.1"
+        stroke="currentColor"
+        strokeWidth={1.05}
+        strokeLinecap="round"
+        opacity={0.8}
+      />
+    </svg>
+  );
+}
+
+/**
  * Brain — misma geometría legible que el icono «brain» de Lucide (hemisferios + surco + circunvoluciones).
  * Trazo alineado al resto de glifos de la barra. No es nodo del grafo.
  */
@@ -380,7 +437,7 @@ export const TOPBAR_GLYPH_BY_NODE_TYPE: Record<
   React.FC<GlyphProps>
 > = {
   brain: TopbarGlyphBrain,
-  designer: TopbarGlyphIndesign,
+  designer: TopbarGlyphDesignerStudio,
   nanoBanana: TopbarGlyphImageGenerator,
   photoRoom: TopbarGlyphPhotoRoom,
   geminiVideo: TopbarGlyphVideoGenerator,
