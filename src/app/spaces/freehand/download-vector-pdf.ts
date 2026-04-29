@@ -115,6 +115,7 @@ const LARGE_DATA_URL_FOR_SVG2PDF = 32 * 1024;
 
 /** Calidad JPEG al optimizar (0–1). ~0.72 suele dar buen equilibrio peso/calidad en documentos. */
 const PDF_OPTIMIZE_JPEG_QUALITY = 0.72;
+const SVG_NS = "http://www.w3.org/2000/svg";
 
 function hasTransparencyInImageData(data: ImageData): boolean {
   const d = data.data;
@@ -122,6 +123,142 @@ function hasTransparencyInImageData(data: ImageData): boolean {
     if (d[i]! < 255) return true;
   }
   return false;
+}
+
+function parseMarkerUrlRef(v: string | null): string | null {
+  if (!v) return null;
+  const m = v.trim().match(/^url\((['"]?)#([^'")]+)\1\)$/i);
+  return m?.[2] ?? null;
+}
+
+function asNum(v: string | null | undefined, fallback = 0): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function parsePointsAttr(raw: string | null): Array<{ x: number; y: number }> {
+  if (!raw) return [];
+  const nums = raw
+    .trim()
+    .replace(/,/g, " ")
+    .split(/\s+/)
+    .map((t) => Number(t))
+    .filter((n) => Number.isFinite(n));
+  const out: Array<{ x: number; y: number }> = [];
+  for (let i = 0; i + 1 < nums.length; i += 2) out.push({ x: nums[i]!, y: nums[i + 1]! });
+  return out;
+}
+
+function endpointAndAngleForGeometry(
+  el: Element,
+  atStart: boolean,
+): { x: number; y: number; angleDeg: number } | null {
+  const tag = el.tagName.toLowerCase();
+  if (tag === "line") {
+    const x1 = asNum(el.getAttribute("x1"));
+    const y1 = asNum(el.getAttribute("y1"));
+    const x2 = asNum(el.getAttribute("x2"));
+    const y2 = asNum(el.getAttribute("y2"));
+    const angleDeg = (Math.atan2(y2 - y1, x2 - x1) * 180) / Math.PI;
+    return atStart ? { x: x1, y: y1, angleDeg } : { x: x2, y: y2, angleDeg };
+  }
+  if (tag === "polyline" || tag === "polygon") {
+    const pts = parsePointsAttr(el.getAttribute("points"));
+    if (pts.length < 2) return null;
+    if (atStart) {
+      const p0 = pts[0]!;
+      const p1 = pts[1]!;
+      return { x: p0.x, y: p0.y, angleDeg: (Math.atan2(p1.y - p0.y, p1.x - p0.x) * 180) / Math.PI };
+    }
+    const pn = pts[pts.length - 1]!;
+    const pp = pts[pts.length - 2]!;
+    return { x: pn.x, y: pn.y, angleDeg: (Math.atan2(pn.y - pp.y, pn.x - pp.x) * 180) / Math.PI };
+  }
+  try {
+    const geom = el as SVGGeometryElement;
+    const total = geom.getTotalLength();
+    if (!(total > 0)) return null;
+    const eps = Math.max(0.01, Math.min(0.5, total / 200));
+    if (atStart) {
+      const p0 = geom.getPointAtLength(0);
+      const p1 = geom.getPointAtLength(Math.min(total, eps));
+      return { x: p0.x, y: p0.y, angleDeg: (Math.atan2(p1.y - p0.y, p1.x - p0.x) * 180) / Math.PI };
+    }
+    const pn = geom.getPointAtLength(total);
+    const pp = geom.getPointAtLength(Math.max(0, total - eps));
+    return { x: pn.x, y: pn.y, angleDeg: (Math.atan2(pn.y - pp.y, pn.x - pp.x) * 180) / Math.PI };
+  } catch {
+    return null;
+  }
+}
+
+function patchContextPaintAttrs(root: Element, stroke: string | null, fill: string | null) {
+  const all = [root, ...Array.from(root.querySelectorAll("*"))];
+  for (const n of all) {
+    const s = n.getAttribute("stroke");
+    if (s === "context-stroke" && stroke) n.setAttribute("stroke", stroke);
+    const f = n.getAttribute("fill");
+    if (f === "context-fill" && fill) n.setAttribute("fill", fill);
+  }
+}
+
+/**
+ * svg2pdf tiene discrepancias con `marker-start/end` (orientación/escala en algunos trazos).
+ * Para PDF convertimos marcadores en geometría explícita en extremos de path/line/polyline/polygon.
+ */
+function expandSvgMarkersToPathsForPdf(svgMarkup: string): string {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(svgMarkup, "image/svg+xml");
+  if (doc.querySelector("parsererror")) return svgMarkup;
+
+  const candidates = doc.querySelectorAll("path, line, polyline, polygon");
+  for (const el of candidates) {
+    const markerStartId = parseMarkerUrlRef(el.getAttribute("marker-start"));
+    const markerEndId = parseMarkerUrlRef(el.getAttribute("marker-end"));
+    if (!markerStartId && !markerEndId) continue;
+    const parent = el.parentNode;
+    if (!parent) continue;
+    const sourceTransform = el.getAttribute("transform") ?? "";
+    const sourceStroke = el.getAttribute("stroke");
+    const sourceFill = el.getAttribute("fill");
+    const strokeWidth = Math.max(0, asNum(el.getAttribute("stroke-width"), 1));
+
+    const addMarker = (markerId: string, atStart: boolean) => {
+      const mk = doc.getElementById(markerId);
+      if (!mk || mk.tagName.toLowerCase() !== "marker") return;
+      const pos = endpointAndAngleForGeometry(el, atStart);
+      if (!pos) return;
+      const refX = asNum(mk.getAttribute("refX"));
+      const refY = asNum(mk.getAttribute("refY"));
+      const orient = (mk.getAttribute("orient") ?? "auto").trim().toLowerCase();
+      let angle = pos.angleDeg;
+      if (orient === "auto-start-reverse" && atStart) angle += 180;
+      const markerUnits = (mk.getAttribute("markerUnits") ?? "strokeWidth").trim();
+      const unitScale = markerUnits === "userSpaceOnUse" ? 1 : Math.max(0.0001, strokeWidth);
+
+      const g = doc.createElementNS(SVG_NS, "g");
+      const tParts = [];
+      if (sourceTransform) tParts.push(sourceTransform);
+      tParts.push(`translate(${pos.x} ${pos.y}) rotate(${angle})`);
+      if (Math.abs(unitScale - 1) > 1e-9) tParts.push(`scale(${unitScale})`);
+      tParts.push(`translate(${-refX} ${-refY})`);
+      g.setAttribute("transform", tParts.join(" "));
+
+      for (const child of Array.from(mk.children)) {
+        g.appendChild(child.cloneNode(true));
+      }
+      patchContextPaintAttrs(g, sourceStroke, sourceFill);
+      parent.insertBefore(g, el.nextSibling);
+    };
+
+    if (markerStartId) addMarker(markerStartId, true);
+    if (markerEndId) addMarker(markerEndId, false);
+    el.removeAttribute("marker-start");
+    el.removeAttribute("marker-end");
+    el.removeAttribute("marker-mid");
+  }
+
+  return new XMLSerializer().serializeToString(doc.documentElement);
 }
 
 /** Muestreo rápido de alpha (misma idea que en designer-image-pipeline). */
@@ -254,6 +391,7 @@ async function prepareSvgMarkupForVectorPdf(
   opts?: VectorPdfPipelineOptions,
 ): Promise<{ markup: string; cleanup: () => void }> {
   let m = sanitizeSvgNamedEntitiesForXml(svgMarkup);
+  m = expandSvgMarkersToPathsForPdf(m);
   m = await inlineRemoteSvgImagesForPdf(m);
   if (opts?.optimizeImages) {
     m = await recompressRasterImagesForPdf(m, PDF_OPTIMIZE_JPEG_QUALITY);

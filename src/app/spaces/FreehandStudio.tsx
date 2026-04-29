@@ -80,7 +80,6 @@ import {
   Weight,
   BetweenVerticalStart,
   BetweenHorizontalStart,
-  IndentIncrease,
   List,
   ListOrdered,
   ArrowLeftRight,
@@ -96,6 +95,12 @@ import { FreehandExportModal, type ProfessionalExportOptions } from "./freehand/
 const PROP_PANEL_SCRUB_CLASS =
   "cursor-ew-resize rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 font-mono text-[12px] text-zinc-100 outline-none focus:border-violet-500/50";
 const PROP_PANEL_SCRUB_HINT = "Arrastra horizontalmente · Mayús = ×10";
+const DESIGNER_GOOGLE_FONTS_STORAGE_KEY = "foldder.designer.google-fonts-installed.v1";
+
+function designerGoogleFontLinkId(family: string): string {
+  const safe = family.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return `fh-gfont-installed-${safe || "custom"}`;
+}
 
 type BrainTextBlockKind = "Titular" | "Subtítulo" | "Párrafo" | "CTA" | "Quote";
 
@@ -255,6 +260,7 @@ import {
   DESIGNER_FONT_PRESET_VALUE_PREFIX,
   DESIGNER_SYSTEM_FONT_PRESETS,
   designerFontSelectControlValue,
+  GOOGLE_FONTS_LIBRARY,
   GOOGLE_FONTS_POPULAR,
   googleFontStylesheetHref,
 } from "./freehand/google-fonts";
@@ -1322,412 +1328,6 @@ function insertPlainTextAsEditorBlocks(editableRoot: HTMLElement, text: string):
   sel.removeAllRanges();
   sel.addRange(nr);
 }
-
-/** Lista `<a href>` en orden de documento (para gestor de enlaces en el modal de marco de texto). */
-function extractStoryLinksFromHtml(html: string): { text: string; href: string }[] {
-  const trimmed = html?.trim() ?? "";
-  if (!trimmed) return [];
-  const doc = new DOMParser().parseFromString(`<div id="fh-story-link-root">${trimmed}</div>`, "text/html");
-  const root = doc.getElementById("fh-story-link-root");
-  if (!root) return [];
-  const out: { text: string; href: string }[] = [];
-  const walk = (node: Node) => {
-    if (node.nodeType === Node.ELEMENT_NODE) {
-      const el = node as Element;
-      if (el.tagName === "A") {
-        const href = el.getAttribute("href")?.trim() ?? "";
-        if (href) {
-          const text = el.textContent?.replace(/\s+/g, " ").trim() || "(sin texto)";
-          out.push({ text, href });
-        }
-        return;
-      }
-    }
-    node.childNodes.forEach(walk);
-  };
-  walk(root);
-  return out;
-}
-
-function unwrapAnchorElement(a: HTMLAnchorElement) {
-  const parent = a.parentNode;
-  if (!parent) return;
-  while (a.firstChild) parent.insertBefore(a.firstChild, a);
-  parent.removeChild(a);
-}
-
-export type DesignerStoryRichEditorHandle = {
-  /** Envía el HTML actual del contentEditable al padre (`onDesignerStoryRichChange` → historia + lienzo). Llamar antes de cerrar el modal. */
-  flush: () => void;
-};
-
-interface DesignerStoryRichEditorBlockProps {
-  storyId: string;
-  storyText: string;
-  storyHtml: string;
-  onRichChange?: (sid: string, html: string) => void;
-  editorClassName: string;
-  /** Si se define, limita la altura del editor a N líneas (panel); si el texto supera, muestra «abrir completo». */
-  compactMaxLines?: number;
-  onRequestOpenFull?: () => void;
-  /** Solo en el modal ampliado: insertar / quitar hipervínculos. */
-  enableHyperlink?: boolean;
-}
-
-/** Barra + contentEditable compartidos entre el panel de propiedades y el modal ampliado (marco de texto). */
-const DesignerStoryRichEditorBlock = forwardRef<DesignerStoryRichEditorHandle, DesignerStoryRichEditorBlockProps>(
-  function DesignerStoryRichEditorBlock(
-    { storyId, storyText, storyHtml, onRichChange, editorClassName, compactMaxLines, onRequestOpenFull, enableHyperlink },
-    ref,
-  ) {
-  const richEditorRef = useRef<HTMLDivElement | null>(null);
-  const [showOpenFull, setShowOpenFull] = useState(false);
-  const [htmlSnapshot, setHtmlSnapshot] = useState(() => storyHtml || "");
-
-  useEffect(() => {
-    setHtmlSnapshot(storyHtml || "");
-  }, [storyId, storyHtml]);
-
-  const storyLinks = useMemo(() => extractStoryLinksFromHtml(htmlSnapshot), [htmlSnapshot]);
-
-  const remeasureOverflow = useCallback(() => {
-    if (!compactMaxLines) {
-      setShowOpenFull(false);
-      return;
-    }
-    const el = richEditorRef.current;
-    if (!el) return;
-    setShowOpenFull(el.scrollHeight > el.clientHeight + 1);
-  }, [compactMaxLines]);
-
-  useLayoutEffect(() => {
-    remeasureOverflow();
-  }, [storyHtml, storyText, compactMaxLines, remeasureOverflow]);
-
-  useImperativeHandle(
-    ref,
-    () => ({
-      flush: () => {
-        const el = richEditorRef.current;
-        if (!el || !onRichChange) return;
-        const sync = () => {
-          const html = el.innerHTML;
-          onRichChange(storyId, html);
-          setHtmlSnapshot(html);
-        };
-        sync();
-        /** Listas: asegurar un frame tras el último cambio del DOM. */
-        requestAnimationFrame(sync);
-      },
-    }),
-    [storyId, onRichChange],
-  );
-
-  useLayoutEffect(() => {
-    const el = richEditorRef.current;
-    if (!el || !compactMaxLines) return;
-    const ro = new ResizeObserver(() => remeasureOverflow());
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [compactMaxLines, remeasureOverflow]);
-
-  const applyRichCmd = (cmd: string) => {
-    const el = richEditorRef.current;
-    if (!el) return;
-    el.focus();
-    document.execCommand(cmd, false);
-    const sync = () => {
-      if (onRichChange) onRichChange(storyId, el.innerHTML);
-      setHtmlSnapshot(el.innerHTML);
-      queueMicrotask(remeasureOverflow);
-    };
-    /** Listas: el DOM a veces se actualiza en el siguiente frame. */
-    if (cmd === "insertUnorderedList" || cmd === "insertOrderedList") {
-      requestAnimationFrame(sync);
-    } else {
-      sync();
-    }
-  };
-
-  const applyStoryHyperlink = () => {
-    const el = richEditorRef.current;
-    if (!el) return;
-    el.focus();
-    const sel = window.getSelection();
-    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
-      window.alert("Selecciona el texto al que quieres aplicar el enlace.");
-      return;
-    }
-    const raw = window.prompt("URL del enlace", "https://");
-    if (raw == null) return;
-    const url = sanitizeStoryLinkHref(raw);
-    if (!url) return;
-    document.execCommand("createLink", false, url);
-    if (onRichChange) onRichChange(storyId, el.innerHTML);
-    setHtmlSnapshot(el.innerHTML);
-    queueMicrotask(remeasureOverflow);
-  };
-
-  const removeStoryHyperlink = () => {
-    const el = richEditorRef.current;
-    if (!el) return;
-    el.focus();
-    document.execCommand("unlink", false);
-    if (onRichChange) onRichChange(storyId, el.innerHTML);
-    setHtmlSnapshot(el.innerHTML);
-    queueMicrotask(remeasureOverflow);
-  };
-
-  const focusStoryLinkAt = (index: number) => {
-    const el = richEditorRef.current;
-    if (!el) return;
-    const anchors = el.querySelectorAll<HTMLAnchorElement>("a[href]");
-    const a = anchors[index];
-    if (!a) return;
-    el.focus();
-    const range = document.createRange();
-    range.selectNodeContents(a);
-    const sel = window.getSelection();
-    if (sel) {
-      sel.removeAllRanges();
-      sel.addRange(range);
-    }
-    try {
-      a.scrollIntoView({ block: "nearest", inline: "nearest" });
-    } catch {
-      /* ignore */
-    }
-  };
-
-  const editStoryLinkAt = (index: number, currentHref: string) => {
-    const el = richEditorRef.current;
-    if (!el) return;
-    const anchors = el.querySelectorAll<HTMLAnchorElement>("a[href]");
-    const a = anchors[index];
-    if (!a) return;
-    const raw = window.prompt("Nueva URL del enlace", currentHref);
-    if (raw == null) return;
-    const url = sanitizeStoryLinkHref(raw);
-    if (!url) return;
-    a.setAttribute("href", url);
-    if (onRichChange) onRichChange(storyId, el.innerHTML);
-    setHtmlSnapshot(el.innerHTML);
-    queueMicrotask(remeasureOverflow);
-  };
-
-  const removeStoryLinkAt = (index: number) => {
-    const el = richEditorRef.current;
-    if (!el) return;
-    const anchors = el.querySelectorAll<HTMLAnchorElement>("a[href]");
-    const a = anchors[index];
-    if (!a) return;
-    unwrapAnchorElement(a);
-    if (onRichChange) onRichChange(storyId, el.innerHTML);
-    setHtmlSnapshot(el.innerHTML);
-    queueMicrotask(remeasureOverflow);
-  };
-  const compactStyle =
-    compactMaxLines != null
-      ? ({
-          maxHeight: `calc(${compactMaxLines} * 0.75rem * 1.625 + 1rem)`,
-          overflow: "hidden",
-        } as const)
-      : undefined;
-  return (
-    <div className="flex flex-col">
-      <div className="flex items-center gap-0.5 rounded-t-[5px] border border-b-0 border-white/[0.08] bg-white/[0.04] px-1.5 py-1">
-        <button type="button" title="Bold (Ctrl+B)" className="rounded px-1.5 py-0.5 text-[11px] font-bold text-zinc-400 hover:bg-white/10 hover:text-white" onMouseDown={(e) => { e.preventDefault(); applyRichCmd("bold"); }}><b>B</b></button>
-        <button type="button" title="Italic (Ctrl+I)" className="rounded px-1.5 py-0.5 text-[11px] italic text-zinc-400 hover:bg-white/10 hover:text-white" onMouseDown={(e) => { e.preventDefault(); applyRichCmd("italic"); }}><i>I</i></button>
-        <button type="button" title="Underline (Ctrl+U)" className="rounded px-1.5 py-0.5 text-[11px] underline text-zinc-400 hover:bg-white/10 hover:text-white" onMouseDown={(e) => { e.preventDefault(); applyRichCmd("underline"); }}><u>U</u></button>
-        <button type="button" title="Strikethrough" className="rounded px-1.5 py-0.5 text-[11px] line-through text-zinc-400 hover:bg-white/10 hover:text-white" onMouseDown={(e) => { e.preventDefault(); applyRichCmd("strikeThrough"); }}><s>S</s></button>
-        <div className="mx-1 h-4 w-px bg-white/10" />
-        <button
-          type="button"
-          title="Lista con viñetas"
-          className="rounded px-1.5 py-0.5 text-zinc-400 hover:bg-white/10 hover:text-white"
-          aria-label="Lista con viñetas"
-          onMouseDown={(e) => {
-            e.preventDefault();
-            applyRichCmd("insertUnorderedList");
-          }}
-        >
-          <List size={14} strokeWidth={2} aria-hidden />
-        </button>
-        <button
-          type="button"
-          title="Lista numerada"
-          className="rounded px-1.5 py-0.5 text-zinc-400 hover:bg-white/10 hover:text-white"
-          aria-label="Lista numerada"
-          onMouseDown={(e) => {
-            e.preventDefault();
-            applyRichCmd("insertOrderedList");
-          }}
-        >
-          <ListOrdered size={14} strokeWidth={2} aria-hidden />
-        </button>
-        {enableHyperlink && (
-          <>
-            <div className="mx-1 h-4 w-px bg-white/10" />
-            <button
-              type="button"
-              title="Añadir hipervínculo (selecciona texto antes)"
-              className="rounded px-1.5 py-0.5 text-zinc-400 hover:bg-white/10 hover:text-sky-300"
-              onMouseDown={(e) => {
-                e.preventDefault();
-                applyStoryHyperlink();
-              }}
-            >
-              <Link2 size={14} strokeWidth={2} aria-hidden />
-            </button>
-            <button
-              type="button"
-              title="Quitar enlace"
-              className="rounded px-1.5 py-0.5 text-zinc-400 hover:bg-white/10 hover:text-sky-300"
-              onMouseDown={(e) => {
-                e.preventDefault();
-                removeStoryHyperlink();
-              }}
-            >
-              <Unlink2 size={14} strokeWidth={2} aria-hidden />
-            </button>
-          </>
-        )}
-        <div className="mx-1 h-4 w-px bg-white/10" />
-        <button type="button" title="Remove formatting" className="rounded px-1.5 py-0.5 text-[10px] text-zinc-500 hover:bg-white/10 hover:text-white" onMouseDown={(e) => { e.preventDefault(); applyRichCmd("removeFormat"); }}>T̈</button>
-      </div>
-      {enableHyperlink && (
-        <div className="mb-2 rounded-md border border-white/[0.08] bg-[#0d1016] px-2.5 py-2">
-          <p className="mb-1.5 text-[9px] font-bold uppercase tracking-wider text-zinc-500">Hipervínculos en el texto</p>
-          {storyLinks.length === 0 ? (
-            <p className="text-[10px] leading-snug text-zinc-500">
-              Ninguno todavía. Selecciona un fragmento y pulsa el icono de cadena para crear un enlace.
-            </p>
-          ) : (
-            <ul className="max-h-44 space-y-2 overflow-y-auto pr-0.5">
-              {storyLinks.map((L, idx) => (
-                <li
-                  key={`${idx}-${L.href.slice(0, 48)}`}
-                  className="rounded-md border border-white/[0.06] bg-white/[0.03] px-2 py-1.5"
-                >
-                  <div
-                    className="text-[11px] font-medium leading-snug text-zinc-100 line-clamp-2"
-                    title={L.text}
-                  >
-                    {L.text.length > 160 ? `${L.text.slice(0, 157)}…` : L.text}
-                  </div>
-                  <div className="mt-0.5 truncate font-mono text-[9px] text-sky-300/90" title={L.href}>
-                    {L.href}
-                  </div>
-                  <div className="mt-1.5 flex flex-wrap gap-1">
-                    <button
-                      type="button"
-                      className="rounded border border-white/10 bg-white/[0.05] px-1.5 py-0.5 text-[9px] font-semibold text-zinc-300 hover:bg-white/10"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => focusStoryLinkAt(idx)}
-                    >
-                      Seleccionar
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded border border-sky-500/25 bg-sky-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-sky-200 hover:bg-sky-500/20"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => editStoryLinkAt(idx, L.href)}
-                    >
-                      Editar URL
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded border border-rose-500/20 bg-rose-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-rose-200/90 hover:bg-rose-500/20"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => removeStoryLinkAt(idx)}
-                    >
-                      Quitar
-                    </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-      <div
-        ref={(el) => {
-          richEditorRef.current = el;
-          if (el && !el.dataset.init) {
-            el.dataset.init = "1";
-            el.innerHTML = storyHtml || escapeHtmlStr(storyText) || "";
-            queueMicrotask(() => setHtmlSnapshot(el.innerHTML));
-          }
-        }}
-        contentEditable
-        suppressContentEditableWarning
-        style={compactStyle}
-        className={editorClassName}
-        onInput={(e) => {
-          const h = (e.target as HTMLElement).innerHTML;
-          setHtmlSnapshot(h);
-          if (onRichChange) onRichChange(storyId, h);
-          queueMicrotask(remeasureOverflow);
-        }}
-        onBlur={(e) => {
-          const h = (e.target as HTMLElement).innerHTML;
-          setHtmlSnapshot(h);
-          if (onRichChange) onRichChange(storyId, h);
-        }}
-        onPaste={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          const cd = e.clipboardData;
-          if (!cd) return;
-          const text = clipboardToPlainString(cd);
-          if (text.length === 0) return;
-          const el = richEditorRef.current;
-          if (!el) return;
-          const lines = text.split("\n");
-          if (lines.length > 1) {
-            insertPlainTextAsEditorBlocks(el, text);
-            const h = el.innerHTML;
-            setHtmlSnapshot(h);
-            if (onRichChange) onRichChange(storyId, h);
-            queueMicrotask(remeasureOverflow);
-            return;
-          }
-          const line = lines[0] ?? "";
-          const doc = el.ownerDocument;
-          const sel = doc.getSelection();
-          if (!sel?.rangeCount) return;
-          const range = sel.getRangeAt(0);
-          if (!el.contains(range.commonAncestorContainer)) return;
-          range.deleteContents();
-          const tn = doc.createTextNode(line);
-          range.insertNode(tn);
-          range.setStartAfter(tn);
-          range.collapse(true);
-          sel.removeAllRanges();
-          sel.addRange(range);
-          const h = el.innerHTML;
-          setHtmlSnapshot(h);
-          if (onRichChange) onRichChange(storyId, h);
-          queueMicrotask(remeasureOverflow);
-        }}
-        onKeyDown={(e) => e.stopPropagation()}
-        spellCheck={false}
-      />
-      {compactMaxLines != null && showOpenFull && onRequestOpenFull && (
-        <button
-          type="button"
-          className="mt-1.5 w-full rounded-md border border-sky-500/25 bg-sky-500/10 py-1.5 text-[11px] font-semibold text-sky-200/95 transition hover:bg-sky-500/20"
-          onClick={onRequestOpenFull}
-        >
-          abrir completo
-        </button>
-      )}
-    </div>
-  );
-  },
-);
-
-DesignerStoryRichEditorBlock.displayName = "DesignerStoryRichEditorBlock";
 
 function dist(a: Point, b: Point) { return Math.hypot(a.x - b.x, a.y - b.y); }
 
@@ -9407,36 +9007,12 @@ export function FreehandStudioCanvas({
     return dist(penHoverCanvasRaw, penPoints[0]!.anchor) < PEN_CLOSE_TO_START_PX / viewport.zoom;
   }, [penHoverCanvasRaw, penDragging, isPenDrawing, penPoints, viewport.zoom]);
 
-  /** Modal ampliado para editar historia del marco de texto (oculta el panel Propiedades mientras está abierto). */
-  const [designerStoryModalOpen, setDesignerStoryModalOpen] = useState(false);
-  const [designerStoryModalObjectId, setDesignerStoryModalObjectId] = useState<string | null>(null);
-  const [designerStoryModalRect, setDesignerStoryModalRect] = useState({ x: 48, y: 64, w: 760, h: 560 });
   /** Designer: ocultar el lienzo hasta que las imágenes remotas estén listas (barra de progreso centrada). */
   const [designerCanvasRasterLoad, setDesignerCanvasRasterLoad] = useState<{
     phase: "idle" | "loading";
     done: number;
     total: number;
   }>({ phase: "idle", done: 0, total: 0 });
-
-  const openDesignerStoryModalForFrameId = useCallback((frameObjectId: string) => {
-    if (typeof window === "undefined") return;
-    const w = Math.min(820, Math.max(420, window.innerWidth - 96));
-    const h = Math.min(640, Math.max(300, window.innerHeight - 100));
-    const x = Math.max(16, (window.innerWidth - w) / 2);
-    const y = Math.max(36, (window.innerHeight - h) / 2);
-    setDesignerStoryModalRect({ x, y, w, h });
-    setDesignerStoryModalObjectId(frameObjectId);
-    setDesignerStoryModalOpen(true);
-  }, []);
-
-  /** Ref al editor del modal: `flush()` envía el HTML al documento antes de desmontar (cerrar no debe “cancelar”). */
-  const designerStoryModalEditorRef = useRef<DesignerStoryRichEditorHandle | null>(null);
-
-  const closeDesignerStoryModal = useCallback(() => {
-    designerStoryModalEditorRef.current?.flush();
-    setDesignerStoryModalOpen(false);
-    setDesignerStoryModalObjectId(null);
-  }, []);
 
   // Drag state
   const [dragState, setDragState] = useState<{
@@ -9785,6 +9361,37 @@ export function FreehandStudioCanvas({
   const [creationTextTypography, setCreationTextTypography] = useState<TextCreationTypography>(
     () => ({ ...DEFAULT_TEXT_CREATION_TYPOGRAPHY }),
   );
+  const [installedGoogleFonts, setInstalledGoogleFonts] = useState<string[]>([]);
+  const [googleFontInstallModalOpen, setGoogleFontInstallModalOpen] = useState(false);
+  const [googleFontInstallQuery, setGoogleFontInstallQuery] = useState("");
+  const [googleFontInstallSelection, setGoogleFontInstallSelection] = useState<string>("");
+  const [googleFontInstallBusy, setGoogleFontInstallBusy] = useState(false);
+  const googleFontInstallPromisesRef = useRef<Map<string, Promise<void>>>(new Map());
+  const googleFontCategoryByFamily = useMemo(
+    () => new Map<string, string>(GOOGLE_FONTS_LIBRARY.map((g) => [g.family, g.category])),
+    [],
+  );
+  const installedGoogleFontsSet = useMemo(() => new Set(installedGoogleFonts), [installedGoogleFonts]);
+  const installedGoogleFontsDropdownOptions = useMemo(
+    () =>
+      Array.from(installedGoogleFontsSet).sort((a, b) =>
+        a.localeCompare(b, "es", { sensitivity: "base" }),
+      ),
+    [installedGoogleFontsSet],
+  );
+  const popularGoogleFontsDropdownOptions = useMemo(
+    () => GOOGLE_FONTS_POPULAR.filter((g) => !installedGoogleFontsSet.has(g.family)),
+    [installedGoogleFontsSet],
+  );
+  const googleFontsInstallResults = useMemo(() => {
+    const q = googleFontInstallQuery.trim().toLowerCase();
+    if (!q) return GOOGLE_FONTS_LIBRARY;
+    return GOOGLE_FONTS_LIBRARY.filter(
+      (font) =>
+        font.family.toLowerCase().includes(q) ||
+        font.category.toLowerCase().includes(q),
+    );
+  }, [googleFontInstallQuery]);
 
   const [savedPaletteColors, setSavedPaletteColors] = useState<string[]>([]);
 
@@ -9795,6 +9402,41 @@ export function FreehandStudioCanvas({
   useEffect(() => {
     persistSavedPalette(savedPaletteColors);
   }, [savedPaletteColors]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(DESIGNER_GOOGLE_FONTS_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return;
+      const valid = Array.from(
+        new Set(
+          parsed
+            .map((value) => (typeof value === "string" ? value.trim() : ""))
+            .filter((family) => family.length > 0 && googleFontCategoryByFamily.has(family)),
+        ),
+      ).sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" }));
+      if (valid.length === 0) return;
+      setInstalledGoogleFonts(valid);
+      setGoogleFontInstallSelection((prev) => prev || valid[0] || "");
+    } catch {
+      /* noop */
+    }
+  }, [googleFontCategoryByFamily]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      if (installedGoogleFonts.length === 0) {
+        window.localStorage.removeItem(DESIGNER_GOOGLE_FONTS_STORAGE_KEY);
+        return;
+      }
+      window.localStorage.setItem(DESIGNER_GOOGLE_FONTS_STORAGE_KEY, JSON.stringify(installedGoogleFonts));
+    } catch {
+      /* noop */
+    }
+  }, [installedGoogleFonts]);
 
   const documentColorStats = useMemo(
     () => extractDocumentColorStats(objects, artboards.map((a) => a.background)),
@@ -10135,7 +9777,6 @@ export function FreehandStudioCanvas({
     setPrimarySelectedId(null);
     setLayerDragId(null);
     setLayerDropTarget(null);
-    closeDesignerStoryModal();
     let designerSnap: unknown = undefined;
     if (designerHistoryBridge) {
       try {
@@ -10194,7 +9835,7 @@ export function FreehandStudioCanvas({
     return () => {
       cancelled = true;
     };
-  }, [designerMode, designerActivePageId, designerHistoryBridge, closeDesignerStoryModal]);
+  }, [designerMode, designerActivePageId, designerHistoryBridge]);
 
   useEffect(() => {
     if (!studioApiRef) return;
@@ -11709,7 +11350,7 @@ export function FreehandStudioCanvas({
     if (!t) return;
     const fam = t.fontFamily.split(",")[0].replace(/['"]/g, "").trim();
     if (!fam) return;
-    const isGoogle = GOOGLE_FONTS_POPULAR.some((g) => g.family === fam);
+    const isGoogle = GOOGLE_FONTS_LIBRARY.some((g) => g.family === fam);
     let el = document.getElementById("fh-gfont-active") as HTMLLinkElement | null;
     if (!isGoogle) {
       if (el) el.removeAttribute("href");
@@ -11787,25 +11428,6 @@ export function FreehandStudioCanvas({
   useEffect(() => {
     if (quickEditMode && selectedIds.size !== 1) setQuickEditMode(null);
   }, [selectedIds, quickEditMode]);
-
-  useEffect(() => {
-    if (!designerStoryModalOpen || !designerStoryModalObjectId) return;
-    if (!firstSelected || firstSelected.id !== designerStoryModalObjectId) {
-      closeDesignerStoryModal();
-    }
-  }, [designerStoryModalOpen, designerStoryModalObjectId, firstSelected, closeDesignerStoryModal]);
-
-  useEffect(() => {
-    if (!designerStoryModalOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        closeDesignerStoryModal();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [designerStoryModalOpen, closeDesignerStoryModal]);
 
   const groupBounds = useMemo(() => getGroupBounds(selectedObjects), [selectedObjects]);
   const selectionFrame = useMemo(() => computeOrientedSelectionFrame(selectedObjects), [selectedObjects]);
@@ -13088,6 +12710,114 @@ export function FreehandStudioCanvas({
     },
     [pushHistory, updateSelectedProp],
   );
+
+  const ensureGoogleFontStylesheetLoaded = useCallback((family: string): Promise<void> => {
+    const fam = family.trim();
+    if (!fam || typeof document === "undefined" || typeof window === "undefined") return Promise.resolve();
+    const key = fam.toLowerCase();
+    const pending = googleFontInstallPromisesRef.current.get(key);
+    if (pending) return pending;
+    const promise = new Promise<void>((resolve, reject) => {
+      const linkId = designerGoogleFontLinkId(fam);
+      const href = googleFontStylesheetHref(fam);
+      let el = document.getElementById(linkId) as HTMLLinkElement | null;
+      if (!el) {
+        el = document.createElement("link");
+        el.id = linkId;
+        el.rel = "stylesheet";
+        document.head.appendChild(el);
+      }
+      if (el.getAttribute("href") === href && (el.dataset.loaded === "1" || !!el.sheet)) {
+        el.dataset.loaded = "1";
+        resolve();
+        return;
+      }
+      let settled = false;
+      const cleanup = () => {
+        el?.removeEventListener("load", onLoad);
+        el?.removeEventListener("error", onError);
+      };
+      const finish = (ok: boolean) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (ok) resolve();
+        else reject(new Error(`Could not load Google Font: ${fam}`));
+      };
+      const onLoad = () => {
+        if (el) el.dataset.loaded = "1";
+        finish(true);
+      };
+      const onError = () => finish(false);
+      el.addEventListener("load", onLoad);
+      el.addEventListener("error", onError);
+      el.setAttribute("href", href);
+      window.setTimeout(() => {
+        if (settled) return;
+        finish(!!el?.sheet);
+      }, 12000);
+    }).finally(() => {
+      googleFontInstallPromisesRef.current.delete(key);
+    });
+    googleFontInstallPromisesRef.current.set(key, promise);
+    return promise;
+  }, []);
+
+  const openGoogleFontInstallModal = useCallback(() => {
+    const first = GOOGLE_FONTS_LIBRARY[0]?.family ?? "";
+    const fallback = installedGoogleFontsDropdownOptions[0] || first;
+    setGoogleFontInstallSelection((prev) => prev || fallback);
+    setGoogleFontInstallQuery("");
+    setGoogleFontInstallModalOpen(true);
+  }, [installedGoogleFontsDropdownOptions]);
+
+  const confirmGoogleFontInstall = useCallback(async () => {
+    const family = googleFontInstallSelection.trim();
+    if (!family) return;
+    setGoogleFontInstallBusy(true);
+    try {
+      await ensureGoogleFontStylesheetLoaded(family);
+      setInstalledGoogleFonts((prev) =>
+        Array.from(new Set([...prev, family])).sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" })),
+      );
+      const cssFamily = `${family}, system-ui, sans-serif`;
+      if (selectedIdsRef.current.size > 0) {
+        updateSelectedProp("fontFamily", cssFamily);
+      } else {
+        setCreationTextTypography((prev) => ({ ...prev, fontFamily: cssFamily }));
+      }
+      setGoogleFontInstallModalOpen(false);
+      setToast(`Google Font instalada: ${family}`);
+      window.setTimeout(() => setToast(null), 2500);
+    } catch {
+      setToast(`No se pudo instalar ${family}`);
+      window.setTimeout(() => setToast(null), 2500);
+    } finally {
+      setGoogleFontInstallBusy(false);
+    }
+  }, [googleFontInstallSelection, ensureGoogleFontStylesheetLoaded, updateSelectedProp]);
+
+  useEffect(() => {
+    if (installedGoogleFonts.length === 0) return;
+    for (const family of installedGoogleFonts) {
+      void ensureGoogleFontStylesheetLoaded(family).catch(() => undefined);
+    }
+  }, [installedGoogleFonts, ensureGoogleFontStylesheetLoaded]);
+
+  useEffect(() => {
+    if (!googleFontInstallModalOpen) return;
+    const sampleFamilies = googleFontsInstallResults.slice(0, 18).map((f) => f.family);
+    if (googleFontInstallSelection) sampleFamilies.unshift(googleFontInstallSelection);
+    const uniqueFamilies = Array.from(new Set(sampleFamilies));
+    for (const family of uniqueFamilies) {
+      void ensureGoogleFontStylesheetLoaded(family).catch(() => undefined);
+    }
+  }, [
+    googleFontInstallModalOpen,
+    googleFontsInstallResults,
+    googleFontInstallSelection,
+    ensureGoogleFontStylesheetLoaded,
+  ]);
 
   /** Misma mutación que `updateSelectedProp` pero sin apilar historial (p. ej. arrastre tipo scrub). */
   const updateSelectedPropSilent = useCallback((key: string, value: any) => {
@@ -14623,10 +14353,11 @@ export function FreehandStudioCanvas({
         setToast("Tijeras: aún no disponible en trazados compuestos.");
         window.setTimeout(() => setToast(null), 2400);
       }
-      if (!didCut || !nextSelection || nextSelection.size === 0) return;
+      const selectionAfterCut = nextSelection as Set<string> | null;
+      if (!didCut || !selectionAfterCut || selectionAfterCut.size === 0) return;
       setSelectedPoints(new Map());
-      setSelectedIds(nextSelection);
-      setPrimarySelectedId(nextPrimaryId);
+      setSelectedIds(selectionAfterCut);
+      setPrimarySelectedId(nextPrimaryId ?? Array.from(selectionAfterCut)[0] ?? null);
     },
     [pushHistory],
   );
@@ -15525,7 +15256,7 @@ export function FreehandStudioCanvas({
         ) {
           return;
         }
-        if (textEditingId || designerStoryModalOpen) return;
+        if (textEditingId) return;
         e.preventDefault();
         onDesignerNavigatePage(e.key === "ArrowLeft" ? -1 : 1);
         return;
@@ -15808,7 +15539,7 @@ export function FreehandStudioCanvas({
       ungroupSelected, bringForward, sendBackward, finishPenPath, deleteSelectedPoints, exitIsolation,
       copySelectedObjects, cutSelectedObjects, pasteClipboardObjects, pasteInside, quickExportSelectionPng, convertTextToOutlines,
       copyPhotoMarqueeRasterSelection,
-      designerMode, onDesignerNavigatePage, designerStoryModalOpen, imageFrameContentEditId, clipContentEditId, canvasZenMode, scheduleFitAllAfterLayout,
+      designerMode, onDesignerNavigatePage, imageFrameContentEditId, clipContentEditId, canvasZenMode, scheduleFitAllAfterLayout,
       isPhotoRoomStudioEmbed, studioCaps, finishBrushStroke]);
 
   // ── Mouse handlers ────────────────────────────────────────────────
@@ -19630,7 +19361,6 @@ export function FreehandStudioCanvas({
       const tfi = single._designerThreadInfo;
       const canUnlinkTf = tfi && tfi.index > 0;
       return [
-        { label: "Editor ampliado…", action: () => openDesignerStoryModalForFrameId(single.id), shortcut: "dbl-click" },
         ...(single._designerOverflow ? [
           { label: "Añadir marco enlazado ↗", action: () => onDesignerAppendThreadedFrame?.(single.id) },
         ] : []),
@@ -19790,7 +19520,7 @@ export function FreehandStudioCanvas({
       cycleVertexMode, booleanOp, enterIsolation, flattenBooleanToDefinitivePath, exitIsolation, alignObjects, fitAllCanvas,
       resetZoomCanvas, pasteClipboardObjects, pasteInside, cutSelectedObjects, copySelectedObjects, renameSelected,
       convertTextToOutlines, releaseClippingStructure, enterClippingIsolation, switchClippingIsolationMode, enterVectorGroupIsolation,
-      layoutGuides.length, showLayoutGuides, openDesignerStoryModalForFrameId]);
+      layoutGuides.length, showLayoutGuides]);
 
   // ── Cursor ────────────────────────────────────────────────────────
 
@@ -20531,9 +20261,21 @@ export function FreehandStudioCanvas({
           flyoutOpen={leftToolbarToolFlyout}
           setFlyoutOpen={setLeftToolbarToolFlyout}
           active={activeTool === "rect" || activeTool === "line" || activeTool === "ellipse"}
-          mainTitle={primaryShapeTool === "ellipse" ? (designerMode ? "Elipse (E)" : "Elipse (C o E)") : "Rectángulo (R)"}
+          mainTitle={
+            primaryShapeTool === "line"
+              ? "Línea"
+              : primaryShapeTool === "ellipse"
+                ? (designerMode ? "Elipse (E)" : "Elipse (C o E)")
+                : "Rectángulo (R)"
+          }
           onMainClick={() => setActiveTool(primaryShapeTool)}
-          mainIcon={primaryShapeTool === "ellipse" ? <Circle size={19} strokeWidth={TOOLBAR_ICON_STROKE} /> : <Square size={19} strokeWidth={TOOLBAR_ICON_STROKE} />}
+          mainIcon={
+            primaryShapeTool === "line"
+              ? <Minus size={19} strokeWidth={TOOLBAR_ICON_STROKE} />
+              : primaryShapeTool === "ellipse"
+                ? <Circle size={19} strokeWidth={TOOLBAR_ICON_STROKE} />
+                : <Square size={19} strokeWidth={TOOLBAR_ICON_STROKE} />
+          }
         >
           <button
             type="button"
@@ -22841,7 +22583,7 @@ export function FreehandStudioCanvas({
       </div>
 
       {/* ── RIGHT PANEL ──────────────────────────────────────────── */}
-      {!canvasZenMode && !designerStoryModalOpen && (
+      {!canvasZenMode && (
       <div className={`relative flex h-full min-h-0 shrink-0 ${propertiesPanelCollapsed ? "w-0" : ""}`}>
         <button
           type="button"
@@ -25130,51 +24872,6 @@ export function FreehandStudioCanvas({
                   );
                 })()}
 
-                {/* ── Designer: Marco de texto ── */}
-                {designerMode && firstSelected.isTextFrame && (() => {
-                  const storyId = (firstSelected as any).storyId as string | undefined;
-                  const ti = (firstSelected as any)._designerThreadInfo as { index: number; total: number } | undefined;
-                  const canUnlink = ti && ti.index > 0;
-                  const storyText = storyId ? designerStoryMap?.get(storyId) ?? "" : "";
-                  const storyHtml = storyId ? designerStoryHtmlMap?.get(storyId) ?? "" : "";
-
-                  const openDesignerStoryModal = () => {
-                    if (!storyId) return;
-                    openDesignerStoryModalForFrameId(firstSelected.id);
-                  };
-
-                  return (
-                    <div className="border-b border-white/[0.08] px-[14px] py-3 space-y-2.5">
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-sky-200/80">Marco de texto</p>
-
-                      <label className="block text-[10px] font-medium text-zinc-500">Contenido</label>
-                      {storyId && (
-                        <DesignerStoryRichEditorBlock
-                          key={`re-panel-${storyId}`}
-                          storyId={storyId}
-                          storyText={storyText}
-                          storyHtml={storyHtml}
-                          onRichChange={onDesignerStoryRichChange}
-                          compactMaxLines={4}
-                          onRequestOpenFull={openDesignerStoryModal}
-                          editorClassName="mt-0 min-h-0 w-full rounded-b-[5px] border border-white/[0.08] bg-white/[0.06] px-2.5 py-2 text-xs font-light leading-relaxed text-zinc-100 outline-none focus:ring-1 focus:ring-sky-500/40 [&_b]:font-bold [&_strong]:font-bold [&_i]:italic [&_u]:underline [&_s]:line-through [&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:marker:text-zinc-400 [&_li]:my-0.5"
-                        />
-                      )}
-
-                      {canUnlink && (
-                        <button
-                          type="button"
-                          onClick={() => onDesignerUnlinkTextFrame?.(firstSelected.id)}
-                          className="flex w-full items-center justify-center gap-2 rounded-[5px] border border-white/[0.08] bg-white/[0.06] py-2 text-[11px] font-bold text-zinc-200 transition hover:bg-white/10"
-                        >
-                          Romper enlace entrante
-                        </button>
-                      )}
-                    </div>
-                  );
-                })()}
-
-
                 <div className="space-y-2.5 px-[14px] pb-3 pt-1">
 
                 {firstSelected.type === "text" && (() => {
@@ -25191,7 +24888,6 @@ export function FreehandStudioCanvas({
                     "border-[#2d2f34] bg-[#1e2024] text-[#71717a] hover:border-[#3f4249] hover:text-zinc-200";
                   const iconToolBtn = `inline-flex h-7 min-w-0 flex-1 items-center justify-center rounded-[6px] border text-[#a1a1aa] transition-colors ${pillOff}`;
                   const iconToolBtnOn = `inline-flex h-7 min-w-0 flex-1 items-center justify-center rounded-[6px] border text-white transition-colors ${pillOn}`;
-                  const kernOn = (tx.fontKerning ?? "auto") !== "none";
                   const applyInlineRichCommand = (cmd: string): boolean => {
                     if (typeof window === "undefined" || typeof document === "undefined") return false;
                     const activeEl = document.activeElement as HTMLElement | null;
@@ -25234,8 +24930,17 @@ export function FreehandStudioCanvas({
                           className="h-8 min-h-0 min-w-0 flex-1 rounded-[6px] border border-[#2d2f34] bg-[#1e2024] px-2 py-0 text-[11px] text-zinc-100"
                         >
                           <option value="">— Font —</option>
-                          <optgroup label="Google Fonts">
-                            {GOOGLE_FONTS_POPULAR.map((g) => (
+                          {installedGoogleFontsDropdownOptions.length > 0 ? (
+                            <optgroup label="Google Fonts instaladas">
+                              {installedGoogleFontsDropdownOptions.map((family) => (
+                                <option key={family} value={family}>
+                                  {family} ({googleFontCategoryByFamily.get(family) ?? "Google"})
+                                </option>
+                              ))}
+                            </optgroup>
+                          ) : null}
+                          <optgroup label="Google Fonts recomendadas">
+                            {popularGoogleFontsDropdownOptions.map((g) => (
                               <option key={g.family} value={g.family}>
                                 {g.family} ({g.category})
                               </option>
@@ -25354,55 +25059,14 @@ export function FreehandStudioCanvas({
                             className={tfInp}
                           />
                         </div>
-                        <div className={tfField}>
-                          <label className={`flex items-center gap-1.5 ${tfLbl}`} title="Paragraph indent (px)">
-                            <IndentIncrease size={10} strokeWidth={2} className={tfIconMuted} aria-hidden />
-                            Ind
-                          </label>
-                          <ScrubNumberInput
-                            value={tx.paragraphIndent ?? 0}
-                            onKeyboardCommit={(n) => updateSelectedProp("paragraphIndent", clamp(Math.round(n), 0, 200))}
-                            onScrubLive={(n) => updateSelectedPropSilent("paragraphIndent", clamp(Math.round(n), 0, 200))}
-                            onScrubEnd={commitHistoryAfterScrub}
-                            step={1}
-                            roundFn={(n) => clamp(Math.round(n), 0, 200)}
-                            min={0}
-                            max={200}
-                            title="Arrastra horizontalmente · Mayús = ×10"
-                            className={tfInp}
-                          />
-                        </div>
-                        <div className={tfField}>
-                          <label className={`flex items-center gap-1.5 ${tfLbl}`} title="font-kerning: auto aplica pares en la fuente; none los apaga.">
-                            <Link2 size={10} strokeWidth={2} className={tfIconMuted} aria-hidden />
-                            Kern
-                          </label>
-                          <div
-                            className="flex h-7 overflow-hidden rounded-[6px] border border-[#2d2f34] bg-[#1e2024]"
-                            role="group"
-                            aria-label="Kerning de pares"
+                        <div className={`${tfField} col-span-2`}>
+                          <button
+                            type="button"
+                            onClick={openGoogleFontInstallModal}
+                            className="inline-flex h-8 w-full items-center justify-center rounded-[6px] border border-[#2d2f34] bg-[#1e2024] px-2 text-[11px] font-medium text-zinc-100 transition hover:border-[#3f4249] hover:bg-[#252830]"
                           >
-                            <button
-                              type="button"
-                              title="Auto (font-kerning: auto)"
-                              onClick={() => updateSelectedProp("fontKerning", "auto")}
-                              className={`flex flex-1 items-center justify-center border-r border-[#2d2f34] transition-colors ${
-                                kernOn ? "bg-[#534AB7] text-white" : "bg-transparent text-[#71717a] hover:bg-[#252830] hover:text-zinc-200"
-                              }`}
-                            >
-                              <Link2 size={13} strokeWidth={2} aria-hidden />
-                            </button>
-                            <button
-                              type="button"
-                              title="None (font-kerning: none)"
-                              onClick={() => updateSelectedProp("fontKerning", "none")}
-                              className={`flex flex-1 items-center justify-center transition-colors ${
-                                !kernOn ? "bg-[#534AB7] text-white" : "bg-transparent text-[#71717a] hover:bg-[#252830] hover:text-zinc-200"
-                              }`}
-                            >
-                              <Unlink2 size={13} strokeWidth={2} aria-hidden />
-                            </button>
-                          </div>
+                            Instalar google font
+                          </button>
                         </div>
                       </div>
 
@@ -25551,8 +25215,17 @@ export function FreehandStudioCanvas({
                           className="w-full rounded border border-white/10 bg-white/5 px-2 py-1.5 text-[10px] text-white"
                         >
                           <option value="">— Elegir fuente —</option>
-                          <optgroup label="Google Fonts">
-                            {GOOGLE_FONTS_POPULAR.map((g) => (
+                          {installedGoogleFontsDropdownOptions.length > 0 ? (
+                            <optgroup label="Google Fonts instaladas">
+                              {installedGoogleFontsDropdownOptions.map((family) => (
+                                <option key={family} value={family}>
+                                  {family} ({googleFontCategoryByFamily.get(family) ?? "Google"})
+                                </option>
+                              ))}
+                            </optgroup>
+                          ) : null}
+                          <optgroup label="Google Fonts recomendadas">
+                            {popularGoogleFontsDropdownOptions.map((g) => (
                               <option key={g.family} value={g.family}>
                                 {g.family} ({g.category})
                               </option>
@@ -25567,6 +25240,13 @@ export function FreehandStudioCanvas({
                           </optgroup>
                         </select>
                         <div className="flex gap-1">
+                          <button
+                            type="button"
+                            className="flex-1 rounded border border-white/10 bg-white/5 py-1 text-[8px] font-bold uppercase text-zinc-300 hover:bg-white/10"
+                            onClick={openGoogleFontInstallModal}
+                          >
+                            Instalar google font
+                          </button>
                           <button
                             type="button"
                             className="flex-1 rounded border border-white/10 bg-white/5 py-1 text-[8px] font-bold uppercase text-zinc-300 hover:bg-white/10"
@@ -26322,6 +26002,132 @@ export function FreehandStudioCanvas({
       {/* ── Context menu ─────────────────────────────────────────── */}
       {ctxMenu && <CtxMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenuItems} onClose={() => setCtxMenu(null)} />}
 
+      {googleFontInstallModalOpen &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div className="fixed inset-0 z-[100125] flex items-center justify-center p-4">
+            <button
+              type="button"
+              className="absolute inset-0 bg-black/65"
+              aria-label="Cerrar"
+              disabled={googleFontInstallBusy}
+              onClick={() => {
+                if (googleFontInstallBusy) return;
+                setGoogleFontInstallModalOpen(false);
+              }}
+            />
+            <div
+              className="relative z-10 flex w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-white/[0.12] bg-[#12151a] shadow-2xl"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="designer-google-font-install-title"
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between gap-3 border-b border-white/[0.1] px-4 py-3">
+                <div>
+                  <h2 id="designer-google-font-install-title" className="text-[13px] font-semibold text-zinc-100">
+                    Instalar google font
+                  </h2>
+                  <p className="mt-0.5 text-[11px] text-zinc-500">
+                    Selecciona una fuente de Google Fonts para añadirla al sistema de Designer.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={googleFontInstallBusy}
+                  onClick={() => setGoogleFontInstallModalOpen(false)}
+                  className="inline-flex h-8 items-center justify-center rounded-[6px] border border-white/[0.12] bg-white/[0.04] px-3 text-[11px] font-semibold text-zinc-200 transition hover:bg-white/[0.1] disabled:opacity-40"
+                >
+                  Cerrar
+                </button>
+              </div>
+
+              <div className="space-y-3 p-4">
+                <input
+                  type="text"
+                  value={googleFontInstallQuery}
+                  onChange={(e) => setGoogleFontInstallQuery(e.target.value)}
+                  placeholder="Buscar fuente o categoría"
+                  className="h-9 w-full rounded-[6px] border border-white/[0.12] bg-[#0f131a] px-3 text-[12px] text-zinc-100 outline-none ring-violet-500/40 focus:ring-2"
+                />
+                <div className="max-h-[52vh] overflow-y-auto rounded-[8px] border border-white/[0.08] bg-[#0f131a] p-2">
+                  {googleFontsInstallResults.length === 0 ? (
+                    <div className="px-3 py-6 text-center text-[12px] text-zinc-500">
+                      No hay resultados para esa búsqueda.
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      {googleFontsInstallResults.map((font) => {
+                        const isSelected = googleFontInstallSelection === font.family;
+                        const isInstalled = installedGoogleFontsSet.has(font.family);
+                        return (
+                          <button
+                            key={font.family}
+                            type="button"
+                            onClick={() => setGoogleFontInstallSelection(font.family)}
+                            className={`flex w-full items-center justify-between gap-3 rounded-[6px] border px-3 py-2 text-left transition ${
+                              isSelected
+                                ? "border-violet-400/60 bg-violet-500/20"
+                                : "border-transparent bg-white/[0.02] hover:border-white/[0.12] hover:bg-white/[0.05]"
+                            }`}
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div
+                                className="truncate text-[13px] text-zinc-100"
+                                style={{ fontFamily: `${font.family}, system-ui, sans-serif` }}
+                              >
+                                {font.family}
+                              </div>
+                              <div className="text-[10px] uppercase tracking-wide text-zinc-500">{font.category}</div>
+                              <div
+                                className="mt-1.5 truncate rounded-[4px] border border-white/[0.08] bg-black/20 px-2 py-1 text-[15px] leading-tight text-zinc-200"
+                                style={{ fontFamily: `${font.family}, system-ui, sans-serif` }}
+                                aria-hidden
+                              >
+                                The quick brown fox 123
+                              </div>
+                            </div>
+                            {isInstalled ? (
+                              <span className="rounded border border-emerald-400/30 bg-emerald-500/15 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-emerald-200">
+                                Instalada
+                              </span>
+                            ) : (
+                              <span className="rounded border border-white/[0.14] bg-white/[0.04] px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-zinc-400">
+                                Disponible
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 border-t border-white/[0.08] px-4 py-3">
+                <button
+                  type="button"
+                  disabled={googleFontInstallBusy}
+                  onClick={() => setGoogleFontInstallModalOpen(false)}
+                  className="rounded-[6px] border border-white/[0.12] bg-white/[0.04] px-3 py-1.5 text-[11px] font-medium text-zinc-300 transition hover:bg-white/[0.1] disabled:opacity-40"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  disabled={googleFontInstallBusy || !googleFontInstallSelection}
+                  onClick={() => void confirmGoogleFontInstall()}
+                  className="inline-flex items-center gap-2 rounded-[6px] border border-violet-400/40 bg-violet-600/35 px-3 py-1.5 text-[11px] font-semibold text-violet-50 transition hover:bg-violet-600/50 disabled:opacity-40"
+                >
+                  {googleFontInstallBusy ? <Loader2 size={13} className="animate-spin" aria-hidden /> : null}
+                  {googleFontInstallBusy ? "Instalando..." : "Instalar y usar"}
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
+
       {designerMode &&
         supportsBrainImageSuggestions &&
         brainImagePromptModalOpen &&
@@ -26425,147 +26231,6 @@ export function FreehandStudioCanvas({
           </div>,
           document.body,
         )}
-
-      {designerMode &&
-        designerStoryModalOpen &&
-        designerStoryModalObjectId &&
-        (() => {
-          const modalObj = objects.find((o) => o.id === designerStoryModalObjectId);
-          const sid = modalObj && (modalObj as { storyId?: string }).storyId;
-          if (!modalObj || !modalObj.isTextFrame || !sid) return null;
-          const st = designerStoryMap?.get(sid) ?? "";
-          const sh = designerStoryHtmlMap?.get(sid) ?? "";
-          const hasOverflow = !!(modalObj as { _designerOverflow?: boolean })._designerOverflow;
-          return createPortal(
-            <div className="fixed inset-0 z-[100100]">
-              <div
-                className="absolute inset-0 bg-black/45"
-                aria-hidden
-                onPointerDown={(e) => {
-                  if (e.target !== e.currentTarget) return;
-                  closeDesignerStoryModal();
-                }}
-              />
-              <div
-                className="absolute flex flex-col overflow-hidden rounded-xl border border-white/[0.12] bg-[#12151a] shadow-2xl"
-                style={{
-                  left: designerStoryModalRect.x,
-                  top: designerStoryModalRect.y,
-                  width: designerStoryModalRect.w,
-                  height: designerStoryModalRect.h,
-                }}
-                onMouseDown={(e) => e.stopPropagation()}
-              >
-                <div
-                  className="flex shrink-0 cursor-grab select-none items-center justify-between gap-2 border-b border-white/[0.1] bg-[#161a22] px-3 py-2 active:cursor-grabbing"
-                  onPointerDown={(e) => {
-                    if ((e.target as HTMLElement).closest("button")) return;
-                    if (e.button !== 0) return;
-                    e.preventDefault();
-                    e.stopPropagation();
-                    let lx = e.clientX;
-                    let ly = e.clientY;
-                    const pid = e.pointerId;
-                    const onMove = (ev: PointerEvent) => {
-                      if (ev.pointerId !== pid) return;
-                      const dx = ev.clientX - lx;
-                      const dy = ev.clientY - ly;
-                      lx = ev.clientX;
-                      ly = ev.clientY;
-                      setDesignerStoryModalRect((r) => ({
-                        ...r,
-                        x: clamp(r.x + dx, 0, Math.max(0, window.innerWidth - 120)),
-                        y: clamp(r.y + dy, 0, Math.max(0, window.innerHeight - 80)),
-                      }));
-                    };
-                    const onUp = (ev: PointerEvent) => {
-                      if (ev.pointerId !== pid) return;
-                      window.removeEventListener("pointermove", onMove);
-                      window.removeEventListener("pointerup", onUp);
-                    };
-                    window.addEventListener("pointermove", onMove);
-                    window.addEventListener("pointerup", onUp);
-                  }}
-                >
-                  <span className="text-[11px] font-bold uppercase tracking-widest text-sky-200/85">Marco de texto · editor ampliado</span>
-                  <button
-                    type="button"
-                    title="Guardar y cerrar (Esc)"
-                    className="rounded-md p-1.5 text-zinc-400 transition hover:bg-white/10 hover:text-white"
-                    onClick={() => {
-                      closeDesignerStoryModal();
-                    }}
-                  >
-                    <X size={16} strokeWidth={2} />
-                  </button>
-                </div>
-                <div className="relative min-h-0 flex-1 overflow-y-auto px-3 pb-9 pt-2">
-                  {hasOverflow && (
-                    <div className="mb-2 flex items-center gap-1.5 rounded-md border border-rose-500/25 bg-rose-500/10 px-2 py-1.5">
-                      <span className="text-[10px] font-medium text-rose-300">⚠ Texto desbordado</span>
-                      <button
-                        type="button"
-                        onClick={() => onDesignerAppendThreadedFrame?.(modalObj.id)}
-                        className="ml-auto rounded border border-rose-400/30 bg-rose-500/20 px-2 py-0.5 text-[9px] font-bold text-rose-200 transition hover:bg-rose-500/30"
-                      >
-                        + Marco
-                      </button>
-                    </div>
-                  )}
-                  <label className="mb-1.5 block text-[10px] font-medium text-zinc-500">Contenido</label>
-                  <DesignerStoryRichEditorBlock
-                    ref={designerStoryModalEditorRef}
-                    key={`re-modal-${sid}`}
-                    storyId={sid}
-                    storyText={st}
-                    storyHtml={sh}
-                    onRichChange={onDesignerStoryRichChange}
-                    enableHyperlink
-                    editorClassName="min-h-[min(400px,calc(100vh-220px))] w-full overflow-y-auto rounded-b-[5px] border border-white/[0.08] bg-white/[0.06] px-3 py-2.5 text-sm font-light leading-relaxed text-zinc-100 outline-none focus:ring-1 focus:ring-sky-500/40 [&_b]:font-bold [&_strong]:font-bold [&_i]:italic [&_u]:underline [&_s]:line-through [&_a]:text-sky-400 [&_a]:underline [&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:marker:text-zinc-400 [&_li]:my-0.5"
-                  />
-                </div>
-                <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-white/[0.08] bg-[#161a22] px-3 py-2.5">
-                  <button
-                    type="button"
-                    className="shrink-0 rounded-lg border border-sky-500/35 bg-sky-600/25 px-3 py-1.5 text-[11px] font-semibold text-sky-100 transition hover:bg-sky-600/40"
-                    onClick={() => closeDesignerStoryModal()}
-                  >
-                    Guardar y cerrar
-                  </button>
-                </div>
-                <div
-                  className="pointer-events-auto absolute bottom-1.5 right-1.5 h-5 w-5 cursor-nwse-resize rounded border border-white/15 bg-[#1a1f28] hover:bg-white/10"
-                  title="Redimensionar"
-                  onPointerDown={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    const pid = e.pointerId;
-                    const x0 = e.clientX;
-                    const y0 = e.clientY;
-                    const w0 = designerStoryModalRect.w;
-                    const h0 = designerStoryModalRect.h;
-                    const onMove = (ev: PointerEvent) => {
-                      if (ev.pointerId !== pid) return;
-                      setDesignerStoryModalRect((r) => ({
-                        ...r,
-                        w: clamp(w0 + ev.clientX - x0, 400, window.innerWidth - r.x - 8),
-                        h: clamp(h0 + ev.clientY - y0, 240, window.innerHeight - r.y - 8),
-                      }));
-                    };
-                    const onUp = (ev: PointerEvent) => {
-                      if (ev.pointerId !== pid) return;
-                      window.removeEventListener("pointermove", onMove);
-                      window.removeEventListener("pointerup", onUp);
-                    };
-                    window.addEventListener("pointermove", onMove);
-                    window.addEventListener("pointerup", onUp);
-                  }}
-                />
-              </div>
-            </div>,
-            document.body,
-          );
-        })()}
 
       {foldderImagePickerOpen &&
         typeof document !== "undefined" &&
