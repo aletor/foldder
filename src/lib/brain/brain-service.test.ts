@@ -246,4 +246,71 @@ describe("BrainService", () => {
     expect(r.learning.status).toBe("DISMISSED");
     expect((await svc.listPendingLearnings("p1")).length).toBe(0);
   });
+
+  it("createLearningCandidates añade decisionTrace a candidatos visual/restudy con contexto suficiente", async () => {
+    const svc = new BrainService();
+    await svc.createLearningCandidates(
+      "p1",
+      [
+        {
+          type: "VISUAL_MEMORY",
+          scope: "PROJECT",
+          topic: "visual_direction",
+          value: "Predomina una estética editorial cálida con luz lateral.",
+          confidence: 0.74,
+          reasoning: "Patrones visuales consistentes en referencias analizadas.",
+          evidence: {
+            sourceNodeIds: ["brain:visual_references"],
+            sourceNodeTypes: ["brain_studio"],
+            evidenceSource: "visual_reference",
+            sourceArtifactIds: ["img-a", "img-b"],
+            eventCounts: {
+              selected_visual_dna_slot_id: "slot-hero-1",
+              selected_visual_dna_layer: "palette",
+            },
+          },
+        },
+      ],
+      {
+        workspaceId: "ws",
+        sourceAnalysisId: "analysis-visual-001",
+        createdFromAnalysisVersion: "restudy-v1",
+      },
+    );
+    const row = (await svc.listPendingLearnings("p1"))[0];
+    expect(row).toBeDefined();
+    expect(row?.decisionTraceId).toBeTruthy();
+    expect(row?.decisionTrace?.kind).toBe("learning_candidate");
+    expect(row?.decisionTrace?.persistenceIntent).toBe("pending_review");
+    expect(row?.decisionTrace?.outputSummary.summary).toMatch(/Origen visual\/restudy/i);
+    expect(row?.decisionTrace?.inputs.some((x) => x.label.includes("selected_visual_dna_slot_id"))).toBe(true);
+    expect(row?.decisionTrace?.inputs.some((x) => x.label.includes("selected_visual_dna_layer"))).toBe(true);
+  });
+
+  it("createLearningCandidates no añade decisionTrace automática en candidatos no visuales", async () => {
+    const svc = new BrainService();
+    await svc.createLearningCandidates(
+      "p1",
+      [
+        {
+          type: "PROJECT_MEMORY",
+          scope: "PROJECT",
+          topic: "project_memory",
+          value: "Preferencia de copy para este proyecto.",
+          confidence: 0.52,
+          reasoning: "Ajustes de copy repetidos en edición.",
+          evidence: {
+            sourceNodeIds: ["designer-1"],
+            sourceNodeTypes: ["designer"],
+            evidenceSource: "telemetry",
+          },
+        },
+      ],
+      { workspaceId: "ws", nodeId: "designer-1" },
+    );
+    const row = (await svc.listPendingLearnings("p1"))[0];
+    expect(row).toBeDefined();
+    expect(row?.decisionTraceId).toBeUndefined();
+    expect(row?.decisionTrace).toBeUndefined();
+  });
 });

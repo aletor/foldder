@@ -61,6 +61,47 @@ const pendingRow: StoredLearningCandidate = {
   createdAt: "2026-01-01T12:00:00.000Z",
 };
 
+const pendingRowWithTrace: StoredLearningCandidate = {
+  ...pendingRow,
+  id: "lc-ui-trace-1",
+  decisionTraceId: "bdt_learning_candidate_ui_test",
+  decisionTrace: {
+    id: "bdt_learning_candidate_ui_test",
+    kind: "learning_candidate",
+    createdAt: "2026-01-01T12:01:00.000Z",
+    targetNodeType: "designer",
+    targetNodeId: "designer-1",
+    inputs: [
+      { id: "candidate_topic", kind: "candidate", label: "PROJECT_MEMORY / tono" },
+      { id: "ev_1", kind: "event_count", label: "evt_MANUAL_OVERRIDE: 2" },
+    ],
+    outputSummary: {
+      title: "Learning Candidate",
+      summary: "Origen visual/restudy: visual_reference. Detectamos ajustes repetidos en longitud de copy.",
+      confidence: 0.55,
+      warnings: ["señal parcial"],
+    },
+    conflicts: [
+      {
+        id: "conf-1",
+        left: "tono breve",
+        right: "tono largo",
+        resolution: "priorizar breve",
+        severity: "medium",
+      },
+    ],
+    discardedSignals: [
+      {
+        id: "discarded-1",
+        kind: "slice",
+        summary: "safe_generation",
+        reason: "available_but_not_used",
+      },
+    ],
+    confidence: 0.55,
+  },
+};
+
 describe("ProjectBrainFullscreen — pestaña Por revisar", () => {
   const user = userEvent.setup();
 
@@ -148,6 +189,56 @@ describe("ProjectBrainFullscreen — pestaña Por revisar", () => {
     expect(screen.getByRole("button", { name: /Ver por qué/i })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Ver por qué/i }));
     expect(await screen.findByText(/Origen en el lienzo/i)).toBeInTheDocument();
+  });
+
+  it("muestra “Por qué Brain propone esto” cuando el pending trae decisionTrace", async () => {
+    (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes("/api/spaces/brain/learning/pending")) {
+        return jsonResponse({ items: [pendingRowWithTrace] });
+      }
+      if (url.includes("/api/spaces/brain/telemetry/summary")) {
+        return jsonResponse({ nodes: [] });
+      }
+      return jsonResponse({ ok: true });
+    });
+    const onChange = vi.fn();
+    render(
+      <ProjectBrainFullscreen
+        open
+        onClose={() => {}}
+        assetsMetadata={assetsMetadataForTests()}
+        onAssetsMetadataChange={onChange}
+        projectId="proj-ui"
+      />,
+    );
+    await user.click(await screen.findByTestId("brain-tab-review"));
+    const toggle = await screen.findByText(/Por qué Brain propone esto/i);
+    expect(toggle).toBeInTheDocument();
+    await user.click(toggle);
+    expect(await screen.findByText(/Learning candidate/i)).toBeInTheDocument();
+    expect(screen.getByText(/Origen visual\/restudy/i)).toBeInTheDocument();
+    expect(screen.getByText(/Inputs principales:/i)).toBeInTheDocument();
+    expect(screen.getByText(/Warnings:/i)).toBeInTheDocument();
+    expect(screen.getByText(/Conflictos:/i)).toBeInTheDocument();
+    expect(screen.getByText(/Señales descartadas:/i)).toBeInTheDocument();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("no muestra “Por qué Brain propone esto” si el pending no trae decisionTrace", async () => {
+    const onChange = vi.fn();
+    render(
+      <ProjectBrainFullscreen
+        open
+        onClose={() => {}}
+        assetsMetadata={assetsMetadataForTests()}
+        onAssetsMetadataChange={onChange}
+        projectId="proj-ui"
+      />,
+    );
+    await user.click(await screen.findByTestId("brain-tab-review"));
+    await screen.findByText(/Brain ha detectado que Preferís párrafos cortos/i);
+    expect(screen.queryByText(/Por qué Brain propone esto/i)).toBeNull();
   });
 
   async function openReviewAndClickAction(actionLabel: RegExp, bodySnippet: string) {

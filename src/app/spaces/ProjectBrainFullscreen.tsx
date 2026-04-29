@@ -122,6 +122,12 @@ import type { VisualDnaSlot } from "@/lib/brain/visual-dna-slot/types";
 import { normalizeVisualDnaSlots, removeVisualDnaSlot, updateVisualDnaSlot } from "@/lib/brain/visual-dna-slot/normalize";
 import { VisualDnaSlotsLibrary } from "./VisualDnaSlotsLibrary";
 import { hydrateKnowledgeImageDocumentsWithViewUrlsClient } from "@/lib/brain/brain-knowledge-image-view-urls-client";
+import {
+  capDecisionTraces,
+  createBrainDecisionTrace,
+  normalizeBrainDecisionTrace,
+  type BrainDecisionTrace,
+} from "@/lib/brain/brain-decision-trace";
 
 function pickNewestVisualDnaSlot(a: VisualDnaSlot, b: VisualDnaSlot): VisualDnaSlot {
   const ta = Date.parse(a.updatedAt || a.createdAt || "");
@@ -348,6 +354,46 @@ function formatSize(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 KB";
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
   return `${(bytes / 1024).toFixed(1)} KB`;
+}
+
+function formatTraceDate(iso: string): string {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return iso;
+  return new Date(t).toLocaleString("es-ES");
+}
+
+function traceKindLabel(kind: BrainDecisionTrace["kind"]): string {
+  switch (kind) {
+    case "runtime_context":
+      return "Runtime context";
+    case "learning_candidate":
+      return "Learning candidate";
+    case "visual_prompt":
+      return "Visual prompt";
+    case "merge_resolution":
+      return "Merge / resolución";
+    case "telemetry_aggregation":
+      return "Telemetría agregada";
+    default:
+      return kind;
+  }
+}
+
+function tracePersistenceIntentLabel(intent: BrainDecisionTrace["persistenceIntent"]): string {
+  switch (intent) {
+    case "ephemeral":
+      return "temporal";
+    case "pending_review":
+      return "pendiente revisión";
+    case "persist_on_accept":
+      return "persistir al aceptar";
+    case "persist_on_export":
+      return "persistir al exportar";
+    case "persist_immediately":
+      return "persistencia inmediata";
+    default:
+      return "sin política";
+  }
 }
 
 /** Lista de texto segura para filas de análisis (legacy o JSON pueden no ser arrays). */
@@ -648,6 +694,15 @@ export function ProjectBrainFullscreen({
 }: Props) {
   const assets = useMemo(() => normalizeProjectAssets(assetsMetadata), [assetsMetadata]);
   const brandSummary = useMemo(() => buildBrainBrandSummary(assets), [assets]);
+  const decisionTraces = useMemo(
+    () =>
+      capDecisionTraces(assets.strategy.decisionTraces, {
+        max: 50,
+        payloadRiskMax: 25,
+        order: "desc",
+      }),
+    [assets.strategy.decisionTraces],
+  );
   /** Vista previa ADN alineada con el resumen (filtra seed/demo; los datos crudos siguen en Voz/Mensajes hasta que edites). */
   const dnaTabPreview = useMemo(() => {
     const rawTraits = assets.strategy.languageTraits;
@@ -1159,7 +1214,57 @@ export function ProjectBrainFullscreen({
         return;
       }
       if (json.nextAssets) {
-        onAssetsMetadataChange(normalizeProjectAssets(json.nextAssets));
+        const normalizedNext = normalizeProjectAssets(json.nextAssets);
+        const restudyTrace = createBrainDecisionTrace({
+          kind: "merge_resolution",
+          persistenceIntent: "persist_immediately",
+          targetNodeType: "project_brain",
+          useCase: "restudy_pipeline",
+          inputs: [
+            ...(json.visual
+              ? [
+                  {
+                    id: "restudy_visual_total",
+                    kind: "count",
+                    label: `visual_total_images:${json.visual.totalImages}`,
+                  },
+                  {
+                    id: "restudy_visual_real",
+                    kind: "count",
+                    label: `visual_real_analyzed:${json.visual.analyzedReal}`,
+                  },
+                ]
+              : []),
+            ...(typeof json.candidatesCreated === "number"
+              ? [
+                  {
+                    id: "restudy_candidates_created",
+                    kind: "count",
+                    label: `candidates_created:${json.candidatesCreated}`,
+                  },
+                ]
+              : []),
+          ],
+          outputSummary: {
+            title: "Brain Restudy",
+            summary: "Brain restudy pipeline completed and assets were refreshed.",
+            confidence: typeof json.summary?.confidence === "number" ? json.summary.confidence : 0.7,
+            warnings: (json.warnings ?? json.summary?.warnings ?? []).slice(0, 6),
+          },
+          confidence: typeof json.summary?.confidence === "number" ? json.summary.confidence : 0.7,
+        });
+        const traces = capDecisionTraces([restudyTrace, ...(normalizedNext.strategy.decisionTraces ?? [])], {
+          max: 50,
+          payloadRiskMax: 25,
+          order: "desc",
+        });
+        onAssetsMetadataChange({
+          ...normalizedNext,
+          strategy: {
+            ...normalizedNext.strategy,
+            ...(traces.length ? { decisionTraces: traces } : {}),
+          },
+        });
         onVisualReferenceAnalysisDirty?.();
         setLastRestudyCompletedIso(new Date().toISOString());
       }
@@ -1321,6 +1426,7 @@ export function ProjectBrainFullscreen({
             visualDnaSlots: next.visualDnaSlots ?? a.strategy.visualDnaSlots,
             visualDnaSlotSuppressedSourceIds:
               next.visualDnaSlotSuppressedSourceIds ?? a.strategy.visualDnaSlotSuppressedSourceIds,
+            decisionTraces: next.decisionTraces ?? a.strategy.decisionTraces,
           },
         }),
         staleReasons,
@@ -2833,6 +2939,7 @@ export function ProjectBrainFullscreen({
 
   function renderPendingReviewArticle(row: StoredLearningCandidate) {
     const c = row.candidate;
+    const pendingTrace = normalizeBrainDecisionTrace(row.decisionTrace);
     const anchor = resolveLearningPendingAnchorNodeId(row);
     const provUi = getPendingLearningProvenanceUi(row);
     const origin = !anchor
@@ -2920,6 +3027,60 @@ export function ProjectBrainFullscreen({
             ))}
           </ul>
         )}
+        {pendingTrace ? (
+          <details className="rounded-[5px] border border-sky-200/80 bg-sky-50/60 px-3 py-2">
+            <summary className="cursor-pointer text-[11px] font-semibold text-sky-900">
+              Por qué Brain propone esto
+            </summary>
+            <div className="mt-2 space-y-2 text-[11px] leading-snug text-zinc-700">
+              <p>
+                <span className="font-semibold text-zinc-900">Tipo:</span> {traceKindLabel(pendingTrace.kind)} ·{" "}
+                <span className="font-semibold text-zinc-900">Confianza:</span>{" "}
+                {Math.round((pendingTrace.confidence ?? 0) * 100)}%
+              </p>
+              {pendingTrace.persistenceIntent ? (
+                <p className="text-[10px] text-zinc-500">
+                  Persistencia: {tracePersistenceIntentLabel(pendingTrace.persistenceIntent)}
+                </p>
+              ) : null}
+              <p>{pendingTrace.outputSummary.summary}</p>
+              {pendingTrace.inputs.length > 0 ? (
+                <p>
+                  <span className="font-semibold text-zinc-900">Inputs principales:</span>{" "}
+                  {pendingTrace.inputs
+                    .slice(0, 6)
+                    .map((x) => x.label)
+                    .filter(Boolean)
+                    .join(" · ")}
+                </p>
+              ) : null}
+              {pendingTrace.outputSummary.warnings?.length ? (
+                <p>
+                  <span className="font-semibold text-zinc-900">Warnings:</span>{" "}
+                  {pendingTrace.outputSummary.warnings.slice(0, 6).join(" · ")}
+                </p>
+              ) : null}
+              {pendingTrace.conflicts?.length ? (
+                <p>
+                  <span className="font-semibold text-zinc-900">Conflictos:</span>{" "}
+                  {pendingTrace.conflicts
+                    .slice(0, 4)
+                    .map((conflict) => `${conflict.left} vs ${conflict.right} -> ${conflict.resolution}`)
+                    .join(" · ")}
+                </p>
+              ) : null}
+              {pendingTrace.discardedSignals?.length ? (
+                <p>
+                  <span className="font-semibold text-zinc-900">Señales descartadas:</span>{" "}
+                  {pendingTrace.discardedSignals
+                    .slice(0, 4)
+                    .map((signal) => `${signal.summary} (${signal.reason})`)
+                    .join(" · ")}
+                </p>
+              ) : null}
+            </div>
+          </details>
+        ) : null}
         <div className="mt-1 flex flex-wrap gap-2">
           <button
             type="button"
@@ -3621,6 +3782,94 @@ export function ProjectBrainFullscreen({
                     <p className="mt-3 text-[10px] leading-snug text-zinc-400">{BRAIN_TELEMETRY_EPHEMERAL_DEV_NOTE_ES}</p>
                   ) : null}
                 </div>
+
+                {decisionTraces.length > 0 ? (
+                  <div className="rounded-[5px] border border-zinc-200 bg-white p-5 shadow-sm">
+                    <p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">
+                      Decision Trace
+                    </p>
+                    <p className="mt-1 text-[11px] leading-relaxed text-zinc-600">
+                      Por qué Brain decidió esto (diagnóstico avanzado). Se guardan las trazas más recientes con resumen ligero.
+                    </p>
+                    <div className="mt-3 space-y-2">
+                      {decisionTraces.slice(0, 8).map((trace) => (
+                        <details
+                          key={trace.id}
+                          className="rounded-[5px] border border-zinc-200 bg-zinc-50/60 p-2.5"
+                        >
+                          <summary className="cursor-pointer list-none">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className="text-[11px] font-black text-zinc-900">
+                                  {traceKindLabel(trace.kind)}
+                                  {trace.targetNodeType ? ` · ${trace.targetNodeType}` : ""}
+                                  {trace.targetNodeId ? ` · ${trace.targetNodeId}` : ""}
+                                </p>
+                                <p className="text-[10px] text-zinc-500">{formatTraceDate(trace.createdAt)}</p>
+                                {trace.persistenceIntent ? (
+                                  <p className="text-[9px] text-zinc-400">
+                                    {tracePersistenceIntentLabel(trace.persistenceIntent)}
+                                  </p>
+                                ) : null}
+                              </div>
+                              <span className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[9px] font-black text-zinc-700">
+                                conf {Math.round((trace.confidence ?? 0) * 100)}%
+                              </span>
+                            </div>
+                            <p className="mt-1 text-[11px] leading-relaxed text-zinc-700">
+                              {trace.outputSummary.summary}
+                            </p>
+                          </summary>
+                          {trace.outputSummary.warnings?.length ? (
+                            <div className="mt-2 rounded-[5px] border border-amber-200 bg-amber-50 px-2 py-1.5 text-[10px] text-amber-900">
+                              Warnings: {trace.outputSummary.warnings.join(" · ")}
+                            </div>
+                          ) : null}
+                          {trace.inputs.length > 0 ? (
+                            <div className="mt-2">
+                              <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                                Inputs principales
+                              </p>
+                              <p className="mt-1 text-[11px] text-zinc-700">
+                                {trace.inputs
+                                  .slice(0, 6)
+                                  .map((x) => x.label)
+                                  .filter(Boolean)
+                                  .join(" · ")}
+                              </p>
+                            </div>
+                          ) : null}
+                          {trace.conflicts?.length ? (
+                            <div className="mt-2">
+                              <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                                Conflictos
+                              </p>
+                              <p className="mt-1 text-[11px] text-zinc-700">
+                                {trace.conflicts
+                                  .slice(0, 4)
+                                  .map((c) => `${c.left} vs ${c.right} -> ${c.resolution}`)
+                                  .join(" · ")}
+                              </p>
+                            </div>
+                          ) : null}
+                          {trace.discardedSignals?.length ? (
+                            <div className="mt-2">
+                              <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                                Señales descartadas
+                              </p>
+                              <p className="mt-1 text-[11px] text-zinc-700">
+                                {trace.discardedSignals
+                                  .slice(0, 4)
+                                  .map((d) => `${d.summary} (${d.reason})`)
+                                  .join(" · ")}
+                              </p>
+                            </div>
+                          ) : null}
+                        </details>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
               </div>
             )}
 

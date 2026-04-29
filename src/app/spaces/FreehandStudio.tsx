@@ -290,6 +290,7 @@ import {
   DesignerRulerHorizontal,
   DesignerRulerVertical,
 } from "./designer/DesignerCanvasRulers";
+import { TopbarGlyphDesignerStudio, TopbarGlyphPhotoRoom } from "./TopbarPinIcons";
 import { ImageFrameFittingGlyph } from "./freehand/ImageFrameFittingGlyph";
 import { normalizeProjectAssets } from "./project-assets-metadata";
 import { useProjectBrainCanvas } from "./project-brain-canvas-context";
@@ -19842,6 +19843,11 @@ export function FreehandStudioCanvas({
   const primaryPhotoMarqueeTool = toolFlyoutPrimary["tf-photo-marquee"];
   const primaryTextTool = toolFlyoutPrimary["tf-text"];
   const primaryImageTool = toolFlyoutPrimary["tf-img"];
+  const studioHeaderNodeGlyph = isPhotoRoomStudioEmbed
+    ? <TopbarGlyphPhotoRoom size={18} className="shrink-0" />
+    : designerMode
+      ? <TopbarGlyphDesignerStudio size={18} className="shrink-0" />
+      : null;
 
   return (
     <div
@@ -19885,9 +19891,16 @@ export function FreehandStudioCanvas({
 
       {!canvasZenMode && (
       <header className="relative z-30 flex h-14 shrink-0 items-center gap-3 border-b border-white/[0.08] bg-[#12151a] px-3 min-w-0">
-        <div className="min-w-0 shrink">
-          <div className="truncate text-[13px] font-semibold tracking-tight text-white">{studioHeaderTitle}</div>
-          <div className="truncate text-[10px] text-zinc-500">{studioHeaderSubtitle}</div>
+        <div className="min-w-0 shrink flex items-center gap-2">
+          {studioHeaderNodeGlyph ? (
+            <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] border border-white/10 bg-black/45">
+              {studioHeaderNodeGlyph}
+            </span>
+          ) : null}
+          <div className="min-w-0">
+            <div className="truncate text-[13px] font-semibold tracking-tight text-white">{studioHeaderTitle}</div>
+            <div className="truncate text-[10px] text-zinc-500">{studioHeaderSubtitle}</div>
+          </div>
         </div>
         {studioHeaderAccessory ? (
           <div className="flex min-w-0 shrink items-center gap-2">{studioHeaderAccessory}</div>

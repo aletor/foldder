@@ -7,7 +7,6 @@ import { ChevronRight } from 'lucide-react';
 import { NODE_REGISTRY } from './nodeRegistry';
 import { NodeIcon, NodeIconMono } from './foldder-icons';
 import { SIDEBAR_HOVER_HELP } from './sidebarHoverHelp';
-import { NODE_KEYS } from './node-shortcuts';
 import { TopbarGlyphBrain } from './TopbarPinIcons';
 
 const LIBRARY_TIP_WIDTH = 260;
@@ -82,7 +81,7 @@ type SidebarProps = {
 
 function SidebarLibraryNodeIcon({ type, size = 25 }: { type: string; size?: number }) {
   return (
-    <span className="inline-flex items-center justify-center drop-shadow-[0_1px_3px_rgba(0,0,0,0.5)]">
+    <span className="relative z-[1] inline-flex items-center justify-center drop-shadow-[0_1px_3px_rgba(0,0,0,0.5)]">
       {type === 'projectBrain' ? (
         <TopbarGlyphBrain size={size} className="shrink-0 text-white" />
       ) : type === 'projectAssets' ? (
@@ -200,6 +199,18 @@ const Sidebar = ({
     }
   };
 
+  const tileShellStyle: React.CSSProperties = {
+    padding: 0,
+    background: "transparent",
+    border: "none",
+    borderRadius: 0,
+    gap: 0,
+    width: "100%",
+    aspectRatio: "1 / 1",
+    overflow: "visible",
+    boxShadow: "none",
+  };
+
   const TypeIndicators = ({ nodeType }: { nodeType: string }) => {
     const meta = NODE_REGISTRY[nodeType];
     if (!meta) return <div className="type-indicator-container"><div className="type-dot" /><div className="type-dot" /></div>;
@@ -225,20 +236,6 @@ const Sidebar = ({
           )}
         </div>
       </div>
-    );
-  };
-
-  /** Letra de atajo (esquina superior izquierda del botón de la librería) */
-  const KeyBadge = ({ nodeType }: { nodeType: string }) => {
-    const key = NODE_KEYS[nodeType];
-    if (!key) return null;
-    return (
-      <span
-        className="pointer-events-none absolute left-1 top-1 select-none font-mono text-[11px] font-black leading-none tracking-wide text-white/70 [text-shadow:0_1px_3px_rgba(0,0,0,0.55)]"
-        aria-hidden
-      >
-        {key.toUpperCase()}
-      </span>
     );
   };
 
@@ -308,35 +305,30 @@ const Sidebar = ({
               onMouseEnter={(e) => onLibraryTileEnter(e, item.type)}
               onMouseLeave={onLibraryTileLeave}
               onDoubleClick={(e) => handleLibraryTileDoubleClick(e, item.type)}
-              aria-label={
-                NODE_KEYS[item.type]
-                  ? `${item.label}. Arrastra al lienzo. Doble clic para añadir. Atajo ${NODE_KEYS[item.type].toUpperCase()}.`
-                  : `${item.label}. Arrastra al lienzo. Doble clic para añadir.`
-              }
+              aria-label={`${item.label}. Arrastra al lienzo. Doble clic para añadir.`}
               style={{
                 flexShrink: 0,
-                width: 40,
-                height: 36,
+                width: 24,
+                height: 22,
                 display: 'flex',
                 flexDirection: 'column',
                 alignItems: 'center',
                 justifyContent: 'center',
-                gap: 2,
-                borderRadius: 8,
+                gap: 0,
+                borderRadius: 6,
                 border: isFoldderTile ? '1px solid #b081f1' : '1px solid rgba(255,255,255,0.06)',
-                background: isFoldderTile ? 'transparent' : 'rgba(255,255,255,0.04)',
+                background: '#000000',
                 cursor: 'grab',
                 transition: 'all 0.15s',
               }}
               className={
                 isFoldderTile
-                  ? "relative hover:bg-transparent hover:border-[#b081f1] active:scale-95"
-                  : "relative hover:bg-white/10 hover:border-white/20 active:scale-95"
+                  ? "relative !bg-transparent !border-0 hover:!bg-transparent hover:!border-transparent hover:!shadow-none active:scale-95"
+                  : "relative !bg-transparent !border-0 hover:!bg-transparent hover:!border-transparent hover:!shadow-none active:scale-95"
               }
             >
-              <KeyBadge nodeType={item.type} />
-              <SidebarLibraryNodeIcon type={item.type} size={28} />
-              <span style={{ fontSize: 9.8, fontWeight: 700, color: 'rgba(255,255,255,0.92)', letterSpacing: '0.04em', lineHeight: 1, textShadow: '0 1px 2px rgba(0,0,0,0.35)' }}>
+              <SidebarLibraryNodeIcon type={item.type} size={24} />
+              <span style={{ fontSize: 7.4, fontWeight: 300, color: 'rgba(255,255,255,0.92)', letterSpacing: '0.03em', lineHeight: 1, textShadow: '0 1px 2px rgba(0,0,0,0.35)' }}>
                 {item.label}
               </span>
             </div>
@@ -376,12 +368,12 @@ const Sidebar = ({
         className={
           sidebarLockedCollapsed
             ? 'absolute left-0 top-0 h-full w-0 overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]'
-            : 'absolute left-0 top-0 h-full w-0 overflow-hidden group-hover/sidebar:w-[200px] transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]'
+            : 'absolute left-0 top-0 h-full w-0 overflow-hidden group-hover/sidebar:w-[148px] transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]'
         }
         style={{ willChange: 'width' }}
       >
-        <div className="h-full w-[200px] bg-white/5 backdrop-blur-2xl border-r border-white/8 flex flex-col min-h-0 shadow-[4px_0_40px_rgba(0,0,0,0.4)]">
-          <div className="px-3 mb-4 pt-4 flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+        <div className="h-full w-[148px] bg-transparent border-r border-white/8 flex flex-col min-h-0">
+          <div className="px-0 mb-2 pt-2 flex-1 min-h-0 overflow-y-auto custom-scrollbar">
             <div className="text-[10px] font-black text-white/60 uppercase tracking-[3px] mb-5 flex items-center gap-2 px-1">
               <NodeIconMono iconKey="layout" size={13} className="shrink-0 text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)]" /> <span>Node Library</span>
             </div>
@@ -391,7 +383,7 @@ const Sidebar = ({
               <h3 className="text-[8px] font-black text-white/55 uppercase tracking-widest mb-3 px-1 flex items-center gap-1.5 whitespace-nowrap overflow-hidden">
                 <NodeIconMono iconKey="asset" size={10} className="shrink-0 text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)]" /> <span>Ingesta</span>
               </h3>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="mx-auto grid w-full max-w-[124px] grid-cols-2 gap-[1px]">
                 {[
                   { type: 'projectBrain', label: 'Brain' },
                   { type: 'projectAssets', label: 'Foldder' },
@@ -402,20 +394,24 @@ const Sidebar = ({
                   { type: 'pinterestSearch', label: 'Pinterest' },
                 ].map(item => (
                   <div key={item.type}
-                    className={`dndnode relative flex flex-col items-center justify-center gap-1 py-3 px-2 border rounded-2xl cursor-grab active:scale-95 transition-all text-center aspect-square ${
-                      item.type === 'projectAssets'
-                        ? '!bg-transparent hover:!bg-transparent border-[#b081f1] hover:border-[#b081f1]'
-                        : '!bg-white/20 hover:!bg-white/30 border-white/25 hover:border-emerald-400/50'
-                    }`}
+                    className="dndnode group/tile relative flex aspect-square w-full flex-col items-center justify-center gap-0 py-1 px-0 cursor-grab active:scale-95 transition-all text-center !bg-transparent !border-0 hover:!bg-transparent hover:!border-transparent hover:!shadow-none"
+                    style={tileShellStyle}
                     onDragStart={(e) => onDragStart(e, item.type)} onDragEnd={() => onLibraryDragEnd?.()} draggable
                     onMouseEnter={(e) => onLibraryTileEnter(e, item.type)}
                     onMouseLeave={onLibraryTileLeave}
                     onDoubleClick={(e) => handleLibraryTileDoubleClick(e, item.type)}
-                    aria-label={`${item.label}. Arrastra al lienzo. Doble clic para añadir. Atajo ${NODE_KEYS[item.type].toUpperCase()}.`}
+                    aria-label={`${item.label}. Arrastra al lienzo. Doble clic para añadir.`}
                   >
-                    <KeyBadge nodeType={item.type} />
+                    <span
+                      aria-hidden
+                      className={`pointer-events-none absolute left-1/2 top-1/2 h-[84%] w-[84%] -translate-x-1/2 -translate-y-1/2 rounded-[10px] border bg-black transition-colors ${
+                        item.type === 'projectAssets'
+                          ? 'border-[#b081f1] group-hover/tile:border-[#b081f1]'
+                          : 'border-white/25 group-hover/tile:border-emerald-400/50'
+                      }`}
+                    />
                     <SidebarLibraryNodeIcon type={item.type} />
-                    <span className="text-[9.8px] font-black text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.35)]">{item.label}</span>
+                    <span className="relative z-[1] text-[7px] font-light text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.35)]">{item.label}</span>
                     <TypeIndicators nodeType={item.type} />
                   </div>
                 ))}
@@ -427,7 +423,7 @@ const Sidebar = ({
               <h3 className="text-[8px] font-black text-white/55 uppercase tracking-widest mb-3 px-1 flex items-center gap-1.5">
                 <NodeIconMono iconKey="grok" size={10} className="shrink-0 text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)]" /> <span>Inteligencia</span>
               </h3>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="mx-auto grid w-full max-w-[124px] grid-cols-2 gap-[1px]">
                 {[
                   { type: 'backgroundRemover', label: 'Matting' },
                   { type: 'mediaDescriber',    label: 'Eye' },
@@ -438,16 +434,20 @@ const Sidebar = ({
                   { type: 'vfxGenerator',      label: 'VFX Generator' },
                 ].map(item => (
                   <div key={item.type}
-                    className="dndnode relative flex flex-col items-center justify-center gap-1 py-3 px-2 !bg-white/20 hover:!bg-white/30 border border-white/25 hover:border-cyan-400/50 rounded-2xl cursor-grab active:scale-95 transition-all text-center aspect-square"
+                    className="dndnode group/tile relative flex aspect-square w-full flex-col items-center justify-center gap-0 py-1 px-0 cursor-grab active:scale-95 transition-all text-center !bg-transparent !border-0 hover:!bg-transparent hover:!border-transparent hover:!shadow-none"
+                    style={tileShellStyle}
                     onDragStart={(e) => onDragStart(e, item.type)} onDragEnd={() => onLibraryDragEnd?.()} draggable
                     onMouseEnter={(e) => onLibraryTileEnter(e, item.type)}
                     onMouseLeave={onLibraryTileLeave}
                     onDoubleClick={(e) => handleLibraryTileDoubleClick(e, item.type)}
-                    aria-label={`${item.label}. Arrastra al lienzo. Doble clic para añadir. Atajo ${NODE_KEYS[item.type].toUpperCase()}.`}
+                    aria-label={`${item.label}. Arrastra al lienzo. Doble clic para añadir.`}
                   >
-                    <KeyBadge nodeType={item.type} />
+                    <span
+                      aria-hidden
+                      className="pointer-events-none absolute left-1/2 top-1/2 h-[84%] w-[84%] -translate-x-1/2 -translate-y-1/2 rounded-[10px] border border-white/25 bg-black transition-colors group-hover/tile:border-cyan-400/50"
+                    />
                     <SidebarLibraryNodeIcon type={item.type} />
-                    <span className="text-[9.8px] font-black text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.35)]">{item.label}</span>
+                    <span className="relative z-[1] text-[7px] font-light text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.35)]">{item.label}</span>
                     <TypeIndicators nodeType={item.type} />
                   </div>
                 ))}
@@ -459,7 +459,7 @@ const Sidebar = ({
               <h3 className="text-[8px] font-black text-white/55 uppercase tracking-widest mb-3 px-1 flex items-center gap-1.5">
                 <NodeIconMono iconKey="concat" size={10} className="shrink-0 text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)]" /> <span>Lógica</span>
               </h3>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="mx-auto grid w-full max-w-[124px] grid-cols-2 gap-[1px]">
                 {[
                   { type: 'concatenator', label: 'Concat' },
                   { type: 'listado',      label: 'Listado' },
@@ -468,16 +468,20 @@ const Sidebar = ({
                   { type: 'spaceOutput',  label: 'Exit' },
                 ].map(item => (
                   <div key={item.type}
-                    className="dndnode relative flex flex-col items-center justify-center gap-1 py-3 px-2 !bg-white/20 hover:!bg-white/30 border border-white/25 hover:border-blue-400/50 rounded-2xl cursor-grab active:scale-95 transition-all text-center aspect-square"
+                    className="dndnode group/tile relative flex aspect-square w-full flex-col items-center justify-center gap-0 py-1 px-0 cursor-grab active:scale-95 transition-all text-center !bg-transparent !border-0 hover:!bg-transparent hover:!border-transparent hover:!shadow-none"
+                    style={tileShellStyle}
                     onDragStart={(e) => onDragStart(e, item.type)} onDragEnd={() => onLibraryDragEnd?.()} draggable
                     onMouseEnter={(e) => onLibraryTileEnter(e, item.type)}
                     onMouseLeave={onLibraryTileLeave}
                     onDoubleClick={(e) => handleLibraryTileDoubleClick(e, item.type)}
-                    aria-label={`${item.label}. Arrastra al lienzo. Doble clic para añadir. Atajo ${NODE_KEYS[item.type].toUpperCase()}.`}
+                    aria-label={`${item.label}. Arrastra al lienzo. Doble clic para añadir.`}
                   >
-                    <KeyBadge nodeType={item.type} />
+                    <span
+                      aria-hidden
+                      className="pointer-events-none absolute left-1/2 top-1/2 h-[84%] w-[84%] -translate-x-1/2 -translate-y-1/2 rounded-[10px] border border-white/25 bg-black transition-colors group-hover/tile:border-blue-400/50"
+                    />
                     <SidebarLibraryNodeIcon type={item.type} />
-                    <span className="text-[9.8px] font-black text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.35)]">{item.label}</span>
+                    <span className="relative z-[1] text-[7px] font-light text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.35)]">{item.label}</span>
                     <TypeIndicators nodeType={item.type} />
                   </div>
                 ))}
@@ -489,7 +493,7 @@ const Sidebar = ({
               <h3 className="text-[8px] font-black text-white/55 uppercase tracking-widest mb-3 px-1 flex items-center gap-1.5">
                 <NodeIconMono iconKey="canvas" size={10} className="shrink-0 text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)]" /> <span>Composición</span>
               </h3>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="mx-auto grid w-full max-w-[124px] grid-cols-2 gap-[1px]">
                 {[
                   { type: 'imageComposer', label: 'Layout' },
                   { type: 'photoRoom',     label: 'PhotoRoom' },
@@ -502,16 +506,20 @@ const Sidebar = ({
                   { type: 'presenter',     label: 'Presenter' },
                 ].map(item => (
                   <div key={item.type}
-                    className="dndnode relative flex flex-col items-center justify-center gap-1 py-3 px-2 !bg-white/20 hover:!bg-white/30 border border-white/25 hover:border-amber-400/50 rounded-2xl cursor-grab active:scale-95 transition-all text-center aspect-square"
+                    className="dndnode group/tile relative flex aspect-square w-full flex-col items-center justify-center gap-0 py-1 px-0 cursor-grab active:scale-95 transition-all text-center !bg-transparent !border-0 hover:!bg-transparent hover:!border-transparent hover:!shadow-none"
+                    style={tileShellStyle}
                     onDragStart={(e) => onDragStart(e, item.type)} onDragEnd={() => onLibraryDragEnd?.()} draggable
                     onMouseEnter={(e) => onLibraryTileEnter(e, item.type)}
                     onMouseLeave={onLibraryTileLeave}
                     onDoubleClick={(e) => handleLibraryTileDoubleClick(e, item.type)}
-                    aria-label={`${item.label}. Arrastra al lienzo. Doble clic para añadir. Atajo ${NODE_KEYS[item.type].toUpperCase()}.`}
+                    aria-label={`${item.label}. Arrastra al lienzo. Doble clic para añadir.`}
                   >
-                    <KeyBadge nodeType={item.type} />
+                    <span
+                      aria-hidden
+                      className="pointer-events-none absolute left-1/2 top-1/2 h-[84%] w-[84%] -translate-x-1/2 -translate-y-1/2 rounded-[10px] border border-white/25 bg-black transition-colors group-hover/tile:border-amber-400/50"
+                    />
                     <SidebarLibraryNodeIcon type={item.type} />
-                    <span className="text-[9.8px] font-black text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.35)]">{item.label}</span>
+                    <span className="relative z-[1] text-[7px] font-light text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.35)]">{item.label}</span>
                     <TypeIndicators nodeType={item.type} />
                   </div>
                 ))}

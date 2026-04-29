@@ -66,7 +66,7 @@ function dockLayoutSpreadPx(
 }
 
 /**
- * Accesos fijos (no personalizables): Brain → Design → Image → PhotoRoom → Video → VFX → Foldder. (Presenter solo en la librería.)
+ * Accesos fijos (no personalizables): Brain → Design → Image → PhotoRoom → Video → Foldder. (Presenter solo en la librería.)
  * Brain y Foldder: clic → panel fullscreen (tras breve espera); doble clic → nodo projectBrain / projectAssets en el lienzo. Resto: doble clic añade el nodo del pin. Orden estable.
  */
 export const TOPBAR_FIXED_PIN_TYPES = [
@@ -75,7 +75,6 @@ export const TOPBAR_FIXED_PIN_TYPES = [
   "nanoBanana",
   "photoRoom",
   "geminiVideo",
-  "vfxGenerator",
   "files",
 ] as const;
 
@@ -85,11 +84,10 @@ const TOPBAR_PIN_UI: Record<
   { title: string; shortLabel: string }
 > = {
   brain: { title: "Brain — marca y conocimiento", shortLabel: "Brain" },
-  designer: { title: "Designer Studio", shortLabel: "Design" },
+  designer: { title: "Designer Studio", shortLabel: "Designer" },
   nanoBanana: { title: "Image Generator", shortLabel: "Image" },
-  photoRoom: { title: "PhotoRoom — retoque de imagen", shortLabel: "Room" },
+  photoRoom: { title: "PhotoRoom — retoque de imagen", shortLabel: "Photo" },
   geminiVideo: { title: "Video Generator", shortLabel: "Video" },
-  vfxGenerator: { title: "VFX Generator", shortLabel: "VFX" },
   files: { title: "Foldder — multimedia del proyecto", shortLabel: "Foldder" },
 };
 
@@ -153,6 +151,8 @@ function TopbarPinChip({
   const Glyph = TOPBAR_GLYPH_BY_NODE_TYPE[type];
   const isBrain = type === "brain";
   const isAssets = type === "files";
+  const isDesigner = type === "designer";
+  const isPhotoRoom = type === "photoRoom";
   const brainOpenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const assetsOpenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -169,10 +169,14 @@ function TopbarPinChip({
         type="button"
         className={
           isAssets
-            ? `${chipClassName} !bg-transparent !border-[#b081f1] hover:!bg-transparent active:!bg-transparent focus:!bg-transparent hover:!border-[#b081f1] hover:ring-[#b081f1]/60`
-            : chipClassName
+            ? `${chipClassName} !bg-transparent !border-[#b081f1] hover:!bg-transparent active:!bg-transparent focus:!bg-transparent hover:!border-[#b081f1] hover:ring-black/50`
+            : isDesigner
+              ? `${chipClassName} !bg-transparent !border-[#fdb04b] hover:!bg-transparent active:!bg-transparent focus:!bg-transparent hover:!border-[#fdb04b] hover:ring-black/50`
+              : isPhotoRoom
+                ? `${chipClassName} !bg-transparent !border-[#63d4fd] hover:!bg-transparent active:!bg-transparent focus:!bg-transparent hover:!border-[#63d4fd] hover:ring-black/50`
+                : chipClassName
         }
-        style={isAssets ? { backgroundColor: "transparent" } : undefined}
+        style={isAssets || isDesigner || isPhotoRoom ? { backgroundColor: "transparent" } : undefined}
         aria-label={
           isBrain
             ? `${title}. Clic para abrir studio (marca y conocimiento). Doble clic para añadir el nodo Brain al lienzo.`
@@ -321,9 +325,9 @@ export function TopbarPins({
     "mt-0.5 max-w-[4rem] text-center text-[6px] font-medium leading-none tracking-wide text-white uppercase sm:text-[6.5px]";
 
   const chipEmbedded =
-    "flex min-h-[3.85rem] min-w-[3.85rem] max-w-[4.25rem] cursor-pointer flex-col items-center justify-center gap-0.5 rounded-2xl border border-white/30 bg-white/15 px-1 py-1.5 transition-all duration-150 hover:bg-white/25 hover:ring-2 hover:ring-inset hover:ring-white/45 select-none";
+    "flex min-h-[3.85rem] min-w-[3.85rem] max-w-[4.25rem] cursor-pointer flex-col items-center justify-center gap-0.5 rounded-2xl border border-white/30 bg-white/15 px-1 py-1.5 transition-all duration-150 hover:bg-white/25 hover:ring-2 hover:ring-inset hover:ring-black/50 select-none";
   const chipDefault =
-    "flex min-h-[3.75rem] min-w-[3.75rem] max-w-[4.1rem] cursor-pointer flex-col items-center justify-center gap-0.5 rounded-xl border border-white/20 bg-white/[0.12] px-1 py-1.5 transition-all duration-150 hover:bg-white/[0.2] hover:ring-2 hover:ring-inset hover:ring-white/40 select-none";
+    "flex min-h-[3.75rem] min-w-[3.75rem] max-w-[4.1rem] cursor-pointer flex-col items-center justify-center gap-0.5 rounded-xl border border-white/20 bg-white/[0.12] px-1 py-1.5 transition-all duration-150 hover:bg-white/[0.2] hover:ring-2 hover:ring-inset hover:ring-black/50 select-none";
 
   const dockStripH = pinRowSidebarStyle ? DOCK_STRIP_H_SIDEBAR : DOCK_STRIP_H_DEFAULT;
 

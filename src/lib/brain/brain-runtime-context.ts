@@ -8,6 +8,7 @@ import { getBrainFreshnessSummary, getBrainVersion, normalizeBrainMeta } from ".
 import { normalizeVisualDnaSlots } from "@/lib/brain/visual-dna-slot/normalize";
 import type { VisualDnaLayer } from "@/lib/brain/visual-dna-slot/types";
 import { buildSelectedVisualDnaSlotRuntimeView, summarizeVisualDnaSlots } from "@/lib/brain/visual-dna-slot/runtime-layer";
+import { summarizeRuntimeContextTrace } from "@/lib/brain/brain-decision-trace";
 
 function isGuionistaTarget(t: string): boolean {
   const n = t.toLowerCase();
@@ -151,7 +152,7 @@ export function buildBrainRuntimeContext(input: {
           documentsAnalyzed: input.assets.knowledge.documents.filter((d) => d.status === "Analizado").length,
         };
 
-  return {
+  const runtimeContext: BrainRuntimeContext = {
     targetNodeType: input.targetNodeType,
     targetNodeId: input.targetNodeId,
     projectScopeId: input.projectScopeId,
@@ -182,5 +183,60 @@ export function buildBrainRuntimeContext(input: {
     evidence,
     confidence,
     warnings,
+  };
+
+  const possibleSlices = Array.from(
+    new Set(
+      [
+        "slice:brand",
+        "slice:voice",
+        "slice:knowledge",
+        "slice:visual_dna",
+        "slice:brand_visual_dna",
+        "slice:content_dna",
+        "slice:safe_creative_rules",
+        "slice:safe_generation",
+        "slice:approved_claims",
+        "slice:forbidden_claims",
+        "slice:article_structures",
+        "slice:product_language",
+        "slice:visual_integration",
+        "slice:atmosphere",
+        "slice:narrative",
+        "slice:core_brain",
+        "slice:layout",
+        "slice:palette",
+        ...(strategy.personas.length ? ["slice:personas"] : []),
+        ...(strategy.messageBlueprints.length ? ["slice:message_blueprints"] : []),
+        ...(strategy.approvedPatterns.length ? ["slice:approved_patterns"] : []),
+        ...(uniqAvoid.length ? ["slice:avoid"] : []),
+        ...(strategy.visualDnaSlots?.length ? ["slice:visual_dna_slots"] : []),
+      ].filter(Boolean),
+    ),
+  );
+  const includedSlices = slices.filter((s) => s.startsWith("slice:"));
+  const includedSet = new Set(includedSlices);
+  const ignoredSlices = possibleSlices.filter((s) => !includedSet.has(s));
+  const decisionTrace = summarizeRuntimeContextTrace({
+    projectScopeId: input.projectScopeId,
+    targetNodeType: input.targetNodeType,
+    targetNodeId: input.targetNodeId,
+    useCase: input.useCase,
+    contextSlices: slices,
+    warnings,
+    confidence,
+    evidence,
+    staleReasons: meta.staleReasons,
+    flowNodesProvided: input.flowNodes !== undefined,
+    flowEdgesProvided: input.flowEdges !== undefined,
+    includedSlices,
+    ignoredSlices,
+  });
+
+  return {
+    ...runtimeContext,
+    traceId: decisionTrace.id,
+    traceSummary: decisionTrace.outputSummary.summary,
+    decisionTrace,
   };
 }

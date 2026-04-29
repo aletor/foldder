@@ -1,6 +1,7 @@
 import type { BrandDNA } from "./brain-models";
 import { prohibitionText } from "./brain-models";
 import type { BrainNodeType } from "./brain-telemetry";
+import type { BrainDecisionTrace } from "./brain-decision-trace";
 
 export const LEARNING_CANDIDATE_TYPES = [
   "BRAND_DNA",
@@ -147,6 +148,10 @@ export type StoredLearningCandidate = {
   sourceImageId?: string;
   sourceAnalysisId?: string;
   createdFromAnalysisVersion?: string;
+  /** Enlace a traza unificada de por qué se propuso este aprendizaje. */
+  decisionTraceId?: string;
+  /** Snapshot ligero de la traza (complementa `candidate.evidence`; no la sustituye). */
+  decisionTrace?: BrainDecisionTrace;
 };
 
 export interface LearningCandidateStore {

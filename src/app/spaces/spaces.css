@@ -302,25 +302,26 @@
 }
 
 .node-header {
-  padding: calc(16px * 0.7) calc(20px * 0.7);
+  padding: 8px 10px;
   display: flex;
   align-items: center;
-  gap: calc(12px * 0.7);
+  gap: 6px;
   background: rgba(255, 255, 255, 0.1);
   border-bottom: none;
   font-weight: 300;
-  letter-spacing: 0.1em;
-  /* Altura visual ~−30% vs bloque anterior; título −30% */
-  font-size: calc(0.7rem * 1.9 * 0.8 * 0.7);
+  letter-spacing: 0.11em;
+  font-size: 9px;
   text-transform: uppercase;
   color: #fff;
   border-top-left-radius: 12px;
   border-top-right-radius: 12px;
   overflow: hidden;
+  min-height: 30px;
+  animation: node-header-appear 220ms ease-out both;
 }
 
 .node-header__title {
-  line-height: 1.2;
+  line-height: 1.1;
   font-weight: 300;
 }
 
@@ -336,8 +337,8 @@
 
 /* Icono cabecera acorde al header compacto */
 .node-header .foldder-node-icon-wrap svg.foldder-node-icon {
-  width: calc(24px * 0.7) !important;
-  height: calc(24px * 0.7) !important;
+  width: 14px !important;
+  height: 14px !important;
 }
 
 /* Foldder node icons: hover on card, micro scale + clarity (see foldder-icons.tsx) */
@@ -364,12 +365,23 @@
 .node-header .node-badge {
   margin-left: auto;
   background: rgba(0, 0, 0, 0.2);
-  padding: calc(3px * 0.7) calc(10px * 0.7);
-  border-radius: calc(4px * 0.7);
-  font-size: calc(10px * 0.8 * 0.7);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 7px;
   font-weight: 300;
   color: rgba(255, 255, 255, 0.88);
   letter-spacing: 0.15em;
+}
+
+@keyframes node-header-appear {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .node-content {

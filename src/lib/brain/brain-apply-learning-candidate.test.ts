@@ -12,7 +12,10 @@ function row(partial: Partial<StoredLearningCandidate>): StoredLearningCandidate
     sourceSessionIds: partial.sourceSessionIds ?? [],
     createdAt: partial.createdAt ?? "2026-01-01T00:00:00.000Z",
     ...(partial.workspaceId ? { workspaceId: partial.workspaceId } : {}),
+    ...(partial.nodeId ? { nodeId: partial.nodeId } : {}),
     ...(partial.telemetryNodeType ? { telemetryNodeType: partial.telemetryNodeType } : {}),
+    ...(partial.decisionTraceId ? { decisionTraceId: partial.decisionTraceId } : {}),
+    ...(partial.decisionTrace ? { decisionTrace: partial.decisionTrace } : {}),
   };
 }
 
@@ -48,6 +51,7 @@ describe("applyLearningCandidateToProjectAssets", () => {
     const out = applyLearningCandidateToProjectAssets(assets, r, "DISMISS");
     expect(out.applied).toBe(false);
     expect(out.changedPaths).toHaveLength(0);
+    expect(out.nextAssets.strategy.decisionTraces).toBeUndefined();
   });
 
   it("VISUAL_MEMORY + PROMOTE añade confirmedVisualPatterns", () => {
@@ -177,5 +181,41 @@ describe("applyLearningCandidateToProjectAssets", () => {
     const out = applyLearningCandidateToProjectAssets(assets, r, "SAVE_AS_CONTEXT");
     expect(out.applied).toBe(true);
     expect(out.nextAssets.knowledge.contextualMemories?.[0]?.isOutlier).toBe(false);
+  });
+
+  it("al resolver aprendizaje persistido, guarda traces con persist_immediately", () => {
+    const assets = base();
+    const r = row({
+      id: "lc-persist-1",
+      nodeId: "designer-1",
+      telemetryNodeType: "DESIGNER",
+      decisionTraceId: "bdt_pending_1",
+      decisionTrace: {
+        id: "bdt_pending_1",
+        kind: "learning_candidate",
+        createdAt: "2026-01-02T00:00:00.000Z",
+        persistenceIntent: "pending_review",
+        inputs: [{ id: "candidate_topic", kind: "candidate", label: "PROJECT_MEMORY / tone" }],
+        outputSummary: { summary: "Se detectan ajustes consistentes." },
+        confidence: 0.71,
+      },
+      candidate: {
+        type: "PROJECT_MEMORY",
+        scope: "PROJECT",
+        topic: "project_memory",
+        value: "Mantener tono breve en este proyecto.",
+        confidence: 0.71,
+        reasoning: "y".repeat(20),
+        evidence: { sourceNodeIds: ["designer-1"], sourceNodeTypes: ["DESIGNER"] },
+      },
+    });
+    const out = applyLearningCandidateToProjectAssets(assets, r, "KEEP_IN_PROJECT");
+    const traces = out.nextAssets.strategy.decisionTraces ?? [];
+    expect(out.applied).toBe(true);
+    expect(traces.length).toBeGreaterThan(0);
+    const promotedCandidate = traces.find((t) => t.id === "bdt_pending_1");
+    expect(promotedCandidate?.persistenceIntent).toBe("persist_immediately");
+    const resolutionTrace = traces.find((t) => t.kind === "merge_resolution");
+    expect(resolutionTrace?.persistenceIntent).toBe("persist_immediately");
   });
 });

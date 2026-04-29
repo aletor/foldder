@@ -2,6 +2,7 @@
 
 import React, { memo, useState, useEffect } from "react";
 import { useNodes, useReactFlow } from "@xyflow/react";
+import { Maximize2 } from "lucide-react";
 
 const FOLDDER_HEADER_TYPEWRITER_DELAY_MS = 1000;
 
@@ -117,4 +118,40 @@ export const FoldderNodeHeaderTitle = memo(function FoldderNodeHeaderTitle({
 
   const titleClass = ["min-w-0 flex-1 node-header__title font-light", className].filter(Boolean).join(" ");
   return <span className={titleClass}>{display}</span>;
+});
+
+/** Botón central unificado para abrir Studio Mode en previews de nodos. */
+export const FoldderStudioModeCenterButton = memo(function FoldderStudioModeCenterButton({
+  onClick,
+  disabled,
+  className,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  className?: string;
+}) {
+  return (
+    <div className={`pointer-events-none absolute inset-0 z-[15] overflow-hidden opacity-0 transition-opacity duration-200 group-hover/node:opacity-100 ${className ?? ""}`}>
+      <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-2">
+        <button
+          type="button"
+          disabled={disabled}
+          title="Studio Mode"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (!disabled) onClick();
+          }}
+          className="pointer-events-auto nodrag flex max-w-[min(100%,220px)] flex-col items-center gap-1.5 rounded-2xl border border-white/30 bg-white/[0.12] px-6 py-3.5 shadow-xl backdrop-blur-xl transition-all duration-300 ease-out hover:scale-[1.03] hover:bg-white/[0.22] hover:shadow-2xl disabled:pointer-events-none disabled:opacity-35"
+        >
+          <span className="font-mono text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-400">
+            Studio
+          </span>
+          <span className="flex items-center gap-2 font-mono text-[17px] font-black uppercase tracking-wide text-zinc-50">
+            <Maximize2 size={22} strokeWidth={2.5} className="shrink-0 text-violet-200" />
+            Mode
+          </span>
+        </button>
+      </div>
+    </div>
+  );
 });

@@ -2,6 +2,7 @@
  * Contrato de memoria creativa Brain (tipos transversales).
  * Persistencia principal: `project.metadata.assets` + normalización en `normalizeProjectAssets`.
  */
+import type { BrainDecisionTrace } from "./brain-decision-trace";
 
 export const BRAIN_EXTRACTED_CONTEXT_SCHEMA_VERSION = "1.0.0";
 
@@ -217,6 +218,12 @@ export type BrainRuntimeContext = {
   evidence: BrainEvidenceItem[];
   confidence: number;
   warnings: string[];
+  /** ID de trace unificada (diagnóstico) para esta construcción de runtime context. */
+  traceId?: string;
+  /** Resumen corto de la decisión (útil para logs/UI sin payload extra). */
+  traceSummary?: string;
+  /** Trace estructurada opcional; la persistencia la decide el caller. */
+  decisionTrace?: BrainDecisionTrace;
 };
 
 export const VISUAL_SIGNAL_SOURCE_PRIORITY = [

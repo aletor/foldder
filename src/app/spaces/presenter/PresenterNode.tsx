@@ -12,6 +12,9 @@ import type { DesignerNodeData, DesignerPageState } from "../designer/DesignerNo
 import type { PresenterImageVideoPlacement } from "./presenter-image-video-types";
 import { PresenterStudio } from "./PresenterStudio";
 
+const PRESENTER_NODE_MAX_WIDTH = 960;
+const PRESENTER_NODE_MAX_HEIGHT = 2200;
+
 export type PresenterNodeData = {
   label?: string;
   /** Vídeos superpuestos a imágenes en el lienzo del Presenter (no forma parte del Designer). */
@@ -99,7 +102,13 @@ export const PresenterNode = memo(({ id, data, selected }: NodeProps<any>) => {
 
   return (
     <div className="custom-node tool-node group/node" style={{ minWidth: 260 }}>
-      <PresenterNodeResizer minWidth={260} minHeight={180} maxWidth={480} maxHeight={360} isVisible={selected} />
+      <PresenterNodeResizer
+        minWidth={260}
+        minHeight={180}
+        maxWidth={PRESENTER_NODE_MAX_WIDTH}
+        maxHeight={PRESENTER_NODE_MAX_HEIGHT}
+        isVisible={selected}
+      />
 
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Presenter" />
 

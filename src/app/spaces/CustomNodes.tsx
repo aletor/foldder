@@ -125,6 +125,7 @@ import {
 } from "@/lib/brain/build-brain-visual-prompt-context";
 import { useBrainNodeTelemetry } from "@/lib/brain/use-brain-node-telemetry";
 import { DEFAULT_EDGE_COLOR, FOLDDER_LOGO_BLUE, HANDLE_COLORS } from './handle-type-colors';
+import { loadVideoDimensions } from './presenter/presenter-video-frame-layout';
 import {
   NodeIcon,
   resolveFoldderNodeState,
@@ -132,7 +133,14 @@ import {
   FOLDDER_INTERNAL_CATEGORY_TO_ICON,
   type FoldderIconKey,
 } from './foldder-icons';
-import { NodeLabel, FoldderNodeHeaderTitle } from "./foldder-node-ui";
+import { NodeLabel, FoldderNodeHeaderTitle, FoldderStudioModeCenterButton } from "./foldder-node-ui";
+import {
+  loadImageDimensions,
+  nodeFrameNeedsSync,
+  parseAspectRatioValue,
+  resolveAspectLockedNodeFrame,
+  resolveNodeChromeHeight,
+} from "./studio-node-aspect";
 import {
   applyCanvasGroupCollapse,
   applyPromptValueToEdgeSource,
@@ -206,78 +214,6 @@ function ViewerOpenButton({ nodeId, disabled, className }: { nodeId: string; dis
   );
 }
 
-/** Studio en preview: centrado H+V en el área de preview (chip grande). Solo visible en hover. */
-function StudioModeCenterButton({
-  onClick,
-  disabled,
-  className,
-}: {
-  onClick: () => void;
-  disabled?: boolean;
-  className?: string;
-}) {
-  return (
-    <div className={`pointer-events-none absolute inset-0 z-[15] overflow-hidden opacity-0 transition-opacity duration-200 group-hover/node:opacity-100 ${className ?? ''}`}>
-      <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-2">
-        <button
-          type="button"
-          disabled={disabled}
-          title="Studio Mode"
-          onClick={(e) => {
-            e.stopPropagation();
-            if (!disabled) onClick();
-          }}
-          className="pointer-events-auto nodrag flex max-w-[min(100%,220px)] flex-col items-center gap-1.5 rounded-2xl border border-white/30 bg-white/[0.12] px-6 py-3.5 shadow-xl backdrop-blur-xl transition-all duration-300 ease-out hover:scale-[1.03] hover:bg-white/[0.22] hover:shadow-2xl disabled:pointer-events-none disabled:opacity-35"
-        >
-          <span className="font-mono text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-400">
-            Studio
-          </span>
-          <span className="flex items-center gap-2 font-mono text-[17px] font-black uppercase tracking-wide text-zinc-50">
-            <Maximize2 size={22} strokeWidth={2.5} className="shrink-0 text-violet-200" />
-            Mode
-          </span>
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/** Nano Banana: botón Studio centrado en el área de preview. Solo visible con hover sobre el nodo (`group/node`). */
-function NanoBananaStudioModeButton({
-  onClick,
-  disabled,
-}: {
-  onClick: () => void;
-  disabled?: boolean;
-}) {
-  return (
-    <div className="pointer-events-none absolute inset-0 z-[15] overflow-hidden opacity-0 transition-opacity duration-200 group-hover/node:opacity-100">
-      <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-2">
-        <button
-          type="button"
-          disabled={disabled}
-          title="Abrir Studio"
-          onClick={(e) => {
-            e.stopPropagation();
-            if (!disabled) onClick();
-          }}
-          className="pointer-events-auto nodrag flex max-w-[min(100%,220px)] flex-col items-center gap-1.5 rounded-2xl border border-white/30 bg-white/[0.12] px-6 py-3.5 shadow-xl backdrop-blur-xl transition-all duration-300 ease-out hover:scale-[1.03] hover:bg-white/[0.22] hover:shadow-2xl disabled:pointer-events-none disabled:opacity-35"
-        >
-          <span className="font-mono text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-400">
-            Studio
-          </span>
-          <span className="flex items-center gap-2 font-mono text-[17px] font-black uppercase tracking-wide text-zinc-50">
-            <Maximize2 size={22} strokeWidth={2.5} className="shrink-0 text-violet-200" />
-            Mode
-          </span>
-          <span className="text-center text-[10px] font-semibold uppercase leading-tight tracking-wide text-zinc-500">
-            y abre Studio
-          </span>
-        </button>
-      </div>
-    </div>
-  );
-}
 
 /** Media Input: mismo patrón que Studio Mode — hover sobre el preview para elegir otro archivo (misma lógica que upload inicial). */
 function MediaInputChangeMediaButton({
@@ -402,6 +338,7 @@ export const ButtonEdge = ({
 
 /** Tras soltar el resize: encuadra solo este nodo (mismo criterio que foco tras crear nodo). */
 const NODE_RESIZE_END_FIT_PADDING = 0.8;
+const STUDIO_NODE_MAX_HEIGHT = 2200;
 
 function FoldderNodeResizer(props: ComponentProps<typeof NodeResizer>) {
   const nodeId = useNodeId();
@@ -917,6 +854,9 @@ export const ImageComposerNode = memo(({ id, data, selected }: NodeProps<any>) =
   const edges = useEdges();
   const { setNodes } = useReactFlow();
   const updateNodeInternals = useUpdateNodeInternals();
+  const currentNode = nodes.find((node) => node.id === id);
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const previewRef = useRef<HTMLDivElement | null>(null);
 
   const nodeData = data as BaseNodeData & {
     layers?: ComposerLayer[];          // internal layers (rects, colors, texts)
@@ -991,6 +931,42 @@ export const ImageComposerNode = memo(({ id, data, selected }: NodeProps<any>) =
   useEffect(() => {
     updateNodeInternals(id);
   }, [id, handleIds.join(','), updateNodeInternals]);
+
+  useLayoutEffect(() => {
+    const chromeHeight = resolveNodeChromeHeight(frameRef.current, previewRef.current);
+    const nextFrame = resolveAspectLockedNodeFrame({
+      node: currentNode,
+      contentWidth: COMPOSER_ARTBOARD_W,
+      contentHeight: COMPOSER_ARTBOARD_H,
+      minWidth: 340,
+      maxWidth: 1600,
+      minHeight: 300,
+      maxHeight: STUDIO_NODE_MAX_HEIGHT,
+      chromeHeight,
+    });
+    if (!nodeFrameNeedsSync(currentNode, nextFrame)) return;
+    setNodes((nds: any) =>
+      nds.map((node: any) =>
+        node.id === id
+          ? {
+              ...node,
+              width: nextFrame.width,
+              height: nextFrame.height,
+              style: { ...node.style, width: nextFrame.width, height: nextFrame.height },
+            }
+          : node,
+      ),
+    );
+    requestAnimationFrame(() => updateNodeInternals(id));
+  }, [
+    currentNode?.width,
+    currentNode?.height,
+    currentNode?.measured?.width,
+    currentNode?.measured?.height,
+    id,
+    setNodes,
+    updateNodeInternals,
+  ]);
 
   // All layers for rendering (internal first = bottom, image inputs on top)
   const allLayersForRender = useMemo(() => {
@@ -1155,8 +1131,9 @@ export const ImageComposerNode = memo(({ id, data, selected }: NodeProps<any>) =
     <div
       className="custom-node composer-node min-w-0 max-w-full group/node"
       style={{ minWidth: 340 }}
+      ref={frameRef}
     >
-      <FoldderNodeResizer minWidth={340} minHeight={300} isVisible={selected} />
+      <FoldderNodeResizer minWidth={340} minHeight={300} maxWidth={1600} maxHeight={STUDIO_NODE_MAX_HEIGHT} keepAspectRatio isVisible={selected} />
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Composer" />
 
       {/* Input handles */}
@@ -1181,7 +1158,7 @@ export const ImageComposerNode = memo(({ id, data, selected }: NodeProps<any>) =
       </div>
 
       {/* Mini canvas preview — min-w-0: flex no usa el ancho intrínseco del dataURL 1920×1080 */}
-      <div className="relative flex min-h-[120px] min-w-0 w-full max-w-full flex-1 items-center justify-center overflow-hidden bg-[#080808]">
+      <div ref={previewRef} className="relative flex min-h-[120px] min-w-0 w-full max-w-full flex-1 items-center justify-center overflow-hidden bg-[#080808]">
         {nodeData.value ? (
           <img
             src={nodeData.value}
@@ -1195,7 +1172,7 @@ export const ImageComposerNode = memo(({ id, data, selected }: NodeProps<any>) =
             <span className="text-[7px] font-black uppercase tracking-widest text-zinc-500">Connect layers or add shapes</span>
           </div>
         )}
-        <StudioModeCenterButton onClick={() => setIsStudioOpen(true)} />
+        <FoldderStudioModeCenterButton onClick={() => setIsStudioOpen(true)} />
       </div>
 
       {/* Layer panel */}
@@ -2389,7 +2366,9 @@ export const MediaInputNode = memo(({ id, data, selected }: NodeProps<any>) => {
     source?: 'upload' | 'url' | 'asset',
     metadata?: { duration?: string, resolution?: string, fps?: number, size?: string, codec?: string }
   };
+  const nodes = useNodes();
   const { setNodes, fitView } = useReactFlow();
+  const updateNodeInternals = useUpdateNodeInternals();
   const [isUploadingLocal, setIsUploadingLocal] = useState(false);
   const [showFullSize, setShowFullSize] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -2397,7 +2376,11 @@ export const MediaInputNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaFitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const previewRef = useRef<HTMLDivElement | null>(null);
+  const [mediaSize, setMediaSize] = useState<{ url: string; width: number; height: number } | null>(null);
   const isUploading = isUploadingLocal || nodeData.loading;
+  const currentNode = nodes.find((node) => node.id === id);
 
   /** Tras cargar imagen/vídeo el nodo cambia de alto (p. ej. a aspect-video): encuadrar; duración alineada con `fitAnim` (nominal/2) en page. */
   const scheduleFitViewportToThisNode = useCallback((opts?: { force?: boolean }) => {
@@ -2522,20 +2505,95 @@ export const MediaInputNode = memo(({ id, data, selected }: NodeProps<any>) => {
 
   const hasMedia = !!nodeData.value;
   const isVisual = nodeData.type === 'image' || nodeData.type === 'video';
+  const hasSizedVisualMedia =
+    hasMedia && isVisual && !!nodeData.value && mediaSize?.url === nodeData.value;
   /** Preview: vídeo 16:9; imagen conserva ratio dentro del ancho del nodo y tope de alto (cabecera + resizer ~520px). */
   const mediaPreviewFrameClass =
-    hasMedia && nodeData.type === 'video'
-      ? 'aspect-video'
-      : hasMedia && nodeData.type === 'image'
-        ? 'flex min-h-[160px] max-h-[min(440px,58vh)] items-center justify-center'
-        : 'flex min-h-[160px] items-center justify-center';
+    hasMedia && isVisual
+      ? 'flex min-h-0 flex-1 items-center justify-center'
+      : 'flex min-h-[160px] items-center justify-center';
+
+  useEffect(() => {
+    if (!hasMedia || !isVisual || !nodeData.value) return;
+    let cancelled = false;
+    const mediaUrl = nodeData.value;
+    const loadDimensions =
+      nodeData.type === 'video'
+        ? loadVideoDimensions(mediaUrl)
+        : loadImageDimensions(mediaUrl);
+    loadDimensions
+      .then(({ width, height }) => {
+        if (!cancelled) setMediaSize({ url: mediaUrl, width, height });
+      })
+      .catch(() => {
+        /* noop: si no podemos leer dimensiones, el nodo conserva su caja base */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [hasMedia, isVisual, nodeData.type, nodeData.value]);
+
+  useLayoutEffect(() => {
+    if (!hasSizedVisualMedia || !mediaSize) return;
+    const chromeHeight = resolveNodeChromeHeight(frameRef.current, previewRef.current);
+    const nextFrame = resolveAspectLockedNodeFrame({
+      node: currentNode,
+      contentWidth: mediaSize.width,
+      contentHeight: mediaSize.height,
+      minWidth: 280,
+      maxWidth: 960,
+      minHeight: 200,
+      maxHeight: STUDIO_NODE_MAX_HEIGHT,
+      chromeHeight,
+    });
+    if (!nodeFrameNeedsSync(currentNode, nextFrame)) return;
+    setNodes((nds) =>
+      nds.map((node) =>
+        node.id === id
+          ? {
+              ...node,
+              width: nextFrame.width,
+              height: nextFrame.height,
+              style: { ...node.style, width: nextFrame.width, height: nextFrame.height },
+            }
+          : node,
+      ),
+    );
+    requestAnimationFrame(() => {
+      updateNodeInternals(id);
+      scheduleFitViewportToThisNode();
+    });
+  }, [
+    currentNode?.height,
+    currentNode?.measured?.height,
+    currentNode?.measured?.width,
+    currentNode?.width,
+    hasMedia,
+    hasSizedVisualMedia,
+    id,
+    isVisual,
+    mediaSize?.height,
+    mediaSize?.url,
+    mediaSize?.width,
+    scheduleFitViewportToThisNode,
+    setNodes,
+    updateNodeInternals,
+  ]);
 
   return (
     <div
+      ref={frameRef}
       className="custom-node"
       style={{ padding: 0, minWidth: 280, borderRadius: 9, overflow: 'visible' }}
     >
-      <FoldderNodeResizer minWidth={280} minHeight={320} isVisible={selected} />
+      <FoldderNodeResizer
+        minWidth={280}
+        minHeight={hasMedia && isVisual ? 200 : 320}
+        maxWidth={hasMedia && isVisual ? 960 : undefined}
+        maxHeight={hasMedia && isVisual ? STUDIO_NODE_MAX_HEIGHT : undefined}
+        keepAspectRatio={hasSizedVisualMedia}
+        isVisible={selected}
+      />
       <NodeLabel id={id} label={nodeData.label} defaultLabel={nodeData.type ? `${nodeData.type.charAt(0).toUpperCase() + nodeData.type.slice(1)} Input` : 'Media Input'} />
 
       {/* Persistent header */}
@@ -2557,6 +2615,7 @@ export const MediaInputNode = memo(({ id, data, selected }: NodeProps<any>) => {
 
       {/* Full-bleed drop zone / preview */}
       <div
+        ref={previewRef}
         className={`group relative w-full ${mediaPreviewFrameClass} overflow-hidden bg-zinc-900 ${hasMedia ? 'cursor-default' : 'cursor-pointer'} transition-all`}
         style={{ outline: isDragOver ? `2px dashed ${FOLDDER_LOGO_BLUE}` : 'none', outlineOffset: '-2px' }}
         onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
@@ -2610,7 +2669,7 @@ export const MediaInputNode = memo(({ id, data, selected }: NodeProps<any>) => {
             <video
               ref={videoRef}
               src={nodeData.value}
-              className="w-full h-full object-cover"
+              className="w-full h-full object-contain"
               muted
               loop
               onLoadedData={() => scheduleFitViewportToThisNode()}
@@ -2655,7 +2714,7 @@ export const MediaInputNode = memo(({ id, data, selected }: NodeProps<any>) => {
         ) : hasMedia && nodeData.type === 'image' ? (
           <img
             src={nodeData.value}
-            className="mx-auto block h-auto w-auto max-h-[min(440px,58vh)] max-w-full object-contain"
+            className="mx-auto block h-full w-full object-contain"
             alt="Preview"
             onLoad={() => scheduleFitViewportToThisNode()}
           />
@@ -5382,6 +5441,9 @@ export const NanoBananaNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const [result, setResult] = useState<string | null>(null);
   const [showFullSize, setShowFullSize] = useState(false);
   const [showStudio, setShowStudio] = useState(false);
+  const currentNode = nodes.find((node) => node.id === id);
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const previewRef = useRef<HTMLDivElement | null>(null);
   /** Al abrir Studio desde PhotoRoom «Modificar imagen con IA»: id del nodo PhotoRoom para fitView + reabrir su Studio. */
   const photoRoomReturnTargetRef = useRef<string | null>(null);
   const [nanoStudioTopBarCloseMode, setNanoStudioTopBarCloseMode] = useState<'default' | 'returnPhotoRoom'>('default');
@@ -5722,11 +5784,51 @@ export const NanoBananaNode = memo(({ id, data, selected }: NodeProps<any>) => {
 
   const promptConnected = edges.some(e => e.target === id && e.targetHandle === 'prompt');
   const nbResLabel = isFlash25 ? '1K' : normalizeNanoBananaResolution(nodeData.resolution).toUpperCase();
+  const nanoAspect = parseAspectRatioValue(nodeData.aspect_ratio || '16:9') ?? { width: 16, height: 9 };
+
+  useLayoutEffect(() => {
+    const chromeHeight = resolveNodeChromeHeight(frameRef.current, previewRef.current);
+    const nextFrame = resolveAspectLockedNodeFrame({
+      node: currentNode,
+      contentWidth: nanoAspect.width,
+      contentHeight: nanoAspect.height,
+      minWidth: 240,
+      maxWidth: 960,
+      minHeight: 180,
+      maxHeight: STUDIO_NODE_MAX_HEIGHT,
+      chromeHeight,
+    });
+    if (!nodeFrameNeedsSync(currentNode, nextFrame)) return;
+    setNodes((nds: any) =>
+      nds.map((node: any) =>
+        node.id === id
+          ? {
+              ...node,
+              width: nextFrame.width,
+              height: nextFrame.height,
+              style: { ...node.style, width: nextFrame.width, height: nextFrame.height },
+            }
+          : node,
+      ),
+    );
+    requestAnimationFrame(() => updateNodeInternals(id));
+  }, [
+    currentNode?.width,
+    currentNode?.height,
+    currentNode?.measured?.width,
+    currentNode?.measured?.height,
+    id,
+    nanoAspect.height,
+    nanoAspect.width,
+    setNodes,
+    updateNodeInternals,
+  ]);
 
   return (
     <div className={`custom-node processor-node group/node ${isActivelyGenerating ? 'node-glow-running' : ''}`}
-         style={{ minWidth: 240, maxHeight: 600 }}>
-      <FoldderNodeResizer minWidth={240} minHeight={180} maxWidth={960} maxHeight={600} isVisible={selected} />
+         style={{ minWidth: 240 }}
+         ref={frameRef}>
+      <FoldderNodeResizer minWidth={240} minHeight={180} maxWidth={960} maxHeight={STUDIO_NODE_MAX_HEIGHT} keepAspectRatio isVisible={selected} />
       <NodeLabel id={id} label={nodeData.label} defaultLabel="CREACION DE IMAGEN" />
 
       {/* ── Handles ── */}
@@ -5797,6 +5899,7 @@ export const NanoBananaNode = memo(({ id, data, selected }: NodeProps<any>) => {
 
       {/* ── Main image area: preview encaja sin recortar (object-contain); la imagen generada sigue con su resolución real ── */}
       <div
+        ref={previewRef}
         className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-b-[24px] bg-[#0a0a0a] group/out"
         style={{ minHeight: 120 }}
       >
@@ -5849,7 +5952,7 @@ export const NanoBananaNode = memo(({ id, data, selected }: NodeProps<any>) => {
         )}
 
         {/* Siempre visible: al quedar el estado «generando» por carrera, el usuario puede reabrir Studio */}
-        <NanoBananaStudioModeButton onClick={openNanoStudioNormal} />
+        <FoldderStudioModeCenterButton onClick={openNanoStudioNormal} />
 
         {/* INPUT image badge — bottom-left corner overlay (always visible when connected) */}
         {refImgPreview && outputImage && (
@@ -6295,9 +6398,14 @@ export const BackgroundRemoverNode = memo(({ id, data, selected }: NodeProps<any
   const nodes = useNodes();
   const edges = useEdges();
   const { setNodes } = useReactFlow();
+  const updateNodeInternals = useUpdateNodeInternals();
   const [status, setStatus] = useState('idle');
   const [previewMode, setPreviewMode] = useState<'original' | 'mask' | 'cutout'>('cutout');
   const [isStudioOpen, setIsStudioOpen] = useState(false);
+  const currentNode = nodes.find((node) => node.id === id);
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const previewRef = useRef<HTMLDivElement | null>(null);
+  const [aspectImageSize, setAspectImageSize] = useState<{ width: number; height: number } | null>(null);
 
   useEffect(() => {
     if (nodeData.threshold === undefined) {
@@ -6378,22 +6486,80 @@ export const BackgroundRemoverNode = memo(({ id, data, selected }: NodeProps<any
   matteOnRunRef.current = onRun;
   useRegisterAssistantNodeRun(id, () => matteOnRunRef.current());
 
-  const getPreviewImage = () => {
-    const sourceEdge = edges.find(e => e.target === id && e.targetHandle === 'media');
-    const sourceNode = nodes.find(n => n.id === sourceEdge?.source);
-    const original = sourceNode?.data.value as string | undefined;
+  const sourceEdge = edges.find(e => e.target === id && e.targetHandle === 'media');
+  const sourceNode = nodes.find(n => n.id === sourceEdge?.source);
+  const originalPreview = sourceNode?.data.value as string | undefined;
+  const aspectImageUrl = originalPreview || nodeData.result_rgba || nodeData.result_mask || null;
 
+  useEffect(() => {
+    if (!aspectImageUrl) {
+      setAspectImageSize(null);
+      return;
+    }
+    let cancelled = false;
+    loadImageDimensions(aspectImageUrl)
+      .then(({ width, height }) => {
+        if (!cancelled) setAspectImageSize({ width, height });
+      })
+      .catch(() => {
+        if (!cancelled) setAspectImageSize(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [aspectImageUrl]);
+
+  useLayoutEffect(() => {
+    if (!aspectImageSize) return;
+    const chromeHeight = resolveNodeChromeHeight(frameRef.current, previewRef.current);
+    const nextFrame = resolveAspectLockedNodeFrame({
+      node: currentNode,
+      contentWidth: aspectImageSize.width,
+      contentHeight: aspectImageSize.height,
+      minWidth: 320,
+      maxWidth: 700,
+      minHeight: 320,
+      maxHeight: STUDIO_NODE_MAX_HEIGHT,
+      chromeHeight,
+    });
+    if (!nodeFrameNeedsSync(currentNode, nextFrame)) return;
+    setNodes((nds: any) =>
+      nds.map((node: any) =>
+        node.id === id
+          ? {
+              ...node,
+              width: nextFrame.width,
+              height: nextFrame.height,
+              style: { ...node.style, width: nextFrame.width, height: nextFrame.height },
+            }
+          : node,
+      ),
+    );
+    requestAnimationFrame(() => updateNodeInternals(id));
+  }, [
+    aspectImageSize?.height,
+    aspectImageSize?.width,
+    currentNode?.width,
+    currentNode?.height,
+    currentNode?.measured?.width,
+    currentNode?.measured?.height,
+    id,
+    setNodes,
+    updateNodeInternals,
+  ]);
+
+  const getPreviewImage = () => {
     switch (previewMode) {
-      case 'original': return original;
+      case 'original': return originalPreview;
       case 'mask': return nodeData.result_mask;
       case 'cutout': return nodeData.result_rgba;
-      default: return original;
+      default: return originalPreview;
     }
   };
 
   return (
-    <div className={`custom-node mask-node group/node ${status === 'running' ? 'node-glow-running' : ''}`} style={{ minWidth: 320 }}>
-      <FoldderNodeResizer minWidth={320} minHeight={320} maxWidth={700} maxHeight={700} isVisible={selected} />
+    <div ref={frameRef} className={`custom-node mask-node group/node ${status === 'running' ? 'node-glow-running' : ''}`} style={{ minWidth: 320 }}>
+      <FoldderNodeResizer minWidth={320} minHeight={320} maxWidth={700} maxHeight={STUDIO_NODE_MAX_HEIGHT} keepAspectRatio isVisible={selected} />
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Background Remover" />
       <div className="handle-wrapper handle-left">
         <FoldderDataHandle type="target" position={Position.Left} id="media" dataType="image" />
@@ -6412,9 +6578,9 @@ export const BackgroundRemoverNode = memo(({ id, data, selected }: NodeProps<any
         </FoldderNodeHeaderTitle>
       </div>
       
-      <div className="flex flex-col">
+      <div className="flex min-h-0 flex-1 flex-col">
           {/* PREVIEW AREA */}
-          <div className="relative group/preview overflow-hidden bg-slate-100/50 h-[220px] flex items-center justify-center border-b border-slate-200/60">
+          <div ref={previewRef} className="relative group/preview min-h-[180px] flex-1 overflow-hidden bg-slate-100/50 flex items-center justify-center border-b border-slate-200/60">
              <div className="absolute top-2 left-2 z-10 flex gap-1 bg-slate-50/50 p-1 rounded-lg backdrop-blur-md border border-slate-200/60">
                 {(['original', 'mask', 'cutout'] as const).map(mode => (
                   <button 
@@ -6441,7 +6607,7 @@ export const BackgroundRemoverNode = memo(({ id, data, selected }: NodeProps<any
             )}
 
             {status !== 'running' && (
-              <StudioModeCenterButton onClick={() => setIsStudioOpen(true)} />
+              <FoldderStudioModeCenterButton onClick={() => setIsStudioOpen(true)} />
             )}
 
             {status === 'running' && (
@@ -8281,12 +8447,16 @@ export const GeminiVideoNode = memo(({ id, data, selected }: NodeProps<any>) => 
     videoRefSlots?: VideoRefSlotsState;
   };
   const { setNodes, getEdges, getNodes } = useReactFlow();
+  const updateNodeInternals = useUpdateNodeInternals();
   const edges = useEdges();
   const nodes = useNodes();
   const [status, setStatus] = useState('idle');
   const [progress, setProgress] = useState(0);
   const [result, setResult] = useState<string | null>(nodeData.value || null);
   const [showStudio, setShowStudio] = useState(false);
+  const currentNode = nodes.find((node) => node.id === id);
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const previewRef = useRef<HTMLDivElement | null>(null);
 
   const openVideoStudioFromPresenter = Boolean(
     (nodeData as { _foldderOpenVideoStudio?: boolean })._foldderOpenVideoStudio,
@@ -8389,6 +8559,45 @@ export const GeminiVideoNode = memo(({ id, data, selected }: NodeProps<any>) => 
     const max = useSeedance ? 12 : 8;
     return Math.min(100, (durationSecondsForApi / max) * 100);
   }, [useSeedance, durationSecondsForApi]);
+  const videoAspect = parseAspectRatioValue(videoFormatForApi) ?? { width: 16, height: 9 };
+
+  useLayoutEffect(() => {
+    const chromeHeight = resolveNodeChromeHeight(frameRef.current, previewRef.current);
+    const nextFrame = resolveAspectLockedNodeFrame({
+      node: currentNode,
+      contentWidth: videoAspect.width,
+      contentHeight: videoAspect.height,
+      minWidth: 280,
+      maxWidth: 960,
+      minHeight: 200,
+      maxHeight: STUDIO_NODE_MAX_HEIGHT,
+      chromeHeight,
+    });
+    if (!nodeFrameNeedsSync(currentNode, nextFrame)) return;
+    setNodes((nds: any) =>
+      nds.map((node: any) =>
+        node.id === id
+          ? {
+              ...node,
+              width: nextFrame.width,
+              height: nextFrame.height,
+              style: { ...node.style, width: nextFrame.width, height: nextFrame.height },
+            }
+          : node,
+      ),
+    );
+    requestAnimationFrame(() => updateNodeInternals(id));
+  }, [
+    currentNode?.width,
+    currentNode?.height,
+    currentNode?.measured?.width,
+    currentNode?.measured?.height,
+    id,
+    setNodes,
+    updateNodeInternals,
+    videoAspect.height,
+    videoAspect.width,
+  ]);
 
   const displayVideo = useMemo(() => {
     const v = nodeData.value;
@@ -8566,10 +8775,11 @@ export const GeminiVideoNode = memo(({ id, data, selected }: NodeProps<any>) => 
 
   return (
     <div
+      ref={frameRef}
       className={`custom-node processor-node group/node ${isActivelyGenerating ? 'node-glow-running' : ''}`}
-      style={{ minWidth: 280, maxHeight: 600 }}
+      style={{ minWidth: 280 }}
     >
-      <FoldderNodeResizer minWidth={280} minHeight={200} maxWidth={960} maxHeight={600} isVisible={selected} />
+      <FoldderNodeResizer minWidth={280} minHeight={200} maxWidth={960} maxHeight={STUDIO_NODE_MAX_HEIGHT} keepAspectRatio isVisible={selected} />
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Video Generator" />
 
       <div className="handle-wrapper handle-left !top-[20%]">
@@ -8616,6 +8826,7 @@ export const GeminiVideoNode = memo(({ id, data, selected }: NodeProps<any>) => 
       </div>
 
       <div
+        ref={previewRef}
         className="relative flex min-h-0 w-full flex-1 items-center justify-center overflow-hidden rounded-b-[24px] bg-[#0a0a0a] group/out"
         style={{ minHeight: 140 }}
       >
@@ -8645,7 +8856,7 @@ export const GeminiVideoNode = memo(({ id, data, selected }: NodeProps<any>) => 
           </div>
         )}
 
-        <StudioModeCenterButton onClick={() => setShowStudio(true)} />
+        <FoldderStudioModeCenterButton onClick={() => setShowStudio(true)} />
 
         {isActivelyGenerating && (
           <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-[50]">
@@ -9483,6 +9694,7 @@ export const CropNode = memo(({ id, data, selected }: NodeProps<any>) => {
 // --- BEZIER MASK NODE ---
 export const BezierMaskNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const { setNodes } = useReactFlow();
+  const updateNodeInternals = useUpdateNodeInternals();
   const edges = useEdges();
   const nodes = useNodes();
   
@@ -9499,6 +9711,10 @@ export const BezierMaskNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const [invert, setInvert] = useState<boolean>(nodeData.invert || false);
   const [mode, setMode] = useState<'draw' | 'edit'>('draw');
   const [isStudioOpen, setIsStudioOpen] = useState(false);
+  const currentNode = nodes.find((node) => node.id === id);
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const previewRef = useRef<HTMLDivElement | null>(null);
+  const [aspectImageSize, setAspectImageSize] = useState<{ width: number; height: number } | null>(null);
 
   useEffect(() => {
     if (isStudioOpen) document.body.classList.add('nb-studio-open');
@@ -9525,10 +9741,68 @@ export const BezierMaskNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const inputNode = nodes.find(n => n.id === inputEdge?.source);
   const rawValue = inputNode?.data?.value;
   const sourceImage = typeof rawValue === 'string' ? rawValue : undefined;
+  const aspectImageUrl = sourceImage || nodeData.result_rgba || nodeData.result_mask || null;
 
   const updateData = (key: string, val: any) => {
     setNodes((nds: any) => nds.map((n: any) => n.id === id ? { ...n, data: { ...n.data, [key]: val } } : n));
   };
+
+  useEffect(() => {
+    if (!aspectImageUrl) {
+      setAspectImageSize(null);
+      return;
+    }
+    let cancelled = false;
+    loadImageDimensions(aspectImageUrl)
+      .then(({ width, height }) => {
+        if (!cancelled) setAspectImageSize({ width, height });
+      })
+      .catch(() => {
+        if (!cancelled) setAspectImageSize(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [aspectImageUrl]);
+
+  useLayoutEffect(() => {
+    if (!aspectImageSize) return;
+    const chromeHeight = resolveNodeChromeHeight(frameRef.current, previewRef.current);
+    const nextFrame = resolveAspectLockedNodeFrame({
+      node: currentNode,
+      contentWidth: aspectImageSize.width,
+      contentHeight: aspectImageSize.height,
+      minWidth: 360,
+      maxWidth: 960,
+      minHeight: 400,
+      maxHeight: STUDIO_NODE_MAX_HEIGHT,
+      chromeHeight,
+    });
+    if (!nodeFrameNeedsSync(currentNode, nextFrame)) return;
+    setNodes((nds: any) =>
+      nds.map((node: any) =>
+        node.id === id
+          ? {
+              ...node,
+              width: nextFrame.width,
+              height: nextFrame.height,
+              style: { ...node.style, width: nextFrame.width, height: nextFrame.height },
+            }
+          : node,
+      ),
+    );
+    requestAnimationFrame(() => updateNodeInternals(id));
+  }, [
+    aspectImageSize?.height,
+    aspectImageSize?.width,
+    currentNode?.width,
+    currentNode?.height,
+    currentNode?.measured?.width,
+    currentNode?.measured?.height,
+    id,
+    setNodes,
+    updateNodeInternals,
+  ]);
 
   // Convert client coords to 0-100% relative to SVG, accounting for zoom/pan
   const getCoords = (e: React.PointerEvent) => {
@@ -9793,8 +10067,8 @@ export const BezierMaskNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const hasMask = !!(nodeData.result_rgba);
 
   return (
-    <div className={`custom-node mask-node group/node w-[360px]`}>
-            <FoldderNodeResizer minWidth={360} minHeight={400} isVisible={selected} />
+    <div ref={frameRef} className={`custom-node mask-node group/node`} style={{ minWidth: 360 }}>
+            <FoldderNodeResizer minWidth={360} minHeight={400} maxWidth={960} maxHeight={STUDIO_NODE_MAX_HEIGHT} keepAspectRatio isVisible={selected} />
 <NodeLabel id={id} label={nodeData.label} defaultLabel="Bezier Mask" />
       <div className="handle-wrapper handle-left">
         <FoldderDataHandle type="target" position={Position.Left} id="image" dataType="image" />
@@ -9808,9 +10082,9 @@ export const BezierMaskNode = memo(({ id, data, selected }: NodeProps<any>) => {
         </FoldderNodeHeaderTitle>
       </div>
       
-      <div className="flex flex-col">
+      <div className="flex min-h-0 flex-1 flex-col">
         {/* PREVIEW AREA */}
-        <div className="relative group/preview overflow-hidden bg-slate-100/50 h-[220px] flex items-center justify-center border-b border-slate-200/60">
+        <div ref={previewRef} className="relative group/preview min-h-[180px] flex-1 overflow-hidden bg-slate-100/50 flex items-center justify-center border-b border-slate-200/60">
           <div className="absolute top-2 left-2 z-10 flex gap-1 bg-slate-50/50 p-1 rounded-lg backdrop-blur-md border border-slate-200/60">
             {(['original', 'mask', 'cutout'] as const).map(m => (
               <button
@@ -9839,7 +10113,7 @@ export const BezierMaskNode = memo(({ id, data, selected }: NodeProps<any>) => {
             </div>
           )}
 
-          <StudioModeCenterButton onClick={() => setIsStudioOpen(true)} />
+          <FoldderStudioModeCenterButton onClick={() => setIsStudioOpen(true)} />
         </div>
 
         {/* Point count & clear status */}

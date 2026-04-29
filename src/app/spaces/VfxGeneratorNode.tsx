@@ -1,6 +1,6 @@
 "use client";
 
-import React, { memo, useCallback, useMemo, useState } from "react";
+import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   NodeResizer,
   Position,
@@ -8,6 +8,7 @@ import {
   useNodeId,
   useNodes,
   useReactFlow,
+  useUpdateNodeInternals,
   type NodeProps,
 } from "@xyflow/react";
 import { Video, Maximize2, Loader2 } from "lucide-react";
@@ -20,8 +21,16 @@ import { BeebleVfxStudio, type BeebleAlphaMode } from "./BeebleVfxStudio";
 import { BeebleClient, type BeebleJob } from "@/lib/beeble-api";
 import { useBeebleJobPoller } from "@/hooks/useBeebleJobPoller";
 import { runAiJobWithNotification } from "@/lib/ai-job-notifications";
+import { FoldderNodeHeaderTitle, FoldderStudioModeCenterButton } from "./foldder-node-ui";
+import { loadVideoDimensions } from "./presenter/presenter-video-frame-layout";
+import {
+  nodeFrameNeedsSync,
+  resolveAspectLockedNodeFrame,
+  resolveNodeChromeHeight,
+} from "./studio-node-aspect";
 
 const NODE_RESIZE_END_FIT_PADDING = 0.8;
+const VFX_STUDIO_NODE_MAX_HEIGHT = 2200;
 
 function FoldderNodeResizerLocal(props: React.ComponentProps<typeof NodeResizer>) {
   const nodeId = useNodeId();
@@ -112,9 +121,14 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<any>) =>
   const { setNodes } = useReactFlow();
   const edges = useEdges();
   const nodes = useNodes();
+  const updateNodeInternals = useUpdateNodeInternals();
   const [showStudio, setShowStudio] = useState(false);
   const [isLaunching, setIsLaunching] = useState(false);
   const [historyJobs, setHistoryJobs] = useState<BeebleJob[]>([]);
+  const currentNode = nodes.find((node) => node.id === id);
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const previewRef = useRef<HTMLDivElement | null>(null);
+  const [videoSize, setVideoSize] = useState<{ width: number; height: number } | null>(null);
 
   const updatePatch = useCallback(
     (patch: Record<string, unknown>) => {
@@ -301,15 +315,75 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<any>) =>
       ? nodeData.value
       : nodeData.outputRenderUrl ?? "";
 
+  const aspectVideoUrl = sourceVideoUri || displayVideo || "";
+
+  useEffect(() => {
+    if (!aspectVideoUrl) {
+      setVideoSize(null);
+      return;
+    }
+    let cancelled = false;
+    loadVideoDimensions(aspectVideoUrl)
+      .then(({ width, height }) => {
+        if (!cancelled) setVideoSize({ width, height });
+      })
+      .catch(() => {
+        if (!cancelled) setVideoSize(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [aspectVideoUrl]);
+
+  useLayoutEffect(() => {
+    if (!videoSize) return;
+    const chromeHeight = resolveNodeChromeHeight(frameRef.current, previewRef.current);
+    const nextFrame = resolveAspectLockedNodeFrame({
+      node: currentNode,
+      contentWidth: videoSize.width,
+      contentHeight: videoSize.height,
+      minWidth: 300,
+      maxWidth: 960,
+      minHeight: 220,
+      maxHeight: VFX_STUDIO_NODE_MAX_HEIGHT,
+      chromeHeight,
+    });
+    if (!nodeFrameNeedsSync(currentNode, nextFrame)) return;
+    setNodes((nds) =>
+      nds.map((node) =>
+        node.id === id
+          ? {
+              ...node,
+              width: nextFrame.width,
+              height: nextFrame.height,
+              style: { ...node.style, width: nextFrame.width, height: nextFrame.height },
+            }
+          : node,
+      ),
+    );
+    requestAnimationFrame(() => updateNodeInternals(id));
+  }, [
+    currentNode?.width,
+    currentNode?.height,
+    currentNode?.measured?.width,
+    currentNode?.measured?.height,
+    id,
+    setNodes,
+    updateNodeInternals,
+    videoSize?.height,
+    videoSize?.width,
+  ]);
+
   const isBusy =
     nodeData.activeJobStatus === "in_queue" || nodeData.activeJobStatus === "processing";
 
   return (
     <div
+      ref={frameRef}
       className={`custom-node processor-node group/node ${isBusy ? "node-glow-running" : ""}`}
-      style={{ minWidth: 300, maxHeight: 620 }}
+      style={{ minWidth: 300 }}
     >
-      <FoldderNodeResizerLocal minWidth={300} minHeight={220} maxWidth={960} maxHeight={620} isVisible={selected} />
+      <FoldderNodeResizerLocal minWidth={300} minHeight={220} maxWidth={960} maxHeight={VFX_STUDIO_NODE_MAX_HEIGHT} keepAspectRatio isVisible={selected} />
 
       <div className="handle-wrapper handle-left !top-[12%]">
         <FoldderDataHandle type="target" position={Position.Left} id="sourceVideo" dataType="video" />
@@ -339,9 +413,12 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<any>) =>
           })}
           size={16}
         />
-        <span className="flex-1 truncate text-[10px] font-black uppercase tracking-wider text-zinc-200">
+        <FoldderNodeHeaderTitle
+          className="flex-1 truncate uppercase tracking-wider text-zinc-200"
+          introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}
+        >
           VFX Generator
-        </span>
+        </FoldderNodeHeaderTitle>
         <div className="node-badge max-w-[6rem] truncate" title="Beeble">
           BEEBLE
         </div>
@@ -349,6 +426,7 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<any>) =>
       </div>
 
       <div
+        ref={previewRef}
         className="relative flex min-h-0 w-full flex-1 items-center justify-center overflow-hidden rounded-b-[24px] bg-[#0a0a0f] group/out"
         style={{ minHeight: 160 }}
       >
@@ -370,26 +448,7 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<any>) =>
           </div>
         )}
 
-        <div className="pointer-events-none absolute inset-0 z-[15] overflow-hidden opacity-0 transition-opacity duration-200 group-hover/node:opacity-100">
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-2">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setShowStudio(true);
-              }}
-              className="pointer-events-auto nodrag flex max-w-[min(100%,220px)] flex-col items-center gap-1.5 rounded-2xl border border-white/30 bg-white/[0.12] px-6 py-3.5 shadow-xl backdrop-blur-xl transition-all hover:scale-[1.03] hover:bg-white/[0.22]"
-            >
-              <span className="font-mono text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-400">
-                Studio
-              </span>
-              <span className="flex items-center gap-2 font-mono text-[17px] font-black uppercase tracking-wide text-zinc-50">
-                <Maximize2 size={22} strokeWidth={2.5} className="shrink-0 text-violet-200" />
-                Mode
-              </span>
-            </button>
-          </div>
-        </div>
+        <FoldderStudioModeCenterButton onClick={() => setShowStudio(true)} />
 
         {isBusy && (
           <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-[50]">

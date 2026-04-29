@@ -28,6 +28,7 @@ import {
   type StoredLearningCandidate,
 } from "./learning-candidate-schema";
 import { resolveLearningPendingAnchorNodeId } from "./brain-connected-signals-ui";
+import { normalizeBrainDecisionTrace, summarizeLearningCandidateTrace } from "./brain-decision-trace";
 
 export type BrainNodeTelemetryDigestEntry = {
   nodeId: string;
@@ -65,6 +66,35 @@ const DEFAULT_PREFS: CreativePreferences = {
 };
 
 const EMPTY_PROJECT_MEMORY: ProjectMemory = { entries: [] };
+
+function readEventCountString(
+  row: Record<string, number | string> | undefined,
+  keys: string[],
+): string | undefined {
+  if (!row) return undefined;
+  for (const key of keys) {
+    const raw = row[key];
+    if (typeof raw !== "string") continue;
+    const trimmed = raw.trim();
+    if (trimmed) return trimmed.slice(0, 120);
+  }
+  return undefined;
+}
+
+function shouldTraceVisualOrRestudyCandidate(
+  candidate: LearningCandidate,
+  opts:
+    | {
+        sourceAnalysisId?: string;
+        createdFromAnalysisVersion?: string;
+      }
+    | undefined,
+): boolean {
+  if (candidate.evidence.evidenceSource === "visual_reference") return true;
+  if (typeof opts?.sourceAnalysisId === "string" && opts.sourceAnalysisId.trim()) return true;
+  if (typeof opts?.createdFromAnalysisVersion === "string" && opts.createdFromAnalysisVersion.trim()) return true;
+  return false;
+}
 
 function isBrainNodeType(v: unknown): v is import("./brain-telemetry").BrainNodeType {
   return typeof v === "string" && (BRAIN_NODE_TYPES as readonly string[]).includes(v);
@@ -210,7 +240,13 @@ export class BrainService implements LearningCandidateStore {
       this.staticByKey.set(`${row.projectId}#${row.workspaceId}`, row);
     }
     for (const p of seed?.pending ?? []) {
-      this.pendingById.set(p.id, { ...p, candidate: { ...p.candidate, evidence: { ...p.candidate.evidence } } });
+      const decisionTrace = normalizeBrainDecisionTrace(p.decisionTrace);
+      this.pendingById.set(p.id, {
+        ...p,
+        candidate: { ...p.candidate, evidence: { ...p.candidate.evidence } },
+        ...(p.decisionTraceId ? { decisionTraceId: p.decisionTraceId } : {}),
+        ...(decisionTrace ? { decisionTrace } : {}),
+      });
     }
     for (const pm of seed?.projectMemory ?? []) {
       this.projectMemoryByKey.set(pm.key, {
@@ -397,6 +433,66 @@ export class BrainService implements LearningCandidateStore {
     for (const c of candidates) {
       validateLearningCandidate(c);
       const id = randomUUID();
+      let decisionTraceId: string | undefined;
+      let decisionTrace: StoredLearningCandidate["decisionTrace"] | undefined;
+      if (shouldTraceVisualOrRestudyCandidate(c, opts)) {
+        const eventCounts = c.evidence.eventCounts ? { ...c.evidence.eventCounts } : {};
+        const selectedVisualDnaSlotId = readEventCountString(eventCounts, [
+          "selected_visual_dna_slot_id",
+          "selectedVisualDnaSlotId",
+          "visual_dna_slot_id",
+          "slot_id",
+        ]);
+        const selectedVisualDnaLayer = readEventCountString(eventCounts, [
+          "selected_visual_dna_layer",
+          "selectedVisualDnaLayer",
+          "visual_dna_layer",
+          "selected_layer",
+        ]);
+        if (typeof opts?.sourceAnalysisId === "string" && opts.sourceAnalysisId.trim()) {
+          eventCounts.source_analysis_id = opts.sourceAnalysisId.trim().slice(0, 120);
+        }
+        if (typeof opts?.createdFromAnalysisVersion === "string" && opts.createdFromAnalysisVersion.trim()) {
+          eventCounts.analysis_version = opts.createdFromAnalysisVersion.trim().slice(0, 120);
+        }
+        if (selectedVisualDnaSlotId) {
+          eventCounts.selected_visual_dna_slot_id = selectedVisualDnaSlotId;
+        }
+        if (selectedVisualDnaLayer) {
+          eventCounts.selected_visual_dna_layer = selectedVisualDnaLayer;
+        }
+        eventCounts.trace_origin =
+          typeof opts?.sourceAnalysisId === "string" && opts.sourceAnalysisId.trim()
+            ? "restudy_visual"
+            : "visual_reference";
+        if (c.evidence.evidenceSource) {
+          eventCounts.evidence_source = c.evidence.evidenceSource;
+        }
+        const candidateTrace = summarizeLearningCandidateTrace({
+          projectScopeId: pid,
+          targetNodeType: telemetryNodeType,
+          targetNodeId: nodeId,
+          learningCandidateId: id,
+          topic: c.topic,
+          candidateType: c.type,
+          value: c.value,
+          reasoning: `Origen visual/restudy: ${eventCounts.trace_origin}. ${c.reasoning}`,
+          confidence: c.confidence,
+          eventCounts,
+          examples: [
+            ...(c.evidence.examples ?? []),
+            ...(c.evidence.sourceArtifactIds ?? []).slice(0, 4).map((src) => `source:${src}`),
+          ],
+          strongKinds: [
+            eventCounts.trace_origin === "restudy_visual" ? "RESTUDY_VISUAL" : "VISUAL_REFERENCE",
+            ...(selectedVisualDnaSlotId ? ["VISUAL_DNA_SLOT_SELECTED"] : []),
+            ...(selectedVisualDnaLayer ? ["VISUAL_DNA_LAYER_SELECTED"] : []),
+          ],
+          evidenceSource: c.evidence.evidenceSource,
+        });
+        decisionTraceId = candidateTrace.id;
+        decisionTrace = candidateTrace;
+      }
       const row: StoredLearningCandidate = {
         id,
         projectId: pid,
@@ -427,6 +523,8 @@ export class BrainService implements LearningCandidateStore {
         },
         sourceSessionIds: sessions.length ? [...new Set(sessions)] : [],
         createdAt: now,
+        ...(decisionTraceId ? { decisionTraceId } : {}),
+        ...(decisionTrace ? { decisionTrace } : {}),
       };
       this.pendingById.set(id, row);
       ids.push(id);
@@ -439,6 +537,7 @@ export class BrainService implements LearningCandidateStore {
 
   async savePendingReview(rows: StoredLearningCandidate[]): Promise<void> {
     for (const row of rows) {
+      const decisionTrace = normalizeBrainDecisionTrace(row.decisionTrace);
       const copy: StoredLearningCandidate = {
         ...row,
         candidate: {
@@ -462,6 +561,8 @@ export class BrainService implements LearningCandidateStore {
           },
         },
         sourceSessionIds: [...row.sourceSessionIds],
+        ...(row.decisionTraceId ? { decisionTraceId: row.decisionTraceId } : {}),
+        ...(decisionTrace ? { decisionTrace } : {}),
       };
       this.pendingById.set(copy.id, copy);
     }
@@ -526,6 +627,7 @@ export class BrainService implements LearningCandidateStore {
     for (const row of this.pendingById.values()) {
       if (row.projectId !== pid) continue;
       if (row.status !== "PENDING_REVIEW") continue;
+      const decisionTrace = normalizeBrainDecisionTrace(row.decisionTrace);
       out.push({
         ...row,
         candidate: {
@@ -533,6 +635,8 @@ export class BrainService implements LearningCandidateStore {
           evidence: { ...row.candidate.evidence },
         },
         sourceSessionIds: [...row.sourceSessionIds],
+        ...(row.decisionTraceId ? { decisionTraceId: row.decisionTraceId } : {}),
+        ...(decisionTrace ? { decisionTrace } : {}),
       });
     }
     out.sort((a, b) => b.createdAt.localeCompare(a.createdAt));

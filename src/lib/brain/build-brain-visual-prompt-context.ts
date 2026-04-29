@@ -58,6 +58,10 @@ import {
 } from "@/lib/brain/brain-visual-territory";
 import { enrichVisualVariationAxesFromDna, pickBrainVariationBundle } from "@/lib/brain/brain-visual-variety";
 import { buildBrandVisualDnaPromptSnippet } from "@/lib/brain/brand-visual-dna/build-brand-visual-dna-prompt-snippet";
+import {
+  summarizeVisualPromptTrace,
+  type BrainDecisionTrace,
+} from "@/lib/brain/brain-decision-trace";
 
 /** Fuentes que realmente alimentaron el contexto visual (prioridad conceptual). */
 export type BrainVisualPromptSourcesUsed = {
@@ -167,6 +171,9 @@ export type BrainImageSuggestionDiagnostics = {
   promptBeforeSanitize?: string;
   /** Lista exacta de strings de evitar inyectados en el bloque E. */
   visualAvoidUsed?: string[];
+  /** Traza unificada (ligera) para explicar esta composición visual. */
+  decisionTraceId?: string;
+  decisionTrace?: BrainDecisionTrace;
 };
 
 /** Metadatos para «Ver por qué» en Image Generator (Nano Banana) cuando hay Brain conectado. */
@@ -217,6 +224,9 @@ export type BrainImageGeneratorPromptDiagnostics = {
   finalPromptWasRewritten?: boolean;
   promptBeforeSanitize?: string;
   visualAvoidUsed?: string[];
+  /** Traza unificada (ligera) para explicar esta composición visual. */
+  decisionTraceId?: string;
+  decisionTrace?: BrainDecisionTrace;
 };
 
 /** Bloque de texto para copiar en depuración (soporte / “Ver por qué” dev). */
@@ -289,6 +299,13 @@ const DEFAULT_VISUAL_AVOID: readonly string[] = [
   "screens and UI chrome as the main subject",
   "empty minimalism without cultural or tactile objects",
 ];
+
+function visualSourceQualityConfidence(q: BrainVisualPromptSourceQuality): number {
+  if (q === "high") return 0.84;
+  if (q === "medium") return 0.72;
+  if (q === "low") return 0.58;
+  return 0.42;
+}
 
 /**
  * Elige familia + ejes de variedad; reintenta si A2 contradice el territorio visual (deporte, cultura, producto, etc.)
@@ -1078,6 +1095,26 @@ export function composeBrainDesignerImagePrompt(params: {
     promptBeforeSanitize: finalized.promptBeforeSanitize,
     visualAvoidUsed,
   };
+  const decisionTrace = summarizeVisualPromptTrace({
+    targetNodeType: "designer",
+    visualDiagnosticsId: `designer_diag_${Date.now().toString(36)}`,
+    visualSourcesUsed: diagnostics.visualSourcesUsed,
+    chosenAxes: diagnostics.chosenVariationAxes
+      ? Object.fromEntries(
+          Object.entries(diagnostics.chosenVariationAxes).map(([k, v]) => [k, String(v ?? "")]),
+        )
+      : undefined,
+    selectedVisualDnaLayer: diagnostics.visualTerritory,
+    finalPrompt: prompt,
+    warnings: [
+      ...ctx.warnings,
+      ...(diagnostics.incompatibleAxesWarnings ?? []),
+      ...(diagnostics.contaminationWarnings ?? []),
+    ],
+    confidence: visualSourceQualityConfidence(ctx.sourceQuality),
+  });
+  diagnostics.decisionTraceId = decisionTrace.id;
+  diagnostics.decisionTrace = decisionTrace;
 
   return { prompt, diagnostics };
 }
@@ -1170,6 +1207,33 @@ export function composeBrainImageGeneratorPrompt(params: {
     promptBeforeSanitize: finalized.promptBeforeSanitize,
     visualAvoidUsed,
   };
+  const decisionTrace = summarizeVisualPromptTrace({
+    targetNodeType: "image_generator",
+    visualDiagnosticsId: `nano_diag_${Date.now().toString(36)}`,
+    visualSourcesUsed: {
+      confirmedUserVisualDna: ctx.sources.confirmedUserVisualDna,
+      coreVisualReferenceAnalysis: ctx.sources.coreVisualReferenceAnalysis,
+      projectVisualReferenceAnalysis: ctx.sources.projectVisualReferenceAnalysis,
+      aggregatedPatternsTrusted: ctx.sources.aggregatedPatternsTrusted,
+      visionDerivedVisualStyleSlots: ctx.sources.visionDerivedVisualStyleSlots,
+      secondaryBrandStrategyText: Boolean(ctx.brandMessageContext?.trim()),
+    },
+    chosenAxes: diagnostics.chosenVariationAxes
+      ? Object.fromEntries(
+          Object.entries(diagnostics.chosenVariationAxes).map(([k, v]) => [k, String(v ?? "")]),
+        )
+      : undefined,
+    selectedVisualDnaLayer: diagnostics.visualTerritory,
+    finalPrompt: prompt,
+    warnings: [
+      ...ctx.warnings,
+      ...(diagnostics.incompatibleAxesWarnings ?? []),
+      ...(diagnostics.contaminationWarnings ?? []),
+    ],
+    confidence: visualSourceQualityConfidence(ctx.sourceQuality),
+  });
+  diagnostics.decisionTraceId = decisionTrace.id;
+  diagnostics.decisionTrace = decisionTrace;
 
   return { prompt, diagnostics };
 }
@@ -1201,6 +1265,17 @@ export function composeBrainImageGeneratorPromptFromRuntimeContext(params: {
   const prompt = safeAppendix.length ? `${base.prompt}\n\n${safeAppendix}` : base.prompt;
   const trusted = analyses.filter(isTrustedRemoteVisionAnalysis).length;
   const visualSourcesUsedSummary = `trusted_remote=${trusted}; total_rows=${analyses.length}; mockish=${mockish ? "yes" : "no"}`;
+  const runtimeTraceRef = params.brainRuntimeContext.traceId || params.brainRuntimeContext.decisionTrace?.id;
+  const decisionTrace =
+    base.diagnostics.decisionTrace && runtimeTraceRef
+      ? {
+          ...base.diagnostics.decisionTrace,
+          sourceRefs: {
+            ...(base.diagnostics.decisionTrace.sourceRefs ?? {}),
+            runtimeContextId: runtimeTraceRef,
+          },
+        }
+      : base.diagnostics.decisionTrace;
   return {
     prompt,
     diagnostics: {
@@ -1216,6 +1291,8 @@ export function composeBrainImageGeneratorPromptFromRuntimeContext(params: {
       safeCreativeRulesApplied: Boolean(safeAppendix.length),
       safeCreativeAppendixLength: safeAppendix.length || undefined,
       visualSourcesUsedSummary,
+      ...(decisionTrace ? { decisionTrace } : {}),
+      ...(decisionTrace ? { decisionTraceId: decisionTrace.id } : {}),
     },
   };
 }
@@ -1248,7 +1325,7 @@ export function buildVisualImageDiagnosticsFromContext(
   ctx: BrainVisualPromptContextResult,
   finalPromptUsed: string,
 ): BrainImageSuggestionDiagnostics {
-  return {
+  const diagnostics: BrainImageSuggestionDiagnostics = {
     finalPromptUsed,
     visualSourcesUsed: ctx.sources,
     visualReferenceAnalysisRealCount: ctx.visualReferenceAnalysisRealCount,
@@ -1257,4 +1334,16 @@ export function buildVisualImageDiagnosticsFromContext(
     fallbackDefaultUsed: ctx.fallbackDefaultUsed,
     textOnlyGeneration: ctx.textOnlyGeneration,
   };
+  const decisionTrace = summarizeVisualPromptTrace({
+    targetNodeType: "visual_prompt",
+    visualDiagnosticsId: `visual_diag_${Date.now().toString(36)}`,
+    visualSourcesUsed: ctx.sources as unknown as Record<string, boolean>,
+    selectedVisualDnaLayer: ctx.visualTerritory,
+    finalPrompt: finalPromptUsed,
+    warnings: ctx.warnings,
+    confidence: visualSourceQualityConfidence(ctx.sourceQuality),
+  });
+  diagnostics.decisionTraceId = decisionTrace.id;
+  diagnostics.decisionTrace = decisionTrace;
+  return diagnostics;
 }

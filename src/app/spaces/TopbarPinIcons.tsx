@@ -166,54 +166,17 @@ export function TopbarGlyphIndesign({ size = 26, className }: GlyphProps) {
  * Pensado para que se reconozca “diseño + precisión” incluso en tamaño pequeño del dock.
  */
 export function TopbarGlyphDesignerStudio({ size = 26, className }: GlyphProps) {
+  const scaled = Math.round(size * 0.9);
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      className={className}
+    <img
+      src="/designer_icon.svg"
+      alt=""
+      width={scaled}
+      height={scaled}
+      className={[className, "object-contain mx-auto block"].filter(Boolean).join(" ")}
       aria-hidden
-    >
-      <path
-        d="M7.1 4.75h9.8l3.05 2.05v10.4l-3.05 2.05H7.1L4.05 17.2V6.8z"
-        stroke="currentColor"
-        strokeWidth={sw}
-        strokeLinejoin="round"
-      />
-      <rect
-        x="7.15"
-        y="7.05"
-        width="9.7"
-        height="9.9"
-        rx="1.25"
-        stroke="currentColor"
-        strokeWidth={1.15}
-        opacity={0.45}
-      />
-
-      <path
-        d="M8.35 14.4C10.2 10.1 12.9 9.55 16.05 8.95"
-        stroke="currentColor"
-        strokeWidth={1.35}
-        strokeLinecap="round"
-      />
-      <circle cx="8.35" cy="14.4" r="1.25" stroke="currentColor" strokeWidth={1.1} />
-      <circle cx="16.05" cy="8.95" r="1.25" stroke="currentColor" strokeWidth={1.1} />
-
-      <path
-        d="M14.95 7.1l2.15 2.15-1 1-2.15-2.15z"
-        fill="currentColor"
-        fillOpacity={0.95}
-      />
-      <path
-        d="M6.05 9.05v1.25M5.4 9.7h1.3M17.9 13.35v1.05M17.35 13.88h1.1"
-        stroke="currentColor"
-        strokeWidth={1.05}
-        strokeLinecap="round"
-        opacity={0.8}
-      />
-    </svg>
+      draggable={false}
+    />
   );
 }
 
@@ -354,34 +317,17 @@ export function TopbarGlyphFoldderApp({ size = 26, className }: GlyphProps) {
 
 /** PhotoRoom — marco de imagen + varita / retoque (alineado con foldder-icons). */
 export function TopbarGlyphPhotoRoom({ size = 26, className }: GlyphProps) {
+  const scaled = Math.round(size * 0.9);
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      className={className}
+    <img
+      src="/photoroom_icon.svg"
+      alt=""
+      width={scaled}
+      height={scaled}
+      className={[className, "object-contain mx-auto block"].filter(Boolean).join(" ")}
       aria-hidden
-    >
-      <rect x="3.25" y="5" width="12.5" height="10" rx="1.35" stroke="currentColor" strokeWidth={sw} />
-      <circle cx="7.1" cy="9.35" r="1.15" fill="currentColor" opacity={0.28} />
-      <path
-        d="M14.2 4.35 L15.85 6 L16.35 7.85"
-        stroke="currentColor"
-        strokeWidth={1.35}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path d="M14.05 10.25 L17.35 13.55" stroke="currentColor" strokeWidth={1.45} strokeLinecap="round" />
-      <path
-        d="M17.85 14.15 L18.75 15.05 M18.35 13.85 L18.75 14.25 M18.75 13.85 L18.35 14.25"
-        stroke="currentColor"
-        strokeWidth={1.1}
-        strokeLinecap="round"
-        opacity={0.75}
-      />
-      <circle cx="18.05" cy="14.85" r="0.7" fill="currentColor" />
-    </svg>
+      draggable={false}
+    />
   );
 }
 

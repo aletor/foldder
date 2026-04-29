@@ -20,6 +20,7 @@ import { normalizeBrandVisualDna } from "@/lib/brain/brain-brand-visual-dna-synt
 import { normalizeSafeCreativeRules } from "@/lib/brain/brain-safe-creative-rules";
 import { normalizeBrainMeta } from "@/lib/brain/brain-meta";
 import { normalizeKnowledgeUrlsFromDocuments } from "@/lib/brain/brain-knowledge-urls";
+import { capDecisionTraces, type BrainDecisionTrace } from "@/lib/brain/brain-decision-trace";
 
 /**
  * Datos de «Assets» del proyecto (marca + fuente de conocimiento).
@@ -433,6 +434,11 @@ export type BrainStrategy = {
   visualDnaSlotSuppressedSourceIds?: string[];
   /** Procedencia por bloques (resumen / ADN) tras analizar o promover aprendizajes. */
   fieldProvenance?: BrainStrategyFieldProvenance;
+  /**
+   * Trazas ligeras y unificadas de decisiones Brain (diagnóstico transversal).
+   * Ordenadas por `createdAt` descendente y capadas para evitar payloads grandes.
+   */
+  decisionTraces?: BrainDecisionTrace[];
 };
 
 export const AUDIENCE_PERSONA_CATALOG: BrainPersona[] = [
@@ -1385,6 +1391,11 @@ export function normalizeProjectAssets(raw: unknown): ProjectAssetsMetadata {
         nextFp[k] = row;
       }
       strategy.fieldProvenance = nextFp;
+    }
+    if (Array.isArray(s.decisionTraces)) {
+      const traces = capDecisionTraces(s.decisionTraces, { max: 50, order: "desc", payloadRiskMax: 25 });
+      if (traces.length) strategy.decisionTraces = traces;
+      else delete strategy.decisionTraces;
     }
   }
 

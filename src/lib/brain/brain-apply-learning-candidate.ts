@@ -9,6 +9,11 @@ import type { StoredLearningCandidate } from "@/lib/brain/learning-candidate-sch
 import { resolveLearningCandidateTopic } from "@/lib/brain/learning-candidate-schema";
 import { stripLearningValueUiPrefixes } from "@/lib/brain/brain-review-labels";
 import type { BrainFieldSourceInfo, BrainStrategyFieldProvenance } from "@/lib/brain/brain-field-provenance";
+import {
+  capDecisionTraces,
+  createBrainDecisionTrace,
+  normalizeBrainDecisionTrace,
+} from "@/lib/brain/brain-decision-trace";
 
 function cloneAssets(assets: ProjectAssetsMetadata): ProjectAssetsMetadata {
   return normalizeProjectAssets(JSON.parse(JSON.stringify(assets)) as unknown);
@@ -50,6 +55,71 @@ function dedupePush(arr: string[], v: string, changed: string[], path: string): 
   if (exists) return;
   arr.push(t);
   changed.push(path);
+}
+
+function appendLearningDecisionTraces(params: {
+  assets: ProjectAssetsMetadata;
+  row: StoredLearningCandidate;
+  action: LearningResolutionAction;
+  applied: boolean;
+  changedPaths: string[];
+  warnings: string[];
+}): ProjectAssetsMetadata {
+  if (!params.applied || params.action === "DISMISS") return params.assets;
+  const existing = capDecisionTraces(params.assets.strategy.decisionTraces, {
+    max: 50,
+    order: "desc",
+    payloadRiskMax: 25,
+  });
+  const candidateTrace = normalizeBrainDecisionTrace(params.row.decisionTrace);
+  const persistedCandidateTrace = candidateTrace
+    ? normalizeBrainDecisionTrace({
+        ...candidateTrace,
+        persistenceIntent: "persist_immediately",
+      })
+    : null;
+  const resolutionTrace = createBrainDecisionTrace({
+    kind: "merge_resolution",
+    persistenceIntent: "persist_immediately",
+    targetNodeType: params.row.telemetryNodeType?.toLowerCase(),
+    targetNodeId: params.row.nodeId,
+    useCase: "resolve_pending_learning",
+    inputs: [
+      { id: "learning_action", kind: "action", label: params.action },
+      { id: "candidate_type", kind: "candidate", label: params.row.candidate.type },
+      { id: "candidate_topic", kind: "candidate", label: params.row.candidate.topic },
+      ...(params.changedPaths.slice(0, 6).map((path, idx) => ({
+        id: `changed_path_${idx + 1}`,
+        kind: "changed_path",
+        label: path,
+      })) ?? []),
+    ],
+    outputSummary: {
+      title: "Learning Resolution",
+      summary: `Learning ${params.row.id} resolved with ${params.action}.`,
+      confidence: params.row.candidate.confidence,
+      warnings: params.warnings.slice(0, 6),
+    },
+    sourceRefs: {
+      learningCandidateId: params.row.id,
+      ...(params.row.decisionTraceId ? { runtimeContextId: params.row.decisionTraceId } : {}),
+    },
+    confidence: params.row.candidate.confidence,
+  });
+  const toAdd = [persistedCandidateTrace, resolutionTrace].filter(Boolean);
+  const dedupedExisting = existing.filter((t) => !toAdd.some((x) => x?.id === t.id));
+  const nextTraces = capDecisionTraces([...toAdd, ...dedupedExisting], {
+    max: 50,
+    order: "desc",
+    payloadRiskMax: 25,
+  });
+  return {
+    ...params.assets,
+    strategy: {
+      ...params.assets.strategy,
+      ...(nextTraces.length ? { decisionTraces: nextTraces } : {}),
+    },
+  };
 }
 
 /** Destino de escritura en `strategy` / conocimiento a partir de un topic canónico. */
@@ -183,7 +253,15 @@ export function applyLearningCandidateToProjectAssets(
       label: "Memoria solo proyecto",
       changedPath: "knowledge.projectOnlyMemories",
     });
-    return { nextAssets: normalizeProjectAssets(next), applied: true, changedPaths, warnings };
+    const traced = appendLearningDecisionTraces({
+      assets: next,
+      row,
+      action,
+      applied: true,
+      changedPaths,
+      warnings,
+    });
+    return { nextAssets: normalizeProjectAssets(traced), applied: true, changedPaths, warnings };
   }
 
   if (action === "SAVE_AS_CONTEXT" || action === "MARK_OUTLIER") {
@@ -211,7 +289,15 @@ export function applyLearningCandidateToProjectAssets(
       label: action === "MARK_OUTLIER" ? "Contexto puntual (outlier)" : "Contexto puntual",
       changedPath: "knowledge.contextualMemories",
     });
-    return { nextAssets: normalizeProjectAssets(next), applied: true, changedPaths, warnings };
+    const traced = appendLearningDecisionTraces({
+      assets: next,
+      row,
+      action,
+      applied: true,
+      changedPaths,
+      warnings,
+    });
+    return { nextAssets: normalizeProjectAssets(traced), applied: true, changedPaths, warnings };
   }
 
   if (action !== "PROMOTE_TO_DNA") {
@@ -249,7 +335,15 @@ export function applyLearningCandidateToProjectAssets(
       sourceTier: "confirmed",
       changedPath: "knowledge.projectOnlyMemories",
     });
-    return { nextAssets: normalizeProjectAssets(next), applied: true, changedPaths, warnings };
+    const traced = appendLearningDecisionTraces({
+      assets: next,
+      row,
+      action,
+      applied: true,
+      changedPaths,
+      warnings,
+    });
+    return { nextAssets: normalizeProjectAssets(traced), applied: true, changedPaths, warnings };
   }
 
   if (c.type === "VISUAL_MEMORY") {
@@ -262,7 +356,16 @@ export function applyLearningCandidateToProjectAssets(
       label: "ADN visual confirmado (aprendizaje)",
       changedPath: "strategy.visualReferenceAnalysis.confirmedVisualPatterns",
     });
-    return { nextAssets: normalizeProjectAssets(next), applied: changedPaths.length > 0, changedPaths, warnings };
+    const appliedNow = changedPaths.length > 0;
+    const traced = appendLearningDecisionTraces({
+      assets: next,
+      row,
+      action,
+      applied: appliedNow,
+      changedPaths,
+      warnings,
+    });
+    return { nextAssets: normalizeProjectAssets(traced), applied: appliedNow, changedPaths, warnings };
   }
 
   if (c.type === "CREATIVE_PREFERENCE") {
@@ -272,7 +375,15 @@ export function applyLearningCandidateToProjectAssets(
       label: "Preferencia creativa",
       changedPath: "strategy.approvedPhrases",
     });
-    return { nextAssets: normalizeProjectAssets(next), applied: true, changedPaths, warnings };
+    const traced = appendLearningDecisionTraces({
+      assets: next,
+      row,
+      action,
+      applied: true,
+      changedPaths,
+      warnings,
+    });
+    return { nextAssets: normalizeProjectAssets(traced), applied: true, changedPaths, warnings };
   }
 
   if (c.type === "BRAND_DNA" || c.type === "CONTRADICTION") {
@@ -285,7 +396,15 @@ export function applyLearningCandidateToProjectAssets(
         sourceConfidence: "medium",
         changedPath: "strategy.rejectedPatterns",
       });
-      return { nextAssets: normalizeProjectAssets(next), applied: true, changedPaths, warnings };
+      const traced = appendLearningDecisionTraces({
+        assets: next,
+        row,
+        action,
+        applied: true,
+        changedPaths,
+        warnings,
+      });
+      return { nextAssets: normalizeProjectAssets(traced), applied: true, changedPaths, warnings };
     }
 
     const target = inferStrategyWriteTarget(c.topic);
@@ -470,7 +589,16 @@ export function applyLearningCandidateToProjectAssets(
       default:
         break;
     }
-    return { nextAssets: normalizeProjectAssets(next), applied: changedPaths.length > 0, changedPaths, warnings };
+    const appliedNow = changedPaths.length > 0;
+    const traced = appendLearningDecisionTraces({
+      assets: next,
+      row,
+      action,
+      applied: appliedNow,
+      changedPaths,
+      warnings,
+    });
+    return { nextAssets: normalizeProjectAssets(traced), applied: appliedNow, changedPaths, warnings };
   }
 
   if (c.type === "OUTLIER") {

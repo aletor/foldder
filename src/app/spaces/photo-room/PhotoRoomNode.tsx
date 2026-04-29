@@ -1,6 +1,6 @@
 "use client";
 
-import React, { memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import {
   NodeResizer,
@@ -17,8 +17,8 @@ import { ImageIcon, Maximize2 } from "lucide-react";
 import { FOLDDER_FIT_VIEW_EASE } from "@/lib/fit-view-ease";
 import { defaultDataForCanvasDropNode } from "@/lib/canvas-connect-end-drop";
 import { FoldderDataHandle } from "../FoldderDataHandle";
-import { NodeIcon, resolveFoldderNodeState } from "../foldder-icons";
-import { NodeLabel, FoldderNodeHeaderTitle } from "../foldder-node-ui";
+import { NodeLabel, FoldderNodeHeaderTitle, FoldderStudioModeCenterButton } from "../foldder-node-ui";
+import { nodeFrameNeedsSync, resolveAspectLockedNodeFrame, resolveNodeChromeHeight } from "../studio-node-aspect";
 import {
   applyCanvasGroupExpand,
   createCanvasGroupFromNodeIds,
@@ -42,6 +42,8 @@ function dispatchOpenNanoStudioFromPhotoRoom(nanoNodeId: string, photoRoomNodeId
 }
 
 const NODE_RESIZE_END_FIT_PADDING = 0.8;
+const PHOTOROOM_NODE_MAX_WIDTH = 960;
+const PHOTOROOM_NODE_MAX_HEIGHT = 2200;
 
 const PhotoRoomStudioLazy = React.lazy(() => import("./PhotoRoomStudio"));
 
@@ -95,32 +97,6 @@ function ViewerOpenLocal({ nodeId, disabled }: { nodeId: string; disabled: boole
   );
 }
 
-function PhotoRoomStudioModeButton({ onClick }: { onClick: () => void }) {
-  return (
-    <div className="pointer-events-none absolute inset-0 z-[15] overflow-hidden opacity-0 transition-opacity duration-200 group-hover/node:opacity-100">
-      <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-2">
-        <button
-          type="button"
-          title="Abrir Studio"
-          onClick={(e) => {
-            e.stopPropagation();
-            onClick();
-          }}
-          className="pointer-events-auto nodrag flex max-w-[min(100%,220px)] flex-col items-center gap-1.5 rounded-2xl border border-white/30 bg-white/[0.12] px-6 py-3.5 shadow-xl backdrop-blur-xl transition-all duration-300 ease-out hover:scale-[1.03] hover:bg-white/[0.22] hover:shadow-2xl"
-        >
-          <span className="font-mono text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-400">
-            Studio
-          </span>
-          <span className="flex items-center gap-2 font-mono text-[17px] font-black uppercase tracking-wide text-zinc-50">
-            <Maximize2 size={22} strokeWidth={2.5} className="shrink-0 text-violet-200" />
-            Mode
-          </span>
-        </button>
-      </div>
-    </div>
-  );
-}
-
 const SLOT_IDS = ["in_0", "in_1", "in_2", "in_3", "in_4", "in_5", "in_6", "in_7"] as const;
 
 const SLOT_TOP_PCT: Record<string, string> = {
@@ -146,6 +122,8 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const updateNodeInternals = useUpdateNodeInternals();
   const [showStudio, setShowStudio] = useState(false);
   const studioApiRef = useRef<DesignerStudioApi | null>(null);
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const previewRef = useRef<HTMLDivElement | null>(null);
   const brainConnected = edges.some((e) => e.target === id && e.targetHandle === "brain");
 
   const studioArtboard = useMemo(() => {
@@ -166,6 +144,7 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
     () => (Array.isArray(nodeData.studioObjects) ? nodeData.studioObjects : []),
     [nodeData.studioObjects],
   );
+  const currentNode = nodes.find((node) => node.id === id);
 
   const studioLayoutGuides = useMemo(
     () => (Array.isArray(nodeData.studioLayoutGuides) ? nodeData.studioLayoutGuides : []),
@@ -596,9 +575,54 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
     };
   }, [photoRoomInputsSig, showStudio, handleStudioExportPreview]);
 
+  useLayoutEffect(() => {
+    const chromeHeight = resolveNodeChromeHeight(frameRef.current, previewRef.current);
+    const nextFrame = resolveAspectLockedNodeFrame({
+      node: currentNode,
+      contentWidth: studioArtboard.width,
+      contentHeight: studioArtboard.height,
+      minWidth: 260,
+      maxWidth: PHOTOROOM_NODE_MAX_WIDTH,
+      minHeight: 200,
+      maxHeight: PHOTOROOM_NODE_MAX_HEIGHT,
+      chromeHeight,
+    });
+    if (!nodeFrameNeedsSync(currentNode, nextFrame)) return;
+    setNodes((nds: any) =>
+      nds.map((node: any) =>
+        node.id === id
+          ? {
+              ...node,
+              width: nextFrame.width,
+              height: nextFrame.height,
+              style: { ...node.style, width: nextFrame.width, height: nextFrame.height },
+            }
+          : node,
+      ),
+    );
+    requestAnimationFrame(() => updateNodeInternals(id));
+  }, [
+    currentNode?.width,
+    currentNode?.height,
+    currentNode?.measured?.width,
+    currentNode?.measured?.height,
+    id,
+    setNodes,
+    studioArtboard.height,
+    studioArtboard.width,
+    updateNodeInternals,
+  ]);
+
   return (
-    <div className="custom-node processor-node group/node" style={{ minWidth: 260, maxHeight: 600 }}>
-      <FoldderNodeResizerLocal minWidth={260} minHeight={200} maxWidth={520} maxHeight={560} isVisible={selected} />
+    <div ref={frameRef} className="custom-node processor-node group/node" style={{ minWidth: 260 }}>
+      <FoldderNodeResizerLocal
+        minWidth={260}
+        minHeight={200}
+        maxWidth={PHOTOROOM_NODE_MAX_WIDTH}
+        maxHeight={PHOTOROOM_NODE_MAX_HEIGHT}
+        keepAspectRatio
+        isVisible={selected}
+      />
       <NodeLabel id={id} label={nodeData.label} defaultLabel="PhotoRoom" />
 
       {visibleSlots.map((sid) => {
@@ -629,12 +653,9 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
       </div>
 
       <div className="node-header">
-        <NodeIcon
-          type="photoRoom"
-          selected={selected}
-          size={16}
-          state={resolveFoldderNodeState({ done: !!displayUrl })}
-        />
+        <span className="flex h-5 w-5 items-center justify-center rounded-md bg-[#63d4fd]">
+          <img src="/photoroom_icon.svg" alt="" className="h-3.5 w-3.5 object-contain" draggable={false} />
+        </span>
         <FoldderNodeHeaderTitle
           className="min-w-0 flex-1 uppercase leading-tight tracking-tight line-clamp-2"
           introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}
@@ -646,6 +667,7 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
       </div>
 
       <div
+        ref={previewRef}
         className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-b-[24px] bg-[#0a0a0a] group/out"
         style={{ minHeight: 120 }}
       >
@@ -667,7 +689,7 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
             </span>
           </div>
         )}
-        <PhotoRoomStudioModeButton onClick={() => setShowStudio(true)} />
+        <FoldderStudioModeCenterButton onClick={() => setShowStudio(true)} />
       </div>
 
       {showStudio ? (

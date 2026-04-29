@@ -2,6 +2,7 @@
 
 import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
 import type { BrainImageSuggestionDiagnostics } from "@/lib/brain/build-brain-visual-prompt-context";
+import { normalizeBrainDecisionTrace } from "@/lib/brain/brain-decision-trace";
 
 export type { BrainImageSuggestionDiagnostics };
 
@@ -187,6 +188,7 @@ function normalizeSuggestion(item: unknown, index: number): BrainImageSuggestion
   let visualDiagnostics: BrainImageSuggestionDiagnostics | undefined;
   if (vdRaw && typeof vdRaw === "object") {
     const v = vdRaw as Record<string, unknown>;
+    const decisionTrace = normalizeBrainDecisionTrace(v.decisionTrace);
     const vsu = v.visualSourcesUsed;
     visualDiagnostics = {
       finalPromptUsed: typeof v.finalPromptUsed === "string" ? v.finalPromptUsed : "",
@@ -262,6 +264,8 @@ function normalizeSuggestion(item: unknown, index: number): BrainImageSuggestion
       ...(typeof v.finalPromptWasRewritten === "boolean" ? { finalPromptWasRewritten: v.finalPromptWasRewritten } : {}),
       ...(typeof v.promptBeforeSanitize === "string" ? { promptBeforeSanitize: v.promptBeforeSanitize } : {}),
       ...(Array.isArray(v.visualAvoidUsed) ? { visualAvoidUsed: v.visualAvoidUsed as string[] } : {}),
+      ...(typeof v.decisionTraceId === "string" ? { decisionTraceId: v.decisionTraceId } : {}),
+      ...(decisionTrace ? { decisionTrace } : {}),
     };
   }
   return {

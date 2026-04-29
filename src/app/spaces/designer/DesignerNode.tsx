@@ -1,19 +1,23 @@
 "use client";
 
-import React, { memo, useCallback, useEffect, useState } from "react";
+import React, { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { NodeResizer, Position, useEdges, useReactFlow, useUpdateNodeInternals, type NodeProps } from "@xyflow/react";
+import { NodeResizer, Position, useEdges, useNodes, useReactFlow, useUpdateNodeInternals, type NodeProps } from "@xyflow/react";
 import { Pencil } from "lucide-react";
 import { FOLDDER_FIT_VIEW_EASE } from "@/lib/fit-view-ease";
 import { FoldderDataHandle } from "../FoldderDataHandle";
-import { NodeIcon } from "../foldder-icons";
+import { FoldderNodeHeaderTitle, FoldderStudioModeCenterButton } from "../foldder-node-ui";
 import type { IndesignPageFormatId } from "../indesign/page-formats";
 import { DEFAULT_DESIGNER_PAGE_FORMAT, getPageDimensions } from "../indesign/page-formats";
+import { nodeFrameNeedsSync, resolveAspectLockedNodeFrame, resolveNodeChromeHeight } from "../studio-node-aspect";
 import { DesignerPagePreview } from "./DesignerPagePreview";
 import type { Story, TextFrame } from "../indesign/text-model";
 import type { ImageFrameRecord } from "../indesign/image-frame-model";
 import type { FreehandObject, LayoutGuide } from "../FreehandStudio";
 import type { PresenterGroupStep } from "../presenter/presenter-group-animations";
+
+const DESIGNER_NODE_MAX_WIDTH = 960;
+const DESIGNER_NODE_MAX_HEIGHT = 2200;
 
 export type DesignerPageState = {
   id: string;
@@ -58,6 +62,7 @@ function DesignerNodeResizer(props: React.ComponentProps<typeof NodeResizer>) {
 
 export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const nodeData = data as DesignerNodeData;
+  const nodes = useNodes();
   const edges = useEdges();
   const { setNodes } = useReactFlow();
   const updateNodeInternals = useUpdateNodeInternals();
@@ -85,6 +90,9 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
   );
 
   const firstPageDims = pages[0] ? getPageDimensions(pages[0]) : null;
+  const currentNode = nodes.find((node) => node.id === id);
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const previewRef = useRef<HTMLDivElement | null>(null);
   const refreshHandleGeometry = useCallback(() => {
     const run = () => updateNodeInternals(id);
     requestAnimationFrame(() => {
@@ -108,6 +116,45 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
       window.clearTimeout(t);
     };
   }, [refreshHandleGeometry, nodeData.value, pages.length, firstPageDims?.width, firstPageDims?.height]);
+
+  useLayoutEffect(() => {
+    if (!firstPageDims) return;
+    const chromeHeight = resolveNodeChromeHeight(frameRef.current, previewRef.current);
+    const nextFrame = resolveAspectLockedNodeFrame({
+      node: currentNode,
+      contentWidth: firstPageDims.width,
+      contentHeight: firstPageDims.height,
+      minWidth: 280,
+      maxWidth: DESIGNER_NODE_MAX_WIDTH,
+      minHeight: 200,
+      maxHeight: DESIGNER_NODE_MAX_HEIGHT,
+      chromeHeight,
+    });
+    if (!nodeFrameNeedsSync(currentNode, nextFrame)) return;
+    setNodes((nds) =>
+      nds.map((node) =>
+        node.id === id
+          ? {
+              ...node,
+              width: nextFrame.width,
+              height: nextFrame.height,
+              style: { ...node.style, width: nextFrame.width, height: nextFrame.height },
+            }
+          : node,
+      ),
+    );
+    requestAnimationFrame(() => updateNodeInternals(id));
+  }, [
+    currentNode?.width,
+    currentNode?.height,
+    currentNode?.measured?.width,
+    currentNode?.measured?.height,
+    firstPageDims?.width,
+    firstPageDims?.height,
+    id,
+    setNodes,
+    updateNodeInternals,
+  ]);
 
   const onUpdatePages = useCallback(
     (next: DesignerPageState[], nextActiveIdx?: number) => {
@@ -152,32 +199,46 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
   );
 
   return (
-    <div className="custom-node tool-node group/node" style={{ minWidth: 280 }}>
-      <DesignerNodeResizer minWidth={280} minHeight={200} maxWidth={520} maxHeight={420} isVisible={selected} />
+    <div ref={frameRef} className="custom-node tool-node group/node" style={{ minWidth: 280 }}>
+      <DesignerNodeResizer
+        minWidth={280}
+        minHeight={200}
+        maxWidth={DESIGNER_NODE_MAX_WIDTH}
+        maxHeight={DESIGNER_NODE_MAX_HEIGHT}
+        keepAspectRatio
+        isVisible={selected}
+      />
 
       <div className="node-header border-b border-violet-500/15 bg-gradient-to-r from-zinc-900/90 via-zinc-900/70 to-zinc-900/90">
-        <NodeIcon type="designer" selected={selected} size={16} />
-        <span className="flex-1 truncate text-[10px] font-black uppercase tracking-[0.14em] text-zinc-100">
-          Designer
+        <span className="flex h-5 w-5 items-center justify-center rounded-md bg-[#fdb04b]">
+          <img src="/designer_icon.svg" alt="" className="h-3.5 w-3.5 object-contain" draggable={false} />
         </span>
+        <FoldderNodeHeaderTitle
+          className="flex-1 truncate uppercase tracking-[0.14em] text-zinc-100"
+          introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}
+        >
+          Designer
+        </FoldderNodeHeaderTitle>
         <div className="node-badge">DESIGN</div>
       </div>
 
-      <div className="node-content relative" style={{ minHeight: 120 }}>
+      <div
+        ref={previewRef}
+        className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-b-[24px] bg-[#0a0a0a] group/out"
+        style={{ minHeight: 120 }}
+      >
         {nodeData.value ? (
           <img
             src={nodeData.value}
             alt="Designer preview — página 1"
-            className="w-full rounded-lg bg-zinc-950/80"
-            style={{ maxHeight: 180, objectFit: "contain" }}
+            className="max-h-full max-w-full h-auto w-auto object-contain bg-zinc-950/80"
             onLoad={refreshHandleGeometry}
             onError={refreshHandleGeometry}
           />
         ) : pages[0] && (pages[0].objects?.length ?? 0) > 0 && firstPageDims ? (
           <div
-            className="w-full overflow-hidden rounded-lg border border-white/[0.06] bg-[#fafafa]"
+            className="h-full w-full overflow-hidden bg-[#fafafa]"
             style={{
-              maxHeight: 180,
               aspectRatio: `${Math.max(1, firstPageDims.width)} / ${Math.max(1, firstPageDims.height)}`,
             }}
           >
@@ -195,15 +256,7 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
             </span>
           </div>
         )}
-        <button
-          type="button"
-          onClick={() => setIsStudioOpen(true)}
-          className="absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition-opacity duration-200 hover:bg-black/40 hover:opacity-100 group-hover/node:opacity-100"
-        >
-          <span className="rounded-lg bg-violet-600 px-4 py-2 text-xs font-bold text-white shadow-lg">
-            Open Studio
-          </span>
-        </button>
+        <FoldderStudioModeCenterButton onClick={() => setIsStudioOpen(true)} />
       </div>
 
       <div className="handle-wrapper handle-left" style={{ top: "50%", transform: "translateY(-50%)" }}>

@@ -5,6 +5,11 @@ import type { BrainNodeType, TelemetryBatch, TelemetryEvent, TelemetryEventKind 
 import { buildLearningExtractionSystemPrompt } from "./brain-learning-extraction-prompt";
 import { annotateCandidateDnaConflict } from "./brain-learning-conflict";
 import {
+  summarizeLearningCandidateTrace,
+  summarizeTelemetryTrace,
+  type BrainDecisionTrace,
+} from "./brain-decision-trace";
+import {
   LEARNING_CANDIDATES_RESPONSE_JSON_SCHEMA,
   parseLearningCandidatesResponse,
   summarizeBrandDnaForPrompt,
@@ -59,7 +64,60 @@ export type AggregatedTelemetryPayload = AggregatedTelemetryCore & {
   projectId: string;
   workspaceId?: string;
   nodeId: string;
+  decisionTraceId?: string;
+  decisionTrace?: BrainDecisionTrace;
 };
+
+const STRONG_TELEMETRY_KINDS: readonly TelemetryEventKind[] = [
+  "CONTENT_EXPORTED",
+  "MANUAL_OVERRIDE",
+  "TEXT_FINALIZED",
+  "LAYOUT_FINALIZED",
+  "STYLE_APPLIED",
+  "DRIFT_FROM_BRAND",
+  "ASSET_USED",
+  "IMAGE_EDITED",
+  "IMAGE_EXPORTED",
+  "IMAGE_GENERATED",
+  "VISUAL_ASSET_USED",
+  "BACKGROUND_REMOVED",
+  "MASK_USED",
+  "LAYER_USED",
+  "LOGO_CREATED",
+  "LOGO_EDITED",
+  "VIDEO_FRAME_USED",
+  "VIDEO_POSTER_USED",
+  "COLOR_USED",
+  "TYPOGRAPHY_USED",
+  "IMAGE_USED",
+  "IMAGE_IMPORTED",
+  "PROMPT_ACCEPTED",
+  "PROMPT_USED",
+];
+
+function collectStrongSignalKinds(eventKindCounts: Partial<Record<TelemetryEventKind, number>>): string[] {
+  const out: string[] = [];
+  for (const k of STRONG_TELEMETRY_KINDS) {
+    if ((eventKindCounts[k] ?? 0) > 0) out.push(k);
+  }
+  return out;
+}
+
+function dominantFlushReason(
+  flushReasonCounts: Partial<Record<TelemetryFlushReason, number>>,
+): TelemetryFlushReason | undefined {
+  const pairs = Object.entries(flushReasonCounts) as Array<[TelemetryFlushReason, number | undefined]>;
+  let best: TelemetryFlushReason | undefined;
+  let bestCount = -1;
+  for (const [key, count] of pairs) {
+    const n = typeof count === "number" ? count : 0;
+    if (n > bestCount) {
+      best = key;
+      bestCount = n;
+    }
+  }
+  return best;
+}
 
 /** Señales suficientes para invocar extracción (evita candidatos fuertes solo por ignores). */
 export function hasStrongLearningSignals(aggregated: AggregatedTelemetryCore): boolean {
@@ -68,33 +126,7 @@ export function hasStrongLearningSignals(aggregated: AggregatedTelemetryCore): b
   if ((aggregated.flushReasonCounts.export ?? 0) > 0) return true;
   if ((aggregated.suggestions?.uniqueAccepted ?? 0) > 0) return true;
   if (Object.keys(aggregated.manualOverrideCounts).length > 0) return true;
-  const strongKinds: TelemetryEventKind[] = [
-    "CONTENT_EXPORTED",
-    "MANUAL_OVERRIDE",
-    "TEXT_FINALIZED",
-    "LAYOUT_FINALIZED",
-    "STYLE_APPLIED",
-    "DRIFT_FROM_BRAND",
-    "ASSET_USED",
-    "IMAGE_EDITED",
-    "IMAGE_EXPORTED",
-    "IMAGE_GENERATED",
-    "VISUAL_ASSET_USED",
-    "BACKGROUND_REMOVED",
-    "MASK_USED",
-    "LAYER_USED",
-    "LOGO_CREATED",
-    "LOGO_EDITED",
-    "VIDEO_FRAME_USED",
-    "VIDEO_POSTER_USED",
-    "COLOR_USED",
-    "TYPOGRAPHY_USED",
-    "IMAGE_USED",
-    "IMAGE_IMPORTED",
-    "PROMPT_ACCEPTED",
-    "PROMPT_USED",
-  ];
-  for (const k of strongKinds) {
+  for (const k of STRONG_TELEMETRY_KINDS) {
     if ((aggregated.eventKindCounts[k] ?? 0) > 0) return true;
   }
   return false;
@@ -251,11 +283,38 @@ export class TelemetryProcessor {
     event: Pick<TelemetryStreamEvent, "projectId" | "workspaceId" | "nodeId" | "batches">,
   ): AggregatedTelemetryPayload {
     const core = this.aggregateBatch(event.batches);
+    const strongKinds = collectStrongSignalKinds(core.eventKindCounts);
+    const flush = dominantFlushReason(core.flushReasonCounts);
+    const examples: string[] = [];
+    for (const [key, val] of Object.entries(core.manualOverrideCounts)) {
+      if (examples.length >= 4) break;
+      examples.push(`manual:${key}=${val}`);
+    }
+    const telemetryTrace = summarizeTelemetryTrace({
+      targetNodeId: event.nodeId,
+      targetNodeType: core.nodeTypes[0],
+      telemetryBatchId: core.sessionIds[0],
+      flushReason: flush,
+      acceptedCount: core.suggestions.uniqueAccepted,
+      ignoredCount: core.suggestions.uniqueIgnored,
+      exportedCount: core.eventKindCounts.CONTENT_EXPORTED ?? 0,
+      styleAppliedCount: core.eventKindCounts.STYLE_APPLIED ?? 0,
+      imageUsedCount:
+        (core.eventKindCounts.IMAGE_USED ?? 0) +
+        (core.eventKindCounts.ASSET_USED ?? 0) +
+        (core.eventKindCounts.VISUAL_ASSET_USED ?? 0),
+      batchCount: core.batchCount,
+      strongKinds,
+      examples,
+      confidence: strongKinds.length > 0 ? 0.72 : core.suggestions.uniqueAccepted > 0 ? 0.62 : 0.4,
+    });
     return {
       ...core,
       projectId: event.projectId,
       workspaceId: event.workspaceId,
       nodeId: event.nodeId,
+      decisionTraceId: telemetryTrace.id,
+      decisionTrace: telemetryTrace,
     };
   }
 
@@ -339,21 +398,50 @@ export class TelemetryProcessor {
     const now = new Date().toISOString();
     const telemetryNodeType = event.batches[0]?.nodeType;
     const emitterNid = event.nodeId.trim();
+    const strongKinds = collectStrongSignalKinds(aggregated.eventKindCounts);
     return candidates.map((c) => {
-      const nid = resolveStoredLearningCandidateNodeId(c, event);
+      const enriched = this.enrichCandidateEvidence(c, event, aggregated);
+      const nid = resolveStoredLearningCandidateNodeId(enriched, event);
       const resolvedTelemetryType: BrainNodeType | undefined =
-        nid && nid === emitterNid ? telemetryNodeType : inferTelemetryNodeTypeFromEvidence(c);
+        nid && nid === emitterNid ? telemetryNodeType : inferTelemetryNodeTypeFromEvidence(enriched);
+      const candidateTrace = summarizeLearningCandidateTrace({
+        targetNodeType: resolvedTelemetryType,
+        targetNodeId: nid,
+        learningCandidateId: undefined,
+        topic: enriched.topic,
+        candidateType: enriched.type,
+        value: enriched.value,
+        reasoning: enriched.reasoning,
+        confidence: enriched.confidence,
+        eventCounts: enriched.evidence.eventCounts,
+        examples: enriched.evidence.examples,
+        strongKinds,
+        evidenceSource: enriched.evidence.evidenceSource,
+      });
       return {
-      id: randomUUID(),
-      projectId: event.projectId,
-      workspaceId: event.workspaceId,
-      nodeId: nid,
-      ...(resolvedTelemetryType ? { telemetryNodeType: resolvedTelemetryType } : {}),
-      status: "PENDING_REVIEW" as const,
-      sourceSessionIds: sessionKeys,
-      candidate: this.enrichCandidateEvidence(c, event, aggregated),
-      createdAt: now,
-    };
+        id: randomUUID(),
+        projectId: event.projectId,
+        workspaceId: event.workspaceId,
+        nodeId: nid,
+        ...(resolvedTelemetryType ? { telemetryNodeType: resolvedTelemetryType } : {}),
+        status: "PENDING_REVIEW" as const,
+        sourceSessionIds: sessionKeys,
+        candidate: enriched,
+        createdAt: now,
+        decisionTraceId: candidateTrace.id,
+        decisionTrace: {
+          ...candidateTrace,
+          ...(aggregated.decisionTraceId
+            ? {
+                sourceRefs: {
+                  ...(candidateTrace.sourceRefs ?? {}),
+                  telemetryBatchId:
+                    aggregated.decisionTrace?.sourceRefs?.telemetryBatchId ?? aggregated.decisionTraceId,
+                },
+              }
+            : {}),
+        },
+      };
     });
   }
 
