@@ -116,12 +116,30 @@ export function resolvePromptValueFromEdgeSource(
   edge: Pick<Edge, "source" | "sourceHandle">,
   nodes: Node[]
 ): string {
-  const src = nodes.find((n) => n.id === edge.source);
+  return resolvePromptValueFromEdgeSourceLookup(edge, (nodeId) => nodes.find((n) => n.id === nodeId));
+}
+
+/**
+ * Variante para nodos que resuelven muchas entradas a la vez. Evita `nodes.find(...)`
+ * repetido por cada arista cuando el canvas tiene muchos nodos.
+ */
+export function resolvePromptValueFromEdgeSourceMap(
+  edge: Pick<Edge, "source" | "sourceHandle">,
+  nodesById: ReadonlyMap<string, Node>
+): string {
+  return resolvePromptValueFromEdgeSourceLookup(edge, (nodeId) => nodesById.get(nodeId));
+}
+
+function resolvePromptValueFromEdgeSourceLookup(
+  edge: Pick<Edge, "source" | "sourceHandle">,
+  getNode: (nodeId: string) => Node | undefined,
+): string {
+  const src = getNode(edge.source);
   if (!src) return "";
   if (src.type === "canvasGroup" && edge.sourceHandle?.startsWith("g_out_")) {
     const p = parseCanvasGroupOutHandle(edge.sourceHandle);
     if (!p) return "";
-    const inner = nodes.find((n) => n.id === p.memberId);
+    const inner = getNode(p.memberId);
     if (!inner?.data) return "";
     const v = (inner.data as { value?: unknown }).value;
     return typeof v === "string" ? v : "";

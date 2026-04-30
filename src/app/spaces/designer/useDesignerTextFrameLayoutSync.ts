@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, type MutableRefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, type MutableRefObject } from "react";
 import type { DesignerStudioApi, FreehandObject } from "../FreehandStudio";
 import type { DesignerPageState } from "./DesignerNode";
 import { layoutPageStories } from "../indesign/text-layout";
@@ -15,6 +15,87 @@ type Params = {
   pages: DesignerPageState[];
   activePageIndex: number;
 };
+
+type DesignerRichSpan = ReturnType<typeof buildRichSpansForFrame>[number];
+
+function threadInfoEqual(
+  a: FreehandObject["_designerThreadInfo"] | undefined,
+  b: FreehandObject["_designerThreadInfo"] | undefined,
+): boolean {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  return a.index === b.index && a.total === b.total;
+}
+
+function spanStyleEqual(a: DesignerRichSpan["style"], b: DesignerRichSpan["style"]): boolean {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  return (
+    a.fontWeight === b.fontWeight &&
+    a.fontStyle === b.fontStyle &&
+    a.textUnderline === b.textUnderline &&
+    a.textStrikethrough === b.textStrikethrough &&
+    a.fontSize === b.fontSize &&
+    a.color === b.color &&
+    a.fontFamily === b.fontFamily &&
+    a.letterSpacing === b.letterSpacing &&
+    a.linkHref === b.linkHref
+  );
+}
+
+function richSpansEqual(a: DesignerRichSpan[] | undefined, b: DesignerRichSpan[] | undefined): boolean {
+  if (!a && !b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i]!;
+    const y = b[i]!;
+    if (x.text !== y.text || !spanStyleEqual(x.style, y.style)) return false;
+  }
+  return true;
+}
+
+function solidFillColor(value: unknown): string | null {
+  if (typeof value === "string") return value === "none" ? null : value;
+  const fill = value as { type?: string; color?: string } | undefined;
+  return fill?.type === "solid" && fill.color ? fill.color : null;
+}
+
+function patchValueEqual(obj: FreehandObject, key: string, value: unknown): boolean {
+  if (key === "_designerThreadInfo") {
+    return threadInfoEqual(
+      obj._designerThreadInfo,
+      value as FreehandObject["_designerThreadInfo"] | undefined,
+    );
+  }
+  if (key === "_designerRichSpans") {
+    return richSpansEqual(obj._designerRichSpans, value as DesignerRichSpan[] | undefined);
+  }
+  if (key === "fill") {
+    return solidFillColor(obj.fill) === solidFillColor(value);
+  }
+  return Object.is((obj as unknown as Record<string, unknown>)[key], value);
+}
+
+function patchObjectIfChanged(
+  api: DesignerStudioApi,
+  obj: FreehandObject | undefined,
+  id: string,
+  patch: Partial<FreehandObject>,
+): void {
+  if (!obj) {
+    api.patchObject(id, patch);
+    return;
+  }
+  const filteredPatch: Partial<FreehandObject> = {};
+  for (const [key, value] of Object.entries(patch)) {
+    if (!patchValueEqual(obj, key, value)) {
+      (filteredPatch as Record<string, unknown>)[key] = value;
+    }
+  }
+  if (Object.keys(filteredPatch).length > 0) {
+    api.patchObject(id, filteredPatch);
+  }
+}
 
 /**
  * Reparto de texto entre marcos encadenados, overflow y `_designerRichSpans` en el lienzo.
@@ -43,10 +124,12 @@ export function useDesignerTextFrameLayoutSync({
     const editingId = api.getTextEditingId();
 
     const currentObjs = api.getObjects();
+    const objectById = new Map(currentObjs.map((obj) => [obj.id, obj]));
+    const storyById = new Map(stories.map((story) => [story.id, story]));
 
     const textFramesForLayout = textFrames.map((tf) => {
-      const o = currentObjs.find((c) => c.id === tf.id && (c as { isTextFrame?: boolean }).isTextFrame);
-      if (!o) return tf;
+      const o = objectById.get(tf.id);
+      if (!o || !(o as { isTextFrame?: boolean }).isTextFrame) return tf;
       return {
         ...tf,
         x: o.x,
@@ -59,8 +142,8 @@ export function useDesignerTextFrameLayoutSync({
     const typographyForLayout = (s: Story): Typography => {
       const typo = s.typography;
       for (const fid of s.frames) {
-        const o = currentObjs.find((c) => c.id === fid && (c as { isTextFrame?: boolean }).isTextFrame);
-        if (!o) continue;
+        const o = objectById.get(fid);
+        if (!o || !(o as { isTextFrame?: boolean }).isTextFrame) continue;
         const ox = o as FreehandObject & {
           fontFamily?: string;
           fontSize?: number;
@@ -120,7 +203,7 @@ export function useDesignerTextFrameLayoutSync({
         if (!o.isTextFrame) continue;
         const sid = (o as { storyId?: string }).storyId as string | undefined;
         if (!sid) continue;
-        const s = stories.find((st) => st.id === sid);
+        const s = storyById.get(sid);
         if (!s) continue;
         const typo = s.typography;
         const a = o as FreehandObject & {
@@ -144,7 +227,7 @@ export function useDesignerTextFrameLayoutSync({
     let liveTypoSource: Record<string, unknown> | null = null;
     let liveTypoStoryId: string | null = null;
     if (selectedFrameId) {
-      const obj = currentObjs.find((o) => o.id === selectedFrameId) as FreehandObject & {
+      const obj = objectById.get(selectedFrameId) as FreehandObject & {
         storyId?: string;
         fontFamily?: string;
         fontSize?: number;
@@ -179,16 +262,17 @@ export function useDesignerTextFrameLayoutSync({
     }
 
     for (const fl of layouts) {
-      const story = stories.find((s) => s.id === fl.storyId);
+      const story = storyById.get(fl.storyId);
       const total = story?.frames.length ?? 1;
       const index = story ? story.frames.indexOf(fl.frameId) : 0;
       const threadInfo = total > 1 ? { index: Math.max(0, index), total } : undefined;
+      const frameObj = objectById.get(fl.frameId);
 
       const typoPatch: Record<string, unknown> = {};
       if (story && story.frames.length > 1 && fl.frameId !== selectedFrameId) {
         const src = liveTypoStoryId === story.id && liveTypoSource ? liveTypoSource : null;
         if (src) {
-          const obj = currentObjs.find((o) => o.id === fl.frameId) as FreehandObject & {
+          const obj = frameObj as FreehandObject & {
             fontFamily?: string;
             fontSize?: number;
             lineHeight?: number;
@@ -225,14 +309,17 @@ export function useDesignerTextFrameLayoutSync({
       }
 
       if (fl.frameId === editingId) {
-        api.patchObject(fl.frameId, { _designerOverflow: fl.hasOverflow, _designerThreadInfo: threadInfo });
+        patchObjectIfChanged(api, frameObj, fl.frameId, {
+          _designerOverflow: fl.hasOverflow,
+          _designerThreadInfo: threadInfo,
+        });
         continue;
       }
       if (story) {
         const frameContent = sliceStoryContent(story.content, fl.contentRange.start, fl.contentRange.end);
         const frameText = serializeStoryContent(frameContent);
         const richSpans = buildRichSpansForFrame(frameContent);
-        api.patchObject(fl.frameId, {
+        patchObjectIfChanged(api, frameObj, fl.frameId, {
           text: frameText,
           _designerOverflow: fl.hasOverflow,
           _designerThreadInfo: threadInfo,
@@ -240,12 +327,17 @@ export function useDesignerTextFrameLayoutSync({
           ...typoPatch,
         });
       } else {
-        api.patchObject(fl.frameId, { _designerOverflow: fl.hasOverflow, _designerThreadInfo: threadInfo });
+        patchObjectIfChanged(api, frameObj, fl.frameId, {
+          _designerOverflow: fl.hasOverflow,
+          _designerThreadInfo: threadInfo,
+        });
       }
     }
   }, [studioApiRef, pagesRef, activeIdxRef]);
 
-  syncTextFrameLayoutsRef.current = syncTextFrameLayouts;
+  useLayoutEffect(() => {
+    syncTextFrameLayoutsRef.current = syncTextFrameLayouts;
+  }, [syncTextFrameLayouts]);
 
   useEffect(() => {
     clearTimeout(layoutSyncTimerRef.current);

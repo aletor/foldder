@@ -583,9 +583,10 @@ export default function DesignerStudio({
       const api = studioApiRef.current;
       if (api) {
         const newLayouts = layoutPageStories(storiesForPatch, textFramesForPatch);
+        const storyById = new Map(storiesForPatch.map((story) => [story.id, story]));
         for (const fl of newLayouts) {
           if (fl.storyId !== storyId) continue;
-          const st = storiesForPatch.find((s) => s.id === fl.storyId);
+          const st = storyById.get(fl.storyId);
           if (!st) continue;
           const frameContent = sliceStoryContent(st.content, fl.contentRange.start, fl.contentRange.end);
           const ft = serializeStoryContent(frameContent);
@@ -1020,12 +1021,13 @@ export default function DesignerStudio({
       });
 
       if (api) {
-        const story = updatedStories.find(s => s.id === storyId);
+        const storyById = new Map(updatedStories.map((s) => [s.id, s]));
+        const story = storyById.get(storyId);
         if (story && story.frames.length > 1) {
           const layouts = layoutPageStories(updatedStories, textFrames);
           for (const fl of layouts) {
             if (fl.storyId !== storyId) continue;
-            const st = updatedStories.find(s => s.id === fl.storyId);
+            const st = storyById.get(fl.storyId);
             if (!st) continue;
             const frameContent = sliceStoryContent(st.content, fl.contentRange.start, fl.contentRange.end);
             const frameTxt = serializeStoryContent(frameContent);
@@ -1075,9 +1077,10 @@ export default function DesignerStudio({
 
       if (api) {
         const layouts = layoutPageStories(updatedStories, textFrames);
+        const storyById = new Map(updatedStories.map((s) => [s.id, s]));
         for (const fl of layouts) {
           if (fl.storyId !== storyId) continue;
-          const st = updatedStories.find(s => s.id === fl.storyId);
+          const st = storyById.get(fl.storyId);
           if (!st) continue;
           const frameContent = sliceStoryContent(st.content, fl.contentRange.start, fl.contentRange.end);
           const ft = serializeStoryContent(frameContent);
@@ -1123,14 +1126,17 @@ export default function DesignerStudio({
       const api = studioApiRef.current;
       if (api) {
         const newLayouts = layoutPageStories(result.stories, result.textFrames);
+        const textFrameById = new Map(result.textFrames.map((tf) => [tf.id, tf]));
+        const storyById = new Map(result.stories.map((s) => [s.id, s]));
+        const layoutByFrameId = new Map(newLayouts.map((layout) => [layout.frameId, layout]));
         const objs = api.getObjects();
         for (const obj of objs) {
           if (!obj.isTextFrame) continue;
-          const newTf = result.textFrames.find(tf => tf.id === obj.id);
+          const newTf = textFrameById.get(obj.id);
           if (!newTf) continue;
-          const newStory = result.stories.find(s => s.id === newTf.storyId);
+          const newStory = storyById.get(newTf.storyId);
           if (!newStory) continue;
-          const nfl = newLayouts.find(l => l.frameId === obj.id);
+          const nfl = layoutByFrameId.get(obj.id);
           if (!nfl) continue;
           const ftxt = serializeStoryContent(newStory.content).slice(nfl.contentRange.start, nfl.contentRange.end);
           const frameIdx = newStory.frames.indexOf(obj.id);

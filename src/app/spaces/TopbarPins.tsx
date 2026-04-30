@@ -79,9 +79,11 @@ export const TOPBAR_FIXED_PIN_TYPES = [
   "files",
 ] as const;
 
+export type TopbarPinType = (typeof TOPBAR_FIXED_PIN_TYPES)[number];
+
 /** Tooltip (nombre completo) vs etiqueta corta bajo el icono. */
 const TOPBAR_PIN_UI: Record<
-  (typeof TOPBAR_FIXED_PIN_TYPES)[number],
+  TopbarPinType,
   { title: string; shortLabel: string }
 > = {
   brain: { title: "Brain — marca y conocimiento", shortLabel: "Brain" },
@@ -99,6 +101,14 @@ type TopbarPinsProps = {
   onAssetsClick?: () => void;
   /** Doble clic: añadir nodo (Brain → projectBrain, Foldder → projectAssets, resto → tipo del pin). */
   onPinDoubleClick?: (nodeType: string) => void;
+  /** Click directo por pin (modo Vista estándar / apps). Si se pasa, evita la lógica click-vs-doble-click de Pro. */
+  onPinClick?: (pinType: TopbarPinType) => void;
+  /** Lista visible de pins (por defecto `TOPBAR_FIXED_PIN_TYPES`). */
+  pinTypes?: readonly TopbarPinType[];
+  /** Estado visual opcional para integraciones tipo desktop app shell. */
+  activePinType?: TopbarPinType | null;
+  /** Estado visual opcional para app minimizada. */
+  minimizedPinType?: TopbarPinType | null;
   /** Arrastre desde la librería: sin tooltip hover encima de la barra */
   paletteDragActive?: boolean;
   /** Dentro de una barra con borde padre: sin caja interior duplicada */
@@ -125,7 +135,7 @@ function PinHoverCard({ label }: { label: string }) {
 }
 
 type PinChipProps = {
-  type: (typeof TOPBAR_FIXED_PIN_TYPES)[number];
+  type: TopbarPinType;
   title: string;
   shortLabel: string;
   iconSize: number;
@@ -134,7 +144,10 @@ type PinChipProps = {
   onBrainClick?: () => void;
   onAssetsClick?: () => void;
   onPinDoubleClick?: (nodeType: string) => void;
+  onPinClick?: (pinType: TopbarPinType) => void;
   paletteDragActive?: boolean;
+  isActive?: boolean;
+  isMinimized?: boolean;
 };
 
 function TopbarPinChip({
@@ -147,7 +160,10 @@ function TopbarPinChip({
   onBrainClick,
   onAssetsClick,
   onPinDoubleClick,
+  onPinClick,
   paletteDragActive = false,
+  isActive = false,
+  isMinimized = false,
 }: PinChipProps) {
   const Glyph = TOPBAR_GLYPH_BY_NODE_TYPE[type];
   const isBrain = type === "brain";
@@ -181,15 +197,25 @@ function TopbarPinChip({
                 : chipClassName
         }
         style={isCustomDockButton ? { backgroundColor: "transparent" } : undefined}
+        aria-pressed={isActive || isMinimized}
+        data-state={isActive ? "active" : isMinimized ? "minimized" : "idle"}
         aria-label={
-          isBrain
+          onPinClick
+            ? `Abrir ${title}`
+            : isBrain
             ? `${title}. Clic para abrir studio (marca y conocimiento). Doble clic para añadir el nodo Brain al lienzo.`
             : isAssets
               ? `${title}. Clic para abrir Foldder. Doble clic para añadir el nodo Foldder al lienzo.`
               : `${title}. Doble clic para añadir al lienzo.`
         }
         onClick={
-          isBrain
+          onPinClick
+            ? (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onPinClick(type);
+              }
+            : isBrain
             ? (e) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -228,6 +254,7 @@ function TopbarPinChip({
               : undefined
         }
         onDoubleClick={(e) => {
+          if (!onPinDoubleClick) return;
           e.preventDefault();
           e.stopPropagation();
           if (brainOpenTimerRef.current) {
@@ -257,6 +284,14 @@ function TopbarPinChip({
           <Glyph size={iconSize} className={isAssets ? "shrink-0" : "shrink-0 text-white"} />
         )}
         <span className={captionClassName}>{shortLabel}</span>
+        {(isActive || isMinimized) && (
+          <span
+            className={`absolute -bottom-1 h-1.5 w-1.5 rounded-full ${
+              isActive ? "bg-emerald-300" : "bg-amber-300"
+            }`}
+            aria-hidden
+          />
+        )}
       </button>
       {!paletteDragActive && <PinHoverCard label={title} />}
     </div>
@@ -267,6 +302,10 @@ export function TopbarPins({
   onBrainClick,
   onAssetsClick,
   onPinDoubleClick,
+  onPinClick,
+  pinTypes,
+  activePinType = null,
+  minimizedPinType = null,
   paletteDragActive = false,
   embedded = false,
   fullWidthRow = false,
@@ -280,7 +319,8 @@ export function TopbarPins({
   });
   const [mouseX, setMouseX] = useState<number | null>(null);
 
-  const pinCount = TOPBAR_FIXED_PIN_TYPES.length;
+  const visiblePinTypes = pinTypes?.length ? [...pinTypes] : [...TOPBAR_FIXED_PIN_TYPES];
+  const pinCount = visiblePinTypes.length;
   const chipWpx = pinRowSidebarStyle ? CHIP_MIN_W_REM_SIDEBAR * remPx : CHIP_MIN_W_REM_DEFAULT * remPx;
 
   const { centers: restCenterPx, wRest } = useMemo(
@@ -391,9 +431,9 @@ export function TopbarPins({
             : {}),
         }}
         role="toolbar"
-        aria-label="Accesos directos: Brain, Design, Image, PhotoRoom, Video, VFX, Foldder. Brain y Foldder: clic abre el panel; doble clic añade el nodo en el lienzo. En el resto, doble clic para añadir al lienzo."
+        aria-label="Accesos directos de Foldder"
       >
-        {TOPBAR_FIXED_PIN_TYPES.map((type, i) => {
+        {visiblePinTypes.map((type, i) => {
           const ui = TOPBAR_PIN_UI[type];
           const useSidebarChips = pinRowSidebarStyle;
           const w = halfWidths[i] * 2;
@@ -426,7 +466,10 @@ export function TopbarPins({
                     onBrainClick={onBrainClick}
                     onAssetsClick={onAssetsClick}
                     onPinDoubleClick={onPinDoubleClick}
+                    onPinClick={onPinClick}
                     paletteDragActive={paletteDragActive}
+                    isActive={type === activePinType}
+                    isMinimized={type === minimizedPinType}
                   />
                 </div>
               </div>

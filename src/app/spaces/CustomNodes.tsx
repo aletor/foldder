@@ -136,6 +136,7 @@ import {
   applyCanvasGroupCollapse,
   applyPromptValueToEdgeSource,
   resolvePromptValueFromEdgeSource,
+  resolvePromptValueFromEdgeSourceMap,
 } from './canvas-group-logic';
 import {
   buildDirectorEnhancementSuffix,
@@ -1531,7 +1532,8 @@ export const ConcatenatorNode = memo(function ConcatenatorNode({ id, data, selec
     [edges, id]
   );
 
-  const connectedHandleIds = new Set(connectedEdges.map((e) => e.targetHandle));
+  const nodesById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
+  const connectedHandleIds = useMemo(() => new Set(connectedEdges.map((e) => e.targetHandle)), [connectedEdges]);
   const visibleCount = Math.min(Math.max(connectedEdges.length + 1, 1), ALL_HANDLES.length);
 
   useEffect(() => {
@@ -1541,7 +1543,7 @@ export const ConcatenatorNode = memo(function ConcatenatorNode({ id, data, selec
   // Dynamic logic: result is concatenation of all connected prompt values
   useEffect(() => {
     const values = connectedEdges.map((edge) =>
-      resolvePromptValueFromEdgeSource(edge, nodes)
+      resolvePromptValueFromEdgeSourceMap(edge, nodesById)
     );
 
     const result = values.filter((v): v is string => Boolean(v)).join(' ').trim();
@@ -1550,7 +1552,7 @@ export const ConcatenatorNode = memo(function ConcatenatorNode({ id, data, selec
         nds.map((n) => (n.id === id ? { ...n, data: { ...n.data, value: result } } : n))
       );
     }
-  }, [connectedEdges, nodes, id, nodeData.value, setNodes]);
+  }, [connectedEdges, nodesById, id, nodeData.value, setNodes]);
 
   return (
     <div className={`custom-node tool-node` } style={{ minWidth: 240 }}>
@@ -1638,7 +1640,8 @@ export const ListadoNode = memo(function ListadoNode({ id, data, selected }: Nod
     [edges, id]
   );
 
-  const connectedHandleIds = new Set(connectedEdges.map((e) => e.targetHandle));
+  const nodesById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
+  const connectedHandleIds = useMemo(() => new Set(connectedEdges.map((e) => e.targetHandle)), [connectedEdges]);
   /** Una ranura vacía debajo de la última conexión (máx. 8). */
   const visibleCount = Math.min(Math.max(connectedEdges.length + 1, 1), ALL_HANDLES.length);
 
@@ -1648,7 +1651,7 @@ export const ListadoNode = memo(function ListadoNode({ id, data, selected }: Nod
 
   const options = useMemo(() => {
     return connectedEdges.map((edge, i: number) => {
-      const val = String(resolvePromptValueFromEdgeSource(edge, nodes) ?? '');
+      const val = String(resolvePromptValueFromEdgeSourceMap(edge, nodesById) ?? '');
       const truncated = val.length > 72 ? `${val.slice(0, 72)}…` : val;
       const display = val.trim() ? truncated : `(vacío) · entrada ${i + 1}`;
       return {
@@ -1659,7 +1662,7 @@ export const ListadoNode = memo(function ListadoNode({ id, data, selected }: Nod
         value: val,
       };
     });
-  }, [connectedEdges, nodes]);
+  }, [connectedEdges, nodesById]);
 
   useEffect(() => {
     if (options.length === 0) {
@@ -1795,7 +1798,8 @@ export const EnhancerNode = memo(function EnhancerNode({ id, data, selected }: N
     [edges, id]
   );
 
-  const connectedHandleIds = new Set(connectedEdges.map((e) => e.targetHandle));
+  const nodesById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
+  const connectedHandleIds = useMemo(() => new Set(connectedEdges.map((e) => e.targetHandle)), [connectedEdges]);
   /** Misma lógica que Concatenator: al menos 1 ranura visible. */
   const visibleCount = Math.min(Math.max(connectedEdges.length + 1, 1), ALL_HANDLES.length);
 
@@ -1807,10 +1811,10 @@ export const EnhancerNode = memo(function EnhancerNode({ id, data, selected }: N
   const concatenated = useMemo(
     () =>
       connectedEdges
-        .map((edge) => resolvePromptValueFromEdgeSource(edge, nodes))
+        .map((edge) => resolvePromptValueFromEdgeSourceMap(edge, nodesById))
         .filter(Boolean)
         .join('\n\n'),
-    [connectedEdges, nodes]
+    [connectedEdges, nodesById]
   );
 
   const handleEnhance = useCallback(async () => {
@@ -5018,11 +5022,8 @@ export const BackgroundRemoverNode = memo(function BackgroundRemoverNode({ id, d
   const threshold = nodeData.threshold ?? 0.9;
 
   const onRun = async () => {
-    console.log("[BackgroundRemover] onRun triggered");
-    
     // Find ANY incoming edge if the specific one fails
     const incomingEdges = edges.filter(e => e.target === id);
-    console.log("[BackgroundRemover] Connected edges:", incomingEdges.length);
 
     if (incomingEdges.length === 0) {
       return alert("No input connected! Connect an image node to the left side.");
@@ -5041,8 +5042,6 @@ export const BackgroundRemoverNode = memo(function BackgroundRemoverNode({ id, d
         break;
       }
     }
-
-    console.log("[BackgroundRemover] Found media from:", sourceNodeLabel);
 
     if (!media) {
       return alert("Connected node (" + sourceNodeLabel + ") has no image data. Try selecting an image in the source node first.");

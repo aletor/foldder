@@ -16,12 +16,12 @@ import {
   Sparkles,
 } from "lucide-react";
 import type { ProjectFile, WorkspaceViewMode } from "./project-files";
-import { DesktopDock } from "./DesktopDock";
 import { ProjectFolderView, type FoldderDesktopSectionId } from "./ProjectFolderView";
 import type { ProjectMediaItem } from "./project-media-inventory";
 import { DOCK_STUDIO_APPS, type StudioAppConfig } from "./studioApps";
 import { CANVAS_BACKGROUNDS, type CanvasBackgroundOption } from "./canvas-backgrounds";
 import { CanvasWallpaperTransition } from "./CanvasWallpaperTransition";
+import { TopbarPins, type TopbarPinType } from "./TopbarPins";
 
 type StandardDesktopViewProps = {
   projectName: string;
@@ -40,7 +40,7 @@ type StandardDesktopViewProps = {
   onSaveAsFile: (file: ProjectFile) => void;
   onHideFile: (file: ProjectFile) => void;
   onPresentDesignFile: (file: ProjectFile) => void;
-  onOpenFoldder: () => void;
+  onOpenProjectsList: () => void;
   onOpenFoldderFullscreen: () => void;
   onNewProject: () => void;
   onSignOut: () => void;
@@ -76,21 +76,38 @@ function DesktopFolderTile({
       type="button"
       onClick={onOpen}
       onDoubleClick={onOpen}
-      className="group flex min-h-[150px] w-[min(42vw,190px)] flex-col items-start justify-between rounded-[30px] border border-white/14 bg-black/28 p-4 text-left shadow-2xl shadow-black/25 backdrop-blur-xl transition hover:-translate-y-1 hover:border-white/28 hover:bg-black/44"
+      className="group relative flex min-h-[132px] w-full flex-col items-start justify-between overflow-hidden rounded-[18px] border border-white/14 bg-black/30 p-3.5 text-left shadow-[0_12px_28px_-20px_rgba(0,0,0,0.9)] backdrop-blur-xl transition-[transform,border-color,background-color,box-shadow] duration-300 hover:-translate-y-0.5 hover:border-white/24 hover:bg-black/42 hover:shadow-[0_18px_36px_-22px_rgba(0,0,0,0.95)]"
     >
-      <span className={`flex h-14 w-14 items-center justify-center rounded-2xl border border-white/14 bg-gradient-to-br ${tone} shadow-xl transition group-hover:scale-105`}>
-        {icon}
-      </span>
-      <span className="min-w-0">
-        <span className="block truncate text-[12px] font-light uppercase tracking-[0.16em] text-white">
+      <span
+        className="pointer-events-none absolute inset-x-0 top-0 h-[1px] bg-gradient-to-r from-transparent via-white/35 to-transparent opacity-80"
+        aria-hidden
+      />
+
+      <div className="flex w-full items-start justify-between gap-2.5">
+        <span
+          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/18 bg-gradient-to-br ${tone} shadow-lg transition duration-300 group-hover:scale-105`}
+        >
+          {icon}
+        </span>
+        <span className="inline-flex h-7 min-w-[1.8rem] items-center justify-center rounded-full border border-white/14 bg-white/[0.06] px-2 text-[10px] font-light tabular-nums text-white/68">
+          {count}
+        </span>
+      </div>
+
+      <div className="mt-2.5 min-w-0">
+        <span className="block truncate text-[14px] font-light leading-none tracking-[0.18em] text-white">
           {title}
         </span>
-        <span className="mt-1 block line-clamp-2 text-[10px] font-light leading-snug text-white/45">
+        <span className="mt-2 block line-clamp-2 max-w-[28ch] text-[11px] font-light leading-snug text-white/50">
           {subtitle}
         </span>
-      </span>
-      <span className="rounded-full border border-white/10 bg-white/8 px-2 py-1 text-[9px] font-light uppercase tracking-wide text-white/55">
-        {count}
+      </div>
+
+      <span className="mt-2 inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.035] px-2 py-0.5 text-[9px] font-light uppercase tracking-[0.14em] text-white/44 transition-colors duration-300 group-hover:text-white/70">
+        Abrir
+        <span className="text-[10px]" aria-hidden>
+          →
+        </span>
       </span>
     </button>
   );
@@ -113,7 +130,7 @@ export function StandardDesktopView({
   onSaveAsFile,
   onHideFile,
   onPresentDesignFile,
-  onOpenFoldder,
+  onOpenProjectsList,
   onOpenFoldderFullscreen,
   onNewProject,
   onSignOut,
@@ -142,6 +159,26 @@ export function StandardDesktopView({
   const userInitial = (userName || userEmail || "U").trim().charAt(0).toUpperCase();
   const activeBackground =
     CANVAS_BACKGROUNDS.find((background) => background.id === canvasBgId) ?? CANVAS_BACKGROUNDS[0];
+  const standardDockPinTypes: TopbarPinType[] = [
+    "brain",
+    "designer",
+    "nanoBanana",
+    "photoRoom",
+    "geminiVideo",
+    "files",
+  ];
+  const mapAppIdToPinType = (appId: string | null | undefined): TopbarPinType | null => {
+    if (!appId) return null;
+    if (appId === "brain") return "brain";
+    if (appId === "files") return "files";
+    if (appId === "designer") return "designer";
+    if (appId === "photoRoom") return "photoRoom";
+    if (appId === "nanoBanana") return "nanoBanana";
+    if (appId === "geminiVideo") return "geminiVideo";
+    return null;
+  };
+  const activePinType = mapAppIdToPinType(activeAppId);
+  const minimizedPinType = mapAppIdToPinType(minimizedAppId);
 
   useEffect(() => {
     if (foldderOpenRequest <= 0 || typeof window === "undefined") return;
@@ -308,8 +345,8 @@ export function StandardDesktopView({
 
           <button
             type="button"
-            onClick={onOpenFoldder}
-            title="Abrir Foldder"
+            onClick={onOpenProjectsList}
+            title="Abrir proyectos"
             className="group flex h-10 w-10 items-center justify-center rounded-xl border border-white/25 bg-white/[0.08] text-slate-700 shadow-sm backdrop-blur-xl transition-all hover:scale-105 hover:bg-white/[0.15] hover:text-slate-900"
           >
             <FolderOpen size={16} className="text-slate-700 group-hover:text-slate-900" />
@@ -375,7 +412,7 @@ export function StandardDesktopView({
       </header>
 
       <main className="relative z-[1] flex h-full w-full items-center justify-center px-8 pb-32 pt-28">
-        <div className="absolute left-10 top-32 max-w-[min(720px,calc(100vw-5rem))]">
+        <div className="absolute left-10 top-28 w-[min(980px,calc(100vw-5rem))]">
           <div className="mb-6">
             <p className="text-[10px] font-light uppercase tracking-[0.26em] text-white/42">
               Project Desktop
@@ -385,13 +422,14 @@ export function StandardDesktopView({
               En Vista Pro, Foldder es un nodo. En Vista estándar, Foldder es el escritorio del proyecto.
             </p>
           </div>
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <div className="rounded-[22px] border border-white/10 bg-black/14 p-3.5 backdrop-blur-[2px] md:p-4">
+            <div className="mx-auto grid max-w-[860px] grid-cols-2 gap-3 lg:grid-cols-4">
             <DesktopFolderTile
               title="Imported Media"
               subtitle="Uploads, URLs, logos y referencias"
               count={importedMedia.length}
               tone="from-sky-400/35 to-white/8"
-              icon={<Images className="h-7 w-7 text-sky-100" strokeWidth={1.6} />}
+              icon={<Images className="h-5 w-5 text-sky-100" strokeWidth={1.6} />}
               onOpen={() => openFoldderSection("imported")}
             />
             <DesktopFolderTile
@@ -399,7 +437,7 @@ export function StandardDesktopView({
               subtitle="Resultados IA, renders y variaciones"
               count={generatedMedia.length}
               tone="from-fuchsia-400/35 to-white/8"
-              icon={<Sparkles className="h-7 w-7 text-fuchsia-100" strokeWidth={1.6} />}
+              icon={<Sparkles className="h-5 w-5 text-fuchsia-100" strokeWidth={1.6} />}
               onOpen={() => openFoldderSection("generated")}
             />
             <DesktopFolderTile
@@ -407,7 +445,7 @@ export function StandardDesktopView({
               subtitle="Trabajos editables de apps Studio"
               count={rows.length}
               tone="from-amber-400/40 to-white/8"
-              icon={<FileStack className="h-7 w-7 text-amber-100" strokeWidth={1.6} />}
+              icon={<FileStack className="h-5 w-5 text-amber-100" strokeWidth={1.6} />}
               onOpen={() => openFoldderSection("mediaFiles")}
             />
             <DesktopFolderTile
@@ -415,9 +453,10 @@ export function StandardDesktopView({
               subtitle="Entregables finales"
               count={exports.length}
               tone="from-emerald-400/35 to-white/8"
-              icon={<PackageOpen className="h-7 w-7 text-emerald-100" strokeWidth={1.6} />}
+              icon={<PackageOpen className="h-5 w-5 text-emerald-100" strokeWidth={1.6} />}
               onOpen={() => openFoldderSection("exports")}
             />
+            </div>
           </div>
         </div>
 
@@ -498,17 +537,28 @@ export function StandardDesktopView({
         </div>
       )}
 
-      <DesktopDock
-        activeAppId={activeAppId}
-        minimizedAppId={minimizedAppId}
-        onAppClick={(app) => {
-          if (app.appId === "brain" || app.appId === "files" || minimizedAppId === app.appId) {
-            onDockAppClick(app);
-            return;
-          }
-          setLauncherApp(app);
-        }}
-      />
+      <div className="pointer-events-none absolute bottom-6 left-0 right-0 z-[3] flex items-center justify-center">
+        <TopbarPins
+          pinTypes={standardDockPinTypes}
+          activePinType={activePinType}
+          minimizedPinType={minimizedPinType}
+          onPinClick={(pinType) => {
+            const appId =
+              pinType === "files"
+                ? "files"
+                : pinType === "brain"
+                  ? "brain"
+                  : pinType;
+            const app = DOCK_STUDIO_APPS.find((candidate) => candidate.appId === appId);
+            if (!app) return;
+            if (app.appId === "brain" || app.appId === "files" || minimizedAppId === app.appId) {
+              onDockAppClick(app);
+              return;
+            }
+            setLauncherApp(app);
+          }}
+        />
+      </div>
     </section>
   );
 }

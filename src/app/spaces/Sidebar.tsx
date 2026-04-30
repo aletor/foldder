@@ -1,13 +1,17 @@
 "use client";
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import Image from 'next/image';
 import { createPortal } from 'react-dom';
 import { ChevronRight } from 'lucide-react';
 import { NODE_REGISTRY } from './nodeRegistry';
 import { NodeIcon, NodeIconMono } from './foldder-icons';
 import { SIDEBAR_HOVER_HELP } from './sidebarHoverHelp';
-import { TopbarGlyphBrain } from './TopbarPinIcons';
+import {
+  TopbarGlyphBrain,
+  TopbarGlyphDesignerStudio,
+  TopbarGlyphFoldderApp,
+  TopbarGlyphPhotoRoom,
+} from './TopbarPinIcons';
 
 const LIBRARY_TIP_WIDTH = 260;
 /** Altura aproximada del tooltip para decidir si cabe encima del botón */
@@ -52,20 +56,6 @@ function FoldderLogoFMark({ size = 40 }: { size?: number }) {
   );
 }
 
-function FoldderAppTileGlyph({ size = 25 }: { size?: number }) {
-  const scaled = Math.round(size * 1.30);
-  return (
-    <Image
-      src="/logo-folder.png"
-      alt=""
-      width={scaled}
-      height={scaled}
-      className="drop-shadow-[0_1px_3px_rgba(0,0,0,0.45)] object-contain"
-      aria-hidden
-    />
-  );
-}
-
 type SidebarProps = {
   onLibraryDragStart?: (nodeType: string) => void;
   onLibraryDragEnd?: () => void;
@@ -84,12 +74,68 @@ function SidebarLibraryNodeIcon({ type, size = 25 }: { type: string; size?: numb
       {type === 'projectBrain' ? (
         <TopbarGlyphBrain size={size} className="shrink-0 text-white" />
       ) : type === 'projectAssets' ? (
-        <FoldderAppTileGlyph size={size} />
+        <TopbarGlyphFoldderApp size={size} className="shrink-0" />
+      ) : type === 'designer' ? (
+        <TopbarGlyphDesignerStudio size={size} className="shrink-0" />
+      ) : type === 'photoRoom' ? (
+        <TopbarGlyphPhotoRoom size={size} className="shrink-0" />
       ) : (
         <NodeIcon type={type} size={size} colorOverride="#ffffff" />
       )}
     </span>
   );
+}
+
+function tileBorderClassForType(type: string, fallback: string): string {
+  if (type === 'projectAssets') return 'border-[#b081f1] group-hover/tile:border-[#b081f1]';
+  if (type === 'designer') return 'border-[#fdb04b] group-hover/tile:border-[#fdb04b]';
+  if (type === 'photoRoom') return 'border-[#63d4fd] group-hover/tile:border-[#63d4fd]';
+  if (type === 'projectBrain') return 'border-slate-400/60 group-hover/tile:border-slate-300/80';
+  return fallback;
+}
+
+const HIGH_END_PRODUCTION_ITEMS: Array<{ type: string; label: string }> = [
+  { type: 'projectBrain', label: 'Brain' },
+  { type: 'designer', label: 'Designer' },
+  { type: 'photoRoom', label: 'PhotoRoom' },
+  { type: 'nanoBanana', label: 'Image Creation' },
+  { type: 'geminiVideo', label: 'Video Creation' },
+  { type: 'projectAssets', label: 'Foldder' },
+  { type: 'presenter', label: 'Presenter' },
+];
+
+const TOOL_ITEMS: Array<{ type: string; label: string }> = [
+  { type: 'mediaInput', label: 'Asset' },
+  { type: 'promptInput', label: 'Prompt' },
+  { type: 'urlImage', label: 'Web' },
+  { type: 'pinterestSearch', label: 'Pinterest' },
+  { type: 'backgroundRemover', label: 'Matting' },
+  { type: 'mediaDescriber', label: 'Eye' },
+  { type: 'enhancer', label: 'Enhance' },
+  { type: 'grokProcessor', label: 'Grok' },
+  { type: 'vfxGenerator', label: 'VFX Generator' },
+  { type: 'concatenator', label: 'Concat' },
+  { type: 'listado', label: 'Listado' },
+  { type: 'space', label: 'Space' },
+  { type: 'spaceInput', label: 'Entry' },
+  { type: 'spaceOutput', label: 'Exit' },
+  { type: 'imageExport', label: 'Export' },
+  { type: 'painter', label: 'Painter' },
+  { type: 'textOverlay', label: 'Text' },
+  { type: 'crop', label: 'Crop' },
+];
+
+function toolFallbackBorderClass(type: string): string {
+  if (type === 'mediaInput' || type === 'promptInput' || type === 'urlImage' || type === 'pinterestSearch') {
+    return 'border-white/25 group-hover/tile:border-emerald-400/50';
+  }
+  if (type === 'backgroundRemover' || type === 'mediaDescriber' || type === 'enhancer' || type === 'grokProcessor' || type === 'vfxGenerator') {
+    return 'border-white/25 group-hover/tile:border-cyan-400/50';
+  }
+  if (type === 'concatenator' || type === 'listado' || type === 'space' || type === 'spaceInput' || type === 'spaceOutput') {
+    return 'border-white/25 group-hover/tile:border-blue-400/50';
+  }
+  return 'border-white/25 group-hover/tile:border-amber-400/50';
 }
 
 const Sidebar = ({
@@ -265,30 +311,23 @@ const Sidebar = ({
         className={
           sidebarLockedCollapsed
             ? 'absolute left-0 top-0 h-full w-0 overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]'
-            : 'absolute left-0 top-0 h-full w-0 overflow-hidden group-hover/sidebar:w-[148px] transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]'
+            : 'absolute left-0 top-0 h-full w-0 overflow-hidden group-hover/sidebar:w-[166px] transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]'
         }
         style={{ willChange: 'width' }}
       >
-        <div className="h-full w-[148px] bg-transparent border-r border-white/8 flex flex-col min-h-0">
+        <div className="h-full w-[166px] bg-transparent border-r border-white/8 flex flex-col min-h-0">
           <div className="px-0 mb-2 pt-2 flex-1 min-h-0 overflow-y-auto custom-scrollbar">
             <div className="text-[10px] font-black text-white/60 uppercase tracking-[3px] mb-5 flex items-center gap-2 px-1">
               <NodeIconMono iconKey="layout" size={13} className="shrink-0 text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)]" /> <span>Node Library</span>
             </div>
 
-            {/* 📥 INGESTA */}
+            {/* 🚀 HIGH END PRODUCTION */}
             <div className="mb-6">
               <h3 className="text-[8px] font-black text-white/55 uppercase tracking-widest mb-3 px-1 flex items-center gap-1.5 whitespace-nowrap overflow-hidden">
-                <NodeIconMono iconKey="asset" size={10} className="shrink-0 text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)]" /> <span>Ingesta</span>
+                <NodeIconMono iconKey="asset" size={10} className="shrink-0 text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)]" /> <span>High End Production</span>
               </h3>
-              <div className="mx-auto grid w-full max-w-[124px] grid-cols-2 gap-[1px]">
-                {[
-                  { type: 'projectBrain', label: 'Brain' },
-                  { type: 'projectAssets', label: 'Foldder' },
-                  { type: 'mediaInput',  label: 'Asset' },
-                  { type: 'promptInput', label: 'Prompt' },
-                  { type: 'urlImage',    label: 'Web' },
-                  { type: 'pinterestSearch', label: 'Pinterest' },
-                ].map(item => (
+              <div className="mx-auto grid w-full max-w-[164px] grid-cols-2 gap-[8px]">
+                {HIGH_END_PRODUCTION_ITEMS.map(item => (
                   <div key={item.type}
                     className="dndnode group/tile relative flex aspect-square w-full flex-col items-center justify-center gap-0 py-1 px-0 cursor-grab active:scale-95 transition-all text-center !bg-transparent !border-0 hover:!bg-transparent hover:!border-transparent hover:!shadow-none"
                     style={tileShellStyle}
@@ -300,11 +339,7 @@ const Sidebar = ({
                   >
                     <span
                       aria-hidden
-                      className={`pointer-events-none absolute left-1/2 top-1/2 h-[84%] w-[84%] -translate-x-1/2 -translate-y-1/2 rounded-[10px] border bg-black transition-colors ${
-                        item.type === 'projectAssets'
-                          ? 'border-[#b081f1] group-hover/tile:border-[#b081f1]'
-                          : 'border-white/25 group-hover/tile:border-emerald-400/50'
-                      }`}
+                      className={`pointer-events-none absolute left-1/2 top-1/2 h-[97%] w-[97%] -translate-x-1/2 -translate-y-1/2 rounded-[20px] border bg-black transition-colors ${tileBorderClassForType(item.type, 'border-white/25 group-hover/tile:border-white/45')}`}
                     />
                     <SidebarLibraryNodeIcon type={item.type} />
                     <span className="relative z-[1] text-[7px] font-light text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.35)]">{item.label}</span>
@@ -314,21 +349,13 @@ const Sidebar = ({
               </div>
             </div>
 
-            {/* 🧠 INTELIGENCIA */}
+            {/* 🛠 TOOLS */}
             <div className="mb-6">
               <h3 className="text-[8px] font-black text-white/55 uppercase tracking-widest mb-3 px-1 flex items-center gap-1.5">
-                <NodeIconMono iconKey="grok" size={10} className="shrink-0 text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)]" /> <span>Inteligencia</span>
+                <NodeIconMono iconKey="grok" size={10} className="shrink-0 text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)]" /> <span>Tools</span>
               </h3>
-              <div className="mx-auto grid w-full max-w-[124px] grid-cols-2 gap-[1px]">
-                {[
-                  { type: 'backgroundRemover', label: 'Matting' },
-                  { type: 'mediaDescriber',    label: 'Eye' },
-                  { type: 'enhancer',          label: 'Enhance' },
-                  { type: 'grokProcessor',     label: 'Grok' },
-                  { type: 'nanoBanana',        label: 'Nano' },
-                  { type: 'geminiVideo',       label: 'Video Generator' },
-                  { type: 'vfxGenerator',      label: 'VFX Generator' },
-                ].map(item => (
+              <div className="mx-auto grid w-full max-w-[164px] grid-cols-3 gap-[1px]">
+                {TOOL_ITEMS.map(item => (
                   <div key={item.type}
                     className="dndnode group/tile relative flex aspect-square w-full flex-col items-center justify-center gap-0 py-1 px-0 cursor-grab active:scale-95 transition-all text-center !bg-transparent !border-0 hover:!bg-transparent hover:!border-transparent hover:!shadow-none"
                     style={tileShellStyle}
@@ -340,77 +367,7 @@ const Sidebar = ({
                   >
                     <span
                       aria-hidden
-                      className="pointer-events-none absolute left-1/2 top-1/2 h-[84%] w-[84%] -translate-x-1/2 -translate-y-1/2 rounded-[10px] border border-white/25 bg-black transition-colors group-hover/tile:border-cyan-400/50"
-                    />
-                    <SidebarLibraryNodeIcon type={item.type} />
-                    <span className="relative z-[1] text-[7px] font-light text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.35)]">{item.label}</span>
-                    <TypeIndicators nodeType={item.type} />
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* 🧩 LÓGICA */}
-            <div className="mb-6">
-              <h3 className="text-[8px] font-black text-white/55 uppercase tracking-widest mb-3 px-1 flex items-center gap-1.5">
-                <NodeIconMono iconKey="concat" size={10} className="shrink-0 text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)]" /> <span>Lógica</span>
-              </h3>
-              <div className="mx-auto grid w-full max-w-[124px] grid-cols-2 gap-[1px]">
-                {[
-                  { type: 'concatenator', label: 'Concat' },
-                  { type: 'listado',      label: 'Listado' },
-                  { type: 'space',        label: 'Space' },
-                  { type: 'spaceInput',   label: 'Entry' },
-                  { type: 'spaceOutput',  label: 'Exit' },
-                ].map(item => (
-                  <div key={item.type}
-                    className="dndnode group/tile relative flex aspect-square w-full flex-col items-center justify-center gap-0 py-1 px-0 cursor-grab active:scale-95 transition-all text-center !bg-transparent !border-0 hover:!bg-transparent hover:!border-transparent hover:!shadow-none"
-                    style={tileShellStyle}
-                    onDragStart={(e) => onDragStart(e, item.type)} onDragEnd={() => onLibraryDragEnd?.()} draggable
-                    onMouseEnter={(e) => onLibraryTileEnter(e, item.type)}
-                    onMouseLeave={onLibraryTileLeave}
-                    onDoubleClick={(e) => handleLibraryTileDoubleClick(e, item.type)}
-                    aria-label={`${item.label}. Arrastra al lienzo. Doble clic para añadir.`}
-                  >
-                    <span
-                      aria-hidden
-                      className="pointer-events-none absolute left-1/2 top-1/2 h-[84%] w-[84%] -translate-x-1/2 -translate-y-1/2 rounded-[10px] border border-white/25 bg-black transition-colors group-hover/tile:border-blue-400/50"
-                    />
-                    <SidebarLibraryNodeIcon type={item.type} />
-                    <span className="relative z-[1] text-[7px] font-light text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.35)]">{item.label}</span>
-                    <TypeIndicators nodeType={item.type} />
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* 🎨 COMPOSICIÓN */}
-            <div className="mb-3">
-              <h3 className="text-[8px] font-black text-white/55 uppercase tracking-widest mb-3 px-1 flex items-center gap-1.5">
-                <NodeIconMono iconKey="canvas" size={10} className="shrink-0 text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)]" /> <span>Composición</span>
-              </h3>
-              <div className="mx-auto grid w-full max-w-[124px] grid-cols-2 gap-[1px]">
-                {[
-                  { type: 'photoRoom',     label: 'PhotoRoom' },
-                  { type: 'imageExport',   label: 'Export' },
-                  { type: 'painter',       label: 'Painter' },
-                  { type: 'textOverlay',   label: 'Text' },
-                  { type: 'crop',          label: 'Crop' },
-                  { type: 'designer',      label: 'Designer' },
-                  { type: 'presenter',     label: 'Presenter' },
-                ].map(item => (
-                  <div key={item.type}
-                    className="dndnode group/tile relative flex aspect-square w-full flex-col items-center justify-center gap-0 py-1 px-0 cursor-grab active:scale-95 transition-all text-center !bg-transparent !border-0 hover:!bg-transparent hover:!border-transparent hover:!shadow-none"
-                    style={tileShellStyle}
-                    onDragStart={(e) => onDragStart(e, item.type)} onDragEnd={() => onLibraryDragEnd?.()} draggable
-                    onMouseEnter={(e) => onLibraryTileEnter(e, item.type)}
-                    onMouseLeave={onLibraryTileLeave}
-                    onDoubleClick={(e) => handleLibraryTileDoubleClick(e, item.type)}
-                    aria-label={`${item.label}. Arrastra al lienzo. Doble clic para añadir.`}
-                  >
-                    <span
-                      aria-hidden
-                      className="pointer-events-none absolute left-1/2 top-1/2 h-[84%] w-[84%] -translate-x-1/2 -translate-y-1/2 rounded-[10px] border border-white/25 bg-black transition-colors group-hover/tile:border-amber-400/50"
+                      className={`pointer-events-none absolute left-1/2 top-1/2 h-[84%] w-[84%] -translate-x-1/2 -translate-y-1/2 rounded-[10px] border bg-black transition-colors ${tileBorderClassForType(item.type, toolFallbackBorderClass(item.type))}`}
                     />
                     <SidebarLibraryNodeIcon type={item.type} />
                     <span className="relative z-[1] text-[7px] font-light text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.35)]">{item.label}</span>

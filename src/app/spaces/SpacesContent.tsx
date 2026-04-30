@@ -4129,6 +4129,7 @@ export function SpacesContent() {
 
     if (canvasViewMode === 'cards' && nodes.length > 0) {
       const ordered = sortNodesCardsOrder(nodes);
+      const orderedIndexById = new Map(ordered.map((node, index) => [node.id, index]));
       const n = ordered.length;
       const f = Math.min(Math.max(0, cardsFocusIndex), n - 1);
       const anchor = cardsAnchorRef.current;
@@ -4139,7 +4140,7 @@ export function SpacesContent() {
         const isCompat = compatSet.has(node.id);
         const isHover = node.id === libraryDropTargetId;
         const isOverviewHover = node.id === overviewHoverHighlightId;
-        const stackIdx = ordered.findIndex((x) => x.id === node.id);
+        const stackIdx = orderedIndexById.get(node.id) ?? -1;
         if (stackIdx === -1) {
           const cls = [
             node.className,
@@ -4708,7 +4709,7 @@ export function SpacesContent() {
         </ProjectAssetsCanvasContext.Provider>
         </SpacesActiveProjectIdContext.Provider>
 
-        {isAuthenticated && <HandleTypeLegend />}
+        {isAuthenticated && workspaceViewMode === 'pro' && <HandleTypeLegend />}
 
         {isAuthenticated && <ExternalApiBlockedModal />}
 
@@ -5048,8 +5049,11 @@ export function SpacesContent() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => openFoldder("fullscreen")}
-                  title="Abrir Foldder"
+                  onClick={() => {
+                    if (projectDeleteInProgress) return;
+                    openLoadProjectsModal();
+                  }}
+                  title="Abrir proyectos"
                   className="group flex h-10 w-10 items-center justify-center rounded-xl border border-white/25 bg-white/[0.08] text-slate-700 shadow-sm backdrop-blur-xl transition-all hover:scale-105 hover:bg-white/[0.15] hover:text-slate-900"
                 >
                   <FolderOpen size={16} className="text-slate-700 group-hover:text-slate-900" />
@@ -5180,7 +5184,10 @@ export function SpacesContent() {
             onSaveAsFile={saveProjectFileAs}
             onHideFile={hideProjectFile}
             onPresentDesignFile={openPresenterForDesignFile}
-            onOpenFoldder={() => openFoldder("panel")}
+            onOpenProjectsList={() => {
+              if (projectDeleteInProgress) return;
+              openLoadProjectsModal();
+            }}
             onOpenFoldderFullscreen={() => openFoldder("fullscreen")}
             onNewProject={() => {
               if (projectDeleteInProgress) return;

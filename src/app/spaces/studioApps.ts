@@ -69,7 +69,7 @@ export const STUDIO_APPS: StudioAppConfig[] = [
     nodeType: "painter",
     fileKind: "painter",
     extension: ".painter",
-    showInDock: true,
+    showInDock: false,
     canCreateFile: true,
     canOpenFile: true,
   },
@@ -99,7 +99,7 @@ export const STUDIO_APPS: StudioAppConfig[] = [
     nodeType: "vfxGenerator",
     fileKind: "vfx",
     extension: ".vfx",
-    showInDock: true,
+    showInDock: false,
     canCreateFile: true,
     canOpenFile: true,
   },
@@ -130,4 +130,3 @@ export function studioAppForFileKind(kind: ProjectFileKind): StudioAppConfig | u
 export function studioAppForNodeType(nodeType: string | undefined): StudioAppConfig | undefined {
   return nodeType ? STUDIO_APPS.find((app) => app.nodeType === nodeType) : undefined;
 }
-
