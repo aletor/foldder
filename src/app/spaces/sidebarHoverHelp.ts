@@ -4,6 +4,10 @@ export const SIDEBAR_HOVER_HELP: Record<string, { title: string; line: string }>
     title: 'Prompt',
     line: 'Escribes instrucción para la IA',
   },
+  notes: {
+    title: 'Notes',
+    line: 'Sticky note rápida para escribir ideas y conectarlas como prompt',
+  },
   projectBrain: {
     title: 'Brain',
     line: 'Dashboard compacto: ADN, fuentes, nodos conectados y pendientes; abre Brain para editar',

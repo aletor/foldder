@@ -40,22 +40,6 @@ function libraryTooltipPosition(el: HTMLElement): {
     placement,
   };
 }
-/** Icon-only mark from /public/logo_bl.svg — shown when sidebar is collapsed */
-function FoldderLogoFMark({ size = 40 }: { size?: number }) {
-  const scaled = Math.round(size);
-  return (
-    <img
-      src="/logo_bl.svg"
-      alt=""
-      width={scaled}
-      height={scaled}
-      className="drop-shadow-lg object-contain"
-      aria-hidden
-      draggable={false}
-    />
-  );
-}
-
 type SidebarProps = {
   onLibraryDragStart?: (nodeType: string) => void;
   onLibraryDragEnd?: () => void;
@@ -120,6 +104,7 @@ const TOOL_ITEMS: Array<{ type: string; label: string }> = [
   { type: 'spaceInput', label: 'Entry' },
   { type: 'spaceOutput', label: 'Exit' },
   { type: 'imageExport', label: 'Export' },
+  { type: 'notes', label: 'Notes' },
   { type: 'painter', label: 'Painter' },
   { type: 'crop', label: 'Crop' },
 ];
@@ -286,14 +271,6 @@ const Sidebar = ({
   return (
     <>
     <div className="group/sidebar absolute left-0 top-0 h-screen z-[1000]">
-      {/* Collapsed: solo la «F» del logo — misma zona que el antiguo HUD flotante */}
-      <div
-        className="pointer-events-none fixed left-6 top-6 z-[10004] transition-opacity duration-300 opacity-100 group-hover/sidebar:opacity-0"
-        aria-label="Foldder"
-      >
-        <FoldderLogoFMark size={40} />
-      </div>
-
       {/* Transparent hover trigger zone - wider than the pill */}
       <div
         className="absolute inset-0 w-12 h-full pointer-events-auto"

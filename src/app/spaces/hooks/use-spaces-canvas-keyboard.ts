@@ -49,11 +49,18 @@ export function useSpacesCanvasKeyboard(
       if (typeof document !== 'undefined' && document.querySelector('[data-foldder-studio-canvas]')) return;
 
       const target = e.target as HTMLElement;
-      const typing =
-        target.tagName === 'INPUT' ||
-        target.tagName === 'TEXTAREA' ||
-        target.tagName === 'SELECT' ||
-        target.isContentEditable;
+      const active = typeof document !== 'undefined' ? document.activeElement : null;
+      const isTypingElement = (el: Element | null): boolean => {
+        if (!(el instanceof HTMLElement)) return false;
+        return (
+          el.tagName === 'INPUT' ||
+          el.tagName === 'TEXTAREA' ||
+          el.tagName === 'SELECT' ||
+          el.isContentEditable ||
+          Boolean(el.closest('[contenteditable="true"], .nokey, [data-foldder-text-editing="true"]'))
+        );
+      };
+      const typing = isTypingElement(target) || isTypingElement(active);
       if (typing) return;
 
       /** Misma lógica que Tab / Shift+Tab: siguiente o anterior por aristas con wrap en el componente conexo. */

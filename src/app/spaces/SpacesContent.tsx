@@ -46,11 +46,18 @@ import {
 import Sidebar from "./Sidebar";
 import { AgentHUD } from "./AgentHUD";
 import { ApiUsageHud } from "./ApiUsageHud";
-import { HandleTypeLegend } from "./HandleTypeLegend";
 import { AiRequestHud } from "./AiRequestHud";
 import { ExternalApiBlockedModal } from "./ExternalApiBlockedModal";
 import { TopbarPins } from "./TopbarPins";
 import { StandardDesktopView } from "./StandardDesktopView";
+import {
+  createEmptyNotesNodeData,
+  NOTE_GAP,
+  NOTE_HEIGHT,
+  NOTE_MARGIN,
+  NOTE_MIN_HEIGHT,
+  NOTE_WIDTH,
+} from "./NotesSticky";
 import { ProjectBrainFullscreen, type BrainMainSection } from "./ProjectBrainFullscreen";
 import { ProjectAssetsFullscreen } from "./ProjectAssetsFullscreen";
 import {
@@ -263,6 +270,52 @@ function standardShellForRuntimeApp(app: StandardRuntimeApp): FoldderStudioEvent
     appLabel: label ?? app.appId ?? "App",
     fileName: app.fileId ? app.fileName ?? app.title : undefined,
     canSaveAs: Boolean(app.fileId && app.kind !== "brain" && app.kind !== "assets" && app.kind !== "export"),
+  };
+}
+
+function defaultCanvasNodeStyleForType(type: string): React.CSSProperties | undefined {
+  if (type === "nanoBanana") {
+    return { width: NANO_BANANA_DEFAULT_W, height: NANO_BANANA_DEFAULT_H };
+  }
+  if (type === "geminiVideo" || type === "vfxGenerator") {
+    return { width: GEMINI_VIDEO_DEFAULT_W, height: GEMINI_VIDEO_DEFAULT_H };
+  }
+  if (type === "notes") {
+    return {
+      width: NOTE_WIDTH,
+      height: NOTE_HEIGHT,
+      minHeight: NOTE_MIN_HEIGHT,
+    };
+  }
+  return undefined;
+}
+
+function defaultCanvasNodeDragHandle(type: string): string | undefined {
+  return type === "notes" ? ".notes-drag-surface" : undefined;
+}
+
+function normalizeNotesNodeForRuntime<T extends Node>(node: T): T {
+  if (node.type !== "notes") return node;
+  const style = (node.style as React.CSSProperties | undefined) ?? {};
+  const styleHeight = typeof style.height === "number" ? style.height : undefined;
+  const measuredHeight = typeof node.measured?.height === "number" ? node.measured.height : undefined;
+  const nodeHeight = typeof node.height === "number" ? node.height : undefined;
+  const height = Math.max(NOTE_HEIGHT, styleHeight ?? 0, measuredHeight ?? 0, nodeHeight ?? 0);
+  return {
+    ...node,
+    dragHandle: ".notes-drag-surface",
+    height,
+    measured: {
+      ...(node.measured ?? {}),
+      width: NOTE_WIDTH,
+      height,
+    },
+    style: {
+      ...style,
+      width: NOTE_WIDTH,
+      height,
+      minHeight: NOTE_MIN_HEIGHT,
+    },
   };
 }
 
@@ -511,6 +564,10 @@ export function SpacesContent() {
         projectFiles,
       }),
     [metadata.assets, nodes, projectFiles, projectScopeId],
+  );
+  const standardDesktopNotes = useMemo(
+    () => (nodes as Node[]).filter((node) => node.type === "notes"),
+    [nodes],
   );
   const standardActiveFile = useMemo(
     () =>
@@ -863,20 +920,16 @@ export function SpacesContent() {
       });
     }
 
-    const defaultStyleForType =
-      type === 'nanoBanana'
-        ? ({ width: NANO_BANANA_DEFAULT_W, height: NANO_BANANA_DEFAULT_H } as React.CSSProperties)
-        : type === 'geminiVideo' || type === 'vfxGenerator'
-          ? ({ width: GEMINI_VIDEO_DEFAULT_W, height: GEMINI_VIDEO_DEFAULT_H } as React.CSSProperties)
-          : undefined;
+    const defaultStyleForType = defaultCanvasNodeStyleForType(type);
 
     const newNode = {
       id: newId,
       type,
       position,
+      dragHandle: defaultCanvasNodeDragHandle(type),
       data: withFoldderCanvasIntro(type, {
         ...defaultDataForCanvasDropNode(type),
-        label: '',
+        label: type === "notes" ? "Note" : '',
         ...extraData,
       }),
       ...(defaultStyleForType ? { style: defaultStyleForType } : {}),
@@ -1039,20 +1092,16 @@ export function SpacesContent() {
       const center = preferred ?? viewportCenter;
       const position = findEmptyPositionForNewNode(reactFlowType, nodes, center);
       const newId = `node_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-      const pinStyle: React.CSSProperties | undefined =
-        reactFlowType === 'nanoBanana'
-          ? { width: NANO_BANANA_DEFAULT_W, height: NANO_BANANA_DEFAULT_H }
-          : reactFlowType === 'geminiVideo' || reactFlowType === 'vfxGenerator'
-            ? { width: GEMINI_VIDEO_DEFAULT_W, height: GEMINI_VIDEO_DEFAULT_H }
-            : undefined;
+      const pinStyle: React.CSSProperties | undefined = defaultCanvasNodeStyleForType(reactFlowType);
       const newNode = {
         id: newId,
         type: reactFlowType,
         position,
+        dragHandle: defaultCanvasNodeDragHandle(reactFlowType),
         data: withFoldderCanvasIntro(reactFlowType, {
           ...defaultDataForCanvasDropNode(reactFlowType),
           value: '',
-          label: `${reactFlowType} node`,
+          label: reactFlowType === "notes" ? "Note" : `${reactFlowType} node`,
         }),
         ...(pinStyle ? { style: pinStyle } : {}),
       };
@@ -1073,6 +1122,186 @@ export function SpacesContent() {
       void saveProjectRef.current(undefined, { silentError: true });
     }, 180);
   }, []);
+  const notesProjectSaveTimerRef = useRef<number | null>(null);
+  const scheduleNotesProjectSave = useCallback(() => {
+    if (typeof window === "undefined") return;
+    if (notesProjectSaveTimerRef.current !== null) {
+      window.clearTimeout(notesProjectSaveTimerRef.current);
+    }
+    notesProjectSaveTimerRef.current = window.setTimeout(() => {
+      notesProjectSaveTimerRef.current = null;
+      scheduleProjectSave();
+    }, 720);
+  }, [scheduleProjectSave]);
+
+  useEffect(
+    () => () => {
+      if (notesProjectSaveTimerRef.current !== null) {
+        window.clearTimeout(notesProjectSaveTimerRef.current);
+      }
+    },
+    [],
+  );
+
+  const createStandardNote = useCallback(() => {
+    const viewport = getViewport();
+    const topSafe = Math.max(360, Math.min(440, window.innerHeight * 0.4));
+    const bottomSafe = 130;
+    const maxX = Math.max(NOTE_MARGIN, window.innerWidth - NOTE_MARGIN - NOTE_WIDTH);
+    const maxY = Math.max(topSafe, window.innerHeight - bottomSafe - NOTE_HEIGHT);
+    const existingNotes = liveNodesRef.current
+      .filter((node) => node.type === "notes")
+      .map((node) => {
+        const style = (node.style as { width?: number; height?: number } | undefined) ?? {};
+        const width = typeof style.width === "number" ? style.width : NOTE_WIDTH;
+        const height = typeof style.height === "number" ? style.height : NOTE_HEIGHT;
+        return {
+          left: node.position.x * viewport.zoom + viewport.x,
+          top: node.position.y * viewport.zoom + viewport.y,
+          width: width * viewport.zoom,
+          height: height * viewport.zoom,
+        };
+      });
+
+    let chosenScreenX = NOTE_MARGIN;
+    let chosenScreenY = topSafe;
+    let foundSlot = false;
+    for (let y = topSafe; y <= maxY && !foundSlot; y += NOTE_HEIGHT + NOTE_GAP) {
+      for (let x = NOTE_MARGIN; x <= maxX && !foundSlot; x += NOTE_WIDTH + NOTE_GAP) {
+        const overlaps = existingNotes.some((note) => {
+          const horizontal = x < note.left + note.width + NOTE_GAP && x + NOTE_WIDTH + NOTE_GAP > note.left;
+          const vertical = y < note.top + note.height + NOTE_GAP && y + NOTE_HEIGHT + NOTE_GAP > note.top;
+          return horizontal && vertical;
+        });
+        if (!overlaps) {
+          chosenScreenX = x;
+          chosenScreenY = y;
+          foundSlot = true;
+        }
+      }
+    }
+
+    const nodeId = `notes_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const newNode = {
+      id: nodeId,
+      type: "notes",
+      position: screenToFlowPosition({ x: chosenScreenX, y: chosenScreenY }),
+      dragHandle: defaultCanvasNodeDragHandle("notes"),
+      data: withFoldderCanvasIntro("notes", createEmptyNotesNodeData()),
+      style: defaultCanvasNodeStyleForType("notes"),
+      selected: true,
+    };
+    takeSnapshot();
+    setNodes((nds) => [...nds.map((node) => ({ ...node, selected: false })), newNode]);
+    scheduleFoldderCanvasIntroEnd(nodeId);
+    scheduleNotesProjectSave();
+  }, [getViewport, scheduleFoldderCanvasIntroEnd, scheduleNotesProjectSave, screenToFlowPosition, setNodes, takeSnapshot]);
+
+  const updateStandardNote = useCallback((nodeId: string, patch: Record<string, unknown>) => {
+    setNodes((nds) =>
+      nds.map((node) =>
+        node.id === nodeId
+          ? {
+              ...node,
+              data: {
+                ...node.data,
+                ...patch,
+              },
+            }
+          : node,
+      ),
+    );
+    scheduleNotesProjectSave();
+  }, [scheduleNotesProjectSave, setNodes]);
+
+  const duplicateStandardNote = useCallback((nodeId: string) => {
+    takeSnapshot();
+    setNodes((nds) => {
+      const source = nds.find((node) => node.id === nodeId && node.type === "notes");
+      if (!source) return nds;
+      const style = (source.style as React.CSSProperties | undefined) ?? defaultCanvasNodeStyleForType("notes");
+      const duplicateId = `notes_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      return [
+        ...nds.map((node) => ({ ...node, selected: false })),
+        {
+          ...source,
+          id: duplicateId,
+          selected: true,
+          dragHandle: ".notes-drag-surface",
+          position: {
+            x: source.position.x + 36,
+            y: source.position.y + 36,
+          },
+          data: {
+            ...source.data,
+            title: typeof source.data?.title === "string" ? `${source.data.title} copy` : "Note copy",
+            label: typeof source.data?.title === "string" ? `${source.data.title} copy` : "Note copy",
+            updatedAt: new Date().toISOString(),
+          },
+          style,
+        },
+      ];
+    });
+    scheduleNotesProjectSave();
+  }, [scheduleNotesProjectSave, setNodes, takeSnapshot]);
+
+  const deleteStandardNote = useCallback((nodeId: string) => {
+    takeSnapshot();
+    setEdges((eds) => eds.filter((edge) => edge.source !== nodeId && edge.target !== nodeId));
+    setNodes((nds) => nds.filter((node) => node.id !== nodeId));
+    scheduleNotesProjectSave();
+  }, [scheduleNotesProjectSave, setEdges, setNodes, takeSnapshot]);
+
+  const moveStandardNote = useCallback((nodeId: string, dxPx: number, dyPx: number) => {
+    const zoom = Math.max(getViewport().zoom || 1, 0.01);
+    setNodes((nds) =>
+      nds.map((node) =>
+        node.id === nodeId
+          ? {
+              ...node,
+              position: {
+                x: node.position.x + dxPx / zoom,
+                y: node.position.y + dyPx / zoom,
+              },
+            }
+          : node,
+      ),
+    );
+    scheduleNotesProjectSave();
+  }, [getViewport, scheduleNotesProjectSave, setNodes]);
+
+  const syncStandardNoteHeight = useCallback((nodeId: string, heightPx: number) => {
+    const zoom = Math.max(getViewport().zoom || 1, 0.01);
+    const nextHeight = Math.max(NOTE_HEIGHT, heightPx / zoom);
+    setNodes((nds) =>
+      nds.map((node) => {
+        if (node.id !== nodeId) return node;
+        const style = (node.style as React.CSSProperties | undefined) ?? {};
+        if (typeof style.height === "number" && Math.abs(style.height - nextHeight) < 2) {
+          return node;
+        }
+        return {
+          ...node,
+          height: nextHeight,
+          measured: {
+            ...(node.measured ?? {}),
+            width: NOTE_WIDTH,
+            height: nextHeight,
+          },
+          style: {
+            ...style,
+            width: NOTE_WIDTH,
+            height: nextHeight,
+          },
+        };
+      }),
+    );
+    requestAnimationFrame(() => {
+      updateNodeInternals(nodeId);
+      requestAnimationFrame(() => updateNodeInternals(nodeId));
+    });
+    scheduleNotesProjectSave();
+  }, [getViewport, scheduleNotesProjectSave, setNodes, updateNodeInternals]);
 
   const dispatchStudioOpen = useCallback((detail: FoldderStudioEventDetail) => {
     dispatchFoldderStudioEvent(FOLDDER_OPEN_STUDIO_EVENT, detail);
@@ -1287,16 +1516,12 @@ export function SpacesContent() {
       const preferred = preferredCenterRightOfRightmostNode(nodes, reactFlowType);
       const position = findEmptyPositionForNewNode(reactFlowType, nodes, preferred ?? viewportCenter);
       const nodeId = `node_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-      const standardStyle: React.CSSProperties | undefined =
-        reactFlowType === 'nanoBanana'
-          ? { width: NANO_BANANA_DEFAULT_W, height: NANO_BANANA_DEFAULT_H }
-          : reactFlowType === 'geminiVideo' || reactFlowType === 'vfxGenerator'
-            ? { width: GEMINI_VIDEO_DEFAULT_W, height: GEMINI_VIDEO_DEFAULT_H }
-            : undefined;
+      const standardStyle: React.CSSProperties | undefined = defaultCanvasNodeStyleForType(reactFlowType);
       const newNode = {
         id: nodeId,
         type: reactFlowType,
         position,
+        dragHandle: defaultCanvasNodeDragHandle(reactFlowType),
         data: withFoldderCanvasIntro(reactFlowType, {
           ...defaultDataForCanvasDropNode(reactFlowType),
           label: baseName,
@@ -1705,10 +1930,45 @@ export function SpacesContent() {
         fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(800), ...FOLDDER_FIT_VIEW_EASE });
       } else {
         lastDoubleClickFitNodeIdRef.current = node.id;
-        fitViewToNodeIds([node.id], 650);
+        if (node.type === "notes" && reactFlowWrapper.current) {
+          const nodeEl = document.querySelector(`.react-flow__node[data-id="${CSS.escape(node.id)}"]`) as HTMLElement | null;
+          const wrapperEl = reactFlowWrapper.current;
+          if (nodeEl) {
+            const nodeRect = nodeEl.getBoundingClientRect();
+            const wrapperRect = wrapperEl.getBoundingClientRect();
+            const currentViewport = getViewport();
+            const currentZoom = Math.max(currentViewport.zoom || 1, 0.0001);
+            const flowLeft = (nodeRect.left - wrapperRect.left - currentViewport.x) / currentZoom;
+            const flowTop = (nodeRect.top - wrapperRect.top - currentViewport.y) / currentZoom;
+            const flowWidth = nodeRect.width / currentZoom;
+            const flowHeight = nodeRect.height / currentZoom;
+            const paddingRatio = 0.12;
+            const availableWidth = Math.max(120, wrapperRect.width * (1 - paddingRatio * 2));
+            const availableHeight = Math.max(120, wrapperRect.height * (1 - paddingRatio * 2));
+            const nextZoom = Math.min(availableWidth / flowWidth, availableHeight / flowHeight);
+            const centerX = flowLeft + flowWidth / 2;
+            const centerY = flowTop + flowHeight / 2;
+            void setViewport(
+              {
+                x: wrapperRect.width / 2 - centerX * nextZoom,
+                y: wrapperRect.height / 2 - centerY * nextZoom,
+                zoom: nextZoom,
+              },
+              { duration: fitAnim(650), interpolate: "smooth", ...FOLDDER_FIT_VIEW_EASE },
+            );
+            return;
+          }
+        }
+        updateNodeInternals(node.id);
+        requestAnimationFrame(() => {
+          updateNodeInternals(node.id);
+          requestAnimationFrame(() => {
+            fitViewToNodeIds([node.id], 650);
+          });
+        });
       }
     },
-    [fitView, fitViewToNodeIds]
+    [fitView, fitViewToNodeIds, getViewport, setViewport, updateNodeInternals]
   );
 
   /** Doble clic en el lienzo (no en un nodo) → fit a todo el grafo */
@@ -1975,7 +2235,11 @@ export function SpacesContent() {
       const tag = t.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
       if (t.isContentEditable) return true;
-      return !!t.closest('[contenteditable="true"]');
+      return !!t.closest('[contenteditable="true"], .nokey, [data-foldder-text-editing="true"]');
+    };
+    const isTypingNow = (eventTarget: EventTarget | null) => {
+      if (typingTarget(eventTarget)) return true;
+      return typingTarget(document.activeElement);
     };
     const restoreSavedViewport = (saved: { x: number; y: number; zoom: number }) => {
       setViewport({ x: saved.x, y: saved.y, zoom: saved.zoom }, {
@@ -2006,7 +2270,7 @@ export function SpacesContent() {
     const onModifierDown = (e: KeyboardEvent) => {
       if (e.code !== 'Space') return;
       if (e.repeat) return;
-      if (typingTarget(e.target)) return;
+      if (isTypingNow(e.target)) return;
       if (typeof document !== 'undefined' && document.querySelector('[data-foldder-studio-canvas]')) return;
 
       e.preventDefault();
@@ -2033,6 +2297,7 @@ export function SpacesContent() {
     };
     const onModifierUp = (e: KeyboardEvent) => {
       if (e.code !== 'Space') return;
+      if (isTypingNow(e.target) && !spaceHeldForOverviewRef.current) return;
 
       spaceHeldForOverviewRef.current = false;
       setSpaceHeld(false);
@@ -3196,9 +3461,9 @@ export function SpacesContent() {
         (spaces[rootSpaceId] as { nodes?: any[]; edges?: any[] });
 
       const nextNodes = stripLegacyFinal([...(targetSpace?.nodes || [])]).map((n: any) => {
-        if (!n.data || typeof n.data !== 'object') return n;
+        if (!n.data || typeof n.data !== 'object') return normalizeNotesNodeForRuntime(n as Node);
         const { _foldderCanvasIntro: _i, ...rest } = n.data as Record<string, unknown>;
-        return { ...n, data: rest };
+        return normalizeNotesNodeForRuntime({ ...n, data: rest } as Node);
       });
       const nextEdges = stripEdgesToFinal([...(targetSpace?.edges || [])]);
       const sanitizedActiveGraph = sanitizeLegacyRemovedNodesFromGraph(nextNodes as Node[], nextEdges as Edge[]);
@@ -4309,7 +4574,13 @@ export function SpacesContent() {
             id: newId,
             type: libraryType,
             position: placement,
-            data: withFoldderCanvasIntro(libraryType, { value: '', label: `${libraryType} node` }),
+            dragHandle: defaultCanvasNodeDragHandle(libraryType),
+        data: withFoldderCanvasIntro(libraryType, {
+          ...defaultDataForCanvasDropNode(libraryType),
+          value: '',
+          label: libraryType === "notes" ? "Note" : `${libraryType} node`,
+        }),
+            ...(defaultCanvasNodeStyleForType(libraryType) ? { style: defaultCanvasNodeStyleForType(libraryType) } : {}),
           };
 
           const edgeId = `e-lib-${newId}-${targetNode.id}-${Date.now()}`;
@@ -4358,7 +4629,13 @@ export function SpacesContent() {
           id: libDropId,
           type: libraryType,
           position: placement,
-          data: withFoldderCanvasIntro(libraryType, { value: '', label: `${libraryType} node` }),
+          dragHandle: defaultCanvasNodeDragHandle(libraryType),
+          data: withFoldderCanvasIntro(libraryType, {
+            ...defaultDataForCanvasDropNode(libraryType),
+            value: '',
+            label: libraryType === "notes" ? "Note" : `${libraryType} node`,
+          }),
+          ...(defaultCanvasNodeStyleForType(libraryType) ? { style: defaultCanvasNodeStyleForType(libraryType) } : {}),
         };
 
         takeSnapshot();
@@ -4709,8 +4986,6 @@ export function SpacesContent() {
         </ProjectAssetsCanvasContext.Provider>
         </SpacesActiveProjectIdContext.Provider>
 
-        {isAuthenticated && workspaceViewMode === 'pro' && <HandleTypeLegend />}
-
         {isAuthenticated && <ExternalApiBlockedModal />}
 
         {isAuthenticated && (
@@ -4881,7 +5156,7 @@ export function SpacesContent() {
         )}
 
         {/* Action HUD — fila1: agente (izq.) + acciones (der.); fila2: accesos fijos inferiores. Oculto con body.nb-studio-open (Nano Banana Studio fullscreen). */}
-        {workspaceViewMode === 'pro' && (
+        {isAuthenticated && (
         <div
           key="action-hud"
           data-foldder-top-hud
@@ -4889,7 +5164,7 @@ export function SpacesContent() {
           style={{
             position: 'absolute',
             top: 24,
-            left: isAuthenticated ? 84 : 24,
+            left: 24,
             right: 24,
             zIndex: 100,
           }}
@@ -4898,6 +5173,12 @@ export function SpacesContent() {
             {isAuthenticated && (
               <>
                 <div className="pointer-events-auto relative z-[5] flex min-h-[40px] min-w-0 shrink-0 items-center gap-2 sm:gap-3 md:gap-4">
+                  <img
+                    src="/logo_bl.svg"
+                    alt="Foldder"
+                    className="h-11 w-11 shrink-0 object-contain drop-shadow-lg"
+                    draggable={false}
+                  />
                   {/* +20% ancho respecto a 18rem / 20rem / 22rem */}
                   <div className="flex min-h-[40px] w-full min-w-0 max-w-[min(100%,21.6rem)] shrink sm:max-w-[24rem] md:max-w-[26.5rem] items-center rounded-xl border border-white/25 bg-white/[0.08] px-2 py-1 shadow-sm backdrop-blur-xl">
                     <AgentHUD
@@ -4954,7 +5235,11 @@ export function SpacesContent() {
                   <button
                     type="button"
                     onClick={() => setWorkspaceViewMode('standard')}
-                    className="flex h-8 items-center gap-1.5 rounded-lg px-2 text-[8px] font-black uppercase tracking-widest text-slate-700 transition hover:bg-white/20"
+                    className={`flex h-8 items-center gap-1.5 rounded-lg px-2 text-[8px] font-black uppercase tracking-widest transition ${
+                      workspaceViewMode === 'standard'
+                        ? 'bg-white px-2 text-slate-900 shadow-sm'
+                        : 'text-slate-700 hover:bg-white/20'
+                    }`}
                   >
                     <Workflow size={12} />
                     Estándar
@@ -4962,7 +5247,11 @@ export function SpacesContent() {
                   <button
                     type="button"
                     onClick={() => setWorkspaceViewMode('pro')}
-                    className="flex h-8 items-center gap-1.5 rounded-lg bg-white px-2 text-[8px] font-black uppercase tracking-widest text-slate-900 shadow-sm"
+                    className={`flex h-8 items-center gap-1.5 rounded-lg px-2 text-[8px] font-black uppercase tracking-widest transition ${
+                      workspaceViewMode === 'pro'
+                        ? 'bg-white text-slate-900 shadow-sm'
+                        : 'text-slate-700 hover:bg-white/20'
+                    }`}
                   >
                     Pro
                   </button>
@@ -5146,37 +5435,22 @@ export function SpacesContent() {
         </div>
         )}
 
-        {/* Barra inferior: Brain, Design, Present, Image, Video y Foldder */}
-        {isAuthenticated && workspaceViewMode === 'pro' && (
-          <div
-            data-foldder-top-hud
-            className="pointer-events-none absolute bottom-6 left-0 right-0 z-[120] flex items-end justify-center overflow-visible px-4"
-          >
-            <TopbarPins
-              embedded
-              fullWidthRow
-              onBrainClick={() => {
-                setBrainInitialSection(null);
-                setProjectBrainOpen(true);
-              }}
-              onAssetsClick={() => openFoldder("fullscreen")}
-              onPinDoubleClick={addNodeFromTopbarPinDoubleClick}
-              paletteDragActive={paletteDragActive}
-            />
-          </div>
-        )}
-
         {isAuthenticated && workspaceViewMode === 'standard' && (
           <StandardDesktopView
-            projectName={currentName}
             files={projectFiles.items}
             importedMedia={foldderLibrarySections.importedMedia}
             generatedMedia={foldderLibrarySections.generatedMedia}
             exports={foldderLibrarySections.exports}
-            workspaceViewMode={workspaceViewMode}
+            notes={standardDesktopNotes}
+            canvasViewport={getViewport()}
             activeAppId={activeDesktopAppId}
             minimizedAppId={minimizedDesktopAppId}
-            onViewModeChange={setWorkspaceViewMode}
+            onCreateNote={createStandardNote}
+            onUpdateNote={updateStandardNote}
+            onDuplicateNote={duplicateStandardNote}
+            onDeleteNote={deleteStandardNote}
+            onMoveNote={moveStandardNote}
+            onAutoHeightNote={syncStandardNoteHeight}
             onDockAppClick={handleDesktopDockAppClick}
             onCreateFileForApp={createStandardFileForApp}
             onOpenFile={openStandardFile}
@@ -5184,30 +5458,9 @@ export function SpacesContent() {
             onSaveAsFile={saveProjectFileAs}
             onHideFile={hideProjectFile}
             onPresentDesignFile={openPresenterForDesignFile}
-            onOpenProjectsList={() => {
-              if (projectDeleteInProgress) return;
-              openLoadProjectsModal();
-            }}
             onOpenFoldderFullscreen={() => openFoldder("fullscreen")}
-            onNewProject={() => {
-              if (projectDeleteInProgress) return;
-              setNewProjectNameInput('');
-              setShowNewProjectModal(true);
-            }}
-            onSignOut={() => {
-              setPasscodeBypass(false);
-              setPasscode("");
-              setPassError(false);
-              if (sessionStatus === "authenticated") {
-                void signOut({ callbackUrl: "/spaces" });
-              }
-            }}
-            userName={session?.user?.name ?? null}
-            userEmail={session?.user?.email ?? null}
-            userImage={session?.user?.image ?? null}
             foldderOpenRequest={standardFoldderOpenRequest}
             canvasBgId={canvasBgId}
-            onCanvasBgChange={setCanvasBgId}
           />
         )}
 

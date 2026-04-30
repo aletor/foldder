@@ -5,6 +5,7 @@ import type { Edge, Node } from "@xyflow/react";
 import {
   MediaInputNode,
   PromptNode,
+  NotesNode,
   GrokNode,
   ConcatenatorNode,
   ListadoNode,
@@ -38,6 +39,7 @@ export const spacesInitialNodes: Node[] = [];
 export const spacesNodeTypes: Record<string, ComponentType<any>> = {
   mediaInput: MediaInputNode,
   promptInput: PromptNode,
+  notes: NotesNode,
   grokProcessor: GrokNode,
   concatenator: ConcatenatorNode,
   listado: ListadoNode,

@@ -107,6 +107,22 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
         'string (optional — short title shown above the node on the canvas; use when the user names the prompt, e.g. "Eye color" / "color de ojos")',
     }
   },
+  notes: {
+    type: 'notes',
+    label: 'Notes',
+    description: 'Quick sticky note for text annotations.',
+    inputs: [],
+    outputs: [{ id: 'prompt', label: 'Prompt Out', type: 'prompt' }],
+    dataSchema: {
+      title: 'string (editable note title, default "Note")',
+      contentHtml: 'string (rich text HTML for visual editing)',
+      contentMarkdown: 'string (serialized Markdown output)',
+      plainText: 'string (search / preview text)',
+      value: 'string (prompt-compatible Markdown mirror of the note content)',
+      color: '"yellow"',
+      updatedAt: 'string (ISO timestamp)',
+    },
+  },
   grokProcessor: {
     type: 'grokProcessor',
     label: 'Grok Video',

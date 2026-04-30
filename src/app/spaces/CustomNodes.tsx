@@ -163,6 +163,12 @@ import {
   foldderDataTypeFromHandleClass,
   foldderMediaInputDataType,
 } from './FoldderDataHandle';
+import {
+  NotesStickyCard,
+  NOTE_MIN_HEIGHT,
+  NOTE_WIDTH,
+  normalizeNotesNodeData,
+} from './NotesSticky';
 
 interface BaseNodeData {
   value?: string;
@@ -1506,6 +1512,133 @@ export const PromptNode = memo(function PromptNode({ id, data, selected }: NodeP
       </div>
       <div className="handle-wrapper handle-right">
         <span className="handle-label">Prompt out</span>
+        <FoldderDataHandle type="source" position={Position.Right} id="prompt" dataType="prompt" />
+      </div>
+    </div>
+  );
+});
+
+export const NotesNode = memo(function NotesNode({ id, data, selected }: NodeProps) {
+  const nodeData = normalizeNotesNodeData(data);
+  const { setNodes, setEdges } = useReactFlow();
+  const updateNodeInternals = useUpdateNodeInternals();
+  const nodes = useNodes();
+  const currentNode = nodes.find((node) => node.id === id);
+  const style = (currentNode?.style as React.CSSProperties | undefined) ?? {};
+  const width = typeof style.width === "number" ? style.width : NOTE_WIDTH;
+  const height = typeof style.height === "number" ? style.height : NOTE_MIN_HEIGHT;
+
+  const applyPatch = useCallback(
+    (patch: Partial<typeof nodeData>) => {
+      setNodes((nds) =>
+        nds.map((node) =>
+          node.id === id
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  ...patch,
+                },
+              }
+            : node,
+        ),
+      );
+    },
+    [id, setNodes],
+  );
+
+  const duplicateNote = useCallback(() => {
+    const duplicateId = `notes_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    setNodes((nds) => {
+      const source = nds.find((node) => node.id === id);
+      if (!source) return nds;
+      const sourceStyle = (source.style as React.CSSProperties | undefined) ?? {};
+      const nextWidth = typeof sourceStyle.width === "number" ? sourceStyle.width : NOTE_WIDTH;
+      const nextHeight = typeof sourceStyle.height === "number" ? sourceStyle.height : NOTE_MIN_HEIGHT;
+      return [
+        ...nds.map((node) => ({ ...node, selected: false })),
+        {
+          ...source,
+          id: duplicateId,
+          selected: true,
+          dragHandle: ".notes-drag-surface",
+          position: {
+            x: source.position.x + 36,
+            y: source.position.y + 36,
+          },
+          data: {
+            ...source.data,
+            title: `${nodeData.title ?? "Note"} copy`,
+            label: `${nodeData.title ?? "Note"} copy`,
+            updatedAt: new Date().toISOString(),
+          },
+          style: {
+            ...sourceStyle,
+            width: nextWidth,
+            height: nextHeight,
+          },
+        },
+      ];
+    });
+  }, [id, nodeData.title, setNodes]);
+
+  const deleteNote = useCallback(() => {
+    setEdges((eds) => eds.filter((edge) => edge.source !== id && edge.target !== id));
+    setNodes((nds) => nds.filter((node) => node.id !== id));
+  }, [id, setEdges, setNodes]);
+
+  const syncAutoHeight = useCallback((nextHeight: number) => {
+    setNodes((nds) =>
+      nds.map((node) => {
+        if (node.id !== id) return node;
+        const currentStyle = (node.style as React.CSSProperties | undefined) ?? {};
+        if (typeof currentStyle.height === "number" && Math.abs(currentStyle.height - nextHeight) < 2) {
+          return node;
+        }
+        return {
+          ...node,
+          height: nextHeight,
+          measured: {
+            ...(node.measured ?? {}),
+            width: NOTE_WIDTH,
+            height: nextHeight,
+          },
+          style: {
+            ...currentStyle,
+            width: NOTE_WIDTH,
+            height: nextHeight,
+          },
+        };
+      }),
+    );
+    requestAnimationFrame(() => {
+      updateNodeInternals(id);
+      requestAnimationFrame(() => updateNodeInternals(id));
+    });
+  }, [id, setNodes, updateNodeInternals]);
+
+  return (
+    <div
+      className="custom-node relative"
+      style={{
+        width,
+        height,
+        minHeight: NOTE_MIN_HEIGHT,
+      }}
+    >
+      <NotesStickyCard
+        nodeId={id}
+        mode="node"
+        title={nodeData.title}
+        contentHtml={nodeData.contentHtml}
+        selected={selected}
+        onChange={applyPatch}
+        onDuplicate={duplicateNote}
+        onDelete={deleteNote}
+        onAutoHeightChange={syncAutoHeight}
+      />
+      <div className="handle-wrapper handle-right !right-[-16px] top-1/2 z-[8] -translate-y-1/2">
+        <span className="handle-label">Prompt</span>
         <FoldderDataHandle type="source" position={Position.Right} id="prompt" dataType="prompt" />
       </div>
     </div>

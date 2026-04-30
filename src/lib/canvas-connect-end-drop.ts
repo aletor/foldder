@@ -197,6 +197,17 @@ export function defaultDataForCanvasDropNode(nodeType: string): Record<string, u
       return { label: "Brain" };
     case "projectAssets":
       return { label: "Assets" };
+    case "notes":
+      return {
+        title: "Note",
+        label: "Note",
+        color: "yellow",
+        contentHtml: "<p></p>",
+        contentMarkdown: "",
+        plainText: "",
+        value: "",
+        updatedAt: new Date().toISOString(),
+      };
     default:
       return { label: "" };
   }
