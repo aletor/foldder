@@ -208,6 +208,26 @@ export function defaultDataForCanvasDropNode(nodeType: string): Record<string, u
         value: "",
         updatedAt: new Date().toISOString(),
       };
+    case "guionista":
+      return {
+        label: "Guionista",
+        briefing: "",
+        format: "post",
+        settings: {
+          language: "es",
+          length: "medium",
+          tone: "natural",
+          audience: "",
+          goal: "explain",
+          extraInstructions: "",
+        },
+        approaches: [],
+        versions: [],
+        value: "",
+        promptValue: "",
+        status: "draft",
+        updatedAt: new Date().toISOString(),
+      };
     default:
       return { label: "" };
   }

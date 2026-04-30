@@ -24,14 +24,15 @@ export const ProjectAssetsNode = memo(({ id, data, selected }: NodeProps) => {
       assetsMetadata: ctx?.assetsMetadata,
       projectScopeId: ctx?.projectScopeId ?? "__local__",
       projectFiles: ctx?.projectFiles,
+      generatedTextAssets: ctx?.generatedTextAssets,
     });
     return {
       nImported: sections.importedMedia.length,
-      nGenerated: sections.generatedMedia.length,
+      nGenerated: sections.generatedMedia.length + sections.generatedTexts.length,
       nFiles: sections.mediaFiles.length,
       nExports: sections.exports.length,
     };
-  }, [ctx?.assetsMetadata, ctx?.flowNodes, ctx?.projectFiles, ctx?.projectScopeId]);
+  }, [ctx?.assetsMetadata, ctx?.flowNodes, ctx?.generatedTextAssets, ctx?.projectFiles, ctx?.projectScopeId]);
 
   const openLibrary = useCallback(() => {
     if (ctx?.openProjectAssets) {

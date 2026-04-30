@@ -560,6 +560,7 @@ export const NODE_TYPE_TO_FOLDDER_ICON: Record<string, FoldderIconKey> = {
   projectAssets: 'foldderApp',
   pinterestSearch: 'web',
   notes: 'notes',
+  guionista: 'text',
 };
 
 export function resolveFoldderNodeState(opts: {

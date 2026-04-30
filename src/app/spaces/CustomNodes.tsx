@@ -63,6 +63,7 @@ import {
   Film,
   Cpu,
   Pin,
+  PenLine,
 } from 'lucide-react';
 import { StandardStudioShellHeader, type StandardStudioShellConfig } from './StandardStudioShell';
 import {
@@ -169,6 +170,15 @@ import {
   NOTE_WIDTH,
   normalizeNotesNodeData,
 } from './NotesSticky';
+import { GuionistaStudio } from './GuionistaStudio';
+import {
+  GUI_FORMAT_LABELS,
+  normalizeGuionistaData,
+  plainTextFromMarkdown,
+  type GuionistaBrainContext,
+  type GuionistaNodeData,
+} from './guionista-types';
+import { useProjectAssetsCanvas } from './project-assets-canvas-context';
 
 interface BaseNodeData {
   value?: string;
@@ -1641,6 +1651,242 @@ export const NotesNode = memo(function NotesNode({ id, data, selected }: NodePro
         <span className="handle-label">Prompt</span>
         <FoldderDataHandle type="source" position={Position.Right} id="prompt" dataType="prompt" />
       </div>
+    </div>
+  );
+});
+
+function textFromGuionistaSourceNode(source: Node | undefined): string {
+  if (!source || !source.data || typeof source.data !== "object") return "";
+  const row = source.data as Record<string, unknown>;
+  if (source.type === "notes") {
+    return (
+      (typeof row.contentMarkdown === "string" && row.contentMarkdown.trim()) ||
+      (typeof row.plainText === "string" && row.plainText.trim()) ||
+      (typeof row.value === "string" ? row.value.trim() : "")
+    );
+  }
+  return (
+    (typeof row.value === "string" && row.value.trim()) ||
+    (typeof row.promptValue === "string" && row.promptValue.trim()) ||
+    (typeof row.text === "string" ? row.text.trim() : "")
+  );
+}
+
+function summarizeGuionistaBrainContext(assetsMetadata: unknown, enabled: boolean): GuionistaBrainContext {
+  if (!enabled) return { enabled: false };
+  const assets = normalizeProjectAssets(assetsMetadata);
+  const strategy = assets.strategy;
+  const content = strategy.contentDna;
+  return {
+    enabled: true,
+    tone: [
+      ...strategy.languageTraits,
+      ...strategy.syntaxPatterns,
+      ...(content?.writingDo ?? []),
+    ].filter(Boolean).slice(0, 12),
+    projectContext: [
+      content?.topics?.length ? `Topics: ${content.topics.slice(0, 8).join(", ")}` : "",
+      content?.contentPillars?.length ? `Pillars: ${content.contentPillars.slice(0, 8).join(", ")}` : "",
+      content?.preferredFormats?.length ? `Formats: ${content.preferredFormats.slice(0, 8).join(", ")}` : "",
+    ].filter(Boolean).join("\n"),
+    approvedClaims: [
+      ...strategy.approvedPhrases,
+      ...(content?.approvedClaims ?? []),
+      ...strategy.approvedPatterns,
+    ].filter(Boolean).slice(0, 12),
+    avoidPhrases: [
+      ...strategy.tabooPhrases,
+      ...strategy.forbiddenTerms,
+      ...(content?.forbiddenClaims ?? []),
+      ...(content?.writingAvoid ?? []),
+      ...strategy.rejectedPatterns,
+    ].filter(Boolean).slice(0, 16),
+    notes: [
+      ...(content?.narrativeAngles ?? []),
+      ...(content?.articleStructures ?? []),
+      ...strategy.funnelMessages.map((message) => `${message.stage}: ${message.text}`),
+    ].filter(Boolean).slice(0, 10),
+    references: [
+      ...strategy.factsAndEvidence.map((fact) => [fact.claim, ...fact.evidence].filter(Boolean).join(" · ")).filter(Boolean),
+      ...(content?.evidence ?? []).map((entry) => typeof entry === "string" ? entry : JSON.stringify(entry).slice(0, 240)),
+    ].slice(0, 10),
+    editorialStyle: [
+      ...strategy.preferredTerms.map((term) => `Preferred: ${term}`),
+      ...strategy.voiceExamples.map((example) => example.text).filter(Boolean),
+    ].slice(0, 10),
+  };
+}
+
+export const GuionistaNode = memo(function GuionistaNode({ id, data, selected }: NodeProps) {
+  const nodeData = normalizeGuionistaData(data);
+  const { setNodes } = useReactFlow();
+  const nodes = useNodes();
+  const edges = useEdges();
+  const assetsCtx = useProjectAssetsCanvas();
+  const brainCtx = useProjectBrainCanvas();
+  const [isStudioOpen, setIsStudioOpen] = useState(false);
+  const [openAssetId, setOpenAssetId] = useState<string | null>(null);
+
+  const currentVersion = useMemo(() => {
+    const versions = nodeData.versions ?? [];
+    return versions.find((version) => version.id === nodeData.activeVersionId) ?? versions.at(-1) ?? null;
+  }, [nodeData.activeVersionId, nodeData.versions]);
+
+  const incomingEdges = useMemo(() => edges.filter((edge) => edge.target === id), [edges, id]);
+  const brainConnected = useMemo(
+    () => incomingEdges.some((edge) => nodes.find((node) => node.id === edge.source)?.type === "projectBrain" || edge.targetHandle === "brain"),
+    [incomingEdges, nodes],
+  );
+  const initialBriefing = useMemo(() => {
+    const chunks = incomingEdges
+      .map((edge) => textFromGuionistaSourceNode(nodes.find((node) => node.id === edge.source)))
+      .filter(Boolean);
+    return chunks.join("\n\n");
+  }, [incomingEdges, nodes]);
+  const brainHints = useMemo(
+    () => brainConnected ? ["Tono del proyecto", "Contexto del proyecto", "Claims aprobados", "Frases a evitar", "Notas relevantes"] : [],
+    [brainConnected],
+  );
+  const brainContext = useMemo(
+    () => summarizeGuionistaBrainContext(brainCtx?.assetsMetadata, brainConnected),
+    [brainCtx?.assetsMetadata, brainConnected],
+  );
+
+  const patchData = useCallback(
+    (patch: Partial<GuionistaNodeData>) => {
+      setNodes((nds) =>
+        nds.map((node) =>
+          node.id === id
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  ...patch,
+                  value: patch.value ?? patch.promptValue ?? (patch.versions?.find((version) => version.id === patch.activeVersionId)?.markdown) ?? (node.data as Record<string, unknown> | undefined)?.value ?? "",
+                },
+              }
+            : node,
+        ),
+      );
+    },
+    [id, setNodes],
+  );
+
+  useEffect(() => {
+    const onOpenStudio = (event: Event) => {
+      const detail = (event as CustomEvent<{ nodeId?: string; nodeType?: string; appId?: string; assetId?: string }>).detail;
+      if (!detail) return;
+      if (detail.nodeId !== id) return;
+      setOpenAssetId(typeof detail.assetId === "string" ? detail.assetId : null);
+      setIsStudioOpen(true);
+    };
+    const onOpenAsset = (event: Event) => {
+      const detail = (event as CustomEvent<{ nodeId?: string; assetId?: string }>).detail;
+      if (!detail?.assetId) return;
+      if (detail.nodeId && detail.nodeId !== id) return;
+      setOpenAssetId(detail.assetId);
+      setIsStudioOpen(true);
+    };
+    window.addEventListener("foldder:open-studio", onOpenStudio as EventListener);
+    window.addEventListener("foldder-open-guionista-asset", onOpenAsset as EventListener);
+    return () => {
+      window.removeEventListener("foldder:open-studio", onOpenStudio as EventListener);
+      window.removeEventListener("foldder-open-guionista-asset", onOpenAsset as EventListener);
+    };
+  }, [id]);
+
+  const openStudio = useCallback(() => {
+    setOpenAssetId(null);
+    setIsStudioOpen(true);
+  }, []);
+
+  return (
+    <div className="custom-node tool-node" style={{ minWidth: 290 }}>
+      <NodeLabel id={id} label={nodeData.label} defaultLabel="Guionista" />
+
+      <div className="node-header">
+        <NodeIcon type="guionista" selected={selected} size={16} />
+        <FoldderNodeHeaderTitle introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}>
+          GUIONISTA
+        </FoldderNodeHeaderTitle>
+        <div className="node-badge">TEXT</div>
+      </div>
+
+      <div className="node-content flex min-w-0 flex-col gap-3 px-3 pb-3 pt-2">
+        <div className="rounded-2xl border border-slate-200/70 bg-white/80 p-3 shadow-inner">
+          <div className="flex items-start gap-2">
+            <PenLine className="mt-0.5 h-4 w-4 shrink-0 text-slate-700" strokeWidth={1.8} aria-hidden />
+            <div className="min-w-0">
+              <span className="node-label">Guionista</span>
+              <p className="mt-1 line-clamp-3 text-[11px] leading-snug text-slate-700">
+                {currentVersion?.markdown
+                  ? plainTextFromMarkdown(currentVersion.markdown).slice(0, 150)
+                  : "Convierte una idea en texto útil"}
+              </p>
+            </div>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-[9px] font-semibold uppercase tracking-wide">
+            <span className="rounded-full bg-slate-900/8 px-2 py-1 text-slate-600">
+              {currentVersion?.format ? GUI_FORMAT_LABELS[currentVersion.format] : GUI_FORMAT_LABELS[nodeData.format ?? "post"]}
+            </span>
+            <span className={`rounded-full px-2 py-1 ${brainConnected ? "bg-emerald-500/15 text-emerald-700" : "bg-slate-900/8 text-slate-500"}`}>
+              {brainConnected ? "Usando Brain" : "Sin Brain conectado"}
+            </span>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            openStudio();
+          }}
+          className="nodrag flex w-full items-center justify-center gap-2 rounded-xl border border-slate-300/80 bg-white/90 px-3 py-2.5 text-center text-[11px] font-bold uppercase tracking-wide text-slate-800 shadow-sm transition hover:bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/50"
+        >
+          <BookOpen className="h-4 w-4 shrink-0 text-slate-600" strokeWidth={2} aria-hidden />
+          {currentVersion ? "Abrir" : "Empezar"}
+        </button>
+      </div>
+
+      <div className="handle-wrapper handle-left" style={{ top: "30%" }}>
+        <FoldderDataHandle type="target" position={Position.Left} id="prompt" dataType="prompt" />
+        <span className="handle-label">Prompt</span>
+      </div>
+      <div className="handle-wrapper handle-left" style={{ top: "52%" }}>
+        <FoldderDataHandle type="target" position={Position.Left} id="text" dataType="txt" />
+        <span className="handle-label">Text</span>
+      </div>
+      <div className="handle-wrapper handle-left" style={{ top: "74%" }}>
+        <FoldderDataHandle type="target" position={Position.Left} id="brain" dataType="brain" />
+        <span className="handle-label">Brain</span>
+      </div>
+      <div className="handle-wrapper handle-right" style={{ top: "38%" }}>
+        <span className="handle-label">Text out</span>
+        <FoldderDataHandle type="source" position={Position.Right} id="text" dataType="txt" />
+      </div>
+      <div className="handle-wrapper handle-right" style={{ top: "68%" }}>
+        <span className="handle-label">Prompt out</span>
+        <FoldderDataHandle type="source" position={Position.Right} id="prompt" dataType="prompt" />
+      </div>
+
+      {isStudioOpen && (
+        <GuionistaStudio
+          nodeId={id}
+          data={nodeData}
+          generatedTextAssets={assetsCtx?.generatedTextAssets}
+          openAssetId={openAssetId}
+          initialBriefing={initialBriefing}
+          brainConnected={brainConnected}
+          brainHints={brainHints}
+          brainContext={brainContext}
+          onChange={patchData}
+          onSaveAsset={assetsCtx?.saveGuionistaTextAsset}
+          onClose={() => {
+            setIsStudioOpen(false);
+            setOpenAssetId(null);
+          }}
+        />
+      )}
     </div>
   );
 });

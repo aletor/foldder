@@ -123,6 +123,31 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
       updatedAt: 'string (ISO timestamp)',
     },
   },
+  guionista: {
+    type: 'guionista',
+    label: 'Guionista',
+    description: 'Convierte ideas en posts, artículos, guiones, escenas, slides, campañas y reescrituras.',
+    inputs: [
+      { id: 'prompt', label: 'Notes / Prompt', type: 'prompt' },
+      { id: 'text', label: 'Text', type: 'txt' },
+      { id: 'brain', label: 'Brain', type: 'brain' },
+    ],
+    outputs: [
+      { id: 'text', label: 'Text out', type: 'txt' },
+      { id: 'prompt', label: 'Prompt out', type: 'prompt' },
+    ],
+    dataSchema: {
+      briefing: 'string (idea, note, prompt or base text)',
+      format: 'post | article | script | scenes | slides | campaign | rewrite',
+      settings: '{ language, length, tone, audience, goal, extraInstructions }',
+      approaches: 'GuionistaApproach[] (3 editorial approaches)',
+      versions: 'GuionistaVersion[]',
+      activeVersionId: 'string',
+      assetId: 'string (Generated Media text asset id)',
+      value: 'string (active version markdown for Text/Prompt outputs)',
+      promptValue: 'string (active version markdown for Prompt output)',
+    },
+  },
   grokProcessor: {
     type: 'grokProcessor',
     label: 'Grok Video',

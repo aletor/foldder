@@ -7,10 +7,12 @@ import {
   type ProjectMediaItem,
 } from "./project-media-inventory";
 import { getProjectFilesFromMetadata, type ProjectFile, type ProjectFilesMetadata } from "./project-files";
+import { getGuionistaTextAssetsFromMetadata, type GuionistaGeneratedTextAssetsMetadata, type GuionistaTextAsset } from "./guionista-types";
 
 export type FoldderLibrarySections = {
   importedMedia: ProjectMediaItem[];
   generatedMedia: ProjectMediaItem[];
+  generatedTexts: GuionistaTextAsset[];
   mediaFiles: ProjectFile[];
   exports: ProjectFile[];
 };
@@ -113,6 +115,7 @@ export function collectFoldderLibrarySections(args: {
   assetsMetadata: unknown;
   projectScopeId: string;
   projectFiles?: ProjectFilesMetadata;
+  generatedTextAssets?: GuionistaGeneratedTextAssetsMetadata;
 }): FoldderLibrarySections {
   const graphMedia = collectProjectMedia(args.nodes);
   const importedSeen = new Set(graphMedia.imported.map((item) => projectMediaDedupeKey(item.url)));
@@ -132,11 +135,13 @@ export function collectFoldderLibrarySections(args: {
   );
   const exports = visibleProjectFiles.filter((file) => file.kind === "export");
   const mediaFiles = visibleProjectFiles.filter((file) => file.kind !== "export");
+  const generatedTexts = (args.generatedTextAssets ?? getGuionistaTextAssetsFromMetadata({})).items;
 
   const generatedKeys = new Set(generatedMedia.map((item) => projectMediaDedupeKey(item.url)));
   return {
     importedMedia: importedMedia.filter((item) => !generatedKeys.has(projectMediaDedupeKey(item.url))),
     generatedMedia,
+    generatedTexts,
     mediaFiles,
     exports,
   };

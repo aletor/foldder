@@ -1,10 +1,11 @@
 "use client";
 
 import React from "react";
-import { Copy, EyeOff, FileQuestion, FolderOpen, Maximize2, Pencil, Play, SaveAll, X } from "lucide-react";
+import { BookOpen, Copy, EyeOff, FileQuestion, FolderOpen, Maximize2, Pencil, Play, SaveAll, X } from "lucide-react";
 import { NodeIcon } from "./foldder-icons";
 import type { ProjectMediaItem } from "./project-media-inventory";
 import type { ProjectFile } from "./project-files";
+import { GUI_FORMAT_FOLDERS, GUI_FORMAT_LABELS, type GuionistaFormat, type GuionistaTextAsset } from "./guionista-types";
 
 export type FoldderDesktopSectionId = "all" | "imported" | "generated" | "mediaFiles" | "exports";
 
@@ -20,7 +21,9 @@ type ProjectFolderViewProps = {
   initialSection?: FoldderDesktopSectionId;
   importedMedia?: ProjectMediaItem[];
   generatedMedia?: ProjectMediaItem[];
+  generatedTexts?: GuionistaTextAsset[];
   exports?: ProjectFile[];
+  onOpenGuionistaTextAsset?: (assetId: string) => void;
 };
 
 function visibleFiles(files: ProjectFile[]): ProjectFile[] {
@@ -69,6 +72,55 @@ function MediaPreviewTile({ item }: { item: ProjectMediaItem }) {
       </div>
     </a>
   );
+}
+
+function GuionistaTextAssetTile({
+  asset,
+  onOpen,
+}: {
+  asset: GuionistaTextAsset;
+  onOpen?: (assetId: string) => void;
+}) {
+  const activeIndex = Math.max(0, asset.versions.findIndex((version) => version.id === asset.activeVersionId));
+  const platform = asset.platform ? ` · ${asset.platform}` : "";
+  return (
+    <article
+      onDoubleClick={() => onOpen?.(asset.id)}
+      className="group flex min-h-[130px] flex-col rounded-3xl border border-amber-200/12 bg-amber-100/[0.055] p-4 text-left transition hover:-translate-y-0.5 hover:border-amber-200/28 hover:bg-amber-100/[0.085]"
+      title="Doble clic para abrir en Guionista"
+    >
+      <div className="flex items-start gap-3">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-amber-200/16 bg-black/35 text-amber-100">
+          <BookOpen className="h-5 w-5" strokeWidth={1.6} />
+        </span>
+        <div className="min-w-0">
+          <h4 className="line-clamp-2 text-[12px] font-light leading-tight text-white/88">{asset.title}</h4>
+          <p className="mt-1 text-[9px] font-light uppercase tracking-[0.14em] text-amber-100/48">
+            {GUI_FORMAT_LABELS[asset.type]}{platform} · V{activeIndex + 1} · {asset.status}
+          </p>
+        </div>
+      </div>
+      <p className="mt-3 line-clamp-3 text-[11px] font-light leading-relaxed text-white/45">{asset.preview}</p>
+      <button
+        type="button"
+        onClick={() => onOpen?.(asset.id)}
+        className="mt-auto self-start rounded-full border border-white/10 bg-white/[0.06] px-3 py-1.5 text-[9px] font-light uppercase tracking-[0.14em] text-white/62 hover:bg-white/12 hover:text-white"
+      >
+        Abrir en Guionista
+      </button>
+    </article>
+  );
+}
+
+function groupGuionistaAssetsByFolder(assets: GuionistaTextAsset[]): Array<{ type: GuionistaFormat; folder: string; items: GuionistaTextAsset[] }> {
+  const order = Object.keys(GUI_FORMAT_FOLDERS) as GuionistaFormat[];
+  return order
+    .map((type) => ({
+      type,
+      folder: GUI_FORMAT_FOLDERS[type],
+      items: assets.filter((asset) => asset.type === type),
+    }))
+    .filter((group) => group.items.length > 0);
 }
 
 function FoldderSection({
@@ -189,7 +241,9 @@ export function ProjectFolderView({
   initialSection = "all",
   importedMedia = [],
   generatedMedia = [],
+  generatedTexts = [],
   exports = [],
+  onOpenGuionistaTextAsset,
 }: ProjectFolderViewProps) {
   const rows = visibleFiles(files).filter((file) => file.kind !== "export");
   const showImported = initialSection === "all" || initialSection === "imported";
@@ -262,15 +316,43 @@ export function ProjectFolderView({
           <FoldderSection
             title="Generated Media"
             subtitle="Resultados generados por Brain, IA, renders, VFX y nodos automáticos."
-            count={generatedMedia.length}
+            count={generatedMedia.length + generatedTexts.length}
           >
-            {generatedMedia.length === 0 ? (
+            {generatedMedia.length === 0 && generatedTexts.length === 0 ? (
               <p className="rounded-2xl border border-dashed border-white/10 bg-white/[0.03] px-4 py-8 text-center text-[12px] font-light text-white/42">
                 Aún no hay media generado visible en Foldder.
               </p>
             ) : (
-              <div className="grid auto-rows-max grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-4">
-                {generatedMedia.map((item) => <MediaPreviewTile key={item.id} item={item} />)}
+              <div className="space-y-4">
+                {generatedTexts.length > 0 && (
+                  <div>
+                    <p className="mb-2 text-[9px] font-light uppercase tracking-[0.18em] text-white/38">
+                      Texts / Guionista
+                    </p>
+                    <div className="space-y-4">
+                      {groupGuionistaAssetsByFolder(generatedTexts).map((group) => (
+                        <div key={group.type}>
+                          <p className="mb-2 text-[10px] font-light text-white/48">{group.folder}</p>
+                          <div className="grid auto-rows-max grid-cols-[repeat(auto-fill,minmax(210px,1fr))] gap-3">
+                            {group.items.map((asset) => (
+                              <GuionistaTextAssetTile key={asset.id} asset={asset} onOpen={onOpenGuionistaTextAsset} />
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {generatedMedia.length > 0 && (
+                  <div>
+                    <p className="mb-2 text-[9px] font-light uppercase tracking-[0.18em] text-white/38">
+                      Media
+                    </p>
+                    <div className="grid auto-rows-max grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-4">
+                      {generatedMedia.map((item) => <MediaPreviewTile key={item.id} item={item} />)}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </FoldderSection>

@@ -8,6 +8,10 @@ export const SIDEBAR_HOVER_HELP: Record<string, { title: string; line: string }>
     title: 'Notes',
     line: 'Sticky note rápida para escribir ideas y conectarlas como prompt',
   },
+  guionista: {
+    title: 'Guionista',
+    line: 'Editor editorial: convierte ideas, notas o Brain en textos versionados',
+  },
   projectBrain: {
     title: 'Brain',
     line: 'Dashboard compacto: ADN, fuentes, nodos conectados y pendientes; abre Brain para editar',

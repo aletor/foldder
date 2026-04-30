@@ -12,6 +12,7 @@ import {
 import type { ProjectFile } from "./project-files";
 import { ProjectFolderView, type FoldderDesktopSectionId } from "./ProjectFolderView";
 import type { ProjectMediaItem } from "./project-media-inventory";
+import type { GuionistaTextAsset } from "./guionista-types";
 import { DOCK_STUDIO_APPS, type StudioAppConfig } from "./studioApps";
 import { CANVAS_BACKGROUNDS } from "./canvas-backgrounds";
 import { CanvasWallpaperTransition } from "./CanvasWallpaperTransition";
@@ -28,6 +29,7 @@ type StandardDesktopViewProps = {
   files: ProjectFile[];
   importedMedia: ProjectMediaItem[];
   generatedMedia: ProjectMediaItem[];
+  generatedTexts?: GuionistaTextAsset[];
   exports: ProjectFile[];
   notes: Node[];
   canvasViewport: { x: number; y: number; zoom: number };
@@ -46,6 +48,7 @@ type StandardDesktopViewProps = {
   onSaveAsFile: (file: ProjectFile) => void;
   onHideFile: (file: ProjectFile) => void;
   onPresentDesignFile: (file: ProjectFile) => void;
+  onOpenGuionistaTextAsset?: (assetId: string) => void;
   onOpenFoldderFullscreen: () => void;
   foldderOpenRequest?: number;
   canvasBgId: string;
@@ -97,6 +100,7 @@ export function StandardDesktopView({
   files,
   importedMedia,
   generatedMedia,
+  generatedTexts = [],
   exports,
   notes,
   canvasViewport,
@@ -115,6 +119,7 @@ export function StandardDesktopView({
   onSaveAsFile,
   onHideFile,
   onPresentDesignFile,
+  onOpenGuionistaTextAsset,
   onOpenFoldderFullscreen,
   foldderOpenRequest = 0,
   canvasBgId,
@@ -259,7 +264,7 @@ export function StandardDesktopView({
             <DesktopFolderTile
               title="Generated Media"
               subtitle="Resultados IA, renders y variaciones"
-              count={generatedMedia.length}
+              count={generatedMedia.length + generatedTexts.length}
               tone="from-fuchsia-400/35 to-white/8"
               icon={<Sparkles className="h-5 w-5 text-fuchsia-100" strokeWidth={1.6} />}
               onOpen={() => openFoldderSection("generated")}
@@ -291,6 +296,7 @@ export function StandardDesktopView({
             files={rows}
             importedMedia={importedMedia}
             generatedMedia={generatedMedia}
+            generatedTexts={generatedTexts}
             exports={exports}
             onClose={() => setFolderOpen(false)}
             onOpenFile={onOpenFile}
@@ -298,6 +304,7 @@ export function StandardDesktopView({
             onSaveAsFile={onSaveAsFile}
             onHideFile={onHideFile}
             onPresentDesignFile={onPresentDesignFile}
+            onOpenGuionistaTextAsset={onOpenGuionistaTextAsset}
             onOpenFoldderFullscreen={onOpenFoldderFullscreen}
             initialSection={folderSection}
           />

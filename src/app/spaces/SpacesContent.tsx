@@ -111,6 +111,12 @@ import {
 } from "./desktop-studio-events";
 import { collectFoldderLibrarySections } from "./foldder-library";
 import {
+  getGuionistaTextAssetsFromMetadata,
+  setGuionistaTextAssetsInMetadata,
+  upsertGuionistaTextAsset,
+  type GuionistaTextAsset,
+} from "./guionista-types";
+import {
   FOLDDER_EXPORT_CREATED_EVENT,
   type FoldderExportCreatedDetail,
 } from "./foldder-export-events";
@@ -527,6 +533,67 @@ export function SpacesContent() {
     [metadata, nodes],
   );
 
+  const generatedTextAssets = useMemo(
+    () => getGuionistaTextAssetsFromMetadata(metadata),
+    [metadata],
+  );
+
+  const saveGuionistaTextAsset = useCallback((asset: GuionistaTextAsset) => {
+    setMetadata((m: Record<string, unknown>) => {
+      const current = getGuionistaTextAssetsFromMetadata(m);
+      return setGuionistaTextAssetsInMetadata(m, upsertGuionistaTextAsset(current, asset));
+    });
+    window.setTimeout(() => {
+      void saveProjectRef.current(undefined, { silentError: true });
+    }, 200);
+  }, []);
+
+  const openGuionistaTextAsset = useCallback((assetId: string) => {
+    const asset = getGuionistaTextAssetsFromMetadata(metadata).items.find((item) => item.id === assetId);
+    if (!asset) return;
+    const existingNode = liveNodesRef.current.find((node) => node.id === asset.nodeId && node.type === "guionista")
+      ?? liveNodesRef.current.find((node) => node.type === "guionista" && (node.data as Record<string, unknown> | undefined)?.assetId === assetId);
+    let nodeId = existingNode?.id;
+    if (!nodeId) {
+      nodeId = `guionista_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const center = screenToFlowPosition({
+        x: window.innerWidth / 2,
+        y: window.innerHeight / 2,
+      });
+      const position = findEmptyPositionForNewNode("guionista", liveNodesRef.current, center);
+      setNodes((nds) => [
+        ...nds.map((node) => ({ ...node, selected: false })),
+        {
+          id: nodeId,
+          type: "guionista",
+          position,
+          data: withFoldderCanvasIntro("guionista", {
+            ...defaultDataForCanvasDropNode("guionista"),
+            label: "Guionista",
+            title: asset.title,
+            format: asset.type,
+            versions: asset.versions,
+            activeVersionId: asset.activeVersionId,
+            assetId: asset.id,
+            status: asset.status,
+            value: asset.markdown,
+            promptValue: asset.markdown,
+            updatedAt: asset.updatedAt,
+          }),
+        } satisfies Node,
+      ]);
+      scheduleFoldderCanvasIntroEnd(nodeId);
+    }
+    const targetNodeId = nodeId;
+    window.setTimeout(() => {
+      window.dispatchEvent(
+        new CustomEvent("foldder-open-guionista-asset", {
+          detail: { assetId, nodeId: targetNodeId },
+        }),
+      );
+    }, 80);
+  }, [metadata, scheduleFoldderCanvasIntroEnd, screenToFlowPosition, setNodes]);
+
   const projectBrainCanvasValue = useMemo(
     () => ({
       assetsMetadata: metadata.assets,
@@ -550,10 +617,13 @@ export function SpacesContent() {
       flowNodes: nodes,
       assetsMetadata: metadata.assets,
       projectFiles,
+      generatedTextAssets,
       projectScopeId,
       openProjectAssets: () => openFoldder("fullscreen"),
+      saveGuionistaTextAsset,
+      openGuionistaTextAsset,
     }),
-    [nodes, metadata.assets, projectFiles, projectScopeId, openFoldder],
+    [nodes, metadata.assets, projectFiles, generatedTextAssets, projectScopeId, openFoldder, saveGuionistaTextAsset, openGuionistaTextAsset],
   );
   const foldderLibrarySections = useMemo(
     () =>
@@ -562,8 +632,9 @@ export function SpacesContent() {
         assetsMetadata: metadata.assets,
         projectScopeId,
         projectFiles,
+        generatedTextAssets,
       }),
-    [metadata.assets, nodes, projectFiles, projectScopeId],
+    [metadata.assets, nodes, projectFiles, generatedTextAssets, projectScopeId],
   );
   const standardDesktopNotes = useMemo(
     () => (nodes as Node[]).filter((node) => node.type === "notes"),
@@ -5439,6 +5510,7 @@ export function SpacesContent() {
             files={projectFiles.items}
             importedMedia={foldderLibrarySections.importedMedia}
             generatedMedia={foldderLibrarySections.generatedMedia}
+            generatedTexts={foldderLibrarySections.generatedTexts}
             exports={foldderLibrarySections.exports}
             notes={standardDesktopNotes}
             canvasViewport={getViewport()}
@@ -5457,6 +5529,7 @@ export function SpacesContent() {
             onSaveAsFile={saveProjectFileAs}
             onHideFile={hideProjectFile}
             onPresentDesignFile={openPresenterForDesignFile}
+            onOpenGuionistaTextAsset={openGuionistaTextAsset}
             onOpenFoldderFullscreen={() => openFoldder("fullscreen")}
             foldderOpenRequest={standardFoldderOpenRequest}
             canvasBgId={canvasBgId}
@@ -5508,6 +5581,8 @@ export function SpacesContent() {
             nodes={nodes}
             assetsMetadata={metadata.assets}
             projectFiles={projectFiles}
+            generatedTextAssets={generatedTextAssets}
+            onOpenGuionistaTextAsset={openGuionistaTextAsset}
             projectScopeId={projectScopeId}
           />
         )}

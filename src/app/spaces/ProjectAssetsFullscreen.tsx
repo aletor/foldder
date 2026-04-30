@@ -3,12 +3,13 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Node } from "@xyflow/react";
-import { FileQuestion, FolderOpen, X } from "lucide-react";
+import { BookOpen, FileQuestion, FolderOpen, X } from "lucide-react";
 import { collectFoldderLibrarySections } from "./foldder-library";
 import type { ProjectMediaItem } from "./project-media-inventory";
 import type { ProjectFilesMetadata, ProjectFile } from "./project-files";
 import { normalizeProjectAssets } from "./project-assets-metadata";
 import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
+import { GUI_FORMAT_FOLDERS, GUI_FORMAT_LABELS, type GuionistaFormat, type GuionistaGeneratedTextAssetsMetadata, type GuionistaTextAsset } from "./guionista-types";
 
 type Props = {
   open: boolean;
@@ -17,6 +18,8 @@ type Props = {
   /** Solo lectura: logos y colores definidos en Brain (`metadata.assets`). */
   assetsMetadata: unknown;
   projectFiles?: ProjectFilesMetadata;
+  generatedTextAssets?: GuionistaGeneratedTextAssetsMetadata;
+  onOpenGuionistaTextAsset?: (assetId: string) => void;
   /** Scope del proyecto activo para aislar caché y listados. */
   projectScopeId: string;
 };
@@ -160,6 +163,85 @@ function ProjectFilesSection({
   );
 }
 
+function GuionistaTextTile({
+  item,
+  onOpen,
+}: {
+  item: GuionistaTextAsset;
+  onOpen?: (assetId: string) => void;
+}) {
+  const activeIndex = Math.max(0, item.versions.findIndex((version) => version.id === item.activeVersionId));
+  return (
+    <button
+      type="button"
+      onDoubleClick={() => onOpen?.(item.id)}
+      onClick={() => undefined}
+      className="group flex min-h-36 flex-col rounded-xl border border-amber-200/10 bg-zinc-900/80 p-3 text-left shadow-lg transition hover:border-amber-300/35 hover:bg-zinc-900"
+      title="Doble clic para abrir en Guionista"
+    >
+      <div className="flex items-center gap-2">
+        <span className="flex h-9 w-9 items-center justify-center rounded-lg border border-amber-200/15 bg-amber-200/8 text-amber-200">
+          <BookOpen className="h-4 w-4" strokeWidth={1.6} />
+        </span>
+        <div className="min-w-0">
+          <p className="truncate text-[10px] font-semibold text-zinc-200">{item.title}</p>
+          <p className="text-[8px] font-black uppercase tracking-wide text-zinc-500">
+            {GUI_FORMAT_LABELS[item.type]} · V{activeIndex + 1} · {item.status}
+          </p>
+        </div>
+      </div>
+      <p className="mt-3 line-clamp-3 text-[10px] leading-relaxed text-zinc-500">{item.preview}</p>
+      <span className="mt-auto text-[9px] font-semibold uppercase tracking-wide text-amber-200/50 group-hover:text-amber-200/80">
+        Abrir en Guionista
+      </span>
+    </button>
+  );
+}
+
+function groupGuionistaAssetsByFolder(assets: GuionistaTextAsset[]): Array<{ type: GuionistaFormat; folder: string; items: GuionistaTextAsset[] }> {
+  const order = Object.keys(GUI_FORMAT_FOLDERS) as GuionistaFormat[];
+  return order
+    .map((type) => ({
+      type,
+      folder: GUI_FORMAT_FOLDERS[type],
+      items: assets.filter((asset) => asset.type === type),
+    }))
+    .filter((group) => group.items.length > 0);
+}
+
+function GeneratedTextsSection({
+  items,
+  onOpen,
+}: {
+  items: GuionistaTextAsset[];
+  onOpen?: (assetId: string) => void;
+}) {
+  return (
+    <section className="min-w-0 flex-1">
+      <div className="mb-3 border-b border-white/10 pb-2">
+        <h4 className="text-[11px] font-black uppercase tracking-[0.12em] text-amber-100/70">Texts / Guionista</h4>
+        <p className="mt-0.5 text-[11px] text-zinc-500">Posts, artículos, guiones, escenas, slides, campañas y reescrituras.</p>
+      </div>
+      {items.length === 0 ? null : (
+        <div className="space-y-5">
+          {groupGuionistaAssetsByFolder(items).map((group) => (
+            <div key={group.type}>
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">{group.folder}</p>
+              <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+                {group.items.map((item) => (
+                  <li key={item.id}>
+                    <GuionistaTextTile item={item} onOpen={onOpen} />
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function BrandReadonlyStrip({ assetsMetadata }: { assetsMetadata: unknown }) {
   const brand = useMemo(() => normalizeProjectAssets(assetsMetadata).brand, [assetsMetadata]);
 
@@ -223,10 +305,10 @@ function BrandReadonlyStrip({ assetsMetadata }: { assetsMetadata: unknown }) {
   );
 }
 
-export function ProjectAssetsFullscreen({ open, onClose, nodes, assetsMetadata, projectFiles, projectScopeId }: Props) {
-  const { importedMedia: imported, generatedMedia: generated, mediaFiles, exports } = useMemo(
-    () => collectFoldderLibrarySections({ nodes, assetsMetadata, projectScopeId, projectFiles }),
-    [nodes, assetsMetadata, projectScopeId, projectFiles],
+export function ProjectAssetsFullscreen({ open, onClose, nodes, assetsMetadata, projectFiles, generatedTextAssets, onOpenGuionistaTextAsset, projectScopeId }: Props) {
+  const { importedMedia: imported, generatedMedia: generated, generatedTexts, mediaFiles, exports } = useMemo(
+    () => collectFoldderLibrarySections({ nodes, assetsMetadata, projectScopeId, projectFiles, generatedTextAssets }),
+    [nodes, assetsMetadata, projectScopeId, projectFiles, generatedTextAssets],
   );
   const [refreshedUrls, setRefreshedUrls] = useState<Record<string, string>>({});
   const viewImported = useMemo(
@@ -348,6 +430,9 @@ export function ProjectAssetsFullscreen({ open, onClose, nodes, assetsMetadata, 
             items={viewGenerated}
             emptyHint="Aún no hay elementos generados en este proyecto."
           />
+          {generatedTexts.length > 0 && (
+            <GeneratedTextsSection items={generatedTexts} onOpen={onOpenGuionistaTextAsset} />
+          )}
           <ProjectFilesSection
             title="Media Files"
             subtitle="Trabajos editables creados dentro de apps: .design, .photoroom, .painter, .presenter, etc."
