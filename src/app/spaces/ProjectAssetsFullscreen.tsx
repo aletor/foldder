@@ -171,6 +171,7 @@ function GuionistaTextTile({
   onOpen?: (assetId: string) => void;
 }) {
   const activeIndex = Math.max(0, item.versions.findIndex((version) => version.id === item.activeVersionId));
+  const platform = item.platform === "Short" ? "SHORT" : item.platform?.toUpperCase();
   return (
     <button
       type="button"
@@ -185,9 +186,17 @@ function GuionistaTextTile({
         </span>
         <div className="min-w-0">
           <p className="truncate text-[10px] font-semibold text-zinc-200">{item.title}</p>
-          <p className="text-[8px] font-black uppercase tracking-wide text-zinc-500">
-            {GUI_FORMAT_LABELS[item.type]} · V{activeIndex + 1} · {item.status}
-          </p>
+          <div className="mt-1 flex flex-wrap items-center gap-1">
+            <span className="rounded-full border border-amber-200/12 bg-amber-200/8 px-1.5 py-0.5 text-[7px] font-black uppercase tracking-wide text-amber-100/65">
+              {GUI_FORMAT_LABELS[item.type]}
+            </span>
+            {platform && (
+              <span className="rounded-full border border-zinc-100/10 bg-zinc-100/5 px-1.5 py-0.5 text-[7px] font-black uppercase tracking-wide text-zinc-400">
+                {platform}
+              </span>
+            )}
+            <span className="text-[7px] font-black uppercase tracking-wide text-zinc-500">V{activeIndex + 1} · {item.status}</span>
+          </div>
         </div>
       </div>
       <p className="mt-3 line-clamp-3 text-[10px] leading-relaxed text-zinc-500">{item.preview}</p>

@@ -82,7 +82,7 @@ function GuionistaTextAssetTile({
   onOpen?: (assetId: string) => void;
 }) {
   const activeIndex = Math.max(0, asset.versions.findIndex((version) => version.id === asset.activeVersionId));
-  const platform = asset.platform ? ` · ${asset.platform}` : "";
+  const platform = asset.platform === "Short" ? "SHORT" : asset.platform?.toUpperCase();
   return (
     <article
       onDoubleClick={() => onOpen?.(asset.id)}
@@ -95,9 +95,17 @@ function GuionistaTextAssetTile({
         </span>
         <div className="min-w-0">
           <h4 className="line-clamp-2 text-[12px] font-light leading-tight text-white/88">{asset.title}</h4>
-          <p className="mt-1 text-[9px] font-light uppercase tracking-[0.14em] text-amber-100/48">
-            {GUI_FORMAT_LABELS[asset.type]}{platform} · V{activeIndex + 1} · {asset.status}
-          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            <span className="rounded-full border border-amber-100/14 bg-amber-100/10 px-2 py-0.5 text-[8px] font-black uppercase tracking-[0.12em] text-amber-100/70">
+              {GUI_FORMAT_LABELS[asset.type]}
+            </span>
+            {platform && (
+              <span className="rounded-full border border-white/10 bg-white/[0.06] px-2 py-0.5 text-[8px] font-black uppercase tracking-[0.12em] text-white/58">
+                {platform}
+              </span>
+            )}
+            <span className="text-[8px] font-light uppercase tracking-[0.14em] text-amber-100/38">V{activeIndex + 1} · {asset.status}</span>
+          </div>
         </div>
       </div>
       <p className="mt-3 line-clamp-3 text-[11px] font-light leading-relaxed text-white/45">{asset.preview}</p>

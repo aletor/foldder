@@ -5,7 +5,8 @@ export type GuionistaTone = "natural" | "professional" | "premium" | "institutio
 export type GuionistaGoal = "explain" | "convince" | "sell" | "present" | "inspire" | "conversation";
 export type GuionistaAssetStatus = "draft" | "final";
 export type GuionistaSocialPlatform = "LinkedIn" | "Instagram" | "X" | "Short";
-export type GuionistaAiTask = "approaches" | "draft" | "transform" | "social";
+export type GuionistaAiTask = "approaches" | "draft" | "transform" | "social" | "apply_comment" | "apply_comments" | "apply_global_notes";
+export type GuionistaReviewCommentStatus = "pending" | "applied" | "resolved";
 
 export type GuionistaSettings = {
   language: GuionistaLanguage;
@@ -51,6 +52,16 @@ export type GuionistaSocialAdaptation = {
   format: "post";
 };
 
+export type GuionistaReviewComment = {
+  id: string;
+  selectedText: string;
+  comment: string;
+  status: GuionistaReviewCommentStatus;
+  sourceVersionId: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type GuionistaTextAsset = {
   id: string;
   title: string;
@@ -70,6 +81,8 @@ export type GuionistaTextAsset = {
   platform?: GuionistaSocialPlatform;
   categoryPath: string[];
   structured?: Record<string, unknown>;
+  comments?: GuionistaReviewComment[];
+  globalAdjustmentNotes?: string;
 };
 
 export type GuionistaGeneratedTextAssetsMetadata = {
@@ -92,6 +105,8 @@ export type GuionistaNodeData = {
   promptValue?: string;
   title?: string;
   updatedAt?: string;
+  comments?: GuionistaReviewComment[];
+  globalAdjustmentNotes?: string;
 };
 
 export type GuionistaBrainContext = {
@@ -117,11 +132,15 @@ export type GuionistaAiRequest = {
   sourceAssetId?: string;
   sourceVersionId?: string;
   brainContext?: GuionistaBrainContext;
+  selectedText?: string;
+  comment?: GuionistaReviewComment;
+  comments?: GuionistaReviewComment[];
+  globalNotes?: string;
 };
 
 export type GuionistaAiResponse =
   | { task: "approaches"; approaches: GuionistaApproach[] }
-  | { task: "draft" | "transform"; version: GuionistaVersion }
+  | { task: "draft" | "transform" | "apply_comment" | "apply_comments" | "apply_global_notes"; version: GuionistaVersion }
   | { task: "social"; socialPack: GuionistaSocialAdaptation[] };
 
 export const GUI_FORMAT_LABELS: Record<GuionistaFormat, string> = {
@@ -199,6 +218,8 @@ export function normalizeGuionistaData(raw: unknown): GuionistaNodeData {
     value: typeof input.value === "string" ? input.value : versions.find((v) => v.id === activeVersionId)?.markdown ?? "",
     promptValue: typeof input.promptValue === "string" ? input.promptValue : versions.find((v) => v.id === activeVersionId)?.markdown ?? "",
     updatedAt: typeof input.updatedAt === "string" ? input.updatedAt : nowIso(),
+    comments: Array.isArray(input.comments) ? input.comments.filter(isGuionistaReviewComment) : [],
+    globalAdjustmentNotes: typeof input.globalAdjustmentNotes === "string" ? input.globalAdjustmentNotes : "",
   };
 }
 
@@ -228,6 +249,20 @@ function isGuionistaVersion(value: unknown): value is GuionistaVersion {
   if (!value || typeof value !== "object") return false;
   const row = value as Record<string, unknown>;
   return typeof row.id === "string" && typeof row.title === "string" && typeof row.markdown === "string" && isGuionistaFormat(row.format);
+}
+
+function isGuionistaReviewComment(value: unknown): value is GuionistaReviewComment {
+  if (!value || typeof value !== "object") return false;
+  const row = value as Record<string, unknown>;
+  return (
+    typeof row.id === "string" &&
+    typeof row.selectedText === "string" &&
+    typeof row.comment === "string" &&
+    (row.status === "pending" || row.status === "applied" || row.status === "resolved") &&
+    typeof row.sourceVersionId === "string" &&
+    typeof row.createdAt === "string" &&
+    typeof row.updatedAt === "string"
+  );
 }
 
 export function getGuionistaTextAssetsFromMetadata(metadata: unknown): GuionistaGeneratedTextAssetsMetadata {
@@ -283,6 +318,8 @@ export function buildGuionistaAssetFromVersion(args: {
   sourceAssetId?: string;
   sourceVersionId?: string;
   platform?: GuionistaSocialPlatform;
+  comments?: GuionistaReviewComment[];
+  globalAdjustmentNotes?: string;
 }): GuionistaTextAsset {
   const now = nowIso();
   const id = args.existing?.id ?? makeGuionistaId("gui_asset");
@@ -306,5 +343,7 @@ export function buildGuionistaAssetFromVersion(args: {
     platform: args.platform ?? args.existing?.platform,
     categoryPath: ["Generated Media", "Texts", "Guionista", GUI_FORMAT_FOLDERS[args.format]],
     structured: args.version.structured ?? args.existing?.structured,
+    comments: args.comments ?? args.existing?.comments ?? [],
+    globalAdjustmentNotes: args.globalAdjustmentNotes ?? args.existing?.globalAdjustmentNotes ?? "",
   };
 }

@@ -172,11 +172,13 @@ import {
 } from './NotesSticky';
 import { GuionistaStudio } from './GuionistaStudio';
 import {
-  GUI_FORMAT_LABELS,
   normalizeGuionistaData,
   plainTextFromMarkdown,
   type GuionistaBrainContext,
+  type GuionistaFormat,
   type GuionistaNodeData,
+  type GuionistaSocialPlatform,
+  type GuionistaTextAsset,
 } from './guionista-types';
 import { useProjectAssetsCanvas } from './project-assets-canvas-context';
 
@@ -1717,6 +1719,142 @@ function summarizeGuionistaBrainContext(assetsMetadata: unknown, enabled: boolea
   };
 }
 
+type GuionistaAssetVisualMeta = {
+  label: string;
+  detail?: string;
+  badge: string;
+  accent: string;
+  icon: React.ReactNode;
+};
+
+function LinkedInBrandIcon({ className = "h-4 w-4", ...props }: ComponentProps<"svg">) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="currentColor" aria-hidden {...props}>
+      <path d="M20.45 20.45h-3.55v-5.57c0-1.33-.03-3.04-1.85-3.04-1.85 0-2.14 1.45-2.14 2.94v5.67H9.36V9h3.41v1.56h.05c.47-.9 1.64-1.85 3.37-1.85 3.6 0 4.27 2.37 4.27 5.46v6.28ZM5.34 7.43a2.06 2.06 0 1 1 0-4.12 2.06 2.06 0 0 1 0 4.12ZM7.12 20.45H3.56V9h3.56v11.45ZM22.22 0H1.77C.79 0 0 .77 0 1.72v20.56C0 23.23.79 24 1.77 24h20.45c.98 0 1.78-.77 1.78-1.72V1.72C24 .77 23.2 0 22.22 0Z" />
+    </svg>
+  );
+}
+
+function InstagramBrandIcon({ className = "h-4 w-4", ...props }: ComponentProps<"svg">) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" aria-hidden {...props}>
+      <rect x="3" y="3" width="18" height="18" rx="5.2" stroke="currentColor" strokeWidth="2.1" />
+      <circle cx="12" cy="12" r="4.2" stroke="currentColor" strokeWidth="2.1" />
+      <circle cx="17.35" cy="6.65" r="1.25" fill="currentColor" />
+    </svg>
+  );
+}
+
+function XBrandIcon({ className = "h-4 w-4", ...props }: ComponentProps<"svg">) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="currentColor" aria-hidden {...props}>
+      <path d="M18.24 2.25h3.31l-7.23 8.26 8.5 11.24h-6.66l-5.21-6.82-5.97 6.82H1.67l7.73-8.84L1.25 2.25h6.83l4.71 6.23 5.45-6.23Zm-1.16 17.52h1.83L7.08 4.13H5.12l11.96 15.64Z" />
+    </svg>
+  );
+}
+
+function resolveGuionistaAssetVisualMeta(format: GuionistaFormat, platform?: GuionistaSocialPlatform): GuionistaAssetVisualMeta {
+  if (platform === "LinkedIn") {
+    return {
+      label: "Post",
+      detail: "LinkedIn",
+      badge: "LINKEDIN",
+      accent: "border-sky-300/55 bg-sky-300/12 text-sky-100",
+      icon: <LinkedInBrandIcon className="h-4 w-4" />,
+    };
+  }
+  if (platform === "Instagram") {
+    return {
+      label: "Post",
+      detail: "Instagram",
+      badge: "INSTAGRAM",
+      accent: "border-fuchsia-300/45 bg-fuchsia-300/12 text-fuchsia-100",
+      icon: <InstagramBrandIcon className="h-4 w-4" />,
+    };
+  }
+  if (platform === "X") {
+    return {
+      label: "Post",
+      detail: "X",
+      badge: "X",
+      accent: "border-zinc-200/35 bg-zinc-100/10 text-zinc-100",
+      icon: <XBrandIcon className="h-3.5 w-3.5" />,
+    };
+  }
+  if (platform === "Short") {
+    return {
+      label: "Short caption",
+      detail: "Short",
+      badge: "SHORT",
+      accent: "border-slate-200/35 bg-slate-100/10 text-slate-100",
+      icon: <FileText className="h-3.5 w-3.5" strokeWidth={2} />,
+    };
+  }
+  const byFormat: Record<GuionistaFormat, GuionistaAssetVisualMeta> = {
+    article: {
+      label: "Artículo",
+      badge: "ARTICLE",
+      accent: "border-amber-200/45 bg-amber-200/12 text-amber-100",
+      icon: <BookOpen className="h-3.5 w-3.5" strokeWidth={2} />,
+    },
+    post: {
+      label: "Post",
+      badge: "POST",
+      accent: "border-blue-200/35 bg-blue-200/10 text-blue-100",
+      icon: <FileText className="h-3.5 w-3.5" strokeWidth={2} />,
+    },
+    script: {
+      label: "Guion",
+      badge: "SCRIPT",
+      accent: "border-orange-200/40 bg-orange-200/12 text-orange-100",
+      icon: <PenLine className="h-3.5 w-3.5" strokeWidth={2} />,
+    },
+    scenes: {
+      label: "Escenas",
+      badge: "SCENES",
+      accent: "border-violet-200/40 bg-violet-200/12 text-violet-100",
+      icon: <Film className="h-3.5 w-3.5" strokeWidth={2} />,
+    },
+    slides: {
+      label: "Slides",
+      badge: "SLIDES",
+      accent: "border-cyan-200/40 bg-cyan-200/12 text-cyan-100",
+      icon: <LayoutTemplate className="h-3.5 w-3.5" strokeWidth={2} />,
+    },
+    campaign: {
+      label: "Campaña",
+      badge: "CAMPAIGN",
+      accent: "border-emerald-200/40 bg-emerald-200/12 text-emerald-100",
+      icon: <Sparkles className="h-3.5 w-3.5" strokeWidth={2} />,
+    },
+    rewrite: {
+      label: "Reescritura",
+      badge: "REWRITE",
+      accent: "border-rose-200/38 bg-rose-200/12 text-rose-100",
+      icon: <RefreshCw className="h-3.5 w-3.5" strokeWidth={2} />,
+    },
+  };
+  return byFormat[format];
+}
+
+function guionistaAssetPreview(asset: GuionistaTextAsset): string {
+  return asset.preview || plainTextFromMarkdown(asset.markdown || asset.plainText || "").slice(0, 120);
+}
+
+function guionistaTitleAndPreview(args: {
+  activeAsset: GuionistaTextAsset | null;
+  currentVersion: { title: string; markdown: string } | null;
+}): { title: string; preview: string } {
+  const title = args.activeAsset?.title || args.currentVersion?.title || "Guionista";
+  const rawPreview =
+    args.activeAsset?.preview ||
+    (args.currentVersion?.markdown ? plainTextFromMarkdown(args.currentVersion.markdown) : "Convierte una idea en texto útil");
+  return {
+    title,
+    preview: rawPreview.length > 118 ? `${rawPreview.slice(0, 117)}…` : rawPreview,
+  };
+}
+
 export const GuionistaNode = memo(function GuionistaNode({ id, data, selected }: NodeProps) {
   const nodeData = normalizeGuionistaData(data);
   const { setNodes } = useReactFlow();
@@ -1726,11 +1864,34 @@ export const GuionistaNode = memo(function GuionistaNode({ id, data, selected }:
   const brainCtx = useProjectBrainCanvas();
   const [isStudioOpen, setIsStudioOpen] = useState(false);
   const [openAssetId, setOpenAssetId] = useState<string | null>(null);
+  const [generatedExpanded, setGeneratedExpanded] = useState(false);
 
   const currentVersion = useMemo(() => {
     const versions = nodeData.versions ?? [];
     return versions.find((version) => version.id === nodeData.activeVersionId) ?? versions.at(-1) ?? null;
   }, [nodeData.activeVersionId, nodeData.versions]);
+  const activeTextAsset = useMemo(
+    () => assetsCtx?.generatedTextAssets?.items.find((asset) => asset.id === nodeData.assetId) ?? null,
+    [assetsCtx?.generatedTextAssets?.items, nodeData.assetId],
+  );
+  const activeFormat = activeTextAsset?.type ?? currentVersion?.format ?? nodeData.format ?? "post";
+  const activePlatform = activeTextAsset?.platform;
+  const activeVisualMeta = resolveGuionistaAssetVisualMeta(activeFormat, activePlatform);
+  const compactTypeLabel = activeVisualMeta.detail
+    ? `${activeVisualMeta.label.toUpperCase()} · ${activeVisualMeta.detail.toUpperCase()}`
+    : activeVisualMeta.badge;
+  const compactText = guionistaTitleAndPreview({ activeAsset: activeTextAsset, currentVersion });
+  const sourceAssetIdForDerivatives = activeTextAsset?.sourceAssetId ?? activeTextAsset?.id ?? nodeData.assetId;
+  const generatedDerivatives = useMemo(() => {
+    if (!sourceAssetIdForDerivatives) return [];
+    return (assetsCtx?.generatedTextAssets?.items ?? [])
+      .filter((asset) => asset.id !== activeTextAsset?.id)
+      .filter((asset) => asset.sourceAssetId === sourceAssetIdForDerivatives)
+      .filter((asset, index, list) => list.findIndex((candidate) => candidate.id === asset.id) === index)
+      .sort((a, b) => Date.parse(b.updatedAt || b.createdAt) - Date.parse(a.updatedAt || a.createdAt))
+      .slice(0, 8);
+  }, [activeTextAsset?.id, assetsCtx?.generatedTextAssets?.items, sourceAssetIdForDerivatives]);
+  const socialDerivatives = generatedDerivatives.filter((asset) => asset.type === "post" && asset.platform);
 
   const incomingEdges = useMemo(() => edges.filter((edge) => edge.target === id), [edges, id]);
   const brainConnected = useMemo(
@@ -1799,53 +1960,152 @@ export const GuionistaNode = memo(function GuionistaNode({ id, data, selected }:
     setOpenAssetId(null);
     setIsStudioOpen(true);
   }, []);
+  const openAssetInThisNode = useCallback((assetId: string) => {
+    setOpenAssetId(assetId);
+    setIsStudioOpen(true);
+  }, []);
+  const visibleDerivatives = generatedExpanded ? generatedDerivatives.slice(0, 6) : generatedDerivatives.slice(0, 3);
+  const activeVersionIndex = useMemo(() => {
+    const versions = nodeData.versions ?? [];
+    const index = versions.findIndex((version) => version.id === nodeData.activeVersionId);
+    return index >= 0 ? index + 1 : versions.length || (currentVersion ? 1 : 0);
+  }, [currentVersion, nodeData.activeVersionId, nodeData.versions]);
 
   return (
-    <div className="custom-node tool-node" style={{ minWidth: 290 }}>
+    <div className="custom-node tool-node overflow-hidden rounded-[28px] border-white/14 bg-[#11131b]/92 shadow-[0_22px_70px_rgba(0,0,0,0.38)] backdrop-blur-xl" style={{ minWidth: 390 }}>
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Guionista" />
 
-      <div className="node-header">
-        <NodeIcon type="guionista" selected={selected} size={16} />
-        <FoldderNodeHeaderTitle introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}>
-          GUIONISTA
-        </FoldderNodeHeaderTitle>
-        <div className="node-badge">TEXT</div>
-      </div>
-
-      <div className="node-content flex min-w-0 flex-col gap-3 px-3 pb-3 pt-2">
-        <div className="rounded-2xl border border-slate-200/70 bg-white/80 p-3 shadow-inner">
-          <div className="flex items-start gap-2">
-            <PenLine className="mt-0.5 h-4 w-4 shrink-0 text-slate-700" strokeWidth={1.8} aria-hidden />
-            <div className="min-w-0">
-              <span className="node-label">Guionista</span>
-              <p className="mt-1 line-clamp-3 text-[11px] leading-snug text-slate-700">
-                {currentVersion?.markdown
-                  ? plainTextFromMarkdown(currentVersion.markdown).slice(0, 150)
-                  : "Convierte una idea en texto útil"}
-              </p>
+      <div className="node-content flex min-w-0 flex-col gap-0 p-0">
+        <div className="px-5 pb-4 pt-4">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex min-w-0 items-center gap-3">
+              <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border ${activeVisualMeta.accent}`} aria-hidden>
+                <NodeIcon type="guionista" selected={selected} size={19} />
+              </span>
+              <div className="min-w-0">
+                <FoldderNodeHeaderTitle className="text-[13px] text-white/78" introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}>
+                  Guionista
+                </FoldderNodeHeaderTitle>
+              </div>
             </div>
+            <span className={`shrink-0 rounded-xl border px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.16em] ${activeVisualMeta.accent}`}>
+              {compactTypeLabel}
+            </span>
           </div>
-          <div className="mt-3 flex flex-wrap items-center gap-2 text-[9px] font-semibold uppercase tracking-wide">
-            <span className="rounded-full bg-slate-900/8 px-2 py-1 text-slate-600">
-              {currentVersion?.format ? GUI_FORMAT_LABELS[currentVersion.format] : GUI_FORMAT_LABELS[nodeData.format ?? "post"]}
+
+          <div className="mt-5">
+            <h3 className="line-clamp-2 text-[23px] font-semibold leading-[1.1] tracking-[-0.03em] text-white">
+              {compactText.title}
+            </h3>
+            <p className="mt-2 line-clamp-2 text-[13px] font-light leading-relaxed text-white/48">
+              {compactText.preview}
+            </p>
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <span
+              className={`rounded-full border px-3 py-1.5 text-[10px] font-semibold ${
+                activeTextAsset
+                  ? "border-emerald-300/20 bg-emerald-300/10 text-emerald-100"
+                  : "border-white/10 bg-white/[0.06] text-white/50"
+              }`}
+            >
+              {activeTextAsset ? "Guardado" : "Borrador"}
             </span>
-            <span className={`rounded-full px-2 py-1 ${brainConnected ? "bg-emerald-500/15 text-emerald-700" : "bg-slate-900/8 text-slate-500"}`}>
-              {brainConnected ? "Usando Brain" : "Sin Brain conectado"}
+            {activeVersionIndex > 0 && (
+              <span className="rounded-full border border-white/10 bg-white/[0.06] px-3 py-1.5 text-[10px] font-semibold text-white/58">
+                V{activeVersionIndex}
+              </span>
+            )}
+            <span className={`rounded-full border px-3 py-1.5 text-[10px] font-semibold ${brainConnected ? "border-sky-200/20 bg-sky-200/10 text-sky-100" : "border-white/10 bg-white/[0.06] text-white/50"}`}>
+              {brainConnected ? "Usando Brain" : "Sin Brain"}
             </span>
+            {generatedDerivatives.length > 0 && (
+              <span className="rounded-full border border-white/10 bg-white/[0.06] px-3 py-1.5 text-[10px] font-semibold text-white/58">
+                {generatedDerivatives.length} piezas
+              </span>
+            )}
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            openStudio();
-          }}
-          className="nodrag flex w-full items-center justify-center gap-2 rounded-xl border border-slate-300/80 bg-white/90 px-3 py-2.5 text-center text-[11px] font-bold uppercase tracking-wide text-slate-800 shadow-sm transition hover:bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/50"
-        >
-          <BookOpen className="h-4 w-4 shrink-0 text-slate-600" strokeWidth={2} aria-hidden />
-          {currentVersion ? "Abrir" : "Empezar"}
-        </button>
+        {generatedDerivatives.length > 0 && (
+          <div className="border-t border-white/8 px-5 py-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <p className="text-[12px] font-semibold text-white/76">Derivados</p>
+              <p className="text-[9px] font-black uppercase tracking-[0.22em] text-white/34">
+                {socialDerivatives.length ? `Social pack · ${socialDerivatives.length}` : `Piezas · ${generatedDerivatives.length}`}
+              </p>
+            </div>
+            <div className="grid gap-2">
+              {visibleDerivatives.map((asset) => {
+                const meta = resolveGuionistaAssetVisualMeta(asset.type, asset.platform);
+                return (
+                  <button
+                    key={asset.id}
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      openAssetInThisNode(asset.id);
+                    }}
+                    onDoubleClick={(event) => {
+                      event.stopPropagation();
+                      openAssetInThisNode(asset.id);
+                    }}
+                    className="nodrag group flex items-center gap-3 rounded-2xl border border-white/9 bg-white/[0.045] px-3 py-2.5 text-left transition hover:border-white/18 hover:bg-white/[0.075]"
+                    title="Abrir en Guionista"
+                  >
+                    <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border ${meta.accent}`}>
+                      {meta.icon}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="line-clamp-1 text-[12px] font-semibold leading-tight text-white/76">{asset.title}</p>
+                      <p className="mt-0.5 line-clamp-1 text-[9px] font-light text-white/35">{guionistaAssetPreview(asset)}</p>
+                    </div>
+                    <ChevronRight className="h-4 w-4 shrink-0 text-white/32 transition group-hover:translate-x-0.5 group-hover:text-white/62" />
+                  </button>
+                );
+              })}
+            </div>
+            {generatedDerivatives.length > 3 && (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setGeneratedExpanded((value) => !value);
+                }}
+                className="nodrag mt-3 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.13em] text-white/42 transition hover:bg-white/10 hover:text-white"
+              >
+                {generatedExpanded ? "Ocultar" : `Ver ${generatedDerivatives.length - 3} más`}
+              </button>
+            )}
+          </div>
+        )}
+
+        <div className="flex items-center justify-end gap-2 border-t border-white/8 px-5 py-4">
+          {generatedDerivatives.length > 0 && (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                setGeneratedExpanded((value) => !value);
+              }}
+              className="nodrag rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-[11px] font-semibold text-white/48 transition hover:bg-white/10 hover:text-white"
+            >
+              {generatedExpanded ? "Ocultar" : "Mostrar"}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              openStudio();
+            }}
+            className="nodrag flex items-center justify-center gap-2 rounded-xl border border-white/14 bg-white/[0.08] px-4 py-2.5 text-center text-[11px] font-bold uppercase tracking-wide text-white/76 shadow-sm transition hover:bg-white/[0.13] hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/50"
+          >
+            <BookOpen className="h-4 w-4 shrink-0" strokeWidth={2} aria-hidden />
+            {currentVersion ? "Abrir" : "Empezar"}
+          </button>
+        </div>
       </div>
 
       <div className="handle-wrapper handle-left" style={{ top: "30%" }}>

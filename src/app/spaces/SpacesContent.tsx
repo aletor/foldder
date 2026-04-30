@@ -578,6 +578,8 @@ export function SpacesContent() {
             status: asset.status,
             value: asset.markdown,
             promptValue: asset.markdown,
+            comments: asset.comments ?? [],
+            globalAdjustmentNotes: asset.globalAdjustmentNotes ?? "",
             updatedAt: asset.updatedAt,
           }),
         } satisfies Node,

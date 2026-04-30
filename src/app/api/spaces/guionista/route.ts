@@ -28,6 +28,11 @@ import {
 
 const MODEL = "gpt-4o";
 const ROUTE = "/api/spaces/guionista";
+const REVIEW_TASKS = new Set<GuionistaAiRequest["task"]>([
+  "apply_comment",
+  "apply_comments",
+  "apply_global_notes",
+]);
 
 function safeString(value: unknown, max = 4000): string {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
@@ -47,7 +52,7 @@ function parseAiPayload(text: string, request: GuionistaAiRequest): Record<strin
   try {
     return parseJsonObject(text);
   } catch {
-    if (request.task === "draft" || request.task === "transform") {
+    if (request.task === "draft" || request.task === "transform" || REVIEW_TASKS.has(request.task)) {
       return { title: request.currentVersion?.title, markdown: text };
     }
     if (request.task === "social") {
@@ -140,14 +145,44 @@ function userPrompt(request: GuionistaAiRequest): string {
   }
 
   if (request.task === "transform") {
+    const derivativeRule =
+      request.action === "Crear titulares"
+        ? "Para Crear titulares: markdown debe ser exactamente una lista de 5 titulares, un bullet por titular, sin reemplazar el documento base."
+        : request.action === "Convertir en slides"
+          ? "Para Convertir en slides: markdown debe estructurarse por Slide 1, Slide 2, etc., con titulo, bullets y notas cuando ayuden."
+          : request.action === "Convertir en guion"
+            ? "Para Convertir en guion: markdown debe incluir titulo, voz en off, texto en pantalla, notas visuales y duracion aproximada cuando proceda."
+            : "";
     return [
       ...common,
       `Acción rápida: ${request.action || "Transformar"}`,
       request.targetFormat ? `Formato objetivo: ${request.targetFormat}` : "",
       `Versión activa:\n${safeString(current?.markdown, 10000)}`,
+      derivativeRule,
       "Devuelve exactamente este JSON:",
       '{"title":"...","markdown":"...","structured":{}}',
       "Reglas: crea una nueva versión transformada. No destruyas ni resumas de forma pobre salvo que la acción sea acortar.",
+    ].filter(Boolean).join("\n\n");
+  }
+
+  if (REVIEW_TASKS.has(request.task)) {
+    const pendingComments = (request.comments ?? (request.comment ? [request.comment] : []))
+      .filter((comment) => comment.status === "pending")
+      .slice(0, 20)
+      .map((comment, index) => [
+        `Comentario ${index + 1}:`,
+        `Fragmento seleccionado: ${safeString(comment.selectedText, 1200)}`,
+        `Instrucción editorial: ${safeString(comment.comment, 1200)}`,
+      ].join("\n"))
+      .join("\n\n");
+    return [
+      ...common,
+      `Versión activa completa:\n${safeString(current?.markdown, 14000)}`,
+      pendingComments ? `Comentarios editoriales pendientes:\n${pendingComments}` : "",
+      request.globalNotes ? `Notas globales de ajuste:\n${safeString(request.globalNotes, 2400)}` : "",
+      "Devuelve exactamente este JSON:",
+      '{"title":"...","markdown":"...","structured":{}}',
+      "Reglas: devuelve el texto completo actualizado, no solo el fragmento. Modifica solo lo necesario. Mantén tono, estructura y formato. Respeta Brain si está conectado. No inventes datos nuevos.",
     ].filter(Boolean).join("\n\n");
   }
 
@@ -195,15 +230,23 @@ function normalizeVersion(raw: Record<string, unknown>, request: GuionistaAiRequ
     safeString(raw.text, 50000) ||
     safeString(request.currentVersion?.markdown, 50000) ||
     `# ${title}\n\n${safeString(request.briefing, 12000) || "Borrador pendiente."}`;
+  const reviewLabel =
+    request.task === "apply_comment"
+      ? "Comentario aplicado"
+      : request.task === "apply_comments"
+        ? "Comentarios aplicados"
+        : request.task === "apply_global_notes"
+          ? "Notas aplicadas"
+          : null;
   return {
     id: makeGuionistaId("gui_version"),
-    label: request.task === "transform" ? request.action || "Nueva versión" : request.approach ? "Primer borrador" : "Borrador directo",
+    label: reviewLabel ?? (request.task === "transform" ? request.action || "Nueva versión" : request.approach ? "Primer borrador" : "Borrador directo"),
     title,
     format,
     markdown,
     plainText: plainTextFromMarkdown(markdown),
     createdAt: nowIso(),
-    sourceAction: request.task === "transform" ? request.action : request.approach ? "Usar enfoque" : "Escribir directamente",
+    sourceAction: reviewLabel ?? (request.task === "transform" ? request.action : request.approach ? "Usar enfoque" : "Escribir directamente"),
     structured: raw.structured && typeof raw.structured === "object" ? raw.structured as Record<string, unknown> : undefined,
   };
 }
@@ -259,7 +302,14 @@ export async function POST(req: NextRequest) {
         { role: "user", content: userPrompt({ ...request, format, settings: request.settings ?? GUI_DEFAULT_SETTINGS }) },
       ],
       temperature: request.task === "approaches" ? 0.85 : 0.72,
-      max_tokens: request.task === "social" ? 1700 : request.task === "approaches" ? 1000 : 2600,
+      max_tokens:
+        request.task === "social"
+          ? 1700
+          : request.task === "approaches"
+            ? 1000
+            : REVIEW_TASKS.has(request.task)
+              ? 3600
+              : 2600,
     });
 
     const content = completion.choices[0]?.message?.content ?? "{}";
@@ -271,7 +321,10 @@ export async function POST(req: NextRequest) {
     } else if (request.task === "social") {
       response = { task: "social", socialPack: normalizeSocialPack(json.socialPack, request) };
     } else {
-      response = { task: request.task === "transform" ? "transform" : "draft", version: normalizeVersion(json, request) };
+      response = {
+        task: request.task === "transform" || REVIEW_TASKS.has(request.task) ? request.task : "draft",
+        version: normalizeVersion(json, request),
+      };
     }
 
     const usage = completion.usage;
