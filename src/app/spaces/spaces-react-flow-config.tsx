@@ -6,8 +6,6 @@ import {
   MediaInputNode,
   PromptNode,
   NotesNode,
-  GuionistaNode,
-  CineNode,
   GrokNode,
   ConcatenatorNode,
   ListadoNode,
@@ -31,6 +29,8 @@ import {
   PresenterNode,
   ButtonEdge,
 } from "./CustomNodes";
+import { CineNode } from "./cine/CineNode";
+import { GuionistaNode } from "./guionista/GuionistaNode";
 import { PhotoRoomNode } from "./photo-room/PhotoRoomNode";
 import { CanvasGroupNode } from "./CanvasGroupNode";
 

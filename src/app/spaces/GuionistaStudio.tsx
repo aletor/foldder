@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import {
   Brain,
   Check,
@@ -37,6 +36,7 @@ import {
   type GuionistaTextAsset,
   type GuionistaVersion,
 } from "./guionista-types";
+import { StudioNodePortal } from "./studio-node/studio-node-architecture";
 
 const FORMAT_OPTIONS: Array<{ id: GuionistaFormat; title: string; help: string }> = [
   { id: "post", title: "Post", help: "LinkedIn, redes o publicaciones cortas." },
@@ -796,12 +796,6 @@ export function GuionistaStudio({
     setSaveState(currentSignature === savedSignature ? "saved" : "dirty");
   }, [activeAsset, current, currentSignature, savedSignature]);
 
-  useEffect(() => {
-    if (typeof document === "undefined") return;
-    document.body.classList.add("nb-studio-open");
-    return () => document.body.classList.remove("nb-studio-open");
-  }, []);
-
   const beginLoading = useCallback((action: string, label: string) => {
     setLoadingAction(action);
     setLoadingLabel(label);
@@ -1500,6 +1494,5 @@ export function GuionistaStudio({
     </div>
   );
 
-  if (typeof document === "undefined") return null;
-  return createPortal(shell, document.body);
+  return <StudioNodePortal>{shell}</StudioNodePortal>;
 }

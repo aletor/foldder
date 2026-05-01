@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { createPortal } from "react-dom";
 import {
   ArrowRight,
   BookOpen,
@@ -43,6 +42,7 @@ import {
   createCineFrameDraft,
   prepareSceneForVideo,
 } from "./cine-engine";
+import { StudioNodePortal } from "./studio-node/studio-node-architecture";
 
 type CineStudioTab = "script" | "cast" | "backgrounds" | "storyboard" | "output";
 
@@ -327,11 +327,6 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
     })),
   }), [nodeId, safeData.mode, safeData.scenes, safeData.visualDirection.aspectRatio]);
 
-  useEffect(() => {
-    document.body.classList.add("nb-studio-open");
-    return () => document.body.classList.remove("nb-studio-open");
-  }, []);
-
   const shell = (
     <div className="fixed inset-0 z-[100090] flex flex-col bg-[#05070b] text-white">
       {standardShell ? <StandardStudioShellHeader shell={standardShell} /> : null}
@@ -529,5 +524,5 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
     </div>
   );
 
-  return typeof document !== "undefined" ? createPortal(shell, document.body) : shell;
+  return <StudioNodePortal>{shell}</StudioNodePortal>;
 }

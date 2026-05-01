@@ -4,7 +4,6 @@ import React, { memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo
 import { flushSync } from "react-dom";
 import {
   NodeResizer,
-  Position,
   addEdge,
   useEdges,
   useNodeId,
@@ -16,8 +15,7 @@ import {
 import { ImageIcon } from "lucide-react";
 import { FOLDDER_FIT_VIEW_EASE } from "@/lib/fit-view-ease";
 import { defaultDataForCanvasDropNode } from "@/lib/canvas-connect-end-drop";
-import { FoldderDataHandle } from "../FoldderDataHandle";
-import { NodeLabel, FoldderNodeHeaderTitle, FoldderStudioModeCenterButton } from "../foldder-node-ui";
+import { FoldderStudioModeCenterButton } from "../foldder-node-ui";
 import { nodeFrameNeedsSync, resolveAspectLockedNodeFrame, resolveNodeChromeHeight } from "../studio-node-aspect";
 import {
   applyCanvasGroupExpand,
@@ -30,8 +28,8 @@ import {
 import { withFoldderCanvasIntro } from "../spaces-canvas-intro";
 import type { DesignerStudioApi, FreehandObject } from "../FreehandStudio";
 import { dispatchFoldderExportCreated } from "../foldder-export-events";
-import { FOLDDER_STANDARD_STUDIO_CLOSE_REQUEST_EVENT, type FoldderStudioEventDetail } from "../desktop-studio-events";
-import type { StandardStudioShellConfig } from "../StandardStudioShell";
+import { StudioCanvasNodeShell, type StudioCanvasNodeHandleSpec } from "../studio-node/studio-canvas-node";
+import { useStudioNodeController } from "../studio-node/studio-node-architecture";
 import type { PhotoRoomNodeStudioData } from "./photo-room-types";
 import { registerPendingNanoStudioOpenFromPhotoRoom } from "./photo-room-nano-open-pending";
 
@@ -98,8 +96,19 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const edges = useEdges();
   const { setNodes, setEdges, getNodes, getEdges, fitView } = useReactFlow();
   const updateNodeInternals = useUpdateNodeInternals();
-  const [showStudio, setShowStudio] = useState(false);
-  const [standardShell, setStandardShell] = useState<StandardStudioShellConfig | null>(null);
+  const {
+    isStudioOpen: showStudio,
+    setIsStudioOpen: setShowStudio,
+    standardShell,
+    openStudio,
+    closeStudio,
+  } = useStudioNodeController({
+    nodeId: id,
+    nodeType: "photoRoom",
+    openEvents: ["foldder-open-photo-room-studio"],
+    matchOpen: (detail) => detail.nodeId === id || detail.photoRoomNodeId === id,
+    matchClose: (detail) => detail.nodeId === id || detail.photoRoomNodeId === id,
+  });
   const studioApiRef = useRef<DesignerStudioApi | null>(null);
   const frameRef = useRef<HTMLDivElement | null>(null);
   const previewRef = useRef<HTMLDivElement | null>(null);
@@ -405,6 +414,24 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
     return out;
   }, [connectedBySlot]);
 
+  const nodeHandles = useMemo<StudioCanvasNodeHandleSpec[]>(() => [
+    ...visibleSlots.map((sid) => {
+      const idx = SLOT_IDS.indexOf(sid as (typeof SLOT_IDS)[number]);
+      const ok = connectedBySlot[sid];
+      return {
+        side: "left" as const,
+        top: SLOT_TOP_PCT[sid] ?? `${11 + idx * 11}%`,
+        type: "target" as const,
+        id: sid,
+        dataType: "image" as const,
+        label: ok ? `✓ Imagen ${idx + 1}` : `Imagen ${idx + 1}`,
+        labelStyle: ok ? { color: "#f59e0b" } : undefined,
+      };
+    }),
+    { side: "left", top: "96%", type: "target", id: "brain", dataType: "brain", label: "Brain" },
+    { side: "right", top: "50%", type: "source", id: "image", dataType: "image", label: "Salida imagen" },
+  ], [connectedBySlot, visibleSlots]);
+
   const refreshHandleGeometry = useCallback(() => {
     const run = () => updateNodeInternals(id);
     requestAnimationFrame(() => {
@@ -426,34 +453,6 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
       window.clearTimeout(t);
     };
   }, [refreshHandleGeometry, brainConnected, showStudio, studioObjects.length, nodeData.value]);
-
-  /** Volver desde Nano Banana Studio (flujo «Modificar imagen con IA»): reabrir este PhotoRoom en Studio. */
-  useEffect(() => {
-    const openStudio = (ev: Event) => {
-      const d = (ev as CustomEvent<FoldderStudioEventDetail & { photoRoomNodeId?: string }>).detail;
-      if (d?.photoRoomNodeId !== id && d?.nodeId !== id) return;
-      setStandardShell(d.standardShell ? { ...d.standardShell, nodeId: id, nodeType: "photoRoom", fileId: d.fileId, appId: d.appId } : null);
-      setShowStudio(true);
-    };
-    const closeStudio = (ev: Event) => {
-      const d = (ev as CustomEvent<{ photoRoomNodeId?: string; nodeId?: string }>).detail;
-      if (d?.photoRoomNodeId !== id && d?.nodeId !== id) return;
-      setStandardShell(null);
-      setShowStudio(false);
-    };
-    window.addEventListener("foldder-open-photo-room-studio", openStudio as EventListener);
-    window.addEventListener("foldder:open-studio", openStudio as EventListener);
-    window.addEventListener("foldder-open-node-studio", openStudio as EventListener);
-    window.addEventListener("foldder:close-studio", closeStudio as EventListener);
-    window.addEventListener("foldder-close-node-studio", closeStudio as EventListener);
-    return () => {
-      window.removeEventListener("foldder-open-photo-room-studio", openStudio as EventListener);
-      window.removeEventListener("foldder:open-studio", openStudio as EventListener);
-      window.removeEventListener("foldder-open-node-studio", openStudio as EventListener);
-      window.removeEventListener("foldder:close-studio", closeStudio as EventListener);
-      window.removeEventListener("foldder-close-node-studio", closeStudio as EventListener);
-    };
-  }, [id]);
 
   const previewUrl = useMemo(() => {
     for (const sid of SLOT_IDS) {
@@ -610,7 +609,28 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
   ]);
 
   return (
-    <div ref={frameRef} className="custom-node processor-node group/node" style={{ minWidth: 260 }}>
+    <StudioCanvasNodeShell
+      ref={frameRef}
+      nodeId={id}
+      nodeType="photoRoom"
+      selected={selected}
+      label={nodeData.label}
+      defaultLabel="PhotoRoom"
+      title="PhotoRoom"
+      badge={`${visibleSlots.length} in`}
+      headerIcon={
+        <span className="flex h-5 w-5 items-center justify-center rounded-md bg-[#63d4fd]">
+          <img src="/photoroom_icon.svg" alt="" className="h-3.5 w-3.5 object-contain" draggable={false} />
+        </span>
+      }
+      titleClassName="min-w-0 flex-1 uppercase leading-tight tracking-tight line-clamp-2"
+      badgeClassName="shrink-0"
+      baseClassName="custom-node processor-node"
+      className="group/node"
+      minWidth={260}
+      handles={nodeHandles}
+      introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}
+    >
       <FoldderNodeResizerLocal
         minWidth={260}
         minHeight={200}
@@ -619,47 +639,6 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
         keepAspectRatio
         isVisible={selected}
       />
-      <NodeLabel id={id} label={nodeData.label} defaultLabel="PhotoRoom" />
-
-      {visibleSlots.map((sid) => {
-        const idx = SLOT_IDS.indexOf(sid as (typeof SLOT_IDS)[number]);
-        const ok = connectedBySlot[sid];
-        return (
-          <div
-            key={sid}
-            className="handle-wrapper handle-left"
-            style={{ top: SLOT_TOP_PCT[sid] ?? `${11 + idx * 11}%` }}
-          >
-            <FoldderDataHandle type="target" position={Position.Left} id={sid} dataType="image" />
-            <span className="handle-label" style={{ color: ok ? "#f59e0b" : undefined }}>
-              {ok ? `✓ Imagen ${idx + 1}` : `Imagen ${idx + 1}`}
-            </span>
-          </div>
-        );
-      })}
-
-      <div className="handle-wrapper handle-left" style={{ top: "96%" }}>
-        <FoldderDataHandle type="target" position={Position.Left} id="brain" dataType="brain" />
-        <span className="handle-label">Brain</span>
-      </div>
-
-      <div className="handle-wrapper handle-right" style={{ top: "50%" }}>
-        <span className="handle-label">Salida imagen</span>
-        <FoldderDataHandle type="source" position={Position.Right} id="image" dataType="image" />
-      </div>
-
-      <div className="node-header">
-        <span className="flex h-5 w-5 items-center justify-center rounded-md bg-[#63d4fd]">
-          <img src="/photoroom_icon.svg" alt="" className="h-3.5 w-3.5 object-contain" draggable={false} />
-        </span>
-        <FoldderNodeHeaderTitle
-          className="min-w-0 flex-1 uppercase leading-tight tracking-tight line-clamp-2"
-          introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}
-        >
-          PhotoRoom
-        </FoldderNodeHeaderTitle>
-        <div className="node-badge shrink-0">{visibleSlots.length} in</div>
-      </div>
 
       <div
         ref={previewRef}
@@ -685,8 +664,7 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
           </div>
         )}
         <FoldderStudioModeCenterButton onClick={() => {
-          setStandardShell(null);
-          setShowStudio(true);
+          openStudio();
         }} />
       </div>
 
@@ -718,18 +696,12 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
             }}
             standardShell={standardShell ?? undefined}
             onClose={() => {
-              setShowStudio(false);
-              setStandardShell(null);
-              if (standardShell && typeof window !== "undefined") {
-                window.dispatchEvent(new CustomEvent(FOLDDER_STANDARD_STUDIO_CLOSE_REQUEST_EVENT, {
-                  detail: { nodeId: id, nodeType: "photoRoom", fileId: standardShell.fileId, appId: standardShell.appId },
-                }));
-              }
+              closeStudio({ notifyStandardShell: true });
             }}
           />
         </Suspense>
       ) : null}
-    </div>
+    </StudioCanvasNodeShell>
   );
 });
 

@@ -17,6 +17,7 @@ import {
 } from "./new-document-model";
 import { PhotoRoomNewDocumentPanel } from "./PhotoRoomNewDocumentPanel";
 import { useBrainNodeTelemetry } from "@/lib/brain/use-brain-node-telemetry";
+import { useStudioBodyLock } from "../studio-node/studio-node-architecture";
 
 export type PhotoRoomConnectedImageInput = { slot: string; src: string };
 
@@ -188,17 +189,15 @@ export default function PhotoRoomStudio({
     background: NewDocumentConfig["background"];
   } | null>(null);
 
-  useEffect(() => {
-    if (open) document.body.classList.add("nb-studio-open");
-    else document.body.classList.remove("nb-studio-open");
-    return () => document.body.classList.remove("nb-studio-open");
-  }, [open]);
+  useStudioBodyLock(open);
 
   useEffect(() => {
-    if (!open) {
+    if (open) return undefined;
+    const timer = window.setTimeout(() => {
       setCanvasPresetModalOpen(false);
       setCanvasResizePreview(null);
-    }
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [open]);
 
   const showNewDocumentWizard = open && !docSetupDone && objects.length === 0;
@@ -219,7 +218,8 @@ export default function PhotoRoomStudio({
       canvasDimFitSkipRef.current = false;
       return;
     }
-    setFitNonce((n) => n + 1);
+    const raf = requestAnimationFrame(() => setFitNonce((n) => n + 1));
+    return () => cancelAnimationFrame(raf);
   }, [liveArtboard.width, liveArtboard.height]);
 
   const initialArtboards = useMemo(

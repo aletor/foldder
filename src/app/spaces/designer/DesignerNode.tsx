@@ -1,12 +1,10 @@
 "use client";
 
 import React, { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import { NodeResizer, Position, useEdges, useNodes, useReactFlow, useUpdateNodeInternals, type NodeProps } from "@xyflow/react";
+import { NodeResizer, useEdges, useNodes, useReactFlow, useUpdateNodeInternals, type NodeProps } from "@xyflow/react";
 import { Pencil } from "lucide-react";
 import { FOLDDER_FIT_VIEW_EASE } from "@/lib/fit-view-ease";
-import { FoldderDataHandle } from "../FoldderDataHandle";
-import { FoldderNodeHeaderTitle, FoldderStudioModeCenterButton } from "../foldder-node-ui";
+import { FoldderStudioModeCenterButton } from "../foldder-node-ui";
 import type { IndesignPageFormatId } from "../indesign/page-formats";
 import { DEFAULT_DESIGNER_PAGE_FORMAT, getPageDimensions } from "../indesign/page-formats";
 import { nodeFrameNeedsSync, resolveAspectLockedNodeFrame, resolveNodeChromeHeight } from "../studio-node-aspect";
@@ -18,12 +16,19 @@ import {
   dispatchFoldderExportCreated,
   type FoldderExportCreatedDetail,
 } from "../foldder-export-events";
-import { FOLDDER_STANDARD_STUDIO_CLOSE_REQUEST_EVENT, type FoldderStudioEventDetail } from "../desktop-studio-events";
 import type { StandardStudioShellConfig } from "../StandardStudioShell";
+import { StudioCanvasNodeShell, type StudioCanvasNodeHandleSpec } from "../studio-node/studio-canvas-node";
+import { StudioNodePortal, useStudioNodeController } from "../studio-node/studio-node-architecture";
 import type { PresenterGroupStep } from "../presenter/presenter-group-animations";
 
 const DESIGNER_NODE_MAX_WIDTH = 960;
 const DESIGNER_NODE_MAX_HEIGHT = 2200;
+
+const DESIGNER_NODE_HANDLES: StudioCanvasNodeHandleSpec[] = [
+  { side: "left", top: "50%", style: { transform: "translateY(-50%)" }, type: "target", id: "brain", dataType: "brain", label: "Brain" },
+  { side: "right", top: "38%", style: { transform: "translateY(-50%)" }, type: "source", id: "image", dataType: "image", label: "Image" },
+  { side: "right", top: "62%", style: { transform: "translateY(-50%)" }, type: "source", id: "document", dataType: "generic", label: "Document" },
+];
 
 export type DesignerPageState = {
   id: string;
@@ -72,7 +77,10 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const edges = useEdges();
   const { setNodes } = useReactFlow();
   const updateNodeInternals = useUpdateNodeInternals();
-  const [isStudioOpen, setIsStudioOpen] = useState(false);
+  const { isStudioOpen, openStudio, closeStudio, standardShell } = useStudioNodeController({
+    nodeId: id,
+    nodeType: "designer",
+  });
   const brainConnected = edges.some((e) => e.target === id && e.targetHandle === "brain");
 
   const pages: DesignerPageState[] =
@@ -97,7 +105,6 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
 
   const firstPageDims = pages[0] ? getPageDimensions(pages[0]) : null;
   const currentNode = nodes.find((node) => node.id === id);
-  const [standardShell, setStandardShell] = useState<StandardStudioShellConfig | null>(null);
   const frameRef = useRef<HTMLDivElement | null>(null);
   const previewRef = useRef<HTMLDivElement | null>(null);
   const refreshHandleGeometry = useCallback(() => {
@@ -108,37 +115,6 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
     });
     window.setTimeout(run, 140);
   }, [id, updateNodeInternals]);
-
-  useEffect(() => {
-    if (isStudioOpen) document.body.classList.add("nb-studio-open");
-    else document.body.classList.remove("nb-studio-open");
-    return () => document.body.classList.remove("nb-studio-open");
-  }, [isStudioOpen]);
-
-  useEffect(() => {
-    const onOpenStudio = (ev: Event) => {
-      const detail = (ev as CustomEvent<FoldderStudioEventDetail>).detail;
-      if (detail?.nodeId !== id) return;
-      setStandardShell(detail.standardShell ? { ...detail.standardShell, nodeId: id, nodeType: "designer", fileId: detail.fileId, appId: detail.appId } : null);
-      setIsStudioOpen(true);
-    };
-    const onCloseStudio = (ev: Event) => {
-      const detail = (ev as CustomEvent<{ nodeId?: string }>).detail;
-      if (detail?.nodeId !== id) return;
-      setStandardShell(null);
-      setIsStudioOpen(false);
-    };
-    window.addEventListener("foldder:open-studio", onOpenStudio as EventListener);
-    window.addEventListener("foldder-open-node-studio", onOpenStudio as EventListener);
-    window.addEventListener("foldder:close-studio", onCloseStudio as EventListener);
-    window.addEventListener("foldder-close-node-studio", onCloseStudio as EventListener);
-    return () => {
-      window.removeEventListener("foldder:open-studio", onOpenStudio as EventListener);
-      window.removeEventListener("foldder-open-node-studio", onOpenStudio as EventListener);
-      window.removeEventListener("foldder:close-studio", onCloseStudio as EventListener);
-      window.removeEventListener("foldder-close-node-studio", onCloseStudio as EventListener);
-    };
-  }, [id]);
 
   useEffect(() => {
     const raf = requestAnimationFrame(() => refreshHandleGeometry());
@@ -231,7 +207,27 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
   );
 
   return (
-    <div ref={frameRef} className="custom-node tool-node group/node" style={{ minWidth: 280 }}>
+    <StudioCanvasNodeShell
+      ref={frameRef}
+      nodeId={id}
+      nodeType="designer"
+      selected={selected}
+      label={nodeData.label}
+      defaultLabel="Designer"
+      title="Designer"
+      badge="DESIGN"
+      headerIcon={
+        <span className="flex h-5 w-5 items-center justify-center rounded-md bg-[#fdb04b]">
+          <img src="/designer_icon.svg" alt="" className="h-3.5 w-3.5 object-contain" draggable={false} />
+        </span>
+      }
+      headerClassName="border-b border-violet-500/15 bg-gradient-to-r from-zinc-900/90 via-zinc-900/70 to-zinc-900/90"
+      titleClassName="flex-1 truncate uppercase tracking-[0.14em] text-zinc-100"
+      className="group/node"
+      minWidth={280}
+      handles={DESIGNER_NODE_HANDLES}
+      introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}
+    >
       <DesignerNodeResizer
         minWidth={280}
         minHeight={200}
@@ -240,19 +236,6 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
         keepAspectRatio
         isVisible={selected}
       />
-
-      <div className="node-header border-b border-violet-500/15 bg-gradient-to-r from-zinc-900/90 via-zinc-900/70 to-zinc-900/90">
-        <span className="flex h-5 w-5 items-center justify-center rounded-md bg-[#fdb04b]">
-          <img src="/designer_icon.svg" alt="" className="h-3.5 w-3.5 object-contain" draggable={false} />
-        </span>
-        <FoldderNodeHeaderTitle
-          className="flex-1 truncate uppercase tracking-[0.14em] text-zinc-100"
-          introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}
-        >
-          Designer
-        </FoldderNodeHeaderTitle>
-        <div className="node-badge">DESIGN</div>
-      </div>
 
       <div
         ref={previewRef}
@@ -289,40 +272,19 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
           </div>
         )}
         <FoldderStudioModeCenterButton onClick={() => {
-          setStandardShell(null);
-          setIsStudioOpen(true);
+          openStudio();
         }} />
       </div>
 
-      <div className="handle-wrapper handle-left" style={{ top: "50%", transform: "translateY(-50%)" }}>
-        <FoldderDataHandle type="target" position={Position.Left} id="brain" dataType="brain" />
-        <span className="handle-label">Brain</span>
-      </div>
-
-      <div className="handle-wrapper handle-right" style={{ top: "38%", transform: "translateY(-50%)" }}>
-        <span className="handle-label">Image</span>
-        <FoldderDataHandle type="source" position={Position.Right} id="image" dataType="image" />
-      </div>
-      <div className="handle-wrapper handle-right" style={{ top: "62%", transform: "translateY(-50%)" }}>
-        <span className="handle-label">Document</span>
-        <FoldderDataHandle type="source" position={Position.Right} id="document" dataType="generic" />
-      </div>
-
-      {isStudioOpen &&
-        createPortal(
+      {isStudioOpen && (
+        <StudioNodePortal>
           <DesignerStudioLazy
             initialPages={pages}
             activePageIndex={activeIdx}
             designerCanvasInstanceKey={id}
             brainConnected={brainConnected}
             onClose={() => {
-              setIsStudioOpen(false);
-              setStandardShell(null);
-              if (standardShell && typeof window !== "undefined") {
-                window.dispatchEvent(new CustomEvent(FOLDDER_STANDARD_STUDIO_CLOSE_REQUEST_EVENT, {
-                  detail: { nodeId: id, nodeType: "designer", fileId: standardShell.fileId, appId: standardShell.appId },
-                }));
-              }
+              closeStudio({ notifyStandardShell: true });
             }}
             onExport={onExport}
             onFinalExport={(detail) => {
@@ -332,10 +294,10 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
             onUpdatePages={onUpdatePages}
             autoImageOptimization={nodeData.autoImageOptimization !== false}
             onAutoImageOptimizationChange={onAutoImageOptimizationChange}
-          />,
-          document.body,
-        )}
-    </div>
+          />
+        </StudioNodePortal>
+      )}
+    </StudioCanvasNodeShell>
   );
 });
 
