@@ -12,6 +12,10 @@ export const SIDEBAR_HOVER_HELP: Record<string, { title: string; line: string }>
     title: 'Guionista',
     line: 'Editor editorial: convierte ideas, notas o Brain en textos versionados',
   },
+  cine: {
+    title: 'Cine',
+    line: 'Preproducción audiovisual: guion, reparto, fondos, storyboard y prompts de frames',
+  },
   projectBrain: {
     title: 'Brain',
     line: 'Dashboard compacto: ADN, fuentes, nodos conectados y pendientes; abre Brain para editar',

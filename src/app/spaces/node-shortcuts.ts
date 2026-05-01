@@ -32,4 +32,5 @@ export const NODE_KEYS: Record<string, string> = {
   crop: 'x',
   designer: 'f',
   presenter: ';',
+  cine: 'c',
 };

@@ -148,6 +148,32 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
       promptValue: 'string (active version markdown for Prompt output)',
     },
   },
+  cine: {
+    type: 'cine',
+    label: 'Cine',
+    description:
+      'Dirección audiovisual y preproducción: convierte guiones en reparto, fondos, storyboard, prompts de frames y plan de vídeo.',
+    inputs: [
+      { id: 'prompt', label: 'Guion / Prompt', type: 'prompt' },
+      { id: 'text', label: 'Texto / Guion', type: 'txt' },
+      { id: 'brain', label: 'Brain', type: 'brain' },
+    ],
+    outputs: [
+      { id: 'storyboard', label: 'Storyboard', type: 'json' },
+      { id: 'videoScenes', label: 'Video scenes', type: 'json' },
+    ],
+    dataSchema: {
+      sourceScript: '{ nodeId?, text, title? }',
+      manualScript: 'string',
+      mode: 'short_film | advertising | fashion_film | documentary | product_video | music_video | brand_story | social_video',
+      status: 'empty | script_received | analyzed | characters_ready | backgrounds_ready | storyboard_ready | frames_ready | ready_for_video',
+      visualDirection: '{ aspectRatio, realismLevel, globalStylePrompt, tone, pacing, cameraStyle, lightingStyle, useBrain }',
+      characters: 'CineCharacter[]',
+      backgrounds: 'CineBackground[]',
+      scenes: 'CineScene[]',
+      value: 'string (JSON summary for downstream planning)',
+    },
+  },
   grokProcessor: {
     type: 'grokProcessor',
     label: 'Grok Video',

@@ -33,7 +33,8 @@ export type FoldderIconKey =
   | 'freehand'
   | 'brain'
   | 'photoRoom'
-  | 'notes';
+  | 'notes'
+  | 'cine';
 
 type GlyphProps = {
   state?: FoldderNodeIconState;
@@ -332,6 +333,18 @@ export function FoldderVideo({ state, className, size }: GlyphProps) {
   );
 }
 
+export function FoldderCine({ state, className, size }: GlyphProps) {
+  return (
+    <FoldderIcon state={state} className={className} size={size}>
+      <rect x="2.5" y="5.1" width="11" height="8.1" rx="1.35" />
+      <path d="M3.15 5.15 L5.1 2.8 H7.35 L5.4 5.15" />
+      <path d="M7.15 5.15 L9.1 2.8 H11.35 L9.4 5.15" />
+      <path d="M3.1 7.2 H12.9" opacity={0.45} strokeWidth={1.15} />
+      <path d="M6.85 8.25 L6.85 11.25 L9.45 9.75 Z" fill="currentColor" stroke="none" strokeWidth={0} />
+    </FoldderIcon>
+  );
+}
+
 export function FoldderConcat({ state, className, size }: GlyphProps) {
   return (
     <FoldderIcon state={state} className={className} size={size}>
@@ -501,6 +514,7 @@ export const FOLDDER_ICON_COLORS: Record<FoldderIconKey, string> = {
   brain: '#c084fc',
   photoRoom: '#f472b6',
   notes: '#fbbf24',
+  cine: '#67e8f9',
 };
 
 export const FOLDDER_NODE_ICONS: Record<FoldderIconKey, React.FC<GlyphProps>> = {
@@ -530,6 +544,7 @@ export const FOLDDER_NODE_ICONS: Record<FoldderIconKey, React.FC<GlyphProps>> = 
   brain: FoldderBrain,
   photoRoom: FoldderPhotoRoom,
   notes: FoldderNotes,
+  cine: FoldderCine,
 };
 
 /** React Flow node `type` → icon grammar */
@@ -561,6 +576,7 @@ export const NODE_TYPE_TO_FOLDDER_ICON: Record<string, FoldderIconKey> = {
   pinterestSearch: 'web',
   notes: 'notes',
   guionista: 'text',
+  cine: 'cine',
 };
 
 export function resolveFoldderNodeState(opts: {

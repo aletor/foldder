@@ -228,6 +228,33 @@ export function defaultDataForCanvasDropNode(nodeType: string): Record<string, u
         status: "draft",
         updatedAt: new Date().toISOString(),
       };
+    case "cine":
+      return {
+        label: "Cine",
+        manualScript: "",
+        mode: "short_film",
+        status: "empty",
+        visualDirection: {
+          aspectRatio: "16:9",
+          realismLevel: "realistic",
+          globalStylePrompt: "",
+          tone: "cinematografico, sobrio y visual",
+          pacing: "claro y narrativo",
+          colorPalette: [],
+          cameraStyle: "camara cinematografica natural",
+          lightingStyle: "luz motivada y atmosferica",
+          useBrain: true,
+          visualCapsuleIds: [],
+        },
+        characters: [],
+        backgrounds: [],
+        scenes: [],
+        value: "",
+        metadata: {
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      };
     default:
       return { label: "" };
   }

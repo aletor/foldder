@@ -180,6 +180,13 @@ import {
   type GuionistaSocialPlatform,
   type GuionistaTextAsset,
 } from './guionista-types';
+import { CineStudio } from './CineStudio';
+import {
+  CINE_MODE_LABELS,
+  CINE_STATUS_LABELS,
+  normalizeCineData,
+  type CineNodeData,
+} from './cine-types';
 import { useProjectAssetsCanvas } from './project-assets-canvas-context';
 
 interface BaseNodeData {
@@ -2138,6 +2145,171 @@ export const GuionistaNode = memo(function GuionistaNode({ id, data, selected }:
           }}
         />
       )}
+    </div>
+  );
+});
+
+export const CineNode = memo(function CineNode({ id, data, selected }: NodeProps) {
+  const nodeData = normalizeCineData(data);
+  const { setNodes } = useReactFlow();
+  const nodes = useNodes();
+  const edges = useEdges();
+  const [isStudioOpen, setIsStudioOpen] = useState(false);
+
+  const incomingEdges = useMemo(() => edges.filter((edge) => edge.target === id), [edges, id]);
+  const sourceScriptEdge = useMemo(
+    () => incomingEdges.find((edge) => edge.targetHandle === "script" || edge.targetHandle === "prompt" || edge.targetHandle === "text"),
+    [incomingEdges],
+  );
+  const brainEdge = useMemo(
+    () => incomingEdges.find((edge) => edge.targetHandle === "brain" || nodes.find((node) => node.id === edge.source)?.type === "projectBrain"),
+    [incomingEdges, nodes],
+  );
+  const sourceScriptNode = useMemo(
+    () => nodes.find((node) => node.id === sourceScriptEdge?.source),
+    [nodes, sourceScriptEdge?.source],
+  );
+  const sourceScriptText = useMemo(() => textFromGuionistaSourceNode(sourceScriptNode), [sourceScriptNode]);
+  const brainConnected = Boolean(brainEdge);
+  const framesPrepared = useMemo(
+    () => nodeData.scenes.reduce((count, scene) => count + [scene.frames.single, scene.frames.start, scene.frames.end].filter(Boolean).length, 0),
+    [nodeData.scenes],
+  );
+  const framesTotal = useMemo(
+    () => nodeData.scenes.reduce((count, scene) => count + (scene.framesMode === "start_end" ? 2 : 1), 0),
+    [nodeData.scenes],
+  );
+
+  const patchData = useCallback(
+    (next: CineNodeData) => {
+      setNodes((nds) =>
+        nds.map((node) =>
+          node.id === id
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  ...next,
+                  value: next.value || JSON.stringify({ scenes: next.scenes.length, framesPrepared }),
+                },
+              }
+            : node,
+        ),
+      );
+    },
+    [framesPrepared, id, setNodes],
+  );
+
+  useEffect(() => {
+    const onOpenStudio = (event: Event) => {
+      const detail = (event as CustomEvent<{ nodeId?: string; nodeType?: string }>).detail;
+      if (!detail || detail.nodeId !== id) return;
+      setIsStudioOpen(true);
+    };
+    window.addEventListener("foldder:open-studio", onOpenStudio as EventListener);
+    return () => window.removeEventListener("foldder:open-studio", onOpenStudio as EventListener);
+  }, [id]);
+
+  const statusLabel = CINE_STATUS_LABELS[nodeData.status];
+  const modeLabel = CINE_MODE_LABELS[nodeData.mode];
+
+  return (
+    <div className="custom-node tool-node" style={{ minWidth: 292, width: 292 }}>
+      <NodeLabel id={id} label={nodeData.label} defaultLabel="Cine" />
+
+      <div className="node-header">
+        <NodeIcon type="cine" selected={selected} size={16} />
+        <FoldderNodeHeaderTitle introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}>
+          CINE
+        </FoldderNodeHeaderTitle>
+        <div className="node-badge max-w-[116px] truncate">{modeLabel}</div>
+      </div>
+
+      <div className="node-content flex flex-col gap-3 px-3 pb-3 pt-2">
+        <div className="rounded-2xl border border-slate-200/60 bg-slate-50/60 p-3 shadow-inner">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <span className="node-label">Mesa de dirección</span>
+              <h3 className="mt-1 text-[18px] font-semibold leading-tight tracking-[-0.035em] text-slate-950">
+                {statusLabel}
+              </h3>
+              <p className="mt-1 line-clamp-2 text-[11px] font-light leading-relaxed text-slate-600">
+                {nodeData.detected?.logline || sourceScriptText || "Convierte guion en escenas, reparto, fondos y frames."}
+              </p>
+            </div>
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200/80 bg-slate-900 text-cyan-100 shadow-sm">
+              <Film className="h-5 w-5" strokeWidth={1.8} />
+            </div>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-1.5">
+            <span className="rounded-xl border border-slate-200/70 bg-white/80 px-2 py-1.5 text-[10px] font-semibold text-slate-700">
+              {nodeData.scenes.length} escenas
+            </span>
+            <span className="rounded-xl border border-slate-200/70 bg-white/80 px-2 py-1.5 text-[10px] font-semibold text-slate-700">
+              {nodeData.characters.length} personajes
+            </span>
+            <span className="rounded-xl border border-slate-200/70 bg-white/80 px-2 py-1.5 text-[10px] font-semibold text-slate-700">
+              {nodeData.backgrounds.length} fondos
+            </span>
+            <span className="rounded-xl border border-slate-200/70 bg-white/80 px-2 py-1.5 text-[10px] font-semibold text-slate-700">
+              {framesPrepared}/{framesTotal || 0} frames
+            </span>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            <span className={`rounded-full border px-2.5 py-1 text-[9px] font-semibold ${brainConnected ? "border-cyan-400/25 bg-cyan-400/10 text-cyan-700" : "border-slate-300/70 bg-white/70 text-slate-500"}`}>
+              {brainConnected ? "Brain conectado" : "Sin Brain"}
+            </span>
+            <span className={`rounded-full border px-2.5 py-1 text-[9px] font-semibold ${sourceScriptText ? "border-amber-400/25 bg-amber-400/10 text-amber-700" : "border-slate-300/70 bg-white/70 text-slate-500"}`}>
+              {sourceScriptText ? "Guionista conectado" : "Guion manual"}
+            </span>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            setIsStudioOpen(true);
+          }}
+          className="nodrag flex items-center justify-center gap-2 rounded-xl border border-slate-300/80 bg-white/90 px-3 py-2.5 text-[11px] font-bold uppercase tracking-wide text-slate-800 shadow-sm transition hover:bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/50"
+        >
+          <Film className="h-4 w-4" strokeWidth={2} />
+          Abrir Cine
+        </button>
+      </div>
+
+      <div className="handle-wrapper handle-left" style={{ top: "30%" }}>
+        <FoldderDataHandle type="target" position={Position.Left} id="prompt" dataType="prompt" />
+        <span className="handle-label">Guion</span>
+      </div>
+      <div className="handle-wrapper handle-left" style={{ top: "54%" }}>
+        <FoldderDataHandle type="target" position={Position.Left} id="text" dataType="txt" />
+        <span className="handle-label">Text</span>
+      </div>
+      <div className="handle-wrapper handle-left" style={{ top: "78%" }}>
+        <FoldderDataHandle type="target" position={Position.Left} id="brain" dataType="brain" />
+        <span className="handle-label">Brain</span>
+      </div>
+      <div className="handle-wrapper handle-right" style={{ top: "40%" }}>
+        <span className="handle-label">Storyboard</span>
+        <FoldderDataHandle type="source" position={Position.Right} id="storyboard" dataType="generic" />
+      </div>
+      <div className="handle-wrapper handle-right" style={{ top: "68%" }}>
+        <span className="handle-label">Video plan</span>
+        <FoldderDataHandle type="source" position={Position.Right} id="videoScenes" dataType="generic" />
+      </div>
+
+      {isStudioOpen ? (
+        <CineStudio
+          nodeId={id}
+          data={nodeData}
+          onChange={patchData}
+          onClose={() => setIsStudioOpen(false)}
+          brainConnected={brainConnected}
+          sourceScriptText={sourceScriptText}
+          sourceScriptNodeId={sourceScriptNode?.id}
+        />
+      ) : null}
     </div>
   );
 });
