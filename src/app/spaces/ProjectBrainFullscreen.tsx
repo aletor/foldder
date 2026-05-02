@@ -8,7 +8,6 @@ import {
   ChevronDown,
   ChevronUp,
   CircleHelp,
-  Droplets,
   Edit3,
   ExternalLink,
   FileText,
@@ -98,8 +97,6 @@ import {
   type BrainFlowNodeLite,
 } from "@/lib/brain/brain-canvas-brain-links";
 import {
-  BRAIN_PENDING_QUEUE_TOOLTIP_ES,
-  BRAIN_RECENT_SIGNALS_TOOLTIP_ES,
   BRAIN_TELEMETRY_EPHEMERAL_DEV_NOTE_ES,
   buildPendingCountByNodeId,
   connectedNodeSignalsCopy,
@@ -1158,8 +1155,8 @@ export function ProjectBrainFullscreen({
   }, [open, projectId, loadPendingLearningsStable]);
 
   const [activeTab, setActiveTab] = useState<BrainMainSection>("overview");
-  /** Métricas detalladas del sidebar izquierdo (7 barras); colapsado reduce scroll vertical. */
-  const [brainStudioSidebarMetricsOpen, setBrainStudioSidebarMetricsOpen] = useState(false);
+  const [atmosphereCanvasMode, setAtmosphereCanvasMode] = useState<"fusion" | "project">("fusion");
+  const [brainIdentityEditorOpen, setBrainIdentityEditorOpen] = useState(false);
   /** Tarjeta «Contexto de marca» en ADN: vista corta + Ver más. */
   const [dnaBrandContextExpanded, setDnaBrandContextExpanded] = useState(false);
   const [brandSummarySectionSourcesKey, setBrandSummarySectionSourcesKey] = useState<BrandSummarySection["key"] | null>(
@@ -4084,6 +4081,524 @@ export function ProjectBrainFullscreen({
 
   if (!open) return null;
 
+  const isAtmosphereMode = activeTab === "overview";
+  const brandRecord = assets.brand as Record<string, unknown>;
+  const stringFromBrand = (key: string): string | null => {
+    const value = brandRecord[key];
+    return typeof value === "string" && value.trim() ? value.trim() : null;
+  };
+  const projectDisplayName =
+    stringFromBrand("name") ??
+    stringFromBrand("title") ??
+    stringFromBrand("brandName") ??
+    stringFromBrand("claim") ??
+    "Proyecto activo";
+  const brandClaim =
+    stringFromBrand("claim") ??
+    stringFromBrand("descriptor") ??
+    stringFromBrand("tagline") ??
+    "Atmósfera creativa viva";
+  const readyVisualCapsules = visualCapsules.filter((c) => c.analysisStatus === "ready" && c.status !== "archived");
+  const partialVisualCapsules = visualCapsules.filter((c) => c.analysisStatus !== "ready" && c.status !== "archived");
+  const activePalette = Array.from(
+    new Set(
+      [
+        assets.brand.colorPrimary,
+        assets.brand.colorSecondary,
+        assets.brand.colorAccent,
+      ].filter((hex): hex is string => typeof hex === "string" && /^#?[0-9a-f]{3,8}$/i.test(hex.trim())),
+    ),
+  )
+    .map((hex) => (hex.startsWith("#") ? hex : `#${hex}`))
+    .slice(0, 7);
+  const paletteForCanvas = activePalette.length
+    ? activePalette
+    : ["#4f46e5", "#8b5cf6", "#f8fafc", "#111827", "#f59e0b"];
+  const brandPrimaryForCanvas =
+    typeof assets.brand.colorPrimary === "string" && /^#?[0-9a-f]{3,8}$/i.test(assets.brand.colorPrimary.trim())
+      ? assets.brand.colorPrimary.startsWith("#")
+        ? assets.brand.colorPrimary
+        : `#${assets.brand.colorPrimary}`
+      : paletteForCanvas[0];
+  const acceptedTextBubbles = [
+    ...assets.strategy.approvedPhrases,
+    ...assets.strategy.generatedPieces
+      .filter((piece) => piece.status === "approved")
+      .map((piece) => piece.revised || piece.draft || piece.objective),
+    ...assets.strategy.funnelMessages.map((messageItem) => messageItem.text),
+  ]
+    .map((text) => text.trim())
+    .filter(Boolean)
+    .slice(0, 4);
+  const canvasTextBubbles = [
+    "Mantener consistencia de marca",
+    "Escalar producción creativa",
+    ...acceptedTextBubbles,
+  ].slice(0, 4);
+  const toneChips = [
+    ...assets.strategy.languageTraits,
+    ...assets.strategy.preferredTerms,
+  ]
+    .map((tag) => tag.trim())
+    .filter(Boolean)
+    .slice(0, 6);
+  const canvasToneChips = toneChips.length ? toneChips : ["PREMIUM", "EDITORIAL", "HUMANO", "TECNOLÓGICO", "CLARO", "SOBRIO"];
+  const connectedLearningLabel =
+    brainClients.length > 0
+      ? `Aprendiendo de ${brainClients.length} nodo${brainClients.length === 1 ? "" : "s"}: ${brainClients
+          .slice(0, 3)
+          .map((c) => c.label)
+          .join(", ")}${brainClients.length > 3 ? ` +${brainClients.length - 3}` : ""}`
+      : "Listo para aprender de Designer y Photoroom";
+  const imageDnaTitle = "ADN DE IMAGEN";
+  const sectionTitleByTab: Record<BrainMainSection, string> = {
+    overview: "Atmósfera",
+    sources: "Fuentes",
+    dna: "ADN activo",
+    looks: "Looks visuales",
+    visual_refs: "Visual",
+    brand_visual_dna: "Síntesis visual",
+    knowledge: "Fuentes analizadas",
+    connected_nodes: "Nodos conectados",
+    review: "Aprendizajes",
+    diagnostics: "Diagnóstico",
+    voice: "Voz",
+    personas: "Audiencias",
+    messages: "Mensajes",
+    facts: "Hechos",
+  };
+
+  const renderVisualDnaCarousel = (compact = false) => {
+    const visibleCapsules = visualCapsules.slice(0, compact ? 2 : 6);
+    return (
+      <section className={`${compact ? "h-full p-3" : "h-full p-4"} flex min-h-0 flex-col`}>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-900">
+              {imageDnaTitle}
+              <Edit3 className="h-3 w-3 text-violet-700" aria-hidden />
+            </p>
+            {!compact ? <p className="mt-0.5 text-[11px] text-zinc-500">Mosaicos visuales · Cápsulas independientes</p> : null}
+          </div>
+          <button
+            type="button"
+            onClick={() => setActiveTab("looks")}
+            className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-[10px] font-black uppercase tracking-wide text-violet-700 hover:bg-violet-100"
+          >
+            Añadir look
+          </button>
+        </div>
+
+        <div className={`min-h-0 flex-1 gap-2 overflow-x-auto overflow-y-hidden pb-1 ${compact ? "grid grid-cols-1" : "flex"}`}>
+          {visibleCapsules.map((capsule) => {
+            const hero = capsule.mosaicImageUrl ?? capsule.sourceImageUrl;
+            const miniRefs = [
+              ...(capsule.persons ?? []),
+              ...(capsule.environments ?? []),
+              ...(capsule.textures ?? []),
+              ...(capsule.objects ?? []),
+            ]
+              .map((item) => item.imageUrl)
+              .filter((url): url is string => Boolean(url))
+              .slice(0, 2);
+            const swatches = (capsule.palette?.length ? capsule.palette.map((color) => color.hex) : paletteForCanvas).slice(0, 5);
+            const tags = [...(capsule.moodTags ?? []), ...(capsule.visualTraits ?? [])].slice(0, 3);
+            return (
+              <button
+                key={capsule.id}
+                type="button"
+                onClick={() => setActiveTab("looks")}
+                className={`${compact ? "w-full" : "w-[245px]"} group shrink-0 overflow-hidden rounded-[18px] border border-zinc-200 bg-white text-left shadow-sm transition hover:-translate-y-0.5 hover:border-violet-200 hover:shadow-md`}
+              >
+                <div className={`${compact ? "h-24" : "h-32"} grid grid-cols-[30px_minmax(0,1fr)_52px] gap-1 bg-zinc-100 p-1`}>
+                  <div className="grid gap-1">
+                    {swatches.map((hex, idx) => (
+                      <span key={`${capsule.id}-${hex}-${idx}`} className="rounded-[7px] border border-white/70" style={{ backgroundColor: hex }} />
+                    ))}
+                  </div>
+                  <div className="overflow-hidden rounded-[12px] bg-gradient-to-br from-violet-50 via-white to-zinc-100">
+                    {hero ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={hero} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <div className="flex h-full items-center justify-center px-2 text-center text-[9px] font-black uppercase tracking-wide text-zinc-400">
+                        Mosaico pendiente
+                      </div>
+                    )}
+                  </div>
+                  <div className="grid gap-1">
+                    {[0, 1].map((idx) => (
+                      <div key={idx} className="overflow-hidden rounded-[10px] bg-white">
+                        {miniRefs[idx] ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={miniRefs[idx]} alt="" className="h-full w-full object-cover" />
+                        ) : hero ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={hero} alt="" className="h-full w-full object-cover opacity-70" />
+                        ) : (
+                          <div className="h-full w-full bg-zinc-200" />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="p-3">
+                  <p className="line-clamp-1 text-[12px] font-black text-zinc-900">
+                    {capsule.title?.trim() || capsule.sourceImageId || "Look visual"}
+                  </p>
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {(tags.length ? tags : [capsule.analysisStatus ?? "partial", capsule.status]).map((tag) => (
+                      <span key={tag} className="rounded-full bg-zinc-100 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-zinc-500">
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+          {visualCapsules.length === 0 ? (
+            <button
+              type="button"
+              onClick={() => setActiveTab("looks")}
+              className={`${compact ? "h-28 w-full" : "h-full w-[245px]"} shrink-0 rounded-[18px] border border-dashed border-violet-200 bg-violet-50/70 p-4 text-center text-[11px] font-bold text-violet-800 hover:bg-violet-100`}
+            >
+              Añade imágenes para crear tus primeros mosaicos de ADN visual.
+            </button>
+          ) : null}
+        </div>
+
+        {!compact && visualCapsules.length > 2 ? (
+          <div className="mt-3 flex items-center justify-center gap-1.5">
+            {visualCapsules.slice(0, 4).map((capsule, idx) => (
+              <span key={capsule.id} className={`h-1.5 rounded-full ${idx === 0 ? "w-6 bg-violet-700" : "w-1.5 bg-zinc-300"}`} />
+            ))}
+          </div>
+        ) : null}
+      </section>
+    );
+  };
+
+  const renderBrainAtmosphereCanvas = (compact = false) => (
+    <aside
+      className={`relative min-h-0 shrink-0 overflow-visible ${
+        compact ? "w-[20%] min-w-[220px]" : "w-[min(65%,900px)]"
+      }`}
+    >
+      <div className={`grid h-full min-h-0 ${compact ? "grid-rows-[minmax(0,0.66fr)_minmax(0,0.34fr)] gap-3 p-4" : "grid-rows-[minmax(0,75fr)_minmax(0,25fr)] gap-4 p-5 lg:p-6"}`}>
+        <section
+          className="relative min-h-0 overflow-visible"
+        >
+          <div className="relative z-10 flex h-full flex-col justify-between p-4 lg:p-5">
+            <div className="flex items-start justify-between gap-3">
+              <div className="inline-flex rounded-full border border-white/80 bg-white/72 p-1 text-[10px] font-black uppercase tracking-wide shadow-sm backdrop-blur-md">
+                {(
+                  [
+                    ["fusion", "Fusión activa"],
+                    ["project", "Proyecto"],
+                  ] as const
+                ).map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setAtmosphereCanvasMode(id)}
+                    className={`rounded-full px-3 py-1.5 transition ${
+                      atmosphereCanvasMode === id ? "bg-zinc-950 text-white shadow-sm" : "text-zinc-600 hover:bg-white"
+                    }`}
+                  >
+                    {compact ? label.replace("Fusión activa", "Fusión") : label}
+                  </button>
+                ))}
+              </div>
+              {!compact ? (
+                <div title={BRAIN_ADN_COMPLETENESS_TOOLTIP_ES} className="rounded-full border border-white/70 bg-white/78 px-4 py-2 text-right shadow-sm backdrop-blur-md">
+                  <p className="text-[9px] font-black uppercase tracking-[0.18em] text-zinc-500">ADN activo</p>
+                  <p className="text-2xl font-black tabular-nums text-violet-800">{adn.total}/100</p>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="grid items-end gap-4 lg:grid-cols-[minmax(0,0.48fr)_minmax(0,1fr)]">
+              <div className="min-w-0 rounded-[24px] border border-white/64 bg-white/64 p-3 shadow-sm backdrop-blur-md">
+                <div className="flex items-center gap-3">
+                  <div className={`${compact ? "h-11 w-11" : "h-14 w-14"} shrink-0 overflow-hidden rounded-[16px] border border-white bg-white shadow-sm`}>
+                    {assets.brand.logoPositive || assets.brand.logoNegative ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={assets.brand.logoPositive || assets.brand.logoNegative || ""} alt="" className="h-full w-full object-contain p-2" />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center bg-violet-700 text-lg font-black text-white">
+                        {projectDisplayName.slice(0, 1).toUpperCase()}
+                      </div>
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <p className={`${compact ? "text-base" : "text-xl"} line-clamp-1 font-black tracking-tight text-zinc-950`}>{projectDisplayName}</p>
+                    <p className="mt-0.5 line-clamp-1 text-[11px] leading-snug text-zinc-600">{brandClaim}</p>
+                    <button
+                      type="button"
+                      onClick={() => setBrainIdentityEditorOpen((openEditor) => !openEditor)}
+                      className="mt-1.5 inline-flex items-center gap-1 rounded-full bg-white px-2.5 py-1 text-[9px] font-black uppercase tracking-wide text-violet-700 shadow-sm hover:bg-violet-50"
+                    >
+                      <Edit3 className="h-3 w-3" aria-hidden />
+                      Editar identidad
+                    </button>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {paletteForCanvas.map((hex) => (
+                        <span key={hex} title={hex} className={`${compact ? "h-4 w-4" : "h-5 w-6"} rounded-[7px] border border-white shadow-sm`} style={{ backgroundColor: hex }} />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                {!brainIdentityEditorOpen ? (
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    {canvasTextBubbles.slice(0, 2).map((text) => (
+                      <span key={text} className="rounded-full border border-white/70 bg-white/68 px-2.5 py-1 text-[9px] font-black uppercase tracking-wide text-zinc-700 shadow-sm backdrop-blur">
+                        {text}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+                {brainIdentityEditorOpen ? (
+                  <div className="mt-3 rounded-[18px] border border-zinc-200/80 bg-white/86 p-3">
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <LogoDropSlot compact label="Logo +" description="Fondos claros" dataUrl={assets.brand.logoPositive} slotId="positive" onPick={onLogoPick} onClear={onLogoClear} />
+                      <LogoDropSlot compact label="Logo -" description="Fondos oscuros" dataUrl={assets.brand.logoNegative} slotId="negative" onPick={onLogoPick} onClear={onLogoClear} />
+                    </div>
+                    <div className="mt-3 grid gap-2">
+                      <ColorField compact label="Primario" value={assets.brand.colorPrimary} onChange={(h) => setBrand({ colorPrimary: h })} />
+                      <ColorField compact label="Secundario" value={assets.brand.colorSecondary} onChange={(h) => setBrand({ colorSecondary: h })} />
+                      <ColorField compact label="Acento" value={assets.brand.colorAccent} onChange={(h) => setBrand({ colorAccent: h })} />
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              {!compact ? (
+                <div className="flex flex-col items-end gap-2 pb-1">
+                  <div className="flex flex-wrap justify-end gap-2">
+                    {canvasTextBubbles.slice(2, 4).map((text, idx) => (
+                      <span
+                        key={`${text}-${idx}`}
+                        className={`${idx === 0 ? "bg-zinc-950 text-white" : "bg-white text-zinc-950"} rounded-full border border-white/70 px-4 py-2 text-[12px] font-bold shadow-md backdrop-blur-md`}
+                      >
+                        <span className="mr-2 text-violet-400">✓</span>
+                        {text}
+                      </span>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap justify-end gap-1.5">
+                    {canvasToneChips.map((chip) => (
+                      <span key={chip} className="rounded-full border border-white/60 bg-white/72 px-2.5 py-1 text-[9px] font-black uppercase tracking-[0.14em] text-zinc-700 shadow-sm backdrop-blur">
+                        {chip}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </section>
+
+        <div className="min-h-0">{renderVisualDnaCarousel(compact)}</div>
+      </div>
+    </aside>
+  );
+
+  const brainControlModules: Array<{
+    id: string;
+    title: string;
+    summary: string;
+    subtext: string;
+    action: string;
+    tab: BrainMainSection;
+    icon: typeof Brain;
+    active: boolean;
+    complete?: boolean;
+  }> = [
+    {
+      id: "activeDna",
+      title: "ADN ACTIVO",
+      summary: `Marca · Proyecto · ${readyVisualCapsules.length} Looks`,
+      subtext: "Snapshot de lo que reciben los nodos creativos.",
+      action: "Ver snapshot",
+      tab: "dna",
+      icon: Sparkles,
+      active: resolveBrainPrimarySection(activeTab) === "dna" && !["voice", "messages", "personas", "facts"].includes(activeTab),
+      complete: adn.total >= 70,
+    },
+    {
+      id: "project",
+      title: "PROYECTO",
+      summary: projectDisplayName,
+      subtext: "Brief, referencias, formatos y objetivos.",
+      action: "Editar",
+      tab: "sources",
+      icon: LayoutDashboard,
+      active: resolveBrainPrimarySection(activeTab) === "sources",
+      complete: projectSourceDocs.length > 0,
+    },
+    {
+      id: "looks",
+      title: "LOOKS VISUALES",
+      summary: `${readyVisualCapsules.length} ready · ${partialVisualCapsules.length} parcial · ${archivedVisualCapsules} archivados`,
+      subtext: "Cápsulas visuales activas.",
+      action: "Ver biblioteca",
+      tab: "looks",
+      icon: ImageIcon,
+      active: activeTab === "looks",
+      complete: readyVisualCapsules.length > 0,
+    },
+    {
+      id: "voice",
+      title: "VOZ",
+      summary: canvasToneChips.slice(0, 3).join(" · "),
+      subtext: "Tono, reglas y palabras clave.",
+      action: "Ver detalles",
+      tab: "voice",
+      icon: MessageSquareText,
+      active: activeTab === "voice",
+      complete: assets.strategy.languageTraits.length > 0 || assets.strategy.voiceExamples.length > 0,
+    },
+    {
+      id: "messages",
+      title: "MENSAJES",
+      summary: `${assets.strategy.approvedPhrases.length} aceptados · ${assets.strategy.funnelMessages.length} mensajes`,
+      subtext: "Claims, mensajes clave y CTA.",
+      action: "Revisar",
+      tab: "messages",
+      icon: Send,
+      active: activeTab === "messages",
+      complete: assets.strategy.approvedPhrases.length > 0 || assets.strategy.funnelMessages.length > 0,
+    },
+    {
+      id: "sources",
+      title: "FUENTES",
+      summary: `${assets.knowledge.documents.length} documentos · ${imageDocCount} imágenes · ${assets.knowledge.urls.length} enlaces`,
+      subtext: "Todo el conocimiento del proyecto.",
+      action: "Añadir",
+      tab: "sources",
+      icon: BookOpen,
+      active: activeTab === "sources" || activeTab === "knowledge",
+      complete: assets.knowledge.documents.length > 0 || assets.knowledge.urls.length > 0,
+    },
+    {
+      id: "learnings",
+      title: "APRENDIZAJES",
+      summary: `${assets.strategy.generatedPieces.length} guardados · ${pendingLearnings.length} por revisar`,
+      subtext: visualPendingProposals > 0 ? `${visualPendingProposals} propuesta(s) visuales pendientes.` : "Lo que Brain ha aprendido.",
+      action: "Revisar",
+      tab: "review",
+      icon: Network,
+      active: activeTab === "review",
+      complete: pendingLearnings.length === 0 && assets.strategy.generatedPieces.length > 0,
+    },
+    {
+      id: "diagnostic",
+      title: "DIAGNÓSTICO",
+      summary: `ADN ${adn.total}/100 · Visual ${skinVisualRefScore}%`,
+      subtext:
+        visualImageRefCount > 0
+          ? `Identidad ${skinIdentityScore}% · Hechos ${skinFactsScore}% · Nodos ${skinNodeLearningScore}%.`
+          : getBrainFreshnessSummary(assets.brainMeta),
+      action: "Ver desglose",
+      tab: "diagnostics",
+      icon: CircleHelp,
+      active: resolveBrainPrimarySection(activeTab) === "diagnostics",
+      complete: adn.total >= 70,
+    },
+  ];
+
+  const renderBrainControlPanel = (compact = false) => (
+    <aside
+      className={`min-h-0 shrink-0 overflow-y-auto overscroll-y-contain p-3 ${
+        compact ? "w-[25%] min-w-[270px]" : "w-[35%] min-w-[330px]"
+      }`}
+    >
+      <div className="mb-3 flex items-center justify-between gap-3 px-1">
+        <div>
+          <p className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">Brain Control Panel</p>
+          <p className="mt-0.5 text-[12px] font-semibold text-zinc-800">
+            {isAtmosphereMode ? "Módulos del ADN vivo" : sectionTitleByTab[activeTab]}
+          </p>
+        </div>
+        {!isAtmosphereMode ? (
+          <button
+            type="button"
+            onClick={() => setActiveTab("overview")}
+            className="rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-[10px] font-black uppercase tracking-wide text-zinc-700 hover:bg-zinc-100"
+          >
+            Atmósfera
+          </button>
+        ) : null}
+      </div>
+      <div className="space-y-2">
+        {brainControlModules.map((module) => {
+          const Icon = module.icon;
+          return (
+            <button
+              key={module.id}
+              type="button"
+              onClick={() => setActiveTab(module.tab)}
+              className={`group w-full rounded-[18px] border px-3 py-2.5 text-left transition hover:-translate-y-0.5 hover:shadow-md ${
+                module.active ? "border-violet-200 bg-violet-50/80 shadow-sm" : "border-zinc-200 bg-white hover:border-violet-100"
+              }`}
+            >
+              <div className="flex items-start gap-2.5">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[13px] bg-violet-100 text-violet-700">
+                  <Icon className="h-4 w-4" strokeWidth={2} aria-hidden />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-2">
+                    <span className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-900">{module.title}</span>
+                    {module.complete ? <span className="h-2 w-2 rounded-full bg-emerald-500" /> : null}
+                  </span>
+                  <span className="mt-0.5 block line-clamp-1 text-[12px] font-bold text-zinc-800">{module.summary}</span>
+                  <span className="mt-0.5 block line-clamp-1 text-[10px] leading-snug text-zinc-500">{module.subtext}</span>
+                  <span className="mt-1.5 inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-wide text-violet-700">
+                    {module.action}
+                    <ChevronDown className="-rotate-90 h-3 w-3 transition group-hover:translate-x-0.5" aria-hidden />
+                  </span>
+                </span>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+      {activeTab === "review" ? (
+        <div className="mt-3 rounded-[20px] border border-zinc-200 bg-zinc-50/80 p-3">
+          <p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">Filtrar aprendizajes</p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {(
+              [
+                ["all", "Todos"],
+                ["visual", "Visual"],
+                ["designer", "Designer"],
+                ["photoroom", "Photoroom"],
+                ["article", "Artículos"],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setReviewSourceFilter(id)}
+                className={`rounded-full border px-2.5 py-1 text-[9px] font-black uppercase tracking-wide ${
+                  reviewSourceFilter === id
+                    ? "border-violet-700 bg-violet-700 text-white"
+                    : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-100"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <p className="mt-2 text-[10px] leading-snug text-zinc-500">
+            {pendingFiltered.length} de {pendingLearnings.length} visibles.
+          </p>
+        </div>
+      ) : null}
+    </aside>
+  );
+
   const shell = (
     <div
       className="fixed inset-0 z-[100080] flex flex-col bg-zinc-100"
@@ -4091,38 +4606,38 @@ export function ProjectBrainFullscreen({
       aria-modal="true"
       aria-labelledby="project-brain-title"
     >
-      <header className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-zinc-200/80 bg-white/95 px-4 backdrop-blur-sm supports-[backdrop-filter]:bg-white/80">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[5px] border border-violet-200/80 bg-violet-50">
-            <Brain className="h-4 w-4 text-violet-700" strokeWidth={1.75} aria-hidden />
+      <header className="flex h-[68px] shrink-0 items-center justify-between gap-3 border-b border-zinc-200/80 bg-white/95 px-5 backdrop-blur-sm supports-[backdrop-filter]:bg-white/82">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-violet-200/80 bg-violet-50 shadow-sm">
+            <Brain className="h-5 w-5 text-violet-700" strokeWidth={1.75} aria-hidden />
           </span>
           <div className="min-w-0 leading-tight">
-            <h1 id="project-brain-title" className="text-[13px] font-semibold tracking-tight text-zinc-900">
+            <h1 id="project-brain-title" className="text-[16px] font-black tracking-tight text-zinc-950">
               Brain
             </h1>
-            <p className="truncate text-[10px] text-zinc-500">Memoria creativa del proyecto</p>
+            <p className="truncate text-[11px] font-medium text-zinc-500">Atmósfera · {projectDisplayName}</p>
           </div>
         </div>
-        <div className="hidden min-w-0 flex-1 items-center justify-center gap-2 text-[10px] font-medium text-zinc-600 md:flex">
+        <div className="hidden min-w-0 flex-1 items-center justify-center gap-2 text-[11px] font-bold text-zinc-600 md:flex">
           <span
-            title={BRAIN_ADN_COMPLETENESS_TOOLTIP_ES}
-            className="rounded-[5px] border border-violet-100 bg-violet-50/90 px-2 py-0.5 tabular-nums text-violet-900"
+            className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-zinc-800 shadow-sm"
           >
-            ADN {adn.total}/100
+            <span className="h-2 w-2 rounded-full bg-emerald-500" />
+            Conectado
           </span>
-          <span className="text-zinc-300">·</span>
-          <span
-            title="Cola de aprendizajes pendientes de decisión; la procedencia (visión real, telemetría, etc.) se indica en cada tarjeta."
-            className="rounded-[5px] border border-amber-100 bg-amber-50/90 px-2 py-0.5 tabular-nums text-amber-900"
-          >
-            {pendingLearnings.length} por revisar
-          </span>
-          <span className="text-zinc-300">·</span>
-          <span className="rounded-[5px] border border-sky-100 bg-sky-50/90 px-2 py-0.5 tabular-nums text-sky-900">
-            {brainClients.length} nodos
+          <span className="rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-zinc-700 shadow-sm">
+            {connectedLearningLabel}
           </span>
         </div>
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => setActiveTab("sources")}
+            className="inline-flex items-center gap-2 rounded-full border border-violet-700 bg-violet-700 px-4 py-2 text-[11px] font-black uppercase tracking-wide text-white shadow-sm transition hover:bg-violet-800"
+          >
+            <Plus className="h-3.5 w-3.5" strokeWidth={2.25} aria-hidden />
+            Añadir conocimiento
+          </button>
           <button
             type="button"
             disabled={knowledgeIngestLocked || brandLocked}
@@ -4134,15 +4649,23 @@ export function ProjectBrainFullscreen({
                   ? "Marca bloqueada: desbloquéala antes de reiniciar Brain"
                 : "Borra marca, pozo, estrategia y todo análisis (memoria local hasta guardar)"
             }
-            className="inline-flex items-center gap-1.5 rounded-[5px] border-2 border-rose-700 bg-rose-600 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-white shadow-sm transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
+            className="hidden items-center gap-1.5 rounded-full border border-rose-200 bg-rose-50 px-3 py-2 text-[10px] font-black uppercase tracking-wide text-rose-700 shadow-sm transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50 lg:inline-flex"
           >
             <Trash2 className="h-3.5 w-3.5 shrink-0" strokeWidth={2.25} aria-hidden />
-            Reiniciar Brain
+            Reiniciar
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("diagnostics")}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-zinc-200 bg-white text-[18px] font-black leading-none text-zinc-700 shadow-sm transition hover:bg-zinc-50"
+            aria-label="Más opciones"
+          >
+            …
           </button>
           <button
             type="button"
             onClick={onClose}
-            className="flex shrink-0 items-center gap-1.5 rounded-[5px] border border-zinc-200 bg-white px-3 py-1.5 text-[11px] font-medium text-zinc-800 transition hover:bg-zinc-50"
+            className="flex shrink-0 items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-2 text-[11px] font-bold text-zinc-800 shadow-sm transition hover:bg-zinc-50"
           >
             <X className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
             Cerrar
@@ -4165,191 +4688,16 @@ export function ProjectBrainFullscreen({
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1 gap-3 overflow-hidden px-3 pb-3 pt-2.5 sm:gap-4 sm:px-4">
-        <aside className="flex w-[200px] shrink-0 flex-col gap-2 overflow-y-auto overflow-x-hidden overscroll-y-contain pr-0.5 min-h-0 sm:w-[220px]">
-          <section className="rounded-[5px] border border-zinc-200/90 bg-white p-2.5 shadow-sm">
-            <div className="flex items-start justify-between gap-1">
-              <p className="text-[9px] font-semibold uppercase tracking-wider text-zinc-500">Salud</p>
-              <button
-                type="button"
-                onClick={() => setBrainStudioSidebarMetricsOpen((o) => !o)}
-                className="shrink-0 rounded-[5px] px-1 py-0.5 text-[9px] font-medium text-violet-600 hover:bg-violet-50"
-              >
-                {brainStudioSidebarMetricsOpen ? "Ocultar" : "Desglose"}
-              </button>
-            </div>
-            <p className="mt-0.5 text-xl font-semibold tabular-nums text-violet-800" title={BRAIN_ADN_COMPLETENESS_TOOLTIP_ES}>
-              {adn.total}
-              <span className="text-xs font-normal text-zinc-500">/100</span>
-            </p>
-            {!brainStudioSidebarMetricsOpen ? (
-              <p className="mt-1 text-[9px] leading-snug text-zinc-500">
-                Voz, referencias, nodos… Pulsa «Desglose» para las 7 barras.
-              </p>
-            ) : (
-              <p className="mt-1 text-[9px] leading-snug text-zinc-500">
-                Heurística de completitud (voz, personas, mensajes, contexto analizado)
-              </p>
-            )}
-            {brainStudioSidebarMetricsOpen ? (
-              <div className="mt-2.5 space-y-2">
-                {[
-                  ["Identidad visual", skinIdentityScore, "bg-fuchsia-500"],
-                  ["Voz y tono", adn.voiceScore, "bg-violet-500"],
-                  ["Personas", adn.personasScore, "bg-amber-500"],
-                  ["Mensajes", adn.msgScore, "bg-sky-500"],
-                  ["Datos / pruebas", skinFactsScore, "bg-rose-500"],
-                  [
-                    "Imágenes con visión remota",
-                    skinVisualRefScore,
-                    "bg-indigo-500",
-                    "Cuántas imágenes de referencia tienen análisis remoto (Gemini/OpenAI) sin fallback, frente al inventario total.",
-                  ],
-                  ["Aprendizaje de nodos", skinNodeLearningScore, "bg-emerald-500"],
-                ].map((row) => {
-                  const label = String(row[0]);
-                  const value = Number(row[1]);
-                  const klass = String(row[2]);
-                  const barTitle = row.length > 3 ? String(row[3]) : undefined;
-                  return (
-                    <div key={label} title={barTitle}>
-                      <div className="mb-0.5 flex items-center justify-between text-[9px] text-zinc-600">
-                        <span className="min-w-0 truncate">{label}</span>
-                        <span className="shrink-0 tabular-nums">{value}%</span>
-                      </div>
-                      <div className="h-1 rounded-full bg-zinc-100">
-                        <div className={`h-1 rounded-full ${klass}`} style={{ width: `${value}%` }} />
-                      </div>
-                    </div>
-                  );
-                })}
-                <p
-                  className="mt-2 break-words text-[8px] leading-snug text-zinc-500"
-                  title="Versión y frescura del Brain (dev / desglose)"
-                >
-                  {getBrainFreshnessSummary(assets.brainMeta)}
-                </p>
-              </div>
-            ) : null}
-          </section>
+      <div
+        className="flex min-h-0 flex-1 gap-3 overflow-hidden px-3 pb-3 pt-2.5 sm:gap-4 sm:px-4"
+        style={{
+          backgroundColor: brandPrimaryForCanvas,
+        }}
+      >
+        {renderBrainAtmosphereCanvas(!isAtmosphereMode)}
 
-          <section className="rounded-[5px] border border-zinc-200/90 bg-white p-2.5">
-            <p className="mb-1.5 text-[9px] font-semibold uppercase tracking-wider text-zinc-500">Identidad visual</p>
-            <LogoDropSlot
-              compact
-              label="Logo +"
-              description="Fondos claros"
-              dataUrl={assets.brand.logoPositive}
-              slotId="positive"
-              onPick={onLogoPick}
-              onClear={onLogoClear}
-            />
-            <div className="mt-2" />
-            <LogoDropSlot
-              compact
-              label="Logo -"
-              description="Fondos oscuros"
-              dataUrl={assets.brand.logoNegative}
-              slotId="negative"
-              onPick={onLogoPick}
-              onClear={onLogoClear}
-            />
-            <div className="mt-3 border-t border-zinc-200 pt-3">
-              <span className="mb-2 flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wide text-zinc-600">
-                <Droplets className="h-3 w-3 text-amber-600" aria-hidden />
-                Paleta
-              </span>
-              <div className="space-y-2">
-                <ColorField
-                  compact
-                  label="Primario"
-                  value={assets.brand.colorPrimary}
-                  onChange={(h) => setBrand({ colorPrimary: h })}
-                />
-                <ColorField
-                  compact
-                  label="Secundario"
-                  value={assets.brand.colorSecondary}
-                  onChange={(h) => setBrand({ colorSecondary: h })}
-                />
-                <ColorField
-                  compact
-                  label="Acento"
-                  value={assets.brand.colorAccent}
-                  onChange={(h) => setBrand({ colorAccent: h })}
-                />
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setActiveTab("knowledge")}
-              className="mt-2 w-full rounded-[5px] border border-zinc-200 bg-zinc-50 py-1.5 text-[9px] font-semibold uppercase tracking-wide text-zinc-700 hover:bg-zinc-100"
-            >
-              Editar identidad
-            </button>
-          </section>
-
-          <section className="rounded-[5px] border border-zinc-200/90 bg-white p-2.5 shadow-sm">
-            <p className="text-[9px] font-semibold uppercase tracking-wider text-zinc-500">Fuentes</p>
-            <p className="mt-1 text-[8px] leading-snug text-zinc-500">Ingesta fija arriba del panel.</p>
-            <ul className="mt-1.5 space-y-1 text-[10px] text-zinc-700">
-              <li className="flex justify-between">
-                <span>Documentos</span>
-                <span className="font-bold text-zinc-900">{assets.knowledge.documents.length}</span>
-              </li>
-              <li className="flex justify-between">
-                <span>Enlaces</span>
-                <span className="font-bold text-zinc-900">{assets.knowledge.urls.length}</span>
-              </li>
-              <li className="flex justify-between">
-                <span>Imágenes (docs)</span>
-                <span className="font-bold text-zinc-900">{imageDocCount}</span>
-              </li>
-              <li
-                className="flex justify-between"
-                title="Inventario de imágenes de referencia; no indica cuántas tienen visión remota."
-              >
-                <span>Imágenes referencia</span>
-                <span className="font-bold text-zinc-900">{visualImageRefCount}</span>
-              </li>
-              <li
-                className="flex justify-between"
-                title="Filas con Gemini u OpenAI sin mock ni fallback (metadatos del proyecto)."
-              >
-                <span>Visión remota (sin fallback)</span>
-                <span className="font-bold text-zinc-900">{visualDisposition.realRemoteAnalyzed}</span>
-              </li>
-            </ul>
-          </section>
-
-          <section className="rounded-[5px] border border-zinc-200/90 bg-white p-2.5 shadow-sm">
-            <p className="text-[9px] font-semibold uppercase tracking-wider text-zinc-500">Aprendizaje</p>
-            <ul className="mt-1.5 space-y-1 text-[10px] text-zinc-700">
-              <li className="flex justify-between">
-                <span>Por revisar</span>
-                <span className="font-bold text-amber-700">{pendingLearnings.length}</span>
-              </li>
-              <li className="flex justify-between">
-                <span>Propuestas visuales</span>
-                <span className="font-bold text-violet-800">{visualPendingProposals}</span>
-              </li>
-              <li className="flex justify-between">
-                <span>Piezas en memoria</span>
-                <span className="font-bold text-zinc-900">{assets.strategy.generatedPieces.length}</span>
-              </li>
-            </ul>
-            <button
-              type="button"
-              onClick={() => setActiveTab("review")}
-              className="mt-2 w-full rounded-[5px] border border-violet-600 bg-violet-600 py-1.5 text-[9px] font-semibold uppercase tracking-wide text-white hover:bg-violet-700"
-            >
-              Aprendizajes
-            </button>
-          </section>
-        </aside>
-
-        <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-y-contain rounded-[5px] border border-zinc-200/90 bg-white p-3 shadow-sm sm:p-4">
-          <div className="mb-3 flex flex-col gap-2 border-b border-zinc-100 pb-3">
+        <main className={`${isAtmosphereMode ? "hidden" : "flex"} min-h-0 min-w-0 flex-1 flex-col overflow-y-auto overscroll-y-contain rounded-[28px] border border-zinc-200/90 bg-white p-3 shadow-sm sm:p-4`}>
+          <div className="hidden">
             <div className="flex min-w-0 flex-wrap items-center gap-1">
               {(
                 [
@@ -6669,208 +7017,7 @@ export function ProjectBrainFullscreen({
             )}
         </main>
 
-        <aside className="hidden min-h-0 w-[min(280px,30vw)] shrink-0 flex-col gap-2 overflow-y-auto overscroll-y-contain rounded-[5px] border border-zinc-200/90 bg-white p-3 shadow-sm xl:flex">
-          {activeTab === "overview" && (
-            <div className="space-y-4">
-              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">Próximas acciones</p>
-              <div className="flex flex-col gap-2">
-                <button
-                  type="button"
-                  onClick={() => setActiveTab("review")}
-                  className="rounded-[5px] border border-violet-600 bg-violet-600 py-2.5 text-left text-[11px] font-black uppercase tracking-wide text-white px-3"
-                >
-                  Revisar bandeja · {pendingLearnings.length}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab("looks")}
-                  className="rounded-[5px] border border-zinc-300 bg-white py-2.5 text-left text-[11px] font-bold text-zinc-800 px-3 hover:bg-zinc-50"
-                >
-                  Completar Looks visuales
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab("sources")}
-                  className="rounded-[5px] border border-zinc-300 bg-white py-2.5 text-left text-[11px] font-bold text-zinc-800 px-3 hover:bg-zinc-50"
-                >
-                  Subir fuentes de Marca / Proyecto
-                </button>
-              </div>
-              <div className="rounded-[5px] border border-amber-100 bg-amber-50/70 p-3">
-                <p className="text-[10px] font-black uppercase tracking-wide text-amber-900">Tres focos que suben el ADN</p>
-                <ul className="mt-2 space-y-1.5 text-[11px] leading-snug text-amber-950/90">
-                  <li>· Añade hechos verificados y mensajes con evidencia.</li>
-                  <li>· Marca referencias visuales como ADN visual de marca cuando encajen.</li>
-                  <li>· Conecta nodos creativos al Brain para captar señales reales.</li>
-                </ul>
-              </div>
-            </div>
-          )}
-          {activeTab === "dna" && (
-            <div className="space-y-3">
-              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">Resumen ADN</p>
-              <p className="text-2xl font-black text-violet-800" title={BRAIN_ADN_COMPLETENESS_TOOLTIP_ES}>
-                {adn.total}
-                <span className="text-sm font-semibold text-zinc-500">/100</span>
-              </p>
-              <p className="text-[11px] leading-relaxed text-zinc-600">
-                Puntuación de completitud (heurística) a partir de voz, personas, mensajes y documentos de contexto
-                analizados. No mide calidad creativa absoluta.
-              </p>
-            </div>
-          )}
-          {activeTab === "sources" && (
-            <div className="space-y-3">
-              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">Fuentes</p>
-              <p className="text-[11px] leading-relaxed text-zinc-600">
-                Marca es identidad reutilizable. Proyecto es contexto temporal. Looks visuales crea cápsulas
-                independientes desde imágenes.
-              </p>
-              <ul className="space-y-1 text-[11px] text-zinc-700">
-                <li>Marca · {brandSourceDocs.length} fuente(s)</li>
-                <li>Proyecto · {projectSourceDocs.length} fuente(s)</li>
-                <li>Looks · {capsuleSourceDocs.length} imagen(es) fuente</li>
-              </ul>
-            </div>
-          )}
-          {activeTab === "brand_visual_dna" && (
-            <div className="space-y-3">
-              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">Brand Visual DNA</p>
-              <p className="text-[11px] leading-relaxed text-zinc-600">
-                Análisis técnico + clusters; la IA interpreta solo agregados. Usa la vista principal para exportar o
-                enviar al Brain.
-              </p>
-            </div>
-          )}
-          {activeTab === "visual_refs" && (
-            <div className="space-y-3">
-              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">Paleta dominante (agregada)</p>
-              <div className="flex flex-wrap gap-2">
-                {(visualAggregatedResolved?.dominantPalette ?? []).slice(0, 10).map((hex) => (
-                  <span
-                    key={hex}
-                    title={hex}
-                    className="h-9 w-9 rounded-full border border-zinc-200 shadow-sm"
-                    style={{ backgroundColor: hex }}
-                  />
-                ))}
-                {!visualAggregatedResolved?.dominantPalette?.length && (
-                  <p className="text-[11px] text-zinc-500">Los swatches aparecen cuando haya referencias analizadas.</p>
-                )}
-              </div>
-              {visualReferenceAnalysisDirty ? (
-                <p className="text-[10px] leading-snug text-amber-900">
-                  Análisis actualizado en memoria — guarda el proyecto para conservarlo.
-                </p>
-              ) : null}
-            </div>
-          )}
-          {activeTab === "looks" && (
-            <div className="space-y-3">
-              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">Cápsulas visuales</p>
-              <p className="text-[11px] leading-relaxed text-zinc-600">
-                Looks visuales es la biblioteca de ADN por imagen. Cada cápsula conserva su propio mosaico y no modifica
-                Marca ni Proyecto automáticamente.
-              </p>
-              <div className="rounded-[5px] border border-violet-100 bg-violet-50/80 p-3 text-[11px] text-violet-950">
-                <p>{visualCapsules.length} cápsula(s) creadas.</p>
-                <p className="mt-1">{visualCapsules.filter((c) => c.analysisStatus === "ready").length} ready · {visualCapsules.filter((c) => c.analysisStatus === "error").length} con error.</p>
-              </div>
-            </div>
-          )}
-          {activeTab === "connected_nodes" && (
-            <div className="space-y-3">
-              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">Señales por nodo</p>
-              <ul className="space-y-2 text-[11px] text-zinc-700">
-                {brainClients.map((c) => {
-                  const tel = telemetryByNodeId[c.id];
-                  const pendN = pendingByNodeId.get(c.id) ?? 0;
-                  const { signalsLine, pendingLine, lastSignalLine } = connectedNodeSignalsCopy({
-                    summaryLine: tel?.summaryLine ?? null,
-                    lastAt: tel?.lastAt ?? null,
-                    pendingCount: pendN,
-                    expanded: true,
-                  });
-                  return (
-                    <li key={c.id} className="rounded-[5px] border border-zinc-200 bg-white px-3 py-2">
-                      <span className="font-bold text-zinc-900">{c.label}</span>
-                      <span className="text-zinc-500"> · {labelForBrainNodeSource(c.brainNodeType)}</span>
-                      <span className="mt-1 block text-[10px] text-zinc-600" title={BRAIN_RECENT_SIGNALS_TOOLTIP_ES}>
-                        {signalsLine}
-                      </span>
-                      {pendingLine ? (
-                        <span className="mt-0.5 block text-[10px] text-zinc-700" title={BRAIN_PENDING_QUEUE_TOOLTIP_ES}>
-                          {pendingLine}
-                        </span>
-                      ) : null}
-                      {lastSignalLine ? (
-                        <span className="mt-0.5 block text-[9px] text-zinc-500">{lastSignalLine}</span>
-                      ) : null}
-                    </li>
-                  );
-                })}
-                {brainClients.length === 0 && <li className="text-zinc-500">Sin nodos enlazados aún.</li>}
-              </ul>
-              {process.env.NODE_ENV === "development" ? (
-                <p className="text-[9px] leading-snug text-zinc-400">{BRAIN_TELEMETRY_EPHEMERAL_DEV_NOTE_ES}</p>
-              ) : null}
-            </div>
-          )}
-          {activeTab === "review" && (
-            <div className="space-y-3">
-              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">Filtrar origen</p>
-              <div className="flex flex-wrap gap-2">
-                {(
-                  [
-                    ["all", "Todos"],
-                    ["visual", "Visual / Imagen"],
-                    ["designer", "Designer"],
-                    ["photoroom", "Photoroom"],
-                    ["article", "Artículos"],
-                  ] as const
-                ).map(([id, label]) => (
-                  <button
-                    key={id}
-                    type="button"
-                    onClick={() => setReviewSourceFilter(id)}
-                    className={`rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-wide ${
-                      reviewSourceFilter === id
-                        ? "border-violet-700 bg-violet-700 text-white"
-                        : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-100"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-              <p className="text-[11px] leading-relaxed text-zinc-600">
-                {pendingFiltered.length} de {pendingLearnings.length} visibles con el filtro actual.
-              </p>
-            </div>
-          )}
-          {activeTab === "knowledge" && (
-            <div className="space-y-2">
-              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">Estado de análisis</p>
-              <p className="text-[12px] text-zinc-800">
-                {analyzedCount} fuentes analizadas de {assets.knowledge.documents.length} activas.
-              </p>
-              <p className="text-[11px] text-zinc-600">
-                La ingesta y el resumen están arriba del panel principal. Aquí revisas cada documento y el chat.
-              </p>
-            </div>
-          )}
-          {(activeTab === "voice" ||
-            activeTab === "personas" ||
-            activeTab === "messages" ||
-            activeTab === "facts") && (
-            <div className="space-y-2">
-              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">Modo editorial</p>
-              <p className="text-[11px] leading-relaxed text-zinc-600">
-                Estas vistas son para afinar detalle. El pulso del Brain está en «Resumen» y «Por revisar».
-              </p>
-            </div>
-          )}
-        </aside>
+        {renderBrainControlPanel(!isAtmosphereMode)}
 
         {signalModalClient && (
           <div

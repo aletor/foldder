@@ -13718,6 +13718,38 @@ export function FreehandStudioCanvas({
     [updateSelectedProp, applyStrokeColorWithVisibleWidth],
   );
 
+  const swapLeftToolbarFillAndStroke = useCallback(() => {
+    if (leftToolbarSwatchPreview.noVectorStyle || leftToolbarSwatchPreview.hideFillForLine) return;
+
+    const nextFill = leftToolbarSwatchPreview.strokeNone
+      ? "none"
+      : (normalizeHexColor(leftToolbarSwatchPreview.strokeHex) ?? leftToolbarSwatchPreview.strokeHex);
+    const nextStroke = leftToolbarSwatchPreview.fillNone
+      ? "none"
+      : (normalizeHexColor(leftToolbarSwatchPreview.fillHex) ?? leftToolbarSwatchPreview.fillHex);
+    const sel = selectedIdsRef.current;
+
+    setFillColor(nextFill);
+    setStrokeColor(nextStroke);
+    if (nextStroke !== "none") setStrokeWidth((w) => (w <= 0 ? 2 : w));
+
+    if (sel.size === 0) return;
+
+    setObjects((prev) => {
+      const next = prev.map((o) => {
+        if (!sel.has(o.id)) return o;
+        if (o.type === "booleanGroup" || o.type === "image") return o;
+        const strokeWidthPatch = nextStroke !== "none" && (o.strokeWidth ?? 0) <= 0 ? { strokeWidth: 2 } : {};
+        if (o.type === "textOnPath") {
+          return { ...o, fill: nextFill, stroke: nextStroke, ...strokeWidthPatch };
+        }
+        return { ...o, fill: solidFill(nextFill), stroke: nextStroke, ...strokeWidthPatch };
+      });
+      pushHistory(next, sel);
+      return next;
+    });
+  }, [leftToolbarSwatchPreview, pushHistory]);
+
   const closeLeftToolbarColorUI = useCallback(() => {
     leftToolbarEyeAbortRef.current?.abort();
     leftToolbarEyeAbortRef.current = null;
@@ -21430,59 +21462,75 @@ export function FreehandStudioCanvas({
           className="relative mt-1 flex w-full flex-col items-center"
           data-left-toolbar-swatch-dock
         >
-          <div className="relative h-[26px] w-[26px] shrink-0">
-            <button
-              type="button"
-              disabled={leftToolbarSwatchPreview.noVectorStyle}
-              onClick={openLeftToolbarColorPicker("stroke")}
-              {...(!leftToolbarSwatchPreview.noVectorStyle
-                ? { onDragOver: leftToolbarSwatchDragOver, onDrop: leftToolbarDropStroke }
-                : {})}
-              className={`absolute left-0 top-0 z-0 flex h-[18px] w-[18px] items-center justify-center rounded-[3px] border border-white/25 bg-[#2a2d33] shadow-sm transition hover:brightness-110 ${
-                leftToolbarSwatchPreview.noVectorStyle ? "cursor-not-allowed opacity-40" : ""
-              }`}
-              title="Trazo — elegir color o sin trazo"
-              aria-label="Color de trazo"
-              aria-expanded={leftToolbarColorTarget === "stroke"}
-            >
-              {leftToolbarSwatchPreview.strokeNone ? (
-                <span className="relative block h-[14px] w-[14px] overflow-hidden rounded-[2px] bg-white">
-                  <span className="absolute inset-y-0.5 left-1/2 w-0.5 -translate-x-1/2 rounded-full bg-red-500" />
-                </span>
-              ) : (
-                <span
-                  className="block h-[14px] w-[14px] rounded-[2px]"
-                  style={{ backgroundColor: leftToolbarSwatchPreview.strokeHex }}
-                />
-              )}
-            </button>
-            {!leftToolbarSwatchPreview.hideFillForLine && (
+          <div className="relative h-[28px] w-[40px] shrink-0">
+            <div className="absolute left-[2px] top-[1px] h-[26px] w-[26px]">
               <button
                 type="button"
                 disabled={leftToolbarSwatchPreview.noVectorStyle}
-                onClick={openLeftToolbarColorPicker("fill")}
+                onClick={openLeftToolbarColorPicker("stroke")}
                 {...(!leftToolbarSwatchPreview.noVectorStyle
-                  ? { onDragOver: leftToolbarSwatchDragOver, onDrop: leftToolbarDropFill }
+                  ? { onDragOver: leftToolbarSwatchDragOver, onDrop: leftToolbarDropStroke }
                   : {})}
-                className={`absolute bottom-0 right-0 z-10 flex h-[18px] w-[18px] items-center justify-center rounded-[3px] border-2 border-sky-500/45 bg-[#2a2d33] shadow-md transition hover:brightness-110 ${
+                className={`absolute left-0 top-0 z-0 flex h-[18px] w-[18px] items-center justify-center rounded-[3px] border border-white/25 bg-[#2a2d33] shadow-sm transition hover:brightness-110 ${
                   leftToolbarSwatchPreview.noVectorStyle ? "cursor-not-allowed opacity-40" : ""
                 }`}
-                title="Relleno — elegir color o sin relleno"
-                aria-label="Color de relleno"
-                aria-expanded={leftToolbarColorTarget === "fill"}
+                title="Trazo — elegir color o sin trazo"
+                aria-label="Color de trazo"
+                aria-expanded={leftToolbarColorTarget === "stroke"}
               >
-                {leftToolbarSwatchPreview.fillNone ? (
+                {leftToolbarSwatchPreview.strokeNone ? (
                   <span className="relative block h-[14px] w-[14px] overflow-hidden rounded-[2px] bg-white">
                     <span className="absolute inset-y-0.5 left-1/2 w-0.5 -translate-x-1/2 rounded-full bg-red-500" />
                   </span>
                 ) : (
                   <span
                     className="block h-[14px] w-[14px] rounded-[2px]"
-                    style={{ backgroundColor: leftToolbarSwatchPreview.fillHex }}
+                    style={{ backgroundColor: leftToolbarSwatchPreview.strokeHex }}
                   />
                 )}
               </button>
-            )}
+              {!leftToolbarSwatchPreview.hideFillForLine && (
+                <button
+                  type="button"
+                  disabled={leftToolbarSwatchPreview.noVectorStyle}
+                  onClick={openLeftToolbarColorPicker("fill")}
+                  {...(!leftToolbarSwatchPreview.noVectorStyle
+                    ? { onDragOver: leftToolbarSwatchDragOver, onDrop: leftToolbarDropFill }
+                    : {})}
+                  className={`absolute bottom-0 right-0 z-10 flex h-[18px] w-[18px] items-center justify-center rounded-[3px] border-2 border-sky-500/45 bg-[#2a2d33] shadow-md transition hover:brightness-110 ${
+                    leftToolbarSwatchPreview.noVectorStyle ? "cursor-not-allowed opacity-40" : ""
+                  }`}
+                  title="Relleno — elegir color o sin relleno"
+                  aria-label="Color de relleno"
+                  aria-expanded={leftToolbarColorTarget === "fill"}
+                >
+                  {leftToolbarSwatchPreview.fillNone ? (
+                    <span className="relative block h-[14px] w-[14px] overflow-hidden rounded-[2px] bg-white">
+                      <span className="absolute inset-y-0.5 left-1/2 w-0.5 -translate-x-1/2 rounded-full bg-red-500" />
+                    </span>
+                  ) : (
+                    <span
+                      className="block h-[14px] w-[14px] rounded-[2px]"
+                      style={{ backgroundColor: leftToolbarSwatchPreview.fillHex }}
+                    />
+                  )}
+                </button>
+              )}
+            </div>
+            <button
+              type="button"
+              disabled={leftToolbarSwatchPreview.noVectorStyle || leftToolbarSwatchPreview.hideFillForLine}
+              onClick={swapLeftToolbarFillAndStroke}
+              className={`absolute right-0 top-[5px] flex h-[16px] w-[16px] items-center justify-center rounded-full border border-white/[0.12] bg-white/[0.06] text-zinc-300 shadow-sm transition hover:border-white/25 hover:bg-white/[0.1] hover:text-white ${
+                leftToolbarSwatchPreview.noVectorStyle || leftToolbarSwatchPreview.hideFillForLine
+                  ? "cursor-not-allowed opacity-35"
+                  : ""
+              }`}
+              title="Intercambiar relleno y trazo"
+              aria-label="Intercambiar relleno y trazo"
+            >
+              <ArrowLeftRight className="h-2.5 w-2.5" strokeWidth={2.6} aria-hidden />
+            </button>
           </div>
         </div>
 
