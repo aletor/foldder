@@ -4,6 +4,10 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import { ChevronLeft, ChevronRight, ImageIcon, Loader2, RefreshCw, Trash2, AlertTriangle } from "lucide-react";
 import type { VisualDnaSlot } from "@/lib/brain/visual-dna-slot/types";
 import type { BrainVisualImageAnalysis, VisualCapsuleStatus } from "@/app/spaces/project-assets-metadata";
+import {
+  stableKnowledgeFileUrlFromMaybeUrl,
+  tryExtractKnowledgeFilesKeyFromUrl,
+} from "@/lib/s3-media-hydrate";
 
 type VisualCapsuleLibraryMeta = {
   id: string;
@@ -25,10 +29,21 @@ export type VisualDnaSlotsLibraryProps = {
   belowIngest?: boolean;
 };
 
-function thumb(src?: string) {
-  const u = src?.trim();
-  if (!u) return null;
-  return u;
+function tryExtractKnowledgeFilesKeyFromVisualDnaUrl(value: string | null | undefined): string | null {
+  const raw = value?.trim();
+  return raw ? tryExtractKnowledgeFilesKeyFromUrl(raw) : null;
+}
+
+function visualDnaSlotSourceS3Key(slot: VisualDnaSlot): string | null {
+  return slot.sourceS3Path?.trim() || tryExtractKnowledgeFilesKeyFromVisualDnaUrl(slot.sourceImageUrl);
+}
+
+function visualDnaSlotMosaicS3Key(slot: VisualDnaSlot): string | null {
+  return slot.mosaic.s3Path?.trim() || tryExtractKnowledgeFilesKeyFromVisualDnaUrl(slot.mosaic.imageUrl);
+}
+
+function displayVisualDnaImageUrl(signedUrl: string | undefined, rawUrl: string | undefined): string | null {
+  return stableKnowledgeFileUrlFromMaybeUrl(rawUrl) || signedUrl?.trim() || null;
 }
 
 const VISUAL_DNA_S3_URL_TTL_MS = 4 * 60 * 1000;
@@ -166,12 +181,20 @@ export function VisualDnaSlotsLibrary({
 }: VisualDnaSlotsLibraryProps) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [signedMosaicUrls, setSignedMosaicUrls] = useState<Record<string, string>>({});
+  const [signedSourceUrls, setSignedSourceUrls] = useState<Record<string, string>>({});
   const scrollerRef = useRef<HTMLUListElement>(null);
 
   const mosaicS3Signature = useMemo(
     () =>
       slots
-        .map((slot) => `${slot.id}:${slot.mosaic.s3Path ?? ""}:${slot.mosaic.imageUrl ? "url" : ""}`)
+        .map((slot) => `${slot.id}:${visualDnaSlotMosaicS3Key(slot) ?? ""}`)
+        .join("|"),
+    [slots],
+  );
+  const sourceS3Signature = useMemo(
+    () =>
+      slots
+        .map((slot) => `${slot.id}:${visualDnaSlotSourceS3Key(slot) ?? ""}`)
         .join("|"),
     [slots],
   );
@@ -179,8 +202,8 @@ export function VisualDnaSlotsLibrary({
   useEffect(() => {
     let cancelled = false;
     const missing = slots
-      .map((slot) => ({ id: slot.id, key: slot.mosaic.s3Path?.trim(), hasUrl: Boolean(slot.mosaic.imageUrl?.trim()) }))
-      .filter((row): row is { id: string; key: string; hasUrl: boolean } => Boolean(row.key) && !row.hasUrl && !signedMosaicUrls[row.id]);
+      .map((slot) => ({ id: slot.id, key: visualDnaSlotMosaicS3Key(slot) }))
+      .filter((row): row is { id: string; key: string } => Boolean(row.key) && !signedMosaicUrls[row.id]);
     if (!missing.length) return;
     void Promise.all(
       missing.map(async (row) => {
@@ -202,6 +225,32 @@ export function VisualDnaSlotsLibrary({
     };
   }, [mosaicS3Signature, signedMosaicUrls, slots]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const missing = slots
+      .map((slot) => ({ id: slot.id, key: visualDnaSlotSourceS3Key(slot) }))
+      .filter((row): row is { id: string; key: string } => Boolean(row.key) && !signedSourceUrls[row.id]);
+    if (!missing.length) return;
+    void Promise.all(
+      missing.map(async (row) => {
+        const url = await presignVisualDnaS3Key(row.key);
+        return url ? { id: row.id, url } : null;
+      }),
+    ).then((rows) => {
+      if (cancelled) return;
+      const valid = rows.filter((row): row is { id: string; url: string } => Boolean(row));
+      if (!valid.length) return;
+      setSignedSourceUrls((prev) => {
+        const next = { ...prev };
+        for (const row of valid) next[row.id] = row.url;
+        return next;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [sourceS3Signature, signedSourceUrls, slots]);
+
   const scrollSlots = useCallback((dir: -1 | 1) => {
     const el = scrollerRef.current;
     if (!el) return;
@@ -215,7 +264,7 @@ export function VisualDnaSlotsLibrary({
     ? analysisStatusBySourceDocumentId?.[open.sourceDocumentId]
     : undefined;
   const openAnalysisReady = !openAnalysisStatus || openAnalysisStatus === "analyzed";
-  const openHasMosaic = Boolean(open?.mosaic.imageUrl?.trim() || open?.mosaic.s3Path?.trim());
+  const openHasMosaic = Boolean(open && (open.mosaic.imageUrl?.trim() || visualDnaSlotMosaicS3Key(open)));
 
   return (
     <div
@@ -256,14 +305,20 @@ export function VisualDnaSlotsLibrary({
             className="flex min-h-0 min-w-0 flex-1 snap-x snap-mandatory gap-3 overflow-x-auto overflow-y-visible scroll-smooth pb-1.5 pt-0.5 [scrollbar-width:thin]"
           >
           {slots.map((slot) => {
-            const src = thumb(slot.sourceImageUrl);
-            const mos = thumb(slot.mosaic.imageUrl) || thumb(signedMosaicUrls[slot.id]);
+            const src = displayVisualDnaImageUrl(
+              signedSourceUrls[slot.id],
+              slot.sourceImageUrl || visualDnaSlotSourceS3Key(slot) || undefined,
+            );
+            const mos = displayVisualDnaImageUrl(
+              signedMosaicUrls[slot.id],
+              slot.mosaic.imageUrl || visualDnaSlotMosaicS3Key(slot) || undefined,
+            );
             const busy = Boolean(busySlotIds[slot.id]);
             const analysisStatus = slot.sourceDocumentId
               ? analysisStatusBySourceDocumentId?.[slot.sourceDocumentId]
               : undefined;
             const capsuleMeta = slot.sourceDocumentId ? capsuleMetaBySourceDocumentId?.[slot.sourceDocumentId] : undefined;
-            const canGenerateFromSourceOnly = Boolean(capsuleMeta && (slot.sourceImageUrl?.trim() || src));
+            const canGenerateFromSourceOnly = Boolean(capsuleMeta && (src || slot.sourceImageUrl?.trim() || visualDnaSlotSourceS3Key(slot)));
             const analysisReady = !analysisStatus || analysisStatus === "analyzed" || canGenerateFromSourceOnly;
             const statusDetail =
               busy
@@ -473,9 +528,9 @@ export function VisualDnaSlotsLibrary({
                 <div className="lg:col-span-4">
                   <p className="mb-1 text-[9px] font-black uppercase text-zinc-500">Imagen fuente</p>
                   <div className="overflow-hidden rounded-[5px] border border-zinc-200 bg-zinc-50">
-                    {thumb(open.sourceImageUrl) ? (
+                    {displayVisualDnaImageUrl(signedSourceUrls[open.id], open.sourceImageUrl || visualDnaSlotSourceS3Key(open) || undefined) ? (
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img src={open.sourceImageUrl} alt="" className="w-full object-contain" />
+                      <img src={displayVisualDnaImageUrl(signedSourceUrls[open.id], open.sourceImageUrl || visualDnaSlotSourceS3Key(open) || undefined) || ""} alt="" className="w-full object-contain" />
                     ) : (
                       <p className="p-4 text-[11px] text-zinc-500">Sin vista previa (sube con data URL o URL https).</p>
                     )}
@@ -484,9 +539,9 @@ export function VisualDnaSlotsLibrary({
                 <div className="lg:col-span-8">
                   <p className="mb-1 text-[9px] font-black uppercase text-zinc-500">Mosaico de sugerencias</p>
                   <div className="overflow-hidden rounded-[5px] border border-zinc-200 bg-zinc-50">
-                    {thumb(open.mosaic.imageUrl) || thumb(signedMosaicUrls[open.id]) ? (
+                    {displayVisualDnaImageUrl(signedMosaicUrls[open.id], open.mosaic.imageUrl || visualDnaSlotMosaicS3Key(open) || undefined) ? (
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img src={thumb(open.mosaic.imageUrl) || thumb(signedMosaicUrls[open.id]) || ""} alt="Mosaico" className="w-full object-contain" />
+                      <img src={displayVisualDnaImageUrl(signedMosaicUrls[open.id], open.mosaic.imageUrl || visualDnaSlotMosaicS3Key(open) || undefined) || ""} alt="Mosaico" className="w-full object-contain" />
                     ) : (
                       <p className="p-4 text-[11px] text-zinc-500">Sin mosaico generado.</p>
                     )}

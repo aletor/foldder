@@ -348,6 +348,7 @@ export function createVisualDnaSlotFromImage(input: {
   const secondary = [...(input.analysis.colorPalette?.secondary ?? [])].filter(Boolean).slice(0, 3);
   const paletteColors = [...new Set([...dom, ...secondary])].slice(0, 6);
   const srcUrl = input.ref.imageUrlForVision?.trim();
+  const srcS3Path = input.ref.s3Path?.trim();
   const subjectTokens = splitVisualNoteTokens([input.analysis.subject, ...(input.analysis.subjectTags ?? [])]);
   const compositionTokens = splitVisualNoteTokens(input.analysis.composition ?? []);
   const styleTokens = splitVisualNoteTokens([
@@ -382,6 +383,7 @@ export function createVisualDnaSlotFromImage(input: {
     sourceImageId: input.ref.id,
     sourceDocumentId: input.ref.id,
     ...(srcUrl ? { sourceImageUrl: srcUrl } : {}),
+    ...(srcS3Path ? { sourceS3Path: srcS3Path } : {}),
     createdAt: now,
     brainVersion: bv,
     status: "pending" as const,

@@ -317,6 +317,10 @@ const DEFAULT_VISUAL_AVOID: readonly string[] = [
   "futuristic SaaS dashboard as hero",
   "generic glass office",
   "team smiling at tablet or screen",
+  "three people around a wooden table",
+  "wooden meeting table with scattered documents",
+  "home-office meeting scene with posters on the wall",
+  "placing the company logo on generic office walls or folders",
   "over-polished startup stock photo",
   "blue tech gel lighting as main mood",
   "sterile empty workspace",
@@ -547,6 +551,7 @@ export function buildBrainVisualPromptContext(
 ): BrainVisualPromptContextResult {
   const strategy = assets.strategy;
   const layer = strategy.visualReferenceAnalysis;
+  const hasGeneratedBrandMosaic = Boolean(layer?.dnaCollageImageDataUrl?.trim());
   const rawAnalyses = layer?.analyses ?? [];
   const analyses = rawAnalyses.filter((a) => !isExcludedFromVisualDna(a));
   const trusted = analyses.filter(isTrustedRemoteVisionAnalysis).filter(analysisQualityOk);
@@ -777,6 +782,11 @@ export function buildBrainVisualPromptContext(
   }
 
   const directionParts: string[] = [];
+  if (hasGeneratedBrandMosaic) {
+    directionParts.push(
+      "PRIORIDAD 0 — Existe un MOSAICO GENERAL DE MARCA generado desde Brain. Cuando el nodo adjunte esa imagen como referencia, úsala como fuente visual dominante: composición, jerarquía gráfica, paleta, luz, texturas, objetos y tipo de escena deben parecer una extensión directa del mosaico. No sustituyas ese lenguaje por escenas corporativas genéricas.",
+    );
+  }
   if (confirmed.length) {
     directionParts.push(
       `PRIORIDAD 1 — Patrones visuales confirmados por el usuario (imperativos sobre corporateContext y claims genéricos): ${confirmed.slice(0, 20).join(", ")}.`,
@@ -1285,7 +1295,7 @@ export function composeBrainDesignerImagePrompt(params: {
     advancedLongPrompt: params.advancedLongPrompt,
   });
 
-  const prompt = `${finalized.prompt}\n\nNota: si hay logo de referencia en la petición, usar solo ese logotipo; sin texto largo en la imagen.`;
+  const prompt = `${finalized.prompt}\n\nNota: si la petición adjunta un mosaico general de marca, úsalo como referencia visual dominante y no como simple moodboard secundario. Si hay logo de referencia, usar solo ese logotipo y solo de forma sutil; sin texto largo en la imagen.`;
 
   const corp = (ctx.brandMessageContext ?? "").trim();
 

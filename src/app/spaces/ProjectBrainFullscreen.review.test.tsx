@@ -157,8 +157,7 @@ describe("ProjectBrainFullscreen — pestaña Por revisar", () => {
       />,
     );
     const dialog = await screen.findByRole("dialog");
-    const asideHeading = within(dialog).getAllByText(/^Identidad visual$/i)[0];
-    expect(asideHeading).toBeInTheDocument();
+    expect(within(dialog).getByRole("heading", { name: /^Brain$/i })).toBeInTheDocument();
     await user.click(screen.getByTestId("brain-tab-sources"));
     await user.click(screen.getByTestId("brain-subtab-knowledge"));
     expect(await within(dialog).findByText(/Brief de marca\.txt/i)).toBeInTheDocument();

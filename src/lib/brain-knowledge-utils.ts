@@ -26,6 +26,7 @@ export type BrainDnaExtraction = {
     protagonist: string[];
     environment: string[];
     textures: string[];
+    colors: string[];
     people: string[];
     tone: string[];
     evidence_text: string[];
@@ -52,6 +53,7 @@ const DNA_JSON_SHAPE = `{
     "protagonist": [],
     "environment": [],
     "textures": [],
+    "colors": [],
     "people": [],
     "tone": [],
     "evidence_text": []
@@ -79,6 +81,7 @@ function defaultDna(): BrainDnaExtraction {
       protagonist: [],
       environment: [],
       textures: [],
+      colors: [],
       people: [],
       tone: [],
       evidence_text: [],
@@ -173,6 +176,7 @@ function normalizeVisualSignals(input: unknown): NonNullable<BrainDnaExtraction[
     protagonist: normalizeStringArray(obj.protagonist, 12),
     environment: normalizeStringArray(obj.environment, 12),
     textures: normalizeStringArray(obj.textures, 12),
+    colors: normalizeStringArray(obj.colors, 16),
     people: normalizeStringArray(obj.people, 12),
     tone: normalizeStringArray(obj.tone, 10),
     evidence_text: normalizeStringArray(obj.evidence_text, 20),
@@ -433,6 +437,7 @@ Rules:
    - protagonist: what is visually central (product/model/object)
    - environment: scene/place/style
    - textures: materials/surfaces/colors/patterns
+   - colors: exact hex colors when visible or inferable, plus short color names if no hex is safe
    - people: number/type/action/posture/mood
    - tone: brand mood and art direction
 3) Keep values evidence-based and specific; avoid vague generic text.

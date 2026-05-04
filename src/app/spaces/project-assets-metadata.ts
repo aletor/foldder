@@ -84,6 +84,32 @@ export type ProjectBrandKit = {
   colorAccent: string | null;
 };
 
+export type BrainDiscoveredBrandAssetKind = "logo" | "color";
+
+export type BrainDiscoveredBrandAsset = {
+  id: string;
+  kind: BrainDiscoveredBrandAssetKind;
+  label: string;
+  value: string;
+  imageUrl?: string;
+  hex?: string;
+  sourceAssetId?: string;
+  sourceDocumentId?: string;
+  sourceName?: string;
+  confidence?: number;
+  discoveredAt: string;
+};
+
+export type BrainVisualGeneralLook = {
+  /** Referencias visuales retiradas del LOOK general sin borrar la fuente original. */
+  excludedReferenceSourceAssetIds?: string[];
+  /** Activos de marca detectados automáticamente y aceptados para el LOOK general. */
+  discoveredBrandAssets?: BrainDiscoveredBrandAsset[];
+  /** IDs de candidatos automáticos que el usuario quitó de la imagen de marca descubierta. */
+  excludedDiscoveredBrandAssetIds?: string[];
+  updatedAt?: string;
+};
+
 /** Memoria explícita solo para este proyecto (p. ej. tras KEEP_IN_PROJECT). */
 export type BrainProjectMemoryEntry = {
   id: string;
@@ -477,6 +503,8 @@ export type BrainStrategy = {
    * No sustituyen ni contaminan automáticamente `brandVisualDna`, `contentDna` ni `visualReferenceAnalysis`.
    */
   visualCapsules?: VisualCapsule[];
+  /** Capa editable del LOOK general: referencias globales + marca descubierta. */
+  visualGeneralLook?: BrainVisualGeneralLook;
   /**
    * IDs de documentos de conocimiento (imagen) cuyo slot se eliminó a mano.
    * El sync automático no vuelve a crear slots para estos documentos mientras existan en el pozo.
@@ -717,6 +745,77 @@ const VISUAL_CAPSULE_SUGGESTION_KINDS: readonly VisualCapsuleSuggestionKind[] = 
   "hero",
   "palette",
 ];
+
+function normalizeDiscoveredBrandAsset(raw: unknown): BrainDiscoveredBrandAsset | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const kind = o.kind === "logo" || o.kind === "color" ? o.kind : null;
+  if (!kind) return null;
+  const id = typeof o.id === "string" && o.id.trim() ? o.id.trim().slice(0, 180) : "";
+  const label = typeof o.label === "string" && o.label.trim() ? o.label.trim().slice(0, 180) : "";
+  const value = typeof o.value === "string" && o.value.trim() ? o.value.trim().slice(0, 120000) : "";
+  if (!id || !value) return null;
+  const hex = typeof o.hex === "string" && /^#[0-9A-Fa-f]{6}$/.test(o.hex) ? o.hex : undefined;
+  const imageUrl = typeof o.imageUrl === "string" && o.imageUrl.trim() ? o.imageUrl.trim().slice(0, 120000) : undefined;
+  return {
+    id,
+    kind,
+    label: label || (kind === "logo" ? "Logo detectado" : "Color detectado"),
+    value,
+    ...(imageUrl ? { imageUrl } : {}),
+    ...(hex ? { hex } : {}),
+    ...(typeof o.sourceAssetId === "string" && o.sourceAssetId.trim()
+      ? { sourceAssetId: o.sourceAssetId.trim().slice(0, 180) }
+      : {}),
+    ...(typeof o.sourceDocumentId === "string" && o.sourceDocumentId.trim()
+      ? { sourceDocumentId: o.sourceDocumentId.trim().slice(0, 180) }
+      : {}),
+    ...(typeof o.sourceName === "string" && o.sourceName.trim() ? { sourceName: o.sourceName.trim().slice(0, 240) } : {}),
+    ...(typeof o.confidence === "number" && Number.isFinite(o.confidence)
+      ? { confidence: Math.max(0, Math.min(1, o.confidence)) }
+      : {}),
+    discoveredAt: typeof o.discoveredAt === "string" && o.discoveredAt.trim() ? o.discoveredAt.trim() : new Date().toISOString(),
+  };
+}
+
+function normalizeVisualGeneralLook(raw: unknown): BrainVisualGeneralLook | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const o = raw as Record<string, unknown>;
+  const discoveredBrandAssets = Array.isArray(o.discoveredBrandAssets)
+    ? o.discoveredBrandAssets
+        .map(normalizeDiscoveredBrandAsset)
+        .filter((x): x is BrainDiscoveredBrandAsset => Boolean(x))
+        .slice(0, 80)
+    : [];
+  const excludedDiscoveredBrandAssetIds = Array.isArray(o.excludedDiscoveredBrandAssetIds)
+    ? Array.from(
+        new Set(
+          o.excludedDiscoveredBrandAssetIds
+            .filter((x): x is string => typeof x === "string")
+            .map((x) => x.trim())
+            .filter(Boolean)
+            .slice(0, 160),
+        ),
+      )
+    : [];
+  const excludedReferenceSourceAssetIds = Array.isArray(o.excludedReferenceSourceAssetIds)
+    ? Array.from(
+        new Set(
+          o.excludedReferenceSourceAssetIds
+            .filter((x): x is string => typeof x === "string")
+            .map((x) => x.trim())
+            .filter(Boolean)
+            .slice(0, 300),
+        ),
+      )
+    : [];
+  const out: BrainVisualGeneralLook = {};
+  if (excludedReferenceSourceAssetIds.length) out.excludedReferenceSourceAssetIds = excludedReferenceSourceAssetIds;
+  if (discoveredBrandAssets.length) out.discoveredBrandAssets = discoveredBrandAssets;
+  if (excludedDiscoveredBrandAssetIds.length) out.excludedDiscoveredBrandAssetIds = excludedDiscoveredBrandAssetIds;
+  if (typeof o.updatedAt === "string" && o.updatedAt.trim()) out.updatedAt = o.updatedAt.trim();
+  return Object.keys(out).length ? out : undefined;
+}
 
 function normalizeVisualCapsuleSuggestion(raw: unknown, fallbackKind: VisualCapsuleSuggestionKind): VisualCapsuleSuggestion | null {
   if (!raw || typeof raw !== "object") return null;
@@ -1570,6 +1669,11 @@ export function normalizeProjectAssets(raw: unknown): ProjectAssetsMetadata {
       else delete strategy.visualCapsules;
     }
     {
+      const visualGeneralLook = normalizeVisualGeneralLook(s.visualGeneralLook);
+      if (visualGeneralLook) strategy.visualGeneralLook = visualGeneralLook;
+      else delete strategy.visualGeneralLook;
+    }
+    {
       const docIds = new Set(knowledge.documents.map((d) => d.id));
       const suppressed = normalizeVisualDnaSlotSuppressedSourceIds(s.visualDnaSlotSuppressedSourceIds, docIds);
       if (suppressed.length) strategy.visualDnaSlotSuppressedSourceIds = suppressed;
@@ -1650,6 +1754,13 @@ export function summarizeProjectAssetsForAssistant(raw: unknown): string {
     `Voice examples: ${a.strategy.voiceExamples.length}.`,
     `Facts & evidence: ${a.strategy.factsAndEvidence.length}.`,
     `Visual style: protagonist="${a.strategy.visualStyle.protagonist.description || "-"}"; environment="${a.strategy.visualStyle.environment.description || "-"}"; textures="${a.strategy.visualStyle.textures.description || "-"}"; people="${a.strategy.visualStyle.people.description || "-"}".`,
+    (() => {
+      const discovered = a.strategy.visualGeneralLook?.discoveredBrandAssets ?? [];
+      const colors = discovered.filter((x) => x.kind === "color").map((x) => x.hex ?? x.value).slice(0, 8);
+      const logos = discovered.filter((x) => x.kind === "logo").length;
+      if (!colors.length && !logos) return "";
+      return `Discovered brand image: ${logos} logo candidate(s), colors ${colors.join(", ") || "none"}.`;
+    })(),
     (() => {
       const v = a.strategy.visualReferenceAnalysis;
       const n = v?.analyses?.length ?? 0;

@@ -16,7 +16,6 @@ export const s3Client = new S3Client({
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || "",
   },
 });
-console.log("[S3 Utils] Client region:", AWS_REGION);
 
 export const BUCKET_NAME = process.env.AWS_S3_BUCKET_NAME || "content-engine-ai-docs-832666711966";
 

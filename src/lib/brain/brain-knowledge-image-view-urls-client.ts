@@ -1,6 +1,7 @@
 import type { KnowledgeDocumentEntry, ProjectAssetsMetadata } from "@/app/spaces/project-assets-metadata";
 import { normalizeVisualDnaSlots } from "@/lib/brain/visual-dna-slot/normalize";
 import { readResponseJson } from "@/lib/read-response-json";
+import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
 
 function isKnowledgeImageDoc(d: KnowledgeDocumentEntry): boolean {
   const mime = (d.mime ?? "").toLowerCase();
@@ -14,10 +15,6 @@ function hasVisionReadyUrl(d: KnowledgeDocumentEntry): boolean {
   if (typeof d.dataUrl === "string" && d.dataUrl.startsWith("data:image")) return true;
   if (typeof d.originalSourceUrl === "string" && /^https:\/\//i.test(d.originalSourceUrl.trim())) return true;
   return false;
-}
-
-function hasHttpsUrl(url: unknown): boolean {
-  return typeof url === "string" && /^https:\/\//i.test(url.trim());
 }
 
 const VIEW_URL_TTL_MS = 5 * 60 * 1000;
@@ -77,13 +74,15 @@ export async function hydrateKnowledgeImageDocumentsWithViewUrlsClient(
     normalizeVisualDnaSlots(assets.strategy.visualDnaSlots).map(async (slot) => {
       let next = slot;
 
-      const sourceKey = slot.sourceS3Path?.trim();
+      const sourceKey =
+        slot.sourceS3Path?.trim() || tryExtractKnowledgeFilesKeyFromUrl(slot.sourceImageUrl ?? "") || undefined;
       if (sourceKey) {
         const sourceUrl = await fetchSignedViewUrl(sourceKey);
-        if (sourceUrl) next = { ...next, sourceImageUrl: sourceUrl };
+        if (sourceUrl) next = { ...next, sourceImageUrl: sourceUrl, sourceS3Path: sourceKey };
       }
 
-      const mosaicKey = slot.mosaic?.s3Path?.trim();
+      const mosaicKey =
+        slot.mosaic?.s3Path?.trim() || tryExtractKnowledgeFilesKeyFromUrl(slot.mosaic?.imageUrl ?? "") || undefined;
       if (mosaicKey) {
         const mosaicUrl = await fetchSignedViewUrl(mosaicKey);
         if (mosaicUrl) {
@@ -92,6 +91,7 @@ export async function hydrateKnowledgeImageDocumentsWithViewUrlsClient(
             mosaic: {
               ...next.mosaic,
               imageUrl: mosaicUrl,
+              s3Path: mosaicKey,
             },
           };
         }

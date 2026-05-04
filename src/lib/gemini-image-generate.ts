@@ -327,8 +327,8 @@ export async function geminiImageGenerate(
       inputTokens: 0,
       outputTokens: 0,
       totalTokens: 0,
-      costUsd: estimateGeminiImageGenerationUsd(String(modelKey)),
-      note: "Imagen sin usageMetadata en respuesta (coste estimado por generación)",
+      costUsd: estimateGeminiImageGenerationUsd(String(modelKey), resInput),
+      note: `Imagen sin usageMetadata en respuesta (coste estimado por generación, resolución ${resInput})`,
     });
   }
 

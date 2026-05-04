@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import type { BrainAnalysisOrigin, BrainExtractedContext, BrainExtractedContextSourceType } from "./brain-creative-memory-types";
+import type { BrainExtractedContext, BrainExtractedContextSourceType } from "./brain-creative-memory-types";
 import { BRAIN_EXTRACTED_CONTEXT_SCHEMA_VERSION } from "./brain-creative-memory-types";
 import { buildEmbeddingTextFromExtractedContext, normalizeBrainExtractedContext, parseBrainExtractedContext } from "./brain-extracted-context";
 

@@ -50,17 +50,35 @@ export function estimateGeminiUsd(
   return (inputTokens * pi + outputTokens * po) / 1_000_000;
 }
 
-/** Coste fijo por generación de imagen cuando no hay usageMetadata de tokens. */
-export function estimateGeminiImageGenerationUsd(modelKey: string): number {
-  switch (modelKey) {
-    case "pro3":
-      return 0.12;
-    case "flash25":
-      return 0.02;
-    case "flash31":
-    default:
-      return 0.05;
+function normalizeGeminiImageResolution(resolution: string | undefined): "0.5k" | "1k" | "2k" | "4k" {
+  const r = (resolution || "").trim().toLowerCase();
+  if (r === "0.5k" || r === "512" || r === "512px" || r === "0.5") return "0.5k";
+  if (r === "1k" || r === "1024" || r === "1024px") return "1k";
+  if (r === "4k" || r === "4096" || r === "4096px") return "4k";
+  return "2k";
+}
+
+/** Coste por generación de imagen cuando no hay usageMetadata de tokens. */
+export function estimateGeminiImageGenerationUsd(modelKey: string, resolution?: string): number {
+  const m = (modelKey || "").trim().toLowerCase();
+  if (m === "pro3" || m.includes("3-pro")) return 0.12;
+  if (m === "flash25" || m.includes("2.5-flash-image")) return 0.02;
+
+  if (m === "flash31" || m.includes("3.1-flash-image")) {
+    switch (normalizeGeminiImageResolution(resolution)) {
+      case "0.5k":
+        return 0.045;
+      case "1k":
+        return 0.067;
+      case "4k":
+        return 0.151;
+      case "2k":
+      default:
+        return 0.101;
+    }
   }
+
+  return 0.101;
 }
 
 /** Veo: coste orientativo por segundo de salida (sin breakdown de tokens en la API). */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { BrainVisualImageAnalysis } from "@/app/spaces/project-assets-metadata";
+import type { AggregatedVisualPatterns, BrainVisualImageAnalysis } from "@/app/spaces/project-assets-metadata";
 import type { BrainVisualAssetRef } from "@/lib/brain/brain-visual-analysis";
 import { computeBrainVisualDnaCollageFingerprint } from "./brain-visual-dna-collage-nano";
 import { buildBrainVisualDnaCollageModel } from "./brain-visual-dna-collage";
@@ -49,7 +49,10 @@ function analyzed(partial: Partial<BrainVisualImageAnalysis>): BrainVisualImageA
 
 describe("buildBrainVisualDnaCollageModel", () => {
   it("returns empty slots without analyzed rows", () => {
-    const m = buildBrainVisualDnaCollageModel([], { dominantPalette: ["#000000"], narrativeSummary: "" } as any);
+    const m = buildBrainVisualDnaCollageModel([], {
+      dominantPalette: ["#000000"],
+      narrativeSummary: "",
+    } as AggregatedVisualPatterns);
     expect(m.sourceCount).toBe(0);
     expect(m.slots.every((s) => s.imageUrl === null)).toBe(true);
   });
@@ -76,7 +79,7 @@ describe("buildBrainVisualDnaCollageModel", () => {
         }),
       ),
     ];
-    const agg = {
+    const agg: AggregatedVisualPatterns = {
       dominantPalette: ["#111111", "#222222"],
       narrativeSummary: "x",
       recurringStyles: [],
@@ -89,7 +92,7 @@ describe("buildBrainVisualDnaCollageModel", () => {
       implicitBrandMessages: [],
       countsByClassification: {},
       excludedFromVisualDnaCount: 0,
-    } as any;
+    };
     const m = buildBrainVisualDnaCollageModel(rows, agg);
     expect(m.sourceCount).toBe(2);
     const hero = m.slots.find((s) => s.id === "hero");

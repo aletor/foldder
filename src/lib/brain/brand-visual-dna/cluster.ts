@@ -3,14 +3,6 @@ import { BRAND_VISUAL_DNA_EMBEDDING_DIM, buildVisualFeatureEmbedding, cosineSimi
 
 type LabeledVec = { id: string; vec: number[] };
 
-function vecAdd(a: number[], b: number[]): number[] {
-  return a.map((x, i) => x + (b[i] ?? 0));
-}
-
-function vecScale(a: number[], s: number): number[] {
-  return a.map((x) => x * s);
-}
-
 function nearestCentroid(vec: number[], centroids: number[][]): number {
   let best = 0;
   let bestSim = -Infinity;

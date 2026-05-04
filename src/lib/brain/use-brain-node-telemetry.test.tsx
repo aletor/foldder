@@ -6,7 +6,12 @@ import { SpacesActiveProjectIdContext } from "@/contexts/SpacesActiveProjectIdCo
 import { useBrainNodeTelemetry } from "./use-brain-node-telemetry";
 import type { TelemetryBatch } from "./brain-telemetry";
 
-const syncMock = vi.hoisted(() => vi.fn(async (_args: unknown) => ({ ok: true })));
+const syncMock = vi.hoisted(() =>
+  vi.fn(async (args: unknown) => {
+    void args;
+    return { ok: true };
+  }),
+);
 
 vi.mock("./brain-telemetry-client", () => ({
   syncNodeTelemetryViaApi: (args: unknown) => syncMock(args),

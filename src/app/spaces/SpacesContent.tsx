@@ -207,6 +207,39 @@ import {
   useSpacesCanvasKeyboard,
 } from "./hooks";
 
+function preserveBrainVisualCollageMetadata(
+  incoming: Record<string, unknown>,
+  current: Record<string, unknown>,
+): Record<string, unknown> {
+  const currentAssets = current.assets as Record<string, unknown> | undefined;
+  const currentStrategy = currentAssets?.strategy as Record<string, unknown> | undefined;
+  const currentVisual = currentStrategy?.visualReferenceAnalysis as Record<string, unknown> | undefined;
+  const currentCollage = typeof currentVisual?.dnaCollageImageDataUrl === "string" ? currentVisual.dnaCollageImageDataUrl : "";
+  if (!currentCollage.trim()) return incoming;
+
+  const incomingAssets = incoming.assets as Record<string, unknown> | undefined;
+  const incomingStrategy = incomingAssets?.strategy as Record<string, unknown> | undefined;
+  const incomingVisual = incomingStrategy?.visualReferenceAnalysis as Record<string, unknown> | undefined;
+  const incomingCollage = typeof incomingVisual?.dnaCollageImageDataUrl === "string" ? incomingVisual.dnaCollageImageDataUrl : "";
+  if (incomingCollage.trim()) return incoming;
+
+  return {
+    ...incoming,
+    assets: {
+      ...(incomingAssets ?? {}),
+      strategy: {
+        ...(incomingStrategy ?? {}),
+        visualReferenceAnalysis: {
+          ...(incomingVisual ?? {}),
+          dnaCollageImageDataUrl: currentVisual?.dnaCollageImageDataUrl,
+          dnaCollageSourceFingerprint: currentVisual?.dnaCollageSourceFingerprint,
+          dnaCollageGeneratedAt: currentVisual?.dnaCollageGeneratedAt,
+        },
+      },
+    },
+  };
+}
+
 function newLocalWorkspaceScopeId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
@@ -3295,7 +3328,8 @@ export function SpacesContent() {
         setSpacesMap(spacesToSave as Record<string, unknown>);
       }
       if (metadataVersionRef.current === metadataVersionAtSaveStart) {
-        setMetadata((savedProject.metadata || projectToSave.metadata) as Record<string, unknown>);
+        const serverMetadata = (savedProject.metadata || projectToSave.metadata) as Record<string, unknown>;
+        setMetadata((current: Record<string, unknown>) => preserveBrainVisualCollageMetadata(serverMetadata, current));
         setVisualReferenceAnalysisDirty(false);
       } else {
         console.info(

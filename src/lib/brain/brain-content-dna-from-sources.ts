@@ -107,8 +107,9 @@ export function buildContentDnaFromBrainSources(input: {
   if (approvedFromFacts.length) {
     evidence.push(evidenceFrom("document", "Claims aprobados anclados a factsAndEvidence verificados.", 0.72, bv));
   }
-  topicsFromDocs.length &&
+  if (topicsFromDocs.length) {
     evidence.push(evidenceFrom("analysis", "Temas inferidos desde extractedContextStructured (revisar antes de publicar).", 0.42, bv));
+  }
 
   const inferredBoost = topicsFromDocs.length > 0 ? 0.08 : 0;
   const confidence = Math.min(0.88, 0.48 + Math.min(0.22, approvedFromFacts.length * 0.03) + inferredBoost);

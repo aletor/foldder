@@ -311,11 +311,14 @@ export function joinBlob(input: BrainVisualTerritoryInput): string {
   return parts.join(" ").toLowerCase();
 }
 
+function countMatches(blob: string, rx: RegExp): number {
+  return [...blob.matchAll(rx)].length;
+}
+
 function scoreSport(blob: string, signals: VisualSemanticSignals): number {
   const rx =
     /\b(athlete|atleta|sport|deporte|running|training|entren|football|fútbol|soccer|basket|baloncesto|tennis|golf|performance|rendimiento|movement|movimiento|gym|gimnasio|court|cancha|pista|track|sneakers|zapatillas|calzado|jersey|camiseta|nike|adidas|swoosh|marathon|sprint|warm|stretch|fitness|workout|olympic|nba|fifa|sportswear|equipo deportivo|ropa deportiva|dynamic|dinámic|action shot|hero product|product hero)\b/gi;
-  let m = 0;
-  for (const _ of blob.matchAll(rx)) m += 2;
+  let m = countMatches(blob, rx) * 2;
   if (/\bjust do it\b/i.test(blob)) m += 3;
   if (signals.spaceSignals.sport) m += 5;
   if (signals.objectSignals.sportObjects) m += 4;
@@ -327,8 +330,7 @@ function scoreSport(blob: string, signals: VisualSemanticSignals): number {
 function scoreFashion(blob: string, signals: VisualSemanticSignals): number {
   const rx =
     /\b(fashion|moda|runway|pasarela|couture|editorial moda|lookbook|textil premium|garment|vestuario|styling)\b/gi;
-  let m = 0;
-  for (const _ of blob.matchAll(rx)) m += 2;
+  let m = countMatches(blob, rx) * 2;
   if (signals.culturalSignals.fashion) m += 3;
   if (signals.compositionSignals.editorial) m += 2;
   if (signals.clothingSignals.luxury) m += 2;
@@ -338,15 +340,13 @@ function scoreFashion(blob: string, signals: VisualSemanticSignals): number {
 function scoreTech(blob: string): number {
   const rx =
     /\b(saas|software|api|dashboard|cloud|plataforma|app|startup tech|developer|code|datos|analytics|ux ui)\b/gi;
-  let m = 0;
-  for (const _ of blob.matchAll(rx)) m += 2;
+  const m = countMatches(blob, rx) * 2;
   return m;
 }
 
 function scoreLuxury(blob: string, signals: VisualSemanticSignals): number {
   const rx = /\b(luxury|lujo|premium|jewelry|reloj|perfume|cosmética alta|skincare premium)\b/gi;
-  let m = 0;
-  for (const _ of blob.matchAll(rx)) m += 2;
+  let m = countMatches(blob, rx) * 2;
   if (signals.compositionSignals.productHero) m += 4;
   if (signals.objectSignals.productObjects) m += 3;
   if (signals.textureSignals.glossy || signals.textureSignals.glass) m += 1;
@@ -355,8 +355,7 @@ function scoreLuxury(blob: string, signals: VisualSemanticSignals): number {
 
 function scoreMusic(blob: string, signals: VisualSemanticSignals): number {
   const rx = /\b(music|música|concert|concierto|dj|band|artista|álbum|audio|instrument)\b/gi;
-  let m = 0;
-  for (const _ of blob.matchAll(rx)) m += 2;
+  let m = countMatches(blob, rx) * 2;
   if (signals.culturalSignals.music) m += 4;
   return m;
 }
@@ -364,22 +363,19 @@ function scoreMusic(blob: string, signals: VisualSemanticSignals): number {
 function scoreOutdoor(blob: string): number {
   const rx =
     /\b(outdoor|aire libre|hiking|trekking|camping|montaña|trail|naturaleza|paisaje|surf|climb|escalada)\b/gi;
-  let m = 0;
-  for (const _ of blob.matchAll(rx)) m += 2;
+  const m = countMatches(blob, rx) * 2;
   return m;
 }
 
 function scoreFood(blob: string): number {
   const rx = /\b(food|comida|culinary|chef|restaurant|plato|bebida gastronom|packaging food|hospitality)\b/gi;
-  let m = 0;
-  for (const _ of blob.matchAll(rx)) m += 2;
+  const m = countMatches(blob, rx) * 2;
   return m;
 }
 
 function scoreArchitecture(blob: string, signals: VisualSemanticSignals): number {
   const rx = /\b(architecture|arquitectura|interior design|render arquitect|facade|edificio|espacio arquitect)\b/gi;
-  let m = 0;
-  for (const _ of blob.matchAll(rx)) m += 2;
+  let m = countMatches(blob, rx) * 2;
   if (signals.spaceSignals.architectural) m += 5;
   if (!signals.peopleSignals.present) m += 3;
   if (signals.compositionSignals.wide) m += 2;
@@ -389,8 +385,7 @@ function scoreArchitecture(blob: string, signals: VisualSemanticSignals): number
 function scoreCreativeWorkspace(blob: string, signals: VisualSemanticSignals): number {
   const rx =
     /\b(creative studio|diseño gráfico|agencia creativa|workshop creativo|lluvia de ideas|moodboard|mood board)\b/gi;
-  let m = 0;
-  for (const _ of blob.matchAll(rx)) m += 2;
+  let m = countMatches(blob, rx) * 2;
   if (/\b(design agency|estudio creativo)\b/i.test(blob)) m += 2;
   if (signals.objectSignals.creativeTools) m += 6;
   if (signals.objectSignals.techObjects && (signals.activitySignals.making || signals.activitySignals.editing))

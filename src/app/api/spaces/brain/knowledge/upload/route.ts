@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { recordApiUsage, resolveUsageUserEmailFromRequest } from "@/lib/api-usage";
+import { countPdfImageObjects, extractVisualImagesFromPdfBuffer, MAX_PDF_VISUAL_IMAGES } from "@/lib/brain/pdf-visual-extract";
 import { uploadToS3 } from "@/lib/s3-utils";
 import { v4 as uuidv4 } from "uuid";
 
@@ -20,6 +21,8 @@ const ALLOWED_MIME = new Set([
   "image/png",
   "image/webp",
 ]);
+
+export const runtime = "nodejs";
 
 function getExt(name: string): string {
   const ext = name.split(".").pop()?.toLowerCase() || "";
@@ -52,6 +55,13 @@ export async function POST(req: NextRequest) {
 
     const uploadedDocs = [];
     const rejected: Array<{ name: string; reason: string }> = [];
+    const pdfVisualDiagnostics: Array<{
+      name: string;
+      pageRenderCount: number;
+      extractedImageCount: number;
+      uploadedVisualCount: number;
+      imageObjectCount: number;
+    }> = [];
     for (const file of files) {
       const ext = getExt(file.name);
       const mime = (file.type || "application/octet-stream").toLowerCase();
@@ -99,6 +109,72 @@ export async function POST(req: NextRequest) {
         status: "Subido",
         uploadedAt: new Date().toISOString(),
       });
+
+      if (format === "pdf") {
+        const imageObjectCount = countPdfImageObjects(buffer);
+        const extractedImages = await extractVisualImagesFromPdfBuffer(buffer, file.name);
+        const pdfVisualImages = extractedImages.slice(0, MAX_PDF_VISUAL_IMAGES);
+        pdfVisualDiagnostics.push({
+          name: file.name,
+          pageRenderCount: 0,
+          extractedImageCount: extractedImages.length,
+          uploadedVisualCount: pdfVisualImages.length,
+          imageObjectCount,
+        });
+        await recordApiUsage({
+          provider: "aws",
+          userEmail: usageUserEmail,
+          serviceId: "s3-knowledge",
+          route: "/api/spaces/brain/knowledge/upload",
+          operation: "pdf_visual_extract",
+          costIsKnown: false,
+          costUsd: 0,
+          metadata: {
+            name: file.name,
+            pageRenderCount: 0,
+            extractedImageCount: extractedImages.length,
+            uploadedVisualCount: pdfVisualImages.length,
+            imageObjectCount,
+            maxVisualImages: MAX_PDF_VISUAL_IMAGES,
+            strategy: "embedded_pdf_images_only",
+          },
+        });
+        for (const image of pdfVisualImages) {
+          const imageKey = await uploadToS3(image.name, image.buffer, image.mime);
+          await recordApiUsage({
+            provider: "aws",
+            userEmail: usageUserEmail,
+            serviceId: "s3-knowledge",
+            route: "/api/spaces/brain/knowledge/upload",
+            operation: "put_object",
+            costIsKnown: false,
+            costUsd: 0,
+            bytes: image.buffer.length,
+            metadata: {
+              key: imageKey,
+              mime: image.mime,
+              source: "pdf_image_extract",
+              parent: s3Key,
+              pdfImageObjectCount: imageObjectCount,
+              width: image.width,
+              height: image.height,
+            },
+          });
+          uploadedDocs.push({
+            id: uuidv4(),
+            name: image.name,
+            size: image.buffer.length,
+            mime: image.mime,
+            scope,
+            contextKind,
+            s3Path: imageKey,
+            type: "image",
+            format: "image",
+            status: "Subido",
+            uploadedAt: new Date().toISOString(),
+          });
+        }
+      }
     }
 
     return NextResponse.json({
@@ -110,6 +186,7 @@ export async function POST(req: NextRequest) {
           : `No compatible files were uploaded (${rejected.length} skipped).`,
       documents: uploadedDocs,
       rejected,
+      pdfVisualDiagnostics,
     });
   } catch (error) {
     console.error("[brain/knowledge/upload]", error);

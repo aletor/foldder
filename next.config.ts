@@ -23,15 +23,16 @@ const nextConfig: NextConfig = {
         ignored: ["**/node_modules/**", "**/data/**", "**/.git/**"],
       };
     }
+    config.resolve = config.resolve || {};
+    config.resolve.alias = {
+      ...(config.resolve.alias || {}),
+      canvas: false,
+      "paper/dist/node/canvas.js": false,
+    };
     if (!isServer) {
-      config.resolve = config.resolve || {};
       config.resolve.fallback = {
         ...(config.resolve.fallback || {}),
         canvas: false,
-      };
-      config.resolve.alias = {
-        ...(config.resolve.alias || {}),
-        "paper/dist/node/canvas.js": false,
       };
     }
     return config;

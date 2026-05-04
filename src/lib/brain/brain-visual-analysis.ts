@@ -90,6 +90,8 @@ export type BrainVisualAssetRef = {
   fileName?: string;
   /** data:image/… o https://… para visión real (referencias en conocimiento / slots). */
   imageUrlForVision?: string;
+  /** Clave S3 estable cuando la imagen vive en knowledge-files/. Permite renovar URLs firmadas caducadas. */
+  s3Path?: string;
 };
 
 export function analysisDedupeKeyFromRef(ref: BrainVisualAssetRef): string {
@@ -934,6 +936,7 @@ export function collectVisualImageAssetRefs(assets: ProjectAssetsMetadata): Brai
       mime: d.mime,
       type: d.type === "image" ? "image" : "document",
       sourceKind: "knowledge_document",
+      ...(d.s3Path?.trim() ? { s3Path: d.s3Path.trim() } : {}),
       ...(imageUrlForVision ? { imageUrlForVision } : {}),
     });
   }

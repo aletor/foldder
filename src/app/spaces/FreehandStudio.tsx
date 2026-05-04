@@ -690,7 +690,10 @@ import { hydrateKnowledgeImageDocumentsWithViewUrlsClient } from "@/lib/brain/br
 import { useProjectBrainCanvas } from "./project-brain-canvas-context";
 import { useProjectAssetsCanvas } from "./project-assets-canvas-context";
 import { collectProjectMedia, projectMediaDedupeKey, type ProjectMediaItem } from "./project-media-inventory";
-import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
+import {
+  stableKnowledgeFileUrlFromMaybeUrl,
+  tryExtractKnowledgeFilesKeyFromUrl,
+} from "@/lib/s3-media-hydrate";
 import {
   brainSuggestionsKeyForField,
   ensureBrainImageSuggestions,
@@ -11060,13 +11063,18 @@ export function FreehandStudioCanvas({
       const t = v.trim();
       if (!t) return;
       if (t.startsWith("data:") && t.length > 350_000) return;
-      if (!t.startsWith("data:") && !/^https?:\/\//i.test(t)) return;
+      if (!t.startsWith("data:") && !/^https?:\/\//i.test(t) && !t.startsWith("/api/spaces/s3-file")) return;
       if (!refs.includes(t)) refs.push(t);
     };
-    push(brainAssets.brand.logoPositive);
-    push(brainAssets.brand.logoNegative);
+    push(stableKnowledgeFileUrlFromMaybeUrl(brainAssets.brand.logoPositive));
+    push(stableKnowledgeFileUrlFromMaybeUrl(brainAssets.brand.logoNegative));
     return refs.slice(0, 1);
   }, [brainAssets]);
+
+  const brainBrandMosaicReference = useMemo(
+    () => stableKnowledgeFileUrlFromMaybeUrl(designerBrainAssets.strategy.visualReferenceAnalysis?.dnaCollageImageDataUrl),
+    [designerBrainAssets.strategy.visualReferenceAnalysis?.dnaCollageImageDataUrl],
+  );
 
   const brainBrandColorLine = useMemo(() => {
     const c = [brainAssets.brand.colorPrimary, brainAssets.brand.colorSecondary, brainAssets.brand.colorAccent]
@@ -11223,7 +11231,15 @@ export function FreehandStudioCanvas({
     const claimB = brainClaims[1] ?? "Sistema creativo conectado";
     const dnaSourceInstruction =
       brainImageDnaSource === "brand"
-        ? "Usa principalmente el ADN visual de marca como dirección de esta generación."
+        ? [
+            "Usa principalmente el ADN visual de marca como dirección de esta generación.",
+            brainBrandMosaicReference
+              ? "El mosaico general de marca va adjunto como PRIMERA referencia visual: debe mandar sobre composición, luz, paleta, materialidad, jerarquía gráfica y tipo de escena."
+              : "",
+            "No inventes reunión, mesa de madera, oficina doméstica, posters corporativos ni personas trabajando si no aparecen claramente en ese mosaico o en el custom.",
+          ]
+            .filter(Boolean)
+            .join(" ")
         : brainImageDnaSource === "project"
           ? "Usa principalmente el contexto visual y narrativo del proyecto como dirección de esta generación."
           : "";
@@ -11240,9 +11256,15 @@ export function FreehandStudioCanvas({
     const metricsLine = brainMarketSignals.length > 0 ? brainMarketSignals.join(", ") : "";
     const brandBlock = `Colores de marca: ${brainBrandColorLine}.`;
     const logoBlock =
-      brainLogoReferences.length > 0
-        ? "Usar el logo de referencia adjunto con presencia sutil y coherente de marca."
-        : "No incluir logotipo explícito.";
+      brainBrandMosaicReference && brainImageDnaSource === "brand"
+        ? `La primera imagen adjunta es el MOSAICO GENERAL DE MARCA y es la referencia visual dominante. ${
+            brainLogoReferences.length > 0
+              ? "El logo adjunto solo puede aparecer como detalle sutil si encaja."
+              : "No incluir logotipo explícito."
+          }`
+        : brainLogoReferences.length > 0
+          ? "Usar el logo de referencia adjunto con presencia sutil y coherente de marca."
+          : "No incluir logotipo explícito.";
 
     const varietyInput: BrainDesignerVarietyInput = {
       varietyMode: brainImageVarietyMode,
@@ -11312,6 +11334,7 @@ export function FreehandStudioCanvas({
     brainNearbyTextContentKey,
     selectedTextValue,
     brainBrandColorLine,
+    brainBrandMosaicReference,
     brainLogoReferences,
     brainFeatureHints,
     brainDifferentiators,
@@ -11365,6 +11388,7 @@ export function FreehandStudioCanvas({
       brainNearbyTextContentKey,
       (selectedTextValue || "").trim(),
       brainBrandColorLine,
+      brainBrandMosaicReference ?? "",
       String(brainLogoReferences.length),
       brainFeatureHints.join("¦"),
       brainDifferentiators.join("¦"),
@@ -11387,6 +11411,7 @@ export function FreehandStudioCanvas({
     brainNearbyTextContentKey,
     selectedTextValue,
     brainBrandColorLine,
+    brainBrandMosaicReference,
     brainLogoReferences.length,
     brainFeatureHints,
     brainDifferentiators,
@@ -11539,9 +11564,12 @@ export function FreehandStudioCanvas({
       }
     };
 
+    const allowLatestFallback = !(brainImageDnaActivated && brainImageDnaSource === "brand" && brainBrandMosaicReference);
     applyEntry(
       getBrainImageSuggestionEntry(brainSuggestionFieldKey) ??
-        (nodeId ? getLatestBrainImageSuggestionEntryForField(projectScopeId, nodeId, targetId) : undefined),
+        (allowLatestFallback && nodeId
+          ? getLatestBrainImageSuggestionEntryForField(projectScopeId, nodeId, targetId)
+          : undefined),
     );
 
     const onUpdate = (ev: Event) => {
@@ -11564,6 +11592,9 @@ export function FreehandStudioCanvas({
     registerAiGeneratedRefsOnObject,
     nodeId,
     projectScopeId,
+    brainImageDnaActivated,
+    brainImageDnaSource,
+    brainBrandMosaicReference,
   ]);
 
   useEffect(() => {
@@ -11596,6 +11627,8 @@ export function FreehandStudioCanvas({
     const visualCapsuleRefs = brainVisualCapsuleSelection?.selectedExampleImageUrl
       ? [brainVisualCapsuleSelection.selectedExampleImageUrl]
       : [];
+    const brandMosaicRefs =
+      brainImageDnaSource === "brand" && brainBrandMosaicReference ? [brainBrandMosaicReference] : [];
     const logoRefsForGemini = brainVisualCapsuleSelection
       ? [
           ...visualCapsuleRefs,
@@ -11603,7 +11636,10 @@ export function FreehandStudioCanvas({
             ? await prepareBrainLogoRefsForGemini(brainLogoReferences)
             : []),
         ].slice(0, 3)
-      : await prepareBrainLogoRefsForGemini(brainLogoReferences);
+      : [
+          ...(await prepareBrainLogoRefsForGemini(brandMosaicRefs)),
+          ...(await prepareBrainLogoRefsForGemini(brainLogoReferences)),
+        ].slice(0, 3);
     await ensureBrainImageSuggestions({
       key: brainSuggestionFieldKey,
       plans: brainImagePromptPlansRef.current,
@@ -11616,7 +11652,9 @@ export function FreehandStudioCanvas({
     supportsBrainImageSuggestions,
     prepareBrainLogoRefsForGemini,
     brainLogoReferences,
+    brainBrandMosaicReference,
     brainVisualCapsuleSelection,
+    brainImageDnaSource,
     brainImageAspectRatio,
   ]);
 
@@ -24246,7 +24284,10 @@ export function FreehandStudioCanvas({
                             ]).map((item) => {
                               const selected = brainImageDnaActivated && brainImageDnaSource === item.id;
                               const faded = brainImageDnaActivated && !selected;
-                              const brandLogo = brainAssets.brand.logoPositive || brainAssets.brand.logoNegative;
+                              const brandLogo =
+                                stableKnowledgeFileUrlFromMaybeUrl(brainAssets.brand.logoPositive) ||
+                                stableKnowledgeFileUrlFromMaybeUrl(brainAssets.brand.logoNegative);
+                              const brandPreview = item.id === "brand" ? brainBrandMosaicReference || brandLogo : null;
                               return (
                                 <button
                                   key={item.id}
@@ -24270,7 +24311,11 @@ export function FreehandStudioCanvas({
                                           : "linear-gradient(135deg, rgba(39,39,42,1), rgba(88,28,135,0.9))",
                                     }}
                                   />
-                                  <div className="absolute inset-0 grid grid-cols-[0.42fr_1fr] gap-1.5 p-1.5">
+                                  {brandPreview ? (
+                                    <img src={brandPreview} alt="" className="absolute inset-0 h-full w-full object-cover opacity-85" />
+                                  ) : null}
+                                  <div className="absolute inset-0 bg-gradient-to-b from-black/5 via-black/10 to-black/55" />
+                                  <div className="absolute inset-0 grid grid-cols-[0.34fr_1fr] gap-1.5 p-1.5">
                                     <div className="grid gap-1">
                                       {[brainAssets.brand.colorPrimary, brainAssets.brand.colorSecondary, brainAssets.brand.colorAccent]
                                         .map((hex) => normalizeHexColor(hex ?? ""))
@@ -24282,7 +24327,9 @@ export function FreehandStudioCanvas({
                                       {!brainAssets.brand.colorPrimary ? <span className="rounded-[5px] bg-white/15" /> : null}
                                     </div>
                                     <div className="relative overflow-hidden rounded-[7px] bg-black/22">
-                                      {item.id === "brand" && brandLogo ? (
+                                      {item.id === "brand" && brainBrandMosaicReference ? (
+                                        <img src={brainBrandMosaicReference} alt="" className="h-full w-full object-cover opacity-95" />
+                                      ) : item.id === "brand" && brandLogo ? (
                                         <img src={brandLogo} alt="" className="h-full w-full object-contain p-2 opacity-90" />
                                       ) : (
                                         <div className="grid h-full grid-cols-2 gap-1 p-1">
@@ -24295,7 +24342,7 @@ export function FreehandStudioCanvas({
                                     </div>
                                   </div>
                                   <span className="absolute left-1.5 top-1.5 rounded-full bg-black/52 px-2 py-0.5 text-[8px] font-black uppercase tracking-wide text-white backdrop-blur">
-                                    {item.label}
+                                    {item.id === "brand" && brainBrandMosaicReference ? "Brand mosaic" : item.label}
                                   </span>
                                   {selected ? (
                                     <span className="absolute right-1.5 top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-violet-500 text-white shadow-sm">

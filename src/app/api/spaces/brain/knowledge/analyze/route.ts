@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
+import sharp from "sharp";
 import {
   ApiServiceDisabledError,
   assertApiServiceEnabled,
@@ -11,6 +12,7 @@ import {
   buildReadableCorporateContext,
   extractDnaFromImageRobust,
   extractDnaFromTextRobust,
+  type BrainDnaExtraction,
   type BrainOpenAiChatUsageHook,
 } from "@/lib/brain-knowledge-utils";
 import {
@@ -121,6 +123,86 @@ const FUNNEL_STAGES: BrainFunnelMessage["stage"][] = [
 function cleanText(input: unknown, max = 260): string {
   if (typeof input !== "string") return "";
   return input.replace(/\s+/g, " ").trim().slice(0, max);
+}
+
+function isImageAnalysisFallbackEligible(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /429|quota|billing|rate limit|insufficient_quota|OpenAI|vision/i.test(message);
+}
+
+function hexFromRgb(r: number, g: number, b: number): string {
+  return `#${[r, g, b].map((v) => Math.max(0, Math.min(255, v)).toString(16).padStart(2, "0")).join("")}`.toUpperCase();
+}
+
+async function buildLocalImageDnaFallback(
+  buffer: Buffer,
+  doc: Pick<BrainDoc, "name" | "mime">,
+  reason: unknown,
+): Promise<BrainDnaExtraction> {
+  let width = 0;
+  let height = 0;
+  let colors: string[] = [];
+  try {
+    const image = sharp(buffer, { failOn: "none" });
+    const meta = await image.metadata();
+    width = meta.width ?? 0;
+    height = meta.height ?? 0;
+    const { data, info } = await image
+      .resize(64, 64, { fit: "inside", withoutEnlargement: true })
+      .removeAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const buckets = new Map<string, number>();
+    for (let i = 0; i + 2 < data.length; i += info.channels) {
+      const r = Math.round(data[i] / 32) * 32;
+      const g = Math.round(data[i + 1] / 32) * 32;
+      const b = Math.round(data[i + 2] / 32) * 32;
+      const hex = hexFromRgb(r, g, b);
+      buckets.set(hex, (buckets.get(hex) ?? 0) + 1);
+    }
+    colors = [...buckets.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([hex]) => hex)
+      .slice(0, 8);
+  } catch {
+    colors = [];
+  }
+
+  const reasonText = reason instanceof Error ? reason.message : String(reason ?? "Análisis remoto no disponible");
+  const dimensionText = width && height ? `${width}x${height}px` : "dimensiones no disponibles";
+  return {
+    empresa: {
+      propuesta_valor: "",
+      sector: "",
+      diferenciadores: [],
+    },
+    audiencia: { perfil_cliente: "", problemas_principales: [], necesidades: [] },
+    producto: { funcionalidades: [], beneficios: [] },
+    casos_uso: [],
+    mercado: {
+      tam: "",
+      sam: "",
+      som: "",
+      horizonte_temporal: "",
+      segmento_objetivo: "",
+      indicadores_clave: [],
+    },
+    data_relevante_numerica: [],
+    diferencial_competitivo: "",
+    tono_marca: "Referencia visual pendiente de interpretación remota",
+    visual_signals: {
+      protagonist: [`Referencia visual importada: ${doc.name}`],
+      environment: [],
+      textures: [],
+      colors,
+      people: [],
+      tone: ["Análisis local de emergencia; usar la visión remota del LOOK para interpretación semántica"],
+      evidence_text: [
+        `Imagen ${doc.mime || "image/*"} · ${dimensionText}`,
+        `Fallback local activado porque OpenAI no pudo analizar la imagen: ${reasonText.slice(0, 220)}`,
+      ],
+    },
+  };
 }
 
 function sanitizeVoiceExamples(raw: unknown): BrainVoiceExample[] {
@@ -390,6 +472,7 @@ type VisualEvidenceBag = {
   protagonist: string[];
   environment: string[];
   textures: string[];
+  colors: string[];
   people: string[];
   tone: string[];
   models: string[];
@@ -422,6 +505,7 @@ function collectVisualEvidence(docs: BrainDoc[]): VisualEvidenceBag {
     protagonist: [],
     environment: [],
     textures: [],
+    colors: [],
     people: [],
     tone: [],
     models: [],
@@ -469,6 +553,7 @@ function collectVisualEvidence(docs: BrainDoc[]): VisualEvidenceBag {
         14,
       );
       pushUnique(bag.textures, visualSignals ? readStringArray(visualSignals, "textures") : [], 14);
+      pushUnique(bag.colors, visualSignals ? readStringArray(visualSignals, "colors") : [], 16);
       pushUnique(bag.people, visualSignals ? readStringArray(visualSignals, "people") : [], 14);
       pushUnique(
         bag.tone,
@@ -570,7 +655,7 @@ function buildFallbackVisualStyle(docs: BrainDoc[]): BrainVisualStyle {
     3,
   );
   const environmentHint = uniqueStrings([...visual.environment], 3);
-  const texturesHint = uniqueStrings([...visual.textures], 3);
+  const texturesHint = uniqueStrings([...visual.textures, ...visual.colors], 4);
   const peopleHint = uniqueStrings([...visual.people], 3);
   const toneStrongHint = uniqueStrings([...visual.tone, ...tones], 2);
 
@@ -686,6 +771,7 @@ async function inferVisualStyleWithLlm(
     protagonist: visualEvidence.protagonist.slice(0, 8),
     environment: visualEvidence.environment.slice(0, 8),
     textures: visualEvidence.textures.slice(0, 8),
+    colors: visualEvidence.colors.slice(0, 8),
     people: visualEvidence.people.slice(0, 8),
     tone: visualEvidence.tone.slice(0, 6),
     snippets: visualEvidence.snippets.slice(0, 10),
@@ -1068,14 +1154,28 @@ export async function POST(req: NextRequest) {
         const fileBuffer = await getFromS3(doc.s3Path);
 
         let extractedData: Record<string, unknown>;
+        let analysisProvider: BrainDoc["analysisProvider"] = "openai";
+        let analysisOrigin: BrainDoc["analysisOrigin"] = "remote_ai";
+        let analysisReliability: BrainDoc["analysisReliability"] = "high";
+        let isReliableForGeneration = true;
         if (doc.type === "image" || doc.format === "image" || doc.mime.startsWith("image/")) {
           const b64 = fileBuffer.toString("base64");
-          extractedData = (await extractDnaFromImageRobust(
-            openai,
-            b64,
-            doc.mime || "image/png",
-            onExtractUsage,
-          )) as Record<string, unknown>;
+          try {
+            extractedData = (await extractDnaFromImageRobust(
+              openai,
+              b64,
+              doc.mime || "image/png",
+              onExtractUsage,
+            )) as Record<string, unknown>;
+          } catch (imageError) {
+            if (!isImageAnalysisFallbackEligible(imageError)) throw imageError;
+            console.warn(`[brain/knowledge/analyze] image AI analysis failed for ${doc.id}; using local fallback:`, imageError);
+            extractedData = (await buildLocalImageDnaFallback(fileBuffer, doc, imageError)) as Record<string, unknown>;
+            analysisProvider = "internal";
+            analysisOrigin = "local_heuristic";
+            analysisReliability = "low";
+            isReliableForGeneration = false;
+          }
         } else {
           const textContent = await parseBrainDocument(fileBuffer, doc.s3Path, doc.mime || "");
           extractedData = (await extractDnaFromTextRobust(openai, textContent, onExtractUsage)) as Record<
@@ -1133,10 +1233,10 @@ export async function POST(req: NextRequest) {
           insights: buildDocInsights(doc, extractedData),
           embedding,
           errorMessage: undefined,
-          analysisProvider: "openai",
-          analysisOrigin: "remote_ai",
-          analysisReliability: "high",
-          isReliableForGeneration: true,
+          analysisProvider,
+          analysisOrigin,
+          analysisReliability,
+          isReliableForGeneration,
         };
         analyzedDocIds.push(doc.id);
       } catch (docError) {

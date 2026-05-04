@@ -1,15 +1,29 @@
 import type { Node } from "@xyflow/react";
 
+const KNOWLEDGE_FILES_PREFIX = "knowledge-files/";
+
+function safeDecodeUriComponent(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 /** Extrae la clave `knowledge-files/...` de una URL prefirmada del bucket. */
 export function tryExtractKnowledgeFilesKeyFromUrl(url: string): string | null {
   if (!url || typeof url !== "string" || url.startsWith("blob:") || url.startsWith("data:")) {
     return null;
   }
+  const trimmed = url.trim();
+  if (trimmed.startsWith(KNOWLEDGE_FILES_PREFIX)) return trimmed;
   try {
-    const u = new URL(url);
-    const path = u.pathname.replace(/^\/+/, "");
+    const u = new URL(trimmed, "http://foldder.local");
+    const routeKey = u.pathname === "/api/spaces/s3-file" ? u.searchParams.get("key")?.trim() : "";
+    if (routeKey?.startsWith(KNOWLEDGE_FILES_PREFIX)) return routeKey;
+    const path = safeDecodeUriComponent(u.pathname.replace(/^\/+/, ""));
     // Virtual-hosted: knowledge-files/… | Path-style: bucket/knowledge-files/…
-    const idx = path.indexOf("knowledge-files/");
+    const idx = path.indexOf(KNOWLEDGE_FILES_PREFIX);
     if (idx >= 0) return path.slice(idx);
     return null;
   } catch {
@@ -17,9 +31,26 @@ export function tryExtractKnowledgeFilesKeyFromUrl(url: string): string | null {
   }
 }
 
+export function stableKnowledgeFileUrlFromKey(key: string): string | null {
+  const clean = key.trim();
+  if (!clean.startsWith(KNOWLEDGE_FILES_PREFIX) || clean.includes("..") || clean.includes("\0")) return null;
+  return `/api/spaces/s3-file?key=${encodeURIComponent(clean)}`;
+}
+
+export function stableKnowledgeFileUrlFromMaybeUrl(value: string | null | undefined): string | null {
+  const raw = value?.trim();
+  if (!raw) return null;
+  if (raw.startsWith("data:") || raw.startsWith("blob:")) return raw;
+  if (raw.startsWith("/api/spaces/s3-file")) return raw;
+  const key = tryExtractKnowledgeFilesKeyFromUrl(raw);
+  if (key) return stableKnowledgeFileUrlFromKey(key);
+  if (/^https:\/\//i.test(raw)) return raw;
+  return null;
+}
+
 function resolveS3KeyFromNodeData(data: Record<string, unknown>): string | null {
   const sk = data.s3Key ?? data.key;
-  if (typeof sk === "string" && sk.startsWith("knowledge-files/")) return sk;
+  if (typeof sk === "string" && sk.startsWith(KNOWLEDGE_FILES_PREFIX)) return sk;
   const v = data.value;
   if (typeof v === "string") {
     const fromUrl = tryExtractKnowledgeFilesKeyFromUrl(v);

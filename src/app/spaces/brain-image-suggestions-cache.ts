@@ -373,7 +373,7 @@ async function callGeminiGenerate(prompt: string, refs: string[], aspectRatio: s
       prompt,
       images: refs,
       model: "flash31",
-      resolution: "0.5k",
+      resolution: "1k",
       aspect_ratio: aspectRatio,
     }),
   });

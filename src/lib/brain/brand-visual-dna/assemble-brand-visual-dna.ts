@@ -163,7 +163,6 @@ export function assembleBrandVisualDnaRoot(params: {
   styleClusters: BrandVisualDnaStyleCluster[];
   ai: GeminiClusterInterpretResult | null;
 }): BrandVisualDnaRoot {
-  const analysesById = new Map(params.analyses.map((a) => [a.image_id, a]));
   const global_visual_rules = buildGlobalFromAnalyses(
     params.analyses,
     params.styleClusters,

@@ -32,7 +32,7 @@ type Props = {
 
 export function PublicPresenterClient({ initial }: Props) {
   const pages = initial.payload.pages;
-  const transitionsByPageId = initial.payload.transitionsByPageId ?? {};
+  const transitionsByPageId = useMemo(() => initial.payload.transitionsByPageId ?? {}, [initial.payload.transitionsByPageId]);
 
   const [gatePass, setGatePass] = useState(() => !initial.options.requirePasscode);
   const [passInput, setPassInput] = useState("");
@@ -95,6 +95,17 @@ export function PublicPresenterClient({ initial }: Props) {
     if (!steps.length) return null;
     return { revealCount: playRevealCount, steps };
   }, [pages, activeIdx, playRevealCount]);
+
+  const playableIndices = useMemo(
+    () => pages.map((_, i) => i).filter((i) => !isPresenterSlideSkipped(pages[i])),
+    [pages],
+  );
+  const slideCountLabel = useMemo(() => {
+    if (playableIndices.length === 0) return "—";
+    const pos = playableIndices.indexOf(activeIdx);
+    if (pos < 0) return `${activeIdx + 1} / ${pages.length}`;
+    return `${pos + 1} / ${playableIndices.length}`;
+  }, [playableIndices, activeIdx, pages.length]);
 
   const playAdvanceRight = useCallback(() => {
     if (pendingAnim) return;
@@ -257,17 +268,6 @@ export function PublicPresenterClient({ initial }: Props) {
   const page = pages[activeIdx];
   const dims = page ? getPageDimensions(page) : { width: 16, height: 9 };
   const stepsLen = page ? mergeStepsWithPage(page).length : 0;
-
-  const playableIndices = useMemo(
-    () => pages.map((_, i) => i).filter((i) => !isPresenterSlideSkipped(pages[i])),
-    [pages],
-  );
-  const slideCountLabel = useMemo(() => {
-    if (playableIndices.length === 0) return "—";
-    const pos = playableIndices.indexOf(activeIdx);
-    if (pos < 0) return `${activeIdx + 1} / ${pages.length}`;
-    return `${pos + 1} / ${playableIndices.length}`;
-  }, [playableIndices, activeIdx, pages.length]);
 
   return (
     <div
