@@ -99,6 +99,8 @@ const PROP_PANEL_SCRUB_CLASS =
   "cursor-ew-resize rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 font-mono text-[12px] text-zinc-100 outline-none focus:border-violet-500/50";
 const PROP_PANEL_SCRUB_HINT = "Arrastra horizontalmente · Mayús = ×10";
 const DESIGNER_GOOGLE_FONTS_STORAGE_KEY = "foldder.designer.google-fonts-installed.v1";
+const DESIGNER_CUSTOM_FONTS_STORAGE_KEY = "foldder.shared.custom-fonts.v1";
+const DESIGNER_CUSTOM_FONTS_CHANGED_EVENT = "foldder-custom-fonts-changed";
 
 function designerGoogleFontLinkId(family: string): string {
   const safe = family.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
@@ -1638,6 +1640,7 @@ type DesignerCustomFontStyle = {
   family: string;
   style: string;
   weight: number;
+  dataUrl?: string;
 };
 type DesignerCustomFontEntry = DesignerCustomFontStyle | string;
 
@@ -1654,6 +1657,15 @@ const DESIGNER_IMPORTED_FONT_STYLE_DEFS: Array<{ label: string; weight: number; 
   { label: "Bold", weight: 700, aliases: ["bold"] },
   { label: "Black", weight: 900, aliases: ["black", "heavy"] },
 ];
+const DESIGNER_SYSTEM_FONT_FAMILY_VALUE_PREFIX = "__system-family:";
+
+function designerSystemFontFamilyLabel(label: string): string {
+  return label.split("·")[0]?.trim() || label.trim();
+}
+
+function designerSystemFontStyleLabel(label: string): string {
+  return label.split("·").slice(1).join("·").trim() || label.trim();
+}
 
 function parseDesignerImportedFontFileName(fileName: string, fallbackWeight: number): DesignerCustomFontStyle {
   const clean = normalizeDesignerCustomFontFamilyName(fileName);
@@ -1679,10 +1691,81 @@ function normalizeDesignerCustomFontEntry(entry: DesignerCustomFontEntry): Desig
   if (typeof entry === "string") return parseDesignerImportedFontFileName(entry, DEFAULT_DOCUMENT_FONT_WEIGHT);
   if (!entry || !isMeaningfulDesignerFontFamilyName(entry.family)) return null;
   return {
-    family: entry.family,
-    style: entry.style || DESIGNER_IMPORTED_FONT_STYLE_DEFS.find((d) => d.weight === entry.weight)?.label || `${entry.weight || 400}`,
+    family: entry.family.trim(),
+    style: entry.style?.trim() || DESIGNER_IMPORTED_FONT_STYLE_DEFS.find((d) => d.weight === entry.weight)?.label || `${entry.weight || 400}`,
     weight: clamp(Math.round(entry.weight || DEFAULT_DOCUMENT_FONT_WEIGHT), 100, 900),
+    ...(typeof entry.dataUrl === "string" && entry.dataUrl.startsWith("data:")
+      ? { dataUrl: entry.dataUrl }
+      : {}),
   };
+}
+
+function sortDesignerCustomFonts(fonts: DesignerCustomFontStyle[]): DesignerCustomFontStyle[] {
+  return fonts.slice().sort(
+    (a, b) =>
+      a.family.localeCompare(b.family, "es", { sensitivity: "base" }) ||
+      a.weight - b.weight ||
+      a.style.localeCompare(b.style, "es", { sensitivity: "base" }),
+  );
+}
+
+function mergeDesignerCustomFonts(fonts: DesignerCustomFontEntry[]): DesignerCustomFontStyle[] {
+  const map = new Map<string, DesignerCustomFontStyle>();
+  for (const entry of fonts) {
+    const normalized = normalizeDesignerCustomFontEntry(entry);
+    if (!normalized) continue;
+    map.set(`${normalized.family.toLowerCase()}|${normalized.style.toLowerCase()}`, normalized);
+  }
+  return sortDesignerCustomFonts(Array.from(map.values()));
+}
+
+function readStoredDesignerCustomFonts(): DesignerCustomFontStyle[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(DESIGNER_CUSTOM_FONTS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return mergeDesignerCustomFonts(parsed);
+  } catch {
+    return [];
+  }
+}
+
+function persistDesignerCustomFonts(fonts: DesignerCustomFontStyle[]): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    if (fonts.length === 0) {
+      window.localStorage.removeItem(DESIGNER_CUSTOM_FONTS_STORAGE_KEY);
+      return true;
+    }
+    window.localStorage.setItem(DESIGNER_CUSTOM_FONTS_STORAGE_KEY, JSON.stringify(sortDesignerCustomFonts(fonts)));
+    return true;
+  } catch {
+    /* localStorage quota can be tight with font files; keep the current session loaded. */
+    return false;
+  }
+}
+
+async function designerFontDataUrlToArrayBuffer(dataUrl: string): Promise<ArrayBuffer | null> {
+  try {
+    const res = await fetch(dataUrl);
+    return await res.arrayBuffer();
+  } catch {
+    return null;
+  }
+}
+
+async function loadDesignerCustomFontFace(font: DesignerCustomFontStyle): Promise<void> {
+  if (typeof document === "undefined" || typeof FontFace === "undefined" || !font.dataUrl) return;
+  const face = new FontFace(font.family, `url("${font.dataUrl}")`, {
+    weight: String(font.weight),
+    style: "normal",
+  });
+  await face.load();
+  document.fonts.add(face);
+  const buf = await designerFontDataUrlToArrayBuffer(font.dataUrl);
+  if (buf) registerUserFontBuffer(font.family, font.weight, buf);
 }
 
 function richSpansToInlineHtml(
@@ -1716,6 +1799,14 @@ function richSpansToInlineHtml(
       if (st.textStrikethrough) inner = wrapTag("s", inner);
       if (st.fontStyle === "italic") inner = wrapTag("i", inner);
       if (st.fontWeight && (String(st.fontWeight) === "bold" || Number(st.fontWeight) >= 600)) inner = wrapTag("b", inner);
+      const inlineStyles: string[] = [];
+      if (st.color) {
+        inlineStyles.push(`color:${escapeXmlAttr(st.color)}`);
+        inlineStyles.push(`-webkit-text-fill-color:${escapeXmlAttr(st.color)}`);
+      }
+      if (inlineStyles.length > 0) {
+        inner = `<span style="${inlineStyles.join(";")}">${inner}</span>`;
+      }
       if (st.linkHref) {
         const href = sanitizeStoryLinkHref(st.linkHref);
         if (href) inner = `<a href="${href}" target="_blank" rel="noopener noreferrer">${inner}</a>`;
@@ -1789,6 +1880,72 @@ function normalizeInlineFrameRichHtml(html: string): string {
   }
 
   return c.innerHTML || "<div><br></div>";
+}
+
+function simpleTextRichPayloadFromHtml(html: string): {
+  plain: string;
+  spans?: TextObject["_designerRichSpans"];
+} {
+  if (typeof document === "undefined") return { plain: html };
+  const container = document.createElement("div");
+  container.innerHTML = normalizeInlineFrameRichHtml(html);
+  const spans: NonNullable<TextObject["_designerRichSpans"]> = [];
+  const sameStyle = (a?: SpanStyle, b?: SpanStyle) => JSON.stringify(a ?? {}) === JSON.stringify(b ?? {});
+  const pushSpan = (text: string, style: SpanStyle) => {
+    if (!text) return;
+    const cleanedStyle = Object.fromEntries(
+      Object.entries(style).filter(([, value]) => value != null && value !== ""),
+    ) as SpanStyle;
+    const nextStyle = Object.keys(cleanedStyle).length > 0 ? cleanedStyle : undefined;
+    const prev = spans[spans.length - 1];
+    if (prev && sameStyle(prev.style, nextStyle)) {
+      prev.text += text;
+      return;
+    }
+    spans.push({ text, ...(nextStyle ? { style: nextStyle } : {}) });
+  };
+  const walk = (node: Node, inherited: SpanStyle) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      pushSpan(node.textContent ?? "", inherited);
+      return;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    const el = node as HTMLElement;
+    const tag = el.tagName.toLowerCase();
+    const style: SpanStyle = { ...inherited };
+    if (tag === "b" || tag === "strong") style.fontWeight = "bold";
+    if (tag === "i" || tag === "em") style.fontStyle = "italic";
+    if (tag === "u") style.textUnderline = true;
+    if (tag === "s" || tag === "strike" || tag === "del") style.textStrikethrough = true;
+    if (tag === "a") {
+      const href = sanitizeStoryLinkHref(el.getAttribute("href") ?? "");
+      if (href) style.linkHref = href;
+    }
+    if (el.style.fontWeight) style.fontWeight = el.style.fontWeight;
+    if (el.style.fontStyle) style.fontStyle = el.style.fontStyle;
+    if (el.style.color) style.color = el.style.color;
+    const webkitTextFill = (el.style as CSSStyleDeclaration & { webkitTextFillColor?: string }).webkitTextFillColor;
+    if (webkitTextFill) style.color = webkitTextFill;
+    if (tag === "br") {
+      pushSpan("\n", style);
+      return;
+    }
+    for (const child of Array.from(el.childNodes)) walk(child, style);
+  };
+  const nodes = Array.from(container.childNodes);
+  nodes.forEach((node, idx) => {
+    if (idx > 0 && node.nodeType === Node.ELEMENT_NODE) {
+      const tag = (node as HTMLElement).tagName.toLowerCase();
+      if (tag === "div" || tag === "p" || tag === "ul" || tag === "ol") pushSpan("\n", {});
+    }
+    walk(node, {});
+  });
+  const plain = spans.map((span) => span.text).join("");
+  const hasStyledSpan = spans.some((span) => !!span.style && Object.keys(span.style).length > 0);
+  return {
+    plain,
+    spans: hasStyledSpan ? spans : undefined,
+  };
 }
 
 /** Texto copiado (ChatGPT, Word, etc.): espacios raros y caracteres invisibles / de formato. */
@@ -7166,6 +7323,7 @@ export function renderObj(
             ss.textDecoration = [st.textUnderline && "underline", st.textStrikethrough && "line-through"].filter(Boolean).join(" ");
           }
           if (st.color) ss.color = st.color;
+          if (st.color) ss.WebkitTextFillColor = st.color;
           if (st.linkHref) {
             const noCanvasLink = !!(t.isTextFrame && opts?.designerMode);
             return (
@@ -10079,6 +10237,8 @@ export function FreehandStudioCanvas({
   );
   const [installedGoogleFonts, setInstalledGoogleFonts] = useState<string[]>([]);
   const [customDesignerFonts, setCustomDesignerFonts] = useState<DesignerCustomFontStyle[]>([]);
+  const [customDesignerFontsHydrated, setCustomDesignerFontsHydrated] = useState(false);
+  const customDesignerFontsRef = useRef<DesignerCustomFontStyle[]>([]);
   const [googleFontInstallModalOpen, setGoogleFontInstallModalOpen] = useState(false);
   const [googleFontInstallQuery, setGoogleFontInstallQuery] = useState("");
   const [googleFontInstallSelection, setGoogleFontInstallSelection] = useState<string>("");
@@ -10087,6 +10247,30 @@ export function FreehandStudioCanvas({
   const googleFontCategoryByFamily = useMemo(
     () => new Map<string, string>(GOOGLE_FONTS_LIBRARY.map((g) => [g.family, g.category])),
     [],
+  );
+  const systemFontStylesByFamily = useMemo(() => {
+    const map = new Map<string, Array<{ style: string; weight: number; family: string }>>();
+    for (const preset of DESIGNER_SYSTEM_FONT_PRESETS) {
+      const familyLabel = designerSystemFontFamilyLabel(preset.label);
+      const list = map.get(familyLabel) ?? [];
+      list.push({
+        style: designerSystemFontStyleLabel(preset.label),
+        weight: preset.weight,
+        family: preset.family,
+      });
+      map.set(familyLabel, list);
+    }
+    for (const [family, list] of map) {
+      map.set(
+        family,
+        list.slice().sort((a, b) => a.weight - b.weight || a.style.localeCompare(b.style, "es", { sensitivity: "base" })),
+      );
+    }
+    return map;
+  }, []);
+  const systemFontFamilyOptions = useMemo(
+    () => Array.from(systemFontStylesByFamily.keys()),
+    [systemFontStylesByFamily],
   );
   const installedGoogleFontsSet = useMemo(() => new Set(installedGoogleFonts), [installedGoogleFonts]);
   const customDesignerFontStylesByFamily = useMemo(() => {
@@ -10128,6 +10312,39 @@ export function FreehandStudioCanvas({
     () => GOOGLE_FONTS_POPULAR.filter((g) => !installedGoogleFontsSet.has(g.family)),
     [installedGoogleFontsSet],
   );
+
+  useEffect(() => {
+    customDesignerFontsRef.current = customDesignerFonts;
+  }, [customDesignerFonts]);
+
+  const loadStoredCustomDesignerFonts = useCallback(() => {
+    const stored = readStoredDesignerCustomFonts();
+    customDesignerFontsRef.current = stored;
+    setCustomDesignerFonts(stored);
+    setCustomDesignerFontsHydrated(true);
+    void Promise.all(stored.map((font) => loadDesignerCustomFontFace(font))).catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    loadStoredCustomDesignerFonts();
+    const onCustomFontsChanged = () => loadStoredCustomDesignerFonts();
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === DESIGNER_CUSTOM_FONTS_STORAGE_KEY) loadStoredCustomDesignerFonts();
+    };
+    window.addEventListener(DESIGNER_CUSTOM_FONTS_CHANGED_EVENT, onCustomFontsChanged);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener(DESIGNER_CUSTOM_FONTS_CHANGED_EVENT, onCustomFontsChanged);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, [loadStoredCustomDesignerFonts]);
+
+  useEffect(() => {
+    if (!customDesignerFontsHydrated) return;
+    persistDesignerCustomFonts(customDesignerFonts);
+  }, [customDesignerFonts, customDesignerFontsHydrated]);
+
   const googleFontsInstallResults = useMemo(() => {
     const q = googleFontInstallQuery.trim().toLowerCase();
     if (!q) return GOOGLE_FONTS_LIBRARY;
@@ -10197,16 +10414,18 @@ export function FreehandStudioCanvas({
   const inlineFrameEditorRef = useRef<HTMLDivElement | null>(null);
   const inlineFrameEditorObjectIdRef = useRef<string | null>(null);
   const inlineFrameEditorFocusedForIdRef = useRef<string | null>(null);
+  const simpleTextSelectionRef = useRef<{ objectId: string; range: Range } | null>(null);
   useEffect(() => {
     if (!textEditingId) {
       inlineFrameEditorRef.current = null;
       inlineFrameEditorObjectIdRef.current = null;
       inlineFrameEditorFocusedForIdRef.current = null;
+      simpleTextSelectionRef.current = null;
       return;
     }
     if (inlineFrameEditorFocusedForIdRef.current === textEditingId) return;
     const o = objects.find((x) => x.id === textEditingId);
-    if (!(o?.type === "text") || !(o as TextObject).isTextFrame) return;
+    if (!(o?.type === "text")) return;
     const el = inlineFrameEditorRef.current;
     if (!el) return;
     el.focus();
@@ -10220,6 +10439,88 @@ export function FreehandStudioCanvas({
     }
     inlineFrameEditorFocusedForIdRef.current = textEditingId;
   }, [textEditingId, objects]);
+
+  const captureSimpleTextSelection = useCallback((editor: HTMLElement | null) => {
+    if (!editor || editor.getAttribute("data-fh-simple-text-editor") !== "true") return;
+    const objectId = editor.getAttribute("data-fh-text-editor-object-id") || "";
+    if (!objectId) return;
+    const sel = typeof window !== "undefined" ? window.getSelection() : null;
+    if (!sel || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    if (!editor.contains(range.commonAncestorContainer)) return;
+    simpleTextSelectionRef.current = { objectId, range: range.cloneRange() };
+  }, []);
+
+  const syncSimpleTextEditorToObject = useCallback((editor: HTMLElement | null) => {
+    if (!editor || editor.getAttribute("data-fh-simple-text-editor") !== "true") return;
+    const objectId = editor.getAttribute("data-fh-text-editor-object-id") || "";
+    if (!objectId) return;
+    const payload = simpleTextRichPayloadFromHtml(editor.innerHTML);
+    setObjects((prev) =>
+      prev.map((o) => {
+        if (o.id !== objectId || o.type !== "text") return o;
+        const tx = o as TextObject;
+        return {
+          ...tx,
+          text: payload.plain,
+          _designerRichSpans: payload.spans,
+        };
+      }),
+    );
+  }, []);
+
+  const getSimpleTextEditorForInlineStyle = useCallback((): HTMLElement | null => {
+    if (typeof document === "undefined") return null;
+    const activeEl = document.activeElement as HTMLElement | null;
+    const activeEditor = activeEl?.closest?.("[data-fh-simple-text-editor='true']") as HTMLElement | null;
+    if (activeEditor) return activeEditor;
+    const current = inlineFrameEditorRef.current;
+    if (current?.getAttribute("data-fh-simple-text-editor") === "true") return current;
+    return null;
+  }, []);
+
+  const applyInlineCssToSimpleTextSelection = useCallback(
+    (style: Partial<Pick<SpanStyle, "fontWeight" | "fontStyle" | "color">>) => {
+      if (typeof document === "undefined" || typeof window === "undefined") return false;
+      const editor = getSimpleTextEditorForInlineStyle();
+      if (!editor) return false;
+      const objectId = editor.getAttribute("data-fh-text-editor-object-id") || "";
+      const sel = window.getSelection();
+      let range: Range | null = null;
+      if (
+        sel &&
+        sel.rangeCount > 0 &&
+        editor.contains(sel.anchorNode) &&
+        editor.contains(sel.focusNode)
+      ) {
+        range = sel.getRangeAt(0);
+      } else if (simpleTextSelectionRef.current?.objectId === objectId) {
+        range = simpleTextSelectionRef.current.range;
+      }
+      if (!range) return false;
+      if (range.collapsed) {
+        range = document.createRange();
+        range.selectNodeContents(editor);
+      }
+      const span = document.createElement("span");
+      if (style.fontWeight != null) span.style.fontWeight = String(style.fontWeight);
+      if (style.fontStyle != null) span.style.fontStyle = String(style.fontStyle);
+      if (style.color != null) {
+        span.style.color = String(style.color);
+        (span.style as CSSStyleDeclaration & { webkitTextFillColor?: string }).webkitTextFillColor = String(style.color);
+      }
+      span.appendChild(range.extractContents());
+      range.insertNode(span);
+      const nextRange = document.createRange();
+      nextRange.selectNodeContents(span);
+      sel?.removeAllRanges();
+      sel?.addRange(nextRange);
+      simpleTextSelectionRef.current = { objectId, range: nextRange.cloneRange() };
+      syncSimpleTextEditorToObject(editor);
+      return true;
+    },
+    [getSimpleTextEditorForInlineStyle, syncSimpleTextEditorToObject],
+  );
 
   const [showGrid, setShowGrid] = useState(true);
   const [layoutGuides, setLayoutGuides] = useState<LayoutGuide[]>(() => initialLayoutGuides ?? []);
@@ -13810,6 +14111,13 @@ export function FreehandStudioCanvas({
   /** Google Fonts o presets Helvetica (familia + peso en un solo paso de historial). */
   const designerFontControlValue = useCallback(
     (fontFamily: string, fontWeight: number) => {
+      const norm = fontFamily.replace(/\s+/g, " ").trim();
+      const systemPreset = DESIGNER_SYSTEM_FONT_PRESETS.find(
+        (p) => p.family.replace(/\s+/g, " ").trim() === norm && p.weight === fontWeight,
+      );
+      if (systemPreset) {
+        return `${DESIGNER_SYSTEM_FONT_FAMILY_VALUE_PREFIX}${designerSystemFontFamilyLabel(systemPreset.label)}`;
+      }
       const builtInValue = designerFontSelectControlValue(fontFamily, fontWeight);
       if (builtInValue) return builtInValue;
       const primary = parsePrimaryFontFamily(fontFamily);
@@ -13821,6 +14129,39 @@ export function FreehandStudioCanvas({
   const applyDesignerFontDropdown = useCallback(
     (v: string) => {
       if (!v) return;
+      if (v.startsWith(DESIGNER_SYSTEM_FONT_FAMILY_VALUE_PREFIX)) {
+        const familyLabel = v.slice(DESIGNER_SYSTEM_FONT_FAMILY_VALUE_PREFIX.length);
+        const styles = systemFontStylesByFamily.get(familyLabel);
+        if (!styles?.length) return;
+        const currentTextSelection = selectedObjects.find(
+          (o): o is TextObject | TextOnPathObject =>
+            selectedIdsRef.current.has(o.id) && (o.type === "text" || o.type === "textOnPath"),
+        );
+        const currentWeight = currentTextSelection?.fontWeight ?? creationTextTypography.fontWeight;
+        const exact = styles.find((item) => item.weight === currentWeight);
+        const book = styles.find((item) => item.style.toLowerCase() === "book");
+        const regular = styles.find((item) => item.weight === 400);
+        const selectedStyle = exact ?? book ?? regular ?? styles[0]!;
+        if (selectedIdsRef.current.size > 0) {
+          const sel = selectedIdsRef.current;
+          setObjects((prev) => {
+            const next = prev.map((o) =>
+              sel.has(o.id) && (o.type === "text" || o.type === "textOnPath")
+                ? { ...o, fontFamily: selectedStyle.family, fontWeight: selectedStyle.weight }
+                : o,
+            );
+            pushHistory(next, sel);
+            return next;
+          });
+        } else {
+          setCreationTextTypography((prev) => ({
+            ...prev,
+            fontFamily: selectedStyle.family,
+            fontWeight: selectedStyle.weight,
+          }));
+        }
+        return;
+      }
       if (v.startsWith(DESIGNER_FONT_PRESET_VALUE_PREFIX)) {
         const id = v.slice(DESIGNER_FONT_PRESET_VALUE_PREFIX.length);
         const p = DESIGNER_SYSTEM_FONT_PRESETS.find((x) => x.id === id);
@@ -13870,7 +14211,14 @@ export function FreehandStudioCanvas({
       }
       updateSelectedProp("fontFamily", `${v}, system-ui, sans-serif`);
     },
-    [creationTextTypography.fontWeight, customDesignerFontStylesByFamily, pushHistory, selectedObjects, updateSelectedProp],
+    [
+      creationTextTypography.fontWeight,
+      customDesignerFontStylesByFamily,
+      pushHistory,
+      selectedObjects,
+      systemFontStylesByFamily,
+      updateSelectedProp,
+    ],
   );
 
   const importDesignerCustomFontFile = useCallback(
@@ -13898,17 +14246,13 @@ export function FreehandStudioCanvas({
         await face.load();
         document.fonts.add(face);
         registerUserFontBuffer(parsedFont.family, parsedFont.weight, buf);
-        setCustomDesignerFonts((prev) => {
-          const withoutSameStyle = prev.filter(
-            (item) => !(item.family === parsedFont.family && item.style === parsedFont.style),
-          );
-          return [...withoutSameStyle, parsedFont].sort(
-            (a, b) =>
-              a.family.localeCompare(b.family, "es", { sensitivity: "base" }) ||
-              a.weight - b.weight ||
-              a.style.localeCompare(b.style, "es", { sensitivity: "base" }),
-          );
-        });
+        const importedFont: DesignerCustomFontStyle = { ...parsedFont, dataUrl };
+        const nextCustomFonts = mergeDesignerCustomFonts([...customDesignerFontsRef.current, importedFont]);
+        customDesignerFontsRef.current = nextCustomFonts;
+        setCustomDesignerFonts(nextCustomFonts);
+        setCustomDesignerFontsHydrated(true);
+        const persisted = persistDesignerCustomFonts(nextCustomFonts);
+        if (persisted) window.dispatchEvent(new Event(DESIGNER_CUSTOM_FONTS_CHANGED_EVENT));
         const cssFamily = cssFontFamilyStackForDesignerFamily(parsedFont.family);
         if (selectedIdsRef.current.size > 0) {
           const sel = selectedIdsRef.current;
@@ -14152,6 +14496,10 @@ export function FreehandStudioCanvas({
   /** Paleta: siempre aplica al color de relleno (y a la selección vectorial / texto). */
   const applyPaletteHex = useCallback(
     (hex: string) => {
+      if (applyInlineCssToSimpleTextSelection({ color: hex })) {
+        setFillColor(hex);
+        return;
+      }
       const sel = selectedIdsRef.current;
       if (sel.size === 0) {
         setFillColor(hex);
@@ -14169,7 +14517,7 @@ export function FreehandStudioCanvas({
         return next;
       });
     },
-    [pushHistory],
+    [applyInlineCssToSimpleTextSelection, pushHistory],
   );
 
   const applyLeftToolbarFill = useCallback(
@@ -18239,6 +18587,7 @@ export function FreehandStudioCanvas({
       if (f) {
         const handleSize = 8 / viewport.zoom;
         const hw = f.w / 2, hh = f.h / 2;
+        const startDims = textLayoutDims(t);
         const hDefs: { id: "nw" | "ne" | "se" | "sw" | "n" | "e" | "s" | "w"; lx: number; ly: number }[] = [
           { id: "nw", lx: -hw, ly: -hh }, { id: "ne", lx: hw, ly: -hh },
           { id: "se", lx: hw, ly: hh }, { id: "sw", lx: -hw, ly: hh },
@@ -18254,7 +18603,7 @@ export function FreehandStudioCanvas({
               startY: e.clientY,
               textBoxResizeObjectId: t.id,
               textBoxResizeHandle: hi.id,
-              textBoxResizeStart: { x: t.x, y: t.y, w: t.width, h: t.height },
+              textBoxResizeStart: { x: t.x, y: t.y, w: startDims.w, h: startDims.h },
             });
             return;
           }
@@ -18713,9 +19062,11 @@ export function FreehandStudioCanvas({
         }
         if (src.type === "text") {
           const t = src as TextObject;
-          if (t.isTextFrame) {
-            const newW = Math.max(20, Math.abs(src.width * sx));
-            const newH = Math.max(20, Math.abs(src.height * sy));
+          if (t.isTextFrame || t.textMode === "area") {
+            const visualW = src.width * Math.abs(t.scaleX ?? 1);
+            const visualH = src.height * Math.abs(t.scaleY ?? 1);
+            const newW = Math.max(20, Math.abs(visualW * sx));
+            const newH = Math.max(20, Math.abs(visualH * sy));
             const pivot = { x: src.x + src.width / 2, y: src.y + src.height / 2 };
             const newC = mapWorld(pivot);
             return {
@@ -18907,9 +19258,11 @@ export function FreehandStudioCanvas({
         }
         if (src.type === "text") {
           const tt = src as TextObject;
-          if (tt.isTextFrame) {
-            const nextW = Math.max(20, Math.abs(src.width * sx));
-            const nextH = Math.max(20, Math.abs(src.height * sy));
+          if (tt.isTextFrame || tt.textMode === "area") {
+            const visualW = src.width * Math.abs(tt.scaleX ?? 1);
+            const visualH = src.height * Math.abs(tt.scaleY ?? 1);
+            const nextW = Math.max(20, Math.abs(visualW * sx));
+            const nextH = Math.max(20, Math.abs(visualH * sy));
             const pivot = { x: src.x + src.width / 2, y: src.y + src.height / 2 };
             const newC = mapWorld(pivot);
             return {
@@ -19013,6 +19366,7 @@ export function FreehandStudioCanvas({
           const tx = o as TextObject;
           return {
             ...tx,
+            textMode: "area",
             x: nx,
             y: ny,
             width: nw,
@@ -24326,49 +24680,80 @@ export function FreehandStudioCanvas({
             );
           }
 
+          const simpleHtml = richSpansToInlineHtml(to._designerRichSpans, to.text);
           return (
-            <textarea
+            <div
+              ref={(node) => {
+                inlineFrameEditorRef.current = node;
+                if (!node) return;
+                if (inlineFrameEditorObjectIdRef.current !== to.id) {
+                  node.innerHTML = simpleHtml;
+                  inlineFrameEditorObjectIdRef.current = to.id;
+                }
+              }}
               data-fh-text-editor
-              className="absolute z-[10001] resize-none border-0 bg-transparent p-0 shadow-none outline-none ring-0 placeholder:text-zinc-500 [&::selection]:bg-sky-500/35"
+              data-fh-simple-text-editor="true"
+              data-fh-text-editor-object-id={to.id}
+              contentEditable
+              suppressContentEditableWarning
+              spellCheck
+              className="absolute z-[10001] overflow-hidden border-0 bg-transparent p-0 shadow-none outline-none ring-0 [text-rendering:optimizeLegibility] [&::selection]:bg-sky-500/35 [&_b]:font-bold [&_strong]:font-bold [&_i]:italic [&_u]:underline [&_s]:line-through"
               style={editorStyle}
-              value={to.text}
               onMouseDown={(ev) => {
                 ev.stopPropagation();
               }}
               onPointerDown={(ev) => {
                 ev.stopPropagation();
               }}
-              onChange={(e) => {
-                const v = e.target.value;
+              onMouseUp={(ev) => captureSimpleTextSelection(ev.currentTarget)}
+              onKeyUp={(ev) => captureSimpleTextSelection(ev.currentTarget)}
+              onInput={(ev) => {
+                const editor = ev.currentTarget;
+                const payload = simpleTextRichPayloadFromHtml(editor.innerHTML);
                 setObjects((prev) =>
                   prev.map((o) => {
                     if (o.id !== to.id || o.type !== "text") return o;
                     const t = o as TextObject;
                     let width = t.width;
                     if (t.textMode === "point") {
-                      const lines = v.split("\n");
+                      const lines = payload.plain.split("\n");
                       const maxLen = lines.reduce((m, line) => Math.max(m, line.length), 0);
                       width = Math.max(80, maxLen * t.fontSize * 0.52 + 24);
                     }
-                    return { ...t, text: v, width };
+                    return { ...t, text: payload.plain, width, _designerRichSpans: payload.spans };
                   }),
                 );
+                captureSimpleTextSelection(editor);
               }}
               onKeyDown={(ev) => {
                 if (ev.key === "Escape") {
-                  (ev.target as HTMLTextAreaElement).blur();
+                  (ev.currentTarget as HTMLDivElement).blur();
                   ev.stopPropagation();
+                  return;
+                }
+                const mod = ev.metaKey || ev.ctrlKey;
+                if (!mod) return;
+                const k = ev.key.toLowerCase();
+                if (k === "b" || k === "i" || k === "u") {
+                  ev.preventDefault();
+                  document.execCommand(k === "b" ? "bold" : k === "i" ? "italic" : "underline", false);
+                  syncSimpleTextEditorToObject(ev.currentTarget);
+                  captureSimpleTextSelection(ev.currentTarget);
                 }
               }}
-              onBlur={() => {
-                const editedObj = objectsRef.current.find(o => o.id === to.id) as TextObject | undefined;
+              onBlur={(ev) => {
+                const editor = ev.currentTarget;
+                syncSimpleTextEditorToObject(editor);
                 pushHistory(objectsRef.current, selectedIdsRef.current);
-                if (editedObj?.isTextFrame && onDesignerTextFrameEdit && editedObj.storyId) {
-                  onDesignerTextFrameEdit(editedObj.id, editedObj.storyId, editedObj.text);
+                const nextFocus = ev.relatedTarget as Node | null;
+                const keepSimpleSelectionForPanelAction = !!nextFocus && !editor.contains(nextFocus);
+                if (keepSimpleSelectionForPanelAction) {
+                  captureSimpleTextSelection(editor);
+                  return;
                 }
+                simpleTextSelectionRef.current = null;
                 setTextEditingId(null);
               }}
-              autoFocus
             />
           );
         })()}
@@ -25366,7 +25751,9 @@ export function FreehandStudioCanvas({
                         <ColorDropTarget
                           className="flex items-center gap-1.5"
                           onApplyHex={(hex) => {
-                            updateSelectedFill(() => solidFill(hex));
+                            if (!applyInlineCssToSimpleTextSelection({ color: hex })) {
+                              updateSelectedFill(() => solidFill(hex));
+                            }
                             setFillColor(hex);
                           }}
                         >
@@ -25397,7 +25784,9 @@ export function FreehandStudioCanvas({
                             value={fillPickerValue}
                             onChange={(e) => {
                               const c = e.target.value;
-                              updateSelectedFill(() => solidFill(c));
+                              if (!applyInlineCssToSimpleTextSelection({ color: c })) {
+                                updateSelectedFill(() => solidFill(c));
+                              }
                               setFillColor(c);
                             }}
                             className="h-[22px] w-[22px] shrink-0 cursor-pointer rounded-[5px] border border-white/[0.08] bg-transparent"
@@ -26633,13 +27022,19 @@ export function FreehandStudioCanvas({
                   const iconToolBtn = `inline-flex h-7 min-w-0 flex-1 items-center justify-center rounded-[6px] border text-[#a1a1aa] transition-colors ${pillOff}`;
                   const iconToolBtnOn = `inline-flex h-7 min-w-0 flex-1 items-center justify-center rounded-[6px] border text-white transition-colors ${pillOn}`;
                   const fontSelectValue = designerFontControlValue(tx.fontFamily, tx.fontWeight);
+                  const systemFamilyName = fontSelectValue.startsWith(DESIGNER_SYSTEM_FONT_FAMILY_VALUE_PREFIX)
+                    ? fontSelectValue.slice(DESIGNER_SYSTEM_FONT_FAMILY_VALUE_PREFIX.length)
+                    : "";
                   const showCurrentFontOption =
                     !!fontSelectValue &&
+                    !systemFamilyName &&
                     !customDesignerFontsSet.has(fontSelectValue) &&
                     !installedGoogleFontsSet.has(fontSelectValue) &&
                     !GOOGLE_FONTS_POPULAR.some((g) => g.family === fontSelectValue) &&
                     !fontSelectValue.startsWith(DESIGNER_FONT_PRESET_VALUE_PREFIX);
                   const importedFontStyles = customDesignerFontStylesByFamily.get(fontSelectValue) ?? [];
+                  const systemFontStyles = systemFamilyName ? systemFontStylesByFamily.get(systemFamilyName) ?? [] : [];
+                  const fixedFontStyles = importedFontStyles.length > 0 ? importedFontStyles : systemFontStyles;
                   const applyInlineRichCommand = (cmd: string): boolean => {
                     if (typeof window === "undefined" || typeof document === "undefined") return false;
                     const activeEl = document.activeElement as HTMLElement | null;
@@ -26660,6 +27055,10 @@ export function FreehandStudioCanvas({
                       sel.addRange(r);
                     }
                     document.execCommand(cmd, false);
+                    if (editor.getAttribute("data-fh-simple-text-editor") === "true") {
+                      syncSimpleTextEditorToObject(editor);
+                      captureSimpleTextSelection(editor);
+                    }
                     return true;
                   };
                   const applyTextStyleCommand = (
@@ -26668,6 +27067,20 @@ export function FreehandStudioCanvas({
                   ) => {
                     if (applyInlineRichCommand(cmd)) return;
                     fallback();
+                  };
+                  const applyTextFontSize = (value: number, live = false) => {
+                    const next = clamp(Math.round(value), 4, 400);
+                    if (live) updateSelectedPropSilent("fontSize", next);
+                    else updateSelectedProp("fontSize", next);
+                  };
+                  const applyTextFontWeight = (value: number) => {
+                    const next = clamp(Math.round(value), 100, 900);
+                    updateSelectedProp("fontWeight", next);
+                  };
+                  const applyTextLetterSpacing = (value: number, live = false) => {
+                    const next = Math.round(value * 100) / 100;
+                    if (live) updateSelectedPropSilent("letterSpacing", next);
+                    else updateSelectedProp("letterSpacing", next);
                   };
                   return (
                     <div className="-mx-[14px] space-y-2.5 border-b border-white/[0.08] px-[14px] py-2">
@@ -26713,9 +27126,9 @@ export function FreehandStudioCanvas({
                             ))}
                           </optgroup>
                           <optgroup label="Helvetica · sistema">
-                            {DESIGNER_SYSTEM_FONT_PRESETS.map((p) => (
-                              <option key={p.id} value={`${DESIGNER_FONT_PRESET_VALUE_PREFIX}${p.id}`}>
-                                {p.label}
+                            {systemFontFamilyOptions.map((family) => (
+                              <option key={family} value={`${DESIGNER_SYSTEM_FONT_FAMILY_VALUE_PREFIX}${family}`}>
+                                {family}
                               </option>
                             ))}
                           </optgroup>
@@ -26747,8 +27160,8 @@ export function FreehandStudioCanvas({
                           </label>
                           <ScrubNumberInput
                             value={tx.fontSize}
-                            onKeyboardCommit={(n) => updateSelectedProp("fontSize", clamp(Math.round(n), 4, 400))}
-                            onScrubLive={(n) => updateSelectedPropSilent("fontSize", clamp(Math.round(n), 4, 400))}
+                            onKeyboardCommit={(n) => applyTextFontSize(n)}
+                            onScrubLive={(n) => applyTextFontSize(n, true)}
                             onScrubEnd={commitHistoryAfterScrub}
                             step={1}
                             roundFn={(n) => clamp(Math.round(n), 4, 400)}
@@ -26763,15 +27176,15 @@ export function FreehandStudioCanvas({
                             <Weight size={10} strokeWidth={2} className={tfIconMuted} aria-hidden />
                             Wgt
                           </label>
-                          {importedFontStyles.length > 0 ? (
+                          {fixedFontStyles.length > 0 ? (
                             <select
                               value={String(tx.fontWeight)}
-                              onChange={(e) => updateSelectedProp("fontWeight", Number(e.target.value) || 400)}
+                              onChange={(e) => applyTextFontWeight(Number(e.target.value) || 400)}
                               className={tfInp.replace("cursor-ew-resize", "cursor-pointer")}
-                              title="Estilos disponibles para esta familia importada"
+                              title="Estilos disponibles para esta familia"
                             >
-                              {importedFontStyles.map((style) => (
-                                <option key={`${style.family}-${style.style}-${style.weight}`} value={style.weight}>
+                              {fixedFontStyles.map((style) => (
+                                <option key={`${fontSelectValue}-${style.style}-${style.weight}`} value={style.weight}>
                                   {style.style}
                                 </option>
                               ))}
@@ -26779,7 +27192,7 @@ export function FreehandStudioCanvas({
                           ) : (
                             <ScrubNumberInput
                               value={tx.fontWeight}
-                              onKeyboardCommit={(n) => updateSelectedProp("fontWeight", clamp(Math.round(n), 100, 900))}
+                              onKeyboardCommit={(n) => applyTextFontWeight(n)}
                               onScrubLive={(n) => updateSelectedPropSilent("fontWeight", clamp(Math.round(n), 100, 900))}
                               onScrubEnd={commitHistoryAfterScrub}
                               step={1}
@@ -26816,8 +27229,8 @@ export function FreehandStudioCanvas({
                           </label>
                           <ScrubNumberInput
                             value={tx.letterSpacing}
-                            onKeyboardCommit={(n) => updateSelectedProp("letterSpacing", Math.round(n * 100) / 100)}
-                            onScrubLive={(n) => updateSelectedPropSilent("letterSpacing", Math.round(n * 100) / 100)}
+                            onKeyboardCommit={(n) => applyTextLetterSpacing(n)}
+                            onScrubLive={(n) => applyTextLetterSpacing(n, true)}
                             onScrubEnd={commitHistoryAfterScrub}
                             step={0.05}
                             roundFn={(n) => Math.round(n * 100) / 100}
@@ -26969,13 +27382,19 @@ export function FreehandStudioCanvas({
                 {firstSelected.type === "textOnPath" && (() => {
                   const top = firstSelected as TextOnPathObject;
                   const fontSelectValue = designerFontControlValue(top.fontFamily, top.fontWeight);
+                  const systemFamilyName = fontSelectValue.startsWith(DESIGNER_SYSTEM_FONT_FAMILY_VALUE_PREFIX)
+                    ? fontSelectValue.slice(DESIGNER_SYSTEM_FONT_FAMILY_VALUE_PREFIX.length)
+                    : "";
                   const showCurrentFontOption =
                     !!fontSelectValue &&
+                    !systemFamilyName &&
                     !customDesignerFontsSet.has(fontSelectValue) &&
                     !installedGoogleFontsSet.has(fontSelectValue) &&
                     !GOOGLE_FONTS_POPULAR.some((g) => g.family === fontSelectValue) &&
                     !fontSelectValue.startsWith(DESIGNER_FONT_PRESET_VALUE_PREFIX);
                   const importedFontStyles = customDesignerFontStylesByFamily.get(fontSelectValue) ?? [];
+                  const systemFontStyles = systemFamilyName ? systemFontStylesByFamily.get(systemFamilyName) ?? [] : [];
+                  const fixedFontStyles = importedFontStyles.length > 0 ? importedFontStyles : systemFontStyles;
                   return (
                     <>
                       <div className="space-y-2 border-t border-white/10 pt-2">
@@ -27020,9 +27439,9 @@ export function FreehandStudioCanvas({
                             ))}
                           </optgroup>
                           <optgroup label="Helvetica · sistema">
-                            {DESIGNER_SYSTEM_FONT_PRESETS.map((p) => (
-                              <option key={p.id} value={`${DESIGNER_FONT_PRESET_VALUE_PREFIX}${p.id}`}>
-                                {p.label}
+                            {systemFontFamilyOptions.map((family) => (
+                              <option key={family} value={`${DESIGNER_SYSTEM_FONT_FAMILY_VALUE_PREFIX}${family}`}>
+                                {family}
                               </option>
                             ))}
                           </optgroup>
@@ -27070,15 +27489,15 @@ export function FreehandStudioCanvas({
                           </div>
                           <div className="space-y-0.5">
                             <label className="text-[8px] text-zinc-600">Weight</label>
-                            {importedFontStyles.length > 0 ? (
+                            {fixedFontStyles.length > 0 ? (
                               <select
                                 value={String(top.fontWeight)}
                                 onChange={(e) => updateSelectedProp("fontWeight", Number(e.target.value) || 400)}
                                 className="w-full cursor-pointer rounded border border-white/10 bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-white"
-                                title="Estilos disponibles para esta familia importada"
+                                title="Estilos disponibles para esta familia"
                               >
-                                {importedFontStyles.map((style) => (
-                                  <option key={`${style.family}-${style.style}-${style.weight}`} value={style.weight}>
+                                {fixedFontStyles.map((style) => (
+                                  <option key={`${fontSelectValue}-${style.style}-${style.weight}`} value={style.weight}>
                                     {style.style}
                                   </option>
                                 ))}
