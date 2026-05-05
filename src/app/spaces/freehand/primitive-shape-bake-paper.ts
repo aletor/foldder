@@ -54,6 +54,62 @@ function boundsFromBezierPoints(points: BezierPoint[]): { x: number; y: number; 
   return { x: x1, y: y1, w: Math.max(x2 - x1, 1e-6), h: Math.max(y2 - y1, 1e-6) };
 }
 
+function transformPointLikePrimitive(
+  p: { x: number; y: number },
+  o: { x: number; y: number; width: number; height: number; rotation?: number; flipX?: boolean; flipY?: boolean },
+): { x: number; y: number } {
+  const cx = o.x + o.width / 2;
+  const cy = o.y + o.height / 2;
+  let x = p.x;
+  let y = p.y;
+  if (o.rotation) {
+    const rad = (o.rotation * Math.PI) / 180;
+    const c = Math.cos(rad);
+    const s = Math.sin(rad);
+    const dx = x - cx;
+    const dy = y - cy;
+    x = cx + dx * c - dy * s;
+    y = cy + dx * s + dy * c;
+  }
+  if (o.flipX) x = cx - (x - cx);
+  if (o.flipY) y = cy - (y - cy);
+  return { x, y };
+}
+
+function rectToSharpCornerPath(r: RectObject): PathObject {
+  const raw = [
+    { x: r.x, y: r.y },
+    { x: r.x + r.width, y: r.y },
+    { x: r.x + r.width, y: r.y + r.height },
+    { x: r.x, y: r.y + r.height },
+  ].map((p) => transformPointLikePrimitive(p, r));
+  const points: BezierPoint[] = raw.map((anchor) => ({
+    anchor: { ...anchor },
+    handleIn: { ...anchor },
+    handleOut: { ...anchor },
+    vertexMode: "corner",
+    cornerMode: true,
+    cornerRadius: 0,
+  }));
+  const pb = boundsFromBezierPoints(points);
+  const name = r.name.endsWith("(trazo)") ? r.name : `${r.name} (trazo)`;
+  const rest = stripRectProps(r);
+  return {
+    ...rest,
+    type: "path",
+    name,
+    x: pb.x,
+    y: pb.y,
+    width: pb.w,
+    height: pb.h,
+    rotation: 0,
+    flipX: false,
+    flipY: false,
+    points,
+    closed: true,
+  } as PathObject;
+}
+
 function applyObjTransformToItem(
   item: paper.Item,
   o: { x: number; y: number; width: number; height: number; rotation?: number; flipX?: boolean; flipY?: boolean },
@@ -122,6 +178,13 @@ export function bakeRectToPath(r: RectObject): PathObject | null {
   paper.setup(canvas);
 
   const corners = normalizeCornerRadius(r.cornerRadius ?? r.rx ?? 0, r.width, r.height);
+  const hasRadius =
+    corners.topLeft > 1e-6 ||
+    corners.topRight > 1e-6 ||
+    corners.bottomRight > 1e-6 ||
+    corners.bottomLeft > 1e-6;
+  if (!hasRadius) return rectToSharpCornerPath(r);
+
   const d = rectangleToRoundedPath(
     { x: r.x, y: r.y, width: r.width, height: r.height },
     corners,

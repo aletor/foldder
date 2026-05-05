@@ -824,6 +824,8 @@ interface BezierPoint {
   /** @deprecated Prefer `vertexMode`. Kept for older saved paths. */
   cornerMode?: boolean;
   vertexMode?: VertexMode;
+  /** Designer live-corner radius for sharp/straight anchors, measured along adjacent segments. */
+  cornerRadius?: number;
 }
 
 function getVertexMode(pt: BezierPoint): VertexMode {
@@ -1418,6 +1420,13 @@ const ZERO_CORNER_RADIUS: RectangleCornerRadius = {
   bottomRight: 0,
   bottomLeft: 0,
 };
+
+const RECTANGLE_CORNER_RADIUS_KEYS: (keyof RectangleCornerRadius)[] = [
+  "topLeft",
+  "topRight",
+  "bottomRight",
+  "bottomLeft",
+];
 
 function safeRadiusValue(v: unknown): number {
   const n = Number(v);
@@ -5912,16 +5921,181 @@ function getPathRings(p: PathObject): BezierPoint[][] {
 /** Pixels / zoom: misma distancia que el hit-test al hacer clic para cerrar el trazo en el primer ancla. */
 const PEN_CLOSE_TO_START_PX = 12;
 
+function pointDistanceToLineSegment(p: Point, a: Point, b: Point): number {
+  const vx = b.x - a.x, vy = b.y - a.y;
+  const wx = p.x - a.x, wy = p.y - a.y;
+  const l2 = vx * vx + vy * vy;
+  if (l2 < 1e-9) return dist(p, a);
+  const t = clamp((wx * vx + wy * vy) / l2, 0, 1);
+  return dist(p, { x: a.x + vx * t, y: a.y + vy * t });
+}
+
+function pathSegmentIsStraight(a: BezierPoint, b: BezierPoint): boolean {
+  const chord = Math.max(dist(a.anchor, b.anchor), 1);
+  return (
+    pointDistanceToLineSegment(a.handleOut, a.anchor, b.anchor) <= Math.max(0.75, chord * 0.01) &&
+    pointDistanceToLineSegment(b.handleIn, a.anchor, b.anchor) <= Math.max(0.75, chord * 0.01)
+  );
+}
+
+function pathRingClosedForD(pathClosed: boolean, ringCount: number): boolean {
+  return pathClosed || ringCount > 1;
+}
+
+function pathRingInfoForGlobalIndex(
+  p: Pick<PathObject, "points" | "contourStarts" | "closed">,
+  globalIdx: number,
+): { ring: BezierPoint[]; ringStart: number; localIdx: number; closed: boolean } | null {
+  if (globalIdx < 0 || globalIdx >= p.points.length) return null;
+  const starts = p.contourStarts && p.contourStarts.length > 1 ? p.contourStarts : [0];
+  for (let i = 0; i < starts.length; i++) {
+    const start = starts[i]!;
+    const end = i + 1 < starts.length ? starts[i + 1]! : p.points.length;
+    if (globalIdx >= start && globalIdx < end) {
+      return {
+        ring: p.points.slice(start, end),
+        ringStart: start,
+        localIdx: globalIdx - start,
+        closed: pathRingClosedForD(!!p.closed, starts.length),
+      };
+    }
+  }
+  return null;
+}
+
+function maxPathCornerRadiusForRingPoint(ring: BezierPoint[], idx: number, closed: boolean): number {
+  const n = ring.length;
+  if (n < 3) return 0;
+  if (!closed && (idx === 0 || idx === n - 1)) return 0;
+  const prev = ring[(idx - 1 + n) % n]!;
+  const curr = ring[idx]!;
+  const next = ring[(idx + 1) % n]!;
+  if (!pathSegmentIsStraight(prev, curr) || !pathSegmentIsStraight(curr, next)) return 0;
+  return Math.max(0, Math.min(dist(curr.anchor, prev.anchor), dist(curr.anchor, next.anchor)) / 2);
+}
+
+function pathCornerBisectorForRingPoint(ring: BezierPoint[], idx: number, closed: boolean): Point | null {
+  const maxR = maxPathCornerRadiusForRingPoint(ring, idx, closed);
+  if (maxR <= 0) return null;
+  const n = ring.length;
+  const prev = ring[(idx - 1 + n) % n]!;
+  const curr = ring[idx]!;
+  const next = ring[(idx + 1) % n]!;
+  const vin = { x: prev.anchor.x - curr.anchor.x, y: prev.anchor.y - curr.anchor.y };
+  const vout = { x: next.anchor.x - curr.anchor.x, y: next.anchor.y - curr.anchor.y };
+  const lin = Math.hypot(vin.x, vin.y);
+  const lout = Math.hypot(vout.x, vout.y);
+  if (lin < 1e-6 || lout < 1e-6) return null;
+  const bx = vin.x / lin + vout.x / lout;
+  const by = vin.y / lin + vout.y / lout;
+  const bl = Math.hypot(bx, by);
+  if (bl < 1e-6) return null;
+  return { x: bx / bl, y: by / bl };
+}
+
+function pathCornerWidgetPointForRingPoint(ring: BezierPoint[], idx: number, closed: boolean, zoom = 1): Point | null {
+  const bis = pathCornerBisectorForRingPoint(ring, idx, closed);
+  if (!bis) return null;
+  const curr = ring[idx]!;
+  const maxR = maxPathCornerRadiusForRingPoint(ring, idx, closed);
+  const z = Math.max(zoom, 1e-6);
+  const displayR = Math.min(maxR, Math.max(curr.cornerRadius && curr.cornerRadius > 0 ? curr.cornerRadius : 14 / z, Math.min(7 / z, maxR)));
+  return { x: curr.anchor.x + bis.x * displayR, y: curr.anchor.y + bis.y * displayR };
+}
+
+function pathCornerRadiusFromDrag(ring: BezierPoint[], idx: number, closed: boolean, pos: Point, snap: boolean): number {
+  const bis = pathCornerBisectorForRingPoint(ring, idx, closed);
+  if (!bis) return 0;
+  const curr = ring[idx]!;
+  const maxR = maxPathCornerRadiusForRingPoint(ring, idx, closed);
+  const raw = (pos.x - curr.anchor.x) * bis.x + (pos.y - curr.anchor.y) * bis.y;
+  const value = clamp(raw, 0, maxR);
+  return snap ? Math.round(value) : value;
+}
+
+function applyLinkedCornerRadiusToPathPoints(points: BezierPoint[], p: Pick<PathObject, "points" | "contourStarts" | "closed">, radius: number): BezierPoint[] {
+  return points.map((pt, idx) => {
+    const info = pathRingInfoForGlobalIndex(p, idx);
+    if (!info) return pt;
+    const maxR = maxPathCornerRadiusForRingPoint(info.ring, info.localIdx, info.closed);
+    if (maxR <= 0) return pt;
+    return {
+      ...pt,
+      vertexMode: "corner" as const,
+      cornerMode: true,
+      cornerRadius: clamp(radius, 0, maxR),
+    };
+  });
+}
+
+function pathCornerRadiusStats(p: PathObject): { count: number; maxRadius: number; value: number } {
+  let count = 0;
+  let maxRadius = Infinity;
+  let total = 0;
+  const rings = getPathRings(p);
+  const closed = pathRingClosedForD(!!p.closed, rings.length);
+  for (const ring of rings) {
+    for (let i = 0; i < ring.length; i++) {
+      const maxR = maxPathCornerRadiusForRingPoint(ring, i, closed);
+      if (maxR <= 0) continue;
+      count += 1;
+      maxRadius = Math.min(maxRadius, maxR);
+      total += ring[i]?.cornerRadius ?? 0;
+    }
+  }
+  return {
+    count,
+    maxRadius: count > 0 && Number.isFinite(maxRadius) ? maxRadius : 0,
+    value: count > 0 ? total / count : 0,
+  };
+}
+
+function roundedCornerInfoForRingPoint(ring: BezierPoint[], idx: number, closed: boolean) {
+  const maxR = maxPathCornerRadiusForRingPoint(ring, idx, closed);
+  const curr = ring[idx]!;
+  const r = clamp(curr.cornerRadius ?? 0, 0, maxR);
+  if (r <= 1e-6) return null;
+  const n = ring.length;
+  const prev = ring[(idx - 1 + n) % n]!;
+  const next = ring[(idx + 1) % n]!;
+  const vin = { x: prev.anchor.x - curr.anchor.x, y: prev.anchor.y - curr.anchor.y };
+  const vout = { x: next.anchor.x - curr.anchor.x, y: next.anchor.y - curr.anchor.y };
+  const lin = Math.hypot(vin.x, vin.y);
+  const lout = Math.hypot(vout.x, vout.y);
+  if (lin < 1e-6 || lout < 1e-6) return null;
+  return {
+    entry: { x: curr.anchor.x + (vin.x / lin) * r, y: curr.anchor.y + (vin.y / lin) * r },
+    exit: { x: curr.anchor.x + (vout.x / lout) * r, y: curr.anchor.y + (vout.y / lout) * r },
+    control: curr.anchor,
+  };
+}
+
 function bezierToSvgD(points: BezierPoint[], closed: boolean): string {
   if (points.length === 0) return "";
-  let d = `M ${points[0].anchor.x} ${points[0].anchor.y}`;
+  const rounded = points.map((_, i) => roundedCornerInfoForRingPoint(points, i, closed));
+  let d = rounded[0]
+    ? `M ${rounded[0]!.exit.x} ${rounded[0]!.exit.y}`
+    : `M ${points[0].anchor.x} ${points[0].anchor.y}`;
   for (let i = 1; i < points.length; i++) {
     const prev = points[i - 1], curr = points[i];
-    d += ` C ${prev.handleOut.x} ${prev.handleOut.y} ${curr.handleIn.x} ${curr.handleIn.y} ${curr.anchor.x} ${curr.anchor.y}`;
+    const target = rounded[i]?.entry ?? curr.anchor;
+    if (pathSegmentIsStraight(prev, curr)) d += ` L ${target.x} ${target.y}`;
+    else d += ` C ${prev.handleOut.x} ${prev.handleOut.y} ${curr.handleIn.x} ${curr.handleIn.y} ${target.x} ${target.y}`;
+    if (rounded[i]) {
+      const info = rounded[i]!;
+      d += ` Q ${info.control.x} ${info.control.y} ${info.exit.x} ${info.exit.y}`;
+    }
   }
   if (closed && points.length > 1) {
     const last = points[points.length - 1], first = points[0];
-    d += ` C ${last.handleOut.x} ${last.handleOut.y} ${first.handleIn.x} ${first.handleIn.y} ${first.anchor.x} ${first.anchor.y} Z`;
+    const target = rounded[0]?.entry ?? first.anchor;
+    if (pathSegmentIsStraight(last, first)) d += ` L ${target.x} ${target.y}`;
+    else d += ` C ${last.handleOut.x} ${last.handleOut.y} ${first.handleIn.x} ${first.handleIn.y} ${target.x} ${target.y}`;
+    if (rounded[0]) {
+      const info = rounded[0]!;
+      d += ` Q ${info.control.x} ${info.control.y} ${info.exit.x} ${info.exit.y}`;
+    }
+    d += " Z";
   }
   return d;
 }
@@ -9962,7 +10136,7 @@ export function FreehandStudioCanvas({
 
   // Drag state
   const [dragState, setDragState] = useState<{
-    type: "move" | "resize" | "skew" | "rotationPivot" | "textBoxResize" | "pan" | "create" | "createText" | "createTextFrame" | "createImageFrame" | "directSelect" | "marquee" | "photoRectMarquee" | "photoEllipseMarquee" | "photoLassoMarquee" | "photoPolygonMarquee" | "photoMarqueeNudge" | "photoMarqueeFloatRotate" | "photoMarqueeFloatResize" | "penHandle" | "rotate" | "gradient" | "guideMove" | "guidePull" | "imageContentPan" | "imageContentResize" | "brushPaint" | "photoGradientLine" | "photoGradientVertex" | "cornerRadius";
+    type: "move" | "resize" | "skew" | "rotationPivot" | "textBoxResize" | "pan" | "create" | "createText" | "createTextFrame" | "createImageFrame" | "directSelect" | "pathCornerRadius" | "marquee" | "photoRectMarquee" | "photoEllipseMarquee" | "photoLassoMarquee" | "photoPolygonMarquee" | "photoMarqueeNudge" | "photoMarqueeFloatRotate" | "photoMarqueeFloatResize" | "penHandle" | "rotate" | "gradient" | "guideMove" | "guidePull" | "imageContentPan" | "imageContentResize" | "brushPaint" | "photoGradientLine" | "photoGradientVertex" | "cornerRadius";
     startX: number;
     startY: number;
     startCanvas?: Point;
@@ -9992,6 +10166,10 @@ export function FreehandStudioCanvas({
     dsHtType?: "anchor" | "handleIn" | "handleOut";
     dsStartPt?: Point;
     dsMovePointIndices?: number[];
+    pathCornerRadiusObjId?: string;
+    pathCornerRadiusClipContainerId?: string;
+    pathCornerRadiusPointIdx?: number;
+    pathCornerRadiusLinked?: boolean;
     marqueeOrigin?: Point;
     snapDelta?: Point;
     shiftKey?: boolean;
@@ -10132,6 +10310,7 @@ export function FreehandStudioCanvas({
   /** Corner radius handle hovered on selected rectangle. */
   const [hoverCornerRadiusHandle, setHoverCornerRadiusHandle] = useState<keyof RectangleCornerRadius | null>(null);
   const hoverCornerRadiusHandleRef = useRef<keyof RectangleCornerRadius | null>(null);
+  const [pathCornerRadiusLinked, setPathCornerRadiusLinked] = useState(true);
   /** Panel de capas: desplegado por defecto abajo en la columna derecha. */
   const [layersPanelExpanded, setLayersPanelExpanded] = useState(true);
   /** Desplegable modo de fusión encima del listado de capas. */
@@ -14629,6 +14808,30 @@ export function FreehandStudioCanvas({
     [pushHistory],
   );
 
+  const updateSelectedPathCornerRadius = useCallback(
+    (value: number, opts?: { silent?: boolean }) => {
+      const sel = selectedIdsRef.current;
+      if (sel.size === 0) return;
+      const silent = opts?.silent === true;
+      setObjects((prev) => {
+        const next = prev.map((o) => {
+          if (!sel.has(o.id) || o.type !== "path") return o;
+          const p = o as PathObject;
+          const stats = pathCornerRadiusStats(p);
+          if (stats.count === 0) return o;
+          const radius = clamp(value, 0, stats.maxRadius);
+          return {
+            ...p,
+            points: applyLinkedCornerRadiusToPathPoints(p.points, p, radius),
+          };
+        });
+        if (!silent) pushHistory(next, sel);
+        return next;
+      });
+    },
+    [pushHistory],
+  );
+
   /** Un solo paso de deshacer al terminar un gesto de scrub. */
   const commitHistoryAfterScrub = useCallback(() => {
     updateDuplicateStepFromBaseline(objectsRef.current);
@@ -18308,6 +18511,50 @@ export function FreehandStudioCanvas({
         if (obj.locked || !obj.visible || obj.type !== "path") continue;
         const p = obj as PathObject;
         const rings = getPathRings(p);
+        const ringClosed = pathRingClosedForD(!!p.closed, rings.length);
+        let widgetBase = 0;
+        for (const ring of rings) {
+          const worldRing = ring.map((pt) => ({
+            ...pt,
+            anchor: pathBezierPointToWorld(pt.anchor, p),
+            handleIn: pathBezierPointToWorld(pt.handleIn, p),
+            handleOut: pathBezierPointToWorld(pt.handleOut, p),
+          }));
+          for (let pi = 0; pi < worldRing.length; pi++) {
+            const gIdx = widgetBase + pi;
+            const widget = pathCornerWidgetPointForRingPoint(worldRing, pi, ringClosed, viewport.zoom);
+            if (!widget || dist(pos, widget) >= threshold) continue;
+            if (e.detail >= 2) {
+              const next = objects.map((o) => {
+                if (o.id !== obj.id || o.type !== "path") return o;
+                const pp = o as PathObject;
+                return {
+                  ...pp,
+                  points: pp.points.map((point, idx) =>
+                    idx === gIdx ? { ...point, vertexMode: "corner" as const, cornerMode: true, cornerRadius: 0 } : point,
+                  ),
+                };
+              });
+              setObjects(next);
+              setSelectedIds(new Set([obj.id]));
+              setSelectedPoints(new Map([[obj.id, new Set([gIdx])]]));
+              pushHistory(next, new Set([obj.id]));
+              return;
+            }
+            setSelectedIds(new Set([obj.id]));
+            setSelectedPoints(new Map([[obj.id, new Set([gIdx])]]));
+            setDragState({
+              type: "pathCornerRadius",
+              startX: e.clientX,
+              startY: e.clientY,
+              pathCornerRadiusObjId: obj.id,
+              pathCornerRadiusPointIdx: gIdx,
+              pathCornerRadiusLinked: pathCornerRadiusLinked && !e.altKey,
+            });
+            return;
+          }
+          widgetBase += ring.length;
+        }
         let gBase = 0;
         for (const ring of rings) {
           for (let pi = 0; pi < ring.length; pi++) {
@@ -18369,6 +18616,50 @@ export function FreehandStudioCanvas({
         const pWorld = clipMaskPathAnchorsToWorld(cc, raw);
         const ringsW = getPathRings(pWorld);
         const ringsL = getPathRings(raw);
+        const ringClosed = pathRingClosedForD(!!raw.closed, ringsW.length);
+        let widgetBase = 0;
+        for (const ringW of ringsW) {
+          for (let pi = 0; pi < ringW.length; pi++) {
+            const gIdx = widgetBase + pi;
+            const widget = pathCornerWidgetPointForRingPoint(ringW, pi, ringClosed, viewport.zoom);
+            if (!widget || dist(pos, widget) >= threshold) continue;
+            if (e.detail >= 2) {
+              const next = objects.map((o) => {
+                if (o.id !== cc.id || o.type !== "clippingContainer") return o;
+                const container = o as ClippingContainerObject;
+                if (container.mask.type !== "path") return o;
+                const mask = container.mask as PathObject;
+                return {
+                  ...container,
+                  mask: {
+                    ...mask,
+                    points: mask.points.map((point, idx) =>
+                      idx === gIdx ? { ...point, vertexMode: "corner" as const, cornerMode: true, cornerRadius: 0 } : point,
+                    ),
+                  },
+                };
+              });
+              setObjects(next);
+              setSelectedIds(new Set([cc.id]));
+              setSelectedPoints(new Map([[raw.id, new Set([gIdx])]]));
+              pushHistory(next, new Set([cc.id]));
+              return;
+            }
+            setSelectedIds(new Set([cc.id]));
+            setSelectedPoints(new Map([[raw.id, new Set([gIdx])]]));
+            setDragState({
+              type: "pathCornerRadius",
+              startX: e.clientX,
+              startY: e.clientY,
+              pathCornerRadiusObjId: raw.id,
+              pathCornerRadiusClipContainerId: cc.id,
+              pathCornerRadiusPointIdx: gIdx,
+              pathCornerRadiusLinked: pathCornerRadiusLinked && !e.altKey,
+            });
+            return;
+          }
+          widgetBase += ringW.length;
+        }
         let gBase = 0;
         for (let ri = 0; ri < ringsW.length; ri++) {
           const ringW = ringsW[ri]!;
@@ -18848,8 +19139,7 @@ export function FreehandStudioCanvas({
         const rObj = rectObjectWithNormalizedCorners(so as RectObject);
         const handles = cornerRadiusHandleWorldPoints(rObj);
         const hitR = 7 / viewport.zoom;
-        const order: (keyof RectangleCornerRadius)[] = ["topRight"];
-        for (const key of order) {
+        for (const key of RECTANGLE_CORNER_RADIUS_KEYS) {
           if (dist(pos, handles[key]) <= hitR) {
             setDragState({
               type: "cornerRadius",
@@ -18861,6 +19151,48 @@ export function FreehandStudioCanvas({
               cornerRadiusSnapshot: rectCornerRadiusObject(rObj),
             });
             return;
+          }
+        }
+      } else if (so.type === "path" && so.visible && !so.locked) {
+        const rawPath = so as PathObject;
+        if (rawPath.points?.length >= 3) {
+          const worldPath = pathAnchorsToWorld(rawPath);
+          const rings = getPathRings(worldPath);
+          const ringClosed = pathRingClosedForD(!!worldPath.closed, rings.length);
+          const hitR = 8 / viewport.zoom;
+          let gBase = 0;
+          for (const ring of rings) {
+            for (let pi = 0; pi < ring.length; pi++) {
+              const gIdx = gBase + pi;
+              const widget = pathCornerWidgetPointForRingPoint(ring, pi, ringClosed, viewport.zoom);
+              if (!widget || dist(pos, widget) > hitR) continue;
+              if (e.detail >= 2) {
+                const next = objects.map((o) => {
+                  if (o.id !== rawPath.id || o.type !== "path") return o;
+                  const p = o as PathObject;
+                  return {
+                    ...p,
+                    points: p.points.map((point, idx) =>
+                      idx === gIdx ? { ...point, vertexMode: "corner" as const, cornerMode: true, cornerRadius: 0 } : point,
+                    ),
+                  };
+                });
+                setObjects(next);
+                pushHistory(next, new Set([rawPath.id]));
+                return;
+              }
+              setSelectedPoints(new Map([[rawPath.id, new Set([gIdx])]]));
+              setDragState({
+                type: "pathCornerRadius",
+                startX: e.clientX,
+                startY: e.clientY,
+                pathCornerRadiusObjId: rawPath.id,
+                pathCornerRadiusPointIdx: gIdx,
+                pathCornerRadiusLinked: pathCornerRadiusLinked && !e.altKey,
+              });
+              return;
+            }
+            gBase += ring.length;
           }
         }
       }
@@ -19915,9 +20247,8 @@ export function FreehandStudioCanvas({
           const r = rectObjectWithNormalizedCorners(selectedObjects[0] as RectObject);
           const handles = cornerRadiusHandleWorldPoints(r);
           const hitR = 7 / viewport.zoom;
-          const order: (keyof RectangleCornerRadius)[] = ["topRight"];
           let hit: keyof RectangleCornerRadius | null = null;
-          for (const key of order) {
+          for (const key of RECTANGLE_CORNER_RADIUS_KEYS) {
             if (dist(pos, handles[key]) <= hitR) {
               hit = key;
               break;
@@ -20569,18 +20900,68 @@ export function FreehandStudioCanvas({
     }
 
     if (
+      dragState.type === "pathCornerRadius" &&
+      dragState.pathCornerRadiusObjId &&
+      dragState.pathCornerRadiusPointIdx != null
+    ) {
+      const pos = screenToCanvas(e.clientX, e.clientY);
+      const snap = isShiftHeld(e);
+      const idx = dragState.pathCornerRadiusPointIdx;
+      setObjects((prev) =>
+        prev.map((o) => {
+          if (dragState.pathCornerRadiusClipContainerId) {
+            if (o.id !== dragState.pathCornerRadiusClipContainerId || o.type !== "clippingContainer") return o;
+            const c = o as ClippingContainerObject;
+            if (c.mask.type !== "path") return o;
+            const mask = c.mask as PathObject;
+            const info = pathRingInfoForGlobalIndex(mask, idx);
+            if (!info) return o;
+            const localPos = worldPointToLocal(c, pos);
+            const nextRadius = pathCornerRadiusFromDrag(info.ring, info.localIdx, info.closed, localPos, snap);
+            return {
+              ...c,
+              mask: {
+                ...mask,
+                points: dragState.pathCornerRadiusLinked
+                  ? applyLinkedCornerRadiusToPathPoints(mask.points, mask, nextRadius)
+                  : mask.points.map((pt, pi) =>
+                      pi === idx ? { ...pt, vertexMode: "corner" as const, cornerMode: true, cornerRadius: nextRadius } : pt,
+                    ),
+              },
+            };
+          }
+          if (o.id !== dragState.pathCornerRadiusObjId || o.type !== "path") return o;
+          const p = o as PathObject;
+          const info = pathRingInfoForGlobalIndex(p, idx);
+          if (!info) return o;
+          const localPos = worldPointToPathBezierPoint(pos, p);
+          const nextRadius = pathCornerRadiusFromDrag(info.ring, info.localIdx, info.closed, localPos, snap);
+          return {
+            ...p,
+            points: dragState.pathCornerRadiusLinked
+              ? applyLinkedCornerRadiusToPathPoints(p.points, p, nextRadius)
+              : p.points.map((pt, pi) =>
+                  pi === idx ? { ...pt, vertexMode: "corner" as const, cornerMode: true, cornerRadius: nextRadius } : pt,
+                ),
+          };
+        }),
+      );
+      return;
+    }
+
+    if (
       dragState.type === "cornerRadius" &&
       dragState.cornerRadiusObjectId &&
       dragState.cornerRadiusCorner
     ) {
       const pos = screenToCanvas(e.clientX, e.clientY);
       const altHeld = e.altKey || e.nativeEvent.getModifierState?.("Alt");
-      const linkedEdit = !altHeld;
       const cornerKey = dragState.cornerRadiusCorner as keyof RectangleCornerRadius;
       setObjects((prev) =>
         prev.map((o) => {
           if (o.id !== dragState.cornerRadiusObjectId || o.type !== "rect") return o;
           const r = rectObjectWithNormalizedCorners(o as RectObject);
+          const linkedEdit = rectCornersLinked(r) && !altHeld;
           const loc = worldPointToObjLocal(pos, r);
           const maxR = Math.max(0, Math.min(r.width, r.height) / 2);
           const raw =
@@ -21468,6 +21849,7 @@ export function FreehandStudioCanvas({
       ds.type === "rotationPivot" ||
       ds.type === "textBoxResize" ||
       ds.type === "directSelect" ||
+      ds.type === "pathCornerRadius" ||
       ds.type === "rotate" ||
       ds.type === "gradient" ||
       ds.type === "imageContentPan" ||
@@ -21856,6 +22238,7 @@ export function FreehandStudioCanvas({
   const cursor = useMemo(() => {
     if (spaceHeld || dragState?.type === "pan") return "grab";
     if (dragState?.type === "imageContentPan") return "move";
+    if (dragState?.type === "pathCornerRadius") return "grab";
     if (dragState?.type === "cornerRadius") return "nwse-resize";
     if (dragState?.type === "imageContentResize" && dragState.imageCorner) {
       const m: Record<string, string> = {
@@ -24443,10 +24826,9 @@ export function FreehandStudioCanvas({
                 const hs = cornerRadiusHandleWorldPoints(r);
                 const rr = 3.1 / viewport.zoom;
                 const sw = 1.2 / viewport.zoom;
-                const corners: (keyof RectangleCornerRadius)[] = ["topRight"];
                 return (
                   <g data-ui="corner-radius-handles" pointerEvents="none">
-                    {corners.map((k) => {
+                    {RECTANGLE_CORNER_RADIUS_KEYS.map((k) => {
                       const p = hs[k];
                       const isActive =
                         (dragState?.type === "cornerRadius" && dragState.cornerRadiusCorner === k) ||
@@ -24463,6 +24845,66 @@ export function FreehandStudioCanvas({
                         />
                       );
                     })}
+                  </g>
+                );
+              })()}
+
+            {!canvasZenMode &&
+              activeTool === "select" &&
+              selectedObjects.length === 1 &&
+              selectedObjects[0]?.type === "path" &&
+              (() => {
+                const p = selectedObjects[0] as PathObject;
+                if (!p.visible || p.locked || !p.points || p.points.length < 3) return null;
+                const suppressForInner =
+                  (designerMode &&
+                    imageFrameContentEditId != null &&
+                    selectedIds.size === 1 &&
+                    selectedIds.has(imageFrameContentEditId)) ||
+                  (isClipContentIsolation &&
+                    clipContentEditId != null &&
+                    selectedIds.size === 1 &&
+                    selectedIds.has(clipContentEditId));
+                if (suppressForInner) return null;
+                const worldPath = pathAnchorsToWorld(p);
+                const rings = getPathRings(worldPath);
+                const ringClosed = pathRingClosedForD(!!worldPath.closed, rings.length);
+                let gBase = 0;
+                const handles = rings.flatMap((ring) => {
+                  const list = ring.map((pt, pi) => {
+                    const gIdx = gBase + pi;
+                    const widget = pathCornerWidgetPointForRingPoint(ring, pi, ringClosed, viewport.zoom);
+                    if (!widget) return null;
+                    return {
+                      id: `${p.id}-${gIdx}`,
+                      idx: gIdx,
+                      point: widget,
+                      active:
+                        dragState?.type === "pathCornerRadius" &&
+                        dragState.pathCornerRadiusObjId === p.id &&
+                        dragState.pathCornerRadiusPointIdx === gIdx,
+                      rounded: (pt.cornerRadius ?? 0) > 0.5,
+                    };
+                  });
+                  gBase += ring.length;
+                  return list.filter((item): item is NonNullable<typeof item> => item != null);
+                });
+                if (handles.length === 0) return null;
+                const rr = 3.3 / viewport.zoom;
+                const sw = 1.2 / viewport.zoom;
+                return (
+                  <g data-ui="path-corner-radius-handles" pointerEvents="none">
+                    {handles.map((h) => (
+                      <circle
+                        key={h.id}
+                        cx={h.point.x}
+                        cy={h.point.y}
+                        r={rr}
+                        fill={h.active || h.rounded ? "#22d3ee" : "#101722"}
+                        stroke="rgba(255,255,255,0.95)"
+                        strokeWidth={sw}
+                      />
+                    ))}
                   </g>
                 );
               })()}
@@ -24691,17 +25133,22 @@ export function FreehandStudioCanvas({
                 }
                 return list.map(({ keyId, p, selPts }) => {
                   const rings = getPathRings(p);
+                  const ringClosed = pathRingClosedForD(!!p.closed, rings.length);
                   let gBase = 0;
                   return rings.flatMap((ring) => {
                     const slice = ring.map((pt, pi) => {
                       const gIdx = gBase + pi;
                       const isSel = selPts?.has(gIdx);
                       const vm = getVertexMode(pt);
-                      const anchorFill = isSel ? "#6366f1" : vm === "corner" ? "#fcd34d" : vm === "cusp" ? "#7dd3fc" : "#fff";
+                      const canLiveCorner = maxPathCornerRadiusForRingPoint(ring, pi, ringClosed) > 0;
+                      const displayVm = vm === "smooth" && canLiveCorner ? "corner" : vm;
+                      const anchorFill = isSel ? "#6366f1" : displayVm === "corner" ? "#fcd34d" : displayVm === "cusp" ? "#7dd3fc" : "#fff";
                       const anchorStroke = isSel ? "#fff" : "#6366f1";
+                      const cornerWidget = pathCornerWidgetPointForRingPoint(ring, pi, ringClosed, viewport.zoom);
+                      const hasLiveCorner = cornerWidget && (pt.cornerRadius ?? 0) > 0.5;
                       return (
                         <g key={`ds-${keyId}-${gIdx}`} data-ui="ds-points">
-                          <title>{vm === "smooth" ? "Suave (simétrico)" : vm === "cusp" ? "Partir (tangente continua asimétrica)" : "Esquina (independiente)"}</title>
+                          <title>{displayVm === "smooth" ? "Suave (simétrico)" : displayVm === "cusp" ? "Partir (tangente continua asimétrica)" : "Esquina (independiente)"}</title>
                           <line x1={pt.handleIn.x} y1={pt.handleIn.y} x2={pt.anchor.x} y2={pt.anchor.y}
                             stroke="rgba(99,102,241,0.5)" strokeWidth={1 / viewport.zoom} />
                           <line x1={pt.anchor.x} y1={pt.anchor.y} x2={pt.handleOut.x} y2={pt.handleOut.y}
@@ -24710,11 +25157,41 @@ export function FreehandStudioCanvas({
                             fill="#fff" stroke="#6366f1" strokeWidth={1 / viewport.zoom} />
                           <circle cx={pt.handleOut.x} cy={pt.handleOut.y} r={3.5 / viewport.zoom}
                             fill="#fff" stroke="#6366f1" strokeWidth={1 / viewport.zoom} />
-                          {vm === "corner" ? (
+                          {cornerWidget && (
+                            <g data-ui="live-corner-widget">
+                              <title>Doble clic para resetear. Arrastra para redondear esta esquina.</title>
+                              <line
+                                x1={pt.anchor.x}
+                                y1={pt.anchor.y}
+                                x2={cornerWidget.x}
+                                y2={cornerWidget.y}
+                                stroke="#22d3ee"
+                                strokeWidth={1 / viewport.zoom}
+                                opacity={hasLiveCorner ? 0.75 : 0.35}
+                                strokeDasharray={`${2 / viewport.zoom} ${2 / viewport.zoom}`}
+                              />
+                              <circle
+                                cx={cornerWidget.x}
+                                cy={cornerWidget.y}
+                                r={4.6 / viewport.zoom}
+                                fill={hasLiveCorner ? "#22d3ee" : "#0f172a"}
+                                stroke="#a5f3fc"
+                                strokeWidth={1.2 / viewport.zoom}
+                              />
+                              <path
+                                d={`M ${cornerWidget.x - 2.1 / viewport.zoom} ${cornerWidget.y + 1.6 / viewport.zoom} Q ${cornerWidget.x - 1.7 / viewport.zoom} ${cornerWidget.y - 1.8 / viewport.zoom} ${cornerWidget.x + 2.1 / viewport.zoom} ${cornerWidget.y - 1.6 / viewport.zoom}`}
+                                fill="none"
+                                stroke={hasLiveCorner ? "#042f2e" : "#a5f3fc"}
+                                strokeWidth={1 / viewport.zoom}
+                                strokeLinecap="round"
+                              />
+                            </g>
+                          )}
+                          {displayVm === "corner" ? (
                             <polygon
                               points={`${pt.anchor.x},${pt.anchor.y - 5 / viewport.zoom} ${pt.anchor.x + 4.5 / viewport.zoom},${pt.anchor.y + 4 / viewport.zoom} ${pt.anchor.x - 4.5 / viewport.zoom},${pt.anchor.y + 4 / viewport.zoom}`}
                               fill={anchorFill} stroke={anchorStroke} strokeWidth={1 / viewport.zoom} />
-                          ) : vm === "cusp" ? (
+                          ) : displayVm === "cusp" ? (
                             <rect x={pt.anchor.x - 4 / viewport.zoom} y={pt.anchor.y - 4 / viewport.zoom}
                               width={8 / viewport.zoom} height={8 / viewport.zoom}
                               fill={anchorFill} stroke={anchorStroke} strokeWidth={1 / viewport.zoom} rx={1 / viewport.zoom} />
@@ -27137,6 +27614,52 @@ export function FreehandStudioCanvas({
                               className={inputClass}
                             />
                           </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {firstSelected.type === "path" && (() => {
+                  const p = firstSelected as PathObject;
+                  const stats = pathCornerRadiusStats(p);
+                  const inputClass =
+                    "w-full cursor-ew-resize rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 font-mono text-[12px] text-zinc-100 disabled:cursor-not-allowed disabled:opacity-40";
+                  return (
+                    <div className="border-b border-white/[0.08] px-[14px] py-3">
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <div>
+                          <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Corner Radius</span>
+                          <p className="mt-0.5 text-[10px] text-zinc-500">
+                            {stats.count > 0 ? `${stats.count} esquinas rectas detectadas` : "Sin esquinas rectas editables"}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          title={pathCornerRadiusLinked ? "Desenlazar esquinas del path" : "Enlazar esquinas del path"}
+                          onClick={() => setPathCornerRadiusLinked((v) => !v)}
+                          className={`rounded-[5px] border p-1.5 transition-colors ${pathCornerRadiusLinked ? "border-[#534AB7] bg-[#534AB7] text-white" : "border-white/[0.08] text-zinc-400 hover:bg-white/[0.06]"}`}
+                        >
+                          {pathCornerRadiusLinked ? <Link2 size={14} strokeWidth={2} aria-hidden /> : <Unlink2 size={14} strokeWidth={2} aria-hidden />}
+                        </button>
+                      </div>
+                      {pathCornerRadiusLinked ? (
+                        <ScrubNumberInput
+                          value={Math.round(stats.value * 100) / 100}
+                          onKeyboardCommit={(n) => updateSelectedPathCornerRadius(clamp(n, 0, stats.maxRadius))}
+                          onScrubLive={(n) => updateSelectedPathCornerRadius(clamp(n, 0, stats.maxRadius), { silent: true })}
+                          onScrubEnd={commitHistoryAfterScrub}
+                          step={1}
+                          roundFn={(n) => Math.round(clamp(n, 0, stats.maxRadius) * 100) / 100}
+                          min={0}
+                          max={stats.maxRadius}
+                          disabled={stats.count === 0}
+                          title={stats.count > 0 ? PROP_PANEL_SCRUB_HINT : "Este path no tiene esquinas rectas compatibles"}
+                          className={inputClass}
+                        />
+                      ) : (
+                        <div className="rounded-[6px] border border-white/[0.08] bg-white/[0.035] px-2.5 py-2 text-[10px] leading-snug text-zinc-400">
+                          Esquinas desenlazadas: ajusta cada punto desde los handles del lienzo. Mantén Alt al arrastrar para forzar una sola esquina.
                         </div>
                       )}
                     </div>
