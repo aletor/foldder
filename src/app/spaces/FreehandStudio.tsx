@@ -1031,6 +1031,11 @@ interface FreehandObjectBase {
   /** PhotoRoom: degradado raster sobre la máscara de capa. */
   photoRasterGradientMask?: PhotoRasterGradientPersistV1 | null;
   rotation: number;
+  /** Designer: local skew applied from transform-box edge drags. Degrees. */
+  skewX?: number;
+  skewY?: number;
+  /** Designer: normalized local point used only as rotation pivot. Defaults to center. */
+  rotationPivot?: { x: number; y: number };
   /** Espejo horizontal/vertical (escala −1 en el eje local respecto al centro del recto de selección). */
   flipX?: boolean;
   flipY?: boolean;
@@ -1831,14 +1836,94 @@ function hitTestInnerContentHandles(
 /** Normalized 0–1 in object box → world (respects rotation). */
 function localBoxToWorld(o: FreehandObject, lx: number, ly: number): Point {
   const p = { x: o.x + lx * o.width, y: o.y + ly * o.height };
-  const c = { x: o.x + o.width / 2, y: o.y + o.height / 2 };
-  return rotatePointAround(p, c, o.rotation);
+  return transformObjectBoxPoint(o, p);
 }
 
 function worldToLocalBox(o: FreehandObject, p: Point): { lx: number; ly: number } {
-  const c = { x: o.x + o.width / 2, y: o.y + o.height / 2 };
-  const u = rotatePointAround(p, c, -o.rotation);
+  const inv = typeof DOMPoint !== "undefined" ? inverseObjMatrix(o) : null;
+  const u = inv
+    ? (() => {
+        const pp = new DOMPoint(p.x, p.y).matrixTransform(inv);
+        return { x: pp.x, y: pp.y };
+      })()
+    : rotatePointAround(p, { x: o.x + o.width / 2, y: o.y + o.height / 2 }, -o.rotation);
   return { lx: (u.x - o.x) / Math.max(o.width, 1e-9), ly: (u.y - o.y) / Math.max(o.height, 1e-9) };
+}
+
+const DEFAULT_ROTATION_PIVOT = { x: 0.5, y: 0.5 };
+
+function getObjectRotationPivotLocal(o: FreehandObject): { x: number; y: number } {
+  const p = o.rotationPivot ?? DEFAULT_ROTATION_PIVOT;
+  return { x: Number.isFinite(p.x) ? p.x : 0.5, y: Number.isFinite(p.y) ? p.y : 0.5 };
+}
+
+function getObjectRotationPivotWorld(o: FreehandObject): Point {
+  const p = getObjectRotationPivotLocal(o);
+  return localBoxToWorld(o, p.x, p.y);
+}
+
+function resetObjectRotationPivot(o: FreehandObject): FreehandObject {
+  return { ...o, rotationPivot: { ...DEFAULT_ROTATION_PIVOT } };
+}
+
+function clampSkewDeg(v: number): number {
+  return clamp(v, -75, 75);
+}
+
+function oppositeSkewEdge(edge: "n" | "e" | "s" | "w"): "n" | "e" | "s" | "w" {
+  if (edge === "n") return "s";
+  if (edge === "s") return "n";
+  if (edge === "e") return "w";
+  return "e";
+}
+
+function objectEdgeMidWorld(o: FreehandObject, edge: "n" | "e" | "s" | "w"): Point {
+  if (edge === "n") return localBoxToWorld(o, 0.5, 0);
+  if (edge === "s") return localBoxToWorld(o, 0.5, 1);
+  if (edge === "e") return localBoxToWorld(o, 1, 0.5);
+  return localBoxToWorld(o, 0, 0.5);
+}
+
+function applyAnchoredObjectSkew(
+  src: FreehandObject,
+  edge: "n" | "e" | "s" | "w",
+  axis: "x" | "y",
+  skewDelta: number,
+): FreehandObject {
+  const anchorEdge = oppositeSkewEdge(edge);
+  const anchorBefore = objectEdgeMidWorld(src, anchorEdge);
+  const next =
+    axis === "x"
+      ? { ...src, skewX: clampSkewDeg((src.skewX || 0) + skewDelta) }
+      : { ...src, skewY: clampSkewDeg((src.skewY || 0) + skewDelta) };
+  const anchorAfter = objectEdgeMidWorld(next, anchorEdge);
+  return translateFreehandObject(next, anchorBefore.x - anchorAfter.x, anchorBefore.y - anchorAfter.y);
+}
+
+function applyGlobalAnchoredSelectionSkew(
+  src: FreehandObject,
+  frame: OrientedSelectionFrame,
+  edge: "n" | "e" | "s" | "w",
+  axis: "x" | "y",
+  skewDelta: number,
+): FreehandObject {
+  const center = { x: src.x + src.width / 2, y: src.y + src.height / 2 };
+  const centerLocal = worldToLocalOBB(center, frame.cx, frame.cy, frame.angleDeg);
+  const k = Math.tan(degToRad(skewDelta));
+  let nextCenterLocal = centerLocal;
+  if (axis === "x") {
+    const anchorY = edge === "n" ? frame.h / 2 : -frame.h / 2;
+    nextCenterLocal = { x: centerLocal.x + k * (centerLocal.y - anchorY), y: centerLocal.y };
+  } else {
+    const anchorX = edge === "w" ? frame.w / 2 : -frame.w / 2;
+    nextCenterLocal = { x: centerLocal.x, y: centerLocal.y + k * (centerLocal.x - anchorX) };
+  }
+  const nextCenter = localToWorldOBB(nextCenterLocal, frame.cx, frame.cy, frame.angleDeg);
+  const next =
+    axis === "x"
+      ? { ...src, skewX: clampSkewDeg((src.skewX || 0) + skewDelta) }
+      : { ...src, skewY: clampSkewDeg((src.skewY || 0) + skewDelta) };
+  return translateFreehandObject(next, nextCenter.x - center.x, nextCenter.y - center.y);
 }
 
 function supportsGradientFill(o: FreehandObject): boolean {
@@ -2067,10 +2152,14 @@ function textSvgTransform(t: TextObject): string | undefined {
   const cx = t.x + w / 2, cy = t.y + h / 2;
   const sx = t.scaleX ?? 1, sy = t.scaleY ?? 1;
   const r = t.rotation || 0;
+  const skewX = t.skewX || 0;
+  const skewY = t.skewY || 0;
   const parts: string[] = [];
-  if (sx !== 1 || sy !== 1 || r) {
+  if (sx !== 1 || sy !== 1 || r || skewX || skewY) {
     parts.push(`translate(${cx} ${cy})`);
     if (r) parts.push(`rotate(${r})`);
+    if (skewX) parts.push(`skewX(${skewX})`);
+    if (skewY) parts.push(`skewY(${skewY})`);
     if (sx !== 1 || sy !== 1) parts.push(`scale(${sx} ${sy})`);
     parts.push(`translate(${-cx} ${-cy})`);
   }
@@ -2084,10 +2173,14 @@ export function buildObjTransform(o: FreehandObject): string | undefined {
   const fx = o.flipX ? -1 : 1;
   const fy = o.flipY ? -1 : 1;
   const r = o.rotation || 0;
+  const skewX = o.skewX || 0;
+  const skewY = o.skewY || 0;
   const parts: string[] = [];
-  if (fx !== 1 || fy !== 1 || r) {
+  if (fx !== 1 || fy !== 1 || r || skewX || skewY) {
     parts.push(`translate(${cx} ${cy})`);
     if (r) parts.push(`rotate(${r})`);
+    if (skewX) parts.push(`skewX(${skewX})`);
+    if (skewY) parts.push(`skewY(${skewY})`);
     if (fx !== 1 || fy !== 1) parts.push(`scale(${fx} ${fy})`);
     parts.push(`translate(${-cx} ${-cy})`);
   }
@@ -2102,6 +2195,8 @@ function inverseObjMatrix(o: FreehandObject): DOMMatrix | null {
   const m = new DOMMatrix();
   m.translateSelf(cx, cy);
   if (o.rotation) m.rotateSelf(0, 0, o.rotation);
+  if (o.skewX) m.multiplySelf(new DOMMatrix([1, 0, Math.tan(degToRad(o.skewX)), 1, 0, 0]));
+  if (o.skewY) m.multiplySelf(new DOMMatrix([1, Math.tan(degToRad(o.skewY)), 0, 1, 0, 0]));
   const fx = o.flipX ? -1 : 1;
   const fy = o.flipY ? -1 : 1;
   if (fx !== 1 || fy !== 1) m.scaleSelf(fx, fy);
@@ -2119,6 +2214,25 @@ function pathBezierPointToWorld(pt: Point, o: FreehandObject): Point {
   if (!inv) return { x: pt.x, y: pt.y };
   const t = inv.inverse().transformPoint(new DOMPoint(pt.x, pt.y));
   return { x: t.x, y: t.y };
+}
+
+function worldPointToPathBezierPoint(pt: Point, o: FreehandObject): Point {
+  const inv = inverseObjMatrix(o);
+  if (!inv) return { x: pt.x, y: pt.y };
+  const t = inv.transformPoint(new DOMPoint(pt.x, pt.y));
+  return { x: t.x, y: t.y };
+}
+
+function pathAnchorsToWorld(p: PathObject): PathObject {
+  return {
+    ...p,
+    points: p.points.map((pt) => ({
+      ...pt,
+      anchor: pathBezierPointToWorld(pt.anchor, p),
+      handleIn: pathBezierPointToWorld(pt.handleIn, p),
+      handleOut: pathBezierPointToWorld(pt.handleOut, p),
+    })),
+  };
 }
 
 /**
@@ -3213,17 +3327,38 @@ function aabbFromPoints(pts: Point[]): Rect {
   return { x: x1, y: y1, w: Math.max(x2 - x1, 1), h: Math.max(y2 - y1, 1) };
 }
 
-/** Four corners of the object's local rect in world space (after rotation). */
+function transformObjectBoxPoint(o: FreehandObject, p: Point): Point {
+  const cx = o.x + o.width / 2;
+  const cy = o.y + o.height / 2;
+  let x = p.x - cx;
+  let y = p.y - cy;
+  if (o.flipX) x = -x;
+  if (o.flipY) y = -y;
+  if (o.skewY) y += Math.tan(degToRad(o.skewY)) * x;
+  if (o.skewX) x += Math.tan(degToRad(o.skewX)) * y;
+  if (o.rotation) {
+    const r = degToRad(o.rotation);
+    const rx = x * Math.cos(r) - y * Math.sin(r);
+    const ry = x * Math.sin(r) + y * Math.cos(r);
+    x = rx;
+    y = ry;
+  }
+  return { x: cx + x, y: cy + y };
+}
+
+function transformedBoxWorldCorners(o: FreehandObject, rect?: Rect): Point[] {
+  const r = rect ?? { x: o.x, y: o.y, w: o.width, h: o.height };
+  return [
+    { x: r.x, y: r.y },
+    { x: r.x + r.w, y: r.y },
+    { x: r.x + r.w, y: r.y + r.h },
+    { x: r.x, y: r.y + r.h },
+  ].map((p) => transformObjectBoxPoint(o, p));
+}
+
+/** Four corners of the object's local rect in world space (after rotation/skew). */
 function rectWorldCorners(o: FreehandObject): Point[] {
-  const cx = o.x + o.width / 2, cy = o.y + o.height / 2;
-  const pts: Point[] = [
-    { x: o.x, y: o.y },
-    { x: o.x + o.width, y: o.y },
-    { x: o.x + o.width, y: o.y + o.height },
-    { x: o.x, y: o.y + o.height },
-  ];
-  if (!o.rotation) return pts;
-  return pts.map((p) => rotatePointAround(p, { x: cx, y: cy }, o.rotation));
+  return transformedBoxWorldCorners(o);
 }
 
 /** Axis-aligned bounding box of the painted shape (accounts for rotation). */
@@ -3233,26 +3368,12 @@ function getVisualAABB(o: FreehandObject, allObjects?: FreehandObject[]): Rect {
       const po = o as PathObject;
       if (po.svgPathD && po.points.length < 2) {
         const r = { x: o.x, y: o.y, w: o.width, h: o.height };
-        const cx = o.x + o.width / 2, cy = o.y + o.height / 2;
-        if (!o.rotation) return r;
-        const corners = [
-          { x: r.x, y: r.y },
-          { x: r.x + r.w, y: r.y },
-          { x: r.x + r.w, y: r.y + r.h },
-          { x: r.x, y: r.y + r.h },
-        ].map((p) => rotatePointAround(p, { x: cx, y: cy }, o.rotation));
-        return aabbFromPoints(corners);
+        if (!o.rotation && !o.skewX && !o.skewY && !o.flipX && !o.flipY) return r;
+        return aabbFromPoints(transformedBoxWorldCorners(o, r));
       }
       const pb = getPathBoundsFromPoints((o as PathObject).points);
-      const cx = o.x + o.width / 2, cy = o.y + o.height / 2;
-      if (!o.rotation) return pb;
-      const corners = [
-        { x: pb.x, y: pb.y },
-        { x: pb.x + pb.w, y: pb.y },
-        { x: pb.x + pb.w, y: pb.y + pb.h },
-        { x: pb.x, y: pb.y + pb.h },
-      ].map((p) => rotatePointAround(p, { x: cx, y: cy }, o.rotation));
-      return aabbFromPoints(corners);
+      if (!o.rotation && !o.skewX && !o.skewY && !o.flipX && !o.flipY) return pb;
+      return aabbFromPoints(transformedBoxWorldCorners(o, pb));
     }
     case "textOnPath": {
       const tp = o as TextOnPathObject;
@@ -3574,7 +3695,12 @@ function translateFreehandObject(o: FreehandObject, dx: number, dy: number): Fre
     return { ...c, x: c.x + dx, y: c.y + dy };
   }
   if (o.type === "booleanGroup") {
-    return { ...o, children: o.children.map((ch) => translateFreehandObject(ch, dx, dy)) };
+    return {
+      ...o,
+      x: o.x + dx,
+      y: o.y + dy,
+      children: o.children.map((ch) => translateFreehandObject(ch, dx, dy)),
+    };
   }
   if (o.type === "path") {
     const p = o as PathObject;
@@ -3817,14 +3943,11 @@ function rotateRectLikeAroundPivot(init: FreehandObject, pivot: Point, angleDelt
 }
 
 /**
- * Path: controles a mundo con el giro del objeto, luego rotación rígida alrededor del pivote de selección;
- * se guardan coordenadas absolutas con rotation=0.
+ * Path editable: primero lleva los puntos a su posición visual real (rotation/skew/flip),
+ * después rota rígidamente y hornea el resultado como coordenadas de mundo.
  */
 function rotatePathAroundSelectionPivot(init: PathObject, pivot: Point, angleDeltaDeg: number): PathObject {
-  const C0 = { x: init.x + init.width / 2, y: init.y + init.height / 2 };
-  const r0 = init.rotation;
-  const toWorld = (p: Point) => rotatePointAround(p, C0, r0);
-  const mapP = (p: Point) => rotatePointAround(toWorld(p), pivot, angleDeltaDeg);
+  const mapP = (p: Point) => rotatePointAround(pathBezierPointToWorld(p, init), pivot, angleDeltaDeg);
   const newPts = init.points.map((pt) => ({
     ...pt,
     anchor: mapP(pt.anchor),
@@ -3832,7 +3955,19 @@ function rotatePathAroundSelectionPivot(init: PathObject, pivot: Point, angleDel
     handleOut: mapP(pt.handleOut),
   }));
   const pb = getPathBoundsFromPoints(newPts);
-  return { ...init, x: pb.x, y: pb.y, width: pb.w, height: pb.h, points: newPts, rotation: 0 };
+  return {
+    ...init,
+    x: pb.x,
+    y: pb.y,
+    width: pb.w,
+    height: pb.h,
+    points: newPts,
+    rotation: 0,
+    skewX: 0,
+    skewY: 0,
+    flipX: false,
+    flipY: false,
+  };
 }
 
 function applyRotateAroundSelectionPivot(init: FreehandObject, pivot: Point, angleDeltaDeg: number): FreehandObject {
@@ -3857,8 +3992,7 @@ function applyRotateAroundSelectionPivot(init: FreehandObject, pivot: Point, ang
     };
   }
   if (init.type === "booleanGroup") {
-    const mapWorld = (p: Point) => rotatePointAround(p, pivot, angleDeltaDeg);
-    return mapObjectPointsWithWorld(init, mapWorld) as FreehandObject;
+    return rotateRectLikeAroundPivot(init, pivot, angleDeltaDeg);
   }
   return rotateRectLikeAroundPivot(init, pivot, angleDeltaDeg);
 }
@@ -3921,21 +4055,7 @@ function objectWorldCorners(o: FreehandObject, allObjects?: FreehandObject[]): P
       po.svgPathD && (!po.points || po.points.length < 2)
         ? { x: o.x, y: o.y, w: o.width, h: o.height }
         : getPathBoundsFromPoints(po.points);
-    const cx = o.x + o.width / 2, cy = o.y + o.height / 2;
-    if (!o.rotation) {
-      return [
-        { x: pb.x, y: pb.y },
-        { x: pb.x + pb.w, y: pb.y },
-        { x: pb.x + pb.w, y: pb.y + pb.h },
-        { x: pb.x, y: pb.y + pb.h },
-      ];
-    }
-    return [
-      { x: pb.x, y: pb.y },
-      { x: pb.x + pb.w, y: pb.y },
-      { x: pb.x + pb.w, y: pb.y + pb.h },
-      { x: pb.x, y: pb.y + pb.h },
-    ].map((p) => rotatePointAround(p, { x: cx, y: cy }, o.rotation));
+    return transformedBoxWorldCorners(o, pb);
   }
   if (o.type === "textOnPath") {
     const tp = o as TextOnPathObject;
@@ -3971,6 +4091,10 @@ interface OrientedSelectionFrame {
   h: number;
   angleDeg: number;
 }
+
+type DuplicateTransformStep =
+  | { kind: "translate"; dx: number; dy: number }
+  | { kind: "rotate"; pivot: Point; angleDeltaDeg: number };
 
 /** Oriented box aligned with mean rotation that tightly wraps all selected corners. */
 function computeOrientedSelectionFrame(objs: FreehandObject[]): OrientedSelectionFrame | null {
@@ -7577,7 +7701,7 @@ function objToSvgStringStatic(obj: FreehandObject, w: number, h: number, ox: num
     case "booleanGroup": {
       const bg = obj as BooleanGroupObject;
       if (bg.cachedResult) {
-        parts.push(`<image href="${bg.cachedResult}" x="${obj.x}" y="${obj.y}" width="${obj.width}" height="${obj.height}" preserveAspectRatio="none"/>`);
+        parts.push(`<image href="${bg.cachedResult}" x="${obj.x}" y="${obj.y}" width="${obj.width}" height="${obj.height}" preserveAspectRatio="none" ${transform}/>`);
       }
       break;
     }
@@ -9294,6 +9418,7 @@ export function FreehandStudioCanvas({
   }, [photoRoomInputsSig, nodeId, artboardW, artboardH]);
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [selectionRotationPivots, setSelectionRotationPivots] = useState<Record<string, { x: number; y: number }>>({});
   const [activeTool, setActiveTool] = useState<Tool>("select");
   const [transformHandlesArmed, setTransformHandlesArmed] = useState(false);
   const commandTapCandidateRef = useRef(false);
@@ -9503,7 +9628,7 @@ export function FreehandStudioCanvas({
 
   // Drag state
   const [dragState, setDragState] = useState<{
-    type: "move" | "resize" | "textBoxResize" | "pan" | "create" | "createText" | "createTextFrame" | "createImageFrame" | "directSelect" | "marquee" | "photoRectMarquee" | "photoEllipseMarquee" | "photoLassoMarquee" | "photoPolygonMarquee" | "photoMarqueeNudge" | "photoMarqueeFloatRotate" | "photoMarqueeFloatResize" | "penHandle" | "rotate" | "gradient" | "guideMove" | "guidePull" | "imageContentPan" | "imageContentResize" | "brushPaint" | "photoGradientLine" | "photoGradientVertex" | "cornerRadius";
+    type: "move" | "resize" | "skew" | "rotationPivot" | "textBoxResize" | "pan" | "create" | "createText" | "createTextFrame" | "createImageFrame" | "directSelect" | "marquee" | "photoRectMarquee" | "photoEllipseMarquee" | "photoLassoMarquee" | "photoPolygonMarquee" | "photoMarqueeNudge" | "photoMarqueeFloatRotate" | "photoMarqueeFloatResize" | "penHandle" | "rotate" | "gradient" | "guideMove" | "guidePull" | "imageContentPan" | "imageContentResize" | "brushPaint" | "photoGradientLine" | "photoGradientVertex" | "cornerRadius";
     startX: number;
     startY: number;
     startCanvas?: Point;
@@ -9552,6 +9677,12 @@ export function FreehandStudioCanvas({
     rotateInitialRotations?: Map<string, number>;
     /** Copia profunda al inicio del gesto; la rotación se calcula desde aquí (pivote = centro de selección). */
     rotateInitialSnapshots?: Map<string, FreehandObject>;
+    rotationPivotObjectId?: string;
+    rotationPivotSelectionKey?: string;
+    duplicateRotate?: boolean;
+    skewEdge?: "n" | "e" | "s" | "w";
+    skewAxis?: "x" | "y";
+    skewInitialSnapshots?: Map<string, FreehandObject>;
     /** Alt+arrastre: al soltar, memorizar el delta para ⌘D (paso repetido). */
     duplicateMove?: boolean;
     /** Inicio de `e,f` en paths importados (matrix) para arrastre sin acumular mal. */
@@ -9625,8 +9756,8 @@ export function FreehandStudioCanvas({
     if (!selectedIds.has(clipContentEditId)) setClipContentEditId(null);
   }, [selectedIds, clipContentEditId]);
 
-  /** Paso de duplicado (⌘D): por defecto 20×20 px mundo; tras Alt+arrastre copia = último desplazamiento. */
-  const duplicateStepRef = useRef({ dx: 20, dy: 20 });
+  /** Paso de duplicado (⌘D): por defecto 20×20 px mundo; tras Alt+transformar copia = último transform. */
+  const duplicateStepRef = useRef<DuplicateTransformStep>({ kind: "translate", dx: 20, dy: 20 });
 
   /** Atajo de teclado → herramienta de creación: tiempo del keydown (`e.code`) para “mantener = temporal, soltar → V”. */
   const shapeShortcutKeyDownAtRef = useRef<Partial<Record<string, number>>>({});
@@ -10681,6 +10812,7 @@ export function FreehandStudioCanvas({
   // ── Derived ───────────────────────────────────────────────────────
 
   const selectedObjects = useMemo(() => objects.filter((o) => selectedIds.has(o.id)), [objects, selectedIds]);
+  const selectedIdsKey = useMemo(() => Array.from(selectedIds).sort().join(","), [selectedIds]);
   const firstSelected = selectedObjects[0] ?? null;
   const singleSelected = selectedObjects.length === 1 ? selectedObjects[0] ?? null : null;
 
@@ -14471,13 +14603,16 @@ export function FreehandStudioCanvas({
     const sel = selectedIdsRef.current;
     const objs = objectsRef.current;
     if (sel.size === 0) return;
-    const { dx, dy } = duplicateStepRef.current;
+    const step = duplicateStepRef.current;
     const cloned = objs
       .filter((o) => sel.has(o.id) && !o.photoRoomInputSlot)
       .map((o) => deepCloneFreehandObject(o, uid));
-    const dupes = remapGroupIdsForClones(cloned, uid).map((o) =>
-      translateFreehandObject(o, dx, dy),
-    );
+    const dupes = remapGroupIdsForClones(cloned, uid).map((o) => {
+      if (step.kind === "rotate") {
+        return applyRotateAroundSelectionPivot(o, step.pivot, step.angleDeltaDeg);
+      }
+      return translateFreehandObject(o, step.dx, step.dy);
+    });
     if (dupes.length === 0) return;
     const next = [...objs, ...dupes];
     const ns = new Set(dupes.map((d) => d.id));
@@ -17372,6 +17507,42 @@ export function FreehandStudioCanvas({
     // ── Direct select ─────────────────────────────────────────────
     if (activeTool === "directSelect") {
       const threshold = 8 / viewport.zoom;
+      // Rectángulo sin border radius: edición directa simple = solo 4 vértices.
+      for (let i = objects.length - 1; i >= 0; i--) {
+        const obj = objects[i];
+        if (obj.locked || !obj.visible || obj.type !== "rect") continue;
+        const rect = rectObjectWithNormalizedCorners(obj as RectObject);
+        if (hasRoundedCorners(rectCornerRadiusObject(rect))) continue;
+        const corners = rectWorldCorners(rect);
+        const cornerDefs: { handle: "nw" | "ne" | "se" | "sw"; point: Point }[] = [
+          { handle: "nw", point: corners[0]! },
+          { handle: "ne", point: corners[1]! },
+          { handle: "se", point: corners[2]! },
+          { handle: "sw", point: corners[3]! },
+        ];
+        const hit = cornerDefs.find((c) => dist(pos, c.point) < threshold);
+        if (!hit) continue;
+        const f = computeOrientedSelectionFrame([rect]);
+        if (!f) continue;
+        const allBounds = new Map<string, Rect>();
+        const resizeSnapshot = new Map<string, FreehandObject>();
+        allBounds.set(rect.id, getVisualAABB(rect, objects));
+        resizeSnapshot.set(rect.id, deepCloneFreehandObjectKeepIds(rect));
+        setSelectedIds(new Set([rect.id]));
+        setPrimarySelectedId(rect.id);
+        setSelectedPoints(new Map());
+        setDragState({
+          type: "resize",
+          startX: e.clientX,
+          startY: e.clientY,
+          handle: hit.handle,
+          bounds: getGroupBounds([rect]),
+          initialOrientedFrame: { ...f },
+          allBounds,
+          resizeSnapshot,
+        });
+        return;
+      }
       // Check anchor points and handles on all paths
       for (let i = objects.length - 1; i >= 0; i--) {
         const obj = objects[i];
@@ -17384,7 +17555,8 @@ export function FreehandStudioCanvas({
             const pt = ring[pi]!;
             const gIdx = gBase + pi;
             for (const ht of ["anchor", "handleIn", "handleOut"] as const) {
-              if (dist(pos, pt[ht]) < threshold) {
+              const hitPoint = pathBezierPointToWorld(pt[ht], p);
+              if (dist(pos, hitPoint) < threshold) {
                 if (e.shiftKey || e.nativeEvent.getModifierState?.("Shift")) {
                   setSelectedPoints((prev) => {
                     const m = new Map(prev);
@@ -17689,21 +17861,89 @@ export function FreehandStudioCanvas({
       const rotOffset = 14 / viewport.zoom;
       const hw = f.w / 2, hh = f.h / 2;
 
+      const multiSelectionPivotLocal = selectionRotationPivots[selectedIdsKey] ?? DEFAULT_ROTATION_PIVOT;
+      const multiSelectionPivotWorld = localToWorldOBB(
+        {
+          x: (multiSelectionPivotLocal.x - 0.5) * f.w,
+          y: (multiSelectionPivotLocal.y - 0.5) * f.h,
+        },
+        f.cx,
+        f.cy,
+        f.angleDeg,
+      );
+      const designerPivotWorld = designerMode
+        ? selectedObjects.length === 1
+          ? getObjectRotationPivotWorld(selectedObjects[0]!)
+          : multiSelectionPivotWorld
+        : null;
+
+      if (designerMode && designerPivotWorld) {
+        const pivotObj = selectedObjects.length === 1 ? selectedObjects[0]! : null;
+        if (dist(pos, designerPivotWorld) < Math.max(handleSize, 10 / viewport.zoom)) {
+          if (e.detail >= 2) {
+            if (pivotObj) {
+              const next = objects.map((o) => (o.id === pivotObj.id ? resetObjectRotationPivot(o) : o));
+              setObjects(next);
+              pushHistory(next, selectedIds);
+            } else if (selectedIdsKey) {
+              setSelectionRotationPivots((prev) => ({
+                ...prev,
+                [selectedIdsKey]: { ...DEFAULT_ROTATION_PIVOT },
+              }));
+            }
+            return;
+          }
+          setDragState({
+            type: "rotationPivot",
+            startX: e.clientX,
+            startY: e.clientY,
+            startCanvas: pos,
+            rotationPivotObjectId: pivotObj?.id,
+            rotationPivotSelectionKey: pivotObj ? undefined : selectedIdsKey,
+            initialOrientedFrame: pivotObj ? undefined : { ...f },
+          });
+          return;
+        }
+      }
+
       const rotLocal = [{ x: hw + rotOffset, y: -hh - rotOffset }];
       for (const rl of rotLocal) {
         const rc = localToWorldOBB(rl, f.cx, f.cy, f.angleDeg);
         if (dist(pos, rc) < handleSize) {
-          const startAngle = Math.atan2(pos.y - f.cy, pos.x - f.cx);
+          let rotateTargets = selectedObjects;
+          let rotateObjects = objects;
+          let rotateSelectedIds = selectedIds;
+          let duplicateRotate = false;
+          if (e.altKey) {
+            const clones = remapGroupIdsForClones(
+              selectedObjects
+                .filter((o) => !o.photoRoomInputSlot)
+                .map((o) => deepCloneFreehandObject(o, uid)),
+              uid,
+            );
+            if (clones.length > 0) {
+              rotateObjects = [...objects, ...clones];
+              rotateTargets = clones;
+              rotateSelectedIds = new Set(clones.map((c) => c.id));
+              setObjects(rotateObjects);
+              setSelectedIds(rotateSelectedIds);
+              pushHistory(rotateObjects, rotateSelectedIds);
+              duplicateRotate = true;
+            }
+          }
+          const rotateCenter = designerPivotWorld ?? { x: f.cx, y: f.cy };
+          const startAngle = Math.atan2(pos.y - rotateCenter.y, pos.x - rotateCenter.x);
           const initRots = new Map<string, number>();
           const initSnaps = new Map<string, FreehandObject>();
-          for (const so of selectedObjects) {
+          for (const so of rotateTargets) {
             initRots.set(so.id, so.rotation);
             initSnaps.set(so.id, deepCloneFreehandObjectKeepIds(so));
           }
           setDragState({
             type: "rotate", startX: e.clientX, startY: e.clientY,
-            rotateCenter: { x: f.cx, y: f.cy }, rotateStartAngle: startAngle, rotateInitialRotations: initRots,
+            rotateCenter, rotateStartAngle: startAngle, rotateInitialRotations: initRots,
             rotateInitialSnapshots: initSnaps,
+            duplicateRotate,
           });
           return;
         }
@@ -17712,8 +17952,10 @@ export function FreehandStudioCanvas({
       const hDefs: { id: string; lx: number; ly: number }[] = [
         { id: "nw", lx: -hw, ly: -hh }, { id: "ne", lx: hw, ly: -hh },
         { id: "se", lx: hw, ly: hh }, { id: "sw", lx: -hw, ly: hh },
-        { id: "n", lx: 0, ly: -hh }, { id: "e", lx: hw, ly: 0 },
-        { id: "s", lx: 0, ly: hh }, { id: "w", lx: -hw, ly: 0 },
+        ...(designerMode ? [] : [
+          { id: "n", lx: 0, ly: -hh }, { id: "e", lx: hw, ly: 0 },
+          { id: "s", lx: 0, ly: hh }, { id: "w", lx: -hw, ly: 0 },
+        ]),
       ];
       for (const hi of hDefs) {
         const hp = localToWorldOBB({ x: hi.lx, y: hi.ly }, f.cx, f.cy, f.angleDeg);
@@ -17731,6 +17973,35 @@ export function FreehandStudioCanvas({
             initialOrientedFrame: { ...f },
             allBounds,
             resizeSnapshot,
+          });
+          return;
+        }
+      }
+
+      if (designerMode) {
+        const edgeLocal = worldToLocalOBB(pos, f.cx, f.cy, f.angleDeg);
+        const edgeTol = 8 / viewport.zoom;
+        const insideX = edgeLocal.x >= -hw + handleSize && edgeLocal.x <= hw - handleSize;
+        const insideY = edgeLocal.y >= -hh + handleSize && edgeLocal.y <= hh - handleSize;
+        let edge: "n" | "e" | "s" | "w" | null = null;
+        if (insideX && Math.abs(edgeLocal.y + hh) <= edgeTol) edge = "n";
+        else if (insideX && Math.abs(edgeLocal.y - hh) <= edgeTol) edge = "s";
+        else if (insideY && Math.abs(edgeLocal.x - hw) <= edgeTol) edge = "e";
+        else if (insideY && Math.abs(edgeLocal.x + hw) <= edgeTol) edge = "w";
+        if (edge) {
+          const skewInitialSnapshots = new Map<string, FreehandObject>();
+          for (const so of selectedObjects) {
+            skewInitialSnapshots.set(so.id, deepCloneFreehandObjectKeepIds(so));
+          }
+          setDragState({
+            type: "skew",
+            startX: e.clientX,
+            startY: e.clientY,
+            startCanvas: pos,
+            initialOrientedFrame: { ...f },
+            skewEdge: edge,
+            skewAxis: edge === "n" || edge === "s" ? "x" : "y",
+            skewInitialSnapshots,
           });
           return;
         }
@@ -18027,14 +18298,14 @@ export function FreehandStudioCanvas({
       setClipContentEditId(null);
     }
     setDragState({ type: "marquee", startX: e.clientX, startY: e.clientY, marqueeOrigin: pos, currentCanvas: pos, shiftKey: extendSel });
-  }, [activeTool, viewport, spaceHeld, objects, artboards, selectedIds, selectedObjects, groupBounds, selectionFrame,
+  }, [activeTool, viewport, spaceHeld, objects, artboards, selectedIds, selectedIdsKey, selectedObjects, groupBounds, selectionFrame,
       screenToCanvas, isPenDrawing, penPoints, finishPenPath, resolveSelection, addPointOnSegment, cutPathOnSegment, closeOpenPathWithPen, pushHistory,
       layoutGuides, showLayoutGuides, designerMode, imageFrameContentEditId, setupGuideWindowListeners,
       isClipContentIsolation, clipContentEditId, isPhotoRoomStudioEmbed, photoRectMarqueeSelection,
       photoPolygonMarqueeSelection, photoEllipseMarqueeSelection,
       fillColor, brushPaintRgb, brushSize, brushHardnessPct, brushOpacityPct, brushFlowPct, scheduleBrushPreview,
       scheduleCloneAlignedBrushOverlay,
-      cloneSource, setToast, studioCaps, transformHandlesArmed]);
+      cloneSource, setToast, studioCaps, transformHandlesArmed, selectionRotationPivots]);
 
   const flushSelectionGeometryGesture = useCallback(() => {
     const dragState = dragStateRef.current;
@@ -18631,6 +18902,12 @@ export function FreehandStudioCanvas({
     }
     if (ds.type === "resize" && ds.allBounds && ds.allBounds.size > 0) {
       queueRasterProxiesForSelectionTargets(objectsRef.current.filter((o) => ds.allBounds!.has(o.id)));
+      return;
+    }
+    if (ds.type === "skew" && ds.skewInitialSnapshots && ds.skewInitialSnapshots.size > 0) {
+      queueRasterProxiesForSelectionTargets(
+        objectsRef.current.filter((o) => ds.skewInitialSnapshots!.has(o.id)),
+      );
     }
   }, [dragState, queueRasterProxiesForSelectionTargets]);
 
@@ -18968,6 +19245,75 @@ export function FreehandStudioCanvas({
     ) {
       dragStateRef.current = null;
       setDragState(null);
+      return;
+    }
+
+    if (dragState.type === "rotationPivot" && dragState.rotationPivotObjectId) {
+      const pos = screenToCanvas(e.clientX, e.clientY);
+      setObjects((prev) =>
+        prev.map((o) => {
+          if (o.id !== dragState.rotationPivotObjectId) return o;
+          const p = worldToLocalBox(o, pos);
+          return {
+            ...o,
+            rotationPivot: {
+              x: clamp(p.lx, -2, 3),
+              y: clamp(p.ly, -2, 3),
+            },
+          };
+        }),
+      );
+      return;
+    }
+
+    if (
+      dragState.type === "rotationPivot" &&
+      dragState.rotationPivotSelectionKey &&
+      dragState.initialOrientedFrame
+    ) {
+      const pos = screenToCanvas(e.clientX, e.clientY);
+      const f0 = dragState.initialOrientedFrame;
+      const local = worldToLocalOBB(pos, f0.cx, f0.cy, f0.angleDeg);
+      setSelectionRotationPivots((prev) => ({
+        ...prev,
+        [dragState.rotationPivotSelectionKey!]: {
+          x: clamp(local.x / Math.max(f0.w, 1e-9) + 0.5, -2, 3),
+          y: clamp(local.y / Math.max(f0.h, 1e-9) + 0.5, -2, 3),
+        },
+      }));
+      return;
+    }
+
+    if (
+      dragState.type === "skew" &&
+      dragState.initialOrientedFrame &&
+      dragState.skewEdge &&
+      dragState.skewAxis &&
+      dragState.skewInitialSnapshots &&
+      dragState.startCanvas
+    ) {
+      const pos = screenToCanvas(e.clientX, e.clientY);
+      const f0 = dragState.initialOrientedFrame;
+      const startLocal = worldToLocalOBB(dragState.startCanvas, f0.cx, f0.cy, f0.angleDeg);
+      const currentLocal = worldToLocalOBB(pos, f0.cx, f0.cy, f0.angleDeg);
+      const edge = dragState.skewEdge;
+      const delta =
+        dragState.skewAxis === "x"
+          ? currentLocal.x - startLocal.x
+          : currentLocal.y - startLocal.y;
+      const span = dragState.skewAxis === "x" ? Math.max(f0.h, 1) : Math.max(f0.w, 1);
+      const sign = edge === "n" || edge === "w" ? -1 : 1;
+      const skewDelta = (Math.atan(delta / span) * 180 / Math.PI) * sign;
+      setObjects((prev) =>
+        prev.map((o) => {
+          const src = dragState.skewInitialSnapshots?.get(o.id);
+          if (!src) return o;
+          if ((dragState.skewInitialSnapshots?.size ?? 0) > 1) {
+            return applyGlobalAnchoredSelectionSkew(src, f0, edge, dragState.skewAxis!, skewDelta);
+          }
+          return applyAnchoredObjectSkew(src, edge, dragState.skewAxis!, skewDelta);
+        }),
+      );
       return;
     }
 
@@ -19500,7 +19846,9 @@ export function FreehandStudioCanvas({
           const ew = { x: sw.x + ndx, y: sw.y + ndy };
           newPos = worldPointToLocal(c, ew);
         } else {
-          newPos = { x: start.x + ndx, y: start.y + ndy };
+          const sw = pathBezierPointToWorld(start, o);
+          const ew = { x: sw.x + ndx, y: sw.y + ndy };
+          newPos = worldPointToPathBezierPoint(ew, o);
         }
         if (ht === "anchor") {
           const adx = newPos.x - pt.anchor.x, ady = newPos.y - pt.anchor.y;
@@ -20240,14 +20588,36 @@ export function FreehandStudioCanvas({
         const init = ds.positions.get(firstId);
         const cur = objectsRef.current.find((o) => o.id === firstId);
         if (init && cur) {
-          duplicateStepRef.current = { dx: cur.x - init.x, dy: cur.y - init.y };
+          duplicateStepRef.current = { kind: "translate", dx: cur.x - init.x, dy: cur.y - init.y };
         }
+      }
+    }
+
+    if (
+      ds.type === "rotate" &&
+      ds.duplicateRotate &&
+      ds.rotateCenter &&
+      ds.rotateStartAngle != null
+    ) {
+      const pos = screenToCanvas(e.clientX, e.clientY);
+      const currentAngle = Math.atan2(pos.y - ds.rotateCenter.y, pos.x - ds.rotateCenter.x);
+      const radDelta = shortestAngleDeltaRad(currentAngle, ds.rotateStartAngle);
+      let angleDelta = (radDelta * 180) / Math.PI;
+      if (isShiftHeld(e)) angleDelta = Math.round(angleDelta / 15) * 15;
+      if (Math.abs(angleDelta) > 0.001) {
+        duplicateStepRef.current = {
+          kind: "rotate",
+          pivot: { ...ds.rotateCenter },
+          angleDeltaDeg: angleDelta,
+        };
       }
     }
 
     if (
       ds.type === "move" ||
       ds.type === "resize" ||
+      ds.type === "skew" ||
+      ds.type === "rotationPivot" ||
       ds.type === "textBoxResize" ||
       ds.type === "directSelect" ||
       ds.type === "rotate" ||
@@ -20259,7 +20629,7 @@ export function FreehandStudioCanvas({
       const prox = selectionGestureProxyByIdRef.current;
       let snapshot = objectsRef.current;
       if (
-        (ds.type === "move" || ds.type === "resize" || ds.type === "rotate") &&
+        (ds.type === "move" || ds.type === "resize" || ds.type === "rotate" || ds.type === "skew") &&
         prox.size > 0
       ) {
         snapshot = restoreRasterGestureProxiesInObjects(snapshot, prox);
@@ -23065,7 +23435,30 @@ export function FreehandStudioCanvas({
                   width={selectionFrame.w + 2 / viewport.zoom} height={selectionFrame.h + 2 / viewport.zoom}
                   fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.92)" strokeWidth={1 / viewport.zoom}
                   pointerEvents="none" />
-                {["nw", "ne", "se", "sw", "n", "e", "s", "w"].map((h) => {
+                {designerMode && ["n", "e", "s", "w"].map((edge) => {
+                  const pad = 10 / viewport.zoom;
+                  const hw = selectionFrame.w / 2, hh = selectionFrame.h / 2;
+                  const horizontal = edge === "n" || edge === "s";
+                  const x = horizontal ? -hw : (edge === "e" ? hw - pad / 2 : -hw - pad / 2);
+                  const y = horizontal ? (edge === "s" ? hh - pad / 2 : -hh - pad / 2) : -hh;
+                  const width = horizontal ? selectionFrame.w : pad;
+                  const height = horizontal ? pad : selectionFrame.h;
+                  return (
+                    <rect
+                      key={`skew-${edge}`}
+                      x={x}
+                      y={y}
+                      width={width}
+                      height={height}
+                      fill="transparent"
+                      stroke="transparent"
+                      pointerEvents="all"
+                      style={{ cursor: horizontal ? "ew-resize" : "ns-resize" }}
+                      data-ui="skew-edge"
+                    />
+                  );
+                })}
+                {(designerMode ? ["nw", "ne", "se", "sw"] : ["nw", "ne", "se", "sw", "n", "e", "s", "w"]).map((h) => {
                   const sz = 7 / viewport.zoom;
                   const hw = selectionFrame.w / 2, hh = selectionFrame.h / 2;
                   let hx = 0, hy = 0;
@@ -23081,6 +23474,46 @@ export function FreehandStudioCanvas({
                       rx={1.5 / viewport.zoom} style={{ cursor: `${h}-resize` }} data-ui="handle" />
                   );
                 })}
+                {designerMode && selectedObjects.length > 0 && (() => {
+                  const pivotLocal =
+                    selectedObjects.length === 1
+                      ? worldToLocalOBB(
+                          getObjectRotationPivotWorld(selectedObjects[0]!),
+                          selectionFrame.cx,
+                          selectionFrame.cy,
+                          selectionFrame.angleDeg,
+                        )
+                      : (() => {
+                          const p = selectionRotationPivots[selectedIdsKey] ?? DEFAULT_ROTATION_PIVOT;
+                          return {
+                            x: (p.x - 0.5) * selectionFrame.w,
+                            y: (p.y - 0.5) * selectionFrame.h,
+                          };
+                        })();
+                  const px = pivotLocal.x;
+                  const py = pivotLocal.y;
+                  const r = 5 / viewport.zoom;
+                  const arm = 3.5 / viewport.zoom;
+                  return (
+                    <g
+                      transform={`translate(${px},${py})`}
+                      style={{ cursor: "move" }}
+                      data-ui="rotation-pivot"
+                    >
+                      <circle
+                        cx={0}
+                        cy={0}
+                        r={r}
+                        fill="#10131a"
+                        stroke="#f8fafc"
+                        strokeWidth={1.2 / viewport.zoom}
+                        pointerEvents="all"
+                      />
+                      <line x1={-arm} y1={0} x2={arm} y2={0} stroke="#f8fafc" strokeWidth={1 / viewport.zoom} pointerEvents="none" />
+                      <line x1={0} y1={-arm} x2={0} y2={arm} stroke="#f8fafc" strokeWidth={1 / viewport.zoom} pointerEvents="none" />
+                    </g>
+                  );
+                })()}
                 {(() => {
                   const rotOff = 14 / viewport.zoom;
                   const rotR = 4 / viewport.zoom;
@@ -23361,13 +23794,40 @@ export function FreehandStudioCanvas({
 
             {/* Direct select: anchor points and handles for selected paths (incl. máscara de clippingContainer) */}
             {activeTool === "directSelect" && !canvasZenMode &&
+              selectedObjects.length === 1 &&
+              selectedObjects[0]?.type === "rect" &&
+              (() => {
+                const rect = rectObjectWithNormalizedCorners(selectedObjects[0] as RectObject);
+                if (hasRoundedCorners(rectCornerRadiusObject(rect))) return null;
+                const corners = rectWorldCorners(rect);
+                const z = viewport.zoom;
+                return (
+                  <g data-ui="rect-direct-points" pointerEvents="none">
+                    {corners.map((pt, idx) => (
+                      <rect
+                        key={`rect-direct-${rect.id}-${idx}`}
+                        x={pt.x - 4 / z}
+                        y={pt.y - 4 / z}
+                        width={8 / z}
+                        height={8 / z}
+                        rx={1 / z}
+                        fill="#fff"
+                        stroke="#6366f1"
+                        strokeWidth={1 / z}
+                      />
+                    ))}
+                  </g>
+                );
+              })()}
+
+            {activeTool === "directSelect" && !canvasZenMode &&
               (() => {
                 type DsPath = { keyId: string; p: PathObject; selPts: Set<number> | undefined };
                 const list: DsPath[] = [];
                 for (const o of objects) {
                   if (!o.visible || o.locked) continue;
                   if (o.type === "path" && selectedIds.has(o.id)) {
-                    list.push({ keyId: o.id, p: o as PathObject, selPts: selectedPoints.get(o.id) });
+                    list.push({ keyId: o.id, p: pathAnchorsToWorld(o as PathObject), selPts: selectedPoints.get(o.id) });
                   }
                   if (o.type === "clippingContainer" && selectedIds.has(o.id)) {
                     const c = o as ClippingContainerObject;
