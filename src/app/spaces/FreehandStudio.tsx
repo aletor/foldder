@@ -19062,7 +19062,7 @@ export function FreehandStudioCanvas({
         }
         if (src.type === "text") {
           const t = src as TextObject;
-          if (t.isTextFrame || t.textMode === "area") {
+          if (t.isTextFrame) {
             const visualW = src.width * Math.abs(t.scaleX ?? 1);
             const visualH = src.height * Math.abs(t.scaleY ?? 1);
             const newW = Math.max(20, Math.abs(visualW * sx));
@@ -19258,7 +19258,7 @@ export function FreehandStudioCanvas({
         }
         if (src.type === "text") {
           const tt = src as TextObject;
-          if (tt.isTextFrame || tt.textMode === "area") {
+          if (tt.isTextFrame) {
             const visualW = src.width * Math.abs(tt.scaleX ?? 1);
             const visualH = src.height * Math.abs(tt.scaleY ?? 1);
             const nextW = Math.max(20, Math.abs(visualW * sx));
