@@ -4238,6 +4238,87 @@ function applyRotateAroundSelectionPivot(init: FreehandObject, pivot: Point, ang
   return rotateRectLikeAroundPivot(init, pivot, angleDeltaDeg);
 }
 
+function applyScaleAroundSelectionPivot(init: FreehandObject, pivot: Point, sx: number, sy: number, angleDeg: number): FreehandObject {
+  const mapWorld = (p: Point) => {
+    const local = worldToLocalOBB(p, pivot.x, pivot.y, angleDeg);
+    return localToWorldOBB({ x: local.x * sx, y: local.y * sy }, pivot.x, pivot.y, angleDeg);
+  };
+  if (init.type === "path") {
+    const p = init as PathObject;
+    if (p.svgPathD && (!p.points || p.points.length < 2)) {
+      const c = mapWorld({ x: init.x + init.width / 2, y: init.y + init.height / 2 });
+      const nextW = Math.max(1, Math.abs(init.width * sx));
+      const nextH = Math.max(1, Math.abs(init.height * sy));
+      return {
+        ...init,
+        x: c.x - nextW / 2,
+        y: c.y - nextH / 2,
+        width: nextW,
+        height: nextH,
+        flipX: toggleFlipFromScale(init.flipX, sx),
+        flipY: toggleFlipFromScale(init.flipY, sy),
+      };
+    }
+    const pts = p.points.map((pt) => ({
+      ...pt,
+      anchor: mapWorld(pathBezierPointToWorld(pt.anchor, p)),
+      handleIn: mapWorld(pathBezierPointToWorld(pt.handleIn, p)),
+      handleOut: mapWorld(pathBezierPointToWorld(pt.handleOut, p)),
+    }));
+    const pb = getPathBoundsFromPoints(pts);
+    return { ...p, points: pts, x: pb.x, y: pb.y, width: pb.w, height: pb.h, rotation: 0, skewX: 0, skewY: 0, flipX: false, flipY: false };
+  }
+  if (init.type === "clippingContainer") return mapObjectPointsWithWorld(init, mapWorld) as ClippingContainerObject;
+  if (init.type === "text") {
+    const t = init as TextObject;
+    const { w, h } = textLayoutDims(t);
+    const c = mapWorld({ x: init.x + w / 2, y: init.y + h / 2 });
+    if (t.isTextFrame) {
+      const nextW = Math.max(20, Math.abs(init.width * sx));
+      const nextH = Math.max(20, Math.abs(init.height * sy));
+      return {
+        ...t,
+        x: c.x - nextW / 2,
+        y: c.y - nextH / 2,
+        width: nextW,
+        height: nextH,
+        scaleX: mirrorOnlyScale(t.scaleX, sx),
+        scaleY: mirrorOnlyScale(t.scaleY, sy),
+      };
+    }
+    return { ...t, x: c.x - w / 2, y: c.y - h / 2, scaleX: (t.scaleX ?? 1) * sx, scaleY: (t.scaleY ?? 1) * sy };
+  }
+  const c = mapWorld({ x: init.x + init.width / 2, y: init.y + init.height / 2 });
+  const nextW = Math.max(1, Math.abs(init.width * sx));
+  const nextH = Math.max(1, Math.abs(init.height * sy));
+  return {
+    ...init,
+    x: c.x - nextW / 2,
+    y: c.y - nextH / 2,
+    width: nextW,
+    height: nextH,
+    flipX: toggleFlipFromScale(init.flipX, sx),
+    flipY: toggleFlipFromScale(init.flipY, sy),
+  };
+}
+
+function applyCompositeDuplicateStepToObjects(
+  objects: FreehandObject[],
+  step: Extract<DuplicateTransformStep, { kind: "composite" }>,
+): FreehandObject[] {
+  const rotated =
+    step.rotatePivot && Math.abs(step.angleDeltaDeg ?? 0) > 0.001
+      ? objects.map((o) => applyRotateAroundSelectionPivot(o, step.rotatePivot!, step.angleDeltaDeg ?? 0))
+      : objects;
+  const translated = objects.map((_, idx) => translateFreehandObject(rotated[idx]!, step.dx, step.dy));
+  const f = computeOrientedSelectionFrame(translated);
+  if (!f) return translated;
+  return translated.map((o) => {
+    const scaled = applyScaleAroundSelectionPivot(o, { x: f.cx, y: f.cy }, step.sx, step.sy, f.angleDeg);
+    return step.opacityDelta != null ? { ...scaled, opacity: clamp((scaled.opacity ?? 1) + step.opacityDelta, 0, 1) } : scaled;
+  });
+}
+
 /** Map nested content to world by composing parent → child local transforms. */
 function mapChildToWorldWithChain(outerChain: (p: Point) => Point, o: FreehandObject): FreehandObject {
   if (o.type === "clippingContainer") {
@@ -4335,7 +4416,17 @@ interface OrientedSelectionFrame {
 
 type DuplicateTransformStep =
   | { kind: "translate"; dx: number; dy: number }
-  | { kind: "rotate"; pivot: Point; angleDeltaDeg: number };
+  | { kind: "rotate"; pivot: Point; angleDeltaDeg: number }
+  | {
+      kind: "composite";
+      dx: number;
+      dy: number;
+      sx: number;
+      sy: number;
+      opacityDelta?: number;
+      rotatePivot?: Point;
+      angleDeltaDeg?: number;
+    };
 
 /** Oriented box aligned with mean rotation that tightly wraps all selected corners. */
 function computeOrientedSelectionFrame(objs: FreehandObject[]): OrientedSelectionFrame | null {
@@ -9900,6 +9991,7 @@ export function FreehandStudioCanvas({
     dsPtIdx?: number;
     dsHtType?: "anchor" | "handleIn" | "handleOut";
     dsStartPt?: Point;
+    dsMovePointIndices?: number[];
     marqueeOrigin?: Point;
     snapDelta?: Point;
     shiftKey?: boolean;
@@ -10001,6 +10093,26 @@ export function FreehandStudioCanvas({
 
   /** Paso de duplicado (⌘D): por defecto 20×20 px mundo; tras Alt+transformar copia = último transform. */
   const duplicateStepRef = useRef<DuplicateTransformStep>({ kind: "translate", dx: 20, dy: 20 });
+  const duplicateEditBaselineRef = useRef<Map<string, FreehandObject>>(new Map());
+  const duplicateChainSelectionKeyRef = useRef<string>("");
+  const preserveDuplicateChainSelectionRef = useRef(false);
+  const clearDuplicateChain = useCallback(() => {
+    duplicateEditBaselineRef.current = new Map();
+    duplicateChainSelectionKeyRef.current = "";
+    duplicateStepRef.current = { kind: "translate", dx: 20, dy: 20 };
+  }, []);
+
+  useEffect(() => {
+    const key = Array.from(selectedIds).sort().join(",");
+    if (preserveDuplicateChainSelectionRef.current) {
+      preserveDuplicateChainSelectionRef.current = false;
+      duplicateChainSelectionKeyRef.current = key;
+      return;
+    }
+    if (duplicateChainSelectionKeyRef.current && key !== duplicateChainSelectionKeyRef.current) {
+      clearDuplicateChain();
+    }
+  }, [clearDuplicateChain, selectedIds]);
 
   /** Atajo de teclado → herramienta de creación: tiempo del keydown (`e.code`) para “mantener = temporal, soltar → V”. */
   const shapeShortcutKeyDownAtRef = useRef<Partial<Record<string, number>>>({});
@@ -13617,15 +13729,81 @@ export function FreehandStudioCanvas({
 
   // ── Object mutations ──────────────────────────────────────────────
 
+  const updateDuplicateStepFromBaseline = useCallback(
+    (nextObjects: FreehandObject[], opts?: { rotatePivot?: Point }) => {
+      const sel = selectedIdsRef.current;
+      const baselineMap = duplicateEditBaselineRef.current;
+      if (sel.size === 0 || baselineMap.size === 0) return;
+      const baselineObjects: FreehandObject[] = [];
+      const currentObjects: FreehandObject[] = [];
+      for (const id of sel) {
+        const baseline = baselineMap.get(id);
+        const current = nextObjects.find((o) => o.id === id);
+        if (!baseline || !current) return;
+        baselineObjects.push(baseline);
+        currentObjects.push(current);
+      }
+
+      const opacityDeltas = currentObjects.map((current, idx) => (current.opacity ?? 1) - (baselineObjects[idx]?.opacity ?? 1));
+      const opacityDelta =
+        opacityDeltas.length > 0 ? opacityDeltas.reduce((sum, value) => sum + value, 0) / opacityDeltas.length : 0;
+      const opacityChanged = opacityDeltas.some((value) => Math.abs(value) > 0.001);
+
+      const previousStep = duplicateStepRef.current;
+      const baselineFrame = computeOrientedSelectionFrame(baselineObjects);
+      const currentFrame = computeOrientedSelectionFrame(currentObjects);
+      const previousRotatePivot =
+        previousStep.kind === "rotate"
+          ? previousStep.pivot
+          : previousStep.kind === "composite"
+            ? previousStep.rotatePivot
+            : undefined;
+      const rotatePivot = opts?.rotatePivot ?? previousRotatePivot;
+      const angleDeltaDeg =
+        rotatePivot && baselineFrame && currentFrame
+          ? (shortestAngleDeltaRad((currentFrame.angleDeg * Math.PI) / 180, (baselineFrame.angleDeg * Math.PI) / 180) * 180) / Math.PI
+          : previousStep.kind === "rotate"
+            ? previousStep.angleDeltaDeg
+            : previousStep.kind === "composite"
+              ? previousStep.angleDeltaDeg ?? 0
+              : 0;
+      const rotateChanged = rotatePivot != null && Math.abs(angleDeltaDeg) > 0.001;
+      const residualBaselineObjects = rotateChanged
+        ? baselineObjects.map((baseline) => applyRotateAroundSelectionPivot(baseline, rotatePivot!, angleDeltaDeg))
+        : baselineObjects;
+      const residualBaselineFrame = computeOrientedSelectionFrame(residualBaselineObjects);
+      const dx = residualBaselineFrame && currentFrame ? currentFrame.cx - residualBaselineFrame.cx : 0;
+      const dy = residualBaselineFrame && currentFrame ? currentFrame.cy - residualBaselineFrame.cy : 0;
+      const sx = residualBaselineFrame && currentFrame && residualBaselineFrame.w > 1e-4 ? currentFrame.w / residualBaselineFrame.w : 1;
+      const sy = residualBaselineFrame && currentFrame && residualBaselineFrame.h > 1e-4 ? currentFrame.h / residualBaselineFrame.h : 1;
+      const translateChanged = Math.hypot(dx, dy) > 0.001;
+      const scaleChanged = Math.abs(sx - 1) > 0.001 || Math.abs(sy - 1) > 0.001;
+
+      if (rotateChanged || translateChanged || scaleChanged || opacityChanged) {
+        duplicateStepRef.current = {
+          kind: "composite",
+          dx,
+          dy,
+          sx,
+          sy,
+          ...(rotateChanged ? { rotatePivot: { ...rotatePivot! }, angleDeltaDeg } : {}),
+          ...(opacityChanged ? { opacityDelta } : {}),
+        };
+      }
+    },
+    [],
+  );
+
   const updateSelectedProp = useCallback((key: string, value: any) => {
     const sel = selectedIdsRef.current;
     if (sel.size === 0) return;
     setObjects((prev) => {
       const next = prev.map((o) => sel.has(o.id) ? { ...o, [key]: value } : o);
+      if (key === "opacity") updateDuplicateStepFromBaseline(next);
       pushHistory(next, sel);
       return next;
     });
-  }, [pushHistory]);
+  }, [pushHistory, updateDuplicateStepFromBaseline]);
 
   /** Una sola capa: barra de capas (fusión / opacidad) actúa sobre la primaria o la primera seleccionada. */
   const updateLayerPanelTargetProp = useCallback(
@@ -13633,19 +13811,24 @@ export function FreehandStudioCanvas({
       if (!layerPanelTargetId) return;
       setObjects((prev) => {
         const next = prev.map((o) => (o.id === layerPanelTargetId ? { ...o, [key]: value } : o));
+        if (key === "opacity") updateDuplicateStepFromBaseline(next);
         pushHistory(next, new Set([layerPanelTargetId]));
         return next;
       });
     },
-    [layerPanelTargetId, pushHistory],
+    [layerPanelTargetId, pushHistory, updateDuplicateStepFromBaseline],
   );
 
   const updateLayerPanelTargetPropSilent = useCallback(
     (key: string, value: unknown) => {
       if (!layerPanelTargetId) return;
-      setObjects((prev) => prev.map((o) => (o.id === layerPanelTargetId ? { ...o, [key]: value } : o)));
+      setObjects((prev) => {
+        const next = prev.map((o) => (o.id === layerPanelTargetId ? { ...o, [key]: value } : o));
+        if (key === "opacity") updateDuplicateStepFromBaseline(next);
+        return next;
+      });
     },
-    [layerPanelTargetId],
+    [layerPanelTargetId, updateDuplicateStepFromBaseline],
   );
 
   const flushBrushPreviewToObject = useCallback(() => {
@@ -14393,8 +14576,12 @@ export function FreehandStudioCanvas({
   const updateSelectedPropSilent = useCallback((key: string, value: any) => {
     const sel = selectedIdsRef.current;
     if (sel.size === 0) return;
-    setObjects((prev) => prev.map((o) => (sel.has(o.id) ? { ...o, [key]: value } : o)));
-  }, []);
+    setObjects((prev) => {
+      const next = prev.map((o) => (sel.has(o.id) ? { ...o, [key]: value } : o));
+      if (key === "opacity") updateDuplicateStepFromBaseline(next);
+      return next;
+    });
+  }, [updateDuplicateStepFromBaseline]);
 
   const updateSelectedRectCornerRadius = useCallback(
     (
@@ -14444,13 +14631,15 @@ export function FreehandStudioCanvas({
 
   /** Un solo paso de deshacer al terminar un gesto de scrub. */
   const commitHistoryAfterScrub = useCallback(() => {
+    updateDuplicateStepFromBaseline(objectsRef.current);
     pushHistory(objectsRef.current, selectedIdsRef.current);
-  }, [pushHistory]);
+  }, [pushHistory, updateDuplicateStepFromBaseline]);
 
   const commitLayerPanelHistoryAfterScrub = useCallback(() => {
     if (!layerPanelTargetId) return;
+    updateDuplicateStepFromBaseline(objectsRef.current);
     pushHistory(objectsRef.current, new Set([layerPanelTargetId]));
-  }, [layerPanelTargetId, pushHistory]);
+  }, [layerPanelTargetId, pushHistory, updateDuplicateStepFromBaseline]);
 
   const TRANSFORM_DIM_MIN = 1;
 
@@ -15175,15 +15364,17 @@ export function FreehandStudioCanvas({
     const cloned = objs
       .filter((o) => sel.has(o.id) && !o.photoRoomInputSlot)
       .map((o) => deepCloneFreehandObject(o, uid));
-    const dupes = remapGroupIdsForClones(cloned, uid).map((o) => {
-      if (step.kind === "rotate") {
-        return applyRotateAroundSelectionPivot(o, step.pivot, step.angleDeltaDeg);
-      }
-      return translateFreehandObject(o, step.dx, step.dy);
-    });
+    const remapped = remapGroupIdsForClones(cloned, uid);
+    const dupes = (() => {
+      if (step.kind === "rotate") return remapped.map((o) => applyRotateAroundSelectionPivot(o, step.pivot, step.angleDeltaDeg));
+      if (step.kind === "composite") return applyCompositeDuplicateStepToObjects(remapped, step);
+      return remapped.map((o) => translateFreehandObject(o, step.dx, step.dy));
+    })();
     if (dupes.length === 0) return;
+    duplicateEditBaselineRef.current = new Map(dupes.map((o) => [o.id, deepCloneFreehandObjectKeepIds(o)]));
     const next = [...objs, ...dupes];
     const ns = new Set(dupes.map((d) => d.id));
+    preserveDuplicateChainSelectionRef.current = true;
     setObjects(next); setSelectedIds(ns);
     pushHistory(next, ns);
   }, [pushHistory]);
@@ -18125,24 +18316,39 @@ export function FreehandStudioCanvas({
             for (const ht of ["anchor", "handleIn", "handleOut"] as const) {
               const hitPoint = pathBezierPointToWorld(pt[ht], p);
               if (dist(pos, hitPoint) < threshold) {
-                if (e.shiftKey || e.nativeEvent.getModifierState?.("Shift")) {
-                  setSelectedPoints((prev) => {
-                    const m = new Map(prev);
-                    const s = new Set(m.get(obj.id) || []);
-                    if (ht === "anchor") { if (s.has(gIdx)) s.delete(gIdx); else s.add(gIdx); }
+                const additivePoint = isShiftHeld(e) || e.metaKey || e.ctrlKey;
+                let nextPointSelection = new Set<number>();
+                if (additivePoint) {
+                  const prev = selectedPointsRef.current;
+                  const m = new Map(prev);
+                  const s = new Set(m.get(obj.id) || []);
+                  if (ht === "anchor") {
+                    if (s.has(gIdx)) s.delete(gIdx);
                     else s.add(gIdx);
-                    m.set(obj.id, s);
-                    return m;
-                  });
+                  } else s.add(gIdx);
+                  if (s.size > 0) m.set(obj.id, s);
+                  else m.delete(obj.id);
+                  nextPointSelection = new Set(m.get(obj.id) || []);
+                  setSelectedPoints(m);
                 } else {
                   const m = new Map<string, Set<number>>();
-                  m.set(obj.id, new Set([gIdx]));
+                  const current = selectedPointsRef.current.get(obj.id);
+                  nextPointSelection = ht === "anchor" && current?.has(gIdx) ? new Set(current) : new Set([gIdx]);
+                  m.set(obj.id, nextPointSelection);
                   setSelectedPoints(m);
                 }
                 setSelectedIds(new Set([obj.id]));
+                if (additivePoint && ht === "anchor" && !nextPointSelection.has(gIdx)) return;
                 setDragState({
                   type: "directSelect", startX: e.clientX, startY: e.clientY,
                   dsObjId: obj.id, dsPtIdx: gIdx, dsHtType: ht, dsStartPt: { ...pt[ht] },
+                  dsMovePointIndices: ht === "anchor" && nextPointSelection.has(gIdx) ? Array.from(nextPointSelection) : [gIdx],
+                  pathPointsMap: new Map([[obj.id, p.points.map((ppt) => ({
+                    ...ppt,
+                    anchor: { ...ppt.anchor },
+                    handleIn: { ...ppt.handleIn },
+                    handleOut: { ...ppt.handleOut },
+                  }))]]),
                 });
                 return;
               }
@@ -18173,23 +18379,29 @@ export function FreehandStudioCanvas({
             const gIdx = gBase + pi;
             for (const ht of ["anchor", "handleIn", "handleOut"] as const) {
               if (dist(pos, ptW[ht]) < threshold) {
-                if (e.shiftKey || e.nativeEvent.getModifierState?.("Shift")) {
-                  setSelectedPoints((prev) => {
-                    const m = new Map(prev);
-                    const s = new Set(m.get(raw.id) || []);
-                    if (ht === "anchor") {
-                      if (s.has(gIdx)) s.delete(gIdx);
-                      else s.add(gIdx);
-                    } else s.add(gIdx);
-                    m.set(raw.id, s);
-                    return m;
-                  });
+                const additivePoint = isShiftHeld(e) || e.metaKey || e.ctrlKey;
+                let nextPointSelection = new Set<number>();
+                if (additivePoint) {
+                  const prev = selectedPointsRef.current;
+                  const m = new Map(prev);
+                  const s = new Set(m.get(raw.id) || []);
+                  if (ht === "anchor") {
+                    if (s.has(gIdx)) s.delete(gIdx);
+                    else s.add(gIdx);
+                  } else s.add(gIdx);
+                  if (s.size > 0) m.set(raw.id, s);
+                  else m.delete(raw.id);
+                  nextPointSelection = new Set(m.get(raw.id) || []);
+                  setSelectedPoints(m);
                 } else {
                   const m = new Map<string, Set<number>>();
-                  m.set(raw.id, new Set([gIdx]));
+                  const current = selectedPointsRef.current.get(raw.id);
+                  nextPointSelection = ht === "anchor" && current?.has(gIdx) ? new Set(current) : new Set([gIdx]);
+                  m.set(raw.id, nextPointSelection);
                   setSelectedPoints(m);
                 }
                 setSelectedIds(new Set([cc.id]));
+                if (additivePoint && ht === "anchor" && !nextPointSelection.has(gIdx)) return;
                 setDragState({
                   type: "directSelect",
                   startX: e.clientX,
@@ -18199,6 +18411,13 @@ export function FreehandStudioCanvas({
                   dsPtIdx: gIdx,
                   dsHtType: ht,
                   dsStartPt: { ...ptL[ht] },
+                  dsMovePointIndices: ht === "anchor" && nextPointSelection.has(gIdx) ? Array.from(nextPointSelection) : [gIdx],
+                  pathPointsMap: new Map([[raw.id, raw.points.map((ppt) => ({
+                    ...ppt,
+                    anchor: { ...ppt.anchor },
+                    handleIn: { ...ppt.handleIn },
+                    handleOut: { ...ppt.handleOut },
+                  }))]]),
                 });
                 return;
               }
@@ -18237,9 +18456,15 @@ export function FreehandStudioCanvas({
         }
       }
 
-      // Click fuera en selección directa: volver inmediatamente a herramienta Selección (V).
-      setSelectedPoints(new Map());
-      setActiveTool("select");
+      // Click fuera: salir de edición. Arrastre desde fuera: selección por área de puntos.
+      setDragState({
+        type: "marquee",
+        startX: e.clientX,
+        startY: e.clientY,
+        marqueeOrigin: pos,
+        currentCanvas: pos,
+        shiftKey: isShiftHeld(e) || e.metaKey || e.ctrlKey,
+      });
       return;
     }
 
@@ -18493,6 +18718,8 @@ export function FreehandStudioCanvas({
               rotateObjects = [...objects, ...clones];
               rotateTargets = clones;
               rotateSelectedIds = new Set(clones.map((c) => c.id));
+              duplicateEditBaselineRef.current = new Map(clones.map((o) => [o.id, deepCloneFreehandObjectKeepIds(o)]));
+              preserveDuplicateChainSelectionRef.current = true;
               setObjects(rotateObjects);
               setSelectedIds(rotateSelectedIds);
               pushHistory(rotateObjects, rotateSelectedIds);
@@ -18790,8 +19017,10 @@ export function FreehandStudioCanvas({
             uid,
           );
           const next = [...objects, ...clones];
+          duplicateEditBaselineRef.current = new Map(clones.map((o) => [o.id, deepCloneFreehandObjectKeepIds(o)]));
           setObjects(next);
           const cloneSel = new Set(clones.map((c) => c.id));
+          preserveDuplicateChainSelectionRef.current = true;
           setSelectedIds(cloneSel);
           const positions = new Map<string, Point>();
           const pathPointsMap = new Map<string, BezierPoint[]>();
@@ -20420,27 +20649,36 @@ export function FreehandStudioCanvas({
       }
       const clipId = dragState.dsClipContainerId;
       const applyPt = (pt: BezierPoint, pi: number, o: PathObject): BezierPoint => {
-        if (pi !== dragState.dsPtIdx) return pt;
         const ht = dragState.dsHtType!;
+        const moveIndices = ht === "anchor"
+          ? new Set(dragState.dsMovePointIndices?.length ? dragState.dsMovePointIndices : [dragState.dsPtIdx!])
+          : new Set([dragState.dsPtIdx!]);
+        if (!moveIndices.has(pi)) return pt;
+        const originalPt = dragState.pathPointsMap?.get(dragState.dsObjId!)?.[pi] ?? pt;
         let newPos: Point;
         if (clipId) {
           const c = objectsRef.current.find((x) => x.id === clipId && x.type === "clippingContainer") as
             | ClippingContainerObject
             | undefined;
           if (!c) return pt;
-          const sw = localPointToWorld(c, start);
+          const sw = localPointToWorld(c, ht === "anchor" ? originalPt.anchor : start);
           const ew = { x: sw.x + ndx, y: sw.y + ndy };
           newPos = worldPointToLocal(c, ew);
         } else {
-          const sw = pathBezierPointToWorld(start, o);
+          const sw = pathBezierPointToWorld(ht === "anchor" ? originalPt.anchor : start, o);
           const ew = { x: sw.x + ndx, y: sw.y + ndy };
           newPos = worldPointToPathBezierPoint(ew, o);
         }
         if (ht === "anchor") {
-          const adx = newPos.x - pt.anchor.x, ady = newPos.y - pt.anchor.y;
-          return { ...pt, anchor: newPos, handleIn: { x: pt.handleIn.x + adx, y: pt.handleIn.y + ady }, handleOut: { x: pt.handleOut.x + adx, y: pt.handleOut.y + ady } };
+          const adx = newPos.x - originalPt.anchor.x, ady = newPos.y - originalPt.anchor.y;
+          return {
+            ...originalPt,
+            anchor: newPos,
+            handleIn: { x: originalPt.handleIn.x + adx, y: originalPt.handleIn.y + ady },
+            handleOut: { x: originalPt.handleOut.x + adx, y: originalPt.handleOut.y + ady },
+          };
         }
-        return applyVertexHandleDrag(pt, ht, newPos);
+        return applyVertexHandleDrag(originalPt, ht, newPos);
       };
       setObjects((prev) =>
         prev.map((o) => {
@@ -20853,6 +21091,12 @@ export function FreehandStudioCanvas({
       const o = ds.marqueeOrigin, c = ds.currentCanvas;
       const mx = Math.min(o.x, c.x), my = Math.min(o.y, c.y);
       const mw = Math.abs(c.x - o.x), mh = Math.abs(c.y - o.y);
+      if (activeTool === "directSelect" && mw <= 2 && mh <= 2) {
+        setSelectedPoints(new Map());
+        setActiveTool("select");
+        setDragState(null);
+        return;
+      }
       if (mw > 2 && mh > 2) {
         const marqueeRect: Rect = { x: mx, y: my, w: mw, h: mh };
 
@@ -20865,7 +21109,8 @@ export function FreehandStudioCanvas({
               const p = obj as PathObject;
               const idxs = new Set<number>();
               p.points.forEach((pt, i) => {
-                if (pt.anchor.x >= mx && pt.anchor.x <= mx + mw && pt.anchor.y >= my && pt.anchor.y <= my + mh) {
+                const w = pathBezierPointToWorld(pt.anchor, p);
+                if (w.x >= mx && w.x <= mx + mw && w.y >= my && w.y <= my + mh) {
                   idxs.add(i);
                 }
               });
@@ -20890,8 +21135,25 @@ export function FreehandStudioCanvas({
               }
             }
           }
-          setSelectedPoints(newPts);
-          setSelectedIds(selIds);
+          if (ds.shiftKey) {
+            setSelectedPoints((prev) => {
+              const merged = new Map(prev);
+              newPts.forEach((idxs, oid) => {
+                const s = new Set(merged.get(oid) || []);
+                idxs.forEach((idx) => s.add(idx));
+                merged.set(oid, s);
+              });
+              return merged;
+            });
+            setSelectedIds((prev) => {
+              const merged = new Set(prev);
+              selIds.forEach((id) => merged.add(id));
+              return merged;
+            });
+          } else {
+            setSelectedPoints(newPts);
+            setSelectedIds(selIds);
+          }
         } else {
           const marqueeSel = new Set<string>();
           const vecIsoGid = vectorIsolationGroupId(isolationStackRef.current);
@@ -21183,7 +21445,7 @@ export function FreehandStudioCanvas({
         const init = ds.positions.get(firstId);
         const cur = objectsRef.current.find((o) => o.id === firstId);
         if (init && cur) {
-          duplicateStepRef.current = { kind: "translate", dx: cur.x - init.x, dy: cur.y - init.y };
+          updateDuplicateStepFromBaseline(objectsRef.current);
         }
       }
     }
@@ -21194,19 +21456,10 @@ export function FreehandStudioCanvas({
       ds.rotateCenter &&
       ds.rotateStartAngle != null
     ) {
-      const pos = screenToCanvas(e.clientX, e.clientY);
-      const currentAngle = Math.atan2(pos.y - ds.rotateCenter.y, pos.x - ds.rotateCenter.x);
-      const radDelta = shortestAngleDeltaRad(currentAngle, ds.rotateStartAngle);
-      let angleDelta = (radDelta * 180) / Math.PI;
-      if (isShiftHeld(e)) angleDelta = Math.round(angleDelta / 15) * 15;
-      if (Math.abs(angleDelta) > 0.001) {
-        duplicateStepRef.current = {
-          kind: "rotate",
-          pivot: { ...ds.rotateCenter },
-          angleDeltaDeg: angleDelta,
-        };
-      }
+      updateDuplicateStepFromBaseline(objectsRef.current, { rotatePivot: ds.rotateCenter });
     }
+
+    if (ds.type === "resize") updateDuplicateStepFromBaseline(objectsRef.current);
 
     if (
       ds.type === "move" ||
@@ -21253,6 +21506,7 @@ export function FreehandStudioCanvas({
     screenToCanvas,
     viewport.zoom,
     finishGuideGesture,
+    updateDuplicateStepFromBaseline,
     photoRectMarqueeSelection,
     photoPolygonMarqueeSelection,
     photoEllipseMarqueeSelection,
