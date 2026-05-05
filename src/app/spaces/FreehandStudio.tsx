@@ -1601,6 +1601,90 @@ function pointInWorldRect(p: Point, r: Rect): boolean {
 }
 function escapeHtmlStr(s: string): string { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>"); }
 
+function normalizeDesignerCustomFontFamilyName(fileName: string): string {
+  const lastSegment = fileName.split(/[\\/]/).pop() || fileName;
+  const withoutExt = lastSegment.replace(/\.(ttf|otf|woff2?|ttc)$/i, "");
+  const cleaned = withoutExt
+    .replace(/[_-]+/g, " ")
+    .replace(/["'`]/g, "")
+    .replace(/[^\p{L}\p{N} .-]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleaned || !/[\p{L}\p{N}]/u.test(cleaned)) return "Fuente importada";
+  return cleaned.slice(0, 80);
+}
+
+function isMeaningfulDesignerFontFamilyName(name: string): boolean {
+  const n = name.trim();
+  return n.length > 0 && /[\p{L}\p{N}]/u.test(n) && !/^[,./\\|:;_-]+$/.test(n);
+}
+
+function cssFontFamilyStackForDesignerFamily(family: string): string {
+  const escaped = family.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return `"${escaped}", system-ui, sans-serif`;
+}
+
+function designerFontFileMime(file: File): string {
+  if (file.type) return file.type;
+  const lower = file.name.toLowerCase();
+  if (lower.endsWith(".ttf")) return "font/ttf";
+  if (lower.endsWith(".otf")) return "font/otf";
+  if (lower.endsWith(".woff")) return "font/woff";
+  if (lower.endsWith(".woff2")) return "font/woff2";
+  return "application/octet-stream";
+}
+
+type DesignerCustomFontStyle = {
+  family: string;
+  style: string;
+  weight: number;
+};
+type DesignerCustomFontEntry = DesignerCustomFontStyle | string;
+
+const DESIGNER_IMPORTED_FONT_STYLE_DEFS: Array<{ label: string; weight: number; aliases: string[] }> = [
+  { label: "ExtraLight", weight: 200, aliases: ["extra light", "extralight", "ultra light", "ultralight"] },
+  { label: "SemiBold", weight: 600, aliases: ["semi bold", "semibold", "demi bold", "demibold"] },
+  { label: "ExtraBold", weight: 800, aliases: ["extra bold", "extrabold", "ultra bold", "ultrabold"] },
+  { label: "Hairline", weight: 100, aliases: ["hairline"] },
+  { label: "Thin", weight: 100, aliases: ["thin"] },
+  { label: "Light", weight: 300, aliases: ["light"] },
+  { label: "Book", weight: 400, aliases: ["book"] },
+  { label: "Regular", weight: 400, aliases: ["regular", "roman", "normal"] },
+  { label: "Medium", weight: 500, aliases: ["medium"] },
+  { label: "Bold", weight: 700, aliases: ["bold"] },
+  { label: "Black", weight: 900, aliases: ["black", "heavy"] },
+];
+
+function parseDesignerImportedFontFileName(fileName: string, fallbackWeight: number): DesignerCustomFontStyle {
+  const clean = normalizeDesignerCustomFontFamilyName(fileName);
+  const lower = clean.toLowerCase();
+  for (const def of DESIGNER_IMPORTED_FONT_STYLE_DEFS) {
+    for (const alias of def.aliases) {
+      if (lower === alias) return { family: clean, style: def.label, weight: def.weight };
+      if (!lower.endsWith(` ${alias}`)) continue;
+      const family = clean.slice(0, clean.length - alias.length).trim();
+      return {
+        family: isMeaningfulDesignerFontFamilyName(family) ? family : clean,
+        style: def.label,
+        weight: def.weight,
+      };
+    }
+  }
+  const weight = clamp(Math.round(fallbackWeight || DEFAULT_DOCUMENT_FONT_WEIGHT), 100, 900);
+  const style = DESIGNER_IMPORTED_FONT_STYLE_DEFS.find((d) => d.weight === weight)?.label ?? `${weight}`;
+  return { family: clean, style, weight };
+}
+
+function normalizeDesignerCustomFontEntry(entry: DesignerCustomFontEntry): DesignerCustomFontStyle | null {
+  if (typeof entry === "string") return parseDesignerImportedFontFileName(entry, DEFAULT_DOCUMENT_FONT_WEIGHT);
+  if (!entry || !isMeaningfulDesignerFontFamilyName(entry.family)) return null;
+  return {
+    family: entry.family,
+    style: entry.style || DESIGNER_IMPORTED_FONT_STYLE_DEFS.find((d) => d.weight === entry.weight)?.label || `${entry.weight || 400}`,
+    weight: clamp(Math.round(entry.weight || DEFAULT_DOCUMENT_FONT_WEIGHT), 100, 900),
+  };
+}
+
 function richSpansToInlineHtml(
   spans: Array<{
     text: string;
@@ -9994,6 +10078,7 @@ export function FreehandStudioCanvas({
     () => ({ ...DEFAULT_TEXT_CREATION_TYPOGRAPHY }),
   );
   const [installedGoogleFonts, setInstalledGoogleFonts] = useState<string[]>([]);
+  const [customDesignerFonts, setCustomDesignerFonts] = useState<DesignerCustomFontStyle[]>([]);
   const [googleFontInstallModalOpen, setGoogleFontInstallModalOpen] = useState(false);
   const [googleFontInstallQuery, setGoogleFontInstallQuery] = useState("");
   const [googleFontInstallSelection, setGoogleFontInstallSelection] = useState<string>("");
@@ -10004,12 +10089,40 @@ export function FreehandStudioCanvas({
     [],
   );
   const installedGoogleFontsSet = useMemo(() => new Set(installedGoogleFonts), [installedGoogleFonts]);
+  const customDesignerFontStylesByFamily = useMemo(() => {
+    const map = new Map<string, DesignerCustomFontStyle[]>();
+    for (const item of customDesignerFonts) {
+      const list = map.get(item.family) ?? [];
+      list.push(item);
+      map.set(item.family, list);
+    }
+    for (const [family, list] of map) {
+      map.set(
+        family,
+        list
+          .slice()
+          .sort((a, b) => a.weight - b.weight || a.style.localeCompare(b.style, "es", { sensitivity: "base" })),
+      );
+    }
+    return map;
+  }, [customDesignerFonts]);
+  const customDesignerFontsSet = useMemo(
+    () => new Set(customDesignerFonts.map((item) => item.family)),
+    [customDesignerFonts],
+  );
   const installedGoogleFontsDropdownOptions = useMemo(
     () =>
       Array.from(installedGoogleFontsSet).sort((a, b) =>
         a.localeCompare(b, "es", { sensitivity: "base" }),
       ),
     [installedGoogleFontsSet],
+  );
+  const customDesignerFontsDropdownOptions = useMemo(
+    () =>
+      Array.from(customDesignerFontsSet).sort((a, b) =>
+        a.localeCompare(b, "es", { sensitivity: "base" }),
+      ),
+    [customDesignerFontsSet],
   );
   const popularGoogleFontsDropdownOptions = useMemo(
     () => GOOGLE_FONTS_POPULAR.filter((g) => !installedGoogleFontsSet.has(g.family)),
@@ -10172,6 +10285,7 @@ export function FreehandStudioCanvas({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const svgInputRef = useRef<HTMLInputElement>(null);
   const customFontInputRef = useRef<HTMLInputElement>(null);
+  const customPathFontInputRef = useRef<HTMLInputElement>(null);
 
   const selectedIdsRef = useRef(selectedIds);
   selectedIdsRef.current = selectedIds;
@@ -13694,6 +13808,16 @@ export function FreehandStudioCanvas({
   );
 
   /** Google Fonts o presets Helvetica (familia + peso en un solo paso de historial). */
+  const designerFontControlValue = useCallback(
+    (fontFamily: string, fontWeight: number) => {
+      const builtInValue = designerFontSelectControlValue(fontFamily, fontWeight);
+      if (builtInValue) return builtInValue;
+      const primary = parsePrimaryFontFamily(fontFamily);
+      return isMeaningfulDesignerFontFamilyName(primary) ? primary : "";
+    },
+    [],
+  );
+
   const applyDesignerFontDropdown = useCallback(
     (v: string) => {
       if (!v) return;
@@ -13713,9 +13837,104 @@ export function FreehandStudioCanvas({
         });
         return;
       }
+      const customStyles = customDesignerFontStylesByFamily.get(v);
+      if (customStyles?.length) {
+        const currentTextSelection = selectedObjects.find(
+          (o): o is TextObject | TextOnPathObject =>
+            selectedIdsRef.current.has(o.id) && (o.type === "text" || o.type === "textOnPath"),
+        );
+        const currentWeight = currentTextSelection?.fontWeight ?? creationTextTypography.fontWeight;
+        const regular = customStyles.find((item) => item.weight === 400);
+        const exact = customStyles.find((item) => item.weight === currentWeight);
+        const selectedStyle = exact ?? regular ?? customStyles[0]!;
+        const cssFamily = cssFontFamilyStackForDesignerFamily(v);
+        if (selectedIdsRef.current.size > 0) {
+          const sel = selectedIdsRef.current;
+          setObjects((prev) => {
+            const next = prev.map((o) =>
+              sel.has(o.id) && (o.type === "text" || o.type === "textOnPath")
+                ? { ...o, fontFamily: cssFamily, fontWeight: selectedStyle.weight }
+                : o,
+            );
+            pushHistory(next, sel);
+            return next;
+          });
+        } else {
+          setCreationTextTypography((prev) => ({
+            ...prev,
+            fontFamily: cssFamily,
+            fontWeight: selectedStyle.weight,
+          }));
+        }
+        return;
+      }
       updateSelectedProp("fontFamily", `${v}, system-ui, sans-serif`);
     },
-    [pushHistory, updateSelectedProp],
+    [creationTextTypography.fontWeight, customDesignerFontStylesByFamily, pushHistory, selectedObjects, updateSelectedProp],
+  );
+
+  const importDesignerCustomFontFile = useCallback(
+    async (file: File | undefined, fontWeight: number, input?: HTMLInputElement | null) => {
+      if (!file) return;
+      if (typeof document === "undefined" || typeof FontFace === "undefined") {
+        setToast("Tu navegador no permite cargar fuentes aquí");
+        window.setTimeout(() => setToast(null), 2500);
+        if (input) input.value = "";
+        return;
+      }
+      const parsedFont = parseDesignerImportedFontFileName(file.name, fontWeight);
+      try {
+        const buf = await file.arrayBuffer();
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onerror = () => reject(reader.error ?? new Error("Font read failed"));
+          reader.onload = () => resolve(String(reader.result || ""));
+          reader.readAsDataURL(new Blob([buf], { type: designerFontFileMime(file) }));
+        });
+        const face = new FontFace(parsedFont.family, `url("${dataUrl}")`, {
+          weight: String(parsedFont.weight),
+          style: "normal",
+        });
+        await face.load();
+        document.fonts.add(face);
+        registerUserFontBuffer(parsedFont.family, parsedFont.weight, buf);
+        setCustomDesignerFonts((prev) => {
+          const withoutSameStyle = prev.filter(
+            (item) => !(item.family === parsedFont.family && item.style === parsedFont.style),
+          );
+          return [...withoutSameStyle, parsedFont].sort(
+            (a, b) =>
+              a.family.localeCompare(b.family, "es", { sensitivity: "base" }) ||
+              a.weight - b.weight ||
+              a.style.localeCompare(b.style, "es", { sensitivity: "base" }),
+          );
+        });
+        const cssFamily = cssFontFamilyStackForDesignerFamily(parsedFont.family);
+        if (selectedIdsRef.current.size > 0) {
+          const sel = selectedIdsRef.current;
+          setObjects((prev) => {
+            const next = prev.map((o) =>
+              sel.has(o.id) && (o.type === "text" || o.type === "textOnPath")
+                ? { ...o, fontFamily: cssFamily, fontWeight: parsedFont.weight }
+                : o,
+            );
+            pushHistory(next, sel);
+            return next;
+          });
+        } else {
+          setCreationTextTypography((prev) => ({ ...prev, fontFamily: cssFamily, fontWeight: parsedFont.weight }));
+        }
+        setToast(`Tipografía importada: ${parsedFont.family} · ${parsedFont.style}`);
+        window.setTimeout(() => setToast(null), 2500);
+      } catch (err) {
+        console.error("Designer font import failed", err);
+        setToast("No se pudo cargar la tipografía");
+        window.setTimeout(() => setToast(null), 2500);
+      } finally {
+        if (input) input.value = "";
+      }
+    },
+    [pushHistory],
   );
 
   const ensureGoogleFontStylesheetLoaded = useCallback((family: string): Promise<void> => {
@@ -26413,6 +26632,14 @@ export function FreehandStudioCanvas({
                     "border-[#2d2f34] bg-[#1e2024] text-[#71717a] hover:border-[#3f4249] hover:text-zinc-200";
                   const iconToolBtn = `inline-flex h-7 min-w-0 flex-1 items-center justify-center rounded-[6px] border text-[#a1a1aa] transition-colors ${pillOff}`;
                   const iconToolBtnOn = `inline-flex h-7 min-w-0 flex-1 items-center justify-center rounded-[6px] border text-white transition-colors ${pillOn}`;
+                  const fontSelectValue = designerFontControlValue(tx.fontFamily, tx.fontWeight);
+                  const showCurrentFontOption =
+                    !!fontSelectValue &&
+                    !customDesignerFontsSet.has(fontSelectValue) &&
+                    !installedGoogleFontsSet.has(fontSelectValue) &&
+                    !GOOGLE_FONTS_POPULAR.some((g) => g.family === fontSelectValue) &&
+                    !fontSelectValue.startsWith(DESIGNER_FONT_PRESET_VALUE_PREFIX);
+                  const importedFontStyles = customDesignerFontStylesByFamily.get(fontSelectValue) ?? [];
                   const applyInlineRichCommand = (cmd: string): boolean => {
                     if (typeof window === "undefined" || typeof document === "undefined") return false;
                     const activeEl = document.activeElement as HTMLElement | null;
@@ -26448,13 +26675,27 @@ export function FreehandStudioCanvas({
 
                       <div className="flex gap-2">
                         <select
-                          value={designerFontSelectControlValue(tx.fontFamily, tx.fontWeight)}
+                          value={fontSelectValue}
                           onChange={(e) => {
                             applyDesignerFontDropdown(e.target.value);
                           }}
                           className="h-8 min-h-0 min-w-0 flex-1 rounded-[6px] border border-[#2d2f34] bg-[#1e2024] px-2 py-0 text-[11px] text-zinc-100"
                         >
                           <option value="">— Font —</option>
+                          {showCurrentFontOption ? (
+                            <optgroup label="Fuente actual">
+                              <option value={fontSelectValue}>{fontSelectValue}</option>
+                            </optgroup>
+                          ) : null}
+                          {customDesignerFontsDropdownOptions.length > 0 ? (
+                            <optgroup label="Tipografías importadas">
+                              {customDesignerFontsDropdownOptions.map((family) => (
+                                <option key={family} value={family}>
+                                  {family}
+                                </option>
+                              ))}
+                            </optgroup>
+                          ) : null}
                           {installedGoogleFontsDropdownOptions.length > 0 ? (
                             <optgroup label="Google Fonts instaladas">
                               {installedGoogleFontsDropdownOptions.map((family) => (
@@ -26493,22 +26734,7 @@ export function FreehandStudioCanvas({
                           accept=".ttf,.otf,.woff,.woff2"
                           className="hidden"
                           onChange={async (e) => {
-                            const f = e.target.files?.[0];
-                            if (!f) return;
-                            try {
-                              const buf = await f.arrayBuffer();
-                              const face = new FontFace(f.name.replace(/\.[^.]+$/, ""), buf);
-                              await face.load();
-                              document.fonts.add(face);
-                              registerUserFontBuffer(parsePrimaryFontFamily(face.family), tx.fontWeight, buf);
-                              updateSelectedProp("fontFamily", `"${face.family}", system-ui, sans-serif`);
-                              setToast(`Font loaded: ${face.family}`);
-                              setTimeout(() => setToast(null), 2500);
-                            } catch {
-                              setToast("Could not load font file");
-                              setTimeout(() => setToast(null), 2500);
-                            }
-                            e.target.value = "";
+                            await importDesignerCustomFontFile(e.target.files?.[0], tx.fontWeight, e.currentTarget);
                           }}
                         />
                       </div>
@@ -26537,18 +26763,33 @@ export function FreehandStudioCanvas({
                             <Weight size={10} strokeWidth={2} className={tfIconMuted} aria-hidden />
                             Wgt
                           </label>
-                          <ScrubNumberInput
-                            value={tx.fontWeight}
-                            onKeyboardCommit={(n) => updateSelectedProp("fontWeight", clamp(Math.round(n), 100, 900))}
-                            onScrubLive={(n) => updateSelectedPropSilent("fontWeight", clamp(Math.round(n), 100, 900))}
-                            onScrubEnd={commitHistoryAfterScrub}
-                            step={1}
-                            roundFn={(n) => clamp(Math.round(n), 100, 900)}
-                            min={100}
-                            max={900}
-                            title="Arrastra horizontalmente · Mayús = ×10"
-                            className={tfInp}
-                          />
+                          {importedFontStyles.length > 0 ? (
+                            <select
+                              value={String(tx.fontWeight)}
+                              onChange={(e) => updateSelectedProp("fontWeight", Number(e.target.value) || 400)}
+                              className={tfInp.replace("cursor-ew-resize", "cursor-pointer")}
+                              title="Estilos disponibles para esta familia importada"
+                            >
+                              {importedFontStyles.map((style) => (
+                                <option key={`${style.family}-${style.style}-${style.weight}`} value={style.weight}>
+                                  {style.style}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <ScrubNumberInput
+                              value={tx.fontWeight}
+                              onKeyboardCommit={(n) => updateSelectedProp("fontWeight", clamp(Math.round(n), 100, 900))}
+                              onScrubLive={(n) => updateSelectedPropSilent("fontWeight", clamp(Math.round(n), 100, 900))}
+                              onScrubEnd={commitHistoryAfterScrub}
+                              step={1}
+                              roundFn={(n) => clamp(Math.round(n), 100, 900)}
+                              min={100}
+                              max={900}
+                              title="Arrastra horizontalmente · Mayús = ×10"
+                              className={tfInp}
+                            />
+                          )}
                         </div>
                         <div className={tfField}>
                           <label className={`flex items-center gap-1.5 ${tfLbl}`} title="Line height">
@@ -26727,19 +26968,41 @@ export function FreehandStudioCanvas({
 
                 {firstSelected.type === "textOnPath" && (() => {
                   const top = firstSelected as TextOnPathObject;
+                  const fontSelectValue = designerFontControlValue(top.fontFamily, top.fontWeight);
+                  const showCurrentFontOption =
+                    !!fontSelectValue &&
+                    !customDesignerFontsSet.has(fontSelectValue) &&
+                    !installedGoogleFontsSet.has(fontSelectValue) &&
+                    !GOOGLE_FONTS_POPULAR.some((g) => g.family === fontSelectValue) &&
+                    !fontSelectValue.startsWith(DESIGNER_FONT_PRESET_VALUE_PREFIX);
+                  const importedFontStyles = customDesignerFontStylesByFamily.get(fontSelectValue) ?? [];
                   return (
                     <>
                       <div className="space-y-2 border-t border-white/10 pt-2">
                         <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">Typography</div>
                         <label className="text-[8px] text-zinc-500">Fuentes</label>
                         <select
-                          value={designerFontSelectControlValue(top.fontFamily, top.fontWeight)}
+                          value={fontSelectValue}
                           onChange={(e) => {
                             applyDesignerFontDropdown(e.target.value);
                           }}
                           className="w-full rounded border border-white/10 bg-white/5 px-2 py-1.5 text-[10px] text-white"
                         >
                           <option value="">— Elegir fuente —</option>
+                          {showCurrentFontOption ? (
+                            <optgroup label="Fuente actual">
+                              <option value={fontSelectValue}>{fontSelectValue}</option>
+                            </optgroup>
+                          ) : null}
+                          {customDesignerFontsDropdownOptions.length > 0 ? (
+                            <optgroup label="Tipografías importadas">
+                              {customDesignerFontsDropdownOptions.map((family) => (
+                                <option key={family} value={family}>
+                                  {family}
+                                </option>
+                              ))}
+                            </optgroup>
+                          ) : null}
                           {installedGoogleFontsDropdownOptions.length > 0 ? (
                             <optgroup label="Google Fonts instaladas">
                               {installedGoogleFontsDropdownOptions.map((family) => (
@@ -26775,32 +27038,17 @@ export function FreehandStudioCanvas({
                           <button
                             type="button"
                             className="flex-1 rounded border border-white/10 bg-white/5 py-1 text-[8px] font-bold uppercase text-zinc-300 hover:bg-white/10"
-                            onClick={() => customFontInputRef.current?.click()}
+                            onClick={() => customPathFontInputRef.current?.click()}
                           >
                             Importar .ttf / .otf
                           </button>
                           <input
-                            ref={customFontInputRef}
+                            ref={customPathFontInputRef}
                             type="file"
                             accept=".ttf,.otf,.woff,.woff2"
                             className="hidden"
                             onChange={async (e) => {
-                              const f = e.target.files?.[0];
-                              if (!f) return;
-                              try {
-                                const buf = await f.arrayBuffer();
-                                const face = new FontFace(f.name.replace(/\.[^.]+$/, ""), buf);
-                                await face.load();
-                                document.fonts.add(face);
-                                registerUserFontBuffer(parsePrimaryFontFamily(face.family), top.fontWeight, buf);
-                                updateSelectedProp("fontFamily", `"${face.family}", system-ui, sans-serif`);
-                                setToast(`Font loaded: ${face.family}`);
-                                setTimeout(() => setToast(null), 2500);
-                              } catch {
-                                setToast("Could not load font file");
-                                setTimeout(() => setToast(null), 2500);
-                              }
-                              e.target.value = "";
+                              await importDesignerCustomFontFile(e.target.files?.[0], top.fontWeight, e.currentTarget);
                             }}
                           />
                         </div>
@@ -26822,18 +27070,33 @@ export function FreehandStudioCanvas({
                           </div>
                           <div className="space-y-0.5">
                             <label className="text-[8px] text-zinc-600">Weight</label>
-                            <ScrubNumberInput
-                              value={top.fontWeight}
-                              onKeyboardCommit={(n) => updateSelectedProp("fontWeight", clamp(Math.round(n), 100, 900))}
-                              onScrubLive={(n) => updateSelectedPropSilent("fontWeight", clamp(Math.round(n), 100, 900))}
-                              onScrubEnd={commitHistoryAfterScrub}
-                              step={1}
-                              roundFn={(n) => clamp(Math.round(n), 100, 900)}
-                              min={100}
-                              max={900}
-                              title="Arrastra horizontalmente · Mayús = ×10"
-                              className="w-full cursor-ew-resize rounded border border-white/10 bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-white"
-                            />
+                            {importedFontStyles.length > 0 ? (
+                              <select
+                                value={String(top.fontWeight)}
+                                onChange={(e) => updateSelectedProp("fontWeight", Number(e.target.value) || 400)}
+                                className="w-full cursor-pointer rounded border border-white/10 bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-white"
+                                title="Estilos disponibles para esta familia importada"
+                              >
+                                {importedFontStyles.map((style) => (
+                                  <option key={`${style.family}-${style.style}-${style.weight}`} value={style.weight}>
+                                    {style.style}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <ScrubNumberInput
+                                value={top.fontWeight}
+                                onKeyboardCommit={(n) => updateSelectedProp("fontWeight", clamp(Math.round(n), 100, 900))}
+                                onScrubLive={(n) => updateSelectedPropSilent("fontWeight", clamp(Math.round(n), 100, 900))}
+                                onScrubEnd={commitHistoryAfterScrub}
+                                step={1}
+                                roundFn={(n) => clamp(Math.round(n), 100, 900)}
+                                min={100}
+                                max={900}
+                                title="Arrastra horizontalmente · Mayús = ×10"
+                                className="w-full cursor-ew-resize rounded border border-white/10 bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-white"
+                              />
+                            )}
                           </div>
                         </div>
                         <div className="space-y-0.5">
