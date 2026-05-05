@@ -740,6 +740,7 @@ type Tool =
   | "line"
   | "ellipse"
   | "text"
+  | "textPath"
   | "textFrame"
   | "imageFrame"
   | "eyedropper"
@@ -766,7 +767,7 @@ type ToolFlyoutPrimaryState = {
   "tf-pen": "directSelect" | "pen" | "scissors";
   "tf-shape": "rect" | "line" | "ellipse";
   "tf-photo-marquee": "rectMarquee" | "ellipseMarquee" | "lassoMarquee" | "polygonMarquee";
-  "tf-text": "text" | "textFrame";
+  "tf-text": "text" | "textPath" | "textFrame";
   "tf-img": "importImage" | "imageFrame";
 };
 
@@ -794,6 +795,7 @@ function toolFlyoutGroupForTool(tool: Tool): ToolFlyoutGroupId | null {
     case "polygonMarquee":
       return "tf-photo-marquee";
     case "text":
+    case "textPath":
     case "textFrame":
       return "tf-text";
     case "imageFrame":
@@ -828,9 +830,15 @@ interface BezierPoint {
   cornerRadius?: number;
 }
 
+function isCollapsedBezierHandle(anchor: Point, handle: Point): boolean {
+  return Math.hypot(handle.x - anchor.x, handle.y - anchor.y) < 1e-5;
+}
+
 function getVertexMode(pt: BezierPoint): VertexMode {
-  if (pt.vertexMode) return pt.vertexMode;
   if (pt.cornerMode) return "corner";
+  if (pt.vertexMode === "corner" || pt.vertexMode === "cusp") return pt.vertexMode;
+  if (isCollapsedBezierHandle(pt.anchor, pt.handleIn) || isCollapsedBezierHandle(pt.anchor, pt.handleOut)) return "corner";
+  if (pt.vertexMode) return pt.vertexMode;
   return "smooth";
 }
 
@@ -868,6 +876,19 @@ function applyVertexHandleDrag(pt: BezierPoint, ht: "handleIn" | "handleOut", ne
     ...pt,
     handleIn: newPos,
     handleOut: { x: pt.anchor.x - ux * lenOut, y: pt.anchor.y - uy * lenOut },
+  };
+}
+
+function applyPenCreationHandleDrag(pt: BezierPoint, newHandleOut: Point): BezierPoint {
+  return {
+    ...pt,
+    handleOut: newHandleOut,
+    handleIn: {
+      x: 2 * pt.anchor.x - newHandleOut.x,
+      y: 2 * pt.anchor.y - newHandleOut.y,
+    },
+    vertexMode: "smooth",
+    cornerMode: false,
   };
 }
 
@@ -1200,6 +1221,8 @@ interface TextObject extends FreehandObjectBase {
 interface TextOnPathObject extends Omit<FreehandObjectBase, "fill"> {
   type: "textOnPath";
   guidePathId: string;
+  /** Designer: guía propia del texto. Evita depender de un path externo para selección/transformación. */
+  guidePath?: PathObject;
   text: string;
   fontFamily: string;
   fontSize: number;
@@ -2213,58 +2236,78 @@ function defaultObj(partial: Partial<FreehandObjectBase>): FreehandObjectBase {
   } as FreehandObjectBase;
 }
 
-/**
- * Une un TextObject y un PathObject de la selección en un `TextOnPathObject`.
- * Pura: no actualiza estado ni historial. Si la selección no es exactamente path+text, devuelve `objects` sin cambios.
- */
-function linkTextToPath(objects: FreehandObject[], selectedIds: Set<string>): FreehandObject[] {
-  const selObjs = objects.filter((o) => selectedIds.has(o.id));
-  const paths = selObjs.filter((o) => o.type === "path");
-  const texts = selObjs.filter((o) => o.type === "text");
-  if (paths.length !== 1 || texts.length !== 1) return objects;
-  const path = paths[0] as PathObject;
-  const text = texts[0] as TextObject;
+function textOnPathFillFromFillAppearance(fill: FillAppearance): string {
+  const mf = migrateFill(fill);
+  if (mf.type === "solid") return mf.color === "none" ? "transparent" : mf.color;
+  return mf.stops[0]?.color ?? "#000000";
+}
 
-  const mf = migrateFill(text.fill);
-  const fillStr =
-    mf.type === "solid"
-      ? mf.color === "none"
-        ? "transparent"
-        : mf.color
-      : mf.stops[0]?.color ?? "#000000";
+function clonePathForTextOnPathGuide(path: PathObject): PathObject {
+  const baked = path.points?.length >= 2 ? pathAnchorsToWorld(path) : path;
+  return {
+    ...baked,
+    id: `${path.id}-text-guide`,
+    name: `${path.name || "Trazo"} · guía texto`,
+    points: (baked.points ?? []).map((pt) => ({
+      ...pt,
+      anchor: { ...pt.anchor },
+      handleIn: { ...pt.handleIn },
+      handleOut: { ...pt.handleOut },
+    })),
+    fill: cloneFill(migrateFill(path.fill)),
+    stroke: path.stroke,
+    strokeWidth: path.strokeWidth,
+    rotation: 0,
+    skewX: 0,
+    skewY: 0,
+    flipX: false,
+    flipY: false,
+    groupId: undefined,
+    clipMaskId: undefined,
+    isClipMask: false,
+    locked: false,
+    visible: true,
+  };
+}
+
+function createTextOnPathObjectForGuide(
+  path: PathObject,
+  text: string,
+  typography: TextCreationTypography,
+  fill: FillAppearance,
+  index: number,
+): TextOnPathObject {
+  const guidePath = clonePathForTextOnPathGuide(path);
+  const guideBounds = getVisualAABB(guidePath, [guidePath]);
   const textAnchor: TextOnPathObject["textAnchor"] =
-    text.textAlign === "center" ? "middle" : text.textAlign === "right" ? "end" : "start";
-
+    typography.textAlign === "center" ? "middle" : typography.textAlign === "right" ? "end" : "start";
   const base = defaultObj({
-    name: "Text on path",
-    x: path.x,
-    y: path.y,
-    width: path.width,
-    height: path.height,
-    opacity: text.opacity,
-    rotation: text.rotation,
-    stroke: text.stroke,
-    strokeWidth: text.strokeWidth,
-    strokeLinecap: text.strokeLinecap,
-    strokeLinejoin: text.strokeLinejoin,
-    strokeDasharray: text.strokeDasharray,
-    visible: text.visible,
-    locked: text.locked,
-    groupId: text.groupId,
-    clipMaskId: text.clipMaskId,
+    name: `Texto sobre trazo ${index}`,
+    x: guideBounds.x,
+    y: guideBounds.y,
+    width: guideBounds.w,
+    height: guideBounds.h,
+    opacity: 1,
+    rotation: 0,
+    stroke: "none",
+    strokeWidth: 0,
+    visible: true,
+    locked: false,
+    groupId: path.groupId,
+    clipMaskId: path.clipMaskId,
   });
-
-  const newObj: TextOnPathObject = {
+  return {
     ...(base as FreehandObjectBase),
     type: "textOnPath",
-    guidePathId: path.id,
-    text: text.text,
-    fontFamily: text.fontFamily,
-    fontSize: text.fontSize,
-    fontWeight: text.fontWeight,
-    fontStyle: "normal",
-    fill: fillStr,
-    letterSpacing: text.letterSpacing,
+    guidePathId: guidePath.id,
+    guidePath,
+    text: text.replace(/[\r\n]+/g, " "),
+    fontFamily: typography.fontFamily,
+    fontSize: typography.fontSize,
+    fontWeight: typography.fontWeight,
+    fontStyle: typography.fontStyle,
+    fill: textOnPathFillFromFillAppearance(fill),
+    letterSpacing: typography.letterSpacing,
     startOffset: 0,
     side: "above",
     baselineShift: 0,
@@ -2275,18 +2318,6 @@ function linkTextToPath(objects: FreehandObject[], selectedIds: Set<string>): Fr
     pathWidth: Math.max(path.strokeWidth, 0.5),
     overflow: "visible",
   };
-
-  let replaced = false;
-  const next: FreehandObject[] = [];
-  for (const o of objects) {
-    if (o.id === text.id) {
-      next.push(newObj);
-      replaced = true;
-    } else {
-      next.push(o);
-    }
-  }
-  return replaced ? next : objects;
 }
 
 // ── Geometry ────────────────────────────────────────────────────────────
@@ -3128,6 +3159,129 @@ function distToPathSegments(
   return best;
 }
 
+function estimateTextOnPathAdvance(tp: TextOnPathObject): number {
+  const txt = tp.text || "Texto";
+  const tracking = (tp.letterSpacing ?? 0) + (tp.charSpacing ?? 0);
+  const fallback = txt.length * tp.fontSize * 0.56 + Math.max(0, txt.length - 1) * tracking;
+  if (typeof document === "undefined") return Math.max(tp.fontSize * 2, fallback);
+  try {
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return Math.max(tp.fontSize * 2, fallback);
+    ctx.font = `${tp.fontStyle === "italic" || tp.fontStyle === "oblique" ? tp.fontStyle : "normal"} ${tp.fontWeight} ${tp.fontSize}px ${tp.fontFamily}`;
+    return Math.max(tp.fontSize * 2, ctx.measureText(txt).width + Math.max(0, txt.length - 1) * tracking);
+  } catch {
+    return Math.max(tp.fontSize * 2, fallback);
+  }
+}
+
+function textPathPolylineSamples(path: PathObject, samplesPerSegment = 16): { point: Point; length: number }[] {
+  const ring = getPathRings(path)[0] ?? [];
+  if (ring.length === 0) return [];
+  const out: { point: Point; length: number }[] = [{ point: ring[0]!.anchor, length: 0 }];
+  let len = 0;
+  const closed = pathRingClosedForD(!!path.closed, 1);
+  const segCount = closed ? ring.length : Math.max(0, ring.length - 1);
+  for (let i = 0; i < segCount; i++) {
+    const j = (i + 1) % ring.length;
+    const a = ring[i]!;
+    const b = ring[j]!;
+    let prev = a.anchor;
+    for (let s = 1; s <= samplesPerSegment; s++) {
+      const pt = cubicBezierAt(s / samplesPerSegment, a.anchor, a.handleOut, b.handleIn, b.anchor);
+      len += dist(prev, pt);
+      out.push({ point: pt, length: len });
+      prev = pt;
+    }
+  }
+  return out;
+}
+
+function pointAtTextPathLength(samples: { point: Point; length: number }[], target: number): Point | null {
+  if (samples.length === 0) return null;
+  if (target <= 0) return samples[0]!.point;
+  const total = samples[samples.length - 1]!.length;
+  if (target >= total) return samples[samples.length - 1]!.point;
+  for (let i = 1; i < samples.length; i++) {
+    const prev = samples[i - 1]!;
+    const curr = samples[i]!;
+    if (curr.length < target) continue;
+    const span = Math.max(curr.length - prev.length, 1e-9);
+    const t = (target - prev.length) / span;
+    return {
+      x: prev.point.x + (curr.point.x - prev.point.x) * t,
+      y: prev.point.y + (curr.point.y - prev.point.y) * t,
+    };
+  }
+  return samples[samples.length - 1]!.point;
+}
+
+function resolveTextOnPathGuide(tp: TextOnPathObject, allObjects: FreehandObject[]): PathObject | null {
+  if (tp.guidePath) return tp.guidePath;
+  const guide = allObjects.find((x) => x.id === tp.guidePathId);
+  if (!guide || guide.type !== "path") return null;
+  return clonePathForTextOnPathGuide(guide as PathObject);
+}
+
+function textOnPathLocalSamplePoints(tp: TextOnPathObject, guide: PathObject): Point[] {
+  const samples = textPathPolylineSamples(guide);
+  if (samples.length === 0) return [];
+  const total = samples[samples.length - 1]!.length;
+  if (total <= 1e-6) return [samples[0]!.point];
+  const advance = estimateTextOnPathAdvance(tp);
+  let start = (clamp(tp.startOffset, 0, 100) / 100) * total;
+  if (tp.textAnchor === "middle") start -= advance / 2;
+  else if (tp.textAnchor === "end") start -= advance;
+  const end = start + advance;
+  const from = clamp(Math.min(start, end), 0, total);
+  const to = clamp(Math.max(start, end), 0, total);
+  if (to - from <= 1e-6) {
+    const p = pointAtTextPathLength(samples, clamp(start, 0, total));
+    return p ? [p] : [];
+  }
+  const count = clamp(Math.ceil((to - from) / Math.max(tp.fontSize, 8)), 6, 36);
+  const pts: Point[] = [];
+  for (let i = 0; i <= count; i++) {
+    const p = pointAtTextPathLength(samples, from + ((to - from) * i) / count);
+    if (p) pts.push(p);
+  }
+  return pts;
+}
+
+function textOnPathApproxWorldBounds(tp: TextOnPathObject, allObjects: FreehandObject[]): Rect | null {
+  const gp = resolveTextOnPathGuide(tp, allObjects);
+  if (!gp) return null;
+  const localPts = textOnPathLocalSamplePoints(tp, gp);
+  if (localPts.length === 0) return getVisualAABB(gp, allObjects);
+  const worldPts = localPts.map((p) => pathBezierPointToWorld(p, gp));
+  const pad = Math.max(8, tp.fontSize * 0.85 + Math.abs(tp.baselineShift ?? 0));
+  const box = aabbFromPoints(worldPts);
+  const textBox = { x: box.x - pad, y: box.y - pad, w: box.w + pad * 2, h: box.h + pad * 2 };
+  if (!tp.pathVisible) return textBox;
+  const guideBox = getVisualAABB(gp, [gp]);
+  return aabbFromPoints([
+    { x: textBox.x, y: textBox.y },
+    { x: textBox.x + textBox.w, y: textBox.y + textBox.h },
+    { x: guideBox.x, y: guideBox.y },
+    { x: guideBox.x + guideBox.w, y: guideBox.y + guideBox.h },
+  ]);
+}
+
+function hitTestTextOnPathPaint(pos: Point, tp: TextOnPathObject, allObjects: FreehandObject[], threshold: number): boolean {
+  const gp = resolveTextOnPathGuide(tp, allObjects);
+  if (!gp) return pointInRotatedRect(pos.x, pos.y, tp as unknown as FreehandObject);
+  const localPos = worldPointToPathBezierPoint(pos, gp);
+  const guideBand = Math.max(threshold, (tp.pathWidth ?? gp.strokeWidth ?? 0) / 2 + threshold);
+  if (tp.pathVisible && distToPathSegments(localPos, gp).dist <= guideBand) return true;
+  const localPts = textOnPathLocalSamplePoints(tp, gp);
+  if (localPts.length === 0) return false;
+  const band = Math.max(threshold, tp.fontSize * 0.75 + Math.abs(tp.baselineShift ?? 0));
+  for (let i = 1; i < localPts.length; i++) {
+    if (pointDistanceToLineSegment(localPos, localPts[i - 1]!, localPts[i]!) <= band) return true;
+  }
+  return localPts.some((p) => dist(localPos, p) <= band);
+}
+
 /** Distancia mínima del punto al borde del rect con rotación (coordenadas mundo). */
 function distWorldToRotatedRectBorder(px: number, py: number, obj: FreehandObject): number {
   const rad = (-(obj.rotation ?? 0) * Math.PI) / 180;
@@ -3194,17 +3348,7 @@ function colorDropPreferStroke(pos: Point, obj: FreehandObject, allObjects: Free
     }
     case "textOnPath": {
       const tp = obj as TextOnPathObject;
-      const guide = allObjects.find((x) => x.id === tp.guidePathId);
-      if (!guide || guide.type !== "path") return false;
-      let hp = pos;
-      if (guide.rotation || guide.flipX || guide.flipY) {
-        const inv = inverseObjMatrix(guide);
-        if (inv) {
-          const tt = inv.transformPoint(new DOMPoint(pos.x, pos.y));
-          hp = { x: tt.x, y: tt.y };
-        }
-      }
-      return distToPathSegments(hp, guide as PathObject).dist <= band;
+      return hitTestTextOnPathPaint(pos, tp, allObjects, band);
     }
     case "clippingContainer": {
       const c = obj as ClippingContainerObject;
@@ -3246,9 +3390,7 @@ function hitTestObject(
     case "textOnPath": {
       const tp = obj as TextOnPathObject;
       if (!allObjects) return pointInRotatedRect(pos.x, pos.y, tp);
-      const g = allObjects.find((x) => x.id === tp.guidePathId);
-      if (!g || g.type !== "path") return false;
-      return hitTestObject(pos, g, threshold, allObjects);
+      return hitTestTextOnPathPaint(pos, tp, allObjects, threshold);
     }
     case "path": {
       const pathObj = obj as PathObject;
@@ -3627,10 +3769,7 @@ function getVisualAABB(o: FreehandObject, allObjects?: FreehandObject[]): Rect {
     }
     case "textOnPath": {
       const tp = o as TextOnPathObject;
-      if (!allObjects) return aabbFromPoints(rectWorldCorners(tp));
-      const g = allObjects.find((x) => x.id === tp.guidePathId);
-      if (!g || g.type !== "path") return { x: 0, y: 0, w: 0, h: 0 };
-      return getVisualAABB(g, allObjects);
+      return (allObjects ? textOnPathApproxWorldBounds(tp, allObjects) : null) ?? aabbFromPoints(rectWorldCorners(tp));
     }
     case "clippingContainer":
       return clippingContainerMaskWorldBoundsAabb(o as ClippingContainerObject);
@@ -3744,7 +3883,7 @@ function offsetObjectWorldToLocal(o: FreehandObject, ox: number, oy: number): Fr
     const pb = getPathBoundsFromPoints(pts);
     return { ...p, x: pb.x, y: pb.y, width: pb.w, height: pb.h, points: pts };
   }
-  if (o.type === "rect" || o.type === "ellipse" || o.type === "image" || o.type === "text" || o.type === "textOnPath") {
+  if (o.type === "rect" || o.type === "ellipse" || o.type === "image" || o.type === "text") {
     return { ...o, x: o.x - ox, y: o.y - oy };
   }
   return o;
@@ -3928,6 +4067,17 @@ function applyDeletePathPointIndicesToObjects(
           mask: { ...p, points: newPts, x: pb.x, y: pb.y, width: pb.w, height: pb.h },
         };
       }
+      if (o.type === "textOnPath") {
+        const tp = o as TextOnPathObject;
+        const guide = tp.guidePath;
+        if (!guide) return o;
+        const ptIdxs = sp.get(guide.id);
+        if (!ptIdxs || ptIdxs.size === 0) return o;
+        const newPts = guide.points.filter((_, i) => !ptIdxs.has(i));
+        if (newPts.length < 1) return null;
+        const pb = getPathBoundsFromPoints(newPts);
+        return textOnPathWithGuidePath(tp, { ...guide, points: newPts, x: pb.x, y: pb.y, width: pb.w, height: pb.h });
+      }
       if (o.type !== "path") return o;
       const ptIdxs = sp.get(o.id);
       if (!ptIdxs || ptIdxs.size === 0) return o;
@@ -3970,7 +4120,13 @@ function translateFreehandObject(o: FreehandObject, dx: number, dy: number): Fre
     const pb = getPathBoundsFromPoints(newPts);
     return { ...p, x: pb.x, y: pb.y, width: pb.w, height: pb.h, points: newPts };
   }
-  if (o.type === "rect" || o.type === "ellipse" || o.type === "image" || o.type === "text" || o.type === "textOnPath") {
+  if (o.type === "textOnPath") {
+    const tp = o as TextOnPathObject;
+    const guidePath = tp.guidePath ? (translateFreehandObject(tp.guidePath, dx, dy) as PathObject) : undefined;
+    if (guidePath) return textOnPathWithGuidePath(tp, guidePath);
+    return { ...tp, x: tp.x + dx, y: tp.y + dy };
+  }
+  if (o.type === "rect" || o.type === "ellipse" || o.type === "image" || o.type === "text") {
     return { ...o, x: o.x + dx, y: o.y + dy };
   }
   return o;
@@ -4016,7 +4172,8 @@ function deepCloneFreehandObject(o: FreehandObject, newId: () => string): Freeha
   }
   if (o.type === "textOnPath") {
     const t = o as TextOnPathObject;
-    return { ...t, id };
+    const guidePath = t.guidePath ? (deepCloneFreehandObject(t.guidePath, newId) as PathObject) : undefined;
+    return { ...t, id, guidePath, guidePathId: guidePath?.id ?? t.guidePathId };
   }
   if (o.type === "text") {
     const t = o as TextObject;
@@ -4170,6 +4327,13 @@ function mapObjectPointsWithWorld(
     const pb = getPathBoundsFromPoints(pts);
     return { ...p, points: pts, x: pb.x, y: pb.y, width: pb.w, height: pb.h };
   }
+  if (o.type === "textOnPath") {
+    const tp = o as TextOnPathObject;
+    if (tp.guidePath) {
+      const guidePath = mapObjectPointsWithWorld(tp.guidePath, mapWorld) as PathObject;
+      return textOnPathWithGuidePath(tp, guidePath);
+    }
+  }
   if (o.type === "rect" || o.type === "ellipse" || o.type === "image" || o.type === "text") {
     const c1 = mapWorld({ x: o.x, y: o.y });
     const c2 = mapWorld({ x: o.x + o.width, y: o.y + o.height });
@@ -4178,6 +4342,36 @@ function mapObjectPointsWithWorld(
     return { ...o, x, y, width: w, height: h };
   }
   return o;
+}
+
+function textOnPathWithGuidePath(tp: TextOnPathObject, guidePath: PathObject, fontScale = 1): TextOnPathObject {
+  const b = getVisualAABB(guidePath, [guidePath]);
+  const safeFontScale = Number.isFinite(fontScale) && fontScale > 0 ? fontScale : 1;
+  return {
+    ...tp,
+    guidePath,
+    guidePathId: guidePath.id,
+    x: b.x,
+    y: b.y,
+    width: b.w,
+    height: b.h,
+    rotation: 0,
+    skewX: 0,
+    skewY: 0,
+    flipX: false,
+    flipY: false,
+    fontSize: clamp(tp.fontSize * safeFontScale, 4, 400),
+    letterSpacing: tp.letterSpacing * safeFontScale,
+    charSpacing: tp.charSpacing * safeFontScale,
+    baselineShift: tp.baselineShift * safeFontScale,
+    pathWidth: Math.max(0.5, tp.pathWidth * safeFontScale),
+  };
+}
+
+function mapTextOnPathWithWorld(tp: TextOnPathObject, mapWorld: (p: Point) => Point, fontScale = 1): TextOnPathObject {
+  if (!tp.guidePath) return mapObjectPointsWithWorld(tp, mapWorld) as TextOnPathObject;
+  const guidePath = mapObjectPointsWithWorld(tp.guidePath, mapWorld) as PathObject;
+  return textOnPathWithGuidePath(tp, guidePath, fontScale);
 }
 
 /** Rotación rígida en torno al pivote de selección: mueve el centro del objeto y suma el ángulo. */
@@ -4243,6 +4437,13 @@ function applyRotateAroundSelectionPivot(init: FreehandObject, pivot: Point, ang
   }
   if (init.type === "booleanGroup") {
     return rotateRectLikeAroundPivot(init, pivot, angleDeltaDeg);
+  }
+  if (init.type === "textOnPath") {
+    const tp = init as TextOnPathObject;
+    if (tp.guidePath) {
+      const guidePath = rotatePathAroundSelectionPivot(tp.guidePath, pivot, angleDeltaDeg);
+      return textOnPathWithGuidePath(tp, guidePath);
+    }
   }
   return rotateRectLikeAroundPivot(init, pivot, angleDeltaDeg);
 }
@@ -4390,17 +4591,15 @@ function objectWorldCorners(o: FreehandObject, allObjects?: FreehandObject[]): P
   }
   if (o.type === "textOnPath") {
     const tp = o as TextOnPathObject;
-    if (!allObjects) return rectWorldCorners(tp);
-    const g = allObjects.find((x) => x.id === tp.guidePathId);
-    if (!g || g.type !== "path") {
-      return [
-        { x: 0, y: 0 },
-        { x: 0, y: 0 },
-        { x: 0, y: 0 },
-        { x: 0, y: 0 },
-      ];
-    }
-    return objectWorldCorners(g, allObjects);
+    const box = allObjects ? textOnPathApproxWorldBounds(tp, allObjects) : null;
+    return box
+      ? [
+          { x: box.x, y: box.y },
+          { x: box.x + box.w, y: box.y },
+          { x: box.x + box.w, y: box.y + box.h },
+          { x: box.x, y: box.y + box.h },
+        ]
+      : rectWorldCorners(tp);
   }
   if (o.type === "text") {
     const t = o as TextObject;
@@ -5938,6 +6137,23 @@ function pathSegmentIsStraight(a: BezierPoint, b: BezierPoint): boolean {
   );
 }
 
+function pathCornerHasSharpTurn(ring: BezierPoint[], idx: number): boolean {
+  const n = ring.length;
+  if (n < 3) return false;
+  const prev = ring[(idx - 1 + n) % n]!;
+  const curr = ring[idx]!;
+  const next = ring[(idx + 1) % n]!;
+  const inVec = { x: prev.anchor.x - curr.anchor.x, y: prev.anchor.y - curr.anchor.y };
+  const outVec = { x: next.anchor.x - curr.anchor.x, y: next.anchor.y - curr.anchor.y };
+  const inLen = Math.hypot(inVec.x, inVec.y);
+  const outLen = Math.hypot(outVec.x, outVec.y);
+  if (inLen < 1e-6 || outLen < 1e-6) return false;
+  const dot = (inVec.x * outVec.x + inVec.y * outVec.y) / (inLen * outLen);
+  const clampedDot = clamp(dot, -1, 1);
+  const interiorAngle = Math.acos(clampedDot);
+  return Math.PI - interiorAngle > (22 * Math.PI) / 180;
+}
+
 function pathRingClosedForD(pathClosed: boolean, ringCount: number): boolean {
   return pathClosed || ringCount > 1;
 }
@@ -5970,7 +6186,14 @@ function maxPathCornerRadiusForRingPoint(ring: BezierPoint[], idx: number, close
   const prev = ring[(idx - 1 + n) % n]!;
   const curr = ring[idx]!;
   const next = ring[(idx + 1) % n]!;
+  if (
+    !isCollapsedBezierHandle(curr.anchor, curr.handleIn) ||
+    !isCollapsedBezierHandle(curr.anchor, curr.handleOut)
+  ) {
+    return 0;
+  }
   if (!pathSegmentIsStraight(prev, curr) || !pathSegmentIsStraight(curr, next)) return 0;
+  if (!pathCornerHasSharpTurn(ring, idx)) return 0;
   return Math.max(0, Math.min(dist(curr.anchor, prev.anchor), dist(curr.anchor, next.anchor)) / 2);
 }
 
@@ -7831,8 +8054,8 @@ export function renderObj(
     }
     case "textOnPath": {
       const tp = obj as TextOnPathObject;
-      const guide = allObjects.find((o) => o.id === tp.guidePathId);
-      if (!guide || guide.type !== "path") {
+      const gp = resolveTextOnPathGuide(tp, allObjects);
+      if (!gp) {
         if (process.env.NODE_ENV === "development") {
           console.warn(
             `[Freehand] TextOnPath "${tp.id}" orphan: guidePathId "${tp.guidePathId}" does not resolve to a PathObject.`,
@@ -7840,13 +8063,12 @@ export function renderObj(
         }
         return null;
       }
-      const gp = guide as PathObject;
       const d = pathObjToD(gp);
       const pathRefId = `tp-${tp.id}`;
       const dy = tp.side === "above" ? -tp.fontSize * 0.2 + tp.baselineShift : tp.fontSize * 0.2 + tp.baselineShift;
       const clipOverflowId = `tp-overflow-${tp.id}`;
       return (
-        <g key={tp.id} data-fh-obj={tp.id} transform={transform} opacity={tp.opacity}>
+        <g key={tp.id} data-fh-obj={tp.id} opacity={tp.opacity}>
           <defs>
             <path id={pathRefId} d={d} fill="none" stroke="none" />
             {tp.overflow === "hidden" && (
@@ -8811,6 +9033,21 @@ function PhotoGradientToolIcon({ size = 19, className }: { size?: number; classN
         </linearGradient>
       </defs>
       <rect x="2.5" y="3.2" width="15" height="13.6" rx="1.5" fill={`url(#${gid})`} stroke="currentColor" strokeWidth={1.2} />
+    </svg>
+  );
+}
+
+function TextPathToolIcon({ size = 19, className }: { size?: number; className?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 20 20" fill="none" className={className} aria-hidden>
+      <path d="M6 4.2h8M10 4.2v7.1" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M3.4 15.1 C5.8 12.7 8.1 17.1 10.7 14.4 C12.6 12.4 15 12.7 16.8 14.6"
+        stroke="currentColor"
+        strokeWidth={1.75}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
@@ -10144,6 +10381,7 @@ export function FreehandStudioCanvas({
     svpX?: number; svpY?: number;
     positions?: Map<string, Point>;
     pathPointsMap?: Map<string, BezierPoint[]>;
+    moveSnapshot?: Map<string, FreehandObject>;
     handle?: string;
     bounds?: Rect;
     /** Initial OBB when resize/rotate started (for oriented transform UI). */
@@ -10160,6 +10398,7 @@ export function FreehandStudioCanvas({
     gradientPrimaryId?: string;
     gradientStopIndex?: number;
     dsObjId?: string;
+    dsTextOnPathObjectId?: string;
     /** Si el path editado es la máscara de un `clippingContainer`, el id del contenedor (puntos en local). */
     dsClipContainerId?: string;
     dsPtIdx?: number;
@@ -10167,6 +10406,7 @@ export function FreehandStudioCanvas({
     dsStartPt?: Point;
     dsMovePointIndices?: number[];
     pathCornerRadiusObjId?: string;
+    pathCornerRadiusTextOnPathObjectId?: string;
     pathCornerRadiusClipContainerId?: string;
     pathCornerRadiusPointIdx?: number;
     pathCornerRadiusLinked?: boolean;
@@ -10700,8 +10940,12 @@ export function FreehandStudioCanvas({
   const [spaceHeld, setSpaceHeld] = useState(false);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; canvas?: Point } | null>(null);
   const [textEditingId, setTextEditingId] = useState<string | null>(null);
+  const [textOnPathEditingId, setTextOnPathEditingId] = useState<string | null>(null);
+  const [textOnPathEditorAnchor, setTextOnPathEditorAnchor] = useState<Point | null>(null);
   const textEditingIdRef = useRef(textEditingId);
   textEditingIdRef.current = textEditingId;
+  const textOnPathEditingInputRef = useRef<HTMLInputElement | null>(null);
+  const textOnPathEditingFocusedForIdRef = useRef<string | null>(null);
   const inlineFrameEditorRef = useRef<HTMLDivElement | null>(null);
   const inlineFrameEditorObjectIdRef = useRef<string | null>(null);
   const inlineFrameEditorFocusedForIdRef = useRef<string | null>(null);
@@ -10730,6 +10974,20 @@ export function FreehandStudioCanvas({
     }
     inlineFrameEditorFocusedForIdRef.current = textEditingId;
   }, [textEditingId, objects]);
+
+  useEffect(() => {
+    if (!textOnPathEditingId) {
+      textOnPathEditingInputRef.current = null;
+      textOnPathEditingFocusedForIdRef.current = null;
+      return;
+    }
+    if (textOnPathEditingFocusedForIdRef.current === textOnPathEditingId) return;
+    const el = textOnPathEditingInputRef.current;
+    if (!el) return;
+    el.focus();
+    el.select();
+    textOnPathEditingFocusedForIdRef.current = textOnPathEditingId;
+  }, [textOnPathEditingId]);
 
   const captureSimpleTextSelection = useCallback((editor: HTMLElement | null) => {
     if (!editor || editor.getAttribute("data-fh-simple-text-editor") !== "true") return;
@@ -10889,6 +11147,41 @@ export function FreehandStudioCanvas({
   activeToolRef.current = activeTool;
   const brushSizeRef = useRef(brushSize);
   brushSizeRef.current = brushSize;
+
+  useEffect(() => {
+    let changed = false;
+    const absorbedGuideIds = new Set<string>();
+    const next = objects.map((o) => {
+      if (o.type !== "textOnPath") return o;
+      const tp = o as TextOnPathObject;
+      if (tp.guidePath) return o;
+      const guide = objects.find((candidate) => candidate.id === tp.guidePathId && candidate.type === "path") as PathObject | undefined;
+      if (!guide) return o;
+      const guidePath = clonePathForTextOnPathGuide(guide);
+      const b = getVisualAABB(guidePath, [guidePath]);
+      absorbedGuideIds.add(guide.id);
+      changed = true;
+      return {
+        ...tp,
+        guidePathId: guidePath.id,
+        guidePath,
+        pathVisible: tp.pathVisible || guide.visible,
+        pathColor: tp.pathColor || guide.stroke,
+        pathWidth: tp.pathWidth || Math.max(guide.strokeWidth, 0.5),
+        x: b.x,
+        y: b.y,
+        width: b.w,
+        height: b.h,
+        rotation: 0,
+        skewX: 0,
+        skewY: 0,
+        flipX: false,
+        flipY: false,
+      } as TextOnPathObject;
+    });
+    if (!changed) return;
+    setObjects(next.filter((o) => !absorbedGuideIds.has(o.id)));
+  }, [objects]);
 
   const brushPaintRgb = useMemo(() => {
     const hex = brushColorFromFill
@@ -11101,6 +11394,8 @@ export function FreehandStudioCanvas({
     setClipContentEditId(null);
     setImageFrameContentEditId(null);
     setTextEditingId(null);
+    setTextOnPathEditingId(null);
+    setTextOnPathEditorAnchor(null);
     setCtxMenu(null);
     setQuickEditMode(null);
     setLivePreview(null);
@@ -13044,14 +13339,6 @@ export function FreehandStudioCanvas({
     if (typo) setCreationTextTypography(typo);
   }, [styleSourceForCreation]);
 
-  const canLinkTextToPath = useMemo(
-    () =>
-      selectedIds.size === 2 &&
-      selectedObjects.filter((o) => o.type === "path").length === 1 &&
-      selectedObjects.filter((o) => o.type === "text").length === 1,
-    [selectedIds, selectedObjects],
-  );
-
   useEffect(() => {
     if (typeof document === "undefined") return;
     const t =
@@ -13183,6 +13470,11 @@ export function FreehandStudioCanvas({
         if (x.type !== "clippingContainer") continue;
         const c = x as ClippingContainerObject;
         if (c.mask.type === "path" && (c.mask as PathObject).id === oid) return c.mask as PathObject;
+      }
+      for (const x of objects) {
+        if (x.type !== "textOnPath") continue;
+        const guide = (x as TextOnPathObject).guidePath;
+        if (guide?.id === oid) return guide;
       }
       return undefined;
     };
@@ -16450,6 +16742,20 @@ export function FreehandStudioCanvas({
           const pb = getPathBoundsFromPoints(pts);
           return { ...c, mask: { ...p, points: pts, x: pb.x, y: pb.y, width: pb.w, height: pb.h } };
         }
+        if (o.type === "textOnPath") {
+          const tp = o as TextOnPathObject;
+          const guide = tp.guidePath;
+          if (!guide || guide.id !== objId) return o;
+          const pts = guide.points.map((pt, i) => {
+            if (i !== ptIdx) return pt;
+            const cur = getVertexMode(pt);
+            const order: VertexMode[] = ["smooth", "cusp", "corner"];
+            const nextMode = order[(order.indexOf(cur) + 1) % order.length];
+            return normalizeBezierPointForVertexMode(pt, nextMode);
+          });
+          const pb = getPathBoundsFromPoints(pts);
+          return textOnPathWithGuidePath(tp, { ...guide, points: pts, x: pb.x, y: pb.y, width: pb.w, height: pb.h });
+        }
         if (o.id !== objId || o.type !== "path") return o;
         const p = o as PathObject;
         const pts = p.points.map((pt, i) => {
@@ -16484,6 +16790,19 @@ export function FreehandStudioCanvas({
           });
           const pb = getPathBoundsFromPoints(pts);
           return { ...c, mask: { ...p, points: pts, x: pb.x, y: pb.y, width: pb.w, height: pb.h } };
+        }
+        if (o.type === "textOnPath" && sel.has(o.id)) {
+          const tp = o as TextOnPathObject;
+          const guide = tp.guidePath;
+          if (!guide) return o;
+          const idxs = sp.get(guide.id);
+          if (!idxs || idxs.size === 0) return o;
+          const pts = guide.points.map((pt, i) => {
+            if (!idxs.has(i)) return pt;
+            return normalizeBezierPointForVertexMode(pt, mode);
+          });
+          const pb = getPathBoundsFromPoints(pts);
+          return textOnPathWithGuidePath(tp, { ...guide, points: pts, x: pb.x, y: pb.y, width: pb.w, height: pb.h });
         }
         if (o.type !== "path" || !sel.has(o.id)) return o;
         const idxs = sp.get(o.id);
@@ -18445,6 +18764,35 @@ export function FreehandStudioCanvas({
       return;
     }
 
+    if (activeTool === "textPath") {
+      const hitPath = (() => {
+        const threshold = 10 / viewport.zoom;
+        for (let i = objects.length - 1; i >= 0; i--) {
+          const obj = objects[i];
+          if (obj.locked || !obj.visible || obj.type !== "path") continue;
+          if (hitTestObject(pos, obj, threshold, objects)) return obj as PathObject;
+        }
+        return null;
+      })();
+      if (!hitPath) {
+        setToast("Haz clic sobre un trazado para crear texto sobre trazo.");
+        window.setTimeout(() => setToast(null), 2600);
+        return;
+      }
+      const newObj = createTextOnPathObjectForGuide(hitPath, "", creationTextTypography, solidFill(fillColor), objects.length + 1);
+      const next = [...objects.filter((o) => o.id !== hitPath.id), newObj];
+      const ns = new Set([newObj.id]);
+      setObjects(next);
+      setSelectedIds(ns);
+      setPrimarySelectedId(newObj.id);
+      setTextEditingId(null);
+      setTextOnPathEditorAnchor(pos);
+      setTextOnPathEditingId(newObj.id);
+      pushHistory(next, ns);
+      setActiveTool("select");
+      return;
+    }
+
     // ── Designer: Text Frame & Image Frame ─────────────────────
     if (activeTool === "textFrame") {
       setDragState({ type: "createTextFrame", startX: e.clientX, startY: e.clientY, createOrigin: pos, currentCanvas: pos });
@@ -18504,6 +18852,119 @@ export function FreehandStudioCanvas({
           resizeSnapshot,
         });
         return;
+      }
+      // Texto sobre trazo: editar la curva guía interna con selección directa.
+      for (let i = objects.length - 1; i >= 0; i--) {
+        const obj = objects[i];
+        if (obj.locked || !obj.visible || obj.type !== "textOnPath") continue;
+        const top = obj as TextOnPathObject;
+        const p = top.guidePath;
+        if (!p || !p.points || p.points.length < 2) continue;
+        const rings = getPathRings(p);
+        const ringClosed = pathRingClosedForD(!!p.closed, rings.length);
+        let widgetBase = 0;
+        for (const ring of rings) {
+          const worldRing = ring.map((pt) => ({
+            ...pt,
+            anchor: pathBezierPointToWorld(pt.anchor, p),
+            handleIn: pathBezierPointToWorld(pt.handleIn, p),
+            handleOut: pathBezierPointToWorld(pt.handleOut, p),
+          }));
+          for (let pi = 0; pi < worldRing.length; pi++) {
+            const gIdx = widgetBase + pi;
+            const widget = pathCornerWidgetPointForRingPoint(worldRing, pi, ringClosed, viewport.zoom);
+            if (!widget || dist(pos, widget) >= threshold) continue;
+            if (e.detail >= 2) {
+              const next = objects.map((o) => {
+                if (o.id !== top.id || o.type !== "textOnPath") return o;
+                const tp = o as TextOnPathObject;
+                if (!tp.guidePath) return o;
+                const guide = {
+                  ...tp.guidePath,
+                  points: tp.guidePath.points.map((point, idx) =>
+                    idx === gIdx ? { ...point, vertexMode: "corner" as const, cornerMode: true, cornerRadius: 0 } : point,
+                  ),
+                };
+                return textOnPathWithGuidePath(tp, guide);
+              });
+              setObjects(next);
+              setSelectedIds(new Set([top.id]));
+              setPrimarySelectedId(top.id);
+              setSelectedPoints(new Map([[p.id, new Set([gIdx])]]));
+              pushHistory(next, new Set([top.id]));
+              return;
+            }
+            setSelectedIds(new Set([top.id]));
+            setPrimarySelectedId(top.id);
+            setSelectedPoints(new Map([[p.id, new Set([gIdx])]]));
+            setDragState({
+              type: "pathCornerRadius",
+              startX: e.clientX,
+              startY: e.clientY,
+              pathCornerRadiusObjId: p.id,
+              pathCornerRadiusTextOnPathObjectId: top.id,
+              pathCornerRadiusPointIdx: gIdx,
+              pathCornerRadiusLinked: pathCornerRadiusLinked && !e.altKey,
+            });
+            return;
+          }
+          widgetBase += ring.length;
+        }
+        let gBase = 0;
+        for (const ring of rings) {
+          for (let pi = 0; pi < ring.length; pi++) {
+            const pt = ring[pi]!;
+            const gIdx = gBase + pi;
+            for (const ht of ["anchor", "handleIn", "handleOut"] as const) {
+              const hitPoint = pathBezierPointToWorld(pt[ht], p);
+              if (dist(pos, hitPoint) < threshold) {
+                const additivePoint = isShiftHeld(e) || e.metaKey || e.ctrlKey;
+                let nextPointSelection = new Set<number>();
+                if (additivePoint) {
+                  const prev = selectedPointsRef.current;
+                  const m = new Map(prev);
+                  const s = new Set(m.get(p.id) || []);
+                  if (ht === "anchor") {
+                    if (s.has(gIdx)) s.delete(gIdx);
+                    else s.add(gIdx);
+                  } else s.add(gIdx);
+                  if (s.size > 0) m.set(p.id, s);
+                  else m.delete(p.id);
+                  nextPointSelection = new Set(m.get(p.id) || []);
+                  setSelectedPoints(m);
+                } else {
+                  const m = new Map<string, Set<number>>();
+                  const current = selectedPointsRef.current.get(p.id);
+                  nextPointSelection = ht === "anchor" && current?.has(gIdx) ? new Set(current) : new Set([gIdx]);
+                  m.set(p.id, nextPointSelection);
+                  setSelectedPoints(m);
+                }
+                setSelectedIds(new Set([top.id]));
+                setPrimarySelectedId(top.id);
+                if (additivePoint && ht === "anchor" && !nextPointSelection.has(gIdx)) return;
+                setDragState({
+                  type: "directSelect",
+                  startX: e.clientX,
+                  startY: e.clientY,
+                  dsObjId: p.id,
+                  dsTextOnPathObjectId: top.id,
+                  dsPtIdx: gIdx,
+                  dsHtType: ht,
+                  dsStartPt: { ...pt[ht] },
+                  dsMovePointIndices: ht === "anchor" && nextPointSelection.has(gIdx) ? Array.from(nextPointSelection) : [gIdx],
+                  pathPointsMap: new Map([[p.id, p.points.map((ppt) => ({
+                    ...ppt,
+                    anchor: { ...ppt.anchor },
+                    handleIn: { ...ppt.handleIn },
+                    handleOut: { ...ppt.handleOut },
+                  }))]]),
+                });
+                return;
+              }
+            }
+          }
+          gBase += ring.length;
+        }
       }
       // Check anchor points and handles on all paths
       for (let i = objects.length - 1; i >= 0; i--) {
@@ -19355,10 +19816,12 @@ export function FreehandStudioCanvas({
           preserveDuplicateChainSelectionRef.current = true;
           setSelectedIds(cloneSel);
           const positions = new Map<string, Point>();
+          const moveSnapshot = new Map<string, FreehandObject>();
           const pathPointsMap = new Map<string, BezierPoint[]>();
           const pathSvgMatrixStart = new Map<string, { e: number; f: number }>();
           for (const c of clones) {
             positions.set(c.id, { x: c.x, y: c.y });
+            moveSnapshot.set(c.id, deepCloneFreehandObjectKeepIds(c));
             if (c.type === "path") {
               const cp = c as PathObject;
               pathPointsMap.set(c.id, cp.points.map(pt => ({ ...pt, anchor: { ...pt.anchor }, handleIn: { ...pt.handleIn }, handleOut: { ...pt.handleOut } })));
@@ -19376,6 +19839,7 @@ export function FreehandStudioCanvas({
             startY: e.clientY,
             positions,
             pathPointsMap,
+            moveSnapshot,
             pathSvgMatrixStart: pathSvgMatrixStart.size > 0 ? pathSvgMatrixStart : undefined,
             duplicateMove: true,
           });
@@ -19392,12 +19856,14 @@ export function FreehandStudioCanvas({
       setSelectedIds(newSel);
       setPrimarySelectedId(obj.id);
       const positions = new Map<string, Point>();
+      const moveSnapshot = new Map<string, FreehandObject>();
       const pathPointsMap = new Map<string, BezierPoint[]>();
       const pathSvgMatrixStart = new Map<string, { e: number; f: number }>();
       for (const sid of newSel) {
         const o = objects.find((x) => x.id === sid);
         if (o) {
           positions.set(sid, { x: o.x, y: o.y });
+          moveSnapshot.set(sid, deepCloneFreehandObjectKeepIds(o));
           if (o.type === "path") {
             const po = o as PathObject;
             pathPointsMap.set(sid, po.points.map(pt => ({ ...pt, anchor: { ...pt.anchor }, handleIn: { ...pt.handleIn }, handleOut: { ...pt.handleOut } })));
@@ -19416,6 +19882,7 @@ export function FreehandStudioCanvas({
         startY: e.clientY,
         positions,
         pathPointsMap,
+        moveSnapshot,
         pathSvgMatrixStart: pathSvgMatrixStart.size > 0 ? pathSvgMatrixStart : undefined,
       });
       return;
@@ -19481,6 +19948,10 @@ export function FreehandStudioCanvas({
       setObjects((prev) => prev.map((o) => {
         const sp = dragState.positions!.get(o.id);
         if (!sp) return o;
+        const moveSrc = dragState.moveSnapshot?.get(o.id);
+        if (moveSrc?.type === "textOnPath") {
+          return translateFreehandObject(moveSrc, mdx, mdy);
+        }
         if (
           o.type === "path" &&
           dragState.pathPointsMap?.has(o.id) &&
@@ -19620,6 +20091,10 @@ export function FreehandStudioCanvas({
         }
         if (src.type === "clippingContainer") {
           return mapObjectPointsWithWorld(src, mapWorld) as ClippingContainerObject;
+        }
+        if (src.type === "textOnPath") {
+          const fontScale = (Math.abs(sx) + Math.abs(sy)) / 2;
+          return mapTextOnPathWithWorld(src as TextOnPathObject, mapWorld, fontScale);
         }
         if (src.type === "text") {
           const t = src as TextObject;
@@ -19816,6 +20291,10 @@ export function FreehandStudioCanvas({
         }
         if (src.type === "clippingContainer") {
           return mapObjectPointsWithWorld(src, mapWorld) as ClippingContainerObject;
+        }
+        if (src.type === "textOnPath") {
+          const fontScale = (Math.abs(sx) + Math.abs(sy)) / 2;
+          return mapTextOnPathWithWorld(src as TextOnPathObject, mapWorld, fontScale);
         }
         if (src.type === "text") {
           const tt = src as TextObject;
@@ -20743,7 +21222,7 @@ export function FreehandStudioCanvas({
       setPenPoints((prev) => {
         const pts = [...prev];
         const last = pts[pts.length - 1];
-        pts[pts.length - 1] = applyVertexHandleDrag(last, "handleOut", pos);
+        pts[pts.length - 1] = applyPenCreationHandleDrag(last, pos);
         return pts;
       });
       return;
@@ -20909,6 +21388,25 @@ export function FreehandStudioCanvas({
       const idx = dragState.pathCornerRadiusPointIdx;
       setObjects((prev) =>
         prev.map((o) => {
+          if (dragState.pathCornerRadiusTextOnPathObjectId) {
+            if (o.id !== dragState.pathCornerRadiusTextOnPathObjectId || o.type !== "textOnPath") return o;
+            const tp = o as TextOnPathObject;
+            const guide = tp.guidePath;
+            if (!guide || guide.id !== dragState.pathCornerRadiusObjId) return o;
+            const info = pathRingInfoForGlobalIndex(guide, idx);
+            if (!info) return o;
+            const localPos = worldPointToPathBezierPoint(pos, guide);
+            const nextRadius = pathCornerRadiusFromDrag(info.ring, info.localIdx, info.closed, localPos, snap);
+            const nextGuide = {
+              ...guide,
+              points: dragState.pathCornerRadiusLinked
+                ? applyLinkedCornerRadiusToPathPoints(guide.points, guide, nextRadius)
+                : guide.points.map((pt, pi) =>
+                    pi === idx ? { ...pt, vertexMode: "corner" as const, cornerMode: true, cornerRadius: nextRadius } : pt,
+                  ),
+            };
+            return textOnPathWithGuidePath(tp, nextGuide);
+          }
           if (dragState.pathCornerRadiusClipContainerId) {
             if (o.id !== dragState.pathCornerRadiusClipContainerId || o.type !== "clippingContainer") return o;
             const c = o as ClippingContainerObject;
@@ -21063,6 +21561,15 @@ export function FreehandStudioCanvas({
       };
       setObjects((prev) =>
         prev.map((o) => {
+          if (dragState.dsTextOnPathObjectId) {
+            if (o.id !== dragState.dsTextOnPathObjectId || o.type !== "textOnPath") return o;
+            const tp = o as TextOnPathObject;
+            const guide = tp.guidePath;
+            if (!guide || guide.id !== dragState.dsObjId) return o;
+            const pts = guide.points.map((pt, pi) => applyPt(pt, pi, guide));
+            const pb = getPathBoundsFromPoints(pts);
+            return textOnPathWithGuidePath(tp, { ...guide, points: pts, x: pb.x, y: pb.y, width: pb.w, height: pb.h });
+          }
           if (clipId) {
             if (o.id !== clipId || o.type !== "clippingContainer") return o;
             const cc = o as ClippingContainerObject;
@@ -21501,6 +22008,20 @@ export function FreehandStudioCanvas({
               }
               continue;
             }
+            if (obj.type === "textOnPath") {
+              const guide = (obj as TextOnPathObject).guidePath;
+              if (!guide) continue;
+              const idxs = new Set<number>();
+              guide.points.forEach((pt, i) => {
+                const w = pathBezierPointToWorld(pt.anchor, guide);
+                if (w.x >= mx && w.x <= mx + mw && w.y >= my && w.y <= my + mh) idxs.add(i);
+              });
+              if (idxs.size > 0) {
+                newPts.set(guide.id, idxs);
+                selIds.add(obj.id);
+              }
+              continue;
+            }
             if (obj.type === "clippingContainer") {
               const c = obj as ClippingContainerObject;
               if (c.mask.type !== "path") continue;
@@ -21605,6 +22126,8 @@ export function FreehandStudioCanvas({
         const ns = new Set([newObj.id]);
         setSelectedIds(ns);
         pushHistory(next, ns);
+        setTextOnPathEditingId(null);
+        setTextOnPathEditorAnchor(null);
         setTextEditingId(newObj.id);
       } else {
         const x = Math.min(o.x, c.x), y = Math.min(o.y, c.y);
@@ -21643,6 +22166,8 @@ export function FreehandStudioCanvas({
         const ns = new Set([newObj.id]);
         setSelectedIds(ns);
         pushHistory(next, ns);
+        setTextOnPathEditingId(null);
+        setTextOnPathEditorAnchor(null);
         setTextEditingId(newObj.id);
       }
       setActiveTool("select");
@@ -21693,6 +22218,8 @@ export function FreehandStudioCanvas({
       setSelectedIds(ns);
       pushHistory(next, ns);
       onDesignerTextFrameCreate?.(newObj);
+      setTextOnPathEditingId(null);
+      setTextOnPathEditorAnchor(null);
       setTextEditingId(newObj.id);
       setActiveTool("select");
     }
@@ -21958,17 +22485,6 @@ export function FreehandStudioCanvas({
     if (name != null && name.trim()) updateSelectedProp("name", name.trim());
   }, [updateSelectedProp]);
 
-  const handleLinkTextToPath = useCallback(() => {
-    const prev = objectsRef.current;
-    const sel = selectedIdsRef.current;
-    const next = linkTextToPath(prev, sel);
-    if (next === prev) return;
-    const added = next.find((n) => !prev.some((o) => o.id === n.id));
-    setObjects(next);
-    if (added?.type === "textOnPath") setSelectedIds(new Set([added.id]));
-    pushHistory(next, new Set(added?.type === "textOnPath" ? [added.id] : sel));
-  }, [pushHistory]);
-
   // ── Context menu items ────────────────────────────────────────────
 
   const ctxMenuItems = useMemo((): ContextMenuItem[] => {
@@ -22044,9 +22560,6 @@ export function FreehandStudioCanvas({
 
     if (multiSel) {
       return [
-        ...(canLinkTextToPath
-          ? [{ label: "Texto sobre trazado", action: handleLinkTextToPath, separator: true } as ContextMenuItem]
-          : []),
         { label: "Cut", shortcut: "⌘X", action: cutSelectedObjects },
         { label: "Copy", shortcut: "⌘C", action: copySelectedObjects },
         { label: "Paste", shortcut: "⌘V", action: pasteClipboardObjects, separator: true },
@@ -22088,9 +22601,20 @@ export function FreehandStudioCanvas({
 
     if (single?.type === "text") {
       return [
-        { label: "Edit text", action: () => setTextEditingId(single.id), shortcut: "dbl-click" },
+        { label: "Edit text", action: () => { setTextOnPathEditingId(null); setTextOnPathEditorAnchor(null); setTextEditingId(single.id); }, shortcut: "dbl-click" },
         { label: "Convert to outlines", action: () => { void convertTextToOutlines(); }, separator: true },
         { label: "Duplicate", shortcut: "⌘D", action: duplicateSelected },
+        { label: "Delete", action: deleteSelected, disabled: !hasDeletableSelection },
+        { label: "Export selection", action: () => { setExportModalScope("selection"); setShowExportModal(true); }, separator: true },
+        { label: "Bring to front", action: bringToFront, separator: true },
+        { label: "Send to back", action: sendToBack },
+      ];
+    }
+
+    if (single?.type === "textOnPath") {
+      return [
+        { label: "Editar texto sobre trazo", action: () => { setTextEditingId(null); setTextOnPathEditorAnchor(ctxMenu?.canvas ?? null); setTextOnPathEditingId(single.id); }, shortcut: "dbl-click" },
+        { label: "Duplicate", shortcut: "⌘D", action: duplicateSelected, separator: true },
         { label: "Delete", action: deleteSelected, disabled: !hasDeletableSelection },
         { label: "Export selection", action: () => { setExportModalScope("selection"); setShowExportModal(true); }, separator: true },
         { label: "Bring to front", action: bringToFront, separator: true },
@@ -22224,7 +22748,6 @@ export function FreehandStudioCanvas({
       { label: "Cycle anchor type", action: () => { selectedPoints.forEach((idxs, objId) => { idxs.forEach((idx) => cycleVertexMode(objId, idx)); }); }, disabled: selectedPoints.size === 0 },
     ];
   }, [ctxMenu, selectedIds, selectedObjects, selectedPoints, isolationDepth, objects, showGrid, snapEnabled,
-      canLinkTextToPath, handleLinkTextToPath,
       setShowExportModal, setExportModalScope,
       duplicateSelected, deleteSelected, bringForward, sendBackward, bringToFront, sendToBack,
       updateSelectedProp, groupSelected, ungroupSelected, createClipMask, releaseClipMask, togglePathClosed,
@@ -22289,6 +22812,7 @@ export function FreehandStudioCanvas({
       activeTool === "line" ||
       activeTool === "ellipse" ||
       activeTool === "text" ||
+      activeTool === "textPath" ||
       activeTool === "textFrame" ||
       activeTool === "imageFrame" ||
       activeTool === "rectMarquee" ||
@@ -23067,8 +23591,14 @@ export function FreehandStudioCanvas({
               groupId="tf-text"
               flyoutOpen={leftToolbarToolFlyout}
               setFlyoutOpen={setLeftToolbarToolFlyout}
-              active={activeTool === "text" || activeTool === "textFrame"}
-              mainTitle={primaryTextTool === "textFrame" ? "Marco de texto encadenado (C)" : "Texto (T)"}
+              active={activeTool === "text" || activeTool === "textPath" || activeTool === "textFrame"}
+              mainTitle={
+                primaryTextTool === "textFrame"
+                  ? "Marco de texto encadenado (C)"
+                  : primaryTextTool === "textPath"
+                    ? "Texto sobre trazo"
+                    : "Texto (T)"
+              }
               onMainClick={() => setActiveTool(primaryTextTool)}
               mainIcon={
                 primaryTextTool === "textFrame" ? (
@@ -23076,6 +23606,8 @@ export function FreehandStudioCanvas({
                     <rect x="2.5" y="3" width="15" height="14" rx="1.25" strokeDasharray="2.5 2" />
                     <path d="M6 7.5h8M6 10h8M6 12.5h4" />
                   </svg>
+                ) : primaryTextTool === "textPath" ? (
+                  <TextPathToolIcon size={19} />
                 ) : (
                   <Type size={19} strokeWidth={TOOLBAR_ICON_STROKE} />
                 )
@@ -23093,6 +23625,19 @@ export function FreehandStudioCanvas({
                 }}
               >
                 <Type size={17} strokeWidth={TOOLBAR_ICON_STROKE} />
+              </button>
+              <button
+                type="button"
+                title="Texto sobre trazo"
+                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] transition ${
+                  activeTool === "textPath" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
+                }`}
+                onClick={() => {
+                  setActiveTool("textPath");
+                  setLeftToolbarToolFlyout(null);
+                }}
+              >
+                <TextPathToolIcon size={17} />
               </button>
               <button
                 type="button"
@@ -23593,7 +24138,17 @@ export function FreehandStudioCanvas({
               if (obj.type === "text" && hitTestObject(pos, obj, threshold, objects)) {
                 setSelectedIds(new Set([obj.id]));
                 setPrimarySelectedId(obj.id);
+                setTextOnPathEditingId(null);
+                setTextOnPathEditorAnchor(null);
                 setTextEditingId(obj.id);
+                return;
+              }
+              if (obj.type === "textOnPath" && hitTestObject(pos, obj, threshold, objects)) {
+                setSelectedIds(new Set([obj.id]));
+                setPrimarySelectedId(obj.id);
+                setTextEditingId(null);
+                setTextOnPathEditorAnchor(pos);
+                setTextOnPathEditingId(obj.id);
                 return;
               }
             }
@@ -25130,6 +25685,15 @@ export function FreehandStudioCanvas({
                       selPts: selectedPoints.get(raw.id),
                     });
                   }
+                  if (o.type === "textOnPath" && selectedIds.has(o.id)) {
+                    const guide = (o as TextOnPathObject).guidePath;
+                    if (!guide) continue;
+                    list.push({
+                      keyId: `${o.id}-${guide.id}`,
+                      p: pathAnchorsToWorld(guide),
+                      selPts: selectedPoints.get(guide.id),
+                    });
+                  }
                 }
                 return list.map(({ keyId, p, selPts }) => {
                   const rings = getPathRings(p);
@@ -25146,17 +25710,37 @@ export function FreehandStudioCanvas({
                       const anchorStroke = isSel ? "#fff" : "#6366f1";
                       const cornerWidget = pathCornerWidgetPointForRingPoint(ring, pi, ringClosed, viewport.zoom);
                       const hasLiveCorner = cornerWidget && (pt.cornerRadius ?? 0) > 0.5;
+                      const z = viewport.zoom;
+                      const handleSize = 5.2 / z;
+                      const anchorTri = 4.2 / z;
+                      const anchorRect = 6.2 / z;
                       return (
                         <g key={`ds-${keyId}-${gIdx}`} data-ui="ds-points">
                           <title>{displayVm === "smooth" ? "Suave (simétrico)" : displayVm === "cusp" ? "Partir (tangente continua asimétrica)" : "Esquina (independiente)"}</title>
                           <line x1={pt.handleIn.x} y1={pt.handleIn.y} x2={pt.anchor.x} y2={pt.anchor.y}
-                            stroke="rgba(99,102,241,0.5)" strokeWidth={1 / viewport.zoom} />
+                            stroke="rgba(203,213,225,0.75)" strokeWidth={1 / z} />
                           <line x1={pt.anchor.x} y1={pt.anchor.y} x2={pt.handleOut.x} y2={pt.handleOut.y}
-                            stroke="rgba(99,102,241,0.5)" strokeWidth={1 / viewport.zoom} />
-                          <circle cx={pt.handleIn.x} cy={pt.handleIn.y} r={3.5 / viewport.zoom}
-                            fill="#fff" stroke="#6366f1" strokeWidth={1 / viewport.zoom} />
-                          <circle cx={pt.handleOut.x} cy={pt.handleOut.y} r={3.5 / viewport.zoom}
-                            fill="#fff" stroke="#6366f1" strokeWidth={1 / viewport.zoom} />
+                            stroke="rgba(203,213,225,0.75)" strokeWidth={1 / z} />
+                          <rect
+                            x={pt.handleIn.x - handleSize / 2}
+                            y={pt.handleIn.y - handleSize / 2}
+                            width={handleSize}
+                            height={handleSize}
+                            rx={0.8 / z}
+                            fill="#e5e7eb"
+                            stroke="#94a3b8"
+                            strokeWidth={1 / z}
+                          />
+                          <rect
+                            x={pt.handleOut.x - handleSize / 2}
+                            y={pt.handleOut.y - handleSize / 2}
+                            width={handleSize}
+                            height={handleSize}
+                            rx={0.8 / z}
+                            fill="#e5e7eb"
+                            stroke="#94a3b8"
+                            strokeWidth={1 / z}
+                          />
                           {cornerWidget && (
                             <g data-ui="live-corner-widget">
                               <title>Doble clic para resetear. Arrastra para redondear esta esquina.</title>
@@ -25189,15 +25773,15 @@ export function FreehandStudioCanvas({
                           )}
                           {displayVm === "corner" ? (
                             <polygon
-                              points={`${pt.anchor.x},${pt.anchor.y - 5 / viewport.zoom} ${pt.anchor.x + 4.5 / viewport.zoom},${pt.anchor.y + 4 / viewport.zoom} ${pt.anchor.x - 4.5 / viewport.zoom},${pt.anchor.y + 4 / viewport.zoom}`}
-                              fill={anchorFill} stroke={anchorStroke} strokeWidth={1 / viewport.zoom} />
+                              points={`${pt.anchor.x},${pt.anchor.y - anchorTri} ${pt.anchor.x + anchorTri * 0.9},${pt.anchor.y + anchorTri * 0.8} ${pt.anchor.x - anchorTri * 0.9},${pt.anchor.y + anchorTri * 0.8}`}
+                              fill={anchorFill} stroke={anchorStroke} strokeWidth={1 / z} />
                           ) : displayVm === "cusp" ? (
-                            <rect x={pt.anchor.x - 4 / viewport.zoom} y={pt.anchor.y - 4 / viewport.zoom}
-                              width={8 / viewport.zoom} height={8 / viewport.zoom}
-                              fill={anchorFill} stroke={anchorStroke} strokeWidth={1 / viewport.zoom} rx={1 / viewport.zoom} />
+                            <rect x={pt.anchor.x - anchorRect / 2} y={pt.anchor.y - anchorRect / 2}
+                              width={anchorRect} height={anchorRect}
+                              fill={anchorFill} stroke={anchorStroke} strokeWidth={1 / z} rx={0.8 / z} />
                           ) : (
-                            <circle cx={pt.anchor.x} cy={pt.anchor.y} r={4.2 / viewport.zoom}
-                              fill={anchorFill} stroke={anchorStroke} strokeWidth={1 / viewport.zoom} />
+                            <circle cx={pt.anchor.x} cy={pt.anchor.y} r={3.3 / z}
+                              fill={anchorFill} stroke={anchorStroke} strokeWidth={1 / z} />
                           )}
                         </g>
                       );
@@ -25484,6 +26068,84 @@ export function FreehandStudioCanvas({
                 }
                 simpleTextSelectionRef.current = null;
                 setTextEditingId(null);
+              }}
+            />
+          );
+        })()}
+
+        {textOnPathEditingId && (() => {
+          const tp = objects.find((o) => o.id === textOnPathEditingId && o.type === "textOnPath") as TextOnPathObject | undefined;
+          if (!tp) return null;
+          const fallbackBounds = getVisualAABB(tp, objects);
+          const editorAnchor = textOnPathEditorAnchor ?? {
+            x: fallbackBounds.x + fallbackBounds.w / 2,
+            y: fallbackBounds.y + fallbackBounds.h / 2,
+          };
+          const width = Math.max(Math.min(Math.max(fallbackBounds.w * viewport.zoom, 240), 520), 180);
+          const height = Math.max(tp.fontSize * 1.8 * viewport.zoom, 28);
+          const left = Math.max(12, viewport.x + editorAnchor.x * viewport.zoom - width / 2);
+          const top = Math.max(12, viewport.y + editorAnchor.y * viewport.zoom - height - 10);
+          return (
+            <input
+              ref={textOnPathEditingInputRef}
+              data-fh-text-editor
+              type="text"
+              value={tp.text}
+              placeholder="Escribe el texto sobre el trazo"
+              spellCheck
+              className="absolute z-[10001] rounded-[8px] border border-cyan-300/70 bg-zinc-950/95 px-3 text-white outline-none shadow-[0_12px_36px_rgba(0,0,0,0.45)] placeholder:text-cyan-100/45"
+              style={{
+                left,
+                top,
+                width,
+                height,
+                fontFamily: tp.fontFamily,
+                fontSize: Math.max(1, tp.fontSize * viewport.zoom),
+                fontWeight: tp.fontWeight,
+                fontStyle: tp.fontStyle as "normal" | "italic" | "oblique",
+                color: tp.fill === "none" || tp.fill === "transparent" ? "#ffffff" : tp.fill,
+                caretColor: tp.fill === "none" || tp.fill === "transparent" ? "#ffffff" : tp.fill,
+              }}
+              onMouseDown={(ev) => ev.stopPropagation()}
+              onPointerDown={(ev) => ev.stopPropagation()}
+              onChange={(ev) => {
+                const nextText = ev.currentTarget.value.replace(/[\r\n]+/g, " ");
+                setObjects((prev) =>
+                  prev.map((o) => (o.id === tp.id && o.type === "textOnPath" ? { ...o, text: nextText } : o)),
+                );
+              }}
+              onKeyDown={(ev) => {
+                if (ev.key === "Enter") {
+                  ev.preventDefault();
+                  ev.currentTarget.blur();
+                  return;
+                }
+                if (ev.key === "Escape") {
+                  ev.preventDefault();
+                  ev.currentTarget.blur();
+                }
+              }}
+              onPaste={(ev) => {
+                const raw = ev.clipboardData.getData("text/plain");
+                if (!raw.includes("\n") && !raw.includes("\r")) return;
+                ev.preventDefault();
+                const clean = raw.replace(/[\r\n]+/g, " ");
+                const el = ev.currentTarget;
+                const start = el.selectionStart ?? el.value.length;
+                const end = el.selectionEnd ?? start;
+                const nextText = `${el.value.slice(0, start)}${clean}${el.value.slice(end)}`;
+                setObjects((prev) =>
+                  prev.map((o) => (o.id === tp.id && o.type === "textOnPath" ? { ...o, text: nextText } : o)),
+                );
+                requestAnimationFrame(() => {
+                  const pos = start + clean.length;
+                  el.setSelectionRange(pos, pos);
+                });
+              }}
+              onBlur={() => {
+                pushHistory(objectsRef.current, selectedIdsRef.current);
+                setTextOnPathEditingId(null);
+                setTextOnPathEditorAnchor(null);
               }}
             />
           );
@@ -28176,6 +28838,37 @@ export function FreehandStudioCanvas({
                     <>
                       <div className="space-y-2 border-t border-white/10 pt-2">
                         <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">Typography</div>
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <label className="text-[8px] text-zinc-500">Texto</label>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setTextEditingId(null);
+                                const b = textOnPathApproxWorldBounds(top, objects);
+                                setTextOnPathEditorAnchor(b ? { x: b.x + b.w / 2, y: b.y + b.h / 2 } : { x: top.x + top.width / 2, y: top.y + top.height / 2 });
+                                setTextOnPathEditingId(top.id);
+                              }}
+                              className="rounded border border-white/10 bg-white/5 px-2 py-0.5 text-[8px] font-bold uppercase text-zinc-300 hover:bg-white/10 hover:text-white"
+                            >
+                              Editar en lienzo
+                            </button>
+                          </div>
+                          <input
+                            type="text"
+                            value={top.text}
+                            placeholder="Texto sobre trazo"
+                            onChange={(e) => updateSelectedPropSilent("text", e.target.value.replace(/[\r\n]+/g, " "))}
+                            onBlur={commitHistoryAfterScrub}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                e.currentTarget.blur();
+                              }
+                            }}
+                            className="w-full rounded border border-white/10 bg-black/25 px-2 py-1.5 text-[10px] text-white placeholder:text-zinc-600"
+                          />
+                        </div>
                         <label className="text-[8px] text-zinc-500">Fuentes</label>
                         <select
                           value={fontSelectValue}
@@ -28545,19 +29238,6 @@ export function FreehandStudioCanvas({
             ) : (
               <div className="text-[10px] text-zinc-600 italic">No object selected</div>
             )}
-
-            {canLinkTextToPath ? (
-              <div className="border-t border-white/[0.08] px-[14px] py-3">
-                <div className="mb-2 text-[10px] text-zinc-500 uppercase tracking-wider">Acciones</div>
-                <button
-                  type="button"
-                  onClick={handleLinkTextToPath}
-                  className="w-full rounded-[5px] bg-[#534AB7] py-2.5 text-[12px] font-semibold text-white transition-colors hover:bg-[#6357c4]"
-                >
-                  Texto sobre trazado
-                </button>
-              </div>
-            ) : null}
 
           {/* ── Multi-selección: grupo / boolean (alinear arriba en modo Designer) ── */}
           {selectedObjects.length >= 2 && (

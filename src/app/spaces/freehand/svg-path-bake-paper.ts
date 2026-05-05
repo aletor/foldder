@@ -10,6 +10,7 @@ type BezierPoint = {
   handleIn: { x: number; y: number };
   handleOut: { x: number; y: number };
   vertexMode?: "smooth" | "cusp" | "corner";
+  cornerMode?: boolean;
 };
 
 /** Campos mínimos + resto por referencia (se devuelve objeto extendido). */
@@ -33,11 +34,15 @@ export type SvgPathBakeInput = {
 function paperSegmentToBezier(seg: paper.Segment): BezierPoint {
   const ax = seg.point.x;
   const ay = seg.point.y;
+  const inCollapsed = Math.hypot(seg.handleIn.x, seg.handleIn.y) < 1e-5;
+  const outCollapsed = Math.hypot(seg.handleOut.x, seg.handleOut.y) < 1e-5;
+  const isCorner = inCollapsed || outCollapsed;
   return {
     anchor: { x: ax, y: ay },
     handleIn: { x: ax + seg.handleIn.x, y: ay + seg.handleIn.y },
     handleOut: { x: ax + seg.handleOut.x, y: ay + seg.handleOut.y },
-    vertexMode: "smooth",
+    vertexMode: isCorner ? "corner" : "smooth",
+    cornerMode: isCorner,
   };
 }
 
