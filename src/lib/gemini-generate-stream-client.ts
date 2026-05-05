@@ -9,14 +9,133 @@ export type GeminiStreamResult = {
   time?: number;
 };
 
+const GEMINI_STREAM_SOFT_PAYLOAD_LIMIT = 3_200_000;
+const GEMINI_STREAM_HARD_PAYLOAD_LIMIT = 4_000_000;
+const GEMINI_REF_INITIAL_MAX_DIMENSION = 1536;
+const GEMINI_REF_MIN_MAX_DIMENSION = 768;
+const GEMINI_REF_UPLOAD_MAX_BYTES = 2_800_000;
+
+function isDataImage(value: unknown): value is string {
+  return typeof value === "string" && /^data:image\/[^;,]+(?:;[^,]*)?;base64,/i.test(value);
+}
+
+function jsonSize(body: Record<string, unknown>): number {
+  return new TextEncoder().encode(JSON.stringify(body)).length;
+}
+
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("No se pudo preparar una referencia visual para Gemini."));
+    img.src = src;
+  });
+}
+
+async function compressDataImageForGemini(
+  dataUrl: string,
+  options?: { maxDimension?: number; quality?: number },
+): Promise<string> {
+  if (typeof document === "undefined") return dataUrl;
+  const img = await loadImage(dataUrl);
+  const maxDimension = Math.max(
+    GEMINI_REF_MIN_MAX_DIMENSION,
+    Math.floor(options?.maxDimension ?? GEMINI_REF_INITIAL_MAX_DIMENSION),
+  );
+  const quality = Math.max(0.52, Math.min(0.9, options?.quality ?? 0.78));
+  const scale = Math.min(1, maxDimension / Math.max(img.naturalWidth || img.width, img.naturalHeight || img.height, 1));
+  const width = Math.max(1, Math.round((img.naturalWidth || img.width || 1) * scale));
+  const height = Math.max(1, Math.round((img.naturalHeight || img.height || 1) * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return dataUrl;
+  ctx.drawImage(img, 0, 0, width, height);
+  return canvas.toDataURL("image/jpeg", quality);
+}
+
+function dataUrlToFile(dataUrl: string, filename: string): File | null {
+  const match = /^data:([^;,]+)(?:;[^,]*)?;base64,(.*)$/i.exec(dataUrl);
+  if (!match) return null;
+  const mimeType = match[1] || "image/jpeg";
+  const binary = atob(match[2] || "");
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new File([bytes], filename, { type: mimeType });
+}
+
+async function uploadGeminiReference(dataUrl: string, index: number): Promise<string> {
+  let maxDimension = GEMINI_REF_INITIAL_MAX_DIMENSION;
+  let quality = 0.78;
+  let compacted = await compressDataImageForGemini(dataUrl, { maxDimension, quality });
+  let file = dataUrlToFile(compacted, `gemini-reference-${Date.now()}-${index}.jpg`);
+
+  while (file && file.size > GEMINI_REF_UPLOAD_MAX_BYTES && maxDimension > GEMINI_REF_MIN_MAX_DIMENSION) {
+    maxDimension = Math.max(GEMINI_REF_MIN_MAX_DIMENSION, Math.floor(maxDimension * 0.72));
+    quality = Math.max(0.58, quality - 0.08);
+    compacted = await compressDataImageForGemini(compacted, { maxDimension, quality });
+    file = dataUrlToFile(compacted, `gemini-reference-${Date.now()}-${index}.jpg`);
+  }
+
+  if (!file || file.size > GEMINI_REF_UPLOAD_MAX_BYTES) {
+    throw new Error("Una referencia visual sigue siendo demasiado pesada para prepararla para Gemini.");
+  }
+
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch("/api/gemini/reference-upload", {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `No se pudo subir la referencia visual (${res.status}).`);
+  }
+  const json = (await res.json()) as { url?: string };
+  if (!json.url) throw new Error("La subida de referencia visual no devolvió URL.");
+  return json.url;
+}
+
+async function compactGeminiStreamReferences(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const next: Record<string, unknown> = { ...body };
+  const imageValues = Array.isArray(next.images)
+    ? next.images
+    : isDataImage(next.image)
+      ? [next.image]
+      : [];
+
+  if (!imageValues.some(isDataImage)) return next;
+
+  const compactedImages = await Promise.all(
+    imageValues.map((value, index) =>
+      isDataImage(value) ? uploadGeminiReference(value, index) : value,
+    ),
+  );
+  next.images = compactedImages;
+  delete next.image;
+
+  return next;
+}
+
 export async function geminiGenerateWithServerProgress(
   body: Record<string, unknown>,
   onProgress: (pct: number, stage: string) => void
 ): Promise<GeminiStreamResult> {
+  const preparedBody = await compactGeminiStreamReferences(body);
+  const preparedSize = jsonSize(preparedBody);
+  if (preparedSize > GEMINI_STREAM_HARD_PAYLOAD_LIMIT) {
+    throw new Error(
+      "Las referencias visuales son demasiado pesadas para Gemini Stream. Reduce el número de imágenes o usa referencias ya subidas a S3.",
+    );
+  }
+
   const res = await fetch("/api/gemini/generate-stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify(preparedBody),
   });
 
   if (!res.ok) {
