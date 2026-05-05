@@ -5364,6 +5364,7 @@ function rectUnionBoundarySvgPathDs(rects: Rect[]): string[] {
 // ── Snap ────────────────────────────────────────────────────────────────
 
 const SNAP_SCREEN_PX = 8;
+const OBJECT_MOVE_DRAG_THRESHOLD_PX = 3;
 
 function collectPathAnchorPoints(allObjects: FreehandObject[], excludeIds: Set<string>): Point[] {
   const out: Point[] = [];
@@ -18319,6 +18320,10 @@ export function FreehandStudioCanvas({
     const objects = objectsRef.current;
 
     if (dragState.type === "move" && dragState.positions) {
+      if (Math.hypot(dx, dy) < OBJECT_MOVE_DRAG_THRESHOLD_PX) {
+        setSnapGuides([]);
+        return;
+      }
       const scale = canvasScaleFromPointer(viewport.zoom);
       let mdx = dx * scale, mdy = dy * scale;
 
@@ -19815,6 +19820,14 @@ export function FreehandStudioCanvas({
       (dragState.type === "resize" && !!dragState.allBounds) ||
       dragState.type === "textBoxResize";
     if (useSelectionGeometryRaf) {
+      if (
+        dragState.type === "move" &&
+        dragState.positions &&
+        Math.hypot(dx, dy) < OBJECT_MOVE_DRAG_THRESHOLD_PX
+      ) {
+        setSnapGuides([]);
+        return;
+      }
       selectionPointerTailRef.current = {
         clientX: e.clientX,
         clientY: e.clientY,
@@ -19924,13 +19937,17 @@ export function FreehandStudioCanvas({
       return;
     }
     setSnapGuides([]);
+    const moveDragCommitted =
+      ds.type !== "move" ||
+      !ds.positions ||
+      Math.hypot(e.clientX - ds.startX, e.clientY - ds.startY) >= OBJECT_MOVE_DRAG_THRESHOLD_PX;
 
     if (selectionGestureRafRef.current != null) {
       cancelAnimationFrame(selectionGestureRafRef.current);
       selectionGestureRafRef.current = null;
     }
     const flushSelectionGeometryOnUp =
-      (ds.type === "move" && !!ds.positions) ||
+      (ds.type === "move" && !!ds.positions && moveDragCommitted) ||
       (ds.type === "rotate" && ds.rotateCenter != null && ds.rotateStartAngle != null) ||
       (ds.type === "resize" && !!ds.allBounds);
     if (flushSelectionGeometryOnUp) {
@@ -20575,6 +20592,11 @@ export function FreehandStudioCanvas({
       setSelectedIds(ns);
       pushHistory(next, ns);
       setActiveTool("select");
+    }
+
+    if (ds.type === "move" && !moveDragCommitted) {
+      setDragState(null);
+      return;
     }
 
     if (
