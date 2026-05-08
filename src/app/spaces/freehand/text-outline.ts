@@ -402,7 +402,7 @@ export type TextConversionInput = {
   paragraphIndent?: number;
 };
 
-type PhysicalLineMeta = { text: string; addParagraphIndent: boolean; globalTextStart: number };
+type PhysicalLineMeta = { text: string; addParagraphIndent: boolean; globalTextStart: number; isLastInParagraph: boolean };
 
 function computePhysicalLines(t: TextConversionInput, font: opentype.Font): PhysicalLineMeta[] {
   const pad = t.textMode === "area" ? 4 : 0;
@@ -420,6 +420,7 @@ function computePhysicalLines(t: TextConversionInput, font: opentype.Font): Phys
         text,
         addParagraphIndent: i === 0,
         globalTextStart: acc,
+        isLastInParagraph: true,
       };
       acc += text.length + (i < raw.length - 1 ? 1 : 0);
       return row;
@@ -445,6 +446,7 @@ function computePhysicalLines(t: TextConversionInput, font: opentype.Font): Phys
         text: lines[wi]!,
         addParagraphIndent: wi === 0,
         globalTextStart: fullOff + starts[wi]!,
+        isLastInParagraph: wi === lines.length - 1,
       });
     }
     fullOff += para.length;
@@ -548,6 +550,7 @@ function measureLineCharLeftEdges(
   charStyles: (SpanStyle | undefined)[],
   baseWeight: number,
   fontForWeight: (w: number) => opentype.Font,
+  extraWordSpacing = 0,
 ): number[] {
   const lefts = new Array<number>(line.length + 1);
   let x = startX;
@@ -576,9 +579,36 @@ function measureLineCharLeftEdges(
       if (g2) adv += font.getKerningValue(glyph, g2) * scale;
     }
     x += adv + letterSpacing;
+    if (isJustificationSpace(ch, i, line)) x += extraWordSpacing;
     lefts[i + 1] = x;
   }
   return lefts;
+}
+
+function isJustificationSpace(ch: string, index: number, line: string): boolean {
+  return (ch === " " || ch === "\t") && index < line.length - 1;
+}
+
+function countJustificationSpaces(line: string): number {
+  let count = 0;
+  for (let i = 0; i < line.length; i++) {
+    if (isJustificationSpace(line[i]!, i, line)) count++;
+  }
+  return count;
+}
+
+function lineJustificationExtraSpacing(
+  t: Pick<TextConversionInput, "textMode" | "textAlign">,
+  line: string,
+  lineWidth: number,
+  contentInnerW: number,
+  isLastInParagraph: boolean,
+): number {
+  if (t.textMode !== "area" || t.textAlign !== "justify" || isLastInParagraph) return 0;
+  const gaps = countJustificationSpaces(line);
+  if (gaps <= 0) return 0;
+  const extra = contentInnerW - lineWidth;
+  return extra > 0.01 ? extra / gaps : 0;
 }
 
 const PDF_LINK_BLUE = "#38bdf8";
@@ -686,7 +716,7 @@ export async function richTextToGlyphPaintOps(
   const contentInnerW = Math.max(1, boxW - 2 * pad - indent);
   const lhPx = t.fontSize * t.lineHeight;
   const useKern = t.fontKerning !== "none";
-  const ta = t.textAlign === "justify" ? "left" : t.textAlign;
+  const ta = t.textAlign;
   const leftInset = pad + indent;
   const charStyles = buildCharStyleMap(t.text, runs);
   if (pdfOpts?.makeUrlsClickable) {
@@ -716,7 +746,7 @@ export async function richTextToGlyphPaintOps(
 
   let gIdx = 0;
   for (let li = 0; li < physicalLines.length; li++) {
-    const { text: line, globalTextStart } = physicalLines[li]!;
+    const { text: line, globalTextStart, isLastInParagraph } = physicalLines[li]!;
     const baselineY = t.y + pad + t.fontSize + li * lhPx;
     const lineW = measureLineWidthMixed(
       line,
@@ -738,6 +768,8 @@ export async function richTextToGlyphPaintOps(
       xCursor = t.x + leftInset;
     }
 
+    const justifyExtra = lineJustificationExtraSpacing(t, line, lineW, contentInnerW, isLastInParagraph);
+
     const lefts = measureLineCharLeftEdges(
       line,
       globalTextStart,
@@ -748,6 +780,7 @@ export async function richTextToGlyphPaintOps(
       charStyles,
       t.fontWeight,
       pickFont,
+      justifyExtra,
     );
 
     const linkLineBuf: Array<{
@@ -909,12 +942,12 @@ export async function textToGlyphPathPayloads(
   const lhPx = t.fontSize * t.lineHeight;
   const useKern = t.fontKerning !== "none";
   const physicalLines = computePhysicalLines(t, font);
-  const ta = t.textAlign === "justify" ? "left" : t.textAlign;
+  const ta = t.textAlign;
   const out: GlyphPathPayload[] = [];
   let gIdx = 0;
 
   for (let li = 0; li < physicalLines.length; li++) {
-    const { text: line } = physicalLines[li]!;
+    const { text: line, isLastInParagraph } = physicalLines[li]!;
     const baselineY = t.y + pad + t.fontSize + li * lhPx;
     const lineW = measureLineWidth(font, line, t.fontSize, t.letterSpacing, useKern);
     const leftInset = pad + indent;
@@ -927,6 +960,7 @@ export async function textToGlyphPathPayloads(
     } else {
       xCursor = t.x + leftInset;
     }
+    const justifyExtra = lineJustificationExtraSpacing(t, line, lineW, contentInnerW, isLastInParagraph);
 
     const glyphs = font.stringToGlyphs(line);
     const scale = t.fontSize / font.unitsPerEm;
@@ -942,6 +976,7 @@ export async function textToGlyphPathPayloads(
 
       if (!glyph.path || glyph.path.commands.length === 0) {
         xCursor += adv + t.letterSpacing;
+        if (isJustificationSpace(ch, i, line)) xCursor += justifyExtra;
         continue;
       }
 
@@ -952,6 +987,7 @@ export async function textToGlyphPathPayloads(
         gIdx += 1;
       }
       xCursor += adv + t.letterSpacing;
+      if (isJustificationSpace(ch, i, line)) xCursor += justifyExtra;
     }
   }
 
@@ -999,7 +1035,7 @@ async function appendInvisibleSelectableTextLayerAsync(
   const leftInset = pad + indent;
   const lhPx = conv.fontSize * conv.lineHeight;
   const useKern = conv.fontKerning !== "none";
-  const ta = conv.textAlign === "justify" ? "left" : conv.textAlign;
+  const ta = conv.textAlign;
 
   let charStyles = buildCharStyleMap(conv.text, runs);
   if (pdfOpts?.makeUrlsClickable) {
@@ -1026,7 +1062,7 @@ async function appendInvisibleSelectableTextLayerAsync(
   const NS = "http://www.w3.org/2000/svg";
 
   for (let li = 0; li < physicalLines.length; li++) {
-    const { text: line, globalTextStart } = physicalLines[li]!;
+    const { text: line, globalTextStart, isLastInParagraph } = physicalLines[li]!;
     const baselineY = conv.y + pad + conv.fontSize + li * lhPx;
     const lineW = measureLineWidthMixed(
       line,
@@ -1048,6 +1084,8 @@ async function appendInvisibleSelectableTextLayerAsync(
       xCursor = conv.x + leftInset;
     }
 
+    const justifyExtra = lineJustificationExtraSpacing(conv, line, lineW, contentInnerW, isLastInParagraph);
+
     const lefts = measureLineCharLeftEdges(
       line,
       globalTextStart,
@@ -1058,13 +1096,15 @@ async function appendInvisibleSelectableTextLayerAsync(
       charStyles,
       conv.fontWeight,
       pickFont,
+      justifyExtra,
     );
 
     const textEl = doc.createElementNS(NS, "text");
     textEl.setAttribute("y", String(baselineY));
     textEl.setAttribute("font-size", String(conv.fontSize));
-    textEl.setAttribute("fill", "#000000");
+    textEl.setAttribute("fill", "transparent");
     textEl.setAttribute("fill-opacity", "0");
+    textEl.setAttribute("opacity", "0");
     textEl.setAttribute("stroke", "none");
     textEl.setAttribute("pointer-events", "none");
     textEl.setAttribute("data-fh-pdf-selectable", "1");
@@ -1109,9 +1149,13 @@ async function appendInvisibleSelectableTextLayerAsync(
       i0 = i1;
     }
 
-    /** Una sola rama tipográfica: forzar ancho exacto al de opentype (evita deriva del motor PDF). */
+    /**
+     * Una sola rama tipográfica: forzar ancho exacto al de opentype (evita deriva del motor PDF).
+     * En líneas justificadas usamos el ancho de columna, por si un visor/PDF ignora la invisibilidad
+     * y acaba pintando esta capa seleccionable encima de los paths.
+     */
     if (textEl.childNodes.length === 1) {
-      textEl.setAttribute("textLength", String(lineW));
+      textEl.setAttribute("textLength", String(justifyExtra > 0 ? contentInnerW : lineW));
       textEl.setAttribute("lengthAdjust", "spacingAndGlyphs");
     }
 

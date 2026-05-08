@@ -108,6 +108,14 @@ function designerGoogleFontLinkId(family: string): string {
 }
 
 type BrainTextBlockKind = "Titular" | "Subtítulo" | "Párrafo" | "CTA" | "Quote";
+type TextContentTransformAction = "correct" | "translate";
+type TextContentTargetLanguage = "es" | "en" | "ca";
+
+const TEXT_CONTENT_LANGUAGE_OPTIONS: Array<{ value: TextContentTargetLanguage; label: string }> = [
+  { value: "es", label: "Español" },
+  { value: "en", label: "Inglés" },
+  { value: "ca", label: "Catalán" },
+];
 
 function inferBrainTextBlockKind(opts: {
   text: string;
@@ -1387,7 +1395,7 @@ type IsolationFrame =
     };
 
 type SnapVisual =
-  | { type: "line"; axis: "x" | "y"; pos: number }
+  | { type: "line"; axis: "x" | "y"; pos: number; source?: "object" | "page" | "guide" }
   | { type: "anchor"; x: number; y: number }
   | { type: "cross"; cx: number; cy: number };
 
@@ -2373,6 +2381,10 @@ function textLayoutDims(t: TextObject): { w: number; h: number } {
     return { w: t.width, h: t.height };
   }
   return measurePointTextLayoutDims(t);
+}
+
+function textClipsOverflow(t: TextObject): boolean {
+  return t.textMode === "area";
 }
 
 /** Entrada para PDF/SVG vectorial: incluye `richRuns` si el texto viene de Designer. */
@@ -5906,13 +5918,29 @@ function rectUnionBoundarySvgPathDs(rects: Rect[]): string[] {
 const SNAP_SCREEN_PX = 8;
 const OBJECT_MOVE_DRAG_THRESHOLD_PX = 3;
 
-function collectPathAnchorPoints(allObjects: FreehandObject[], excludeIds: Set<string>): Point[] {
+function collectObjectSnapPoints(allObjects: FreehandObject[], excludeIds: Set<string>): Point[] {
   const out: Point[] = [];
+  const seen = new Set<string>();
+  const add = (p: Point) => {
+    if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) return;
+    const key = `${p.x.toFixed(3)}:${p.y.toFixed(3)}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(p);
+  };
+
   for (const o of allObjects) {
-    if (excludeIds.has(o.id) || !o.visible || o.locked) continue;
-    if (o.type !== "path") continue;
-    for (const pt of (o as PathObject).points) out.push(pt.anchor);
+    if (excludeIds.has(o.id) || !o.visible || o.locked || o.isClipMask) continue;
+    if (o.type === "path") {
+      const p = o as PathObject;
+      if (p.points?.length > 0) {
+        for (const pt of p.points) add(pathBezierPointToWorld(pt.anchor, p));
+        continue;
+      }
+    }
+    for (const corner of objectWorldCorners(o, allObjects)) add(corner);
   }
+
   return out;
 }
 
@@ -5923,6 +5951,12 @@ function snapDeltaTo45(dx: number, dy: number): { x: number; y: number } {
   const step = Math.PI / 4;
   const snapped = Math.round(a / step) * step;
   return { x: Math.cos(snapped) * len, y: Math.sin(snapped) * len };
+}
+
+function constrainDeltaToPrimaryAxis(dx: number, dy: number): { x: number; y: number; axis: "x" | "y" } {
+  return Math.abs(dx) >= Math.abs(dy)
+    ? { x: dx, y: 0, axis: "x" }
+    : { x: 0, y: dy, axis: "y" };
 }
 
 /** Pluma: siguiente ancla en múltiplos de 45° respecto al anterior (misma longitud que el vector cursor). Solo con Mayús pulsada. */
@@ -5950,94 +5984,58 @@ function computeSnap(
   allObjects: FreehandObject[],
   excludeIds: Set<string>,
   zoom: number,
-  layoutGuideSnap?: { vertical: number[]; horizontal: number[] },
+  snapTargets?: { vertical: number[]; horizontal: number[]; pageCenter?: Point | null },
 ): { dx: number; dy: number; guides: SnapVisual[] } {
   const thr = SNAP_SCREEN_PX / zoom;
   const guides: SnapVisual[] = [];
   const mcx = movingBounds.x + movingBounds.w / 2;
   const mcy = movingBounds.y + movingBounds.h / 2;
 
-  const anchors = collectPathAnchorPoints(allObjects, excludeIds);
-  let bestPd = thr + 1;
-  let pdx = 0, pdy = 0;
-  let anchorHit: Point | null = null;
-  for (const ap of anchors) {
-    const d = Math.hypot(mcx - ap.x, mcy - ap.y);
-    if (d < bestPd) {
-      bestPd = d;
-      pdx = ap.x - mcx;
-      pdy = ap.y - mcy;
-      anchorHit = ap;
-    }
-  }
-  if (bestPd <= thr && anchorHit) {
-    guides.push({ type: "anchor", x: anchorHit.x, y: anchorHit.y });
-    return { dx: pdx, dy: pdy, guides };
-  }
-
   let snapDx = 0, snapDy = 0;
   let bestDx = thr + 1, bestDy = thr + 1;
-  let usedMidX = false, usedMidY = false;
+  let snapXPos = 0, snapYPos = 0;
+  let snapXSource: "object" | "page" | "guide" = "object";
+  let snapYSource: "object" | "page" | "guide" = "object";
   const mxs = [movingBounds.x, mcx, movingBounds.x + movingBounds.w];
   const mys = [movingBounds.y, mcy, movingBounds.y + movingBounds.h];
+  const objectSnapPoints = collectObjectSnapPoints(allObjects, excludeIds);
+  const targetXs = [
+    ...objectSnapPoints.map((p) => ({ pos: p.x, source: "object" as const })),
+    ...(snapTargets?.pageCenter ? [{ pos: snapTargets.pageCenter.x, source: "page" as const }] : []),
+    ...(snapTargets?.vertical ?? []).map((pos) => ({ pos, source: "guide" as const })),
+  ];
+  const targetYs = [
+    ...objectSnapPoints.map((p) => ({ pos: p.y, source: "object" as const })),
+    ...(snapTargets?.pageCenter ? [{ pos: snapTargets.pageCenter.y, source: "page" as const }] : []),
+    ...(snapTargets?.horizontal ?? []).map((pos) => ({ pos, source: "guide" as const })),
+  ];
 
-  for (const obj of allObjects) {
-    if (excludeIds.has(obj.id) || !obj.visible || obj.isClipMask) continue;
-    const vb = getVisualAABB(obj, allObjects);
-    const oxs = [vb.x, vb.x + vb.w / 2, vb.x + vb.w];
+  for (const tx of targetXs) {
     for (let xi = 0; xi < mxs.length; xi++) {
-      for (let xj = 0; xj < oxs.length; xj++) {
-        const d = Math.abs(mxs[xi] - oxs[xj]);
-        if (d < bestDx) {
-          bestDx = d;
-          snapDx = oxs[xj] - mxs[xi];
-          usedMidX = xi === 1 && xj === 1;
-        }
-      }
-    }
-  }
-  for (const gx of layoutGuideSnap?.vertical ?? []) {
-    for (let xi = 0; xi < mxs.length; xi++) {
-      const d = Math.abs(mxs[xi] - gx);
+      const d = Math.abs(mxs[xi] - tx.pos);
       if (d < bestDx) {
         bestDx = d;
-        snapDx = gx - mxs[xi];
-        usedMidX = xi === 1;
+        snapDx = tx.pos - mxs[xi];
+        snapXPos = tx.pos;
+        snapXSource = tx.source;
       }
     }
   }
-  for (const obj of allObjects) {
-    if (excludeIds.has(obj.id) || !obj.visible || obj.isClipMask) continue;
-    const vb = getVisualAABB(obj, allObjects);
-    const oys = [vb.y, vb.y + vb.h / 2, vb.y + vb.h];
+  for (const ty of targetYs) {
     for (let yi = 0; yi < mys.length; yi++) {
-      for (let yj = 0; yj < oys.length; yj++) {
-        const d = Math.abs(mys[yi] - oys[yj]);
-        if (d < bestDy) {
-          bestDy = d;
-          snapDy = oys[yj] - mys[yi];
-          usedMidY = yi === 1 && yj === 1;
-        }
-      }
-    }
-  }
-  for (const gy of layoutGuideSnap?.horizontal ?? []) {
-    for (let yi = 0; yi < mys.length; yi++) {
-      const d = Math.abs(mys[yi] - gy);
+      const d = Math.abs(mys[yi] - ty.pos);
       if (d < bestDy) {
         bestDy = d;
-        snapDy = gy - mys[yi];
-        usedMidY = yi === 1;
+        snapDy = ty.pos - mys[yi];
+        snapYPos = ty.pos;
+        snapYSource = ty.source;
       }
     }
   }
   if (bestDx > thr) snapDx = 0;
-  else guides.push({ type: "line", axis: "x", pos: mxs[0] + snapDx });
+  else guides.push({ type: "line", axis: "x", pos: snapXPos, source: snapXSource });
   if (bestDy > thr) snapDy = 0;
-  else guides.push({ type: "line", axis: "y", pos: mys[0] + snapDy });
-  if (usedMidX && usedMidY && bestDx <= thr && bestDy <= thr) {
-    guides.push({ type: "cross", cx: mcx + snapDx, cy: mcy + snapDy });
-  }
+  else guides.push({ type: "line", axis: "y", pos: snapYPos, source: snapYSource });
   return { dx: snapDx, dy: snapDy, guides };
 }
 
@@ -7915,7 +7913,7 @@ export function renderObj(
             width={foW}
             height={foH}
             style={{
-              overflow: t.isTextFrame ? "hidden" : "visible",
+              overflow: textClipsOverflow(t) ? "hidden" : "visible",
               opacity: hideSvgTextWhileEditing ? 0 : 1,
               pointerEvents: hideSvgTextWhileEditing ? "none" : undefined,
             }}
@@ -8254,6 +8252,10 @@ function textObjectToNativeSvgMarkup(t: TextObject): string {
     lines = raw.split("\n");
   }
   const lhPx = t.fontSize * t.lineHeight;
+  if (t.textMode === "area") {
+    const maxLines = Math.max(0, Math.floor(Math.max(0, t.height - 2 * pad) / Math.max(1, lhPx)));
+    lines = lines.slice(0, maxLines);
+  }
   const ta = t.textAlign === "justify" ? "left" : t.textAlign;
   let textAnchor: "start" | "middle" | "end" = "start";
   let baseX = t.x + pad;
@@ -8323,7 +8325,8 @@ function textForeignObjectStaticInnerXml(t: TextObject, fillAp: FillAppearance):
   const fcaps = t.fontVariantCaps === "small-caps" ? "font-variant-caps:small-caps;" : "";
   const deco = [t.textUnderline && "underline", t.textStrikethrough && "line-through"].filter(Boolean).join(" ");
   const tdeco = deco ? `text-decoration:${deco};` : "";
-  const base = `margin:0;padding:${pad}px;padding-left:${padL}px;width:100%;height:100%;box-sizing:border-box;font-family:${escapeXmlAttr(t.fontFamily)};font-size:${t.fontSize}px;font-weight:${t.fontWeight};${fst}line-height:${t.lineHeight};letter-spacing:${t.letterSpacing}px;font-kerning:${t.fontKerning === "none" ? "none" : "auto"};${fcaps}${tdeco}text-align:${ta};white-space:${t.textMode === "point" ? "pre" : "pre-wrap"};word-break:${t.textMode === "area" ? "break-word" : "normal"};opacity:${t.opacity};user-select:none`;
+  const overflow = textClipsOverflow(t) ? "overflow:hidden;" : "";
+  const base = `margin:0;padding:${pad}px;padding-left:${padL}px;width:100%;height:100%;box-sizing:border-box;${overflow}font-family:${escapeXmlAttr(t.fontFamily)};font-size:${t.fontSize}px;font-weight:${t.fontWeight};${fst}line-height:${t.lineHeight};letter-spacing:${t.letterSpacing}px;font-kerning:${t.fontKerning === "none" ? "none" : "auto"};${fcaps}${tdeco}text-align:${ta};white-space:${t.textMode === "point" ? "pre" : "pre-wrap"};word-break:${t.textMode === "area" ? "break-word" : "normal"};opacity:${t.opacity};user-select:none`;
   const fillStr = textFillStyleAttrFromAppearance(fillAp);
   const hasStroke = t.strokeWidth > 0 && t.stroke && t.stroke !== "none";
   const strokePos = t.strokePosition ?? "over";
@@ -8422,7 +8425,8 @@ function objToSvgStringStatic(obj: FreehandObject, w: number, h: number, ox: num
       const innerFo = textForeignObjectStaticInnerXml(t, fill);
       const tt = textSvgTransform(t);
       const gtr = tt ? ` transform="${escapeXmlAttr(tt)}"` : "";
-      parts.push(`<g${gtr}><foreignObject x="${t.x}" y="${t.y}" width="${foW}" height="${foH}">${innerFo}</foreignObject></g>`);
+      const foStyle = textClipsOverflow(t) ? ` style="overflow:hidden"` : "";
+      parts.push(`<g${gtr}><foreignObject x="${t.x}" y="${t.y}" width="${foW}" height="${foH}"${foStyle}>${innerFo}</foreignObject></g>`);
       break;
     }
     case "image":
@@ -10390,7 +10394,15 @@ export function FreehandStudioCanvas({
     resizeSnapshot?: Map<string, FreehandObject>;
     textBoxResizeObjectId?: string;
     textBoxResizeHandle?: "nw" | "ne" | "se" | "sw" | "n" | "e" | "s" | "w";
-    textBoxResizeStart?: { x: number; y: number; w: number; h: number };
+    textBoxResizeStart?: {
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      scaleX: number;
+      scaleY: number;
+      angleDeg: number;
+    };
     allBounds?: Map<string, Rect>;
     createType?: "rect" | "line" | "ellipse";
     createOrigin?: Point;
@@ -11077,6 +11089,7 @@ export function FreehandStudioCanvas({
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportModalScope, setExportModalScope] = useState<"selection" | "full">("selection");
   const [toast, setToast] = useState<string | null>(null);
+  const [textContentBusy, setTextContentBusy] = useState<"correct" | `translate:${TextContentTargetLanguage}` | null>(null);
   /** Combinar capas → raster (panel Propiedades). */
   const [layerMergeBusy, setLayerMergeBusy] = useState(false);
   const [exportFlash, setExportFlash] = useState<ExportRect | null>(null);
@@ -12932,6 +12945,71 @@ export function FreehandStudioCanvas({
       setSelectedIds(new Set([targetId]));
     },
     [brainLengthPreset, brainTonePreset, designerMode, effectiveTextKind, onDesignerTextFrameEdit, singleSelected, pushHistory],
+  );
+
+  const applyTextContentTransform = useCallback(
+    async (action: TextContentTransformAction, targetLanguage?: TextContentTargetLanguage) => {
+      if (!singleSelected || singleSelected.type !== "text") return;
+      const tx = singleSelected as TextObject;
+      const storyId = tx.isTextFrame ? tx.storyId : undefined;
+      const sourceText =
+        designerMode && storyId && designerStoryMap?.get(storyId)
+          ? designerStoryMap.get(storyId)!
+          : tx.text ?? "";
+
+      if (!sourceText.trim()) {
+        setToast("No hay texto que modificar");
+        window.setTimeout(() => setToast(null), 2400);
+        return;
+      }
+
+      const busyKey = action === "correct" ? "correct" : `translate:${targetLanguage ?? "es"}` as const;
+      setTextContentBusy(busyKey);
+      try {
+        const res = await fetch("/api/spaces/text-content", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text: sourceText,
+            action,
+            ...(action === "translate" ? { targetLanguage } : {}),
+          }),
+        });
+        const payload = (await res.json().catch(() => ({}))) as { text?: string; error?: string };
+        if (!res.ok) throw new Error(payload.error || "No se pudo modificar el texto");
+        const nextText = (payload.text ?? "").trim();
+        if (!nextText) throw new Error("El modelo devolvió texto vacío");
+
+        if (designerMode && tx.isTextFrame && storyId && onDesignerStoryTextChange) {
+          onDesignerStoryTextChange(storyId, nextText);
+        } else {
+          const targetId = tx.id;
+          setObjects((prev) => {
+            const next = prev.map((o) =>
+              o.id === targetId && o.type === "text"
+                ? ({ ...o, text: nextText, _designerRichSpans: undefined } as FreehandObject)
+                : o,
+            );
+            pushHistory(next, new Set([targetId]));
+            return next;
+          });
+          if (inlineFrameEditorObjectIdRef.current === targetId && inlineFrameEditorRef.current) {
+            inlineFrameEditorRef.current.innerHTML = richSpansToInlineHtml(undefined, nextText);
+          }
+        }
+
+        setSelectedIds(new Set([tx.id]));
+        setToast(action === "correct" ? "Texto corregido" : "Texto traducido");
+        window.setTimeout(() => setToast(null), 2200);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "No se pudo modificar el texto";
+        setToast(message);
+        window.setTimeout(() => setToast(null), 3600);
+      } finally {
+        setTextContentBusy(null);
+      }
+    },
+    [designerMode, designerStoryMap, onDesignerStoryTextChange, pushHistory, singleSelected],
   );
 
   const applyBrainImageSuggestion = useCallback(
@@ -18817,12 +18895,31 @@ export function FreehandStudioCanvas({
     // ── Direct select ─────────────────────────────────────────────
     if (activeTool === "directSelect") {
       const threshold = 8 / viewport.zoom;
-      // Rectángulo sin border radius: edición directa simple = solo 4 vértices.
+      // Rectángulo: radios de esquina en edición directa; vértices solo si no hay radio.
       for (let i = objects.length - 1; i >= 0; i--) {
         const obj = objects[i];
         if (obj.locked || !obj.visible || obj.type !== "rect") continue;
         const rect = rectObjectWithNormalizedCorners(obj as RectObject);
-        if (hasRoundedCorners(rectCornerRadiusObject(rect))) continue;
+        const rectCorners = rectCornerRadiusObject(rect);
+        const cornerRadiusHandles = cornerRadiusHandleWorldPoints(rect);
+        for (const key of RECTANGLE_CORNER_RADIUS_KEYS) {
+          if (dist(pos, cornerRadiusHandles[key]) <= threshold) {
+            setSelectedIds(new Set([rect.id]));
+            setPrimarySelectedId(rect.id);
+            setSelectedPoints(new Map());
+            setDragState({
+              type: "cornerRadius",
+              startX: e.clientX,
+              startY: e.clientY,
+              cornerRadiusObjectId: rect.id,
+              cornerRadiusCorner: key,
+              cornerRadiusStartValue: rectCorners[key],
+              cornerRadiusSnapshot: rectCorners,
+            });
+            return;
+          }
+        }
+        if (hasRoundedCorners(rectCorners)) continue;
         const corners = rectWorldCorners(rect);
         const cornerDefs: { handle: "nw" | "ne" | "se" | "sw"; point: Point }[] = [
           { handle: "nw", point: corners[0]! },
@@ -19582,78 +19679,17 @@ export function FreehandStudioCanvas({
               startY: e.clientY,
               textBoxResizeObjectId: t.id,
               textBoxResizeHandle: hi.id,
-              textBoxResizeStart: { x: t.x, y: t.y, w: startDims.w, h: startDims.h },
+              textBoxResizeStart: {
+                x: t.x,
+                y: t.y,
+                w: startDims.w,
+                h: startDims.h,
+                scaleX: t.scaleX ?? 1,
+                scaleY: t.scaleY ?? 1,
+                angleDeg: f.angleDeg,
+              },
             });
             return;
-          }
-        }
-      }
-    }
-
-    if (
-      !hideFrameHandlesForInnerContent &&
-      selectedObjects.length === 1 &&
-      activeTool === "select"
-    ) {
-      const so = selectedObjects[0];
-      if (so.type === "rect" && so.visible && !so.locked) {
-        const rObj = rectObjectWithNormalizedCorners(so as RectObject);
-        const handles = cornerRadiusHandleWorldPoints(rObj);
-        const hitR = 7 / viewport.zoom;
-        for (const key of RECTANGLE_CORNER_RADIUS_KEYS) {
-          if (dist(pos, handles[key]) <= hitR) {
-            setDragState({
-              type: "cornerRadius",
-              startX: e.clientX,
-              startY: e.clientY,
-              cornerRadiusObjectId: rObj.id,
-              cornerRadiusCorner: key,
-              cornerRadiusStartValue: rectCornerRadiusObject(rObj)[key],
-              cornerRadiusSnapshot: rectCornerRadiusObject(rObj),
-            });
-            return;
-          }
-        }
-      } else if (so.type === "path" && so.visible && !so.locked) {
-        const rawPath = so as PathObject;
-        if (rawPath.points?.length >= 3) {
-          const worldPath = pathAnchorsToWorld(rawPath);
-          const rings = getPathRings(worldPath);
-          const ringClosed = pathRingClosedForD(!!worldPath.closed, rings.length);
-          const hitR = 8 / viewport.zoom;
-          let gBase = 0;
-          for (const ring of rings) {
-            for (let pi = 0; pi < ring.length; pi++) {
-              const gIdx = gBase + pi;
-              const widget = pathCornerWidgetPointForRingPoint(ring, pi, ringClosed, viewport.zoom);
-              if (!widget || dist(pos, widget) > hitR) continue;
-              if (e.detail >= 2) {
-                const next = objects.map((o) => {
-                  if (o.id !== rawPath.id || o.type !== "path") return o;
-                  const p = o as PathObject;
-                  return {
-                    ...p,
-                    points: p.points.map((point, idx) =>
-                      idx === gIdx ? { ...point, vertexMode: "corner" as const, cornerMode: true, cornerRadius: 0 } : point,
-                    ),
-                  };
-                });
-                setObjects(next);
-                pushHistory(next, new Set([rawPath.id]));
-                return;
-              }
-              setSelectedPoints(new Map([[rawPath.id, new Set([gIdx])]]));
-              setDragState({
-                type: "pathCornerRadius",
-                startX: e.clientX,
-                startY: e.clientY,
-                pathCornerRadiusObjId: rawPath.id,
-                pathCornerRadiusPointIdx: gIdx,
-                pathCornerRadiusLinked: pathCornerRadiusLinked && !e.altKey,
-              });
-              return;
-            }
-            gBase += ring.length;
           }
         }
       }
@@ -19922,25 +19958,43 @@ export function FreehandStudioCanvas({
       }
       const scale = canvasScaleFromPointer(viewport.zoom);
       let mdx = dx * scale, mdy = dy * scale;
+      let lockedMoveAxis: "x" | "y" | null = null;
 
       if (isShiftHeld(e)) {
-        const c = snapDeltaTo45(mdx, mdy);
+        const c = constrainDeltaToPrimaryAxis(mdx, mdy);
         mdx = c.x; mdy = c.y;
+        lockedMoveAxis = c.axis;
       }
 
       if (snapEnabled && dragState.positions.size > 0) {
+        const movingIds = new Set(dragState.positions.keys());
         const tentBounds = getGroupBounds(
-          Array.from(dragState.positions.entries()).map(([id, p]) => {
-            const obj = objects.find((o) => o.id === id)!;
-            return { ...obj, x: p.x + mdx, y: p.y + mdy };
+          Array.from(dragState.positions.keys()).map((id) => {
+            const src = dragState.moveSnapshot?.get(id) ?? objects.find((o) => o.id === id)!;
+            return translateFreehandObject(src, mdx, mdy);
           })
         );
         const vg = layoutGuidesRef.current.filter((g) => g.orientation === "vertical").map((g) => g.position);
         const hg = layoutGuidesRef.current.filter((g) => g.orientation === "horizontal").map((g) => g.position);
-        const snap = computeSnap(tentBounds, objects, selectedIdsRef.current, viewport.zoom, { vertical: vg, horizontal: hg });
-        mdx += snap.dx;
-        mdy += snap.dy;
-        setSnapGuides(snap.guides);
+        const primaryArtboard = pickPrimaryArtboard(artboardsRef.current, null);
+        const pageRect = primaryArtboard ? artboardToRect(primaryArtboard) : null;
+        const pageCenter = pageRect ? { x: pageRect.x + pageRect.w / 2, y: pageRect.y + pageRect.h / 2 } : null;
+        const snap = computeSnap(tentBounds, objects, movingIds, viewport.zoom, {
+          vertical: vg,
+          horizontal: hg,
+          pageCenter,
+        });
+        if (lockedMoveAxis === "x") {
+          mdx += snap.dx;
+          setSnapGuides(snap.guides.filter((g) => g.type === "line" && g.axis === "x"));
+        } else if (lockedMoveAxis === "y") {
+          mdy += snap.dy;
+          setSnapGuides(snap.guides.filter((g) => g.type === "line" && g.axis === "y"));
+        } else {
+          mdx += snap.dx;
+          mdy += snap.dy;
+          setSnapGuides(snap.guides);
+        }
       } else {
         setSnapGuides([]);
       }
@@ -20386,20 +20440,35 @@ export function FreehandStudioCanvas({
       const scale = canvasScaleFromPointer(viewport.zoom);
       const h = dragState.textBoxResizeHandle;
       const s = dragState.textBoxResizeStart;
-      let nx = s.x;
-      let ny = s.y;
       let nw = s.w;
       let nh = s.h;
-      if (h.includes("e")) nw = Math.max(20, s.w + dx * scale);
-      if (h.includes("s")) nh = Math.max(20, s.h + dy * scale);
-      if (h.includes("w")) {
-        nw = Math.max(20, s.w - dx * scale);
-        nx = s.x + (s.w - nw);
-      }
-      if (h.includes("n")) {
-        nh = Math.max(20, s.h - dy * scale);
-        ny = s.y + (s.h - nh);
-      }
+      const dLocal = worldDeltaToLocal({ x: dx * scale, y: dy * scale }, s.angleDeg);
+      const sxAbs = Math.max(1e-6, Math.abs(s.scaleX));
+      const syAbs = Math.max(1e-6, Math.abs(s.scaleY));
+
+      if (h.includes("e")) nw = Math.max(20, s.w + dLocal.x / sxAbs);
+      if (h.includes("s")) nh = Math.max(20, s.h + dLocal.y / syAbs);
+      if (h.includes("w")) nw = Math.max(20, s.w - dLocal.x / sxAbs);
+      if (h.includes("n")) nh = Math.max(20, s.h - dLocal.y / syAbs);
+
+      const startVisW = s.w * sxAbs;
+      const startVisH = s.h * syAbs;
+      const nextVisW = nw * sxAbs;
+      const nextVisH = nh * syAbs;
+      let centerShiftLocalX = 0;
+      let centerShiftLocalY = 0;
+      if (h.includes("e")) centerShiftLocalX = (nextVisW - startVisW) / 2;
+      if (h.includes("w")) centerShiftLocalX = -(nextVisW - startVisW) / 2;
+      if (h.includes("s")) centerShiftLocalY = (nextVisH - startVisH) / 2;
+      if (h.includes("n")) centerShiftLocalY = -(nextVisH - startVisH) / 2;
+
+      const startCx = s.x + s.w / 2;
+      const startCy = s.y + s.h / 2;
+      const th = degToRad(s.angleDeg);
+      const nextCx = startCx + centerShiftLocalX * Math.cos(th) - centerShiftLocalY * Math.sin(th);
+      const nextCy = startCy + centerShiftLocalX * Math.sin(th) + centerShiftLocalY * Math.cos(th);
+      const nx = nextCx - nw / 2;
+      const ny = nextCy - nh / 2;
       setObjects((prev) =>
         prev.map((o) => {
           if (o.id !== dragState.textBoxResizeObjectId || o.type !== "text") return o;
@@ -20722,7 +20791,7 @@ export function FreehandStudioCanvas({
           }
         }
 
-        if (selectedObjects.length === 1 && selectedObjects[0]?.type === "rect" && !overTransformHandle) {
+        if (activeTool === "directSelect" && selectedObjects.length === 1 && selectedObjects[0]?.type === "rect" && !overTransformHandle) {
           const r = rectObjectWithNormalizedCorners(selectedObjects[0] as RectObject);
           const handles = cornerRadiusHandleWorldPoints(r);
           const hitR = 7 / viewport.zoom;
@@ -25363,7 +25432,7 @@ export function FreehandStudioCanvas({
               })()}
 
             {!canvasZenMode &&
-              (activeTool === "select" || activeTool === "directSelect") &&
+              activeTool === "directSelect" &&
               selectedObjects.length === 1 &&
               selectedObjects[0]?.type === "rect" &&
               (() => {
@@ -25405,7 +25474,7 @@ export function FreehandStudioCanvas({
               })()}
 
             {!canvasZenMode &&
-              activeTool === "select" &&
+              activeTool === "directSelect" &&
               selectedObjects.length === 1 &&
               selectedObjects[0]?.type === "path" &&
               (() => {
@@ -25807,11 +25876,11 @@ export function FreehandStudioCanvas({
                   </g>
                 );
               }
-              return g.type === "line" && g.axis === "x"
-                ? <line key={`sg-${i}`} x1={g.pos} y1={-99999} x2={g.pos} y2={99999} stroke="#f472b6" strokeWidth={1 / viewport.zoom} data-ui="snap" />
-                : g.type === "line"
-                  ? <line key={`sg-${i}`} x1={-99999} y1={g.pos!} x2={99999} y2={g.pos!} stroke="#f472b6" strokeWidth={1 / viewport.zoom} data-ui="snap" />
-                  : null;
+              if (g.type !== "line") return null;
+              const stroke = g.source === "page" ? "#38bdf8" : "#f472b6";
+              return g.axis === "x"
+                ? <line key={`sg-${i}`} x1={g.pos} y1={-99999} x2={g.pos} y2={99999} stroke={stroke} strokeWidth={1 / viewport.zoom} data-ui="snap" />
+                : <line key={`sg-${i}`} x1={-99999} y1={g.pos} x2={99999} y2={g.pos} stroke={stroke} strokeWidth={1 / viewport.zoom} data-ui="snap" />;
             })}
           </g>
         </svg>
@@ -28814,6 +28883,37 @@ export function FreehandStudioCanvas({
                       >
                         Convert to outlines
                       </button>
+
+                      <div className="space-y-2 border-t border-white/[0.08] pt-2">
+                        <div className={tfSec}>CONTENT</div>
+                        <button
+                          type="button"
+                          disabled={textContentBusy != null}
+                          onClick={() => void applyTextContentTransform("correct")}
+                          className="inline-flex h-8 w-full items-center justify-center gap-2 rounded-[6px] border border-[#2d2f34] bg-[#1e2024] px-2 text-[11px] font-medium text-zinc-100 transition hover:border-[#3f4249] hover:bg-[#252830] disabled:cursor-wait disabled:opacity-60"
+                        >
+                          {textContentBusy === "correct" ? <Loader2 size={13} className="animate-spin" aria-hidden /> : <Sparkles size={13} aria-hidden />}
+                          Corregir texto
+                        </button>
+                        <select
+                          value=""
+                          disabled={textContentBusy != null}
+                          onChange={(e) => {
+                            const lang = e.target.value as TextContentTargetLanguage;
+                            if (lang) void applyTextContentTransform("translate", lang);
+                          }}
+                          className="h-8 min-h-0 w-full rounded-[6px] border border-[#2d2f34] bg-[#1e2024] px-2 py-0 text-[11px] text-zinc-100 disabled:cursor-wait disabled:opacity-60"
+                        >
+                          <option value="">
+                            {textContentBusy?.startsWith("translate:") ? "Traduciendo..." : "Traducir a..."}
+                          </option>
+                          {TEXT_CONTENT_LANGUAGE_OPTIONS.map((lang) => (
+                            <option key={lang.value} value={lang.value}>
+                              {lang.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
                   );
                 })()}
