@@ -84,13 +84,9 @@ function resolveRunTypo(base: Typography, style?: SpanStyle): Typography {
 function measureText(ctx: CanvasRenderingContext2D, text: string, typo: Typography): number {
   if (!text.length) return 0;
   ctx.font = fontStringFromTypography(typo);
-  // `letterSpacing` in our model is already in px (same as CSS letter-spacing numeric in React style).
-  const extra = typo.letterSpacing;
-  let w = 0;
-  for (let i = 0; i < text.length; i++) {
-    w += ctx.measureText(text[i]!).width + (i < text.length - 1 ? extra : 0);
-  }
-  return w;
+  // Measure the shaped string as a whole: summing chars loses kerning/ligatures and overestimates custom fonts.
+  const tracking = typo.letterSpacing * Math.max(0, text.length - 1);
+  return ctx.measureText(text).width + tracking;
 }
 
 /** Misma tipografía resuelta → mismo trazo para agrupar y usar `measureText` sobre la subcadena (kerning). */
@@ -285,8 +281,12 @@ export function layoutRichTextInFrame(
     });
 
     charIdx = lineEnd;
+    const consumedHardBreak = charIdx < chars.length && chars[charIdx]!.ch === "\n";
+    if (charIdx < chars.length && chars[charIdx]!.ch === "\n") {
+      charIdx++;
+    }
     // Skip trailing space at line break
-    if (charIdx < chars.length && chars[charIdx]!.ch === " " && lineEnd < chars.length) {
+    if (!consumedHardBreak && charIdx < chars.length && chars[charIdx]!.ch === " " && lineEnd < chars.length) {
       charIdx++;
     }
     totalConsumed = charIdx;
@@ -324,7 +324,7 @@ export function layoutStory(
   frameById: Map<string, TextFrame>,
 ): FrameLayout[] {
   const flatRuns = flattenStoryContent(story.content);
-  const stream = serializeStoryContent(story.content);
+  const flatStreamLength = flatRuns.reduce((sum, run) => sum + run.text.length, 0);
   const ctx = getLayoutCanvasContext();
 
   const out: FrameLayout[] = [];
@@ -387,7 +387,7 @@ export function layoutStory(
     });
   }
 
-  const trailing = stream.length - cursor;
+  const trailing = flatStreamLength - cursor;
   if (out.length > 0 && trailing > 0) {
     const last = out[out.length - 1]!;
     out[out.length - 1] = { ...last, hasOverflow: true };

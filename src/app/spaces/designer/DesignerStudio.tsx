@@ -20,12 +20,13 @@ import { computeFittingLayout } from "../indesign/image-frame-layout";
 import { layoutPageStories } from "../indesign/text-layout";
 import type { Story, StoryNode, TextFrame, Typography } from "../indesign/text-model";
 import {
+  flattenStoryContent,
   serializeStoryContent,
   plainTextToStoryNodes,
   htmlToStoryNodes,
   storyNodesToHtml,
-  flattenStoryContent,
   sliceStoryContent,
+  replaceStoryContentRangePreservingParagraphs,
   DEFAULT_TYPOGRAPHY,
 } from "../indesign/text-model";
 import {
@@ -87,6 +88,10 @@ function safeDesignerExportFilenameBase(raw: string | undefined): string {
     .replace(/^_+|_+$/g, "")
     .slice(0, 80);
   return base || "diseno";
+}
+
+function flatStoryText(nodes: StoryNode[]): string {
+  return flattenStoryContent(nodes).map((run) => run.text).join("");
 }
 
 export default function DesignerStudio({
@@ -207,6 +212,7 @@ export default function DesignerStudio({
 
   const studioApiRef = useRef<DesignerStudioApi | null>(null);
   const designerClipboardRef = useRef<FreehandObject[] | null>(null);
+  const threadedTextEditRangeRef = useRef<Map<string, { storyId: string; start: number; end: number }>>(new Map());
   /** Página donde se hizo la última copia (⌘C) al portapapeles Designer; sirve para pegar sin desplazar entre páginas. */
   const designerClipboardSourcePageIdRef = useRef<string | null>(null);
 
@@ -523,8 +529,9 @@ export default function DesignerStudio({
   // ── Text frame editing end ──
 
   const handleDesignerTextFrameEdit = useCallback(
-    (frameId: string, storyId: string, newText: string, richHtml?: string) => {
+    (frameId: string, storyId: string, newText: string, richHtml?: string, phase: "input" | "commit" = "input") => {
       const idx = activeIdxRef.current;
+      const editRangeAtCall = threadedTextEditRangeRef.current.get(frameId);
       let updatedStories: Story[] | null = null;
       let textFramesForPatch: TextFrame[] = [];
       setPages((prev) => {
@@ -541,27 +548,59 @@ export default function DesignerStudio({
         const newNodes = richHtml
           ? normalizeInlineRichNodes(htmlToStoryNodes(richHtml))
           : plainTextToStoryNodes(newText);
+        const replacementFlatText = flatStoryText(newNodes);
+        const replacementFlatLength = replacementFlatText.length;
 
         let nextStories: Story[];
         if (story.frames.length <= 1) {
           nextStories = stories.map((s) =>
             s.id === storyId ? { ...s, content: newNodes } : s,
           );
+          if (phase !== "commit") {
+            threadedTextEditRangeRef.current.set(frameId, {
+              storyId,
+              start: 0,
+              end: replacementFlatLength,
+            });
+          }
         } else {
           const layouts = layoutPageStories(stories, textFrames);
           const frameLayout = layouts.find((l) => l.frameId === frameId);
           if (frameLayout) {
-            const before = sliceStoryContent(normalizedStoryContent, 0, frameLayout.contentRange.start);
-            const currentRangeLen = Math.max(0, frameLayout.contentRange.end - frameLayout.contentRange.start);
-            const nextRangeLen = flattenStoryContent(newNodes).reduce((sum, run) => sum + run.text.length, 0);
-            /**
-             * Si el frame se encoge por reflow (p.ej. salto manual de línea), parte del texto que el editor todavía tiene
-             * ya puede haberse movido al siguiente frame. Extendemos el corte del "after" para evitar solape/duplicado.
-             */
-            const overlapCompensatedEnd =
-              frameLayout.contentRange.end + Math.max(0, nextRangeLen - currentRangeLen);
-            const after = sliceStoryContent(normalizedStoryContent, overlapCompensatedEnd, Number.MAX_SAFE_INTEGER);
-            const merged = normalizeInlineRichNodes([...before, ...newNodes, ...after]);
+            const activeRange = editRangeAtCall;
+            const storyFlat = flatStoryText(normalizedStoryContent);
+            const totalLen = storyFlat.length;
+            const rangeStart =
+              activeRange?.storyId === storyId && activeRange.start === frameLayout.contentRange.start
+                ? Math.max(0, Math.min(activeRange.start, totalLen))
+                : frameLayout.contentRange.start;
+            let rangeEnd =
+              activeRange?.storyId === storyId && activeRange.start === frameLayout.contentRange.start
+                ? Math.max(rangeStart, Math.min(activeRange.end, totalLen))
+                : frameLayout.contentRange.end;
+
+            if (
+              replacementFlatLength > 0 &&
+              storyFlat.slice(rangeStart, rangeStart + replacementFlatLength) === replacementFlatText
+            ) {
+              rangeEnd = Math.max(rangeEnd, Math.min(rangeStart + replacementFlatLength, totalLen));
+            }
+
+            const merged = normalizeInlineRichNodes(
+              replaceStoryContentRangePreservingParagraphs(
+                normalizedStoryContent,
+                rangeStart,
+                rangeEnd,
+                newNodes,
+              ),
+            );
+            if (phase !== "commit") {
+              threadedTextEditRangeRef.current.set(frameId, {
+                storyId,
+                start: rangeStart,
+                end: rangeStart + replacementFlatLength,
+              });
+            }
             nextStories = stories.map((s) =>
               s.id === storyId ? { ...s, content: merged } : s,
             );
@@ -597,6 +636,9 @@ export default function DesignerStudio({
             _designerRichSpans: richSpans,
           });
         }
+      }
+      if (phase === "commit") {
+        threadedTextEditRangeRef.current.delete(frameId);
       }
     },
     [normalizeInlineRichNodes],
@@ -896,7 +938,7 @@ export default function DesignerStudio({
   const appendGuardRef = useRef<string | null>(null);
 
   const handleAppendThreadedFrame = useCallback(
-    (sourceFrameId: string) => {
+    (sourceFrameId: string, pendingEdit?: { plain: string; richHtml: string }) => {
       if (appendGuardRef.current === sourceFrameId) return;
       appendGuardRef.current = sourceFrameId;
       setTimeout(() => { appendGuardRef.current = null; }, 300);
@@ -907,7 +949,7 @@ export default function DesignerStudio({
       const p = pagesRef.current[idx];
       if (!p) return;
 
-      const stories = p.stories ?? [];
+      let stories = p.stories ?? [];
       const textFrames = p.textFrames ?? [];
       const sourceTf = textFrames.find(tf => tf.id === sourceFrameId);
       if (!sourceTf) return;
@@ -916,6 +958,63 @@ export default function DesignerStudio({
       if (story) {
         const frameIdx = story.frames.indexOf(sourceFrameId);
         if (frameIdx >= 0 && frameIdx < story.frames.length - 1) return;
+      }
+
+      if (pendingEdit && story) {
+        const newNodes = normalizeInlineRichNodes(htmlToStoryNodes(pendingEdit.richHtml));
+        const replacementFlatText = flatStoryText(newNodes);
+        const replacementFlatLength = replacementFlatText.length;
+        if (story.frames.length <= 1) {
+          stories = stories.map((s) =>
+            s.id === story.id ? { ...s, content: newNodes } : s,
+          );
+          threadedTextEditRangeRef.current.set(sourceFrameId, {
+            storyId: story.id,
+            start: 0,
+            end: replacementFlatLength,
+          });
+        } else {
+          const layouts = layoutPageStories(stories, textFrames);
+          const frameLayout = layouts.find((l) => l.frameId === sourceFrameId);
+          if (frameLayout) {
+            const normalizedStoryContent = normalizeInlineRichNodes(story.content);
+            const activeRange = threadedTextEditRangeRef.current.get(sourceFrameId);
+            const storyFlat = flatStoryText(normalizedStoryContent);
+            const totalLen = storyFlat.length;
+            const rangeStart =
+              activeRange?.storyId === story.id && activeRange.start === frameLayout.contentRange.start
+                ? Math.max(0, Math.min(activeRange.start, totalLen))
+                : frameLayout.contentRange.start;
+            let rangeEnd =
+              activeRange?.storyId === story.id && activeRange.start === frameLayout.contentRange.start
+                ? Math.max(rangeStart, Math.min(activeRange.end, totalLen))
+                : frameLayout.contentRange.end;
+
+            if (
+              replacementFlatLength > 0 &&
+              storyFlat.slice(rangeStart, rangeStart + replacementFlatLength) === replacementFlatText
+            ) {
+              rangeEnd = Math.max(rangeEnd, Math.min(rangeStart + replacementFlatLength, totalLen));
+            }
+
+            const merged = normalizeInlineRichNodes(
+              replaceStoryContentRangePreservingParagraphs(
+                normalizedStoryContent,
+                rangeStart,
+                rangeEnd,
+                newNodes,
+              ),
+            );
+            threadedTextEditRangeRef.current.set(sourceFrameId, {
+              storyId: story.id,
+              start: rangeStart,
+              end: rangeStart + replacementFlatLength,
+            });
+            stories = stories.map((s) =>
+              s.id === story.id ? { ...s, content: merged } : s,
+            );
+          }
+        }
       }
 
       const pageDims = getPageDimensions(p);
@@ -927,6 +1026,9 @@ export default function DesignerStudio({
       const result = appendTextFrameAfter(stories, textFrames, sourceFrameId, box);
 
       const newFrame = result.textFrames.find(tf => !textFrames.some(old => old.id === tf.id));
+      const newLayouts = layoutPageStories(result.stories, result.textFrames);
+      const storyById = new Map(result.stories.map((s) => [s.id, s]));
+      const layoutByFrameId = new Map(newLayouts.map((layout) => [layout.frameId, layout]));
 
       setPages((prev) => {
         const n = [...prev];
@@ -937,12 +1039,19 @@ export default function DesignerStudio({
       if (newFrame) {
         const story = result.stories.find(s => s.id === newFrame.storyId);
         const typo = story?.typography ?? DEFAULT_TYPOGRAPHY;
+        const newFrameLayout = layoutByFrameId.get(newFrame.id);
+        const newFrameContent = story && newFrameLayout
+          ? sliceStoryContent(story.content, newFrameLayout.contentRange.start, newFrameLayout.contentRange.end)
+          : [];
+        const newFrameText = newFrameContent.length > 0 ? serializeStoryContent(newFrameContent) : "";
+        const newFrameRichSpans = newFrameContent.length > 0 ? buildRichSpansForFrame(newFrameContent) : undefined;
+        const newFrameIndex = story ? story.frames.indexOf(newFrame.id) : -1;
 
         const newObj = {
           id: newFrame.id,
           type: "text" as const,
           textMode: "area" as const,
-          text: "",
+          text: newFrameText,
           x: newFrame.x,
           y: newFrame.y,
           width: newFrame.width,
@@ -973,11 +1082,33 @@ export default function DesignerStudio({
           name: `Text Frame`,
           isTextFrame: true,
           storyId: newFrame.storyId,
+          _designerOverflow: newFrameLayout?.hasOverflow ?? false,
+          _designerThreadInfo: story && story.frames.length > 1
+            ? { index: Math.max(0, newFrameIndex), total: story.frames.length }
+            : undefined,
+          _designerRichSpans: newFrameRichSpans,
         } as FreehandObject;
 
         api.addObject(newObj);
+        for (const fl of newLayouts) {
+          if (fl.storyId !== newFrame.storyId) continue;
+          const st = storyById.get(fl.storyId);
+          if (!st) continue;
+          const frameContent = sliceStoryContent(st.content, fl.contentRange.start, fl.contentRange.end);
+          const frameIdx = st.frames.indexOf(fl.frameId);
+          api.patchObject(fl.frameId, {
+            text: serializeStoryContent(frameContent),
+            storyId: fl.storyId,
+            _designerOverflow: fl.hasOverflow,
+            _designerThreadInfo: st.frames.length > 1
+              ? { index: Math.max(0, frameIdx), total: st.frames.length }
+              : undefined,
+            _designerRichSpans: buildRichSpansForFrame(frameContent),
+          });
+        }
         api.setSelectedIds(new Set([newObj.id]));
       }
+      threadedTextEditRangeRef.current.delete(sourceFrameId);
     },
     [],
   );

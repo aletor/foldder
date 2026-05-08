@@ -18,10 +18,19 @@ export type DesignerEmbedProps = {
   onDesignerImageFrameImportFile?: (frameId: string, file: File) => void | Promise<void>;
   /** Imperative API ref for external object mutations (DesignerStudio ↔ FreehandStudio). */
   studioApiRef?: React.MutableRefObject<DesignerStudioApi | null>;
-  /** Called when text editing ends on a text frame (blur). */
-  onDesignerTextFrameEdit?: (frameId: string, storyId: string, newText: string, richHtml?: string) => void;
+  /** Called when threaded text changes; `commit` marks the end of the inline edit session. */
+  onDesignerTextFrameEdit?: (
+    frameId: string,
+    storyId: string,
+    newText: string,
+    richHtml?: string,
+    phase?: "input" | "commit",
+  ) => void;
   /** Called when user requests a threaded continuation frame from an overflowing text frame. */
-  onDesignerAppendThreadedFrame?: (sourceFrameId: string) => void;
+  onDesignerAppendThreadedFrame?: (
+    sourceFrameId: string,
+    pendingEdit?: { plain: string; richHtml: string },
+  ) => void;
   /** Serialized story content by storyId, for panel display. */
   designerStoryMap?: Map<string, string>;
   /** Rich HTML story content by storyId, for panel rich editor. */

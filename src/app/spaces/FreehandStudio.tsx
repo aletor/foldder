@@ -11030,6 +11030,22 @@ export function FreehandStudioCanvas({
     );
   }, []);
 
+  const syncThreadedTextEditorToStory = useCallback((editor: HTMLElement | null, phase: "input" | "commit" = "input"): boolean => {
+    if (!editor || editor.getAttribute("data-fh-simple-text-editor") === "true") return false;
+    const objectId = editor.getAttribute("data-fh-text-editor-object-id") || inlineFrameEditorObjectIdRef.current || "";
+    if (!objectId) return false;
+    const richHtml = normalizeInlineFrameRichHtml(editor.innerHTML);
+    const plain = editor.innerText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    setObjects((prev) =>
+      prev.map((o) => (o.id === objectId && o.type === "text" ? ({ ...o, text: plain } as FreehandObject) : o)),
+    );
+    const editedObj = objectsRef.current.find((o) => o.id === objectId) as TextObject | undefined;
+    if (editedObj?.isTextFrame && editedObj.storyId && onDesignerTextFrameEdit) {
+      onDesignerTextFrameEdit(editedObj.id, editedObj.storyId, plain, richHtml, phase);
+    }
+    return true;
+  }, [onDesignerTextFrameEdit]);
+
   const getSimpleTextEditorForInlineStyle = useCallback((): HTMLElement | null => {
     if (typeof document === "undefined") return null;
     const activeEl = document.activeElement as HTMLElement | null;
@@ -11039,6 +11055,30 @@ export function FreehandStudioCanvas({
     if (current?.getAttribute("data-fh-simple-text-editor") === "true") return current;
     return null;
   }, []);
+
+  const pendingThreadedTextEditForFrame = useCallback((frameId: string): { plain: string; richHtml: string } | undefined => {
+    const editor = inlineFrameEditorRef.current;
+    if (!editor || inlineFrameEditorObjectIdRef.current !== frameId) return undefined;
+    if (editor.getAttribute("data-fh-simple-text-editor") === "true") return undefined;
+    return {
+      plain: editor.innerText.replace(/\r\n/g, "\n").replace(/\r/g, "\n"),
+      richHtml: normalizeInlineFrameRichHtml(editor.innerHTML),
+    };
+  }, []);
+
+  const appendThreadedFrameFromCanvas = useCallback(
+    (frameId: string) => {
+      const pending = pendingThreadedTextEditForFrame(frameId);
+      if (pending) {
+        setObjects((prev) =>
+          prev.map((o) => (o.id === frameId && o.type === "text" ? ({ ...o, text: pending.plain } as FreehandObject) : o)),
+        );
+        setTextEditingId((curr) => (curr === frameId ? null : curr));
+      }
+      onDesignerAppendThreadedFrame?.(frameId, pending);
+    },
+    [onDesignerAppendThreadedFrame, pendingThreadedTextEditForFrame],
+  );
 
   const applyInlineCssToSimpleTextSelection = useCallback(
     (style: Partial<Pick<SpanStyle, "fontWeight" | "fontStyle" | "color">>) => {
@@ -19380,7 +19420,7 @@ export function FreehandStudioCanvas({
           const portCx = tfObj.x + tfObj.width + 13;
           const portCy = tfObj.y + tfObj.height + 1;
           if (dist(pos, { x: portCx, y: portCy }) < 14 / viewport.zoom) {
-            onDesignerAppendThreadedFrame?.(tfObj.id);
+            appendThreadedFrameFromCanvas(tfObj.id);
             return;
           }
         }
@@ -22655,7 +22695,7 @@ export function FreehandStudioCanvas({
       const canUnlinkTf = tfi && tfi.index > 0;
       return [
         ...(single._designerOverflow ? [
-          { label: "Añadir marco enlazado ↗", action: () => onDesignerAppendThreadedFrame?.(single.id) },
+          { label: "Añadir marco enlazado ↗", action: () => appendThreadedFrameFromCanvas(single.id) },
         ] : []),
         ...(canUnlinkTf ? [
           { label: "Romper enlace entrante", action: () => onDesignerUnlinkTextFrame?.(single.id), separator: true },
@@ -25657,10 +25697,13 @@ export function FreehandStudioCanvas({
                     {hasOverflow && !hasOut && isSelected && (
                       <g
                         style={{ cursor: "pointer" }}
-                        onPointerDown={(e) => e.stopPropagation()}
+                        onPointerDown={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                        }}
                         onClick={(e) => {
                           e.stopPropagation();
-                          onDesignerAppendThreadedFrame?.(t.id);
+                          appendThreadedFrameFromCanvas(t.id);
                         }}
                       >
                         <rect x={t.x + foW + 4} y={t.y + foH - 8} width={18} height={18} rx={4} fill="#ef4444" opacity={0.95} />
@@ -26003,6 +26046,7 @@ export function FreehandStudioCanvas({
                   }
                 }}
                 data-fh-text-editor
+                data-fh-text-editor-object-id={to.id}
                 contentEditable
                 suppressContentEditableWarning
                 spellCheck
@@ -26015,19 +26059,7 @@ export function FreehandStudioCanvas({
                   ev.stopPropagation();
                 }}
                 onInput={(ev) => {
-                  const el = ev.currentTarget;
-                  const plain = el.innerText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-                  const richHtml = normalizeInlineFrameRichHtml(el.innerHTML);
-                  setObjects((prev) =>
-                    prev.map((o) => {
-                      if (o.id !== to.id || o.type !== "text") return o;
-                      const t = o as TextObject;
-                      return { ...t, text: plain };
-                    }),
-                  );
-                  if (to.storyId && onDesignerTextFrameEdit) {
-                    onDesignerTextFrameEdit(to.id, to.storyId, plain, richHtml);
-                  }
+                  syncThreadedTextEditorToStory(ev.currentTarget);
                 }}
                 onKeyDown={(ev) => {
                   if (ev.key === "Escape") {
@@ -26041,23 +26073,12 @@ export function FreehandStudioCanvas({
                   if (k === "b" || k === "i" || k === "u") {
                     ev.preventDefault();
                     document.execCommand(k === "b" ? "bold" : k === "i" ? "italic" : "underline", false);
+                    syncThreadedTextEditorToStory(ev.currentTarget);
                   }
                 }}
                 onBlur={(ev) => {
-                  const richHtml = normalizeInlineFrameRichHtml(ev.currentTarget.innerHTML);
-                  const plain = ev.currentTarget.innerText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-                  setObjects((prev) =>
-                    prev.map((o) => {
-                      if (o.id !== to.id || o.type !== "text") return o;
-                      const t = o as TextObject;
-                      return { ...t, text: plain };
-                    }),
-                  );
-                  const editedObj = objectsRef.current.find((o) => o.id === to.id) as TextObject | undefined;
+                  syncThreadedTextEditorToStory(ev.currentTarget, "commit");
                   pushHistory(objectsRef.current, selectedIdsRef.current);
-                  if (editedObj?.isTextFrame && onDesignerTextFrameEdit && editedObj.storyId) {
-                    onDesignerTextFrameEdit(editedObj.id, editedObj.storyId, plain, richHtml);
-                  }
                   setTextEditingId(null);
                 }}
               />
@@ -28566,6 +28587,8 @@ export function FreehandStudioCanvas({
                     if (editor.getAttribute("data-fh-simple-text-editor") === "true") {
                       syncSimpleTextEditorToObject(editor);
                       captureSimpleTextSelection(editor);
+                    } else {
+                      syncThreadedTextEditorToStory(editor);
                     }
                     return true;
                   };

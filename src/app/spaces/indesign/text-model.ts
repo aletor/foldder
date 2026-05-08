@@ -607,6 +607,91 @@ export function sliceStoryContent(nodes: StoryNode[], start: number, end: number
   return out.length > 0 ? out : [{ type: "paragraph", id: uid("p"), spans: [{ id: uid("s"), text: "" }] }];
 }
 
+function storyFlatLength(nodes: StoryNode[]): number {
+  return flattenStoryContent(nodes).reduce((sum, run) => sum + run.text.length, 0);
+}
+
+function storyBoundaryInsideParagraph(nodes: StoryNode[], boundary: number): boolean {
+  const paragraphs = nodes.filter((n): n is ParagraphNode => n.type === "paragraph");
+  let pos = 0;
+  for (let pi = 0; pi < paragraphs.length; pi++) {
+    const p = paragraphs[pi]!;
+    if (pi > 0) pos += 1;
+    const prefixLen = listPrefixFlatLength(paragraphs, pi);
+    const textStart = pos + prefixLen;
+    const textEnd = textStart + p.spans.reduce((sum, sp) => sum + sp.text.length, 0);
+    if (boundary > textStart && boundary < textEnd) return true;
+    pos = textEnd;
+  }
+  return false;
+}
+
+function cloneSpanNode(sp: SpanNode): SpanNode {
+  return {
+    id: uid("s"),
+    text: sp.text,
+    ...(sp.style ? { style: { ...sp.style } } : {}),
+  };
+}
+
+function cloneParagraphNode(p: ParagraphNode): ParagraphNode {
+  return {
+    type: "paragraph",
+    id: uid("p"),
+    spans: p.spans.map(cloneSpanNode),
+    ...(p.listStyle ? { listStyle: p.listStyle } : {}),
+  };
+}
+
+function mergeParagraphNodes(left: ParagraphNode, right: ParagraphNode): ParagraphNode {
+  const spans = [...left.spans, ...right.spans]
+    .filter((sp) => sp.text.length > 0)
+    .map(cloneSpanNode);
+  return {
+    type: "paragraph",
+    id: uid("p"),
+    spans: spans.length > 0 ? spans : [{ id: uid("s"), text: "" }],
+    ...(left.listStyle ? { listStyle: left.listStyle } : right.listStyle ? { listStyle: right.listStyle } : {}),
+  };
+}
+
+/**
+ * Replace a flat character range without turning frame-flow cuts into real paragraph breaks.
+ * Threaded text frames often split one paragraph across boxes; replacing one frame's slice by
+ * concatenating `before + replacement + after` would insert `\n` at those artificial cuts.
+ */
+export function replaceStoryContentRangePreservingParagraphs(
+  nodes: StoryNode[],
+  start: number,
+  end: number,
+  replacement: StoryNode[],
+): StoryNode[] {
+  const totalLen = storyFlatLength(nodes);
+  const s = Math.max(0, Math.min(start, totalLen));
+  const e = Math.max(s, Math.min(end, totalLen));
+
+  let before = s > 0 ? sliceStoryContent(nodes, 0, s).map(cloneParagraphNode) : [];
+  let middle = replacement.length > 0
+    ? replacement.map((n) => cloneParagraphNode(n as ParagraphNode))
+    : [{ type: "paragraph" as const, id: uid("p"), spans: [{ id: uid("s"), text: "" }] }];
+  let after = e < totalLen ? sliceStoryContent(nodes, e, totalLen).map(cloneParagraphNode) : [];
+
+  if (before.length > 0 && middle.length > 0 && storyBoundaryInsideParagraph(nodes, s)) {
+    const merged = mergeParagraphNodes(before[before.length - 1]!, middle[0]!);
+    before = before.slice(0, -1);
+    middle = [merged, ...middle.slice(1)];
+  }
+
+  if (middle.length > 0 && after.length > 0 && storyBoundaryInsideParagraph(nodes, e)) {
+    const merged = mergeParagraphNodes(middle[middle.length - 1]!, after[0]!);
+    middle = [...middle.slice(0, -1), merged];
+    after = after.slice(1);
+  }
+
+  const out = [...before, ...middle, ...after];
+  return out.length > 0 ? out : [{ type: "paragraph", id: uid("p"), spans: [{ id: uid("s"), text: "" }] }];
+}
+
 export function uid(prefix: string) {
   return `${prefix}_${Math.random().toString(36).slice(2, 11)}`;
 }
