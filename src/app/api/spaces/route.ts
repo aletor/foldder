@@ -10,6 +10,7 @@ import {
   readAllDdbProjects as readAllDdbProjectsStore,
   readAllDdbProjectsMeta as readAllDdbProjectsMetaStore,
   readDdbProjectById as readDdbProjectByIdStore,
+  SpacesRevisionConflictError,
   upsertDdbProject as upsertDdbProjectStore,
   type ProjectListItem,
   type ProjectRecord,
@@ -30,9 +31,11 @@ type SpaceNodeGraph = {
 };
 
 type ProjectBody = {
+  expectedRevision?: number | null;
   id?: string;
   metadata?: Record<string, unknown>;
   name?: string;
+  revision?: number | null;
   rootSpaceId?: string;
   spaces?: Record<string, SpaceNodeGraph>;
 };
@@ -114,9 +117,9 @@ async function readProjectByIdResilient(id: string): Promise<ProjectRecord | nul
 
 async function writeDdbProject(
   project: ProjectRecord,
-  options?: { allowProjectIdMetaScan?: boolean },
-): Promise<void> {
-  await upsertDdbProjectStore(spacesTableName(), project, options);
+  options?: { allowProjectIdMetaScan?: boolean; expectedRevision?: number | null },
+): Promise<{ revision: number }> {
+  return upsertDdbProjectStore(spacesTableName(), project, options);
 }
 
 async function deleteDdbProject(id: string): Promise<void> {
@@ -164,6 +167,7 @@ function projectToMeta(project: ProjectRecord | ProjectListItem) {
     ownerUserImage: project.ownerUserImage,
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,
+    revision: project.revision,
     spacesCount,
   };
 }
@@ -281,6 +285,12 @@ export async function POST(req: Request) {
 
     if (isSpacesDdbEnabled()) {
       const { id, name, rootSpaceId, spaces, metadata } = body;
+      const expectedRevision =
+        typeof body.expectedRevision === "number" && Number.isFinite(body.expectedRevision)
+          ? body.expectedRevision
+          : typeof body.revision === "number" && Number.isFinite(body.revision)
+            ? body.revision
+            : null;
       if (id) {
         const existing = await readProjectByIdResilient(id);
         if (!existing || !projectBelongsToOwner(existing, ownerEmail)) {
@@ -298,7 +308,8 @@ export async function POST(req: Request) {
           ownerUserImage: ownerImage,
           updatedAt: new Date().toISOString(),
         };
-        await writeDdbProject(savedProject);
+        const writeResult = await writeDdbProject(savedProject, { expectedRevision });
+        savedProject.revision = writeResult.revision;
         spacesGetCache = null;
         spacesMetaGetCache = null;
         return jsonNoStore(savedProject);
@@ -337,7 +348,8 @@ export async function POST(req: Request) {
         updatedAt: timestamp,
       };
 
-      await writeDdbProject(newProject, { allowProjectIdMetaScan: false });
+      const writeResult = await writeDdbProject(newProject, { allowProjectIdMetaScan: false });
+      newProject.revision = writeResult.revision;
       spacesGetCache = null;
       spacesMetaGetCache = null;
       return jsonNoStore(newProject);
@@ -357,6 +369,20 @@ export async function POST(req: Request) {
             return projectsCopy;
           }
 
+          const previousRevision =
+            typeof projectsCopy[index].revision === "number" && Number.isFinite(projectsCopy[index].revision)
+              ? projectsCopy[index].revision
+              : 0;
+          const expectedRevision =
+            typeof body.expectedRevision === "number" && Number.isFinite(body.expectedRevision)
+              ? body.expectedRevision
+              : typeof body.revision === "number" && Number.isFinite(body.revision)
+                ? body.revision
+                : null;
+          if (expectedRevision !== null && expectedRevision !== previousRevision) {
+            throw new SpacesRevisionConflictError(id, expectedRevision, previousRevision);
+          }
+
           projectsCopy[index] = {
             ...projectsCopy[index],
             name: name || projectsCopy[index].name,
@@ -366,6 +392,7 @@ export async function POST(req: Request) {
             ownerUserEmail: projectsCopy[index].ownerUserEmail || ownerEmail,
             ownerUserName: ownerName,
             ownerUserImage: ownerImage,
+            revision: previousRevision + 1,
             updatedAt: new Date().toISOString(),
           };
           savedProject = projectsCopy[index];
@@ -404,6 +431,7 @@ export async function POST(req: Request) {
           ownerUserEmail: ownerEmail,
           ownerUserName: ownerName,
           ownerUserImage: ownerImage,
+          revision: 1,
           createdAt: timestamp,
           updatedAt: timestamp,
         };
@@ -423,6 +451,17 @@ export async function POST(req: Request) {
       return jsonNoStore(savedProject ?? fallback);
     });
   } catch (error) {
+    if (error instanceof SpacesRevisionConflictError) {
+      return jsonNoStore(
+        {
+          error:
+            "Project changed on another device. Reload the project before saving again.",
+          conflict: true,
+          actualRevision: error.actualRevision,
+        },
+        { status: 409 },
+      );
+    }
     console.error("Save error:", error);
     return jsonNoStore({ error: "Failed to save project" }, { status: 500 });
   }

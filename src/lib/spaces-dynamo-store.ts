@@ -5,7 +5,7 @@ import {
   QueryCommand,
   ScanCommand,
 } from "@aws-sdk/lib-dynamodb";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { ddbClient } from "@/lib/dynamo-utils";
 import { withDynamoRetry } from "@/lib/dynamo-retry";
 
@@ -27,6 +27,7 @@ export type ProjectRecord = {
   ownerUserEmail?: string;
   ownerUserImage?: string | null;
   ownerUserName?: string | null;
+  revision?: number;
   rootSpaceId: string;
   spaces: Record<string, SpaceNodeGraph>;
   updatedAt: string;
@@ -40,6 +41,7 @@ export type ProjectListItem = {
   ownerUserEmail?: string;
   ownerUserImage?: string | null;
   ownerUserName?: string | null;
+  revision?: number;
   rootSpaceId: string;
   spacesCount: number | null;
   updatedAt: string;
@@ -82,6 +84,20 @@ type LegacyInlineProject = ProjectRecord & {
 
 const SPACES_CHUNK_CHAR_SIZE = 240_000;
 const SPACES_LIST_PK = "PROJECTS";
+const SPACES_WRITE_LOCK_TTL_MS = 45_000;
+
+export class SpacesRevisionConflictError extends Error {
+  constructor(
+    public readonly projectId: string,
+    public readonly expectedRevision: number,
+    public readonly actualRevision: number,
+  ) {
+    super(
+      `Project ${projectId} revision conflict. Expected ${expectedRevision}, current ${actualRevision}.`,
+    );
+    this.name = "SpacesRevisionConflictError";
+  }
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object";
@@ -138,6 +154,83 @@ function projectSortDesc(a: ProjectRecord, b: ProjectRecord): number {
 
 function sha256Hex(input: string): string {
   return createHash("sha256").update(input).digest("hex");
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isConditionalCheckFailed(error: unknown): boolean {
+  return (error as { name?: string } | null)?.name === "ConditionalCheckFailedException";
+}
+
+async function acquireProjectWriteLock(
+  tableName: string,
+  projectId: string,
+): Promise<{ id: string; owner: string }> {
+  const id = `${projectId}#write-lock`;
+  const owner = randomUUID();
+
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const now = Date.now();
+    try {
+      await withDynamoRetry(() =>
+        ddbClient.send(
+          new PutCommand({
+            TableName: tableName,
+            Item: {
+              id,
+              entityType: "project-write-lock",
+              projectId,
+              owner,
+              expiresAt: now + SPACES_WRITE_LOCK_TTL_MS,
+              updatedAt: new Date(now).toISOString(),
+            },
+            ConditionExpression: "attribute_not_exists(id) OR #expiresAt < :now",
+            ExpressionAttributeNames: {
+              "#expiresAt": "expiresAt",
+            },
+            ExpressionAttributeValues: {
+              ":now": now,
+            },
+          }),
+        ),
+      );
+      return { id, owner };
+    } catch (error) {
+      if (!isConditionalCheckFailed(error)) throw error;
+      await sleep(80 + attempt * 120 + Math.floor(Math.random() * 90));
+    }
+  }
+
+  throw new Error(`[spaces-dynamo] write lock busy for project ${projectId}`);
+}
+
+async function releaseProjectWriteLock(
+  tableName: string,
+  lock: { id: string; owner: string },
+): Promise<void> {
+  try {
+    await withDynamoRetry(() =>
+      ddbClient.send(
+        new DeleteCommand({
+          TableName: tableName,
+          Key: { id: lock.id },
+          ConditionExpression: "#owner = :owner",
+          ExpressionAttributeNames: {
+            "#owner": "owner",
+          },
+          ExpressionAttributeValues: {
+            ":owner": lock.owner,
+          },
+        }),
+      ),
+    );
+  } catch (error) {
+    if (!isConditionalCheckFailed(error)) {
+      console.warn(`[spaces-dynamo] failed to release write lock for ${lock.id}:`, error);
+    }
+  }
 }
 
 function isSpaceGraph(value: unknown): value is SpaceNodeGraph {
@@ -241,6 +334,7 @@ function projectFromMeta(
     ownerUserImage: meta.ownerUserImage,
     createdAt: meta.createdAt,
     updatedAt: meta.updatedAt,
+    revision: meta.revision,
     spaces,
   };
 }
@@ -308,6 +402,7 @@ async function scanMetaItems(tableName: string): Promise<Record<string, unknown>
             "#ownerUserImage": "ownerUserImage",
             "#ownerUserName": "ownerUserName",
             "#projectId": "projectId",
+            "#revision": "revision",
             "#rootSpaceId": "rootSpaceId",
             "#updatedAt": "updatedAt",
           },
@@ -315,7 +410,7 @@ async function scanMetaItems(tableName: string): Promise<Record<string, unknown>
             ":meta": "project-meta",
           },
           ProjectionExpression:
-            "id, #projectId, #entityType, #name, #rootSpaceId, #metadata, #ownerUserEmail, #ownerUserName, #ownerUserImage, #createdAt, #updatedAt, #chunkCount, #commitStatus",
+            "id, #projectId, #entityType, #name, #rootSpaceId, #metadata, #ownerUserEmail, #ownerUserName, #ownerUserImage, #createdAt, #updatedAt, #chunkCount, #commitStatus, #revision",
           ExclusiveStartKey: exclusiveStartKey,
         }),
       ),
@@ -480,6 +575,7 @@ export async function readAllDdbProjectsMeta(tableName: string): Promise<Project
                     "#ownerUserImage": "ownerUserImage",
                     "#ownerUserName": "ownerUserName",
                     "#projectId": "projectId",
+                    "#revision": "revision",
                     "#rootSpaceId": "rootSpaceId",
                     "#updatedAt": "updatedAt",
                   },
@@ -487,7 +583,7 @@ export async function readAllDdbProjectsMeta(tableName: string): Promise<Project
                     ":listPk": SPACES_LIST_PK,
                   },
                   ProjectionExpression:
-                    "id, #projectId, #entityType, #name, #rootSpaceId, #metadata, #ownerUserEmail, #ownerUserName, #ownerUserImage, #createdAt, #updatedAt, #chunkCount, #commitStatus",
+                    "id, #projectId, #entityType, #name, #rootSpaceId, #metadata, #ownerUserEmail, #ownerUserName, #ownerUserImage, #createdAt, #updatedAt, #chunkCount, #commitStatus, #revision",
                   ScanIndexForward: false,
                   ExclusiveStartKey: exclusiveStartKey,
                 }),
@@ -521,6 +617,7 @@ export async function readAllDdbProjectsMeta(tableName: string): Promise<Project
         ownerUserImage: item.ownerUserImage,
         createdAt: item.createdAt,
         updatedAt: item.updatedAt,
+        revision: item.revision,
         spacesCount: null,
       });
       continue;
@@ -537,6 +634,7 @@ export async function readAllDdbProjectsMeta(tableName: string): Promise<Project
         ownerUserImage: item.ownerUserImage,
         createdAt: item.createdAt,
         updatedAt: item.updatedAt,
+        revision: item.revision,
         spacesCount: Object.keys(item.spaces || {}).length,
       });
     }
@@ -547,8 +645,8 @@ export async function readAllDdbProjectsMeta(tableName: string): Promise<Project
 export async function upsertDdbProject(
   tableName: string,
   project: ProjectRecord,
-  options?: { allowProjectIdMetaScan?: boolean },
-): Promise<void> {
+  options?: { allowProjectIdMetaScan?: boolean; expectedRevision?: number | null },
+): Promise<{ revision: number }> {
   const nowIso = project.updatedAt || new Date().toISOString();
   const normalizedRoot =
     typeof project.rootSpaceId === "string" && project.rootSpaceId.trim()
@@ -576,78 +674,103 @@ export async function upsertDdbProject(
     throw new Error("[spaces-dynamo] chunk serialization integrity check failed");
   }
 
-  const allowProjectIdMetaScan = options?.allowProjectIdMetaScan ?? true;
-  let existing = await readMetaOrLegacy(tableName, normalizedProject.id);
-  if (!existing && allowProjectIdMetaScan) {
-    existing = await findMetaByProjectId(tableName, normalizedProject.id);
-  }
-  const previousRevision = isMetaItem(existing) && typeof existing.revision === "number"
-    ? existing.revision
-    : 0;
-  const nextRevision = Math.max(1, previousRevision + 1);
-  const metaPrimaryId =
-    isMetaItem(existing) && typeof existing.id === "string" && existing.id.trim()
-      ? existing.id
-      : normalizedProject.id;
-  const newChunkKeys = new Set<string>();
-
-  for (let i = 0; i < chunks.length; i++) {
-    const chunkId = buildChunkKey(normalizedProject.id, i, nextRevision);
-    newChunkKeys.add(chunkId);
-    await ddbClient.send(
-      new PutCommand({
-        TableName: tableName,
-        Item: {
-          id: chunkId,
-          entityType: "project-chunk",
-          projectId: normalizedProject.id,
-          revision: nextRevision,
-          chunkIndex: i,
-          chunkData: chunks[i],
-          updatedAt: normalizedProject.updatedAt,
-        } as SpacesChunkItem,
-      }),
-    );
-  }
-
-  await ddbClient.send(
-    new PutCommand({
-      TableName: tableName,
-      Item: {
-        id: metaPrimaryId,
-        entityType: "project-meta",
-        projectId: normalizedProject.id,
-        createdAt: normalizedProject.createdAt,
-        listPk: SPACES_LIST_PK,
-        listSk: buildListSortKey(normalizedProject.updatedAt, normalizedProject.id),
-        metadata: normalizedProject.metadata ?? {},
-        name: normalizedProject.name,
-        ownerUserEmail: normalizedProject.ownerUserEmail,
-        ownerUserName: normalizedProject.ownerUserName,
-        ownerUserImage: normalizedProject.ownerUserImage,
-        rootSpaceId: normalizedProject.rootSpaceId,
-        storageFormat: "chunks-v1",
-        revision: nextRevision,
-        commitStatus: "committed",
-        contentSha256,
-        chunkCount: chunks.length,
-        updatedAt: normalizedProject.updatedAt,
-      } as SpacesMetaItem,
-    }),
-  );
-
-  // Proyecto nuevo: no hay revisiones anteriores que limpiar.
-  if (previousRevision > 0) {
-    const allProjectChunks = await scanChunksForProject(tableName, normalizedProject.id);
-    for (const chunk of allProjectChunks) {
-      if (newChunkKeys.has(chunk.id)) continue;
-      await ddbClient.send(
-        new DeleteCommand({
-          TableName: tableName,
-          Key: { id: chunk.id },
-        }),
+  const lock = await acquireProjectWriteLock(tableName, normalizedProject.id);
+  try {
+    const allowProjectIdMetaScan = options?.allowProjectIdMetaScan ?? true;
+    let existing = await readMetaOrLegacy(tableName, normalizedProject.id);
+    if (!existing && allowProjectIdMetaScan) {
+      existing = await findMetaByProjectId(tableName, normalizedProject.id);
+    }
+    const previousRevision = isMetaItem(existing) && typeof existing.revision === "number"
+      ? existing.revision
+      : 0;
+    const expectedRevision =
+      typeof options?.expectedRevision === "number" && Number.isFinite(options.expectedRevision)
+        ? options.expectedRevision
+        : null;
+    if (expectedRevision !== null && expectedRevision !== previousRevision) {
+      throw new SpacesRevisionConflictError(
+        normalizedProject.id,
+        expectedRevision,
+        previousRevision,
       );
     }
+
+    const nextRevision = Math.max(1, previousRevision + 1);
+    const metaPrimaryId =
+      isMetaItem(existing) && typeof existing.id === "string" && existing.id.trim()
+        ? existing.id
+        : normalizedProject.id;
+    const newChunkKeys = new Set<string>();
+
+    for (let i = 0; i < chunks.length; i++) {
+      const chunkId = buildChunkKey(normalizedProject.id, i, nextRevision);
+      newChunkKeys.add(chunkId);
+      await withDynamoRetry(() =>
+        ddbClient.send(
+          new PutCommand({
+            TableName: tableName,
+            Item: {
+              id: chunkId,
+              entityType: "project-chunk",
+              projectId: normalizedProject.id,
+              revision: nextRevision,
+              chunkIndex: i,
+              chunkData: chunks[i],
+              updatedAt: normalizedProject.updatedAt,
+            } as SpacesChunkItem,
+          }),
+        ),
+      );
+    }
+
+    await withDynamoRetry(() =>
+      ddbClient.send(
+        new PutCommand({
+          TableName: tableName,
+          Item: {
+            id: metaPrimaryId,
+            entityType: "project-meta",
+            projectId: normalizedProject.id,
+            createdAt: normalizedProject.createdAt,
+            listPk: SPACES_LIST_PK,
+            listSk: buildListSortKey(normalizedProject.updatedAt, normalizedProject.id),
+            metadata: normalizedProject.metadata ?? {},
+            name: normalizedProject.name,
+            ownerUserEmail: normalizedProject.ownerUserEmail,
+            ownerUserName: normalizedProject.ownerUserName,
+            ownerUserImage: normalizedProject.ownerUserImage,
+            rootSpaceId: normalizedProject.rootSpaceId,
+            storageFormat: "chunks-v1",
+            revision: nextRevision,
+            commitStatus: "committed",
+            contentSha256,
+            chunkCount: chunks.length,
+            updatedAt: normalizedProject.updatedAt,
+          } as SpacesMetaItem,
+        }),
+      ),
+    );
+
+    // Proyecto nuevo: no hay revisiones anteriores que limpiar.
+    if (previousRevision > 0) {
+      const allProjectChunks = await scanChunksForProject(tableName, normalizedProject.id);
+      for (const chunk of allProjectChunks) {
+        if (newChunkKeys.has(chunk.id)) continue;
+        await withDynamoRetry(() =>
+          ddbClient.send(
+            new DeleteCommand({
+              TableName: tableName,
+              Key: { id: chunk.id },
+            }),
+          ),
+        );
+      }
+    }
+
+    return { revision: nextRevision };
+  } finally {
+    await releaseProjectWriteLock(tableName, lock);
   }
 }
 

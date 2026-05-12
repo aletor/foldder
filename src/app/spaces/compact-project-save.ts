@@ -2,6 +2,7 @@
 
 type CompactOptions = {
   aggressive?: boolean;
+  dropEmbeddedMedia?: boolean;
 };
 
 const SAVE_SOFT_LIMIT_BYTES = 3_400_000;
@@ -101,6 +102,7 @@ async function compactValue(
 ): Promise<unknown> {
   if (typeof value === "string") {
     if (!isDataUrl(value)) return value;
+    if (options.dropEmbeddedMedia) return undefined;
 
     const hasPersistentRef = parent ? objectHasPersistentMediaRef(parent) : false;
     const previewLike = PREVIEW_KEYS.has(key) || /thumb|preview|display|paint|marked|vision/i.test(key);
@@ -154,11 +156,25 @@ export async function compactProjectForSave<T>(project: T): Promise<{ project: T
     return { project, bytes: initialBytes, compacted: false };
   }
 
-  let compacted = (await compactValue(project, "", null, { aggressive: false })) as T;
+  let compacted = (await compactValue(project, "", null, {
+    aggressive: false,
+    dropEmbeddedMedia: false,
+  })) as T;
   let bytes = encodedSize(compacted);
 
   if (bytes > SAVE_HARD_LIMIT_BYTES) {
-    compacted = (await compactValue(compacted, "", null, { aggressive: true })) as T;
+    compacted = (await compactValue(compacted, "", null, {
+      aggressive: true,
+      dropEmbeddedMedia: false,
+    })) as T;
+    bytes = encodedSize(compacted);
+  }
+
+  if (bytes > SAVE_HARD_LIMIT_BYTES) {
+    compacted = (await compactValue(compacted, "", null, {
+      aggressive: true,
+      dropEmbeddedMedia: true,
+    })) as T;
     bytes = encodedSize(compacted);
   }
 

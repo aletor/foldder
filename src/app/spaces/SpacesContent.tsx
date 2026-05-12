@@ -255,6 +255,7 @@ type SavedProjectMeta = {
   id: string;
   metadata?: Record<string, unknown>;
   name: string;
+  revision?: number | null;
   rootSpaceId?: string;
   spacesCount?: number | null;
   updatedAt?: string;
@@ -263,6 +264,30 @@ type SavedProjectMeta = {
 type SavedProjectDetail = SavedProjectMeta & {
   spaces: Record<string, any>;
 };
+
+type SaveProjectOptions = {
+  reason?: "autosave" | "brain-assets" | "debounced" | "manual" | "text-asset";
+  silentError?: boolean;
+  skipIfUnchanged?: boolean;
+};
+
+const CLIENT_SAVE_BODY_LIMIT_BYTES = 4_250_000;
+const PROJECT_SAVE_DEBOUNCE_MS = 25_000;
+const PROJECT_SAVE_HEARTBEAT_MS = 90_000;
+
+function quickHashString(input: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function projectSaveFingerprint(value: unknown): string {
+  const json = JSON.stringify(value);
+  return `${json.length}:${quickHashString(json)}`;
+}
 
 type OpenDesktopApp = {
   id: string;
@@ -429,6 +454,9 @@ export function SpacesContent() {
 
   // Persistence state
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const [activeProjectRevision, setActiveProjectRevision] = useState<number | null>(null);
+  const activeProjectRevisionRef = useRef<number | null>(null);
+  activeProjectRevisionRef.current = activeProjectRevision;
   const [activeSpaceId, setActiveSpaceId] = useState<string>('root');
   const [currentName, setCurrentName] = useState<string>('');
   const [workspaceViewMode, setWorkspaceViewMode] = useState<WorkspaceViewMode>('standard');
@@ -492,6 +520,9 @@ export function SpacesContent() {
   /** Indicador visual breve tras guardado automático (intervalo 1 min) */
   const [showAutosavePulse, setShowAutosavePulse] = useState(false);
   const autosavePulseTimerRef = useRef<number | null>(null);
+  const projectSaveDebounceTimerRef = useRef<number | null>(null);
+  const lastSavedFingerprintRef = useRef<string | null>(null);
+  const lastSaveWasSkippedRef = useRef(false);
 
   /** Avisos poco intrusivos al terminar trabajos de IA en segundo plano */
   const [aiJobToasts, setAiJobToasts] = useState<Array<{ id: string } & AiJobCompleteDetail>>([]);
@@ -585,7 +616,11 @@ export function SpacesContent() {
       return setGuionistaTextAssetsInMetadata(m, upsertGuionistaTextAsset(current, asset));
     });
     window.setTimeout(() => {
-      void saveProjectRef.current(undefined, { silentError: true });
+      void saveProjectRef.current(undefined, {
+        reason: "text-asset",
+        silentError: true,
+        skipIfUnchanged: true,
+      });
     }, 200);
   }, []);
 
@@ -1232,9 +1267,19 @@ export function SpacesContent() {
 
   const scheduleProjectSave = useCallback(() => {
     if (typeof window === "undefined") return;
-    window.setTimeout(() => {
-      void saveProjectRef.current(undefined, { silentError: true });
-    }, 180);
+    if (projectSaveDebounceTimerRef.current !== null) {
+      window.clearTimeout(projectSaveDebounceTimerRef.current);
+    }
+    projectSaveDebounceTimerRef.current = window.setTimeout(() => {
+      projectSaveDebounceTimerRef.current = null;
+      const g = autosaveGateRef.current;
+      if (g.openLoad || g.openNew || g.deleting || isSavingRef.current) return;
+      void saveProjectRef.current(undefined, {
+        reason: "debounced",
+        silentError: true,
+        skipIfUnchanged: true,
+      });
+    }, PROJECT_SAVE_DEBOUNCE_MS);
   }, []);
   const notesProjectSaveTimerRef = useRef<number | null>(null);
   const scheduleNotesProjectSave = useCallback(() => {
@@ -3234,10 +3279,10 @@ export function SpacesContent() {
 
   const saveProject = async (
     nameToSave?: string,
-    options?: { silentError?: boolean }
+    options?: SaveProjectOptions
   ): Promise<boolean> => {
     const metadataVersionAtSaveStart = metadataVersionRef.current;
-    setIsSaving(true);
+    lastSaveWasSkippedRef.current = false;
     try {
       // Apilado XY Flow: persistir `node.zIndex`, no `style.zIndex` (evita hijos detrás del marco al recargar).
       const normalizedNodes = normalizeNodesForPersistence(nodes as Node[]);
@@ -3272,8 +3317,26 @@ export function SpacesContent() {
         reconcileProjectFilesFromNodes(metadata, sanitizedGraph.nodes as Node[]),
       );
 
+      const projectFingerprintInput = {
+        id: activeProjectId,
+        name: nameToSave || currentName || 'Untitled Project',
+        rootSpaceId: 'root',
+        spaces: spacesToSave,
+        metadata: {
+          ...metadataToSave,
+          ui: uiSnapshot,
+        },
+      };
+      const fingerprint = projectSaveFingerprint(projectFingerprintInput);
+      if (options?.skipIfUnchanged && lastSavedFingerprintRef.current === fingerprint) {
+        lastSaveWasSkippedRef.current = true;
+        return true;
+      }
+
+      setIsSaving(true);
       const projectToSave = {
         id: activeProjectId,
+        expectedRevision: activeProjectId ? activeProjectRevisionRef.current : undefined,
         name: nameToSave || currentName || 'Untitled Project',
         rootSpaceId: 'root',
         spaces: spacesToSave,
@@ -3288,6 +3351,11 @@ export function SpacesContent() {
       if (compactedSave.compacted) {
         console.info(
           `[FOLDDER save] Proyecto compactado antes de guardar: ${Math.round(payloadBeforeBytes / 1024)}KB → ${Math.round(compactedSave.bytes / 1024)}KB.`,
+        );
+      }
+      if (compactedSave.bytes > CLIENT_SAVE_BODY_LIMIT_BYTES) {
+        throw new Error(
+          `Project save is still too large after compaction (${Math.round(compactedSave.bytes / 1024)}KB). Heavy media must stay in S3 and only previews should be saved in the project document.`,
         );
       }
 
@@ -3308,7 +3376,18 @@ export function SpacesContent() {
         createdAt: savedProject.createdAt,
         updatedAt: savedProject.updatedAt,
         metadata: savedProject.metadata,
+        revision: savedProject.revision,
         spacesCount: Object.keys(savedProject.spaces || {}).length,
+      });
+      const savedRevision =
+        typeof savedProject.revision === "number" && Number.isFinite(savedProject.revision)
+          ? savedProject.revision
+          : activeProjectRevisionRef.current;
+      setActiveProjectRevision(savedRevision);
+      activeProjectRevisionRef.current = savedRevision;
+      lastSavedFingerprintRef.current = projectSaveFingerprint({
+        ...projectFingerprintInput,
+        id: savedProject.id,
       });
 
       if (!activeProjectId) {
@@ -3331,8 +3410,16 @@ export function SpacesContent() {
       return true;
     } catch (err) {
       console.error('Save error:', err);
+      const message = err instanceof Error ? err.message : String(err ?? "");
+      if (/changed on another device|revision conflict/i.test(message)) {
+        console.warn("[FOLDDER save] Conflicto de revisión: otro dispositivo guardó este proyecto antes.");
+      }
       if (!options?.silentError) {
-        alert('Error saving project. Check console for details.');
+        alert(
+          /changed on another device|revision conflict/i.test(message)
+            ? 'This project changed on another device. Reload it before saving again.'
+            : 'Error saving project. Check console for details.',
+        );
       }
       return false;
     } finally {
@@ -3375,8 +3462,8 @@ export function SpacesContent() {
   };
 
   /**
-   * Autosave cada 60s solo con sesión + proyecto persistible (`activeProjectId`).
-   * El efecto depende de eso para reiniciar el reloj al cargar/crear proyecto (no solo al montar la página).
+   * Autosave de latido: solo persiste si hay cambios reales desde el último guardado correcto.
+   * Así mantenemos seguridad sin reenviar proyectos pesados cada minuto.
    */
   useEffect(() => {
     if (!isAuthenticated || !activeProjectId) return;
@@ -3387,24 +3474,72 @@ export function SpacesContent() {
         return;
       }
       void (async () => {
-        const ok = await saveProjectRef.current(undefined, { silentError: true });
-        if (ok) {
-          flashAutosavePulseRef.current();
-        } else {
+        const ok = await saveProjectRef.current(undefined, {
+          reason: "autosave",
+          silentError: true,
+          skipIfUnchanged: true,
+        });
+        if (!ok) {
           console.warn(
             '[FOLDDER autosave] No se pudo guardar (revisa red, API /api/spaces o que el proyecto exista en el servidor).'
           );
+        } else if (!lastSaveWasSkippedRef.current) {
+          flashAutosavePulseRef.current();
         }
       })();
     };
 
-    const id = window.setInterval(tick, 60_000);
+    const id = window.setInterval(tick, PROJECT_SAVE_HEARTBEAT_MS);
     return () => window.clearInterval(id);
   }, [isAuthenticated, activeProjectId]);
 
   useEffect(() => {
+    if (!isAuthenticated || !activeProjectId) return;
+    if (projectSaveDebounceTimerRef.current !== null) {
+      window.clearTimeout(projectSaveDebounceTimerRef.current);
+    }
+    projectSaveDebounceTimerRef.current = window.setTimeout(() => {
+      projectSaveDebounceTimerRef.current = null;
+      const g = autosaveGateRef.current;
+      if (g.openLoad || g.openNew || g.deleting || isSavingRef.current) return;
+      void (async () => {
+        const ok = await saveProjectRef.current(undefined, {
+          reason: "debounced",
+          silentError: true,
+          skipIfUnchanged: true,
+        });
+        if (ok && !lastSaveWasSkippedRef.current) {
+          flashAutosavePulseRef.current();
+        }
+      })();
+    }, PROJECT_SAVE_DEBOUNCE_MS);
+    return () => {
+      if (projectSaveDebounceTimerRef.current !== null) {
+        window.clearTimeout(projectSaveDebounceTimerRef.current);
+        projectSaveDebounceTimerRef.current = null;
+      }
+    };
+  }, [
+    activeProjectId,
+    activeSpaceId,
+    canvasBgId,
+    canvasViewMode,
+    cardsFocusIndex,
+    currentName,
+    edges,
+    isAuthenticated,
+    metadata,
+    navigationStack,
+    nodes,
+    sidebarLockedCollapsed,
+    spacesMap,
+    workspaceViewMode,
+  ]);
+
+  useEffect(() => {
     return () => {
       if (autosavePulseTimerRef.current) window.clearTimeout(autosavePulseTimerRef.current);
+      if (projectSaveDebounceTimerRef.current) window.clearTimeout(projectSaveDebounceTimerRef.current);
     };
   }, []);
 
@@ -3431,11 +3566,19 @@ export function SpacesContent() {
           brainAssetsAutosaveTimerRef.current = null;
           const retryGate = autosaveGateRef.current;
           if (retryGate.openLoad || retryGate.openNew || retryGate.deleting || isSavingRef.current) return;
-          void saveProjectRef.current(undefined, { silentError: true });
+          void saveProjectRef.current(undefined, {
+            reason: "brain-assets",
+            silentError: true,
+            skipIfUnchanged: true,
+          });
         }, 1500);
         return;
       }
-      void saveProjectRef.current(undefined, { silentError: true });
+      void saveProjectRef.current(undefined, {
+        reason: "brain-assets",
+        silentError: true,
+        skipIfUnchanged: true,
+      });
     }, 5000);
   }, [metadata.assets, isAuthenticated, activeProjectId]);
 
@@ -3462,6 +3605,9 @@ export function SpacesContent() {
       setNavigationStack([]);
       setSpacesMap({});
       setActiveProjectId(null);
+      setActiveProjectRevision(null);
+      activeProjectRevisionRef.current = null;
+      lastSavedFingerprintRef.current = null;
       setLocalWorkspaceScopeId(newLocalWorkspaceScopeId());
       setMetadata({});
       setVisualReferenceAnalysisDirty(false);
@@ -3594,6 +3740,16 @@ export function SpacesContent() {
       scheduleNodeInternalsRefresh(sanitizedActiveGraph.nodes.map((n: any) => String(n.id)));
       scheduleEdgeGeometryRefresh();
       setActiveProjectId(project.id);
+      setActiveProjectRevision(
+        typeof project.revision === "number" && Number.isFinite(project.revision)
+          ? project.revision
+          : null,
+      );
+      activeProjectRevisionRef.current =
+        typeof project.revision === "number" && Number.isFinite(project.revision)
+          ? project.revision
+          : null;
+      lastSavedFingerprintRef.current = null;
       setActiveSpaceId(targetSpaceId);
       setCurrentName(project.name || projectMeta.name);
       setSpacesMap(spaces as Record<string, any>);
@@ -3665,6 +3821,9 @@ export function SpacesContent() {
       await refreshProjectsList();
       if (activeProjectId === idToDelete) {
         setActiveProjectId(null);
+        setActiveProjectRevision(null);
+        activeProjectRevisionRef.current = null;
+        lastSavedFingerprintRef.current = null;
         setLocalWorkspaceScopeId(newLocalWorkspaceScopeId());
         setActiveSpaceId('root');
         setCurrentName('');
@@ -3705,6 +3864,7 @@ export function SpacesContent() {
         createdAt: savedProject.createdAt,
         updatedAt: savedProject.updatedAt,
         metadata: savedProject.metadata,
+        revision: savedProject.revision,
         spacesCount: Object.keys(savedProject.spaces || {}).length,
       });
     } catch (err) {
@@ -3725,6 +3885,10 @@ export function SpacesContent() {
         headers: { 'Content-Type': 'application/json', ...devBypassHeaders },
         body: JSON.stringify({
           ...projectDetail,
+          expectedRevision:
+            typeof projectDetail.revision === "number" && Number.isFinite(projectDetail.revision)
+              ? projectDetail.revision
+              : undefined,
           name: newName
         })
       });
@@ -3736,9 +3900,17 @@ export function SpacesContent() {
         createdAt: savedProject.createdAt,
         updatedAt: savedProject.updatedAt,
         metadata: savedProject.metadata,
+        revision: savedProject.revision,
         spacesCount: Object.keys(savedProject.spaces || {}).length,
       });
-      if (activeProjectId === id) setCurrentName(newName);
+      if (activeProjectId === id) {
+        setCurrentName(newName);
+        if (typeof savedProject.revision === "number" && Number.isFinite(savedProject.revision)) {
+          setActiveProjectRevision(savedProject.revision);
+          activeProjectRevisionRef.current = savedProject.revision;
+          lastSavedFingerprintRef.current = null;
+        }
+      }
       setEditingId(null);
     } catch (err) {
       console.error('Rename error:', err);
