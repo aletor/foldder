@@ -11,6 +11,8 @@ import {
   assertApiServiceEnabled,
 } from "@/lib/api-usage-controls";
 import {
+  appendVideoPromptTail,
+  collectAllReferenceImageUrlsOrdered,
   parseVideoRefSlots,
 } from "@/lib/video-generator-studio";
 import crypto from "crypto";
@@ -174,12 +176,13 @@ export async function POST(req: NextRequest) {
         ? await processImage(lastFrame.trim())
         : null;
 
-    const slots = parseVideoRefSlots(videoRefSlots);
     const referenceImages: Array<Record<string, unknown>> = [];
-    for (const slotUrl of Object.values(slots)) {
-      if (typeof slotUrl !== "string" || !slotUrl.trim()) continue;
+    const imageRefUrls = collectAllReferenceImageUrlsOrdered({
+      extraSlots: parseVideoRefSlots(videoRefSlots),
+    });
+    for (const slotUrl of imageRefUrls) {
       if (referenceImages.length >= 3) break;
-      const image = await processImage(slotUrl.trim());
+      const image = await processImage(slotUrl);
       if (!image) continue;
       referenceImages.push({
         image,
@@ -192,8 +195,10 @@ export async function POST(req: NextRequest) {
     if (!finalPrompt) {
       return NextResponse.json({ error: "Prompt is required" }, { status: 400 });
     }
-    if (typeof animationPrompt === "string" && animationPrompt.trim()) finalPrompt += `. Animation: ${animationPrompt.trim()}`;
-    if (typeof cameraPreset === "string" && cameraPreset.trim()) finalPrompt += `. Camera motion: ${cameraPreset.trim()}`;
+    finalPrompt = appendVideoPromptTail(finalPrompt, {
+      animationPrompt,
+      cameraPreset,
+    });
     const negative = typeof negativePrompt === "string" ? negativePrompt.trim() : "";
 
     const rawDur = Number(durationSeconds);

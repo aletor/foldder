@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import Image from "next/image";
 import { TOPBAR_GLYPH_BY_NODE_TYPE } from "./TopbarPinIcons";
 
 /** Iconos en la barra inferior — glyph dedicado + pie de etiqueta (icono predominante). */
@@ -94,6 +93,15 @@ const TOPBAR_PIN_UI: Record<
   files: { title: "Abrir Foldder", shortLabel: "Foldder" },
 };
 
+const TOPBAR_PIN_ACCENT: Partial<Record<TopbarPinType, string>> = {
+  brain: "#6b7280",
+  designer: "#fdb04b",
+  nanoBanana: "#e0dc52",
+  photoRoom: "#63d4fd",
+  geminiVideo: "#ed9ae0",
+  files: "#b081f1",
+};
+
 type TopbarPinsProps = {
   /** Clic en «Brain»: identidad + fuente de conocimiento. */
   onBrainClick?: () => void;
@@ -168,9 +176,7 @@ function TopbarPinChip({
   const Glyph = TOPBAR_GLYPH_BY_NODE_TYPE[type];
   const isBrain = type === "brain";
   const isAssets = type === "files";
-  const isDesigner = type === "designer";
-  const isPhotoRoom = type === "photoRoom";
-  const isCustomDockButton = isBrain || isAssets || isDesigner || isPhotoRoom;
+  const accentColor = TOPBAR_PIN_ACCENT[type];
   const brainOpenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const assetsOpenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -186,17 +192,11 @@ function TopbarPinChip({
       <button
         type="button"
         className={
-          isBrain
-            ? `${chipClassName} !bg-transparent !border-[#6b7280] hover:!bg-transparent active:!bg-transparent focus:!bg-transparent hover:!border-[#6b7280] hover:ring-black/50`
-            : isAssets
-            ? `${chipClassName} !bg-transparent !border-[#b081f1] hover:!bg-transparent active:!bg-transparent focus:!bg-transparent hover:!border-[#b081f1] hover:ring-black/50`
-            : isDesigner
-              ? `${chipClassName} !bg-transparent !border-[#fdb04b] hover:!bg-transparent active:!bg-transparent focus:!bg-transparent hover:!border-[#fdb04b] hover:ring-black/50`
-              : isPhotoRoom
-                ? `${chipClassName} !bg-transparent !border-[#63d4fd] hover:!bg-transparent active:!bg-transparent focus:!bg-transparent hover:!border-[#63d4fd] hover:ring-black/50`
-                : chipClassName
+          accentColor
+            ? `${chipClassName} !bg-transparent hover:!bg-transparent active:!bg-transparent focus:!bg-transparent hover:ring-black/50`
+            : chipClassName
         }
-        style={isCustomDockButton ? { backgroundColor: "transparent" } : undefined}
+        style={accentColor ? { backgroundColor: "transparent", borderColor: accentColor } : undefined}
         aria-pressed={isActive || isMinimized}
         data-state={isActive ? "active" : isMinimized ? "minimized" : "idle"}
         aria-label={
@@ -270,15 +270,18 @@ function TopbarPinChip({
         }}
       >
         {isBrain ? (
-          <Image
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
             src="/brain_icon.svg"
             alt=""
-            width={Math.round(iconSize * 0.9)}
-            height={Math.round(iconSize * 0.9)}
-            className="mx-auto block shrink-0 object-contain"
+            className="mx-auto block shrink-0 select-none object-contain pointer-events-none"
+            style={{
+              height: Math.round(iconSize * 0.9),
+              width: "auto",
+              maxWidth: Math.round(iconSize * 0.9) * 1.25,
+            }}
             aria-hidden
             draggable={false}
-            unoptimized
           />
         ) : (
           <Glyph size={iconSize} className={isAssets ? "shrink-0" : "shrink-0 text-white"} />

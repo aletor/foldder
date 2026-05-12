@@ -30,14 +30,12 @@ import {
   Paintbrush,
   ChevronLeft,
   ChevronRight,
-  ChevronDown,
   Plus,
   Sparkles,
   Eraser,
   Crop,
   Pencil,
   Trash2,
-  Camera,
   Upload,
   BookOpen,
   FileText,
@@ -58,7 +56,6 @@ import {
   Droplets,
   Wind,
   Hammer,
-  LayoutTemplate,
   CircleDot,
   Film,
   Cpu,
@@ -139,24 +136,19 @@ import {
   resolvePromptValueFromEdgeSourceMap,
 } from './canvas-group-logic';
 import {
-  buildDirectorEnhancementSuffix,
+  buildVideoPromptAssembly,
   buildPhysicsFlagsFromNodeData,
-  countReferenceFiles,
   DIRECTOR_PROMPT_TEMPLATE_EN,
   estimatedApiImageCount,
-  mergeBasePromptWithDirectorBlock,
   parseVideoRefSlots,
   refTag,
   SEEDANCE_CAMERA_QUICK_INSERTS,
-  SEEDANCE_PROMPT_GUIDE_ES,
   SEEDANCE_REF_LIMITS,
   VIDEO_LIGHTING_PRESETS,
   VIDEO_PHYSICS_OPTIONS,
   VIDEO_VISUAL_STYLE_PRESETS,
-  type VideoRefSlotAudioKey,
   type VideoRefSlotImageKey,
   type VideoRefSlotKey,
-  type VideoRefSlotVideoKey,
   type VideoRefSlotsState,
 } from '@/lib/video-generator-studio';
 import {
@@ -253,6 +245,26 @@ function useCurrentNodeFrameSnapshot(node: Node | undefined): Pick<Node, "width"
           : undefined,
     });
   }, [height, measuredHeight, measuredWidth, styleHeight, styleWidth, width]);
+}
+
+function syncAspectLockedFrameForNode(
+  nodes: Node[],
+  id: string,
+  nextFrame: { width: number; height: number },
+): Node[] {
+  let didSync = false;
+  const nextNodes = nodes.map((node) => {
+    if (node.id !== id || !nodeFrameNeedsSync(node, nextFrame)) return node;
+    didSync = true;
+    return {
+      ...node,
+      width: nextFrame.width,
+      height: nextFrame.height,
+      style: { ...node.style, width: nextFrame.width, height: nextFrame.height },
+    };
+  });
+
+  return didSync ? nextNodes : nodes;
 }
 
 /** Media Input: mismo patrón que Studio Mode — hover sobre el preview para elegir otro archivo (misma lógica que upload inicial). */
@@ -991,6 +1003,7 @@ export const MediaInputNode = memo(function MediaInputNode({ id, data, selected 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaFitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const frameSyncKeyRef = useRef<string | null>(null);
   const frameRef = useRef<HTMLDivElement | null>(null);
   const previewRef = useRef<HTMLDivElement | null>(null);
   const [mediaSize, setMediaSize] = useState<{ url: string; width: number; height: number } | null>(null);
@@ -1164,19 +1177,14 @@ export const MediaInputNode = memo(function MediaInputNode({ id, data, selected 
       maxHeight: STUDIO_NODE_MAX_HEIGHT,
       chromeHeight,
     });
-    if (!nodeFrameNeedsSync(currentFrameNode, nextFrame)) return;
-    setNodes((nds) =>
-      nds.map((node) =>
-        node.id === id
-          ? {
-              ...node,
-              width: nextFrame.width,
-              height: nextFrame.height,
-              style: { ...node.style, width: nextFrame.width, height: nextFrame.height },
-            }
-          : node,
-      ),
-    );
+    if (!nodeFrameNeedsSync(currentFrameNode, nextFrame)) {
+      frameSyncKeyRef.current = null;
+      return;
+    }
+    const frameSyncKey = `${nextFrame.width}x${nextFrame.height}`;
+    if (frameSyncKeyRef.current === frameSyncKey) return;
+    frameSyncKeyRef.current = frameSyncKey;
+    setNodes((nds) => syncAspectLockedFrameForNode(nds as Node[], id, nextFrame));
     requestAnimationFrame(() => {
       updateNodeInternals(id);
       scheduleFitViewportToThisNode();
@@ -2326,18 +2334,7 @@ export const BackgroundRemoverNode = memo(function BackgroundRemoverNode({ id, d
       chromeHeight,
     });
     if (!nodeFrameNeedsSync(currentFrameNode, nextFrame)) return;
-    setNodes((nds) =>
-      nds.map((node) =>
-        node.id === id
-          ? {
-              ...node,
-              width: nextFrame.width,
-              height: nextFrame.height,
-              style: { ...node.style, width: nextFrame.width, height: nextFrame.height },
-            }
-          : node,
-      ),
-    );
+    setNodes((nds) => syncAspectLockedFrameForNode(nds as Node[], id, nextFrame));
     requestAnimationFrame(() => updateNodeInternals(id));
   }, [
     aspectContentHeight,
@@ -3178,6 +3175,9 @@ interface GeminiVideoStudioProps {
   graphPromptFromEdge: string;
   hasPromptEdge: boolean;
   onGraphPromptChange: (text: string) => void;
+  graphNegativePromptFromEdge: string;
+  hasNegativePromptEdge: boolean;
+  onGraphNegativePromptChange: (text: string) => void;
   useSeedance: boolean;
   videoFormatForApi: string;
   resolutionForApi: string;
@@ -3248,6 +3248,9 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
   graphPromptFromEdge,
   hasPromptEdge,
   onGraphPromptChange,
+  graphNegativePromptFromEdge,
+  hasNegativePromptEdge,
+  onGraphNegativePromptChange,
   useSeedance,
   videoFormatForApi,
   resolutionForApi,
@@ -3266,9 +3269,12 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
   }, []);
 
   const [galleryOpen, setGalleryOpen] = useState(false);
-  const [refsPanelOpen, setRefsPanelOpen] = useState(false);
   const promptLocalRef = useRef<HTMLTextAreaElement>(null);
   const isRunning = status === 'running';
+  const activePromptValue = hasPromptEdge ? graphPromptFromEdge : nodeData.prompt ?? '';
+  const activeNegativePrompt = hasNegativePromptEdge ? graphNegativePromptFromEdge : nodeData.negativePrompt ?? '';
+  const activePromptSourceLabel = hasPromptEdge ? 'Grafo' : 'Local';
+  const negativePromptSourceLabel = hasNegativePromptEdge ? 'Grafo' : 'Local';
   const hasPrompt =
     graphPromptFromEdge.trim().length > 0 ||
     (typeof nodeData.prompt === 'string' && nodeData.prompt.trim().length > 0);
@@ -3276,27 +3282,96 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
   const historyExtra = Math.max(0, historyUrls.length - historyPreview.length);
 
   const refSlots = useMemo(() => parseVideoRefSlots(nodeData.videoRefSlots), [nodeData.videoRefSlots]);
-  const refFileCounts = useMemo(() => countReferenceFiles(refSlots), [refSlots]);
+  const referenceImageCount = useMemo(
+    () =>
+      estimatedApiImageCount({
+        graphFirstFrame: connectedFirstFrame,
+        graphLastFrame: connectedLastFrame,
+        extraSlots: refSlots,
+      }),
+    [connectedFirstFrame, connectedLastFrame, refSlots],
+  );
+  const referenceImageLimit = useSeedance ? SEEDANCE_REF_LIMITS.maxImages : 3;
+  const veoFramesOverrideImageRefs = !useSeedance && Boolean(connectedFirstFrame || connectedLastFrame);
+  const physicsForPrompt = useMemo(
+    () =>
+      buildPhysicsFlagsFromNodeData({
+        videoPhysics_cloth: nodeData.videoPhysics_cloth,
+        videoPhysics_fluid: nodeData.videoPhysics_fluid,
+        videoPhysics_hair: nodeData.videoPhysics_hair,
+        videoPhysics_collision: nodeData.videoPhysics_collision,
+        videoPhysics_gravity: nodeData.videoPhysics_gravity,
+      }),
+    [
+      nodeData.videoPhysics_cloth,
+      nodeData.videoPhysics_collision,
+      nodeData.videoPhysics_fluid,
+      nodeData.videoPhysics_gravity,
+      nodeData.videoPhysics_hair,
+    ],
+  );
+  const promptAssembly = useMemo(
+    () =>
+      buildVideoPromptAssembly({
+        basePrompt: activePromptValue,
+        lightingId: nodeData.videoLightingPreset,
+        visualStyleId: nodeData.videoVisualStylePreset,
+        physics: physicsForPrompt,
+        animationPrompt: nodeData.animationPrompt,
+        cameraPreset: nodeData.cameraPreset,
+        negativePrompt: activeNegativePrompt,
+        includeNegativeInPreview: useSeedance,
+      }),
+    [
+      activeNegativePrompt,
+      activePromptValue,
+      nodeData.animationPrompt,
+      nodeData.cameraPreset,
+      nodeData.videoLightingPreset,
+      nodeData.videoVisualStylePreset,
+      physicsForPrompt,
+      useSeedance,
+    ],
+  );
+  const finalPromptPreview =
+    promptAssembly.readablePrompt ||
+    'Escribe un prompt o conecta un nodo Prompt para ver aquí el texto final.';
+
+  const writeActivePrompt = useCallback(
+    (text: string) => {
+      if (hasPromptEdge) onGraphPromptChange(text);
+      else updateData('prompt', text);
+    },
+    [hasPromptEdge, onGraphPromptChange, updateData],
+  );
+
+  const writeActiveNegativePrompt = useCallback(
+    (text: string) => {
+      if (hasNegativePromptEdge) onGraphNegativePromptChange(text);
+      else updateData('negativePrompt', text);
+    },
+    [hasNegativePromptEdge, onGraphNegativePromptChange, updateData],
+  );
 
   const insertIntoPromptLocal = useCallback(
     (snippet: string) => {
-      const cur = typeof nodeData.prompt === 'string' ? nodeData.prompt : '';
+      const cur = activePromptValue;
       const ins = snippet.endsWith(' ') ? snippet : `${snippet} `;
       const el = promptLocalRef.current;
       if (el) {
         const start = el.selectionStart ?? cur.length;
         const end = el.selectionEnd ?? cur.length;
-        updateData('prompt', cur.slice(0, start) + ins + cur.slice(end));
+        writeActivePrompt(cur.slice(0, start) + ins + cur.slice(end));
         requestAnimationFrame(() => {
           el.focus();
           const pos = start + ins.length;
           el.setSelectionRange(pos, pos);
         });
       } else {
-        updateData('prompt', `${cur}${cur && !cur.endsWith(' ') ? ' ' : ''}${ins}`);
+        writeActivePrompt(`${cur}${cur && !cur.endsWith(' ') ? ' ' : ''}${ins}`);
       }
     },
-    [nodeData.prompt, updateData],
+    [activePromptValue, writeActivePrompt],
   );
 
   const setRefSlotFile = useCallback(
@@ -3321,30 +3396,17 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
           graphLastFrame: connectedLastFrame,
           extraSlots: next,
         });
-        if (key.startsWith('Image') && imgTotal > SEEDANCE_REF_LIMITS.maxImages) {
+        if (key.startsWith('Image') && imgTotal > referenceImageLimit) {
           alert(
-            `Máximo ${SEEDANCE_REF_LIMITS.maxImages} imágenes en total (primer/último frame del grafo + referencias @Image).`,
+            `Máximo ${referenceImageLimit} imágenes de referencia para el motor seleccionado.`,
           );
-          return;
-        }
-        const c = countReferenceFiles(next);
-        if (c.total > SEEDANCE_REF_LIMITS.maxTotal) {
-          alert(`Máximo ${SEEDANCE_REF_LIMITS.maxTotal} archivos de referencia por petición.`);
-          return;
-        }
-        if (key.startsWith('Video') && c.videos > SEEDANCE_REF_LIMITS.maxVideos) {
-          alert(`Máximo ${SEEDANCE_REF_LIMITS.maxVideos} vídeos de referencia (≤15 s c/u recomendado).`);
-          return;
-        }
-        if (key.startsWith('Audio') && c.audios > SEEDANCE_REF_LIMITS.maxAudios) {
-          alert(`Máximo ${SEEDANCE_REF_LIMITS.maxAudios} audios de referencia.`);
           return;
         }
         updateData('videoRefSlots', next);
       };
       reader.readAsDataURL(file);
     },
-    [refSlots, connectedFirstFrame, connectedLastFrame, updateData],
+    [refSlots, connectedFirstFrame, connectedLastFrame, referenceImageLimit, updateData],
   );
 
   const seedCamIcon = (id: string): React.ComponentType<{ className?: string }> => {
@@ -3385,44 +3447,28 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
 
   return createPortal(
     <div
-      className="nb-studio-root fixed inset-0 z-[10050] flex h-[100dvh] max-h-[100dvh] flex-col overflow-hidden overscroll-none"
+      className="nb-studio-root fixed inset-0 z-[10050] flex h-[100dvh] max-h-[100dvh] flex-col overflow-hidden overscroll-none bg-[#07080c] text-zinc-100"
       data-foldder-studio-canvas=""
       data-gv-video-studio=""
     >
       {standardShell ? <StandardStudioShellHeader shell={standardShell} /> : null}
-      <div className="nb-studio-topbar flex shrink-0 items-center justify-between gap-2 border-b border-white/[0.07] bg-[#08080c] px-2 py-1.5">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-1">
-          <div className="flex shrink-0 items-center gap-2 border-r border-white/10 pr-2">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-violet-600/35 to-cyan-600/20 ring-1 ring-white/10">
-              <Video className="h-[18px] w-[18px] text-violet-200" strokeWidth={1.75} aria-hidden />
+      <div className="nb-studio-topbar flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-white/[0.07] bg-[#08090d] px-3 py-2">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+          <div className="flex min-w-[8rem] items-center gap-2">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-zinc-900">
+              <Video className="h-[18px] w-[18px] text-cyan-300" strokeWidth={1.75} aria-hidden />
             </div>
-            <div className="leading-tight">
-              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-100">Studio</p>
-              <p className="text-[7px] font-medium text-zinc-500">Vídeo IA</p>
+            <div className="min-w-0 leading-tight">
+              <p className="truncate text-sm font-semibold text-zinc-100">Video Studio</p>
+              <p className="truncate text-[11px] text-zinc-500">{activePromptSourceLabel} prompt</p>
             </div>
           </div>
 
           <div className="flex shrink-0 items-center gap-1" role="group" aria-label="Motor">
             {(
               [
-                {
-                  key: 'veo31' as const,
-                  label: 'Veo',
-                  sub: 'Gemini',
-                  Icon: Sparkles,
-                  activeBg: 'rgba(34,211,238,0.12)',
-                  activeBorder: 'rgba(34,211,238,0.45)',
-                  iconColor: '#22d3ee',
-                },
-                {
-                  key: 'seedance2' as const,
-                  label: 'Seed',
-                  sub: 'Ark',
-                  Icon: Film,
-                  activeBg: 'rgba(244,114,182,0.12)',
-                  activeBorder: 'rgba(244,114,182,0.45)',
-                  iconColor: '#f472b6',
-                },
+                { key: 'veo31' as const, label: 'Veo', Icon: Sparkles, color: '#22d3ee' },
+                { key: 'seedance2' as const, label: 'Seedance', Icon: Film, color: '#f472b6' },
               ] as const
             ).map((m) => {
               const active = (nodeData.videoModel || 'veo31') === m.key;
@@ -3437,10 +3483,7 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
                       const f = nodeData.videoFormat;
                       const fmt = f === '1:1' || f === '9:16' || f === '16:9' ? f : '16:9';
                       updateData('videoFormat', fmt);
-                      updateData(
-                        'duration',
-                        String(Math.min(12, Math.max(2, Number(nodeData.duration) || 5))),
-                      );
+                      updateData('duration', String(Math.min(12, Math.max(2, Number(nodeData.duration) || 5))));
                     } else {
                       updateData('videoFormat', nodeData.videoFormat === '9:16' ? '9:16' : '16:9');
                       updateData(
@@ -3452,27 +3495,25 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
                       updateData('duration', String(normalizeVeoDuration(nodeData.duration)));
                     }
                   }}
-                  title={`${m.label} · ${m.sub}`}
-                  className="flex items-center gap-1 rounded-lg border px-2 py-1 transition-all"
-                  style={{
-                    background: active ? m.activeBg : 'rgba(24,24,32,0.95)',
-                    borderColor: active ? m.activeBorder : 'rgba(82,82,91,0.45)',
-                    color: active ? '#fafafa' : '#a1a1aa',
-                  }}
+                  className={`flex h-8 items-center gap-1 rounded-lg border px-2 text-xs font-semibold transition-colors ${
+                    active ? 'border-white/25 bg-white/[0.08] text-white' : 'border-white/10 bg-black/25 text-zinc-500 hover:text-zinc-200'
+                  }`}
+                  title={m.key === 'seedance2' ? 'Seedance / Ark' : 'Gemini Veo 3.1'}
                 >
-                  <Icon className="h-3.5 w-3.5 shrink-0" style={{ color: active ? m.iconColor : '#71717a' }} />
-                  <span className="text-[9px] font-black uppercase tracking-wide">{m.label}</span>
+                  <Icon className="h-3.5 w-3.5 shrink-0" style={{ color: active ? m.color : '#71717a' }} />
+                  {m.label}
                 </button>
               );
             })}
           </div>
 
-          <div className="flex items-center gap-0.5 rounded-lg border border-white/[0.08] bg-black/40 px-1 py-0.5">
-            <RectangleHorizontal className="h-3 w-3 shrink-0 text-zinc-500" aria-hidden />
+          <label className="flex h-8 items-center gap-1 rounded-lg border border-white/10 bg-black/25 px-2">
+            <RectangleHorizontal className="h-3.5 w-3.5 shrink-0 text-zinc-500" aria-hidden />
             <select
-              className="max-w-[5.5rem] cursor-pointer border-0 bg-transparent py-0 pl-0.5 pr-0 text-[9px] font-bold text-zinc-200 outline-none"
+              className="cursor-pointer border-0 bg-transparent p-0 text-xs font-semibold text-zinc-200 outline-none"
               value={videoFormatForApi}
               onChange={(e) => updateData('videoFormat', e.target.value)}
+              title="Aspect ratio"
             >
               {(useSeedance ? SEEDANCE_ASPECT_OPTIONS : VEO_ASPECT_OPTIONS).map((o) => (
                 <option key={o.value} value={o.value}>
@@ -3480,15 +3521,16 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
                 </option>
               ))}
             </select>
-          </div>
+          </label>
 
           {!useSeedance && (
-            <div className="flex items-center gap-0.5 rounded-lg border border-white/[0.08] bg-black/40 px-1 py-0.5">
-              <Cpu className="h-3 w-3 shrink-0 text-zinc-500" aria-hidden />
+            <label className="flex h-8 items-center gap-1 rounded-lg border border-white/10 bg-black/25 px-2">
+              <Cpu className="h-3.5 w-3.5 shrink-0 text-zinc-500" aria-hidden />
               <select
-                className="max-w-[4.5rem] cursor-pointer border-0 bg-transparent py-0 pl-0.5 pr-0 text-[9px] font-bold text-zinc-200 outline-none"
+                className="cursor-pointer border-0 bg-transparent p-0 text-xs font-semibold text-zinc-200 outline-none"
                 value={resolutionForApi}
                 onChange={(e) => updateData('resolution', e.target.value)}
+                title="Resolution"
               >
                 {VEO_RESOLUTION_OPTIONS.map((o) => (
                   <option key={o.value} value={o.value}>
@@ -3496,71 +3538,51 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
                   </option>
                 ))}
               </select>
-            </div>
+            </label>
           )}
 
-          <div className="flex items-center gap-0.5 rounded-lg border border-white/[0.08] bg-black/40 px-1 py-0.5">
-            <Clock className="h-3 w-3 shrink-0 text-zinc-500" aria-hidden />
+          <label className="flex h-8 items-center gap-1 rounded-lg border border-white/10 bg-black/25 px-2">
+            <Clock className="h-3.5 w-3.5 shrink-0 text-zinc-500" aria-hidden />
             <select
-              className="w-[3.25rem] cursor-pointer border-0 bg-transparent py-0 pl-0.5 pr-0 text-[9px] font-bold text-zinc-200 outline-none"
+              className="cursor-pointer border-0 bg-transparent p-0 text-xs font-semibold text-zinc-200 outline-none"
               value={String(durationSecondsForApi)}
               onChange={(e) => updateData('duration', e.target.value)}
+              title="Duration"
             >
-              {(useSeedance
-                ? SEEDANCE_DURATION_OPTIONS
-                : veoDurationChoicesForResolution(resolutionForApi)
-              ).map((sec) => (
+              {(useSeedance ? SEEDANCE_DURATION_OPTIONS : veoDurationChoicesForResolution(resolutionForApi)).map((sec) => (
                 <option key={sec} value={String(sec)}>
                   {sec}s
                 </option>
               ))}
             </select>
-          </div>
+          </label>
 
-          <div className="flex min-w-0 max-w-[11rem] shrink flex-col gap-0.5 rounded-lg border border-emerald-500/20 bg-emerald-950/15 px-1.5 py-1">
-            <div className="flex items-center gap-1">
-              <DollarSign className="h-2.5 w-2.5 shrink-0 text-emerald-500/80" aria-hidden />
-              <span className="truncate text-[8px] font-mono tabular-nums leading-none text-emerald-400/95">
-                {previewCost.usdPerSecond.toFixed(3)}/s · ${previewCost.totalUsd.toFixed(2)}
-              </span>
-            </div>
-            <div className="h-0.5 w-full overflow-hidden rounded-full bg-white/10">
-              <div
-                className="h-full rounded-full bg-gradient-to-r from-emerald-600/90 to-cyan-500/80 transition-all duration-300"
-                style={{ width: `${preGenProgressPct}%` }}
-              />
+          <div className="flex h-8 min-w-[8.5rem] items-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-950/20 px-2">
+            <DollarSign className="h-3.5 w-3.5 shrink-0 text-emerald-400" aria-hidden />
+            <span className="text-xs font-mono tabular-nums text-emerald-300">
+              ${previewCost.totalUsd.toFixed(2)}
+            </span>
+            <div className="h-1 min-w-10 flex-1 overflow-hidden rounded-full bg-white/10">
+              <div className="h-full rounded-full bg-emerald-400 transition-all" style={{ width: `${preGenProgressPct}%` }} />
             </div>
           </div>
         </div>
 
-        <div className="flex shrink-0 items-center gap-1.5">
+        <div className="flex shrink-0 items-center gap-2">
           <button
             type="button"
             onClick={onGenerate}
             disabled={isRunning || !hasPrompt}
-            className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-[9px] font-black uppercase tracking-wide transition-all disabled:cursor-not-allowed disabled:opacity-45"
-            style={{
-              background: 'linear-gradient(135deg,#6C5CE7,#5548c8)',
-              color: '#fafafa',
-              border: '1px solid rgba(108,92,231,0.45)',
-              boxShadow: '0 2px 10px rgba(108,92,231,0.35)',
-            }}
-            title={!hasPrompt ? 'Conecta un prompt o rellena el panel' : undefined}
+            className="flex h-9 items-center gap-2 rounded-lg border border-violet-400/40 bg-violet-600 px-3 text-xs font-bold text-white transition-colors hover:bg-violet-500 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-zinc-800 disabled:text-zinc-500"
+            title={!hasPrompt ? 'Prompt requerido' : 'Generar vídeo'}
           >
-            {isRunning ? (
-              <>
-                <Loader2 size={14} className="shrink-0 animate-spin" /> {Math.round(progress)}%
-              </>
-            ) : (
-              <>
-                <Zap size={14} className="shrink-0" /> Generar
-              </>
-            )}
+            {isRunning ? <Loader2 size={15} className="shrink-0 animate-spin" /> : <Zap size={15} className="shrink-0" />}
+            {isRunning ? `${Math.round(progress)}%` : 'Generar'}
           </button>
           <button
             type="button"
             onClick={onClose}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/[0.05] text-zinc-400 transition-all hover:border-white/20 hover:bg-white/[0.09] hover:text-white"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] text-zinc-400 transition-colors hover:bg-white/[0.08] hover:text-white"
             title="Cerrar"
           >
             <X size={17} strokeWidth={2.25} />
@@ -3568,16 +3590,16 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
         </div>
       </div>
 
-      <div className="flex min-h-0 w-full flex-1 flex-row overflow-hidden">
-        <div className="flex min-h-0 min-w-0 flex-1 flex-row overflow-hidden">
+      <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden lg:flex-row">
+        <div className="flex min-h-[18rem] min-w-0 flex-1 flex-row overflow-hidden">
           <div
-            className="flex shrink-0 flex-col overflow-hidden border-r border-white/[0.08] bg-[#08080c]/98 transition-[width] duration-200 ease-out"
-            style={{ width: galleryOpen ? 112 : 36 }}
+            className="flex shrink-0 flex-col overflow-hidden border-r border-white/[0.08] bg-[#08090d] transition-[width] duration-200 ease-out"
+            style={{ width: galleryOpen ? 112 : 38 }}
           >
             <button
               type="button"
               onClick={() => setGalleryOpen((o) => !o)}
-              className="flex flex-col items-center justify-center gap-0.5 border-b border-white/[0.08] py-2 text-zinc-400 transition-colors hover:bg-white/[0.04] hover:text-zinc-200"
+              className="flex h-11 flex-col items-center justify-center gap-0.5 border-b border-white/[0.08] text-zinc-400 transition-colors hover:bg-white/[0.04] hover:text-zinc-200"
               title={galleryOpen ? 'Ocultar historial' : 'Historial'}
             >
               <History size={15} strokeWidth={1.75} className="shrink-0 opacity-80" />
@@ -3586,9 +3608,7 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
             {galleryOpen && (
               <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-hidden p-1.5">
                 {historyUrls.length === 0 ? (
-                  <p className="px-0.5 text-[7px] leading-tight text-zinc-600">
-                    Las versiones aparecen aquí (máx. 4 vista previa).
-                  </p>
+                  <p className="px-0.5 text-[10px] leading-tight text-zinc-600">Sin versiones</p>
                 ) : (
                   <>
                     {historyPreview.map((url, i) => (
@@ -3599,579 +3619,346 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
                           updateData('value', url);
                           updateData('type', 'video');
                         }}
-                        className="relative h-12 w-full shrink-0 overflow-hidden rounded-sm border border-white/10 transition-colors hover:border-cyan-500/55"
+                        className="relative h-14 w-full shrink-0 overflow-hidden rounded-md border border-white/10 transition-colors hover:border-cyan-500/55"
                         title={`Versión ${historyUrls.length - i}`}
                       >
                         <video src={url} className="h-full w-full object-cover" muted playsInline />
-                        <span className="absolute bottom-0.5 right-0.5 rounded bg-black/75 px-0.5 text-[7px] font-bold text-zinc-200">
+                        <span className="absolute bottom-0.5 right-0.5 rounded bg-black/75 px-1 text-[9px] font-bold text-zinc-200">
                           {historyUrls.length - i}
                         </span>
                       </button>
                     ))}
-                    {historyExtra > 0 && (
-                      <p className="text-center text-[7px] font-mono text-zinc-600">+{historyExtra}</p>
-                    )}
+                    {historyExtra > 0 && <p className="text-center text-[10px] font-mono text-zinc-600">+{historyExtra}</p>}
                   </>
                 )}
               </div>
             )}
           </div>
 
-          <div className="relative flex min-h-0 min-w-0 flex-1 items-center justify-center overflow-hidden bg-[#0a0a0f] p-2">
+          <div className="relative flex min-h-0 min-w-0 flex-1 items-center justify-center overflow-hidden bg-[#0a0b10] p-3">
             {outputVideo ? (
-              <video
-                src={outputVideo}
-                className="max-h-full max-w-full object-contain"
-                controls
-                loop
-                muted
-                playsInline
-              />
+              <video src={outputVideo} className="max-h-full max-w-full object-contain" controls loop muted playsInline />
             ) : (
-              <div className="flex max-w-xs flex-col items-center justify-center gap-2 px-4 text-center">
-                <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-white/[0.06] bg-zinc-900/50">
+              <div className="flex max-w-sm flex-col items-center justify-center gap-3 px-4 text-center">
+                <div className="flex h-16 w-16 items-center justify-center rounded-lg border border-white/[0.06] bg-zinc-900/60">
                   <Video size={28} className="text-zinc-600" strokeWidth={1.15} />
                 </div>
-                <p className="text-[11px] font-bold text-zinc-500">Sin vídeo</p>
-                <p className="flex flex-wrap items-center justify-center gap-1 text-[9px] leading-snug text-zinc-600">
-                  <span>Panel derecho</span>
-                  <Zap className="h-3 w-3 shrink-0 text-violet-400" aria-hidden />
-                  <span>Generar</span>
-                </p>
+                <p className="text-sm font-semibold text-zinc-500">Sin vídeo todavía</p>
               </div>
             )}
             {isRunning && (
               <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-10">
-                <div className="h-0.5 w-full bg-black/50">
-                  <div
-                    className="h-full bg-gradient-to-r from-[#6C5CE7] to-cyan-400 transition-all duration-500"
-                    style={{ width: `${progress}%` }}
-                  />
+                <div className="h-1 w-full bg-black/50">
+                  <div className="h-full bg-cyan-400 transition-all duration-500" style={{ width: `${progress}%` }} />
                 </div>
-                <p className="bg-black/85 py-0.5 text-center text-[8px] font-black uppercase tracking-widest text-violet-200">
-                  Generando… {Math.round(progress)}%
+                <p className="bg-black/85 py-1 text-center text-xs font-semibold text-cyan-100">
+                  Generando {Math.round(progress)}%
                 </p>
               </div>
             )}
           </div>
         </div>
 
-        <aside className="nb-studio-bottombar flex w-[min(100%,400px)] shrink-0 flex-col overflow-y-auto border-l border-white/[0.09] bg-[#06060a] sm:w-[min(100%,430px)]">
-          <div className="sticky top-0 z-[1] flex items-center gap-2 border-b border-white/[0.07] bg-[#07070c]/98 px-2.5 py-2 backdrop-blur-md">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-violet-600/30 to-fuchsia-600/15 ring-1 ring-white/10">
-              <Sparkles className="h-4 w-4 text-violet-200" strokeWidth={1.75} aria-hidden />
+        <aside className="nb-studio-bottombar flex max-h-full w-full shrink-0 flex-col overflow-y-auto border-t border-white/[0.09] bg-[#07080c] lg:w-[480px] lg:border-l lg:border-t-0">
+          <div className="sticky top-0 z-[1] flex items-center justify-between gap-2 border-b border-white/[0.07] bg-[#08090d]/98 px-3 py-2 backdrop-blur-md">
+            <div className="flex min-w-0 items-center gap-2">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-zinc-900">
+                <Sparkles className="h-4 w-4 text-violet-300" strokeWidth={1.75} aria-hidden />
+              </div>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-zinc-100">Director</p>
+                <p className="truncate text-[11px] text-zinc-500">
+                  {referenceImageCount}/{referenceImageLimit} refs · {negativePromptSourceLabel} negative
+                </p>
+              </div>
             </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-[10px] font-black uppercase tracking-[0.12em] text-zinc-100">Director</p>
-              <p className="truncate text-[7px] text-zinc-500">Flujo 1→4 · 7 capas en texto · refuerzos API · cola</p>
-            </div>
+            <button
+              type="button"
+              onClick={() => void navigator.clipboard?.writeText(finalPromptPreview)}
+              className="flex h-8 items-center gap-1 rounded-lg border border-white/10 bg-white/[0.04] px-2 text-xs font-semibold text-zinc-300 hover:bg-white/[0.08]"
+              title="Copiar prompt final"
+            >
+              <FileText className="h-3.5 w-3.5" />
+              Copiar
+            </button>
           </div>
-          <div className="flex flex-col gap-2 p-2">
-            <details className="group rounded-lg border border-white/[0.07] bg-zinc-950/40">
-              <summary className="flex cursor-pointer list-none items-center gap-2 px-2 py-2 text-zinc-300 marker:content-none [&::-webkit-details-marker]:hidden">
-                <BookOpen className="h-3.5 w-3.5 shrink-0 text-amber-400/95" aria-hidden />
-                <span className="text-[9px] font-black uppercase tracking-wider">Guía prompt</span>
-                <ChevronDown className="ml-auto h-3.5 w-3.5 shrink-0 text-zinc-500 transition-transform group-open:rotate-180" />
-              </summary>
-              <div className="space-y-1.5 border-t border-white/[0.05] px-2 pb-2 pt-1.5 text-[8px] leading-snug text-zinc-400">
-                <p>
-                  <span className="font-bold text-zinc-300">Siete capas:</span> {SEEDANCE_PROMPT_GUIDE_ES.sevenLayersIntro}
-                </p>
-                <p className="space-y-0.5 text-[7px] leading-snug text-zinc-500">
-                  <span className="block text-zinc-400">1 {SEEDANCE_PROMPT_GUIDE_ES.layer1}</span>
-                  <span className="block">2 {SEEDANCE_PROMPT_GUIDE_ES.layer2}</span>
-                  <span className="block">3 {SEEDANCE_PROMPT_GUIDE_ES.layer3}</span>
-                  <span className="block">4 {SEEDANCE_PROMPT_GUIDE_ES.layer4}</span>
-                  <span className="block">5 {SEEDANCE_PROMPT_GUIDE_ES.layer5}</span>
-                  <span className="block">6 {SEEDANCE_PROMPT_GUIDE_ES.layer6}</span>
-                  <span className="block">7 {SEEDANCE_PROMPT_GUIDE_ES.layer7}</span>
-                </p>
-                <p>
-                  <span className="font-bold text-zinc-300">Gestor (cómo encaja):</span> {SEEDANCE_PROMPT_GUIDE_ES.gestorMapping}
-                </p>
-                <p>
-                  <span className="font-bold text-zinc-300">Resumen orden texto:</span> {SEEDANCE_PROMPT_GUIDE_ES.structure}
-                </p>
-                <p className="rounded bg-black/30 px-1.5 py-1 font-mono text-[6.5px] leading-relaxed text-zinc-500 whitespace-pre-wrap">
-                  {DIRECTOR_PROMPT_TEMPLATE_EN}
-                </p>
-                <p>
-                  <span className="font-bold text-zinc-300">Iluminación:</span> {SEEDANCE_PROMPT_GUIDE_ES.lighting}
-                </p>
-                <p>
-                  <span className="font-bold text-zinc-300">Cámara vs sujeto:</span>{' '}
-                  {SEEDANCE_PROMPT_GUIDE_ES.cameraVsSubject}
-                </p>
-                <p>
-                  <span className="font-bold text-zinc-300">Ritmo:</span> {SEEDANCE_PROMPT_GUIDE_ES.fastWarning}
-                </p>
-                <p>
-                  <span className="font-bold text-zinc-300">@Reference:</span> {SEEDANCE_PROMPT_GUIDE_ES.references}
-                </p>
-              </div>
-            </details>
 
-            <div className="rounded-md border border-dashed border-white/[0.08] bg-zinc-950/25 px-2 py-1.5">
-              <p className="text-[7px] font-bold uppercase tracking-wider text-zinc-500">Orden en el gestor</p>
-              <ol className="mt-1 list-decimal space-y-0.5 pl-3.5 text-[7px] leading-snug text-zinc-400">
-                <li>Medios: frames del grafo y @Refs (sube archivos; luego inserta @ImageN… en el texto, capa 2).</li>
-                <li>Texto: prompt del grafo o local en inglés (capas 1–7; puede ir incompleto).</li>
-                <li>Refuerzos: presets Luz, Estilo y Física (keywords en inglés tras tu párrafo al generar).</li>
-                <li>Cola API: animación → preset cámara → negative (el servidor las concatena al final del prompt).</li>
-              </ol>
-            </div>
-
-            <div className="space-y-2">
-              <p className="px-0.5 text-[7px] font-black uppercase tracking-[0.18em] text-zinc-500">1 · Medios</p>
-              <div className="rounded-lg border border-white/[0.06] bg-zinc-950/30 p-2">
-                <div className="mb-1.5 flex items-center gap-1.5 text-zinc-500">
-                  <ImageIcon className="h-3 w-3 text-cyan-500/80" aria-hidden />
-                  <span className="text-[8px] font-black uppercase tracking-wider">Frames grafo</span>
+          <div className="grid gap-3 p-3">
+            <section className="rounded-lg border border-white/[0.08] bg-zinc-950/35 p-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <Link2 className="h-4 w-4 shrink-0 text-emerald-300" aria-hidden />
+                  <h2 className="truncate text-sm font-semibold text-zinc-100">Prompt</h2>
                 </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <VideoStudioFrameSlot label="1º frame" icon={ImageIcon} url={connectedFirstFrame} />
-                  <VideoStudioFrameSlot label="Último" icon={ArrowRightCircle} url={connectedLastFrame} />
-                </div>
-              </div>
-
-              <div className="overflow-hidden rounded-lg border border-fuchsia-500/15 bg-fuchsia-950/[0.08]">
-                <button
-                  type="button"
-                  aria-expanded={refsPanelOpen}
-                  onClick={() => setRefsPanelOpen((v) => !v)}
-                  className="flex w-full cursor-pointer items-center justify-between gap-2 px-2 py-2 text-left outline-none ring-fuchsia-500/40 focus-visible:ring-2"
-                >
-                  <div className="flex min-w-0 items-center gap-1.5">
-                    <Link className="h-3.5 w-3.5 shrink-0 text-fuchsia-400/90" aria-hidden />
-                    <span className="truncate text-[8px] font-black uppercase tracking-wider text-fuchsia-100/90">
-                      @Refs
-                    </span>
-                    <span className="hidden text-[7px] text-zinc-500 sm:inline">img · vídeo · audio</span>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-1">
-                    <span className="text-[7px] font-mono text-zinc-500">
-                      {refFileCounts.total}/{SEEDANCE_REF_LIMITS.maxTotal} · img{' '}
-                      {estimatedApiImageCount({
-                        graphFirstFrame: connectedFirstFrame,
-                        graphLastFrame: connectedLastFrame,
-                        extraSlots: refSlots,
-                      })}
-                      /{SEEDANCE_REF_LIMITS.maxImages}
-                    </span>
-                    <ChevronDown
-                      className={`h-3.5 w-3.5 shrink-0 text-zinc-400 transition-transform ${refsPanelOpen ? 'rotate-180' : ''}`}
-                      aria-hidden
-                    />
-                  </div>
-                </button>
-                {refsPanelOpen ? (
-                  <div className="space-y-2 border-t border-white/[0.06] px-2 pb-2 pt-1.5">
-                    <p className="text-[7px] leading-tight text-zinc-500">
-                      Pulsa <Upload className="inline h-2.5 w-2.5 opacity-70" /> o slot; chip inserta tag en prompt (capa
-                      2).
-                    </p>
-                    <div className="mb-0">
-                      <div className="mb-1 flex items-center gap-1 text-[7px] font-bold uppercase tracking-wider text-fuchsia-400/80">
-                        <ImageIcon className="h-3 w-3" />
-                        Img
-                      </div>
-                      <div className="grid grid-cols-3 gap-1">
-                        {([1, 2, 3, 4, 5, 6, 7, 8, 9] as const).map((n) => {
-                          const key = `Image${n}` as VideoRefSlotImageKey;
-                          const tag = refTag(key);
-                          const url = refSlots[key];
-                          return (
-                            <div key={key} className="min-w-0">
-                              <div className="relative aspect-square overflow-hidden rounded-md border border-white/[0.08] bg-zinc-950/90">
-                                {url ? (
-                                  <img src={url} alt="" className="h-full w-full object-cover" />
-                                ) : (
-                                  <div className="flex h-full min-h-[2.25rem] flex-col items-center justify-center gap-0.5">
-                                    <Upload className="h-3 w-3 text-zinc-600" strokeWidth={1.5} />
-                                    <span className="font-mono text-[6px] text-zinc-600">{n}</span>
-                                  </div>
-                                )}
-                                <input
-                                  type="file"
-                                  accept="image/*"
-                                  className="absolute inset-0 cursor-pointer opacity-0"
-                                  onChange={(e) => {
-                                    const f = e.target.files?.[0];
-                                    setRefSlotFile(key, f ?? null);
-                                    e.target.value = '';
-                                  }}
-                                />
-                              </div>
-                              {url ? (
-                                <div className="mt-0.5 flex justify-center gap-0.5">
-                                  <button
-                                    type="button"
-                                    onClick={() => insertIntoPromptLocal(tag)}
-                                    className="rounded bg-fuchsia-600/30 px-1 py-px font-mono text-[6px] font-bold text-fuchsia-100"
-                                  >
-                                    {tag}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setRefSlotFile(key, null)}
-                                    className="rounded p-0.5 text-zinc-500 hover:text-rose-400"
-                                    title="Quitar"
-                                  >
-                                    <Trash2 className="h-2.5 w-2.5" />
-                                  </button>
-                                </div>
-                              ) : null}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                    <div className="mb-2">
-                      <div className="mb-1 flex items-center gap-1 text-[7px] font-bold uppercase tracking-wider text-cyan-400/80">
-                        <Film className="h-3 w-3" />
-                        Vídeo
-                      </div>
-                      <div className="grid grid-cols-3 gap-1">
-                        {([1, 2, 3] as const).map((n) => {
-                          const key = `Video${n}` as VideoRefSlotVideoKey;
-                          const tag = refTag(key);
-                          const url = refSlots[key];
-                          return (
-                            <div key={key} className="min-w-0">
-                              <div className="relative flex min-h-[2.5rem] flex-col justify-center rounded-md border border-white/[0.08] bg-zinc-950/90 px-1 py-1">
-                                <Film className={`mx-auto h-3 w-3 ${url ? 'text-cyan-400' : 'text-zinc-600'}`} />
-                                <input
-                                  type="file"
-                                  accept="video/*"
-                                  className="absolute inset-0 cursor-pointer opacity-0"
-                                  onChange={(e) => {
-                                    const f = e.target.files?.[0];
-                                    setRefSlotFile(key, f ?? null);
-                                    e.target.value = '';
-                                  }}
-                                />
-                              </div>
-                              {url ? (
-                                <div className="mt-0.5 flex justify-center gap-0.5">
-                                  <button
-                                    type="button"
-                                    onClick={() => insertIntoPromptLocal(tag)}
-                                    className="rounded bg-cyan-600/30 px-1 py-px font-mono text-[6px] font-bold text-cyan-100"
-                                  >
-                                    {tag}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setRefSlotFile(key, null)}
-                                    className="rounded p-0.5 text-zinc-500 hover:text-rose-400"
-                                    title="Quitar"
-                                  >
-                                    <Trash2 className="h-2.5 w-2.5" />
-                                  </button>
-                                </div>
-                              ) : null}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="mb-1 flex items-center gap-1 text-[7px] font-bold uppercase tracking-wider text-emerald-400/80">
-                        <Music className="h-3 w-3" />
-                        Audio
-                      </div>
-                      <div className="grid grid-cols-3 gap-1">
-                        {([1, 2, 3] as const).map((n) => {
-                          const key = `Audio${n}` as VideoRefSlotAudioKey;
-                          const tag = refTag(key);
-                          const url = refSlots[key];
-                          return (
-                            <div key={key} className="min-w-0">
-                              <div className="relative flex min-h-[2.5rem] flex-col justify-center rounded-md border border-white/[0.08] bg-zinc-950/90 px-1 py-1">
-                                <Music className={`mx-auto h-3 w-3 ${url ? 'text-emerald-400' : 'text-zinc-600'}`} />
-                                <input
-                                  type="file"
-                                  accept="audio/*"
-                                  className="absolute inset-0 cursor-pointer opacity-0"
-                                  onChange={(e) => {
-                                    const f = e.target.files?.[0];
-                                    setRefSlotFile(key, f ?? null);
-                                    e.target.value = '';
-                                  }}
-                                />
-                              </div>
-                              {url ? (
-                                <div className="mt-0.5 flex justify-center gap-0.5">
-                                  <button
-                                    type="button"
-                                    onClick={() => insertIntoPromptLocal(tag)}
-                                    className="rounded bg-emerald-600/30 px-1 py-px font-mono text-[6px] font-bold text-emerald-100"
-                                  >
-                                    {tag}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setRefSlotFile(key, null)}
-                                    className="rounded p-0.5 text-zinc-500 hover:text-rose-400"
-                                    title="Quitar"
-                                  >
-                                    <Trash2 className="h-2.5 w-2.5" />
-                                  </button>
-                                </div>
-                              ) : null}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <p className="px-0.5 text-[7px] font-black uppercase tracking-[0.18em] text-zinc-500">2 · Texto director</p>
-            <div className="rounded-lg border border-emerald-500/20 bg-emerald-950/[0.12] p-2">
-              <div className="mb-1 flex items-center gap-1.5">
-                <Link2 className="h-3.5 w-3.5 text-emerald-400/90" aria-hidden />
-                <span className="text-[8px] font-black uppercase tracking-wider text-emerald-200/90">
-                  Prompt grafo
-                </span>
-              </div>
-              {hasPromptEdge ? (
-                <textarea
-                  value={graphPromptFromEdge}
-                  onChange={(e) => onGraphPromptChange(e.target.value)}
-                  rows={3}
-                  className="max-h-36 w-full resize-y rounded-md border border-emerald-500/25 bg-black/30 px-2 py-1.5 text-[10px] leading-snug text-zinc-100 outline-none focus:border-emerald-400/50"
-                />
-              ) : (
-                <div className="flex items-start gap-2 rounded-md border border-dashed border-white/10 bg-black/25 px-2 py-2 text-[9px] leading-snug text-zinc-500">
-                  <Link2 className="mt-0.5 h-3 w-3 shrink-0 opacity-40" />
-                  Sin cable al Prompt — usa prompt local o conecta un nodo.
-                </div>
-              )}
-            </div>
-
-            <div className="rounded-lg border border-violet-500/15 bg-violet-950/10 p-2">
-              <div className="mb-1 flex items-center gap-1.5">
-                <FileText className="h-3.5 w-3.5 text-violet-300/90" aria-hidden />
-                <span className="text-[8px] font-black uppercase tracking-wider text-violet-200/90">
-                  Prompt local
+                <span className="rounded-md border border-emerald-400/20 bg-emerald-950/30 px-2 py-1 text-[11px] font-semibold text-emerald-200">
+                  {activePromptSourceLabel}
                 </span>
               </div>
               <textarea
                 ref={promptLocalRef}
-                value={nodeData.prompt ?? ''}
-                onChange={(e) => updateData('prompt', e.target.value)}
-                rows={4}
-                placeholder="Inglés · 7 capas: 1 cámara → 2 sujeto/@Image → 3 acción+físicas → 4 entorno → 5 luz → 6 estilo → 7 locks (puedes acortar)"
-                className="w-full resize-y rounded-md border border-white/10 bg-black/40 px-2 py-1.5 text-[10px] leading-snug text-zinc-100 placeholder-zinc-600 outline-none focus:border-violet-500/45"
+                value={activePromptValue}
+                onChange={(e) => writeActivePrompt(e.target.value)}
+                rows={8}
+                placeholder="Describe el plano, sujeto, acción, entorno, luz, estilo y locks."
+                className="min-h-[12rem] w-full resize-y rounded-lg border border-white/10 bg-black/35 px-3 py-2 text-[13px] leading-6 text-zinc-100 placeholder-zinc-600 outline-none focus:border-emerald-400/50"
               />
-              <div className="mt-2 space-y-2">
-                <div className="rounded-md border border-violet-500/25 bg-violet-950/20 px-2 py-1.5">
-                  <div className="mb-1 flex items-center gap-1.5">
-                    <LayoutTemplate className="h-3.5 w-3.5 text-violet-300" aria-hidden />
-                    <span className="text-[8px] font-black uppercase tracking-wider text-violet-100/95">
-                      Plantilla de escena
-                    </span>
-                  </div>
-                  <p className="mb-1.5 text-[7px] leading-snug text-zinc-500">
-                    Esqueleto en 7 capas (inglés); el gestor añade luz/estilo/física y el preset de cámara al enviar.
-                    Puedes borrar líneas que no uses. No sustituye el preset API ni las frases rápidas de cámara.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => insertIntoPromptLocal(DIRECTOR_PROMPT_TEMPLATE_EN)}
-                    className="inline-flex h-7 items-center gap-1 rounded-md border border-violet-500/40 bg-violet-950/40 px-2 text-[7px] font-bold uppercase tracking-wide text-violet-100 hover:bg-violet-900/50"
-                    title={DIRECTOR_PROMPT_TEMPLATE_EN}
-                  >
-                    <LayoutTemplate className="h-3 w-3 shrink-0" />
-                    Insertar plantilla
-                  </button>
-                </div>
-                <div className="rounded-md border border-cyan-500/25 bg-cyan-950/15 px-2 py-1.5">
-                  <div className="mb-1 flex items-center gap-1.5">
-                    <Camera className="h-3.5 w-3.5 text-cyan-300" aria-hidden />
-                    <span className="text-[8px] font-black uppercase tracking-wider text-cyan-100/95">
-                      Frases de cámara (prompt)
-                    </span>
-                  </div>
-                  <p className="mb-1.5 text-[7px] leading-snug text-zinc-500">
-                    Atajos que insertan una frase en inglés sobre cómo se mueve la cámara (distinto de la plantilla
-                    de escena y del bloque «Cámara (preset)» de la API).
-                  </p>
-                  <div className="flex flex-wrap gap-1">
-                    {SEEDANCE_CAMERA_QUICK_INSERTS.map((c) => {
-                      const CamI = seedCamIcon(c.id);
-                      return (
-                        <button
-                          key={c.id}
-                          type="button"
-                          title={`${c.label}: ${c.en}`}
-                          onClick={() => insertIntoPromptLocal(c.en + ',')}
-                          className="flex h-7 w-7 items-center justify-center rounded-md border border-cyan-500/35 bg-cyan-950/30 text-cyan-200/90 hover:bg-cyan-900/45"
-                        >
-                          <CamI className="h-3.5 w-3.5" aria-hidden />
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-              {hasPromptEdge ? (
-                <p className="mt-1 flex items-start gap-1 text-[7px] leading-tight text-zinc-500">
-                  <Info className="mt-0.5 h-3 w-3 shrink-0 opacity-70" />
-                  El grafo tiene prioridad; editar arriba actualiza el nodo fuente.
-                </p>
-              ) : null}
-            </div>
-            </div>
-
-            <div className="space-y-2">
-              <p className="px-0.5 text-[7px] font-black uppercase tracking-[0.18em] text-zinc-500">3 · Refuerzos API</p>
-              <p className="px-0.5 text-[7px] leading-snug text-zinc-600">
-                Keywords en inglés tras tu párrafo: refuerzan luz (capa 5), estilo (6) y física (3). Opcional si ya lo
-                describes en el texto.
-              </p>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              <div className="rounded-lg border border-amber-500/15 bg-amber-950/10 p-2">
-                <div className="mb-1 flex items-center gap-1.5">
-                  <Sun className="h-3.5 w-3.5 text-amber-400" aria-hidden />
-                  <span className="text-[8px] font-black uppercase tracking-wider text-amber-100/90">Luz</span>
-                </div>
-                <select
-                  className="w-full rounded-md border border-white/10 bg-black/45 py-1 pl-1.5 pr-1 text-[9px] text-zinc-100 outline-none focus:border-amber-500/40"
-                  value={nodeData.videoLightingPreset ?? ''}
-                  onChange={(e) => updateData('videoLightingPreset', e.target.value || undefined)}
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => insertIntoPromptLocal(DIRECTOR_PROMPT_TEMPLATE_EN)}
+                  className="flex h-8 items-center gap-1 rounded-lg border border-violet-400/25 bg-violet-950/25 px-2 text-xs font-semibold text-violet-100 hover:bg-violet-900/35"
+                  title="Insertar plantilla"
                 >
-                  {VIDEO_LIGHTING_PRESETS.map((p) => (
-                    <option key={p.id || 'none'} value={p.id}>
-                      {p.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="rounded-lg border border-sky-500/15 bg-sky-950/10 p-2">
-                <div className="mb-1 flex items-center gap-1.5">
-                  <Palette className="h-3.5 w-3.5 text-sky-400" aria-hidden />
-                  <span className="text-[8px] font-black uppercase tracking-wider text-sky-100/90">Estilo</span>
-                </div>
-                <select
-                  className="w-full rounded-md border border-white/10 bg-black/45 py-1 pl-1.5 pr-1 text-[9px] text-zinc-100 outline-none focus:border-sky-500/40"
-                  value={nodeData.videoVisualStylePreset ?? ''}
-                  onChange={(e) => updateData('videoVisualStylePreset', e.target.value || undefined)}
-                >
-                  {VIDEO_VISUAL_STYLE_PRESETS.map((p) => (
-                    <option key={p.id || 'none'} value={p.id}>
-                      {p.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="rounded-lg border border-white/[0.06] bg-zinc-950/35 p-2">
-              <div className="mb-1.5 flex items-center gap-1.5 text-zinc-500">
-                <Boxes className="h-3 w-3 text-zinc-400" aria-hidden />
-                <span className="text-[8px] font-black uppercase tracking-wider">Física</span>
-              </div>
-              <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
-                {VIDEO_PHYSICS_OPTIONS.map((p) => {
-                  const PI = physicIcon(p.id);
+                  <BookOpen className="h-3.5 w-3.5" />
+                  Plantilla
+                </button>
+                {SEEDANCE_CAMERA_QUICK_INSERTS.map((c) => {
+                  const CamI = seedCamIcon(c.id);
                   return (
-                    <label
-                      key={p.id}
-                      className="flex cursor-pointer items-center gap-2 rounded-md border border-white/[0.05] bg-black/25 px-1.5 py-1 text-[8px] text-zinc-400 hover:bg-white/[0.03]"
+                    <button
+                      key={c.id}
+                      type="button"
+                      title={`${c.label}: ${c.en}`}
+                      onClick={() => insertIntoPromptLocal(`${c.en},`)}
+                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-cyan-500/25 bg-cyan-950/20 text-cyan-200 hover:bg-cyan-900/35"
                     >
-                      <input
-                        type="checkbox"
-                        checked={!!(nodeData as Record<string, unknown>)[`videoPhysics_${p.id}`]}
-                        onChange={(e) => updateData(`videoPhysics_${p.id}`, e.target.checked)}
-                        className="rounded border-zinc-600"
-                      />
-                      <PI className="h-3 w-3 shrink-0 text-zinc-500" aria-hidden />
-                      <span className="leading-tight">{p.label}</span>
-                    </label>
+                      <CamI className="h-4 w-4" aria-hidden />
+                    </button>
                   );
                 })}
               </div>
-            </div>
-            </div>
+            </section>
 
-            <div className="space-y-2">
-              <p className="px-0.5 text-[7px] font-black uppercase tracking-[0.18em] text-zinc-500">4 · Cola API</p>
-              <p className="px-0.5 text-[7px] leading-snug text-zinc-600">
-                El servidor concatena al final del prompt, en este orden:{' '}
-                <span className="text-zinc-500">Animación</span> →{' '}
-                <span className="text-zinc-500">Cámara (preset)</span> →{' '}
-                <span className="text-zinc-500">Negative</span>. La capa 1 sigue siendo la primera frase de tu texto
-                principal.
-              </p>
-
-              <div className="flex flex-col gap-2 rounded-lg border border-white/[0.06] bg-zinc-950/30 p-2 sm:flex-row sm:items-end">
-                <div className="min-w-0 flex-1">
-                  <div className="mb-1 flex items-center gap-1.5">
-                    <Move className="h-3 w-3 text-zinc-500" aria-hidden />
-                    <span className="text-[8px] font-black uppercase tracking-wider text-zinc-500">Animación (API)</span>
+            <section className="rounded-lg border border-white/[0.08] bg-zinc-950/35 p-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <FileText className="h-4 w-4 shrink-0 text-cyan-300" aria-hidden />
+                  <h2 className="truncate text-sm font-semibold text-zinc-100">Prompt final</h2>
+                </div>
+                {promptAssembly.directorEnhancement ? (
+                  <span className="rounded-md border border-cyan-400/20 bg-cyan-950/25 px-2 py-1 text-[11px] font-semibold text-cyan-200">
+                    Enriquecido
+                  </span>
+                ) : null}
+              </div>
+              <textarea
+                readOnly
+                value={finalPromptPreview}
+                rows={7}
+                className="min-h-[9.5rem] w-full resize-y rounded-lg border border-white/10 bg-black/45 px-3 py-2 font-mono text-[12px] leading-5 text-zinc-200 outline-none"
+              />
+              {!useSeedance && activeNegativePrompt.trim() ? (
+                <div className="mt-2 rounded-lg border border-rose-400/20 bg-rose-950/15 px-3 py-2">
+                  <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-rose-200">
+                    <Ban className="h-3.5 w-3.5" />
+                    Negative prompt
                   </div>
-                  <p className="mb-1 text-[7px] leading-snug text-zinc-600">
-                    Fragmento extra de movimiento; distinto del preset de cámara y de la capa 1 en el prompt.
-                  </p>
+                  <p className="whitespace-pre-wrap text-xs leading-5 text-rose-100/80">{activeNegativePrompt}</p>
+                </div>
+              ) : null}
+            </section>
+
+            <section className="rounded-lg border border-white/[0.08] bg-zinc-950/35 p-3">
+              <div className="mb-3 flex items-center gap-2">
+                <Cpu className="h-4 w-4 shrink-0 text-amber-300" />
+                <h2 className="text-sm font-semibold text-zinc-100">Ajustes</h2>
+              </div>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <label className="min-w-0">
+                  <span className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-amber-100">
+                    <Sun className="h-3.5 w-3.5 text-amber-300" />
+                    Luz
+                  </span>
+                  <select
+                    className="h-9 w-full rounded-lg border border-white/10 bg-black/40 px-2 text-sm text-zinc-100 outline-none focus:border-amber-400/40"
+                    value={nodeData.videoLightingPreset ?? ''}
+                    onChange={(e) => updateData('videoLightingPreset', e.target.value || undefined)}
+                  >
+                    {VIDEO_LIGHTING_PRESETS.map((p) => (
+                      <option key={p.id || 'none'} value={p.id}>
+                        {p.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="min-w-0">
+                  <span className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-sky-100">
+                    <Palette className="h-3.5 w-3.5 text-sky-300" />
+                    Estilo
+                  </span>
+                  <select
+                    className="h-9 w-full rounded-lg border border-white/10 bg-black/40 px-2 text-sm text-zinc-100 outline-none focus:border-sky-400/40"
+                    value={nodeData.videoVisualStylePreset ?? ''}
+                    onChange={(e) => updateData('videoVisualStylePreset', e.target.value || undefined)}
+                  >
+                    {VIDEO_VISUAL_STYLE_PRESETS.map((p) => (
+                      <option key={p.id || 'none'} value={p.id}>
+                        {p.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <label className="min-w-0">
+                  <span className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-zinc-300">
+                    <Move className="h-3.5 w-3.5 text-zinc-400" />
+                    Animación
+                  </span>
                   <input
                     type="text"
                     value={nodeData.animationPrompt ?? ''}
                     onChange={(e) => updateData('animationPrompt', e.target.value)}
-                    className="w-full rounded-md border border-white/10 bg-black/40 px-2 py-1.5 text-[10px] text-zinc-100 outline-none focus:border-violet-500/40"
-                    placeholder="Opcional (inglés)…"
+                    className="h-9 w-full rounded-lg border border-white/10 bg-black/40 px-2 text-sm text-zinc-100 outline-none focus:border-violet-400/40"
+                    placeholder="Optional motion..."
                   />
-                </div>
-                <label className="flex shrink-0 cursor-pointer items-center gap-1.5 rounded-md border border-white/[0.06] bg-black/30 px-2 py-2 text-[8px] text-zinc-400">
-                  <input
-                    type="checkbox"
-                    checked={!!nodeData.audio}
-                    onChange={(e) => updateData('audio', e.target.checked)}
-                    className="rounded border-zinc-600"
-                  />
-                  <Music className="h-3.5 w-3.5 text-violet-400/80" />
-                  Gen. audio
                 </label>
-              </div>
-
-              <div className="rounded-lg border border-white/[0.06] bg-zinc-950/35 p-2">
-                <div className="mb-1.5 flex items-center gap-1.5">
-                  <Compass className="h-3.5 w-3.5 text-cyan-400/80" aria-hidden />
-                  <span className="text-[8px] font-black uppercase tracking-wider text-zinc-400">Cámara (preset API)</span>
-                </div>
-                <p className="mb-1.5 text-[7px] leading-snug text-zinc-600">
-                  Etiqueta de movimiento que añade el backend; puedes combinarla con la capa 1 del prompt local.
-                </p>
-                <CameraMotionSelector
-                  compact
-                  value={nodeData.cameraPreset || ''}
-                  onChange={(val) => updateData('cameraPreset', val)}
-                />
-              </div>
-
-              <div className="rounded-lg border border-rose-500/15 bg-rose-950/10 p-2">
-                <div className="mb-1 flex items-center gap-1.5">
-                  <Ban className="h-3.5 w-3.5 text-rose-400/85" aria-hidden />
-                  <span className="text-[8px] font-black uppercase tracking-wider text-rose-100/90">
-                    Negative / exclusión
+                <div className="min-w-0">
+                  <span className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-cyan-100">
+                    <Compass className="h-3.5 w-3.5 text-cyan-300" />
+                    Cámara
                   </span>
+                  <CameraMotionSelector compact value={nodeData.cameraPreset || ''} onChange={(val) => updateData('cameraPreset', val)} />
                 </div>
-                <p className="mb-1 text-[7px] leading-snug text-zinc-600">
-                  Complementa la capa 7 (locks) del texto; el backend lo añade al final como exclusión.
-                </p>
-                <textarea
-                  value={nodeData.negativePrompt ?? ''}
-                  onChange={(e) => updateData('negativePrompt', e.target.value)}
-                  rows={2}
-                  className="w-full resize-none rounded-md border border-white/10 bg-black/40 px-2 py-1 text-[10px] leading-snug text-zinc-100 placeholder-zinc-600 outline-none focus:border-rose-500/35"
-                  placeholder="Opcional (inglés)…"
-                />
               </div>
-            </div>
+
+              <div className="mt-3">
+                <span className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-zinc-300">
+                  <Boxes className="h-3.5 w-3.5 text-zinc-400" />
+                  Física
+                </span>
+                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                  {VIDEO_PHYSICS_OPTIONS.map((p) => {
+                    const PI = physicIcon(p.id);
+                    const checked = !!(nodeData as Record<string, unknown>)[`videoPhysics_${p.id}`];
+                    return (
+                      <label
+                        key={p.id}
+                        className={`flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border px-2 text-xs transition-colors ${
+                          checked ? 'border-cyan-400/35 bg-cyan-950/25 text-cyan-100' : 'border-white/10 bg-black/25 text-zinc-400 hover:bg-white/[0.04]'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => updateData(`videoPhysics_${p.id}`, e.target.checked)}
+                          className="h-4 w-4 rounded border-zinc-600"
+                        />
+                        <PI className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                        <span className="min-w-0 truncate">{p.label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <label className="min-w-0">
+                  <span className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-rose-100">
+                    <Ban className="h-3.5 w-3.5 text-rose-300" />
+                    Negative
+                    <span className="ml-auto rounded border border-white/10 px-1.5 py-0.5 text-[10px] text-zinc-500">
+                      {negativePromptSourceLabel}
+                    </span>
+                  </span>
+                  <textarea
+                    value={activeNegativePrompt}
+                    onChange={(e) => writeActiveNegativePrompt(e.target.value)}
+                    rows={3}
+                    className="min-h-[5rem] w-full resize-y rounded-lg border border-white/10 bg-black/40 px-2 py-1.5 text-sm leading-5 text-zinc-100 outline-none focus:border-rose-400/35"
+                    placeholder="Things to avoid..."
+                  />
+                </label>
+                {useSeedance ? (
+                  <label className="flex min-h-[5rem] cursor-pointer items-center gap-3 rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-zinc-300">
+                    <input
+                      type="checkbox"
+                      checked={!!nodeData.audio}
+                      onChange={(e) => updateData('audio', e.target.checked)}
+                      className="h-4 w-4 rounded border-zinc-600"
+                    />
+                    <Music className="h-4 w-4 text-violet-300" />
+                    Generar audio
+                  </label>
+                ) : null}
+              </div>
+            </section>
+
+            <section className="rounded-lg border border-white/[0.08] bg-zinc-950/35 p-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <ImageIcon className="h-4 w-4 shrink-0 text-fuchsia-300" aria-hidden />
+                  <h2 className="truncate text-sm font-semibold text-zinc-100">Referencias</h2>
+                </div>
+                <span className={`rounded-md border px-2 py-1 text-[11px] font-semibold ${
+                  veoFramesOverrideImageRefs
+                    ? 'border-amber-400/25 bg-amber-950/25 text-amber-200'
+                    : 'border-fuchsia-400/20 bg-fuchsia-950/25 text-fuchsia-200'
+                }`}
+                >
+                  {veoFramesOverrideImageRefs ? 'Frames activos' : `${referenceImageCount}/${referenceImageLimit}`}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <VideoStudioFrameSlot label="First frame" icon={ImageIcon} url={connectedFirstFrame} />
+                <VideoStudioFrameSlot label="Last frame" icon={ArrowRightCircle} url={connectedLastFrame} />
+              </div>
+
+              <div className={`mt-3 grid grid-cols-3 gap-2 ${veoFramesOverrideImageRefs ? 'opacity-55' : ''}`}>
+                {([1, 2, 3, 4, 5, 6, 7, 8, 9] as const).slice(0, referenceImageLimit).map((n) => {
+                  const key = `Image${n}` as VideoRefSlotImageKey;
+                  const tag = refTag(key);
+                  const url = refSlots[key];
+                  return (
+                    <div key={key} className="min-w-0">
+                      <div className="relative aspect-square overflow-hidden rounded-lg border border-white/[0.08] bg-black/35">
+                        {url ? (
+                          <img src={url} alt="" className="h-full w-full object-cover" />
+                        ) : (
+                          <div className="flex h-full min-h-[4rem] flex-col items-center justify-center gap-1">
+                            <Upload className="h-4 w-4 text-zinc-600" strokeWidth={1.5} />
+                            <span className="font-mono text-[10px] text-zinc-600">{n}</span>
+                          </div>
+                        )}
+                        <input
+                          type="file"
+                          accept="image/*"
+                          disabled={veoFramesOverrideImageRefs}
+                          className="absolute inset-0 cursor-pointer opacity-0 disabled:cursor-not-allowed"
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            setRefSlotFile(key, f ?? null);
+                            e.target.value = '';
+                          }}
+                        />
+                      </div>
+                      {url ? (
+                        <div className="mt-1 flex justify-center gap-1">
+                          <button
+                            type="button"
+                            disabled={veoFramesOverrideImageRefs}
+                            onClick={() => insertIntoPromptLocal(tag)}
+                            className="rounded-md bg-fuchsia-600/25 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-fuchsia-100 disabled:opacity-40"
+                          >
+                            {tag}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setRefSlotFile(key, null)}
+                            className="rounded-md p-1 text-zinc-500 hover:text-rose-400"
+                            title="Quitar"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
           </div>
         </aside>
       </div>
@@ -4356,18 +4143,7 @@ export const GeminiVideoNode = memo(function GeminiVideoNode({ id, data, selecte
       chromeHeight,
     });
     if (!nodeFrameNeedsSync(currentFrameNode, nextFrame)) return;
-    setNodes((nds) =>
-      nds.map((node) =>
-        node.id === id
-          ? {
-              ...node,
-              width: nextFrame.width,
-              height: nextFrame.height,
-              style: { ...node.style, width: nextFrame.width, height: nextFrame.height },
-            }
-          : node,
-      ),
-    );
+    setNodes((nds) => syncAspectLockedFrameForNode(nds as Node[], id, nextFrame));
     requestAnimationFrame(() => updateNodeInternals(id));
   }, [
     currentFrameNode,
@@ -4419,6 +4195,24 @@ export const GeminiVideoNode = memo(function GeminiVideoNode({ id, data, selecte
     [promptEdge, setNodes],
   );
 
+  const negativePromptEdgeForStudio = useMemo(
+    () => edges.find((e) => e.target === id && e.targetHandle === 'negativePrompt'),
+    [edges, id],
+  );
+
+  const graphNegativePromptFromEdge = useMemo(() => {
+    if (!negativePromptEdgeForStudio) return '';
+    return String(resolvePromptValueFromEdgeSource(negativePromptEdgeForStudio, nodes as Node[]) ?? '');
+  }, [negativePromptEdgeForStudio, nodes]);
+
+  const onGraphNegativePromptChange = useCallback(
+    (text: string) => {
+      if (!negativePromptEdgeForStudio) return;
+      setNodes((nds) => applyPromptValueToEdgeSource(negativePromptEdgeForStudio, nds as Node[], text));
+    },
+    [negativePromptEdgeForStudio, setNodes],
+  );
+
   const connectedFirstFrame = useMemo(() => {
     const edge = edges.find((e) => e.target === id && e.targetHandle === 'firstFrame');
     if (!edge) return null;
@@ -4456,15 +4250,20 @@ export const GeminiVideoNode = memo(function GeminiVideoNode({ id, data, selecte
     };
 
     const basePrompt = findSourceValue(promptEdge) || nodeData.prompt || "";
-    const enhancement = buildDirectorEnhancementSuffix({
+    const negativePrompt = findSourceValue(negativePromptEdge) || nodeData.negativePrompt;
+    const promptAssembly = buildVideoPromptAssembly({
+      basePrompt,
       lightingId: nodeData.videoLightingPreset,
       visualStyleId: nodeData.videoVisualStylePreset,
       physics: buildPhysicsFlagsFromNodeData(nodeData as Record<string, unknown>),
+      animationPrompt: nodeData.animationPrompt,
+      cameraPreset: nodeData.cameraPreset,
+      negativePrompt,
+      includeNegativeInPreview: useSeedance,
     });
-    const prompt = mergeBasePromptWithDirectorBlock(basePrompt, enhancement);
+    const prompt = promptAssembly.promptForRequest;
     const firstFrame = findSourceValue(firstFrameEdge);
     const lastFrame = findSourceValue(lastFrameEdge);
-    const negativePrompt = findSourceValue(negativePromptEdge) || nodeData.negativePrompt;
 
     if (!basePrompt.trim())
       return alert(
@@ -4499,7 +4298,7 @@ export const GeminiVideoNode = memo(function GeminiVideoNode({ id, data, selecte
             resolution: useSeedance ? videoFormatForApi : resolutionForApi,
             aspectRatio: videoFormatForApi,
             durationSeconds: durationSecondsForApi,
-            audio: nodeData.audio || false,
+            audio: useSeedance ? nodeData.audio || false : false,
             seed: nodeData.seed,
             negativePrompt: negativePrompt,
             animationPrompt: nodeData.animationPrompt,
@@ -4696,6 +4495,9 @@ export const GeminiVideoNode = memo(function GeminiVideoNode({ id, data, selecte
           graphPromptFromEdge={graphPromptFromEdge}
           hasPromptEdge={!!promptEdge}
           onGraphPromptChange={onGraphPromptChange}
+          graphNegativePromptFromEdge={graphNegativePromptFromEdge}
+          hasNegativePromptEdge={!!negativePromptEdgeForStudio}
+          onGraphNegativePromptChange={onGraphNegativePromptChange}
           useSeedance={useSeedance}
           videoFormatForApi={videoFormatForApi}
           resolutionForApi={resolutionForApi}

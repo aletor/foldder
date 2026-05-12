@@ -10,6 +10,7 @@ import {
   assertApiServiceEnabled,
 } from "@/lib/api-usage-controls";
 import {
+  appendVideoPromptTail,
   collectAllReferenceImageUrlsOrdered,
   parseVideoRefSlots,
 } from "@/lib/video-generator-studio";
@@ -124,16 +125,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Se requiere prompt" }, { status: 400 });
     }
 
-    let finalPrompt = promptStr;
-    if (typeof animationPrompt === "string" && animationPrompt.trim()) {
-      finalPrompt += `. Animation: ${animationPrompt}`;
-    }
-    if (typeof cameraPreset === "string" && cameraPreset.trim()) {
-      finalPrompt += `. Camera motion: ${cameraPreset}`;
-    }
-    if (typeof negativePrompt === "string" && negativePrompt.trim()) {
-      finalPrompt += `. Negative: avoid ${negativePrompt}`;
-    }
+    const finalPrompt = appendVideoPromptTail(promptStr, {
+      animationPrompt,
+      cameraPreset,
+      negativePrompt,
+      includeNegative: true,
+    });
 
     const dur = clampDuration(Number(durationSeconds));
 

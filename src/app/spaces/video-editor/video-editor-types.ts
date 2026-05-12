@@ -1,7 +1,21 @@
 import type { MediaListOutput } from "../media-list-output";
 import type { VideoEditorSubtitleTrack } from "./subtitles-types";
 
-export type VideoEditorTrackKind = "video" | "audio" | "music" | "sfx" | "ambience" | "voiceover";
+export type VideoEditorBaseTrackKind = "video" | "audio" | "music" | "sfx" | "ambience" | "voiceover";
+export type VideoEditorTrackKind = VideoEditorBaseTrackKind | (string & {});
+export type VideoEditorTimelineTrackKind = "visual" | "audio";
+export type VideoEditorAudioRole = "original" | "music" | "sfx" | "ambience" | "voiceover";
+
+export type VideoEditorTimelineTrack = {
+  id: VideoEditorTrackKind;
+  kind: VideoEditorTimelineTrackKind;
+  label: string;
+  locked?: boolean;
+  muted?: boolean;
+  hidden?: boolean;
+  height?: number;
+  role?: VideoEditorBaseTrackKind | "custom";
+};
 
 export type VideoEditorRenderSettings = {
   resolution: "720p" | "1080p";
@@ -38,11 +52,14 @@ export type VideoEditorClip = {
   title: string;
   startTime: number;
   durationSeconds: number;
+  sourceDurationSeconds?: number;
+  extendMode?: "trim" | "freeze" | "loop";
   trimStart?: number;
   trimEnd?: number;
   volume?: number;
   fadeInSeconds?: number;
   fadeOutSeconds?: number;
+  audioRole?: VideoEditorAudioRole;
   locked?: boolean;
   mute?: boolean;
   framing?: "fit" | "fill" | "crop_center";
@@ -81,7 +98,12 @@ export type VideoEditorNodeData = {
   label?: string;
   sourceMediaList?: MediaListOutput;
   sourceMediaListFingerprint?: string;
-  tracks: Record<VideoEditorTrackKind, VideoEditorClip[]>;
+  layout?: {
+    timelineHeight?: number;
+  };
+  timelineTracks?: VideoEditorTimelineTrack[];
+  tracks: Record<string, VideoEditorClip[]>;
+  selectedTrackId?: VideoEditorTrackKind;
   selectedClipId?: string;
   playheadTime: number;
   timelineZoom?: number;
@@ -93,35 +115,34 @@ export type VideoEditorNodeData = {
   render?: VideoEditorRenderState;
 };
 
-export const VIDEO_EDITOR_TRACK_LABELS: Record<VideoEditorTrackKind, string> = {
-  video: "Video",
-  audio: "Audio original",
+export const VIDEO_EDITOR_TRACK_LABELS: Record<VideoEditorBaseTrackKind, string> = {
+  video: "V1",
+  audio: "A1",
   music: "Música",
   sfx: "SFX / Ruidos",
   ambience: "Ambiente",
   voiceover: "Voz en off",
 };
 
-export const VIDEO_EDITOR_TRACK_ORDER: VideoEditorTrackKind[] = [
+export const VIDEO_EDITOR_TRACK_ORDER: VideoEditorBaseTrackKind[] = [
   "video",
   "audio",
-  "sfx",
-  "music",
-  "ambience",
-  "voiceover",
+];
+
+export const DEFAULT_VIDEO_EDITOR_TIMELINE_TRACKS: VideoEditorTimelineTrack[] = [
+  { id: "video", kind: "visual", label: "V1", role: "video", height: 54 },
+  { id: "audio", kind: "audio", label: "A1", role: "audio", height: 46 },
 ];
 
 export function createEmptyVideoEditorData(): VideoEditorNodeData {
   return {
     label: "Video Editor",
+    timelineTracks: DEFAULT_VIDEO_EDITOR_TIMELINE_TRACKS,
     tracks: {
       video: [],
       audio: [],
-      music: [],
-      sfx: [],
-      ambience: [],
-      voiceover: [],
     },
+    selectedTrackId: "video",
     playheadTime: 0,
     timelineZoom: 18,
     totalDurationSeconds: 0,

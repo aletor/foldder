@@ -8,7 +8,7 @@ import { promisify } from "util";
 import { getFromS3, getPresignedUrl, uploadBufferToS3Key } from "@/lib/s3-utils";
 import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
 import type { VideoEditorRenderClip, VideoEditorRenderManifest } from "@/app/spaces/video-editor/video-editor-render-types";
-import type { VideoEditorTrackKind } from "@/app/spaces/video-editor/video-editor-types";
+import { exportSubtitleDocumentToAss } from "@/app/spaces/video-editor/subtitle-utils";
 
 const execFileAsync = promisify(execFile);
 
@@ -81,18 +81,35 @@ async function downloadClipToFile(clip: VideoEditorRenderClip, dir: string): Pro
   return { ...clip, localPath: outputPath };
 }
 
-export async function resolveRenderAssets(manifest: VideoEditorRenderManifest, dir: string): Promise<Record<VideoEditorTrackKind, ResolvedRenderClip[]>> {
+export async function resolveRenderAssets(manifest: VideoEditorRenderManifest, dir: string): Promise<Record<string, ResolvedRenderClip[]>> {
   const entries = await Promise.all(
     Object.entries(manifest.tracks).map(async ([track, clips]) => [
       track,
       await Promise.all(clips.map((clip) => downloadClipToFile(clip, dir))),
     ]),
   );
-  return Object.fromEntries(entries) as Record<VideoEditorTrackKind, ResolvedRenderClip[]>;
+  return Object.fromEntries(entries) as Record<string, ResolvedRenderClip[]>;
 }
 
 function visualFilter(manifest: VideoEditorRenderManifest, clip: VideoEditorRenderClip): string {
   const { width, height, fps } = manifest.settings;
+  if (clip.mediaType === "image" && clip.motion && clip.motion !== "none") {
+    const frameCount = Math.max(1, Math.round(Math.max(0.1, clip.durationSeconds) * fps));
+    const denominator = Math.max(1, frameCount - 1);
+    const progress = `on/${denominator}`;
+    const zoom = clip.motion === "slow_zoom_out"
+      ? `max(1,1.12-0.12*${progress})`
+      : clip.motion === "pan_left" || clip.motion === "pan_right"
+        ? "1.08"
+        : `min(1.12,1+0.12*${progress})`;
+    const x = clip.motion === "pan_left"
+      ? `(iw-iw/zoom)*(1-${progress})`
+      : clip.motion === "pan_right"
+        ? `(iw-iw/zoom)*${progress}`
+        : "iw/2-(iw/zoom/2)";
+    const y = "ih/2-(ih/zoom/2)";
+    return `scale=${width * 2}:${height * 2}:force_original_aspect_ratio=increase,zoompan=z='${zoom}':x='${x}':y='${y}':d=${frameCount}:s=${width}x${height}:fps=${fps},setsar=1,format=yuv420p`;
+  }
   if (clip.fitMode === "fit") {
     return `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=${fps},format=yuv420p`;
   }
@@ -130,12 +147,16 @@ async function renderVisualClipSegment(manifest: VideoEditorRenderManifest, clip
   const duration = Math.max(0.1, clip.durationSeconds);
   const baseArgs = ["-y"];
   if (clip.mediaType === "video" && clip.trimStart) baseArgs.push("-ss", String(clip.trimStart));
+  const hasImageMotion = clip.mediaType === "image" && Boolean(clip.motion && clip.motion !== "none");
   const inputArgs = clip.mediaType === "image"
-    ? ["-loop", "1", "-t", String(duration), "-i", clip.localPath]
+    ? hasImageMotion
+      ? ["-loop", "1", "-i", clip.localPath]
+      : ["-loop", "1", "-t", String(duration), "-i", clip.localPath]
     : ["-i", clip.localPath, "-t", String(duration)];
   await execFileAsync(ffmpeg, [
     ...baseArgs,
     ...inputArgs,
+    ...(hasImageMotion ? ["-t", String(duration)] : []),
     "-vf",
     visualFilter(manifest, clip),
     "-an",
@@ -154,31 +175,60 @@ function escapeConcatPath(path: string): string {
   return path.replace(/'/g, "'\\''");
 }
 
-async function renderVisualTrack(manifest: VideoEditorRenderManifest, clips: ResolvedRenderClip[], dir: string): Promise<string> {
-  const visualClips = clips
+function visualLayerIds(manifest: VideoEditorRenderManifest): string[] {
+  const layers = manifest.layers?.filter((layer) => layer.kind === "visual" && !layer.hidden).sort((a, b) => a.order - b.order).map((layer) => layer.id);
+  return layers?.length ? layers : ["video"];
+}
+
+function activeVisualClipForInterval(manifest: VideoEditorRenderManifest, resolved: Record<string, ResolvedRenderClip[]>, startTime: number): ResolvedRenderClip | undefined {
+  const lookupTime = startTime + 0.001;
+  for (const trackId of visualLayerIds(manifest)) {
+    const clip = (resolved[trackId] ?? [])
+      .filter((item) => item.mediaType === "image" || item.mediaType === "video")
+      .sort((a, b) => a.startTime - b.startTime)
+      .find((item) => item.startTime <= lookupTime && lookupTime < item.startTime + Math.max(0.01, item.durationSeconds));
+    if (clip) return clip;
+  }
+  return undefined;
+}
+
+async function renderVisualTrack(manifest: VideoEditorRenderManifest, resolved: Record<string, ResolvedRenderClip[]>, dir: string): Promise<string> {
+  const visualClips = visualLayerIds(manifest)
+    .flatMap((trackId) => resolved[trackId] ?? [])
     .filter((clip) => clip.mediaType === "image" || clip.mediaType === "video")
     .sort((a, b) => a.startTime - b.startTime);
   if (!visualClips.length) throw new Error("no_visual_clips");
+  const cutPoints = Array.from(new Set([
+    0,
+    manifest.durationSeconds,
+    ...visualClips.flatMap((clip) => [
+      Math.max(0, clip.startTime),
+      Math.min(manifest.durationSeconds, clip.startTime + Math.max(0.1, clip.durationSeconds)),
+    ]),
+  ]))
+    .filter((point) => point >= 0 && point <= manifest.durationSeconds)
+    .sort((a, b) => a - b);
   const segmentPaths: string[] = [];
-  let cursor = 0;
-  for (let i = 0; i < visualClips.length; i++) {
-    const clip = visualClips[i];
-    if (clip.startTime > cursor + 0.02) {
+  for (let i = 0; i < cutPoints.length - 1; i++) {
+    const cursor = cutPoints[i] ?? 0;
+    const nextCursor = cutPoints[i + 1] ?? cursor;
+    const duration = Math.max(0, nextCursor - cursor);
+    if (duration <= 0.02) continue;
+    const clip = activeVisualClipForInterval(manifest, resolved, cursor);
+    if (!clip) {
       const gapPath = join(dir, `segment_${String(segmentPaths.length).padStart(4, "0")}_black.mp4`);
-      await renderBlackSegment(manifest, clip.startTime - cursor, gapPath);
+      await renderBlackSegment(manifest, duration, gapPath);
       segmentPaths.push(gapPath);
-      cursor = clip.startTime;
+      continue;
     }
-    const duration = Math.max(0.1, Math.min(clip.durationSeconds, Math.max(0.1, manifest.durationSeconds - cursor)));
+    const sourceOffset = Math.max(0, cursor - clip.startTime);
     const segmentPath = join(dir, `segment_${String(segmentPaths.length).padStart(4, "0")}.mp4`);
-    await renderVisualClipSegment(manifest, { ...clip, durationSeconds: duration }, segmentPath);
+    await renderVisualClipSegment(manifest, {
+      ...clip,
+      durationSeconds: duration,
+      trimStart: clip.mediaType === "video" ? Math.max(0, (clip.trimStart ?? 0) + sourceOffset) : clip.trimStart,
+    }, segmentPath);
     segmentPaths.push(segmentPath);
-    cursor += duration;
-  }
-  if (manifest.durationSeconds > cursor + 0.02) {
-    const gapPath = join(dir, `segment_${String(segmentPaths.length).padStart(4, "0")}_tail.mp4`);
-    await renderBlackSegment(manifest, manifest.durationSeconds - cursor, gapPath);
-    segmentPaths.push(gapPath);
   }
   const listPath = join(dir, "segments.txt");
   await writeFile(listPath, segmentPaths.map((path) => `file '${escapeConcatPath(path)}'`).join("\n"));
@@ -187,7 +237,7 @@ async function renderVisualTrack(manifest: VideoEditorRenderManifest, clips: Res
   return visualPath;
 }
 
-async function renderAudioTrack(manifest: VideoEditorRenderManifest, resolved: Record<VideoEditorTrackKind, ResolvedRenderClip[]>, dir: string): Promise<string | null> {
+async function renderAudioTrack(manifest: VideoEditorRenderManifest, resolved: Record<string, ResolvedRenderClip[]>, dir: string): Promise<string | null> {
   const audioClips = Object.entries(resolved)
     .filter(([track]) => track !== "video")
     .flatMap(([, clips]) => clips)
@@ -233,6 +283,42 @@ async function muxFinalVideo(visualPath: string, audioPath: string | null, outpu
   await execFileAsync(resolveFfmpegPath(), args);
 }
 
+function burnInSubtitleTrack(manifest: VideoEditorRenderManifest) {
+  return manifest.subtitleTracks?.find((track) => track.enabled && track.burnIn && track.document?.segments?.length);
+}
+
+function escapeFfmpegFilterPath(path: string): string {
+  return path.replace(/\\/g, "\\\\").replace(/:/g, "\\:").replace(/'/g, "\\'");
+}
+
+async function burnSubtitlesIntoVideo(manifest: VideoEditorRenderManifest, visualPath: string, dir: string): Promise<string> {
+  const subtitleTrack = burnInSubtitleTrack(manifest);
+  if (!subtitleTrack?.document) return visualPath;
+  const assPath = join(dir, "subtitles.ass");
+  const outputPath = join(dir, "visual_subtitled.mp4");
+  const document = {
+    ...subtitleTrack.document,
+    mode: subtitleTrack.mode,
+    style: subtitleTrack.style || subtitleTrack.document.style,
+  };
+  await writeFile(assPath, exportSubtitleDocumentToAss(document, manifest.settings.width, manifest.settings.height));
+  await execFileAsync(resolveFfmpegPath(), [
+    "-y",
+    "-i",
+    visualPath,
+    "-vf",
+    `subtitles='${escapeFfmpegFilterPath(assPath)}'`,
+    "-an",
+    "-c:v",
+    "libx264",
+    ...ffmpegQualityArgs(manifest),
+    "-pix_fmt",
+    "yuv420p",
+    outputPath,
+  ]);
+  return outputPath;
+}
+
 export async function uploadRenderedVideoToS3(filePath: string, manifest: VideoEditorRenderManifest, renderId: string): Promise<{ s3Key: string; outputUrl: string }> {
   const buffer = await readFile(filePath);
   const key = `knowledge-files/renders/video-editor/${manifest.editorNodeId}/${renderId}.mp4`;
@@ -248,14 +334,15 @@ export async function renderVideoEditorTimeline(manifest: VideoEditorRenderManif
   const dir = await mkdtemp(join(tmpdir(), `foldder-video-editor-${renderId}-`));
   try {
     await assertFfmpegAvailable();
-    if (!manifest.tracks.video.some((clip) => clip.mediaType === "image" || clip.mediaType === "video")) {
+    if (!visualLayerIds(manifest).some((trackId) => (manifest.tracks[trackId] ?? []).some((clip) => clip.mediaType === "image" || clip.mediaType === "video"))) {
       throw new Error("no_visual_clips");
     }
     const resolved = await resolveRenderAssets(manifest, dir);
-    const visualPath = await renderVisualTrack(manifest, resolved.video, dir);
+    const visualPath = await renderVisualTrack(manifest, resolved, dir);
+    const finalVisualPath = await burnSubtitlesIntoVideo(manifest, visualPath, dir);
     const audioPath = await renderAudioTrack(manifest, resolved, dir);
     const finalPath = join(dir, "final.mp4");
-    await muxFinalVideo(visualPath, audioPath, finalPath);
+    await muxFinalVideo(finalVisualPath, audioPath, finalPath);
     const uploaded = await uploadRenderedVideoToS3(finalPath, manifest, renderId);
     return {
       renderId,

@@ -6,7 +6,7 @@ import { AuthSessionProvider } from "@/components/AuthSessionProvider";
 export const metadata: Metadata = {
   title: "Foldder",
   description:
-    "Foldder — flujo visual Spaces, Runway, Gemini, Grok y herramientas de composición.",
+    "Foldder — visual Spaces workflow for Runway, Gemini, Grok, and composition tools.",
   icons: { icon: "/favicon.ico", apple: "/favicon.png" },
 };
 

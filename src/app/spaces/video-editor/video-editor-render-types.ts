@@ -1,4 +1,3 @@
-import type { VideoEditorTrackKind } from "./video-editor-types";
 import type { FoldderSubtitleDocument, RenderSubtitleMode, SubtitleStyle } from "./subtitles-types";
 
 export type VideoEditorRenderSettings = {
@@ -18,15 +17,19 @@ export type VideoEditorRenderClip = {
   url?: string;
   s3Key?: string;
   mediaType: "image" | "video" | "audio";
-  track: VideoEditorTrackKind;
+  track: string;
   startTime: number;
   durationSeconds: number;
+  sourceDurationSeconds?: number;
+  extendMode?: "trim" | "freeze" | "loop";
   trimStart?: number;
   trimEnd?: number;
   volume?: number;
   fadeInSeconds?: number;
   fadeOutSeconds?: number;
+  audioRole?: "original" | "music" | "sfx" | "ambience" | "voiceover";
   fitMode?: "fit" | "fill" | "crop_center";
+  motion?: "none" | "slow_zoom_in" | "slow_zoom_out" | "pan_left" | "pan_right";
   title?: string;
   metadata?: unknown;
 };
@@ -35,7 +38,15 @@ export type VideoEditorRenderManifest = {
   editorNodeId: string;
   settings: VideoEditorRenderSettings;
   durationSeconds: number;
-  tracks: Record<VideoEditorTrackKind, VideoEditorRenderClip[]>;
+  tracks: Record<string, VideoEditorRenderClip[]>;
+  layers?: Array<{
+    id: string;
+    kind: "visual" | "audio";
+    label: string;
+    order: number;
+    hidden?: boolean;
+    muted?: boolean;
+  }>;
   subtitleTracks?: Array<{
     id: string;
     enabled: boolean;

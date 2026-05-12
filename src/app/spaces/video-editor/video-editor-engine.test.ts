@@ -6,10 +6,16 @@ import {
   buildInitialVideoEditorTracks,
   buildVideoEditorRenderManifest,
   createAudioRequest,
+  createVideoEditorTimelineTrack,
+  deleteVideoEditorTimelineTrack,
   getActiveVisualClipAtTime,
   ingestMediaListToVideoEditor,
   moveVideoEditorClip,
+  normalizeVideoEditorData,
   resizeVideoEditorClip,
+  setVideoEditorClipEndTrim,
+  setVideoEditorClipStartTrim,
+  splitVideoEditorClipAtTime,
   trimVideoEditorClipStart,
 } from "./video-editor-engine";
 import { createEmptyVideoEditorData } from "./video-editor-types";
@@ -81,9 +87,10 @@ describe("video editor engine", () => {
     const next = approveTimelineAudioVariation({ ...data, audioRequests: [request] }, request.id, "asset://sfx-1", 0);
 
     expect(next.audioRequests[0]?.status).toBe("approved");
-    expect(next.tracks.sfx).toHaveLength(1);
-    expect(next.tracks.sfx[0]?.startTime).toBe(12);
-    expect(next.tracks.sfx[0]?.assetId).toBe("asset://sfx-1");
+    expect(next.tracks.audio).toHaveLength(1);
+    expect(next.tracks.audio[0]?.startTime).toBe(12);
+    expect(next.tracks.audio[0]?.assetId).toBe("asset://sfx-1");
+    expect(next.tracks.audio[0]?.audioRole).toBe("sfx");
   });
 
   it("finds the active visual clip at the playhead", () => {
@@ -110,6 +117,124 @@ describe("video editor engine", () => {
     expect(resized.tracks.video[0]?.durationSeconds).toBe(3);
   });
 
+  it("clamps video clips to the detected source duration", () => {
+    const data = ingestMediaListToVideoEditor(mediaList([
+      { id: "video_1", order: 1, title: "Video", mediaType: "video", role: "scene_video", assetId: "asset://video", status: "generated", durationSeconds: 5 },
+    ]), createEmptyVideoEditorData());
+
+    const resized = resizeVideoEditorClip(data, data.tracks.video[0]?.id ?? "", 12);
+
+    expect(resized.tracks.video[0]?.durationSeconds).toBe(5);
+  });
+
+  it("can shorten and then lengthen a clip again from the right edge", () => {
+    const data = ingestMediaListToVideoEditor(mediaList([
+      { id: "video_1", order: 1, title: "Video", mediaType: "video", role: "scene_video", assetId: "asset://video", status: "generated", durationSeconds: 8 },
+    ]), createEmptyVideoEditorData());
+    const clipId = data.tracks.video[0]?.id ?? "";
+
+    const shortened = resizeVideoEditorClip(data, clipId, 3);
+    const lengthened = resizeVideoEditorClip(shortened, clipId, 6);
+
+    expect(shortened.tracks.video[0]?.durationSeconds).toBe(3);
+    expect(shortened.tracks.video[0]?.trimEnd).toBe(5);
+    expect(lengthened.tracks.video[0]?.durationSeconds).toBe(6);
+    expect(lengthened.tracks.video[0]?.trimEnd).toBe(2);
+  });
+
+  it("creates custom timeline layers that participate in preview and render manifests", () => {
+    const base = ingestMediaListToVideoEditor(mediaList([
+      { id: "image_1", order: 1, title: "Base", mediaType: "image", role: "storyboard_frame", assetId: "knowledge-files/base.png", status: "generated", durationSeconds: 4 },
+    ]), createEmptyVideoEditorData());
+    const withLayer = createVideoEditorTimelineTrack(base, "visual");
+    const customTrackId = withLayer.selectedTrackId ?? "";
+    const overlayClip = {
+      ...withLayer.tracks.video[0]!,
+      id: "overlay_clip",
+      track: customTrackId,
+      title: "Overlay",
+      assetId: "knowledge-files/overlay.png",
+      startTime: 1,
+      durationSeconds: 2,
+    };
+    const data = {
+      ...withLayer,
+      tracks: {
+        ...withLayer.tracks,
+        [customTrackId]: [overlayClip],
+      },
+    };
+
+    const result = buildVideoEditorRenderManifest(data, "editor_1");
+
+    expect(getActiveVisualClipAtTime(data, 1.5)?.title).toBe("Overlay");
+    expect(result.ok).toBe(true);
+    expect(result.manifest?.layers?.some((layer) => layer.id === customTrackId && layer.kind === "visual")).toBe(true);
+    expect(result.manifest?.tracks[customTrackId]?.[0]?.title).toBe("Overlay");
+  });
+
+  it("moves clips between compatible timeline layers", () => {
+    const base = ingestMediaListToVideoEditor(mediaList([
+      { id: "image_1", order: 1, title: "Base", mediaType: "image", role: "storyboard_frame", assetId: "knowledge-files/base.png", status: "generated", durationSeconds: 4 },
+    ]), createEmptyVideoEditorData());
+    const withLayer = createVideoEditorTimelineTrack(base, "visual");
+    const customTrackId = withLayer.selectedTrackId ?? "";
+    const clipId = withLayer.tracks.video[0]?.id ?? "";
+
+    const moved = moveVideoEditorClip(withLayer, clipId, 2, customTrackId);
+
+    expect(moved.tracks.video).toHaveLength(0);
+    expect(moved.tracks[customTrackId]?.[0]?.track).toBe(customTrackId);
+    expect(moved.tracks[customTrackId]?.[0]?.startTime).toBe(2);
+  });
+
+  it("deletes custom tracks while preserving at least one track of each kind", () => {
+    const base = ingestMediaListToVideoEditor(mediaList([
+      { id: "image_1", order: 1, title: "Base", mediaType: "image", role: "storyboard_frame", assetId: "knowledge-files/base.png", status: "generated", durationSeconds: 4 },
+    ]), createEmptyVideoEditorData());
+    const withLayer = createVideoEditorTimelineTrack(base, "visual");
+    const customTrackId = withLayer.selectedTrackId ?? "";
+    const clipId = withLayer.tracks.video[0]?.id ?? "";
+    const moved = moveVideoEditorClip(withLayer, clipId, 0, customTrackId);
+
+    const deleted = deleteVideoEditorTimelineTrack(moved, customTrackId);
+    const blocked = deleteVideoEditorTimelineTrack(base, "video");
+
+    expect(deleted.timelineTracks?.some((track) => track.id === customTrackId)).toBe(false);
+    expect(deleted.tracks[customTrackId]).toBeUndefined();
+    expect(deleted.tracks.video).toHaveLength(1);
+    expect(deleted.tracks.video[0]?.track).toBe("video");
+    expect(blocked).toBe(base);
+  });
+
+  it("migrates legacy semantic audio tracks into A1 roles", () => {
+    const normalized = normalizeVideoEditorData({
+      ...createEmptyVideoEditorData(),
+      timelineTracks: [
+        { id: "video", kind: "visual", label: "V1" },
+        { id: "sfx", kind: "audio", label: "SFX / Ruidos" },
+      ],
+      tracks: {
+        video: [],
+        audio: [],
+        sfx: [{
+          id: "clip_sfx",
+          assetId: "asset://sfx",
+          mediaType: "audio",
+          track: "sfx",
+          title: "Hit",
+          startTime: 1,
+          durationSeconds: 2,
+        }],
+      },
+    });
+
+    expect(normalized.timelineTracks?.some((track) => track.id === "sfx")).toBe(false);
+    expect(normalized.tracks.audio).toHaveLength(1);
+    expect(normalized.tracks.audio[0]?.track).toBe("audio");
+    expect(normalized.tracks.audio[0]?.audioRole).toBe("sfx");
+  });
+
   it("trims a clip from the start while keeping its end fixed", () => {
     const data = ingestMediaListToVideoEditor(mediaList([
       { id: "video_1", order: 1, title: "Video", mediaType: "video", role: "scene_video", assetId: "asset://video", status: "generated", durationSeconds: 8 },
@@ -121,6 +246,38 @@ describe("video editor engine", () => {
     expect(trimmed.tracks.video[0]?.startTime).toBe(2);
     expect(trimmed.tracks.video[0]?.durationSeconds).toBe(6);
     expect(trimmed.tracks.video[0]?.trimStart).toBe(2);
+  });
+
+  it("splits a video clip at the playhead and preserves source trim", () => {
+    const data = ingestMediaListToVideoEditor(mediaList([
+      { id: "video_1", order: 1, title: "Video", mediaType: "video", role: "scene_video", assetId: "asset://video", status: "generated", durationSeconds: 8 },
+    ]), createEmptyVideoEditorData());
+    const clipId = data.tracks.video[0]?.id ?? "";
+
+    const split = splitVideoEditorClipAtTime(data, clipId, 3);
+
+    expect(split.tracks.video).toHaveLength(2);
+    expect(split.tracks.video[0]?.durationSeconds).toBe(3);
+    expect(split.tracks.video[0]?.trimEnd).toBe(5);
+    expect(split.tracks.video[1]?.startTime).toBe(3);
+    expect(split.tracks.video[1]?.durationSeconds).toBe(5);
+    expect(split.tracks.video[1]?.trimStart).toBe(3);
+    expect(split.selectedClipId).toBe(split.tracks.video[1]?.id);
+  });
+
+  it("updates trim fields and timeline duration from inspector-style edits", () => {
+    const data = ingestMediaListToVideoEditor(mediaList([
+      { id: "video_1", order: 1, title: "Video", mediaType: "video", role: "scene_video", assetId: "asset://video", status: "generated", durationSeconds: 8 },
+    ]), createEmptyVideoEditorData());
+    const clipId = data.tracks.video[0]?.id ?? "";
+
+    const trimmedStart = setVideoEditorClipStartTrim(data, clipId, 1.5);
+    const trimmedEnd = setVideoEditorClipEndTrim(trimmedStart, clipId, 2);
+
+    expect(trimmedStart.tracks.video[0]?.trimStart).toBe(1.5);
+    expect(trimmedStart.tracks.video[0]?.durationSeconds).toBe(6.5);
+    expect(trimmedEnd.tracks.video[0]?.trimEnd).toBe(2);
+    expect(trimmedEnd.tracks.video[0]?.durationSeconds).toBe(4.5);
   });
 
   it("builds a render manifest and preserves trim and volume", () => {
@@ -147,6 +304,25 @@ describe("video editor engine", () => {
     expect(result.manifest?.tracks.audio[0]?.volume).toBe(0.4);
     expect(result.manifest?.durationSeconds).toBe(8);
     expect(result.ignoredClips).toBe(0);
+  });
+
+  it("preserves image motion presets in the render manifest", () => {
+    const data = ingestMediaListToVideoEditor(mediaList([
+      { id: "image_1", order: 1, title: "Still", mediaType: "image", role: "storyboard_frame", assetId: "knowledge-files/still.png", status: "generated", durationSeconds: 4 },
+    ]), createEmptyVideoEditorData());
+    const imageId = data.tracks.video[0]?.id ?? "";
+    const patched = {
+      ...data,
+      tracks: {
+        ...data.tracks,
+        video: data.tracks.video.map((clip) => clip.id === imageId ? { ...clip, motion: "slow_zoom_in" as const } : clip),
+      },
+    };
+
+    const result = buildVideoEditorRenderManifest(patched, "editor_1");
+
+    expect(result.ok).toBe(true);
+    expect(result.manifest?.tracks.video[0]?.motion).toBe("slow_zoom_in");
   });
 
   it("rejects render manifests without visual clips", () => {

@@ -3,7 +3,8 @@
 import React, { useState, useCallback, useMemo, useRef, useEffect, useLayoutEffect } from "react";
 import { createPortal, flushSync } from "react-dom";
 import Image from "next/image";
-import { signIn, signOut, useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
+import { signOut, useSession } from "next-auth/react";
 import {
   ReactFlow,
   Controls,
@@ -25,6 +26,8 @@ import {
 import "@xyflow/react/dist/style.css";
 import { DesignerSpaceIdContext } from "@/contexts/DesignerSpaceIdContext";
 import { SpacesActiveProjectIdContext } from "@/contexts/SpacesActiveProjectIdContext";
+import { useLanguage } from "@/components/LanguageProvider";
+import { LANGUAGE_OPTIONS } from "@/lib/i18n";
 import { ProjectBrainCanvasContext } from "./project-brain-canvas-context";
 import { ProjectAssetsCanvasContext } from "./project-assets-canvas-context";
 
@@ -153,6 +156,7 @@ import {
   Maximize2,
   Minimize2,
   LayoutGrid,
+  Languages,
   ChevronDown,
   ZoomIn,
   LogOut,
@@ -164,7 +168,6 @@ import {
 import { CanvasWallpaperTransition } from "./CanvasWallpaperTransition";
 import { CANVAS_BACKGROUNDS } from "./canvas-backgrounds";
 import { SpacesWelcomeChrome } from "./SpacesWelcomeChrome";
-import { SpacesPasswordOverlay } from "./SpacesPasswordOverlay";
 import { GraphContextMenuShell } from "./GraphContextMenuShell";
 import {
   spacesInitialNodes as initialNodes,
@@ -360,12 +363,10 @@ function normalizeNotesNodeForRuntime<T extends Node>(node: T): T {
 
 export function SpacesContent() {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
+  const router = useRouter();
   const { data: session, status: sessionStatus } = useSession();
-  const [passcodeBypass, setPasscodeBypass] = useState(false);
-  const [passcode, setPasscode] = useState("");
-  const [passError, setPassError] = useState(false);
-  const isAuthenticated = sessionStatus === "authenticated" || passcodeBypass;
-  const authLoading = sessionStatus === "loading";
+  const { language, setLanguage } = useLanguage();
+  const isAuthenticated = sessionStatus === "authenticated";
   const [nodes, setNodes, onNodesChange] = useNodesState<any>(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<any>(initialEdges);
   /** Siempre la misma referencia que `nodes` / `edges` (sync en render, no en useEffect) */
@@ -455,6 +456,7 @@ export function SpacesContent() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
   const [isGeneratingAssistant, setIsGeneratingAssistant] = useState(false);
+  const [assistantHudOpen, setAssistantHudOpen] = useState(false);
   /** Respuesta del modelo pidiendo desambiguación (opciones en modal). */
   const [assistantClarify, setAssistantClarify] = useState<{
     message: string;
@@ -2644,29 +2646,13 @@ export function SpacesContent() {
     return () => window.removeEventListener(AI_JOB_COMPLETE_EVENT, handler as EventListener);
   }, []);
 
-  const handleTempPasscode = useCallback((val: string) => {
-    setPasscode(val);
-    if (val === "6666") {
-      setPasscodeBypass(true);
-      setPassError(false);
-      return;
-    }
-    if (val.length === 4) {
-      setPassError(true);
-      setTimeout(() => {
-        setPasscode("");
-        setPassError(false);
-      }, 500);
-    }
-  }, []);
+  const devBypassHeaders = useMemo<Record<string, string>>(() => ({}), []);
 
-  const devBypassHeaders = useMemo<Record<string, string>>(() => {
-    const headers: Record<string, string> = {};
-    if (passcodeBypass) {
-      headers["x-foldder-dev-passcode"] = "6666";
+  useEffect(() => {
+    if (sessionStatus === "unauthenticated") {
+      router.replace("/");
     }
-    return headers;
-  }, [passcodeBypass]);
+  }, [router, sessionStatus]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -3224,9 +3210,7 @@ export function SpacesContent() {
   const projectsListOwnerKey =
     sessionStatus === 'authenticated'
       ? `google:${String(session?.user?.email ?? session?.user?.id ?? '')}`
-      : passcodeBypass
-        ? 'passcode-bypass'
-        : '';
+      : '';
 
   const projectsListOwnerRef = useRef<string | null>(null);
 
@@ -3476,6 +3460,8 @@ export function SpacesContent() {
       setCurrentName(trimmed);
       setCardsFocusIndex(0);
       setCanvasViewMode('free');
+      setWorkspaceViewMode('pro');
+      setAssistantHudOpen(false);
     });
     const ok = await saveProjectRef.current(trimmed);
     if (ok) {
@@ -3752,11 +3738,6 @@ export function SpacesContent() {
       console.error('Rename error:', err);
     }
   };
-
-  /** Mismo criterio que **A**, pero ordena todo el grafo (ignora selección). Menú «Ordenar nodos». */
-  const autoLayoutNodes = useCallback(() => {
-    autoLayout({ ignoreSelection: true, horizontalIsolates: false });
-  }, [autoLayout]);
 
   const applyAssistantGraphPayload = (data: {
     nodes?: Node[];
@@ -5198,18 +5179,6 @@ export function SpacesContent() {
           </div>
         )}
 
-        {!isAuthenticated && (
-          <SpacesPasswordOverlay
-            loading={authLoading}
-            onGoogleSignIn={() => {
-              void signIn("google", { callbackUrl: "/spaces" });
-            }}
-            passcode={passcode}
-            passError={passError}
-            onPasscodeChange={handleTempPasscode}
-          />
-        )}
-
         {/* Context Menu */}
         {contextMenu && (
           <GraphContextMenuShell
@@ -5300,65 +5269,84 @@ export function SpacesContent() {
           <div className="relative flex w-full min-w-0 max-w-full items-center gap-2 sm:gap-3">
             {isAuthenticated && (
               <>
-                <div className="pointer-events-auto relative z-[5] flex min-h-[40px] min-w-0 shrink-0 items-center gap-2 sm:gap-3 md:gap-4">
+                <div className="pointer-events-auto relative z-[25] flex min-h-[40px] min-w-0 shrink-0 items-center gap-2">
                   <img
                     src="/logo_bl.svg"
                     alt="Foldder"
                     className="h-11 w-11 shrink-0 object-contain drop-shadow-lg"
                     draggable={false}
                   />
-                  {/* +20% ancho respecto a 18rem / 20rem / 22rem */}
-                  <div className="flex min-h-[40px] w-full min-w-0 max-w-[min(100%,21.6rem)] shrink sm:max-w-[24rem] md:max-w-[26.5rem] items-center rounded-xl border border-white/25 bg-white/[0.08] px-2 py-1 shadow-sm backdrop-blur-xl">
-                    <AgentHUD
-                      variant="topbar"
-                      onGenerate={onGenerateAssistant}
-                      isGenerating={isGeneratingAssistant}
-                      selectedNodeCount={nodes.filter((n) => n.selected).length}
-                    />
+                  <button
+                    type="button"
+                    onClick={() => setAssistantHudOpen((open) => !open)}
+                    title={assistantHudOpen ? "Ocultar asistente" : "Abrir asistente"}
+                    aria-expanded={assistantHudOpen}
+                    aria-controls="foldder-top-assistant"
+                    className={`group flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/25 bg-white/[0.08] text-white/70 shadow-sm backdrop-blur-xl transition-all hover:scale-105 hover:bg-white/[0.15] hover:text-white ${
+                      assistantHudOpen ? 'bg-white/20 text-white ring-1 ring-white/35' : ''
+                    }`}
+                  >
+                    <MessageCircle size={16} className="text-current" />
+                  </button>
+                  <div
+                    id="foldder-top-assistant"
+                    className={`absolute left-[calc(100%+0.5rem)] top-0 min-w-0 overflow-hidden transition-[width,opacity,transform] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                      assistantHudOpen
+                        ? 'w-[min(52vw,26.5rem)] translate-x-0 opacity-100'
+                        : 'pointer-events-none w-0 -translate-x-2 opacity-0'
+                    }`}
+                    aria-hidden={!assistantHudOpen}
+                  >
+                    <div className="flex min-h-[40px] w-full items-center rounded-xl border border-white/25 bg-white/[0.08] px-2 py-1 shadow-sm backdrop-blur-xl">
+                      <AgentHUD
+                        variant="topbar"
+                        onGenerate={onGenerateAssistant}
+                        isGenerating={isGeneratingAssistant}
+                        selectedNodeCount={nodes.filter((n) => n.selected).length}
+                      />
+                    </div>
                   </div>
                 </div>
-                <div className="pointer-events-none absolute inset-0 z-[1] flex items-center justify-center px-[clamp(5.5rem,22vw,14rem)]">
-                  <div className="pointer-events-auto flex min-h-[40px] w-full max-w-[min(88vw,17rem)] items-center justify-center rounded-xl bg-white/[0.08] px-2.5 py-1.5 text-center shadow-sm backdrop-blur-xl sm:max-w-[18rem]">
-                    <label htmlFor="foldder-hud-project-name" className="sr-only">
-                      Nombre del proyecto
-                    </label>
-                    <input
-                      id="foldder-hud-project-name"
-                      type="text"
-                      value={currentName}
-                      onChange={(e) => setCurrentName(e.target.value)}
-                      onBlur={() => {
-                        if (!activeProjectId) return;
-                        const t = currentName.trim();
-                        if (!t) return;
-                        const prev = savedProjects.find((p) => p.id === activeProjectId)?.name;
-                        if (prev === t) return;
-                        void renameProject(activeProjectId, t);
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-                      }}
-                      placeholder="Nombre del proyecto"
-                      title={
-                        activeProjectId
-                          ? 'Nombre del proyecto (se guarda al salir del campo)'
-                          : 'Crea o abre un proyecto para guardar el nombre'
-                      }
-                      className="min-w-0 w-full bg-transparent text-center text-[13px] font-semibold leading-snug text-white placeholder:text-white/45 focus:outline-none focus:ring-0"
-                    />
-                  </div>
+                <div className="pointer-events-auto relative z-[5] flex min-h-[40px] min-w-[12rem] flex-1 items-center justify-center rounded-xl bg-white/[0.08] px-2.5 py-1.5 text-center shadow-sm backdrop-blur-xl">
+                  <label htmlFor="foldder-hud-project-name" className="sr-only">
+                    Nombre del proyecto
+                  </label>
+                  <input
+                    id="foldder-hud-project-name"
+                    type="text"
+                    value={currentName}
+                    onChange={(e) => setCurrentName(e.target.value)}
+                    onBlur={() => {
+                      if (!activeProjectId) return;
+                      const t = currentName.trim();
+                      if (!t) return;
+                      const prev = savedProjects.find((p) => p.id === activeProjectId)?.name;
+                      if (prev === t) return;
+                      void renameProject(activeProjectId, t);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                    }}
+                    placeholder="Nombre del proyecto"
+                    title={
+                      activeProjectId
+                        ? 'Nombre del proyecto (se guarda al salir del campo)'
+                        : 'Crea o abre un proyecto para guardar el nombre'
+                    }
+                    className="min-w-0 w-full bg-transparent text-center text-[13px] font-semibold leading-snug text-white placeholder:text-white/45 focus:outline-none focus:ring-0"
+                  />
                 </div>
               </>
             )}
             <div
               className={
                 isAuthenticated
-                  ? 'pointer-events-auto relative z-[5] ml-auto flex min-w-0 shrink-0 items-center gap-2 sm:gap-3'
+                  ? 'pointer-events-auto relative z-[5] ml-auto flex min-w-0 max-w-[min(100%,54rem)] shrink-0 items-center justify-end gap-2 sm:gap-3'
                   : 'pointer-events-auto flex w-full min-w-0 flex-1 items-center justify-between gap-3'
               }
             >
               {/* Quick Actions — fondo / pantalla / Foldder (pins abajo en `TopbarPins`) */}
-              <div className="flex shrink-0 gap-1.5">
+              <div className="flex max-w-full shrink-0 flex-nowrap items-center justify-end gap-1.5">
                 <div className="flex h-10 items-center rounded-xl border border-white/25 bg-white/[0.08] p-1 shadow-sm backdrop-blur-xl">
                   <button
                     type="button"
@@ -5366,7 +5354,7 @@ export function SpacesContent() {
                     className={`flex h-8 items-center gap-1.5 rounded-lg px-2 text-[8px] font-black uppercase tracking-widest transition ${
                       workspaceViewMode === 'standard'
                         ? 'bg-white px-2 text-slate-900 shadow-sm'
-                        : 'text-slate-700 hover:bg-white/20'
+                        : 'text-white/70 hover:bg-white/20 hover:text-white'
                     }`}
                   >
                     <Workflow size={12} />
@@ -5378,7 +5366,7 @@ export function SpacesContent() {
                     className={`flex h-8 items-center gap-1.5 rounded-lg px-2 text-[8px] font-black uppercase tracking-widest transition ${
                       workspaceViewMode === 'pro'
                         ? 'bg-white text-slate-900 shadow-sm'
-                        : 'text-slate-700 hover:bg-white/20'
+                        : 'text-white/70 hover:bg-white/20 hover:text-white'
                     }`}
                   >
                     Pro
@@ -5388,14 +5376,14 @@ export function SpacesContent() {
                   <button
                     type="button"
                     onClick={() => setCanvasBgMenuOpen((o) => !o)}
-                    title="Fondo del lienzo y ordenar nodos"
+                    title="Fondo del lienzo e idioma"
                     aria-expanded={canvasBgMenuOpen}
-                    className="group relative flex h-10 w-10 items-center justify-center rounded-xl border border-white/25 bg-white/[0.08] text-slate-700 shadow-sm backdrop-blur-xl transition-all hover:scale-105 hover:bg-white/[0.15] hover:text-slate-900"
+                    className="group relative flex h-10 w-10 items-center justify-center rounded-xl border border-white/25 bg-white/[0.08] text-white/70 shadow-sm backdrop-blur-xl transition-all hover:scale-105 hover:bg-white/[0.15] hover:text-white"
                   >
-                    <LayoutGrid size={16} className="text-slate-700 group-hover:text-slate-900" />
+                    <LayoutGrid size={16} className="text-current" />
                     <ChevronDown
                       size={12}
-                      className={`absolute bottom-1 right-1 text-slate-600 transition-transform ${canvasBgMenuOpen ? 'rotate-180' : ''}`}
+                      className={`absolute bottom-1 right-1 text-current opacity-75 transition-transform ${canvasBgMenuOpen ? 'rotate-180' : ''}`}
                       aria-hidden
                     />
                   </button>
@@ -5431,18 +5419,38 @@ export function SpacesContent() {
                           ))}
                         </div>
                       </div>
-                      <div className="mt-1 border-t border-slate-200/80 px-1.5 pt-1.5 dark:border-slate-600/80">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            autoLayoutNodes();
-                            setCanvasBgMenuOpen(false);
-                          }}
-                          className="flex w-full items-center justify-center gap-2 rounded-lg bg-slate-800 py-2 text-xs font-semibold text-white transition-colors hover:bg-slate-900 dark:bg-slate-700 dark:hover:bg-slate-600"
-                        >
-                          <LayoutGrid size={14} aria-hidden />
-                          Ordenar nodos
-                        </button>
+                      <div
+                        className="mt-1 border-t border-slate-200/80 px-1.5 pt-1.5 dark:border-slate-600/80"
+                        data-foldder-i18n-ignore
+                      >
+                        <div className="flex items-center justify-between gap-2 rounded-lg bg-slate-100/80 p-1.5 dark:bg-slate-800/80">
+                          <div className="flex items-center gap-1.5 px-1.5 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500 dark:text-slate-300">
+                            <Languages size={13} aria-hidden />
+                            <span>{language === "es" ? "Idioma" : "Language"}</span>
+                          </div>
+                          <div className="flex shrink-0 gap-1">
+                            {LANGUAGE_OPTIONS.map((option) => {
+                              const active = option.id === language;
+                              return (
+                                <button
+                                  key={option.id}
+                                  type="button"
+                                  onClick={() => setLanguage(option.id)}
+                                  aria-pressed={active}
+                                  aria-label={option.label}
+                                  title={option.label}
+                                  className={`flex h-8 w-10 items-center justify-center rounded-md border text-[11px] font-black uppercase tracking-[0.08em] transition ${
+                                    active
+                                      ? "border-slate-900 bg-slate-900 text-white shadow-sm dark:border-white dark:bg-white dark:text-slate-950"
+                                      : "border-slate-300 bg-white text-slate-600 hover:border-slate-500 hover:text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-slate-400 dark:hover:text-white"
+                                  }`}
+                                >
+                                  {option.shortLabel}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
                       </div>
                     </div>
                   )}
@@ -5456,12 +5464,12 @@ export function SpacesContent() {
                       : 'Pantalla completa (ocultar barra del navegador)'
                   }
                   aria-pressed={browserFullscreen}
-                  className="group flex h-10 w-10 items-center justify-center rounded-xl border border-white/25 bg-white/[0.08] text-slate-700 shadow-sm backdrop-blur-xl transition-all hover:scale-105 hover:bg-white/[0.15] hover:text-slate-900"
+                  className="group flex h-10 w-10 items-center justify-center rounded-xl border border-white/25 bg-white/[0.08] text-white/70 shadow-sm backdrop-blur-xl transition-all hover:scale-105 hover:bg-white/[0.15] hover:text-white"
                 >
                   {browserFullscreen ? (
-                    <Minimize2 size={16} className="text-slate-700 group-hover:text-slate-900" aria-hidden />
+                    <Minimize2 size={16} className="text-current" aria-hidden />
                   ) : (
-                    <Maximize2 size={16} className="text-slate-700 group-hover:text-slate-900" aria-hidden />
+                    <Maximize2 size={16} className="text-current" aria-hidden />
                   )}
                 </button>
                 <button
@@ -5471,9 +5479,9 @@ export function SpacesContent() {
                     openLoadProjectsModal();
                   }}
                   title="Abrir proyectos"
-                  className="group flex h-10 w-10 items-center justify-center rounded-xl border border-white/25 bg-white/[0.08] text-slate-700 shadow-sm backdrop-blur-xl transition-all hover:scale-105 hover:bg-white/[0.15] hover:text-slate-900"
+                  className="group flex h-10 w-10 items-center justify-center rounded-xl border border-white/25 bg-white/[0.08] text-white/70 shadow-sm backdrop-blur-xl transition-all hover:scale-105 hover:bg-white/[0.15] hover:text-white"
                 >
-                  <FolderOpen size={16} className="text-slate-700 group-hover:text-slate-900" />
+                  <FolderOpen size={16} className="text-current" />
                 </button>
                 <button
                   type="button"
@@ -5523,17 +5531,14 @@ export function SpacesContent() {
                     <button
                       type="button"
                       onClick={() => {
-                        setPasscodeBypass(false);
-                        setPasscode("");
-                        setPassError(false);
                         if (sessionStatus === "authenticated") {
-                          void signOut({ callbackUrl: "/spaces" });
+                          void signOut({ callbackUrl: "/" });
                         }
                       }}
                       title="Cerrar sesión"
-                      className="group flex h-9 w-9 items-center justify-center rounded-xl border border-white/25 bg-white/[0.08] text-slate-700 shadow-sm backdrop-blur-xl transition-all hover:scale-105 hover:bg-white/[0.15] hover:text-slate-900"
+                      className="group flex h-9 w-9 items-center justify-center rounded-xl border border-white/25 bg-white/[0.08] text-white/70 shadow-sm backdrop-blur-xl transition-all hover:scale-105 hover:bg-white/[0.15] hover:text-white"
                     >
-                      <LogOut size={14} className="text-slate-700 group-hover:text-slate-900" />
+                      <LogOut size={14} className="text-current" />
                     </button>
                   </div>
                 )}
@@ -5762,29 +5767,29 @@ export function SpacesContent() {
           </div>
         )}
 
-        {/* Modals — mismo estilo que tarjetas Lógica en Sidebar (borde blanco /25, fondo white/20, slate-700) */}
+        {/* Modals — alto contraste sobre cualquier fondo del lienzo */}
         {showNewProjectModal && (
           <div className="fixed inset-0 z-[10006] flex items-center justify-center p-4">
             <div
-              className="absolute inset-0 bg-black/45 backdrop-blur-xl"
+              className="absolute inset-0 bg-black/60 backdrop-blur-xl"
               onClick={() => !isSaving && setShowNewProjectModal(false)}
               aria-hidden
             />
-            <div className="relative z-10 w-full max-w-md rounded-3xl border border-white/25 bg-white/20 p-8 shadow-2xl shadow-black/20 backdrop-blur-xl">
+            <div className="relative z-10 w-full max-w-md rounded-3xl border border-white/12 bg-black/88 p-8 shadow-2xl shadow-black/45 backdrop-blur-xl">
               <div className="mb-6 flex items-center justify-between">
-                <h2 className="flex items-center gap-3 text-xl font-black uppercase tracking-wide text-slate-800">
-                  <FolderPlus size={20} className="text-blue-600" /> Nuevo proyecto
+                <h2 className="flex items-center gap-3 text-xl font-black uppercase tracking-wide text-white">
+                  <FolderPlus size={20} className="text-blue-400" /> Nuevo proyecto
                 </h2>
                 <button
                   type="button"
                   onClick={() => !isSaving && setShowNewProjectModal(false)}
-                  className="rounded-full p-2 text-slate-500 transition-colors hover:bg-white/40 hover:text-slate-800"
+                  className="rounded-full p-2 text-white/50 transition-colors hover:bg-white/10 hover:text-white"
                   aria-label="Cerrar"
                 >
                   <X size={16} />
                 </button>
               </div>
-              <p className="mb-4 text-sm leading-relaxed text-slate-600">
+              <p className="mb-4 text-sm leading-relaxed text-white/68">
                 Elige un nombre. Se creará un lienzo vacío y se guardará en el servidor; a partir de ahí el proyecto se
                 guardará solo cada minuto.
               </p>
@@ -5798,13 +5803,13 @@ export function SpacesContent() {
                   if (e.key === 'Enter') void submitNewProject();
                   if (e.key === 'Escape' && !isSaving) setShowNewProjectModal(false);
                 }}
-                className="mb-6 w-full rounded-2xl border border-white/25 bg-white/25 px-4 py-3 text-sm font-bold text-slate-800 shadow-inner outline-none backdrop-blur-sm transition-all placeholder:text-slate-500 focus:border-blue-400/60 focus:ring-2 focus:ring-blue-400/25"
+                className="mb-6 w-full rounded-2xl border border-white/18 bg-white px-4 py-3 text-sm font-bold text-slate-950 shadow-inner outline-none transition-all placeholder:text-slate-500 focus:border-blue-400/80 focus:ring-2 focus:ring-blue-400/30"
               />
               <div className="flex justify-end gap-3">
                 <button
                   type="button"
                   onClick={() => !isSaving && setShowNewProjectModal(false)}
-                  className="rounded-2xl border border-white/25 bg-white/15 px-6 py-2.5 font-black text-[11px] uppercase tracking-widest text-slate-700 transition-all hover:bg-white/35"
+                  className="rounded-2xl border border-white/22 bg-white/8 px-6 py-2.5 font-black text-[11px] uppercase tracking-widest text-white/72 transition-all hover:bg-white/14 hover:text-white"
                 >
                   Cancelar
                 </button>

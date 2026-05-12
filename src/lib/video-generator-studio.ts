@@ -321,6 +321,62 @@ export function mergeBasePromptWithDirectorBlock(
   return `${b}\n\n${e}`;
 }
 
+export function appendVideoPromptTail(
+  prompt: string,
+  args: {
+    animationPrompt?: unknown;
+    cameraPreset?: unknown;
+    negativePrompt?: unknown;
+    includeNegative?: boolean;
+  },
+): string {
+  let finalPrompt = prompt.trim();
+  const animation = typeof args.animationPrompt === "string" ? args.animationPrompt.trim() : "";
+  const camera = typeof args.cameraPreset === "string" ? args.cameraPreset.trim() : "";
+  const negative = typeof args.negativePrompt === "string" ? args.negativePrompt.trim() : "";
+  if (animation) finalPrompt += `. Animation: ${animation}`;
+  if (camera) finalPrompt += `. Camera motion: ${camera}`;
+  if (args.includeNegative && negative) finalPrompt += `. Negative: avoid ${negative}`;
+  return finalPrompt;
+}
+
+export function buildVideoPromptAssembly(args: {
+  basePrompt: string;
+  lightingId?: string;
+  visualStyleId?: string;
+  physics?: Partial<Record<VideoPhysicsKey, boolean>>;
+  animationPrompt?: unknown;
+  cameraPreset?: unknown;
+  negativePrompt?: unknown;
+  includeNegativeInPreview?: boolean;
+}): {
+  basePrompt: string;
+  directorEnhancement: string;
+  promptForRequest: string;
+  readablePrompt: string;
+} {
+  const basePrompt = args.basePrompt.trim();
+  const directorEnhancement = buildDirectorEnhancementSuffix({
+    lightingId: args.lightingId,
+    visualStyleId: args.visualStyleId,
+    physics: args.physics,
+  });
+  const promptForRequest = mergeBasePromptWithDirectorBlock(basePrompt, directorEnhancement);
+  const readablePrompt = appendVideoPromptTail(promptForRequest, {
+    animationPrompt: args.animationPrompt,
+    cameraPreset: args.cameraPreset,
+    negativePrompt: args.negativePrompt,
+    includeNegative: args.includeNegativeInPreview,
+  });
+
+  return {
+    basePrompt,
+    directorEnhancement,
+    promptForRequest,
+    readablePrompt,
+  };
+}
+
 /**
  * Orden: primer frame grafo → último frame grafo → @Image1…@Image9 (Studio).
  * Máximo 9 imágenes en total (límite Seedance). Vídeo/audio: solo en prompt (@Video / @Audio).

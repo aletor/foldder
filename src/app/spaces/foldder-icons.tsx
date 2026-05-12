@@ -19,6 +19,8 @@ export type FoldderIconKey =
   | 'grok'
   | 'nano'
   | 'video'
+  | 'videoEdition'
+  | 'vfx'
   | 'concat'
   | 'listPick'
   | 'space'
@@ -33,6 +35,8 @@ export type FoldderIconKey =
   | 'freehand'
   | 'brain'
   | 'photoRoom'
+  | 'guionista'
+  | 'presenter'
   | 'notes'
   | 'cine';
 
@@ -281,18 +285,39 @@ export function FoldderGrok({ state, className, size }: GlyphProps) {
   );
 }
 
-/** Nano Banana — solo “imagen” (marco + sol + sierra), sin plátano */
+/** Image generation — raster mark shared with sidebar/topbar. */
 export function FoldderNano({ state, className, size }: GlyphProps) {
+  const s = state ?? 'idle';
   return (
-    <FoldderIcon state={state} className={className} size={size}>
-      <rect x="2.5" y="2.75" width="11" height="10.5" rx="1.35" />
-      <circle cx="5.4" cy="5.85" r="0.9" fill="currentColor" stroke="none" strokeWidth={0} />
-      <path
-        d="M3.35 12.45 L6.15 9.15 L8.35 10.85 L10.55 8.55 L12.65 12.45"
-        opacity={0.92}
-        strokeWidth={1.25}
+    <span
+      className={shellClass(s, `${className ?? ''} relative inline-flex items-center justify-center`)}
+      style={{ ...shellFilter(s), width: size, height: size }}
+      aria-hidden
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src="/image_icon.svg"
+        alt=""
+        width={size}
+        height={size}
+        className="h-full w-full select-none object-contain pointer-events-none"
+        draggable={false}
       />
-    </FoldderIcon>
+      {s === 'processing' && (
+        <span
+          className="foldder-icon-pulse absolute right-px top-px block h-[5px] w-[5px] rounded-full bg-current opacity-95"
+          aria-hidden
+        />
+      )}
+      {s === 'done' && (
+        <span className="absolute right-px top-px block h-[4px] w-[4px] rounded-full bg-current opacity-95" aria-hidden />
+      )}
+      {s === 'error' && (
+        <span className="absolute -bottom-px -right-px text-[8px] leading-none text-rose-400 opacity-90" aria-hidden>
+          ×
+        </span>
+      )}
+    </span>
   );
 }
 
@@ -320,27 +345,120 @@ export function FoldderPhotoRoom({ state, className, size }: GlyphProps) {
 
 /** Marco de vídeo + triángulo play (lectura inmediata) */
 export function FoldderVideo({ state, className, size }: GlyphProps) {
+  const s = state ?? 'idle';
   return (
-    <FoldderIcon state={state} className={className} size={size}>
-      <rect x="2.35" y="3.35" width="11.3" height="9.3" rx="1.65" />
-      <path
-        d="M6.85 6.15 L6.85 10.85 L10.85 8.5 Z"
-        fill="currentColor"
-        stroke="none"
-        strokeWidth={0}
+    <span
+      className={shellClass(s, `${className ?? ''} relative inline-flex items-center justify-center`)}
+      style={{ ...shellFilter(s), width: size, height: size }}
+      aria-hidden
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src="/video_icon.svg"
+        alt=""
+        width={size}
+        height={size}
+        className="h-full w-full select-none object-contain pointer-events-none"
+        draggable={false}
       />
-    </FoldderIcon>
+      {s === 'processing' && (
+        <span
+          className="foldder-icon-pulse absolute right-px top-px block h-[5px] w-[5px] rounded-full bg-current opacity-95"
+          aria-hidden
+        />
+      )}
+      {s === 'done' && (
+        <span className="absolute right-px top-px block h-[4px] w-[4px] rounded-full bg-current opacity-95" aria-hidden />
+      )}
+      {s === 'error' && (
+        <span className="absolute -bottom-px -right-px text-[8px] leading-none text-rose-400 opacity-90" aria-hidden>
+          ×
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** Video Editor raster mark — timeline / edition studio. */
+export function FoldderVideoEdition({ state, className, size }: GlyphProps) {
+  const s = state ?? 'idle';
+  return (
+    <span
+      className={shellClass(s, `${className ?? ''} relative inline-flex items-center justify-center`)}
+      style={{ ...shellFilter(s), width: size, height: size }}
+      aria-hidden
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src="/video_edition_icon.svg"
+        alt=""
+        width={size}
+        height={size}
+        className="h-full w-full select-none object-contain pointer-events-none"
+        draggable={false}
+      />
+      {s === 'processing' && (
+        <span
+          className="foldder-icon-pulse absolute right-px top-px block h-[5px] w-[5px] rounded-full bg-current opacity-95"
+          aria-hidden
+        />
+      )}
+      {s === 'done' && (
+        <span className="absolute right-px top-px block h-[4px] w-[4px] rounded-full bg-current opacity-95" aria-hidden />
+      )}
+      {s === 'error' && (
+        <span className="absolute -bottom-px -right-px text-[8px] leading-none text-rose-400 opacity-90" aria-hidden>
+          ×
+        </span>
+      )}
+    </span>
   );
 }
 
 export function FoldderCine({ state, className, size }: GlyphProps) {
+  const s = state ?? 'idle';
+  return (
+    <span
+      className={shellClass(s, `${className ?? ''} relative inline-flex items-center justify-center`)}
+      style={{ ...shellFilter(s), width: size, height: size }}
+      aria-hidden
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src="/cine_icon.svg"
+        alt=""
+        width={size}
+        height={size}
+        className="h-full w-full select-none object-contain pointer-events-none"
+        draggable={false}
+      />
+      {s === 'processing' && (
+        <span
+          className="foldder-icon-pulse absolute right-px top-px block h-[5px] w-[5px] rounded-full bg-current opacity-95"
+          aria-hidden
+        />
+      )}
+      {s === 'done' && (
+        <span className="absolute right-px top-px block h-[4px] w-[4px] rounded-full bg-current opacity-95" aria-hidden />
+      )}
+      {s === 'error' && (
+        <span className="absolute -bottom-px -right-px text-[8px] leading-none text-rose-400 opacity-90" aria-hidden>
+          ×
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** VFX — small-tool glyph: layered frames + impact sparkle, distinct from video generation. */
+export function FoldderVfx({ state, className, size }: GlyphProps) {
   return (
     <FoldderIcon state={state} className={className} size={size}>
-      <rect x="2.5" y="5.1" width="11" height="8.1" rx="1.35" />
-      <path d="M3.15 5.15 L5.1 2.8 H7.35 L5.4 5.15" />
-      <path d="M7.15 5.15 L9.1 2.8 H11.35 L9.4 5.15" />
-      <path d="M3.1 7.2 H12.9" opacity={0.45} strokeWidth={1.15} />
-      <path d="M6.85 8.25 L6.85 11.25 L9.45 9.75 Z" fill="currentColor" stroke="none" strokeWidth={0} />
+      <rect x="2.8" y="4.2" width="8.2" height="6.6" rx="1.15" opacity={0.34} />
+      <rect x="4.9" y="5.9" width="8.2" height="6.6" rx="1.15" />
+      <path d="M3.3 10.5c1.35-1.45 2.65 1.4 4 0s2.65 1.4 4 0" opacity={0.58} strokeWidth={1.15} />
+      <path d="M11.9 2.9l.55 1.15 1.15.55-1.15.55-.55 1.15-.55-1.15-1.15-.55 1.15-.55z" fill="currentColor" stroke="none" strokeWidth={0} />
+      <path d="M13.4 10.7l.35.75.75.35-.75.35-.35.75-.35-.75-.75-.35.75-.35z" fill="currentColor" stroke="none" strokeWidth={0} opacity={0.72} />
     </FoldderIcon>
   );
 }
@@ -486,6 +604,78 @@ export function FoldderFreehand({ state, className, size = 16 }: GlyphProps) {
   );
 }
 
+/** Guionista raster mark — same asset logic as Designer/PhotoRoom icons. */
+export function FoldderGuionista({ state, className, size = 16 }: GlyphProps) {
+  const s = state ?? 'idle';
+  return (
+    <span
+      className={shellClass(s, `${className ?? ''} relative inline-flex items-center justify-center`)}
+      style={{ ...shellFilter(s), width: size, height: size }}
+      aria-hidden
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src="/guionista_icon.svg"
+        alt=""
+        width={size}
+        height={size}
+        className="h-full w-full select-none object-contain pointer-events-none"
+        draggable={false}
+      />
+      {s === 'processing' && (
+        <span
+          className="foldder-icon-pulse absolute right-px top-px block h-[5px] w-[5px] rounded-full bg-current opacity-95"
+          aria-hidden
+        />
+      )}
+      {s === 'done' && (
+        <span className="absolute right-px top-px block h-[4px] w-[4px] rounded-full bg-current opacity-95" aria-hidden />
+      )}
+      {s === 'error' && (
+        <span className="absolute -bottom-px -right-px text-[8px] leading-none text-rose-400 opacity-90" aria-hidden>
+          ×
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** Presenter raster mark — same asset logic as Designer/PhotoRoom icons. */
+export function FoldderPresenter({ state, className, size = 16 }: GlyphProps) {
+  const s = state ?? 'idle';
+  return (
+    <span
+      className={shellClass(s, `${className ?? ''} relative inline-flex items-center justify-center`)}
+      style={{ ...shellFilter(s), width: size, height: size }}
+      aria-hidden
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src="/presenter_icon.svg"
+        alt=""
+        width={size}
+        height={size}
+        className="h-full w-full select-none object-contain pointer-events-none"
+        draggable={false}
+      />
+      {s === 'processing' && (
+        <span
+          className="foldder-icon-pulse absolute right-px top-px block h-[5px] w-[5px] rounded-full bg-current opacity-95"
+          aria-hidden
+        />
+      )}
+      {s === 'done' && (
+        <span className="absolute right-px top-px block h-[4px] w-[4px] rounded-full bg-current opacity-95" aria-hidden />
+      )}
+      {s === 'error' && (
+        <span className="absolute -bottom-px -right-px text-[8px] leading-none text-rose-400 opacity-90" aria-hidden>
+          ×
+        </span>
+      )}
+    </span>
+  );
+}
+
 /** Category colors — stroke-driven; no icon backgrounds */
 export const FOLDDER_ICON_COLORS: Record<FoldderIconKey, string> = {
   asset: '#22d3ee',
@@ -499,6 +689,8 @@ export const FOLDDER_ICON_COLORS: Record<FoldderIconKey, string> = {
   grok: '#8b5cf6',
   nano: '#c4b5fd',
   video: '#a855f7',
+  videoEdition: '#a78bfa',
+  vfx: '#67e8f9',
   concat: '#fdba74',
   listPick: '#a5b4fc',
   space: '#fb923c',
@@ -513,8 +705,10 @@ export const FOLDDER_ICON_COLORS: Record<FoldderIconKey, string> = {
   freehand: '#22d3ee',
   brain: '#c084fc',
   photoRoom: '#f472b6',
+  guionista: '#e9d5ff',
+  presenter: '#c084fc',
   notes: '#fbbf24',
-  cine: '#67e8f9',
+  cine: '#c084fc',
 };
 
 export const FOLDDER_NODE_ICONS: Record<FoldderIconKey, React.FC<GlyphProps>> = {
@@ -529,6 +723,8 @@ export const FOLDDER_NODE_ICONS: Record<FoldderIconKey, React.FC<GlyphProps>> = 
   grok: FoldderGrok,
   nano: FoldderNano,
   video: FoldderVideo,
+  videoEdition: FoldderVideoEdition,
+  vfx: FoldderVfx,
   concat: FoldderConcat,
   listPick: FoldderListPick,
   space: FoldderSpace,
@@ -543,6 +739,8 @@ export const FOLDDER_NODE_ICONS: Record<FoldderIconKey, React.FC<GlyphProps>> = 
   freehand: FoldderFreehand,
   brain: FoldderBrain,
   photoRoom: FoldderPhotoRoom,
+  guionista: FoldderGuionista,
+  presenter: FoldderPresenter,
   notes: FoldderNotes,
   cine: FoldderCine,
 };
@@ -558,7 +756,9 @@ export const NODE_TYPE_TO_FOLDDER_ICON: Record<string, FoldderIconKey> = {
   grokProcessor: 'grok',
   nanoBanana: 'nano',
   geminiVideo: 'video',
-  vfxGenerator: 'video',
+  video_editor: 'videoEdition',
+  videoEditor: 'videoEdition',
+  vfxGenerator: 'vfx',
   concatenator: 'concat',
   listado: 'listPick',
   space: 'space',
@@ -569,13 +769,13 @@ export const NODE_TYPE_TO_FOLDDER_ICON: Record<string, FoldderIconKey> = {
   crop: 'crop',
   canvasGroup: 'layout',
   designer: 'freehand',
-  presenter: 'nano',
+  presenter: 'presenter',
   photoRoom: 'photoRoom',
   projectBrain: 'brain',
   projectAssets: 'foldderApp',
   pinterestSearch: 'web',
   notes: 'notes',
-  guionista: 'text',
+  guionista: 'guionista',
   cine: 'cine',
 };
 

@@ -9,6 +9,26 @@ type GlyphProps = {
 
 const sw = 1.45;
 
+function TopbarRasterGlyph({
+  src,
+  size = 26,
+  className,
+  maxWidthScale = 1.25,
+}: GlyphProps & { src: string; maxWidthScale?: number }) {
+  const scaled = Math.round(size * 0.9);
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={src}
+      alt=""
+      className={[className, "mx-auto block select-none object-contain pointer-events-none"].filter(Boolean).join(" ")}
+      style={{ height: scaled, width: "auto", maxWidth: scaled * maxWidthScale }}
+      aria-hidden
+      draggable={false}
+    />
+  );
+}
+
 /**
  * Iconos solo para la barra inferior de accesos: trazo fino, viewBox 24×24, alta legibilidad.
  * No reutilizar como icono de nodo en el grafo (ver `foldder-icons`).
@@ -45,85 +65,24 @@ export function TopbarGlyphVectorStudio({ size = 26, className }: GlyphProps) {
   );
 }
 
-/** Image Generator — marco de imagen + paisaje + destellos (generación creativa). */
+/** Image Generator — generation studio mark. */
 export function TopbarGlyphImageGenerator({ size = 26, className }: GlyphProps) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      className={className}
-      aria-hidden
-    >
-      <rect x="2.75" y="4.5" width="18.5" height="14" rx="2.75" stroke="currentColor" strokeWidth={sw} />
-      <path
-        d="M5.5 16.5L9 11.5l2.8 3.2L14.5 9l5 7.5"
-        stroke="currentColor"
-        strokeWidth={1.35}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <circle cx="8.25" cy="8.75" r="1.35" fill="currentColor" />
-      {/* Destellos (cruces +) */}
-      <path
-        d="M16.75 4.5v2.2M15.65 5.6h2.2M19.5 6.75v1.6M18.7 7.55h1.6"
-        stroke="currentColor"
-        strokeWidth={1.2}
-        strokeLinecap="round"
-        opacity={0.95}
-      />
-      <circle cx="18.85" cy="11.85" r="0.65" fill="currentColor" opacity={0.5} />
-    </svg>
-  );
+  return <TopbarRasterGlyph src="/image_icon.svg" size={size} className={className} />;
 }
 
-/** Video Generator — celuloide (perforaciones) + play en marco 16:9. */
+/** Video Generator — generation studio mark. */
 export function TopbarGlyphVideoGenerator({ size = 26, className }: GlyphProps) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      className={className}
-      aria-hidden
-    >
-      <rect x="3.25" y="5.75" width="17.5" height="12.5" rx="2.35" stroke="currentColor" strokeWidth={sw} />
-      <path d="M5.25 5.75v2.35M8.6 5.75v2.35M12 5.75v2.35M15.4 5.75v2.35M18.75 5.75v2.35" stroke="currentColor" strokeWidth={1.15} strokeLinecap="round" opacity={0.42} />
-      <path d="M10.35 12.35L10.35 17.5L15 14.925L10.35 12.35z" fill="currentColor" />
-      <path d="M5.25 18.5v2.35M8.6 18.5v2.35M12 18.5v2.35M15.4 18.5v2.35M18.75 18.5v2.35" stroke="currentColor" strokeWidth={1.15} strokeLinecap="round" opacity={0.42} />
-    </svg>
-  );
+  return <TopbarRasterGlyph src="/video_icon.svg" size={size} className={className} />;
 }
 
-/** Presenter — pantalla de proyección + reproducción (modo presentación). */
+/** Video Editor — timeline edition studio mark. */
+export function TopbarGlyphVideoEdition({ size = 26, className }: GlyphProps) {
+  return <TopbarRasterGlyph src="/video_edition_icon.svg" size={size} className={className} />;
+}
+
+/** Presenter — presentation studio mark. */
 export function TopbarGlyphPresenter({ size = 26, className }: GlyphProps) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      className={className}
-      aria-hidden
-    >
-      <rect x="3.75" y="5.25" width="16.5" height="11" rx="1.65" stroke="currentColor" strokeWidth={sw} />
-      <path
-        d="M8.25 19.5h7.5M12 16.75v2.75"
-        stroke="currentColor"
-        strokeWidth={1.25}
-        strokeLinecap="round"
-      />
-      <path
-        d="M10.4 10.85l4.2 2.65-4.2 2.65v-5.3z"
-        fill="currentColor"
-        fillOpacity={0.92}
-      />
-      <rect x="5.25" y="7.15" width="5.5" height="0.9" rx="0.35" fill="currentColor" fillOpacity={0.22} />
-      <rect x="5.25" y="9.05" width="8.25" height="0.85" rx="0.35" fill="currentColor" fillOpacity={0.18} />
-    </svg>
-  );
+  return <TopbarRasterGlyph src="/presenter_icon.svg" size={size} className={className} />;
 }
 
 /** Indesign — páginas apiladas + líneas de texto (maquetación editorial). */
@@ -168,6 +127,7 @@ export function TopbarGlyphIndesign({ size = 26, className }: GlyphProps) {
 export function TopbarGlyphDesignerStudio({ size = 26, className }: GlyphProps) {
   const scaled = Math.round(size * 0.9);
   return (
+    // eslint-disable-next-line @next/next/no-img-element
     <img
       src="/designer_icon.svg"
       alt=""
@@ -301,34 +261,22 @@ export function TopbarGlyphFiles({ size = 26, className }: GlyphProps) {
 
 /** Foldder app mark (color corporativo). */
 export function TopbarGlyphFoldderApp({ size = 26, className }: GlyphProps) {
-  const scaled = Math.round(size * 0.9);
-  return (
-    <img
-      src="/logo_topbar.svg"
-      alt=""
-      width={scaled}
-      height={scaled}
-      className={[className, "object-contain mx-auto block"].filter(Boolean).join(" ")}
-      aria-hidden
-      draggable={false}
-    />
-  );
+  return <TopbarRasterGlyph src="/logo_topbar.svg" size={size} className={className} />;
 }
 
 /** PhotoRoom — marco de imagen + varita / retoque (alineado con foldder-icons). */
 export function TopbarGlyphPhotoRoom({ size = 26, className }: GlyphProps) {
-  const scaled = Math.round(size * 0.9);
-  return (
-    <img
-      src="/photoroom_icon.svg"
-      alt=""
-      width={scaled}
-      height={scaled}
-      className={[className, "object-contain mx-auto block"].filter(Boolean).join(" ")}
-      aria-hidden
-      draggable={false}
-    />
-  );
+  return <TopbarRasterGlyph src="/photoroom_icon.svg" size={size} className={className} />;
+}
+
+/** Guionista — editorial writing studio mark. */
+export function TopbarGlyphGuionista({ size = 26, className }: GlyphProps) {
+  return <TopbarRasterGlyph src="/guionista_icon.svg" size={size} className={className} />;
+}
+
+/** Cine — audiovisual preproduction studio mark. */
+export function TopbarGlyphCine({ size = 26, className }: GlyphProps) {
+  return <TopbarRasterGlyph src="/cine_icon.svg" size={size} className={className} />;
 }
 
 /** VFX Generator — capas apiladas + onda / impacto (efectos sobre vídeo). */
@@ -374,19 +322,29 @@ export function TopbarGlyphVfxGenerator({ size = 26, className }: GlyphProps) {
 
 export const TOPBAR_GLYPH_BY_NODE_TYPE: Record<
   | "brain"
+  | "guionista"
+  | "cine"
   | "designer"
   | "nanoBanana"
   | "photoRoom"
   | "geminiVideo"
+  | "video_editor"
+  | "videoEditor"
+  | "presenter"
   | "vfxGenerator"
   | "files",
   React.FC<GlyphProps>
 > = {
   brain: TopbarGlyphBrain,
+  guionista: TopbarGlyphGuionista,
+  cine: TopbarGlyphCine,
   designer: TopbarGlyphDesignerStudio,
   nanoBanana: TopbarGlyphImageGenerator,
   photoRoom: TopbarGlyphPhotoRoom,
   geminiVideo: TopbarGlyphVideoGenerator,
+  video_editor: TopbarGlyphVideoEdition,
+  videoEditor: TopbarGlyphVideoEdition,
+  presenter: TopbarGlyphPresenter,
   vfxGenerator: TopbarGlyphVfxGenerator,
   files: TopbarGlyphFoldderApp,
 };
