@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
 import { isDynamoEnabled } from "@/lib/dynamo-utils";
 import { updateJsonStore, readJsonStore } from "@/lib/json-persistence";
-import { collectS3KeysFromProjectSpaces } from "@/lib/s3-media-hydrate";
+import { collectS3KeysFromProjectSpaces, collectS3KeysFromValue } from "@/lib/s3-media-hydrate";
 import { deleteFromS3 } from "@/lib/s3-utils";
 import {
   deleteDdbProject as deleteDdbProjectStore,
@@ -190,6 +190,15 @@ function projectBelongsToOwner(
   ownerEmail: string,
 ): boolean {
   return normalizeOwnerEmail(project.ownerUserEmail) === ownerEmail;
+}
+
+function collectS3KeysFromProject(project: ProjectRecord): string[] {
+  return [
+    ...new Set([
+      ...collectS3KeysFromProjectSpaces(project.spaces || {}),
+      ...collectS3KeysFromValue(project.metadata || {}),
+    ]),
+  ];
 }
 
 function devBypassUserFromRequest(req: Request): AuthUser | null {
@@ -483,9 +492,7 @@ export async function DELETE(req: Request) {
         return jsonNoStore({ error: "Project not found" }, { status: 404 });
       }
       if (projectToDelete) {
-        const s3Keys = collectS3KeysFromProjectSpaces(
-          (projectToDelete.spaces || {}) as Record<string, unknown>,
-        );
+        const s3Keys = collectS3KeysFromProject(projectToDelete);
         for (const key of s3Keys) {
           try {
             await deleteFromS3(key);
@@ -511,9 +518,7 @@ export async function DELETE(req: Request) {
       if (projectToDelete) {
         console.log(`[Cleanup] Deleting project "${projectToDelete.name}"...`);
 
-        const s3Keys = collectS3KeysFromProjectSpaces(
-          (projectToDelete.spaces || {}) as Record<string, unknown>,
-        );
+        const s3Keys = collectS3KeysFromProject(projectToDelete);
 
         if (s3Keys.length > 0) {
           console.log(`[Cleanup] Found ${s3Keys.length} assets across all spaces to remove from S3.`);

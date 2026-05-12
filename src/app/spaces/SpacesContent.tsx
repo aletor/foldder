@@ -114,6 +114,10 @@ import {
 import { collectFoldderLibrarySections } from "./foldder-library";
 import { compactProjectForSave, projectSavePayloadBytes } from "./compact-project-save";
 import {
+  materializeProjectSpacesMediaForSave,
+  type ProjectMediaUploadCache,
+} from "./project-media-s3-save";
+import {
   getGuionistaTextAssetsFromMetadata,
   setGuionistaTextAssetsInMetadata,
   upsertGuionistaTextAsset,
@@ -540,6 +544,7 @@ export function SpacesContent() {
   const projectSaveDebounceTimerRef = useRef<number | null>(null);
   const lastSavedFingerprintRef = useRef<string | null>(null);
   const lastSaveWasSkippedRef = useRef(false);
+  const projectMediaUploadCacheRef = useRef<ProjectMediaUploadCache>(new Map());
 
   /** Avisos poco intrusivos al terminar trabajos de IA en segundo plano */
   const [aiJobToasts, setAiJobToasts] = useState<Array<{ id: string } & AiJobCompleteDetail>>([]);
@@ -3301,6 +3306,8 @@ export function SpacesContent() {
     const metadataVersionAtSaveStart = metadataVersionRef.current;
     lastSaveWasSkippedRef.current = false;
     try {
+      setIsSaving(true);
+      setSaveHealth({ state: "saving", message: "Preparing project save...", at: Date.now() });
       // Apilado XY Flow: persistir `node.zIndex`, no `style.zIndex` (evita hijos detrás del marco al recargar).
       const normalizedNodes = normalizeNodesForPersistence(nodes as Node[]);
       const sanitizedGraph = sanitizeLegacyRemovedNodesFromGraph(
@@ -3317,6 +3324,17 @@ export function SpacesContent() {
       const spacesToSave = normalizeSpacesMapNodesForPersistence(
         syncedSpaces as Record<string, { nodes?: Node[] }>
       );
+      setSaveHealth({ state: "saving", message: "Moving heavy media to cloud storage...", at: Date.now() });
+      const materializedMedia = await materializeProjectSpacesMediaForSave(spacesToSave, {
+        cache: projectMediaUploadCacheRef.current,
+        projectId: projectScopeId,
+      });
+      const spacesReadyForSave = materializedMedia.spaces;
+      if (materializedMedia.uploaded > 0 || materializedMedia.reused > 0) {
+        console.info(
+          `[FOLDDER save] Media S3-first: ${materializedMedia.uploaded} uploaded, ${materializedMedia.reused} reused, ${Math.round(materializedMedia.projectMediaBytes / 1024)}KB moved.`,
+        );
+      }
 
       const uiSnapshot = {
         canvasBgId,
@@ -3338,7 +3356,7 @@ export function SpacesContent() {
         id: activeProjectId,
         name: nameToSave || currentName || 'Untitled Project',
         rootSpaceId: 'root',
-        spaces: spacesToSave,
+        spaces: spacesReadyForSave,
         metadata: {
           ...metadataToSave,
           ui: uiSnapshot,
@@ -3347,17 +3365,17 @@ export function SpacesContent() {
       const fingerprint = projectSaveFingerprint(projectFingerprintInput);
       if (options?.skipIfUnchanged && lastSavedFingerprintRef.current === fingerprint) {
         lastSaveWasSkippedRef.current = true;
+        setSaveHealth((current) => (current.state === "saving" ? { state: "idle" } : current));
         return true;
       }
 
-      setIsSaving(true);
       setSaveHealth({ state: "saving", message: "Saving project...", at: Date.now() });
       const projectToSave = {
         id: activeProjectId,
         expectedRevision: activeProjectId ? activeProjectRevisionRef.current : undefined,
         name: nameToSave || currentName || 'Untitled Project',
         rootSpaceId: 'root',
-        spaces: spacesToSave,
+        spaces: spacesReadyForSave,
         metadata: {
           ...metadataToSave,
           ui: uiSnapshot,
@@ -3413,9 +3431,9 @@ export function SpacesContent() {
         setActiveProjectId(savedProject.id);
         setActiveSpaceId(activeSpaceId);
         setCurrentName(savedProject.name);
-        setSpacesMap(savedProject.spaces || spacesToSave);
+        setSpacesMap(savedProject.spaces || spacesReadyForSave);
       } else {
-        setSpacesMap(spacesToSave as Record<string, unknown>);
+        setSpacesMap((savedProject.spaces || spacesReadyForSave) as Record<string, unknown>);
       }
       if (metadataVersionRef.current === metadataVersionAtSaveStart) {
         const serverMetadata = (savedProject.metadata || compactedSave.project.metadata) as Record<string, unknown>;
@@ -3641,6 +3659,7 @@ export function SpacesContent() {
       return;
     }
     if (projectDeleteInProgress) return;
+    projectMediaUploadCacheRef.current.clear();
     flushSync(() => {
       setNodes([]);
       setEdges([]);
@@ -3695,6 +3714,7 @@ export function SpacesContent() {
   const loadProject = (projectMeta: SavedProjectMeta) => {
     void (async () => {
       let project: SavedProjectDetail;
+      projectMediaUploadCacheRef.current.clear();
       setProjectLoadingError(null);
       setProjectLoadingId(projectMeta.id);
       setProjectLoadingStage("Solicitando datos del proyecto al servidor…");
@@ -3863,6 +3883,7 @@ export function SpacesContent() {
       await readResponseJson<{ ok?: boolean }>(res, 'DELETE /api/spaces');
       await refreshProjectsList();
       if (activeProjectId === idToDelete) {
+        projectMediaUploadCacheRef.current.clear();
         setActiveProjectId(null);
         setActiveProjectRevision(null);
         activeProjectRevisionRef.current = null;

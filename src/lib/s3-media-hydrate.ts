@@ -59,6 +59,22 @@ function resolveS3KeyFromNodeData(data: Record<string, unknown>): string | null 
   return null;
 }
 
+function collectS3KeysFromUnknown(value: unknown, keys: Set<string>): void {
+  if (typeof value === "string") {
+    const fromUrl = tryExtractKnowledgeFilesKeyFromUrl(value);
+    if (fromUrl) keys.add(fromUrl);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectS3KeysFromUnknown(item, keys);
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+  for (const item of Object.values(value as Record<string, unknown>)) {
+    collectS3KeysFromUnknown(item, keys);
+  }
+}
+
 /** Imágenes en marcos del nodo Designer (`data.pages[].objects[].imageFrameContent`). */
 function collectDesignerImageKeysFromPages(d: Record<string, unknown>, keys: Set<string>) {
   const pages = d.pages;
@@ -126,7 +142,14 @@ function collectPresignKeysFromNodeData(d: Record<string, unknown>, keys: Set<st
 /** All `knowledge-files/…` keys referenced by node data (current value, history, versions). */
 export function collectS3KeysFromNodeData(d: Record<string, unknown>): string[] {
   const keys = new Set<string>();
+  collectS3KeysFromUnknown(d, keys);
   collectPresignKeysFromNodeData(d, keys);
+  return [...keys];
+}
+
+export function collectS3KeysFromValue(value: unknown): string[] {
+  const keys = new Set<string>();
+  collectS3KeysFromUnknown(value, keys);
   return [...keys];
 }
 
@@ -228,6 +251,45 @@ function hydrateDesignerPagesInData(d: Record<string, unknown>, urls: Record<str
   return any ? { ...d, pages: nextPages } : d;
 }
 
+function isS3KeyLikeField(key: string): boolean {
+  const k = key.toLowerCase();
+  return (
+    k === "key" ||
+    k === "s3key" ||
+    k === "s3keyhr" ||
+    k === "s3keyopt" ||
+    k === "s3path" ||
+    k.endsWith("s3key") ||
+    k.endsWith("s3path")
+  );
+}
+
+function hydrateGenericMediaUrls(value: unknown, urls: Record<string, string>, key = ""): unknown {
+  if (typeof value === "string") {
+    if (isS3KeyLikeField(key)) return value;
+    const s3Key = tryExtractKnowledgeFilesKeyFromUrl(value);
+    return s3Key && urls[s3Key] ? urls[s3Key] : value;
+  }
+  if (Array.isArray(value)) {
+    let changed = false;
+    const next = value.map((item) => {
+      const hydrated = hydrateGenericMediaUrls(item, urls, key);
+      if (hydrated !== item) changed = true;
+      return hydrated;
+    });
+    return changed ? next : value;
+  }
+  if (!value || typeof value !== "object") return value;
+  let changed = false;
+  const out: Record<string, unknown> = {};
+  for (const [childKey, childValue] of Object.entries(value as Record<string, unknown>)) {
+    const hydrated = hydrateGenericMediaUrls(childValue, urls, childKey);
+    if (hydrated !== childValue) changed = true;
+    out[childKey] = hydrated;
+  }
+  return changed ? out : value;
+}
+
 /**
  * Tras cargar un proyecto: renueva `data.value` con URLs prefirmadas válidas usando `s3Key`
  * o la clave inferida de una URL antigua del mismo prefijo.
@@ -274,6 +336,7 @@ export async function hydrateSpacesMapWithFreshUrls(
         d = hydrateGenerationHistoryUrls(d, urls);
         d = hydrateAssetVersionUrls(d, urls);
         d = hydrateDesignerPagesInData(d, urls);
+        d = hydrateGenericMediaUrls(d, urls) as Record<string, unknown>;
         return { ...n, data: d };
       }),
     };
