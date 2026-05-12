@@ -63,6 +63,7 @@ import {
 } from "./NotesSticky";
 import { ProjectBrainFullscreen, type BrainMainSection } from "./ProjectBrainFullscreen";
 import { ProjectAssetsFullscreen } from "./ProjectAssetsFullscreen";
+import { PerformanceHud } from "./PerformanceHud";
 import {
   resolveHandleMetaForCanvasDrop,
   pickNewNodeTypeForCanvasDrop,
@@ -112,7 +113,11 @@ import {
   type FoldderStudioEventDetail,
 } from "./desktop-studio-events";
 import { collectFoldderLibrarySections } from "./foldder-library";
-import { compactProjectForSave, projectSavePayloadBytes } from "./compact-project-save";
+import { compactProjectForSave } from "./compact-project-save";
+import { dispatchFoldderCanvasPerformanceMode, dispatchFoldderPerformanceMeasure } from "./performance-events";
+import { prepareProjectSavePayload } from "./project-save-worker-client";
+import { projectSaveFingerprint } from "./project-save-utils";
+import { mergeLiveStudioNodeDataIntoNodes } from "./studio-live-documents";
 import {
   materializeProjectSpacesMediaForSave,
   type ProjectMediaUploadCache,
@@ -287,20 +292,6 @@ const CLIENT_SAVE_BODY_LIMIT_BYTES = 4_250_000;
 const PROJECT_SAVE_DEBOUNCE_MS = 25_000;
 const PROJECT_SAVE_HEARTBEAT_MS = 90_000;
 
-function quickHashString(input: string): string {
-  let hash = 2166136261;
-  for (let i = 0; i < input.length; i++) {
-    hash ^= input.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(36);
-}
-
-function projectSaveFingerprint(value: unknown): string {
-  const json = JSON.stringify(value);
-  return `${json.length}:${quickHashString(json)}`;
-}
-
 function isRevisionConflictMessage(message: string): boolean {
   return /changed on another device|revision conflict/i.test(message);
 }
@@ -419,6 +410,12 @@ export function SpacesContent() {
   const liveEdgesRef = useRef<any[]>(initialEdges);
   liveNodesRef.current = nodes;
   liveEdgesRef.current = edges;
+  const [canvasPerformanceMode, setCanvasPerformanceMode] = useState(false);
+  const canvasPerformanceModeRef = useRef(false);
+  const canvasPerformanceReleaseTimerRef = useRef<number | null>(null);
+  const pendingProjectSaveAfterInteractionRef = useRef(false);
+  const nodeDataSignatureTokensRef = useRef(new WeakMap<object, number>());
+  const nodeDataSignatureCounterRef = useRef(0);
   const { screenToFlowPosition, setViewport, fitView, getViewport } = useReactFlow();
   const updateNodeInternals = useUpdateNodeInternals();
   const runAssistantPipeline = useNodeExecutionRunner();
@@ -694,6 +691,71 @@ export function SpacesContent() {
     }, 80);
   }, [metadata, scheduleFoldderCanvasIntroEnd, screenToFlowPosition, setNodes]);
 
+  const getNodeDataSignatureToken = useCallback((value: unknown): string => {
+    if (!value || typeof value !== "object") return String(value ?? "");
+    const known = nodeDataSignatureTokensRef.current.get(value);
+    if (known != null) return String(known);
+    nodeDataSignatureCounterRef.current += 1;
+    const next = nodeDataSignatureCounterRef.current;
+    nodeDataSignatureTokensRef.current.set(value, next);
+    return String(next);
+  }, []);
+
+  const nodesContentSignature = useMemo(
+    () =>
+      (nodes as Node[])
+        .map((node) => `${node.id}:${node.type ?? ""}:${getNodeDataSignatureToken(node.data)}`)
+        .join("|"),
+    [nodes, getNodeDataSignatureToken],
+  );
+
+  const brainFlowNodesSignature = useMemo(
+    () =>
+      (nodes as Node[])
+        .map((node) => {
+          const data = (node.data ?? {}) as { label?: unknown; title?: unknown; name?: unknown };
+          return [
+            node.id,
+            node.type ?? "",
+            typeof data.label === "string" ? data.label : "",
+            typeof data.title === "string" ? data.title : "",
+            typeof data.name === "string" ? data.name : "",
+          ].join(":");
+        })
+        .join("|"),
+    [nodes],
+  );
+
+  const brainFlowNodes = useMemo(
+    () =>
+      (nodes as Node[]).map((node) => {
+        const data = (node.data ?? {}) as { label?: unknown; title?: unknown; name?: unknown };
+        return {
+          id: node.id,
+          type: node.type,
+          data: {
+            label: typeof data.label === "string" ? data.label : undefined,
+            title: typeof data.title === "string" ? data.title : undefined,
+            name: typeof data.name === "string" ? data.name : undefined,
+          },
+        };
+      }),
+    // Only rebuild when the Brain-relevant identity/label signature changes; node position changes should not refresh Brain cards.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [brainFlowNodesSignature],
+  );
+
+  const brainFlowEdges = useMemo(
+    () =>
+      (edges as Edge[]).map((edge) => ({
+        source: edge.source,
+        target: edge.target,
+        sourceHandle: edge.sourceHandle,
+        targetHandle: edge.targetHandle,
+      })),
+    [edges],
+  );
+
   const projectBrainCanvasValue = useMemo(
     () => ({
       assetsMetadata: metadata.assets,
@@ -706,25 +768,12 @@ export function SpacesContent() {
         setBrainInitialSection("review");
         setProjectBrainOpen(true);
       },
-      flowNodes: nodes,
-      flowEdges: edges,
+      flowNodes: brainFlowNodes,
+      flowEdges: brainFlowEdges,
     }),
-    [metadata.assets, projectScopeId, nodes, edges],
+    [metadata.assets, projectScopeId, brainFlowNodes, brainFlowEdges],
   );
 
-  const projectAssetsCanvasValue = useMemo(
-    () => ({
-      flowNodes: nodes,
-      assetsMetadata: metadata.assets,
-      projectFiles,
-      generatedTextAssets,
-      projectScopeId,
-      openProjectAssets: () => openFoldder("fullscreen"),
-      saveGuionistaTextAsset,
-      openGuionistaTextAsset,
-    }),
-    [nodes, metadata.assets, projectFiles, generatedTextAssets, projectScopeId, openFoldder, saveGuionistaTextAsset, openGuionistaTextAsset],
-  );
   const foldderLibrarySections = useMemo(
     () =>
       collectFoldderLibrarySections({
@@ -734,7 +783,42 @@ export function SpacesContent() {
         projectFiles,
         generatedTextAssets,
       }),
-    [metadata.assets, nodes, projectFiles, generatedTextAssets, projectScopeId],
+    // Project media is driven by node type/data, not canvas x/y movement. Avoid rescanning heavy Designer pages during drag.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [metadata.assets, nodesContentSignature, projectFiles, generatedTextAssets, projectScopeId],
+  );
+
+  const projectAssetsLibrarySummary = useMemo(
+    () => ({
+      nImported: foldderLibrarySections.importedMedia.length,
+      nGenerated: foldderLibrarySections.generatedMedia.length + foldderLibrarySections.generatedTexts.length,
+      nFiles: foldderLibrarySections.mediaFiles.length,
+      nExports: foldderLibrarySections.exports.length,
+    }),
+    [foldderLibrarySections],
+  );
+
+  const projectAssetsCanvasValue = useMemo(
+    () => ({
+      librarySummary: projectAssetsLibrarySummary,
+      assetsMetadata: metadata.assets,
+      projectFiles,
+      generatedTextAssets,
+      projectScopeId,
+      openProjectAssets: () => openFoldder("fullscreen"),
+      saveGuionistaTextAsset,
+      openGuionistaTextAsset,
+    }),
+    [
+      projectAssetsLibrarySummary,
+      metadata.assets,
+      projectFiles,
+      generatedTextAssets,
+      projectScopeId,
+      openFoldder,
+      saveGuionistaTextAsset,
+      openGuionistaTextAsset,
+    ],
   );
   const standardDesktopNotes = useMemo(
     () => (nodes as Node[]).filter((node) => node.type === "notes"),
@@ -976,7 +1060,7 @@ export function SpacesContent() {
               target: newId,
               targetHandle,
               type: 'buttonEdge',
-              animated: true,
+              animated: false,
             });
             connected = true;
 
@@ -1009,7 +1093,7 @@ export function SpacesContent() {
                     target: downstreamEdge.target,
                     targetHandle: downInpHandle.id,
                     type: 'buttonEdge',
-                    animated: true,
+                    animated: false,
                   });
                 }
               }
@@ -1031,7 +1115,7 @@ export function SpacesContent() {
                 target: sel.id,
                 targetHandle: inp.id,
                 type: 'buttonEdge',
-                animated: true,
+                animated: false,
               });
               break;
             }
@@ -1210,7 +1294,7 @@ export function SpacesContent() {
         target: vidId,
         targetHandle: "prompt",
         type: "buttonEdge" as const,
-        animated: true,
+        animated: false,
       };
       const edgeFrame = {
         id: `ae-${urlId}-${vidId}-image-firstFrame`,
@@ -1219,7 +1303,7 @@ export function SpacesContent() {
         target: vidId,
         targetHandle: "firstFrame",
         type: "buttonEdge" as const,
-        animated: true,
+        animated: false,
       };
       takeSnapshot();
       setNodes((nds) => [...nds, promptNode, urlNode, vidNode]);
@@ -1296,6 +1380,10 @@ export function SpacesContent() {
       projectSaveDebounceTimerRef.current = null;
       const g = autosaveGateRef.current;
       if (g.openLoad || g.openNew || g.deleting || isSavingRef.current) return;
+      if (canvasPerformanceModeRef.current) {
+        pendingProjectSaveAfterInteractionRef.current = true;
+        return;
+      }
       void saveProjectRef.current(undefined, {
         reason: "debounced",
         silentError: true,
@@ -1323,6 +1411,52 @@ export function SpacesContent() {
     },
     [],
   );
+
+  const beginCanvasPerformanceInteraction = useCallback(() => {
+    if (typeof window !== "undefined" && canvasPerformanceReleaseTimerRef.current !== null) {
+      window.clearTimeout(canvasPerformanceReleaseTimerRef.current);
+      canvasPerformanceReleaseTimerRef.current = null;
+    }
+    if (canvasPerformanceModeRef.current) return;
+    canvasPerformanceModeRef.current = true;
+    setCanvasPerformanceMode(true);
+    dispatchFoldderCanvasPerformanceMode(true);
+  }, []);
+
+  const endCanvasPerformanceInteraction = useCallback(() => {
+    if (typeof window === "undefined") {
+      canvasPerformanceModeRef.current = false;
+      setCanvasPerformanceMode(false);
+      dispatchFoldderCanvasPerformanceMode(false);
+      return;
+    }
+    if (canvasPerformanceReleaseTimerRef.current !== null) {
+      window.clearTimeout(canvasPerformanceReleaseTimerRef.current);
+    }
+    canvasPerformanceReleaseTimerRef.current = window.setTimeout(() => {
+      canvasPerformanceReleaseTimerRef.current = null;
+      canvasPerformanceModeRef.current = false;
+      setCanvasPerformanceMode(false);
+      dispatchFoldderCanvasPerformanceMode(false);
+      if (pendingProjectSaveAfterInteractionRef.current) {
+        pendingProjectSaveAfterInteractionRef.current = false;
+        scheduleProjectSave();
+      }
+    }, 180);
+  }, [scheduleProjectSave]);
+
+  useEffect(() => {
+    if (!edges.some((edge) => edge.animated)) return;
+    setEdges((currentEdges) => {
+      let changed = false;
+      const nextEdges = currentEdges.map((edge) => {
+        if (!edge.animated) return edge;
+        changed = true;
+        return { ...edge, animated: false };
+      });
+      return changed ? nextEdges : currentEdges;
+    });
+  }, [edges, setEdges]);
 
   const createStandardNote = useCallback(() => {
     const viewport = getViewport();
@@ -1968,7 +2102,7 @@ export function SpacesContent() {
       target: nodeId,
       targetHandle: "document",
       type: "buttonEdge" as const,
-      animated: true,
+      animated: false,
     };
     const projectFile = createProjectFileForStudioNode({
       node: presenterNode as Node,
@@ -3309,7 +3443,8 @@ export function SpacesContent() {
       setIsSaving(true);
       setSaveHealth({ state: "saving", message: "Preparing project save...", at: Date.now() });
       // Apilado XY Flow: persistir `node.zIndex`, no `style.zIndex` (evita hijos detrás del marco al recargar).
-      const normalizedNodes = normalizeNodesForPersistence(nodes as Node[]);
+      const nodesWithLiveStudioDocs = mergeLiveStudioNodeDataIntoNodes(nodes as Node[]);
+      const normalizedNodes = normalizeNodesForPersistence(nodesWithLiveStudioDocs as Node[]);
       const sanitizedGraph = sanitizeLegacyRemovedNodesFromGraph(
         normalizedNodes as Node[],
         edges as Edge[],
@@ -3362,14 +3497,7 @@ export function SpacesContent() {
           ui: uiSnapshot,
         },
       };
-      const fingerprint = projectSaveFingerprint(projectFingerprintInput);
-      if (options?.skipIfUnchanged && lastSavedFingerprintRef.current === fingerprint) {
-        lastSaveWasSkippedRef.current = true;
-        setSaveHealth((current) => (current.state === "saving" ? { state: "idle" } : current));
-        return true;
-      }
 
-      setSaveHealth({ state: "saving", message: "Saving project...", at: Date.now() });
       const projectToSave = {
         id: activeProjectId,
         expectedRevision: activeProjectId ? activeProjectRevisionRef.current : undefined,
@@ -3382,23 +3510,63 @@ export function SpacesContent() {
           savedAt: new Date().toISOString(),
         },
       };
-      const payloadBeforeBytes = projectSavePayloadBytes(projectToSave);
-      const compactedSave = await compactProjectForSave(projectToSave);
-      if (compactedSave.compacted) {
+
+      setSaveHealth({ state: "saving", message: "Preparing save payload...", at: Date.now() });
+      const preparedSave = await prepareProjectSavePayload({
+        fingerprintInput: projectFingerprintInput,
+        projectToSave,
+      });
+      dispatchFoldderPerformanceMeasure({
+        name: "save.prepare",
+        durationMs: preparedSave.durationMs,
+        bytes: preparedSave.payloadBeforeBytes,
+        worker: preparedSave.usedWorker,
+      });
+      const fingerprint = preparedSave.fingerprint;
+      if (options?.skipIfUnchanged && lastSavedFingerprintRef.current === fingerprint) {
+        lastSaveWasSkippedRef.current = true;
+        setSaveHealth((current) => (current.state === "saving" ? { state: "idle" } : current));
+        return true;
+      }
+
+      let requestBody = preparedSave.payloadJson;
+      let saveBytes = preparedSave.payloadBeforeBytes;
+      let savedProjectFallback = projectToSave;
+      if (preparedSave.needsMainCompaction) {
+        setSaveHealth({ state: "saving", message: "Compacting project payload...", at: Date.now() });
+        const compactStartedAt = performance.now();
+        const compactedSave = await compactProjectForSave(projectToSave);
+        dispatchFoldderPerformanceMeasure({
+          name: "save.compact",
+          durationMs: performance.now() - compactStartedAt,
+          bytes: compactedSave.bytes,
+          compacted: compactedSave.compacted,
+        });
+        requestBody = JSON.stringify(compactedSave.project);
+        saveBytes = compactedSave.bytes;
+        savedProjectFallback = compactedSave.project;
+        if (compactedSave.compacted) {
+          console.info(
+            `[FOLDDER save] Proyecto compactado antes de guardar: ${Math.round(preparedSave.payloadBeforeBytes / 1024)}KB → ${Math.round(compactedSave.bytes / 1024)}KB.`,
+          );
+        }
+      }
+      if (preparedSave.needsMainCompaction && saveBytes <= preparedSave.payloadBeforeBytes) {
         console.info(
-          `[FOLDDER save] Proyecto compactado antes de guardar: ${Math.round(payloadBeforeBytes / 1024)}KB → ${Math.round(compactedSave.bytes / 1024)}KB.`,
+          `[FOLDDER save] Payload preparado: ${Math.round(preparedSave.payloadBeforeBytes / 1024)}KB${preparedSave.usedWorker ? " en worker" : ""}.`,
         );
       }
-      if (compactedSave.bytes > CLIENT_SAVE_BODY_LIMIT_BYTES) {
+      if (saveBytes > CLIENT_SAVE_BODY_LIMIT_BYTES) {
         throw new Error(
-          `Project save is still too large after compaction (${Math.round(compactedSave.bytes / 1024)}KB). Heavy media must stay in S3 and only previews should be saved in the project document.`,
+          `Project save is still too large after compaction (${Math.round(saveBytes / 1024)}KB). Heavy media must stay in S3 and only previews should be saved in the project document.`,
         );
       }
 
+      setSaveHealth({ state: "saving", message: "Saving project...", at: Date.now() });
       const res = await fetch('/api/spaces', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...devBypassHeaders },
-        body: JSON.stringify(compactedSave.project)
+        body: requestBody
       });
       
       const savedProject = await readJsonWithHttpError<SavedProjectDetail>(res, 'POST /api/spaces (save)');
@@ -3436,7 +3604,7 @@ export function SpacesContent() {
         setSpacesMap((savedProject.spaces || spacesReadyForSave) as Record<string, unknown>);
       }
       if (metadataVersionRef.current === metadataVersionAtSaveStart) {
-        const serverMetadata = (savedProject.metadata || compactedSave.project.metadata) as Record<string, unknown>;
+        const serverMetadata = (savedProject.metadata || savedProjectFallback.metadata) as Record<string, unknown>;
         setMetadata((current: Record<string, unknown>) => preserveBrainVisualCollageMetadata(serverMetadata, current));
         setVisualReferenceAnalysisDirty(false);
       } else {
@@ -3520,7 +3688,8 @@ export function SpacesContent() {
 
     const tick = () => {
       const g = autosaveGateRef.current;
-      if (g.openLoad || g.openNew || g.deleting || isSavingRef.current) {
+      if (g.openLoad || g.openNew || g.deleting || isSavingRef.current || canvasPerformanceModeRef.current) {
+        if (canvasPerformanceModeRef.current) pendingProjectSaveAfterInteractionRef.current = true;
         return;
       }
       void (async () => {
@@ -3552,6 +3721,10 @@ export function SpacesContent() {
       projectSaveDebounceTimerRef.current = null;
       const g = autosaveGateRef.current;
       if (g.openLoad || g.openNew || g.deleting || isSavingRef.current) return;
+      if (canvasPerformanceModeRef.current) {
+        pendingProjectSaveAfterInteractionRef.current = true;
+        return;
+      }
       void (async () => {
         const ok = await saveProjectRef.current(undefined, {
           reason: "debounced",
@@ -3590,6 +3763,7 @@ export function SpacesContent() {
     return () => {
       if (autosavePulseTimerRef.current) window.clearTimeout(autosavePulseTimerRef.current);
       if (projectSaveDebounceTimerRef.current) window.clearTimeout(projectSaveDebounceTimerRef.current);
+      if (canvasPerformanceReleaseTimerRef.current) window.clearTimeout(canvasPerformanceReleaseTimerRef.current);
     };
   }, []);
 
@@ -3622,11 +3796,24 @@ export function SpacesContent() {
       brainAssetsAutosaveTimerRef.current = null;
       const g = autosaveGateRef.current;
       if (g.openLoad || g.openNew || g.deleting) return;
+      if (canvasPerformanceModeRef.current) {
+        pendingProjectSaveAfterInteractionRef.current = true;
+        return;
+      }
       if (isSavingRef.current) {
         brainAssetsAutosaveTimerRef.current = window.setTimeout(() => {
           brainAssetsAutosaveTimerRef.current = null;
           const retryGate = autosaveGateRef.current;
-          if (retryGate.openLoad || retryGate.openNew || retryGate.deleting || isSavingRef.current) return;
+          if (
+            retryGate.openLoad ||
+            retryGate.openNew ||
+            retryGate.deleting ||
+            isSavingRef.current ||
+            canvasPerformanceModeRef.current
+          ) {
+            if (canvasPerformanceModeRef.current) pendingProjectSaveAfterInteractionRef.current = true;
+            return;
+          }
           void saveProjectRef.current(undefined, {
             reason: "brain-assets",
             silentError: true,
@@ -4137,36 +4324,55 @@ export function SpacesContent() {
     );
   };
 
-  /** Refit del marco canvasGroup ~60fps mientras se arrastra o redimensiona un hijo (sin depender de expandParent). */
+  /** Refit del marco canvasGroup mientras se arrastra/redimensiona un hijo, limitado al grupo afectado. */
   const canvasGroupRefitRafRef = useRef<number | null>(null);
-  const scheduleCanvasGroupRefit = useCallback(() => {
+  const canvasGroupRefitTargetsRef = useRef<Set<string> | null>(new Set());
+  const scheduleCanvasGroupRefit = useCallback((targetGroupIds?: Iterable<string>) => {
+    if (targetGroupIds) {
+      if (canvasGroupRefitTargetsRef.current !== null) {
+        for (const id of targetGroupIds) canvasGroupRefitTargetsRef.current.add(id);
+      }
+    } else {
+      canvasGroupRefitTargetsRef.current = null;
+    }
     if (canvasGroupRefitRafRef.current != null) return;
     canvasGroupRefitRafRef.current = requestAnimationFrame(() => {
       canvasGroupRefitRafRef.current = null;
-      setNodes((prev) => recomputeCanvasGroupFrames(prev));
+      const targets = canvasGroupRefitTargetsRef.current;
+      canvasGroupRefitTargetsRef.current = new Set();
+      if (targets && targets.size === 0) return;
+      setNodes((prev) => recomputeCanvasGroupFrames(prev, targets ?? undefined));
     });
   }, [setNodes]);
 
-  const onNodeDrag = useCallback(() => {
-    scheduleCanvasGroupRefit();
+  const onNodeDrag = useCallback((_event: unknown, node: unknown) => {
+    const parentId = (node as { parentId?: string } | null | undefined)?.parentId;
+    if (!parentId) return;
+    scheduleCanvasGroupRefit([parentId]);
   }, [scheduleCanvasGroupRefit]);
 
   const onNodeDragStop = useCallback(
-    (_event: unknown, _node: unknown, _nodes: unknown) => {
+    (_event: unknown, node: unknown, _nodes: unknown) => {
       if (canvasGroupRefitRafRef.current != null) {
         cancelAnimationFrame(canvasGroupRefitRafRef.current);
         canvasGroupRefitRafRef.current = null;
       }
-      requestAnimationFrame(() => {
-        setNodes((nds) => recomputeCanvasGroupFrames(nds));
-      });
+      canvasGroupRefitTargetsRef.current = new Set();
+      endCanvasPerformanceInteraction();
+      const parentId = (node as { parentId?: string } | null | undefined)?.parentId;
+      if (parentId) {
+        requestAnimationFrame(() => {
+          setNodes((nds) => recomputeCanvasGroupFrames(nds, [parentId]));
+        });
+      }
     },
-    [setNodes]
+    [endCanvasPerformanceInteraction, setNodes]
   );
 
   const onNodeDragStart = useCallback(() => {
+    beginCanvasPerformanceInteraction();
     takeSnapshot(); // capture state when drag begins, before positions change
-  }, [takeSnapshot]);
+  }, [beginCanvasPerformanceInteraction, takeSnapshot]);
 
   const onConnect: OnConnect = useCallback(
     (params) => {
@@ -4394,7 +4600,7 @@ export function SpacesContent() {
       target:       fromType === 'source' ? newNodeId   : fromNodeId,
       targetHandle: fromType === 'source' ? newHandle   : fromHandleId,
       type:         'buttonEdge',
-      animated:     true,
+      animated: false,
     };
 
     setNodes((nds: any) => [...nds, newNode]);
@@ -4492,7 +4698,7 @@ export function SpacesContent() {
             target: plan.targetId,
             targetHandle: plan.targetHandle,
             type: 'buttonEdge',
-            animated: true,
+            animated: false,
           },
         ]);
       }
@@ -4615,7 +4821,7 @@ export function SpacesContent() {
             target: 'out',
             targetHandle: 'in',
             type: 'buttonEdge',
-            animated: true,
+            animated: false,
           },
         ]
       : [];
@@ -4944,7 +5150,7 @@ export function SpacesContent() {
                   target: newId,
                   targetHandle: plan.targetHandle,
                   type: 'buttonEdge' as const,
-                  animated: true,
+                  animated: false,
                 }
               : {
                   id: edgeId,
@@ -4953,7 +5159,7 @@ export function SpacesContent() {
                   target: targetNode.id,
                   targetHandle: plan.targetHandle,
                   type: 'buttonEdge' as const,
-                  animated: true,
+                  animated: false,
                 };
 
           takeSnapshot();
@@ -5247,13 +5453,14 @@ export function SpacesContent() {
             }
             onNodesChange(filtered);
 
-            const childLayoutChange = filtered.some((c) => {
-              if (c.type !== "dimensions" && c.type !== "position") return false;
+            const changedCanvasGroupIds = new Set<string>();
+            for (const c of filtered) {
+              if (c.type !== "dimensions" && c.type !== "position") continue;
               const id = (c as { id?: string }).id;
-              if (!id) return false;
+              if (!id) continue;
               const node = nds.find((n) => n.id === id);
-              return Boolean(node?.parentId);
-            });
+              if (node?.parentId) changedCanvasGroupIds.add(node.parentId);
+            }
             if (removals.length > 0) {
               setTimeout(() => {
                 setNodes((prev) => {
@@ -5266,8 +5473,8 @@ export function SpacesContent() {
                   return nextNodes;
                 });
               }, 0);
-            } else if (childLayoutChange) {
-              scheduleCanvasGroupRefit();
+            } else if (changedCanvasGroupIds.size > 0) {
+              scheduleCanvasGroupRefit(changedCanvasGroupIds);
             }
 
             if (removals.length > 0) {
@@ -5302,6 +5509,8 @@ export function SpacesContent() {
           onNodeDragStart={onNodeDragStart}
           onNodeDrag={onNodeDrag}
           onNodeDragStop={onNodeDragStop}
+          onMoveStart={beginCanvasPerformanceInteraction}
+          onMoveEnd={endCanvasPerformanceInteraction}
           onConnectEnd={onConnectEnd}
           connectionMode={ConnectionMode.Loose}
           elevateEdgesOnSelect
@@ -5327,7 +5536,7 @@ export function SpacesContent() {
           nodesDraggable={canvasViewMode === 'free'}
           nodesConnectable={canvasViewMode === 'free' && !overviewModeActive}
 
-          className={`spaces-canvas${spaceHeld || middlePanHeld ? ' spaces-canvas--space-pan' : ''}${canvasViewMode === 'cards' ? ' spaces-canvas--cards-mode' : ''}${overviewModeActive ? ' foldder-overview-mode-active' : ''}`}
+          className={`spaces-canvas${spaceHeld || middlePanHeld ? ' spaces-canvas--space-pan' : ''}${canvasViewMode === 'cards' ? ' spaces-canvas--cards-mode' : ''}${overviewModeActive ? ' foldder-overview-mode-active' : ''}${canvasPerformanceMode ? ' spaces-canvas--performance' : ''}`}
           style={reactFlowCanvasStyle}
         >
           <Background color="#111" gap={40} size={1} />
@@ -6369,6 +6578,8 @@ export function SpacesContent() {
             </div>
           </div>
         )}
+
+        <PerformanceHud />
 
         {typeof document !== 'undefined' &&
           projectDeleteInProgress &&

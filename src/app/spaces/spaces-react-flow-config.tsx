@@ -82,7 +82,7 @@ export const spacesEdgeTypes = {
 
 export const spacesDefaultEdgeOptions = {
   type: "buttonEdge",
-  animated: true,
+  animated: false,
 };
 
 export const spacesInitialEdges: Edge[] = [];

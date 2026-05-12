@@ -1,7 +1,17 @@
 "use client";
 
 import React, { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { NodeResizer, useEdges, useNodes, useReactFlow, useUpdateNodeInternals, type NodeProps } from "@xyflow/react";
+import {
+  NodeResizer,
+  useReactFlow,
+  useStore,
+  useUpdateNodeInternals,
+  type Edge,
+  type Node,
+  type NodeProps,
+  type ReactFlowState,
+} from "@xyflow/react";
+import { shallow } from "zustand/shallow";
 import { Pencil } from "lucide-react";
 import { FOLDDER_FIT_VIEW_EASE } from "@/lib/fit-view-ease";
 import { FoldderStudioModeCenterButton } from "../foldder-node-ui";
@@ -20,9 +30,54 @@ import type { StandardStudioShellConfig } from "../StandardStudioShell";
 import { StudioCanvasNodeShell, type StudioCanvasNodeHandleSpec } from "../studio-node/studio-canvas-node";
 import { StudioNodePortal, useStudioNodeController } from "../studio-node/studio-node-architecture";
 import type { PresenterGroupStep } from "../presenter/presenter-group-animations";
+import {
+  clearLiveStudioNodeData,
+  setLiveStudioNodeData,
+} from "../studio-live-documents";
+import { FOLDDER_CANVAS_PERFORMANCE_MODE_EVENT } from "../performance-events";
 
 const DESIGNER_NODE_MAX_WIDTH = 960;
 const DESIGNER_NODE_MAX_HEIGHT = 2200;
+
+type NodeFrameSnapshot = {
+  width?: number;
+  height?: number;
+  measuredWidth?: number;
+  measuredHeight?: number;
+  styleWidth?: string | number;
+  styleHeight?: string | number;
+};
+
+const EMPTY_NODE_FRAME: NodeFrameSnapshot = {};
+
+function selectNodeFrameSnapshot(state: ReactFlowState<Node, Edge>, nodeId: string): NodeFrameSnapshot {
+  const node = state.nodeLookup.get(nodeId);
+  if (!node) return EMPTY_NODE_FRAME;
+  const style = node.style as { width?: string | number; height?: string | number } | undefined;
+  return {
+    width: typeof node.width === "number" ? node.width : undefined,
+    height: typeof node.height === "number" ? node.height : undefined,
+    measuredWidth: typeof node.measured?.width === "number" ? node.measured.width : undefined,
+    measuredHeight: typeof node.measured?.height === "number" ? node.measured.height : undefined,
+    styleWidth: style?.width,
+    styleHeight: style?.height,
+  };
+}
+
+function nodeFrameFromSnapshot(snapshot: NodeFrameSnapshot): Pick<Node, "width" | "height" | "measured" | "style"> {
+  return {
+    width: snapshot.width,
+    height: snapshot.height,
+    measured: {
+      width: snapshot.measuredWidth,
+      height: snapshot.measuredHeight,
+    },
+    style: {
+      width: snapshot.styleWidth,
+      height: snapshot.styleHeight,
+    },
+  };
+}
 
 const DESIGNER_NODE_HANDLES: StudioCanvasNodeHandleSpec[] = [
   { side: "left", top: "50%", style: { transform: "translateY(-50%)" }, type: "target", id: "brain", dataType: "brain", label: "Brain" },
@@ -73,15 +128,23 @@ function DesignerNodeResizer(props: React.ComponentProps<typeof NodeResizer>) {
 
 export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const nodeData = data as DesignerNodeData;
-  const nodes = useNodes();
-  const edges = useEdges();
   const { setNodes } = useReactFlow();
   const updateNodeInternals = useUpdateNodeInternals();
+  const liveDesignerPatchRef = useRef<Partial<DesignerNodeData> | null>(null);
   const { isStudioOpen, openStudio, closeStudio, standardShell } = useStudioNodeController({
     nodeId: id,
     nodeType: "designer",
   });
-  const brainConnected = edges.some((e) => e.target === id && e.targetHandle === "brain");
+  const brainConnected = useStore(
+    useCallback(
+      (state: ReactFlowState<Node, Edge>) => state.edges.some((edge) => edge.target === id && edge.targetHandle === "brain"),
+      [id],
+    ),
+  );
+  const currentNodeFrameSnapshot = useStore(
+    useCallback((state: ReactFlowState<Node, Edge>) => selectNodeFrameSnapshot(state, id), [id]),
+    shallow,
+  );
 
   const pages: DesignerPageState[] =
     Array.isArray(nodeData.pages) && nodeData.pages.length > 0
@@ -104,16 +167,30 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
   );
 
   const firstPageDims = pages[0] ? getPageDimensions(pages[0]) : null;
-  const currentNode = nodes.find((node) => node.id === id);
+  const currentNodeFrame = nodeFrameFromSnapshot(currentNodeFrameSnapshot);
   const frameRef = useRef<HTMLDivElement | null>(null);
   const previewRef = useRef<HTMLDivElement | null>(null);
+  const canvasPerformanceModeRef = useRef(false);
   const refreshHandleGeometry = useCallback(() => {
+    if (canvasPerformanceModeRef.current) return;
     const run = () => updateNodeInternals(id);
     requestAnimationFrame(() => {
       run();
       requestAnimationFrame(run);
     });
     window.setTimeout(run, 140);
+  }, [id, updateNodeInternals]);
+
+  useEffect(() => {
+    const handlePerformanceMode = (event: Event) => {
+      const active = Boolean((event as CustomEvent<{ active?: boolean }>).detail?.active);
+      canvasPerformanceModeRef.current = active;
+      if (!active) requestAnimationFrame(() => updateNodeInternals(id));
+    };
+    window.addEventListener(FOLDDER_CANVAS_PERFORMANCE_MODE_EVENT, handlePerformanceMode);
+    return () => {
+      window.removeEventListener(FOLDDER_CANVAS_PERFORMANCE_MODE_EVENT, handlePerformanceMode);
+    };
   }, [id, updateNodeInternals]);
 
   useEffect(() => {
@@ -129,7 +206,7 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
     if (!firstPageDims) return;
     const chromeHeight = resolveNodeChromeHeight(frameRef.current, previewRef.current);
     const nextFrame = resolveAspectLockedNodeFrame({
-      node: currentNode,
+      node: currentNodeFrame,
       contentWidth: firstPageDims.width,
       contentHeight: firstPageDims.height,
       minWidth: 280,
@@ -138,7 +215,7 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
       maxHeight: DESIGNER_NODE_MAX_HEIGHT,
       chromeHeight,
     });
-    if (!nodeFrameNeedsSync(currentNode, nextFrame)) return;
+    if (!nodeFrameNeedsSync(currentNodeFrame, nextFrame)) return;
     setNodes((nds) =>
       nds.map((node) =>
         node.id === id
@@ -153,10 +230,12 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
     );
     requestAnimationFrame(() => updateNodeInternals(id));
   }, [
-    currentNode?.width,
-    currentNode?.height,
-    currentNode?.measured?.width,
-    currentNode?.measured?.height,
+    currentNodeFrameSnapshot.width,
+    currentNodeFrameSnapshot.height,
+    currentNodeFrameSnapshot.measuredWidth,
+    currentNodeFrameSnapshot.measuredHeight,
+    currentNodeFrameSnapshot.styleWidth,
+    currentNodeFrameSnapshot.styleHeight,
     firstPageDims?.width,
     firstPageDims?.height,
     id,
@@ -166,6 +245,18 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
 
   const onUpdatePages = useCallback(
     (next: DesignerPageState[], nextActiveIdx?: number) => {
+      if (isStudioOpen) {
+        const patch: Partial<DesignerNodeData> = {
+          pages: next,
+          ...(nextActiveIdx !== undefined ? { activePageIndex: nextActiveIdx } : {}),
+        };
+        liveDesignerPatchRef.current = {
+          ...(liveDesignerPatchRef.current ?? {}),
+          ...patch,
+        };
+        setLiveStudioNodeData(id, patch);
+        return;
+      }
       setNodes((nds) =>
         nds.map((n) =>
           n.id === id
@@ -181,8 +272,33 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
         ),
       );
     },
-    [id, setNodes],
+    [id, isStudioOpen, setNodes],
   );
+
+  const commitLiveDesignerPatch = useCallback(() => {
+    const patch = liveDesignerPatchRef.current;
+    if (!patch || Object.keys(patch).length === 0) {
+      clearLiveStudioNodeData(id);
+      return;
+    }
+    liveDesignerPatchRef.current = null;
+    clearLiveStudioNodeData(id);
+    setNodes((nds) =>
+      nds.map((n) =>
+        n.id === id
+          ? {
+              ...n,
+              data: {
+                ...n.data,
+                ...patch,
+              },
+            }
+          : n,
+      ),
+    );
+  }, [id, setNodes]);
+
+  useEffect(() => () => clearLiveStudioNodeData(id), [id]);
 
   const onExport = useCallback(
     (dataUrl: string) => {
@@ -284,6 +400,7 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
             designerCanvasInstanceKey={id}
             brainConnected={brainConnected}
             onClose={() => {
+              commitLiveDesignerPatch();
               closeStudio({ notifyStandardShell: true });
             }}
             onExport={onExport}

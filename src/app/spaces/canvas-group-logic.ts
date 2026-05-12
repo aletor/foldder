@@ -351,25 +351,51 @@ export function removeEmptyCanvasGroups(nodes: Node[], edges: Edge[]): { nodes: 
  * Sincroniza `data.memberIds` con los hijos reales (`parentId`) y ajusta ancho/alto del marco
  * del grupo expandido al bounding box de los miembros; en colapsado recalcula el tamaño compacto.
  */
-export function recomputeCanvasGroupFrames(nodes: Node[]): Node[] {
-  const parentType = new Map(nodes.map((x) => [x.id, x.type as string | undefined]));
+export function recomputeCanvasGroupFrames(
+  nodes: Node[],
+  targetGroupIds?: Iterable<string>,
+): Node[] {
+  const targetGroupSet = targetGroupIds ? new Set(targetGroupIds) : null;
+  if (targetGroupSet && targetGroupSet.size === 0) return nodes;
+
+  const canvasGroupIds = new Set<string>();
+  for (const n of nodes) {
+    if (n.type === "canvasGroup") canvasGroupIds.add(n.id);
+  }
+  if (canvasGroupIds.size === 0) return nodes;
+
+  let changed = false;
   const withFixedExpand = nodes.map((n) => {
     if (!n.parentId) return n;
-    if (parentType.get(n.parentId) !== "canvasGroup") return n;
+    if (!canvasGroupIds.has(n.parentId)) return n;
+    if (targetGroupSet && !targetGroupSet.has(n.parentId)) return n;
     if ((n as { expandParent?: boolean }).expandParent === false) return n;
+    changed = true;
     return { ...n, expandParent: false } as Node;
   });
 
-  return withFixedExpand.map((node) => {
+  const childrenByParent = new Map<string, Node[]>();
+  for (const n of withFixedExpand) {
+    if (!n.parentId) continue;
+    if (!canvasGroupIds.has(n.parentId)) continue;
+    if (targetGroupSet && !targetGroupSet.has(n.parentId)) continue;
+    const children = childrenByParent.get(n.parentId);
+    if (children) children.push(n);
+    else childrenByParent.set(n.parentId, [n]);
+  }
+  for (const children of childrenByParent.values()) {
+    children.sort((a, b) =>
+      a.position.y !== b.position.y ? a.position.y - b.position.y : a.position.x - b.position.x
+    );
+  }
+
+  const nextNodes = withFixedExpand.map((node) => {
     if (node.type !== "canvasGroup") return node;
+    if (targetGroupSet && !targetGroupSet.has(node.id)) return node;
     const n = normalizeCanvasGroupNodeZ(node);
 
     const gid = n.id;
-    const children = withFixedExpand
-      .filter((c) => c.parentId === gid)
-      .sort((a, b) =>
-        a.position.y !== b.position.y ? a.position.y - b.position.y : a.position.x - b.position.x
-      );
+    const children = childrenByParent.get(gid) ?? [];
     const memberIds = children.map((c) => c.id);
 
     const prevMembers = Array.isArray((n.data as { memberIds?: string[] })?.memberIds)
@@ -390,10 +416,14 @@ export function recomputeCanvasGroupFrames(nodes: Node[]): Node[] {
       if (membersMatch && prevW === collapsedW && prevH === collapsedH) {
         const zi = (n.style as { zIndex?: number })?.zIndex;
         if (typeof zi === "number" && zi <= 0) {
-          return { ...n, style: ensureCanvasGroupZIndex(n.style) as Node["style"] };
+          const next = { ...n, style: ensureCanvasGroupZIndex(n.style) as Node["style"] };
+          if (next !== node) changed = true;
+          return next;
         }
+        if (n !== node) changed = true;
         return n;
       }
+      changed = true;
       return {
         ...n,
         data: nextData,
@@ -407,10 +437,14 @@ export function recomputeCanvasGroupFrames(nodes: Node[]): Node[] {
       if (membersMatch && prevW === w && prevH === h) {
         const zi = (n.style as { zIndex?: number })?.zIndex;
         if (typeof zi === "number" && zi <= 0) {
-          return { ...n, style: ensureCanvasGroupZIndex(n.style) as Node["style"] };
+          const next = { ...n, style: ensureCanvasGroupZIndex(n.style) as Node["style"] };
+          if (next !== node) changed = true;
+          return next;
         }
+        if (n !== node) changed = true;
         return n;
       }
+      changed = true;
       return {
         ...n,
         data: nextData,
@@ -435,16 +469,22 @@ export function recomputeCanvasGroupFrames(nodes: Node[]): Node[] {
     if (membersMatch && prevW === groupW && prevH === groupH) {
       const zi = (n.style as { zIndex?: number })?.zIndex;
       if (typeof zi === "number" && zi <= 0) {
-        return { ...n, style: ensureCanvasGroupZIndex(n.style) as Node["style"] };
+        const next = { ...n, style: ensureCanvasGroupZIndex(n.style) as Node["style"] };
+        if (next !== node) changed = true;
+        return next;
       }
+      if (n !== node) changed = true;
       return n;
     }
+    changed = true;
     return {
       ...n,
       data: nextData,
       style: { ...ensureCanvasGroupZIndex(n.style), width: groupW, height: groupH } as Node["style"],
     };
   });
+
+  return changed ? nextNodes : nodes;
 }
 
 /**

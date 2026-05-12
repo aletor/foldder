@@ -23158,6 +23158,7 @@ export function FreehandStudioCanvas({
 
   // ── Clip path defs ────────────────────────────────────────────────
 
+  const gradientDefObjects = useMemo(() => flattenObjectsForGradientDefs(objects), [objects]);
   const clipObjects = useMemo(() => objects.filter((o) => o.isClipMask), [objects]);
   const clippedGroups = useMemo(() => {
     const map = new Map<string, FreehandObject[]>();
@@ -24446,7 +24447,7 @@ export function FreehandStudioCanvas({
               x={viewport.x % (20 * viewport.zoom)} y={viewport.y % (20 * viewport.zoom)}>
               <circle cx={1} cy={1} r={0.5} fill="rgba(255,255,255,0.04)" />
             </pattern>
-            {flattenObjectsForGradientDefs(objects).map((o) => {
+            {gradientDefObjects.map((o) => {
               const f = migrateFill(o.fill);
               return f.type === "solid" ? null : renderFillDef(f, gradientDefId(o.id));
             })}

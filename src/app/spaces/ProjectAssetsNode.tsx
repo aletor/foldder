@@ -18,6 +18,7 @@ export const ProjectAssetsNode = memo(({ id, data, selected }: NodeProps) => {
   const ctx = useProjectAssetsCanvas();
 
   const { nImported, nGenerated, nFiles, nExports } = useMemo(() => {
+    if (ctx?.librarySummary) return ctx.librarySummary;
     const list = ctx?.flowNodes ?? [];
     const sections = collectFoldderLibrarySections({
       nodes: list,
@@ -32,7 +33,14 @@ export const ProjectAssetsNode = memo(({ id, data, selected }: NodeProps) => {
       nFiles: sections.mediaFiles.length,
       nExports: sections.exports.length,
     };
-  }, [ctx?.assetsMetadata, ctx?.flowNodes, ctx?.generatedTextAssets, ctx?.projectFiles, ctx?.projectScopeId]);
+  }, [
+    ctx?.assetsMetadata,
+    ctx?.flowNodes,
+    ctx?.generatedTextAssets,
+    ctx?.librarySummary,
+    ctx?.projectFiles,
+    ctx?.projectScopeId,
+  ]);
 
   const openLibrary = useCallback(() => {
     if (ctx?.openProjectAssets) {

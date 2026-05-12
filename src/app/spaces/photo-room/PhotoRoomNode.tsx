@@ -5,13 +5,16 @@ import { flushSync } from "react-dom";
 import {
   NodeResizer,
   addEdge,
-  useEdges,
   useNodeId,
-  useNodes,
   useReactFlow,
+  useStore,
   useUpdateNodeInternals,
+  type Edge,
+  type Node,
   type NodeProps,
+  type ReactFlowState,
 } from "@xyflow/react";
+import { shallow } from "zustand/shallow";
 import { ImageIcon } from "lucide-react";
 import { FOLDDER_FIT_VIEW_EASE } from "@/lib/fit-view-ease";
 import { defaultDataForCanvasDropNode } from "@/lib/canvas-connect-end-drop";
@@ -23,13 +26,18 @@ import {
   edgeTargetsMemberInput,
   nodeBoundsForLayout,
   parseCanvasGroupOutHandle,
-  resolvePromptValueFromEdgeSource,
+  resolvePromptValueFromEdgeSourceMap,
 } from "../canvas-group-logic";
 import { withFoldderCanvasIntro } from "../spaces-canvas-intro";
 import type { DesignerStudioApi, FreehandObject } from "../FreehandStudio";
 import { dispatchFoldderExportCreated } from "../foldder-export-events";
 import { StudioCanvasNodeShell, type StudioCanvasNodeHandleSpec } from "../studio-node/studio-canvas-node";
 import { useStudioNodeController } from "../studio-node/studio-node-architecture";
+import {
+  clearLiveStudioNodeData,
+  setLiveStudioNodeData,
+} from "../studio-live-documents";
+import { FOLDDER_CANVAS_PERFORMANCE_MODE_EVENT } from "../performance-events";
 import type { PhotoRoomNodeStudioData } from "./photo-room-types";
 import { registerPendingNanoStudioOpenFromPhotoRoom } from "./photo-room-nano-open-pending";
 
@@ -90,10 +98,78 @@ type BaseNodeData = { label?: string; value?: string; type?: string };
 
 type PhotoRoomNodeData = BaseNodeData & PhotoRoomNodeStudioData;
 
+type NodeFrameSnapshot = {
+  width?: number;
+  height?: number;
+  measuredWidth?: number;
+  measuredHeight?: number;
+  styleWidth?: string | number;
+  styleHeight?: string | number;
+};
+
+const EMPTY_NODE_FRAME: NodeFrameSnapshot = {};
+
+function selectNodeFrameSnapshot(state: ReactFlowState<Node, Edge>, nodeId: string): NodeFrameSnapshot {
+  const node = state.nodeLookup.get(nodeId);
+  if (!node) return EMPTY_NODE_FRAME;
+  const style = node.style as { width?: string | number; height?: string | number } | undefined;
+  return {
+    width: typeof node.width === "number" ? node.width : undefined,
+    height: typeof node.height === "number" ? node.height : undefined,
+    measuredWidth: typeof node.measured?.width === "number" ? node.measured.width : undefined,
+    measuredHeight: typeof node.measured?.height === "number" ? node.measured.height : undefined,
+    styleWidth: style?.width,
+    styleHeight: style?.height,
+  };
+}
+
+function nodeFrameFromSnapshot(snapshot: NodeFrameSnapshot): Pick<Node, "width" | "height" | "measured" | "style"> {
+  return {
+    width: snapshot.width,
+    height: snapshot.height,
+    measured: {
+      width: snapshot.measuredWidth,
+      height: snapshot.measuredHeight,
+    },
+    style: {
+      width: snapshot.styleWidth,
+      height: snapshot.styleHeight,
+    },
+  };
+}
+
+function selectPhotoRoomFlowSnapshot(state: ReactFlowState<Node, Edge>, nodeId: string): string[] {
+  const result = new Array<string>(1 + SLOT_IDS.length * 2).fill("");
+  let brainConnected = false;
+  const slotEdges = new Map<string, Edge>();
+
+  for (const edge of state.edges) {
+    if (!brainConnected && edge.target === nodeId && edge.targetHandle === "brain") {
+      brainConnected = true;
+    }
+    for (const slotId of SLOT_IDS) {
+      if (!slotEdges.has(slotId) && edgeTargetsMemberInput(edge, nodeId, slotId)) {
+        slotEdges.set(slotId, edge);
+      }
+    }
+  }
+
+  const nodesById = state.nodeLookup as unknown as ReadonlyMap<string, Node>;
+  result[0] = brainConnected ? "1" : "0";
+  SLOT_IDS.forEach((slotId, index) => {
+    const edge = slotEdges.get(slotId);
+    const base = 1 + index * 2;
+    result[base] = edge ? "1" : "0";
+    result[base + 1] = edge ? resolvePromptValueFromEdgeSourceMap(edge, nodesById) : "";
+  });
+
+  return result;
+}
+
 export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const nodeData = data as PhotoRoomNodeData;
-  const nodes = useNodes();
-  const edges = useEdges();
+  const [liveStudioData, setLiveStudioData] = useState<Partial<PhotoRoomNodeData> | null>(null);
+  const liveStudioDataRef = useRef<Partial<PhotoRoomNodeData> | null>(null);
   const { setNodes, setEdges, getNodes, getEdges, fitView } = useReactFlow();
   const updateNodeInternals = useUpdateNodeInternals();
   const {
@@ -109,13 +185,28 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
     matchOpen: (detail) => detail.nodeId === id || detail.photoRoomNodeId === id,
     matchClose: (detail) => detail.nodeId === id || detail.photoRoomNodeId === id,
   });
+  const showStudioRef = useRef(showStudio);
+  useLayoutEffect(() => {
+    showStudioRef.current = showStudio;
+  }, [showStudio]);
   const studioApiRef = useRef<DesignerStudioApi | null>(null);
   const frameRef = useRef<HTMLDivElement | null>(null);
   const previewRef = useRef<HTMLDivElement | null>(null);
-  const brainConnected = edges.some((e) => e.target === id && e.targetHandle === "brain");
+  const canvasPerformanceModeRef = useRef(false);
+  const currentNodeFrameSnapshot = useStore(
+    useCallback((state: ReactFlowState<Node, Edge>) => selectNodeFrameSnapshot(state, id), [id]),
+    shallow,
+  );
+  const photoRoomFlowSnapshot = useStore(
+    useCallback((state: ReactFlowState<Node, Edge>) => selectPhotoRoomFlowSnapshot(state, id), [id]),
+    shallow,
+  );
+  const currentNodeFrame = nodeFrameFromSnapshot(currentNodeFrameSnapshot);
+  const brainConnected = photoRoomFlowSnapshot[0] === "1";
+  const effectiveNodeData = showStudio && liveStudioData ? { ...nodeData, ...liveStudioData } : nodeData;
 
   const studioArtboard = useMemo(() => {
-    const ab = nodeData.studioArtboard;
+    const ab = effectiveNodeData.studioArtboard;
     const wRaw = ab?.width;
     const hRaw = ab?.height;
     const w = typeof wRaw === "number" ? wRaw : Number(wRaw);
@@ -126,27 +217,61 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
       height: Number.isFinite(h) && h > 0 ? Math.round(h) : 1080,
       background: typeof ab?.background === "string" ? ab.background : "#ffffff",
     };
-  }, [id, nodeData.studioArtboard?.id, nodeData.studioArtboard?.width, nodeData.studioArtboard?.height, nodeData.studioArtboard?.background]);
+  }, [
+    id,
+    effectiveNodeData.studioArtboard?.id,
+    effectiveNodeData.studioArtboard?.width,
+    effectiveNodeData.studioArtboard?.height,
+    effectiveNodeData.studioArtboard?.background,
+  ]);
 
   const studioObjects = useMemo(
-    () => (Array.isArray(nodeData.studioObjects) ? nodeData.studioObjects : []),
-    [nodeData.studioObjects],
+    () => (Array.isArray(effectiveNodeData.studioObjects) ? effectiveNodeData.studioObjects : []),
+    [effectiveNodeData.studioObjects],
   );
-  const currentNode = nodes.find((node) => node.id === id);
 
   const studioLayoutGuides = useMemo(
-    () => (Array.isArray(nodeData.studioLayoutGuides) ? nodeData.studioLayoutGuides : []),
-    [nodeData.studioLayoutGuides],
+    () => (Array.isArray(effectiveNodeData.studioLayoutGuides) ? effectiveNodeData.studioLayoutGuides : []),
+    [effectiveNodeData.studioLayoutGuides],
   );
 
   const persistStudio = useCallback(
     (patch: Partial<PhotoRoomNodeStudioData> & { value?: string; type?: string }) => {
-      setNodes((nds: any) =>
-        nds.map((n: any) => (n.id === id ? { ...n, data: { ...n.data, ...patch } } : n)),
+      if (showStudioRef.current) {
+        const next = { ...(liveStudioDataRef.current ?? {}), ...patch };
+        liveStudioDataRef.current = next;
+        setLiveStudioNodeData(id, next as Record<string, unknown>);
+        setLiveStudioData(next);
+        return;
+      }
+      setNodes((nds: Node[]) =>
+        nds.map((n) =>
+          n.id === id ? { ...n, data: { ...((n.data ?? {}) as Record<string, unknown>), ...patch } } : n,
+        ),
       );
     },
     [id, setNodes],
   );
+
+  const commitLivePhotoRoomData = useCallback(() => {
+    const patch = liveStudioDataRef.current;
+    if (!patch || Object.keys(patch).length === 0) {
+      clearLiveStudioNodeData(id);
+      liveStudioDataRef.current = null;
+      setLiveStudioData(null);
+      return;
+    }
+    clearLiveStudioNodeData(id);
+    liveStudioDataRef.current = null;
+    setLiveStudioData(null);
+    setNodes((nds: Node[]) =>
+      nds.map((n) =>
+        n.id === id ? { ...n, data: { ...((n.data ?? {}) as Record<string, unknown>), ...patch } } : n,
+      ),
+    );
+  }, [id, setNodes]);
+
+  useEffect(() => () => clearLiveStudioNodeData(id), [id]);
 
   const handleStudioExportPreview = useCallback(
     (dataUrl: string) => {
@@ -289,6 +414,7 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
       registerPendingNanoStudioOpenFromPhotoRoom(nanoId, flowPhotoRoomId);
 
       flushSync(() => {
+        showStudioRef.current = false;
         setShowStudio(false);
         setNodes(mergedNodes as any);
         setEdges(edgesWithChains as any);
@@ -383,6 +509,7 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
       }
 
       flushSync(() => {
+        showStudioRef.current = false;
         setShowStudio(false);
         if (nextNodes !== nodesNow) {
           setNodes(nextNodes as any);
@@ -399,11 +526,26 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
 
   const connectedBySlot = useMemo(() => {
     const m: Record<string, boolean> = {};
-    for (const sid of SLOT_IDS) {
-      m[sid] = edges.some((e: any) => edgeTargetsMemberInput(e, id, sid));
-    }
+    SLOT_IDS.forEach((sid, index) => {
+      m[sid] = photoRoomFlowSnapshot[1 + index * 2] === "1";
+    });
     return m;
-  }, [edges, id]);
+  }, [photoRoomFlowSnapshot]);
+
+  const photoRoomConnectedInputs = useMemo(() => {
+    const out: { slot: string; src: string }[] = [];
+    SLOT_IDS.forEach((sid, index) => {
+      const src = photoRoomFlowSnapshot[1 + index * 2 + 1]?.trim() ?? "";
+      if (src.length > 0) out.push({ slot: sid, src });
+    });
+    return out;
+  }, [photoRoomFlowSnapshot]);
+
+  const previewUrl = photoRoomConnectedInputs[0]?.src ?? null;
+  const anyInputEdge = useMemo(
+    () => SLOT_IDS.some((_, index) => photoRoomFlowSnapshot[1 + index * 2] === "1"),
+    [photoRoomFlowSnapshot],
+  );
 
   const visibleSlots = useMemo(() => {
     const out: string[] = [];
@@ -433,12 +575,25 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
   ], [connectedBySlot, visibleSlots]);
 
   const refreshHandleGeometry = useCallback(() => {
+    if (canvasPerformanceModeRef.current) return;
     const run = () => updateNodeInternals(id);
     requestAnimationFrame(() => {
       run();
       requestAnimationFrame(run);
     });
     window.setTimeout(run, 140);
+  }, [id, updateNodeInternals]);
+
+  useEffect(() => {
+    const handlePerformanceMode = (event: Event) => {
+      const active = Boolean((event as CustomEvent<{ active?: boolean }>).detail?.active);
+      canvasPerformanceModeRef.current = active;
+      if (!active) requestAnimationFrame(() => updateNodeInternals(id));
+    };
+    window.addEventListener(FOLDDER_CANVAS_PERFORMANCE_MODE_EVENT, handlePerformanceMode);
+    return () => {
+      window.removeEventListener(FOLDDER_CANVAS_PERFORMANCE_MODE_EVENT, handlePerformanceMode);
+    };
   }, [id, updateNodeInternals]);
 
   useEffect(() => {
@@ -452,36 +607,7 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
       cancelAnimationFrame(raf);
       window.clearTimeout(t);
     };
-  }, [refreshHandleGeometry, brainConnected, showStudio, studioObjects.length, nodeData.value]);
-
-  const previewUrl = useMemo(() => {
-    for (const sid of SLOT_IDS) {
-      const e = edges.find((ed: any) => edgeTargetsMemberInput(ed, id, sid));
-      if (!e) continue;
-      const v = resolvePromptValueFromEdgeSource(e, nodes as any);
-      if (typeof v === "string" && v) return v;
-    }
-    return null;
-  }, [edges, id, nodes]);
-
-  const anyInputEdge = useMemo(
-    () => SLOT_IDS.some((sid) => edges.some((e: any) => edgeTargetsMemberInput(e, id, sid))),
-    [edges, id],
-  );
-
-  /** Imágenes conectadas por slot → capas PhotoRoom (no eliminables en Studio). */
-  const photoRoomConnectedInputs = useMemo(() => {
-    const out: { slot: string; src: string }[] = [];
-    for (const sid of SLOT_IDS) {
-      const e = edges.find((ed: any) => edgeTargetsMemberInput(ed, id, sid));
-      if (!e) continue;
-      const v = resolvePromptValueFromEdgeSource(e, nodes as any);
-      if (typeof v === "string" && v.trim().length > 0) {
-        out.push({ slot: sid, src: v.trim() });
-      }
-    }
-    return out;
-  }, [edges, id, nodes]);
+  }, [refreshHandleGeometry, brainConnected, showStudio, studioObjects.length, effectiveNodeData.value]);
 
   const photoRoomInputsSig = useMemo(
     () => photoRoomConnectedInputs.map((c) => `${c.slot}:${c.src}`).join("|"),
@@ -515,6 +641,7 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
    * Con studio guardado no pisamos `value` aquí; la miniatura usa `previewUrl` en `displayUrl`.
    */
   useEffect(() => {
+    if (showStudio) return;
     setNodes((nds: any) =>
       nds.map((n: any) => {
         if (n.id !== id) return n;
@@ -530,7 +657,7 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
         return n;
       }),
     );
-  }, [anyInputEdge, id, previewUrl, setNodes]);
+  }, [anyInputEdge, id, previewUrl, setNodes, showStudio]);
 
   /**
    * Miniatura del nodo:
@@ -542,7 +669,7 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
    */
   const hasPersistedStudio = Array.isArray(studioObjects) && studioObjects.length > 0;
   const exportedThumb =
-    typeof nodeData.value === "string" && nodeData.value.length > 0 ? nodeData.value : null;
+    typeof effectiveNodeData.value === "string" && effectiveNodeData.value.length > 0 ? effectiveNodeData.value : null;
   const displayUrl = hasPersistedStudio
     ? exportedThumb ?? previewUrl ?? null
     : previewUrl ?? exportedThumb ?? null;
@@ -550,6 +677,7 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
   /** Studio abierto: actualizar miniatura del nodo al cambiar entradas (mismo PNG que al cerrar). */
   useEffect(() => {
     if (!showStudio) return;
+    if (canvasPerformanceModeRef.current) return;
     let cancelled = false;
     const timer = window.setTimeout(() => {
       void (async () => {
@@ -573,7 +701,7 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
   useLayoutEffect(() => {
     const chromeHeight = resolveNodeChromeHeight(frameRef.current, previewRef.current);
     const nextFrame = resolveAspectLockedNodeFrame({
-      node: currentNode,
+      node: currentNodeFrame,
       contentWidth: studioArtboard.width,
       contentHeight: studioArtboard.height,
       minWidth: 260,
@@ -582,7 +710,7 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
       maxHeight: PHOTOROOM_NODE_MAX_HEIGHT,
       chromeHeight,
     });
-    if (!nodeFrameNeedsSync(currentNode, nextFrame)) return;
+    if (!nodeFrameNeedsSync(currentNodeFrame, nextFrame)) return;
     setNodes((nds: any) =>
       nds.map((node: any) =>
         node.id === id
@@ -597,10 +725,12 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
     );
     requestAnimationFrame(() => updateNodeInternals(id));
   }, [
-    currentNode?.width,
-    currentNode?.height,
-    currentNode?.measured?.width,
-    currentNode?.measured?.height,
+    currentNodeFrameSnapshot.width,
+    currentNodeFrameSnapshot.height,
+    currentNodeFrameSnapshot.measuredWidth,
+    currentNodeFrameSnapshot.measuredHeight,
+    currentNodeFrameSnapshot.styleWidth,
+    currentNodeFrameSnapshot.styleHeight,
     id,
     setNodes,
     studioArtboard.height,
@@ -614,7 +744,7 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
       nodeId={id}
       nodeType="photoRoom"
       selected={selected}
-      label={nodeData.label}
+      label={effectiveNodeData.label}
       defaultLabel="PhotoRoom"
       title="PhotoRoom"
       badge={`${visibleSlots.length} in`}
@@ -664,6 +794,7 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
           </div>
         )}
         <FoldderStudioModeCenterButton onClick={() => {
+          showStudioRef.current = true;
           openStudio();
         }} />
       </div>
@@ -683,7 +814,7 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
             layoutGuides={studioLayoutGuides}
             artboard={studioArtboard}
             brainConnected={brainConnected}
-            docSetupDone={!!nodeData.photoRoomDocSetupDone}
+            docSetupDone={!!effectiveNodeData.photoRoomDocSetupDone}
             connectedImageInputs={photoRoomConnectedInputs}
             studioApiRef={studioApiRef}
             onPhotoRoomModificarImagenIA={handlePhotoRoomModificarImagenIA}
@@ -696,6 +827,8 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
             }}
             standardShell={standardShell ?? undefined}
             onClose={() => {
+              showStudioRef.current = false;
+              commitLivePhotoRoomData();
               closeStudio({ notifyStandardShell: true });
             }}
           />

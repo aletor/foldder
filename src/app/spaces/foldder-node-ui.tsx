@@ -1,7 +1,7 @@
 "use client";
 
-import React, { memo, useState, useEffect } from "react";
-import { useNodes, useReactFlow } from "@xyflow/react";
+import React, { memo, useCallback, useState, useEffect } from "react";
+import { useReactFlow, useStore, type Node } from "@xyflow/react";
 import { Maximize2 } from "lucide-react";
 
 const FOLDDER_HEADER_TYPEWRITER_DELAY_MS = 1000;
@@ -19,25 +19,28 @@ export const NodeLabel = ({
   const [isEditing, setIsEditing] = useState(false);
   const [val, setVal] = useState(label || "");
   const { setNodes } = useReactFlow();
-  const allNodes = useNodes();
-
-  const nodeType = allNodes.find((n) => n.id === id)?.type;
-  const sameTypeNodes = allNodes
-    .filter((n) => n.type === nodeType)
-    .sort((a, b) => {
-      if (a.position.y !== b.position.y) return a.position.y - b.position.y;
-      return a.position.x - b.position.x;
-    });
-
-  const index = sameTypeNodes.findIndex((n) => n.id === id) + 1;
   const isSystemLabel = label && (label.startsWith("AI_SPACE_") || label.match(/\.(jpg|jpeg|png|webp|mp4)$/i));
+  const needsGeneratedIndex = !label || Boolean(isSystemLabel);
+  const index = useStore(
+    useCallback((state: { nodes: Node[] }) => {
+      if (!needsGeneratedIndex) return 0;
+      const nodeType = state.nodes.find((n) => n.id === id)?.type;
+      const sameTypeNodes = state.nodes
+        .filter((n) => n.type === nodeType)
+        .sort((a, b) => {
+          if (a.position.y !== b.position.y) return a.position.y - b.position.y;
+          return a.position.x - b.position.x;
+        });
+      return sameTypeNodes.findIndex((n) => n.id === id) + 1;
+    }, [id, needsGeneratedIndex]),
+  );
   const displayLabel = label && !isSystemLabel ? label : `${defaultLabel} ${index}`;
 
   const handleBlur = () => {
     setIsEditing(false);
     const trimmed = val.split(" ").slice(0, 5).join(" ");
-    setNodes((nds: any) =>
-      nds.map((n: any) => (n.id === id ? { ...n, data: { ...n.data, label: trimmed } } : n)),
+    setNodes((nds: Node[]) =>
+      nds.map((n) => (n.id === id ? { ...n, data: { ...(n.data ?? {}), label: trimmed } } : n)),
     );
   };
 

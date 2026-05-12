@@ -4,8 +4,20 @@
 
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps } from "react";
 import { createPortal, flushSync } from "react-dom";
-import { NodeResizer, Position, useEdges, useNodeId, useNodes, useReactFlow, useUpdateNodeInternals, type Node, type NodeProps } from "@xyflow/react";
-import { Camera, ChevronLeft, ChevronRight, Eye, Globe, History, ImageIcon, Info, Loader2, Maximize2, Palette, Plus, Sparkles, Trash2, X } from "lucide-react";
+import {
+  NodeResizer,
+  Position,
+  useNodeId,
+  useReactFlow,
+  useStore,
+  useUpdateNodeInternals,
+  type Edge,
+  type Node,
+  type NodeProps,
+  type ReactFlowState,
+} from "@xyflow/react";
+import { shallow } from "zustand/shallow";
+import { Camera, ChevronLeft, ChevronRight, Eye, Globe, ImageIcon, Loader2, Maximize2, Plus, Sparkles, Trash2, X } from "lucide-react";
 import { FOLDDER_FIT_VIEW_EASE } from "@/lib/fit-view-ease";
 import { runAiJobWithNotification } from "@/lib/ai-job-notifications";
 import { aiHudNanoBananaJobEnd, aiHudNanoBananaJobProgress, aiHudNanoBananaJobStart, getAiHudNanoBananaJobProgressForNode } from "@/lib/ai-hud-generation-progress";
@@ -19,7 +31,7 @@ import { NodeIcon, resolveFoldderNodeState } from "../foldder-icons";
 import { FoldderNodeHeaderTitle, FoldderStudioModeCenterButton, NodeLabel } from "../foldder-node-ui";
 import { StandardStudioShellHeader, type StandardStudioShellConfig } from "../StandardStudioShell";
 import { FOLDDER_STANDARD_STUDIO_CLOSE_REQUEST_EVENT, type FoldderStudioEventDetail } from "../desktop-studio-events";
-import { applyCanvasGroupCollapse, resolvePromptValueFromEdgeSource } from "../canvas-group-logic";
+import { applyCanvasGroupCollapse, resolvePromptValueFromEdgeSourceMap } from "../canvas-group-logic";
 import { nodeFrameNeedsSync, parseAspectRatioValue, resolveAspectLockedNodeFrame, resolveNodeChromeHeight } from "../studio-node-aspect";
 import { useProjectBrainCanvas } from "../project-brain-canvas-context";
 import { normalizeProjectAssets } from "../project-assets-metadata";
@@ -27,6 +39,7 @@ import { takePendingNanoStudioOpenFromPhotoRoom } from "../photo-room/photo-room
 import { takePendingNanoStudioOpenFromCine } from "../cine/cine-nano-open-pending";
 import type { CineImageStudioResult, CineImageStudioSession } from "../cine-types";
 import { useRegisterAssistantNodeRun } from "../use-assistant-node-run";
+import { FOLDDER_CANVAS_PERFORMANCE_MODE_EVENT } from "../performance-events";
 
 interface BaseNodeData {
   value?: string;
@@ -40,30 +53,46 @@ interface BaseNodeData {
   uploadError?: string;
 }
 
-function createNodeFrameSnapshot(
-  node: Pick<Node, "width" | "height" | "measured" | "style"> | undefined,
-): Pick<Node, "width" | "height" | "measured" | "style"> | undefined {
-  if (!node) return undefined;
+type NodeFrameSnapshot = {
+  width?: number;
+  height?: number;
+  measuredWidth?: number;
+  measuredHeight?: number;
+  styleWidth?: string | number;
+  styleHeight?: string | number;
+};
+
+const EMPTY_NODE_FRAME: NodeFrameSnapshot = {};
+
+function selectNodeFrameSnapshot(state: ReactFlowState<Node, Edge>, nodeId: string): NodeFrameSnapshot {
+  const node = state.nodeLookup.get(nodeId);
+  if (!node) return EMPTY_NODE_FRAME;
+  const style = node.style as { width?: string | number; height?: string | number } | undefined;
   return {
-    width: node.width,
-    height: node.height,
-    measured: node.measured
-      ? {
-          width: node.measured.width,
-          height: node.measured.height,
-        }
-      : undefined,
-    style: node.style
-      ? {
-          width: node.style.width,
-          height: node.style.height,
-        }
-      : undefined,
+    width: typeof node.width === "number" ? node.width : undefined,
+    height: typeof node.height === "number" ? node.height : undefined,
+    measuredWidth: typeof node.measured?.width === "number" ? node.measured.width : undefined,
+    measuredHeight: typeof node.measured?.height === "number" ? node.measured.height : undefined,
+    styleWidth: style?.width,
+    styleHeight: style?.height,
   };
 }
 
-function useCurrentNodeFrameSnapshot(node: Node | undefined): Pick<Node, "width" | "height" | "measured" | "style"> | undefined {
-  return useMemo(() => createNodeFrameSnapshot(node), [node]);
+function nodeFrameFromSnapshot(
+  snapshot: NodeFrameSnapshot,
+): Pick<Node, "width" | "height" | "measured" | "style"> | undefined {
+  return {
+    width: snapshot.width,
+    height: snapshot.height,
+    measured: {
+      width: snapshot.measuredWidth,
+      height: snapshot.measuredHeight,
+    },
+    style: {
+      width: snapshot.styleWidth,
+      height: snapshot.styleHeight,
+    },
+  };
 }
 
 /** Snapshot current output into _assetVersions for version history. */
@@ -123,6 +152,46 @@ const REF_SLOTS = [
   { id: 'image3', label: 'Ref 3', top: '49%' },
   { id: 'image4', label: 'Ref 4', top: '66%' },
 ] as const;
+
+const NANO_FLOW_SNAPSHOT_BRAIN = 0;
+const NANO_FLOW_SNAPSHOT_PROMPT_CONNECTED = 1;
+const NANO_FLOW_SNAPSHOT_PROMPT_VALUE = 2;
+const NANO_FLOW_SNAPSHOT_REFS_START = 3;
+
+function selectNanoBananaFlowSnapshot(state: ReactFlowState<Node, Edge>, nodeId: string): string[] {
+  const result = new Array<string>(NANO_FLOW_SNAPSHOT_REFS_START + REF_SLOTS.length * 2).fill("");
+  const refEdges = new Map<string, Edge>();
+  let brainConnected = false;
+  let promptEdge: Edge | undefined;
+
+  for (const edge of state.edges) {
+    if (edge.target !== nodeId) continue;
+    if (!brainConnected && edge.targetHandle === "brain") {
+      const source = state.nodeLookup.get(edge.source);
+      brainConnected = source?.type === "projectBrain";
+    } else if (!promptEdge && edge.targetHandle === "prompt") {
+      promptEdge = edge;
+    }
+    for (const slot of REF_SLOTS) {
+      if (!refEdges.has(slot.id) && edge.targetHandle === slot.id) {
+        refEdges.set(slot.id, edge);
+      }
+    }
+  }
+
+  const nodesById = state.nodeLookup as unknown as ReadonlyMap<string, Node>;
+  result[NANO_FLOW_SNAPSHOT_BRAIN] = brainConnected ? "1" : "0";
+  result[NANO_FLOW_SNAPSHOT_PROMPT_CONNECTED] = promptEdge ? "1" : "0";
+  result[NANO_FLOW_SNAPSHOT_PROMPT_VALUE] = promptEdge ? resolvePromptValueFromEdgeSourceMap(promptEdge, nodesById) : "";
+  REF_SLOTS.forEach((slot, index) => {
+    const edge = refEdges.get(slot.id);
+    const base = NANO_FLOW_SNAPSHOT_REFS_START + index * 2;
+    result[base] = edge ? "1" : "0";
+    result[base + 1] = edge ? resolvePromptValueFromEdgeSourceMap(edge, nodesById) : "";
+  });
+
+  return result;
+}
 
 /** Stable empty ref for `generationHistory` when absent (avoid new [] each render). */
 const NANO_BANANA_EMPTY_GEN_HISTORY: string[] = [];
@@ -2141,8 +2210,6 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
     /** Persisted with the project (Studio + main-run versions). */
     generationHistory?: string[];
   };
-  const nodes = useNodes();
-  const edges = useEdges();
   const { setNodes, setEdges, fitView, getNodes, getEdges } = useReactFlow();
   const [status, setStatus] = useState('idle');
   const [progress, setProgress] = useState(0);
@@ -2150,10 +2217,44 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   const [showFullSize, setShowFullSize] = useState(false);
   const [showStudio, setShowStudio] = useState(false);
   const [standardShell, setStandardShell] = useState<StandardStudioShellConfig | null>(null);
-  const currentNode = nodes.find((node) => node.id === id);
-  const currentFrameNode = useCurrentNodeFrameSnapshot(currentNode);
+  const currentFrameSnapshot = useStore(
+    useCallback((state: ReactFlowState<Node, Edge>) => selectNodeFrameSnapshot(state, id), [id]),
+    shallow,
+  );
+  const nanoFlowSnapshot = useStore(
+    useCallback((state: ReactFlowState<Node, Edge>) => selectNanoBananaFlowSnapshot(state, id), [id]),
+    shallow,
+  );
+  const {
+    width: currentFrameWidth,
+    height: currentFrameHeight,
+    measuredWidth: currentFrameMeasuredWidth,
+    measuredHeight: currentFrameMeasuredHeight,
+    styleWidth: currentFrameStyleWidth,
+    styleHeight: currentFrameStyleHeight,
+  } = currentFrameSnapshot;
+  const currentFrameNode = useMemo(
+    () =>
+      nodeFrameFromSnapshot({
+        width: currentFrameWidth,
+        height: currentFrameHeight,
+        measuredWidth: currentFrameMeasuredWidth,
+        measuredHeight: currentFrameMeasuredHeight,
+        styleWidth: currentFrameStyleWidth,
+        styleHeight: currentFrameStyleHeight,
+      }),
+    [
+      currentFrameWidth,
+      currentFrameHeight,
+      currentFrameMeasuredWidth,
+      currentFrameMeasuredHeight,
+      currentFrameStyleWidth,
+      currentFrameStyleHeight,
+    ],
+  );
   const frameRef = useRef<HTMLDivElement | null>(null);
   const previewRef = useRef<HTMLDivElement | null>(null);
+  const canvasPerformanceModeRef = useRef(false);
   /** Al abrir Studio desde PhotoRoom «Modificar imagen con IA»: id del nodo PhotoRoom para fitView + reabrir su Studio. */
   const photoRoomReturnTargetRef = useRef<string | null>(null);
   const cineReturnSessionRef = useRef<CineImageStudioSession | null>(null);
@@ -2175,14 +2276,20 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
     setBrainImageDiag(d);
   }, []);
 
-  const brainConnected = useMemo(
+  const brainConnected = nanoFlowSnapshot[NANO_FLOW_SNAPSHOT_BRAIN] === "1";
+  const promptConnected = nanoFlowSnapshot[NANO_FLOW_SNAPSHOT_PROMPT_CONNECTED] === "1";
+  const promptValue = nanoFlowSnapshot[NANO_FLOW_SNAPSHOT_PROMPT_VALUE] ?? "";
+  const connectedSlots = useMemo(
+    () => REF_SLOTS.map((_, index) => nanoFlowSnapshot[NANO_FLOW_SNAPSHOT_REFS_START + index * 2] === "1"),
+    [nanoFlowSnapshot],
+  );
+  const refImages = useMemo(
     () =>
-      edges.some((e: { target: string; targetHandle?: string | null; source: string }) => {
-        if (e.target !== id || e.targetHandle !== "brain") return false;
-        const src = nodes.find((n: Node) => n.id === e.source);
-        return src?.type === "projectBrain";
+      REF_SLOTS.map((_, index) => {
+        const value = nanoFlowSnapshot[NANO_FLOW_SNAPSHOT_REFS_START + index * 2 + 1];
+        return typeof value === "string" && value ? value : null;
       }),
-    [edges, id, nodes],
+    [nanoFlowSnapshot],
   );
 
   const composeBrainForStudio = useMemo(() => {
@@ -2198,12 +2305,25 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   }, [brainConnected, brainCanvasCtx?.assetsMetadata, id]);
 
   const refreshNanoHandleGeometry = useCallback(() => {
+    if (canvasPerformanceModeRef.current) return;
     const run = () => updateNodeInternals(id);
     requestAnimationFrame(() => {
       run();
       requestAnimationFrame(run);
     });
     window.setTimeout(run, 140);
+  }, [id, updateNodeInternals]);
+
+  useEffect(() => {
+    const handlePerformanceMode = (event: Event) => {
+      const active = Boolean((event as CustomEvent<{ active?: boolean }>).detail?.active);
+      canvasPerformanceModeRef.current = active;
+      if (!active) requestAnimationFrame(() => updateNodeInternals(id));
+    };
+    window.addEventListener(FOLDDER_CANVAS_PERFORMANCE_MODE_EVENT, handlePerformanceMode);
+    return () => {
+      window.removeEventListener(FOLDDER_CANVAS_PERFORMANCE_MODE_EVENT, handlePerformanceMode);
+    };
   }, [id, updateNodeInternals]);
 
   useEffect(() => {
@@ -2318,7 +2438,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
         );
       });
     }
-  }, [fitView, getNodes, getEdges, setNodes, setEdges, id, nodeData.value]);
+  }, [fitView, getNodes, getEdges, setNodes, setEdges, id]);
 
   useEffect(() => {
     const onOpenFromPhotoRoom = (ev: Event) => {
@@ -2463,28 +2583,10 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   const updateData = (key: string, val: unknown) =>
     setNodes((nds) => nds.map((n) => n.id === id ? { ...n, data: { ...n.data, [key]: val } } : n));
 
-  // Collect all connected reference images
-  const getRefImages = () => {
-    const imgs: (string | null)[] = [];
-    for (const slot of REF_SLOTS) {
-      const edge = edges.find(e => e.target === id && e.targetHandle === slot.id);
-      const rawVal = edge ? resolvePromptValueFromEdgeSource(edge, nodes) : '';
-      imgs.push(typeof rawVal === 'string' && rawVal ? rawVal : null);
-    }
-    return imgs;
-  };
-
-  // Check which handles have connections
-  const connectedSlots = REF_SLOTS.map(slot =>
-    edges.some(e => e.target === id && e.targetHandle === slot.id)
-  );
-
   const onRun = async () => {
-    const promptEdge = edges.find(e => e.target === id && e.targetHandle === 'prompt');
-    const prompt = promptEdge ? resolvePromptValueFromEdgeSource(promptEdge, nodes) : '';
-    if (!prompt) return alert("Connect a prompt node!");
+    if (!promptValue) return alert("Connect a prompt node!");
 
-    const userPromptRaw = String(prompt ?? "");
+    const userPromptRaw = String(promptValue ?? "");
     let promptToSend = userPromptRaw;
     let diagForRun: BrainImageGeneratorPromptDiagnostics | null = null;
     if (brainConnected && brainCanvasCtx?.assetsMetadata) {
@@ -2502,7 +2604,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
         diagForRun = null;
       }
     }
-    const refImages = getRefImages().filter(Boolean) as string[];
+    const connectedRefImages = refImages.filter(Boolean) as string[];
 
     const epoch = ++graphGenEpochRef.current;
     setStatus('running');
@@ -2515,7 +2617,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
         const json = await geminiGenerateWithServerProgress(
           {
             prompt: promptToSend,
-            images: refImages,
+            images: connectedRefImages,
             aspect_ratio: nodeData.aspect_ratio || '16:9',
             resolution: isFlash25 ? '1k' : normalizeNanoBananaResolution(nodeData.resolution),
             model: selectedModel,
@@ -2588,12 +2690,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   useRegisterAssistantNodeRun(id, onRun);
 
   // Preview of connected ref slot 0 (the base image)
-  const refImgPreview = (() => {
-    // REF_SLOTS[0].id === 'image' — the first/main reference slot
-    const edge = edges.find(e => e.target === id && e.targetHandle === 'image');
-    const v = edge ? resolvePromptValueFromEdgeSource(edge, nodes) : '';
-    return typeof v === 'string' && v ? v : null;
-  })();
+  const refImgPreview = refImages[0] ?? null;
 
   /** Persisted URL/base64 from node data (S3 presigned after save + hydrate). `result` is only in-memory after generate. */
   const persistedOutput =
@@ -2603,7 +2700,6 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   /** Barra y glow solo con avance <100%; a 100% se oculta aunque `status` tarde un tick en pasar a success. */
   const isActivelyGenerating = status === 'running' && progress < 100;
 
-  const promptConnected = edges.some(e => e.target === id && e.targetHandle === 'prompt');
   const nbResLabel = isFlash25 ? '1K' : normalizeNanoBananaResolution(nodeData.resolution).toUpperCase();
   const nanoAspect = parseAspectRatioValue(nodeData.aspect_ratio || '16:9') ?? { width: 16, height: 9 };
 
@@ -2869,12 +2965,8 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
 
       {/* ── NanoBanana Studio ── */}
       {showStudio && (() => {
-        const promptEdge = edges.find((e) => e.target === id && e.targetHandle === 'prompt');
-        const promptVal = promptEdge
-          ? String(resolvePromptValueFromEdgeSource(promptEdge, nodes) ?? '')
-          : '';
-        const studioPrompt = cineStudioPrompt || promptVal;
-        const refImgs = getRefImages();
+        const studioPrompt = cineStudioPrompt || promptValue;
+        const refImgs = refImages;
         const connected0 = cineStudioSourceImage || (refImgs[0] as string | null | undefined) || null;
         const isCineStudioSession = Boolean(cineStudioPrompt || cineStudioSourceImage);
         const studioLastGenerated = isCineStudioSession ? null : outputImage;

@@ -7,7 +7,13 @@ import type { GuionistaGeneratedTextAssetsMetadata, GuionistaTextAsset } from ".
 
 export type ProjectAssetsCanvasContextValue = {
   /** Nodos del grafo actual (para inventario multimedia en la tarjeta). */
-  flowNodes: Node[];
+  flowNodes?: Node[];
+  librarySummary?: {
+    nImported: number;
+    nGenerated: number;
+    nFiles: number;
+    nExports: number;
+  };
   assetsMetadata: unknown;
   projectFiles?: ProjectFilesMetadata;
   generatedTextAssets?: GuionistaGeneratedTextAssetsMetadata;

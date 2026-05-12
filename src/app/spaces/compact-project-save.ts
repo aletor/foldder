@@ -1,11 +1,13 @@
 "use client";
 
+import { projectSavePayloadBytes } from "./project-save-utils";
+
 type CompactOptions = {
   aggressive?: boolean;
   dropEmbeddedMedia?: boolean;
 };
 
-const SAVE_SOFT_LIMIT_BYTES = 3_400_000;
+export const SAVE_SOFT_LIMIT_BYTES = 3_400_000;
 const SAVE_HARD_LIMIT_BYTES = 4_000_000;
 const DATA_IMAGE_RE = /^data:image\/[^;,]+(?:;[^,]*)?;base64,/i;
 const DATA_URL_RE = /^data:[^,\s]+;base64,/i;
@@ -23,20 +25,12 @@ const PREVIEW_KEYS = new Set([
   "referenceImageData",
 ]);
 
-function encodedSize(value: unknown): number {
-  return new TextEncoder().encode(JSON.stringify(value)).length;
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function isDataUrl(value: unknown): value is string {
   return typeof value === "string" && DATA_URL_RE.test(value);
-}
-
-function isDataImage(value: unknown): value is string {
-  return typeof value === "string" && DATA_IMAGE_RE.test(value);
 }
 
 function objectHasPersistentMediaRef(value: Record<string, unknown>): boolean {
@@ -151,7 +145,7 @@ async function compactValue(
 }
 
 export async function compactProjectForSave<T>(project: T): Promise<{ project: T; bytes: number; compacted: boolean }> {
-  const initialBytes = encodedSize(project);
+  const initialBytes = projectSavePayloadBytes(project);
   if (initialBytes <= SAVE_SOFT_LIMIT_BYTES) {
     return { project, bytes: initialBytes, compacted: false };
   }
@@ -160,14 +154,14 @@ export async function compactProjectForSave<T>(project: T): Promise<{ project: T
     aggressive: false,
     dropEmbeddedMedia: false,
   })) as T;
-  let bytes = encodedSize(compacted);
+  let bytes = projectSavePayloadBytes(compacted);
 
   if (bytes > SAVE_HARD_LIMIT_BYTES) {
     compacted = (await compactValue(compacted, "", null, {
       aggressive: true,
       dropEmbeddedMedia: false,
     })) as T;
-    bytes = encodedSize(compacted);
+    bytes = projectSavePayloadBytes(compacted);
   }
 
   if (bytes > SAVE_HARD_LIMIT_BYTES) {
@@ -175,12 +169,8 @@ export async function compactProjectForSave<T>(project: T): Promise<{ project: T
       aggressive: true,
       dropEmbeddedMedia: true,
     })) as T;
-    bytes = encodedSize(compacted);
+    bytes = projectSavePayloadBytes(compacted);
   }
 
   return { project: compacted, bytes, compacted: true };
-}
-
-export function projectSavePayloadBytes(value: unknown): number {
-  return encodedSize(value);
 }

@@ -1,10 +1,11 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React, { useCallback } from "react";
 import {
   Handle,
   useNodeId,
-  useEdges,
+  useStore,
+  type Edge,
   type HandleProps,
 } from "@xyflow/react";
 import { NodeIcon, type FoldderIconKey } from "./foldder-icons";
@@ -113,24 +114,25 @@ export function FoldderDataHandle({
   ...rest
 }: FoldderDataHandleProps) {
   const nodeId = useNodeId();
-  const edges = useEdges();
 
-  const connected = useMemo(() => {
-    if (!nodeId) return false;
-    const hid = id ?? null;
-    if (handleType === "target") {
-      return edges.some((e) => {
-        if (e.target !== nodeId) return false;
-        const eh = e.targetHandle ?? null;
+  const connected = useStore(
+    useCallback((state: { edges: Edge[] }) => {
+      if (!nodeId) return false;
+      const hid = id ?? null;
+      if (handleType === "target") {
+        return state.edges.some((e) => {
+          if (e.target !== nodeId) return false;
+          const eh = e.targetHandle ?? null;
+          return eh === hid || (hid === null && (eh === null || eh === undefined));
+        });
+      }
+      return state.edges.some((e) => {
+        if (e.source !== nodeId) return false;
+        const eh = e.sourceHandle ?? null;
         return eh === hid || (hid === null && (eh === null || eh === undefined));
       });
-    }
-    return edges.some((e) => {
-      if (e.source !== nodeId) return false;
-      const eh = e.sourceHandle ?? null;
-      return eh === hid || (hid === null && (eh === null || eh === undefined));
-    });
-  }, [edges, nodeId, id, handleType]);
+    }, [nodeId, id, handleType]),
+  );
 
   const typeClass = TYPE_CLASS[dataType];
   const mergedClass = [
