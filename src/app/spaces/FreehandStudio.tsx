@@ -17609,6 +17609,21 @@ export function FreehandStudioCanvas({
         setCtxMenu(null);
         return;
       }
+      if (
+        (e.key === "r" || e.key === "R") &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.shiftKey &&
+        activeToolRef.current === "select" &&
+        selectedIdsRef.current.size > 0
+      ) {
+        e.preventDefault();
+        if (!e.repeat) {
+          setTransformHandlesArmed((prev) => !prev);
+        }
+        return;
+      }
       if (e.key === "r" || e.key === "R") {
         e.preventDefault();
         setActiveTool("rect");
