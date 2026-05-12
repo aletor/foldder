@@ -112,6 +112,7 @@ import {
   type FoldderStudioEventDetail,
 } from "./desktop-studio-events";
 import { collectFoldderLibrarySections } from "./foldder-library";
+import { compactProjectForSave, projectSavePayloadBytes } from "./compact-project-save";
 import {
   getGuionistaTextAssetsFromMetadata,
   setGuionistaTextAssetsInMetadata,
@@ -3282,11 +3283,18 @@ export function SpacesContent() {
           savedAt: new Date().toISOString(),
         },
       };
+      const payloadBeforeBytes = projectSavePayloadBytes(projectToSave);
+      const compactedSave = await compactProjectForSave(projectToSave);
+      if (compactedSave.compacted) {
+        console.info(
+          `[FOLDDER save] Proyecto compactado antes de guardar: ${Math.round(payloadBeforeBytes / 1024)}KB → ${Math.round(compactedSave.bytes / 1024)}KB.`,
+        );
+      }
 
       const res = await fetch('/api/spaces', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...devBypassHeaders },
-        body: JSON.stringify(projectToSave)
+        body: JSON.stringify(compactedSave.project)
       });
       
       const savedProject = await readJsonWithHttpError<SavedProjectDetail>(res, 'POST /api/spaces (save)');
@@ -3312,7 +3320,7 @@ export function SpacesContent() {
         setSpacesMap(spacesToSave as Record<string, unknown>);
       }
       if (metadataVersionRef.current === metadataVersionAtSaveStart) {
-        const serverMetadata = (savedProject.metadata || projectToSave.metadata) as Record<string, unknown>;
+        const serverMetadata = (savedProject.metadata || compactedSave.project.metadata) as Record<string, unknown>;
         setMetadata((current: Record<string, unknown>) => preserveBrainVisualCollageMetadata(serverMetadata, current));
         setVisualReferenceAnalysisDirty(false);
       } else {

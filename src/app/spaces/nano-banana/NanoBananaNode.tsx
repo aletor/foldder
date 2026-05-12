@@ -144,6 +144,57 @@ const CHANGE_PALETTE = [
   { name: 'negro',    hex: '#111827' },
 ];
 
+const ANALYZE_AREAS_SOFT_IMAGE_BYTES = 850_000;
+
+function isDataImageUrl(value: unknown): value is string {
+  return typeof value === 'string' && /^data:image\/[^;,]+(?:;[^,]*)?;base64,/i.test(value);
+}
+
+function loadImageElement(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('No se pudo preparar la imagen para analizar áreas.'));
+    img.src = src;
+  });
+}
+
+async function compactImageForAnalyzeAreas(
+  src: string | null | undefined,
+  options?: { maxSide?: number; quality?: number; maxBytes?: number },
+): Promise<string | null> {
+  if (!src) return null;
+  if (!isDataImageUrl(src) || typeof document === 'undefined') return src;
+  const maxBytes = options?.maxBytes ?? ANALYZE_AREAS_SOFT_IMAGE_BYTES;
+  if (src.length <= maxBytes) return src;
+
+  const img = await loadImageElement(src);
+  let maxSide = options?.maxSide ?? 1280;
+  let quality = options?.quality ?? 0.72;
+  let best = src;
+
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const scale = Math.min(
+      1,
+      maxSide / Math.max(img.naturalWidth || img.width, img.naturalHeight || img.height, 1),
+    );
+    const width = Math.max(1, Math.round((img.naturalWidth || img.width || 1) * scale));
+    const height = Math.max(1, Math.round((img.naturalHeight || img.height || 1) * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return best;
+    ctx.drawImage(img, 0, 0, width, height);
+    best = canvas.toDataURL('image/jpeg', quality);
+    if (best.length <= maxBytes) return best;
+    maxSide = Math.max(480, Math.floor(maxSide * 0.72));
+    quality = Math.max(0.52, quality - 0.08);
+  }
+
+  return best;
+}
+
 // Build a labeled reference grid from per-change reference images.
 // Returns a data URL (JPEG) or null if no changes have reference images.
 const buildReferenceGrid = (
@@ -965,34 +1016,60 @@ const NanoBananaStudio = memo(({
         }
 
         const hasPaintedZones = vc.some((c) => !c.isGlobal && c.paintData);
+        const [baseImageForAnalyze, colorMapImageForAnalyze] = await Promise.all([
+          compactImageForAnalyzeAreas(currentImage, { maxSide: 1280, quality: 0.72, maxBytes: 900_000 }),
+          compactImageForAnalyzeAreas(hasPaintedZones ? markedBaseUrl : null, {
+            maxSide: 960,
+            quality: 0.68,
+            maxBytes: 520_000,
+          }),
+        ]);
+        const changesForAnalyze = await Promise.all(
+          vc.map(async (c) => {
+            const pd = positionData[c.assignedColor.name];
+            const [paintData, referenceImageData] = await Promise.all([
+              compactImageForAnalyzeAreas(c.paintData ?? null, {
+                maxSide: 960,
+                quality: 0.66,
+                maxBytes: 420_000,
+              }),
+              compactImageForAnalyzeAreas(c.referenceImage ?? null, {
+                maxSide: 960,
+                quality: 0.7,
+                maxBytes: 520_000,
+              }),
+            ]);
+            return {
+              color: c.assignedColor.name,
+              description: c.description.trim(),
+              posX: pd?.cx ?? null,
+              posY: pd?.cy ?? null,
+              bboxX1: pd?.x1 ?? null,
+              bboxY1: pd?.y1 ?? null,
+              bboxX2: pd?.x2 ?? null,
+              bboxY2: pd?.y2 ?? null,
+              areaPct: pd?.areaPct ?? null,
+              quadrant: pd?.quadrant ?? null,
+              paintData,
+              assignedColorHex: c.assignedColor.hex,
+              referenceImageData,
+              isGlobal: !!c.isGlobal,
+            };
+          }),
+        );
         const aiRes = await fetch('/api/gemini/analyze-areas', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            baseImage: currentImage,
-            colorMapImage: hasPaintedZones ? markedBaseUrl : null,
-            changes: vc.map((c) => {
-              const pd = positionData[c.assignedColor.name];
-              return {
-                color: c.assignedColor.name,
-                description: c.description.trim(),
-                posX: pd?.cx ?? null,
-                posY: pd?.cy ?? null,
-                bboxX1: pd?.x1 ?? null,
-                bboxY1: pd?.y1 ?? null,
-                bboxX2: pd?.x2 ?? null,
-                bboxY2: pd?.y2 ?? null,
-                areaPct: pd?.areaPct ?? null,
-                quadrant: pd?.quadrant ?? null,
-                paintData: c.paintData ?? null,
-                assignedColorHex: c.assignedColor.hex,
-                referenceImageData: c.referenceImage ?? null,
-                isGlobal: !!c.isGlobal,
-              };
-            }),
+            baseImage: baseImageForAnalyze,
+            colorMapImage: colorMapImageForAnalyze,
+            changes: changesForAnalyze,
           }),
         });
-        const aiJson = await aiRes.json();
+        const aiJson = await aiRes.json().catch(async () => {
+          const text = await aiRes.text().catch(() => "");
+          return { error: text || `Analyze areas failed (${aiRes.status})` };
+        });
         if (aiRes.ok && aiJson.prompt) {
           fullPrompt = aiJson.prompt;
           if (aiJson.markedImageData) {
