@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { recordApiUsage, resolveUsageUserEmailFromRequest } from "@/lib/api-usage";
+import { normalizeUploadedImageForFoldder } from "@/lib/foldder-server-image-optimization";
 import { getPresignedUrl, uploadBufferToS3Key } from "@/lib/s3-utils";
 
 export const runtime = "nodejs";
@@ -19,7 +20,7 @@ function extensionForContentType(contentType: string, filename: string): string 
   const dot = filename.lastIndexOf(".");
   const fromName = dot >= 0 ? filename.slice(dot + 1).toLowerCase().replace(/[^a-z0-9]/g, "") : "";
   if (fromName) return fromName;
-  if (contentType.includes("jpeg")) return "jpg";
+  if (contentType.includes("jpeg") || contentType.includes("jpg")) return "jpg";
   if (contentType.includes("png")) return "png";
   if (contentType.includes("webp")) return "webp";
   if (contentType.includes("gif")) return "gif";
@@ -45,17 +46,25 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "unsupported media type" }, { status: 400 });
     }
 
-    const buffer = Buffer.from(await file.arrayBuffer());
-    if (buffer.length > MAX_UPLOAD_BYTES) {
+    const rawBuffer = Buffer.from(await file.arrayBuffer());
+    if (rawBuffer.length > MAX_UPLOAD_BYTES) {
       return NextResponse.json({ error: "file too large" }, { status: 413 });
     }
+    const normalized = contentType.startsWith("image/")
+      ? await normalizeUploadedImageForFoldder(rawBuffer, contentType)
+      : {
+          buffer: rawBuffer,
+          contentType,
+          ext: extensionForContentType(contentType, file.name || ""),
+          optimized: false,
+          originalBytes: rawBuffer.length,
+        };
 
     const projectId = safeSegment(form.get("projectId"), "unsaved");
     const mediaId = safeSegment(form.get("mediaId"), randomUUID());
-    const ext = extensionForContentType(contentType, file.name || "");
-    const key = `knowledge-files/project-media/${projectId}/${mediaId}.${ext}`;
+    const key = `knowledge-files/project-media/${projectId}/${mediaId}.${normalized.ext}`;
 
-    await uploadBufferToS3Key(key, buffer, contentType);
+    await uploadBufferToS3Key(key, normalized.buffer, normalized.contentType);
     await recordApiUsage({
       provider: "aws",
       userEmail: usageUserEmail,
@@ -64,8 +73,13 @@ export async function POST(req: Request) {
       operation: "put_object",
       costIsKnown: false,
       costUsd: 0,
-      bytes: buffer.length,
-      metadata: { key, contentType },
+      bytes: normalized.buffer.length,
+      metadata: {
+        key,
+        contentType: normalized.contentType,
+        optimized: normalized.optimized,
+        originalBytes: normalized.originalBytes,
+      },
     });
 
     const signedUrl = await getPresignedUrl(key);

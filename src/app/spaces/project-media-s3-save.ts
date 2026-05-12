@@ -1,5 +1,7 @@
 "use client";
 
+import { optimizeImageBlobForFoldder } from "./media/foldder-image-optimization";
+
 type UploadedProjectMedia = {
   contentType: string;
   s3Key: string;
@@ -39,7 +41,7 @@ function parseDataMedia(value: string): { base64: string; contentType: string } 
 }
 
 function extensionForContentType(contentType: string): string {
-  if (contentType.includes("jpeg")) return "jpg";
+  if (contentType.includes("jpeg") || contentType.includes("jpg")) return "jpg";
   if (contentType.includes("png")) return "png";
   if (contentType.includes("webp")) return "webp";
   if (contentType.includes("gif")) return "gif";
@@ -50,7 +52,7 @@ function extensionForContentType(contentType: string): string {
   return "bin";
 }
 
-function dataUrlToFile(value: string, mediaId: string): File | null {
+function dataUrlToBlob(value: string): { blob: Blob; contentType: string } | null {
   const parsed = parseDataMedia(value);
   if (!parsed) return null;
   const binary = atob(parsed.base64);
@@ -58,8 +60,22 @@ function dataUrlToFile(value: string, mediaId: string): File | null {
   for (let i = 0; i < binary.length; i++) {
     bytes[i] = binary.charCodeAt(i);
   }
+  return {
+    blob: new Blob([bytes], { type: parsed.contentType }),
+    contentType: parsed.contentType,
+  };
+}
+
+async function dataUrlToUploadFile(value: string, mediaId: string): Promise<File | null> {
+  const parsed = dataUrlToBlob(value);
+  if (!parsed) return null;
+  if (parsed.contentType.startsWith("image/") && !parsed.contentType.includes("svg")) {
+    const optimized = await optimizeImageBlobForFoldder(parsed.blob, parsed.contentType);
+    const type = optimized.blob.type || (optimized.ext === "jpg" ? "image/jpeg" : `image/${optimized.ext}`);
+    return new File([optimized.blob], `${mediaId}.${optimized.ext}`, { type });
+  }
   const ext = extensionForContentType(parsed.contentType);
-  return new File([bytes], `${mediaId}.${ext}`, { type: parsed.contentType });
+  return new File([parsed.blob], `${mediaId}.${ext}`, { type: parsed.contentType });
 }
 
 function newMediaId(): string {
@@ -86,7 +102,7 @@ async function uploadDataMedia(
 
   const parsed = parseDataMedia(value);
   const mediaId = newMediaId();
-  const file = dataUrlToFile(value, mediaId);
+  const file = await dataUrlToUploadFile(value, mediaId);
   if (!parsed || !file) {
     throw new Error("Invalid embedded project media.");
   }

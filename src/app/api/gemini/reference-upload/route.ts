@@ -2,8 +2,18 @@ import { NextResponse } from "next/server";
 import { recordApiUsage, resolveUsageUserEmailFromRequest } from "@/lib/api-usage";
 import { ApiServiceDisabledError, assertApiServiceEnabled } from "@/lib/api-usage-controls";
 import { getPresignedUrl, uploadToS3 } from "@/lib/s3-utils";
+import { normalizeUploadedImageForFoldder } from "@/lib/foldder-server-image-optimization";
 
 const MAX_REFERENCE_BYTES = 3_500_000;
+
+export const runtime = "nodejs";
+
+function filenameWithExtension(filename: string | undefined, ext: string) {
+  const base = (filename || `gemini-reference-${Date.now()}`)
+    .trim()
+    .replace(/\.[^.]+$/, "");
+  return `${base || `gemini-reference-${Date.now()}`}.${ext}`;
+}
 
 export async function POST(req: Request) {
   try {
@@ -14,16 +24,31 @@ export async function POST(req: Request) {
     if (!(file instanceof File)) {
       return NextResponse.json({ error: "file required" }, { status: 400 });
     }
-    if (file.size > MAX_REFERENCE_BYTES) {
+
+    const rawBuffer = Buffer.from(await file.arrayBuffer());
+    const rawContentType = file.type || "image/jpeg";
+    const normalized = rawContentType.startsWith("image/")
+      ? await normalizeUploadedImageForFoldder(rawBuffer, rawContentType)
+      : {
+          buffer: rawBuffer,
+          contentType: rawContentType,
+          ext: "bin",
+          optimized: false,
+          originalBytes: rawBuffer.length,
+        };
+
+    if (normalized.buffer.length > MAX_REFERENCE_BYTES) {
       return NextResponse.json(
         { error: "reference too large after compression" },
         { status: 413 },
       );
     }
 
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const contentType = file.type || "image/jpeg";
-    const key = await uploadToS3(file.name || `gemini-reference-${Date.now()}.jpg`, buffer, contentType);
+    const key = await uploadToS3(
+      filenameWithExtension(file.name, normalized.ext),
+      normalized.buffer,
+      normalized.contentType,
+    );
     await recordApiUsage({
       provider: "aws",
       userEmail: usageUserEmail,
@@ -32,8 +57,13 @@ export async function POST(req: Request) {
       operation: "put_object",
       costIsKnown: false,
       costUsd: 0,
-      bytes: buffer.length,
-      metadata: { key, contentType },
+      bytes: normalized.buffer.length,
+      metadata: {
+        key,
+        contentType: normalized.contentType,
+        optimized: normalized.optimized,
+        originalBytes: normalized.originalBytes,
+      },
     });
     const url = await getPresignedUrl(key);
     return NextResponse.json({ url, s3Key: key });

@@ -2,8 +2,20 @@ import { NextResponse } from "next/server";
 import { recordApiUsage, resolveUsageUserEmailFromRequest } from "@/lib/api-usage";
 import { getPresignedUrl, uploadBufferToS3Key } from "@/lib/s3-utils";
 import { buildDesignerAssetObjectKey } from "@/lib/designer-asset-keys";
+import { normalizeUploadedImageForFoldder } from "@/lib/foldder-server-image-optimization";
 
-const ALLOWED_EXT = new Set(["jpg", "jpeg", "png", "webp", "gif", "bin"]);
+export const runtime = "nodejs";
+
+const ALLOWED_EXT = new Set(["jpg", "jpeg", "png", "webp", "gif", "svg", "bin"]);
+
+function contentTypeForExt(ext: string): string {
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  if (ext === "png") return "image/png";
+  if (ext === "webp") return "image/webp";
+  if (ext === "gif") return "image/gif";
+  if (ext === "svg") return "image/svg+xml";
+  return "application/octet-stream";
+}
 
 /**
  * Sube un binario a la ruta Designer (`…_HR` | `…_OPT`) del espacio.
@@ -40,13 +52,22 @@ export async function POST(req: Request) {
       ext = "bin";
     }
 
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const contentType = file.type || (ext === "jpg" || ext === "jpeg" ? "image/jpeg" : `application/octet-stream`);
+    const rawBuffer = Buffer.from(await file.arrayBuffer());
+    const rawContentType = file.type || contentTypeForExt(ext);
+    const normalized = rawContentType.startsWith("image/")
+      ? await normalizeUploadedImageForFoldder(rawBuffer, rawContentType)
+      : {
+          buffer: rawBuffer,
+          contentType: rawContentType,
+          ext,
+          optimized: false,
+          originalBytes: rawBuffer.length,
+        };
 
     const space =
       typeof spaceId === "string" && spaceId.length > 0 ? spaceId : null;
-    const key = buildDesignerAssetObjectKey(space, assetId, variant, ext);
-    await uploadBufferToS3Key(key, buffer, contentType);
+    const key = buildDesignerAssetObjectKey(space, assetId, variant, normalized.ext);
+    await uploadBufferToS3Key(key, normalized.buffer, normalized.contentType);
     await recordApiUsage({
       provider: "aws",
       userEmail: usageUserEmail,
@@ -55,8 +76,14 @@ export async function POST(req: Request) {
       operation: "put_object",
       costIsKnown: false,
       costUsd: 0,
-      bytes: buffer.length,
-      metadata: { key, variant },
+      bytes: normalized.buffer.length,
+      metadata: {
+        key,
+        variant,
+        contentType: normalized.contentType,
+        optimized: normalized.optimized,
+        originalBytes: normalized.originalBytes,
+      },
     });
     const url = await getPresignedUrl(key);
 

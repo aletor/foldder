@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { recordApiUsage, resolveUsageUserEmailFromRequest } from "@/lib/api-usage";
 import { countPdfImageObjects, extractVisualImagesFromPdfBuffer, MAX_PDF_VISUAL_IMAGES } from "@/lib/brain/pdf-visual-extract";
+import { normalizeUploadedImageForFoldder } from "@/lib/foldder-server-image-optimization";
 import { uploadToS3 } from "@/lib/s3-utils";
 import { v4 as uuidv4 } from "uuid";
 
@@ -27,6 +28,19 @@ export const runtime = "nodejs";
 function getExt(name: string): string {
   const ext = name.split(".").pop()?.toLowerCase() || "";
   return ext === "jpeg" ? "jpg" : ext;
+}
+
+function imageContentTypeForExt(ext: string): string {
+  if (ext === "png") return "image/png";
+  if (ext === "webp") return "image/webp";
+  return "image/jpeg";
+}
+
+function filenameWithExtension(filename: string, ext: string): string {
+  const base = (filename || `knowledge-image-${Date.now()}`)
+    .trim()
+    .replace(/\.[^.]+$/, "");
+  return `${base || `knowledge-image-${Date.now()}`}.${ext}`;
 }
 
 export async function POST(req: NextRequest) {
@@ -76,13 +90,29 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
-      if (file.size > MAX_FILE_BYTES) {
+      if (!isImage && file.size > MAX_FILE_BYTES) {
         rejected.push({ name: file.name, reason: "file_too_large" });
         continue;
       }
 
       const buffer = Buffer.from(await file.arrayBuffer());
-      const s3Key = await uploadToS3(file.name, buffer, mime);
+      const uploadMime = isImage && !mime.startsWith("image/") ? imageContentTypeForExt(ext) : mime;
+      const normalized = isImage
+        ? await normalizeUploadedImageForFoldder(buffer, uploadMime)
+        : {
+            buffer,
+            contentType: uploadMime,
+            ext,
+            optimized: false,
+            originalBytes: buffer.length,
+          };
+      if (normalized.buffer.length > MAX_FILE_BYTES) {
+        rejected.push({ name: file.name, reason: "file_too_large" });
+        continue;
+      }
+
+      const uploadName = isImage ? filenameWithExtension(file.name, normalized.ext) : file.name;
+      const s3Key = await uploadToS3(uploadName, normalized.buffer, normalized.contentType);
       await recordApiUsage({
         provider: "aws",
         userEmail: usageUserEmail,
@@ -91,16 +121,21 @@ export async function POST(req: NextRequest) {
         operation: "put_object",
         costIsKnown: false,
         costUsd: 0,
-        bytes: buffer.length,
-        metadata: { key: s3Key, mime },
+        bytes: normalized.buffer.length,
+        metadata: {
+          key: s3Key,
+          mime: normalized.contentType,
+          optimized: normalized.optimized,
+          originalBytes: normalized.originalBytes,
+        },
       });
       const format = isImage ? "image" : ext === "pdf" ? "pdf" : ext === "docx" ? "docx" : isHtml ? "html" : "txt";
 
       uploadedDocs.push({
         id: uuidv4(),
         name: file.name,
-        size: file.size,
-        mime,
+        size: normalized.buffer.length,
+        mime: normalized.contentType,
         scope,
         contextKind,
         s3Path: s3Key,
@@ -140,7 +175,9 @@ export async function POST(req: NextRequest) {
           },
         });
         for (const image of pdfVisualImages) {
-          const imageKey = await uploadToS3(image.name, image.buffer, image.mime);
+          const normalizedImage = await normalizeUploadedImageForFoldder(image.buffer, image.mime);
+          const imageName = filenameWithExtension(image.name, normalizedImage.ext);
+          const imageKey = await uploadToS3(imageName, normalizedImage.buffer, normalizedImage.contentType);
           await recordApiUsage({
             provider: "aws",
             userEmail: usageUserEmail,
@@ -149,22 +186,24 @@ export async function POST(req: NextRequest) {
             operation: "put_object",
             costIsKnown: false,
             costUsd: 0,
-            bytes: image.buffer.length,
+            bytes: normalizedImage.buffer.length,
             metadata: {
               key: imageKey,
-              mime: image.mime,
+              mime: normalizedImage.contentType,
               source: "pdf_image_extract",
               parent: s3Key,
               pdfImageObjectCount: imageObjectCount,
               width: image.width,
               height: image.height,
+              optimized: normalizedImage.optimized,
+              originalBytes: normalizedImage.originalBytes,
             },
           });
           uploadedDocs.push({
             id: uuidv4(),
             name: image.name,
-            size: image.buffer.length,
-            mime: image.mime,
+            size: normalizedImage.buffer.length,
+            mime: normalizedImage.contentType,
             scope,
             contextKind,
             s3Path: imageKey,

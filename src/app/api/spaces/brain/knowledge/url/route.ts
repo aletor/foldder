@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { recordApiUsage, resolveUsageUserEmailFromRequest } from "@/lib/api-usage";
+import { normalizeUploadedImageForFoldder } from "@/lib/foldder-server-image-optimization";
 import { uploadToS3 } from "@/lib/s3-utils";
 import { v4 as uuidv4 } from "uuid";
 import axios from "axios";
@@ -53,6 +54,11 @@ function extensionFromMime(mime: string): string {
   return "jpg";
 }
 
+function filenameWithExtension(filename: string, ext: string): string {
+  const base = filename.trim().replace(/\.[^.]+$/, "");
+  return `${base || `URL-visual-${Date.now()}`}.${ext}`;
+}
+
 async function fetchUrlVisualDocument(params: {
   contextKind?: KnowledgeContextKind;
   imageUrl: string;
@@ -76,9 +82,12 @@ async function fetchUrlVisualDocument(params: {
     if (!mime.startsWith("image/")) return null;
     const buf = Buffer.from(img.data);
     if (!buf.length || buf.length > 4 * 1024 * 1024) return null;
-    const ext = extensionFromMime(mime);
-    const visualFilename = `URL-visual-${Date.now()}-${params.index + 1}.${ext}`;
-    const visualKey = await uploadToS3(visualFilename, buf, mime);
+    const normalized = await normalizeUploadedImageForFoldder(buf, mime);
+    const visualFilename = filenameWithExtension(
+      `URL-visual-${Date.now()}-${params.index + 1}.${extensionFromMime(mime)}`,
+      normalized.ext,
+    );
+    const visualKey = await uploadToS3(visualFilename, normalized.buffer, normalized.contentType);
     await recordApiUsage({
       provider: "aws",
       userEmail: params.usageUserEmail,
@@ -87,14 +96,20 @@ async function fetchUrlVisualDocument(params: {
       operation: "put_object",
       costIsKnown: false,
       costUsd: 0,
-      bytes: buf.length,
-      metadata: { key: visualKey, source: "url_visual_extract" },
+      bytes: normalized.buffer.length,
+      metadata: {
+        key: visualKey,
+        source: "url_visual_extract",
+        contentType: normalized.contentType,
+        optimized: normalized.optimized,
+        originalBytes: normalized.originalBytes,
+      },
     });
     return {
       id: uuidv4(),
       name: `[URL visual] ${params.title}`,
-      size: buf.length,
-      mime,
+      size: normalized.buffer.length,
+      mime: normalized.contentType,
       scope: params.scope,
       contextKind: params.contextKind,
       s3Path: visualKey,
