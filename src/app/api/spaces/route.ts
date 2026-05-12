@@ -52,15 +52,25 @@ const spacesStore = {
 
 const SPACES_DDB_TABLE_ENV = "FOLDDER_SPACES_DDB_TABLE";
 const SPACES_GET_CACHE_TTL_MS = 1500;
-const SPACES_META_EDGE_S_MAXAGE_SECONDS = 10;
-const SPACES_META_EDGE_STALE_SECONDS = 60;
-const SPACES_DETAIL_EDGE_S_MAXAGE_SECONDS = 5;
-const SPACES_DETAIL_EDGE_STALE_SECONDS = 30;
+const AUTHENTICATED_NO_STORE_HEADERS = {
+  "Cache-Control": "private, no-store, max-age=0, must-revalidate",
+  Vary: "Cookie, Authorization",
+};
 let spacesGetCache: { expiresAt: number; rows: ProjectRecord[] } | null = null;
 let spacesMetaGetCache: {
   expiresAt: number;
   rows: Array<ReturnType<typeof projectToMeta>>;
 } | null = null;
+
+function jsonNoStore<T>(body: T, init?: ResponseInit): NextResponse<T> {
+  return NextResponse.json(body, {
+    ...init,
+    headers: {
+      ...AUTHENTICATED_NO_STORE_HEADERS,
+      ...(init?.headers ?? {}),
+    },
+  });
+}
 
 function isSpacesDdbEnabled(): boolean {
   return isDynamoEnabled(SPACES_DDB_TABLE_ENV);
@@ -230,20 +240,16 @@ export async function GET(req: Request) {
     if (id && id.length > 0) {
       const project = await readProjectByIdResilient(id);
       if (!project || !projectBelongsToOwner(project, ownerEmail)) {
-        return NextResponse.json({ error: "Project not found" }, { status: 404 });
+        return jsonNoStore({ error: "Project not found" }, { status: 404 });
       }
-      return NextResponse.json(project, {
-        headers: {
-          "Cache-Control": `public, s-maxage=${SPACES_DETAIL_EDGE_S_MAXAGE_SECONDS}, stale-while-revalidate=${SPACES_DETAIL_EDGE_STALE_SECONDS}`,
-        },
-      });
+      return jsonNoStore(project);
     }
 
     if (wantsFull && !wantsMeta) {
       const rows = (await readProjects()).filter((p) =>
         projectBelongsToOwner(p, ownerEmail),
       );
-      return NextResponse.json(rows);
+      return jsonNoStore(rows);
     }
 
     const meta = (await readProjectsMeta())
@@ -254,23 +260,12 @@ export async function GET(req: Request) {
       const start = cursorIdx >= 0 ? cursorIdx + 1 : 0;
       const items = meta.slice(start, start + limitRaw);
       const nextCursor = items.length === limitRaw ? items[items.length - 1]?.id ?? null : null;
-      return NextResponse.json(
-        { items, nextCursor },
-        {
-          headers: {
-            "Cache-Control": `public, s-maxage=${SPACES_META_EDGE_S_MAXAGE_SECONDS}, stale-while-revalidate=${SPACES_META_EDGE_STALE_SECONDS}`,
-          },
-        },
-      );
+      return jsonNoStore({ items, nextCursor });
     }
-    return NextResponse.json(meta, {
-      headers: {
-        "Cache-Control": `public, s-maxage=${SPACES_META_EDGE_S_MAXAGE_SECONDS}, stale-while-revalidate=${SPACES_META_EDGE_STALE_SECONDS}`,
-      },
-    });
+    return jsonNoStore(meta);
   } catch (error) {
     console.error("[spaces][GET] failed:", error);
-    return NextResponse.json({ error: "Failed to read projects" }, { status: 500 });
+    return jsonNoStore({ error: "Failed to read projects" }, { status: 500 });
   }
 }
 
@@ -306,7 +301,7 @@ export async function POST(req: Request) {
         await writeDdbProject(savedProject);
         spacesGetCache = null;
         spacesMetaGetCache = null;
-        return NextResponse.json(savedProject);
+        return jsonNoStore(savedProject);
       }
 
       const projectId = uuidv4();
@@ -345,7 +340,7 @@ export async function POST(req: Request) {
       await writeDdbProject(newProject, { allowProjectIdMetaScan: false });
       spacesGetCache = null;
       spacesMetaGetCache = null;
-      return NextResponse.json(newProject);
+      return jsonNoStore(newProject);
     }
 
     return await runSpacesDbExclusive(async () => {
@@ -419,17 +414,17 @@ export async function POST(req: Request) {
       });
 
       if (!projectFound) {
-        return NextResponse.json({ error: "Project not found" }, { status: 404 });
+        return jsonNoStore({ error: "Project not found" }, { status: 404 });
       }
 
     spacesGetCache = null;
     spacesMetaGetCache = null;
       const fallback = projects[projects.length - 1] ?? null;
-      return NextResponse.json(savedProject ?? fallback);
+      return jsonNoStore(savedProject ?? fallback);
     });
   } catch (error) {
     console.error("Save error:", error);
-    return NextResponse.json({ error: "Failed to save project" }, { status: 500 });
+    return jsonNoStore({ error: "Failed to save project" }, { status: 500 });
   }
 }
 
@@ -441,12 +436,12 @@ export async function DELETE(req: Request) {
 
     const { searchParams } = new URL(req.url);
     const id = searchParams.get("id");
-    if (!id || id.length === 0) return NextResponse.json({ error: "ID required" }, { status: 400 });
+    if (!id || id.length === 0) return jsonNoStore({ error: "ID required" }, { status: 400 });
 
     if (isSpacesDdbEnabled()) {
       const projectToDelete = await readProjectByIdResilient(id);
       if (!projectToDelete || !projectBelongsToOwner(projectToDelete, ownerEmail)) {
-        return NextResponse.json({ error: "Project not found" }, { status: 404 });
+        return jsonNoStore({ error: "Project not found" }, { status: 404 });
       }
       if (projectToDelete) {
         const s3Keys = collectS3KeysFromProjectSpaces(
@@ -464,7 +459,7 @@ export async function DELETE(req: Request) {
       await deleteDdbProject(id);
       spacesGetCache = null;
       spacesMetaGetCache = null;
-      return NextResponse.json({ ok: true, id });
+      return jsonNoStore({ ok: true, id });
     }
 
     return await runSpacesDbExclusive(async () => {
@@ -472,7 +467,7 @@ export async function DELETE(req: Request) {
       const projectToDelete = projects.find((project) => project.id === id);
 
       if (!projectToDelete || !projectBelongsToOwner(projectToDelete, ownerEmail)) {
-        return NextResponse.json({ error: "Project not found" }, { status: 404 });
+        return jsonNoStore({ error: "Project not found" }, { status: 404 });
       }
       if (projectToDelete) {
         console.log(`[Cleanup] Deleting project "${projectToDelete.name}"...`);
@@ -498,10 +493,10 @@ export async function DELETE(req: Request) {
         currentProjects.filter((project) => project.id !== id),
       );
       spacesGetCache = null;
-      return NextResponse.json({ ok: true, id, remaining: filtered.length });
+      return jsonNoStore({ ok: true, id, remaining: filtered.length });
     });
   } catch (error) {
     console.error("Delete error:", error);
-    return NextResponse.json({ error: "Failed to delete project" }, { status: 500 });
+    return jsonNoStore({ error: "Failed to delete project" }, { status: 500 });
   }
 }

@@ -3202,6 +3202,7 @@ export function SpacesContent() {
   const fetchProjectDetailById = useCallback(async (projectId: string) => {
     const res = await fetch(`/api/spaces?id=${encodeURIComponent(projectId)}`, {
       headers: devBypassHeaders,
+      cache: 'no-store',
     });
     return readJsonWithHttpError<SavedProjectDetail>(res, 'GET /api/spaces?id=...');
   }, [devBypassHeaders]);
