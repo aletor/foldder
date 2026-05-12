@@ -21,6 +21,10 @@ type MaterializeProjectMediaResult<TSpaces> = {
 const DATA_MEDIA_RE = /^data:(image\/[^;,]+|video\/[^;,]+|audio\/[^;,]+)(?:;[^,]*)?;base64,(.*)$/i;
 const MIN_S3_MEDIA_DATA_URL_LENGTH = 32_000;
 
+type MediaUploadPolicy = {
+  preserveImageQuality?: boolean;
+};
+
 function hashString(input: string): string {
   let hash = 2166136261;
   for (let i = 0; i < input.length; i++) {
@@ -66,10 +70,18 @@ function dataUrlToBlob(value: string): { blob: Blob; contentType: string } | nul
   };
 }
 
-async function dataUrlToUploadFile(value: string, mediaId: string): Promise<File | null> {
+async function dataUrlToUploadFile(
+  value: string,
+  mediaId: string,
+  policy: MediaUploadPolicy,
+): Promise<File | null> {
   const parsed = dataUrlToBlob(value);
   if (!parsed) return null;
-  if (parsed.contentType.startsWith("image/") && !parsed.contentType.includes("svg")) {
+  if (
+    parsed.contentType.startsWith("image/") &&
+    !parsed.contentType.includes("svg") &&
+    !policy.preserveImageQuality
+  ) {
     const optimized = await optimizeImageBlobForFoldder(parsed.blob, parsed.contentType);
     const type = optimized.blob.type || (optimized.ext === "jpg" ? "image/jpeg" : `image/${optimized.ext}`);
     return new File([optimized.blob], `${mediaId}.${optimized.ext}`, { type });
@@ -93,8 +105,9 @@ async function uploadDataMedia(
   value: string,
   projectId: string | null,
   cache: ProjectMediaUploadCache,
+  policy: MediaUploadPolicy,
 ): Promise<{ media: UploadedProjectMedia; reused: boolean; bytes: number }> {
-  const signature = dataUrlSignature(value);
+  const signature = `${policy.preserveImageQuality ? "preserve" : "opt"}:${dataUrlSignature(value)}`;
   const cached = cache.get(signature);
   if (cached) {
     return { media: cached, reused: true, bytes: 0 };
@@ -102,7 +115,7 @@ async function uploadDataMedia(
 
   const parsed = parseDataMedia(value);
   const mediaId = newMediaId();
-  const file = await dataUrlToUploadFile(value, mediaId);
+  const file = await dataUrlToUploadFile(value, mediaId, policy);
   if (!parsed || !file) {
     throw new Error("Invalid embedded project media.");
   }
@@ -111,6 +124,9 @@ async function uploadDataMedia(
   form.set("file", file);
   form.set("mediaId", mediaId);
   form.set("projectId", projectId || "unsaved");
+  if (policy.preserveImageQuality) {
+    form.set("preserveQuality", "1");
+  }
 
   const res = await fetch("/api/spaces/project-media-upload", {
     method: "POST",
@@ -136,6 +152,30 @@ function sidecarKeyForMediaField(key: string): string | null {
   return null;
 }
 
+function boolProp(source: Record<string, unknown>, key: string): boolean {
+  return source[key] === true;
+}
+
+function recordProp(source: Record<string, unknown>, key: string): Record<string, unknown> | null {
+  const value = source[key];
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function shouldPreserveImageQualityForMediaField(
+  source: Record<string, unknown> | null,
+  key: string,
+): boolean {
+  if (!source) return false;
+  const imageMeta = recordProp(source, "imageAssetMeta");
+  if (imageMeta && boolProp(imageMeta, "generatedByAi")) return true;
+  if (boolProp(source, "generatedByAi")) return true;
+  if (typeof source.generatedByAiSource === "string" && source.generatedByAiSource.trim()) return true;
+  if (key === "value" && Array.isArray(source.generationHistory)) return true;
+  return false;
+}
+
 export async function materializeProjectSpacesMediaForSave<TSpaces>(
   spaces: TSpaces,
   options: {
@@ -148,10 +188,16 @@ export async function materializeProjectSpacesMediaForSave<TSpaces>(
   let reused = 0;
   let uploaded = 0;
 
-  const visit = async (value: unknown, key: string): Promise<{ changed: boolean; s3Key?: string; value: unknown }> => {
+  const visit = async (
+    value: unknown,
+    key: string,
+    source: Record<string, unknown> | null,
+  ): Promise<{ changed: boolean; s3Key?: string; value: unknown }> => {
     if (typeof value === "string") {
       if (!shouldMaterializeString(value)) return { changed: false, value };
-      const result = await uploadDataMedia(value, options.projectId, options.cache);
+      const result = await uploadDataMedia(value, options.projectId, options.cache, {
+        preserveImageQuality: shouldPreserveImageQualityForMediaField(source, key),
+      });
       if (result.reused) reused += 1;
       else uploaded += 1;
       projectMediaBytes += result.bytes;
@@ -162,7 +208,7 @@ export async function materializeProjectSpacesMediaForSave<TSpaces>(
       let any = false;
       const next: unknown[] = [];
       for (const item of value) {
-        const child = await visit(item, key);
+        const child = await visit(item, key, null);
         if (child.changed) any = true;
         next.push(child.value);
       }
@@ -175,7 +221,7 @@ export async function materializeProjectSpacesMediaForSave<TSpaces>(
       const next: Record<string, unknown> = { ...source };
       for (const [childKey, childValue] of Object.entries(source)) {
         try {
-          const child = await visit(childValue, childKey);
+          const child = await visit(childValue, childKey, source);
           if (!child.changed) continue;
           any = true;
           next[childKey] = child.value;
@@ -194,7 +240,7 @@ export async function materializeProjectSpacesMediaForSave<TSpaces>(
     return { changed: false, value };
   };
 
-  const result = await visit(spaces, "spaces");
+  const result = await visit(spaces, "spaces", null);
   return {
     failed,
     projectMediaBytes,

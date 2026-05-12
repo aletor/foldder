@@ -50,7 +50,8 @@ export async function POST(req: Request) {
     if (rawBuffer.length > MAX_UPLOAD_BYTES) {
       return NextResponse.json({ error: "file too large" }, { status: 413 });
     }
-    const normalized = contentType.startsWith("image/")
+    const preserveQuality = form.get("preserveQuality") === "1";
+    const normalized = contentType.startsWith("image/") && !preserveQuality
       ? await normalizeUploadedImageForFoldder(rawBuffer, contentType)
       : {
           buffer: rawBuffer,
@@ -79,6 +80,7 @@ export async function POST(req: Request) {
         contentType: normalized.contentType,
         optimized: normalized.optimized,
         originalBytes: normalized.originalBytes,
+        preserveQuality,
       },
     });
 

@@ -2,11 +2,20 @@ import { NextResponse } from "next/server";
 import { recordApiUsage, resolveUsageUserEmailFromRequest } from "@/lib/api-usage";
 import { ApiServiceDisabledError, assertApiServiceEnabled } from "@/lib/api-usage-controls";
 import { getPresignedUrl, uploadToS3 } from "@/lib/s3-utils";
-import { normalizeUploadedImageForFoldder } from "@/lib/foldder-server-image-optimization";
 
 const MAX_REFERENCE_BYTES = 3_500_000;
 
 export const runtime = "nodejs";
+
+function extensionForContentType(contentType: string, filename: string): string {
+  const mime = contentType.toLowerCase();
+  if (mime.includes("jpeg") || mime.includes("jpg")) return "jpg";
+  if (mime.includes("png")) return "png";
+  if (mime.includes("webp")) return "webp";
+  const dot = filename.lastIndexOf(".");
+  const fromName = dot >= 0 ? filename.slice(dot + 1).toLowerCase().replace(/[^a-z0-9]/g, "") : "";
+  return fromName || "jpg";
+}
 
 function filenameWithExtension(filename: string | undefined, ext: string) {
   const base = (filename || `gemini-reference-${Date.now()}`)
@@ -25,29 +34,22 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "file required" }, { status: 400 });
     }
 
-    const rawBuffer = Buffer.from(await file.arrayBuffer());
-    const rawContentType = file.type || "image/jpeg";
-    const normalized = rawContentType.startsWith("image/")
-      ? await normalizeUploadedImageForFoldder(rawBuffer, rawContentType)
-      : {
-          buffer: rawBuffer,
-          contentType: rawContentType,
-          ext: "bin",
-          optimized: false,
-          originalBytes: rawBuffer.length,
-        };
-
-    if (normalized.buffer.length > MAX_REFERENCE_BYTES) {
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const contentType = file.type || "image/jpeg";
+    if (!contentType.startsWith("image/")) {
+      return NextResponse.json({ error: "image reference required" }, { status: 400 });
+    }
+    if (buffer.length > MAX_REFERENCE_BYTES) {
       return NextResponse.json(
-        { error: "reference too large after compression" },
+        { error: "reference too large for Gemini upload" },
         { status: 413 },
       );
     }
 
     const key = await uploadToS3(
-      filenameWithExtension(file.name, normalized.ext),
-      normalized.buffer,
-      normalized.contentType,
+      filenameWithExtension(file.name, extensionForContentType(contentType, file.name || "")),
+      buffer,
+      contentType,
     );
     await recordApiUsage({
       provider: "aws",
@@ -57,12 +59,11 @@ export async function POST(req: Request) {
       operation: "put_object",
       costIsKnown: false,
       costUsd: 0,
-      bytes: normalized.buffer.length,
+      bytes: buffer.length,
       metadata: {
         key,
-        contentType: normalized.contentType,
-        optimized: normalized.optimized,
-        originalBytes: normalized.originalBytes,
+        contentType,
+        preserveQuality: true,
       },
     });
     const url = await getPresignedUrl(key);
