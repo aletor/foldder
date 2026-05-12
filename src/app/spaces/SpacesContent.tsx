@@ -271,6 +271,14 @@ type SaveProjectOptions = {
   skipIfUnchanged?: boolean;
 };
 
+type SaveHealthState = "idle" | "saving" | "saved" | "error" | "conflict" | "too-large";
+
+type SaveHealth = {
+  state: SaveHealthState;
+  message?: string;
+  at?: number;
+};
+
 const CLIENT_SAVE_BODY_LIMIT_BYTES = 4_250_000;
 const PROJECT_SAVE_DEBOUNCE_MS = 25_000;
 const PROJECT_SAVE_HEARTBEAT_MS = 90_000;
@@ -287,6 +295,14 @@ function quickHashString(input: string): string {
 function projectSaveFingerprint(value: unknown): string {
   const json = JSON.stringify(value);
   return `${json.length}:${quickHashString(json)}`;
+}
+
+function isRevisionConflictMessage(message: string): boolean {
+  return /changed on another device|revision conflict/i.test(message);
+}
+
+function isPayloadTooLargeMessage(message: string): boolean {
+  return /too large|413|límite|limite|payload/i.test(message);
 }
 
 type OpenDesktopApp = {
@@ -519,6 +535,7 @@ export function SpacesContent() {
   const [apiUsagePanelOpen, setApiUsagePanelOpen] = useState(false);
   /** Indicador visual breve tras guardado automático (intervalo 1 min) */
   const [showAutosavePulse, setShowAutosavePulse] = useState(false);
+  const [saveHealth, setSaveHealth] = useState<SaveHealth>({ state: "idle" });
   const autosavePulseTimerRef = useRef<number | null>(null);
   const projectSaveDebounceTimerRef = useRef<number | null>(null);
   const lastSavedFingerprintRef = useRef<string | null>(null);
@@ -3334,6 +3351,7 @@ export function SpacesContent() {
       }
 
       setIsSaving(true);
+      setSaveHealth({ state: "saving", message: "Saving project...", at: Date.now() });
       const projectToSave = {
         id: activeProjectId,
         expectedRevision: activeProjectId ? activeProjectRevisionRef.current : undefined,
@@ -3389,6 +3407,7 @@ export function SpacesContent() {
         ...projectFingerprintInput,
         id: savedProject.id,
       });
+      setSaveHealth({ state: "saved", message: "Saved", at: Date.now() });
 
       if (!activeProjectId) {
         setActiveProjectId(savedProject.id);
@@ -3411,12 +3430,25 @@ export function SpacesContent() {
     } catch (err) {
       console.error('Save error:', err);
       const message = err instanceof Error ? err.message : String(err ?? "");
-      if (/changed on another device|revision conflict/i.test(message)) {
+      if (isRevisionConflictMessage(message)) {
         console.warn("[FOLDDER save] Conflicto de revisión: otro dispositivo guardó este proyecto antes.");
       }
+      setSaveHealth({
+        state: isRevisionConflictMessage(message)
+          ? "conflict"
+          : isPayloadTooLargeMessage(message)
+            ? "too-large"
+            : "error",
+        message: isRevisionConflictMessage(message)
+          ? "Project changed elsewhere. Reload before saving."
+          : isPayloadTooLargeMessage(message)
+            ? "Project is too heavy to save. Media must stay in cloud storage."
+            : "Save failed. Retrying on the next change.",
+        at: Date.now(),
+      });
       if (!options?.silentError) {
         alert(
-          /changed on another device|revision conflict/i.test(message)
+          isRevisionConflictMessage(message)
             ? 'This project changed on another device. Reload it before saving again.'
             : 'Error saving project. Check console for details.',
         );
@@ -3542,6 +3574,17 @@ export function SpacesContent() {
       if (projectSaveDebounceTimerRef.current) window.clearTimeout(projectSaveDebounceTimerRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (saveHealth.state !== "saved") return;
+    const at = saveHealth.at;
+    const id = window.setTimeout(() => {
+      setSaveHealth((current) =>
+        current.state === "saved" && current.at === at ? { state: "idle" } : current,
+      );
+    }, 3200);
+    return () => window.clearTimeout(id);
+  }, [saveHealth]);
 
   /**
    * Brain: persistencia defensiva de `metadata.assets` poco después de cambios relevantes
@@ -5333,6 +5376,44 @@ export function SpacesContent() {
             {apiUsagePanelOpen && <ApiUsageHud />}
             <AiRequestHud />
             <div className="pointer-events-auto flex items-center gap-2">
+              {saveHealth.state !== "idle" && (
+                <div
+                  className={[
+                    "flex max-w-[min(88vw,360px)] items-center gap-2 rounded-md border px-2.5 py-1.5 text-[10px] font-semibold shadow-md backdrop-blur-md",
+                    saveHealth.state === "saved"
+                      ? "border-emerald-300/35 bg-emerald-950/70 text-emerald-100"
+                      : saveHealth.state === "saving"
+                        ? "border-white/25 bg-black/60 text-white"
+                        : "border-red-300/35 bg-red-950/75 text-red-50",
+                  ].join(" ")}
+                  aria-live={saveHealth.state === "saved" ? "polite" : "assertive"}
+                >
+                  {saveHealth.state === "saving" ? (
+                    <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+                  ) : saveHealth.state === "saved" ? (
+                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                  ) : (
+                    <AlertCircle className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                  )}
+                  <span className="truncate">{saveHealth.message}</span>
+                  {saveHealth.state === "conflict" && activeProjectId && (
+                    <button
+                      type="button"
+                      className="ml-1 shrink-0 rounded border border-white/20 bg-white/10 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-white transition-colors hover:bg-white/18"
+                      onClick={() => {
+                        const meta =
+                          savedProjects.find((project) => project.id === activeProjectId) ?? {
+                            id: activeProjectId,
+                            name: currentName || "Project",
+                          };
+                        loadProject(meta);
+                      }}
+                    >
+                      Reload
+                    </button>
+                  )}
+                </div>
+              )}
               {showAutosavePulse && (
                 <span
                   className="h-2.5 w-2.5 shrink-0 animate-pulse rounded-full bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.9)]"
