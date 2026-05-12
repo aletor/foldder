@@ -82,7 +82,6 @@ import {
   type AiJobCompleteDetail,
 } from "@/lib/ai-job-notifications";
 import { FOLDDER_FIT_VIEW_EASE } from "@/lib/fit-view-ease";
-import { enterFullscreen } from "@/lib/fullscreen";
 import "./spaces.css";
 import { NODE_REGISTRY } from "./nodeRegistry";
 import {
@@ -3494,8 +3493,6 @@ export function SpacesContent() {
     setShowWelcome(false);
     openLoadProjectsModal();
     setPostAuthProjectsGate(true);
-    // Intento de fullscreen tras login (puede ser bloqueado por navegador).
-    void enterFullscreen(document.documentElement).catch(() => undefined);
   }, [isAuthenticated, openLoadProjectsModal]);
 
   const loadProject = (projectMeta: SavedProjectMeta) => {

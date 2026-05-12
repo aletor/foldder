@@ -8,6 +8,9 @@ export const metadata: Metadata = {
   description:
     "Foldder — visual Spaces workflow for Runway, Gemini, Grok, and composition tools.",
   icons: { icon: "/favicon.ico", apple: "/favicon.png" },
+  other: {
+    google: "notranslate",
+  },
 };
 
 export default function RootLayout({
@@ -16,8 +19,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body className="antialiased">
+    <html lang="en" translate="no" className="notranslate" suppressHydrationWarning>
+      <body className="notranslate antialiased" translate="no">
         <AuthSessionProvider>
           <AppShell>{children}</AppShell>
         </AuthSessionProvider>

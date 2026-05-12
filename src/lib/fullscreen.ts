@@ -22,7 +22,17 @@ export function isDocumentFullscreen(): boolean {
   return getFullscreenElement() !== null;
 }
 
+function hasFullscreenUserActivation(): boolean {
+  const activation = navigator.userActivation;
+  if (!activation) return true;
+  return activation.isActive;
+}
+
 export async function enterFullscreen(el: HTMLElement = document.documentElement): Promise<void> {
+  if (!hasFullscreenUserActivation()) {
+    throw new Error('Fullscreen requires a user gesture');
+  }
+
   const node = el as HTMLElement & {
     webkitRequestFullscreen?: () => void;
     mozRequestFullScreen?: () => void;
@@ -125,6 +135,7 @@ export function installPreserveDocumentFullscreenOnFilePicker(): () => void {
     }
     pendingRestoreAfterPicker = false;
     clearArmTimer();
+    if (!hasFullscreenUserActivation()) return;
     void enterFullscreen(document.documentElement).catch(() => undefined);
   };
 
