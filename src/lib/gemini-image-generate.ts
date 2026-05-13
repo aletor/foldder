@@ -6,7 +6,7 @@
  * (sin API de avance) se usa tiempo transcurrido vs. una duración esperada por modelo.
  */
 
-import { uploadToS3, getPresignedUrl } from "@/lib/s3-utils";
+import { uploadBufferToS3Key, uploadToS3, getPresignedUrl } from "@/lib/s3-utils";
 import { parseGeminiUsageMetadata, recordApiUsage } from "@/lib/api-usage";
 import { estimateGeminiImageGenerationUsd } from "@/lib/pricing-config";
 import { parseReferenceImageForGemini } from "@/lib/parse-reference-image";
@@ -74,6 +74,19 @@ const MSG_SAFETY_ES =
 function looksCopyrightOrRecitationPolicy(text: string): boolean {
   const t = text.trim();
   return t.length > 0 && COPYRIGHT_OR_POLICY_HINT.test(t);
+}
+
+function userScopedGeneratedImageKey(filename: string, userEmail?: string): string | null {
+  const normalizedEmail = (userEmail || "").trim().toLowerCase();
+  if (!normalizedEmail) return null;
+  const ownerHash = crypto.createHash("sha256").update(normalizedEmail).digest("hex").slice(0, 20);
+  const safeFilename =
+    filename
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, "_")
+      .replace(/[^a-zA-Z0-9._-]/g, "") || `gemini_${crypto.randomUUID()}.png`;
+  return `knowledge-files/user-assets/${ownerHash}/generated/${Date.now()}-${safeFilename}`;
 }
 
 function classifyNoImageFailure(params: {
@@ -308,7 +321,10 @@ export async function geminiImageGenerate(
 
   report(90, "s3");
   const filename = `gemini_${modelKey}_${crypto.randomUUID()}.png`;
-  const key = await uploadToS3(filename, imageBuffer, "image/png");
+  const userScopedKey = userScopedGeneratedImageKey(filename, usageUserEmail);
+  const key = userScopedKey
+    ? await uploadBufferToS3Key(userScopedKey, imageBuffer, "image/png")
+    : await uploadToS3(filename, imageBuffer, "image/png");
   const url = await getPresignedUrl(key);
 
   const usage = parseGeminiUsageMetadata(data);

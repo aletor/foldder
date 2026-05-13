@@ -56,7 +56,9 @@ type SpacesV2MediaRefItem = {
   entityType: "spaces-v2-media-ref";
   projectId: string;
   ownerHash: string;
+  ownerPk: string;
   ownerUserEmail?: string;
+  listSk: string;
   s3Key: string;
   s3KeyHash: string;
   updatedAt: string;
@@ -130,6 +132,10 @@ function chunkSk(revision: number, index: number): string {
 }
 
 function mediaSk(key: string): string {
+  return `MEDIA#${sha256Hex(key)}`;
+}
+
+function mediaOwnerListSk(key: string): string {
   return `MEDIA#${sha256Hex(key)}`;
 }
 
@@ -514,6 +520,46 @@ export async function readSpacesV2ProjectsForOwner(
   return projects.filter((project): project is ProjectRecord => Boolean(project));
 }
 
+export async function readSpacesV2ProjectMediaRefByOwnerKey(
+  tableName: string,
+  ownerEmail: string,
+  key: string,
+): Promise<Pick<SpacesV2MediaRefItem, "projectId" | "s3Key"> | null> {
+  const normalizedOwner = normalizeOwnerEmail(ownerEmail);
+  if (!normalizedOwner || !key) return null;
+
+  const response = await withDynamoRetry(() =>
+    ddbClient.send(
+      new QueryCommand({
+        TableName: tableName,
+        IndexName: process.env.FOLDDER_SPACES_V2_OWNER_GSI?.trim() || "ownerPk-listSk-index",
+        KeyConditionExpression: "#ownerPk = :ownerPk AND #listSk = :listSk",
+        ExpressionAttributeNames: {
+          "#listSk": "listSk",
+          "#ownerPk": "ownerPk",
+        },
+        ExpressionAttributeValues: {
+          ":listSk": mediaOwnerListSk(key),
+          ":ownerPk": ownerPk(normalizedOwner),
+        },
+        Limit: 1,
+      }),
+    ),
+  );
+  const indexed = (response.Items ?? []).find(isMediaRefItem);
+  if (indexed && indexed.s3Key === key) {
+    return { projectId: indexed.projectId, s3Key: indexed.s3Key };
+  }
+
+  // Backward compatibility for refs written before media refs were indexed by owner.
+  const projects = await readSpacesV2ProjectsForOwner(tableName, normalizedOwner);
+  for (const project of projects) {
+    const keys = collectS3KeysFromProjectRecord(project);
+    if (keys.includes(key)) return { projectId: project.id, s3Key: key };
+  }
+  return null;
+}
+
 export async function upsertSpacesV2Project(
   tableName: string,
   project: ProjectRecord,
@@ -598,7 +644,9 @@ export async function upsertSpacesV2Project(
               entityType: "spaces-v2-media-ref",
               projectId: normalizedProject.id,
               ownerHash: owner,
+              ownerPk: ownerPk(normalizedProject.ownerUserEmail),
               ownerUserEmail: normalizedProject.ownerUserEmail,
+              listSk: mediaOwnerListSk(s3Key),
               s3Key,
               s3KeyHash: sha256Hex(s3Key),
               updatedAt: normalizedProject.updatedAt,

@@ -14,6 +14,11 @@ import {
   readDdbProjectMediaRefByOwnerKey,
   type ProjectRecord,
 } from "@/lib/spaces-dynamo-store";
+import {
+  readSpacesV2ProjectById,
+  readSpacesV2ProjectMediaRefByOwnerKey,
+  readSpacesV2ProjectsForOwner,
+} from "@/lib/spaces-v2-store";
 
 export type SpacesAuthUser = {
   email: string;
@@ -22,6 +27,7 @@ export type SpacesAuthUser = {
 };
 
 const SPACES_DDB_TABLE_ENV = "FOLDDER_SPACES_DDB_TABLE";
+const SPACES_V2_DDB_TABLE_ENV = "FOLDDER_SPACES_V2_DDB_TABLE";
 const KNOWLEDGE_FILES_PREFIX = "knowledge-files/";
 const PROJECT_MEDIA_PREFIX = "knowledge-files/project-media/";
 const USER_PROJECT_MEDIA_PREFIX = "knowledge-files/project-media/user/";
@@ -102,8 +108,16 @@ function isSpacesDdbEnabled(): boolean {
   return isDynamoEnabled(SPACES_DDB_TABLE_ENV);
 }
 
+function isSpacesV2Enabled(): boolean {
+  return isDynamoEnabled(SPACES_V2_DDB_TABLE_ENV);
+}
+
 function spacesTableName(): string {
   return process.env[SPACES_DDB_TABLE_ENV]?.trim() || "";
+}
+
+function spacesV2TableName(): string {
+  return process.env[SPACES_V2_DDB_TABLE_ENV]?.trim() || "";
 }
 
 function devBypassUserFromRequest(req: Request): SpacesAuthUser | null {
@@ -154,6 +168,9 @@ export async function requireSpacesAuthUser(req: Request): Promise<
 
 async function readProjectByIdForAccess(projectId: string): Promise<ProjectRecord | null> {
   if (!projectId || projectId === "unsaved") return null;
+  if (isSpacesV2Enabled()) {
+    return readSpacesV2ProjectById(spacesV2TableName(), projectId);
+  }
   if (isSpacesDdbEnabled()) {
     return readDdbProjectByIdStore(spacesTableName(), projectId);
   }
@@ -162,6 +179,9 @@ async function readProjectByIdForAccess(projectId: string): Promise<ProjectRecor
 }
 
 async function readProjectsForAccess(ownerEmail?: string): Promise<ProjectRecord[]> {
+  if (isSpacesV2Enabled()) {
+    return ownerEmail ? readSpacesV2ProjectsForOwner(spacesV2TableName(), ownerEmail) : [];
+  }
   if (isSpacesDdbEnabled()) {
     return readAllDdbProjectsStore(spacesTableName(), ownerEmail);
   }
@@ -184,6 +204,15 @@ function legacyProjectIdFromProjectMediaKey(key: string): string | null {
 }
 
 async function userProjectReferencesKey(ownerEmail: string, key: string): Promise<boolean> {
+  if (isSpacesV2Enabled()) {
+    try {
+      const mediaRef = await readSpacesV2ProjectMediaRefByOwnerKey(spacesV2TableName(), ownerEmail, key);
+      if (mediaRef) return true;
+    } catch (error) {
+      console.warn("[spaces-access] spaces_v2 media ref lookup failed; falling back to project scan.", error);
+    }
+  }
+
   if (isSpacesDdbEnabled()) {
     try {
       const mediaRef = await readDdbProjectMediaRefByOwnerKey(spacesTableName(), ownerEmail, key);
