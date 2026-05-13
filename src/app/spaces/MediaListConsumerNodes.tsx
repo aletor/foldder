@@ -2,7 +2,8 @@
 
 import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { Position, type NodeProps, useEdges, useNodes } from "@xyflow/react";
+import { Position, useStore, type Edge, type Node, type NodeProps, type ReactFlowState } from "@xyflow/react";
+import { shallow } from "zustand/shallow";
 import { Clipboard, Download, File, Layers, Music, Search, X } from "lucide-react";
 
 import { downloadS3Object, forceDownloadUrl, sanitizeDownloadFilename } from "@/lib/browser-download";
@@ -15,6 +16,7 @@ import {
   readMediaListFromNode,
 } from "./media-list-consumers";
 import type { MediaListItem, MediaListOutput } from "./media-list-output";
+import { useFoldderRenderMetric } from "./use-performance-metrics";
 
 const MEDIA_LIST_URL_TTL_MS = 50 * 60 * 1000;
 const mediaListPresignedUrlCache = new globalThis.Map<string, { url: string; expiresAt: number }>();
@@ -80,14 +82,40 @@ function useMediaListItemUrl(item: MediaListItem | undefined): string | undefine
   return key ? (resolved?.cacheKey === cacheKey ? resolved.url : undefined) : src;
 }
 
+type ConnectedMediaListSourceSnapshot = {
+  sourceId: string;
+  sourceType?: string;
+  sourceData?: unknown;
+} | null;
+
+function selectConnectedMediaListSource(
+  state: ReactFlowState<Node, Edge>,
+  nodeId: string,
+): ConnectedMediaListSourceSnapshot {
+  const edge = state.edges.find((item) => item.target === nodeId && (!item.targetHandle || item.targetHandle === "media_list"));
+  if (!edge) return null;
+  const sourceNode = state.nodeLookup.get(edge.source);
+  if (!sourceNode) return null;
+  return {
+    sourceId: sourceNode.id,
+    sourceType: sourceNode.type,
+    sourceData: sourceNode.data,
+  };
+}
+
 function useConnectedMediaList(nodeId: string): MediaListOutput | null {
-  const edges = useEdges();
-  const nodes = useNodes();
+  const source = useStore(
+    useCallback((state: ReactFlowState<Node, Edge>) => selectConnectedMediaListSource(state, nodeId), [nodeId]),
+    shallow,
+  );
   return useMemo(() => {
-    const edge = edges.find((item) => item.target === nodeId && (!item.targetHandle || item.targetHandle === "media_list"));
-    const sourceNode = nodes.find((node) => node.id === edge?.source);
-    return readMediaListFromNode(sourceNode);
-  }, [edges, nodeId, nodes]);
+    if (!source) return null;
+    return readMediaListFromNode({
+      id: source.sourceId,
+      type: source.sourceType,
+      data: source.sourceData,
+    } as Node);
+  }, [source]);
 }
 
 async function resolveMediaListItemDownloadUrl(item: MediaListItem): Promise<string | null> {
@@ -369,6 +397,7 @@ function ExportMultimediaStudio({
 }
 
 export const ExportMultimediaNode = memo(function ExportMultimediaNode({ id, data, selected }: NodeProps) {
+  useFoldderRenderMetric("ExportMultimediaNode", id);
   const output = useConnectedMediaList(id);
   const [studioOpen, setStudioOpen] = useState(false);
   const stats = mediaListStats(output);

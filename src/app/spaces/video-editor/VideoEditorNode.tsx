@@ -2,7 +2,8 @@
 
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Position, type NodeProps, useEdges, useNodes, useReactFlow } from "@xyflow/react";
+import { Position, useReactFlow, useStore, type Edge, type Node, type NodeProps, type ReactFlowState } from "@xyflow/react";
+import { shallow } from "zustand/shallow";
 import { AlertTriangle, Captions, CheckCircle2, Clock, Copy, Download, Eye, EyeOff, File, Film, ImageIcon, Layers, Lock, Music, Pause, Play, Plus, RefreshCw, Scissors, SkipBack, SkipForward, StepBack, StepForward, Trash2, Unlock, Video, Volume2, VolumeX, X } from "lucide-react";
 
 import { downloadS3Object, forceDownloadUrl } from "@/lib/browser-download";
@@ -54,6 +55,7 @@ import {
   exportSubtitleDocumentToSrt,
   exportSubtitleDocumentToVtt,
 } from "./subtitle-utils";
+import { useFoldderRenderMetric } from "../use-performance-metrics";
 
 const VIDEO_EDITOR_URL_TTL_MS = 50 * 60 * 1000;
 const videoEditorPresignedUrlCache = new globalThis.Map<string, { url: string; expiresAt: number }>();
@@ -126,12 +128,15 @@ async function presignVideoEditorS3Key(key: string): Promise<string | null> {
   return promise;
 }
 
-function useVideoEditorAssetUrl(src?: string, s3Key?: string): string | undefined {
+function useVideoEditorAssetUrl(src?: string, s3Key?: string, enabled = true): string | undefined {
   const [resolved, setResolved] = useState<{ cacheKey: string; url: string } | null>(null);
   const key = resolveS3Key(src, s3Key);
   const cacheKey = `${src || ""}\u0001${key || ""}`;
   useEffect(() => {
     let cancelled = false;
+    if (!enabled) return () => {
+      cancelled = true;
+    };
     if (!key) return () => {
       cancelled = true;
     };
@@ -142,18 +147,47 @@ function useVideoEditorAssetUrl(src?: string, s3Key?: string): string | undefine
     return () => {
       cancelled = true;
     };
-  }, [cacheKey, key]);
+  }, [cacheKey, enabled, key]);
+  if (!enabled) return undefined;
   return key ? (resolved?.cacheKey === cacheKey ? resolved.url : undefined) : src;
 }
 
+type ConnectedMediaListSourceSnapshot = {
+  edgeId: string;
+  sourceId: string;
+  sourceType?: string;
+  sourceData?: unknown;
+} | null;
+
+function selectConnectedMediaListSource(
+  state: ReactFlowState<Node, Edge>,
+  nodeId: string,
+): ConnectedMediaListSourceSnapshot {
+  const edge = state.edges.find((item) => item.target === nodeId && (!item.targetHandle || item.targetHandle === "media_list"));
+  if (!edge) return null;
+  const sourceNode = state.nodeLookup.get(edge.source);
+  if (!sourceNode) return null;
+  return {
+    edgeId: edge.id,
+    sourceId: sourceNode.id,
+    sourceType: sourceNode.type,
+    sourceData: sourceNode.data,
+  };
+}
+
 function useConnectedMediaList(nodeId: string): MediaListOutput | null {
-  const edges = useEdges();
-  const nodes = useNodes();
+  const source = useStore(
+    useCallback((state: ReactFlowState<Node, Edge>) => selectConnectedMediaListSource(state, nodeId), [nodeId]),
+    shallow,
+  );
   return useMemo(() => {
-    const edge = edges.find((item) => item.target === nodeId && (!item.targetHandle || item.targetHandle === "media_list"));
-    const sourceNode = nodes.find((node) => node.id === edge?.source);
-    return readMediaListFromNode(sourceNode);
-  }, [edges, nodeId, nodes]);
+    if (!source) return null;
+    return readMediaListFromNode({
+      id: source.sourceId,
+      type: source.sourceType,
+      data: source.sourceData,
+    } as Node);
+  }, [source]);
 }
 
 function clipStats(data: VideoEditorNodeData) {
@@ -167,9 +201,12 @@ function clipStats(data: VideoEditorNodeData) {
   };
 }
 
-function MediaPreview({ item, className }: { item: MediaListItem; className?: string }) {
-  const url = useVideoEditorAssetUrl(item.url || item.assetId, item.s3Key);
+function MediaPreview({ item, className, mediaVisible = true }: { item: MediaListItem; className?: string; mediaVisible?: boolean }) {
+  const url = useVideoEditorAssetUrl(item.url || item.assetId, item.s3Key, mediaVisible);
   const baseClass = cx("flex h-full w-full items-center justify-center bg-slate-900 text-white/35", className);
+  if (!mediaVisible && (item.mediaType === "video" || item.mediaType === "image")) {
+    return <div className={baseClass}>{item.mediaType === "video" ? <Film size={28} /> : <ImageIcon size={28} />}</div>;
+  }
   if (item.mediaType === "video" && url) return <video className={cx("h-full w-full object-cover", className)} src={url} muted playsInline preload="metadata" />;
   if (item.mediaType === "image" && url) {
     // eslint-disable-next-line @next/next/no-img-element
@@ -184,15 +221,17 @@ function ClipPreview({
   clip,
   playheadTime,
   isPlaying,
+  mediaVisible,
   onDurationKnown,
 }: {
   clip?: VideoEditorClip;
   playheadTime: number;
   isPlaying: boolean;
+  mediaVisible: boolean;
   onDurationKnown?: (clipId: string, durationSeconds: number) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const url = useVideoEditorAssetUrl(clip?.url || clip?.assetId, clip?.s3Key);
+  const url = useVideoEditorAssetUrl(clip?.url || clip?.assetId, clip?.s3Key, mediaVisible);
   const loadKey = `${clip?.id || "empty"}:${url || "pending"}`;
   const [loadState, setLoadState] = useState<{ key: string; status: "idle" | "loading" | "ready" | "error" }>({ key: "", status: "idle" });
   const effectiveLoadState = loadState.key === loadKey ? loadState.status : clip ? "loading" : "idle";
@@ -202,6 +241,10 @@ function ClipPreview({
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !clip || clip.mediaType !== "video") return;
+    if (!mediaVisible) {
+      video.pause();
+      return;
+    }
     const targetTime = Math.max(0, (clip.trimStart ?? 0) + (playheadTime - clip.startTime));
     if (video.readyState > 0 && Math.abs(video.currentTime - targetTime) > 0.35) video.currentTime = targetTime;
     video.volume = clip.mute ? 0 : Math.max(0, Math.min(1, clip.volume ?? 1));
@@ -210,9 +253,16 @@ function ClipPreview({
     } else {
       video.pause();
     }
-  }, [clip, isPlaying, playheadTime]);
+  }, [clip, isPlaying, mediaVisible, playheadTime]);
   if (!clip) {
     return <div className="flex h-full items-center justify-center rounded-[28px] border border-dashed border-white/12 bg-black text-sm text-white/32">Sin clip visual en este punto.</div>;
+  }
+  if (!mediaVisible && (clip.mediaType === "video" || clip.mediaType === "image")) {
+    return (
+      <div className="flex h-full items-center justify-center rounded-[28px] border border-white/10 bg-black text-xs font-black uppercase tracking-[0.14em] text-white/32">
+        Preview pausada fuera de viewport
+      </div>
+    );
   }
   const loadingOverlay = effectiveLoadState === "loading" ? (
     <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-[28px] bg-black/45 text-xs font-black uppercase tracking-[0.12em] text-white/48">
@@ -349,8 +399,8 @@ function waveformBarHeight(seed: string, index: number): number {
   return 22 + (hash % 66);
 }
 
-function TimelineClipFace({ clip }: { clip: VideoEditorClip }) {
-  const url = useVideoEditorAssetUrl(clip.url || clip.assetId, clip.s3Key);
+function TimelineClipFace({ clip, mediaVisible }: { clip: VideoEditorClip; mediaVisible: boolean }) {
+  const url = useVideoEditorAssetUrl(clip.url || clip.assetId, clip.s3Key, mediaVisible);
   if (clip.mediaType === "audio") {
     return (
       <div className="pointer-events-none absolute inset-x-2 bottom-1 top-5 flex items-center gap-[2px] opacity-65">
@@ -813,6 +863,7 @@ function VideoEditorStudio({
   const [dragPreview, setDragPreview] = useState<{ x: number; y: number; label: string } | null>(null);
   const [dragTargetTrackId, setDragTargetTrackId] = useState<string | null>(null);
   const [layoutDrag, setLayoutDrag] = useState<{ startY: number; startHeight: number } | null>(null);
+  const [timelineViewport, setTimelineViewport] = useState({ scrollLeft: 0, width: 1200 });
   const timelineTracks = useMemo(() => getVideoEditorTimelineTracks(data), [data]);
   const selectedTrack = timelineTracks.find((track) => track.id === data.selectedTrackId);
   const selectedClip = timelineTracks.flatMap((track) => data.tracks[track.id] ?? []).find((clip) => clip.id === data.selectedClipId);
@@ -843,6 +894,11 @@ function VideoEditorStudio({
   const timelineDuration = Math.max(1, data.totalDurationSeconds);
   const timelineWidth = Math.max(900, timelineDuration * timelineScale + 80);
   const timelineHeight = clampTimelineHeight(data.layout?.timelineHeight ?? 300);
+  const visibleTimelineStart = Math.max(0, (timelineViewport.scrollLeft - TIMELINE_LABEL_WIDTH) / Math.max(1, timelineScale) - 8);
+  const visibleTimelineEnd = Math.min(
+    timelineDuration + 8,
+    (timelineViewport.scrollLeft + timelineViewport.width - TIMELINE_LABEL_WIDTH) / Math.max(1, timelineScale) + 8,
+  );
   const renderState = data.render ?? createDefaultVideoEditorRenderState();
   const renderPreviewUrl = useVideoEditorAssetUrl(renderState.outputUrl || renderState.outputAssetId, renderState.s3Key);
   const renderReadyUrl = renderPreviewUrl || renderState.outputUrl;
@@ -1459,6 +1515,29 @@ function VideoEditorStudio({
   }, [commit, data, renderState]);
 
   useEffect(() => {
+    const viewport = timelineViewportRef.current;
+    if (!viewport) return;
+    let raf = 0;
+    const measure = () => {
+      window.cancelAnimationFrame(raf);
+      raf = window.requestAnimationFrame(() => {
+        setTimelineViewport({
+          scrollLeft: viewport.scrollLeft,
+          width: viewport.clientWidth || 1200,
+        });
+      });
+    };
+    measure();
+    viewport.addEventListener("scroll", measure, { passive: true });
+    window.addEventListener("resize", measure);
+    return () => {
+      window.cancelAnimationFrame(raf);
+      viewport.removeEventListener("scroll", measure);
+      window.removeEventListener("resize", measure);
+    };
+  }, [timelineHeight, timelineScale, timelineWidth]);
+
+  useEffect(() => {
     const previousStatus = previousRenderStatusRef.current;
     previousRenderStatusRef.current = renderState.status;
     if (renderState.status !== "ready" || previousStatus === "ready" || !renderReadyKey) return;
@@ -1549,7 +1628,7 @@ function VideoEditorStudio({
               </label>
             </div>
             <div className="relative h-[calc(100%-112px)] min-h-[228px] overflow-hidden rounded-[28px]">
-              <ClipPreview clip={activeVisualClip} playheadTime={livePlayhead} isPlaying={isPlaying} onDurationKnown={patchClipSourceDuration} />
+              <ClipPreview clip={activeVisualClip} playheadTime={livePlayhead} isPlaying={isPlaying} mediaVisible onDurationKnown={patchClipSourceDuration} />
               <SubtitlePreviewOverlay track={activeSubtitleTrack} currentTime={livePlayhead} />
             </div>
             <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
@@ -2060,7 +2139,11 @@ function VideoEditorStudio({
                         commit({ ...data, selectedTrackId: track.id, status: "editing" });
                       }}
                     >
-                      {(data.tracks[track.id] ?? []).map((clip) => (
+                      {(data.tracks[track.id] ?? []).map((clip) => {
+                        const clipVisible =
+                          clip.startTime + clip.durationSeconds >= visibleTimelineStart &&
+                          clip.startTime <= visibleTimelineEnd;
+                        return (
                         <button
                           key={clip.id}
                           type="button"
@@ -2081,7 +2164,7 @@ function VideoEditorStudio({
                           className={cx("absolute top-1 flex h-10 items-center justify-between gap-2 overflow-hidden rounded-md border px-3 text-left text-xs font-bold shadow-[0_2px_6px_rgba(0,0,0,0.22)] transition", clip.locked || track.locked ? "cursor-not-allowed opacity-60" : "cursor-grab active:cursor-grabbing", clip.mediaType === "audio" ? "border-emerald-300/28 bg-emerald-500/18 text-emerald-50/82" : "border-sky-300/28 bg-sky-500/18 text-sky-50/82", data.selectedClipId === clip.id ? "ring-2 ring-amber-300/75" : undefined, clip.sourceDurationSeconds && clip.durationSeconds >= getVideoEditorClipMaxDuration(clip) - 0.01 ? "outline outline-1 outline-amber-200/35" : undefined)}
                           style={{ left: clip.startTime * timelineScale, width: Math.max(28, clip.durationSeconds * timelineScale) }}
                         >
-                          <TimelineClipFace clip={clip} />
+                          <TimelineClipFace clip={clip} mediaVisible={clipVisible} />
                           <span className="relative z-[1] truncate drop-shadow">{clip.title}</span>
                           <span className="relative z-[1] text-[10px] opacity-65 drop-shadow">{clip.durationSeconds.toFixed(1)}s</span>
                           <span
@@ -2121,7 +2204,8 @@ function VideoEditorStudio({
                             title="Trim final"
                           />
                         </button>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                   );
@@ -2271,6 +2355,7 @@ function VideoEditorStudio({
 }
 
 export const VideoEditorNode = memo(function VideoEditorNode({ id, data, selected }: NodeProps) {
+  useFoldderRenderMetric("VideoEditorNode", id);
   const sourceMediaList = useConnectedMediaList(id);
   const { setNodes } = useReactFlow();
   const nodeData = normalizeVideoEditorData(data);

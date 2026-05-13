@@ -168,11 +168,22 @@ function shouldPreserveImageQualityForMediaField(
   key: string,
 ): boolean {
   if (!source) return false;
+  const normalizedKey = key.toLowerCase();
   const imageMeta = recordProp(source, "imageAssetMeta");
   if (imageMeta && boolProp(imageMeta, "generatedByAi")) return true;
   if (boolProp(source, "generatedByAi")) return true;
   if (typeof source.generatedByAiSource === "string" && source.generatedByAiSource.trim()) return true;
   if (key === "value" && Array.isArray(source.generationHistory)) return true;
+  if (key === "value" && source.type === "image" && typeof source.s3Key === "string") return true;
+  if (
+    normalizedKey.includes("reference") ||
+    normalizedKey.includes("gemini") ||
+    normalizedKey === "imagesrc" ||
+    normalizedKey === "sourceimage" ||
+    normalizedKey === "initialimage"
+  ) {
+    return true;
+  }
   return false;
 }
 

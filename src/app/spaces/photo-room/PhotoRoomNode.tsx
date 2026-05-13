@@ -30,6 +30,7 @@ import {
 } from "../canvas-group-logic";
 import { withFoldderCanvasIntro } from "../spaces-canvas-intro";
 import type { DesignerStudioApi, FreehandObject } from "../FreehandStudio";
+import { DesignerPagePreview } from "../designer/DesignerPagePreview";
 import { dispatchFoldderExportCreated } from "../foldder-export-events";
 import { StudioCanvasNodeShell, type StudioCanvasNodeHandleSpec } from "../studio-node/studio-canvas-node";
 import { useStudioNodeController } from "../studio-node/studio-node-architecture";
@@ -37,7 +38,10 @@ import {
   clearLiveStudioNodeData,
   setLiveStudioNodeData,
 } from "../studio-live-documents";
-import { FOLDDER_CANVAS_PERFORMANCE_MODE_EVENT } from "../performance-events";
+import { nodeFrameFromSnapshot, selectNodeFrameSnapshot } from "../react-flow-selectors";
+import { useCanvasPerformanceModeRef } from "../use-canvas-performance-mode";
+import { useFoldderRenderMetric } from "../use-performance-metrics";
+import { useNodeViewportVisibility } from "../use-node-viewport-visibility";
 import type { PhotoRoomNodeStudioData } from "./photo-room-types";
 import { registerPendingNanoStudioOpenFromPhotoRoom } from "./photo-room-nano-open-pending";
 
@@ -98,46 +102,6 @@ type BaseNodeData = { label?: string; value?: string; type?: string };
 
 type PhotoRoomNodeData = BaseNodeData & PhotoRoomNodeStudioData;
 
-type NodeFrameSnapshot = {
-  width?: number;
-  height?: number;
-  measuredWidth?: number;
-  measuredHeight?: number;
-  styleWidth?: string | number;
-  styleHeight?: string | number;
-};
-
-const EMPTY_NODE_FRAME: NodeFrameSnapshot = {};
-
-function selectNodeFrameSnapshot(state: ReactFlowState<Node, Edge>, nodeId: string): NodeFrameSnapshot {
-  const node = state.nodeLookup.get(nodeId);
-  if (!node) return EMPTY_NODE_FRAME;
-  const style = node.style as { width?: string | number; height?: string | number } | undefined;
-  return {
-    width: typeof node.width === "number" ? node.width : undefined,
-    height: typeof node.height === "number" ? node.height : undefined,
-    measuredWidth: typeof node.measured?.width === "number" ? node.measured.width : undefined,
-    measuredHeight: typeof node.measured?.height === "number" ? node.measured.height : undefined,
-    styleWidth: style?.width,
-    styleHeight: style?.height,
-  };
-}
-
-function nodeFrameFromSnapshot(snapshot: NodeFrameSnapshot): Pick<Node, "width" | "height" | "measured" | "style"> {
-  return {
-    width: snapshot.width,
-    height: snapshot.height,
-    measured: {
-      width: snapshot.measuredWidth,
-      height: snapshot.measuredHeight,
-    },
-    style: {
-      width: snapshot.styleWidth,
-      height: snapshot.styleHeight,
-    },
-  };
-}
-
 function selectPhotoRoomFlowSnapshot(state: ReactFlowState<Node, Edge>, nodeId: string): string[] {
   const result = new Array<string>(1 + SLOT_IDS.length * 2).fill("");
   let brainConnected = false;
@@ -167,6 +131,7 @@ function selectPhotoRoomFlowSnapshot(state: ReactFlowState<Node, Edge>, nodeId: 
 }
 
 export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
+  useFoldderRenderMetric("PhotoRoomNode", id);
   const nodeData = data as PhotoRoomNodeData;
   const [liveStudioData, setLiveStudioData] = useState<Partial<PhotoRoomNodeData> | null>(null);
   const liveStudioDataRef = useRef<Partial<PhotoRoomNodeData> | null>(null);
@@ -192,7 +157,12 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const studioApiRef = useRef<DesignerStudioApi | null>(null);
   const frameRef = useRef<HTMLDivElement | null>(null);
   const previewRef = useRef<HTMLDivElement | null>(null);
-  const canvasPerformanceModeRef = useRef(false);
+  const nodeMediaVisible = useNodeViewportVisibility(id, 900);
+  const canvasPerformanceModeRef = useCanvasPerformanceModeRef(
+    useCallback((active: boolean) => {
+      if (!active) requestAnimationFrame(() => updateNodeInternals(id));
+    }, [id, updateNodeInternals]),
+  );
   const currentNodeFrameSnapshot = useStore(
     useCallback((state: ReactFlowState<Node, Edge>) => selectNodeFrameSnapshot(state, id), [id]),
     shallow,
@@ -585,18 +555,6 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
   }, [id, updateNodeInternals]);
 
   useEffect(() => {
-    const handlePerformanceMode = (event: Event) => {
-      const active = Boolean((event as CustomEvent<{ active?: boolean }>).detail?.active);
-      canvasPerformanceModeRef.current = active;
-      if (!active) requestAnimationFrame(() => updateNodeInternals(id));
-    };
-    window.addEventListener(FOLDDER_CANVAS_PERFORMANCE_MODE_EVENT, handlePerformanceMode);
-    return () => {
-      window.removeEventListener(FOLDDER_CANVAS_PERFORMANCE_MODE_EVENT, handlePerformanceMode);
-    };
-  }, [id, updateNodeInternals]);
-
-  useEffect(() => {
     refreshHandleGeometry();
   }, [refreshHandleGeometry, visibleSlots.join(",")]);
 
@@ -775,7 +733,7 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
         className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-b-[24px] bg-[#0a0a0a] group/out"
         style={{ minHeight: 120 }}
       >
-        {displayUrl ? (
+        {displayUrl && nodeMediaVisible ? (
           <img
             src={displayUrl}
             alt=""
@@ -783,6 +741,20 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
             onLoad={refreshHandleGeometry}
             onError={refreshHandleGeometry}
           />
+        ) : hasPersistedStudio ? (
+          <div
+            className="h-full w-full overflow-hidden bg-[#fafafa]"
+            style={{
+              aspectRatio: `${Math.max(1, studioArtboard.width)} / ${Math.max(1, studioArtboard.height)}`,
+            }}
+          >
+            <DesignerPagePreview
+              objects={studioObjects}
+              pageWidth={studioArtboard.width}
+              pageHeight={studioArtboard.height}
+              renderImages={nodeMediaVisible}
+            />
+          </div>
         ) : (
           <div className="flex w-full flex-col items-center justify-center gap-2 py-8">
             <ImageIcon size={28} className="text-zinc-400/50" />

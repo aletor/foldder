@@ -1,13 +1,15 @@
 "use client";
 
-import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
+import React, { memo, useCallback, useEffect, useState } from "react";
 import {
+  type Edge,
+  type Node,
   NodeProps,
   Position,
-  useEdges,
-  useNodes,
   useReactFlow,
+  useStore,
   useUpdateNodeInternals,
+  type ReactFlowState,
 } from "@xyflow/react";
 import { ChevronDown, ChevronUp, Layers, Link2 } from "lucide-react";
 import { FoldderDataHandle, type FoldderHandleDataType } from "./FoldderDataHandle";
@@ -19,6 +21,7 @@ import {
   parseCanvasGroupOutHandle,
   resolveHandleDataType,
 } from "./canvas-group-logic";
+import { useFoldderRenderMetric } from "./use-performance-metrics";
 
 /** Proxy handles: desplazamiento vertical respecto al borde superior del nodo (marco centrado ~90px). */
 const COLLAPSED_PROXY_TOP_OFFSET = 40;
@@ -50,68 +53,119 @@ type CanvasGroupData = {
   memberIds?: string[];
 };
 
+type CanvasGroupProxySnapshot = {
+  hid: string;
+  dtype: FoldderHandleDataType;
+  top: number;
+};
+
+type CanvasGroupStoreSnapshot = {
+  groupedCount: number;
+  incomingProxies: CanvasGroupProxySnapshot[];
+  outgoingProxies: CanvasGroupProxySnapshot[];
+};
+
+const EMPTY_GROUP_SNAPSHOT: CanvasGroupStoreSnapshot = {
+  groupedCount: 0,
+  incomingProxies: [],
+  outgoingProxies: [],
+};
+
+function sameProxyList(a: CanvasGroupProxySnapshot[], b: CanvasGroupProxySnapshot[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i].hid !== b[i].hid || a[i].dtype !== b[i].dtype || a[i].top !== b[i].top) return false;
+  }
+  return true;
+}
+
+function sameGroupSnapshot(a: CanvasGroupStoreSnapshot, b: CanvasGroupStoreSnapshot): boolean {
+  return (
+    a.groupedCount === b.groupedCount &&
+    sameProxyList(a.incomingProxies, b.incomingProxies) &&
+    sameProxyList(a.outgoingProxies, b.outgoingProxies)
+  );
+}
+
+function selectCanvasGroupSnapshot(
+  state: ReactFlowState<Node, Edge>,
+  groupId: string,
+  fallbackMemberCount: number,
+): CanvasGroupStoreSnapshot {
+  const nodeLookup = state.nodeLookup as unknown as ReadonlyMap<string, Node>;
+  let childCount = 0;
+  for (const node of nodeLookup.values()) {
+    if (node.parentId === groupId) childCount += 1;
+  }
+
+  const incomingProxies: CanvasGroupProxySnapshot[] = [];
+  const outgoingProxies: CanvasGroupProxySnapshot[] = [];
+  let incomingY = 10;
+  let outgoingY = 10;
+
+  for (const edge of state.edges) {
+    if (edge.target === groupId && edge.targetHandle?.startsWith("g_in_")) {
+      const parsed = parseCanvasGroupInHandle(edge.targetHandle);
+      if (parsed) {
+        const inner = nodeLookup.get(parsed.memberId);
+        const resolvedType = resolveHandleDataType(inner?.type as string, "in", parsed.handleId);
+        incomingProxies.push({
+          hid: edge.targetHandle,
+          dtype: foldderTypeFromRegistry(resolvedType),
+          top: incomingY,
+        });
+        incomingY += 22;
+      }
+      continue;
+    }
+    if (edge.source === groupId && edge.sourceHandle?.startsWith("g_out_")) {
+      const parsed = parseCanvasGroupOutHandle(edge.sourceHandle);
+      if (parsed) {
+        const inner = nodeLookup.get(parsed.memberId);
+        const resolvedType = resolveHandleDataType(inner?.type as string, "out", parsed.handleId);
+        outgoingProxies.push({
+          hid: edge.sourceHandle,
+          dtype: foldderTypeFromRegistry(resolvedType),
+          top: outgoingY,
+        });
+        outgoingY += 22;
+      }
+    }
+  }
+
+  if (childCount === 0 && fallbackMemberCount === 0 && incomingProxies.length === 0 && outgoingProxies.length === 0) {
+    return EMPTY_GROUP_SNAPSHOT;
+  }
+  return {
+    groupedCount: childCount > 0 ? childCount : fallbackMemberCount,
+    incomingProxies,
+    outgoingProxies,
+  };
+}
+
 /** Marco visual idéntico en plegado y despliegue (borde discontinuo fino en spaces.css). `canvas-group-frame` anula el vidrio global de `.custom-node`. */
 const GROUP_FRAME_CLASS =
   "canvas-group-frame bg-gradient-to-b from-white/[0.035] to-white/[0.01] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-sm";
 
 export const CanvasGroupNode = memo(function CanvasGroupNode({ id, data, selected }: NodeProps) {
+  useFoldderRenderMetric("CanvasGroupNode", id);
   const d = (data ?? {}) as CanvasGroupData;
   const { setNodes, setEdges, getNodes, getEdges, fitView } = useReactFlow();
   const updateNodeInternals = useUpdateNodeInternals();
-  const allNodes = useNodes();
-  const edges = useEdges();
   const collapsed = Boolean(d.collapsed);
   const memberIds = Array.isArray(d.memberIds) ? d.memberIds : [];
-
-  const groupedCount = useMemo(() => {
-    const n = allNodes.filter((node) => node.parentId === id).length;
-    return n > 0 ? n : memberIds.length;
-  }, [allNodes, id, memberIds.length]);
+  const groupSnapshot = useStore(
+    useCallback(
+      (state: ReactFlowState<Node, Edge>) => selectCanvasGroupSnapshot(state, id, memberIds.length),
+      [id, memberIds.length],
+    ),
+    sameGroupSnapshot,
+  );
+  const { groupedCount, incomingProxies, outgoingProxies } = groupSnapshot;
 
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(d.label ?? "Grupo");
-
-  useEffect(() => {
-    setTitle(d.label ?? "Grupo");
-  }, [d.label]);
-
-  const incomingProxies = useMemo(() => {
-    const list: { hid: string; dtype: FoldderHandleDataType; top: number }[] = [];
-    let y = 10;
-    for (const e of edges) {
-      if (e.target !== id || !e.targetHandle?.startsWith("g_in_")) continue;
-      const p = parseCanvasGroupInHandle(e.targetHandle);
-      if (!p) continue;
-      const inner = allNodes.find((n) => n.id === p.memberId);
-      const rt = resolveHandleDataType(inner?.type as string, "in", p.handleId);
-      list.push({
-        hid: e.targetHandle!,
-        dtype: foldderTypeFromRegistry(rt),
-        top: y,
-      });
-      y += 22;
-    }
-    return list;
-  }, [edges, id, allNodes]);
-
-  const outgoingProxies = useMemo(() => {
-    const list: { hid: string; dtype: FoldderHandleDataType; top: number }[] = [];
-    let y = 10;
-    for (const e of edges) {
-      if (e.source !== id || !e.sourceHandle?.startsWith("g_out_")) continue;
-      const p = parseCanvasGroupOutHandle(e.sourceHandle);
-      if (!p) continue;
-      const inner = allNodes.find((n) => n.id === p.memberId);
-      const rt = resolveHandleDataType(inner?.type as string, "out", p.handleId);
-      list.push({
-        hid: e.sourceHandle!,
-        dtype: foldderTypeFromRegistry(rt),
-        top: y,
-      });
-      y += 22;
-    }
-    return list;
-  }, [edges, id, allNodes]);
+  const displayTitle = editing ? title : d.label ?? "Grupo";
 
   useEffect(() => {
     if (collapsed) {
@@ -123,8 +177,10 @@ export const CanvasGroupNode = memo(function CanvasGroupNode({ id, data, selecte
     const trimmed = title.trim().slice(0, 80) || "Grupo";
     setTitle(trimmed);
     setEditing(false);
-    setNodes((nds: any[]) =>
-      nds.map((n: any) => (n.id === id ? { ...n, data: { ...n.data, label: trimmed } } : n))
+    setNodes((nds: Node[]) =>
+      nds.map((node) =>
+        node.id === id ? { ...node, data: { ...(node.data as Record<string, unknown>), label: trimmed } } : node,
+      )
     );
   }, [id, setNodes, title]);
 
@@ -137,8 +193,8 @@ export const CanvasGroupNode = memo(function CanvasGroupNode({ id, data, selecte
       ? applyCanvasGroupExpand(id, n, e)
       : applyCanvasGroupCollapse(id, n, e);
     if (!next) return;
-    setNodes(next.nodes as any);
-    setEdges(next.edges as any);
+    setNodes(next.nodes as Node[]);
+    setEdges(next.edges as Edge[]);
     queueMicrotask(() => updateNodeInternals(String(id)));
     if (isCollapsed) {
       setTimeout(() => {
@@ -146,7 +202,7 @@ export const CanvasGroupNode = memo(function CanvasGroupNode({ id, data, selecte
         const memberIdsNow = nds.filter((node) => node.parentId === id).map((node) => node.id);
         const fitTargets = [{ id }, ...memberIdsNow.map((mid) => ({ id: mid }))];
         void fitView({
-          nodes: fitTargets as any,
+          nodes: fitTargets,
           padding: 0.8,
           duration: 560,
           interpolate: "smooth",
@@ -195,10 +251,11 @@ export const CanvasGroupNode = memo(function CanvasGroupNode({ id, data, selecte
                 title="Arrastra para mover el grupo · doble clic para editar el título"
                 onDoubleClick={(e) => {
                   e.stopPropagation();
+                  setTitle(d.label ?? "Grupo");
                   setEditing(true);
                 }}
               >
-                {title}
+                {displayTitle}
               </button>
             )}
           </div>
@@ -293,10 +350,11 @@ export const CanvasGroupNode = memo(function CanvasGroupNode({ id, data, selecte
               title="Arrastra para mover el grupo · doble clic para editar el título"
               onDoubleClick={(e) => {
                 e.stopPropagation();
+                setTitle(d.label ?? "Grupo");
                 setEditing(true);
               }}
             >
-              {title}
+              {displayTitle}
             </button>
           )}
         </div>

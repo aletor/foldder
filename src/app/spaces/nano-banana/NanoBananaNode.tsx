@@ -39,7 +39,10 @@ import { takePendingNanoStudioOpenFromPhotoRoom } from "../photo-room/photo-room
 import { takePendingNanoStudioOpenFromCine } from "../cine/cine-nano-open-pending";
 import type { CineImageStudioResult, CineImageStudioSession } from "../cine-types";
 import { useRegisterAssistantNodeRun } from "../use-assistant-node-run";
-import { FOLDDER_CANVAS_PERFORMANCE_MODE_EVENT } from "../performance-events";
+import { nodeFrameFromSnapshot, selectNodeFrameSnapshot } from "../react-flow-selectors";
+import { useCanvasPerformanceModeRef } from "../use-canvas-performance-mode";
+import { useFoldderRenderMetric } from "../use-performance-metrics";
+import { useNodeViewportVisibility } from "../use-node-viewport-visibility";
 
 interface BaseNodeData {
   value?: string;
@@ -51,48 +54,6 @@ interface BaseNodeData {
   loading?: boolean;
   error?: boolean;
   uploadError?: string;
-}
-
-type NodeFrameSnapshot = {
-  width?: number;
-  height?: number;
-  measuredWidth?: number;
-  measuredHeight?: number;
-  styleWidth?: string | number;
-  styleHeight?: string | number;
-};
-
-const EMPTY_NODE_FRAME: NodeFrameSnapshot = {};
-
-function selectNodeFrameSnapshot(state: ReactFlowState<Node, Edge>, nodeId: string): NodeFrameSnapshot {
-  const node = state.nodeLookup.get(nodeId);
-  if (!node) return EMPTY_NODE_FRAME;
-  const style = node.style as { width?: string | number; height?: string | number } | undefined;
-  return {
-    width: typeof node.width === "number" ? node.width : undefined,
-    height: typeof node.height === "number" ? node.height : undefined,
-    measuredWidth: typeof node.measured?.width === "number" ? node.measured.width : undefined,
-    measuredHeight: typeof node.measured?.height === "number" ? node.measured.height : undefined,
-    styleWidth: style?.width,
-    styleHeight: style?.height,
-  };
-}
-
-function nodeFrameFromSnapshot(
-  snapshot: NodeFrameSnapshot,
-): Pick<Node, "width" | "height" | "measured" | "style"> | undefined {
-  return {
-    width: snapshot.width,
-    height: snapshot.height,
-    measured: {
-      width: snapshot.measuredWidth,
-      height: snapshot.measuredHeight,
-    },
-    style: {
-      width: snapshot.styleWidth,
-      height: snapshot.styleHeight,
-    },
-  };
 }
 
 /** Snapshot current output into _assetVersions for version history. */
@@ -2202,6 +2163,7 @@ NanoBananaStudio.displayName = 'NanoBananaStudio';
 
 
 export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected }: NodeProps) {
+  useFoldderRenderMetric("NanoBananaNode", id);
   const nodeData = data as BaseNodeData & {
     aspect_ratio?: string;
     resolution?: string;
@@ -2254,7 +2216,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   );
   const frameRef = useRef<HTMLDivElement | null>(null);
   const previewRef = useRef<HTMLDivElement | null>(null);
-  const canvasPerformanceModeRef = useRef(false);
+  const nodeMediaVisible = useNodeViewportVisibility(id, 900);
   /** Al abrir Studio desde PhotoRoom «Modificar imagen con IA»: id del nodo PhotoRoom para fitView + reabrir su Studio. */
   const photoRoomReturnTargetRef = useRef<string | null>(null);
   const cineReturnSessionRef = useRef<CineImageStudioSession | null>(null);
@@ -2266,6 +2228,11 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   const [nanoStudioTopBarCloseMode, setNanoStudioTopBarCloseMode] = useState<'default' | 'returnPhotoRoom' | 'returnCine'>('default');
 
   const updateNodeInternals = useUpdateNodeInternals();
+  const canvasPerformanceModeRef = useCanvasPerformanceModeRef(
+    useCallback((active: boolean) => {
+      if (!active) requestAnimationFrame(() => updateNodeInternals(id));
+    }, [id, updateNodeInternals]),
+  );
   const brainCanvasCtx = useProjectBrainCanvas();
   const brainTelemetry = useBrainNodeTelemetry({ canvasNodeId: id, nodeType: "IMAGE_GENERATOR" });
   const [brainImageDiag, setBrainImageDiag] = useState<BrainImageGeneratorPromptDiagnostics | null>(null);
@@ -2312,18 +2279,6 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
       requestAnimationFrame(run);
     });
     window.setTimeout(run, 140);
-  }, [id, updateNodeInternals]);
-
-  useEffect(() => {
-    const handlePerformanceMode = (event: Event) => {
-      const active = Boolean((event as CustomEvent<{ active?: boolean }>).detail?.active);
-      canvasPerformanceModeRef.current = active;
-      if (!active) requestAnimationFrame(() => updateNodeInternals(id));
-    };
-    window.addEventListener(FOLDDER_CANVAS_PERFORMANCE_MODE_EVENT, handlePerformanceMode);
-    return () => {
-      window.removeEventListener(FOLDDER_CANVAS_PERFORMANCE_MODE_EVENT, handlePerformanceMode);
-    };
   }, [id, updateNodeInternals]);
 
   useEffect(() => {
@@ -2645,6 +2600,8 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
               value: out,
               type: 'image',
               ...(typeof json.key === 'string' ? { s3Key: json.key } : {}),
+              generatedByAi: true,
+              generatedByAiSource: "gemini-image-generator",
               generationHistory: h,
               _assetVersions: versions,
             },
@@ -2815,7 +2772,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
       >
 
         {/* OUTPUT image — preview ajustado al marco del nodo */}
-        {outputImage ? (
+        {outputImage && nodeMediaVisible ? (
           <>
             <img
               src={outputImage}
@@ -2840,9 +2797,17 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
               {modelInfo.label} · {nbResLabel} · {nodeData.aspect_ratio || '16:9'}
             </span>
           </>
+        ) : outputImage ? (
+          <div className="w-full h-full flex flex-col items-center justify-center gap-2"
+               style={{ background: 'rgba(0,0,0,0.04)' }}>
+            <ImageIcon size={28} className="text-zinc-400/50" />
+            <span className="text-[7px] font-black uppercase tracking-widest text-zinc-400/60 text-center leading-tight">
+              Preview pausada<br/>fuera de viewport
+            </span>
+          </div>
         ) : (
           /* No output yet — show input image at full opacity as reference preview */
-          refImgPreview ? (
+          refImgPreview && nodeMediaVisible ? (
             <>
               <img src={refImgPreview} alt="Input" className="max-h-full max-w-full object-contain" />
               <div className="absolute bottom-0 left-0 right-0 flex items-center px-2 py-1 z-[12]"
@@ -2865,7 +2830,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
         <FoldderStudioModeCenterButton onClick={openNanoStudioNormal} />
 
         {/* INPUT image badge — bottom-left corner overlay (always visible when connected) */}
-        {refImgPreview && outputImage && (
+        {refImgPreview && outputImage && nodeMediaVisible && (
           <div className="absolute bottom-2 left-2 rounded overflow-hidden border-2 border-white/60 shadow-lg"
                style={{ width: 56, height: 40 }}>
             <img src={refImgPreview} alt="ref" className="w-full h-full object-cover" />
@@ -3021,7 +2986,13 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
               setResult(url);
               setNodes((nds) => nds.map((n) => {
                 if (n.id !== id) return n;
-                const data: Record<string, unknown> = { ...n.data, value: url, type: 'image' };
+                const data: Record<string, unknown> = {
+                  ...n.data,
+                  value: url,
+                  type: 'image',
+                  generatedByAi: true,
+                  generatedByAiSource: "gemini-image-generator:studio",
+                };
                 if (s3Key) data.s3Key = s3Key;
                 else delete data.s3Key;
                 return { ...n, data };

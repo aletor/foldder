@@ -1,7 +1,8 @@
 "use client";
 
 import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
-import { NodeProps, useEdges, useNodes, useReactFlow } from "@xyflow/react";
+import { NodeProps, useReactFlow, useStore, type Edge, type Node, type ReactFlowState } from "@xyflow/react";
+import { shallow } from "zustand/shallow";
 import { Film } from "lucide-react";
 import { defaultDataForCanvasDropNode } from "@/lib/canvas-connect-end-drop";
 import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
@@ -41,6 +42,36 @@ import {
   dispatchOpenNanoStudioFromCine,
   registerPendingNanoStudioOpenFromCine,
 } from "./cine-nano-open-pending";
+import { useFoldderRenderMetric } from "../use-performance-metrics";
+
+type CineInputSnapshot = {
+  sourceScriptText: string;
+  sourceScriptNodeId?: string;
+  brainConnected: boolean;
+};
+
+function selectCineInputSnapshot(state: ReactFlowState<Node, Edge>, nodeId: string): CineInputSnapshot {
+  const nodeLookup = state.nodeLookup as unknown as ReadonlyMap<string, Node>;
+  let sourceScriptNode: Node | undefined;
+  let brainConnected = false;
+
+  for (const edge of state.edges) {
+    if (edge.target !== nodeId) continue;
+    if (!sourceScriptNode && (edge.targetHandle === "script" || edge.targetHandle === "prompt" || edge.targetHandle === "text")) {
+      sourceScriptNode = nodeLookup.get(edge.source);
+    }
+    if (!brainConnected && (edge.targetHandle === "brain" || nodeLookup.get(edge.source)?.type === "projectBrain")) {
+      brainConnected = true;
+    }
+    if (sourceScriptNode && brainConnected) break;
+  }
+
+  return {
+    sourceScriptText: textFromStudioSourceNode(sourceScriptNode),
+    sourceScriptNodeId: sourceScriptNode?.id,
+    brainConnected,
+  };
+}
 
 type CineCanvasPreviewImage = {
   src: string;
@@ -144,10 +175,13 @@ const CINE_NODE_HANDLES: StudioCanvasNodeHandleSpec[] = [
 ];
 
 export const CineNode = memo(function CineNode({ id, data, selected }: NodeProps) {
+  useFoldderRenderMetric("CineNode", id);
   const nodeData = normalizeCineData(data);
   const { setNodes, getNodes, fitView } = useReactFlow();
-  const nodes = useNodes();
-  const edges = useEdges();
+  const cineInputSnapshot = useStore(
+    useCallback((state: ReactFlowState<Node, Edge>) => selectCineInputSnapshot(state, id), [id]),
+    shallow,
+  );
   const [studioReturn, setStudioReturn] = useState<{
     tab?: "direction" | "script" | "cast" | "backgrounds" | "storyboard" | "output";
     sceneId?: string;
@@ -157,21 +191,8 @@ export const CineNode = memo(function CineNode({ id, data, selected }: NodeProps
     nodeType: "cine",
   });
 
-  const incomingEdges = useMemo(() => edges.filter((edge) => edge.target === id), [edges, id]);
-  const sourceScriptEdge = useMemo(
-    () => incomingEdges.find((edge) => edge.targetHandle === "script" || edge.targetHandle === "prompt" || edge.targetHandle === "text"),
-    [incomingEdges],
-  );
-  const brainEdge = useMemo(
-    () => incomingEdges.find((edge) => edge.targetHandle === "brain" || nodes.find((node) => node.id === edge.source)?.type === "projectBrain"),
-    [incomingEdges, nodes],
-  );
-  const sourceScriptNode = useMemo(
-    () => nodes.find((node) => node.id === sourceScriptEdge?.source),
-    [nodes, sourceScriptEdge?.source],
-  );
-  const sourceScriptText = useMemo(() => textFromStudioSourceNode(sourceScriptNode), [sourceScriptNode]);
-  const brainConnected = Boolean(brainEdge);
+  const sourceScriptText = cineInputSnapshot.sourceScriptText;
+  const brainConnected = cineInputSnapshot.brainConnected;
   const framesPrepared = useMemo(
     () => nodeData.scenes.reduce((count, scene) => count + [scene.frames.single, scene.frames.start, scene.frames.end].filter(Boolean).length, 0),
     [nodeData.scenes],
@@ -425,7 +446,7 @@ export const CineNode = memo(function CineNode({ id, data, selected }: NodeProps
           onClose={() => closeStudio()}
           brainConnected={brainConnected}
           sourceScriptText={sourceScriptText}
-          sourceScriptNodeId={sourceScriptNode?.id}
+          sourceScriptNodeId={cineInputSnapshot.sourceScriptNodeId}
           initialTab={studioReturn?.tab}
           initialSceneId={studioReturn?.sceneId}
           onOpenImageStudio={openImageStudioFromCine}

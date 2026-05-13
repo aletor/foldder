@@ -34,50 +34,13 @@ import {
   clearLiveStudioNodeData,
   setLiveStudioNodeData,
 } from "../studio-live-documents";
-import { FOLDDER_CANVAS_PERFORMANCE_MODE_EVENT } from "../performance-events";
+import { nodeFrameFromSnapshot, selectNodeFrameSnapshot } from "../react-flow-selectors";
+import { useCanvasPerformanceModeRef } from "../use-canvas-performance-mode";
+import { useFoldderRenderMetric } from "../use-performance-metrics";
+import { useNodeViewportVisibility } from "../use-node-viewport-visibility";
 
 const DESIGNER_NODE_MAX_WIDTH = 960;
 const DESIGNER_NODE_MAX_HEIGHT = 2200;
-
-type NodeFrameSnapshot = {
-  width?: number;
-  height?: number;
-  measuredWidth?: number;
-  measuredHeight?: number;
-  styleWidth?: string | number;
-  styleHeight?: string | number;
-};
-
-const EMPTY_NODE_FRAME: NodeFrameSnapshot = {};
-
-function selectNodeFrameSnapshot(state: ReactFlowState<Node, Edge>, nodeId: string): NodeFrameSnapshot {
-  const node = state.nodeLookup.get(nodeId);
-  if (!node) return EMPTY_NODE_FRAME;
-  const style = node.style as { width?: string | number; height?: string | number } | undefined;
-  return {
-    width: typeof node.width === "number" ? node.width : undefined,
-    height: typeof node.height === "number" ? node.height : undefined,
-    measuredWidth: typeof node.measured?.width === "number" ? node.measured.width : undefined,
-    measuredHeight: typeof node.measured?.height === "number" ? node.measured.height : undefined,
-    styleWidth: style?.width,
-    styleHeight: style?.height,
-  };
-}
-
-function nodeFrameFromSnapshot(snapshot: NodeFrameSnapshot): Pick<Node, "width" | "height" | "measured" | "style"> {
-  return {
-    width: snapshot.width,
-    height: snapshot.height,
-    measured: {
-      width: snapshot.measuredWidth,
-      height: snapshot.measuredHeight,
-    },
-    style: {
-      width: snapshot.styleWidth,
-      height: snapshot.styleHeight,
-    },
-  };
-}
 
 const DESIGNER_NODE_HANDLES: StudioCanvasNodeHandleSpec[] = [
   { side: "left", top: "50%", style: { transform: "translateY(-50%)" }, type: "target", id: "brain", dataType: "brain", label: "Brain" },
@@ -127,6 +90,7 @@ function DesignerNodeResizer(props: React.ComponentProps<typeof NodeResizer>) {
 }
 
 export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
+  useFoldderRenderMetric("DesignerNode", id);
   const nodeData = data as DesignerNodeData;
   const { setNodes } = useReactFlow();
   const updateNodeInternals = useUpdateNodeInternals();
@@ -170,7 +134,12 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const currentNodeFrame = nodeFrameFromSnapshot(currentNodeFrameSnapshot);
   const frameRef = useRef<HTMLDivElement | null>(null);
   const previewRef = useRef<HTMLDivElement | null>(null);
-  const canvasPerformanceModeRef = useRef(false);
+  const nodeMediaVisible = useNodeViewportVisibility(id, 900);
+  const canvasPerformanceModeRef = useCanvasPerformanceModeRef(
+    useCallback((active: boolean) => {
+      if (!active) requestAnimationFrame(() => updateNodeInternals(id));
+    }, [id, updateNodeInternals]),
+  );
   const refreshHandleGeometry = useCallback(() => {
     if (canvasPerformanceModeRef.current) return;
     const run = () => updateNodeInternals(id);
@@ -179,18 +148,6 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
       requestAnimationFrame(run);
     });
     window.setTimeout(run, 140);
-  }, [id, updateNodeInternals]);
-
-  useEffect(() => {
-    const handlePerformanceMode = (event: Event) => {
-      const active = Boolean((event as CustomEvent<{ active?: boolean }>).detail?.active);
-      canvasPerformanceModeRef.current = active;
-      if (!active) requestAnimationFrame(() => updateNodeInternals(id));
-    };
-    window.addEventListener(FOLDDER_CANVAS_PERFORMANCE_MODE_EVENT, handlePerformanceMode);
-    return () => {
-      window.removeEventListener(FOLDDER_CANVAS_PERFORMANCE_MODE_EVENT, handlePerformanceMode);
-    };
   }, [id, updateNodeInternals]);
 
   useEffect(() => {
@@ -358,7 +315,7 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
         className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-b-[24px] bg-[#0a0a0a] group/out"
         style={{ minHeight: 120 }}
       >
-        {nodeData.value ? (
+        {nodeData.value && nodeMediaVisible ? (
           <img
             src={nodeData.value}
             alt="Designer preview — página 1"
@@ -377,6 +334,7 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
               objects={pages[0].objects}
               pageWidth={firstPageDims.width}
               pageHeight={firstPageDims.height}
+              renderImages={nodeMediaVisible}
             />
           </div>
         ) : (

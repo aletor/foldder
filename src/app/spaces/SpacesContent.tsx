@@ -117,7 +117,9 @@ import { compactProjectForSave } from "./compact-project-save";
 import { dispatchFoldderCanvasPerformanceMode, dispatchFoldderPerformanceMeasure } from "./performance-events";
 import { prepareProjectSavePayload } from "./project-save-worker-client";
 import { projectSaveFingerprint } from "./project-save-utils";
+import { buildProjectSaveManifest } from "./project-save-manifest";
 import { mergeLiveStudioNodeDataIntoNodes } from "./studio-live-documents";
+import { useFoldderRenderMetric } from "./use-performance-metrics";
 import {
   materializeProjectSpacesMediaForSave,
   type ProjectMediaUploadCache,
@@ -398,6 +400,7 @@ function normalizeNotesNodeForRuntime<T extends Node>(node: T): T {
 }
 
 export function SpacesContent() {
+  useFoldderRenderMetric("SpacesContent");
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const router = useRouter();
   const { data: session, status: sessionStatus } = useSession();
@@ -413,7 +416,9 @@ export function SpacesContent() {
   const [canvasPerformanceMode, setCanvasPerformanceMode] = useState(false);
   const canvasPerformanceModeRef = useRef(false);
   const canvasPerformanceReleaseTimerRef = useRef<number | null>(null);
+  const canvasInteractionStartedAtRef = useRef<number | null>(null);
   const pendingProjectSaveAfterInteractionRef = useRef(false);
+  const pendingProjectSaveAfterInFlightRef = useRef(false);
   const nodeDataSignatureTokensRef = useRef(new WeakMap<object, number>());
   const nodeDataSignatureCounterRef = useRef(0);
   const { screenToFlowPosition, setViewport, fitView, getViewport } = useReactFlow();
@@ -1379,7 +1384,11 @@ export function SpacesContent() {
     projectSaveDebounceTimerRef.current = window.setTimeout(() => {
       projectSaveDebounceTimerRef.current = null;
       const g = autosaveGateRef.current;
-      if (g.openLoad || g.openNew || g.deleting || isSavingRef.current) return;
+      if (g.openLoad || g.openNew || g.deleting) return;
+      if (isSavingRef.current) {
+        pendingProjectSaveAfterInFlightRef.current = true;
+        return;
+      }
       if (canvasPerformanceModeRef.current) {
         pendingProjectSaveAfterInteractionRef.current = true;
         return;
@@ -1419,6 +1428,7 @@ export function SpacesContent() {
     }
     if (canvasPerformanceModeRef.current) return;
     canvasPerformanceModeRef.current = true;
+    canvasInteractionStartedAtRef.current = performance.now();
     setCanvasPerformanceMode(true);
     dispatchFoldderCanvasPerformanceMode(true);
   }, []);
@@ -1436,8 +1446,16 @@ export function SpacesContent() {
     canvasPerformanceReleaseTimerRef.current = window.setTimeout(() => {
       canvasPerformanceReleaseTimerRef.current = null;
       canvasPerformanceModeRef.current = false;
+      const startedAt = canvasInteractionStartedAtRef.current;
+      canvasInteractionStartedAtRef.current = null;
       setCanvasPerformanceMode(false);
       dispatchFoldderCanvasPerformanceMode(false);
+      if (startedAt !== null) {
+        dispatchFoldderPerformanceMeasure({
+          name: "canvas.interaction",
+          durationMs: performance.now() - startedAt,
+        });
+      }
       if (pendingProjectSaveAfterInteractionRef.current) {
         pendingProjectSaveAfterInteractionRef.current = false;
         scheduleProjectSave();
@@ -3486,6 +3504,15 @@ export function SpacesContent() {
         metadata,
         reconcileProjectFilesFromNodes(metadata, sanitizedGraph.nodes as Node[]),
       );
+      const saveManifest = buildProjectSaveManifest(spacesReadyForSave as Record<string, unknown>, {
+        uploaded: materializedMedia.uploaded,
+        reused: materializedMedia.reused,
+        bytes: materializedMedia.projectMediaBytes,
+      });
+      const metadataWithSaveManifest = {
+        ...metadataToSave,
+        saveManifest,
+      };
 
       const projectFingerprintInput = {
         id: activeProjectId,
@@ -3493,7 +3520,7 @@ export function SpacesContent() {
         rootSpaceId: 'root',
         spaces: spacesReadyForSave,
         metadata: {
-          ...metadataToSave,
+          ...metadataWithSaveManifest,
           ui: uiSnapshot,
         },
       };
@@ -3505,7 +3532,7 @@ export function SpacesContent() {
         rootSpaceId: 'root',
         spaces: spacesReadyForSave,
         metadata: {
-          ...metadataToSave,
+          ...metadataWithSaveManifest,
           ui: uiSnapshot,
           savedAt: new Date().toISOString(),
         },
@@ -3563,6 +3590,7 @@ export function SpacesContent() {
       }
 
       setSaveHealth({ state: "saving", message: "Saving project...", at: Date.now() });
+      const requestStartedAt = performance.now();
       const res = await fetch('/api/spaces', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...devBypassHeaders },
@@ -3570,6 +3598,11 @@ export function SpacesContent() {
       });
       
       const savedProject = await readJsonWithHttpError<SavedProjectDetail>(res, 'POST /api/spaces (save)');
+      dispatchFoldderPerformanceMeasure({
+        name: "save.request",
+        durationMs: performance.now() - requestStartedAt,
+        bytes: saveBytes,
+      });
       if (!savedProject || typeof savedProject !== 'object' || !savedProject.id) {
         return false;
       }
@@ -3642,6 +3675,12 @@ export function SpacesContent() {
       return false;
     } finally {
       setIsSaving(false);
+      if (pendingProjectSaveAfterInFlightRef.current) {
+        pendingProjectSaveAfterInFlightRef.current = false;
+        if (typeof window !== "undefined") {
+          window.setTimeout(() => scheduleProjectSave(), 120);
+        }
+      }
     }
   };
 

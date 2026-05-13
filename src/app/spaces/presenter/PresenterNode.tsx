@@ -2,7 +2,8 @@
 
 import React, { memo, useCallback, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { NodeResizer, Position, useEdges, useNodes, useReactFlow, type NodeProps } from "@xyflow/react";
+import { NodeResizer, Position, useReactFlow, useStore, type Edge, type Node, type NodeProps, type ReactFlowState } from "@xyflow/react";
+import { shallow } from "zustand/shallow";
 import { Presentation } from "lucide-react";
 import { FOLDDER_FIT_VIEW_EASE } from "@/lib/fit-view-ease";
 import { FoldderDataHandle } from "../FoldderDataHandle";
@@ -13,6 +14,7 @@ import type { PresenterImageVideoPlacement } from "./presenter-image-video-types
 import { PresenterStudio } from "./PresenterStudio";
 import { FOLDDER_STANDARD_STUDIO_CLOSE_REQUEST_EVENT, type FoldderStudioEventDetail } from "../desktop-studio-events";
 import type { StandardStudioShellConfig } from "../StandardStudioShell";
+import { useFoldderRenderMetric } from "../use-performance-metrics";
 
 const PRESENTER_NODE_MAX_WIDTH = 960;
 const PRESENTER_NODE_MAX_HEIGHT = 2200;
@@ -29,25 +31,24 @@ function useDesignerDocumentPages(presenterId: string): {
   designerMissing: boolean;
   designerNodeId: string | null;
 } {
-  const edges = useEdges();
-  const nodes = useNodes();
-
-  return useMemo(() => {
-    const incoming = edges.filter(
-      (e) => e.target === presenterId && (e.targetHandle === "document" || e.targetHandle == null),
-    );
-    const edge = incoming[0];
-    if (!edge) {
-      return { pages: null, connected: false, designerMissing: false, designerNodeId: null };
-    }
-    const src = nodes.find((n) => n.id === edge.source);
-    if (!src || src.type !== "designer") {
-      return { pages: null, connected: true, designerMissing: true, designerNodeId: null };
-    }
-    const data = src.data as { pages?: DesignerPageState[] };
-    const pages = Array.isArray(data.pages) && data.pages.length > 0 ? data.pages : null;
-    return { pages, connected: true, designerMissing: false, designerNodeId: src.id };
-  }, [edges, nodes, presenterId]);
+  return useStore(
+    useCallback((state: ReactFlowState<Node, Edge>) => {
+      const edge = state.edges.find(
+        (item) => item.target === presenterId && (item.targetHandle === "document" || item.targetHandle == null),
+      );
+      if (!edge) {
+        return { pages: null, connected: false, designerMissing: false, designerNodeId: null };
+      }
+      const src = state.nodeLookup.get(edge.source);
+      if (!src || src.type !== "designer") {
+        return { pages: null, connected: true, designerMissing: true, designerNodeId: null };
+      }
+      const data = src.data as { pages?: DesignerPageState[] };
+      const pages = Array.isArray(data.pages) && data.pages.length > 0 ? data.pages : null;
+      return { pages, connected: true, designerMissing: false, designerNodeId: src.id };
+    }, [presenterId]),
+    shallow,
+  );
 }
 
 function PresenterNodeResizer(props: React.ComponentProps<typeof NodeResizer>) {
@@ -67,6 +68,7 @@ function PresenterNodeResizer(props: React.ComponentProps<typeof NodeResizer>) {
 }
 
 export const PresenterNode = memo(({ id, data, selected }: NodeProps<any>) => {
+  useFoldderRenderMetric("PresenterNode", id);
   const nodeData = data as PresenterNodeData;
   const { setNodes } = useReactFlow();
   const [studioOpen, setStudioOpen] = useState(false);

@@ -4,19 +4,22 @@ import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, 
 import {
   NodeResizer,
   Position,
-  useEdges,
   useNodeId,
-  useNodes,
   useReactFlow,
+  useStore,
   useUpdateNodeInternals,
+  type Edge,
+  type Node,
   type NodeProps,
+  type ReactFlowState,
 } from "@xyflow/react";
+import { shallow } from "zustand/shallow";
 import { Video } from "lucide-react";
 import { FOLDDER_FIT_VIEW_EASE } from "@/lib/fit-view-ease";
 import { FoldderDataHandle } from "./FoldderDataHandle";
 import { NodeIcon } from "./foldder-icons";
 import { resolveFoldderNodeState } from "./foldder-icons";
-import { resolvePromptValueFromEdgeSource } from "./canvas-group-logic";
+import { resolvePromptValueFromEdgeSourceMap } from "./canvas-group-logic";
 import { BeebleVfxStudio, type BeebleAlphaMode } from "./BeebleVfxStudio";
 import type { StandardStudioShellConfig } from "./StandardStudioShell";
 import {
@@ -33,6 +36,9 @@ import {
   resolveAspectLockedNodeFrame,
   resolveNodeChromeHeight,
 } from "./studio-node-aspect";
+import { nodeFrameFromSnapshot, selectNodeFrameSnapshot } from "./react-flow-selectors";
+import { useFoldderRenderMetric } from "./use-performance-metrics";
+import { useNodeViewportVisibility } from "./use-node-viewport-visibility";
 
 const NODE_RESIZE_END_FIT_PADDING = 0.8;
 const VFX_STUDIO_NODE_MAX_HEIGHT = 2200;
@@ -91,24 +97,71 @@ function migrateStoredPrompt(d: VfxGeneratorNodeData): string {
   return "";
 }
 
+const VFX_FLOW_SOURCE_VIDEO_VALUE = 0;
+const VFX_FLOW_REFERENCE_IMAGE_VALUE = 1;
+const VFX_FLOW_ALPHA_VALUE = 2;
+const VFX_FLOW_PROMPT_VALUE = 3;
+const VFX_FLOW_SOURCE_VIDEO_CONNECTED = 4;
+const VFX_FLOW_REFERENCE_CONNECTED = 5;
+const VFX_FLOW_ALPHA_CONNECTED = 6;
+const VFX_FLOW_PROMPT_CONNECTED = 7;
+
+function selectVfxFlowSnapshot(state: ReactFlowState<Node, Edge>, nodeId: string): string[] {
+  const result = new Array<string>(8).fill("");
+  const nodesById = state.nodeLookup as unknown as ReadonlyMap<string, Node>;
+
+  for (const edge of state.edges) {
+    if (edge.target !== nodeId) continue;
+    if (edge.targetHandle === "sourceVideo" && !result[VFX_FLOW_SOURCE_VIDEO_CONNECTED]) {
+      result[VFX_FLOW_SOURCE_VIDEO_CONNECTED] = "1";
+      result[VFX_FLOW_SOURCE_VIDEO_VALUE] = resolvePromptValueFromEdgeSourceMap(edge, nodesById);
+      continue;
+    }
+    if (edge.targetHandle === "referenceImage" && !result[VFX_FLOW_REFERENCE_CONNECTED]) {
+      result[VFX_FLOW_REFERENCE_CONNECTED] = "1";
+      result[VFX_FLOW_REFERENCE_IMAGE_VALUE] = resolvePromptValueFromEdgeSourceMap(edge, nodesById);
+      continue;
+    }
+    if (edge.targetHandle === "alphaMask" && !result[VFX_FLOW_ALPHA_CONNECTED]) {
+      result[VFX_FLOW_ALPHA_CONNECTED] = "1";
+      result[VFX_FLOW_ALPHA_VALUE] = resolvePromptValueFromEdgeSourceMap(edge, nodesById);
+      continue;
+    }
+    if ((edge.targetHandle === "prompt" || edge.targetHandle === "p0") && !result[VFX_FLOW_PROMPT_CONNECTED]) {
+      result[VFX_FLOW_PROMPT_CONNECTED] = "1";
+      result[VFX_FLOW_PROMPT_VALUE] = resolvePromptValueFromEdgeSourceMap(edge, nodesById);
+    }
+  }
+
+  return result;
+}
+
 function pushAssetVersion(data: Record<string, unknown>, url: string, source: string) {
   const prev = Array.isArray(data._assetVersions) ? data._assetVersions : [];
   return [...prev, { url, source, timestamp: Date.now() }];
 }
 
 export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<any>) => {
+  useFoldderRenderMetric("VfxGeneratorNode", id);
   const nodeData = data as VfxGeneratorNodeData;
   const { setNodes } = useReactFlow();
-  const edges = useEdges();
-  const nodes = useNodes();
   const updateNodeInternals = useUpdateNodeInternals();
   const [showStudio, setShowStudio] = useState(false);
   const [standardShell, setStandardShell] = useState<StandardStudioShellConfig | null>(null);
   const [isLaunching, setIsLaunching] = useState(false);
   const [historyJobs, setHistoryJobs] = useState<BeebleJob[]>([]);
-  const currentNode = nodes.find((node) => node.id === id);
+  const currentFrameSnapshot = useStore(
+    useCallback((state: ReactFlowState<Node, Edge>) => selectNodeFrameSnapshot(state, id), [id]),
+    shallow,
+  );
+  const flowSnapshot = useStore(
+    useCallback((state: ReactFlowState<Node, Edge>) => selectVfxFlowSnapshot(state, id), [id]),
+    shallow,
+  );
+  const currentNodeFrame = nodeFrameFromSnapshot(currentFrameSnapshot);
   const frameRef = useRef<HTMLDivElement | null>(null);
   const previewRef = useRef<HTMLDivElement | null>(null);
+  const nodeMediaVisible = useNodeViewportVisibility(id, 900);
   const [videoSize, setVideoSize] = useState<{ width: number; height: number } | null>(null);
 
   const updatePatch = useCallback(
@@ -145,50 +198,10 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<any>) =>
     };
   }, [id]);
 
-  const edgeVideo = useMemo(
-    () => edges.find((e) => e.target === id && e.targetHandle === "sourceVideo"),
-    [edges, id],
-  );
-  const edgeRefImg = useMemo(
-    () => edges.find((e) => e.target === id && e.targetHandle === "referenceImage"),
-    [edges, id],
-  );
-  const edgeAlpha = useMemo(
-    () => edges.find((e) => e.target === id && e.targetHandle === "alphaMask"),
-    [edges, id],
-  );
-  /** `prompt` es el handle actual; `p0` compatibilidad con grafos antiguos. */
-  const edgePrompt = useMemo(
-    () =>
-      edges.find(
-        (e) => e.target === id && (e.targetHandle === "prompt" || e.targetHandle === "p0"),
-      ),
-    [edges, id],
-  );
-
-  const videoFromGraph = useMemo(() => {
-    if (!edgeVideo) return "";
-    const v = resolvePromptValueFromEdgeSource(edgeVideo, nodes as any[]);
-    return typeof v === "string" && v.trim() ? v.trim() : "";
-  }, [edgeVideo, nodes]);
-
-  const refFromGraph = useMemo(() => {
-    if (!edgeRefImg) return "";
-    const v = resolvePromptValueFromEdgeSource(edgeRefImg, nodes as any[]);
-    return typeof v === "string" && v.trim() ? v.trim() : "";
-  }, [edgeRefImg, nodes]);
-
-  const alphaFromGraph = useMemo(() => {
-    if (!edgeAlpha) return "";
-    const v = resolvePromptValueFromEdgeSource(edgeAlpha, nodes as any[]);
-    return typeof v === "string" && v.trim() ? v.trim() : "";
-  }, [edgeAlpha, nodes]);
-
-  const promptFromGraph = useMemo(() => {
-    if (!edgePrompt) return "";
-    const t = resolvePromptValueFromEdgeSource(edgePrompt, nodes as any[]);
-    return typeof t === "string" ? t : "";
-  }, [edgePrompt, nodes]);
+  const videoFromGraph = (flowSnapshot[VFX_FLOW_SOURCE_VIDEO_VALUE] ?? "").trim();
+  const refFromGraph = (flowSnapshot[VFX_FLOW_REFERENCE_IMAGE_VALUE] ?? "").trim();
+  const alphaFromGraph = (flowSnapshot[VFX_FLOW_ALPHA_VALUE] ?? "").trim();
+  const promptFromGraph = flowSnapshot[VFX_FLOW_PROMPT_VALUE] ?? "";
 
   const storedPrompt = useMemo(() => migrateStoredPrompt(nodeData), [nodeData]);
 
@@ -198,7 +211,7 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<any>) =>
     [promptFromGraph, storedPrompt],
   );
 
-  const promptConnected = !!edgePrompt;
+  const promptConnected = flowSnapshot[VFX_FLOW_PROMPT_CONNECTED] === "1";
 
   const sourceVideoUri = videoFromGraph || (nodeData.sourceVideoUri ?? "").trim();
   const referenceImageUri = refFromGraph || (nodeData.referenceImageUri ?? "").trim();
@@ -324,6 +337,7 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<any>) =>
   const aspectVideoUrl = sourceVideoUri || displayVideo || "";
 
   useEffect(() => {
+    if (!nodeMediaVisible) return;
     if (!aspectVideoUrl) {
       setVideoSize(null);
       return;
@@ -339,13 +353,13 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<any>) =>
     return () => {
       cancelled = true;
     };
-  }, [aspectVideoUrl]);
+  }, [aspectVideoUrl, nodeMediaVisible]);
 
   useLayoutEffect(() => {
     if (!videoSize) return;
     const chromeHeight = resolveNodeChromeHeight(frameRef.current, previewRef.current);
     const nextFrame = resolveAspectLockedNodeFrame({
-      node: currentNode,
+      node: currentNodeFrame,
       contentWidth: videoSize.width,
       contentHeight: videoSize.height,
       minWidth: 300,
@@ -354,7 +368,7 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<any>) =>
       maxHeight: VFX_STUDIO_NODE_MAX_HEIGHT,
       chromeHeight,
     });
-    if (!nodeFrameNeedsSync(currentNode, nextFrame)) return;
+    if (!nodeFrameNeedsSync(currentNodeFrame, nextFrame)) return;
     setNodes((nds) =>
       nds.map((node) =>
         node.id === id
@@ -369,10 +383,12 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<any>) =>
     );
     requestAnimationFrame(() => updateNodeInternals(id));
   }, [
-    currentNode?.width,
-    currentNode?.height,
-    currentNode?.measured?.width,
-    currentNode?.measured?.height,
+    currentFrameSnapshot.width,
+    currentFrameSnapshot.height,
+    currentFrameSnapshot.measuredWidth,
+    currentFrameSnapshot.measuredHeight,
+    currentFrameSnapshot.styleWidth,
+    currentFrameSnapshot.styleHeight,
     id,
     setNodes,
     updateNodeInternals,
@@ -435,7 +451,7 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<any>) =>
         className="relative flex min-h-0 w-full flex-1 items-center justify-center overflow-hidden rounded-b-[24px] bg-[#0a0a0f] group/out"
         style={{ minHeight: 160 }}
       >
-        {displayVideo ? (
+        {displayVideo && nodeMediaVisible ? (
           <video
             src={displayVideo}
             className="max-h-full max-w-full object-contain"
@@ -444,6 +460,13 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<any>) =>
             muted
             playsInline
           />
+        ) : displayVideo ? (
+          <div className="flex flex-col items-center justify-center gap-2 px-4 py-6 opacity-35">
+            <Video size={30} className="text-zinc-500" />
+            <span className="text-center text-[8px] font-black uppercase tracking-widest text-zinc-600">
+              Preview pausada fuera de viewport
+            </span>
+          </div>
         ) : (
           <div className="flex flex-col items-center justify-center gap-2 px-4 py-6 opacity-35">
             <Video size={30} className="text-zinc-500" />
@@ -491,11 +514,11 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<any>) =>
           updatePatch={updatePatch}
           nodeLabel={typeof nodeData.label === "string" ? nodeData.label : ""}
           sourceVideoUri={sourceVideoUri}
-          sourceVideoConnected={!!edgeVideo && !!videoFromGraph}
+          sourceVideoConnected={flowSnapshot[VFX_FLOW_SOURCE_VIDEO_CONNECTED] === "1" && !!videoFromGraph}
           referenceImageUri={referenceImageUri}
-          referenceConnected={!!edgeRefImg && !!refFromGraph}
+          referenceConnected={flowSnapshot[VFX_FLOW_REFERENCE_CONNECTED] === "1" && !!refFromGraph}
           alphaUri={alphaUri}
-          alphaConnected={!!edgeAlpha && !!alphaFromGraph}
+          alphaConnected={flowSnapshot[VFX_FLOW_ALPHA_CONNECTED] === "1" && !!alphaFromGraph}
           alphaMode={alphaMode}
           maxResolution={maxResolution}
           prompt={storedPrompt}

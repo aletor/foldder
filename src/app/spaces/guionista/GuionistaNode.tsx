@@ -1,7 +1,8 @@
 "use client";
 
 import React, { memo, useCallback, useMemo, useState, type ComponentProps } from "react";
-import { NodeProps, useEdges, useNodes, useReactFlow } from "@xyflow/react";
+import { NodeProps, useReactFlow, useStore, type Edge, type Node, type ReactFlowState } from "@xyflow/react";
+import { shallow } from "zustand/shallow";
 import { BookOpen, ChevronRight, FileText, Film, LayoutTemplate, PenLine, RefreshCw, Sparkles } from "lucide-react";
 import { GuionistaStudio } from "../GuionistaStudio";
 import { useProjectAssetsCanvas } from "../project-assets-canvas-context";
@@ -24,6 +25,7 @@ import {
 } from "../studio-node/studio-canvas-node";
 import { useStudioNodeController } from "../studio-node/studio-node-architecture";
 import { textFromStudioSourceNode } from "../studio-node/source-node-text";
+import { useFoldderRenderMetric } from "../use-performance-metrics";
 
 const GUIONISTA_NODE_HANDLES: StudioCanvasNodeHandleSpec[] = [
   { side: "left", top: "30%", type: "target", id: "prompt", dataType: "prompt", label: "Prompt" },
@@ -214,11 +216,36 @@ function guionistaTitleAndPreview(args: {
   };
 }
 
+function selectGuionistaInputSnapshot(
+  state: ReactFlowState<Node, Edge>,
+  nodeId: string,
+): { brainConnected: boolean; initialBriefing: string } {
+  const nodeLookup = state.nodeLookup as unknown as ReadonlyMap<string, Node>;
+  const chunks: string[] = [];
+  let brainConnected = false;
+  for (const edge of state.edges) {
+    if (edge.target !== nodeId) continue;
+    const source = nodeLookup.get(edge.source);
+    if (!brainConnected && (source?.type === "projectBrain" || edge.targetHandle === "brain")) {
+      brainConnected = true;
+    }
+    const text = textFromStudioSourceNode(source);
+    if (text) chunks.push(text);
+  }
+  return {
+    brainConnected,
+    initialBriefing: chunks.join("\n\n"),
+  };
+}
+
 export const GuionistaNode = memo(function GuionistaNode({ id, data, selected }: NodeProps) {
+  useFoldderRenderMetric("GuionistaNode", id);
   const nodeData = normalizeGuionistaData(data);
   const { setNodes } = useReactFlow();
-  const nodes = useNodes();
-  const edges = useEdges();
+  const inputSnapshot = useStore(
+    useCallback((state: ReactFlowState<Node, Edge>) => selectGuionistaInputSnapshot(state, id), [id]),
+    shallow,
+  );
   const assetsCtx = useProjectAssetsCanvas();
   const brainCtx = useProjectBrainCanvas();
   const [openAssetId, setOpenAssetId] = useState<string | null>(null);
@@ -272,17 +299,8 @@ export const GuionistaNode = memo(function GuionistaNode({ id, data, selected }:
   }, [activeTextAsset, assetsCtx?.generatedTextAssets?.items, sourceAssetIdForDerivatives]);
   const socialDerivatives = generatedDerivatives.filter((asset) => asset.type === "post" && asset.platform);
 
-  const incomingEdges = useMemo(() => edges.filter((edge) => edge.target === id), [edges, id]);
-  const brainConnected = useMemo(
-    () => incomingEdges.some((edge) => nodes.find((node) => node.id === edge.source)?.type === "projectBrain" || edge.targetHandle === "brain"),
-    [incomingEdges, nodes],
-  );
-  const initialBriefing = useMemo(() => {
-    const chunks = incomingEdges
-      .map((edge) => textFromStudioSourceNode(nodes.find((node) => node.id === edge.source)))
-      .filter(Boolean);
-    return chunks.join("\n\n");
-  }, [incomingEdges, nodes]);
+  const brainConnected = inputSnapshot.brainConnected;
+  const initialBriefing = inputSnapshot.initialBriefing;
   const brainHints = useMemo(
     () => brainConnected ? ["Tono del proyecto", "Contexto del proyecto", "Claims aprobados", "Frases a evitar", "Notas relevantes"] : [],
     [brainConnected],

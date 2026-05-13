@@ -55,10 +55,12 @@ export function DesignerPagePreview({
   objects,
   pageWidth,
   pageHeight,
+  renderImages = true,
 }: {
   objects: FreehandObject[];
   pageWidth: number;
   pageHeight: number;
+  renderImages?: boolean;
 }) {
   const pw = Math.max(32, pageWidth);
   const ph = Math.max(32, pageHeight);
@@ -83,7 +85,7 @@ export function DesignerPagePreview({
           );
           const ifc = rObj.imageFrameContent;
           const cid = `dpp-clip-${rObj.id}`;
-          if (ifc?.src) {
+          if (ifc?.src && renderImages) {
             return (
               <g key={o.id}>
                 <defs>
@@ -115,7 +117,7 @@ export function DesignerPagePreview({
 
         if (o.type === "image") {
           const im = o as FreehandObject & { src: string };
-          if (im.src) {
+          if (im.src && renderImages) {
             return (
               <image
                 key={o.id}

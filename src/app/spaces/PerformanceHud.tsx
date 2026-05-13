@@ -3,13 +3,18 @@
 import React, { useEffect, useState } from "react";
 import {
   FOLDDER_PERFORMANCE_MEASURE_EVENT,
+  FOLDDER_PERFORMANCE_RENDER_EVENT,
   type FoldderPerformanceMeasureDetail,
+  type FoldderPerformanceRenderDetail,
 } from "./performance-events";
 
 type PerfSample = {
   fps: number;
+  minFps: number;
+  avgFps: number;
   longTasks: number;
   lastMeasure: FoldderPerformanceMeasureDetail | null;
+  renderHotspots: Array<{ key: string; label: string; rpm: number }>;
 };
 
 function shouldShowPerformanceHud(): boolean {
@@ -22,8 +27,11 @@ export function PerformanceHud() {
   const [enabled, setEnabled] = useState(false);
   const [sample, setSample] = useState<PerfSample>({
     fps: 0,
+    minFps: 0,
+    avgFps: 0,
     longTasks: 0,
     lastMeasure: null,
+    renderHotspots: [],
   });
 
   useEffect(() => {
@@ -37,15 +45,31 @@ export function PerformanceHud() {
     let raf = 0;
     let frames = 0;
     let lastAt = performance.now();
+    const fpsWindow: number[] = [];
     let longTasks = 0;
     let lastMeasure: FoldderPerformanceMeasureDetail | null = null;
+    const renderTotals = new Map<string, { label: string; renders: number; intervalMs: number }>();
 
     const tick = (now: number) => {
       frames += 1;
       const elapsed = now - lastAt;
       if (elapsed >= 500) {
         const fps = Math.round((frames * 1000) / elapsed);
-        setSample({ fps, longTasks, lastMeasure });
+        fpsWindow.push(fps);
+        if (fpsWindow.length > 30) fpsWindow.shift();
+        const minFps = fpsWindow.length ? Math.min(...fpsWindow) : fps;
+        const avgFps = fpsWindow.length
+          ? Math.round(fpsWindow.reduce((sum, item) => sum + item, 0) / fpsWindow.length)
+          : fps;
+        const renderHotspots = Array.from(renderTotals.entries())
+          .map(([key, value]) => ({
+            key,
+            label: value.label,
+            rpm: Math.round((value.renders * 60000) / Math.max(1, value.intervalMs)),
+          }))
+          .sort((a, b) => b.rpm - a.rpm)
+          .slice(0, 5);
+        setSample({ fps, minFps, avgFps, longTasks, lastMeasure, renderHotspots });
         frames = 0;
         lastAt = now;
       }
@@ -69,12 +93,25 @@ export function PerformanceHud() {
       setSample((current) => ({ ...current, lastMeasure }));
     };
 
+    const onRender = (event: Event) => {
+      const detail = (event as CustomEvent<FoldderPerformanceRenderDetail>).detail;
+      const key = detail.id ? `${detail.name}:${detail.id}` : detail.name;
+      const prev = renderTotals.get(key);
+      renderTotals.set(key, {
+        label: detail.id ? `${detail.name} · ${detail.id.slice(0, 8)}` : detail.name,
+        renders: (prev?.renders ?? 0) + detail.renders,
+        intervalMs: (prev?.intervalMs ?? 0) + detail.intervalMs,
+      });
+    };
+
     window.addEventListener(FOLDDER_PERFORMANCE_MEASURE_EVENT, onMeasure);
+    window.addEventListener(FOLDDER_PERFORMANCE_RENDER_EVENT, onRender);
     raf = requestAnimationFrame(tick);
     return () => {
       cancelAnimationFrame(raf);
       observer?.disconnect();
       window.removeEventListener(FOLDDER_PERFORMANCE_MEASURE_EVENT, onMeasure);
+      window.removeEventListener(FOLDDER_PERFORMANCE_RENDER_EVENT, onRender);
     };
   }, [enabled]);
 
@@ -90,9 +127,26 @@ export function PerformanceHud() {
         </span>
       </div>
       <div className="flex items-center justify-between gap-5">
+        <span className="text-white/55">FPS min / avg</span>
+        <span>
+          {sample.minFps || "--"} / {sample.avgFps || "--"}
+        </span>
+      </div>
+      <div className="flex items-center justify-between gap-5">
         <span className="text-white/55">Long tasks</span>
         <span>{sample.longTasks}</span>
       </div>
+      {sample.renderHotspots.length > 0 && (
+        <div className="mt-1 border-t border-white/10 pt-1">
+          <div className="text-white/55">Render hotspots/min</div>
+          {sample.renderHotspots.map((item) => (
+            <div key={item.key} className="flex items-center justify-between gap-4 text-white/70">
+              <span className="max-w-[130px] truncate">{item.label}</span>
+              <span>{item.rpm}</span>
+            </div>
+          ))}
+        </div>
+      )}
       {measure && (
         <div className="mt-1 border-t border-white/10 pt-1 text-white/70">
           <div>{measure.name}</div>
