@@ -254,6 +254,20 @@ function preserveBrainVisualCollageMetadata(
   };
 }
 
+function stripVolatileProjectMetadata(metadata: Record<string, unknown> | null | undefined): Record<string, unknown> {
+  if (!metadata || typeof metadata !== "object") return {};
+  const { savedAt: _savedAt, ...stable } = metadata;
+  return stable;
+}
+
+function projectMetadataEqual(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
+  return projectSaveFingerprint(stripVolatileProjectMetadata(a)) === projectSaveFingerprint(stripVolatileProjectMetadata(b));
+}
+
+function projectRecordEqual(a: unknown, b: unknown): boolean {
+  return projectSaveFingerprint(a) === projectSaveFingerprint(b);
+}
+
 function newLocalWorkspaceScopeId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
@@ -485,6 +499,10 @@ export function SpacesContent() {
   const [savedProjects, setSavedProjects] = useState<SavedProjectMeta[]>([]);
   const [spacesMap, setSpacesMap] = useState<Record<string, any>>({});
   const [metadata, setMetadata] = useState<any>({});
+  const brainAssetsFingerprint = useMemo(
+    () => projectSaveFingerprint(metadata?.assets ?? null),
+    [metadata?.assets],
+  );
   const metadataVersionRef = useRef(0);
   const metadataIdentityRef = useRef(metadata);
   if (metadataIdentityRef.current !== metadata) {
@@ -3500,8 +3518,9 @@ export function SpacesContent() {
         sidebarLockedCollapsed,
       };
 
+      const stableMetadata = stripVolatileProjectMetadata(metadata);
       const metadataToSave = setProjectFilesInMetadata(
-        metadata,
+        stableMetadata,
         reconcileProjectFilesFromNodes(metadata, sanitizedGraph.nodes as Node[]),
       );
       const saveManifest = buildProjectSaveManifest(spacesReadyForSave as Record<string, unknown>, {
@@ -3534,7 +3553,6 @@ export function SpacesContent() {
         metadata: {
           ...metadataWithSaveManifest,
           ui: uiSnapshot,
-          savedAt: new Date().toISOString(),
         },
       };
 
@@ -3634,11 +3652,20 @@ export function SpacesContent() {
         setCurrentName(savedProject.name);
         setSpacesMap(savedProject.spaces || spacesReadyForSave);
       } else {
-        setSpacesMap((savedProject.spaces || spacesReadyForSave) as Record<string, unknown>);
+        const nextSpacesMap = (savedProject.spaces || spacesReadyForSave) as Record<string, unknown>;
+        setSpacesMap((current: Record<string, unknown>) =>
+          projectRecordEqual(current, nextSpacesMap) ? current : nextSpacesMap,
+        );
       }
       if (metadataVersionRef.current === metadataVersionAtSaveStart) {
-        const serverMetadata = (savedProject.metadata || savedProjectFallback.metadata) as Record<string, unknown>;
-        setMetadata((current: Record<string, unknown>) => preserveBrainVisualCollageMetadata(serverMetadata, current));
+        const serverMetadata = stripVolatileProjectMetadata(
+          (savedProject.metadata || savedProjectFallback.metadata) as Record<string, unknown>,
+        );
+        setMetadata((current: Record<string, unknown>) => {
+          const currentStable = stripVolatileProjectMetadata(current);
+          const next = preserveBrainVisualCollageMetadata(serverMetadata, currentStable);
+          return projectMetadataEqual(currentStable, next) ? current : next;
+        });
         setVisualReferenceAnalysisDirty(false);
       } else {
         console.info(
@@ -3867,7 +3894,7 @@ export function SpacesContent() {
         skipIfUnchanged: true,
       });
     }, 5000);
-  }, [metadata.assets, isAuthenticated, activeProjectId]);
+  }, [brainAssetsFingerprint, isAuthenticated, activeProjectId]);
 
   useEffect(() => {
     return () => {
@@ -4042,7 +4069,7 @@ export function SpacesContent() {
       setActiveSpaceId(targetSpaceId);
       setCurrentName(project.name || projectMeta.name);
       setSpacesMap(spaces as Record<string, any>);
-      setMetadata(project.metadata || {});
+      setMetadata(stripVolatileProjectMetadata(project.metadata || {}));
       setVisualReferenceAnalysisDirty(false);
 
       const nav = ui?.navigationStack;
