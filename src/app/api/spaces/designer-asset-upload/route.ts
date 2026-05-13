@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
 import { recordApiUsage, resolveUsageUserEmailFromRequest } from "@/lib/api-usage";
-import { getPresignedUrl, uploadBufferToS3Key } from "@/lib/s3-utils";
-import { buildDesignerAssetObjectKey } from "@/lib/designer-asset-keys";
 import { normalizeUploadedImageForFoldder } from "@/lib/foldder-server-image-optimization";
+import {
+  buildUserDesignerAssetObjectKey,
+  requireSpacesAuthUser,
+  stableKnowledgeFileUrlFromKey,
+} from "@/lib/spaces-access-control";
+import { uploadBufferToS3Key } from "@/lib/s3-utils";
 
 export const runtime = "nodejs";
 
@@ -24,6 +28,9 @@ function contentTypeForExt(ext: string): string {
  */
 export async function POST(req: Request) {
   try {
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
+
     const usageUserEmail = await resolveUsageUserEmailFromRequest(req);
     const formData = await req.formData();
     const file = formData.get("file");
@@ -66,7 +73,13 @@ export async function POST(req: Request) {
 
     const space =
       typeof spaceId === "string" && spaceId.length > 0 ? spaceId : null;
-    const key = buildDesignerAssetObjectKey(space, assetId, variant, normalized.ext);
+    const key = buildUserDesignerAssetObjectKey({
+      assetId,
+      contentExt: normalized.ext,
+      spaceId: space,
+      userEmail: authState.user.email,
+      variant,
+    });
     await uploadBufferToS3Key(key, normalized.buffer, normalized.contentType);
     await recordApiUsage({
       provider: "aws",
@@ -85,7 +98,7 @@ export async function POST(req: Request) {
         originalBytes: normalized.originalBytes,
       },
     });
-    const url = await getPresignedUrl(key);
+    const url = stableKnowledgeFileUrlFromKey(key);
 
     return NextResponse.json({ url, s3Key: key, assetId, variant });
   } catch (e: unknown) {

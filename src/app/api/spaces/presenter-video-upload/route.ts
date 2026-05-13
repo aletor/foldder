@@ -6,6 +6,7 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { NextResponse } from "next/server";
 import { recordApiUsage, resolveUsageUserEmailFromRequest } from "@/lib/api-usage";
+import { requireSpacesAuthUser, spacesOwnerHash } from "@/lib/spaces-access-control";
 import { getPresignedUrl, uploadBufferToS3Key } from "@/lib/s3-utils";
 
 export const runtime = "nodejs";
@@ -60,6 +61,9 @@ export async function POST(req: Request) {
   let tmpIn: string | null = null;
   let tmpOut: string | null = null;
   try {
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
+
     const usageUserEmail = await resolveUsageUserEmailFromRequest(req);
     const form = await req.formData();
     const file = form.get("file");
@@ -96,7 +100,7 @@ export async function POST(req: Request) {
       outBuf = buf;
     }
 
-    const key = `spaces/presenter-videos/${id}.${ext}`;
+    const key = `spaces/presenter-videos/${spacesOwnerHash(authState.user.email)}/${id}.${ext}`;
     await uploadBufferToS3Key(key, outBuf, contentType);
     await recordApiUsage({
       provider: "aws",

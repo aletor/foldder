@@ -1403,7 +1403,7 @@ export function SpacesContent() {
     projectSaveDebounceTimerRef.current = window.setTimeout(() => {
       projectSaveDebounceTimerRef.current = null;
       const g = autosaveGateRef.current;
-      if (g.openLoad || g.openNew || g.deleting) return;
+      if (!g.authenticated || !g.hasProject || g.openLoad || g.openNew || g.deleting) return;
       if (isSavingRef.current) {
         pendingProjectSaveAfterInFlightRef.current = true;
         return;
@@ -3755,7 +3755,15 @@ export function SpacesContent() {
 
     const tick = () => {
       const g = autosaveGateRef.current;
-      if (g.openLoad || g.openNew || g.deleting || isSavingRef.current || canvasPerformanceModeRef.current) {
+      if (
+        !g.authenticated ||
+        !g.hasProject ||
+        g.openLoad ||
+        g.openNew ||
+        g.deleting ||
+        isSavingRef.current ||
+        canvasPerformanceModeRef.current
+      ) {
         if (canvasPerformanceModeRef.current) pendingProjectSaveAfterInteractionRef.current = true;
         return;
       }
@@ -3787,7 +3795,7 @@ export function SpacesContent() {
     projectSaveDebounceTimerRef.current = window.setTimeout(() => {
       projectSaveDebounceTimerRef.current = null;
       const g = autosaveGateRef.current;
-      if (g.openLoad || g.openNew || g.deleting || isSavingRef.current) return;
+      if (!g.authenticated || !g.hasProject || g.openLoad || g.openNew || g.deleting || isSavingRef.current) return;
       if (canvasPerformanceModeRef.current) {
         pendingProjectSaveAfterInteractionRef.current = true;
         return;
@@ -3862,7 +3870,7 @@ export function SpacesContent() {
     brainAssetsAutosaveTimerRef.current = window.setTimeout(() => {
       brainAssetsAutosaveTimerRef.current = null;
       const g = autosaveGateRef.current;
-      if (g.openLoad || g.openNew || g.deleting) return;
+      if (!g.authenticated || !g.hasProject || g.openLoad || g.openNew || g.deleting) return;
       if (canvasPerformanceModeRef.current) {
         pendingProjectSaveAfterInteractionRef.current = true;
         return;
@@ -3872,6 +3880,8 @@ export function SpacesContent() {
           brainAssetsAutosaveTimerRef.current = null;
           const retryGate = autosaveGateRef.current;
           if (
+            !retryGate.authenticated ||
+            !retryGate.hasProject ||
             retryGate.openLoad ||
             retryGate.openNew ||
             retryGate.deleting ||
@@ -4066,11 +4076,18 @@ export function SpacesContent() {
         typeof project.revision === "number" && Number.isFinite(project.revision)
           ? project.revision
           : null;
-      lastSavedFingerprintRef.current = null;
+      const loadedStableMetadata = stripVolatileProjectMetadata(project.metadata || {});
+      lastSavedFingerprintRef.current = projectSaveFingerprint({
+        id: project.id,
+        name: project.name || projectMeta.name,
+        rootSpaceId: 'root',
+        spaces,
+        metadata: loadedStableMetadata,
+      });
       setActiveSpaceId(targetSpaceId);
       setCurrentName(project.name || projectMeta.name);
       setSpacesMap(spaces as Record<string, any>);
-      setMetadata(stripVolatileProjectMetadata(project.metadata || {}));
+      setMetadata(loadedStableMetadata);
       setVisualReferenceAnalysisDirty(false);
 
       const nav = ui?.navigationStack;

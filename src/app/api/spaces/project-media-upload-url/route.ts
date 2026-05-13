@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
+import {
+  buildProjectMediaObjectKey,
+  requireSpacesAuthUser,
+} from "@/lib/spaces-access-control";
 import { ensureBrowserUploadCorsForS3, getPresignedUploadUrl } from "@/lib/s3-utils";
 
 export const runtime = "nodejs";
@@ -37,6 +41,9 @@ function extensionForContentType(contentType: string, filename: string): string 
 
 export async function POST(req: Request) {
   try {
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
+
     const body = (await req.json().catch(() => null)) as UploadTicketRequest | null;
     const contentType = typeof body?.contentType === "string"
       ? body.contentType.trim().toLowerCase()
@@ -50,7 +57,12 @@ export async function POST(req: Request) {
     const mediaId = safeSegment(body?.mediaId, randomUUID());
     const filename = typeof body?.filename === "string" ? body.filename : "";
     const ext = extensionForContentType(contentType, filename);
-    const key = `knowledge-files/project-media/${projectId}/${mediaId}.${ext}`;
+    const key = buildProjectMediaObjectKey({
+      contentExt: ext,
+      mediaId,
+      projectId,
+      userEmail: authState.user.email,
+    });
     await ensureBrowserUploadCorsForS3().catch((error) => {
       console.warn("[project-media-upload-url] S3 CORS self-check failed; signed upload may need bucket CORS.", error);
     });

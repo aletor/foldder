@@ -1,20 +1,26 @@
 import { NextResponse } from "next/server";
-import { getPresignedUrl } from "@/lib/s3-utils";
+import {
+  canUserAccessKnowledgeFileKey,
+  isSafeKnowledgeFilesKey,
+  requireSpacesAuthUser,
+  stableKnowledgeFileUrlFromKey,
+} from "@/lib/spaces-access-control";
 
 const PREFIX = "knowledge-files/";
 
 function isAllowedKey(key: string): boolean {
-  if (!key || typeof key !== "string") return false;
-  if (key.includes("..") || key.includes("\0")) return false;
-  return key.startsWith(PREFIX);
+  return isSafeKnowledgeFilesKey(key) && key.startsWith(PREFIX);
 }
 
 /**
- * Devuelve URLs prefirmadas nuevas para claves S3 del bucket (p. ej. tras cargar un proyecto guardado).
- * Las URLs previas caducan (~1 h); el cliente debe persistir `data.s3Key` y llamar aquí al abrir.
+ * Devuelve URLs estables same-origin para claves S3 accesibles por el usuario.
+ * El cliente debe persistir `data.s3Key`; la lectura real pasa por `/api/spaces/s3-file`.
  */
 export async function POST(req: Request) {
   try {
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
+
     const body = await req.json();
     const raw = body?.keys;
     if (!Array.isArray(raw) || raw.length === 0) {
@@ -30,7 +36,9 @@ export async function POST(req: Request) {
     const urls: Record<string, string> = {};
     await Promise.all(
       unique.map(async (key) => {
-        urls[key] = await getPresignedUrl(key);
+        if (await canUserAccessKnowledgeFileKey(authState.user.email, key)) {
+          urls[key] = stableKnowledgeFileUrlFromKey(key);
+        }
       })
     );
     return NextResponse.json({ urls });

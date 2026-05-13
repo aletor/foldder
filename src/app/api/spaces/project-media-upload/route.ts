@@ -2,7 +2,12 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { recordApiUsage, resolveUsageUserEmailFromRequest } from "@/lib/api-usage";
 import { normalizeUploadedImageForFoldder } from "@/lib/foldder-server-image-optimization";
-import { getPresignedUrl, uploadBufferToS3Key } from "@/lib/s3-utils";
+import {
+  buildProjectMediaObjectKey,
+  requireSpacesAuthUser,
+  stableKnowledgeFileUrlFromKey,
+} from "@/lib/spaces-access-control";
+import { uploadBufferToS3Key } from "@/lib/s3-utils";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -34,6 +39,9 @@ function extensionForContentType(contentType: string, filename: string): string 
 
 export async function POST(req: Request) {
   try {
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
+
     let usageUserEmail: string | undefined;
     try {
       usageUserEmail = await resolveUsageUserEmailFromRequest(req);
@@ -68,7 +76,12 @@ export async function POST(req: Request) {
 
     const projectId = safeSegment(form.get("projectId"), "unsaved");
     const mediaId = safeSegment(form.get("mediaId"), randomUUID());
-    const key = `knowledge-files/project-media/${projectId}/${mediaId}.${normalized.ext}`;
+    const key = buildProjectMediaObjectKey({
+      contentExt: normalized.ext,
+      mediaId,
+      projectId,
+      userEmail: authState.user.email,
+    });
 
     await uploadBufferToS3Key(key, normalized.buffer, normalized.contentType);
     recordApiUsage({
@@ -91,14 +104,8 @@ export async function POST(req: Request) {
       console.warn("[project-media-upload] usage recording failed; upload kept.", error);
     });
 
-    const stableUrl = `/api/spaces/s3-file?key=${encodeURIComponent(key)}`;
-    let signedUrl: string | undefined;
-    try {
-      signedUrl = await getPresignedUrl(key);
-    } catch (error) {
-      console.warn("[project-media-upload] signed url failed; stable route kept.", error);
-    }
-    return NextResponse.json({ key, s3Key: key, url: stableUrl, signedUrl });
+    const stableUrl = stableKnowledgeFileUrlFromKey(key);
+    return NextResponse.json({ key, s3Key: key, url: stableUrl });
   } catch (error) {
     const message = error instanceof Error ? error.message : "upload failed";
     console.error("[project-media-upload]", error);

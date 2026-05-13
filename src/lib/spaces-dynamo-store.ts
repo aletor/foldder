@@ -472,6 +472,9 @@ function parseJsonFromChunks(meta: SpacesMetaItem, chunks: SpacesChunkItem[]): u
 
   const joinedBase64 = ordered.map((c) => c.chunkData).join("");
   const payloadJson = Buffer.from(joinedBase64, "base64").toString("utf8");
+  if (meta.contentSha256 && sha256Hex(payloadJson) !== meta.contentSha256) {
+    throw new Error(`[spaces-dynamo] chunk content hash mismatch for ${meta.projectId}`);
+  }
   return JSON.parse(payloadJson) as unknown;
 }
 

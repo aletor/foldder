@@ -1,14 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { BUCKET_NAME, s3Client } from "@/lib/s3-utils";
+import {
+  canUserAccessKnowledgeFileKey,
+  isSafeKnowledgeFilesKey,
+  requireSpacesAuthUser,
+} from "@/lib/spaces-access-control";
 
 const PREFIX = "knowledge-files/";
 const ONE_HOUR = 3600;
 
 function isAllowedKey(key: string): boolean {
-  if (!key || typeof key !== "string") return false;
-  if (key.includes("..") || key.includes("\0")) return false;
-  return key.startsWith(PREFIX);
+  return isSafeKnowledgeFilesKey(key) && key.startsWith(PREFIX);
 }
 
 function sanitizeRangeHeader(value: string | null): string | undefined {
@@ -23,6 +26,12 @@ export async function GET(req: NextRequest) {
     const key = searchParams.get("key")?.trim() ?? "";
     if (!isAllowedKey(key)) {
       return NextResponse.json({ error: "Invalid S3 key." }, { status: 400 });
+    }
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
+    const allowed = await canUserAccessKnowledgeFileKey(authState.user.email, key);
+    if (!allowed) {
+      return NextResponse.json({ error: "Forbidden S3 key." }, { status: 403 });
     }
 
     const range = sanitizeRangeHeader(req.headers.get("range"));
