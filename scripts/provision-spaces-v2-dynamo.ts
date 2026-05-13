@@ -5,6 +5,9 @@ import {
   UpdateTableCommand,
   waitUntilTableExists,
 } from "@aws-sdk/client-dynamodb";
+import { loadEnvConfig } from "@next/env";
+
+loadEnvConfig(process.cwd());
 
 const region = process.env.AWS_REGION?.trim() || "us-east-1";
 const accessKeyId = process.env.AWS_ACCESS_KEY_ID?.trim();
