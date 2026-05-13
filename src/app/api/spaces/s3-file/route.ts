@@ -1,12 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getPresignedUrl } from "@/lib/s3-utils";
+import { GetObjectCommand } from "@aws-sdk/client-s3";
+import { BUCKET_NAME, s3Client } from "@/lib/s3-utils";
 
 const PREFIX = "knowledge-files/";
+const ONE_HOUR = 3600;
 
 function isAllowedKey(key: string): boolean {
   if (!key || typeof key !== "string") return false;
   if (key.includes("..") || key.includes("\0")) return false;
   return key.startsWith(PREFIX);
+}
+
+function sanitizeRangeHeader(value: string | null): string | undefined {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  return /^bytes=\d*-\d*(?:,\d*-\d*)?$/.test(trimmed) ? trimmed : undefined;
 }
 
 export async function GET(req: NextRequest) {
@@ -16,10 +24,35 @@ export async function GET(req: NextRequest) {
     if (!isAllowedKey(key)) {
       return NextResponse.json({ error: "Invalid S3 key." }, { status: 400 });
     }
-    const url = await getPresignedUrl(key);
-    const res = NextResponse.redirect(url, { status: 307 });
-    res.headers.set("Cache-Control", "no-store, max-age=0");
-    return res;
+
+    const range = sanitizeRangeHeader(req.headers.get("range"));
+    const object = await s3Client.send(
+      new GetObjectCommand({
+        Bucket: BUCKET_NAME,
+        Key: key,
+        Range: range,
+      }),
+    );
+
+    if (!object.Body) {
+      return NextResponse.json({ error: "Empty S3 object." }, { status: 404 });
+    }
+
+    const headers = new Headers({
+      "Accept-Ranges": object.AcceptRanges || "bytes",
+      "Access-Control-Allow-Origin": "*",
+      "Cache-Control": `private, max-age=${ONE_HOUR}`,
+      "Content-Type": object.ContentType || "application/octet-stream",
+    });
+    if (object.ContentLength != null) headers.set("Content-Length", String(object.ContentLength));
+    if (object.ContentRange) headers.set("Content-Range", object.ContentRange);
+    if (object.ETag) headers.set("ETag", object.ETag);
+    if (object.LastModified) headers.set("Last-Modified", object.LastModified.toUTCString());
+
+    return new Response(object.Body.transformToWebStream(), {
+      headers,
+      status: object.ContentRange ? 206 : 200,
+    });
   } catch (error) {
     console.error("[spaces/s3-file]", error);
     return NextResponse.json({ error: "Failed to generate file URL." }, { status: 500 });
