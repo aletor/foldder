@@ -15,6 +15,14 @@ import {
   type ProjectListItem,
   type ProjectRecord,
 } from "@/lib/spaces-dynamo-store";
+import {
+  deleteSpacesV2Project,
+  readSpacesV2ProjectById,
+  readSpacesV2ProjectsForOwner,
+  readSpacesV2ProjectsMetaForOwner,
+  SpacesV2RevisionConflictError,
+  upsertSpacesV2Project,
+} from "@/lib/spaces-v2-store";
 import { runSpacesDbExclusive } from "@/lib/spaces-db-queue";
 import { auth } from "@/lib/auth";
 
@@ -31,6 +39,7 @@ type SpaceNodeGraph = {
 };
 
 type ProjectBody = {
+  createIfMissing?: boolean;
   expectedRevision?: number | null;
   id?: string;
   metadata?: Record<string, unknown>;
@@ -54,6 +63,7 @@ const spacesStore = {
 };
 
 const SPACES_DDB_TABLE_ENV = "FOLDDER_SPACES_DDB_TABLE";
+const SPACES_V2_DDB_TABLE_ENV = "FOLDDER_SPACES_V2_DDB_TABLE";
 const SPACES_GET_CACHE_TTL_MS = 1500;
 const AUTHENTICATED_NO_STORE_HEADERS = {
   "Cache-Control": "private, no-store, max-age=0, must-revalidate",
@@ -96,24 +106,45 @@ function isSpacesDdbEnabled(): boolean {
   return isDynamoEnabled(SPACES_DDB_TABLE_ENV);
 }
 
+function isSpacesV2Enabled(): boolean {
+  return isDynamoEnabled(SPACES_V2_DDB_TABLE_ENV);
+}
+
+function isSpacesCloudStoreEnabled(): boolean {
+  return isSpacesV2Enabled() || isSpacesDdbEnabled();
+}
+
 function spacesTableName(): string {
   return process.env[SPACES_DDB_TABLE_ENV]?.trim() || "";
 }
 
+function spacesV2TableName(): string {
+  return process.env[SPACES_V2_DDB_TABLE_ENV]?.trim() || "";
+}
+
 async function scanDdbProjects(ownerEmail?: string): Promise<ProjectRecord[]> {
+  if (isSpacesV2Enabled()) {
+    return ownerEmail ? readSpacesV2ProjectsForOwner(spacesV2TableName(), ownerEmail) : [];
+  }
   return readAllDdbProjectsStore(spacesTableName(), ownerEmail);
 }
 
 async function scanDdbProjectsMeta(ownerEmail?: string) {
+  if (isSpacesV2Enabled()) {
+    return ownerEmail ? readSpacesV2ProjectsMetaForOwner(spacesV2TableName(), ownerEmail) : [];
+  }
   return readAllDdbProjectsMetaStore(spacesTableName(), ownerEmail);
 }
 
 async function readDdbProjectById(id: string): Promise<ProjectRecord | null> {
+  if (isSpacesV2Enabled()) {
+    return readSpacesV2ProjectById(spacesV2TableName(), id);
+  }
   return readDdbProjectByIdStore(spacesTableName(), id);
 }
 
 async function readProjectByIdResilient(id: string): Promise<ProjectRecord | null> {
-  if (!isSpacesDdbEnabled()) {
+  if (!isSpacesCloudStoreEnabled()) {
     return (await readProjects()).find((row) => row.id === id) ?? null;
   }
 
@@ -123,6 +154,8 @@ async function readProjectByIdResilient(id: string): Promise<ProjectRecord | nul
   } catch (error) {
     console.error(`[spaces] direct Dynamo read failed for project ${id}:`, error);
   }
+
+  if (isSpacesV2Enabled()) return null;
 
   try {
     return (await readProjects()).find((row) => row.id === id) ?? null;
@@ -136,21 +169,32 @@ async function writeDdbProject(
   project: ProjectRecord,
   options?: { allowProjectIdMetaScan?: boolean; expectedRevision?: number | null },
 ): Promise<{ revision: number }> {
+  if (isSpacesV2Enabled()) {
+    return upsertSpacesV2Project(spacesV2TableName(), project, {
+      expectedRevision: options?.expectedRevision,
+    });
+  }
   return upsertDdbProjectStore(spacesTableName(), project, options);
 }
 
 async function deleteDdbProject(id: string): Promise<void> {
+  if (isSpacesV2Enabled()) {
+    await deleteSpacesV2Project(spacesV2TableName(), id);
+    return;
+  }
   await deleteDdbProjectStore(spacesTableName(), id);
 }
 
 async function readProjects(ownerEmail?: string): Promise<ProjectRecord[]> {
-  if (isSpacesDdbEnabled()) {
+  if (isSpacesCloudStoreEnabled()) {
     const now = Date.now();
-    if (!ownerEmail && spacesGetCache && spacesGetCache.expiresAt > now) {
+    if (!ownerEmail && !isSpacesV2Enabled() && spacesGetCache && spacesGetCache.expiresAt > now) {
       return spacesGetCache.rows;
     }
     const rows = await scanDdbProjects(ownerEmail);
-    if (!ownerEmail) spacesGetCache = { rows, expiresAt: now + SPACES_GET_CACHE_TTL_MS };
+    if (!ownerEmail && !isSpacesV2Enabled()) {
+      spacesGetCache = { rows, expiresAt: now + SPACES_GET_CACHE_TTL_MS };
+    }
     return rows;
   }
   const rows = await readJsonStore(spacesStore);
@@ -158,13 +202,15 @@ async function readProjects(ownerEmail?: string): Promise<ProjectRecord[]> {
 }
 
 async function readProjectsMeta(ownerEmail?: string): Promise<Array<ReturnType<typeof projectToMeta>>> {
-  if (isSpacesDdbEnabled()) {
+  if (isSpacesCloudStoreEnabled()) {
     const now = Date.now();
-    if (!ownerEmail && spacesMetaGetCache && spacesMetaGetCache.expiresAt > now) {
+    if (!ownerEmail && !isSpacesV2Enabled() && spacesMetaGetCache && spacesMetaGetCache.expiresAt > now) {
       return spacesMetaGetCache.rows;
     }
     const rows = (await scanDdbProjectsMeta(ownerEmail)).map(projectToMeta);
-    if (!ownerEmail) spacesMetaGetCache = { rows, expiresAt: now + SPACES_GET_CACHE_TTL_MS };
+    if (!ownerEmail && !isSpacesV2Enabled()) {
+      spacesMetaGetCache = { rows, expiresAt: now + SPACES_GET_CACHE_TTL_MS };
+    }
     return rows;
   }
   return (await readProjects(ownerEmail)).map(projectToMeta);
@@ -193,8 +239,8 @@ function projectToMeta(project: ProjectRecord | ProjectListItem) {
 async function writeProjects(
   updater: (projects: ProjectRecord[]) => Promise<ProjectRecord[]> | ProjectRecord[],
 ): Promise<ProjectRecord[]> {
-  if (isSpacesDdbEnabled()) {
-    throw new Error("writeProjects is not supported with DynamoDB enabled");
+  if (isSpacesCloudStoreEnabled()) {
+    throw new Error("writeProjects is not supported with cloud persistence enabled");
   }
   return updateJsonStore(spacesStore, updater);
 }
@@ -308,7 +354,7 @@ export async function POST(req: Request) {
 
     const body = (await req.json()) as ProjectBody;
 
-    if (isSpacesDdbEnabled()) {
+    if (isSpacesCloudStoreEnabled()) {
       const { id, name, rootSpaceId, spaces, metadata } = body;
       const expectedRevision =
         typeof body.expectedRevision === "number" && Number.isFinite(body.expectedRevision)
@@ -318,6 +364,45 @@ export async function POST(req: Request) {
             : null;
       if (id) {
         const existing = await readProjectByIdResilient(id);
+        if (!existing && body.createIfMissing === true) {
+          const timestamp = new Date().toISOString();
+          const resolvedRoot =
+            rootSpaceId != null && rootSpaceId !== ""
+              ? rootSpaceId
+              : spaces && typeof spaces === "object" && "root" in spaces
+                ? "root"
+                : "root";
+          const newProject: ProjectRecord = {
+            id,
+            name: name || "New Project",
+            rootSpaceId: resolvedRoot,
+            spaces:
+              spaces || {
+                [resolvedRoot]: {
+                  id: resolvedRoot,
+                  name: "Main Space",
+                  nodes: [],
+                  edges: [],
+                  createdAt: timestamp,
+                  updatedAt: timestamp,
+                },
+              },
+            metadata: metadata ?? {},
+            ownerUserEmail: ownerEmail,
+            ownerUserName: ownerName,
+            ownerUserImage: ownerImage,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          };
+          const writeResult = await writeDdbProject(newProject, {
+            allowProjectIdMetaScan: false,
+            expectedRevision: 0,
+          });
+          newProject.revision = writeResult.revision;
+          spacesGetCache = null;
+          spacesMetaGetCache = null;
+          return jsonNoStore(newProject);
+        }
         if (!existing || !projectBelongsToOwner(existing, ownerEmail)) {
           return NextResponse.json({ error: "Project not found" }, { status: 404 });
         }
@@ -373,7 +458,10 @@ export async function POST(req: Request) {
         updatedAt: timestamp,
       };
 
-      const writeResult = await writeDdbProject(newProject, { allowProjectIdMetaScan: false });
+      const writeResult = await writeDdbProject(newProject, {
+        allowProjectIdMetaScan: false,
+        expectedRevision: 0,
+      });
       newProject.revision = writeResult.revision;
       spacesGetCache = null;
       spacesMetaGetCache = null;
@@ -390,6 +478,41 @@ export async function POST(req: Request) {
         if (id) {
           const index = projectsCopy.findIndex((project) => project.id === id);
           if (index === -1 || !projectBelongsToOwner(projectsCopy[index], ownerEmail)) {
+            if (index === -1 && body.createIfMissing === true) {
+              const resolvedRoot =
+                rootSpaceId != null && rootSpaceId !== ""
+                  ? rootSpaceId
+                  : spaces && typeof spaces === "object" && "root" in spaces
+                    ? "root"
+                    : "root";
+              const timestamp = new Date().toISOString();
+              const newProject: ProjectRecord = {
+                id,
+                name: name || "New Project",
+                rootSpaceId: resolvedRoot,
+                spaces:
+                  spaces || {
+                    [resolvedRoot]: {
+                      id: resolvedRoot,
+                      name: "Main Space",
+                      nodes: [],
+                      edges: [],
+                      createdAt: timestamp,
+                      updatedAt: timestamp,
+                    },
+                  },
+                metadata: metadata ?? {},
+                ownerUserEmail: ownerEmail,
+                ownerUserName: ownerName,
+                ownerUserImage: ownerImage,
+                revision: 1,
+                createdAt: timestamp,
+                updatedAt: timestamp,
+              };
+              projectsCopy.push(newProject);
+              savedProject = newProject;
+              return projectsCopy;
+            }
             projectFound = false;
             return projectsCopy;
           }
@@ -470,13 +593,13 @@ export async function POST(req: Request) {
         return jsonNoStore({ error: "Project not found" }, { status: 404 });
       }
 
-    spacesGetCache = null;
-    spacesMetaGetCache = null;
+      spacesGetCache = null;
+      spacesMetaGetCache = null;
       const fallback = projects[projects.length - 1] ?? null;
       return jsonNoStore(savedProject ?? fallback);
     });
   } catch (error) {
-    if (error instanceof SpacesRevisionConflictError) {
+    if (error instanceof SpacesRevisionConflictError || error instanceof SpacesV2RevisionConflictError) {
       return jsonNoStore(
         {
           error:
@@ -528,7 +651,7 @@ export async function DELETE(req: Request) {
     const id = searchParams.get("id");
     if (!id || id.length === 0) return jsonNoStore({ error: "ID required" }, { status: 400 });
 
-    if (isSpacesDdbEnabled()) {
+    if (isSpacesCloudStoreEnabled()) {
       const projectToDelete = await readProjectByIdResilient(id);
       if (!projectToDelete || !projectBelongsToOwner(projectToDelete, ownerEmail)) {
         return jsonNoStore({ error: "Project not found" }, { status: 404 });

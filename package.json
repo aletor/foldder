@@ -17,6 +17,7 @@
     "perf:budget": "tsx scripts/check-performance-budget.ts",
     "migrate:dynamo": "tsx scripts/migrate-json-to-dynamo.ts",
     "provision:dynamo": "tsx scripts/provision-dynamo.ts",
+    "provision:spaces-v2": "tsx scripts/provision-spaces-v2-dynamo.ts",
     "backfill:spaces-list-index": "tsx scripts/backfill-spaces-list-index.ts",
     "budget:app": "tsx scripts/setup-app-budget.ts"
   },

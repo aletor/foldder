@@ -9,6 +9,7 @@ import { ensureBrowserUploadCorsForS3, getPresignedUploadUrl } from "@/lib/s3-ut
 export const runtime = "nodejs";
 
 const ALLOWED_PREFIXES = ["image/", "video/", "audio/"];
+const SPACES_V2_DDB_TABLE_ENV = "FOLDDER_SPACES_V2_DDB_TABLE";
 
 type UploadTicketRequest = {
   contentType?: unknown;
@@ -39,6 +40,10 @@ function extensionForContentType(contentType: string, filename: string): string 
   return "bin";
 }
 
+function requiresStableProjectId(): boolean {
+  return Boolean(process.env[SPACES_V2_DDB_TABLE_ENV]?.trim());
+}
+
 export async function POST(req: Request) {
   try {
     const authState = await requireSpacesAuthUser(req);
@@ -53,14 +58,17 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "unsupported media type" }, { status: 400 });
     }
 
-    const projectId = safeSegment(body?.projectId, "unsaved");
+    const projectId = safeSegment(body?.projectId, "");
+    if (requiresStableProjectId() && !projectId) {
+      return NextResponse.json({ error: "projectId required" }, { status: 400 });
+    }
     const mediaId = safeSegment(body?.mediaId, randomUUID());
     const filename = typeof body?.filename === "string" ? body.filename : "";
     const ext = extensionForContentType(contentType, filename);
     const key = buildProjectMediaObjectKey({
       contentExt: ext,
       mediaId,
-      projectId,
+      projectId: projectId || "unsaved",
       userEmail: authState.user.email,
     });
     await ensureBrowserUploadCorsForS3().catch((error) => {

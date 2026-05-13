@@ -14,6 +14,7 @@ export const maxDuration = 300;
 
 const MAX_UPLOAD_BYTES = 220 * 1024 * 1024;
 const ALLOWED_PREFIXES = ["image/", "video/", "audio/"];
+const SPACES_V2_DDB_TABLE_ENV = "FOLDDER_SPACES_V2_DDB_TABLE";
 
 function safeSegment(value: FormDataEntryValue | null, fallback: string): string {
   if (typeof value !== "string") return fallback;
@@ -35,6 +36,10 @@ function extensionForContentType(contentType: string, filename: string): string 
   if (contentType.includes("mpeg")) return "mp3";
   if (contentType.includes("wav")) return "wav";
   return "bin";
+}
+
+function requiresStableProjectId(): boolean {
+  return Boolean(process.env[SPACES_V2_DDB_TABLE_ENV]?.trim());
 }
 
 export async function POST(req: Request) {
@@ -74,12 +79,15 @@ export async function POST(req: Request) {
           originalBytes: rawBuffer.length,
         };
 
-    const projectId = safeSegment(form.get("projectId"), "unsaved");
+    const projectId = safeSegment(form.get("projectId"), "");
+    if (requiresStableProjectId() && !projectId) {
+      return NextResponse.json({ error: "projectId required" }, { status: 400 });
+    }
     const mediaId = safeSegment(form.get("mediaId"), randomUUID());
     const key = buildProjectMediaObjectKey({
       contentExt: normalized.ext,
       mediaId,
-      projectId,
+      projectId: projectId || "unsaved",
       userEmail: authState.user.email,
     });
 

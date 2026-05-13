@@ -3533,9 +3533,11 @@ export function SpacesContent() {
         ...metadataToSave,
         saveManifest,
       };
+      const effectiveProjectId = activeProjectId ?? localWorkspaceScopeId;
+      const creatingProject = !activeProjectId;
 
       const projectFingerprintInput = {
-        id: activeProjectId,
+        id: effectiveProjectId,
         name: nameToSave || currentName || 'Untitled Project',
         rootSpaceId: 'root',
         spaces: spacesReadyForSave,
@@ -3546,8 +3548,9 @@ export function SpacesContent() {
       };
 
       const projectToSave = {
-        id: activeProjectId,
-        expectedRevision: activeProjectId ? activeProjectRevisionRef.current : undefined,
+        id: effectiveProjectId,
+        createIfMissing: creatingProject,
+        expectedRevision: creatingProject ? 0 : activeProjectRevisionRef.current,
         name: nameToSave || currentName || 'Untitled Project',
         rootSpaceId: 'root',
         spaces: spacesReadyForSave,

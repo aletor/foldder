@@ -23,6 +23,18 @@ Tambien puedes activar DynamoDB para persistencia por item:
 - `FOLDDER_PRESENTER_SHARES_DDB_TABLE`
 - (opcional) `FOLDDER_PRESENTER_SHARES_DDB_DECK_GSI` para listar por `deckKey` sin `scan`
 
+Para instalaciones nuevas usa `spaces_v2`: una tabla nueva con clave compuesta `pk/sk`,
+chunks por revision, indice por usuario y media siempre referenciada por S3.
+No migra proyectos legacy; al activar estas variables `/api/spaces` usa solo `spaces_v2`.
+
+```bash
+npm run provision:spaces-v2
+```
+
+Variables:
+- `FOLDDER_SPACES_V2_DDB_TABLE` (por defecto `foldder-prod-spaces-v2`)
+- `FOLDDER_SPACES_V2_OWNER_GSI` (por defecto `ownerPk-listSk-index`)
+
 **Repositorio:** [github.com/aletor/foldder](https://github.com/aletor/foldder). Si el remoto local apunta al nombre antiguo: `git remote set-url origin https://github.com/aletor/foldder.git`
 
 En el repo de marketing, `NEXT_PUBLIC_MEDIA_COMPOSER_URL` debe apuntar a la URL de despliegue de esta app (Labs).
