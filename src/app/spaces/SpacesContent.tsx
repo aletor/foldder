@@ -122,6 +122,7 @@ import { mergeLiveStudioNodeDataIntoNodes } from "./studio-live-documents";
 import { useFoldderRenderMetric } from "./use-performance-metrics";
 import {
   materializeProjectSpacesMediaForSave,
+  uploadProjectMediaFile,
   type ProjectMediaUploadCache,
 } from "./project-media-s3-save";
 import {
@@ -5334,58 +5335,31 @@ export function SpacesContent() {
           scheduleFoldderCanvasIntroEnd(nodeId);
 
           void (async () => {
-            const formData = new FormData();
-            formData.append('file', file);
             try {
-              const res = await fetch('/api/runway/upload', { method: 'POST', body: formData });
-              const json = await readResponseJson<{ url?: string; s3Key?: string; error?: string }>(
-                res,
-                'POST /api/runway/upload'
-              );
-              if (json?.url) {
-                setNodes((nds) => {
-                  return nds.map((n) =>
-                    n.id === nodeId
-                      ? {
-                          ...n,
-                          data: {
-                            ...n.data,
-                            value: json.url,
-                            s3Key: json.s3Key,
-                            loading: false,
-                            error: false,
-                            metadata: {
-                              size: `${(file.size / (1024 * 1024)).toFixed(2)} MB`,
-                              resolution: fileType === 'video' || fileType === 'image' ? 'Auto-detected' : '-',
-                              codec: file.type.split('/')[1]?.toUpperCase() || 'RAW',
-                            },
+              const uploaded = await uploadProjectMediaFile(file, {
+                projectId: projectScopeId,
+              });
+              setNodes((nds) => {
+                return nds.map((n) =>
+                  n.id === nodeId
+                    ? {
+                        ...n,
+                        data: {
+                          ...n.data,
+                          value: uploaded.url,
+                          s3Key: uploaded.s3Key,
+                          loading: false,
+                          error: false,
+                          metadata: {
+                            size: `${(file.size / (1024 * 1024)).toFixed(2)} MB`,
+                            resolution: fileType === 'video' || fileType === 'image' ? 'Auto-detected' : '-',
+                            codec: (file.type || uploaded.contentType).split('/')[1]?.toUpperCase() || 'RAW',
                           },
-                        }
-                      : n
-                  );
-                });
-              } else {
-                const detail =
-                  json?.error ||
-                  (!res.ok ? `HTTP ${res.status}` : null) ||
-                  'El servidor no devolvió URL (revisa consola y credenciales S3).';
-                console.error('[canvas drop upload]', detail, json);
-                setNodes((nds) =>
-                  nds.map((n) =>
-                    n.id === nodeId
-                      ? {
-                          ...n,
-                          data: {
-                            ...n.data,
-                            loading: false,
-                            error: true,
-                            uploadError: detail,
-                          },
-                        }
-                      : n
-                  )
+                        },
+                      }
+                    : n
                 );
-              }
+              });
             } catch (err) {
               console.error('Auto-drop upload error:', err);
               setNodes((nds) =>
@@ -5423,6 +5397,7 @@ export function SpacesContent() {
       fitViewToNodeIds,
       scheduleFoldderCanvasIntroEnd,
       setSidebarLockedCollapsed,
+      projectScopeId,
     ]
   );
 

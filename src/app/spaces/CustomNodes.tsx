@@ -88,7 +88,6 @@ function captureCurrentOutput(
 import './spaces.css';
 import { takePendingNanoStudioOpenFromPhotoRoom } from './photo-room/photo-room-nano-open-pending';
 import { FOLDDER_FIT_VIEW_EASE } from '@/lib/fit-view-ease';
-import { readResponseJson } from '@/lib/read-response-json';
 import { estimateVideoGeneratorPreviewUsd } from '@/lib/pricing-config';
 import { runAiJobWithNotification } from '@/lib/ai-job-notifications';
 import {
@@ -106,7 +105,9 @@ import { NODE_REGISTRY } from './nodeRegistry';
 import { useRegisterAssistantNodeRun } from './use-assistant-node-run';
 import { dispatchFoldderExportCreated } from './foldder-export-events';
 import { useProjectBrainCanvas } from "./project-brain-canvas-context";
+import { useProjectAssetsCanvas } from "./project-assets-canvas-context";
 import { normalizeProjectAssets } from "./project-assets-metadata";
+import { uploadProjectMediaFile } from "./project-media-s3-save";
 import {
   composeBrainImageGeneratorPromptWithRuntime,
   type BrainImageGeneratorPromptDiagnostics,
@@ -995,6 +996,7 @@ export const MediaInputNode = memo(function MediaInputNode({ id, data, selected 
   };
   const nodes = useNodes();
   const { setNodes, fitView } = useReactFlow();
+  const projectAssetsCtx = useProjectAssetsCanvas();
   const updateNodeInternals = useUpdateNodeInternals();
   const [isUploadingLocal, setIsUploadingLocal] = useState(false);
   const [showFullSize, setShowFullSize] = useState(false);
@@ -1048,43 +1050,27 @@ export const MediaInputNode = memo(function MediaInputNode({ id, data, selected 
   const handleFileUpload = async (file: File) => {
     setIsUploadingLocal(true);
     updateNodeData({ error: false, uploadError: undefined });
-    const formData = new FormData();
-    formData.append('file', file);
     try {
-      const res = await fetch('/api/runway/upload', { method: 'POST', body: formData });
-      const json = await readResponseJson<{ url?: string; s3Key?: string; error?: string }>(
-        res,
-        'POST /api/runway/upload (mediaInput)'
-      );
-      if (json?.url) {
-        const type = getFileType(file.name, file.type);
-        const mockMetadata = {
-          size: `${(file.size / (1024 * 1024)).toFixed(2)} MB`,
-          resolution: (type === 'video' || type === 'image') ? '1920×1080' : '-',
-          duration: (type === 'video' || type === 'audio') ? '–' : '-',
-          codec: file.type.split('/')[1]?.toUpperCase() || 'UNKNOWN'
-        };
-        updateNodeData({
-          value: json.url,
-          type,
-          source: 'upload',
-          metadata: mockMetadata,
-          ...(json.s3Key ? { s3Key: json.s3Key } : {}),
-          error: false,
-          uploadError: undefined,
-        });
-        if (type === 'image' || type === 'video') scheduleFitViewportToThisNode({ force: true });
-      } else {
-        const detail =
-          json?.error ||
-          (!res.ok ? `HTTP ${res.status}` : undefined) ||
-          'El servidor no devolvió URL (revisa S3 y la consola).';
-        console.error('[MediaInput] upload failed:', detail, json);
-        updateNodeData({
-          error: true,
-          uploadError: detail,
-        });
-      }
+      const uploaded = await uploadProjectMediaFile(file, {
+        projectId: projectAssetsCtx?.projectScopeId ?? null,
+      });
+      const type = getFileType(file.name, file.type || uploaded.contentType);
+      const mockMetadata = {
+        size: `${(file.size / (1024 * 1024)).toFixed(2)} MB`,
+        resolution: (type === 'video' || type === 'image') ? 'Auto-detected' : '-',
+        duration: (type === 'video' || type === 'audio') ? '–' : '-',
+        codec: (file.type || uploaded.contentType).split('/')[1]?.toUpperCase() || 'UNKNOWN'
+      };
+      updateNodeData({
+        value: uploaded.url,
+        type,
+        source: 'upload',
+        metadata: mockMetadata,
+        s3Key: uploaded.s3Key,
+        error: false,
+        uploadError: undefined,
+      });
+      if (type === 'image' || type === 'video') scheduleFitViewportToThisNode({ force: true });
     } catch (err) {
       console.error('Upload error:', err);
       updateNodeData({

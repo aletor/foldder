@@ -2,7 +2,7 @@
 
 import { optimizeImageBlobForFoldder } from "./media/foldder-image-optimization";
 
-type UploadedProjectMedia = {
+export type UploadedProjectMedia = {
   contentType: string;
   s3Key: string;
   url: string;
@@ -22,7 +22,7 @@ const DATA_MEDIA_RE = /^data:(image\/[^;,]+|video\/[^;,]+|audio\/[^;,]+)(?:;[^,]
 const MIN_S3_MEDIA_DATA_URL_LENGTH = 32_000;
 const SERVER_UPLOAD_FALLBACK_MAX_BYTES = 3_500_000;
 
-type MediaUploadPolicy = {
+export type MediaUploadPolicy = {
   preserveImageQuality?: boolean;
 };
 
@@ -71,6 +71,23 @@ function extensionForContentType(contentType: string): string {
   return "bin";
 }
 
+function contentTypeFromFile(file: File): string {
+  const explicit = file.type?.trim().toLowerCase();
+  if (explicit) return explicit;
+  const name = file.name.toLowerCase();
+  if (/\.(jpe?g)$/.test(name)) return "image/jpeg";
+  if (/\.png$/.test(name)) return "image/png";
+  if (/\.webp$/.test(name)) return "image/webp";
+  if (/\.gif$/.test(name)) return "image/gif";
+  if (/\.svg$/.test(name)) return "image/svg+xml";
+  if (/\.mp4$/.test(name)) return "video/mp4";
+  if (/\.webm$/.test(name)) return "video/webm";
+  if (/\.mov$/.test(name)) return "video/quicktime";
+  if (/\.mp3$/.test(name)) return "audio/mpeg";
+  if (/\.wav$/.test(name)) return "audio/wav";
+  return "application/octet-stream";
+}
+
 function dataUrlToBlob(value: string): { blob: Blob; contentType: string } | null {
   const parsed = parseDataMedia(value);
   if (!parsed) return null;
@@ -103,6 +120,32 @@ async function dataUrlToUploadFile(
   }
   const ext = extensionForContentType(parsed.contentType);
   return new File([parsed.blob], `${mediaId}.${ext}`, { type: parsed.contentType });
+}
+
+async function normalizeProjectMediaFileForUpload(
+  file: File,
+  mediaId: string,
+  policy: MediaUploadPolicy,
+): Promise<File> {
+  const contentType = contentTypeFromFile(file);
+  if (
+    contentType.startsWith("image/") &&
+    !contentType.includes("svg") &&
+    !contentType.includes("gif") &&
+    !policy.preserveImageQuality
+  ) {
+    try {
+      const optimized = await optimizeImageBlobForFoldder(file, contentType);
+      const type = optimized.blob.type || (optimized.ext === "jpg" ? "image/jpeg" : `image/${optimized.ext}`);
+      return new File([optimized.blob], `${mediaId}.${optimized.ext}`, { type });
+    } catch (error) {
+      console.warn("[FOLDDER media upload] Image optimization failed; uploading original file.", error);
+    }
+  }
+
+  if (file.type === contentType) return file;
+  const ext = extensionForContentType(contentType);
+  return new File([file], `${mediaId}.${ext}`, { type: contentType });
 }
 
 async function uploadProjectMediaDirectToS3(
@@ -171,6 +214,62 @@ async function uploadProjectMediaViaServer(
     s3Key: json.s3Key,
     url: json.url,
   };
+}
+
+export async function uploadProjectMediaFile(
+  file: File,
+  options: {
+    mediaId?: string;
+    policy?: MediaUploadPolicy;
+    projectId: string | null;
+  },
+): Promise<UploadedProjectMedia> {
+  const mediaId = options.mediaId || newMediaId();
+  const policy = options.policy || {};
+  const uploadFile = await normalizeProjectMediaFileForUpload(file, mediaId, policy);
+
+  let directError: unknown = null;
+  try {
+    return await uploadProjectMediaDirectToS3(uploadFile, mediaId, options.projectId);
+  } catch (error) {
+    directError = error;
+    console.warn("[FOLDDER media upload] Direct project media upload failed; trying fallback.", error);
+  }
+
+  if (uploadFile.size <= SERVER_UPLOAD_FALLBACK_MAX_BYTES) {
+    try {
+      return await uploadProjectMediaViaServer(uploadFile, mediaId, options.projectId, policy);
+    } catch (fallbackError) {
+      const directMessage = directError instanceof Error ? directError.message : "direct upload failed";
+      const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : "server fallback failed";
+      throw new Error(`${directMessage}; ${fallbackMessage}`);
+    }
+  }
+
+  if (
+    policy.preserveImageQuality &&
+    contentTypeFromFile(file).startsWith("image/") &&
+    !contentTypeFromFile(file).includes("svg") &&
+    !contentTypeFromFile(file).includes("gif")
+  ) {
+    const optimizedFallback = await normalizeProjectMediaFileForUpload(file, mediaId, {
+      preserveImageQuality: false,
+    });
+    if (optimizedFallback.size <= SERVER_UPLOAD_FALLBACK_MAX_BYTES) {
+      try {
+        return await uploadProjectMediaViaServer(optimizedFallback, mediaId, options.projectId, {
+          preserveImageQuality: false,
+        });
+      } catch (fallbackError) {
+        const directMessage = directError instanceof Error ? directError.message : "direct upload failed";
+        const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : "optimized fallback failed";
+        throw new Error(`${directMessage}; ${fallbackMessage}`);
+      }
+    }
+  }
+
+  const directMessage = directError instanceof Error ? directError.message : "direct upload failed";
+  throw new Error(`Project media is too large for server fallback; ${directMessage}`);
 }
 
 function newMediaId(): string {
