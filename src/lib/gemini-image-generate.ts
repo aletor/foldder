@@ -109,6 +109,20 @@ function expectedGeminiWaitMs(modelKey: string, thinking: boolean): number {
   return 35_000;
 }
 
+function isGeminiDeadlineError(status: number, detail: string): boolean {
+  return status === 503 && /deadline|timeout|timed?\s*out|expired/i.test(detail);
+}
+
+function geminiApiErrorMessage(status: number, detail: string): string {
+  if (status === 429) {
+    return "Google API Quota Reached (429). No automatic retry was made.";
+  }
+  if (isGeminiDeadlineError(status, detail)) {
+    return "Gemini could not complete the image generation in time (503). No automatic retry was made to avoid extra cost.";
+  }
+  return `Gemini Error (${status})`;
+}
+
 /**
  * Ejecuta la generación. `onProgress` recibe porcentaje 0–100 y clave de fase (servidor).
  */
@@ -224,19 +238,11 @@ export async function geminiImageGenerate(
 
   let response: Response | undefined;
   try {
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      response = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      if (response.status === 429 && attempt < 2) {
-        await new Promise((r) => setTimeout(r, 5000));
-        continue;
-      }
-      break;
-    }
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
   } finally {
     clearInterval(waitTimer);
   }
@@ -252,7 +258,7 @@ export async function geminiImageGenerate(
       throw new GeminiGenerateError(MSG_COPYRIGHT_ES, 422, detail);
     }
     throw new GeminiGenerateError(
-      isQuota ? "Google API Quota Reached (429)" : `Gemini Error (${response.status})`,
+      geminiApiErrorMessage(response.status || 500, detail),
       response.status || 500,
       detail,
     );

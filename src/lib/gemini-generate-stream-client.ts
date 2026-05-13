@@ -9,6 +9,17 @@ export type GeminiStreamResult = {
   time?: number;
 };
 
+function isProviderDeadlineMessage(status: unknown, message: string): boolean {
+  return status === 503 && /deadline|timeout|timed?\s*out|expired/i.test(message);
+}
+
+function normalizeStreamErrorMessage(status: unknown, message: string): string {
+  if (isProviderDeadlineMessage(status, message)) {
+    return "Gemini could not complete the image generation in time (503). No automatic retry was made to avoid extra cost.";
+  }
+  return message;
+}
+
 const GEMINI_STREAM_HARD_PAYLOAD_LIMIT = 4_000_000;
 const GEMINI_REF_INITIAL_MAX_DIMENSION = 3072;
 const GEMINI_REF_MIN_MAX_DIMENSION = 1024;
@@ -204,6 +215,7 @@ export async function geminiGenerateWithServerProgress(
     time?: number;
     error?: string;
     details?: string;
+    status?: number;
   }) => {
     if (msg.type === "phase" && typeof msg.progress === "number") {
       lastProgress = msg.progress;
@@ -227,7 +239,8 @@ export async function geminiGenerateWithServerProgress(
       const main = typeof msg.error === "string" && msg.error.trim() ? msg.error.trim() : "Error en generación";
       const det =
         typeof msg.details === "string" && msg.details.trim() ? msg.details.trim().slice(0, 600) : "";
-      throw new Error(det ? `${main} — ${det}` : main);
+      const normalized = normalizeStreamErrorMessage(msg.status, det ? `${main} — ${det}` : main);
+      throw new Error(normalized);
     }
   };
 
