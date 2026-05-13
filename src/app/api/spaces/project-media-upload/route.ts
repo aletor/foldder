@@ -34,7 +34,12 @@ function extensionForContentType(contentType: string, filename: string): string 
 
 export async function POST(req: Request) {
   try {
-    const usageUserEmail = await resolveUsageUserEmailFromRequest(req);
+    let usageUserEmail: string | undefined;
+    try {
+      usageUserEmail = await resolveUsageUserEmailFromRequest(req);
+    } catch (error) {
+      console.warn("[project-media-upload] usage user resolution failed; continuing upload.", error);
+    }
     const form = await req.formData();
     const file = form.get("file");
     if (!(file instanceof File)) {
@@ -66,7 +71,7 @@ export async function POST(req: Request) {
     const key = `knowledge-files/project-media/${projectId}/${mediaId}.${normalized.ext}`;
 
     await uploadBufferToS3Key(key, normalized.buffer, normalized.contentType);
-    await recordApiUsage({
+    recordApiUsage({
       provider: "aws",
       userEmail: usageUserEmail,
       serviceId: "s3-assets",
@@ -82,10 +87,17 @@ export async function POST(req: Request) {
         originalBytes: normalized.originalBytes,
         preserveQuality,
       },
+    }).catch((error) => {
+      console.warn("[project-media-upload] usage recording failed; upload kept.", error);
     });
 
-    const signedUrl = await getPresignedUrl(key);
     const stableUrl = `/api/spaces/s3-file?key=${encodeURIComponent(key)}`;
+    let signedUrl: string | undefined;
+    try {
+      signedUrl = await getPresignedUrl(key);
+    } catch (error) {
+      console.warn("[project-media-upload] signed url failed; stable route kept.", error);
+    }
     return NextResponse.json({ key, s3Key: key, url: stableUrl, signedUrl });
   } catch (error) {
     const message = error instanceof Error ? error.message : "upload failed";

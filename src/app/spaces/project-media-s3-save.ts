@@ -20,9 +20,25 @@ type MaterializeProjectMediaResult<TSpaces> = {
 
 const DATA_MEDIA_RE = /^data:(image\/[^;,]+|video\/[^;,]+|audio\/[^;,]+)(?:;[^,]*)?;base64,(.*)$/i;
 const MIN_S3_MEDIA_DATA_URL_LENGTH = 32_000;
+const DIRECT_S3_UPLOAD_MIN_BYTES = 2_500_000;
+const SERVER_UPLOAD_FALLBACK_MAX_BYTES = 3_500_000;
 
 type MediaUploadPolicy = {
   preserveImageQuality?: boolean;
+};
+
+type ProjectMediaUploadTicket = {
+  error?: string;
+  method?: "PUT";
+  s3Key?: string;
+  uploadUrl?: string;
+  url?: string;
+};
+
+type ProjectMediaUploadResponse = {
+  error?: string;
+  s3Key?: string;
+  url?: string;
 };
 
 function hashString(input: string): string {
@@ -90,6 +106,74 @@ async function dataUrlToUploadFile(
   return new File([parsed.blob], `${mediaId}.${ext}`, { type: parsed.contentType });
 }
 
+async function uploadProjectMediaDirectToS3(
+  file: File,
+  mediaId: string,
+  projectId: string | null,
+): Promise<UploadedProjectMedia> {
+  const ticketRes = await fetch("/api/spaces/project-media-upload-url", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contentType: file.type || "application/octet-stream",
+      filename: file.name,
+      mediaId,
+      projectId: projectId || "unsaved",
+      size: file.size,
+    }),
+  });
+  const ticket = (await ticketRes.json().catch(() => null)) as ProjectMediaUploadTicket | null;
+  if (!ticketRes.ok || !ticket?.s3Key || !ticket.url || !ticket.uploadUrl) {
+    throw new Error(ticket?.error || `Project media upload ticket failed (${ticketRes.status}).`);
+  }
+
+  const uploadRes = await fetch(ticket.uploadUrl, {
+    method: ticket.method || "PUT",
+    headers: { "Content-Type": file.type || "application/octet-stream" },
+    body: file,
+    credentials: "omit",
+  });
+  if (!uploadRes.ok) {
+    throw new Error(`Direct project media upload failed (${uploadRes.status}).`);
+  }
+
+  return {
+    contentType: file.type || "application/octet-stream",
+    s3Key: ticket.s3Key,
+    url: ticket.url,
+  };
+}
+
+async function uploadProjectMediaViaServer(
+  file: File,
+  mediaId: string,
+  projectId: string | null,
+  policy: MediaUploadPolicy,
+): Promise<UploadedProjectMedia> {
+  const form = new FormData();
+  form.set("file", file);
+  form.set("mediaId", mediaId);
+  form.set("projectId", projectId || "unsaved");
+  if (policy.preserveImageQuality) {
+    form.set("preserveQuality", "1");
+  }
+
+  const res = await fetch("/api/spaces/project-media-upload", {
+    method: "POST",
+    body: form,
+  });
+  const json = (await res.json().catch(() => null)) as ProjectMediaUploadResponse | null;
+  if (!res.ok || !json?.s3Key || !json.url) {
+    throw new Error(json?.error || `Project media upload failed (${res.status}).`);
+  }
+
+  return {
+    contentType: file.type || "application/octet-stream",
+    s3Key: json.s3Key,
+    url: json.url,
+  };
+}
+
 function newMediaId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
@@ -120,26 +204,36 @@ async function uploadDataMedia(
     throw new Error("Invalid embedded project media.");
   }
 
-  const form = new FormData();
-  form.set("file", file);
-  form.set("mediaId", mediaId);
-  form.set("projectId", projectId || "unsaved");
-  if (policy.preserveImageQuality) {
-    form.set("preserveQuality", "1");
+  let media: UploadedProjectMedia | null = null;
+  const shouldUploadDirect = policy.preserveImageQuality || file.size >= DIRECT_S3_UPLOAD_MIN_BYTES;
+  if (shouldUploadDirect) {
+    try {
+      media = await uploadProjectMediaDirectToS3(file, mediaId, projectId);
+    } catch (error) {
+      console.warn("[FOLDDER save] Direct project media upload failed; trying fallback.", error);
+    }
   }
 
-  const res = await fetch("/api/spaces/project-media-upload", {
-    method: "POST",
-    body: form,
-  });
-  const json = (await res.json().catch(() => null)) as
-    | { error?: string; s3Key?: string; url?: string }
-    | null;
-  if (!res.ok || !json?.s3Key || !json.url) {
-    throw new Error(json?.error || `Project media upload failed (${res.status}).`);
+  if (!media) {
+    if (file.size <= SERVER_UPLOAD_FALLBACK_MAX_BYTES) {
+      media = await uploadProjectMediaViaServer(file, mediaId, projectId, policy);
+    } else if (
+      policy.preserveImageQuality &&
+      parsed.contentType.startsWith("image/") &&
+      !parsed.contentType.includes("svg")
+    ) {
+      const optimizedFallback = await dataUrlToUploadFile(value, mediaId, { preserveImageQuality: false });
+      if (!optimizedFallback || optimizedFallback.size > SERVER_UPLOAD_FALLBACK_MAX_BYTES) {
+        throw new Error("Project media is too large for server fallback and direct upload failed.");
+      }
+      media = await uploadProjectMediaViaServer(optimizedFallback, mediaId, projectId, {
+        preserveImageQuality: false,
+      });
+    } else {
+      throw new Error("Project media is too large for server upload and direct upload failed.");
+    }
   }
 
-  const media = { contentType: parsed.contentType, s3Key: json.s3Key, url: json.url };
   cache.set(signature, media);
   return { media, reused: false, bytes: file.size };
 }
