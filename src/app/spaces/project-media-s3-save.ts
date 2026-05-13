@@ -20,7 +20,6 @@ type MaterializeProjectMediaResult<TSpaces> = {
 
 const DATA_MEDIA_RE = /^data:(image\/[^;,]+|video\/[^;,]+|audio\/[^;,]+)(?:;[^,]*)?;base64,(.*)$/i;
 const MIN_S3_MEDIA_DATA_URL_LENGTH = 32_000;
-const DIRECT_S3_UPLOAD_MIN_BYTES = 2_500_000;
 const SERVER_UPLOAD_FALLBACK_MAX_BYTES = 3_500_000;
 
 type MediaUploadPolicy = {
@@ -205,18 +204,23 @@ async function uploadDataMedia(
   }
 
   let media: UploadedProjectMedia | null = null;
-  const shouldUploadDirect = policy.preserveImageQuality || file.size >= DIRECT_S3_UPLOAD_MIN_BYTES;
-  if (shouldUploadDirect) {
-    try {
-      media = await uploadProjectMediaDirectToS3(file, mediaId, projectId);
-    } catch (error) {
-      console.warn("[FOLDDER save] Direct project media upload failed; trying fallback.", error);
-    }
+  let directError: unknown = null;
+  try {
+    media = await uploadProjectMediaDirectToS3(file, mediaId, projectId);
+  } catch (error) {
+    directError = error;
+    console.warn("[FOLDDER save] Direct project media upload failed; trying fallback.", error);
   }
 
   if (!media) {
     if (file.size <= SERVER_UPLOAD_FALLBACK_MAX_BYTES) {
-      media = await uploadProjectMediaViaServer(file, mediaId, projectId, policy);
+      try {
+        media = await uploadProjectMediaViaServer(file, mediaId, projectId, policy);
+      } catch (fallbackError) {
+        const directMessage = directError instanceof Error ? directError.message : "direct upload failed";
+        const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : "server fallback failed";
+        throw new Error(`${directMessage}; ${fallbackMessage}`);
+      }
     } else if (
       policy.preserveImageQuality &&
       parsed.contentType.startsWith("image/") &&
@@ -226,11 +230,18 @@ async function uploadDataMedia(
       if (!optimizedFallback || optimizedFallback.size > SERVER_UPLOAD_FALLBACK_MAX_BYTES) {
         throw new Error("Project media is too large for server fallback and direct upload failed.");
       }
-      media = await uploadProjectMediaViaServer(optimizedFallback, mediaId, projectId, {
-        preserveImageQuality: false,
-      });
+      try {
+        media = await uploadProjectMediaViaServer(optimizedFallback, mediaId, projectId, {
+          preserveImageQuality: false,
+        });
+      } catch (fallbackError) {
+        const directMessage = directError instanceof Error ? directError.message : "direct upload failed";
+        const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : "optimized fallback failed";
+        throw new Error(`${directMessage}; ${fallbackMessage}`);
+      }
     } else {
-      throw new Error("Project media is too large for server upload and direct upload failed.");
+      const directMessage = directError instanceof Error ? directError.message : "direct upload failed";
+      throw new Error(`Project media is too large for server fallback; ${directMessage}`);
     }
   }
 
