@@ -8,6 +8,10 @@ import {
 import { createHash, randomUUID } from "node:crypto";
 import { ddbClient } from "@/lib/dynamo-utils";
 import { withDynamoRetry } from "@/lib/dynamo-retry";
+import {
+  collectS3KeysFromProjectSpaces,
+  collectS3KeysFromValue,
+} from "@/lib/s3-media-hydrate";
 
 type SpaceNodeGraph = {
   createdAt?: string;
@@ -57,11 +61,13 @@ type SpacesMetaItem = {
   ownerUserEmail?: string;
   ownerUserImage?: string | null;
   ownerUserName?: string | null;
+  ownerPk?: string;
   rootSpaceId: string;
   storageFormat: "chunks-v1" | "chunks-v2";
   chunkCount: number;
   listPk?: string;
   listSk?: string;
+  mediaKeyCount?: number;
   revision?: number;
   commitStatus?: "committed" | "pending" | "invalid";
   contentSha256?: string;
@@ -75,6 +81,17 @@ type SpacesChunkItem = {
   revision?: number;
   chunkIndex: number;
   chunkData: string;
+  updatedAt: string;
+};
+
+type SpacesMediaRefItem = {
+  id: string;
+  entityType: "project-media-ref";
+  projectId: string;
+  ownerHash: string;
+  ownerUserEmail?: string;
+  s3Key: string;
+  s3KeyHash: string;
   updatedAt: string;
 };
 
@@ -95,6 +112,7 @@ const SPACES_META_MAX_ARRAY_ITEMS = 30;
 const SPACES_META_MAX_OBJECT_KEYS = 80;
 const SPACES_META_MAX_STRING_BYTES = 4_000;
 const SPACES_LIST_PK = "PROJECTS";
+const SPACES_OWNER_PK_PREFIX = "OWNER#";
 const SPACES_WRITE_LOCK_TTL_MS = 45_000;
 const DATA_URL_RE = /^data:([^;,]+)?(?:;[^,]+)*;base64,/i;
 const MEDIA_PAYLOAD_KEY_RE =
@@ -142,6 +160,16 @@ function isChunkItem(item: unknown): item is SpacesChunkItem {
   );
 }
 
+function isMediaRefItem(item: unknown): item is SpacesMediaRefItem {
+  if (!isRecord(item)) return false;
+  return (
+    item.entityType === "project-media-ref" &&
+    typeof item.id === "string" &&
+    typeof item.ownerHash === "string" &&
+    typeof item.s3Key === "string"
+  );
+}
+
 function splitBase64Chunks(base64: string): string[] {
   if (!base64) return [""];
   const chunks: string[] = [];
@@ -160,6 +188,35 @@ function buildChunkKey(projectId: string, index: number, revision?: number): str
 
 function buildListSortKey(updatedAt: string, projectId: string): string {
   return `${updatedAt}#${projectId}`;
+}
+
+function normalizeOwnerEmail(email: string | null | undefined): string {
+  return (email || "").trim().toLowerCase();
+}
+
+function spacesOwnerHash(email: string | null | undefined): string {
+  return createHash("sha256").update(normalizeOwnerEmail(email)).digest("hex").slice(0, 20);
+}
+
+function ownerPkForEmail(email: string | null | undefined): string | undefined {
+  const normalized = normalizeOwnerEmail(email);
+  return normalized ? `${SPACES_OWNER_PK_PREFIX}${spacesOwnerHash(normalized)}` : undefined;
+}
+
+function spacesListGsiName(): string {
+  return process.env.FOLDDER_SPACES_DDB_LIST_GSI?.trim() || "";
+}
+
+function spacesOwnerGsiName(): string {
+  return process.env.FOLDDER_SPACES_DDB_OWNER_GSI?.trim() || "";
+}
+
+function spacesProjectGsiName(): string {
+  return process.env.FOLDDER_SPACES_DDB_PROJECT_GSI?.trim() || "";
+}
+
+function mediaRefId(ownerEmail: string | null | undefined, key: string): string {
+  return `media-ref#${spacesOwnerHash(ownerEmail)}#${sha256Hex(key)}`;
 }
 
 function projectSortDesc(a: ProjectRecord, b: ProjectRecord): number {
@@ -560,7 +617,104 @@ async function scanMetaItems(tableName: string): Promise<Record<string, unknown>
   return out;
 }
 
+async function queryMetaItemsByOwner(
+  tableName: string,
+  ownerEmail: string,
+): Promise<Record<string, unknown>[] | null> {
+  const indexName = spacesOwnerGsiName();
+  const ownerPk = ownerPkForEmail(ownerEmail);
+  if (!indexName || !ownerPk) return null;
+
+  const out: Record<string, unknown>[] = [];
+  let exclusiveStartKey: Record<string, unknown> | undefined;
+  try {
+    do {
+      const response = await withDynamoRetry(() =>
+        ddbClient.send(
+          new QueryCommand({
+            TableName: tableName,
+            IndexName: indexName,
+            KeyConditionExpression: "#ownerPk = :ownerPk",
+            FilterExpression: "#entityType = :meta",
+            ExpressionAttributeNames: {
+              "#chunkCount": "chunkCount",
+              "#commitStatus": "commitStatus",
+              "#createdAt": "createdAt",
+              "#entityType": "entityType",
+              "#metadata": "metadata",
+              "#name": "name",
+              "#ownerPk": "ownerPk",
+              "#ownerUserEmail": "ownerUserEmail",
+              "#ownerUserImage": "ownerUserImage",
+              "#ownerUserName": "ownerUserName",
+              "#projectId": "projectId",
+              "#revision": "revision",
+              "#rootSpaceId": "rootSpaceId",
+              "#storageFormat": "storageFormat",
+              "#updatedAt": "updatedAt",
+            },
+            ExpressionAttributeValues: {
+              ":meta": "project-meta",
+              ":ownerPk": ownerPk,
+            },
+            ProjectionExpression:
+              "id, #projectId, #entityType, #name, #rootSpaceId, #metadata, #ownerUserEmail, #ownerUserName, #ownerUserImage, #createdAt, #updatedAt, #chunkCount, #commitStatus, #revision, #storageFormat",
+            ScanIndexForward: false,
+            ExclusiveStartKey: exclusiveStartKey,
+          }),
+        ),
+      );
+      out.push(...((response.Items ?? []) as Record<string, unknown>[]));
+      exclusiveStartKey = response.LastEvaluatedKey as Record<string, unknown> | undefined;
+    } while (exclusiveStartKey);
+    return out.length > 0 ? out : null;
+  } catch (error) {
+    console.error("[spaces-dynamo] owner meta query failed, falling back to scan:", error);
+    return null;
+  }
+}
+
+async function queryItemsByProjectId(
+  tableName: string,
+  projectId: string,
+): Promise<Record<string, unknown>[] | null> {
+  const indexName = spacesProjectGsiName();
+  if (!indexName) return null;
+
+  const out: Record<string, unknown>[] = [];
+  let exclusiveStartKey: Record<string, unknown> | undefined;
+  try {
+    do {
+      const response = await withDynamoRetry(() =>
+        ddbClient.send(
+          new QueryCommand({
+            TableName: tableName,
+            IndexName: indexName,
+            KeyConditionExpression: "#projectId = :projectId",
+            ExpressionAttributeNames: {
+              "#projectId": "projectId",
+            },
+            ExpressionAttributeValues: {
+              ":projectId": projectId,
+            },
+            ExclusiveStartKey: exclusiveStartKey,
+          }),
+        ),
+      );
+      out.push(...((response.Items ?? []) as Record<string, unknown>[]));
+      exclusiveStartKey = response.LastEvaluatedKey as Record<string, unknown> | undefined;
+    } while (exclusiveStartKey);
+    return out.length > 0 ? out : null;
+  } catch (error) {
+    console.error("[spaces-dynamo] project item query failed, falling back to scan:", error);
+    return null;
+  }
+}
+
 async function scanChunksForProject(tableName: string, projectId: string): Promise<SpacesChunkItem[]> {
+  const queried = await queryItemsByProjectId(tableName, projectId);
+  if (queried) return queried.filter(isChunkItem);
+
   const out: SpacesChunkItem[] = [];
   let exclusiveStartKey: Record<string, unknown> | undefined;
 
@@ -612,6 +766,9 @@ async function findMetaByProjectId(
   tableName: string,
   projectId: string,
 ): Promise<SpacesMetaItem | null> {
+  const queried = await queryItemsByProjectId(tableName, projectId);
+  if (queried) return queried.find(isMetaItem) ?? null;
+
   const items = await scanMetaItems(tableName);
   for (const item of items) {
     if (isMetaItem(item) && item.projectId === projectId) {
@@ -619,6 +776,22 @@ async function findMetaByProjectId(
     }
   }
   return null;
+}
+
+export async function readDdbProjectMediaRefByOwnerKey(
+  tableName: string,
+  ownerEmail: string,
+  key: string,
+): Promise<SpacesMediaRefItem | null> {
+  const response = await withDynamoRetry(() =>
+    ddbClient.send(
+      new GetCommand({
+        TableName: tableName,
+        Key: { id: mediaRefId(ownerEmail, key) },
+      }),
+    ),
+  );
+  return isMediaRefItem(response.Item) ? response.Item : null;
 }
 
 export async function readDdbProjectById(tableName: string, id: string): Promise<ProjectRecord | null> {
@@ -648,7 +821,17 @@ export async function readDdbProjectById(tableName: string, id: string): Promise
   }
 }
 
-export async function readAllDdbProjects(tableName: string): Promise<ProjectRecord[]> {
+export async function readAllDdbProjects(tableName: string, ownerEmail?: string): Promise<ProjectRecord[]> {
+  const normalizedOwner = normalizeOwnerEmail(ownerEmail);
+  if (normalizedOwner) {
+    const metaRows = await readAllDdbProjectsMeta(tableName, normalizedOwner);
+    const projects = await Promise.all(metaRows.map((meta) => readDdbProjectById(tableName, meta.id)));
+    return projects
+      .filter((project): project is ProjectRecord => Boolean(project))
+      .filter((project) => normalizeOwnerEmail(project.ownerUserEmail) === normalizedOwner)
+      .sort(projectSortDesc);
+  }
+
   const items = await scanAllItems(tableName);
 
   const projects: ProjectRecord[] = [];
@@ -689,10 +872,13 @@ export async function readAllDdbProjects(tableName: string): Promise<ProjectReco
   return projects.sort(projectSortDesc);
 }
 
-export async function readAllDdbProjectsMeta(tableName: string): Promise<ProjectListItem[]> {
-  const listGsi = process.env.FOLDDER_SPACES_DDB_LIST_GSI?.trim();
-  const items = listGsi
-    ? await (async () => {
+export async function readAllDdbProjectsMeta(tableName: string, ownerEmail?: string): Promise<ProjectListItem[]> {
+  const ownerItems = ownerEmail ? await queryMetaItemsByOwner(tableName, ownerEmail) : null;
+  const listGsi = spacesListGsiName();
+  const items =
+    ownerItems ??
+    (listGsi
+      ? await (async () => {
         try {
           const out: Record<string, unknown>[] = [];
           let exclusiveStartKey: Record<string, unknown> | undefined;
@@ -742,7 +928,7 @@ export async function readAllDdbProjectsMeta(tableName: string): Promise<Project
           return scanMetaItems(tableName);
         }
       })()
-    : await scanMetaItems(tableName);
+      : await scanMetaItems(tableName));
   const projectsById = new Map<string, ProjectListItem>();
 
   for (const item of items) {
@@ -783,6 +969,61 @@ export async function readAllDdbProjectsMeta(tableName: string): Promise<Project
   return [...projectsById.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
+function collectS3KeysFromProjectRecord(project: ProjectRecord): string[] {
+  return [
+    ...new Set([
+      ...collectS3KeysFromProjectSpaces(project.spaces || {}),
+      ...collectS3KeysFromValue(project.metadata || {}),
+    ]),
+  ];
+}
+
+async function upsertProjectMediaRefs(
+  tableName: string,
+  project: ProjectRecord,
+  mediaKeys: string[],
+): Promise<void> {
+  const ownerEmail = normalizeOwnerEmail(project.ownerUserEmail);
+  if (!ownerEmail || mediaKeys.length === 0) return;
+
+  const ownerHash = spacesOwnerHash(ownerEmail);
+  for (const key of [...new Set(mediaKeys)]) {
+    await withDynamoRetry(() =>
+      ddbClient.send(
+        new PutCommand({
+          TableName: tableName,
+          Item: {
+            id: mediaRefId(ownerEmail, key),
+            entityType: "project-media-ref",
+            projectId: project.id,
+            ownerHash,
+            ownerUserEmail: ownerEmail,
+            s3Key: key,
+            s3KeyHash: sha256Hex(key),
+            updatedAt: project.updatedAt,
+          } as SpacesMediaRefItem,
+        }),
+      ),
+    );
+  }
+}
+
+async function deleteProjectMediaRefs(tableName: string, project: ProjectRecord): Promise<void> {
+  const ownerEmail = normalizeOwnerEmail(project.ownerUserEmail);
+  if (!ownerEmail) return;
+
+  for (const key of collectS3KeysFromProjectRecord(project)) {
+    await withDynamoRetry(() =>
+      ddbClient.send(
+        new DeleteCommand({
+          TableName: tableName,
+          Key: { id: mediaRefId(ownerEmail, key) },
+        }),
+      ),
+    );
+  }
+}
+
 export async function upsertDdbProject(
   tableName: string,
   project: ProjectRecord,
@@ -820,6 +1061,7 @@ export async function upsertDdbProject(
     throw new Error("[spaces-dynamo] chunk serialization integrity check failed");
   }
   const metaMetadata = compactMetadataForMetaItem(normalizedProject.metadata ?? {});
+  const mediaKeys = collectS3KeysFromProjectRecord(normalizedProject);
 
   const lock = await acquireProjectWriteLock(tableName, normalizedProject.id);
   try {
@@ -882,8 +1124,10 @@ export async function upsertDdbProject(
             createdAt: normalizedProject.createdAt,
             listPk: SPACES_LIST_PK,
             listSk: buildListSortKey(normalizedProject.updatedAt, normalizedProject.id),
+            mediaKeyCount: mediaKeys.length,
             metadata: metaMetadata,
             name: normalizedProject.name,
+            ownerPk: ownerPkForEmail(normalizedProject.ownerUserEmail),
             ownerUserEmail: normalizedProject.ownerUserEmail,
             ownerUserName: normalizedProject.ownerUserName,
             ownerUserImage: normalizedProject.ownerUserImage,
@@ -898,6 +1142,8 @@ export async function upsertDdbProject(
         }),
       ),
     );
+
+    await upsertProjectMediaRefs(tableName, normalizedProject, mediaKeys);
 
     // Proyecto nuevo: no hay revisiones anteriores que limpiar.
     if (previousRevision > 0) {
@@ -922,6 +1168,7 @@ export async function upsertDdbProject(
 }
 
 export async function deleteDdbProject(tableName: string, id: string): Promise<void> {
+  const projectBeforeDelete = await readDdbProjectById(tableName, id);
   let existing = await readMetaOrLegacy(tableName, id);
   if (!existing) {
     existing = await findMetaByProjectId(tableName, id);
@@ -944,4 +1191,8 @@ export async function deleteDdbProject(tableName: string, id: string): Promise<v
       Key: { id: metaKey },
     }),
   );
+
+  if (projectBeforeDelete) {
+    await deleteProjectMediaRefs(tableName, projectBeforeDelete);
+  }
 }

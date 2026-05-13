@@ -11,6 +11,7 @@ import {
 import {
   readAllDdbProjects as readAllDdbProjectsStore,
   readDdbProjectById as readDdbProjectByIdStore,
+  readDdbProjectMediaRefByOwnerKey,
   type ProjectRecord,
 } from "@/lib/spaces-dynamo-store";
 
@@ -160,9 +161,9 @@ async function readProjectByIdForAccess(projectId: string): Promise<ProjectRecor
   return rows.find((row) => row.id === projectId) ?? null;
 }
 
-async function readProjectsForAccess(): Promise<ProjectRecord[]> {
+async function readProjectsForAccess(ownerEmail?: string): Promise<ProjectRecord[]> {
   if (isSpacesDdbEnabled()) {
-    return readAllDdbProjectsStore(spacesTableName());
+    return readAllDdbProjectsStore(spacesTableName(), ownerEmail);
   }
   return readJsonStore(spacesStore);
 }
@@ -183,7 +184,16 @@ function legacyProjectIdFromProjectMediaKey(key: string): string | null {
 }
 
 async function userProjectReferencesKey(ownerEmail: string, key: string): Promise<boolean> {
-  const rows = await readProjectsForAccess();
+  if (isSpacesDdbEnabled()) {
+    try {
+      const mediaRef = await readDdbProjectMediaRefByOwnerKey(spacesTableName(), ownerEmail, key);
+      if (mediaRef) return true;
+    } catch (error) {
+      console.warn("[spaces-access] media ref lookup failed; falling back to project scan.", error);
+    }
+  }
+
+  const rows = await readProjectsForAccess(ownerEmail);
   for (const project of rows) {
     if (!projectBelongsToOwnerEmail(project, ownerEmail)) continue;
     const keys = new Set([

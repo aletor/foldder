@@ -17,6 +17,9 @@ En produccion sobre Vercel, conviene usar S3 tambien para esos metadatos mediant
 
 Tambien puedes activar DynamoDB para persistencia por item:
 - `FOLDDER_SPACES_DDB_TABLE`
+- (opcional) `FOLDDER_SPACES_DDB_LIST_GSI` para listar proyectos por fecha sin `scan`
+- (opcional) `FOLDDER_SPACES_DDB_OWNER_GSI` para listar proyectos por usuario sin leer otros usuarios
+- (opcional) `FOLDDER_SPACES_DDB_PROJECT_GSI` para leer chunks/media refs por proyecto sin `scan`
 - `FOLDDER_PRESENTER_SHARES_DDB_TABLE`
 - (opcional) `FOLDDER_PRESENTER_SHARES_DDB_DECK_GSI` para listar por `deckKey` sin `scan`
 

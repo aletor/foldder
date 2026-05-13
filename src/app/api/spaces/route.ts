@@ -75,6 +75,23 @@ function jsonNoStore<T>(body: T, init?: ResponseInit): NextResponse<T> {
   });
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isWriteLockBusyError(error: unknown): boolean {
+  return errorMessage(error).includes("write lock busy");
+}
+
+function isPayloadShapeError(error: unknown): boolean {
+  const message = errorMessage(error);
+  return (
+    message.includes("invalid project") ||
+    message.includes("serialization integrity") ||
+    message.includes("serialization check")
+  );
+}
+
 function isSpacesDdbEnabled(): boolean {
   return isDynamoEnabled(SPACES_DDB_TABLE_ENV);
 }
@@ -83,12 +100,12 @@ function spacesTableName(): string {
   return process.env[SPACES_DDB_TABLE_ENV]?.trim() || "";
 }
 
-async function scanDdbProjects(): Promise<ProjectRecord[]> {
-  return readAllDdbProjectsStore(spacesTableName());
+async function scanDdbProjects(ownerEmail?: string): Promise<ProjectRecord[]> {
+  return readAllDdbProjectsStore(spacesTableName(), ownerEmail);
 }
 
-async function scanDdbProjectsMeta() {
-  return readAllDdbProjectsMetaStore(spacesTableName());
+async function scanDdbProjectsMeta(ownerEmail?: string) {
+  return readAllDdbProjectsMetaStore(spacesTableName(), ownerEmail);
 }
 
 async function readDdbProjectById(id: string): Promise<ProjectRecord | null> {
@@ -126,30 +143,31 @@ async function deleteDdbProject(id: string): Promise<void> {
   await deleteDdbProjectStore(spacesTableName(), id);
 }
 
-async function readProjects(): Promise<ProjectRecord[]> {
+async function readProjects(ownerEmail?: string): Promise<ProjectRecord[]> {
   if (isSpacesDdbEnabled()) {
     const now = Date.now();
-    if (spacesGetCache && spacesGetCache.expiresAt > now) {
+    if (!ownerEmail && spacesGetCache && spacesGetCache.expiresAt > now) {
       return spacesGetCache.rows;
     }
-    const rows = await scanDdbProjects();
-    spacesGetCache = { rows, expiresAt: now + SPACES_GET_CACHE_TTL_MS };
+    const rows = await scanDdbProjects(ownerEmail);
+    if (!ownerEmail) spacesGetCache = { rows, expiresAt: now + SPACES_GET_CACHE_TTL_MS };
     return rows;
   }
-  return readJsonStore(spacesStore);
+  const rows = await readJsonStore(spacesStore);
+  return ownerEmail ? rows.filter((row) => projectBelongsToOwner(row, ownerEmail)) : rows;
 }
 
-async function readProjectsMeta(): Promise<Array<ReturnType<typeof projectToMeta>>> {
+async function readProjectsMeta(ownerEmail?: string): Promise<Array<ReturnType<typeof projectToMeta>>> {
   if (isSpacesDdbEnabled()) {
     const now = Date.now();
-    if (spacesMetaGetCache && spacesMetaGetCache.expiresAt > now) {
+    if (!ownerEmail && spacesMetaGetCache && spacesMetaGetCache.expiresAt > now) {
       return spacesMetaGetCache.rows;
     }
-    const rows = (await scanDdbProjectsMeta()).map(projectToMeta);
-    spacesMetaGetCache = { rows, expiresAt: now + SPACES_GET_CACHE_TTL_MS };
+    const rows = (await scanDdbProjectsMeta(ownerEmail)).map(projectToMeta);
+    if (!ownerEmail) spacesMetaGetCache = { rows, expiresAt: now + SPACES_GET_CACHE_TTL_MS };
     return rows;
   }
-  return (await readProjects()).map(projectToMeta);
+  return (await readProjects(ownerEmail)).map(projectToMeta);
 }
 
 function projectToMeta(project: ProjectRecord | ProjectListItem) {
@@ -259,13 +277,11 @@ export async function GET(req: Request) {
     }
 
     if (wantsFull && !wantsMeta) {
-      const rows = (await readProjects()).filter((p) =>
-        projectBelongsToOwner(p, ownerEmail),
-      );
+      const rows = await readProjects(ownerEmail);
       return jsonNoStore(rows);
     }
 
-    const meta = (await readProjectsMeta())
+    const meta = (await readProjectsMeta(ownerEmail))
       .filter((p) => projectBelongsToOwner(p, ownerEmail))
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     if (Number.isFinite(limitRaw) && limitRaw > 0) {
@@ -471,8 +487,34 @@ export async function POST(req: Request) {
         { status: 409 },
       );
     }
+    if (isWriteLockBusyError(error)) {
+      return jsonNoStore(
+        {
+          error: "Project is already saving. Try again in a few seconds.",
+          retryable: true,
+          code: "SAVE_LOCK_BUSY",
+        },
+        { status: 423 },
+      );
+    }
+    if (isPayloadShapeError(error)) {
+      return jsonNoStore(
+        {
+          error: "Project payload is not valid for saving.",
+          code: "INVALID_PROJECT_PAYLOAD",
+        },
+        { status: 400 },
+      );
+    }
     console.error("Save error:", error);
-    return jsonNoStore({ error: "Failed to save project" }, { status: 500 });
+    return jsonNoStore(
+      {
+        error: "Failed to save project",
+        code: "SAVE_FAILED",
+        retryable: true,
+      },
+      { status: 500 },
+    );
   }
 }
 

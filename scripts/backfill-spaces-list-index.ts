@@ -1,15 +1,18 @@
 import { ScanCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { createHash } from "node:crypto";
 import { ddbClient } from "../src/lib/dynamo-utils";
 import { withDynamoRetry } from "../src/lib/dynamo-retry";
 
 type MetaLikeRow = {
   id: string;
   entityType?: string;
+  ownerUserEmail?: string;
   projectId?: string;
   updatedAt?: string;
 };
 
 const LIST_PK = "PROJECTS";
+const OWNER_PK_PREFIX = "OWNER#";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object";
@@ -23,6 +26,7 @@ function asMetaLike(item: unknown): MetaLikeRow | null {
   return {
     id: item.id,
     entityType,
+    ownerUserEmail: typeof item.ownerUserEmail === "string" ? item.ownerUserEmail : undefined,
     projectId: typeof item.projectId === "string" ? item.projectId : undefined,
     updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : undefined,
   };
@@ -30,6 +34,13 @@ function asMetaLike(item: unknown): MetaLikeRow | null {
 
 function listSk(updatedAt: string, projectId: string): string {
   return `${updatedAt}#${projectId}`;
+}
+
+function ownerPk(email: string | undefined): string | undefined {
+  const normalized = (email || "").trim().toLowerCase();
+  if (!normalized) return undefined;
+  const hash = createHash("sha256").update(normalized).digest("hex").slice(0, 20);
+  return `${OWNER_PK_PREFIX}${hash}`;
 }
 
 async function main(): Promise<void> {
@@ -53,7 +64,7 @@ async function main(): Promise<void> {
       ddbClient.send(
         new ScanCommand({
           TableName: tableName,
-          ProjectionExpression: "id, entityType, projectId, updatedAt, listPk",
+          ProjectionExpression: "id, entityType, projectId, updatedAt, listPk, ownerPk, ownerUserEmail",
           ExclusiveStartKey: exclusiveStartKey,
         }),
       ),
@@ -64,7 +75,12 @@ async function main(): Promise<void> {
       const item = asMetaLike(raw);
       if (!item) continue;
       const row = raw as Record<string, unknown>;
-      if (typeof row.listPk === "string" && row.listPk.length > 0) {
+      const nextOwnerPk = ownerPk(item.ownerUserEmail);
+      if (
+        typeof row.listPk === "string" &&
+        row.listPk.length > 0 &&
+        (!nextOwnerPk || row.ownerPk === nextOwnerPk)
+      ) {
         skipped += 1;
         continue;
       }
@@ -80,14 +96,18 @@ async function main(): Promise<void> {
           new UpdateCommand({
             TableName: tableName,
             Key: { id: item.id },
-            UpdateExpression: "SET #listPk = :listPk, #listSk = :listSk",
+            UpdateExpression: nextOwnerPk
+              ? "SET #listPk = :listPk, #listSk = :listSk, #ownerPk = :ownerPk"
+              : "SET #listPk = :listPk, #listSk = :listSk",
             ExpressionAttributeNames: {
               "#listPk": "listPk",
               "#listSk": "listSk",
+              ...(nextOwnerPk ? { "#ownerPk": "ownerPk" } : {}),
             },
             ExpressionAttributeValues: {
               ":listPk": LIST_PK,
               ":listSk": listSk(updatedAt, projectId),
+              ...(nextOwnerPk ? { ":ownerPk": nextOwnerPk } : {}),
             },
           }),
         ),
@@ -110,4 +130,3 @@ main().catch((error) => {
   console.error("[backfill-spaces-list] failed:", error);
   process.exitCode = 1;
 });
-
