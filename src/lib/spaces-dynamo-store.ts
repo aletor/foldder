@@ -58,7 +58,7 @@ type SpacesMetaItem = {
   ownerUserImage?: string | null;
   ownerUserName?: string | null;
   rootSpaceId: string;
-  storageFormat: "chunks-v1";
+  storageFormat: "chunks-v1" | "chunks-v2";
   chunkCount: number;
   listPk?: string;
   listSk?: string;
@@ -82,9 +82,23 @@ type LegacyInlineProject = ProjectRecord & {
   entityType?: undefined;
 };
 
+type ProjectChunkPayload = {
+  metadata?: Record<string, unknown>;
+  spaces: Record<string, SpaceNodeGraph>;
+  version?: number;
+};
+
 const SPACES_CHUNK_CHAR_SIZE = 240_000;
+const SPACES_META_METADATA_MAX_BYTES = 64_000;
+const SPACES_META_MAX_DEPTH = 6;
+const SPACES_META_MAX_ARRAY_ITEMS = 30;
+const SPACES_META_MAX_OBJECT_KEYS = 80;
+const SPACES_META_MAX_STRING_BYTES = 4_000;
 const SPACES_LIST_PK = "PROJECTS";
 const SPACES_WRITE_LOCK_TTL_MS = 45_000;
+const DATA_URL_RE = /^data:([^;,]+)?(?:;[^,]+)*;base64,/i;
+const MEDIA_PAYLOAD_KEY_RE =
+  /^(base64|blob|buffer|bytes|data|dataUrl|image|imageData|imageUrl|mask|preview|src|thumbnail|thumb|url|value)$/i;
 
 export class SpacesRevisionConflictError extends Error {
   constructor(
@@ -154,6 +168,104 @@ function projectSortDesc(a: ProjectRecord, b: ProjectRecord): number {
 
 function sha256Hex(input: string): string {
   return createHash("sha256").update(input).digest("hex");
+}
+
+function jsonByteLength(value: unknown): number {
+  try {
+    return Buffer.byteLength(JSON.stringify(value ?? null), "utf8");
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
+}
+
+function compactLargeStringForMeta(value: string, key: string): string | Record<string, unknown> {
+  const dataUrlMatch = value.match(DATA_URL_RE);
+  const bytes = Buffer.byteLength(value, "utf8");
+  if (dataUrlMatch || bytes > SPACES_META_MAX_STRING_BYTES || MEDIA_PAYLOAD_KEY_RE.test(key)) {
+    const maybeRemoteAsset =
+      /^(https?:\/\/|\/api\/spaces\/s3-file\?|\/api\/spaces\/project-media)/i.test(value) &&
+      bytes <= SPACES_META_MAX_STRING_BYTES;
+    if (maybeRemoteAsset && !dataUrlMatch) return value;
+    return {
+      _omittedFromMetaItem: dataUrlMatch ? "data-url" : "large-string",
+      byteLength: bytes,
+      mimeType: dataUrlMatch?.[1],
+    };
+  }
+  return value;
+}
+
+function compactValueForMetaItem(value: unknown, key = "", depth = 0): unknown {
+  if (value == null || typeof value === "boolean" || typeof value === "number") return value;
+  if (typeof value === "string") return compactLargeStringForMeta(value, key);
+  if (typeof value !== "object") return undefined;
+
+  if (depth >= SPACES_META_MAX_DEPTH) {
+    return { _omittedFromMetaItem: "max-depth" };
+  }
+
+  if (Array.isArray(value)) {
+    const items = value
+      .slice(0, SPACES_META_MAX_ARRAY_ITEMS)
+      .map((item) => compactValueForMetaItem(item, key, depth + 1));
+    if (value.length > SPACES_META_MAX_ARRAY_ITEMS) {
+      items.push({ _omittedFromMetaItem: "array-tail", count: value.length - SPACES_META_MAX_ARRAY_ITEMS });
+    }
+    return items;
+  }
+
+  const source = value as Record<string, unknown>;
+  const compacted: Record<string, unknown> = {};
+  const entries = Object.entries(source);
+  let written = 0;
+  for (const [childKey, childValue] of entries) {
+    if (written >= SPACES_META_MAX_OBJECT_KEYS) break;
+    const compactedValue = compactValueForMetaItem(childValue, childKey, depth + 1);
+    if (compactedValue === undefined) continue;
+    compacted[childKey] = compactedValue;
+    written += 1;
+  }
+  if (entries.length > SPACES_META_MAX_OBJECT_KEYS) {
+    compacted._omittedFromMetaItem = {
+      reason: "object-tail",
+      count: entries.length - SPACES_META_MAX_OBJECT_KEYS,
+    };
+  }
+  return compacted;
+}
+
+function extractSafeMetaKey(
+  compacted: Record<string, unknown>,
+  key: string,
+): Record<string, unknown> | unknown[] | undefined {
+  const value = compacted[key];
+  if (!isRecord(value) && !Array.isArray(value)) return undefined;
+  return jsonByteLength(value) <= 12_000 ? value : undefined;
+}
+
+function compactMetadataForMetaItem(metadata: Record<string, unknown>): Record<string, unknown> {
+  const compactedRaw = compactValueForMetaItem(metadata);
+  const compacted = isRecord(compactedRaw) ? compactedRaw : {};
+  if (jsonByteLength(compacted) <= SPACES_META_METADATA_MAX_BYTES) return compacted;
+
+  const fallback: Record<string, unknown> = {
+    _storedInProjectChunks: true,
+    _summaryOnly: true,
+    _originalMetadataBytes: jsonByteLength(metadata),
+  };
+  const ui = extractSafeMetaKey(compacted, "ui");
+  const saveManifest = extractSafeMetaKey(compacted, "saveManifest");
+  const projectFiles = extractSafeMetaKey(compacted, "projectFiles");
+  if (ui) fallback.ui = ui;
+  if (saveManifest) fallback.saveManifest = saveManifest;
+  if (projectFiles) fallback.projectFiles = projectFiles;
+
+  if (jsonByteLength(fallback) <= SPACES_META_METADATA_MAX_BYTES) return fallback;
+  return {
+    _storedInProjectChunks: true,
+    _summaryOnly: true,
+    _originalMetadataBytes: jsonByteLength(metadata),
+  };
 }
 
 function sleep(ms: number): Promise<void> {
@@ -319,14 +431,16 @@ function buildRecoverySpaces(meta: SpacesMetaItem): Record<string, SpaceNodeGrap
 function projectFromMeta(
   meta: SpacesMetaItem,
   spaces: Record<string, SpaceNodeGraph>,
+  payloadMetadata?: Record<string, unknown>,
   extraMetadata?: Record<string, unknown>,
 ): ProjectRecord {
+  const baseMetadata = payloadMetadata ?? meta.metadata ?? {};
   return {
     id: meta.projectId,
     name: meta.name,
     rootSpaceId: meta.rootSpaceId,
     metadata: {
-      ...(meta.metadata ?? {}),
+      ...baseMetadata,
       ...(extraMetadata ?? {}),
     },
     ownerUserEmail: meta.ownerUserEmail,
@@ -339,7 +453,7 @@ function projectFromMeta(
   };
 }
 
-function parseSpacesFromChunks(meta: SpacesMetaItem, chunks: SpacesChunkItem[]): Record<string, SpaceNodeGraph> {
+function parseJsonFromChunks(meta: SpacesMetaItem, chunks: SpacesChunkItem[]): unknown {
   const targetRevision =
     typeof meta.revision === "number" && Number.isFinite(meta.revision) && meta.revision > 0
       ? meta.revision
@@ -357,8 +471,28 @@ function parseSpacesFromChunks(meta: SpacesMetaItem, chunks: SpacesChunkItem[]):
   }
 
   const joinedBase64 = ordered.map((c) => c.chunkData).join("");
-  const spacesJson = Buffer.from(joinedBase64, "base64").toString("utf8");
-  return JSON.parse(spacesJson) as Record<string, SpaceNodeGraph>;
+  const payloadJson = Buffer.from(joinedBase64, "base64").toString("utf8");
+  return JSON.parse(payloadJson) as unknown;
+}
+
+function parseProjectPayloadFromChunks(meta: SpacesMetaItem, chunks: SpacesChunkItem[]): ProjectChunkPayload {
+  const parsed = parseJsonFromChunks(meta, chunks);
+  if (meta.storageFormat === "chunks-v2") {
+    if (!isRecord(parsed) || !isRecord(parsed.spaces)) {
+      throw new Error(`[spaces-dynamo] invalid chunks-v2 payload for ${meta.projectId}`);
+    }
+    return {
+      spaces: parsed.spaces as Record<string, SpaceNodeGraph>,
+      metadata: isRecord(parsed.metadata) ? parsed.metadata : {},
+      version: typeof parsed.version === "number" ? parsed.version : 2,
+    };
+  }
+  if (!isRecord(parsed)) {
+    throw new Error(`[spaces-dynamo] invalid chunks-v1 spaces payload for ${meta.projectId}`);
+  }
+  return {
+    spaces: parsed as Record<string, SpaceNodeGraph>,
+  };
 }
 
 async function scanAllItems(tableName: string): Promise<Record<string, unknown>[]> {
@@ -404,13 +538,14 @@ async function scanMetaItems(tableName: string): Promise<Record<string, unknown>
             "#projectId": "projectId",
             "#revision": "revision",
             "#rootSpaceId": "rootSpaceId",
+            "#storageFormat": "storageFormat",
             "#updatedAt": "updatedAt",
           },
           ExpressionAttributeValues: {
             ":meta": "project-meta",
           },
           ProjectionExpression:
-            "id, #projectId, #entityType, #name, #rootSpaceId, #metadata, #ownerUserEmail, #ownerUserName, #ownerUserImage, #createdAt, #updatedAt, #chunkCount, #commitStatus, #revision",
+            "id, #projectId, #entityType, #name, #rootSpaceId, #metadata, #ownerUserEmail, #ownerUserName, #ownerUserImage, #createdAt, #updatedAt, #chunkCount, #commitStatus, #revision, #storageFormat",
           ExclusiveStartKey: exclusiveStartKey,
         }),
       ),
@@ -500,10 +635,11 @@ export async function readDdbProjectById(tableName: string, id: string): Promise
 
   const chunks = await scanChunksForProject(tableName, row.projectId);
   try {
-    return projectFromMeta(row, parseSpacesFromChunks(row, chunks));
+    const payload = parseProjectPayloadFromChunks(row, chunks);
+    return projectFromMeta(row, payload.spaces, payload.metadata);
   } catch (error) {
     console.error(`[spaces-dynamo] failed to rebuild project ${row.projectId}, using recovery fallback:`, error);
-    return projectFromMeta(row, buildRecoverySpaces(row), {
+    return projectFromMeta(row, buildRecoverySpaces(row), undefined, {
       _recoveredFromCorruptChunks: true,
     });
   }
@@ -535,11 +671,12 @@ export async function readAllDdbProjects(tableName: string): Promise<ProjectReco
   for (const [projectId, meta] of metaByProjectId.entries()) {
     const chunks = chunksByProjectId.get(projectId) ?? [];
     try {
-      projects.push(projectFromMeta(meta, parseSpacesFromChunks(meta, chunks)));
+      const payload = parseProjectPayloadFromChunks(meta, chunks);
+      projects.push(projectFromMeta(meta, payload.spaces, payload.metadata));
     } catch (error) {
       console.error(`[spaces-dynamo] failed to rebuild project ${projectId}, using recovery fallback:`, error);
       projects.push(
-        projectFromMeta(meta, buildRecoverySpaces(meta), {
+        projectFromMeta(meta, buildRecoverySpaces(meta), undefined, {
           _recoveredFromCorruptChunks: true,
         }),
       );
@@ -577,13 +714,14 @@ export async function readAllDdbProjectsMeta(tableName: string): Promise<Project
                     "#projectId": "projectId",
                     "#revision": "revision",
                     "#rootSpaceId": "rootSpaceId",
+                    "#storageFormat": "storageFormat",
                     "#updatedAt": "updatedAt",
                   },
                   ExpressionAttributeValues: {
                     ":listPk": SPACES_LIST_PK,
                   },
                   ProjectionExpression:
-                    "id, #projectId, #entityType, #name, #rootSpaceId, #metadata, #ownerUserEmail, #ownerUserName, #ownerUserImage, #createdAt, #updatedAt, #chunkCount, #commitStatus, #revision",
+                    "id, #projectId, #entityType, #name, #rootSpaceId, #metadata, #ownerUserEmail, #ownerUserName, #ownerUserImage, #createdAt, #updatedAt, #chunkCount, #commitStatus, #revision, #storageFormat",
                   ScanIndexForward: false,
                   ExclusiveStartKey: exclusiveStartKey,
                 }),
@@ -661,18 +799,24 @@ export async function upsertDdbProject(
   };
   validateProjectForCommit(normalizedProject);
 
-  const spacesJson = JSON.stringify(normalizedProject.spaces || {});
-  const spacesRoundTrip = JSON.parse(spacesJson) as Record<string, SpaceNodeGraph>;
-  if (!isRecord(spacesRoundTrip)) {
-    throw new Error("[spaces-dynamo] spaces serialization check failed");
+  const chunkPayload: ProjectChunkPayload = {
+    version: 2,
+    spaces: normalizedProject.spaces || {},
+    metadata: normalizedProject.metadata ?? {},
+  };
+  const chunkPayloadJson = JSON.stringify(chunkPayload);
+  const chunkPayloadRoundTrip = JSON.parse(chunkPayloadJson) as ProjectChunkPayload;
+  if (!isRecord(chunkPayloadRoundTrip) || !isRecord(chunkPayloadRoundTrip.spaces)) {
+    throw new Error("[spaces-dynamo] project payload serialization check failed");
   }
-  const contentSha256 = sha256Hex(spacesJson);
-  const spacesB64 = Buffer.from(spacesJson, "utf8").toString("base64");
-  const chunks = splitBase64Chunks(spacesB64);
+  const contentSha256 = sha256Hex(chunkPayloadJson);
+  const payloadB64 = Buffer.from(chunkPayloadJson, "utf8").toString("base64");
+  const chunks = splitBase64Chunks(payloadB64);
   const rebuilt = Buffer.from(chunks.join(""), "base64").toString("utf8");
-  if (rebuilt !== spacesJson) {
+  if (rebuilt !== chunkPayloadJson) {
     throw new Error("[spaces-dynamo] chunk serialization integrity check failed");
   }
+  const metaMetadata = compactMetadataForMetaItem(normalizedProject.metadata ?? {});
 
   const lock = await acquireProjectWriteLock(tableName, normalizedProject.id);
   try {
@@ -735,13 +879,13 @@ export async function upsertDdbProject(
             createdAt: normalizedProject.createdAt,
             listPk: SPACES_LIST_PK,
             listSk: buildListSortKey(normalizedProject.updatedAt, normalizedProject.id),
-            metadata: normalizedProject.metadata ?? {},
+            metadata: metaMetadata,
             name: normalizedProject.name,
             ownerUserEmail: normalizedProject.ownerUserEmail,
             ownerUserName: normalizedProject.ownerUserName,
             ownerUserImage: normalizedProject.ownerUserImage,
             rootSpaceId: normalizedProject.rootSpaceId,
-            storageFormat: "chunks-v1",
+            storageFormat: "chunks-v2",
             revision: nextRevision,
             commitStatus: "committed",
             contentSha256,
