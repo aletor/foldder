@@ -180,13 +180,39 @@ function isDataImageUrl(value: unknown): value is string {
   return typeof value === 'string' && /^data:image\/[^;,]+(?:;[^,]*)?;base64,/i.test(value);
 }
 
-function loadImageElement(src: string): Promise<HTMLImageElement> {
+function loadImageElement(src: string, options?: { crossOrigin?: boolean }): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
+    if (options?.crossOrigin && !src.startsWith('data:') && !src.startsWith('blob:')) {
+      img.crossOrigin = 'anonymous';
+    }
     img.onload = () => resolve(img);
     img.onerror = () => reject(new Error('No se pudo preparar la imagen para analizar áreas.'));
     img.src = src;
   });
+}
+
+async function loadCanvasSafeImageElement(src: string): Promise<{ img: HTMLImageElement; cleanup: () => void }> {
+  const s3Key = tryExtractKnowledgeFilesKeyFromUrl(src);
+  if (s3Key) {
+    const res = await fetch(`/api/spaces/s3-download?key=${encodeURIComponent(s3Key)}`, { cache: 'no-store' });
+    if (res.ok) {
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      try {
+        const img = await loadImageElement(objectUrl);
+        return { img, cleanup: () => URL.revokeObjectURL(objectUrl) };
+      } catch (error) {
+        URL.revokeObjectURL(objectUrl);
+        throw error;
+      }
+    }
+  }
+
+  return {
+    img: await loadImageElement(src, { crossOrigin: true }),
+    cleanup: () => {},
+  };
 }
 
 async function compactImageForAnalyzeAreas(
@@ -940,15 +966,19 @@ const NanoBananaStudio = memo(({
       const colorMapUrl = offscreen.toDataURL('image/png');
 
       const changesKey = JSON.stringify(
-        validChanges.map((c) => ({
-          id: c.id,
-          desc: c.description,
-          color: c.assignedColor.name,
-          hasPaint: !!c.paintData,
-          isGlobal: !!c.isGlobal,
-          /** Sin esto, al añadir/quitar 📎 ref visual se reutilizaba el prompt sin REF 3 */
-          refSig: c.referenceImage ? String(c.referenceImage.length) : '0',
-        })),
+        {
+          v: 2,
+          baseSig: currentImage ? String(currentImage.length) : '0',
+          changes: validChanges.map((c) => ({
+            id: c.id,
+            desc: c.description,
+            color: c.assignedColor.name,
+            hasPaint: !!c.paintData,
+            isGlobal: !!c.isGlobal,
+            /** Sin esto, al añadir/quitar 📎 ref visual se reutilizaba el prompt sin REF 3 */
+            refSig: c.referenceImage ? String(c.referenceImage.length) : '0',
+          })),
+        },
       );
 
       if (cachedPromptData && cachedPromptData.changesKey === changesKey) {
@@ -984,13 +1014,16 @@ const NanoBananaStudio = memo(({
 
         let markedBaseUrl = colorMapUrl;
         const domImg = imgRef.current;
-        if (domImg && domImg.complete && domImg.naturalWidth > 0) {
+        const baseSrcForCanvas = currentImage || domImg?.src || null;
+        if (baseSrcForCanvas) {
+          let loadedBase: { img: HTMLImageElement; cleanup: () => void } | null = null;
           try {
+            loadedBase = await loadCanvasSafeImageElement(baseSrcForCanvas);
             const marked = document.createElement('canvas');
             marked.width = W;
             marked.height = H;
             const mc = marked.getContext('2d')!;
-            mc.drawImage(domImg, 0, 0, W, H);
+            mc.drawImage(loadedBase.img, 0, 0, W, H);
             for (const change of vc) {
               if (!change.paintData) continue;
               await new Promise<void>((r2) => {
@@ -1021,6 +1054,8 @@ const NanoBananaStudio = memo(({
             markedBaseUrl = marked.toDataURL('image/png');
           } catch (e) {
             console.warn('[marked-base] Canvas draw failed, using color map fallback:', e);
+          } finally {
+            loadedBase?.cleanup();
           }
         }
 
@@ -1081,6 +1116,8 @@ const NanoBananaStudio = memo(({
         }
 
         const hasPaintedZones = vc.some((c) => !c.isGlobal && c.paintData);
+        const colorMapImageKind =
+          hasPaintedZones && markedBaseUrl !== colorMapUrl ? 'marked-base' : 'abstract-map';
         const [baseImageForAnalyze, colorMapImageForAnalyze] = await Promise.all([
           compactImageForAnalyzeAreas(currentImage, { maxSide: 1280, quality: 0.72, maxBytes: 900_000 }),
           compactImageForAnalyzeAreas(hasPaintedZones ? markedBaseUrl : null, {
@@ -1089,6 +1126,9 @@ const NanoBananaStudio = memo(({
             maxBytes: 520_000,
           }),
         ]);
+        if (colorMapImageKind === 'marked-base' && colorMapImageForAnalyze) {
+          markedRef2DataUrl = colorMapImageForAnalyze;
+        }
         const changesForAnalyze = await Promise.all(
           vc.map(async (c) => {
             const pd = positionData[c.assignedColor.name];
@@ -1127,6 +1167,7 @@ const NanoBananaStudio = memo(({
           body: JSON.stringify({
             baseImage: baseImageForAnalyze,
             colorMapImage: colorMapImageForAnalyze,
+            colorMapImageKind,
             changes: changesForAnalyze,
           }),
         });

@@ -5,7 +5,6 @@ import {
   resolveUsageUserEmailFromRequest,
 } from "@/lib/api-usage";
 import { parseReferenceImageForGemini } from "@/lib/parse-reference-image";
-import sharp from "sharp";
 import {
   ApiServiceDisabledError,
   assertApiServiceEnabled,
@@ -29,6 +28,24 @@ interface AreaChange {
   assignedColorHex?: string;
   referenceImageData?: string | null;
   isGlobal?: boolean;
+}
+
+type SharpCallable = (
+  input?: Buffer | Uint8Array | ArrayBuffer | string | null,
+  options?: Record<string, unknown>,
+) => import("sharp").Sharp;
+type SharpOverlayOptions = import("sharp").OverlayOptions;
+
+async function loadSharp(): Promise<SharpCallable | null> {
+  try {
+    const mod = await import("sharp");
+    const candidate = mod as unknown as { default?: SharpCallable };
+    return candidate.default || (mod as unknown as SharpCallable);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn("[analyze-areas] Sharp unavailable; using client marked-map fallback:", message);
+    return null;
+  }
 }
 
 function buildSpatialDescription(c: AreaChange): string {
@@ -66,6 +83,9 @@ async function buildMarkedImageWithSharp(
   changes: AreaChange[]
 ): Promise<string | null> {
   try {
+    const sharp = await loadSharp();
+    if (!sharp) return null;
+
     const baseBuffer = Buffer.from(baseData, "base64");
     const baseMeta = await sharp(baseBuffer).metadata();
     const W = baseMeta.width || 1280;
@@ -74,7 +94,7 @@ async function buildMarkedImageWithSharp(
     // Start with the base image (converted to PNG for compositing)
     const composite = sharp(baseBuffer).ensureAlpha();
 
-    const overlays: sharp.OverlayOptions[] = [];
+    const overlays: SharpOverlayOptions[] = [];
 
     for (const change of changes) {
       if (!change.paintData || !change.assignedColorHex) continue;
@@ -150,7 +170,7 @@ export async function POST(req: NextRequest) {
   try {
     await assertApiServiceEnabled("gemini-analyze");
     const usageUserEmail = await resolveUsageUserEmailFromRequest(req);
-    const { baseImage, colorMapImage, changes } = await req.json();
+    const { baseImage, colorMapImage, colorMapImageKind, changes } = await req.json();
 
     const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
     if (!apiKey) return NextResponse.json({ error: "API Key not configured" }, { status: 500 });
@@ -166,7 +186,7 @@ export async function POST(req: NextRequest) {
     const hasZones = zoneChanges.length > 0;
 
     // 1. Base image
-    const parsedBase = baseImage ? await parseReferenceImageForGemini(baseImage) : null;
+    const parsedBase = baseImage ? await parseReferenceImageForGemini(baseImage, { baseUrl: req.url }) : null;
     if (parsedBase) {
       parts.push({ inline_data: { mime_type: parsedBase.mimeType, data: parsedBase.data } });
     }
@@ -174,6 +194,7 @@ export async function POST(req: NextRequest) {
     // 2. Marked image / map — solo para cambios por zona (trazos). Los globales no llevan máscara.
     let useMarked = false;
     let markedImgData: string | null = null;
+    let markedImgMime: string | null = null;
     if (parsedBase && hasZones) {
       markedImgData = await buildMarkedImageWithSharp(
         parsedBase.data,
@@ -183,16 +204,25 @@ export async function POST(req: NextRequest) {
       if (markedImgData) {
         parts.push({ inline_data: { mime_type: "image/png", data: markedImgData } });
         useMarked = true;
+        markedImgMime = "image/png";
         console.log("[analyze-areas] Using marked image approach (zones)");
       }
     }
 
-    // Fallback si hay zonas pero sharp falló: mapa de color del cliente (no duplicar base en modo solo-global)
+    // Fallback si hay zonas pero sharp falló: el cliente puede enviar REF2 ya compuesta
+    // sobre la imagen base. Si no, usamos el mapa abstracto de color.
     if (!useMarked && hasZones && colorMapImage) {
-      const parsedMap = await parseReferenceImageForGemini(colorMapImage);
+      const parsedMap = await parseReferenceImageForGemini(colorMapImage, { baseUrl: req.url });
       if (parsedMap) {
         parts.push({ inline_data: { mime_type: parsedMap.mimeType, data: parsedMap.data } });
-        console.log("[analyze-areas] Using color map fallback");
+        if (colorMapImageKind === "marked-base") {
+          useMarked = true;
+          markedImgData = parsedMap.data;
+          markedImgMime = parsedMap.mimeType;
+          console.log("[analyze-areas] Using client marked image fallback");
+        } else {
+          console.log("[analyze-areas] Using color map fallback");
+        }
       }
     }
 
@@ -367,7 +397,7 @@ Devuelve SOLO el prompt, sin texto adicional.`;
       prompt: text.trim(),
       // Return the marked image so the client uses it as REFERENCIA 2 in generation
       markedImageData: useMarked && markedImgData ? markedImgData : null,
-      markedImageMime: useMarked && markedImgData ? "image/png" : null,
+      markedImageMime: useMarked && markedImgData ? markedImgMime || "image/png" : null,
     });
 
   } catch (error: unknown) {

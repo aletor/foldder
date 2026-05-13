@@ -7,7 +7,45 @@ import {
   ApiServiceDisabledError,
   assertApiServiceEnabled,
 } from '@/lib/api-usage-controls';
+import { getPresignedUrl } from '@/lib/s3-utils';
 import OpenAI from 'openai';
+
+const KNOWLEDGE_FILES_PREFIX = "knowledge-files/";
+
+function safeDecodeUriComponent(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function tryExtractKnowledgeFilesKey(value: string, baseUrl: string): string | null {
+  const raw = value.trim();
+  if (raw.startsWith(KNOWLEDGE_FILES_PREFIX)) return raw;
+  try {
+    const url = new URL(raw, baseUrl);
+    const routeKey = url.pathname === "/api/spaces/s3-file" ? url.searchParams.get("key")?.trim() : "";
+    if (routeKey?.startsWith(KNOWLEDGE_FILES_PREFIX)) return routeKey;
+    const decodedPath = safeDecodeUriComponent(url.pathname.replace(/^\/+/, ""));
+    const idx = decodedPath.indexOf(KNOWLEDGE_FILES_PREFIX);
+    return idx >= 0 ? decodedPath.slice(idx) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveModelReadableMediaUrl(rawUrl: string, req: Request): Promise<string> {
+  const trimmed = rawUrl.trim();
+  if (!trimmed || trimmed.startsWith("data:")) return trimmed;
+  const s3Key = tryExtractKnowledgeFilesKey(trimmed, req.url);
+  if (s3Key) return getPresignedUrl(s3Key);
+  try {
+    return new URL(trimmed, req.url).toString();
+  } catch {
+    return trimmed;
+  }
+}
 
 export async function POST(req: Request) {
   try {
@@ -23,7 +61,9 @@ export async function POST(req: Request) {
       apiKey: process.env.OPENAI_API_KEY || "",
     });
 
-    console.log(`[Media Describer] Analyzing ${type} at ${url}`);
+    const mediaUrlForModel = await resolveModelReadableMediaUrl(url, req);
+
+    console.log(`[Media Describer] Analyzing ${type} at ${mediaUrlForModel.startsWith("data:") ? "data-url" : mediaUrlForModel}`);
 
     let prompt = "";
     let contentPayload: any[] = [];
@@ -35,7 +75,7 @@ export async function POST(req: Request) {
         { type: "text", text: prompt },
         {
           type: "image_url",
-          image_url: { url: url, detail: "high" }
+          image_url: { url: mediaUrlForModel, detail: "high" }
         }
       ];
     } else if (type === 'pdf' || type === 'txt') {
