@@ -225,6 +225,41 @@ async function compactImageForAnalyzeAreas(
   return best;
 }
 
+async function compactMaskForAnalyzeAreas(
+  src: string | null | undefined,
+  options?: { maxSide?: number; maxBytes?: number },
+): Promise<string | null> {
+  if (!src) return null;
+  if (!isDataImageUrl(src) || typeof document === 'undefined') return src;
+  const maxBytes = options?.maxBytes ?? ANALYZE_AREAS_SOFT_IMAGE_BYTES;
+  if (src.length <= maxBytes) return src;
+
+  const img = await loadImageElement(src);
+  let maxSide = options?.maxSide ?? 960;
+  let best = src;
+
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const scale = Math.min(
+      1,
+      maxSide / Math.max(img.naturalWidth || img.width, img.naturalHeight || img.height, 1),
+    );
+    const width = Math.max(1, Math.round((img.naturalWidth || img.width || 1) * scale));
+    const height = Math.max(1, Math.round((img.naturalHeight || img.height || 1) * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return best;
+    ctx.clearRect(0, 0, width, height);
+    ctx.drawImage(img, 0, 0, width, height);
+    best = canvas.toDataURL('image/png');
+    if (best.length <= maxBytes) return best;
+    maxSide = Math.max(360, Math.floor(maxSide * 0.7));
+  }
+
+  return best;
+}
+
 // Build a labeled reference grid from per-change reference images.
 // Returns a data URL (JPEG) or null if no changes have reference images.
 const buildReferenceGrid = (
@@ -1058,9 +1093,8 @@ const NanoBananaStudio = memo(({
           vc.map(async (c) => {
             const pd = positionData[c.assignedColor.name];
             const [paintData, referenceImageData] = await Promise.all([
-              compactImageForAnalyzeAreas(c.paintData ?? null, {
+              compactMaskForAnalyzeAreas(c.paintData ?? null, {
                 maxSide: 960,
-                quality: 0.66,
                 maxBytes: 420_000,
               }),
               compactImageForAnalyzeAreas(c.referenceImage ?? null, {

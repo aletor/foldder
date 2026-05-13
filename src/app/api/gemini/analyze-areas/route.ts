@@ -95,11 +95,28 @@ async function buildMarkedImageWithSharp(
         const cb = parseInt(hex.slice(4, 6), 16);
 
         // Tint: replace non-transparent pixels with the assigned color
+        let alphaPixels = 0;
         for (let i = 0; i < raw.length; i += 4) {
           if (raw[i + 3] > 30) {
+            alphaPixels++;
             raw[i] = cr; raw[i + 1] = cg; raw[i + 2] = cb;
             raw[i + 3] = Math.min(220, raw[i + 3] * 3);
           }
+        }
+        const alphaPct = (alphaPixels / Math.max(1, W * H)) * 100;
+        const declaredPct = typeof change.areaPct === "number" && Number.isFinite(change.areaPct)
+          ? change.areaPct
+          : null;
+        if (
+          alphaPct > 30 ||
+          (declaredPct != null && declaredPct < 5 && alphaPct > Math.max(12, declaredPct * 18))
+        ) {
+          console.warn(
+            "[analyze-areas] Skipping suspicious full-frame mask for",
+            change.color,
+            { alphaPct: Math.round(alphaPct * 10) / 10, declaredPct },
+          );
+          continue;
         }
 
         // Convert raw back to PNG overlay
