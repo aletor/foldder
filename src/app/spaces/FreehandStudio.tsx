@@ -8366,6 +8366,13 @@ function substituteNativeTextForRasterExport(svgXml: string, objects: FreehandOb
       continue;
     }
     g.querySelectorAll("foreignObject").forEach((el) => el.remove());
+    /**
+     * The live SVG wraps text in `g[data-fh-text]` with `textSvgTransform(t)`.
+     * `textObjectToNativeSvgMarkup` includes the same transform so the raster
+     * fallback can stand on its own. Keeping both makes transformed/scaled text
+     * export with the transform applied twice (huge/shifted in PNG + thumbnails).
+     */
+    g.removeAttribute("transform");
     const root = wrap.documentElement;
     while (root.firstChild) g.appendChild(root.firstChild);
   }
