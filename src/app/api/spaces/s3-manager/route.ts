@@ -1,5 +1,5 @@
 import path from "path";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { isDynamoEnabled } from "@/lib/dynamo-utils";
 import { readJsonStore } from "@/lib/json-persistence";
@@ -57,6 +57,35 @@ function normalizeOwnerEmail(email: string | null | undefined): string {
   return (email || "").trim().toLowerCase();
 }
 
+function isAdminUser(email: string): boolean {
+  const configured = (
+    process.env.FOLDDER_ADMIN_EMAILS ||
+    process.env.ADMIN_EMAIL ||
+    ""
+  )
+    .split(",")
+    .map((s) => normalizeOwnerEmail(s))
+    .filter(Boolean);
+  if (configured.length === 0) return process.env.NODE_ENV !== "production";
+  return configured.includes(email);
+}
+
+function devBypassAllowed(req: NextRequest): boolean {
+  if (process.env.NODE_ENV === "production") return false;
+  return req.headers.get("x-foldder-dev-passcode") === "6666";
+}
+
+async function requireAdminUser(req: NextRequest): Promise<
+  { ok: true; email: string } | { ok: false; response: NextResponse }
+> {
+  if (devBypassAllowed(req)) return { ok: true, email: "dev-bypass@local.foldder" };
+  const session = await auth();
+  const email = normalizeOwnerEmail(session?.user?.email);
+  if (!email) return { ok: false, response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
+  if (!isAdminUser(email)) return { ok: false, response: NextResponse.json({ error: "Forbidden" }, { status: 403 }) };
+  return { ok: true, email };
+}
+
 function spacesTableName(): string {
   return process.env[SPACES_DDB_TABLE_ENV]?.trim() || "";
 }
@@ -100,21 +129,16 @@ async function listAllKnowledgeObjects(): Promise<
   return out;
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    const session = await auth();
-    const ownerEmail = normalizeOwnerEmail(session?.user?.email);
-    if (!ownerEmail) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const adminState = await requireAdminUser(req);
+    if (!adminState.ok) return adminState.response;
 
     const [projects, s3Objects] = await Promise.all([
       readProjects(),
       listAllKnowledgeObjects(),
     ]);
-    const ownedProjects = projects.filter(
-      (p) => normalizeOwnerEmail(p.ownerUserEmail) === ownerEmail,
-    );
+    const ownedProjects = projects;
 
     const projectNameById = new Map<string, string>();
     const projectIdsBySpaceId = new Map<string, Set<string>>();
@@ -166,7 +190,7 @@ export async function GET() {
         orphan: projectIds.length === 0,
       };
     });
-    const files = filesRaw.filter((f) => f.projectIds.length > 0);
+    const files = filesRaw;
 
     const projectItems = ownedProjects.map((project) => {
       let fileCount = 0;
