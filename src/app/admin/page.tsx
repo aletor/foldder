@@ -73,6 +73,47 @@ type AdminFile = {
   orphan: boolean;
 };
 
+type MediaGcDryRunObject = {
+  key: string;
+  lastModified: string | null;
+  size: number;
+  ageDays: number | null;
+  candidate: boolean;
+  category: string;
+  referenced: boolean;
+  reason?: "stale-orphan" | "stale-unsaved";
+  unsaved: boolean;
+};
+
+type MediaGcDryRunResponse = {
+  dryRun: true;
+  generatedAt: string;
+  policy: string;
+  policyConfig: {
+    orphanMinAgeDays: number;
+    unsavedMinAgeDays: number;
+  };
+  summary: {
+    candidateBytes: number;
+    candidateObjects: number;
+    objects: number;
+    orphanBytes: number;
+    orphanCandidates: number;
+    orphanObjects: number;
+    protectedReferencedObjects: number;
+    referencedKeys: number;
+    staleUnsavedCandidates: number;
+    unsavedBytes: number;
+    unsavedObjects: number;
+  };
+  samples: {
+    orphans: MediaGcDryRunObject[];
+    referencedUnsaved: MediaGcDryRunObject[];
+    safeCandidates: MediaGcDryRunObject[];
+    unsaved: MediaGcDryRunObject[];
+  };
+};
+
 type AdminCalendarDay = {
   day: string;
   activeUsers: number;
@@ -259,6 +300,13 @@ function formatMoney(usd: number): string {
   }).format(usd || 0);
 }
 
+function formatAgeDays(days: number | null): string {
+  if (days == null) return "sin fecha";
+  if (days === 0) return "hoy";
+  if (days === 1) return "1 dia";
+  return `${days} dias`;
+}
+
 function usageCategoryLabel(category: string): string {
   const labels: Record<string, string> = {
     "ia-text": "IA texto",
@@ -298,6 +346,8 @@ export default function AdminPage() {
   const [data, setData] = useState<OverviewResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
+  const [gcLoading, setGcLoading] = useState(false);
+  const [gcDryRun, setGcDryRun] = useState<MediaGcDryRunResponse | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -359,10 +409,35 @@ export default function AdminPage() {
           : payload.projects[0]?.id ?? null,
       );
       setSelectedKeys(new Set());
+      setGcDryRun(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error cargando panel");
     } finally {
       setLoading(false);
+    }
+  }, [apiHeaders]);
+
+  const loadGcDryRun = useCallback(async () => {
+    setGcLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/admin/media-gc-dry-run", {
+        cache: "no-store",
+        headers: apiHeaders,
+      });
+      const payload = (await res.json()) as Partial<MediaGcDryRunResponse> & { error?: string };
+      if (!res.ok || payload.error || payload.dryRun !== true || !payload.summary || !payload.samples) {
+        throw new Error(payload.error || "No se pudo calcular el dry-run");
+      }
+      const dryRun = payload as MediaGcDryRunResponse;
+      setGcDryRun(dryRun);
+      setNotice(
+        `Dry-run calculado: ${dryRun.summary.candidateObjects} candidato(s), ${formatBytes(dryRun.summary.candidateBytes)}.`,
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error calculando dry-run GC");
+    } finally {
+      setGcLoading(false);
     }
   }, [apiHeaders]);
 
@@ -422,6 +497,14 @@ export default function AdminPage() {
 
   const selectedFiles = filteredFiles.filter((f) => selectedKeys.has(f.key));
   const selectedBytes = selectedFiles.reduce((acc, f) => acc + f.size, 0);
+  const gcSafeCandidateKeys = useMemo(
+    () => new Set(gcDryRun?.samples.safeCandidates.map((row) => row.key) ?? []),
+    [gcDryRun],
+  );
+  const visibleGcCandidateFiles = useMemo(
+    () => filteredFiles.filter((file) => gcSafeCandidateKeys.has(file.key)),
+    [filteredFiles, gcSafeCandidateKeys],
+  );
 
   const selectedUserInfo = data?.users.find((u) => u.email === selectedUser) || null;
   const selectedProjectInfo = data?.projects.find((p) => p.id === selectedProject) || null;
@@ -436,6 +519,15 @@ export default function AdminPage() {
 
   const openDeleteOne = (file: AdminFile) => {
     setDeletePlan({ keys: [file.key], totalBytes: file.size });
+  };
+
+  const selectVisibleGcCandidates = () => {
+    if (visibleGcCandidateFiles.length === 0) return;
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      visibleGcCandidateFiles.forEach((file) => next.add(file.key));
+      return next;
+    });
   };
 
   const confirmDelete = async () => {
@@ -1020,6 +1112,15 @@ export default function AdminPage() {
                 </label>
                 <button
                   type="button"
+                  onClick={() => void loadGcDryRun()}
+                  disabled={gcLoading}
+                  className="inline-flex items-center gap-2 rounded-lg border border-cyan-300/30 bg-cyan-300/10 px-3 py-2 text-xs text-cyan-100 transition hover:bg-cyan-300/16 disabled:cursor-not-allowed disabled:opacity-45"
+                >
+                  <RefreshCcw size={12} />
+                  {gcLoading ? "Calculando..." : "Dry-run GC"}
+                </button>
+                <button
+                  type="button"
                   onClick={openDeleteSelected}
                   disabled={selectedFiles.length === 0}
                   className="inline-flex items-center gap-2 rounded-lg border border-red-400/35 bg-red-400/10 px-3 py-2 text-xs text-red-200 transition hover:bg-red-400/20 disabled:cursor-not-allowed disabled:opacity-45"
@@ -1047,6 +1148,109 @@ export default function AdminPage() {
                 <p className="text-amber-100/80">Huerfanos globales</p>
                 <p className="mt-1 text-xl font-semibold text-amber-100">{data.summary.orphanFiles}</p>
               </div>
+            </div>
+
+            <div className="rounded-xl border border-cyan-300/15 bg-cyan-300/[0.045] p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs tracking-[0.1em] text-cyan-100/60 uppercase">Dry-run GC multimedia</p>
+                  <p className="mt-1 text-sm text-white/70">
+                    Auditoria informativa: no borra nada. Solo marca candidatos no referenciados y con antiguedad suficiente.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={selectVisibleGcCandidates}
+                  disabled={!gcDryRun || visibleGcCandidateFiles.length === 0}
+                  className="inline-flex items-center gap-2 rounded-lg border border-white/18 bg-white/[0.04] px-3 py-2 text-xs text-white/75 transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-45"
+                >
+                  Seleccionar candidatos visibles ({visibleGcCandidateFiles.length})
+                </button>
+              </div>
+
+              {gcDryRun ? (
+                <>
+                  <div className="mt-4 grid gap-2 md:grid-cols-3 xl:grid-cols-6">
+                    <div className="rounded-lg border border-white/10 bg-black/15 p-3 text-xs">
+                      <p className="text-white/50">Objetos revisados</p>
+                      <p className="mt-1 text-lg font-semibold">{gcDryRun.summary.objects}</p>
+                    </div>
+                    <div className="rounded-lg border border-white/10 bg-black/15 p-3 text-xs">
+                      <p className="text-white/50">Referencias protegidas</p>
+                      <p className="mt-1 text-lg font-semibold">{gcDryRun.summary.referencedKeys}</p>
+                    </div>
+                    <div className="rounded-lg border border-amber-300/20 bg-amber-300/[0.055] p-3 text-xs">
+                      <p className="text-amber-100/70">Huerfanos</p>
+                      <p className="mt-1 text-lg font-semibold text-amber-100">{gcDryRun.summary.orphanObjects}</p>
+                    </div>
+                    <div className="rounded-lg border border-red-300/20 bg-red-300/[0.055] p-3 text-xs">
+                      <p className="text-red-100/70">Candidatos</p>
+                      <p className="mt-1 text-lg font-semibold text-red-100">{gcDryRun.summary.candidateObjects}</p>
+                    </div>
+                    <div className="rounded-lg border border-red-300/20 bg-red-300/[0.055] p-3 text-xs">
+                      <p className="text-red-100/70">Peso candidato</p>
+                      <p className="mt-1 text-lg font-semibold text-red-100">{formatBytes(gcDryRun.summary.candidateBytes)}</p>
+                    </div>
+                    <div className="rounded-lg border border-white/10 bg-black/15 p-3 text-xs">
+                      <p className="text-white/50">Politica</p>
+                      <p className="mt-1 text-[11px] text-white/80">
+                        unsaved {gcDryRun.policyConfig.unsavedMinAgeDays}d · orphan {gcDryRun.policyConfig.orphanMinAgeDays}d
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                    <div className="rounded-lg border border-white/10 bg-black/12 p-3">
+                      <p className="text-xs font-semibold tracking-[0.1em] text-white/48 uppercase">
+                        Candidatos seguros ({gcDryRun.samples.safeCandidates.length} muestra)
+                      </p>
+                      <div className="mt-2 max-h-40 space-y-1 overflow-auto pr-1">
+                        {gcDryRun.samples.safeCandidates.slice(0, 10).map((row) => (
+                          <div key={row.key} className="rounded-md border border-white/8 bg-white/[0.025] px-2 py-1.5 text-[11px]">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="truncate text-white/75">{row.key}</span>
+                              <span className="shrink-0 text-white/45">{formatBytes(row.size)}</span>
+                            </div>
+                            <p className="text-white/38">
+                              {row.reason === "stale-unsaved" ? "unsaved temporal" : "huerfano"} · {formatAgeDays(row.ageDays)}
+                            </p>
+                          </div>
+                        ))}
+                        {gcDryRun.samples.safeCandidates.length === 0 && (
+                          <p className="text-xs text-white/45">No hay candidatos con la politica actual.</p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border border-white/10 bg-black/12 p-3">
+                      <p className="text-xs font-semibold tracking-[0.1em] text-white/48 uppercase">
+                        Protegidos aunque parezcan temporales
+                      </p>
+                      <p className="mt-1 text-xs text-white/48">
+                        Objetos en /unsaved/ que siguen referenciados por algun proyecto no se consideran candidatos.
+                      </p>
+                      <div className="mt-2 max-h-40 space-y-1 overflow-auto pr-1">
+                        {gcDryRun.samples.referencedUnsaved.slice(0, 10).map((row) => (
+                          <div key={row.key} className="rounded-md border border-emerald-300/12 bg-emerald-300/[0.035] px-2 py-1.5 text-[11px]">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="truncate text-emerald-100/75">{row.key}</span>
+                              <span className="shrink-0 text-emerald-100/45">{formatBytes(row.size)}</span>
+                            </div>
+                            <p className="text-emerald-100/38">protegido · {formatAgeDays(row.ageDays)}</p>
+                          </div>
+                        ))}
+                        {gcDryRun.samples.referencedUnsaved.length === 0 && (
+                          <p className="text-xs text-white/45">No hay temporales referenciados en la muestra.</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="mt-3 rounded-lg border border-dashed border-white/12 p-3 text-xs text-white/48">
+                  Pulsa “Dry-run GC” para calcular candidatos. El calculo lee S3 y Dynamo; no ejecuta borrado.
+                </div>
+              )}
             </div>
 
             <div className="max-h-[760px] overflow-auto rounded-lg border border-white/10">

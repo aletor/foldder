@@ -3,6 +3,7 @@ import { ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { ScanCommand } from "@aws-sdk/lib-dynamodb";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { classifyMediaGcObjects } from "@/lib/admin-media-gc";
 import { ddbClient, isDynamoEnabled } from "@/lib/dynamo-utils";
 import { withDynamoRetry } from "@/lib/dynamo-retry";
 import { readJsonStore } from "@/lib/json-persistence";
@@ -14,6 +15,7 @@ import {
   readAllDdbProjects as readAllDdbProjectsStore,
   type ProjectRecord,
 } from "@/lib/spaces-dynamo-store";
+import { readAllSpacesV2Projects } from "@/lib/spaces-v2-store";
 import { BUCKET_NAME, s3Client } from "@/lib/s3-utils";
 
 export const runtime = "nodejs";
@@ -128,6 +130,18 @@ async function referencedKeysFromSpacesV2(tableName: string): Promise<Set<string
     }
     exclusiveStartKey = response.LastEvaluatedKey as Record<string, unknown> | undefined;
   } while (exclusiveStartKey);
+
+  try {
+    const projects = await readAllSpacesV2Projects(tableName);
+    for (const project of projects) {
+      for (const key of collectS3KeysFromProject(project)) {
+        if (key.startsWith(KNOWLEDGE_PREFIX)) keys.add(key);
+      }
+    }
+  } catch (error) {
+    console.warn("[admin][media-gc-dry-run] spaces_v2 project read failed; media refs still protect known keys.", error);
+  }
+
   return keys;
 }
 
@@ -150,27 +164,24 @@ export async function GET(req: NextRequest) {
       listAllKnowledgeObjects(),
       referencedKeysFromProjects(),
     ]);
-    const orphanObjects = objects.filter((row) => !referenced.has(row.key));
-    const unsavedObjects = objects.filter((row) => row.key.includes("/unsaved/"));
-    const orphanBytes = orphanObjects.reduce((acc, row) => acc + row.size, 0);
-    const unsavedBytes = unsavedObjects.reduce((acc, row) => acc + row.size, 0);
+    const classification = classifyMediaGcObjects(objects, referenced);
+    const candidates = classification.objects.filter((row) => row.candidate);
+    const orphanObjects = classification.objects.filter((row) => !row.referenced);
+    const unsavedObjects = classification.objects.filter((row) => row.unsaved);
+    const referencedUnsaved = classification.objects.filter((row) => row.category === "referenced-unsaved");
 
     return NextResponse.json({
       dryRun: true,
       generatedAt: new Date().toISOString(),
+      policyConfig: classification.policy,
       policy:
-        "No objects are deleted by this endpoint. Physical deletion is limited to project deletion and the protected admin manager.",
-      summary: {
-        objects: objects.length,
-        orphanBytes,
-        orphanObjects: orphanObjects.length,
-        referencedKeys: referenced.size,
-        unsavedBytes,
-        unsavedObjects: unsavedObjects.length,
-      },
+        "No objects are deleted by this endpoint. Candidates are informational only; physical deletion is limited to project deletion and the protected admin manager.",
+      summary: classification.summary,
       samples: {
         orphans: orphanObjects.slice(0, MAX_SAMPLE_KEYS),
+        safeCandidates: candidates.slice(0, MAX_SAMPLE_KEYS),
         unsaved: unsavedObjects.slice(0, MAX_SAMPLE_KEYS),
+        referencedUnsaved: referencedUnsaved.slice(0, MAX_SAMPLE_KEYS),
       },
     });
   } catch (error) {
