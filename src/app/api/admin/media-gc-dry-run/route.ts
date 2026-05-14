@@ -1,7 +1,7 @@
 import path from "path";
 import { ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { ScanCommand } from "@aws-sdk/lib-dynamodb";
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { classifyMediaGcObjects } from "@/lib/admin-media-gc";
 import { ddbClient, isDynamoEnabled } from "@/lib/dynamo-utils";
@@ -51,17 +51,11 @@ function isAdminUser(email: string): boolean {
     .split(",")
     .map((s) => normalizeEmail(s))
     .filter(Boolean);
-  if (configured.length === 0) return process.env.NODE_ENV !== "production";
+  if (configured.length === 0) return false;
   return configured.includes(email);
 }
 
-function devBypassAllowed(req: NextRequest): boolean {
-  if (process.env.NODE_ENV === "production") return false;
-  return req.headers.get("x-foldder-dev-passcode") === "6666";
-}
-
-async function ensureAdmin(req: NextRequest): Promise<NextResponse | null> {
-  if (devBypassAllowed(req)) return null;
+async function ensureAdmin(): Promise<NextResponse | null> {
   const session = await auth();
   const email = normalizeEmail(session?.user?.email);
   if (!email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -155,9 +149,9 @@ async function referencedKeysFromProjects(): Promise<Set<string>> {
   return new Set(projects.flatMap(collectS3KeysFromProject));
 }
 
-export async function GET(req: NextRequest) {
+export async function GET() {
   try {
-    const guard = await ensureAdmin(req);
+    const guard = await ensureAdmin();
     if (guard) return guard;
 
     const [objects, referenced] = await Promise.all([

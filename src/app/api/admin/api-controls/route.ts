@@ -20,21 +20,13 @@ function isAdminUser(email: string): boolean {
     .map((s) => normalizeEmail(s))
     .filter(Boolean);
 
-  if (configured.length === 0) {
-    return process.env.NODE_ENV !== "production";
-  }
+  if (configured.length === 0) return false;
   return configured.includes(email);
 }
 
-function devBypassAllowed(req: NextRequest): boolean {
-  if (process.env.NODE_ENV === "production") return false;
-  return req.headers.get("x-foldder-dev-passcode") === "6666";
-}
-
-async function ensureAdmin(req: NextRequest): Promise<
+async function ensureAdmin(): Promise<
   { ok: true; actorEmail: string } | { ok: false; response: NextResponse }
 > {
-  if (devBypassAllowed(req)) return { ok: true, actorEmail: "dev-bypass@local.foldder" };
   const session = await auth();
   const email = normalizeEmail(session?.user?.email);
   if (!email) {
@@ -58,9 +50,9 @@ function isUsageServiceId(value: string): value is UsageServiceId {
   return SERVICE_IDS.has(value as UsageServiceId);
 }
 
-export async function GET(req: NextRequest) {
+export async function GET() {
   try {
-    const guard = await ensureAdmin(req);
+    const guard = await ensureAdmin();
     if (!guard.ok) return guard.response;
     const controls = await getApiServiceControls();
     return NextResponse.json({
@@ -74,7 +66,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const guard = await ensureAdmin(req);
+    const guard = await ensureAdmin();
     if (!guard.ok) return guard.response;
 
     const body = (await req.json()) as { serviceId?: string; enabled?: boolean };

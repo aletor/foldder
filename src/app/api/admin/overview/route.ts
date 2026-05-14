@@ -1,5 +1,5 @@
 import path from "path";
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { auth } from "@/lib/auth";
 import { isDynamoEnabled } from "@/lib/dynamo-utils";
@@ -150,21 +150,13 @@ function isAdminUser(email: string): boolean {
     .map((s) => normalizeEmail(s))
     .filter(Boolean);
 
-  if (configured.length === 0) {
-    return process.env.NODE_ENV !== "production";
-  }
+  if (configured.length === 0) return false;
   return configured.includes(email);
 }
 
-function devBypassAllowed(req: NextRequest): boolean {
-  if (process.env.NODE_ENV === "production") return false;
-  return req.headers.get("x-foldder-dev-passcode") === "6666";
-}
-
-async function ensureAdmin(req: NextRequest): Promise<
+async function ensureAdmin(): Promise<
   { ok: true } | { ok: false; response: NextResponse }
 > {
-  if (devBypassAllowed(req)) return { ok: true };
   const session = await auth();
   const email = normalizeEmail(session?.user?.email);
   if (!email) {
@@ -270,9 +262,9 @@ function estimateSessionsAndMinutes(isoDates: string[]): {
   return { sessionCount: sessions, estimatedMinutes: minutes };
 }
 
-export async function GET(req: NextRequest) {
+export async function GET() {
   try {
-    const guard = await ensureAdmin(req);
+    const guard = await ensureAdmin();
     if (!guard.ok) return guard.response;
 
     const [projects, s3Objects, apiUsage, apiControls] = await Promise.all([

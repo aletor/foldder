@@ -359,15 +359,10 @@ export default function AdminPage() {
   const [fileQuery, setFileQuery] = useState("");
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [deletePlan, setDeletePlan] = useState<DeletePlan | null>(null);
-  const [devPasscode, setDevPasscode] = useState("");
 
   const apiHeaders = useMemo<Record<string, string>>(() => {
-    const headers: Record<string, string> = {};
-    if (devPasscode === "6666") {
-      headers["x-foldder-dev-passcode"] = "6666";
-    }
-    return headers;
-  }, [devPasscode]);
+    return {};
+  }, []);
 
   const summaryTiles = useMemo<Array<[string, string | number, LucideIcon]>>(
     () =>
@@ -574,12 +569,6 @@ export default function AdminPage() {
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <input
-                value={devPasscode}
-                onChange={(e) => setDevPasscode(e.target.value)}
-                placeholder="Dev code"
-                className="w-28 rounded-lg border border-white/20 bg-white/[0.04] px-2 py-2 text-xs"
-              />
               <button
                 type="button"
                 onClick={() => void load()}

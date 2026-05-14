@@ -17,17 +17,11 @@ function isAdminUser(email: string): boolean {
     .split(",")
     .map((s) => normalizeEmail(s))
     .filter(Boolean);
-  if (configured.length === 0) return process.env.NODE_ENV !== "production";
+  if (configured.length === 0) return false;
   return configured.includes(email);
 }
 
-function devBypassAllowed(req: NextRequest): boolean {
-  if (process.env.NODE_ENV === "production") return false;
-  return req.headers.get("x-foldder-dev-passcode") === "6666";
-}
-
-async function ensureAdmin(req: NextRequest): Promise<NextResponse | null> {
-  if (devBypassAllowed(req)) return null;
+async function ensureAdmin(): Promise<NextResponse | null> {
   const session = await auth();
   const email = normalizeEmail(session?.user?.email);
   if (!email) {
@@ -41,7 +35,7 @@ async function ensureAdmin(req: NextRequest): Promise<NextResponse | null> {
 
 export async function POST(req: NextRequest) {
   try {
-    const guard = await ensureAdmin(req);
+    const guard = await ensureAdmin();
     if (guard) return guard;
 
     const body = (await req.json()) as { keys?: unknown };
@@ -78,4 +72,3 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Failed to delete files" }, { status: 500 });
   }
 }
-
