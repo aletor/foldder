@@ -1,18 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   recordApiUsage,
-  resolveUsageUserEmailFromRequest,
 } from "@/lib/api-usage";
 import {
   ApiServiceDisabledError,
   assertApiServiceEnabled,
 } from "@/lib/api-usage-controls";
+import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
 import OpenAI from "openai";
 
 export async function POST(req: NextRequest) {
   try {
     await assertApiServiceEnabled("openai-enhance");
-    const usageUserEmail = await resolveUsageUserEmailFromRequest(req);
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
+    const usageUserEmail = authState.user.email;
     const { prompt } = await req.json();
 
     if (!prompt) {
@@ -68,7 +70,7 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({ enhanced });
-  } catch (error: any) {
+  } catch (error: unknown) {
     if (error instanceof ApiServiceDisabledError) {
       return NextResponse.json(
         { error: `API bloqueada en admin: ${error.label}` },
@@ -76,6 +78,7 @@ export async function POST(req: NextRequest) {
       );
     }
     console.error("OpenAI Enhance Error:", error);
-    return NextResponse.json({ error: error.message || "Internal Server Error" }, { status: 500 });
+    const message = error instanceof Error ? error.message : "Internal Server Error";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

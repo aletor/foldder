@@ -2,13 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   parseGeminiUsageMetadata,
   recordApiUsage,
-  resolveUsageUserEmailFromRequest,
 } from "@/lib/api-usage";
 import { parseReferenceImageForGemini } from "@/lib/parse-reference-image";
 import {
   ApiServiceDisabledError,
   assertApiServiceEnabled,
 } from "@/lib/api-usage-controls";
+import {
+  assertUserCanAccessMediaReference,
+  ForbiddenMediaReferenceError,
+} from "@/lib/api-media-access";
+import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
 
 // Cheapest Gemini model with vision capability (text output only)
 const VISION_MODEL = "gemini-2.5-flash";
@@ -169,7 +173,9 @@ async function buildMarkedImageWithSharp(
 export async function POST(req: NextRequest) {
   try {
     await assertApiServiceEnabled("gemini-analyze");
-    const usageUserEmail = await resolveUsageUserEmailFromRequest(req);
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
+    const usageUserEmail = authState.user.email;
     const { baseImage, colorMapImage, colorMapImageKind, changes } = await req.json();
 
     const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
@@ -186,6 +192,7 @@ export async function POST(req: NextRequest) {
     const hasZones = zoneChanges.length > 0;
 
     // 1. Base image
+    await assertUserCanAccessMediaReference(usageUserEmail, baseImage, "base image");
     const parsedBase = baseImage ? await parseReferenceImageForGemini(baseImage, { baseUrl: req.url }) : null;
     if (parsedBase) {
       parts.push({ inline_data: { mime_type: parsedBase.mimeType, data: parsedBase.data } });
@@ -212,6 +219,7 @@ export async function POST(req: NextRequest) {
     // Fallback si hay zonas pero sharp falló: el cliente puede enviar REF2 ya compuesta
     // sobre la imagen base. Si no, usamos el mapa abstracto de color.
     if (!useMarked && hasZones && colorMapImage) {
+      await assertUserCanAccessMediaReference(usageUserEmail, colorMapImage, "zone map image");
       const parsedMap = await parseReferenceImageForGemini(colorMapImage, { baseUrl: req.url });
       if (parsedMap) {
         parts.push({ inline_data: { mime_type: parsedMap.mimeType, data: parsedMap.data } });
@@ -228,6 +236,13 @@ export async function POST(req: NextRequest) {
 
     // 3. Prompt
     const hasAnyRef = typedChanges.some((c) => c.referenceImageData);
+    for (const [index, change] of typedChanges.entries()) {
+      await assertUserCanAccessMediaReference(
+        usageUserEmail,
+        change.referenceImageData,
+        `visual reference ${index + 1}`,
+      );
+    }
 
     let systemPrompt: string;
 
@@ -406,6 +421,9 @@ Devuelve SOLO el prompt, sin texto adicional.`;
         { error: `API bloqueada en admin: ${error.label}` },
         { status: 423 },
       );
+    }
+    if (error instanceof ForbiddenMediaReferenceError) {
+      return NextResponse.json({ error: error.message }, { status: 403 });
     }
     const message = error instanceof Error ? error.message : String(error);
     console.error("[analyze-areas] Error:", message);

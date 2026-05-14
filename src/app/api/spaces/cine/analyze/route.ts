@@ -2,12 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 import {
   recordApiUsage,
-  resolveUsageUserEmailFromRequest,
 } from "@/lib/api-usage";
 import {
   ApiServiceDisabledError,
   assertApiServiceEnabled,
 } from "@/lib/api-usage-controls";
+import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
 import {
   validateAndNormalizeCineAIAnalysis,
 } from "@/app/spaces/cine-engine";
@@ -176,11 +176,13 @@ function userPrompt(request: CineAnalyzeRequest): string {
 export async function POST(req: NextRequest) {
   try {
     await assertApiServiceEnabled("openai-cine-analyze");
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
     const apiKey = process.env.OPENAI_API_KEY?.trim();
     if (!apiKey) {
       return NextResponse.json({ error: "OPENAI_API_KEY no configurada." }, { status: 503 });
     }
-    const usageUserEmail = await resolveUsageUserEmailFromRequest(req);
+    const usageUserEmail = authState.user.email;
     const request = await req.json() as CineAnalyzeRequest;
     const script = safeString(request.script, 20000);
     if (!script) {

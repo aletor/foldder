@@ -5,8 +5,12 @@ import {
   ApiServiceDisabledError,
   assertApiServiceEnabled,
 } from "@/lib/api-usage-controls";
-import { recordApiUsage, resolveUsageUserEmailFromRequest } from "@/lib/api-usage";
+import { recordApiUsage } from "@/lib/api-usage";
 import { getFromS3 } from "@/lib/s3-utils";
+import {
+  canUserAccessKnowledgeFileKey,
+  requireSpacesAuthUser,
+} from "@/lib/spaces-access-control";
 import { parseBrainDocument } from "@/lib/brain-parser-utils";
 import {
   buildReadableCorporateContext,
@@ -1076,7 +1080,9 @@ export async function POST(req: NextRequest) {
   try {
     await assertApiServiceEnabled("openai-brain-analyze");
     await assertApiServiceEnabled("openai-embeddings");
-    const usageUserEmail = await resolveUsageUserEmailFromRequest(req);
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
+    const usageUserEmail = authState.user.email;
     const body = (await req.json()) as {
       documents?: BrainDoc[];
       strategy?: BrainStrategy;
@@ -1151,6 +1157,8 @@ export async function POST(req: NextRequest) {
       const doc = nextDocs[idx];
       try {
         if (!doc.s3Path) throw new Error("Missing s3Path for analysis");
+        const allowed = await canUserAccessKnowledgeFileKey(usageUserEmail, doc.s3Path);
+        if (!allowed) throw new Error("Forbidden document asset");
         const fileBuffer = await getFromS3(doc.s3Path);
 
         let extractedData: Record<string, unknown>;

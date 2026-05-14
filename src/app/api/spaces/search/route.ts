@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server';
 import { MAX_CANDIDATES, filterImageUrlsByIntent } from '@/lib/gemini-image-intent-verify';
-import { resolveUsageUserEmailFromRequest } from "@/lib/api-usage";
 import {
   ApiServiceDisabledError,
   assertApiServiceEnabled,
 } from "@/lib/api-usage-controls";
+import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
 import gis from "g-i-s";
 
 type GisResult = { url?: string };
@@ -86,6 +86,8 @@ const searchWikipediaImage = async (query: string): Promise<string[]> => {
 
 export async function POST(req: Request) {
   try {
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
     const body = await req.json();
     const query = body.query as string;
     const limit = typeof body.limit === 'number' ? body.limit : 5;
@@ -98,7 +100,7 @@ export async function POST(req: Request) {
     }
 
     const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
-    const usageUserEmail = await resolveUsageUserEmailFromRequest(req);
+    const usageUserEmail = authState.user.email;
     const intentForVision =
       typeof verifyIntentRaw === 'string' && verifyIntentRaw.trim()
         ? verifyIntentRaw.trim()

@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import {
   recordApiUsage,
-  resolveUsageUserEmailFromRequest,
 } from "@/lib/api-usage";
 import {
   ApiServiceDisabledError,
@@ -33,6 +32,7 @@ import {
   trimNodesToCharBudget,
 } from "@/lib/assistant-context-trim";
 import OpenAI from "openai";
+import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
 
 /**
  * Modelo OpenAI para el asistente de grafo.
@@ -42,10 +42,18 @@ import OpenAI from "openai";
  */
 const ASSISTANT_MODEL = process.env.OPENAI_ASSISTANT_MODEL?.trim() || "gpt-4o-mini";
 
+type AssistantDeltaNode = {
+  type?: string;
+  data?: Record<string, unknown>;
+  [key: string]: unknown;
+};
+
 export async function POST(req: Request) {
   try {
     await assertApiServiceEnabled("openai-assistant");
-    const usageUserEmail = await resolveUsageUserEmailFromRequest(req);
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
+    const usageUserEmail = authState.user.email;
     const { prompt, currentNodes = [], currentEdges = [], projectAssets } = await req.json() as {
       prompt?: string;
       currentNodes?: unknown;
@@ -159,7 +167,7 @@ export async function POST(req: Request) {
     let rawDeltaNodes = Array.isArray(result.nodes) ? [...result.nodes] : [];
 
     if (result.nodes && Array.isArray(result.nodes)) {
-      result.nodes = result.nodes.map((node: any) => {
+      result.nodes = result.nodes.map((node: AssistantDeltaNode) => {
         if (node.type === "urlImage" && node.data?.label) {
           return {
             ...node,
@@ -288,7 +296,7 @@ export async function POST(req: Request) {
     }
 
     return NextResponse.json(result);
-  } catch (error: any) {
+  } catch (error: unknown) {
     if (error instanceof ApiServiceDisabledError) {
       return NextResponse.json(
         { error: `API bloqueada en admin: ${error.label}` },
@@ -296,6 +304,7 @@ export async function POST(req: Request) {
       );
     }
     console.error("Assistant API Error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    const message = error instanceof Error ? error.message : "Internal Server Error";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

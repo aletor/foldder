@@ -3,13 +3,17 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import {
   parseGeminiUsageMetadata,
   recordApiUsage,
-  resolveUsageUserEmailFromRequest,
 } from "@/lib/api-usage";
 import {
   ApiServiceDisabledError,
   assertApiServiceEnabled,
 } from "@/lib/api-usage-controls";
 import { parseReferenceImageForGemini } from "@/lib/parse-reference-image";
+import {
+  assertUserCanAccessMediaReference,
+  ForbiddenMediaReferenceError,
+} from "@/lib/api-media-access";
+import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
 import { parseJsonObjectFromVisionModelText } from "@/lib/brain/brain-vision-json-from-text";
 import { GEMINI_VISION_ANALYSIS_SERVICE_ID } from "@/lib/brain/brain-vision-usage";
 import {
@@ -32,6 +36,9 @@ function safeString(value: unknown, max = 120000): string {
 export async function POST(req: NextRequest) {
   try {
     await assertApiServiceEnabled(GEMINI_VISION_ANALYSIS_SERVICE_ID);
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
+    const usageUserEmail = authState.user.email;
     const body = (await req.json().catch(() => ({}))) as Body;
     const imageUrl = safeString(body.imageUrl);
     const slotId = safeString(body.slotId, 160);
@@ -44,7 +51,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "GEMINI_API_KEY / GOOGLE_API_KEY no configurada." }, { status: 500 });
     }
 
-    const parsed = await parseReferenceImageForGemini(imageUrl);
+    const s3Key = await assertUserCanAccessMediaReference(usageUserEmail, imageUrl, "mosaic image");
+    const parsed = await parseReferenceImageForGemini(s3Key ?? imageUrl, { baseUrl: req.url });
     if (!parsed) {
       return NextResponse.json({ error: "No se pudo leer la imagen del mosaico." }, { status: 400 });
     }
@@ -74,7 +82,7 @@ export async function POST(req: NextRequest) {
     const usage = parseGeminiUsageMetadata(result.response);
     await recordApiUsage({
       provider: "gemini",
-      userEmail: await resolveUsageUserEmailFromRequest(req),
+      userEmail: usageUserEmail,
       serviceId: GEMINI_VISION_ANALYSIS_SERVICE_ID,
       route: ROUTE,
       model: modelName,
@@ -93,8 +101,10 @@ export async function POST(req: NextRequest) {
     if (e instanceof ApiServiceDisabledError) {
       return NextResponse.json({ error: `${e.label} está desactivado.` }, { status: 403 });
     }
+    if (e instanceof ForbiddenMediaReferenceError) {
+      return NextResponse.json({ error: e.message }, { status: 403 });
+    }
     const message = e instanceof Error ? e.message : "No se pudo analizar el mosaico ADN.";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
-

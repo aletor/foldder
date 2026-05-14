@@ -2,12 +2,12 @@ import { NextResponse } from "next/server";
 import OpenAI from "openai";
 import {
   recordApiUsage,
-  resolveUsageUserEmailFromRequest,
 } from "@/lib/api-usage";
 import {
   ApiServiceDisabledError,
   assertApiServiceEnabled,
 } from "@/lib/api-usage-controls";
+import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
 
 const TEXT_CONTENT_MODEL =
   process.env.OPENAI_TEXT_CONTENT_MODEL?.trim() ||
@@ -34,7 +34,9 @@ function isTargetLanguage(value: unknown): value is TargetLanguage {
 export async function POST(req: Request) {
   try {
     await assertApiServiceEnabled("openai-assistant");
-    const usageUserEmail = await resolveUsageUserEmailFromRequest(req);
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
+    const usageUserEmail = authState.user.email;
     const body = (await req.json().catch(() => ({}))) as {
       text?: unknown;
       action?: unknown;

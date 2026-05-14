@@ -48,7 +48,18 @@ vi.mock("@/lib/pricing-config", () => ({
 
 vi.mock("@/lib/s3-utils", () => ({
   uploadToS3: vi.fn(async () => "knowledge-files/test-video.mp4"),
+  uploadBufferToS3Key: vi.fn(async (key: string) => key),
   getPresignedUrl: vi.fn(async () => "https://example.com/test-video.mp4"),
+}));
+
+vi.mock("@/lib/spaces-access-control", () => ({
+  buildUserAssetObjectKey: vi.fn(() => "knowledge-files/user-assets/test/generated-video.mp4"),
+  canUserAccessKnowledgeFileKey: vi.fn(async () => true),
+  requireSpacesAuthUser: vi.fn(async () => ({
+    ok: true,
+    user: { email: "test@local.foldder", image: null, name: "Test" },
+  })),
+  stableKnowledgeFileUrlFromKey: vi.fn((key: string) => `/api/spaces/s3-file?key=${encodeURIComponent(key)}`),
 }));
 
 import { POST } from "./route";
@@ -81,7 +92,7 @@ describe("/api/gemini/video", () => {
     const json = await response.json();
 
     expect(response.status).toBe(200);
-    expect(json.output).toContain("https://example.com/test-video.mp4");
+    expect(json.output).toContain("/api/spaces/s3-file?key=knowledge-files%2Fuser-assets%2Ftest%2Fgenerated-video.mp4");
     const params = lastGenerateVideosParams as {
       image?: { imageBytes?: string; inlineData?: unknown; mimeType?: string };
       config?: { referenceImages?: unknown[] };

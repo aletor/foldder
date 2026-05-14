@@ -1,23 +1,32 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
   recordApiUsage,
-  resolveUsageUserEmailFromRequest,
 } from '@/lib/api-usage';
 import Replicate from 'replicate';
 import {
   ApiServiceDisabledError,
   assertApiServiceEnabled,
 } from "@/lib/api-usage-controls";
+import {
+  assertUserCanAccessMediaReference,
+  ForbiddenMediaReferenceError,
+} from "@/lib/api-media-access";
+import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
+import { getPresignedUrl } from "@/lib/s3-utils";
 
 export async function POST(req: NextRequest) {
   try {
     await assertApiServiceEnabled("replicate-vmatte");
-    const usageUserEmail = await resolveUsageUserEmailFromRequest(req);
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
+    const usageUserEmail = authState.user.email;
     const { video } = await req.json();
 
-    if (!video) {
+    if (typeof video !== "string" || !video.trim()) {
       return NextResponse.json({ error: 'Missing video input' }, { status: 400 });
     }
+    const s3Key = await assertUserCanAccessMediaReference(usageUserEmail, video, "video");
+    const providerVideo = s3Key ? await getPresignedUrl(s3Key) : video;
 
     console.log(`--- VIDEO MATTE START --- Engine: RVM`);
 
@@ -35,7 +44,7 @@ export async function POST(req: NextRequest) {
       "arielreplicate/robust_video_matting:df03798935c106575239a9cba2e6467fac75586617a264a9fb120a1608674515",
       {
         input: {
-          video: video,
+          video: providerVideo,
           output_type: "video_rgba" 
         }
       }
@@ -71,6 +80,9 @@ export async function POST(req: NextRequest) {
         { error: `API bloqueada en admin: ${error.label}` },
         { status: 423 },
       );
+    }
+    if (error instanceof ForbiddenMediaReferenceError) {
+      return NextResponse.json({ error: error.message }, { status: 403 });
     }
     console.error('[Video Matte] CRITICAL ERROR:', error);
     const message = error instanceof Error ? error.message : String(error);

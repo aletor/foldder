@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
 import { normalizeProjectAssets } from "@/app/spaces/project-assets-metadata";
 import {
   aggregateVisualPatterns,
@@ -12,6 +11,7 @@ import { ApiServiceDisabledError, assertApiServiceEnabled } from "@/lib/api-usag
 import { buildBrandVisualDnaFromVisualReferenceAnalysis } from "@/lib/brain/brain-brand-visual-dna-synthesis";
 import { getBrainVersion } from "@/lib/brain/brain-meta";
 import { canWriteBrainScope } from "@/lib/brain/brain-scope-policy";
+import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
 
 export const runtime = "nodejs";
 
@@ -21,17 +21,15 @@ export const runtime = "nodejs";
  */
 export async function POST(req: NextRequest) {
   try {
-    const session = await auth();
-    if (!session?.user?.email) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
     const body = (await req.json()) as { projectId?: string; assets?: unknown };
     const projectId = body.projectId?.trim() ?? "";
     if (!projectId) {
       return NextResponse.json({ error: "projectId required" }, { status: 400 });
     }
     let assets = normalizeProjectAssets(body.assets ?? {});
-    assets = await hydrateProjectAssetsForBrainVision(assets, session.user.email);
+    assets = await hydrateProjectAssetsForBrainVision(assets, authState.user.email);
     const provider = createDefaultBrainVisionProvider();
     try {
       if (provider.id === "openai-vision") {
@@ -48,7 +46,7 @@ export async function POST(req: NextRequest) {
 
     const debug = Boolean((body as { debug?: boolean }).debug);
     const { layer, providerId, diagnostics } = await reanalyzeVisualReferencesAsync(projectId, assets, {
-      userEmail: session.user.email ?? undefined,
+      userEmail: authState.user.email,
       route: "/api/spaces/brain/visual/reanalyze",
       provider, // mismo que el comprobado con `assertApiServiceEnabled`
       debug,

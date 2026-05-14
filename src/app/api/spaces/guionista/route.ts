@@ -2,12 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 import {
   recordApiUsage,
-  resolveUsageUserEmailFromRequest,
 } from "@/lib/api-usage";
 import {
   ApiServiceDisabledError,
   assertApiServiceEnabled,
 } from "@/lib/api-usage-controls";
+import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
 import {
   GUI_DEFAULT_SETTINGS,
   GUI_FORMAT_LABELS,
@@ -289,7 +289,9 @@ function normalizeSocialPack(raw: unknown, request: GuionistaAiRequest): Guionis
 export async function POST(req: NextRequest) {
   try {
     await assertApiServiceEnabled("openai-brain-content");
-    const usageUserEmail = await resolveUsageUserEmailFromRequest(req);
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
+    const usageUserEmail = authState.user.email;
     const request = await req.json() as GuionistaAiRequest;
     const format = isGuionistaFormat(request.format) ? request.format : request.currentVersion?.format ?? "post";
 

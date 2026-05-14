@@ -6,8 +6,8 @@ import {
 } from "@/lib/api-usage-controls";
 import {
   recordApiUsage,
-  resolveUsageUserEmailFromRequest,
 } from "@/lib/api-usage";
+import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
 
 type BrainDoc = {
   id: string;
@@ -50,7 +50,9 @@ export async function POST(req: NextRequest) {
   try {
     await assertApiServiceEnabled("openai-brain-chat");
     await assertApiServiceEnabled("openai-embeddings");
-    const usageUserEmail = await resolveUsageUserEmailFromRequest(req);
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
+    const usageUserEmail = authState.user.email;
 
     const body = (await req.json()) as {
       question?: string;

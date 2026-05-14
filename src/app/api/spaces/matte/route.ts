@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
   recordApiUsage,
-  resolveUsageUserEmailFromRequest,
 } from '@/lib/api-usage';
 import sharp from 'sharp';
 import Replicate from 'replicate';
@@ -9,12 +8,34 @@ import {
   ApiServiceDisabledError,
   assertApiServiceEnabled,
 } from "@/lib/api-usage-controls";
+import {
+  assertUserCanAccessMediaReference,
+  ForbiddenMediaReferenceError,
+  inferMimeTypeFromPath,
+} from "@/lib/api-media-access";
+import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
+import { getFromS3 } from "@/lib/s3-utils";
+
+function parseImageDataUrl(value: string): { buffer: Buffer; mime: string } {
+  const marker = ";base64,";
+  const idx = value.indexOf(marker);
+  if (!value.startsWith("data:") || idx === -1) {
+    throw new Error("Invalid image data URL");
+  }
+  const mime = value.slice(5, idx).split(";")[0] || "image/png";
+  return {
+    buffer: Buffer.from(value.slice(idx + marker.length), "base64"),
+    mime,
+  };
+}
 
 export async function POST(req: NextRequest) {
   console.log(`[Background Remover] POST request received`);
   try {
     await assertApiServiceEnabled("replicate-bg");
-    const usageUserEmail = await resolveUsageUserEmailFromRequest(req);
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
+    const usageUserEmail = authState.user.email;
     const body = await req.json();
     const { 
       image, 
@@ -23,7 +44,7 @@ export async function POST(req: NextRequest) {
       threshold = 0.9 
     } = body;
 
-    if (!image) {
+    if (typeof image !== "string" || !image.trim()) {
       return NextResponse.json({ error: 'Missing image input' }, { status: 400 });
     }
     console.log(`--- BACKGROUND REMOVER START ---`);
@@ -32,7 +53,13 @@ export async function POST(req: NextRequest) {
     let imageBuffer: Buffer;
     let imageInputForReplicate: string = image;
 
-    if (image.startsWith('http')) {
+    const s3Key = await assertUserCanAccessMediaReference(usageUserEmail, image, "image");
+    if (s3Key) {
+      imageBuffer = await getFromS3(s3Key);
+      const mime = inferMimeTypeFromPath(s3Key, "image/png");
+      imageInputForReplicate = `data:${mime};base64,${imageBuffer.toString("base64")}`;
+      console.log(`[Background Remover] Loaded authorized S3 image: ${s3Key}`);
+    } else if (image.startsWith('http')) {
       console.log(`[Background Remover] Pre-fetching image to bypass potential 403: ${image}`);
       const imgFetchRes = await fetch(image, {
         headers: {
@@ -47,7 +74,8 @@ export async function POST(req: NextRequest) {
       const mime = imgFetchRes.headers.get('content-type') || 'image/png';
       imageInputForReplicate = `data:${mime};base64,${imageBuffer.toString('base64')}`;
     } else {
-      imageBuffer = Buffer.from(image.replace(/^data:image\/\w+;base64,/, ''), 'base64');
+      const parsedImage = parseImageDataUrl(image);
+      imageBuffer = parsedImage.buffer;
       console.log(`[Background Remover] Base64 Image. First 10 bytes: ${imageBuffer.slice(0, 10).toString('hex')}`);
       imageInputForReplicate = image; // Use original base64
     }
@@ -186,6 +214,9 @@ export async function POST(req: NextRequest) {
         { error: `API bloqueada en admin: ${error.label}` },
         { status: 423 },
       );
+    }
+    if (error instanceof ForbiddenMediaReferenceError) {
+      return NextResponse.json({ error: error.message }, { status: 403 });
     }
     console.error('[Background Remover] CRITICAL ERROR:', error);
     const message = error instanceof Error ? error.message : String(error);

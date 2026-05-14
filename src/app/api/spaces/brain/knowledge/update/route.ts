@@ -4,8 +4,9 @@ import {
   ApiServiceDisabledError,
   assertApiServiceEnabled,
 } from "@/lib/api-usage-controls";
-import { recordApiUsage, resolveUsageUserEmailFromRequest } from "@/lib/api-usage";
+import { recordApiUsage } from "@/lib/api-usage";
 import { buildReadableCorporateContext } from "@/lib/brain-knowledge-utils";
+import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
 
 type BrainDoc = {
   id: string;
@@ -28,7 +29,9 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 export async function POST(req: NextRequest) {
   try {
     await assertApiServiceEnabled("openai-embeddings");
-    const usageUserEmail = await resolveUsageUserEmailFromRequest(req);
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
+    const usageUserEmail = authState.user.email;
     const { id, context, documents, projectId, workspaceId } = (await req.json()) as {
       id?: string;
       context?: unknown;
@@ -93,4 +96,3 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
-

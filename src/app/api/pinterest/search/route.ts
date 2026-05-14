@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { extractBestPinterestImageUrl } from "@/lib/pinterest-pin-media";
-import { recordApiUsage, resolveUsageUserEmailFromRequest } from "@/lib/api-usage";
+import { recordApiUsage } from "@/lib/api-usage";
+import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
 
 const PINTEREST_API = "https://api.pinterest.com/v5";
 
@@ -32,7 +33,9 @@ function normalizePins(items: unknown[]): PinterestPinResult[] {
  */
 export async function POST(req: Request) {
   try {
-    const usageUserEmail = await resolveUsageUserEmailFromRequest(req);
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
+    const usageUserEmail = authState.user.email;
     const token = process.env.PINTEREST_ACCESS_TOKEN?.trim();
     if (!token) {
       return NextResponse.json(
