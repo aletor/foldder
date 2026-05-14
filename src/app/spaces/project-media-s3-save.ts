@@ -20,6 +20,7 @@ type MaterializeProjectMediaResult<TSpaces> = {
 
 const DATA_MEDIA_RE = /^data:(image\/[^;,]+|video\/[^;,]+|audio\/[^;,]+)(?:;[^,]*)?;base64,(.*)$/i;
 const MIN_S3_MEDIA_DATA_URL_LENGTH = 32_000;
+const PROJECT_MEDIA_UPLOAD_CONCURRENCY = 3;
 const SERVER_UPLOAD_FALLBACK_MAX_BYTES = 3_500_000;
 
 export type MediaUploadPolicy = {
@@ -47,6 +48,36 @@ function hashString(input: string): string {
     hash = Math.imul(hash, 16777619);
   }
   return (hash >>> 0).toString(36);
+}
+
+function createConcurrencyLimiter(limit: number) {
+  let active = 0;
+  const queue: Array<() => void> = [];
+
+  const runNext = () => {
+    if (active >= limit) return;
+    const task = queue.shift();
+    if (!task) return;
+    task();
+  };
+
+  return async function limitTask<T>(task: () => Promise<T>): Promise<T> {
+    await new Promise<void>((resolve) => {
+      const start = () => {
+        active += 1;
+        resolve();
+      };
+      if (active < limit) start();
+      else queue.push(start);
+    });
+
+    try {
+      return await task();
+    } finally {
+      active = Math.max(0, active - 1);
+      runNext();
+    }
+  };
 }
 
 function dataUrlSignature(value: string): string {
@@ -348,6 +379,30 @@ async function uploadDataMedia(
   return { media, reused: false, bytes: file.size };
 }
 
+async function uploadDataMediaDeduped(
+  value: string,
+  projectId: string | null,
+  cache: ProjectMediaUploadCache,
+  policy: MediaUploadPolicy,
+  inFlightUploads: Map<string, Promise<{ media: UploadedProjectMedia; reused: boolean; bytes: number }>>,
+): Promise<{ media: UploadedProjectMedia; reused: boolean; bytes: number }> {
+  const signature = `${policy.preserveImageQuality ? "preserve" : "opt"}:${dataUrlSignature(value)}`;
+  const cached = cache.get(signature);
+  if (cached) return { media: cached, reused: true, bytes: 0 };
+  const pending = inFlightUploads.get(signature);
+  if (pending) {
+    const result = await pending;
+    return { media: result.media, reused: true, bytes: 0 };
+  }
+  const upload = uploadDataMedia(value, projectId, cache, policy);
+  inFlightUploads.set(signature, upload);
+  try {
+    return await upload;
+  } finally {
+    inFlightUploads.delete(signature);
+  }
+}
+
 function sidecarKeyForMediaField(key: string): string | null {
   if (key === "value" || key === "src" || key === "url" || key === "dataUrl") return "s3Key";
   if (key === "imageUrl") return "imageS3Key";
@@ -402,6 +457,8 @@ export async function materializeProjectSpacesMediaForSave<TSpaces>(
   let projectMediaBytes = 0;
   let reused = 0;
   let uploaded = 0;
+  const inFlightUploads = new Map<string, Promise<{ media: UploadedProjectMedia; reused: boolean; bytes: number }>>();
+  const limitUpload = createConcurrencyLimiter(PROJECT_MEDIA_UPLOAD_CONCURRENCY);
 
   const visit = async (
     value: unknown,
@@ -410,9 +467,17 @@ export async function materializeProjectSpacesMediaForSave<TSpaces>(
   ): Promise<{ changed: boolean; s3Key?: string; value: unknown }> => {
     if (typeof value === "string") {
       if (!shouldMaterializeString(value)) return { changed: false, value };
-      const result = await uploadDataMedia(value, options.projectId, options.cache, {
-        preserveImageQuality: shouldPreserveImageQualityForMediaField(source, key),
-      });
+      const result = await limitUpload(() =>
+        uploadDataMediaDeduped(
+          value,
+          options.projectId,
+          options.cache,
+          {
+            preserveImageQuality: shouldPreserveImageQualityForMediaField(source, key),
+          },
+          inFlightUploads,
+        ),
+      );
       if (result.reused) reused += 1;
       else uploaded += 1;
       projectMediaBytes += result.bytes;
@@ -420,33 +485,34 @@ export async function materializeProjectSpacesMediaForSave<TSpaces>(
     }
 
     if (Array.isArray(value)) {
-      let any = false;
-      const next: unknown[] = [];
-      for (const item of value) {
-        const child = await visit(item, key, null);
-        if (child.changed) any = true;
-        next.push(child.value);
-      }
+      const children = await Promise.all(value.map((item) => visit(item, key, null)));
+      const any = children.some((child) => child.changed);
+      const next = children.map((child) => child.value);
       return { changed: any, value: any ? next : value };
     }
 
     if (value && typeof value === "object") {
-      let any = false;
       const source = value as Record<string, unknown>;
       const next: Record<string, unknown> = { ...source };
-      for (const [childKey, childValue] of Object.entries(source)) {
-        try {
-          const child = await visit(childValue, childKey, source);
-          if (!child.changed) continue;
-          any = true;
-          next[childKey] = child.value;
-          const sidecar = child.s3Key ? sidecarKeyForMediaField(childKey) : null;
-          if (sidecar && typeof next[sidecar] !== "string") {
-            next[sidecar] = child.s3Key;
+      const entries = Object.entries(source);
+      const children = await Promise.all(
+        entries.map(async ([childKey, childValue]) => {
+          try {
+            return { child: await visit(childValue, childKey, source), childKey };
+          } catch (error) {
+            failed += 1;
+            throw error;
           }
-        } catch (error) {
-          failed += 1;
-          throw error;
+        }),
+      );
+      let any = false;
+      for (const { child, childKey } of children) {
+        if (!child.changed) continue;
+        any = true;
+        next[childKey] = child.value;
+        const sidecar = child.s3Key ? sidecarKeyForMediaField(childKey) : null;
+        if (sidecar && typeof next[sidecar] !== "string") {
+          next[sidecar] = child.s3Key;
         }
       }
       return { changed: any, value: any ? next : value };

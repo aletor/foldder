@@ -11,6 +11,7 @@ import {
   collectS3KeysFromProjectSpaces,
   collectS3KeysFromValue,
 } from "@/lib/s3-media-hydrate";
+import type { SpacesWriteStoreStats } from "@/lib/spaces-save-telemetry";
 import type { ProjectListItem, ProjectRecord } from "@/lib/spaces-dynamo-store";
 
 type SpaceNodeGraph = ProjectRecord["spaces"][string];
@@ -564,7 +565,7 @@ export async function upsertSpacesV2Project(
   tableName: string,
   project: ProjectRecord,
   options?: { expectedRevision?: number | null },
-): Promise<{ revision: number }> {
+): Promise<{ revision: number; telemetry: SpacesWriteStoreStats }> {
   const nowIso = project.updatedAt || new Date().toISOString();
   const createdAt = project.createdAt || nowIso;
   const normalizedRoot =
@@ -691,7 +692,16 @@ export async function upsertSpacesV2Project(
     );
 
     await cleanupSupersededItems(tableName, normalizedProject.id, nextRevision, mediaKeySet);
-    return { revision: nextRevision };
+    return {
+      revision: nextRevision,
+      telemetry: {
+        chunkCount: chunks.length,
+        contentSha256,
+        mediaKeyCount: mediaKeys.length,
+        payloadBytes: Buffer.byteLength(payloadJson, "utf8"),
+        storageFormat: "spaces-v2-chunks",
+      },
+    };
   } catch (error) {
     await deleteItemsInBatches(tableName, writtenChunkKeys).catch((cleanupError) => {
       console.warn("[spaces-v2] failed to remove orphan chunks after write failure:", cleanupError);

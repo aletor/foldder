@@ -1,29 +1,21 @@
 /**
- * Client-side helpers to delete S3 objects under `knowledge-files/` (server route enforces prefix).
+ * Client-side S3 deletion helpers are intentionally no-ops.
  *
- * Política del producto: no borrar objetos al sustituir generaciones o quitar una imagen del lienzo;
- * los assets se eliminan en bloque al borrar el proyecto (`DELETE /api/spaces` + `deleteFromS3`).
- * Estas funciones se mantienen por si en el futuro se expone un “papelera / purge” explícito.
+ * Product policy:
+ * - removing a document/image from a project only removes the reference;
+ * - media is physically deleted when the whole project is deleted;
+ * - manual object deletion lives in the protected admin manager.
  */
 
-const PREFIX = "knowledge-files/";
-
 export function fireAndForgetDeleteS3Keys(keys: string[]): void {
-  const valid = keys.filter((k) => typeof k === "string" && k.startsWith(PREFIX));
-  if (valid.length === 0) return;
-  void fetch("/api/spaces/s3-delete", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ keys: [...new Set(valid)] }),
-  }).catch(() => {});
+  void keys;
 }
 
-/** After replacing `data.s3Key` with a new upload, delete the old object if it is no longer referenced. */
+/** Kept for compatibility with older call sites; it never deletes media. */
 export function deleteSupersededS3Key(
   previousKey: unknown,
   nextKey: unknown,
 ): void {
-  if (typeof previousKey !== "string" || !previousKey.startsWith(PREFIX)) return;
-  if (typeof nextKey === "string" && nextKey === previousKey) return;
-  fireAndForgetDeleteS3Keys([previousKey]);
+  void previousKey;
+  void nextKey;
 }

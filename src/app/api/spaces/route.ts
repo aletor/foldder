@@ -25,6 +25,15 @@ import {
 } from "@/lib/spaces-v2-store";
 import { runSpacesDbExclusive } from "@/lib/spaces-db-queue";
 import { auth } from "@/lib/auth";
+import {
+  recordSpacesSaveTelemetry,
+  spacesTelemetryOwnerHash,
+  summarizeSpacesProjectPayload,
+  type SpacesProjectPayloadStats,
+  type SpacesSaveOperation,
+  type SpacesSaveStatus,
+  type SpacesWriteStoreStats,
+} from "@/lib/spaces-save-telemetry";
 
 export const runtime = "nodejs";
 
@@ -168,7 +177,7 @@ async function readProjectByIdResilient(id: string): Promise<ProjectRecord | nul
 async function writeDdbProject(
   project: ProjectRecord,
   options?: { allowProjectIdMetaScan?: boolean; expectedRevision?: number | null },
-): Promise<{ revision: number }> {
+): Promise<{ revision: number; telemetry?: SpacesWriteStoreStats }> {
   if (isSpacesV2Enabled()) {
     return upsertSpacesV2Project(spacesV2TableName(), project, {
       expectedRevision: options?.expectedRevision,
@@ -265,6 +274,64 @@ function collectS3KeysFromProject(project: ProjectRecord): string[] {
   ];
 }
 
+async function recordProjectRouteTelemetry(args: {
+  actualRevision?: number | null;
+  errorCode?: string;
+  errorMessage?: string;
+  expectedRevision?: number | null;
+  operation: SpacesSaveOperation;
+  ownerEmail?: string;
+  projectId?: string;
+  route: string;
+  s3DeleteFailed?: number;
+  s3DeleteRequested?: number;
+  s3DeleteSucceeded?: number;
+  startedAt: number;
+  stats?: SpacesProjectPayloadStats;
+  status: SpacesSaveStatus;
+  storeStats?: SpacesWriteStoreStats;
+}) {
+  await recordSpacesSaveTelemetry({
+    actualRevision: args.actualRevision,
+    chunkCount: args.storeStats?.chunkCount,
+    contentSha256: args.storeStats?.contentSha256,
+    durationMs: Date.now() - args.startedAt,
+    edgeCount: args.stats?.edgeCount,
+    errorCode: args.errorCode,
+    errorMessage: args.errorMessage,
+    expectedRevision: args.expectedRevision,
+    mediaKeyCount: args.storeStats?.mediaKeyCount ?? args.stats?.mediaKeyCount,
+    metadataBytes: args.stats?.metadataBytes,
+    nodeCount: args.stats?.nodeCount,
+    operation: args.operation,
+    ownerHash: spacesTelemetryOwnerHash(args.ownerEmail),
+    payloadBytes: args.storeStats?.payloadBytes ?? args.stats?.payloadBytes,
+    projectId: args.projectId,
+    route: args.route,
+    s3DeleteFailed: args.s3DeleteFailed,
+    s3DeleteRequested: args.s3DeleteRequested,
+    s3DeleteSucceeded: args.s3DeleteSucceeded,
+    spaceCount: args.stats?.spaceCount,
+    status: args.status,
+    storageFormat: args.storeStats?.storageFormat,
+  });
+}
+
+function saveStatusForError(error: unknown): SpacesSaveStatus {
+  if (error instanceof SpacesRevisionConflictError || error instanceof SpacesV2RevisionConflictError) {
+    return "conflict";
+  }
+  if (isPayloadShapeError(error)) return "rejected";
+  return "error";
+}
+
+function saveCodeForError(error: unknown): string {
+  if (error instanceof SpacesRevisionConflictError || error instanceof SpacesV2RevisionConflictError) return "REVISION_CONFLICT";
+  if (isWriteLockBusyError(error)) return "SAVE_LOCK_BUSY";
+  if (isPayloadShapeError(error)) return "INVALID_PROJECT_PAYLOAD";
+  return (error as { name?: string } | null)?.name || "SAVE_FAILED";
+}
+
 function devBypassUserFromRequest(req: Request): AuthUser | null {
   if (process.env.NODE_ENV === "production") return null;
   const code = req.headers.get("x-foldder-dev-passcode");
@@ -345,14 +412,23 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+  const startedAt = Date.now();
+  let telemetryOwnerEmail = "";
+  let telemetryProjectId: string | undefined;
+  let telemetryExpectedRevision: number | null | undefined;
+  let telemetryOperation: SpacesSaveOperation = "unknown";
+  let telemetryStats: SpacesProjectPayloadStats | undefined;
   try {
     const authState = await requireAuthUser(req);
     if (!authState.ok) return authState.response;
     const ownerEmail = authState.user.email;
+    telemetryOwnerEmail = ownerEmail;
     const ownerName = authState.user.name;
     const ownerImage = authState.user.image;
 
     const body = (await req.json()) as ProjectBody;
+    telemetryProjectId = body.id;
+    telemetryStats = summarizeSpacesProjectPayload(body);
 
     if (isSpacesCloudStoreEnabled()) {
       const { id, name, rootSpaceId, spaces, metadata } = body;
@@ -362,9 +438,11 @@ export async function POST(req: Request) {
           : typeof body.revision === "number" && Number.isFinite(body.revision)
             ? body.revision
             : null;
+      telemetryExpectedRevision = expectedRevision;
       if (id) {
         const existing = await readProjectByIdResilient(id);
         if (!existing && body.createIfMissing === true) {
+          telemetryOperation = "create_if_missing";
           const timestamp = new Date().toISOString();
           const resolvedRoot =
             rootSpaceId != null && rootSpaceId !== ""
@@ -401,12 +479,38 @@ export async function POST(req: Request) {
           newProject.revision = writeResult.revision;
           spacesGetCache = null;
           spacesMetaGetCache = null;
+          await recordProjectRouteTelemetry({
+            actualRevision: writeResult.revision,
+            expectedRevision: 0,
+            operation: telemetryOperation,
+            ownerEmail,
+            projectId: newProject.id,
+            route: "/api/spaces",
+            startedAt,
+            stats: summarizeSpacesProjectPayload(newProject),
+            status: "ok",
+            storeStats: writeResult.telemetry,
+          });
           return jsonNoStore(newProject);
         }
         if (!existing || !projectBelongsToOwner(existing, ownerEmail)) {
-          return NextResponse.json({ error: "Project not found" }, { status: 404 });
+          telemetryOperation = "save";
+          await recordProjectRouteTelemetry({
+            errorCode: "PROJECT_NOT_FOUND",
+            errorMessage: "Project not found",
+            expectedRevision,
+            operation: telemetryOperation,
+            ownerEmail,
+            projectId: id,
+            route: "/api/spaces",
+            startedAt,
+            stats: telemetryStats,
+            status: "rejected",
+          });
+          return jsonNoStore({ error: "Project not found" }, { status: 404 });
         }
 
+        telemetryOperation = "save";
         const savedProject: ProjectRecord = {
           ...existing,
           name: name || existing.name,
@@ -422,10 +526,25 @@ export async function POST(req: Request) {
         savedProject.revision = writeResult.revision;
         spacesGetCache = null;
         spacesMetaGetCache = null;
+        await recordProjectRouteTelemetry({
+          actualRevision: writeResult.revision,
+          expectedRevision,
+          operation: telemetryOperation,
+          ownerEmail,
+          projectId: savedProject.id,
+          route: "/api/spaces",
+          startedAt,
+          stats: summarizeSpacesProjectPayload(savedProject),
+          status: "ok",
+          storeStats: writeResult.telemetry,
+        });
         return jsonNoStore(savedProject);
       }
 
+      telemetryOperation = "create";
       const projectId = uuidv4();
+      telemetryProjectId = projectId;
+      telemetryExpectedRevision = 0;
       const initialSpaceId = uuidv4();
       const resolvedRoot =
         rootSpaceId != null && rootSpaceId !== ""
@@ -465,6 +584,18 @@ export async function POST(req: Request) {
       newProject.revision = writeResult.revision;
       spacesGetCache = null;
       spacesMetaGetCache = null;
+      await recordProjectRouteTelemetry({
+        actualRevision: writeResult.revision,
+        expectedRevision: 0,
+        operation: telemetryOperation,
+        ownerEmail,
+        projectId: newProject.id,
+        route: "/api/spaces",
+        startedAt,
+        stats: summarizeSpacesProjectPayload(newProject),
+        status: "ok",
+        storeStats: writeResult.telemetry,
+      });
       return jsonNoStore(newProject);
     }
 
@@ -476,9 +607,12 @@ export async function POST(req: Request) {
         const { id, name, rootSpaceId, spaces, metadata } = body;
 
         if (id) {
+          telemetryProjectId = id;
           const index = projectsCopy.findIndex((project) => project.id === id);
           if (index === -1 || !projectBelongsToOwner(projectsCopy[index], ownerEmail)) {
             if (index === -1 && body.createIfMissing === true) {
+              telemetryOperation = "create_if_missing";
+              telemetryExpectedRevision = 0;
               const resolvedRoot =
                 rootSpaceId != null && rootSpaceId !== ""
                   ? rootSpaceId
@@ -517,6 +651,7 @@ export async function POST(req: Request) {
             return projectsCopy;
           }
 
+          telemetryOperation = "save";
           const previousRevision =
             typeof projectsCopy[index].revision === "number" && Number.isFinite(projectsCopy[index].revision)
               ? projectsCopy[index].revision
@@ -527,6 +662,7 @@ export async function POST(req: Request) {
               : typeof body.revision === "number" && Number.isFinite(body.revision)
                 ? body.revision
                 : null;
+          telemetryExpectedRevision = expectedRevision;
           if (expectedRevision !== null && expectedRevision !== previousRevision) {
             throw new SpacesRevisionConflictError(id, expectedRevision, previousRevision);
           }
@@ -547,7 +683,10 @@ export async function POST(req: Request) {
           return projectsCopy;
         }
 
+        telemetryOperation = "create";
         const projectId = uuidv4();
+        telemetryProjectId = projectId;
+        telemetryExpectedRevision = 0;
         const initialSpaceId = uuidv4();
         const resolvedRoot =
           rootSpaceId != null && rootSpaceId !== ""
@@ -590,15 +729,53 @@ export async function POST(req: Request) {
       });
 
       if (!projectFound) {
+        await recordProjectRouteTelemetry({
+          errorCode: "PROJECT_NOT_FOUND",
+          errorMessage: "Project not found",
+          expectedRevision: telemetryExpectedRevision,
+          operation: telemetryOperation === "unknown" ? "save" : telemetryOperation,
+          ownerEmail,
+          projectId: telemetryProjectId,
+          route: "/api/spaces",
+          startedAt,
+          stats: telemetryStats,
+          status: "rejected",
+        });
         return jsonNoStore({ error: "Project not found" }, { status: 404 });
       }
 
       spacesGetCache = null;
       spacesMetaGetCache = null;
       const fallback = projects[projects.length - 1] ?? null;
+      const returnedProject = savedProject ?? fallback;
+      if (returnedProject) {
+        await recordProjectRouteTelemetry({
+          actualRevision: returnedProject.revision ?? null,
+          expectedRevision: telemetryExpectedRevision,
+          operation: telemetryOperation,
+          ownerEmail,
+          projectId: returnedProject.id,
+          route: "/api/spaces",
+          startedAt,
+          stats: summarizeSpacesProjectPayload(returnedProject),
+          status: "ok",
+        });
+      }
       return jsonNoStore(savedProject ?? fallback);
     });
   } catch (error) {
+    await recordProjectRouteTelemetry({
+      errorCode: saveCodeForError(error),
+      errorMessage: errorMessage(error),
+      expectedRevision: telemetryExpectedRevision,
+      operation: telemetryOperation,
+      ownerEmail: telemetryOwnerEmail,
+      projectId: telemetryProjectId,
+      route: "/api/spaces",
+      startedAt,
+      stats: telemetryStats,
+      status: saveStatusForError(error),
+    });
     if (error instanceof SpacesRevisionConflictError || error instanceof SpacesV2RevisionConflictError) {
       return jsonNoStore(
         {
@@ -642,26 +819,49 @@ export async function POST(req: Request) {
 }
 
 export async function DELETE(req: Request) {
+  const startedAt = Date.now();
+  let telemetryOwnerEmail = "";
+  let telemetryProjectId: string | undefined;
+  let telemetryStats: SpacesProjectPayloadStats | undefined;
+  let s3DeleteRequested = 0;
+  let s3DeleteSucceeded = 0;
+  let s3DeleteFailed = 0;
   try {
     const authState = await requireAuthUser(req);
     if (!authState.ok) return authState.response;
     const ownerEmail = authState.user.email;
+    telemetryOwnerEmail = ownerEmail;
 
     const { searchParams } = new URL(req.url);
     const id = searchParams.get("id");
+    telemetryProjectId = id ?? undefined;
     if (!id || id.length === 0) return jsonNoStore({ error: "ID required" }, { status: 400 });
 
     if (isSpacesCloudStoreEnabled()) {
       const projectToDelete = await readProjectByIdResilient(id);
       if (!projectToDelete || !projectBelongsToOwner(projectToDelete, ownerEmail)) {
+        await recordProjectRouteTelemetry({
+          errorCode: "PROJECT_NOT_FOUND",
+          errorMessage: "Project not found",
+          operation: "delete_project",
+          ownerEmail,
+          projectId: id,
+          route: "/api/spaces",
+          startedAt,
+          status: "rejected",
+        });
         return jsonNoStore({ error: "Project not found" }, { status: 404 });
       }
       if (projectToDelete) {
+        telemetryStats = summarizeSpacesProjectPayload(projectToDelete);
         const s3Keys = collectS3KeysFromProject(projectToDelete);
+        s3DeleteRequested = s3Keys.length;
         for (const key of s3Keys) {
           try {
             await deleteFromS3(key);
+            s3DeleteSucceeded += 1;
           } catch (error) {
+            s3DeleteFailed += 1;
             console.error(`[Cleanup] Failed to remove ${key}:`, error);
           }
         }
@@ -670,6 +870,18 @@ export async function DELETE(req: Request) {
       await deleteDdbProject(id);
       spacesGetCache = null;
       spacesMetaGetCache = null;
+      await recordProjectRouteTelemetry({
+        operation: "delete_project",
+        ownerEmail,
+        projectId: id,
+        route: "/api/spaces",
+        s3DeleteFailed,
+        s3DeleteRequested,
+        s3DeleteSucceeded,
+        startedAt,
+        stats: telemetryStats,
+        status: "ok",
+      });
       return jsonNoStore({ ok: true, id });
     }
 
@@ -678,20 +890,34 @@ export async function DELETE(req: Request) {
       const projectToDelete = projects.find((project) => project.id === id);
 
       if (!projectToDelete || !projectBelongsToOwner(projectToDelete, ownerEmail)) {
+        await recordProjectRouteTelemetry({
+          errorCode: "PROJECT_NOT_FOUND",
+          errorMessage: "Project not found",
+          operation: "delete_project",
+          ownerEmail,
+          projectId: id,
+          route: "/api/spaces",
+          startedAt,
+          status: "rejected",
+        });
         return jsonNoStore({ error: "Project not found" }, { status: 404 });
       }
       if (projectToDelete) {
+        telemetryStats = summarizeSpacesProjectPayload(projectToDelete);
         console.log(`[Cleanup] Deleting project "${projectToDelete.name}"...`);
 
         const s3Keys = collectS3KeysFromProject(projectToDelete);
+        s3DeleteRequested = s3Keys.length;
 
         if (s3Keys.length > 0) {
           console.log(`[Cleanup] Found ${s3Keys.length} assets across all spaces to remove from S3.`);
           for (const key of s3Keys) {
             try {
               await deleteFromS3(key);
+              s3DeleteSucceeded += 1;
               console.log(`[Cleanup] Successfully removed: ${key}`);
             } catch (error) {
+              s3DeleteFailed += 1;
               console.error(`[Cleanup] Failed to remove ${key}:`, error);
             }
           }
@@ -702,9 +928,35 @@ export async function DELETE(req: Request) {
         currentProjects.filter((project) => project.id !== id),
       );
       spacesGetCache = null;
+      await recordProjectRouteTelemetry({
+        operation: "delete_project",
+        ownerEmail,
+        projectId: id,
+        route: "/api/spaces",
+        s3DeleteFailed,
+        s3DeleteRequested,
+        s3DeleteSucceeded,
+        startedAt,
+        stats: telemetryStats,
+        status: "ok",
+      });
       return jsonNoStore({ ok: true, id, remaining: filtered.length });
     });
   } catch (error) {
+    await recordProjectRouteTelemetry({
+      errorCode: (error as { name?: string } | null)?.name || "DELETE_PROJECT_FAILED",
+      errorMessage: errorMessage(error),
+      operation: "delete_project",
+      ownerEmail: telemetryOwnerEmail,
+      projectId: telemetryProjectId,
+      route: "/api/spaces",
+      s3DeleteFailed,
+      s3DeleteRequested,
+      s3DeleteSucceeded,
+      startedAt,
+      stats: telemetryStats,
+      status: "error",
+    });
     console.error("Delete error:", error);
     return jsonNoStore({ error: "Failed to delete project" }, { status: 500 });
   }

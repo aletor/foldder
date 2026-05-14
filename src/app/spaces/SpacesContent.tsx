@@ -257,7 +257,9 @@ function preserveBrainVisualCollageMetadata(
 
 function stripVolatileProjectMetadata(metadata: Record<string, unknown> | null | undefined): Record<string, unknown> {
   if (!metadata || typeof metadata !== "object") return {};
-  const { savedAt: _savedAt, ...stable } = metadata;
+  // `ui` contains viewport/navigation state. It is persisted with real saves, but
+  // must not make the content fingerprint dirty by itself.
+  const { savedAt: _savedAt, ui: _ui, ...stable } = metadata;
   return stable;
 }
 
@@ -3541,10 +3543,10 @@ export function SpacesContent() {
         name: nameToSave || currentName || 'Untitled Project',
         rootSpaceId: 'root',
         spaces: spacesReadyForSave,
-        metadata: {
+        metadata: stripVolatileProjectMetadata({
           ...metadataWithSaveManifest,
           ui: uiSnapshot,
-        },
+        }),
       };
 
       const projectToSave = {
@@ -3733,6 +3735,7 @@ export function SpacesContent() {
   isSavingRef.current = isSaving;
   const brainAssetsAutosaveTimerRef = useRef<number | null>(null);
   const hasSeenBrainAssetsChangeRef = useRef(false);
+  const brainAssetsAutosaveProjectRef = useRef<string | null>(null);
 
   const autosaveGateRef = useRef({
     authenticated: false,
@@ -3823,18 +3826,12 @@ export function SpacesContent() {
   }, [
     activeProjectId,
     activeSpaceId,
-    canvasBgId,
-    canvasViewMode,
-    cardsFocusIndex,
     currentName,
     edges,
     isAuthenticated,
     metadata,
-    navigationStack,
     nodes,
-    sidebarLockedCollapsed,
     spacesMap,
-    workspaceViewMode,
   ]);
 
   useEffect(() => {
@@ -3861,7 +3858,15 @@ export function SpacesContent() {
    * (subidas, análisis visual, ADN por imagen), para no perder progreso ante refresh inesperado.
    */
   useEffect(() => {
-    if (!isAuthenticated || !activeProjectId) return;
+    if (!isAuthenticated || !activeProjectId) {
+      brainAssetsAutosaveProjectRef.current = null;
+      return;
+    }
+    if (brainAssetsAutosaveProjectRef.current !== activeProjectId) {
+      brainAssetsAutosaveProjectRef.current = activeProjectId;
+      hasSeenBrainAssetsChangeRef.current = true;
+      return;
+    }
     if (!hasSeenBrainAssetsChangeRef.current) {
       hasSeenBrainAssetsChangeRef.current = true;
       return;

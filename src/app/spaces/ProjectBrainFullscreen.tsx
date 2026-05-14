@@ -115,7 +115,6 @@ import { applyLearningCandidateToProjectAssets } from "@/lib/brain/brain-apply-l
 import { BrandSummarySourcesPanel, type BrandSummaryNavTab } from "./brand-summary-sources-panel";
 import { BrandVisualDnaPanel } from "./BrandVisualDnaPanel";
 import type { BrandVisualDnaStoredBundle } from "@/lib/brain/brand-visual-dna/types";
-import { fireAndForgetDeleteS3Keys } from "@/lib/s3-delete-client";
 import {
   BRAIN_BRAND_LOCKED_MESSAGE,
   canWriteBrainScope,
@@ -2727,28 +2726,12 @@ export function ProjectBrainFullscreen({
 
   const handleDeleteVisualDnaSlot = useCallback(
     (slotId: string) => {
-      let keysToDelete: string[] = [];
       patch((a) => {
         const slots = normalizeVisualDnaSlots(a.strategy.visualDnaSlots ?? []);
         const victim = slots.find((s) => s.id === slotId);
         const docId = victim?.sourceDocumentId?.trim();
         const doc = docId ? a.knowledge.documents.find((d) => d.id === docId) : undefined;
         const deletesCapsuleSource = Boolean(doc && resolveBrainSourceScope(doc) === "capsule");
-        if (victim) {
-          const maybeKeys = [
-            deletesCapsuleSource ? doc?.s3Path : undefined,
-            victim.mosaic?.s3Path,
-            victim.people?.same?.s3Path,
-            victim.people?.similar?.s3Path,
-            victim.objects?.same?.s3Path,
-            victim.objects?.similar?.s3Path,
-            victim.environments?.same?.s3Path,
-            victim.environments?.similar?.s3Path,
-            victim.textures?.same?.s3Path,
-            victim.textures?.similar?.s3Path,
-          ];
-          keysToDelete = [...new Set(maybeKeys.filter((k): k is string => typeof k === "string" && k.startsWith("knowledge-files/")))];
-        }
         const nextDocuments = deletesCapsuleSource && docId
           ? a.knowledge.documents.filter((d) => d.id !== docId)
           : a.knowledge.documents;
@@ -2792,7 +2775,6 @@ export function ProjectBrainFullscreen({
           },
         };
       });
-      if (keysToDelete.length) fireAndForgetDeleteS3Keys(keysToDelete);
     },
     [patch],
   );
@@ -3726,7 +3708,6 @@ export function ProjectBrainFullscreen({
       if (!confirm("¿Seguro que quieres eliminar este documento?")) return;
       setIsDeleting(id);
       try {
-        if (doc?.s3Path) fireAndForgetDeleteS3Keys([doc.s3Path]);
         const remaining = assets.knowledge.documents.filter((d) => d.id !== id);
         const isImg = (d: KnowledgeDocumentEntry) =>
           d.type === "image" ||
@@ -3751,13 +3732,11 @@ export function ProjectBrainFullscreen({
     if (!guardBrandWrite("No se puede vaciar el pozo mientras Marca esté bloqueada.")) return;
     if (
       !confirm(
-        "Se vaciará la bandeja de fuentes: se borrarán todos los documentos e imágenes subidos, los enlaces guardados y el resumen corporativo extraído. El ADN visual persistido no se borra aquí. ¿Continuar?",
+        "Se vaciará la bandeja de fuentes del proyecto: se retirarán documentos, imágenes, enlaces y el resumen corporativo extraído. Los archivos S3 se conservan hasta borrar el proyecto completo o limpiarlos desde administración. El ADN visual persistido no se borra aquí. ¿Continuar?",
       )
     ) {
       return;
     }
-    const keys = assets.knowledge.documents.map((d) => d.s3Path).filter((k): k is string => Boolean(k?.trim()));
-    if (keys.length) fireAndForgetDeleteS3Keys(keys);
     const hadImages = assets.knowledge.documents.some(
       (d) =>
         d.type === "image" ||
@@ -3778,13 +3757,11 @@ export function ProjectBrainFullscreen({
     }
     if (
       !confirm(
-        "Esto reiniciará marca, documentos, referencias visuales, estrategia y chat local del Brain. Los aprendizajes pendientes asociados al proyecto pueden seguir existiendo en el servidor hasta que se revisen o eliminen desde «Aprendizajes». Se intentarán eliminar los archivos de la bandeja en almacenamiento. No hay deshacer. ¿Continuar?",
+        "Esto reiniciará marca, documentos, referencias visuales, estrategia y chat local del Brain. Los aprendizajes pendientes asociados al proyecto pueden seguir existiendo en el servidor hasta que se revisen o eliminen desde «Aprendizajes». Los archivos subidos se conservan hasta borrar el proyecto completo o limpiarlos desde administración. No hay deshacer. ¿Continuar?",
       )
     ) {
       return;
     }
-    const keys = assets.knowledge.documents.map((d) => d.s3Path).filter((k): k is string => Boolean(k?.trim()));
-    if (keys.length) fireAndForgetDeleteS3Keys(keys);
     knowledgeIngestQueueRef.current = [];
     visionAfterKnowledgeIngestRef.current = false;
     knowledgeIngestPumpRunningRef.current = false;
@@ -3810,7 +3787,6 @@ export function ProjectBrainFullscreen({
     setMessage({ text: "", type: "" });
     showToast("Brain reiniciado en memoria. Guarda el proyecto en el espacio para persistir.", "success");
   }, [
-    assets.knowledge.documents,
     guardBrandWrite,
     knowledgeIngestLocked,
     onAssetsMetadataChange,

@@ -258,7 +258,7 @@ export default function S3ManagerPage() {
     setError(null);
     setNotice(null);
     try {
-      const res = await fetch("/api/spaces/s3-delete", {
+      const res = await fetch("/api/admin/s3-delete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ keys: deletePlan.keys }),
@@ -297,8 +297,8 @@ export default function S3ManagerPage() {
                 Gestor de archivos S3
               </h1>
               <p className="mt-2 text-sm text-white/68">
-                Por proyecto y archivos sueltos. Visualiza, organiza y limpia
-                almacenamiento con trazabilidad completa.
+                Gestor manual protegido. El borrado de objetos queda reservado
+                a administración o al borrado completo de un proyecto.
               </p>
             </div>
             <button
