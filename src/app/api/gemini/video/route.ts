@@ -229,7 +229,6 @@ export async function POST(req: NextRequest) {
       resolution: resStr,
       ...(effectiveDur > 0 ? { durationSeconds: effectiveDur } : {}),
       ...(negative ? { negativePrompt: negative } : {}),
-      personGeneration: "allow_adult",
     };
     if (lastImage) config.lastFrame = lastImage;
     // Veo referenceImages are a separate text-to-video mode: do not combine with image/lastFrame.
