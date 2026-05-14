@@ -17,7 +17,6 @@ const COST_ENDPOINTS: CostEndpointGuard[] = [
   { route: "src/app/api/grok/generate/route.ts", services: ['"grok-video"'] },
   { route: "src/app/api/grok/status/[id]/route.ts", services: ['"grok-status"'] },
   { route: "src/app/api/openai/enhance/route.ts", services: ['"openai-enhance"'] },
-  { route: "src/app/api/pinterest/search/route.ts", services: ['"pinterest-search"'] },
   { route: "src/app/api/runway/generate/route.ts", services: ['"runway-gen3"'] },
   { route: "src/app/api/runway/status/[id]/route.ts", services: ['"runway-status"'] },
   { route: "src/app/api/seedance/video/route.ts", services: ['"seedance-video"'] },

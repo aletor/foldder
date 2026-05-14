@@ -23,7 +23,7 @@ export function getAiRequestLabelForPathname(pathname: string): string | null {
     { test: /^\/api\/spaces\/video-matte$/, label: "Replicate" },
     { test: /^\/api\/spaces\/compose$/, label: "Componer" },
     { test: /^\/api\/spaces\/search$/, label: "Búsqueda" },
-    { test: /^\/api\/pinterest\/search$/, label: "Pinterest" },
+    { test: /^\/api\/inspiration\/search$/, label: "Inspiration" },
   ];
 
   for (const { test, label } of rules) {

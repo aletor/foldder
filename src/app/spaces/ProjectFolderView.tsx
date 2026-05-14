@@ -305,7 +305,7 @@ export function ProjectFolderView({
         {showImported && (
           <FoldderSection
             title="Imported Media"
-            subtitle="Archivos que entran desde fuera: uploads, URLs, Pinterest, logos, PDFs y referencias."
+            subtitle="Archivos que entran desde fuera: uploads, URLs, logos, PDFs y referencias."
             count={importedMedia.length}
           >
             {importedMedia.length === 0 ? (

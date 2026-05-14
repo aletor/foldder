@@ -163,8 +163,16 @@ export function defaultDataForCanvasDropNode(nodeType: string): Record<string, u
   switch (nodeType) {
     case "urlImage":
       return { label: "", pendingSearch: false };
-    case "pinterestSearch":
-      return { pins: [], selectedIndex: 0, label: "Pinterest" };
+    case "inspiration":
+      return {
+        label: "Inspiration",
+        facet: "similar",
+        results: [],
+        selected: null,
+        value: "",
+        type: "image",
+        status: "empty",
+      };
     case "promptInput":
       return { label: "", value: "" };
     case "mediaInput":

@@ -115,7 +115,7 @@ const TOOL_ITEMS: Array<{ type: string; label: string }> = [
   { type: 'mediaInput', label: 'Asset' },
   { type: 'promptInput', label: 'Prompt' },
   { type: 'urlImage', label: 'Web' },
-  { type: 'pinterestSearch', label: 'Pinterest' },
+  { type: 'inspiration', label: 'Inspiration' },
   { type: 'backgroundRemover', label: 'Matting' },
   { type: 'mediaDescriber', label: 'Eye' },
   { type: 'enhancer', label: 'Enhance' },
@@ -134,7 +134,7 @@ const TOOL_ITEMS: Array<{ type: string; label: string }> = [
 ];
 
 function toolFallbackBorderClass(type: string): string {
-  if (type === 'mediaInput' || type === 'promptInput' || type === 'urlImage' || type === 'pinterestSearch') {
+  if (type === 'mediaInput' || type === 'promptInput' || type === 'urlImage' || type === 'inspiration') {
     return 'border-white/25 group-hover/tile:border-emerald-400/50';
   }
   if (type === 'backgroundRemover' || type === 'mediaDescriber' || type === 'enhancer' || type === 'grokProcessor' || type === 'vfxGenerator') {

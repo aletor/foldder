@@ -48,7 +48,6 @@ export function orderExecuteNodeIds(
 
 const RUNNABLE_TYPES = new Set([
   "urlImage",
-  "pinterestSearch",
   "nanoBanana",
   "backgroundRemover",
   "geminiVideo",
@@ -92,7 +91,6 @@ export function tryInferExecuteNodeIds(
   /** Artículo opcional: "genera una imagen", "genera el video", "quiero una foto"… */
   const article = "(?:el|la|los|las|un|una|unos|unas)\\s+";
   const wantsRun =
-    /\bpinterest\b/.test(p) ||
     /\b(ejecuta|ejecutar|run|execute|procesa el|hazlo correr|hazlo)\b/.test(p) ||
     /\b(genera|generar)\s+(imagen|imagenes|image|fotos?|videos?)\b/.test(p) ||
     new RegExp(`\\b(genera|generar)\\s+(?:${article})?(imagen|image|fotos?|video)\\b`).test(p) ||

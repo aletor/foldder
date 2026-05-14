@@ -76,10 +76,7 @@ describe("inferServiceIdFromRecord", () => {
     ).toBe("openai-embeddings");
   });
 
-  it("mapea rutas Pinterest y Beeble sin serviceId", () => {
-    expect(
-      inferServiceIdFromRecord(line({ provider: "pinterest", route: "/api/pinterest/search" })),
-    ).toBe("pinterest-search");
+  it("mapea rutas Beeble sin serviceId", () => {
     expect(
       inferServiceIdFromRecord(line({ provider: "beeble", route: "/api/beeble/foo/bar" })),
     ).toBe("beeble-api");

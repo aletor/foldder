@@ -14,7 +14,6 @@ import {
   MediaDescriberNode,
   ImageExportNode,
   UrlImageNode,
-  PinterestSearchNode,
   SpaceNode,
   SpaceInputNode,
   SpaceOutputNode,
@@ -35,6 +34,7 @@ import { NanoBananaNode } from "./nano-banana/NanoBananaNode";
 import { PhotoRoomNode } from "./photo-room/PhotoRoomNode";
 import { CanvasGroupNode } from "./CanvasGroupNode";
 import { VideoEditorNode } from "./video-editor/VideoEditorNode";
+import { InspirationNode } from "./inspiration/InspirationNode";
 
 export const spacesInitialNodes: Node[] = [];
 
@@ -59,7 +59,7 @@ export const spacesNodeTypes: Record<string, ComponentType<any>> = {
   mediaDescriber: MediaDescriberNode,
   imageExport: ImageExportNode,
   urlImage: UrlImageNode,
-  pinterestSearch: PinterestSearchNode,
+  inspiration: InspirationNode,
   space: SpaceNode,
   spaceInput: SpaceInputNode,
   spaceOutput: SpaceOutputNode,

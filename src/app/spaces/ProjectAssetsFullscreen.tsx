@@ -429,7 +429,7 @@ export function ProjectAssetsFullscreen({ open, onClose, nodes, assetsMetadata, 
           <BrandReadonlyStrip assetsMetadata={assetsMetadata} />
           <MediaSection
             title="Imported Media"
-            subtitle="Archivos que entran desde fuera: uploads, URLs, Pinterest, logos, PDFs, documentos de marca y referencias."
+            subtitle="Archivos que entran desde fuera: uploads, URLs, logos, PDFs, documentos de marca y referencias."
             items={viewImported}
             emptyHint="Aún no hay elementos importados visibles en este proyecto."
           />

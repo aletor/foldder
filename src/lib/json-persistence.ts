@@ -11,6 +11,12 @@ export type JsonStoreConfig<T> = {
 };
 
 function isJsonStoreS3Enabled(): boolean {
+  const localOnly = (process.env.FOLDDER_JSON_STORE_LOCAL_ONLY || "")
+    .trim()
+    .toLowerCase();
+  if (localOnly === "1" || localOnly === "true" || localOnly === "yes") {
+    return false;
+  }
   return Boolean(
     process.env.AWS_ACCESS_KEY_ID?.trim() &&
       process.env.AWS_SECRET_ACCESS_KEY?.trim() &&

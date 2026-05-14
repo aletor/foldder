@@ -5,7 +5,7 @@ import {
 } from "@/lib/spaces-access-control";
 import { BUCKET_NAME, getFromS3 } from "@/lib/s3-utils";
 
-/** Muchos CDNs (p. ej. pinimg) devuelven 403 si el fetch parece un bot sin User-Agent de navegador. */
+/** Muchos CDNs devuelven 403 si el fetch parece un bot sin User-Agent de navegador. */
 const UPSTREAM_UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
@@ -115,19 +115,10 @@ async function proxyImage(target: ProxyTarget): Promise<Response> {
   let response: Response;
   try {
     const imageUrl = target.url;
-    let host = "";
-    try {
-      host = new URL(imageUrl).hostname.toLowerCase();
-    } catch {
-      /* invalid URL handled below */
-    }
     const headers: Record<string, string> = {
       Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
       "User-Agent": UPSTREAM_UA,
     };
-    if (host.includes("pinimg.com") || host.includes("pinterest.com")) {
-      headers.Referer = "https://www.pinterest.com/";
-    }
 
     response = await fetch(imageUrl, {
       redirect: "follow",

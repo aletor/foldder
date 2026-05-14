@@ -83,7 +83,8 @@ function isExemptFromRepeat(pathname: string): boolean {
     pathname === "/api/gemini/generate" ||
     pathname === "/api/gemini/generate-stream" ||
     pathname === "/api/gemini/analyze-areas" ||
-    pathname === "/api/spaces/text-content"
+    pathname === "/api/spaces/text-content" ||
+    pathname === "/api/inspiration/search"
   ) {
     return true;
   }

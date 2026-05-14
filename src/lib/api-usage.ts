@@ -80,7 +80,7 @@ export const USAGE_SERVICES = [
   { id: "openai-brain-content", label: "OpenAI · Brain generación contenido", category: "brain" as const },
   { id: "openai-cine-analyze", label: "OpenAI · Cine análisis de guion", category: "ia-text" as const },
   { id: "openai-embeddings", label: "OpenAI · Embeddings", category: "embeddings" as const },
-  { id: "pinterest-search", label: "Pinterest · Search API", category: "external-api" as const },
+  { id: "pexels-search", label: "Pexels · Inspiration search", category: "external-api" as const },
   { id: "beeble-api", label: "Beeble · API proxy", category: "external-api" as const },
   { id: "runway-status", label: "Runway · Status polling", category: "ia-video" as const },
   { id: "grok-status", label: "xAI Grok · Status polling", category: "ia-video" as const },
@@ -109,7 +109,7 @@ export type UsageProvider =
   | "runway"
   | "replicate"
   | "volcengine"
-  | "pinterest"
+  | "pexels"
   | "beeble"
   | "aws";
 
@@ -208,7 +208,10 @@ export function inferServiceIdFromRecord(r: UsageRecordLine): UsageServiceId {
   if (routePath.includes("/brain/content/generate")) return "openai-brain-content";
   if (routePath.includes("/spaces/cine/analyze")) return "openai-cine-analyze";
   if (routePath.includes("/brain/knowledge/update")) return "openai-embeddings";
-  if (routePath.includes("/pinterest/search")) return "pinterest-search";
+  if (routePath.includes("/inspiration/search")) {
+    if (r.provider === "pexels") return "pexels-search";
+    return "unknown-external";
+  }
   if (routePath.includes("/beeble/")) return "beeble-api";
   if (routePath.includes("/video-editor/render")) return "aws-fargate-render";
 
@@ -224,7 +227,7 @@ export function inferServiceIdFromRecord(r: UsageRecordLine): UsageServiceId {
     warnAmbiguousLegacy(`provider ${r.provider} sin ruta reconocida`, r);
     return "unknown-external";
   }
-  if (r.provider === "pinterest" || r.provider === "beeble" || r.provider === "aws") {
+  if (r.provider === "beeble" || r.provider === "aws") {
     return "unknown-external";
   }
   warnAmbiguousLegacy("proveedor desconocido", r);

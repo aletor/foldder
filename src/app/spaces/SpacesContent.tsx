@@ -147,11 +147,9 @@ import {
   findTopNodeUnderFlowPoint,
   findEmptyPositionForNewNode,
   preferredCenterRightOfRightmostNode,
-  planDuplicateBelowMultiInput,
   orderedSourcesForSharedTarget,
   positionNewNodeRightOfSources,
 } from "./connection-utils";
-import { NodeIconMono } from "./foldder-icons";
 import {
   FolderPlus,
   FolderOpen,
@@ -180,7 +178,6 @@ import {
 import { CanvasWallpaperTransition } from "./CanvasWallpaperTransition";
 import { CANVAS_BACKGROUNDS } from "./canvas-backgrounds";
 import { SpacesWelcomeChrome } from "./SpacesWelcomeChrome";
-import { GraphContextMenuShell } from "./GraphContextMenuShell";
 import {
   spacesInitialNodes as initialNodes,
   spacesInitialEdges as initialEdges,
@@ -4863,78 +4860,16 @@ export function SpacesContent() {
 
 
 
-  const onPaneContextMenu = useCallback((event: any) => {
+  const onPaneContextMenu = useCallback((event: globalThis.MouseEvent | React.MouseEvent<Element, MouseEvent>) => {
     event.preventDefault();
-    setContextMenu({ x: event.clientX, y: event.clientY });
+    setContextMenu(null);
   }, []);
 
-  const onNodeContextMenu = useCallback((event: any, node: any) => {
+  const onNodeContextMenu = useCallback((event: globalThis.MouseEvent | React.MouseEvent<Element, MouseEvent>) => {
     event.preventDefault();
-    setContextMenu({ x: event.clientX, y: event.clientY, nodeId: node.id });
+    event.stopPropagation?.();
+    setContextMenu(null);
   }, []);
-
-  const deleteNode = useCallback(
-    (id: string) => {
-      const target = nodes.find((n) => n.id === id);
-      if (!target) return;
-      /** El marco de agrupación en el lienzo no se elimina por menú contextual ni por tecla (solo Desagrupar). */
-      if (target.type === "canvasGroup") {
-        setContextMenu(null);
-        return;
-      }
-
-      setNodes((nds) => {
-        const next = nds.filter((n) => n.id !== id);
-        return recomputeCanvasGroupFrames(next);
-      });
-      setEdges((eds) => eds.filter((edge) => edge.source !== id && edge.target !== id));
-      setContextMenu(null);
-      setTimeout(() => {
-        fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(650), ...FOLDDER_FIT_VIEW_EASE });
-      }, 80);
-    },
-    [nodes, setNodes, setEdges, fitView]
-  );
-
-  const duplicateNode = useCallback(
-    (id: string) => {
-      const node = nodes.find((n) => n.id === id);
-      if (!node) return;
-      if (node.type === "canvasGroup") return;
-
-      const plan = planDuplicateBelowMultiInput(node, edges, nodes);
-      const newId = `${node.type}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
-      const rawData = node.data && typeof node.data === 'object' ? { ...(node.data as object) } : {};
-      delete (rawData as { _foldderCanvasIntro?: unknown })._foldderCanvasIntro;
-      const newNode = {
-        ...node,
-        id: newId,
-        position: plan?.position ?? { x: node.position.x + 20, y: node.position.y + 20 },
-        selected: true,
-        data: withFoldderCanvasIntro(String(node.type), rawData as Record<string, unknown>),
-      };
-
-      takeSnapshot();
-      setNodes((nds) => [...nds.map((n) => ({ ...n, selected: false })), newNode]);
-      scheduleFoldderCanvasIntroEnd(newId);
-      if (plan) {
-        setEdges((eds) => [
-          ...eds,
-          {
-            id: `dup-${newId}-${plan.targetId}-${Date.now()}`,
-            source: newId,
-            sourceHandle: plan.sourceHandle,
-            target: plan.targetId,
-            targetHandle: plan.targetHandle,
-            type: 'buttonEdge',
-            animated: false,
-          },
-        ]);
-      }
-      setContextMenu(null);
-    },
-    [nodes, edges, setNodes, setEdges, takeSnapshot, scheduleFoldderCanvasIntroEnd]
-  );
 
   const groupSelectedToSpace = useCallback(() => {
     const selectedNodes = nodes.filter(
@@ -5869,79 +5804,6 @@ export function SpacesContent() {
               </button>
             </div>
           </div>
-        )}
-
-        {/* Context Menu */}
-        {contextMenu && (
-          <GraphContextMenuShell
-            x={contextMenu.x}
-            y={contextMenu.y}
-            remeasureKey={`${contextMenu.nodeId ?? "pane"}-${nodes.length}`}
-            onMouseLeave={() => setContextMenu(null)}
-          >
-            <div className="mb-1 border-b border-white/5 px-3 py-2 text-[8px] font-black uppercase tracking-widest text-white/30">
-              Actions
-            </div>
-
-            {contextMenu.nodeId ? (
-              <>
-                {nodes.find((n) => n.id === contextMenu.nodeId)?.type === "canvasGroup" && (
-                  <div
-                    className="context-menu-item primary"
-                    onClick={() => {
-                      const gid = contextMenu.nodeId!;
-                      performCanvasUngroup(gid);
-                      setContextMenu(null);
-                    }}
-                  >
-                    <NodeIconMono iconKey="concat" size={14} className="text-violet-300 opacity-90" /> Desagrupar (lienzo)
-                  </div>
-                )}
-                <div 
-                  className="context-menu-item"
-                  onClick={() => duplicateNode(contextMenu.nodeId!)}
-                >
-                  <NodeIconMono iconKey="concat" size={14} className="text-blue-400 opacity-90" /> Duplicate Node
-                </div>
-                {nodes.find((n) => n.id === contextMenu.nodeId)?.type !== "canvasGroup" && (
-                  <div
-                    className="context-menu-item danger"
-                    onClick={() => deleteNode(contextMenu.nodeId!)}
-                  >
-                    <NodeIconMono iconKey="matting" size={14} className="text-rose-400 opacity-90" /> Delete Node
-                  </div>
-                )}
-              </>
-            ) : (
-              <>
-                {nodes.filter((n) => n.selected).length >= 2 && (
-                  <div
-                    className="context-menu-item primary"
-                    onClick={groupSelectedToCanvasGroup}
-                  >
-                    <NodeIconMono iconKey="concat" size={14} className="text-violet-300 opacity-90" /> Agrupar en el lienzo
-                  </div>
-                )}
-                <div 
-                  className="context-menu-item primary"
-                  onClick={groupSelectedToSpace}
-                >
-                  <NodeIconMono iconKey="space" size={14} className="text-cyan-300 opacity-90" /> Group into Nested Space
-                </div>
-                <div className="context-menu-separator" />
-                <div 
-                  className="context-menu-item"
-                  onClick={() => {
-                    setNodes([]);
-                    setEdges([]);
-                    setContextMenu(null);
-                  }}
-                >
-                  <NodeIconMono iconKey="canvas" size={14} className="text-slate-300 opacity-80" /> Clear Canvas
-                </div>
-              </>
-            )}
-          </GraphContextMenuShell>
         )}
 
         {/* Action HUD — fila1: agente (izq.) + acciones (der.); fila2: accesos fijos inferiores. Oculto con body.nb-studio-open (Nano Banana Studio fullscreen). */}

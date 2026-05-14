@@ -3,7 +3,7 @@
 /* eslint-disable @next/next/no-img-element */
 
 import React, { memo, useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef, type ComponentProps } from 'react';
-import { createPortal, flushSync } from 'react-dom';
+import { createPortal } from 'react-dom';
 import { Position, NodeProps, BaseEdge, EdgeLabelRenderer, getBezierPath, EdgeProps, useReactFlow, useUpdateNodeInternals, useNodes, useEdges, NodeResizer, useNodeId, type Node } from '@xyflow/react';
 import {
   Video, 
@@ -26,7 +26,6 @@ import {
   Music,
   Info,
   Globe,
-  Eye,
   Paintbrush,
   ChevronLeft,
   ChevronRight,
@@ -59,8 +58,6 @@ import {
   CircleDot,
   Film,
   Cpu,
-  Pin,
-  PenLine,
 } from 'lucide-react';
 import { StandardStudioShellHeader, type StandardStudioShellConfig } from './StandardStudioShell';
 import {
@@ -86,33 +83,17 @@ function captureCurrentOutput(
 }
 
 import './spaces.css';
-import { takePendingNanoStudioOpenFromPhotoRoom } from './photo-room/photo-room-nano-open-pending';
 import { FOLDDER_FIT_VIEW_EASE } from '@/lib/fit-view-ease';
 import { estimateVideoGeneratorPreviewUsd } from '@/lib/pricing-config';
 import { runAiJobWithNotification } from '@/lib/ai-job-notifications';
-import {
-  aiHudNanoBananaJobStart,
-  aiHudNanoBananaJobProgress,
-  aiHudNanoBananaJobEnd,
-  getAiHudNanoBananaJobProgressForNode,
-} from '@/lib/ai-hud-generation-progress';
-import { geminiGenerateWithServerProgress } from '@/lib/gemini-generate-stream-client';
+import { readJsonWithHttpError } from '@/lib/read-response-json';
 import { isFoldderMediaPreviewAutoFitSuppressed } from '@/lib/media-preview-fit-suppress';
-import { tryExtractKnowledgeFilesKeyFromUrl } from '@/lib/s3-media-hydrate';
 import { fetchBlobViaSpacesProxy } from '@/lib/spaces-proxy-fetch';
-import { usePreventBrowserPinchZoom } from '@/lib/use-prevent-browser-pinch-zoom';
 import { NODE_REGISTRY } from './nodeRegistry';
 import { useRegisterAssistantNodeRun } from './use-assistant-node-run';
 import { dispatchFoldderExportCreated } from './foldder-export-events';
-import { useProjectBrainCanvas } from "./project-brain-canvas-context";
 import { useProjectAssetsCanvas } from "./project-assets-canvas-context";
-import { normalizeProjectAssets } from "./project-assets-metadata";
 import { uploadProjectMediaFile } from "./project-media-s3-save";
-import {
-  composeBrainImageGeneratorPromptWithRuntime,
-  type BrainImageGeneratorPromptDiagnostics,
-} from "@/lib/brain/build-brain-visual-prompt-context";
-import { useBrainNodeTelemetry } from "@/lib/brain/use-brain-node-telemetry";
 import { DEFAULT_EDGE_COLOR, FOLDDER_LOGO_BLUE, HANDLE_COLORS } from './handle-type-colors';
 import { loadVideoDimensions } from './presenter/presenter-video-frame-layout';
 import {
@@ -131,7 +112,6 @@ import {
   resolveNodeChromeHeight,
 } from "./studio-node-aspect";
 import {
-  applyCanvasGroupCollapse,
   applyPromptValueToEdgeSource,
   resolvePromptValueFromEdgeSource,
   resolvePromptValueFromEdgeSourceMap,
@@ -583,195 +563,6 @@ export const UrlImageNode = memo(function UrlImageNode({ id, data, selected }: N
       </div>
       <div className="handle-wrapper handle-right">
         <span className="handle-label">Image Out</span>
-        <FoldderDataHandle type="source" position={Position.Right} id="image" dataType="image" />
-      </div>
-    </div>
-  );
-});
-
-type PinterestPin = { id: string; imageUrl: string; title?: string };
-
-export const PinterestSearchNode = memo(function PinterestSearchNode({ id, data, selected }: NodeProps) {
-  const nodeData = data as BaseNodeData & {
-    pins?: PinterestPin[];
-    selectedIndex?: number;
-    lastHint?: string;
-  };
-  const nodes = useNodes();
-  const edges = useEdges();
-  const { setNodes } = useReactFlow();
-  const [loading, setLoading] = useState(false);
-
-  const promptEdge = useMemo(
-    () => edges.find((e) => e.target === id && e.targetHandle === "prompt"),
-    [edges, id]
-  );
-  const searchText = useMemo(() => {
-    if (!promptEdge) return "";
-    return String(resolvePromptValueFromEdgeSource(promptEdge, nodes as Node[]) ?? "").trim();
-  }, [promptEdge, nodes]);
-
-  const pins = Array.isArray(nodeData.pins) ? nodeData.pins : [];
-  const selectedIndex = Math.min(Math.max(nodeData.selectedIndex ?? 0, 0), Math.max(pins.length - 1, 0));
-  const current = pins[selectedIndex];
-  const currentUrl = current?.imageUrl ?? (typeof nodeData.value === "string" ? nodeData.value : "");
-
-  const updateData = useCallback(
-    (updates: Record<string, unknown>) => {
-      setNodes((nds) =>
-        nds.map((n) => (n.id === id ? { ...n, data: { ...n.data, ...updates } } : n))
-      );
-    },
-    [id, setNodes]
-  );
-
-  const runSearch = useCallback(async () => {
-    const promptEdgeRun = edges.find((e) => e.target === id && e.targetHandle === "prompt");
-    const q = promptEdgeRun
-      ? String(resolvePromptValueFromEdgeSource(promptEdgeRun, nodes as Node[]) ?? "").trim()
-      : "";
-    if (!q) return;
-    setLoading(true);
-    try {
-      const ok = await runAiJobWithNotification({ nodeId: id, label: "Pinterest" }, async () => {
-        const res = await fetch("/api/pinterest/search", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query: q, limit: 4 }),
-        });
-        const json = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          throw new Error(typeof json.error === "string" ? json.error : `HTTP ${res.status}`);
-        }
-        const list = Array.isArray(json.pins) ? json.pins : [];
-        const hint = typeof json.hint === "string" ? json.hint : undefined;
-        if (list.length === 0) {
-          updateData({
-            pins: [],
-            value: "",
-            lastHint: hint || "Sin resultados.",
-            type: "image",
-            source: "pinterest",
-          });
-          return;
-        }
-        const first = list[0] as PinterestPin;
-        updateData({
-          pins: list,
-          selectedIndex: 0,
-          value: first.imageUrl,
-          lastHint: hint,
-          type: "image",
-          source: "pinterest",
-        });
-      });
-      if (!ok) {
-        updateData({ lastHint: "Búsqueda cancelada o con error." });
-      }
-    } catch (e) {
-      console.error("[PinterestSearchNode]", e);
-      updateData({
-        lastHint: e instanceof Error ? e.message : "Error al buscar.",
-      });
-    } finally {
-      setLoading(false);
-    }
-  }, [id, edges, nodes, updateData]);
-
-  useRegisterAssistantNodeRun(id, runSearch);
-
-  const pick = (idx: number) => {
-    if (idx < 0 || idx >= pins.length) return;
-    const p = pins[idx];
-    updateData({ selectedIndex: idx, value: p.imageUrl, type: "image", source: "pinterest" });
-  };
-
-  const previewSnippet =
-    searchText.length > 120 ? `${searchText.slice(0, 117)}…` : searchText;
-
-  return (
-    <div
-      className={`custom-node border-rose-500/35 pinterest-search-node ${loading ? "node-glow-running" : ""}`}
-      style={{ minWidth: 280 }}
-    >
-      <div className="handle-wrapper handle-left" style={{ top: "32%" }}>
-        <FoldderDataHandle type="target" position={Position.Left} id="prompt" dataType="prompt" />
-        <span className="handle-label">Prompt</span>
-      </div>
-      <FoldderNodeResizer minWidth={280} minHeight={340} isVisible={selected} />
-      <NodeLabel id={id} label={nodeData.label} defaultLabel="Pinterest" />
-      <div className="node-header">
-        <NodeIcon type="pinterestSearch" loading={loading} selected={selected} size={16} />
-        <FoldderNodeHeaderTitle
-          className="flex-1"
-          introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}
-        >
-          PINTEREST
-        </FoldderNodeHeaderTitle>
-        {loading && <Loader2 size={12} className="animate-spin shrink-0" />}
-      </div>
-      <div className="node-content">
-        <div className="mb-2 rounded-lg border border-white/10 bg-white/[0.04] px-2.5 py-2">
-          <p className="text-[8px] font-black uppercase tracking-widest text-zinc-500">Texto de búsqueda (entrada)</p>
-          {previewSnippet ? (
-            <p className="mt-1 line-clamp-3 font-mono text-[9px] leading-snug text-rose-100/95">{previewSnippet}</p>
-          ) : (
-            <p className="mt-1 text-[9px] leading-snug text-zinc-500">
-              Conecta un nodo <span className="font-bold text-zinc-400">Prompt</span> a la izquierda.
-            </p>
-          )}
-        </div>
-        <button
-          type="button"
-          onClick={() => void runSearch()}
-          disabled={loading || !searchText}
-          className="mb-3 flex w-full items-center justify-center gap-2 rounded-xl border border-rose-500/40 bg-rose-500/15 py-2 text-[10px] font-black uppercase tracking-widest text-rose-100 transition hover:bg-rose-500/25 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          <Pin size={14} strokeWidth={2} aria-hidden />
-          Buscar
-        </button>
-
-        {nodeData.lastHint ? (
-          <p className="mb-2 text-[9px] leading-snug text-amber-200/90">{nodeData.lastHint}</p>
-        ) : null}
-
-        <div className="relative mb-2 w-full overflow-hidden rounded-xl border border-white/10 bg-slate-900/40 aspect-video shadow-inner">
-          {currentUrl ? (
-            <img src={currentUrl} className="h-full w-full object-contain" alt="" />
-          ) : (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-zinc-500">
-              <Pin size={28} strokeWidth={1.5} />
-              <span className="text-[9px] font-black uppercase tracking-tighter">Resultado principal</span>
-            </div>
-          )}
-        </div>
-
-        {pins.length > 0 && (
-          <div>
-            <p className="mb-1.5 text-[8px] font-black uppercase tracking-widest text-zinc-500">Sugerencias</p>
-            <div className="grid grid-cols-4 gap-1.5">
-              {pins.slice(0, 4).map((p, idx) => (
-                <button
-                  key={p.id || idx}
-                  type="button"
-                  onClick={() => pick(idx)}
-                  className={`aspect-square overflow-hidden rounded-lg border transition ${
-                    idx === selectedIndex
-                      ? "border-rose-400 ring-2 ring-rose-400/30"
-                      : "border-white/10 opacity-80 hover:opacity-100"
-                  }`}
-                >
-                  {p.imageUrl ? (
-                    <img src={p.imageUrl} className="h-full w-full object-cover" alt="" />
-                  ) : null}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-      <div className="handle-wrapper handle-right">
-        <span className="handle-label">Imagen</span>
         <FoldderDataHandle type="source" position={Position.Right} id="image" dataType="image" />
       </div>
     </div>
@@ -2952,17 +2743,27 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
   const edges = useEdges();
   const { setNodes } = useReactFlow();
   const [status, setStatus] = useState('idle');
-  const [description, setDescription] = useState<string | null>(null);
+  const [description, setDescription] = useState<string | null>(
+    typeof nodeData.value === 'string' && nodeData.value.trim() ? nodeData.value : null,
+  );
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const persistedDescription = typeof nodeData.value === 'string' && nodeData.value.trim() ? nodeData.value : null;
+  const visibleDescription = description || persistedDescription;
 
   const onRun = async () => {
     const inputEdge = edges.find(e => e.target === id && e.targetHandle === 'media');
     const inputNode = nodes.find(n => n.id === inputEdge?.source);
     
-    if (!inputNode) return alert("Need media input to describe!");
+    if (!inputNode) {
+      setStatus('error');
+      setErrorMessage("Connect an image before generating a description.");
+      return;
+    }
 
     setStatus('running');
+    setErrorMessage(null);
 
-    const ok = await runAiJobWithNotification({ nodeId: id, label: 'Gemini Describer' }, async () => {
+    const ok = await runAiJobWithNotification({ nodeId: id, label: 'Eye Describer' }, async () => {
       let finalMediaUrl = inputNode.data?.value as string | undefined;
       let finalMediaType: string;
 
@@ -2985,7 +2786,10 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
           metadata: inputNode.data.metadata
         })
       });
-      const json = await res.json();
+      const json = await readJsonWithHttpError<{ description?: string; error?: string }>(
+        res,
+        'POST /api/spaces/describe',
+      );
 
       if (json.description) {
         setDescription(json.description);
@@ -2995,7 +2799,10 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
       }
     });
     setStatus(ok ? 'success' : 'error');
-    if (!ok) console.error("Describe error");
+    if (!ok) {
+      setErrorMessage("The visual description could not be generated. Check the connected image or API access.");
+      console.error("Describe error");
+    }
   };
 
   useRegisterAssistantNodeRun(id, onRun);
@@ -3011,7 +2818,7 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
       <div className="node-header">
         <NodeIcon type="mediaDescriber" selected={selected} state={resolveFoldderNodeState({ loading: status === 'running', done: status === 'success', error: status === 'error' })} size={16} />
         <FoldderNodeHeaderTitle introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}>
-          Gemini Describer
+          Eye Describer
         </FoldderNodeHeaderTitle>
         <div className="node-badge">VISION</div>
       </div>
@@ -3023,9 +2830,15 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
           {status === 'running' ? 'ANALYZING...' : 'GENERATE DESCRIPTION'}
         </button>
 
-        <div className="p-3 bg-slate-50/50 rounded-xl border border-slate-200/60 min-h-[80px]">
-          {description ? (
-            <div className="text-[10px] text-gray-300 leading-relaxed font-mono">{description}</div>
+        {errorMessage ? (
+          <div className="mb-3 rounded-xl border border-rose-500/30 bg-rose-500/10 p-2.5 text-[9px] leading-snug text-rose-200">
+            {errorMessage}
+          </div>
+        ) : null}
+
+        <div className="p-3 bg-black/30 rounded-xl border border-white/10 min-h-[80px]">
+          {visibleDescription ? (
+            <div className="text-[10px] text-zinc-200 leading-relaxed font-mono">{visibleDescription}</div>
           ) : (
             <div className="h-full flex flex-col items-center justify-center opacity-20 py-4">
               <Zap size={24} className="mb-2" />

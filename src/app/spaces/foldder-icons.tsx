@@ -773,7 +773,7 @@ export const NODE_TYPE_TO_FOLDDER_ICON: Record<string, FoldderIconKey> = {
   photoRoom: 'photoRoom',
   projectBrain: 'brain',
   projectAssets: 'foldderApp',
-  pinterestSearch: 'web',
+  inspiration: 'web',
   notes: 'notes',
   guionista: 'guionista',
   cine: 'cine',

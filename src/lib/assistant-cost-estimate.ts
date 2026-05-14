@@ -45,12 +45,6 @@ const PAID_NODE_TYPES: Record<
     eurMin: 0.0,
     eurMax: 0.02,
   },
-  pinterestSearch: {
-    id: "pinterest-search",
-    name: "Pinterest API (búsqueda)",
-    eurMin: 0,
-    eurMax: 0.02,
-  },
   enhancer: {
     id: "openai-enhance",
     name: "OpenAI · Mejorar prompt",
