@@ -74,7 +74,7 @@ import {
 import { matchesClearCanvasIntent } from "@/lib/clear-canvas-intent";
 import { matchesAddSpaceNodeIntent } from "@/lib/assistant-quick-intents";
 import { installAiFetchOverlay } from "@/lib/ai-request-overlay";
-import { readJsonWithHttpError, readResponseJson } from "@/lib/read-response-json";
+import { readJsonWithHttpError, readResponseJson, type HttpJsonError } from "@/lib/read-response-json";
 import { hydrateSpacesMapWithFreshUrls } from "@/lib/s3-media-hydrate";
 import {
   AI_JOB_COMPLETE_EVENT,
@@ -317,6 +317,75 @@ function isRevisionConflictMessage(message: string): boolean {
 
 function isPayloadTooLargeMessage(message: string): boolean {
   return /too large|413|límite|limite|payload/i.test(message);
+}
+
+function getHttpJsonError(err: unknown): HttpJsonError | null {
+  return err instanceof Error ? (err as HttpJsonError) : null;
+}
+
+function classifyProjectSaveError(err: unknown): {
+  alertMessage: string;
+  healthMessage: string;
+  state: SaveHealthState;
+} {
+  const httpError = getHttpJsonError(err);
+  const message = err instanceof Error ? err.message : String(err ?? "");
+  const status = httpError?.status;
+  const code = httpError?.code;
+
+  if (isRevisionConflictMessage(message)) {
+    return {
+      alertMessage: "This project changed on another device. Reload it before saving again.",
+      healthMessage: "Project changed elsewhere. Reload before saving.",
+      state: "conflict",
+    };
+  }
+
+  if (isPayloadTooLargeMessage(message) || status === 413) {
+    return {
+      alertMessage: "This project is too heavy to save. Keep large media in cloud storage and try again.",
+      healthMessage: "Project is too heavy to save. Media must stay in cloud storage.",
+      state: "too-large",
+    };
+  }
+
+  if (status === 401 || /unauthorized|session/i.test(message)) {
+    return {
+      alertMessage: "Your session expired. Sign in again before saving.",
+      healthMessage: "Session expired. Sign in again before saving.",
+      state: "error",
+    };
+  }
+
+  if (status === 403 || /forbidden|not allowed|access/i.test(message)) {
+    return {
+      alertMessage: "Some project media is not accessible with this account. Reload the project or sign in again.",
+      healthMessage: "Project media is not accessible. Reload before saving.",
+      state: "error",
+    };
+  }
+
+  if (code === "PROJECT_DATA_INTEGRITY_ERROR") {
+    return {
+      alertMessage: "The saved project data failed an integrity check. Reload the project before continuing.",
+      healthMessage: "Project data integrity check failed. Reload before saving.",
+      state: "error",
+    };
+  }
+
+  if (status && status >= 500) {
+    return {
+      alertMessage: "The server could not save the project. Your local changes remain open; try again shortly.",
+      healthMessage: "Server save failed. Retrying on the next change.",
+      state: "error",
+    };
+  }
+
+  return {
+    alertMessage: "Error saving project. Check console for details.",
+    healthMessage: "Save failed. Retrying on the next change.",
+    state: "error",
+  };
 }
 
 type OpenDesktopApp = {
@@ -3685,25 +3754,14 @@ export function SpacesContent() {
       if (isRevisionConflictMessage(message)) {
         console.warn("[FOLDDER save] Conflicto de revisión: otro dispositivo guardó este proyecto antes.");
       }
+      const classifiedSaveError = classifyProjectSaveError(err);
       setSaveHealth({
-        state: isRevisionConflictMessage(message)
-          ? "conflict"
-          : isPayloadTooLargeMessage(message)
-            ? "too-large"
-            : "error",
-        message: isRevisionConflictMessage(message)
-          ? "Project changed elsewhere. Reload before saving."
-          : isPayloadTooLargeMessage(message)
-            ? "Project is too heavy to save. Media must stay in cloud storage."
-            : "Save failed. Retrying on the next change.",
+        state: classifiedSaveError.state,
+        message: classifiedSaveError.healthMessage,
         at: Date.now(),
       });
       if (!options?.silentError) {
-        alert(
-          isRevisionConflictMessage(message)
-            ? 'This project changed on another device. Reload it before saving again.'
-            : 'Error saving project. Check console for details.',
-        );
+        alert(classifiedSaveError.alertMessage);
       }
       return false;
     } finally {
