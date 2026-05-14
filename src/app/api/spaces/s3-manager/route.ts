@@ -3,17 +3,22 @@ import { NextRequest, NextResponse } from "next/server";
 import { ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { isDynamoEnabled } from "@/lib/dynamo-utils";
 import { readJsonStore } from "@/lib/json-persistence";
-import { collectS3KeysFromProjectSpaces } from "@/lib/s3-media-hydrate";
+import {
+  collectS3KeysFromProjectSpaces,
+  collectS3KeysFromValue,
+} from "@/lib/s3-media-hydrate";
 import {
   readAllDdbProjects as readAllDdbProjectsStore,
   type ProjectRecord,
 } from "@/lib/spaces-dynamo-store";
+import { readAllSpacesV2Projects } from "@/lib/spaces-v2-store";
 import { BUCKET_NAME, s3Client } from "@/lib/s3-utils";
 import { auth } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
 const SPACES_DDB_TABLE_ENV = "FOLDDER_SPACES_DDB_TABLE";
+const SPACES_V2_DDB_TABLE_ENV = "FOLDDER_SPACES_V2_DDB_TABLE";
 const KNOWLEDGE_PREFIX = "knowledge-files/";
 const LIST_MAX_KEYS = 1000;
 
@@ -53,6 +58,10 @@ function isSpacesDdbEnabled(): boolean {
   return isDynamoEnabled(SPACES_DDB_TABLE_ENV);
 }
 
+function isSpacesV2Enabled(): boolean {
+  return isDynamoEnabled(SPACES_V2_DDB_TABLE_ENV);
+}
+
 function normalizeOwnerEmail(email: string | null | undefined): string {
   return (email || "").trim().toLowerCase();
 }
@@ -90,7 +99,14 @@ function spacesTableName(): string {
   return process.env[SPACES_DDB_TABLE_ENV]?.trim() || "";
 }
 
+function spacesV2TableName(): string {
+  return process.env[SPACES_V2_DDB_TABLE_ENV]?.trim() || "";
+}
+
 async function readProjects(): Promise<ProjectRecord[]> {
+  if (isSpacesV2Enabled()) {
+    return readAllSpacesV2Projects(spacesV2TableName());
+  }
   if (isSpacesDdbEnabled()) {
     return readAllDdbProjectsStore(spacesTableName());
   }
@@ -154,7 +170,11 @@ export async function GET(req: NextRequest) {
         projectIdsBySpaceId.set(spaceId, bucket);
       }
 
-      for (const key of collectS3KeysFromProjectSpaces(project.spaces || {})) {
+      const projectS3Keys = new Set([
+        ...collectS3KeysFromProjectSpaces(project.spaces || {}),
+        ...collectS3KeysFromValue(project.metadata || {}),
+      ]);
+      for (const key of projectS3Keys) {
         const bucket = projectIdsByReferencedKey.get(key) ?? new Set<string>();
         bucket.add(project.id);
         projectIdsByReferencedKey.set(key, bucket);

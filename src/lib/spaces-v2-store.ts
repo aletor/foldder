@@ -3,6 +3,7 @@ import {
   GetCommand,
   PutCommand,
   QueryCommand,
+  ScanCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { createHash } from "node:crypto";
 import { ddbClient } from "@/lib/dynamo-utils";
@@ -553,6 +554,45 @@ export async function readSpacesV2ProjectsForOwner(
   const metas = await readSpacesV2ProjectsMetaForOwner(tableName, ownerEmail);
   const projects = await Promise.all(metas.map((meta) => readSpacesV2ProjectById(tableName, meta.id)));
   return projects.filter((project): project is ProjectRecord => Boolean(project));
+}
+
+export async function readAllSpacesV2Projects(tableName: string): Promise<ProjectRecord[]> {
+  const metas: ProjectListItem[] = [];
+  let exclusiveStartKey: Record<string, unknown> | undefined;
+  do {
+    const response = await withDynamoRetry(() =>
+      ddbClient.send(
+        new ScanCommand({
+          TableName: tableName,
+          ExclusiveStartKey: exclusiveStartKey,
+          ExpressionAttributeNames: { "#entityType": "entityType" },
+          ExpressionAttributeValues: { ":meta": "spaces-v2-project-meta" },
+          FilterExpression: "#entityType = :meta",
+        }),
+      ),
+    );
+    for (const item of response.Items ?? []) {
+      if (isMetaItem(item)) metas.push(metaToListItem(item));
+    }
+    exclusiveStartKey = response.LastEvaluatedKey as Record<string, unknown> | undefined;
+  } while (exclusiveStartKey);
+
+  const projects: ProjectRecord[] = [];
+  for (let i = 0; i < metas.length; i += 8) {
+    const batch = metas.slice(i, i + 8);
+    const settled = await Promise.allSettled(
+      batch.map((meta) => readSpacesV2ProjectById(tableName, meta.id)),
+    );
+    for (let j = 0; j < settled.length; j += 1) {
+      const result = settled[j];
+      if (result.status === "fulfilled" && result.value) {
+        projects.push(result.value);
+      } else if (result.status === "rejected") {
+        console.warn("[spaces-v2] failed to read project for admin inventory:", batch[j]?.id, result.reason);
+      }
+    }
+  }
+  return projects;
 }
 
 export async function readSpacesV2ProjectMediaRefByOwnerKey(
