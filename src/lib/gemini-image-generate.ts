@@ -198,7 +198,7 @@ export async function geminiImageGenerate(
         throw new GeminiGenerateError("Forbidden reference image", 403);
       }
     }
-    const parsed = await parseReferenceImageForGemini(slice[i]);
+    const parsed = await parseReferenceImageForGemini(s3Key ?? slice[i]);
     if (parsed) {
       parts.push({ inline_data: { mime_type: parsed.mimeType, data: parsed.data } });
       inlineImageCount += 1;
