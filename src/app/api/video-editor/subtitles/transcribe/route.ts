@@ -10,6 +10,10 @@ import {
   exportSubtitleDocumentToVtt,
 } from "@/app/spaces/video-editor/subtitle-utils";
 import { resolveUsageUserEmailFromRequest, recordApiUsage } from "@/lib/api-usage";
+import {
+  ApiServiceDisabledError,
+  assertApiServiceEnabled,
+} from "@/lib/api-usage-controls";
 import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
 import { getFromS3, uploadBufferToS3Key } from "@/lib/s3-utils";
 import {
@@ -250,6 +254,7 @@ export async function POST(req: Request) {
   try {
     const authState = await requireSpacesAuthUser(req);
     if (!authState.ok) return authState.response;
+    await assertApiServiceEnabled("openai-subtitles");
     const body = (await req.json()) as TranscribeRequestBody;
     const provider = (process.env.SUBTITLE_TRANSCRIPTION_PROVIDER?.trim() || "openai").toLowerCase();
     if (provider !== "openai") {
@@ -270,6 +275,12 @@ export async function POST(req: Request) {
     }
     return NextResponse.json({ ok: true, document, documentKey });
   } catch (error) {
+    if (error instanceof ApiServiceDisabledError) {
+      return NextResponse.json(
+        { ok: false, error: `API bloqueada en admin: ${error.label}` },
+        { status: 423 },
+      );
+    }
     const message = error instanceof Error ? error.message : "subtitle_transcription_failed";
     const status = message.startsWith("provider_not_configured") ? 501 : 500;
     if (!message.startsWith("provider_not_")) {

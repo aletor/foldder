@@ -4,6 +4,14 @@ vi.mock("@/lib/api-usage", () => ({
   resolveUsageUserEmailFromRequest: async () => "test@local.foldder",
 }));
 
+vi.mock("@/lib/api-usage-controls", () => ({
+  ApiServiceDisabledError: class ApiServiceDisabledError extends Error {
+    serviceId = "aws-fargate-render";
+    label = "AWS Fargate · Render Video Editor";
+  },
+  assertApiServiceEnabled: vi.fn(async () => undefined),
+}));
+
 vi.mock("@/lib/spaces-access-control", () => ({
   canUserAccessKnowledgeFileKey: vi.fn(async () => true),
   requireSpacesAuthUser: vi.fn(async () => ({

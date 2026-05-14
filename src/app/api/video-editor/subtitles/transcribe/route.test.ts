@@ -5,6 +5,14 @@ vi.mock("@/lib/api-usage", () => ({
   resolveUsageUserEmailFromRequest: async () => "test@local.foldder",
 }));
 
+vi.mock("@/lib/api-usage-controls", () => ({
+  ApiServiceDisabledError: class ApiServiceDisabledError extends Error {
+    serviceId = "openai-subtitles";
+    label = "OpenAI · Transcripción / subtítulos";
+  },
+  assertApiServiceEnabled: vi.fn(async () => undefined),
+}));
+
 vi.mock("@/lib/spaces-access-control", () => ({
   buildUserAssetObjectKey: vi.fn(({ filename, folder }) => `knowledge-files/user-assets/test/${folder}/${filename}`),
   canUserAccessKnowledgeFileKey: vi.fn(async () => true),

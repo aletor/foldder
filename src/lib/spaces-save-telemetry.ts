@@ -31,8 +31,12 @@ export type SpacesProjectPayloadStats = {
 
 export type SpacesWriteStoreStats = {
   chunkCount?: number;
+  chunksWriteMs?: number;
   contentSha256?: string;
+  cleanupMs?: number;
+  mediaRefsWriteMs?: number;
   mediaKeyCount?: number;
+  metaWriteMs?: number;
   payloadBytes?: number;
   storageFormat?: string;
 };
@@ -40,13 +44,17 @@ export type SpacesWriteStoreStats = {
 export type SpacesSaveTelemetryEvent = {
   actualRevision?: number | null;
   chunkCount?: number;
+  chunksWriteMs?: number;
   contentSha256?: string;
+  cleanupMs?: number;
   durationMs: number;
   edgeCount?: number;
   errorCode?: string;
   errorMessage?: string;
   expectedRevision?: number | null;
+  mediaRefsWriteMs?: number;
   mediaKeyCount?: number;
+  metaWriteMs?: number;
   metadataBytes?: number;
   nodeCount?: number;
   operation: SpacesSaveOperation;
@@ -108,7 +116,11 @@ function sanitizeEvent(event: SpacesSaveTelemetryEvent): SpacesSaveTelemetryEven
   return {
     ...event,
     contentSha256: event.contentSha256?.slice(0, 64),
+    chunksWriteMs: Number.isFinite(event.chunksWriteMs) ? Math.round(event.chunksWriteMs ?? 0) : undefined,
+    cleanupMs: Number.isFinite(event.cleanupMs) ? Math.round(event.cleanupMs ?? 0) : undefined,
     errorMessage: truncateError(event.errorMessage),
+    mediaRefsWriteMs: Number.isFinite(event.mediaRefsWriteMs) ? Math.round(event.mediaRefsWriteMs ?? 0) : undefined,
+    metaWriteMs: Number.isFinite(event.metaWriteMs) ? Math.round(event.metaWriteMs ?? 0) : undefined,
     ownerHash: event.ownerHash || undefined,
     projectId: event.projectId || undefined,
   };

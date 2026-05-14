@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 
 import type { VideoEditorRenderManifest } from "@/app/spaces/video-editor/video-editor-render-types";
 import {
+  ApiServiceDisabledError,
+  assertApiServiceEnabled,
+} from "@/lib/api-usage-controls";
+import {
   canUserAccessKnowledgeFileKey,
   requireSpacesAuthUser,
 } from "@/lib/spaces-access-control";
@@ -62,6 +66,7 @@ export async function POST(req: Request) {
   try {
     const authState = await requireSpacesAuthUser(req);
     if (!authState.ok) return authState.response;
+    await assertApiServiceEnabled("aws-fargate-render");
     const body = await req.json();
     const manifest = body?.manifest;
     if (!isRenderManifest(manifest)) {
@@ -80,6 +85,12 @@ export async function POST(req: Request) {
     const result = await createVideoEditorFargateRenderJob(manifest, { userEmail: authState.user.email });
     return NextResponse.json(result);
   } catch (error) {
+    if (error instanceof ApiServiceDisabledError) {
+      return NextResponse.json(
+        { renderId: "", status: "error", error: `API bloqueada en admin: ${error.label}` },
+        { status: 423 },
+      );
+    }
     const message = error instanceof Error ? error.message : "render_failed";
     console.error("[video-editor-render]", error);
     return NextResponse.json({ renderId: "", status: "error", error: message }, { status: 500 });

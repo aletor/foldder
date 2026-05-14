@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { extractBestPinterestImageUrl } from "@/lib/pinterest-pin-media";
 import { recordApiUsage } from "@/lib/api-usage";
+import {
+  ApiServiceDisabledError,
+  assertApiServiceEnabled,
+} from "@/lib/api-usage-controls";
 import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
 
 const PINTEREST_API = "https://api.pinterest.com/v5";
@@ -35,6 +39,7 @@ export async function POST(req: Request) {
   try {
     const authState = await requireSpacesAuthUser(req);
     if (!authState.ok) return authState.response;
+    await assertApiServiceEnabled("pinterest-search");
     const usageUserEmail = authState.user.email;
     const token = process.env.PINTEREST_ACCESS_TOKEN?.trim();
     if (!token) {
@@ -137,6 +142,12 @@ export async function POST(req: Request) {
           : undefined,
     });
   } catch (e) {
+    if (e instanceof ApiServiceDisabledError) {
+      return NextResponse.json(
+        { error: `API bloqueada en admin: ${e.label}` },
+        { status: 423 },
+      );
+    }
     console.error("[pinterest/search]", e);
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "Error interno" },

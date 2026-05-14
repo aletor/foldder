@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
 import RunwayML from '@runwayml/sdk';
 import { recordApiUsage, resolveUsageUserEmailFromRequest } from "@/lib/api-usage";
+import {
+  ApiServiceDisabledError,
+  assertApiServiceEnabled,
+} from "@/lib/api-usage-controls";
 import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
 
 function getRunwayClient() {
@@ -13,6 +17,7 @@ export async function GET(req: Request, props: { params: Promise<{ id: string }>
   try {
     const authState = await requireSpacesAuthUser(req);
     if (!authState.ok) return authState.response;
+    await assertApiServiceEnabled("runway-status");
     const params = await props.params;
     const taskId = params.id;
     if (!taskId) {
@@ -47,6 +52,12 @@ export async function GET(req: Request, props: { params: Promise<{ id: string }>
       error: task.failureCode || task.failureReason
     });
   } catch (error: unknown) {
+    if (error instanceof ApiServiceDisabledError) {
+      return NextResponse.json(
+        { error: `API bloqueada en admin: ${error.label}` },
+        { status: 423 },
+      );
+    }
     console.error("[Runway Status API Error]:", error);
     const message = error instanceof Error ? error.message : "Internal Server Error";
     return NextResponse.json({ error: message }, { status: 500 });

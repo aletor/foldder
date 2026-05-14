@@ -17,6 +17,7 @@ import {
 } from "@/lib/spaces-dynamo-store";
 import {
   deleteSpacesV2Project,
+  SpacesV2IntegrityError,
   readSpacesV2ProjectById,
   readSpacesV2ProjectsForOwner,
   readSpacesV2ProjectsMetaForOwner,
@@ -161,6 +162,7 @@ async function readProjectByIdResilient(id: string): Promise<ProjectRecord | nul
     const direct = await readDdbProjectById(id);
     if (direct) return direct;
   } catch (error) {
+    if (error instanceof SpacesV2IntegrityError) throw error;
     console.error(`[spaces] direct Dynamo read failed for project ${id}:`, error);
   }
 
@@ -294,13 +296,17 @@ async function recordProjectRouteTelemetry(args: {
   await recordSpacesSaveTelemetry({
     actualRevision: args.actualRevision,
     chunkCount: args.storeStats?.chunkCount,
+    chunksWriteMs: args.storeStats?.chunksWriteMs,
     contentSha256: args.storeStats?.contentSha256,
+    cleanupMs: args.storeStats?.cleanupMs,
     durationMs: Date.now() - args.startedAt,
     edgeCount: args.stats?.edgeCount,
     errorCode: args.errorCode,
     errorMessage: args.errorMessage,
     expectedRevision: args.expectedRevision,
+    mediaRefsWriteMs: args.storeStats?.mediaRefsWriteMs,
     mediaKeyCount: args.storeStats?.mediaKeyCount ?? args.stats?.mediaKeyCount,
+    metaWriteMs: args.storeStats?.metaWriteMs,
     metadataBytes: args.stats?.metadataBytes,
     nodeCount: args.stats?.nodeCount,
     operation: args.operation,
@@ -321,12 +327,14 @@ function saveStatusForError(error: unknown): SpacesSaveStatus {
   if (error instanceof SpacesRevisionConflictError || error instanceof SpacesV2RevisionConflictError) {
     return "conflict";
   }
+  if (error instanceof SpacesV2IntegrityError) return "error";
   if (isPayloadShapeError(error)) return "rejected";
   return "error";
 }
 
 function saveCodeForError(error: unknown): string {
   if (error instanceof SpacesRevisionConflictError || error instanceof SpacesV2RevisionConflictError) return "REVISION_CONFLICT";
+  if (error instanceof SpacesV2IntegrityError) return `PROJECT_DATA_INTEGRITY_${error.code}`;
   if (isWriteLockBusyError(error)) return "SAVE_LOCK_BUSY";
   if (isPayloadShapeError(error)) return "INVALID_PROJECT_PAYLOAD";
   return (error as { name?: string } | null)?.name || "SAVE_FAILED";
@@ -406,6 +414,18 @@ export async function GET(req: Request) {
     }
     return jsonNoStore(meta);
   } catch (error) {
+    if (error instanceof SpacesV2IntegrityError) {
+      console.error("[spaces][GET] integrity failed:", error);
+      return jsonNoStore(
+        {
+          error: "Project data integrity check failed.",
+          code: "PROJECT_DATA_INTEGRITY_ERROR",
+          detail: error.code,
+          retryable: false,
+        },
+        { status: 500 },
+      );
+    }
     console.error("[spaces][GET] failed:", error);
     return jsonNoStore({ error: "Failed to read projects" }, { status: 500 });
   }
@@ -785,6 +805,17 @@ export async function POST(req: Request) {
           actualRevision: error.actualRevision,
         },
         { status: 409 },
+      );
+    }
+    if (error instanceof SpacesV2IntegrityError) {
+      return jsonNoStore(
+        {
+          error: "Project data integrity check failed. Reload or contact support before saving.",
+          code: "PROJECT_DATA_INTEGRITY_ERROR",
+          detail: error.code,
+          retryable: false,
+        },
+        { status: 500 },
       );
     }
     if (isWriteLockBusyError(error)) {

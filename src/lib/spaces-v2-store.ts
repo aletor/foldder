@@ -94,6 +94,21 @@ export class SpacesV2RevisionConflictError extends Error {
   }
 }
 
+export class SpacesV2IntegrityError extends Error {
+  constructor(
+    public readonly projectId: string,
+    public readonly code:
+      | "CHUNK_COUNT_MISMATCH"
+      | "CHUNK_HASH_MISMATCH"
+      | "INVALID_CHUNK_PAYLOAD"
+      | "INVALID_CHUNK_JSON",
+    message: string,
+  ) {
+    super(message);
+    this.name = "SpacesV2IntegrityError";
+  }
+}
+
 const CHUNK_CHAR_SIZE = 240_000;
 const META_METADATA_MAX_BYTES = 64_000;
 const META_MAX_DEPTH = 6;
@@ -380,17 +395,36 @@ function parseProjectPayloadFromChunks(meta: SpacesV2MetaItem, chunks: SpacesV2C
     .filter((chunk) => chunk.revision === meta.revision)
     .sort((a, b) => a.chunkIndex - b.chunkIndex);
   if (selected.length !== meta.chunkCount) {
-    throw new Error(
+    throw new SpacesV2IntegrityError(
+      meta.projectId,
+      "CHUNK_COUNT_MISMATCH",
       `[spaces-v2] chunk count mismatch for ${meta.projectId}. expected ${meta.chunkCount} got ${selected.length}`,
     );
   }
   const payloadJson = Buffer.from(selected.map((c) => c.chunkData).join(""), "base64").toString("utf8");
   if (sha256Hex(payloadJson) !== meta.contentSha256) {
-    throw new Error(`[spaces-v2] chunk content hash mismatch for ${meta.projectId}`);
+    throw new SpacesV2IntegrityError(
+      meta.projectId,
+      "CHUNK_HASH_MISMATCH",
+      `[spaces-v2] chunk content hash mismatch for ${meta.projectId}`,
+    );
   }
-  const parsed = JSON.parse(payloadJson) as unknown;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(payloadJson) as unknown;
+  } catch (error) {
+    throw new SpacesV2IntegrityError(
+      meta.projectId,
+      "INVALID_CHUNK_JSON",
+      `[spaces-v2] invalid chunk JSON for ${meta.projectId}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
   if (!isRecord(parsed) || !isRecord(parsed.spaces)) {
-    throw new Error(`[spaces-v2] invalid chunk payload for ${meta.projectId}`);
+    throw new SpacesV2IntegrityError(
+      meta.projectId,
+      "INVALID_CHUNK_PAYLOAD",
+      `[spaces-v2] invalid chunk payload for ${meta.projectId}`,
+    );
   }
   return {
     version: 2,
@@ -608,7 +642,12 @@ export async function upsertSpacesV2Project(
   const pk = projectPk(normalizedProject.id);
   const metaCondition = metaWriteCondition(expectedRevision);
   const writtenChunkKeys: Array<{ pk: string; sk: string }> = [];
+  let chunksWriteMs = 0;
+  let mediaRefsWriteMs = 0;
+  let metaWriteMs = 0;
+  let cleanupMs = 0;
   try {
+    let phaseStartedAt = Date.now();
     for (let i = 0; i < chunks.length; i++) {
       const sk = chunkSk(nextRevision, i);
       writtenChunkKeys.push({ pk, sk });
@@ -630,10 +669,12 @@ export async function upsertSpacesV2Project(
         ),
       );
     }
+    chunksWriteMs = Date.now() - phaseStartedAt;
 
     const mediaKeys = collectS3KeysFromProjectRecord(normalizedProject);
     const mediaKeySet = new Set(mediaKeys);
     const owner = ownerHash(normalizedProject.ownerUserEmail);
+    phaseStartedAt = Date.now();
     for (const s3Key of mediaKeySet) {
       await withDynamoRetry(() =>
         ddbClient.send(
@@ -656,7 +697,9 @@ export async function upsertSpacesV2Project(
         ),
       );
     }
+    mediaRefsWriteMs = Date.now() - phaseStartedAt;
 
+    phaseStartedAt = Date.now();
     await withDynamoRetry(() =>
       ddbClient.send(
         new PutCommand({
@@ -690,14 +733,21 @@ export async function upsertSpacesV2Project(
         }),
       ),
     );
+    metaWriteMs = Date.now() - phaseStartedAt;
 
+    phaseStartedAt = Date.now();
     await cleanupSupersededItems(tableName, normalizedProject.id, nextRevision, mediaKeySet);
+    cleanupMs = Date.now() - phaseStartedAt;
     return {
       revision: nextRevision,
       telemetry: {
         chunkCount: chunks.length,
+        chunksWriteMs,
         contentSha256,
+        cleanupMs,
+        mediaRefsWriteMs,
         mediaKeyCount: mediaKeys.length,
+        metaWriteMs,
         payloadBytes: Buffer.byteLength(payloadJson, "utf8"),
         storageFormat: "spaces-v2-chunks",
       },
