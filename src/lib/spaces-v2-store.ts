@@ -39,6 +39,7 @@ type SpacesV2MetaItem = {
   mediaKeyCount: number;
   spacesCount: number;
   storageFormat: "spaces-v2-chunks";
+  uiUpdatedAt?: string;
 };
 
 type SpacesV2ChunkItem = {
@@ -435,11 +436,13 @@ function parseProjectPayloadFromChunks(meta: SpacesV2MetaItem, chunks: SpacesV2C
 }
 
 function projectFromMeta(meta: SpacesV2MetaItem, payload: ProjectChunkPayload): ProjectRecord {
+  const chunkMetadata = payload.metadata ?? meta.metadata ?? {};
+  const metaUi = isRecord(meta.metadata?.ui) ? meta.metadata.ui : undefined;
   return {
     id: meta.projectId,
     name: meta.name,
     rootSpaceId: meta.rootSpaceId,
-    metadata: payload.metadata ?? meta.metadata ?? {},
+    metadata: metaUi ? { ...chunkMetadata, ui: metaUi } : chunkMetadata,
     ownerUserEmail: meta.ownerUserEmail,
     ownerUserName: meta.ownerUserName,
     ownerUserImage: meta.ownerUserImage,
@@ -554,6 +557,43 @@ export async function readSpacesV2ProjectsForOwner(
   const metas = await readSpacesV2ProjectsMetaForOwner(tableName, ownerEmail);
   const projects = await Promise.all(metas.map((meta) => readSpacesV2ProjectById(tableName, meta.id)));
   return projects.filter((project): project is ProjectRecord => Boolean(project));
+}
+
+export async function updateSpacesV2ProjectUi(
+  tableName: string,
+  args: {
+    ownerEmail: string;
+    projectId: string;
+    ui: Record<string, unknown>;
+  },
+): Promise<{ revision: number } | null> {
+  const meta = await getMetaItem(tableName, args.projectId);
+  if (!meta) return null;
+  if (normalizeOwnerEmail(meta.ownerUserEmail) !== normalizeOwnerEmail(args.ownerEmail)) return null;
+
+  const metadata = isRecord(meta.metadata) ? meta.metadata : {};
+  const nextMeta: SpacesV2MetaItem = {
+    ...meta,
+    metadata: compactMetadataForMetaItem({
+      ...metadata,
+      ui: args.ui,
+    }),
+    uiUpdatedAt: new Date().toISOString(),
+  };
+
+  await withDynamoRetry(() =>
+    ddbClient.send(
+      new PutCommand({
+        TableName: tableName,
+        Item: nextMeta,
+        ConditionExpression: "#revision = :expectedRevision",
+        ExpressionAttributeNames: { "#revision": "revision" },
+        ExpressionAttributeValues: { ":expectedRevision": meta.revision },
+      }),
+    ),
+  );
+
+  return { revision: meta.revision };
 }
 
 export async function readAllSpacesV2Projects(tableName: string): Promise<ProjectRecord[]> {

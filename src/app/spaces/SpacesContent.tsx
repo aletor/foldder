@@ -307,9 +307,21 @@ type SaveHealth = {
   at?: number;
 };
 
+type ProjectUiSnapshot = {
+  activeSpaceId: string;
+  canvasBgId: string;
+  canvasViewMode: "free" | "cards";
+  cardsFocusIndex: number;
+  navigationStack: string[];
+  sidebarLockedCollapsed: boolean;
+  viewport: { x: number; y: number; zoom: number };
+  workspaceViewMode: WorkspaceViewMode;
+};
+
 const CLIENT_SAVE_BODY_LIMIT_BYTES = 4_250_000;
 const PROJECT_SAVE_DEBOUNCE_MS = 25_000;
 const PROJECT_SAVE_HEARTBEAT_MS = 90_000;
+const PROJECT_UI_SAVE_DEBOUNCE_MS = 60_000;
 
 function isRevisionConflictMessage(message: string): boolean {
   return /changed on another device|revision conflict/i.test(message);
@@ -634,9 +646,12 @@ export function SpacesContent() {
   const [saveHealth, setSaveHealth] = useState<SaveHealth>({ state: "idle" });
   const autosavePulseTimerRef = useRef<number | null>(null);
   const projectSaveDebounceTimerRef = useRef<number | null>(null);
+  const projectUiSaveDebounceTimerRef = useRef<number | null>(null);
   const lastSavedFingerprintRef = useRef<string | null>(null);
+  const lastSavedUiFingerprintRef = useRef<string | null>(null);
   const lastSaveWasSkippedRef = useRef(false);
   const projectMediaUploadCacheRef = useRef<ProjectMediaUploadCache>(new Map());
+  const devBypassHeaders = useMemo<Record<string, string>>(() => ({}), []);
 
   /** Avisos poco intrusivos al terminar trabajos de IA en segundo plano */
   const [aiJobToasts, setAiJobToasts] = useState<Array<{ id: string } & AiJobCompleteDetail>>([]);
@@ -2890,6 +2905,61 @@ export function SpacesContent() {
   }, [getViewport, setViewport, setViewportZoomCssVar]);
 
   // Ref + CSS var + HUD de zoom: cualquier cambio de viewport (rueda, pinch, fitView, setViewport…)
+  const buildProjectUiSnapshot = useCallback(
+    (): ProjectUiSnapshot => ({
+      activeSpaceId,
+      canvasBgId,
+      canvasViewMode,
+      cardsFocusIndex,
+      navigationStack,
+      sidebarLockedCollapsed,
+      viewport: viewportRef.current,
+      workspaceViewMode,
+    }),
+    [
+      activeSpaceId,
+      canvasBgId,
+      canvasViewMode,
+      cardsFocusIndex,
+      navigationStack,
+      sidebarLockedCollapsed,
+      workspaceViewMode,
+    ],
+  );
+
+  const saveProjectUiSnapshot = useCallback(async () => {
+    if (!isAuthenticated || !activeProjectId) return;
+    const ui = buildProjectUiSnapshot();
+    const fingerprint = projectSaveFingerprint(ui);
+    if (lastSavedUiFingerprintRef.current === fingerprint) return;
+    try {
+      const res = await fetch("/api/spaces/ui", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...devBypassHeaders },
+        body: JSON.stringify({ id: activeProjectId, ui }),
+      });
+      if (!res.ok) {
+        const payload = await readResponseJson<{ error?: string }>(res, "POST /api/spaces/ui");
+        console.warn("[FOLDDER ui-save] Lightweight UI save failed:", payload?.error ?? res.status);
+        return;
+      }
+      lastSavedUiFingerprintRef.current = fingerprint;
+    } catch (error) {
+      console.warn("[FOLDDER ui-save] Lightweight UI save failed:", error);
+    }
+  }, [activeProjectId, buildProjectUiSnapshot, devBypassHeaders, isAuthenticated]);
+
+  const scheduleProjectUiSave = useCallback(() => {
+    if (!isAuthenticated || !activeProjectId || typeof window === "undefined") return;
+    if (projectUiSaveDebounceTimerRef.current !== null) {
+      window.clearTimeout(projectUiSaveDebounceTimerRef.current);
+    }
+    projectUiSaveDebounceTimerRef.current = window.setTimeout(() => {
+      projectUiSaveDebounceTimerRef.current = null;
+      void saveProjectUiSnapshot();
+    }, PROJECT_UI_SAVE_DEBOUNCE_MS);
+  }, [activeProjectId, isAuthenticated, saveProjectUiSnapshot]);
+
   const onViewportChangeFromFlow = useCallback(
     (vp: { x: number; y: number; zoom: number }) => {
       viewportRef.current = vp;
@@ -2897,11 +2967,25 @@ export function SpacesContent() {
         setViewportZoomCssVar(vp.zoom);
         setCanvasZoom(vp.zoom);
       }
+      scheduleProjectUiSave();
     },
-    [setViewportZoomCssVar]
+    [scheduleProjectUiSave, setViewportZoomCssVar]
   );
 
   useOnViewportChange({ onChange: onViewportChangeFromFlow });
+
+  useEffect(() => {
+    scheduleProjectUiSave();
+  }, [
+    activeSpaceId,
+    canvasBgId,
+    canvasViewMode,
+    cardsFocusIndex,
+    navigationStack,
+    scheduleProjectUiSave,
+    sidebarLockedCollapsed,
+    workspaceViewMode,
+  ]);
 
   const onCanvasInit = useCallback(() => {
     requestAnimationFrame(() => {
@@ -2954,8 +3038,6 @@ export function SpacesContent() {
     window.addEventListener(AI_JOB_COMPLETE_EVENT, handler as EventListener);
     return () => window.removeEventListener(AI_JOB_COMPLETE_EVENT, handler as EventListener);
   }, []);
-
-  const devBypassHeaders = useMemo<Record<string, string>>(() => ({}), []);
 
   useEffect(() => {
     if (sessionStatus === "unauthenticated") {
@@ -3579,16 +3661,7 @@ export function SpacesContent() {
         );
       }
 
-      const uiSnapshot = {
-        canvasBgId,
-        canvasViewMode,
-        workspaceViewMode,
-        cardsFocusIndex,
-        viewport: getViewport(),
-        navigationStack,
-        activeSpaceId,
-        sidebarLockedCollapsed,
-      };
+      const uiSnapshot = buildProjectUiSnapshot();
 
       const stableMetadata = stripVolatileProjectMetadata(metadata);
       const metadataToSave = setProjectFilesInMetadata(
@@ -3719,6 +3792,7 @@ export function SpacesContent() {
         ...projectFingerprintInput,
         id: savedProject.id,
       });
+      lastSavedUiFingerprintRef.current = projectSaveFingerprint(uiSnapshot);
       setSaveHealth({ state: "saved", message: "Saved", at: Date.now() });
 
       if (!activeProjectId) {
@@ -3896,6 +3970,7 @@ export function SpacesContent() {
     return () => {
       if (autosavePulseTimerRef.current) window.clearTimeout(autosavePulseTimerRef.current);
       if (projectSaveDebounceTimerRef.current) window.clearTimeout(projectSaveDebounceTimerRef.current);
+      if (projectUiSaveDebounceTimerRef.current) window.clearTimeout(projectUiSaveDebounceTimerRef.current);
       if (canvasPerformanceReleaseTimerRef.current) window.clearTimeout(canvasPerformanceReleaseTimerRef.current);
     };
   }, []);
@@ -4000,6 +4075,7 @@ export function SpacesContent() {
       setActiveProjectRevision(null);
       activeProjectRevisionRef.current = null;
       lastSavedFingerprintRef.current = null;
+      lastSavedUiFingerprintRef.current = null;
       setLocalWorkspaceScopeId(newLocalWorkspaceScopeId());
       setMetadata({});
       setVisualReferenceAnalysisDirty(false);
@@ -4150,6 +4226,7 @@ export function SpacesContent() {
         spaces,
         metadata: loadedStableMetadata,
       });
+      lastSavedUiFingerprintRef.current = projectSaveFingerprint(ui ?? {});
       setActiveSpaceId(targetSpaceId);
       setCurrentName(project.name || projectMeta.name);
       setSpacesMap(spaces as Record<string, any>);
@@ -4225,6 +4302,7 @@ export function SpacesContent() {
         setActiveProjectRevision(null);
         activeProjectRevisionRef.current = null;
         lastSavedFingerprintRef.current = null;
+        lastSavedUiFingerprintRef.current = null;
         setLocalWorkspaceScopeId(newLocalWorkspaceScopeId());
         setActiveSpaceId('root');
         setCurrentName('');
@@ -4310,6 +4388,7 @@ export function SpacesContent() {
           setActiveProjectRevision(savedProject.revision);
           activeProjectRevisionRef.current = savedProject.revision;
           lastSavedFingerprintRef.current = null;
+          lastSavedUiFingerprintRef.current = null;
         }
       }
       setEditingId(null);
