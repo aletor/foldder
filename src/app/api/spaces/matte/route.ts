@@ -89,56 +89,50 @@ export async function POST(req: NextRequest) {
     });
 
     // 1. ML Inference: Professional Matting (851-labs/background-remover)
-    let maskUrl: string = "";
-    const maxRetries = 3;
-    let retryDelay = 2000; // Start with 2s
-
-    for (let i = 0; i < maxRetries; i++) {
-        try {
-            console.log(`[Background Remover] ML Attempt ${i + 1}/${maxRetries}`);
-            const output = await replicate.run(
-                "851-labs/background-remover:a029dff38972b5fda4ec5d75d7d1cd25aeff621d2cf4946a41055d7db66b80bc",
-                { 
-                    input: { 
-                        image: imageInputForReplicate,
-                        threshold: Number(threshold),
-                        reverse: false
-                    } 
-                }
-            );
-            maskUrl = Array.isArray(output) ? output[0] : output.toString();
-            await recordApiUsage({
-              provider: "replicate",
-              userEmail: usageUserEmail,
-              serviceId: "replicate-bg",
-              route: "/api/spaces/matte",
-              model: "851-labs/background-remover",
-              inputTokens: 0,
-              outputTokens: 0,
-              totalTokens: 0,
-              costUsd: 0.01,
-              note: "Eliminar fondo (estimado)",
-            });
-            break; // Success!
-        } catch (mlErr: unknown) {
-            const mlMessage = mlErr instanceof Error ? mlErr.message : String(mlErr);
-            const mlStatus =
-              typeof mlErr === "object" && mlErr !== null && "status" in mlErr
-                ? (mlErr as { status?: number }).status
-                : undefined;
-            const is429 = mlMessage.includes("429") || mlStatus === 429;
-            if (is429 && i < maxRetries - 1) {
-                console.warn(`[Background Remover] Rate limit hit (429). Retrying in ${retryDelay}ms...`);
-                await new Promise(resolve => setTimeout(resolve, retryDelay));
-                retryDelay *= 2; // Exponential backoff
-                continue;
-            }
-            console.error("[Background Remover] ML Error:", mlErr);
-            return NextResponse.json({ 
-                error: is429 ? "Replicate Rate Limit: Too many requests or low balance (<$5). Please wait a moment." : `ML Engine failed: ${mlMessage}`,
-                details: mlMessage 
-            }, { status: is429 ? 429 : 500 });
-        }
+    // Single attempt only: retries must be initiated by the user to avoid uncontrolled cost.
+    let maskUrl: string;
+    try {
+      const output = await replicate.run(
+        "851-labs/background-remover:a029dff38972b5fda4ec5d75d7d1cd25aeff621d2cf4946a41055d7db66b80bc",
+        {
+          input: {
+            image: imageInputForReplicate,
+            threshold: Number(threshold),
+            reverse: false,
+          },
+        },
+      );
+      maskUrl = Array.isArray(output) ? output[0] : output.toString();
+      await recordApiUsage({
+        provider: "replicate",
+        userEmail: usageUserEmail,
+        serviceId: "replicate-bg",
+        route: "/api/spaces/matte",
+        model: "851-labs/background-remover",
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        costUsd: 0.01,
+        note: "Eliminar fondo (estimado)",
+      });
+    } catch (mlErr: unknown) {
+      const mlMessage = mlErr instanceof Error ? mlErr.message : String(mlErr);
+      const mlStatus =
+        typeof mlErr === "object" && mlErr !== null && "status" in mlErr
+          ? (mlErr as { status?: number }).status
+          : undefined;
+      const is429 = mlMessage.includes("429") || mlStatus === 429;
+      console.error("[Background Remover] ML Error:", mlErr);
+      return NextResponse.json(
+        {
+          error: is429
+            ? "Replicate rate limit or low balance. No automatic retry was made; try again manually in a moment."
+            : `ML Engine failed: ${mlMessage}`,
+          details: mlMessage,
+          retryable: is429,
+        },
+        { status: is429 ? 429 : 500 },
+      );
     }
 
     // 2. Fetch Mask (Image buffer already available)
