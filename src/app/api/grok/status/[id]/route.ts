@@ -1,11 +1,13 @@
 import { NextResponse } from 'next/server';
 import { recordApiUsage, resolveUsageUserEmailFromRequest } from "@/lib/api-usage";
+import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
 
 export async function GET(req: Request, props: { params: Promise<{ id: string }> }) {
   try {
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
     const params = await props.params;
     const taskId = params.id;
-    const apiKey = process.env.GROK_API_KEY;
     if (!taskId) {
       return NextResponse.json({ error: "Task ID is required" }, { status: 400 });
     }
@@ -55,8 +57,9 @@ export async function GET(req: Request, props: { params: Promise<{ id: string }>
       output: videoUrl ? [videoUrl] : [],
       error: data.failure_reason || data.error?.message || (status === 'FAILED' ? "Generation failed" : null)
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("[Grok Status API Error]:", error);
-    return NextResponse.json({ error: error.message || "Internal Server Error" }, { status: 500 });
+    const message = error instanceof Error ? error.message : "Internal Server Error";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

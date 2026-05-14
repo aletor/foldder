@@ -6,8 +6,12 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { NextResponse } from "next/server";
 import { recordApiUsage, resolveUsageUserEmailFromRequest } from "@/lib/api-usage";
-import { requireSpacesAuthUser, spacesOwnerHash } from "@/lib/spaces-access-control";
-import { getPresignedUrl, uploadBufferToS3Key } from "@/lib/s3-utils";
+import {
+  buildUserAssetObjectKey,
+  requireSpacesAuthUser,
+  stableKnowledgeFileUrlFromKey,
+} from "@/lib/spaces-access-control";
+import { uploadBufferToS3Key } from "@/lib/s3-utils";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -100,7 +104,12 @@ export async function POST(req: Request) {
       outBuf = buf;
     }
 
-    const key = `spaces/presenter-videos/${spacesOwnerHash(authState.user.email)}/${id}.${ext}`;
+    const key = buildUserAssetObjectKey({
+      userEmail: authState.user.email,
+      folder: "presenter/videos",
+      filename: `${id}.${ext}`,
+      unique: false,
+    });
     await uploadBufferToS3Key(key, outBuf, contentType);
     await recordApiUsage({
       provider: "aws",
@@ -113,7 +122,7 @@ export async function POST(req: Request) {
       bytes: outBuf.length,
       metadata: { key, contentType },
     });
-    const url = await getPresignedUrl(key);
+    const url = stableKnowledgeFileUrlFromKey(key);
 
     return NextResponse.json({ url, s3Key: key });
   } catch (e: unknown) {

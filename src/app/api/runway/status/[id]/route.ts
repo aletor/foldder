@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import RunwayML from '@runwayml/sdk';
 import { recordApiUsage, resolveUsageUserEmailFromRequest } from "@/lib/api-usage";
+import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
 
 function getRunwayClient() {
   const apiKey =
@@ -10,6 +11,8 @@ function getRunwayClient() {
 
 export async function GET(req: Request, props: { params: Promise<{ id: string }> }) {
   try {
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
     const params = await props.params;
     const taskId = params.id;
     if (!taskId) {
@@ -17,7 +20,13 @@ export async function GET(req: Request, props: { params: Promise<{ id: string }>
     }
 
     const runway = getRunwayClient();
-    const task = await runway.tasks.retrieve(taskId) as any;
+    const task = await runway.tasks.retrieve(taskId) as {
+      failureCode?: string;
+      failureReason?: string;
+      output?: unknown;
+      progress?: number;
+      status?: string;
+    };
 
     const usageUserEmail = await resolveUsageUserEmailFromRequest(req);
     await recordApiUsage({
@@ -37,8 +46,9 @@ export async function GET(req: Request, props: { params: Promise<{ id: string }>
       output: task.output, // Array of URLs if SUCCEEDED
       error: task.failureCode || task.failureReason
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("[Runway Status API Error]:", error);
-    return NextResponse.json({ error: error.message || "Internal Server Error" }, { status: 500 });
+    const message = error instanceof Error ? error.message : "Internal Server Error";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

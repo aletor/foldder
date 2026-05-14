@@ -220,7 +220,7 @@ export async function runBrainRestudyPipeline(input: {
     let providerId = "mock";
 
     if (opt.reanalyzeVisualReferences) {
-      working = await hydrateProjectAssetsForBrainVision(working);
+  working = await hydrateProjectAssetsForBrainVision(working, input.userEmail);
       const provider = createBrainVisionProviderForRestudy(opt.provider);
       providerId = provider.id;
       let visionGateOk = true;

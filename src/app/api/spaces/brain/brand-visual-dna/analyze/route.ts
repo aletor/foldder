@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
     }
 
     let assets = normalizeProjectAssets(body.assets ?? {});
-    assets = await hydrateProjectAssetsForBrainVision(assets);
+    assets = await hydrateProjectAssetsForBrainVision(assets, session.user.email);
 
     const refs = collectVisualImageAssetRefs(assets);
     let images = refs

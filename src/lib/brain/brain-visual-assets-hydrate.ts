@@ -4,6 +4,7 @@ import type {
   ProjectAssetsMetadata,
 } from "@/app/spaces/project-assets-metadata";
 import { getPresignedUrl } from "@/lib/s3-utils";
+import { canUserAccessKnowledgeFileKey } from "@/lib/spaces-access-control";
 
 const VISUAL_STYLE_SLOT_KEYS: readonly BrainVisualStyleSlotKey[] = [
   "protagonist",
@@ -30,7 +31,15 @@ function hasVisionReadyUrl(dataUrl?: string, httpsUrl?: string): boolean {
  * Antes de visión remota (Gemini/OpenAI): asegura `https` descargable para refs que solo tienen clave S3.
  * No persiste nada; solo muta una copia en memoria para esta petición.
  */
-export async function hydrateProjectAssetsForBrainVision(assets: ProjectAssetsMetadata): Promise<ProjectAssetsMetadata> {
+async function canHydrateKey(key: string, ownerEmail?: string): Promise<boolean> {
+  if (!ownerEmail) return false;
+  return canUserAccessKnowledgeFileKey(ownerEmail, key);
+}
+
+export async function hydrateProjectAssetsForBrainVision(
+  assets: ProjectAssetsMetadata,
+  ownerEmail?: string,
+): Promise<ProjectAssetsMetadata> {
   const vs = assets.strategy.visualStyle;
   const nextStyle = {
     protagonist: { ...vs.protagonist },
@@ -45,6 +54,7 @@ export async function hydrateProjectAssetsForBrainVision(assets: ProjectAssetsMe
     const s3 = slot.imageS3Key?.trim();
     if (!s3) continue;
     try {
+      if (!(await canHydrateKey(s3, ownerEmail))) continue;
       nextStyle[key] = { ...slot, imageUrl: await getPresignedUrl(s3) };
     } catch {
       /* sin credenciales S3 o objeto inexistente */
@@ -58,6 +68,7 @@ export async function hydrateProjectAssetsForBrainVision(assets: ProjectAssetsMe
       const key = d.s3Path?.trim();
       if (!key) return d;
       try {
+        if (!(await canHydrateKey(key, ownerEmail))) return d;
         const url = await getPresignedUrl(key);
         return { ...d, originalSourceUrl: url };
       } catch {

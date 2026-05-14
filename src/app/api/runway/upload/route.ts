@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { recordApiUsage, resolveUsageUserEmailFromRequest } from "@/lib/api-usage";
 import { normalizeUploadedImageForFoldder } from "@/lib/foldder-server-image-optimization";
-import { uploadToS3, getPresignedUrl } from '@/lib/s3-utils';
+import { buildUserAssetObjectKey, requireSpacesAuthUser } from "@/lib/spaces-access-control";
+import { uploadBufferToS3Key, getPresignedUrl } from '@/lib/s3-utils';
 
 export const runtime = "nodejs";
 
@@ -14,6 +15,8 @@ function filenameWithExtension(filename: string | undefined, ext: string) {
 
 export async function POST(req: Request) {
   try {
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
     const usageUserEmail = await resolveUsageUserEmailFromRequest(req);
     const formData = await req.formData();
     const file = formData.get('file') as File;
@@ -36,14 +39,14 @@ export async function POST(req: Request) {
     
     console.log(`[Runway Upload] Uploading ${file.name} (${normalized.contentType})...`);
 
-    // Upload to S3
-    const s3Key = await uploadToS3(
-      contentType.startsWith("image/")
+    const s3Key = buildUserAssetObjectKey({
+      userEmail: authState.user.email,
+      folder: "runway/uploads",
+      filename: contentType.startsWith("image/")
         ? filenameWithExtension(file.name, normalized.ext)
         : file.name,
-      normalized.buffer,
-      normalized.contentType,
-    );
+    });
+    await uploadBufferToS3Key(s3Key, normalized.buffer, normalized.contentType);
     await recordApiUsage({
       provider: "aws",
       userEmail: usageUserEmail,

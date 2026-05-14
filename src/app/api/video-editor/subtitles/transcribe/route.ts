@@ -12,6 +12,11 @@ import {
 import { resolveUsageUserEmailFromRequest, recordApiUsage } from "@/lib/api-usage";
 import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
 import { getFromS3, uploadBufferToS3Key } from "@/lib/s3-utils";
+import {
+  buildUserAssetObjectKey,
+  canUserAccessKnowledgeFileKey,
+  requireSpacesAuthUser,
+} from "@/lib/spaces-access-control";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -65,7 +70,10 @@ function filenameFromSource(source: string | undefined): string {
   return name.includes(".") ? name : `${name}.mp4`;
 }
 
-async function resolveSource(body: TranscribeRequestBody): Promise<{ buffer: Buffer; mimeType: string; filename: string; sourceId: string }> {
+async function resolveSource(
+  body: TranscribeRequestBody,
+  userEmail: string,
+): Promise<{ buffer: Buffer; mimeType: string; filename: string; sourceId: string }> {
   const source = body.s3Key || body.sourceAssetId || body.sourceUrl || "";
   const directS3Key = body.s3Key?.startsWith("knowledge-files/") ? body.s3Key : null;
   const s3Key = directS3Key
@@ -73,6 +81,8 @@ async function resolveSource(body: TranscribeRequestBody): Promise<{ buffer: Buf
     || (body.sourceUrl ? tryExtractKnowledgeFilesKeyFromUrl(body.sourceUrl) : null)
     || (body.sourceAssetId ? tryExtractKnowledgeFilesKeyFromUrl(body.sourceAssetId) : null);
   if (s3Key) {
+    const allowed = await canUserAccessKnowledgeFileKey(userEmail, s3Key);
+    if (!allowed) throw new Error("source_forbidden");
     return {
       buffer: await getFromS3(s3Key),
       mimeType: mimeFromSource(s3Key),
@@ -168,10 +178,10 @@ function documentFromOpenAI(args: {
   });
 }
 
-async function transcribeWithOpenAI(body: TranscribeRequestBody, req: Request) {
+async function transcribeWithOpenAI(body: TranscribeRequestBody, req: Request, userEmail: string) {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) throw new Error("provider_not_configured:OPENAI_API_KEY");
-  const source = await resolveSource(body);
+  const source = await resolveSource(body, userEmail);
   const model = process.env.OPENAI_TRANSCRIPTION_MODEL?.trim() || "whisper-1";
   const form = new FormData();
   form.append("file", new Blob([new Uint8Array(source.buffer)], { type: source.mimeType }), source.filename);
@@ -220,12 +230,15 @@ async function transcribeWithOpenAI(body: TranscribeRequestBody, req: Request) {
   return document;
 }
 
-async function persistSubtitleDocument(document: ReturnType<typeof documentFromOpenAI>): Promise<{ documentKey?: string; srtKey?: string; vttKey?: string; assKey?: string }> {
-  const baseKey = `knowledge-files/video-editor/subtitles/${document.id}`;
-  const documentKey = `${baseKey}/subtitle.json`;
-  const srtKey = `${baseKey}/subtitle.srt`;
-  const vttKey = `${baseKey}/subtitle.vtt`;
-  const assKey = `${baseKey}/subtitle.ass`;
+async function persistSubtitleDocument(
+  document: ReturnType<typeof documentFromOpenAI>,
+  userEmail: string,
+): Promise<{ documentKey?: string; srtKey?: string; vttKey?: string; assKey?: string }> {
+  const folder = `video-editor/subtitles/${document.id.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+  const documentKey = buildUserAssetObjectKey({ userEmail, folder, filename: "subtitle.json", unique: false });
+  const srtKey = buildUserAssetObjectKey({ userEmail, folder, filename: "subtitle.srt", unique: false });
+  const vttKey = buildUserAssetObjectKey({ userEmail, folder, filename: "subtitle.vtt", unique: false });
+  const assKey = buildUserAssetObjectKey({ userEmail, folder, filename: "subtitle.ass", unique: false });
   await uploadBufferToS3Key(documentKey, Buffer.from(JSON.stringify(document, null, 2), "utf8"), "application/json");
   await uploadBufferToS3Key(srtKey, Buffer.from(exportSubtitleDocumentToSrt(document), "utf8"), "text/plain; charset=utf-8");
   await uploadBufferToS3Key(vttKey, Buffer.from(exportSubtitleDocumentToVtt(document), "utf8"), "text/vtt; charset=utf-8");
@@ -235,15 +248,17 @@ async function persistSubtitleDocument(document: ReturnType<typeof documentFromO
 
 export async function POST(req: Request) {
   try {
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
     const body = (await req.json()) as TranscribeRequestBody;
     const provider = (process.env.SUBTITLE_TRANSCRIPTION_PROVIDER?.trim() || "openai").toLowerCase();
     if (provider !== "openai") {
       return NextResponse.json({ ok: false, error: `provider_not_implemented:${provider}` }, { status: 501 });
     }
-    const document = await transcribeWithOpenAI(body, req);
+    const document = await transcribeWithOpenAI(body, req, authState.user.email);
     let documentKey: string | undefined;
     try {
-      const persisted = await persistSubtitleDocument(document);
+      const persisted = await persistSubtitleDocument(document, authState.user.email);
       documentKey = persisted.documentKey;
       document.exports = {
         srtKey: persisted.srtKey,

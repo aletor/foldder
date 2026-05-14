@@ -10,6 +10,11 @@ import { uploadBufferToS3Key, uploadToS3, getPresignedUrl } from "@/lib/s3-utils
 import { parseGeminiUsageMetadata, recordApiUsage } from "@/lib/api-usage";
 import { estimateGeminiImageGenerationUsd } from "@/lib/pricing-config";
 import { parseReferenceImageForGemini } from "@/lib/parse-reference-image";
+import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
+import {
+  canUserAccessKnowledgeFileKey,
+  stableKnowledgeFileUrlFromKey,
+} from "@/lib/spaces-access-control";
 import crypto from "crypto";
 
 export const GEMINI_IMAGE_MODELS = {
@@ -184,6 +189,15 @@ export async function geminiImageGenerate(
   const n = slice.length || 1;
   let inlineImageCount = 0;
   for (let i = 0; i < slice.length; i++) {
+    const s3Key = tryExtractKnowledgeFilesKeyFromUrl(slice[i]);
+    if (s3Key) {
+      const allowed = usageUserEmail
+        ? await canUserAccessKnowledgeFileKey(usageUserEmail, s3Key)
+        : false;
+      if (!allowed) {
+        throw new GeminiGenerateError("Forbidden reference image", 403);
+      }
+    }
     const parsed = await parseReferenceImageForGemini(slice[i]);
     if (parsed) {
       parts.push({ inline_data: { mime_type: parsed.mimeType, data: parsed.data } });
@@ -325,7 +339,7 @@ export async function geminiImageGenerate(
   const key = userScopedKey
     ? await uploadBufferToS3Key(userScopedKey, imageBuffer, "image/png")
     : await uploadToS3(filename, imageBuffer, "image/png");
-  const url = await getPresignedUrl(key);
+  const url = userScopedKey ? stableKnowledgeFileUrlFromKey(key) : await getPresignedUrl(key);
 
   const usage = parseGeminiUsageMetadata(data);
   if (usage) {

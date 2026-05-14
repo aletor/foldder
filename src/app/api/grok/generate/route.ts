@@ -8,10 +8,18 @@ import {
   assertApiServiceEnabled,
 } from "@/lib/api-usage-controls";
 import fs from 'fs';
+import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
+import {
+  canUserAccessKnowledgeFileKey,
+  requireSpacesAuthUser,
+} from "@/lib/spaces-access-control";
+import { getPresignedUrl } from "@/lib/s3-utils";
 
 export async function POST(req: Request) {
   try {
     await assertApiServiceEnabled("grok-video");
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
     const usageUserEmail = await resolveUsageUserEmailFromRequest(req);
     const { promptText, videoUrl, duration, resolution, aspect_ratio } = await req.json();
 
@@ -20,7 +28,17 @@ export async function POST(req: Request) {
     }
 
     // Correct endpoint for video-to-video editing is /edits
-    const endpoint = videoUrl 
+    let providerVideoUrl = typeof videoUrl === "string" ? videoUrl : "";
+    if (providerVideoUrl) {
+      const s3Key = tryExtractKnowledgeFilesKeyFromUrl(providerVideoUrl);
+      if (s3Key) {
+        const allowed = await canUserAccessKnowledgeFileKey(authState.user.email, s3Key);
+        if (!allowed) return NextResponse.json({ error: "forbidden_asset" }, { status: 403 });
+        providerVideoUrl = await getPresignedUrl(s3Key);
+      }
+    }
+
+    const endpoint = providerVideoUrl
       ? 'https://api.x.ai/v1/videos/edits' 
       : 'https://api.x.ai/v1/videos/generations';
 
@@ -30,9 +48,9 @@ export async function POST(req: Request) {
       duration: duration || 5,
       ...(resolution && { resolution }),
       ...(aspect_ratio && { aspect_ratio }),
-      ...(videoUrl && { 
+      ...(providerVideoUrl && {
         video: {
-          url: videoUrl 
+          url: providerVideoUrl
         } 
       })
     };

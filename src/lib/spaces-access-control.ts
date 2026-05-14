@@ -1,5 +1,5 @@
 import path from "path";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { isDynamoEnabled } from "@/lib/dynamo-utils";
@@ -62,6 +62,33 @@ export function isSafeKnowledgeFilesKey(key: string): boolean {
 
 export function stableKnowledgeFileUrlFromKey(key: string): string {
   return `/api/spaces/s3-file?key=${encodeURIComponent(key)}`;
+}
+
+export function sanitizeS3Filename(filename: string | null | undefined, fallback = "asset.bin"): string {
+  const clean = (filename || fallback)
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, "_")
+    .replace(/[^a-zA-Z0-9._-]/g, "");
+  return clean || fallback;
+}
+
+export function buildUserAssetObjectKey(args: {
+  filename: string;
+  folder: string;
+  unique?: boolean;
+  userEmail: string;
+}): string {
+  const owner = spacesOwnerHash(args.userEmail);
+  const folder = args.folder
+    .split("/")
+    .map((segment) => safeSegment(segment, "assets"))
+    .filter(Boolean)
+    .join("/");
+  const filename = sanitizeS3Filename(args.filename);
+  const prefix = args.unique === false ? "" : `${Date.now()}-${randomUUID()}-`;
+  return `${USER_ASSETS_PREFIX}${owner}/${folder || "assets"}/${prefix}${filename}`;
 }
 
 export function buildProjectMediaObjectKey(args: {

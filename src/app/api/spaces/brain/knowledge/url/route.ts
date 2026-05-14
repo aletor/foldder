@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { recordApiUsage, resolveUsageUserEmailFromRequest } from "@/lib/api-usage";
 import { normalizeUploadedImageForFoldder } from "@/lib/foldder-server-image-optimization";
-import { uploadToS3 } from "@/lib/s3-utils";
+import { buildUserAssetObjectKey, requireSpacesAuthUser } from "@/lib/spaces-access-control";
+import { uploadBufferToS3Key } from "@/lib/s3-utils";
 import { v4 as uuidv4 } from "uuid";
 import axios from "axios";
 import * as cheerio from "cheerio";
@@ -66,6 +67,7 @@ async function fetchUrlVisualDocument(params: {
   scope: KnowledgeScope;
   title: string;
   usageUserEmail: string | undefined;
+  userEmail: string;
 }): Promise<UrlVisualDocument | null> {
   try {
     const img = await axios.get<ArrayBuffer>(params.imageUrl, {
@@ -87,7 +89,12 @@ async function fetchUrlVisualDocument(params: {
       `URL-visual-${Date.now()}-${params.index + 1}.${extensionFromMime(mime)}`,
       normalized.ext,
     );
-    const visualKey = await uploadToS3(visualFilename, normalized.buffer, normalized.contentType);
+    const visualKey = buildUserAssetObjectKey({
+      userEmail: params.userEmail,
+      folder: "brain/knowledge/url-visuals",
+      filename: visualFilename,
+    });
+    await uploadBufferToS3Key(visualKey, normalized.buffer, normalized.contentType);
     await recordApiUsage({
       provider: "aws",
       userEmail: params.usageUserEmail,
@@ -126,6 +133,8 @@ async function fetchUrlVisualDocument(params: {
 
 export async function POST(req: NextRequest) {
   try {
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
     const usageUserEmail = await resolveUsageUserEmailFromRequest(req);
     const { url, scope: scopeRaw, contextKind: contextKindRaw } = (await req.json()) as {
       url?: string;
@@ -171,7 +180,12 @@ export async function POST(req: NextRequest) {
 
     const filename = `URL-${Date.now()}.txt`;
     const textBuf = Buffer.from(bodyText, "utf-8");
-    const s3Key = await uploadToS3(filename, textBuf, "text/plain");
+    const s3Key = buildUserAssetObjectKey({
+      userEmail: authState.user.email,
+      folder: "brain/knowledge/url",
+      filename,
+    });
+    await uploadBufferToS3Key(s3Key, textBuf, "text/plain");
     await recordApiUsage({
       provider: "aws",
       userEmail: usageUserEmail,
@@ -201,7 +215,15 @@ export async function POST(req: NextRequest) {
     const visualDocuments = (
       await Promise.all(
         visualCandidates.map((imageUrl, index) =>
-          fetchUrlVisualDocument({ contextKind, imageUrl, index, scope, title, usageUserEmail }),
+          fetchUrlVisualDocument({
+            contextKind,
+            imageUrl,
+            index,
+            scope,
+            title,
+            usageUserEmail,
+            userEmail: authState.user.email,
+          }),
         ),
       )
     ).filter((doc): doc is UrlVisualDocument => Boolean(doc));

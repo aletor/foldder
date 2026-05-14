@@ -4,11 +4,18 @@ import {
   resolveUsageUserEmailFromRequest,
 } from "@/lib/api-usage";
 import { estimateSeedanceVideoUsd } from "@/lib/pricing-config";
-import { uploadToS3, getPresignedUrl } from "@/lib/s3-utils";
+import { getPresignedUrl, uploadBufferToS3Key } from "@/lib/s3-utils";
 import {
   ApiServiceDisabledError,
   assertApiServiceEnabled,
 } from "@/lib/api-usage-controls";
+import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
+import {
+  buildUserAssetObjectKey,
+  canUserAccessKnowledgeFileKey,
+  requireSpacesAuthUser,
+  stableKnowledgeFileUrlFromKey,
+} from "@/lib/spaces-access-control";
 import {
   appendVideoPromptTail,
   collectAllReferenceImageUrlsOrdered,
@@ -83,6 +90,8 @@ function buildArkContent(payload: {
 export async function POST(req: NextRequest) {
   try {
     await assertApiServiceEnabled("seedance-video");
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
     const usageUserEmail = await resolveUsageUserEmailFromRequest(req);
     const body = await req.json();
     const {
@@ -140,11 +149,22 @@ export async function POST(req: NextRequest) {
         ? aspectRatio.trim()
         : null;
 
-    const imageUrls = collectAllReferenceImageUrlsOrdered({
+    const rawImageUrls = collectAllReferenceImageUrlsOrdered({
       firstFrame: typeof firstFrame === "string" ? firstFrame : null,
       lastFrame: typeof lastFrame === "string" ? lastFrame : null,
       extraSlots: parseVideoRefSlots(videoRefSlots),
     });
+    const imageUrls: string[] = [];
+    for (const rawUrl of rawImageUrls) {
+      const s3Key = tryExtractKnowledgeFilesKeyFromUrl(rawUrl);
+      if (s3Key) {
+        const allowed = await canUserAccessKnowledgeFileKey(authState.user.email, s3Key);
+        if (!allowed) throw new Error("Forbidden reference image");
+        imageUrls.push(await getPresignedUrl(s3Key));
+      } else {
+        imageUrls.push(rawUrl);
+      }
+    }
 
     const createBody: Record<string, unknown> = {
       model,
@@ -252,8 +272,13 @@ export async function POST(req: NextRequest) {
 
     const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
     const filename = `seedance_${crypto.randomUUID()}.mp4`;
-    const key = await uploadToS3(filename, videoBuffer, "video/mp4");
-    const url = await getPresignedUrl(key);
+    const key = buildUserAssetObjectKey({
+      userEmail: authState.user.email,
+      folder: "generated/video/seedance",
+      filename,
+    });
+    await uploadBufferToS3Key(key, videoBuffer, "video/mp4");
+    const url = stableKnowledgeFileUrlFromKey(key);
 
     await recordApiUsage({
       provider: "volcengine",

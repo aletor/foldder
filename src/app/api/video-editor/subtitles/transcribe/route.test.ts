@@ -5,6 +5,15 @@ vi.mock("@/lib/api-usage", () => ({
   resolveUsageUserEmailFromRequest: async () => "test@local.foldder",
 }));
 
+vi.mock("@/lib/spaces-access-control", () => ({
+  buildUserAssetObjectKey: vi.fn(({ filename, folder }) => `knowledge-files/user-assets/test/${folder}/${filename}`),
+  canUserAccessKnowledgeFileKey: vi.fn(async () => true),
+  requireSpacesAuthUser: vi.fn(async () => ({
+    ok: true,
+    user: { email: "test@local.foldder", image: null, name: "Test" },
+  })),
+}));
+
 import { POST } from "./route";
 
 describe("/api/video-editor/subtitles/transcribe", () => {

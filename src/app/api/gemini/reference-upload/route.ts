@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { recordApiUsage, resolveUsageUserEmailFromRequest } from "@/lib/api-usage";
 import { ApiServiceDisabledError, assertApiServiceEnabled } from "@/lib/api-usage-controls";
-import { getPresignedUrl, uploadToS3 } from "@/lib/s3-utils";
+import { buildUserAssetObjectKey, requireSpacesAuthUser } from "@/lib/spaces-access-control";
+import { getPresignedUrl, uploadBufferToS3Key } from "@/lib/s3-utils";
 
 const MAX_REFERENCE_BYTES = 3_500_000;
 
@@ -27,6 +28,8 @@ function filenameWithExtension(filename: string | undefined, ext: string) {
 export async function POST(req: Request) {
   try {
     await assertApiServiceEnabled("gemini-nano");
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
     const usageUserEmail = await resolveUsageUserEmailFromRequest(req);
     const formData = await req.formData();
     const file = formData.get("file");
@@ -46,11 +49,12 @@ export async function POST(req: Request) {
       );
     }
 
-    const key = await uploadToS3(
-      filenameWithExtension(file.name, extensionForContentType(contentType, file.name || "")),
-      buffer,
-      contentType,
-    );
+    const key = buildUserAssetObjectKey({
+      userEmail: authState.user.email,
+      folder: "gemini/references",
+      filename: filenameWithExtension(file.name, extensionForContentType(contentType, file.name || "")),
+    });
+    await uploadBufferToS3Key(key, buffer, contentType);
     await recordApiUsage({
       provider: "aws",
       userEmail: usageUserEmail,

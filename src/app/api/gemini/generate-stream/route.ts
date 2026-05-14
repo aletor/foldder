@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { geminiImageGenerate, GeminiGenerateError } from "@/lib/gemini-image-generate";
-import { resolveUsageUserEmailFromRequest } from "@/lib/api-usage";
 import { ApiServiceDisabledError, assertApiServiceEnabled } from "@/lib/api-usage-controls";
+import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
 
 /**
  * Misma carga útil que POST /api/gemini/generate, pero respuesta NDJSON:
@@ -10,7 +10,9 @@ import { ApiServiceDisabledError, assertApiServiceEnabled } from "@/lib/api-usag
  */
 export async function POST(req: NextRequest) {
   const encoder = new TextEncoder();
-  const usageUserEmail = await resolveUsageUserEmailFromRequest(req);
+  const authState = await requireSpacesAuthUser(req);
+  if (!authState.ok) return authState.response;
+  const usageUserEmail = authState.user.email;
   const body = await req.json();
 
   const stream = new ReadableStream({

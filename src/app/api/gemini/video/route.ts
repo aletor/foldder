@@ -5,11 +5,19 @@ import {
   resolveUsageUserEmailFromRequest,
 } from "@/lib/api-usage";
 import { estimateGeminiVeoVideoUsd, veoResolutionMultiplier } from "@/lib/pricing-config";
-import { uploadToS3, getPresignedUrl } from "@/lib/s3-utils";
+import { uploadBufferToS3Key } from "@/lib/s3-utils";
 import {
   ApiServiceDisabledError,
   assertApiServiceEnabled,
 } from "@/lib/api-usage-controls";
+import { parseReferenceImageForGemini } from "@/lib/parse-reference-image";
+import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
+import {
+  buildUserAssetObjectKey,
+  canUserAccessKnowledgeFileKey,
+  requireSpacesAuthUser,
+  stableKnowledgeFileUrlFromKey,
+} from "@/lib/spaces-access-control";
 import {
   appendVideoPromptTail,
   collectAllReferenceImageUrlsOrdered,
@@ -113,6 +121,8 @@ export async function POST(req: NextRequest) {
   console.log("[Gemini Video] Request received");
   try {
     await assertApiServiceEnabled("gemini-veo");
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
     const usageUserEmail = await resolveUsageUserEmailFromRequest(req);
     const body = await req.json();
     const {
@@ -140,30 +150,18 @@ export async function POST(req: NextRequest) {
     const ai = new GoogleGenAI({ apiKey });
 
     const processImage = async (image: string): Promise<GeminiVeoImage | null> => {
-      if (!image) return null;
-      let base64Data = "";
-      let mimeType = "image/png";
-
-      if (image.startsWith("data:")) {
-        const splitParts = image.split(";base64,");
-        mimeType = splitParts[0]?.split(":")[1] || "image/png";
-        base64Data = splitParts[1];
-      } else if (image.startsWith("http")) {
-        const imgRes = await fetch(image, {
-          headers: {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          }
-        });
-        if (!imgRes.ok) throw new Error(`Failed to fetch reference image: ${imgRes.status}`);
-        const buffer = await imgRes.arrayBuffer();
-        base64Data = Buffer.from(buffer).toString('base64');
-        mimeType = imgRes.headers.get('content-type') || 'image/png';
+      const trimmed = image?.trim();
+      if (!trimmed) return null;
+      const s3Key = tryExtractKnowledgeFilesKeyFromUrl(trimmed);
+      if (s3Key) {
+        const allowed = await canUserAccessKnowledgeFileKey(authState.user.email, s3Key);
+        if (!allowed) throw new Error("Forbidden reference image");
       }
-
-      if (!base64Data) return null;
+      const parsed = await parseReferenceImageForGemini(trimmed, { baseUrl: req.url });
+      if (!parsed) return null;
       return {
-        imageBytes: base64Data,
-        mimeType,
+        imageBytes: parsed.data,
+        mimeType: parsed.mimeType,
       };
     };
 
@@ -306,8 +304,13 @@ export async function POST(req: NextRequest) {
       videoBuffer = Buffer.from(await videoRes.arrayBuffer());
     }
     const filename = `veo_${crypto.randomUUID()}.mp4`;
-    const key = await uploadToS3(filename, videoBuffer, "video/mp4");
-    const url = await getPresignedUrl(key);
+    const key = buildUserAssetObjectKey({
+      userEmail: authState.user.email,
+      folder: "generated/video/veo",
+      filename,
+    });
+    await uploadBufferToS3Key(key, videoBuffer, "video/mp4");
+    const url = stableKnowledgeFileUrlFromKey(key);
 
     const costDur = effectiveDur > 0 ? effectiveDur : 8;
     await recordApiUsage({

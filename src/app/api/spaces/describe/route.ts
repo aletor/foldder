@@ -7,10 +7,18 @@ import {
   ApiServiceDisabledError,
   assertApiServiceEnabled,
 } from '@/lib/api-usage-controls';
+import {
+  canUserAccessKnowledgeFileKey,
+  requireSpacesAuthUser,
+} from "@/lib/spaces-access-control";
 import { getPresignedUrl } from '@/lib/s3-utils';
 import OpenAI from 'openai';
 
 const KNOWLEDGE_FILES_PREFIX = "knowledge-files/";
+
+type OpenAiDescribeContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string; detail: "high" } };
 
 function safeDecodeUriComponent(value: string): string {
   try {
@@ -35,11 +43,22 @@ function tryExtractKnowledgeFilesKey(value: string, baseUrl: string): string | n
   }
 }
 
-async function resolveModelReadableMediaUrl(rawUrl: string, req: Request): Promise<string> {
+class MediaAccessError extends Error {
+  constructor(message: string, public status: number) {
+    super(message);
+    this.name = "MediaAccessError";
+  }
+}
+
+async function resolveModelReadableMediaUrl(rawUrl: string, req: Request, userEmail: string): Promise<string> {
   const trimmed = rawUrl.trim();
   if (!trimmed || trimmed.startsWith("data:")) return trimmed;
   const s3Key = tryExtractKnowledgeFilesKey(trimmed, req.url);
-  if (s3Key) return getPresignedUrl(s3Key);
+  if (s3Key) {
+    const allowed = await canUserAccessKnowledgeFileKey(userEmail, s3Key);
+    if (!allowed) throw new MediaAccessError("forbidden_key", 403);
+    return getPresignedUrl(s3Key);
+  }
   try {
     return new URL(trimmed, req.url).toString();
   } catch {
@@ -50,6 +69,8 @@ async function resolveModelReadableMediaUrl(rawUrl: string, req: Request): Promi
 export async function POST(req: Request) {
   try {
     await assertApiServiceEnabled("openai-describe");
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
     const usageUserEmail = await resolveUsageUserEmailFromRequest(req);
     const { url, type, metadata } = await req.json();
 
@@ -61,12 +82,12 @@ export async function POST(req: Request) {
       apiKey: process.env.OPENAI_API_KEY || "",
     });
 
-    const mediaUrlForModel = await resolveModelReadableMediaUrl(url, req);
+    const mediaUrlForModel = await resolveModelReadableMediaUrl(url, req, authState.user.email);
 
     console.log(`[Media Describer] Analyzing ${type} at ${mediaUrlForModel.startsWith("data:") ? "data-url" : mediaUrlForModel}`);
 
     let prompt = "";
-    let contentPayload: any[] = [];
+    let contentPayload: OpenAiDescribeContentPart[] = [];
 
     if (type === 'image' || type === 'video') {
       prompt = "Describe this media asset in great detail. Focus on the visual elements, composition, mood, and any specific subjects. Provide a precise, descriptive prompt that could be used to recreate or enhance this scene. Be concise but highly descriptive. Output only the description.";
@@ -129,14 +150,18 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ description });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     if (error instanceof ApiServiceDisabledError) {
       return NextResponse.json(
         { error: `API bloqueada en admin: ${error.label}` },
         { status: 423 },
       );
     }
+    if (error instanceof MediaAccessError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     console.error("[Media Describer] Error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    const message = error instanceof Error ? error.message : "describe_failed";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

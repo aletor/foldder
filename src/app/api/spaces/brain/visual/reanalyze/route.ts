@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "projectId required" }, { status: 400 });
     }
     let assets = normalizeProjectAssets(body.assets ?? {});
-    assets = await hydrateProjectAssetsForBrainVision(assets);
+    assets = await hydrateProjectAssetsForBrainVision(assets, session.user.email);
     const provider = createDefaultBrainVisionProvider();
     try {
       if (provider.id === "openai-vision") {

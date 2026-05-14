@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { recordApiUsage, resolveUsageUserEmailFromRequest } from "@/lib/api-usage";
 import { countPdfImageObjects, extractVisualImagesFromPdfBuffer, MAX_PDF_VISUAL_IMAGES } from "@/lib/brain/pdf-visual-extract";
 import { normalizeUploadedImageForFoldder } from "@/lib/foldder-server-image-optimization";
-import { uploadToS3 } from "@/lib/s3-utils";
+import { buildUserAssetObjectKey, requireSpacesAuthUser } from "@/lib/spaces-access-control";
+import { uploadBufferToS3Key } from "@/lib/s3-utils";
 import { v4 as uuidv4 } from "uuid";
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -45,6 +46,8 @@ function filenameWithExtension(filename: string, ext: string): string {
 
 export async function POST(req: NextRequest) {
   try {
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
     const usageUserEmail = await resolveUsageUserEmailFromRequest(req);
     const formData = await req.formData();
     const files = formData.getAll("file") as File[];
@@ -112,7 +115,12 @@ export async function POST(req: NextRequest) {
       }
 
       const uploadName = isImage ? filenameWithExtension(file.name, normalized.ext) : file.name;
-      const s3Key = await uploadToS3(uploadName, normalized.buffer, normalized.contentType);
+      const s3Key = buildUserAssetObjectKey({
+        userEmail: authState.user.email,
+        folder: "brain/knowledge",
+        filename: uploadName,
+      });
+      await uploadBufferToS3Key(s3Key, normalized.buffer, normalized.contentType);
       await recordApiUsage({
         provider: "aws",
         userEmail: usageUserEmail,
@@ -177,7 +185,12 @@ export async function POST(req: NextRequest) {
         for (const image of pdfVisualImages) {
           const normalizedImage = await normalizeUploadedImageForFoldder(image.buffer, image.mime);
           const imageName = filenameWithExtension(image.name, normalizedImage.ext);
-          const imageKey = await uploadToS3(imageName, normalizedImage.buffer, normalizedImage.contentType);
+          const imageKey = buildUserAssetObjectKey({
+            userEmail: authState.user.email,
+            folder: "brain/knowledge/pdf-visuals",
+            filename: imageName,
+          });
+          await uploadBufferToS3Key(imageKey, normalizedImage.buffer, normalizedImage.contentType);
           await recordApiUsage({
             provider: "aws",
             userEmail: usageUserEmail,

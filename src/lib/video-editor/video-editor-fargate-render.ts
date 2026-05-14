@@ -1,12 +1,12 @@
 import { randomUUID } from "crypto";
 import { PutObjectCommand, GetObjectCommand, NoSuchKey } from "@aws-sdk/client-s3";
 import { ECSClient, RunTaskCommand } from "@aws-sdk/client-ecs";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 import type { VideoEditorRenderManifest } from "@/app/spaces/video-editor/video-editor-render-types";
 import { recordApiUsage } from "@/lib/api-usage";
 import { estimateAwsFargateUsd } from "@/lib/pricing-config";
 import { BUCKET_NAME, s3Client } from "@/lib/s3-utils";
+import { spacesOwnerHash, stableKnowledgeFileUrlFromKey } from "@/lib/spaces-access-control";
 
 export type VideoEditorRenderJobStatus = {
   renderId: string;
@@ -92,8 +92,11 @@ async function readRenderJson<T>(bucket: string, key: string): Promise<T | null>
   }
 }
 
-export function renderJobKeys(renderId: string) {
-  const base = `knowledge-files/renders/video-editor/${renderId}`;
+export function renderJobKeys(renderId: string, userEmail?: string) {
+  const ownerHash = userEmail ? spacesOwnerHash(userEmail) : "";
+  const base = ownerHash
+    ? `knowledge-files/user-assets/${ownerHash}/video-editor/renders/${renderId}`
+    : `knowledge-files/renders/video-editor/${renderId}`;
   return {
     manifestS3Key: `${base}/manifest.json`,
     statusS3Key: `${base}/status.json`,
@@ -107,7 +110,7 @@ export async function createVideoEditorFargateRenderJob(
 ): Promise<VideoEditorRenderJobStatus> {
   const config = getFargateConfig();
   const renderId = randomUUID();
-  const keys = renderJobKeys(renderId);
+  const keys = renderJobKeys(renderId, options.userEmail);
   const now = new Date().toISOString();
   const status: VideoEditorRenderJobStatus = {
     renderId,
@@ -174,14 +177,13 @@ export async function createVideoEditorFargateRenderJob(
   return renderingStatus;
 }
 
-export async function getVideoEditorRenderStatus(renderId: string): Promise<VideoEditorRenderJobStatus | null> {
+export async function getVideoEditorRenderStatus(renderId: string, userEmail?: string): Promise<VideoEditorRenderJobStatus | null> {
   const bucket = getVideoRenderBucket();
-  const { statusS3Key } = renderJobKeys(renderId);
+  const { statusS3Key } = renderJobKeys(renderId, userEmail);
   const status = await readRenderJson<VideoEditorRenderJobStatus>(bucket, statusS3Key);
   if (!status) return null;
-  if (status.status === "ready" && status.s3Key && !status.outputUrl) {
-    const outputUrl = await getSignedUrl(s3Client, new GetObjectCommand({ Bucket: bucket, Key: status.s3Key }), { expiresIn: 3600 });
-    return { ...status, outputUrl };
+  if (status.status === "ready" && status.s3Key) {
+    return { ...status, outputUrl: stableKnowledgeFileUrlFromKey(status.s3Key) };
   }
   return status;
 }
@@ -217,7 +219,7 @@ export async function markVideoEditorRenderUsageRecorded(status: VideoEditorRend
   });
 
   const bucket = getVideoRenderBucket();
-  const { statusS3Key } = renderJobKeys(status.renderId);
+  const { statusS3Key } = renderJobKeys(status.renderId, status.usageUserEmail);
   const next: VideoEditorRenderJobStatus = {
     ...status,
     usageRecordedAt: new Date().toISOString(),

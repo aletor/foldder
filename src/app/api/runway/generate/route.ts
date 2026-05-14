@@ -8,6 +8,12 @@ import {
   ApiServiceDisabledError,
   assertApiServiceEnabled,
 } from "@/lib/api-usage-controls";
+import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
+import {
+  canUserAccessKnowledgeFileKey,
+  requireSpacesAuthUser,
+} from "@/lib/spaces-access-control";
+import { getPresignedUrl } from "@/lib/s3-utils";
 
 function getRunwayClient() {
   const apiKey =
@@ -18,6 +24,8 @@ function getRunwayClient() {
 export async function POST(req: Request) {
   try {
     await assertApiServiceEnabled("runway-gen3");
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
     const usageUserEmail = await resolveUsageUserEmailFromRequest(req);
     const { promptText, videoUrl, imageUrl, duration = 5 } = await req.json();
 
@@ -26,13 +34,22 @@ export async function POST(req: Request) {
     }
 
     const runway = getRunwayClient();
+    let promptImage = videoUrl || imageUrl;
+    if (typeof promptImage === "string") {
+      const s3Key = tryExtractKnowledgeFilesKeyFromUrl(promptImage);
+      if (s3Key) {
+        const allowed = await canUserAccessKnowledgeFileKey(authState.user.email, s3Key);
+        if (!allowed) return NextResponse.json({ error: "forbidden_asset" }, { status: 403 });
+        promptImage = await getPresignedUrl(s3Key);
+      }
+    }
 
     console.log(`[Runway API] Starting ${duration}s generation task...`);
 
     // Using Gen-3 Alpha Turbo for fast results
     const task = await runway.imageToVideo.create({
       model: 'gen3a_turbo',
-      promptImage: videoUrl || imageUrl, 
+      promptImage,
       promptText: promptText,
       duration: duration as 5 | 10
     });

@@ -1,16 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { geminiImageGenerate, GeminiGenerateError } from "@/lib/gemini-image-generate";
-import { resolveUsageUserEmailFromRequest } from "@/lib/api-usage";
 import { ApiServiceDisabledError, assertApiServiceEnabled } from "@/lib/api-usage-controls";
+import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
 
 export async function POST(req: NextRequest) {
   console.log("[Gemini REST] Request received");
   try {
     await assertApiServiceEnabled("gemini-nano");
-    const usageUserEmail = await resolveUsageUserEmailFromRequest(req);
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
     const body = await req.json();
     const result = await geminiImageGenerate(body, undefined, {
-      usageUserEmail,
+      usageUserEmail: authState.user.email,
     });
     return NextResponse.json(result);
   } catch (error: unknown) {
