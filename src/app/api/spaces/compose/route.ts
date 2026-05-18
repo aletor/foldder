@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import sharp from 'sharp';
 import { getFromS3 } from '@/lib/s3-utils';
 import { tryExtractKnowledgeFilesKeyFromUrl } from '@/lib/s3-media-hydrate';
 import { canUserAccessKnowledgeFileKey, requireSpacesAuthUser } from '@/lib/spaces-access-control';
+
+export const runtime = 'nodejs';
 
 const MAX_COMPOSE_DIMENSION = 4096;
 const MAX_COMPOSE_PIXELS = 18_000_000;
@@ -66,6 +67,35 @@ async function resolveLayerImageBuffer(
   return Buffer.from(arrayBuffer);
 }
 
+function mimeTypeFromImageBuffer(buffer: Buffer, fallback = "image/png"): string {
+  if (buffer.length >= 12) {
+    if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) return "image/png";
+    if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return "image/jpeg";
+    if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46) return "image/gif";
+    if (
+      buffer.toString("ascii", 0, 4) === "RIFF" &&
+      buffer.toString("ascii", 8, 12) === "WEBP"
+    ) {
+      return "image/webp";
+    }
+  }
+  return fallback;
+}
+
+function extensionFromMimeType(mimeType: string, fallback: string): string {
+  if (mimeType === "image/jpeg") return "jpg";
+  if (mimeType === "image/png") return "png";
+  if (mimeType === "image/webp") return "webp";
+  if (mimeType === "image/gif") return "gif";
+  return fallback;
+}
+
+function withFilenameExtension(filename: string, extension: string): string {
+  const safeExt = extension.replace(/[^a-z0-9]/gi, "").toLowerCase() || "png";
+  const base = filename.replace(/\.[a-z0-9]+$/i, "");
+  return `${base}.${safeExt}`;
+}
+
 export async function POST(req: NextRequest) {
   let layersJson = '[]';
   try {
@@ -104,6 +134,37 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Too many layers for one composition' }, { status: 413 });
     }
     console.log(`Active Layers Count: ${layers.length}`);
+
+    const canPassthroughSingleImage =
+      layers.length === 1 &&
+      layers[0] &&
+      !layers[0].color &&
+      !layers[0].x &&
+      !layers[0].y &&
+      (!layers[0].scale || layers[0].scale === 1);
+
+    if (canPassthroughSingleImage) {
+      const imageBuffer = await resolveLayerImageBuffer(layers[0], req.nextUrl.origin, authState.user.email);
+      if (imageBuffer.length > MAX_LAYER_IMAGE_BYTES) {
+        return NextResponse.json({ error: 'Image is too large to export.' }, { status: 413 });
+      }
+      const detectedMimeType = mimeTypeFromImageBuffer(imageBuffer, format === "jpeg" ? "image/jpeg" : "image/png");
+      const extension = extensionFromMimeType(detectedMimeType, format === "jpeg" ? "jpg" : "png");
+      const safeFilename = withFilenameExtension(filename, extension).replace(/[^a-z0-9.]/gi, '_');
+
+      console.log(`[Compose API] PASSTHROUGH: Exported ${safeFilename} (${Math.round(imageBuffer.length / 1024)} KB)`);
+      return new Response(new Uint8Array(imageBuffer), {
+        status: 200,
+        headers: {
+          'Content-Type': detectedMimeType,
+          'Content-Disposition': `attachment; filename="${safeFilename}"`,
+          'Content-Length': imageBuffer.length.toString(),
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+        },
+      });
+    }
+
+    const { default: sharp } = await import('sharp');
 
     // 1. Create base image (solid black instead of transparent to verify visibility)
     const canvas = sharp({
