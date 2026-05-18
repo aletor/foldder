@@ -392,6 +392,14 @@ async function getMetaItem(tableName: string, projectId: string): Promise<Spaces
   return isMetaItem(response.Item) ? response.Item : null;
 }
 
+export async function readSpacesV2ProjectMetaById(
+  tableName: string,
+  projectId: string,
+): Promise<ProjectListItem | null> {
+  const meta = await getMetaItem(tableName, projectId);
+  return meta ? metaToListItem(meta) : null;
+}
+
 function parseProjectPayloadFromChunks(meta: SpacesV2MetaItem, chunks: SpacesV2ChunkItem[]): ProjectChunkPayload {
   const selected = chunks
     .filter((chunk) => chunk.revision === meta.revision)

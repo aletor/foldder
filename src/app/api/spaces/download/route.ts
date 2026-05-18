@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { requireSpacesAuthUser } from '@/lib/spaces-access-control';
+
+const MAX_DOWNLOAD_BYTES = 30 * 1024 * 1024;
 
 export async function POST(req: NextRequest) {
   try {
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
+
     // Handle both JSON and Form Data (forms send URL-encoded/form-data)
     let base64, filename, format;
     
@@ -26,6 +32,9 @@ export async function POST(req: NextRequest) {
     const base64Parts = base64.split(',');
     const base64Content = base64Parts.length > 1 ? base64Parts[1] : base64Parts[0];
     const buffer = Buffer.from(base64Content, 'base64');
+    if (buffer.length > MAX_DOWNLOAD_BYTES) {
+      return NextResponse.json({ error: 'Image too large to download through this endpoint' }, { status: 413 });
+    }
     
     const mimeType = format === 'jpeg' ? 'image/jpeg' : 'image/png';
     const extension = format === 'jpeg' ? 'jpg' : 'png';
@@ -45,8 +54,11 @@ export async function POST(req: NextRequest) {
         'Cache-Control': 'no-cache, no-store, must-revalidate',
       },
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Download API Error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Download failed' },
+      { status: 500 },
+    );
   }
 }

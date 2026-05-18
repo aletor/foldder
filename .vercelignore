@@ -2,3 +2,4 @@
 .vercel
 node_modules
 data/spaces-db.json
+data/spaces-db*.json

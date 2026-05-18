@@ -19,6 +19,7 @@ import {
   deleteSpacesV2Project,
   SpacesV2IntegrityError,
   readSpacesV2ProjectById,
+  readSpacesV2ProjectMetaById,
   readSpacesV2ProjectsForOwner,
   readSpacesV2ProjectsMetaForOwner,
   SpacesV2RevisionConflictError,
@@ -460,8 +461,27 @@ export async function POST(req: Request) {
             : null;
       telemetryExpectedRevision = expectedRevision;
       if (id) {
-        const existing = await readProjectByIdResilient(id);
-        if (!existing && body.createIfMissing === true) {
+        let existing: ProjectRecord | null = null;
+        let corruptedExistingMeta: ProjectListItem | null = null;
+        try {
+          existing = await readProjectByIdResilient(id);
+        } catch (error) {
+          if (error instanceof SpacesV2IntegrityError && isSpacesV2Enabled()) {
+            const metaOnly = await readSpacesV2ProjectMetaById(spacesV2TableName(), id);
+            if (metaOnly && projectBelongsToOwner(metaOnly, ownerEmail)) {
+              corruptedExistingMeta = metaOnly;
+              console.warn(
+                `[spaces][POST] repairing project ${id} from client payload after ${error.code}.`,
+              );
+            } else {
+              throw error;
+            }
+          } else {
+            throw error;
+          }
+        }
+
+        if (!existing && !corruptedExistingMeta && body.createIfMissing === true) {
           telemetryOperation = "create_if_missing";
           const timestamp = new Date().toISOString();
           const resolvedRoot =
@@ -513,7 +533,8 @@ export async function POST(req: Request) {
           });
           return jsonNoStore(newProject);
         }
-        if (!existing || !projectBelongsToOwner(existing, ownerEmail)) {
+        const existingMeta = existing ?? corruptedExistingMeta;
+        if (!existingMeta || !projectBelongsToOwner(existingMeta, ownerEmail)) {
           telemetryOperation = "save";
           await recordProjectRouteTelemetry({
             errorCode: "PROJECT_NOT_FOUND",
@@ -529,26 +550,55 @@ export async function POST(req: Request) {
           });
           return jsonNoStore({ error: "Project not found" }, { status: 404 });
         }
+        if (!existing && corruptedExistingMeta && !spaces) {
+          telemetryOperation = "save";
+          await recordProjectRouteTelemetry({
+            errorCode: "PROJECT_DATA_INTEGRITY_ERROR",
+            errorMessage: "Cannot repair corrupted project without a full spaces payload.",
+            expectedRevision,
+            operation: telemetryOperation,
+            ownerEmail,
+            projectId: id,
+            route: "/api/spaces",
+            startedAt,
+            stats: telemetryStats,
+            status: "rejected",
+          });
+          return jsonNoStore(
+            {
+              error: "Project data integrity check failed. Reload or contact support before saving.",
+              code: "PROJECT_DATA_INTEGRITY_ERROR",
+              detail: "MISSING_REPAIR_PAYLOAD",
+              retryable: false,
+            },
+            { status: 500 },
+          );
+        }
 
         telemetryOperation = "save";
         const savedProject: ProjectRecord = {
-          ...existing,
-          name: name || existing.name,
-          rootSpaceId: rootSpaceId || existing.rootSpaceId,
-          spaces: spaces || existing.spaces,
-          metadata: metadata || existing.metadata,
-          ownerUserEmail: existing.ownerUserEmail || ownerEmail,
+          id: existingMeta.id,
+          name: name || existingMeta.name,
+          rootSpaceId: rootSpaceId || existingMeta.rootSpaceId,
+          spaces: spaces || existing?.spaces || {},
+          metadata: metadata || existingMeta.metadata,
+          ownerUserEmail: existingMeta.ownerUserEmail || ownerEmail,
           ownerUserName: ownerName,
           ownerUserImage: ownerImage,
+          createdAt: existingMeta.createdAt,
           updatedAt: new Date().toISOString(),
         };
-        const writeResult = await writeDdbProject(savedProject, { expectedRevision });
+        const writeExpectedRevision =
+          corruptedExistingMeta && typeof corruptedExistingMeta.revision === "number"
+            ? corruptedExistingMeta.revision
+            : expectedRevision;
+        const writeResult = await writeDdbProject(savedProject, { expectedRevision: writeExpectedRevision });
         savedProject.revision = writeResult.revision;
         spacesGetCache = null;
         spacesMetaGetCache = null;
         await recordProjectRouteTelemetry({
           actualRevision: writeResult.revision,
-          expectedRevision,
+          expectedRevision: writeExpectedRevision,
           operation: telemetryOperation,
           ownerEmail,
           projectId: savedProject.id,

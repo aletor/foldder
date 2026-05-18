@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { aggregateUsageSince, DEFAULT_USAGE_SINCE_ISO } from "@/lib/api-usage";
+import { requireFoldderAdmin } from "@/lib/admin-auth";
 import { listKnowledgeFilesStatsCached } from "@/lib/s3-knowledge-stats";
 
 export async function GET(req: NextRequest) {
+  const admin = await requireFoldderAdmin();
+  if (!admin.ok) return admin.response;
+
   const sinceParam = req.nextUrl.searchParams.get("since");
   const since = sinceParam || DEFAULT_USAGE_SINCE_ISO;
   try {
@@ -21,7 +25,10 @@ export async function GET(req: NextRequest) {
       ...data,
       s3Documents,
     });
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message || "Failed to read usage" }, { status: 500 });
+  } catch (e: unknown) {
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : "Failed to read usage" },
+      { status: 500 },
+    );
   }
 }

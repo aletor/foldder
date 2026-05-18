@@ -37,6 +37,16 @@ function imageContentTypeForExt(ext: string): string {
   return "image/jpeg";
 }
 
+function documentContentTypeForExt(ext: string): string {
+  if (ext === "pdf") return "application/pdf";
+  if (ext === "docx") return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  if (ext === "txt") return "text/plain";
+  if (ext === "md") return "text/markdown";
+  if (ext === "rtf") return "application/rtf";
+  if (ext === "html" || ext === "htm") return "text/html";
+  return "application/octet-stream";
+}
+
 function filenameWithExtension(filename: string, ext: string): string {
   const base = (filename || `knowledge-image-${Date.now()}`)
     .trim()
@@ -84,10 +94,11 @@ export async function POST(req: NextRequest) {
       const mime = (file.type || "application/octet-stream").toLowerCase();
       const isImage = mime.startsWith("image/") || ["jpg", "png", "webp"].includes(ext);
       const isHtml = ext === "html" || ext === "htm";
+      const isBrowserUnknownMime = mime === "application/octet-stream" && ALLOWED_EXT.has(ext);
 
       if (
         !ALLOWED_EXT.has(ext) ||
-        (!ALLOWED_MIME.has(mime) && !mime.startsWith("text/") && !isImage && !isHtml)
+        (!ALLOWED_MIME.has(mime) && !mime.startsWith("text/") && !isImage && !isHtml && !isBrowserUnknownMime)
       ) {
         rejected.push({ name: file.name, reason: "unsupported_type" });
         continue;
@@ -99,7 +110,11 @@ export async function POST(req: NextRequest) {
       }
 
       const buffer = Buffer.from(await file.arrayBuffer());
-      const uploadMime = isImage && !mime.startsWith("image/") ? imageContentTypeForExt(ext) : mime;
+      const uploadMime = isImage && !mime.startsWith("image/")
+        ? imageContentTypeForExt(ext)
+        : mime === "application/octet-stream"
+          ? documentContentTypeForExt(ext)
+          : mime;
       const normalized = isImage
         ? await normalizeUploadedImageForFoldder(buffer, uploadMime)
         : {

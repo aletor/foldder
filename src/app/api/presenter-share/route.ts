@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
+import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
 import {
   createPresenterShare,
   listPresenterShares,
@@ -30,6 +31,9 @@ function randomToken(): string {
 /** GET ?deckKey= — lista enlaces de un deck. */
 export async function GET(req: Request) {
   try {
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
+
     const { searchParams } = new URL(req.url);
     const deckKey = searchParams.get("deckKey") || "";
     if (!deckKey.trim()) {
@@ -79,6 +83,9 @@ type PostBody = {
 
 export async function POST(req: Request) {
   try {
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
+
     const body = (await req.json()) as PostBody;
     if (!body.deckKey || typeof body.deckKey !== "string") {
       return NextResponse.json({ error: "deckKey required" }, { status: 400 });

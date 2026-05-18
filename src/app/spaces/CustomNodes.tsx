@@ -574,14 +574,8 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
   const edges = useEdges();
   const [format, setFormat] = useState<'png' | 'jpeg'>('png');
   const [isExporting, setIsExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   const [detectedSize, setDetectedSize] = useState<{ url: string; w: number; h: number } | null>(null);
-
-  // Refs for synchronous form-based download (bypasses Chrome async security blocks)
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-  const formRef = useRef<HTMLFormElement>(null);
-  const layersInputRef = useRef<HTMLInputElement>(null);
-  const filenameInputRef = useRef<HTMLInputElement>(null);
-  const formatInputRef = useRef<HTMLInputElement>(null);
 
   // Find the single source connected to this node
   const sourceEdge = edges.find(e => e.target === id);
@@ -590,12 +584,15 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
 
   const layers = useMemo(() => {
     if (!sourceNode) return [];
+    const sourceData = sourceNode.data as Record<string, unknown>;
+    const s3Key = typeof sourceData.s3Key === "string" ? sourceData.s3Key : undefined;
     return [{
       type: sourceNode.type,
-      value: sourceNode.data.value as string | undefined,
+      value: s3Key ? undefined : sourceData.value as string | undefined,
+      s3Key,
       width: sourceNodeDimensions?.width || 0,
       height: sourceNodeDimensions?.height || 0
-    }].filter(l => l.value);
+    }].filter(l => l.value || l.s3Key);
   }, [sourceNode, sourceNodeDimensions?.height, sourceNodeDimensions?.width]);
 
   // Native pixel size of the connected image (data URLs from Crop, http(s), blob: — all measured the same)
@@ -625,37 +622,74 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
   const directImageSrc =
     sourceNode && typeof sourceNode.data?.value === 'string' ? sourceNode.data.value : null;
 
-  const handleExport = () => {
+  const handleExport = async () => {
     if (!sourceNode) return alert("Connect an image first!");
-    if (!formRef.current || !layersInputRef.current || !filenameInputRef.current || !formatInputRef.current) return;
+    if (!layers.length) return alert("The connected node has no image to export.");
 
     const extension = format === 'jpeg' ? 'jpg' : 'png';
     const filename = `AI_Space_Output_${Date.now()}.${extension}`;
+    const body = new FormData();
+    body.set("layers", JSON.stringify(layers));
+    body.set("filename", filename);
+    body.set("format", format);
+    body.set("width", String(exportW));
+    body.set("height", String(exportH));
+    body.set("previewWidth", String(exportW));
+    body.set("previewHeight", String(exportH));
 
-    // Populate form inputs SYNCHRONOUSLY (before any awaits)
-    layersInputRef.current.value = JSON.stringify(layers);
-    filenameInputRef.current.value = filename;
-    formatInputRef.current.value = format;
-
-    // SYNCHRONOUS form submit → browser handles Content-Disposition: attachment natively
-    formRef.current.submit();
-    dispatchFoldderExportCreated({
-      name: filename,
-      extension: `.${extension}`,
-      sourceNodeId: sourceNode.id,
-      thumbnailUrl: directImageSrc ?? undefined,
-      mimeType: format === "jpeg" ? "image/jpeg" : "image/png",
-      exportedFrom: "imageExport",
-      exportFormat: extension,
-      metadata: {
-        exportNodeId: id,
-        width: exportW,
-        height: exportH,
-      },
-    });
-
+    setExportError(null);
     setIsExporting(true);
-    window.setTimeout(() => setIsExporting(false), 500);
+    try {
+      const res = await fetch("/api/spaces/compose", {
+        method: "POST",
+        body,
+        credentials: "same-origin",
+      });
+      if (!res.ok) {
+        let message = `Export failed (${res.status}).`;
+        try {
+          const payload = (await res.json()) as { error?: unknown };
+          if (typeof payload.error === "string" && payload.error.trim()) message = payload.error.trim();
+        } catch {
+          const text = await res.text().catch(() => "");
+          if (text.trim()) message = text.trim().slice(0, 180);
+        }
+        throw new Error(message);
+      }
+
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = filename;
+      anchor.rel = "noreferrer";
+      anchor.style.display = "none";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+
+      dispatchFoldderExportCreated({
+        name: filename,
+        extension: `.${extension}`,
+        sourceNodeId: sourceNode.id,
+        thumbnailUrl: directImageSrc ?? undefined,
+        mimeType: format === "jpeg" ? "image/jpeg" : "image/png",
+        exportedFrom: "imageExport",
+        exportFormat: extension,
+        metadata: {
+          exportNodeId: id,
+          width: exportW,
+          height: exportH,
+        },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Export failed.";
+      setExportError(message);
+      console.error("[ImageExportNode] Export failed:", error);
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   useRegisterAssistantNodeRun(id, handleExport);
@@ -669,31 +703,6 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
     >
       <FoldderNodeResizer minWidth={240} minHeight={180} maxWidth={960} maxHeight={600} isVisible={selected} />
       <NodeLabel id={id} label={typeof data.label === "string" ? data.label : undefined} defaultLabel="Export" />
-
-      {/* Hidden iframe — receives the form POST response (Content-Disposition: attachment) */}
-      <iframe
-        ref={iframeRef}
-        name="export-download-frame"
-        title="download"
-        style={{ position: 'fixed', top: '-9999px', left: '-9999px', width: '1px', height: '1px', opacity: 0 }}
-      />
-
-      {/* Hidden form — submitted synchronously when user clicks Export */}
-      <form
-        ref={formRef}
-        action="/api/spaces/compose"
-        method="POST"
-        target="export-download-frame"
-        style={{ display: 'none' }}
-      >
-        <input ref={layersInputRef} type="hidden" name="layers" />
-        <input ref={filenameInputRef} type="hidden" name="filename" />
-        <input ref={formatInputRef} type="hidden" name="format" />
-        <input type="hidden" name="width" value={String(exportW)} />
-        <input type="hidden" name="height" value={String(exportH)} />
-        <input type="hidden" name="previewWidth" value={String(exportW)} />
-        <input type="hidden" name="previewHeight" value={String(exportH)} />
-      </form>
 
       <div className="handle-wrapper handle-left">
         <FoldderDataHandle type="target" position={Position.Left} id="image" dataType="image" />
@@ -744,6 +753,11 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
             </span>
             <span>EXPORT READY</span>
           </div>
+          {exportError ? (
+            <div className="rounded-[10px] border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-[9px] font-semibold leading-snug text-rose-100">
+              {exportError}
+            </div>
+          ) : null}
         </div>
 
         {/* Preview: marco con la misma proporción que la imagen (exportW/H); encaja en el nodo sin deformar */}

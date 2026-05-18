@@ -955,6 +955,129 @@ type GeneratedPreview = {
   };
 };
 
+const BRAIN_DIRECT_UPLOAD_THRESHOLD_BYTES = 3.8 * 1024 * 1024;
+const BRAIN_DIRECT_UPLOAD_MAX_BYTES = 40 * 1024 * 1024;
+
+type BrainKnowledgeUploadResponse = {
+  message?: string;
+  documents?: KnowledgeDocumentEntry[];
+  rejected?: Array<{ name?: string; reason?: string }>;
+  pdfVisualDiagnostics?: Array<{
+    name?: string;
+    pageRenderCount?: number;
+    extractedImageCount?: number;
+    uploadedVisualCount?: number;
+    renderError?: string;
+  }>;
+  error?: string;
+};
+
+async function uploadBrainKnowledgeFiles(
+  files: File[],
+  scope: "core" | "context",
+  onProgress: (message: string) => void,
+): Promise<BrainKnowledgeUploadResponse> {
+  const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
+  const shouldUseDirectForAll = totalBytes > BRAIN_DIRECT_UPLOAD_THRESHOLD_BYTES;
+  const directFiles = files.filter((file) => shouldUseDirectForAll || file.size > BRAIN_DIRECT_UPLOAD_THRESHOLD_BYTES);
+  const formFiles = files.filter((file) => !directFiles.includes(file));
+
+  const merged: BrainKnowledgeUploadResponse = {
+    documents: [],
+    rejected: [],
+    pdfVisualDiagnostics: [],
+  };
+
+  if (formFiles.length) {
+    const formData = new FormData();
+    formFiles.forEach((file) => formData.append("file", file));
+    formData.append("scope", scope);
+    if (scope === "context") formData.append("contextKind", "general");
+    const response = await fetch("/api/spaces/brain/knowledge/upload", {
+      method: "POST",
+      body: formData,
+    });
+    const data = await readResponseJson<BrainKnowledgeUploadResponse>(
+      response,
+      "POST /api/spaces/brain/knowledge/upload",
+    );
+    if (!response.ok) throw new Error(data?.error || "Error subiendo archivos");
+    merged.documents?.push(...(data?.documents ?? []));
+    merged.rejected?.push(...(data?.rejected ?? []));
+    merged.pdfVisualDiagnostics?.push(...(data?.pdfVisualDiagnostics ?? []));
+  }
+
+  if (directFiles.length) {
+    onProgress(`Subiendo ${directFiles.length} archivo(s) pesado(s) directamente a S3…`);
+    const registeredItems: Array<{ key: string; name: string; size: number; mime: string; scope: "core" | "context"; contextKind?: "general" }> = [];
+    for (const file of directFiles) {
+      if (file.size > BRAIN_DIRECT_UPLOAD_MAX_BYTES) {
+        merged.rejected?.push({ name: file.name, reason: "file_too_large" });
+        continue;
+      }
+      const ticketResponse = await fetch("/api/spaces/brain/knowledge/upload-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          filename: file.name,
+          contentType: file.type || "application/octet-stream",
+          size: file.size,
+        }),
+      });
+      const ticket = await readResponseJson<{
+        error?: string;
+        uploadUrl?: string;
+        key?: string;
+        maxBytes?: number;
+      }>(ticketResponse, "POST /api/spaces/brain/knowledge/upload-url");
+      if (!ticketResponse.ok || !ticket?.uploadUrl || !ticket.key) {
+        throw new Error(ticket?.error || "No se pudo preparar la subida S3.");
+      }
+      onProgress(`Subiendo ${file.name} (${formatSize(file.size)}) a S3…`);
+      const putResponse = await fetch(ticket.uploadUrl, {
+        method: "PUT",
+        headers: { "Content-Type": file.type || "application/octet-stream" },
+        body: file,
+      });
+      if (!putResponse.ok) {
+        throw new Error(`No se pudo subir ${file.name} a S3 (${putResponse.status}).`);
+      }
+      registeredItems.push({
+        key: ticket.key,
+        name: file.name,
+        size: file.size,
+        mime: file.type || "application/octet-stream",
+        scope,
+        contextKind: scope === "context" ? "general" : undefined,
+      });
+    }
+
+    if (registeredItems.length) {
+      onProgress("Registrando archivos subidos en Brain…");
+      const registerResponse = await fetch("/api/spaces/brain/knowledge/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: registeredItems }),
+      });
+      const registered = await readResponseJson<BrainKnowledgeUploadResponse>(
+        registerResponse,
+        "POST /api/spaces/brain/knowledge/register",
+      );
+      if (!registerResponse.ok) throw new Error(registered?.error || "No se pudieron registrar los archivos.");
+      merged.documents?.push(...(registered?.documents ?? []));
+      merged.rejected?.push(...(registered?.rejected ?? []));
+      merged.pdfVisualDiagnostics?.push(...(registered?.pdfVisualDiagnostics ?? []));
+    }
+  }
+
+  const added = merged.documents?.length ?? 0;
+  const skipped = merged.rejected?.length ?? 0;
+  merged.message = added
+    ? `Successfully uploaded ${added} file(s)${skipped ? ` · ${skipped} skipped` : ""}`
+    : `No compatible files were uploaded (${skipped} skipped).`;
+  return merged;
+}
+
 function readFileDataUrl(file: File, maxBytes: number): Promise<string> {
   return new Promise((resolve, reject) => {
     if (file.size > maxBytes) {
@@ -3287,28 +3410,11 @@ export function ProjectBrainFullscreen({
             setKnowledgePipelineDetail(
               `Subiendo ${nFiles} archivo${nFiles === 1 ? "" : "s"} al pozo de ${scopeLabel}${imgHint}…`,
             );
-            const formData = new FormData();
-            job.files.forEach((f) => formData.append("file", f));
-            formData.append("scope", job.scope);
-            if (job.scope === "context") formData.append("contextKind", "general");
-            const response = await fetch("/api/spaces/brain/knowledge/upload", {
-              method: "POST",
-              body: formData,
-            });
-            const data = await readResponseJson<{
-              message?: string;
-              documents?: KnowledgeDocumentEntry[];
-              rejected?: Array<{ name?: string; reason?: string }>;
-              pdfVisualDiagnostics?: Array<{
-                name?: string;
-                pageRenderCount?: number;
-                extractedImageCount?: number;
-                uploadedVisualCount?: number;
-                renderError?: string;
-              }>;
-              error?: string;
-            }>(response, "POST /api/spaces/brain/knowledge/upload");
-            if (!response.ok) throw new Error(data?.error || "Error subiendo archivos");
+            const data = await uploadBrainKnowledgeFiles(
+              job.files,
+              job.scope,
+              setKnowledgePipelineDetail,
+            );
             const pdfDiagnostics = data?.pdfVisualDiagnostics ?? [];
             const pdfRenderFailed = pdfDiagnostics.find(
               (row) => (row.pageRenderCount ?? 0) === 0 && (row.extractedImageCount ?? 0) > 0,

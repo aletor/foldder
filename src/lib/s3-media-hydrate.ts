@@ -19,7 +19,10 @@ export function tryExtractKnowledgeFilesKeyFromUrl(url: string): string | null {
   if (trimmed.startsWith(KNOWLEDGE_FILES_PREFIX)) return trimmed;
   try {
     const u = new URL(trimmed, "http://foldder.local");
-    const routeKey = u.pathname === "/api/spaces/s3-file" ? u.searchParams.get("key")?.trim() : "";
+    const routeKey =
+      u.pathname === "/api/spaces/s3-file" || u.pathname === "/api/spaces/s3-download"
+        ? u.searchParams.get("key")?.trim()
+        : "";
     if (routeKey?.startsWith(KNOWLEDGE_FILES_PREFIX)) return routeKey;
     const path = safeDecodeUriComponent(u.pathname.replace(/^\/+/, ""));
     // Virtual-hosted: knowledge-files/… | Path-style: bucket/knowledge-files/…

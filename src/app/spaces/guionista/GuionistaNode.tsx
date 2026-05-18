@@ -3,7 +3,7 @@
 import React, { memo, useCallback, useMemo, useState, type ComponentProps } from "react";
 import { NodeProps, useReactFlow, useStore, type Edge, type Node, type ReactFlowState } from "@xyflow/react";
 import { shallow } from "zustand/shallow";
-import { BookOpen, ChevronRight, FileText, Film, LayoutTemplate, PenLine, RefreshCw, Sparkles } from "lucide-react";
+import { BookOpen, CheckCircle2, ChevronRight, FileText, Film, LayoutTemplate, PenLine, RefreshCw, Sparkles } from "lucide-react";
 import { GuionistaStudio } from "../GuionistaStudio";
 import { useProjectAssetsCanvas } from "../project-assets-canvas-context";
 import { normalizeProjectAssets } from "../project-assets-metadata";
@@ -362,33 +362,36 @@ export const GuionistaNode = memo(function GuionistaNode({ id, data, selected }:
     >
       <div className="node-content flex min-w-0 flex-col gap-3 px-3 pb-3 pt-2">
         <div className="min-w-0">
-          <span className="node-label">{hasGeneratedText ? activeVisualMeta.label : "Guionista"}</span>
-          <div className="rounded-xl border border-slate-200/60 bg-slate-50/50 p-3 shadow-inner">
-            <h3 className="line-clamp-2 text-[16px] font-semibold leading-[1.12] tracking-[-0.025em] text-slate-900">
-              {compactText.title}
-            </h3>
-            <p className="mt-1.5 line-clamp-2 text-[11px] font-light leading-relaxed text-slate-600">
-              {compactText.preview}
-            </p>
-
-            <div className="mt-3 flex flex-wrap items-center gap-1.5">
-              <StudioCanvasPill active={Boolean(activeTextAsset)} activeClassName="border-emerald-500/20 bg-emerald-500/10 text-emerald-700">
-                {activeTextAsset ? "Guardado" : "Borrador"}
-              </StudioCanvasPill>
-              {activeVersionIndex > 0 && (
-                <span className="rounded-full border border-slate-300/70 bg-white/70 px-2.5 py-1 text-[9px] font-semibold text-slate-600">
-                  V{activeVersionIndex}
-                </span>
-              )}
-              <StudioCanvasPill active={brainConnected} activeClassName="border-sky-400/20 bg-sky-400/10 text-sky-700">
-                {brainConnected ? "Usando Brain" : "Sin Brain"}
-              </StudioCanvasPill>
-              {generatedDerivatives.length > 0 && (
-                <span className="rounded-full border border-slate-300/70 bg-white/70 px-2.5 py-1 text-[9px] font-semibold text-slate-600">
-                  {generatedDerivatives.length} piezas
-                </span>
-              )}
+          <div className="flex items-start gap-2">
+            <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] ${activeVisualMeta.accent.replace("border-", "border border-")}`}>
+              {activeVisualMeta.icon}
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[8px] font-black uppercase tracking-[0.14em] text-slate-400">{compactTypeLabel}</span>
+                {activeTextAsset && <CheckCircle2 className="h-3 w-3 shrink-0 text-emerald-500" strokeWidth={2.2} />}
+              </div>
+              <h3 className="mt-1 line-clamp-2 text-[16px] font-semibold leading-[1.08] tracking-[-0.02em] text-slate-950">
+                {compactText.title}
+              </h3>
             </div>
+          </div>
+          <p className="mt-2 line-clamp-3 text-[11px] font-light leading-relaxed text-slate-600">
+            {hasGeneratedText ? compactText.preview : "Conecta una idea, texto o Brain y abre Studio para escribir."}
+          </p>
+
+          <div className="mt-3 flex flex-wrap items-center gap-1.5">
+            <StudioCanvasPill active={Boolean(activeTextAsset)} activeClassName="border-emerald-500/20 bg-emerald-500/10 text-emerald-700">
+              {activeTextAsset ? "Guardado" : "Borrador"}
+            </StudioCanvasPill>
+            {activeVersionIndex > 0 && (
+              <span className="rounded-[10px] bg-slate-100 px-2 py-1 text-[9px] font-semibold text-slate-500">
+                V{activeVersionIndex}
+              </span>
+            )}
+            <StudioCanvasPill active={brainConnected} activeClassName="border-sky-400/20 bg-sky-400/10 text-sky-700">
+              {brainConnected ? "Brain" : "Sin Brain"}
+            </StudioCanvasPill>
           </div>
         </div>
 
@@ -400,7 +403,7 @@ export const GuionistaNode = memo(function GuionistaNode({ id, data, selected }:
                 {socialDerivatives.length ? `Social pack · ${socialDerivatives.length}` : `Piezas · ${generatedDerivatives.length}`}
               </p>
             </div>
-            <div className="grid gap-1.5 rounded-xl border border-slate-200/60 bg-slate-50/50 p-2 shadow-inner">
+            <div className="grid gap-1.5">
               {visibleDerivatives.map((asset) => {
                 const meta = resolveGuionistaAssetVisualMeta(asset.type, asset.platform);
                 return (
@@ -415,10 +418,10 @@ export const GuionistaNode = memo(function GuionistaNode({ id, data, selected }:
                       event.stopPropagation();
                       openAssetInThisNode(asset.id);
                     }}
-                    className="nodrag group flex items-center gap-2 rounded-lg border border-slate-200/70 bg-white/70 px-2.5 py-2 text-left transition hover:border-slate-300 hover:bg-white"
+                    className="nodrag group flex items-center gap-2 rounded-[10px] bg-slate-50 px-2.5 py-2 text-left transition hover:bg-white"
                     title="Abrir en Guionista"
                   >
-                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-slate-200/80 bg-slate-900/5 text-slate-600">
+                    <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-[10px] ${meta.accent.replace("border-", "border border-")}`}>
                       {meta.icon}
                     </span>
                     <div className="min-w-0 flex-1">
@@ -436,7 +439,7 @@ export const GuionistaNode = memo(function GuionistaNode({ id, data, selected }:
                     event.stopPropagation();
                     setGeneratedExpanded((value) => !value);
                   }}
-                  className="nodrag rounded-full border border-slate-300/70 bg-white/70 px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.13em] text-slate-500 transition hover:bg-white hover:text-slate-800"
+                  className="nodrag rounded-[10px] bg-slate-50 px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.13em] text-slate-500 transition hover:bg-white hover:text-slate-800"
                 >
                   {generatedExpanded ? "Ocultar" : `Ver ${generatedDerivatives.length - 3} más`}
                 </button>
