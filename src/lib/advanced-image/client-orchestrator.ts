@@ -9,7 +9,6 @@ import {
   type AdvancedImageWorkingImage,
 } from "./domain";
 import {
-  readAdvancedImageFinalCache,
   readAdvancedImageGeminiRawCache,
   writeAdvancedImageFinalCache,
   writeAdvancedImageGeminiRawCache,
@@ -27,17 +26,8 @@ export type AdvancedImageGenerationLogger = (event: {
   cacheKey: string;
   hit: boolean;
   stateHash: string;
-  type: "final-image" | "gemini-raw";
+  type: "gemini-raw";
 }) => void;
-
-export type AdvancedImageFinalImageProcessor = (args: {
-  generated: AdvancedImageCachedGeneratedImage;
-  now: string;
-  plan: AdvancedImageGenerationPlan;
-  requestId: string;
-  session: AdvancedImageSession;
-  userEmail: string;
-}) => Promise<AdvancedImageCachedGeneratedImage>;
 
 export type AdvancedImageClientGenerationOptions = {
   batchPendingIds?: string[];
@@ -48,7 +38,6 @@ export type AdvancedImageClientGenerationOptions = {
   };
   logger?: AdvancedImageGenerationLogger;
   now: string;
-  finalImageProcessor?: AdvancedImageFinalImageProcessor;
   requestId: string;
   transport: AdvancedImageGeminiTransport;
   userEmail: string;
@@ -124,8 +113,7 @@ export async function runAdvancedImageClientGeneration(
   });
 
   if (cached.hit) {
-    const finalValue = await resolveFinalGeneratedImage(session, plan, cached.value, options);
-    const workingImage = workingImageFromCached(plan, finalValue, options.now, session);
+    const workingImage = workingImageFromCached(plan, cached.value, options.now, session);
     const nextSession = assignBatchNumberToGeneratedCorrections(
       setAdvancedImageWorkingImage(session, workingImage, { timestamp: options.now }),
       plan.batchPendingIds,
@@ -177,13 +165,12 @@ export async function runAdvancedImageClientGeneration(
       requestId: options.requestId,
       userEmail: options.userEmail,
     });
-    const finalValue = await resolveFinalGeneratedImage(session, plan, cacheValue, options);
-    await writeAdvancedImageFinalCache(options.cacheStore, plan, finalValue, { createdAt: options.now }, {
+    await writeAdvancedImageFinalCache(options.cacheStore, plan, cacheValue, { createdAt: options.now }, {
       requestId: options.requestId,
       userEmail: options.userEmail,
     });
 
-    const workingImage = workingImageFromCached(plan, finalValue, options.now, session);
+    const workingImage = workingImageFromCached(plan, cacheValue, options.now, session);
     const nextSession = assignBatchNumberToGeneratedCorrections(
       setAdvancedImageWorkingImage(session, workingImage, { timestamp: options.now }),
       plan.batchPendingIds,
@@ -207,44 +194,6 @@ export async function runAdvancedImageClientGeneration(
     const next = markGenerationFailure(session, options.batchPendingIds ?? plan.batchPendingIds, message, options.now);
     throw new AdvancedImageClientGenerationError(message, next, error);
   }
-}
-
-async function resolveFinalGeneratedImage(
-  session: AdvancedImageSession,
-  plan: AdvancedImageGenerationPlan,
-  generated: AdvancedImageCachedGeneratedImage,
-  options: AdvancedImageClientGenerationOptions,
-): Promise<AdvancedImageCachedGeneratedImage> {
-  if (plan.strictCompositeSteps.length === 0 || !options.finalImageProcessor) {
-    return generated;
-  }
-
-  const cachedFinal = await readAdvancedImageFinalCache(
-    options.cacheStore,
-    plan,
-    options.now,
-    { requestId: options.requestId, userEmail: options.userEmail },
-  );
-  options.logger?.({
-    cacheKey: plan.cacheKeys.finalImage,
-    hit: cachedFinal.hit,
-    stateHash: plan.finalImageStateHash,
-    type: "final-image",
-  });
-  if (cachedFinal.hit) return cachedFinal.value;
-
-  const processed = await options.finalImageProcessor({
-    generated,
-    now: options.now,
-    plan,
-    requestId: options.requestId,
-    session,
-    userEmail: options.userEmail,
-  });
-  return {
-    ...processed,
-    sourceHash: plan.finalImageStateHash,
-  };
 }
 
 function assignBatchNumberToGeneratedCorrections(

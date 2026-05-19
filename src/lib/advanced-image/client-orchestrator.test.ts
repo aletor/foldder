@@ -321,59 +321,6 @@ describe("advanced-image-client-orchestrator", () => {
     expect(logs[0].stateHash).toBe(logs[1].stateHash);
   });
 
-  it("applies and caches final strict-zone composite output without another Gemini call", async () => {
-    const cacheStore = createAdvancedImageMemoryCacheStore();
-    const t = transport();
-    const logs: Array<{ hit: boolean; type: string }> = [];
-    const finalImageProcessor = vi.fn(async ({ generated, plan }) => ({
-      ...generated,
-      imageUrl: `/api/spaces/s3-file?key=knowledge-files/generated/${plan.finalImageStateHash}-strict.png`,
-      raw: { processedFrom: generated.imageUrl },
-      s3Key: `knowledge-files/generated/${plan.finalImageStateHash}-strict.png`,
-    }));
-    const s = addCorrection(
-      session(),
-      {
-        ...correction("strict"),
-        strictZoneBoundary: true,
-      },
-      { timestamp: "2026-05-18T09:02:00.000Z" },
-    );
-    const options = {
-      batchPendingIds: ["strict"],
-      cacheStore,
-      costApproval: { approved: true, reason: "explicit_user_action" as const },
-      finalImageProcessor,
-      logger: (event: { hit: boolean; type: string }) => logs.push(event),
-      transport: t,
-      userEmail: "user@example.com",
-    };
-
-    const first = await runAdvancedImageClientGeneration(s, {
-      ...options,
-      now: "2026-05-18T09:10:00.000Z",
-      requestId: "req-strict-1",
-    });
-    const second = await runAdvancedImageClientGeneration(s, {
-      ...options,
-      costApproval: { approved: true, reason: "cached_replay" },
-      now: "2026-05-18T09:11:00.000Z",
-      requestId: "req-strict-2",
-    });
-
-    expect(t).toHaveBeenCalledTimes(1);
-    expect(finalImageProcessor).toHaveBeenCalledTimes(1);
-    expect(first.workingImage.imageUrl).toContain("-strict.png");
-    expect(second.workingImage.imageUrl).toBe(first.workingImage.imageUrl);
-    expect(first.workingImage.sourceHash).toBe(first.plan.finalImageStateHash);
-    expect(logs.map((log) => `${log.type}:${log.hit}`)).toEqual([
-      "gemini-raw:false",
-      "final-image:false",
-      "gemini-raw:true",
-      "final-image:true",
-    ]);
-  });
-
   it("keeps master intact and marks the current correction failed on transport errors", async () => {
     const cacheStore = createAdvancedImageMemoryCacheStore();
     const s = appendCorrection(session(), "a");

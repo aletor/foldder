@@ -43,7 +43,6 @@ import {
   type AdvancedImagePoint,
   type AdvancedImageSession,
   type AdvancedImageUserReferenceGrid,
-  type AdvancedImageZone,
   type AdvancedImageZoneTool,
   type AdvancedImageWorkingImage,
 } from "@/lib/advanced-image/domain";
@@ -56,7 +55,6 @@ import { createAdvancedImageMemoryCacheStore, readAdvancedImageGeminiRawCache } 
 import {
   AdvancedImageClientGenerationError,
   runAdvancedImageClientGeneration,
-  type AdvancedImageFinalImageProcessor,
   type AdvancedImageClientGenerationResult,
 } from "@/lib/advanced-image/client-orchestrator";
 import type { AdvancedImageGeminiTransport } from "@/lib/advanced-image/gemini-adapter";
@@ -312,139 +310,6 @@ async function createAndUploadCorrectionReferenceGrid(args: {
       width: grid.layout.width,
     },
     sourceImageCount: grid.layout.usedImageCount,
-  };
-}
-
-function drawZonePath(ctx: CanvasRenderingContext2D, zone: AdvancedImageZone, width: number, height: number) {
-  const sourceWidth = Math.max(1, zone.sourceSize.width);
-  const sourceHeight = Math.max(1, zone.sourceSize.height);
-  const scaleX = width / sourceWidth;
-  const scaleY = height / sourceHeight;
-  for (const stroke of zone.strokes) {
-    if (stroke.points.length < 3) continue;
-    const first = stroke.points[0];
-    ctx.moveTo(first.x * scaleX, first.y * scaleY);
-    for (const point of stroke.points.slice(1)) {
-      ctx.lineTo(point.x * scaleX, point.y * scaleY);
-    }
-    ctx.closePath();
-  }
-}
-
-function buildFeatheredZoneMask(args: {
-  featherPx: number;
-  height: number;
-  width: number;
-  zones: AdvancedImageZone[];
-}): HTMLCanvasElement {
-  const mask = document.createElement("canvas");
-  mask.width = args.width;
-  mask.height = args.height;
-  const maskCtx = mask.getContext("2d");
-  if (!maskCtx) throw new Error("Could not create strict-zone mask.");
-  maskCtx.fillStyle = "#fff";
-  maskCtx.beginPath();
-  for (const zone of args.zones) drawZonePath(maskCtx, zone, args.width, args.height);
-  maskCtx.fill("nonzero");
-  if (args.featherPx <= 0) return mask;
-
-  const feathered = document.createElement("canvas");
-  feathered.width = args.width;
-  feathered.height = args.height;
-  const featherCtx = feathered.getContext("2d");
-  if (!featherCtx) throw new Error("Could not create feathered strict-zone mask.");
-  featherCtx.filter = `blur(${args.featherPx}px)`;
-  featherCtx.drawImage(mask, 0, 0);
-  featherCtx.filter = "none";
-  featherCtx.drawImage(mask, 0, 0);
-  return feathered;
-}
-
-async function applyStrictZoneBoundaryComposite(args: {
-  generated: Parameters<AdvancedImageFinalImageProcessor>[0]["generated"];
-  nodeId: string;
-  now: string;
-  plan: Parameters<AdvancedImageFinalImageProcessor>[0]["plan"];
-  projectId: string | null;
-  requestId: string;
-  session: AdvancedImageSession;
-}): Promise<Parameters<AdvancedImageFinalImageProcessor>[0]["generated"]> {
-  if (args.plan.strictCompositeSteps.length === 0) return args.generated;
-  if (args.plan.globalAdjustmentActive) {
-    console.info("[ImageCreationAdvanced strict composite] skipped because a global adjustment is active", {
-      requestId: args.requestId,
-      strictCorrectionIds: args.plan.strictCorrectionIds,
-    });
-    return {
-      ...args.generated,
-      raw: {
-        ...(typeof args.generated.raw === "object" && args.generated.raw ? args.generated.raw : {}),
-        strictCompositeApplied: false,
-        strictCompositeSkipped: "global-adjustment-active",
-      },
-    };
-  }
-
-  const generatedImage = await createImageElement(args.generated.imageUrl);
-  const masterImage = await createImageElement(args.session.master.imageUrl);
-  const width = Math.max(1, args.session.master.width);
-  const height = Math.max(1, args.session.master.height);
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Could not create strict composite canvas.");
-  ctx.drawImage(masterImage, 0, 0, width, height);
-
-  const activeIds = new Set(args.plan.activeCorrectionIds);
-  const activeZones = args.session.corrections
-    .filter((correction) => activeIds.has(correction.id) && correction.status === "active")
-    .map((correction) => correction.zone);
-  const zones = activeZones.length > 0
-    ? activeZones
-    : args.plan.strictCompositeSteps.map((step) => step.zone);
-  const featherPx = Math.max(0, ...args.plan.strictCompositeSteps.map((step) => step.featherPx));
-  const mask = buildFeatheredZoneMask({ featherPx, height, width, zones });
-
-  const generatedLayer = document.createElement("canvas");
-  generatedLayer.width = width;
-  generatedLayer.height = height;
-  const generatedCtx = generatedLayer.getContext("2d");
-  if (!generatedCtx) throw new Error("Could not create strict generated layer.");
-  generatedCtx.drawImage(generatedImage, 0, 0, width, height);
-  generatedCtx.globalCompositeOperation = "destination-in";
-  generatedCtx.drawImage(mask, 0, 0);
-  generatedCtx.globalCompositeOperation = "source-over";
-  ctx.drawImage(generatedLayer, 0, 0);
-
-  const blob = await canvasToBlob(canvas, "image/png");
-  const compositeHash = await hashBlobSha256(blob);
-  const safeNodeId = args.nodeId.replace(/[^a-zA-Z0-9_-]/g, "_");
-  const safeRequestId = args.requestId.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 80);
-  const mediaId = `advanced_image_strict_${safeNodeId}_${safeRequestId}_${compositeHash.slice(-8)}`;
-  const file = new File([blob], `${mediaId}.png`, { type: "image/png", lastModified: Date.parse(args.now) || Date.now() });
-  const uploaded = await uploadProjectMediaFile(file, {
-    mediaId,
-    policy: { preserveImageQuality: true },
-    projectId: args.projectId,
-  });
-  console.info("[ImageCreationAdvanced strict composite] applied", {
-    activeZoneCount: zones.length,
-    compositeHash,
-    requestId: args.requestId,
-    strictCorrectionIds: args.plan.strictCorrectionIds,
-  });
-  return {
-    ...args.generated,
-    height,
-    imageUrl: uploaded.url,
-    raw: {
-      ...(typeof args.generated.raw === "object" && args.generated.raw ? args.generated.raw : {}),
-      strictCompositeApplied: true,
-      strictCorrectionIds: args.plan.strictCorrectionIds,
-    },
-    s3Key: uploaded.s3Key,
-    width,
   };
 }
 
@@ -923,8 +788,6 @@ function ImageCreationAdvancedStudio({
         pendingCount: planToRun.batchPendingIds.length,
         refsTotal: planToRun.identityReferences.length + planToRun.directionReferences.length,
         requestId,
-        strictCorrectionIds: planToRun.strictCorrectionIds,
-        strictCorrectionsCount: planToRun.strictCorrectionIds.length,
       });
       try {
         const ok = await runAiJobWithNotification({ nodeId, label: "Image Creation Advanced" }, async () => {
@@ -941,12 +804,6 @@ function ImageCreationAdvancedStudio({
                   `[ImageCreationAdvanced cache] ${event.hit ? "HIT" : "MISS"} ${event.type} stateHash=${event.stateHash} key=${event.cacheKey}`,
                 );
               },
-              finalImageProcessor: (processorArgs) =>
-                applyStrictZoneBoundaryComposite({
-                  ...processorArgs,
-                  nodeId,
-                  projectId,
-                }),
               now,
               requestId,
               transport: createStreamGeminiTransport({
@@ -983,9 +840,6 @@ function ImageCreationAdvancedStudio({
           outputUrlPresent: Boolean(generationResult.workingImage.imageUrl),
           requestId,
           resolutionWarning: generationResult.resolutionWarning,
-          compositeApplied: generationResult.plan.strictCompositeSteps.length > 0,
-          strictCorrectionIds: generationResult.plan.strictCorrectionIds,
-          strictCorrectionsCount: generationResult.plan.strictCorrectionIds.length,
         });
         latestSessionRef.current = nextSession;
         onPatch({
@@ -1013,8 +867,6 @@ function ImageCreationAdvancedStudio({
           globalAdjustmentText: truncateForLog(planToRun.globalAdjustmentText ?? ""),
           pendingCount: planToRun.batchPendingIds.length,
           requestId,
-          strictCorrectionIds: planToRun.strictCorrectionIds,
-          strictCorrectionsCount: planToRun.strictCorrectionIds.length,
         });
         onPatch({
           advancedSession: safeSessionForNodeData(failedSession),
@@ -1028,7 +880,7 @@ function ImageCreationAdvancedStudio({
         window.setTimeout(() => setProgress(0), 900);
       }
     },
-    [authSession?.user?.email, nodeId, onPatch, projectId, runIdentityAnalysisInBackground, skipCostConfirm],
+    [authSession?.user?.email, nodeId, onPatch, runIdentityAnalysisInBackground, skipCostConfirm],
   );
 
   const confirmDraftCorrection = useCallback(async () => {
@@ -1610,12 +1462,6 @@ function ImageCreationAdvancedStudio({
               </p>
               <div className="mt-2 flex items-center gap-2 text-[10px] text-zinc-500">
                 {hasReference ? <ImageIcon size={12} className="text-yellow-200" /> : null}
-                {correction.strictZoneBoundary ? (
-                  <span className="inline-flex items-center gap-1 rounded-[8px] bg-sky-400/10 px-1.5 py-0.5 text-[9px] font-bold text-sky-200">
-                    <LockKeyhole size={10} />
-                    Strict
-                  </span>
-                ) : null}
                 {batch ? <span>#{batch}</span> : null}
                 {correction.analysisStatus === "failed" ? <span className="text-amber-200/80">Identity not anchored</span> : null}
               </div>
@@ -1652,7 +1498,6 @@ function ImageCreationAdvancedStudio({
           <span className={`min-w-0 flex-1 truncate text-[11px] text-zinc-300 ${state === "inactive" ? "line-through opacity-60" : ""}`}>
             {correction.userInstruction}
           </span>
-          {correction.strictZoneBoundary ? <LockKeyhole size={11} className="shrink-0 text-sky-200/80" /> : null}
           <span className="rounded-[8px] bg-white/[0.05] px-2 py-1 text-[9px] font-bold text-zinc-500">#{batch}</span>
           {hoveredPreviousCorrectionId === correction.id && cropUrl ? (
             <span className="pointer-events-none absolute right-full top-0 z-40 mr-3 h-28 w-36 overflow-hidden rounded-[10px] bg-zinc-950 shadow-2xl ring-1 ring-white/10">

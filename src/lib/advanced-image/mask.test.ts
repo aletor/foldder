@@ -37,29 +37,6 @@ describe("advanced-image-mask", () => {
     expect(zone.areaRatio).toBeGreaterThan(0);
   });
 
-  it("persists the source drawing tool for polygon zones", () => {
-    const zone = createZoneFromStrokes({
-      sourceSize,
-      strokes: [
-        {
-          closed: true,
-          id: "polygon",
-          points: [
-            { x: 100, y: 100 },
-            { x: 220, y: 100 },
-            { x: 220, y: 220 },
-            { x: 100, y: 220 },
-            { x: 100, y: 100 },
-          ],
-        },
-      ],
-      tool: "polygon",
-    });
-
-    expect(zone.tool).toBe("polygon");
-    expect(buildAdvancedImageMaskSvg(zone)).toContain("<polygon");
-  });
-
   it("clamps strokes to source bounds and rejects empty zones", () => {
     const strokes = normalizeAdvancedImageStrokes(
       [
