@@ -101,6 +101,12 @@ type LocalReferencePreview = {
   objectUrl: string;
 };
 
+type DependentActionRequest = {
+  correctionId: string;
+  dependentIds: string[];
+  type: "deactivate" | "delete";
+};
+
 const DEFAULT_SETTINGS: AdvancedImageGenerationSettings = {
   analysisModel: "gemini-2.5-flash",
   cropMaxSide: 768,
@@ -211,6 +217,10 @@ function primaryZonePoints(correction: AdvancedImageCorrection): AdvancedImagePo
   return correction.zone.strokes.find((stroke) => stroke.points.length > 0)?.points ?? [];
 }
 
+function isValidDraftZone(points: AdvancedImagePoint[], tool: AdvancedImageZoneTool): boolean {
+  return isValidClosedLasso(points, tool === "polygon" ? { minPoints: 4 } : undefined);
+}
+
 function revokeReferencePreviews(previews: LocalReferencePreview[]): void {
   for (const preview of previews) {
     URL.revokeObjectURL(preview.objectUrl);
@@ -237,6 +247,29 @@ function truncateForLog(value: string, max = 50): string {
 
 function globalAdjustmentPendingLabel(session: AdvancedImageSession | undefined): boolean {
   return session ? isAdvancedImageGlobalAdjustmentPending(session) : false;
+}
+
+function collectDirectDependentIds(corrections: AdvancedImageCorrection[], correctionId: string): string[] {
+  return corrections
+    .filter((correction) => correction.dependencies.includes(correctionId))
+    .map((correction) => correction.id);
+}
+
+function collectActiveDependentIds(corrections: AdvancedImageCorrection[], rootId: string): string[] {
+  const roots = new Set([rootId]);
+  const dependents = new Set<string>();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const correction of corrections) {
+      if (correction.status !== "active" || roots.has(correction.id) || dependents.has(correction.id)) continue;
+      if (correction.dependencies.some((dependencyId) => roots.has(dependencyId) || dependents.has(dependencyId))) {
+        dependents.add(correction.id);
+        changed = true;
+      }
+    }
+  }
+  return Array.from(dependents);
 }
 
 function createImageElement(src: string): Promise<HTMLImageElement> {
@@ -520,6 +553,7 @@ function ImageCreationAdvancedStudio({
   const [expandedPreviousCorrectionId, setExpandedPreviousCorrectionId] = useState<string | null>(null);
   const [hoveredPreviousCorrectionId, setHoveredPreviousCorrectionId] = useState<string | null>(null);
   const [openCardMenuId, setOpenCardMenuId] = useState<string | null>(null);
+  const [dependentActionRequest, setDependentActionRequest] = useState<DependentActionRequest | null>(null);
   const [promoteModalOpen, setPromoteModalOpen] = useState(false);
   const [referenceUploadError, setReferenceUploadError] = useState<string | null>(null);
   const [referenceUploading, setReferenceUploading] = useState(false);
@@ -1033,7 +1067,7 @@ function ImageCreationAdvancedStudio({
 
   const confirmDraftCorrection = useCallback(async () => {
       const base = session;
-      if (!base || !draftCanConfirm || !isValidClosedLasso(draftPoints) || referenceUploading) return null;
+      if (!base || !draftCanConfirm || !isValidDraftZone(draftPoints, activeDrawingTool) || referenceUploading) return null;
       const timestamp = new Date().toISOString();
       const closedPoints = draftPoints[0] === draftPoints[draftPoints.length - 1] ? draftPoints : [...draftPoints, draftPoints[0]];
       const text = draftText.trim() || "Use the attached visual reference in this marked area.";
@@ -1219,7 +1253,7 @@ function ImageCreationAdvancedStudio({
             : false;
           if (nearFirst && points.length >= 3) {
             const closed = [...points, first];
-            if (!isValidClosedLasso(closed)) return points;
+            if (!isValidDraftZone(closed, "polygon")) return points;
             setDrawingMode(false);
             setIsDrawing(false);
             setPolygonPreviewPoint(null);
@@ -1266,7 +1300,7 @@ function ImageCreationAdvancedStudio({
       const point = pointFromPointerEvent(event);
       const points = point ? [...draftPoints, point] : draftPoints;
       setIsDrawing(false);
-      if (isValidClosedLasso(points)) {
+      if (isValidDraftZone(points, "freehand")) {
         setDraftPoints([...points, points[0]]);
         setDrawingMode(false);
         setDraftText("");
@@ -1397,6 +1431,16 @@ function ImageCreationAdvancedStudio({
   const toggleCorrectionOnly = useCallback(
     (correctionId: string) => {
       if (!session) return;
+      const correction = session.corrections.find((item) => item.id === correctionId);
+      if (!correction) return;
+      if (correction.status === "active") {
+        const dependentIds = collectActiveDependentIds(session.corrections, correctionId);
+        if (dependentIds.length > 0) {
+          setDependentActionRequest({ correctionId, dependentIds, type: "deactivate" });
+          setOpenCardMenuId(null);
+          return;
+        }
+      }
       const timestamp = new Date().toISOString();
       const next = toggleCorrection(session, correctionId, { timestamp });
       onPatch({ advancedSession: safeSessionForNodeData(next), error: undefined, status: "editing" });
@@ -1407,6 +1451,12 @@ function ImageCreationAdvancedStudio({
   const deleteCorrectionOnly = useCallback(
     (correctionId: string) => {
       if (!session) return;
+      const dependentIds = collectActiveDependentIds(session.corrections, correctionId);
+      if (dependentIds.length > 0) {
+        setDependentActionRequest({ correctionId, dependentIds, type: "delete" });
+        setOpenCardMenuId(null);
+        return;
+      }
       const confirmed = window.confirm("Delete this correction? This cannot be undone outside the session undo stack.");
       if (!confirmed) return;
       const timestamp = new Date().toISOString();
@@ -1417,6 +1467,33 @@ function ImageCreationAdvancedStudio({
       onPatch({ advancedSession: safeSessionForNodeData(next), error: undefined, status: "editing" });
     },
     [onPatch, session],
+  );
+
+  const resolveDependentAction = useCallback(
+    (strategy: "cascade" | "keep") => {
+      if (!session || !dependentActionRequest) return;
+      const timestamp = new Date().toISOString();
+      const keepDependents = strategy === "keep";
+      const next = dependentActionRequest.type === "deactivate"
+        ? toggleCorrection(
+            session,
+            dependentActionRequest.correctionId,
+            { timestamp },
+            { dependentStrategy: keepDependents ? "keep" : "deactivate", status: "inactive" },
+          )
+        : removeCorrection(
+            session,
+            dependentActionRequest.correctionId,
+            { timestamp },
+            { dependentStrategy: keepDependents ? "keep" : "deactivate" },
+          );
+      setDependentActionRequest(null);
+      setOpenCardMenuId(null);
+      setEditingCorrectionId(null);
+      setExpandedPreviousCorrectionId(null);
+      onPatch({ advancedSession: safeSessionForNodeData(next), error: undefined, status: "editing" });
+    },
+    [dependentActionRequest, onPatch, session],
   );
 
   const updateGlobalText = useCallback(
@@ -1574,6 +1651,8 @@ function ImageCreationAdvancedStudio({
       const thumbnailUrl = correction.identityAnchor?.cropUrl || (section === "pending" ? referenceGridUrl : "");
       const hasReference = Boolean(correction.userReference || localRefs.length > 0);
       const batch = correctionBatchNumber(correction);
+      const dependencyCount = correction.dependencies.length;
+      const dependentCount = session ? collectDirectDependentIds(session.corrections, correction.id).length : 0;
       return (
         <div
           key={correction.id}
@@ -1616,6 +1695,17 @@ function ImageCreationAdvancedStudio({
                     Strict
                   </span>
                 ) : null}
+                {dependencyCount > 0 ? (
+                  <span className="inline-flex items-center gap-1 rounded-[8px] bg-violet-400/10 px-1.5 py-0.5 text-[9px] font-bold text-violet-200">
+                    <Layers3 size={10} />
+                    Depends {dependencyCount}
+                  </span>
+                ) : null}
+                {dependentCount > 0 ? (
+                  <span className="inline-flex items-center gap-1 rounded-[8px] bg-emerald-400/10 px-1.5 py-0.5 text-[9px] font-bold text-emerald-200">
+                    Used by {dependentCount}
+                  </span>
+                ) : null}
                 {batch ? <span>#{batch}</span> : null}
                 {correction.analysisStatus === "failed" ? <span className="text-amber-200/80">Identity not anchored</span> : null}
               </div>
@@ -1639,6 +1729,7 @@ function ImageCreationAdvancedStudio({
       }
       const cropUrl = correction.identityAnchor?.cropUrl;
       const batch = correctionBatchNumber(correction) ?? 1;
+      const hasDependencySignal = correction.dependencies.length > 0 || (session ? collectDirectDependentIds(session.corrections, correction.id).length > 0 : false);
       return (
         <button
           key={correction.id}
@@ -1653,6 +1744,7 @@ function ImageCreationAdvancedStudio({
             {correction.userInstruction}
           </span>
           {correction.strictZoneBoundary ? <LockKeyhole size={11} className="shrink-0 text-sky-200/80" /> : null}
+          {hasDependencySignal ? <Layers3 size={11} className="shrink-0 text-violet-200/80" /> : null}
           <span className="rounded-[8px] bg-white/[0.05] px-2 py-1 text-[9px] font-bold text-zinc-500">#{batch}</span>
           {hoveredPreviousCorrectionId === correction.id && cropUrl ? (
             <span className="pointer-events-none absolute right-full top-0 z-40 mr-3 h-28 w-36 overflow-hidden rounded-[10px] bg-zinc-950 shadow-2xl ring-1 ring-white/10">
@@ -2351,6 +2443,67 @@ function ImageCreationAdvancedStudio({
                   className="rounded-[10px] bg-yellow-300 px-4 py-2 text-[11px] font-black uppercase tracking-[0.12em] text-zinc-950 transition hover:bg-yellow-200 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
                 >
                   Promote
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+        {dependentActionRequest && session ? (
+          <div className="fixed inset-0 z-[100110] flex items-center justify-center bg-black/55 p-6 backdrop-blur-sm">
+            <div className="w-full max-w-[520px] rounded-[10px] bg-[#15161d] p-6 text-zinc-100 shadow-2xl ring-1 ring-white/12">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-violet-200/80">Dependencies</p>
+                  <h2 className="mt-2 text-[22px] font-black tracking-tight">
+                    {dependentActionRequest.type === "delete" ? "Delete dependent correction?" : "Deactivate dependent correction?"}
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setDependentActionRequest(null)}
+                  className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-white/[0.05] text-zinc-400 transition hover:bg-white/10 hover:text-white"
+                  aria-label="Close dependency modal"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              <p className="mt-4 text-[13px] leading-relaxed text-zinc-300">
+                This correction is used by {dependentActionRequest.dependentIds.length} active dependent correction{dependentActionRequest.dependentIds.length === 1 ? "" : "s"}. Keeping dependents active may make the next generation less coherent.
+              </p>
+              <div className="mt-4 rounded-[10px] bg-white/[0.045] p-3 text-[12px] text-zinc-400">
+                <p className="mb-2 font-bold text-zinc-200">Dependent changes</p>
+                <div className="grid gap-1.5">
+                  {dependentActionRequest.dependentIds.map((id) => {
+                    const dependent = session.corrections.find((correction) => correction.id === id);
+                    return (
+                      <div key={id} className="truncate rounded-[8px] bg-black/20 px-2 py-1.5">
+                        {dependent?.userInstruction ?? id}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="mt-6 flex flex-wrap justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setDependentActionRequest(null)}
+                  className="rounded-[10px] bg-white/[0.06] px-4 py-2 text-[11px] font-bold text-zinc-300 transition hover:bg-white/[0.1]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => resolveDependentAction("keep")}
+                  className="rounded-[10px] bg-white/[0.06] px-4 py-2 text-[11px] font-bold text-zinc-200 transition hover:bg-white/[0.1]"
+                >
+                  Keep dependents active
+                </button>
+                <button
+                  type="button"
+                  onClick={() => resolveDependentAction("cascade")}
+                  className="rounded-[10px] bg-yellow-300 px-4 py-2 text-[11px] font-black uppercase tracking-[0.12em] text-zinc-950 transition hover:bg-yellow-200"
+                >
+                  {dependentActionRequest.type === "delete" ? "Delete and deactivate" : "Deactivate dependents"}
                 </button>
               </div>
             </div>
