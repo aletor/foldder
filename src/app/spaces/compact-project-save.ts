@@ -25,6 +25,16 @@ const PREVIEW_KEYS = new Set([
   "referenceImageData",
 ]);
 
+const DROP_KEYS = new Set([
+  "redoStack",
+  "undoStack",
+  "localObjectUrl",
+  "objectURL",
+  "objectUrl",
+  "objectUrls",
+  "objectURLS",
+]);
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -94,6 +104,8 @@ async function compactValue(
   parent: Record<string, unknown> | null,
   options: Required<CompactOptions>,
 ): Promise<unknown> {
+  if (DROP_KEYS.has(key)) return undefined;
+
   if (typeof value === "string") {
     if (!isDataUrl(value)) return value;
     if (options.dropEmbeddedMedia) return undefined;
@@ -135,6 +147,7 @@ async function compactValue(
   if (isRecord(value)) {
     const next: Record<string, unknown> = {};
     for (const [childKey, childValue] of Object.entries(value)) {
+      if (DROP_KEYS.has(childKey)) continue;
       const compacted = await compactValue(childValue, childKey, value, options);
       if (compacted !== undefined) next[childKey] = compacted;
     }

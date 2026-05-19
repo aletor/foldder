@@ -299,6 +299,22 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
     ],
     dataSchema: {}
   },
+  imageCreationAdvanced: {
+    type: 'imageCreationAdvanced',
+    label: 'Image Creation Advanced',
+    description:
+      'Non destructive image creation: locks an immutable master, stores structured corrections, and rebuilds from master.',
+    inputs: [
+      { id: 'image', label: 'Master image', type: 'image', required: true },
+      { id: 'prompt', label: 'Prompt', type: 'prompt' },
+    ],
+    outputs: [{ id: 'image', label: 'Image Out', type: 'image' }],
+    dataSchema: {
+      advancedSession: 'AdvancedImageSession (master + structured corrections + working image)',
+      value: 'string (working/output image URL)',
+      type: 'image',
+    },
+  },
   backgroundRemover: {
     type: 'backgroundRemover',
     label: 'Background Remover',

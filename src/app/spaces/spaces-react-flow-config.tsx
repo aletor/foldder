@@ -35,6 +35,7 @@ import { PhotoRoomNode } from "./photo-room/PhotoRoomNode";
 import { CanvasGroupNode } from "./CanvasGroupNode";
 import { VideoEditorNode } from "./video-editor/VideoEditorNode";
 import { InspirationNode } from "./inspiration/InspirationNode";
+import { ImageCreationAdvancedNode } from "./image-creation-advanced/ImageCreationAdvancedNode";
 
 export const spacesInitialNodes: Node[] = [];
 
@@ -55,6 +56,7 @@ export const spacesNodeTypes: Record<string, ComponentType<any>> = {
   listado: ListadoNode,
   enhancer: EnhancerNode,
   nanoBanana: NanoBananaNode,
+  imageCreationAdvanced: ImageCreationAdvancedNode,
   backgroundRemover: BackgroundRemoverNode,
   mediaDescriber: MediaDescriberNode,
   imageExport: ImageExportNode,

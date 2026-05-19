@@ -755,6 +755,7 @@ export const NODE_TYPE_TO_FOLDDER_ICON: Record<string, FoldderIconKey> = {
   enhancer: 'enhance',
   grokProcessor: 'grok',
   nanoBanana: 'nano',
+  imageCreationAdvanced: 'nano',
   geminiVideo: 'video',
   video_editor: 'videoEdition',
   videoEditor: 'videoEdition',

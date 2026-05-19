@@ -10,6 +10,7 @@ type CostEndpointGuard = {
 const COST_ENDPOINTS: CostEndpointGuard[] = [
   { route: "src/app/api/beeble/[...path]/route.ts", services: ['"beeble-api"'] },
   { route: "src/app/api/gemini/analyze-areas/route.ts", services: ['"gemini-analyze"'] },
+  { route: "src/app/api/gemini/describe-region/route.ts", services: ['"gemini-analyze"'] },
   { route: "src/app/api/gemini/generate/route.ts", services: ['"gemini-nano"'] },
   { route: "src/app/api/gemini/generate-stream/route.ts", services: ['"gemini-nano"'] },
   { route: "src/app/api/gemini/reference-upload/route.ts", services: ['"gemini-nano"'] },

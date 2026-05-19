@@ -118,6 +118,16 @@ export const STUDIO_NODE_MANIFESTS = {
     supportsStandardShell: true,
     description: "Generación y edición de imágenes con referencias.",
   },
+  imageCreationAdvanced: {
+    nodeType: "imageCreationAdvanced",
+    appId: "imageCreationAdvanced",
+    label: "Imagen Avanzada",
+    chrome: "generator",
+    modulePath: "src/app/spaces/image-creation-advanced/ImageCreationAdvancedNode.tsx",
+    ownsPortal: true,
+    supportsStandardShell: true,
+    description: "Edición no destructiva de imagen desde master inmutable.",
+  },
   geminiVideo: {
     nodeType: "geminiVideo",
     appId: "geminiVideo",

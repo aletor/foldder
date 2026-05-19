@@ -446,6 +446,16 @@ function shouldPreserveImageQualityForMediaField(
   return false;
 }
 
+const SAVE_RUNTIME_KEYS = new Set([
+  "redoStack",
+  "undoStack",
+  "localObjectUrl",
+  "objectURL",
+  "objectUrl",
+  "objectUrls",
+  "objectURLS",
+]);
+
 export async function materializeProjectSpacesMediaForSave<TSpaces>(
   spaces: TSpaces,
   options: {
@@ -494,7 +504,14 @@ export async function materializeProjectSpacesMediaForSave<TSpaces>(
     if (value && typeof value === "object") {
       const source = value as Record<string, unknown>;
       const next: Record<string, unknown> = { ...source };
-      const entries = Object.entries(source);
+      let droppedRuntimeKey = false;
+      for (const runtimeKey of SAVE_RUNTIME_KEYS) {
+        if (runtimeKey in next) {
+          delete next[runtimeKey];
+          droppedRuntimeKey = true;
+        }
+      }
+      const entries = Object.entries(source).filter(([childKey]) => !SAVE_RUNTIME_KEYS.has(childKey));
       const children = await Promise.all(
         entries.map(async ([childKey, childValue]) => {
           try {
@@ -505,7 +522,7 @@ export async function materializeProjectSpacesMediaForSave<TSpaces>(
           }
         }),
       );
-      let any = false;
+      let any = droppedRuntimeKey;
       for (const { child, childKey } of children) {
         if (!child.changed) continue;
         any = true;

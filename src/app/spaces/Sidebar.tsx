@@ -46,6 +46,7 @@ const SIDEBAR_RASTER_ICON_SRC: Record<string, string> = {
   cine: '/cine_icon.svg',
   photoRoom: '/photoroom_icon.svg',
   nanoBanana: '/image_icon.svg',
+  imageCreationAdvanced: '/image_icon.svg',
   geminiVideo: '/video_icon.svg',
   presenter: '/presenter_icon.svg',
   video_editor: '/video_edition_icon.svg',
@@ -91,6 +92,7 @@ function tileBorderClassForType(type: string, fallback: string): string {
   if (type === 'cine') return 'border-[#b48689] group-hover/tile:border-[#b48689]';
   if (type === 'photoRoom') return 'border-[#63d4fd] group-hover/tile:border-[#63d4fd]';
   if (type === 'nanoBanana') return 'border-[#e0dc52] group-hover/tile:border-[#e0dc52]';
+  if (type === 'imageCreationAdvanced') return 'border-[#f6e56e] group-hover/tile:border-[#f6e56e]';
   if (type === 'geminiVideo') return 'border-[#ed9ae0] group-hover/tile:border-[#ed9ae0]';
   if (type === 'video_editor' || type === 'videoEditor') return 'border-[#ffb2c6] group-hover/tile:border-[#ffb2c6]';
   if (type === 'presenter') return 'border-[#8ac091] group-hover/tile:border-[#8ac091]';
@@ -105,6 +107,7 @@ const HIGH_END_PRODUCTION_ITEMS: Array<{ type: string; label: string }> = [
   { type: 'designer', label: 'Designer' },
   { type: 'photoRoom', label: 'PhotoRoom' },
   { type: 'nanoBanana', label: 'Image Creation' },
+  { type: 'imageCreationAdvanced', label: 'Image Advanced' },
   { type: 'geminiVideo', label: 'Video Creation' },
   { type: 'projectAssets', label: 'Foldder' },
   { type: 'presenter', label: 'Presenter' },
