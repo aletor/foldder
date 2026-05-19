@@ -12,11 +12,8 @@ import {
   Clock3,
   ImageIcon,
   Layers3,
-  LockKeyhole,
   Maximize2,
   MoreHorizontal,
-  Paintbrush,
-  Pentagon,
   Plus,
   RefreshCw,
   ShieldCheck,
@@ -43,7 +40,6 @@ import {
   type AdvancedImagePoint,
   type AdvancedImageSession,
   type AdvancedImageUserReferenceGrid,
-  type AdvancedImageZoneTool,
   type AdvancedImageWorkingImage,
 } from "@/lib/advanced-image/domain";
 import {
@@ -368,17 +364,11 @@ function ImageCreationAdvancedStudio({
   const [imageSize, setImageSize] = useState<{ height: number; width: number }>({ height: 1024, width: 1024 });
   const [generating, setGenerating] = useState(false);
   const [drawingMode, setDrawingMode] = useState(false);
-  const [drawingToolPickerOpen, setDrawingToolPickerOpen] = useState(false);
-  const [lastDrawingTool, setLastDrawingTool] = useState<AdvancedImageZoneTool>("freehand");
-  const [activeDrawingTool, setActiveDrawingTool] = useState<AdvancedImageZoneTool>("freehand");
   const [draftPoints, setDraftPoints] = useState<AdvancedImagePoint[]>([]);
-  const [polygonPreviewPoint, setPolygonPreviewPoint] = useState<AdvancedImagePoint | null>(null);
   const [draftReferences, setDraftReferences] = useState<LocalReferencePreview[]>([]);
-  const [draftStrictZoneBoundary, setDraftStrictZoneBoundary] = useState(false);
   const [draftText, setDraftText] = useState("");
   const [editingCorrectionId, setEditingCorrectionId] = useState<string | null>(null);
   const [editReferences, setEditReferences] = useState<LocalReferencePreview[]>([]);
-  const [editStrictZoneBoundary, setEditStrictZoneBoundary] = useState(false);
   const [editText, setEditText] = useState("");
   const [isDrawing, setIsDrawing] = useState(false);
   const [previousExpanded, setPreviousExpanded] = useState(false);
@@ -901,7 +891,7 @@ function ImageCreationAdvancedStudio({
             radius: 1.5,
           },
         ],
-        tool: activeDrawingTool,
+        tool: "freehand",
       });
       setReferenceUploadError(null);
       setReferenceUploading(true);
@@ -924,7 +914,6 @@ function ImageCreationAdvancedStudio({
         base,
         {
           id: correctionId,
-          strictZoneBoundary: draftStrictZoneBoundary,
           timestamp,
           userInstruction: text,
           userReference,
@@ -947,15 +936,13 @@ function ImageCreationAdvancedStudio({
         setDraftReferences([]);
       }
       setReferenceUploading(false);
-      setDraftStrictZoneBoundary(false);
       setDraftText("");
       setDraftPoints([]);
-      setPolygonPreviewPoint(null);
       setDrawingMode(false);
       setIsDrawing(false);
       return next;
     },
-    [activeDrawingTool, draftCanConfirm, draftPoints, draftReferences, draftStrictZoneBoundary, draftText, nodeId, onPatch, projectId, referenceUploading, session],
+    [draftCanConfirm, draftPoints, draftReferences, draftText, nodeId, onPatch, projectId, referenceUploading, session],
   );
 
   const startDrawingCorrection = useCallback(() => {
@@ -965,38 +952,21 @@ function ImageCreationAdvancedStudio({
     revokeReferencePreviews(editReferences);
     setEditReferences([]);
     setEditText("");
-    setEditStrictZoneBoundary(false);
     setEditingCorrectionId(null);
     setDraftReferences([]);
-    setDraftStrictZoneBoundary(false);
     setDraftText("");
     setDraftPoints([]);
-    setPolygonPreviewPoint(null);
-    setDrawingMode(false);
-    setDrawingToolPickerOpen(true);
+    setDrawingMode(true);
     setIsDrawing(false);
     onPatch({ advancedSession: safeSessionForNodeData(base), error: undefined, status: "editing" });
   }, [draftReferences, editReferences, ensureSession, onPatch]);
 
-  const chooseDrawingTool = useCallback((tool: AdvancedImageZoneTool) => {
-    setActiveDrawingTool(tool);
-    setLastDrawingTool(tool);
-    setDrawingToolPickerOpen(false);
-    setDraftPoints([]);
-    setPolygonPreviewPoint(null);
-    setDrawingMode(true);
-    setIsDrawing(false);
-  }, []);
-
   const cancelDrawing = useCallback(() => {
     revokeReferencePreviews(draftReferences);
     setDraftReferences([]);
-    setDraftStrictZoneBoundary(false);
     setDraftText("");
     setDraftPoints([]);
-    setPolygonPreviewPoint(null);
     setDrawingMode(false);
-    setDrawingToolPickerOpen(false);
     setIsDrawing(false);
     setReferenceUploadError(null);
   }, [draftReferences]);
@@ -1010,23 +980,16 @@ function ImageCreationAdvancedStudio({
   }, [editReferences]);
 
   useEffect(() => {
-    if (!drawingToolPickerOpen && !drawingMode && !draftReadyForPopover && !editingCorrectionId) return undefined;
+    if (!drawingMode && !draftReadyForPopover && !editingCorrectionId) return undefined;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         if (editingCorrectionId) cancelCorrectionEditor();
         else cancelDrawing();
-      } else if (
-        drawingMode &&
-        activeDrawingTool === "polygon" &&
-        (event.key === "Backspace" || (event.key.toLowerCase() === "z" && (event.metaKey || event.ctrlKey)))
-      ) {
-        event.preventDefault();
-        setDraftPoints((points) => points.slice(0, -1));
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeDrawingTool, cancelCorrectionEditor, cancelDrawing, draftReadyForPopover, drawingMode, drawingToolPickerOpen, editingCorrectionId]);
+  }, [cancelCorrectionEditor, cancelDrawing, draftReadyForPopover, drawingMode, editingCorrectionId]);
 
   useEffect(() => {
     if (!expandedPreviousCorrectionId) return undefined;
@@ -1060,36 +1023,12 @@ function ImageCreationAdvancedStudio({
       if (!drawingMode || generating) return;
       const point = pointFromPointerEvent(event);
       if (!point) return;
-      if (activeDrawingTool === "polygon") {
-        event.preventDefault();
-        setDraftPoints((points) => {
-          const first = points[0];
-          const thresholdX = renderedRect.width > 0 && session ? (10 / renderedRect.width) * session.master.width : 10;
-          const thresholdY = renderedRect.height > 0 && session ? (10 / renderedRect.height) * session.master.height : 10;
-          const nearFirst = first
-            ? Math.hypot((point.x - first.x) / Math.max(1, thresholdX), (point.y - first.y) / Math.max(1, thresholdY)) <= 1
-            : false;
-          if (nearFirst && points.length >= 3) {
-            const closed = [...points, first];
-            if (!isValidClosedLasso(closed)) return points;
-            setDrawingMode(false);
-            setIsDrawing(false);
-            setPolygonPreviewPoint(null);
-            setDraftText("");
-            return closed;
-          }
-          if (nearFirst && points.length < 3) return points;
-          setIsDrawing(true);
-          return [...points, point];
-        });
-        return;
-      }
       event.currentTarget.setPointerCapture(event.pointerId);
       event.preventDefault();
       setIsDrawing(true);
       setDraftPoints([point]);
     },
-    [activeDrawingTool, drawingMode, generating, pointFromPointerEvent, renderedRect.height, renderedRect.width, session],
+    [drawingMode, generating, pointFromPointerEvent],
   );
 
   const handleLassoPointerMove = useCallback(
@@ -1098,22 +1037,18 @@ function ImageCreationAdvancedStudio({
       const point = pointFromPointerEvent(event);
       if (!point) return;
       event.preventDefault();
-      if (activeDrawingTool === "polygon") {
-        setPolygonPreviewPoint(point);
-        return;
-      }
       setDraftPoints((points) => {
         const last = points[points.length - 1];
         if (last && Math.hypot(last.x - point.x, last.y - point.y) < 2) return points;
         return [...points, point];
       });
     },
-    [activeDrawingTool, drawingMode, generating, isDrawing, pointFromPointerEvent],
+    [drawingMode, generating, isDrawing, pointFromPointerEvent],
   );
 
   const handleLassoPointerUp = useCallback(
     (event: React.PointerEvent<SVGSVGElement>) => {
-      if (!drawingMode || !isDrawing || generating || activeDrawingTool === "polygon") return;
+      if (!drawingMode || !isDrawing || generating) return;
       event.preventDefault();
       const point = pointFromPointerEvent(event);
       const points = point ? [...draftPoints, point] : draftPoints;
@@ -1127,7 +1062,7 @@ function ImageCreationAdvancedStudio({
       setDraftPoints([]);
       setDrawingMode(true);
     },
-    [activeDrawingTool, draftPoints, drawingMode, generating, isDrawing, pointFromPointerEvent],
+    [draftPoints, drawingMode, generating, isDrawing, pointFromPointerEvent],
   );
 
   const addDraftReferenceFiles = useCallback((files: FileList | null) => {
@@ -1158,7 +1093,6 @@ function ImageCreationAdvancedStudio({
       revokeReferencePreviews(editReferences);
       setEditReferences([]);
       setEditText(correction.userInstruction);
-      setEditStrictZoneBoundary(correction.strictZoneBoundary === true);
       setEditingCorrectionId(correction.id);
       setReferenceUploadError(null);
     },
@@ -1210,7 +1144,6 @@ function ImageCreationAdvancedStudio({
         {
           userInstruction: text,
           userReference,
-          strictZoneBoundary: editStrictZoneBoundary,
         },
         { timestamp },
       );
@@ -1226,7 +1159,6 @@ function ImageCreationAdvancedStudio({
         setEditReferences([]);
       }
       setEditText("");
-      setEditStrictZoneBoundary(false);
       setEditingCorrectionId(null);
       onPatch({ advancedSession: safeSessionForNodeData(next), error: undefined, status: "editing" });
     } catch (error) {
@@ -1235,7 +1167,7 @@ function ImageCreationAdvancedStudio({
     } finally {
       setReferenceUploading(false);
     }
-  }, [editReferences, editStrictZoneBoundary, editText, editingCorrection, nodeId, onPatch, projectId, referenceUploading, session]);
+  }, [editReferences, editText, editingCorrection, nodeId, onPatch, projectId, referenceUploading, session]);
 
   const retryCorrection = useCallback(
     (correctionId: string) => {
@@ -1622,18 +1554,6 @@ function ImageCreationAdvancedStudio({
                                 strokeLinejoin="round"
                                 strokeWidth={Math.max(2, session.master.width * 0.0018)}
                               />
-                              {correction.zone.tool === "polygon"
-                                ? points.slice(0, -1).map((point, index) => (
-                                    <circle
-                                      key={`${correction.id}-vertex-${index}`}
-                                      cx={point.x}
-                                      cy={point.y}
-                                      r={Math.max(3, session.master.width * 0.0016)}
-                                      fill={stroke}
-                                      opacity={0.86}
-                                    />
-                                  ))
-                                : null}
                             </g>
                           );
                         })}
@@ -1658,45 +1578,6 @@ function ImageCreationAdvancedStudio({
                               style={{ filter: "drop-shadow(0 0 2px rgba(0,0,0,.9)) drop-shadow(0 0 5px rgba(0,0,0,.75))" }}
                             />
                           ) : null}
-                          {activeDrawingTool === "polygon" && draftPoints.length > 0 && polygonPreviewPoint ? (
-                            <line
-                              x1={draftPoints[draftPoints.length - 1].x}
-                              y1={draftPoints[draftPoints.length - 1].y}
-                              x2={polygonPreviewPoint.x}
-                              y2={polygonPreviewPoint.y}
-                              stroke="rgba(255,255,255,0.68)"
-                              strokeDasharray={`${Math.max(8, session.master.width * 0.004)} ${Math.max(8, session.master.width * 0.004)}`}
-                              strokeLinecap="round"
-                              strokeWidth={Math.max(2, session.master.width * 0.0013)}
-                              style={{ filter: "drop-shadow(0 0 2px rgba(0,0,0,.9))" }}
-                            />
-                          ) : null}
-                          {activeDrawingTool === "polygon"
-                            ? draftPoints.map((point, index) => {
-                                const first = draftPoints[0];
-                                const thresholdX = renderedRect.width > 0 ? (10 / renderedRect.width) * session.master.width : 10;
-                                const thresholdY = renderedRect.height > 0 ? (10 / renderedRect.height) * session.master.height : 10;
-                                const closing =
-                                  index === 0 &&
-                                  draftPoints.length >= 3 &&
-                                  polygonPreviewPoint &&
-                                  Math.hypot(
-                                    (polygonPreviewPoint.x - first.x) / Math.max(1, thresholdX),
-                                    (polygonPreviewPoint.y - first.y) / Math.max(1, thresholdY),
-                                  ) <= 1;
-                                return (
-                                  <circle
-                                    key={`${point.x}-${point.y}-${index}`}
-                                    cx={point.x}
-                                    cy={point.y}
-                                    r={Math.max(closing ? 8 : 4, session.master.width * (closing ? 0.004 : 0.002))}
-                                    fill={closing ? "#facc15" : "#ffffff"}
-                                    stroke="rgba(0,0,0,0.75)"
-                                    strokeWidth={Math.max(1, session.master.width * 0.0008)}
-                                  />
-                                );
-                              })
-                            : null}
                         </>
                       )}
                     </svg>
@@ -1768,18 +1649,6 @@ function ImageCreationAdvancedStudio({
                           {referenceUploadError}
                         </p>
                       ) : null}
-                      <label className="mt-3 flex cursor-pointer items-start gap-2 rounded-[10px] bg-white/[0.045] p-2 text-[11px] leading-snug text-zinc-300">
-                        <input
-                          type="checkbox"
-                          checked={draftStrictZoneBoundary}
-                          onChange={(event) => setDraftStrictZoneBoundary(event.target.checked)}
-                          className="mt-0.5 h-3.5 w-3.5 accent-yellow-300"
-                        />
-                        <span>
-                          <span className="block font-bold text-zinc-100">Limit strictly to the drawn zone</span>
-                          <span className="text-zinc-500">Recommended for walls, floors, patterns or textures.</span>
-                        </span>
-                      </label>
                       <div className="mt-3 flex items-center justify-end gap-2">
                         <button
                           type="button"
@@ -1884,18 +1753,6 @@ function ImageCreationAdvancedStudio({
                           {referenceUploadError}
                         </p>
                       ) : null}
-                      <label className="mt-3 flex cursor-pointer items-start gap-2 rounded-[10px] bg-white/[0.045] p-2 text-[11px] leading-snug text-zinc-300">
-                        <input
-                          type="checkbox"
-                          checked={editStrictZoneBoundary}
-                          onChange={(event) => setEditStrictZoneBoundary(event.target.checked)}
-                          className="mt-0.5 h-3.5 w-3.5 accent-yellow-300"
-                        />
-                        <span>
-                          <span className="block font-bold text-zinc-100">Limit strictly to the drawn zone</span>
-                          <span className="text-zinc-500">Recommended for walls, floors, patterns or textures.</span>
-                        </span>
-                      </label>
                       <div className="mt-3 flex items-center justify-end gap-2">
                         <button
                           type="button"
@@ -1935,38 +1792,7 @@ function ImageCreationAdvancedStudio({
             ) : null}
             {drawingMode ? (
               <div className="pointer-events-none absolute left-1/2 top-6 -translate-x-1/2 rounded-[10px] bg-black/65 px-4 py-2 text-[11px] font-bold text-white shadow-2xl backdrop-blur">
-                {activeDrawingTool === "polygon" ? "Click vertices. Close on the first point." : "Draw the area to edit"}
-              </div>
-            ) : null}
-            {drawingToolPickerOpen ? (
-              <div className="absolute left-1/2 top-6 z-30 w-[320px] -translate-x-1/2 rounded-[10px] bg-black/75 p-3 text-zinc-100 shadow-2xl ring-1 ring-white/12 backdrop-blur-xl">
-                <p className="mb-2 text-[10px] font-black uppercase tracking-[0.16em] text-zinc-500">Select tool</p>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => chooseDrawingTool("freehand")}
-                    className={`flex items-center justify-center gap-2 rounded-[10px] px-3 py-2 text-[11px] font-black uppercase tracking-[0.12em] transition ${
-                      lastDrawingTool === "freehand"
-                        ? "bg-yellow-300 text-zinc-950"
-                        : "bg-white/[0.07] text-zinc-200 hover:bg-white/[0.12]"
-                    }`}
-                  >
-                    <Paintbrush size={14} />
-                    Freehand
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => chooseDrawingTool("polygon")}
-                    className={`flex items-center justify-center gap-2 rounded-[10px] px-3 py-2 text-[11px] font-black uppercase tracking-[0.12em] transition ${
-                      lastDrawingTool === "polygon"
-                        ? "bg-yellow-300 text-zinc-950"
-                        : "bg-white/[0.07] text-zinc-200 hover:bg-white/[0.12]"
-                    }`}
-                  >
-                    <Pentagon size={14} />
-                    Polygon
-                  </button>
-                </div>
+                Draw the area to edit
               </div>
             ) : null}
             <div className="absolute bottom-6 left-1/2 flex -translate-x-1/2 flex-col items-center gap-2">
@@ -2114,9 +1940,9 @@ function ImageCreationAdvancedStudio({
             </section>
 
             <section className="mt-5 space-y-3">
-              {drawingMode || drawingToolPickerOpen ? (
+              {drawingMode ? (
                 <div className="rounded-[10px] bg-yellow-300/10 px-4 py-3 text-[11px] font-bold text-yellow-100">
-                  {drawingToolPickerOpen ? "Choosing drawing tool..." : "Drawing new correction..."}
+                  Drawing new correction...
                 </div>
               ) : (
                 <button

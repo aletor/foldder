@@ -54,7 +54,6 @@ export type AdvancedImagePromptCorrectionBlock = {
   referenceId?: string;
   referenceRole?: AdvancedImagePipelineReferenceRole;
   referenceSourceImageCount?: number;
-  strictZoneBoundary: boolean;
   zone: AdvancedImagePromptZone;
 };
 
@@ -81,12 +80,6 @@ export type AdvancedImagePostCompositeStep = {
   featherPx: number;
 };
 
-export type AdvancedImageStrictCompositeStep = {
-  correctionId: string;
-  featherPx: number;
-  zone: AdvancedImageZone;
-};
-
 export type AdvancedImageGenerationPlan = {
   activeCorrectionIds: string[];
   appliedPreserveCorrectionIds: string[];
@@ -110,8 +103,6 @@ export type AdvancedImageGenerationPlan = {
   prompt: AdvancedImageStructuredPrompt;
   promptVersion: string;
   referenceLimit: number;
-  strictCompositeSteps: AdvancedImageStrictCompositeStep[];
-  strictCorrectionIds: string[];
   model: string;
   resolution: string;
 };
@@ -190,13 +181,6 @@ export function buildAdvancedImageGenerationPlan(
   const postCompositeSteps = active
     .filter((correction) => correction.pinMode === "composite" && correction.identityAnchor)
     .map((correction) => postCompositeStepFromCorrection(correction, options.featherPx ?? 12));
-  const strictCompositeSteps = active
-    .filter((correction) => correction.strictZoneBoundary === true)
-    .map((correction) => ({
-      correctionId: correction.id,
-      featherPx: 8,
-      zone: correction.zone,
-    }));
   const prompt = buildStructuredPrompt({
     active,
     appliedCorrections,
@@ -225,7 +209,6 @@ export function buildAdvancedImageGenerationPlan(
     baseFinalImageStateHash: computeFinalImageStateHash(session),
     geminiStateHash,
     postCompositeSteps: postCompositeSteps.map((step) => [step.correctionId, step.cropHash, step.featherPx]),
-    strictCompositeSteps: strictCompositeSteps.map((step) => [step.correctionId, step.zone.geometryHash, step.featherPx]),
   });
   return {
     ok: true,
@@ -255,8 +238,6 @@ export function buildAdvancedImageGenerationPlan(
       prompt,
       promptVersion: session.generationSettings.promptVersion,
       referenceLimit: maxReferenceImages,
-      strictCompositeSteps,
-      strictCorrectionIds: strictCompositeSteps.map((step) => step.correctionId),
       model: session.generationSettings.model,
       resolution: session.generationSettings.resolution,
     },
@@ -285,8 +266,7 @@ export function isCorrectionAppliedToWorking(
   return (
     snapshot.geometryHash === correction.geometryHash &&
     snapshot.instructionHash === correction.instructionHash &&
-    snapshot.referenceHash === correction.referenceHash &&
-    (snapshot.strictZoneBoundary ?? false) === (correction.strictZoneBoundary === true)
+    snapshot.referenceHash === correction.referenceHash
   );
 }
 
@@ -558,7 +538,6 @@ function buildStructuredPrompt(args: {
         pinMode: correction.pinMode,
         referenceId: identityRef?.id,
         referenceRole: identityRef?.role,
-        strictZoneBoundary: correction.strictZoneBoundary === true,
         zone: promptZoneFromZone(correction.zone),
       };
     }),
@@ -575,7 +554,6 @@ function buildStructuredPrompt(args: {
         referenceLayout: directionRef?.layout,
         referenceRole: directionRef?.role,
         referenceSourceImageCount: correction.userReference?.sourceImageCount,
-        strictZoneBoundary: correction.strictZoneBoundary === true,
         zone: promptZoneFromZone(correction.zone),
       };
     }),
@@ -657,7 +635,6 @@ function buildPromptText(
       ? "- For local changes, preserve everything outside marked zones. Only the GLOBAL TRANSFORMATION may alter the full-scene lighting, color, ambiance or style."
       : "- Preserve everything outside marked zones EXACTLY. Do not modify any area outside the explicitly marked zones.",
     "- Preserve original composition, camera angle, perspective, lighting continuity, texture fidelity and resolution.",
-    "- Each marked zone defines the exact boundary of its change. Do NOT extend any change to similar visual elements outside the marked zone, even if they appear to be part of the same object, wall, floor, surface, pattern or texture. Treat the boundary of each marked zone as a hard cutoff.",
     "- Do not draw colored masks, outlines, guide circles, labels, zone borders, UI marks or reference annotations into the final image.",
     "- Output one clean final image at the same resolution and aspect ratio as the BASE IMAGE.",
     "- If a described zone cannot be reliably located in the base image, apply the change in the most plausible nearby area and prioritize visual coherence over literal location matching.",
@@ -697,11 +674,6 @@ function renderPreserveBlock(block: AdvancedImagePromptCorrectionBlock, index: n
       "- Reference image originally used for this change is not included in this call; preserve from written description.",
     );
   }
-  if (block.strictZoneBoundary) {
-    lines.push(
-      "- Strict zone boundary: enabled. This change MUST be confined to the exact marked zone only. Do NOT modify any area outside this specific zone under any circumstances.",
-    );
-  }
   return lines;
 }
 
@@ -720,11 +692,6 @@ function renderApplyBlock(block: AdvancedImagePromptCorrectionBlock, index: numb
     }
   } else if (block.referenceSourceImageCount) {
     lines.push("- A visual direction grid exists but is not included due to the reference limit. Use the written instruction only.");
-  }
-  if (block.strictZoneBoundary) {
-    lines.push(
-      "- Strict zone boundary: enabled. This change MUST be confined to the exact marked zone only. Do NOT modify any area outside this specific zone under any circumstances.",
-    );
   }
   return lines;
 }
@@ -813,6 +780,5 @@ export function computeAdvancedImagePlanFingerprint(plan: AdvancedImageGeneratio
     omittedIdentityReferenceCorrectionIds: plan.omittedIdentityReferenceCorrectionIds,
     postCompositeSteps: plan.postCompositeSteps.map((step) => [step.correctionId, step.cropHash, step.featherPx]),
     promptText: plan.prompt.promptText,
-    strictCompositeSteps: plan.strictCompositeSteps.map((step) => [step.correctionId, step.zone.geometryHash, step.featherPx]),
   });
 }

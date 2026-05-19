@@ -321,7 +321,6 @@ function buildCorrectionSnapshots(
           geometryHash: correction.geometryHash,
           instructionHash: correction.instructionHash,
           referenceHash: correction.referenceHash,
-          strictZoneBoundary: correction.strictZoneBoundary === true,
         },
       ]),
   );

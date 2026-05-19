@@ -3,7 +3,7 @@ export type AdvancedImagePinMode = "anchor" | "composite" | "regenerate";
 export type AdvancedImageAnalysisStatus = "pending" | "ready" | "failed";
 export type AdvancedImageGenerationStatus = "idle" | "generating" | "failed";
 export type AdvancedImageGlobalAdjustmentStatus = "draft" | "applied";
-export type AdvancedImageZoneTool = "freehand" | "polygon";
+export type AdvancedImageZoneTool = "freehand";
 
 export type AdvancedImagePoint = {
   x: number;
@@ -103,7 +103,6 @@ export type AdvancedImageCorrection = {
   pinMode: AdvancedImagePinMode;
   referenceHash?: string;
   status: AdvancedImageCorrectionStatus;
-  strictZoneBoundary: boolean;
   timestamp: string;
   userInstruction: string;
   userReference?: AdvancedImageUserReferenceGrid;
@@ -118,7 +117,6 @@ export type AdvancedImageWorkingImage = {
       geometryHash: string;
       instructionHash: string;
       referenceHash?: string;
-      strictZoneBoundary?: boolean;
     }
   >;
   generatedAt: string;
@@ -219,7 +217,6 @@ export type AdvancedImageAddCorrectionInput = {
   identityAnchor?: AdvancedImageIdentityAnchor;
   pinMode?: AdvancedImagePinMode;
   status?: AdvancedImageCorrectionStatus;
-  strictZoneBoundary?: boolean;
   timestamp: string;
   userInstruction: string;
   userReference?: AdvancedImageUserReferenceGrid;
@@ -233,7 +230,6 @@ export type AdvancedImageEditCorrectionPatch = Partial<
     | "identityAnchor"
     | "pinMode"
     | "status"
-    | "strictZoneBoundary"
     | "userInstruction"
     | "userReference"
     | "zone"
@@ -825,7 +821,6 @@ function normalizeCorrectionInput(input: AdvancedImageAddCorrectionInput, order:
     pinMode: input.pinMode ?? "anchor",
     referenceHash: undefined,
     status: input.status ?? "active",
-    strictZoneBoundary: input.strictZoneBoundary === true,
     timestamp: input.timestamp,
     userInstruction: input.userInstruction,
     userReference: input.userReference,
@@ -863,20 +858,23 @@ function normalizeGlobalText(text: string | undefined): string {
   return (text ?? "").trim().replace(/\s+/g, " ");
 }
 
-function normalizeCorrection(correction: AdvancedImageCorrection): AdvancedImageCorrection {
+function normalizeCorrection(correction: AdvancedImageCorrection & { strictZoneBoundary?: unknown }): AdvancedImageCorrection {
+  const cloned = cloneJson(correction) as AdvancedImageCorrection & { strictZoneBoundary?: unknown };
+  const { strictZoneBoundary: _strictZoneBoundary, ...rest } = cloned;
+  const zone: AdvancedImageZone = { ...cloneJson(correction.zone), tool: "freehand" };
   return {
-    ...cloneJson(correction),
+    ...rest,
     appliedBatchNumber:
       typeof correction.appliedBatchNumber === "number" && correction.appliedBatchNumber > 0
         ? Math.floor(correction.appliedBatchNumber)
         : undefined,
     dependencies: uniqueSorted(correction.dependencies ?? []),
-    geometryHash: computeZoneGeometryHash(correction.zone),
+    geometryHash: computeZoneGeometryHash(zone),
     instructionHash: computeInstructionHash(correction.userInstruction),
     pinMode: correction.pinMode ?? "anchor",
     referenceHash: correction.userReference ? computeReferenceHash(correction.userReference) : undefined,
-    strictZoneBoundary: correction.strictZoneBoundary === true,
     userInstruction: normalizeInstruction(correction.userInstruction),
+    zone,
   };
 }
 
@@ -908,7 +906,6 @@ function correctionGenerationHashInput(
     order: correction.order,
     pinMode: normalizedPinMode,
     referenceHash: correction.referenceHash ?? null,
-    strictZoneBoundary: correction.strictZoneBoundary === true,
   };
 }
 
