@@ -33,6 +33,7 @@ import {
   markAdvancedImageCorrectionRuntime,
   promoteToMaster,
   removeCorrection,
+  reorderCorrections,
   stableHash,
   setAdvancedImageWorkingImage,
   toggleCorrection,
@@ -552,6 +553,7 @@ function ImageCreationAdvancedStudio({
   const [previousExpanded, setPreviousExpanded] = useState(false);
   const [expandedPreviousCorrectionId, setExpandedPreviousCorrectionId] = useState<string | null>(null);
   const [hoveredPreviousCorrectionId, setHoveredPreviousCorrectionId] = useState<string | null>(null);
+  const [draggingCorrectionId, setDraggingCorrectionId] = useState<string | null>(null);
   const [openCardMenuId, setOpenCardMenuId] = useState<string | null>(null);
   const [dependentActionRequest, setDependentActionRequest] = useState<DependentActionRequest | null>(null);
   const [promoteModalOpen, setPromoteModalOpen] = useState(false);
@@ -1496,6 +1498,24 @@ function ImageCreationAdvancedStudio({
     [dependentActionRequest, onPatch, session],
   );
 
+  const moveCorrectionBefore = useCallback(
+    (dragId: string, targetId: string) => {
+      if (!session || dragId === targetId) return;
+      const ordered = session.corrections.slice().sort((a, b) => a.order - b.order).map((correction) => correction.id);
+      const from = ordered.indexOf(dragId);
+      const to = ordered.indexOf(targetId);
+      if (from < 0 || to < 0 || from === to) return;
+      const nextOrder = ordered.filter((id) => id !== dragId);
+      nextOrder.splice(to > from ? to - 1 : to, 0, dragId);
+      const timestamp = new Date().toISOString();
+      const next = reorderCorrections(session, nextOrder, { timestamp });
+      setDraggingCorrectionId(null);
+      setOpenCardMenuId(null);
+      onPatch({ advancedSession: safeSessionForNodeData(next), error: undefined, status: "editing" });
+    },
+    [onPatch, session],
+  );
+
   const updateGlobalText = useCallback(
     (text: string) => {
       const base = ensureSession();
@@ -1657,7 +1677,22 @@ function ImageCreationAdvancedStudio({
         <div
           key={correction.id}
           onClick={() => openCorrectionEditor(correction)}
-          className={`cursor-pointer rounded-[10px] border p-3 transition hover:bg-white/[0.07] ${correctionCardTone(state, section)}`}
+          draggable={!generating && !drawingMode}
+          onDragStart={(event) => {
+            event.dataTransfer.effectAllowed = "move";
+            event.dataTransfer.setData("text/plain", correction.id);
+            setDraggingCorrectionId(correction.id);
+          }}
+          onDragEnd={() => setDraggingCorrectionId(null)}
+          onDragOver={(event) => {
+            if (draggingCorrectionId && draggingCorrectionId !== correction.id) event.preventDefault();
+          }}
+          onDrop={(event) => {
+            event.preventDefault();
+            const dragId = event.dataTransfer.getData("text/plain") || draggingCorrectionId;
+            if (dragId) moveCorrectionBefore(dragId, correction.id);
+          }}
+          className={`cursor-pointer rounded-[10px] border p-3 transition hover:bg-white/[0.07] ${draggingCorrectionId === correction.id ? "opacity-45" : ""} ${correctionCardTone(state, section)}`}
         >
           <div className="flex gap-3">
             <div className="h-[74px] w-[92px] shrink-0 overflow-hidden rounded-[10px] bg-zinc-800/70">
@@ -1717,7 +1752,7 @@ function ImageCreationAdvancedStudio({
         </div>
       );
     },
-    [localReferencesByCorrectionId, openCorrectionEditor, renderCardMenu, session],
+    [drawingMode, draggingCorrectionId, generating, localReferencesByCorrectionId, moveCorrectionBefore, openCorrectionEditor, renderCardMenu, session],
   );
 
   const renderCompactPreviousRow = useCallback(
@@ -1734,10 +1769,25 @@ function ImageCreationAdvancedStudio({
         <button
           key={correction.id}
           type="button"
+          draggable={!generating && !drawingMode}
           onClick={() => setExpandedPreviousCorrectionId(correction.id)}
+          onDragStart={(event) => {
+            event.dataTransfer.effectAllowed = "move";
+            event.dataTransfer.setData("text/plain", correction.id);
+            setDraggingCorrectionId(correction.id);
+          }}
+          onDragEnd={() => setDraggingCorrectionId(null)}
+          onDragOver={(event) => {
+            if (draggingCorrectionId && draggingCorrectionId !== correction.id) event.preventDefault();
+          }}
+          onDrop={(event) => {
+            event.preventDefault();
+            const dragId = event.dataTransfer.getData("text/plain") || draggingCorrectionId;
+            if (dragId) moveCorrectionBefore(dragId, correction.id);
+          }}
           onMouseEnter={() => setHoveredPreviousCorrectionId(correction.id)}
           onMouseLeave={() => setHoveredPreviousCorrectionId(null)}
-          className="relative flex w-full items-center gap-2 rounded-[10px] px-2.5 py-2 text-left transition hover:bg-white/[0.055]"
+          className={`relative flex w-full items-center gap-2 rounded-[10px] px-2.5 py-2 text-left transition hover:bg-white/[0.055] ${draggingCorrectionId === correction.id ? "opacity-45" : ""}`}
         >
           <span className={`h-2 w-2 shrink-0 rounded-full ${state === "inactive" ? "bg-zinc-500" : "bg-emerald-300"}`} />
           <span className={`min-w-0 flex-1 truncate text-[11px] text-zinc-300 ${state === "inactive" ? "line-through opacity-60" : ""}`}>
@@ -1754,7 +1804,7 @@ function ImageCreationAdvancedStudio({
         </button>
       );
     },
-    [expandedPreviousCorrectionId, hoveredPreviousCorrectionId, renderFullCorrectionCard, session],
+    [draggingCorrectionId, drawingMode, expandedPreviousCorrectionId, generating, hoveredPreviousCorrectionId, moveCorrectionBefore, renderFullCorrectionCard, session],
   );
 
   const generateButtonLabel = useMemo(() => {
