@@ -205,7 +205,12 @@ describe("advanced-image-client-orchestrator", () => {
     expect(secondBatch.plan.appliedPreserveCorrectionIds).toEqual(["a", "b"]);
     expect(secondBatch.plan.batchPendingIds).toEqual(["c"]);
     expect(secondBatch.plan.baseImage.contentHash).toBe(masterHash);
-    expect(secondBatch.plan.prompt.promptText).toContain("PRESERVE EXISTING CHANGES:");
+    expect(secondBatch.plan.previousStateReference).toMatchObject({
+      id: "REF-STATE-PREVIOUS",
+      url: firstBatch.workingImage.imageUrl,
+    });
+    expect(secondBatch.plan.prompt.promptText).toContain("REF-STATE-PREVIOUS");
+    expect(secondBatch.plan.prompt.promptText).toContain("RECONSTRUCT ACCEPTED PREVIOUS CHANGES:");
     expect(secondBatch.plan.prompt.promptText).toContain("APPLY NEW CHANGES:");
     expect(secondBatch.session.master.contentHash).toBe(masterHash);
     expect(secondBatch.workingImage.activeCorrectionIds).toEqual(["a", "b", "c"]);

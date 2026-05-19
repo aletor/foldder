@@ -8,7 +8,7 @@ export type AdvancedImageGeminiReferenceInput = {
   correctionId?: string;
   hash: string;
   label: "MASTER" | string;
-  role: "base" | "direction" | "identity";
+  role: "base" | "direction" | "identity" | "previous_state";
   s3Key?: string;
   url: string;
 };
@@ -252,6 +252,17 @@ function buildReferenceInputs(plan: AdvancedImageGenerationPlan): AdvancedImageG
       s3Key: plan.baseImage.s3Key,
       url: plan.baseImage.imageUrl,
     },
+    ...(plan.previousStateReference
+      ? [
+          {
+            hash: plan.previousStateReference.hash,
+            label: plan.previousStateReference.label,
+            role: plan.previousStateReference.role,
+            s3Key: plan.previousStateReference.s3Key,
+            url: plan.previousStateReference.url,
+          } satisfies AdvancedImageGeminiReferenceInput,
+        ]
+      : []),
     ...plan.identityReferences.map(referenceInputFromPlanReference),
     ...plan.directionReferences.map(referenceInputFromPlanReference),
   ];

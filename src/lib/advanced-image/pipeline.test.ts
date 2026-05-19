@@ -183,6 +183,10 @@ describe("advanced-image-pipeline", () => {
     if (!result.ok) return;
     expect(result.plan.batchPendingIds).toEqual(["current"]);
     expect(result.plan.appliedPreserveCorrectionIds).toEqual(["previous"]);
+    expect(result.plan.previousStateReference).toMatchObject({
+      id: "REF-STATE-PREVIOUS",
+      url: "/api/spaces/s3-file?key=knowledge-files/generated/working.png",
+    });
     expect(result.plan.directionReferences.map((ref) => ref.id)).toEqual(["REF-DIR-previous", "REF-DIR-current"]);
     expect(result.plan.identityReferences.map((ref) => ref.id)).toEqual(["REF-ID-previous"]);
     expect(result.plan.prompt.blocks.find((block) => block.correctionId === "current")?.referenceId).toBe("REF-DIR-current");
@@ -302,14 +306,19 @@ describe("advanced-image-pipeline", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.plan.referenceLimit).toBe(3);
-    expect(result.plan.identityReferences.map((ref) => ref.correctionId)).toEqual(["composite-far", "overlap"]);
-    expect(result.plan.identityReferences[0].priorityReasons).toContain("composite-critical");
-    expect(result.plan.identityReferences[1].priorityReasons).toContain("spatial-overlap");
-    expect(result.plan.omittedIdentityReferenceCorrectionIds).toEqual(["recent"]);
+    expect(result.plan.previousStateReference?.id).toBe("REF-STATE-PREVIOUS");
+    expect(
+      result.plan.identityReferences.length +
+        result.plan.directionReferences.length +
+        (result.plan.previousStateReference ? 1 : 0),
+    ).toBeLessThanOrEqual(result.plan.referenceLimit);
+    expect(result.plan.identityReferences.map((ref) => ref.correctionId)).toEqual(["overlap"]);
+    expect(result.plan.identityReferences[0].priorityReasons).toContain("spatial-overlap");
+    expect(result.plan.omittedIdentityReferenceCorrectionIds).toEqual(["composite-far", "recent"]);
     expect(result.plan.consolidationRecommended).toBe(true);
   });
 
-  it("prioritizes pending directions, composite anchors, applied directions and then anchor identities at the reference limit", () => {
+  it("prioritizes previous state, pending directions, composite anchors, applied directions and then anchor identities at the reference limit", () => {
     let s = session({ maxReferenceImages: 3 });
     s = addCorrection(s, correction("composite", { reference: grid("composite") }), {
       timestamp: "2026-05-18T10:01:00.000Z",
@@ -329,9 +338,15 @@ describe("advanced-image-pipeline", () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
+    expect(result.plan.previousStateReference?.id).toBe("REF-STATE-PREVIOUS");
+    expect(
+      result.plan.identityReferences.length +
+        result.plan.directionReferences.length +
+        (result.plan.previousStateReference ? 1 : 0),
+    ).toBeLessThanOrEqual(result.plan.referenceLimit);
     expect(result.plan.identityReferences.map((ref) => ref.id)).toEqual(["REF-ID-composite"]);
-    expect(result.plan.directionReferences.map((ref) => ref.id)).toEqual(["REF-DIR-composite", "REF-DIR-pending"]);
-    expect(result.plan.omittedDirectionReferenceCorrectionIds).toEqual(["anchor"]);
+    expect(result.plan.directionReferences.map((ref) => ref.id)).toEqual(["REF-DIR-pending"]);
+    expect(result.plan.omittedDirectionReferenceCorrectionIds).toEqual(["composite", "anchor"]);
     expect(result.plan.omittedIdentityReferenceCorrectionIds).toEqual(["anchor"]);
     expect(result.plan.prompt.promptText).toContain(
       "Reference image originally used for this change is not included in this call; preserve from written description.",
@@ -359,13 +374,18 @@ describe("advanced-image-pipeline", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.plan.referenceLimit).toBe(4);
-    expect(result.plan.identityReferences.length + result.plan.directionReferences.length).toBeLessThanOrEqual(4);
+    expect(result.plan.previousStateReference?.id).toBe("REF-STATE-PREVIOUS");
+    expect(
+      result.plan.identityReferences.length +
+        result.plan.directionReferences.length +
+        (result.plan.previousStateReference ? 1 : 0),
+    ).toBeLessThanOrEqual(4);
     expect(result.plan.directionReferences.map((ref) => ref.id)).toEqual([
       "REF-DIR-applied-a",
-      "REF-DIR-applied-b",
       "REF-DIR-pending-a",
       "REF-DIR-pending-b",
     ]);
+    expect(result.plan.omittedDirectionReferenceCorrectionIds).toEqual(["applied-b"]);
     expect(result.plan.omittedIdentityReferenceCorrectionIds).toEqual(["applied-a", "applied-b"]);
     expect(result.plan.consolidationRecommended).toBe(true);
   });

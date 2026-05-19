@@ -1089,7 +1089,10 @@ function ImageCreationAdvancedStudio({
       const willCallGemini = preliminaryPlan.activeCorrectionIds.length > 0 || preliminaryPlan.globalAdjustmentActive;
       let approvedForCost = !willCallGemini || skipCostConfirm;
       if (!skipCostConfirm && willCallGemini) {
-        const referenceCount = preliminaryPlan.identityReferences.length + preliminaryPlan.directionReferences.length;
+        const referenceCount =
+          preliminaryPlan.identityReferences.length +
+          preliminaryPlan.directionReferences.length +
+          (preliminaryPlan.previousStateReference ? 1 : 0);
         const zoneAnalysisNote = batchPendingIds.length > 0
           ? " A lightweight zone-location analysis may run first so the selected areas are described precisely."
           : "";
@@ -1158,7 +1161,11 @@ function ImageCreationAdvancedStudio({
         globalAdjustmentApplied: planToRun.globalAdjustmentActive,
         globalAdjustmentText: truncateForLog(planToRun.globalAdjustmentText ?? ""),
         pendingCount: planToRun.batchPendingIds.length,
-        refsTotal: planToRun.identityReferences.length + planToRun.directionReferences.length,
+        previousStateRefSent: Boolean(planToRun.previousStateReference),
+        refsTotal:
+          planToRun.identityReferences.length +
+          planToRun.directionReferences.length +
+          (planToRun.previousStateReference ? 1 : 0),
         requestId,
         zoneAnalysisCount,
       });
@@ -2482,7 +2489,7 @@ function ImageCreationAdvancedStudio({
                 Generation is guarded
               </div>
               {plan
-                ? `Plan ready: ${plan.identityReferences.length} identity refs, ${plan.directionReferences.length} direction refs, ${plan.batchPendingIds.length} pending${plan.globalAdjustmentActive ? ", global active" : ""}${plan.globalAdjustmentPending ? ", global pending" : ""}.`
+                ? `Plan ready: ${plan.previousStateReference ? "1 previous state ref, " : ""}${plan.identityReferences.length} identity refs, ${plan.directionReferences.length} direction refs, ${plan.batchPendingIds.length} pending${plan.globalAdjustmentActive ? ", global active" : ""}${plan.globalAdjustmentPending ? ", global pending" : ""}.`
                 : "Gemini only runs when you apply, retry, or change active corrections."}
             </section>
           </aside>

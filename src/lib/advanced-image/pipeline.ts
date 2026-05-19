@@ -26,6 +26,16 @@ export type AdvancedImagePipelineBaseImage = {
 
 export type AdvancedImagePipelineReferenceRole = "direction" | "identity";
 
+export type AdvancedImagePipelineStateReference = {
+  activeCorrectionIds: string[];
+  hash: string;
+  id: "REF-STATE-PREVIOUS";
+  label: "REF-STATE-PREVIOUS";
+  role: "previous_state";
+  s3Key?: string;
+  url: string;
+};
+
 export type AdvancedImagePipelineReference = {
   correctionId: string;
   hash: string;
@@ -116,6 +126,7 @@ export type AdvancedImageGenerationPlan = {
   omittedDirectionReferenceCorrectionIds: string[];
   omittedIdentityReferenceCorrectionIds: string[];
   postCompositeSteps: AdvancedImagePostCompositeStep[];
+  previousStateReference?: AdvancedImagePipelineStateReference;
   prompt: AdvancedImageStructuredPrompt;
   promptVersion: string;
   referenceLimit: number;
@@ -196,9 +207,10 @@ export function buildAdvancedImageGenerationPlan(
     configuredReferenceImages,
     operationalReferenceLimitForModel(session.generationSettings.model),
   );
+  const previousStateReference = previousStateReferenceFromSession(session);
   const referenceSelection = selectOperationalReferences({
     appliedCorrections,
-    maxReferenceImages,
+    maxReferenceImages: Math.max(0, maxReferenceImages - (previousStateReference ? 1 : 0)),
     pendingCorrections,
     strongDependencySourceIds,
   });
@@ -213,6 +225,7 @@ export function buildAdvancedImageGenerationPlan(
     identityReferences: referenceSelection.identityReferences,
     master: session.master,
     pendingCorrections,
+    previousStateReference,
     strongDependencySourcesByPendingId,
     globalAdjustmentText: globalAdjustmentActive ? globalAdjustmentText : undefined,
   });
@@ -220,16 +233,22 @@ export function buildAdvancedImageGenerationPlan(
     .filter((block) => block.phase === "preserve")
     .map((block) => block.correctionId);
 
-  const referenceCount = referenceSelection.identityReferences.length + referenceSelection.directionReferences.length;
+  const referenceCount =
+    referenceSelection.identityReferences.length +
+    referenceSelection.directionReferences.length +
+    (previousStateReference ? 1 : 0);
   const geminiStateHash = stableHash({
     appliedPreserveCorrectionIds,
     baseGeminiStateHash: computeGeminiGenerationStateHash(session),
     batchPendingIds: pendingCorrections.map((correction) => correction.id),
-      directionReferences: referenceSelection.directionReferences.map((ref) => [ref.id, ref.hash]),
-      globalAdjustment: {
-        text: globalAdjustmentActive ? globalAdjustmentText : "",
-      },
-      identityReferences: referenceSelection.identityReferences.map((ref) => [ref.id, ref.hash]),
+    directionReferences: referenceSelection.directionReferences.map((ref) => [ref.id, ref.hash]),
+    globalAdjustment: {
+      text: globalAdjustmentActive ? globalAdjustmentText : "",
+    },
+    identityReferences: referenceSelection.identityReferences.map((ref) => [ref.id, ref.hash]),
+    previousStateReference: previousStateReference
+      ? [previousStateReference.id, previousStateReference.hash, previousStateReference.activeCorrectionIds]
+      : null,
     omittedDirectionReferenceCorrectionIds: referenceSelection.omittedDirectionReferenceCorrectionIds,
     omittedIdentityReferenceCorrectionIds: referenceSelection.omittedIdentityReferenceCorrectionIds,
     promptText: prompt.promptText,
@@ -264,6 +283,7 @@ export function buildAdvancedImageGenerationPlan(
       omittedDirectionReferenceCorrectionIds: referenceSelection.omittedDirectionReferenceCorrectionIds,
       omittedIdentityReferenceCorrectionIds: referenceSelection.omittedIdentityReferenceCorrectionIds,
       postCompositeSteps,
+      previousStateReference,
       prompt,
       promptVersion: session.generationSettings.promptVersion,
       referenceLimit: maxReferenceImages,
@@ -545,6 +565,30 @@ function directionReferenceFromGrid(
   };
 }
 
+function previousStateReferenceFromSession(session: AdvancedImageSession): AdvancedImagePipelineStateReference | undefined {
+  const working = session.workingImage;
+  if (!working?.imageUrl) return undefined;
+  const activeCorrectionIds = new Set(activeCorrections(session).map((correction) => correction.id));
+  const hasAcceptedLocalChanges = working.activeCorrectionIds.some((id) => activeCorrectionIds.has(id));
+  const hasAcceptedGlobalChange = isAdvancedImageGlobalAdjustmentActive(session) && session.globalAdjustment?.status === "applied";
+  if (!hasAcceptedLocalChanges && !hasAcceptedGlobalChange) return undefined;
+  return {
+    activeCorrectionIds: [...working.activeCorrectionIds],
+    hash: stableHash({
+      activeCorrectionIds: working.activeCorrectionIds,
+      generatedAt: working.generatedAt,
+      imageUrl: working.imageUrl,
+      s3Key: working.s3Key,
+      sourceHash: working.sourceHash,
+    }),
+    id: "REF-STATE-PREVIOUS",
+    label: "REF-STATE-PREVIOUS",
+    role: "previous_state",
+    s3Key: working.s3Key,
+    url: working.imageUrl,
+  };
+}
+
 function postCompositeStepFromCorrection(
   correction: AdvancedImageCorrection,
   featherPx: number,
@@ -568,6 +612,7 @@ function buildStructuredPrompt(args: {
   identityReferences: AdvancedImagePipelineReference[];
   master: AdvancedImageMaster;
   pendingCorrections: AdvancedImageCorrection[];
+  previousStateReference?: AdvancedImagePipelineStateReference;
   strongDependencySourcesByPendingId?: Map<string, Array<{ correction: AdvancedImageCorrection; reason: string }>>;
 }): AdvancedImageStructuredPrompt {
   const identityRefByCorrectionId = new Map(args.identityReferences.map((ref) => [ref.correctionId, ref]));
@@ -639,7 +684,7 @@ function buildStructuredPrompt(args: {
     blocks,
     finalInstruction,
     globalAdjustmentText: args.globalAdjustmentText,
-    promptText: buildPromptText(args.master, blocks, finalInstruction, args.globalAdjustmentText),
+    promptText: buildPromptText(args.master, blocks, finalInstruction, args.globalAdjustmentText, args.previousStateReference),
   };
 }
 
@@ -698,24 +743,33 @@ function buildPromptText(
   blocks: AdvancedImagePromptCorrectionBlock[],
   finalInstruction: string,
   globalAdjustmentText?: string,
+  previousStateReference?: AdvancedImagePipelineStateReference,
 ): string {
   const preserveBlocks = blocks.filter((block) => block.phase === "preserve");
   const combinedBlocks = blocks.filter((block) => block.phase === "combined");
   const applyBlocks = blocks.filter((block) => block.phase === "apply");
   const dependencyLines = buildDependencyLines(blocks);
   const hasGlobalAdjustment = Boolean(globalAdjustmentText?.trim());
+  const hasPreviousState = Boolean(previousStateReference);
   const lines = [
     "IMAGE CREATION ADVANCED - NON DESTRUCTIVE BATCH EDIT",
     `BASE IMAGE: ${master.id} (${master.width}x${master.height}, hash ${master.contentHash})`,
     "",
-    "Editing BASE IMAGE. Apply the listed corrections coherently in one generation pass.",
+    hasPreviousState
+      ? "Editing BASE IMAGE. Rebuild the accepted previous state shown in REF-STATE-PREVIOUS from the immutable master, then apply the listed new corrections coherently in one generation pass."
+      : "Editing BASE IMAGE. Apply the listed corrections coherently in one generation pass.",
     "",
     "REFERENCE IMAGE ORDER:",
     "- BASE IMAGE is the original immutable master image.",
+    ...(hasPreviousState
+      ? [
+          "- REF-STATE-PREVIOUS is the last accepted generated state. Use it as the complete visual target for all accepted previous changes, but rebuild them from BASE IMAGE rather than using it as the pixel base.",
+        ]
+      : []),
     "- REF-ID-* images are identity anchors from previous accepted corrections. Use them to preserve visual identity.",
     "- REF-DIR-* images are visual direction references for new corrections. Treat them strictly as style/material/subject guidance. Never reproduce, paste, embed or recreate the reference images themselves in the output.",
     "",
-    "PRESERVE EXISTING CHANGES:",
+    "RECONSTRUCT ACCEPTED PREVIOUS CHANGES:",
   ];
   if (preserveBlocks.length === 0) {
     lines.push("- None.");
@@ -741,12 +795,18 @@ function buildPromptText(
       "GLOBAL TRANSFORMATION (applied to entire image):",
       globalAdjustmentText!.trim(),
       "",
-      "Apply this transformation to the full image. Adjust lighting, color palette, ambiance, atmosphere or style as required. Preserve the structural composition, subjects, objects and all PRESERVE EXISTING CHANGES and APPLY NEW CHANGES described above. The global transformation should affect the overall scene mood while keeping individual elements coherent with their descriptions.",
+      "Apply this transformation to the full image. Adjust lighting, color palette, ambiance, atmosphere or style as required. Preserve the structural composition, subjects, objects and all RECONSTRUCT ACCEPTED PREVIOUS CHANGES and APPLY NEW CHANGES described above. The global transformation should affect the overall scene mood while keeping individual elements coherent with their descriptions.",
     );
   }
   lines.push(
     "",
     "CRITICAL FINAL RULES:",
+    ...(hasPreviousState
+      ? [
+          "- First reconstruct every accepted previous change represented by REF-STATE-PREVIOUS and the RECONSTRUCT ACCEPTED PREVIOUS CHANGES section. The output must include those accepted changes unless a new local override explicitly changes them.",
+          "- REF-STATE-PREVIOUS is not the pixel base; BASE IMAGE remains the source of maximum-quality pixels. Use REF-STATE-PREVIOUS only to know what the accepted state must look like.",
+        ]
+      : []),
     hasGlobalAdjustment
       ? "- Only modify the explicitly marked zones for local changes. The GLOBAL TRANSFORMATION affects the entire image."
       : "- Only modify the explicitly marked zones.",
@@ -770,9 +830,10 @@ function buildPromptText(
 
 function renderPreserveBlock(block: AdvancedImagePromptCorrectionBlock, index: number): string[] {
   const lines = [
-    `PRESERVE EXISTING CHANGE ${index} (${block.correctionId}):`,
+    `RECONSTRUCT ACCEPTED PREVIOUS CHANGE ${index} (${block.correctionId}):`,
     `- Zone: ${formatZone(block.zone)}`,
     `- Original instruction: ${block.instruction}.`,
+    "- Rebuild this accepted previous correction from the BASE IMAGE and keep it visible in the final output. It does not exist in the BASE IMAGE, so it must be recreated, not merely preserved.",
     "- Reconstruct this previous correction only inside this exact marked zone. Do not broaden, mirror, duplicate or reinterpret it on unmarked similar elements.",
   ];
   if (block.identityDescription && block.referenceId && block.referenceRole === "identity") {
@@ -889,7 +950,7 @@ function buildDependencyLines(blocks: AdvancedImagePromptCorrectionBlock[]): str
   for (const block of blocks) {
     if (block.phase === "preserve") {
       preserveIndex += 1;
-      labelById.set(block.correctionId, `PRESERVE EXISTING CHANGE ${preserveIndex} (${shortInstructionLabel(block.instruction)})`);
+      labelById.set(block.correctionId, `RECONSTRUCT ACCEPTED PREVIOUS CHANGE ${preserveIndex} (${shortInstructionLabel(block.instruction)})`);
     } else if (block.phase === "combined") {
       applyIndex += 1;
       labelById.set(block.correctionId, `APPLY RESOLVED CHANGE ${applyIndex} (${shortInstructionLabel(block.instruction)})`);
@@ -968,6 +1029,9 @@ export function computeAdvancedImagePlanFingerprint(plan: AdvancedImageGeneratio
     omittedDirectionReferenceCorrectionIds: plan.omittedDirectionReferenceCorrectionIds,
     omittedIdentityReferenceCorrectionIds: plan.omittedIdentityReferenceCorrectionIds,
     postCompositeSteps: plan.postCompositeSteps.map((step) => [step.correctionId, step.cropHash, step.featherPx]),
+    previousStateReference: plan.previousStateReference
+      ? [plan.previousStateReference.id, plan.previousStateReference.hash, plan.previousStateReference.activeCorrectionIds]
+      : null,
     promptText: plan.prompt.promptText,
   });
 }
