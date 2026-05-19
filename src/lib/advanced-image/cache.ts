@@ -1,6 +1,6 @@
 import type { AdvancedImageGenerationPlan } from "./pipeline";
 
-export type AdvancedImageCacheKind = "final-image" | "gemini-raw" | "payload-reference";
+export type AdvancedImageCacheKind = "dependency-instruction" | "final-image" | "gemini-raw" | "payload-reference";
 
 export type AdvancedImageCacheRecord<TValue> = {
   createdAt: string;
@@ -51,6 +51,16 @@ export type AdvancedImageCachedPayloadReference = {
   s3Key?: string;
   uploadedAt: string;
   url: string;
+};
+
+export type AdvancedImageCachedResolvedDependencyInstruction = {
+  dependencyId: string;
+  hash: string;
+  model?: string;
+  modifierId: string;
+  raw?: unknown;
+  resolvedAt: string;
+  resolvedInstruction: string;
 };
 
 export type AdvancedImageCacheWriteOptions = {
@@ -135,6 +145,10 @@ export function getAdvancedImageFinalCacheKey(plan: AdvancedImageGenerationPlan)
 
 export function getAdvancedImagePayloadReferenceCacheKey(referenceHash: string): string {
   return `advanced-image/payload-reference/${referenceHash}`;
+}
+
+export function getAdvancedImageDependencyInstructionCacheKey(hash: string): string {
+  return `advanced-image/dependency-instruction/${hash}`;
 }
 
 export async function readAdvancedImageGeminiRawCache(
@@ -228,6 +242,40 @@ export async function writeAdvancedImagePayloadReferenceCache(
     metadata: {
       role: value.role,
       s3Key: value.s3Key,
+    },
+    options,
+    value,
+  });
+}
+
+export async function readAdvancedImageDependencyInstructionCache(
+  store: AdvancedImageCacheStore,
+  hash: string,
+  now: string,
+  context?: AdvancedImageCacheContext,
+): Promise<AdvancedImageCacheReadResult<AdvancedImageCachedResolvedDependencyInstruction>> {
+  return readAdvancedImageCache<AdvancedImageCachedResolvedDependencyInstruction>(
+    store,
+    getAdvancedImageDependencyInstructionCacheKey(hash),
+    now,
+    context,
+  );
+}
+
+export async function writeAdvancedImageDependencyInstructionCache(
+  store: AdvancedImageCacheStore,
+  value: AdvancedImageCachedResolvedDependencyInstruction,
+  options: AdvancedImageCacheWriteOptions,
+  context?: AdvancedImageCacheContext,
+): Promise<AdvancedImageCacheRecord<AdvancedImageCachedResolvedDependencyInstruction>> {
+  return writeAdvancedImageCache(store, {
+    context,
+    key: getAdvancedImageDependencyInstructionCacheKey(value.hash),
+    kind: "dependency-instruction",
+    metadata: {
+      dependencyId: value.dependencyId,
+      modifierId: value.modifierId,
+      model: value.model,
     },
     options,
     value,

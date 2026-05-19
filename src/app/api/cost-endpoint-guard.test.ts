@@ -14,6 +14,7 @@ const COST_ENDPOINTS: CostEndpointGuard[] = [
   { route: "src/app/api/gemini/generate/route.ts", services: ['"gemini-nano"'] },
   { route: "src/app/api/gemini/generate-stream/route.ts", services: ['"gemini-nano"'] },
   { route: "src/app/api/gemini/reference-upload/route.ts", services: ['"gemini-nano"'] },
+  { route: "src/app/api/gemini/resolve-correction-dependency/route.ts", services: ['"gemini-analyze"'] },
   { route: "src/app/api/gemini/video/route.ts", services: ['"gemini-veo"'] },
   { route: "src/app/api/grok/generate/route.ts", services: ['"grok-video"'] },
   { route: "src/app/api/grok/status/[id]/route.ts", services: ['"grok-status"'] },

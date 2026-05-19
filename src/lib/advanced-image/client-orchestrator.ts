@@ -22,6 +22,7 @@ import {
   type AdvancedImageGeminiTransport,
 } from "./gemini-adapter";
 import { buildAdvancedImageGenerationPlan, type AdvancedImageGenerationPlan } from "./pipeline";
+import type { AdvancedImageResolvedStrongDependency } from "./dependency-resolution";
 
 export type AdvancedImageGenerationLogger = (event: {
   cacheKey: string;
@@ -50,6 +51,7 @@ export type AdvancedImageClientGenerationOptions = {
   now: string;
   finalImageProcessor?: AdvancedImageFinalImageProcessor;
   requestId: string;
+  resolvedStrongDependencies?: AdvancedImageResolvedStrongDependency[];
   transport: AdvancedImageGeminiTransport;
   userEmail: string;
 };
@@ -69,6 +71,7 @@ export async function runAdvancedImageClientGeneration(
 ): Promise<AdvancedImageClientGenerationResult> {
   const planResult = buildAdvancedImageGenerationPlan(session, {
     batchPendingIds: options.batchPendingIds,
+    resolvedStrongDependencies: options.resolvedStrongDependencies,
   });
   if (!planResult.ok) {
     throw new AdvancedImageGeminiAdapterError("Advanced image generation plan failed.", [
