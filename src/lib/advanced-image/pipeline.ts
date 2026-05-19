@@ -14,7 +14,6 @@ import {
   type AdvancedImageZone,
 } from "./domain";
 import { computeZoneOverlapMetrics } from "./mask";
-import type { AdvancedImageResolvedStrongDependency } from "./dependency-resolution";
 
 export type AdvancedImagePipelineBaseImage = {
   contentHash: string;
@@ -59,12 +58,6 @@ export type AdvancedImagePromptCorrectionBlock = {
   zone: AdvancedImagePromptZone;
 };
 
-export type AdvancedImagePromptCombinedBlock = {
-  dependency: AdvancedImagePromptCorrectionBlock;
-  modifier: AdvancedImagePromptCorrectionBlock;
-  resolved: AdvancedImageResolvedStrongDependency;
-};
-
 export type AdvancedImagePromptZone = {
   areaRatio: number;
   bbox: AdvancedImageBox;
@@ -74,7 +67,6 @@ export type AdvancedImagePromptZone = {
 
 export type AdvancedImageStructuredPrompt = {
   blocks: AdvancedImagePromptCorrectionBlock[];
-  combinedBlocks: AdvancedImagePromptCombinedBlock[];
   finalInstruction: string;
   globalAdjustmentText?: string;
   promptText: string;
@@ -142,7 +134,6 @@ export type AdvancedImageGenerationPlanResult =
 export type AdvancedImageBuildGenerationPlanOptions = {
   batchPendingIds?: string[];
   featherPx?: number;
-  resolvedStrongDependencies?: AdvancedImageResolvedStrongDependency[];
 };
 
 export function buildAdvancedImageGenerationPlan(
@@ -213,7 +204,6 @@ export function buildAdvancedImageGenerationPlan(
     identityReferences: referenceSelection.identityReferences,
     master: session.master,
     pendingCorrections,
-    resolvedStrongDependencies: options.resolvedStrongDependencies ?? [],
     globalAdjustmentText: globalAdjustmentActive ? globalAdjustmentText : undefined,
   });
 
@@ -230,12 +220,6 @@ export function buildAdvancedImageGenerationPlan(
     omittedDirectionReferenceCorrectionIds: referenceSelection.omittedDirectionReferenceCorrectionIds,
     omittedIdentityReferenceCorrectionIds: referenceSelection.omittedIdentityReferenceCorrectionIds,
     promptText: prompt.promptText,
-    resolvedStrongDependencies: (options.resolvedStrongDependencies ?? []).map((item) => [
-      item.dependencyId,
-      item.modifierId,
-      item.hash,
-      item.resolvedInstruction,
-    ]),
   });
   const finalImageStateHash = stableHash({
     baseFinalImageStateHash: computeFinalImageStateHash(session),
@@ -554,68 +538,54 @@ function buildStructuredPrompt(args: {
   identityReferences: AdvancedImagePipelineReference[];
   master: AdvancedImageMaster;
   pendingCorrections: AdvancedImageCorrection[];
-  resolvedStrongDependencies: AdvancedImageResolvedStrongDependency[];
 }): AdvancedImageStructuredPrompt {
   const identityRefByCorrectionId = new Map(args.identityReferences.map((ref) => [ref.correctionId, ref]));
   const directionRefByCorrectionId = new Map(args.directionReferences.map((ref) => [ref.correctionId, ref]));
-  const blockByCorrectionId = new Map<string, AdvancedImagePromptCorrectionBlock>();
-  for (const correction of args.appliedCorrections) {
-    const identityRef = identityRefByCorrectionId.get(correction.id);
-    const directionRef = directionRefByCorrectionId.get(correction.id);
-    blockByCorrectionId.set(correction.id, {
-      correctionId: correction.id,
-      dependencies: correction.dependencies,
-      identityDescription: correction.identityAnchor?.description,
-      instruction: correction.userInstruction,
-      originalReferenceId: directionRef?.id,
-      originalReferenceLayout: directionRef?.layout,
-      originalReferenceRole: directionRef ? ("direction" as const) : undefined,
-      originalReferenceSourceImageCount: correction.userReference?.sourceImageCount,
-      phase: "preserve" as const,
-      pinMode: correction.pinMode,
-      referenceId: identityRef?.id,
-      referenceRole: identityRef?.role,
-      strictZoneBoundary: correction.strictZoneBoundary === true,
-      zone: promptZoneFromZone(correction.zone),
-    });
-  }
-  for (const correction of args.pendingCorrections) {
-    const directionRef = directionRefByCorrectionId.get(correction.id);
-    blockByCorrectionId.set(correction.id, {
-      correctionId: correction.id,
-      dependencies: correction.dependencies,
-      identityDescription: correction.identityAnchor?.description,
-      instruction: correction.userInstruction,
-      phase: "apply" as const,
-      pinMode: correction.pinMode,
-      referenceId: directionRef?.id,
-      referenceLayout: directionRef?.layout,
-      referenceRole: directionRef?.role,
-      referenceSourceImageCount: correction.userReference?.sourceImageCount,
-      strictZoneBoundary: correction.strictZoneBoundary === true,
-      zone: promptZoneFromZone(correction.zone),
-    });
-  }
-  const combinedBlocks = args.resolvedStrongDependencies
-    .map((resolved) => {
-      const dependency = blockByCorrectionId.get(resolved.dependencyId);
-      const modifier = blockByCorrectionId.get(resolved.modifierId);
-      return dependency && modifier ? { dependency, modifier, resolved } : null;
-    })
-    .filter((block): block is AdvancedImagePromptCombinedBlock => Boolean(block));
-  const combinedIds = new Set<string>();
-  for (const block of combinedBlocks) {
-    combinedIds.add(block.dependency.correctionId);
-    combinedIds.add(block.modifier.correctionId);
-  }
-  const blocks = Array.from(blockByCorrectionId.values()).filter((block) => !combinedIds.has(block.correctionId));
+  const blocks: AdvancedImagePromptCorrectionBlock[] = [
+    ...args.appliedCorrections.map((correction) => {
+      const identityRef = identityRefByCorrectionId.get(correction.id);
+      const directionRef = directionRefByCorrectionId.get(correction.id);
+      return {
+        correctionId: correction.id,
+        dependencies: correction.dependencies,
+        identityDescription: correction.identityAnchor?.description,
+        instruction: correction.userInstruction,
+        originalReferenceId: directionRef?.id,
+        originalReferenceLayout: directionRef?.layout,
+        originalReferenceRole: directionRef ? ("direction" as const) : undefined,
+        originalReferenceSourceImageCount: correction.userReference?.sourceImageCount,
+        phase: "preserve" as const,
+        pinMode: correction.pinMode,
+        referenceId: identityRef?.id,
+        referenceRole: identityRef?.role,
+        strictZoneBoundary: correction.strictZoneBoundary === true,
+        zone: promptZoneFromZone(correction.zone),
+      };
+    }),
+    ...args.pendingCorrections.map((correction) => {
+      const directionRef = directionRefByCorrectionId.get(correction.id);
+      return {
+        correctionId: correction.id,
+        dependencies: correction.dependencies,
+        identityDescription: correction.identityAnchor?.description,
+        instruction: correction.userInstruction,
+        phase: "apply" as const,
+        pinMode: correction.pinMode,
+        referenceId: directionRef?.id,
+        referenceLayout: directionRef?.layout,
+        referenceRole: directionRef?.role,
+        referenceSourceImageCount: correction.userReference?.sourceImageCount,
+        strictZoneBoundary: correction.strictZoneBoundary === true,
+        zone: promptZoneFromZone(correction.zone),
+      };
+    }),
+  ];
   const finalInstruction = "Generate the final image now, applying all active corrections together in one coherent pass.";
   return {
     blocks,
-    combinedBlocks,
     finalInstruction,
     globalAdjustmentText: args.globalAdjustmentText,
-    promptText: buildPromptText(args.master, blocks, combinedBlocks, finalInstruction, args.globalAdjustmentText),
+    promptText: buildPromptText(args.master, blocks, finalInstruction, args.globalAdjustmentText),
   };
 }
 
@@ -631,7 +601,6 @@ function promptZoneFromZone(zone: AdvancedImageZone): AdvancedImagePromptZone {
 function buildPromptText(
   master: AdvancedImageMaster,
   blocks: AdvancedImagePromptCorrectionBlock[],
-  combinedBlocks: AdvancedImagePromptCombinedBlock[],
   finalInstruction: string,
   globalAdjustmentText?: string,
 ): string {
@@ -648,7 +617,7 @@ function buildPromptText(
     "REFERENCE IMAGE ORDER:",
     "- BASE IMAGE is the original immutable master image.",
     "- REF-ID-* images are identity anchors from previous accepted corrections. Use them to preserve visual identity.",
-    "- REF-DIR-* images are visual direction references for original or new corrections. Treat them strictly as style/material/subject guidance. Never reproduce, paste, embed or recreate the reference images themselves in the output.",
+    "- REF-DIR-* images are visual direction references for new corrections. Treat them strictly as style/material/subject guidance. Never reproduce, paste, embed or recreate the reference images themselves in the output.",
     "",
     "PRESERVE EXISTING CHANGES:",
   ];
@@ -662,10 +631,6 @@ function buildPromptText(
     lines.push("- None.");
   } else {
     applyBlocks.forEach((block, index) => lines.push(...renderApplyBlock(block, index + 1)));
-  }
-  if (combinedBlocks.length > 0) {
-    lines.push("", "APPLY COMBINED CHANGES:");
-    combinedBlocks.forEach((block, index) => lines.push(...renderCombinedBlock(block, index + 1)));
   }
   if (dependencyLines.length > 0) {
     lines.push("", "DEPENDENCIES:", ...dependencyLines);
@@ -764,57 +729,6 @@ function renderApplyBlock(block: AdvancedImagePromptCorrectionBlock, index: numb
   return lines;
 }
 
-function renderCombinedBlock(block: AdvancedImagePromptCombinedBlock, index: number): string[] {
-  const lines = [
-    `APPLY COMBINED CHANGE ${index} (${block.dependency.correctionId} + ${block.modifier.correctionId}):`,
-    `- Original zone: ${formatZone(block.dependency.zone)}`,
-    `- Modifier zone: ${formatZone(block.modifier.zone)}`,
-    `- Original intent: ${block.dependency.instruction}`,
-    `- Modification: ${block.modifier.instruction}`,
-    `- Resolved instruction: ${block.resolved.resolvedInstruction}`,
-  ];
-  if (block.dependency.identityDescription) {
-    lines.push(`- Existing identity description: ${block.dependency.identityDescription}.`);
-  }
-  if (block.dependency.referenceId && block.dependency.referenceRole === "identity") {
-    lines.push(`- Use ${block.dependency.referenceId} as identity anchor for the original element.`);
-  }
-  const dependencyDirectionId = block.dependency.originalReferenceId ?? (
-    block.dependency.referenceRole === "direction" ? block.dependency.referenceId : undefined
-  );
-  const dependencyDirectionLayout = block.dependency.originalReferenceLayout ?? block.dependency.referenceLayout;
-  const dependencyDirectionCount =
-    block.dependency.originalReferenceSourceImageCount ?? block.dependency.referenceSourceImageCount;
-  if (dependencyDirectionId) {
-    lines.push(`- Use ${dependencyDirectionId} as the original visual direction for the combined change.`);
-    if (dependencyDirectionLayout && (dependencyDirectionCount ?? 0) > 1) {
-      lines.push(
-        `- ${dependencyDirectionId} is a composite image of ${dependencyDirectionCount} references arranged in a ${dependencyDirectionLayout.columns}x${dependencyDirectionLayout.rows} grid: ${describeGridLayout(dependencyDirectionLayout, dependencyDirectionCount ?? dependencyDirectionLayout.usedImageCount)}.`,
-      );
-    }
-  } else if (dependencyDirectionCount) {
-    lines.push(
-      "- Original visual reference for the dependency is not included in this call; preserve from written resolved instruction.",
-    );
-  }
-  if (block.modifier.referenceId && block.modifier.referenceRole === "direction") {
-    lines.push(`- Use ${block.modifier.referenceId} as visual direction for the modification part.`);
-    if (block.modifier.referenceLayout && (block.modifier.referenceSourceImageCount ?? 0) > 1) {
-      lines.push(
-        `- ${block.modifier.referenceId} is a composite image of ${block.modifier.referenceSourceImageCount} references arranged in a ${block.modifier.referenceLayout.columns}x${block.modifier.referenceLayout.rows} grid: ${describeGridLayout(block.modifier.referenceLayout, block.modifier.referenceSourceImageCount ?? block.modifier.referenceLayout.usedImageCount)}.`,
-      );
-    }
-  } else if (block.modifier.referenceSourceImageCount) {
-    lines.push("- Visual direction grid for the modifier is not included due to the reference limit. Use the written modification only.");
-  }
-  if (block.dependency.strictZoneBoundary || block.modifier.strictZoneBoundary) {
-    lines.push(
-      "- Strict zone boundary: enabled for this combined change where marked. Confine the modification to the exact marked modifier zone and do NOT alter unrelated areas outside the involved zones.",
-    );
-  }
-  return lines;
-}
-
 function buildDependencyLines(blocks: AdvancedImagePromptCorrectionBlock[]): string[] {
   const labelById = new Map<string, string>();
   let preserveIndex = 0;
@@ -890,12 +804,6 @@ export function computeAdvancedImagePlanFingerprint(plan: AdvancedImageGeneratio
     appliedPreserveCorrectionIds: plan.appliedPreserveCorrectionIds,
     baseImage: plan.baseImage,
     batchPendingIds: plan.batchPendingIds,
-    combinedBlocks: plan.prompt.combinedBlocks.map((block) => [
-      block.dependency.correctionId,
-      block.modifier.correctionId,
-      block.resolved.hash,
-      block.resolved.resolvedInstruction,
-    ]),
     directionReferences: plan.directionReferences.map((ref) => [ref.id, ref.hash]),
     finalImageStateHash: plan.finalImageStateHash,
     geminiStateHash: plan.geminiStateHash,

@@ -60,11 +60,6 @@ import {
   type AdvancedImageFinalImageProcessor,
   type AdvancedImageClientGenerationResult,
 } from "@/lib/advanced-image/client-orchestrator";
-import {
-  findAdvancedImageStrongDependencyPairs,
-  resolveAdvancedImageStrongDependencies,
-  type AdvancedImageDependencyInstructionResolutionTransport,
-} from "@/lib/advanced-image/dependency-resolution";
 import type { AdvancedImageGeminiTransport } from "@/lib/advanced-image/gemini-adapter";
 import { createZoneFromStrokes } from "@/lib/advanced-image/mask";
 import { buildAdvancedImageGenerationPlan, getAdvancedImagePendingCorrectionIds } from "@/lib/advanced-image/pipeline";
@@ -512,31 +507,6 @@ function createStreamGeminiTransport(args: {
   };
 }
 
-function createDependencyResolutionTransport(): AdvancedImageDependencyInstructionResolutionTransport {
-  return async (request, context) => {
-    const res = await fetch("/api/gemini/resolve-correction-dependency", {
-      body: JSON.stringify({
-        dependencyInstruction: request.dependencyInstruction,
-        dependencyZoneDescription: request.dependencyZoneDescription,
-        modifierInstruction: request.modifierInstruction,
-        modifierZoneDescription: request.modifierZoneDescription,
-        requestId: context.requestId,
-      }),
-      headers: { "Content-Type": "application/json" },
-      method: "POST",
-    });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      throw new Error(typeof json?.error === "string" ? json.error : `Dependency resolution failed (${res.status}).`);
-    }
-    return {
-      model: typeof json?.model === "string" ? json.model : undefined,
-      raw: json,
-      resolvedInstruction: String(json?.resolvedInstruction ?? ""),
-    };
-  };
-}
-
 function ImageCreationAdvancedStudio({
   data,
   imageInput,
@@ -938,36 +908,7 @@ function ImageCreationAdvancedStudio({
         onPatch({ advancedSession: safeSessionForNodeData(baseSession), error: "Sign in before calling Gemini.", status: "error" });
         return null;
       }
-      const now = new Date().toISOString();
-      const dependencyPairs = findAdvancedImageStrongDependencyPairs(baseSession, batchPendingIds);
-      if (dependencyPairs.length > 0 && !skipCostConfirm) {
-        const confirmed = window.confirm(
-          `This will call Gemini Flash to resolve ${dependencyPairs.length} dependent correction${dependencyPairs.length === 1 ? "" : "s"} before image generation. Continue?\n\nThis is a small text-only call used to avoid contradictory instructions.`,
-        );
-        if (!confirmed) {
-          onPatch({ advancedSession: safeSessionForNodeData(baseSession), status: "plan_ready" });
-          return null;
-        }
-      }
-      const resolvedStrongDependencies = await resolveAdvancedImageStrongDependencies({
-        cacheStore: advancedImageStudioCache,
-        logger: (event) => {
-          console.info("[ImageCreationAdvanced dependency resolver]", {
-            dependencyId: event.dependencyId,
-            hash: event.hash,
-            hit: event.hit,
-            modifierId: event.modifierId,
-            source: event.source,
-          });
-        },
-        now,
-        pairs: dependencyPairs,
-        requestId: `advanced-image-dependencies-${Date.now()}`,
-        session: baseSession,
-        transport: createDependencyResolutionTransport(),
-        userEmail,
-      });
-      const planResult = buildAdvancedImageGenerationPlan(baseSession, { batchPendingIds, resolvedStrongDependencies });
+      const planResult = buildAdvancedImageGenerationPlan(baseSession, { batchPendingIds });
       if (!planResult.ok) {
         onPatch({
           advancedSession: safeSessionForNodeData(baseSession),
@@ -977,6 +918,7 @@ function ImageCreationAdvancedStudio({
         return null;
       }
       const planToRun = planResult.plan;
+      const now = new Date().toISOString();
       const requestId = `advanced-image-batch-${planToRun.geminiStateHash}-${Date.now()}`;
       const masterContentHashBefore = baseSession.master.contentHash;
       const cached = await readAdvancedImageGeminiRawCache(advancedImageStudioCache, planToRun, now, {
@@ -1017,12 +959,6 @@ function ImageCreationAdvancedStudio({
         pendingCount: planToRun.batchPendingIds.length,
         refsTotal: planToRun.identityReferences.length + planToRun.directionReferences.length,
         requestId,
-        resolvedStrongDependencies: resolvedStrongDependencies.map((item) => ({
-          dependencyId: item.dependencyId,
-          modifierId: item.modifierId,
-          source: item.source,
-        })),
-        strongDependencyPairCount: dependencyPairs.length,
         strictCorrectionIds: planToRun.strictCorrectionIds,
         strictCorrectionsCount: planToRun.strictCorrectionIds.length,
       });
@@ -1049,7 +985,6 @@ function ImageCreationAdvancedStudio({
                 }),
               now,
               requestId,
-              resolvedStrongDependencies,
               transport: createStreamGeminiTransport({
                 aspectRatio: aspectRatioFromMaster(baseSession.master),
                 onProgress: (pct) => setProgress(pct),

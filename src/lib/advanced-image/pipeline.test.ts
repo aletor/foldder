@@ -287,45 +287,6 @@ describe("advanced-image-pipeline", () => {
     expect(result.plan.prompt.blocks.find((block) => block.correctionId === "previous")?.originalReferenceId).toBeUndefined();
   });
 
-  it("combines strongly dependent applied and pending corrections into one resolved prompt block", () => {
-    let s = addCorrection(session({ maxReferenceImages: 5 }), correction("previous", { reference: grid("previous") }), {
-      timestamp: "2026-05-18T10:01:00.000Z",
-    });
-    s = addCorrection(s, correction("current", { offset: 5, reference: grid("current") }), {
-      timestamp: "2026-05-18T10:02:00.000Z",
-    });
-    s = markApplied(s, ["previous"]);
-
-    const result = buildAdvancedImageGenerationPlan(s, {
-      batchPendingIds: ["current"],
-      resolvedStrongDependencies: [
-        {
-          dependencyId: "previous",
-          hash: "resolved-previous-current",
-          modifierId: "current",
-          resolvedInstruction: "Preserve the existing previous correction while applying the current modifier to that same element.",
-          source: "llm",
-        },
-      ],
-    });
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.plan.prompt.blocks.map((block) => block.correctionId)).toEqual([]);
-    expect(result.plan.prompt.combinedBlocks).toHaveLength(1);
-    expect(result.plan.prompt.combinedBlocks[0].dependency.correctionId).toBe("previous");
-    expect(result.plan.prompt.combinedBlocks[0].modifier.correctionId).toBe("current");
-    expect(result.plan.identityReferences.map((ref) => ref.id)).toEqual(["REF-ID-previous"]);
-    expect(result.plan.directionReferences.map((ref) => ref.id)).toEqual(["REF-DIR-previous", "REF-DIR-current"]);
-    expect(result.plan.prompt.promptText).toContain("APPLY COMBINED CHANGE 1 (previous + current):");
-    expect(result.plan.prompt.promptText).toContain("Original intent: Apply correction previous");
-    expect(result.plan.prompt.promptText).toContain("Modification: Apply correction current");
-    expect(result.plan.prompt.promptText).toContain("Resolved instruction: Preserve the existing previous correction");
-    expect(result.plan.prompt.promptText).toContain("Use REF-ID-previous as identity anchor for the original element.");
-    expect(result.plan.prompt.promptText).toContain("Use REF-DIR-previous as the original visual direction for the combined change.");
-    expect(result.plan.prompt.promptText).toContain("Use REF-DIR-current as visual direction for the modification part.");
-  });
-
   it("enforces reference limit with composite, overlap and recency priorities", () => {
     let s = session({ maxReferenceImages: 3 });
     s = addCorrection(s, correction("composite-far", { offset: 720 }), {
