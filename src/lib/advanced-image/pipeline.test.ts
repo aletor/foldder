@@ -194,6 +194,10 @@ describe("advanced-image-pipeline", () => {
     expect(result.plan.prompt.promptText).toContain(
       "Original visual reference: REF-DIR-previous. Preserve coherence with this reference.",
     );
+    expect(result.plan.prompt.promptText).toContain("- Original instruction: Apply correction previous.");
+    expect(result.plan.prompt.promptText).toContain(
+      "Reconstruct this previous correction only inside this exact marked zone.",
+    );
   });
 
   it("adds a GLOBAL TRANSFORMATION block and global-specific final rules when active", () => {
@@ -210,6 +214,9 @@ describe("advanced-image-pipeline", () => {
     expect(result.plan.prompt.promptText).toContain("GLOBAL TRANSFORMATION (applied to entire image):");
     expect(result.plan.prompt.promptText).toContain("make the entire scene night time with cool moonlight");
     expect(result.plan.prompt.promptText).toContain("The GLOBAL TRANSFORMATION affects the entire image.");
+    expect(result.plan.prompt.promptText).toContain(
+      "Do NOT extend a local change to similar, paired, repeated or symmetric visual elements outside the marked zone",
+    );
     expect(result.plan.prompt.promptText).not.toContain("Only modify the explicitly marked zones.\n");
   });
 
@@ -288,6 +295,38 @@ describe("advanced-image-pipeline", () => {
     expect(result.plan.prompt.promptText).toContain(
       "Reference image originally used for this change is not included in this call; preserve from written description.",
     );
+  });
+
+  it("caps operational references to the model transport limit to avoid silent server truncation", () => {
+    let s = session({ maxReferenceImages: 8 });
+    s = addCorrection(s, correction("applied-a", { reference: grid("applied-a") }), {
+      timestamp: "2026-05-18T10:01:00.000Z",
+    });
+    s = addCorrection(s, correction("applied-b", { offset: 180, reference: grid("applied-b") }), {
+      timestamp: "2026-05-18T10:02:00.000Z",
+    });
+    s = addCorrection(s, correction("pending-a", { offset: 360, reference: grid("pending-a") }), {
+      timestamp: "2026-05-18T10:03:00.000Z",
+    });
+    s = addCorrection(s, correction("pending-b", { offset: 540, reference: grid("pending-b") }), {
+      timestamp: "2026-05-18T10:04:00.000Z",
+    });
+    s = markApplied(s, ["applied-a", "applied-b"]);
+
+    const result = buildAdvancedImageGenerationPlan(s, { batchPendingIds: ["pending-a", "pending-b"] });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.plan.referenceLimit).toBe(4);
+    expect(result.plan.identityReferences.length + result.plan.directionReferences.length).toBeLessThanOrEqual(4);
+    expect(result.plan.directionReferences.map((ref) => ref.id)).toEqual([
+      "REF-DIR-applied-a",
+      "REF-DIR-applied-b",
+      "REF-DIR-pending-a",
+      "REF-DIR-pending-b",
+    ]);
+    expect(result.plan.omittedIdentityReferenceCorrectionIds).toEqual(["applied-a", "applied-b"]);
+    expect(result.plan.consolidationRecommended).toBe(true);
   });
 
   it("changing anchor to composite preserves gemini cache key but changes final cache key and post-composite plan", () => {

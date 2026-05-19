@@ -171,7 +171,11 @@ export function buildAdvancedImageGenerationPlan(
   const dependencyIssues = findDependencyIssues(active);
   if (dependencyIssues.length > 0) return { issues: dependencyIssues, ok: false };
 
-  const maxReferenceImages = Math.max(1, session.generationSettings.maxReferenceImages || 8);
+  const configuredReferenceImages = Math.max(1, session.generationSettings.maxReferenceImages || 8);
+  const maxReferenceImages = Math.min(
+    configuredReferenceImages,
+    operationalReferenceLimitForModel(session.generationSettings.model),
+  );
   const referenceSelection = selectOperationalReferences({
     appliedCorrections,
     maxReferenceImages,
@@ -432,6 +436,20 @@ function appliedReferenceStableOrder(correction: AdvancedImageCorrection): numbe
   return (correction.appliedBatchNumber ?? 1) * 10_000 + correction.order;
 }
 
+function operationalReferenceLimitForModel(model: string): number {
+  const normalized = model.trim().toLowerCase();
+  if (normalized === "pro3" || normalized === "gemini-3-pro-image-preview") return 4;
+  if (
+    normalized === "flash31" ||
+    normalized === "gemini-3.1-flash-image-preview" ||
+    normalized === "flash25" ||
+    normalized === "gemini-2.5-flash-image"
+  ) {
+    return 3;
+  }
+  return 4;
+}
+
 function identityReferencePriority(
   correction: AdvancedImageCorrection,
   pendingCorrections: AdvancedImageCorrection[],
@@ -634,6 +652,8 @@ function buildPromptText(
     hasGlobalAdjustment
       ? "- For local changes, preserve everything outside marked zones. Only the GLOBAL TRANSFORMATION may alter the full-scene lighting, color, ambiance or style."
       : "- Preserve everything outside marked zones EXACTLY. Do not modify any area outside the explicitly marked zones.",
+    "- Each marked zone defines the exact boundary and target of its change. Do NOT extend a local change to similar, paired, repeated or symmetric visual elements outside the marked zone, even if they appear to be part of the same face, body, object, wall, floor, surface, pattern or texture.",
+    "- If a zone marks only one eye, one lip, one hand, one shoe, one logo, one tile, one object instance or one side of a pair, modify only that marked instance and never its unmarked counterpart.",
     "- Preserve original composition, camera angle, perspective, lighting continuity, texture fidelity and resolution.",
     "- Do not draw colored masks, outlines, guide circles, labels, zone borders, UI marks or reference annotations into the final image.",
     "- Output one clean final image at the same resolution and aspect ratio as the BASE IMAGE.",
@@ -648,6 +668,8 @@ function renderPreserveBlock(block: AdvancedImagePromptCorrectionBlock, index: n
   const lines = [
     `PRESERVE EXISTING CHANGE ${index} (${block.correctionId}):`,
     `- Zone: ${formatZone(block.zone)}`,
+    `- Original instruction: ${block.instruction}.`,
+    "- Reconstruct this previous correction only inside this exact marked zone. Do not broaden, mirror, duplicate or reinterpret it on unmarked similar elements.",
   ];
   if (block.identityDescription && block.referenceId && block.referenceRole === "identity") {
     lines.push(`- Identity to preserve: ${block.identityDescription}.`, `- Use ${block.referenceId} as identity anchor.`);
@@ -682,6 +704,7 @@ function renderApplyBlock(block: AdvancedImagePromptCorrectionBlock, index: numb
     `APPLY NEW CHANGE ${index} (${block.correctionId}):`,
     `- Zone: ${formatZone(block.zone)}`,
     `- Instruction: ${block.instruction}`,
+    "- Apply this change only inside this exact marked zone. Do not modify matching, paired, repeated or symmetric elements outside the selected area unless the instruction explicitly asks for them.",
   ];
   if (block.referenceId && block.referenceRole === "direction") {
     lines.push(`- Use ${block.referenceId} as visual direction for this change.`);

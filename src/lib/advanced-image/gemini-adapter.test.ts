@@ -168,18 +168,17 @@ describe("advanced-image-gemini-adapter", () => {
     if (!payloadResult.ok) return;
     expect(payloadResult.payload.imageInputs).toEqual([
       master.imageUrl,
-      "/api/spaces/s3-file?key=knowledge-files%2Fanchors%2Fa.png",
       "/api/spaces/s3-file?key=knowledge-files%2Fanchors%2Fb.png",
       "/api/spaces/s3-file?key=knowledge-files%2Fgrids%2Fa.png",
       "/api/spaces/s3-file?key=knowledge-files%2Fgrids%2Fb.png",
       "/api/spaces/s3-file?key=knowledge-files%2Fgrids%2Fc.png",
     ]);
-    expect(payloadResult.payload.prompt).toContain("IMAGE 2: REF-ID-a");
-    expect(payloadResult.payload.prompt).toContain("IMAGE 3: REF-ID-b");
-    expect(payloadResult.payload.prompt).toContain("IMAGE 4: REF-DIR-a");
-    expect(payloadResult.payload.prompt).toContain("IMAGE 5: REF-DIR-b");
-    expect(payloadResult.payload.prompt).toContain("IMAGE 6: REF-DIR-c");
+    expect(payloadResult.payload.prompt).toContain("IMAGE 2: REF-ID-b");
+    expect(payloadResult.payload.prompt).toContain("IMAGE 3: REF-DIR-a");
+    expect(payloadResult.payload.prompt).toContain("IMAGE 4: REF-DIR-b");
+    expect(payloadResult.payload.prompt).toContain("IMAGE 5: REF-DIR-c");
     expect(payloadResult.payload.prompt).toContain("Original visual reference: REF-DIR-a");
+    expect(payloadResult.payload.prompt).toContain("a: no image reference included due to reference limit");
   });
 
   it("blocks execution without explicit cost approval and does not call transport", async () => {
