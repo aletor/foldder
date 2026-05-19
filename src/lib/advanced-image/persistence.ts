@@ -94,6 +94,7 @@ export function restoreAdvancedImageSession(value: unknown): AdvancedImageParseS
       status: "draft",
       text: "",
     },
+    historySnapshots: Array.isArray(base.historySnapshots) ? cloneJson(base.historySnapshots) : [],
     redoStack: Array.isArray(base.redoStack) ? cloneJson(base.redoStack) : [],
     undoStack: Array.isArray(base.undoStack) ? cloneJson(base.undoStack) : [],
   };
@@ -135,6 +136,7 @@ export function computeAdvancedImageSessionPersistenceFingerprint(
     corrections: session.corrections,
     generationSettings: session.generationSettings,
     globalAdjustment: session.globalAdjustment,
+    historySnapshots: session.historySnapshots,
     id: session.id,
     master: session.master,
     redoStack: includeUndoRedo ? session.redoStack : [],

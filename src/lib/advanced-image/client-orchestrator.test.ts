@@ -128,6 +128,9 @@ describe("advanced-image-client-orchestrator", () => {
 
     expect(t).toHaveBeenCalledTimes(3);
     expect(new Set(outputs)).toHaveProperty("size", 3);
+    expect(s.historySnapshots).toHaveLength(3);
+    expect(s.historySnapshots.map((snapshot) => snapshot.batchNumber)).toEqual([1, 2, 3]);
+    expect(s.historySnapshots[2].workingImage.imageUrl).toBe(outputs[2]);
     expect(s.master).toEqual(master);
   });
 

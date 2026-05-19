@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   addCorrection,
+  appendAdvancedImageHistorySnapshot,
   assignAdvancedImageAppliedBatchNumber,
   changePinMode,
   cloneCorrection,
@@ -14,6 +15,8 @@ import {
   promoteToMaster,
   removeCorrection,
   reorderCorrections,
+  restoreAdvancedImageHistorySnapshot,
+  setAdvancedImageWorkingImage,
   toggleCorrection,
   updateAdvancedImageGlobalAdjustment,
   undo,
@@ -22,6 +25,7 @@ import {
   type AdvancedImageGenerationSettings,
   type AdvancedImageMaster,
   type AdvancedImageSession,
+  type AdvancedImageWorkingImage,
   type AdvancedImageZone,
 } from "./domain";
 
@@ -91,6 +95,28 @@ function correction(id: string, dependencies: string[] = []): AdvancedImageAddCo
     timestamp: "2026-05-18T09:01:00.000Z",
     userInstruction: `Add object ${id}`,
     zone: zone(id, id.length * 10),
+  };
+}
+
+function workingImage(ids: string[], sourceHash = "working-hash-1"): AdvancedImageWorkingImage {
+  return {
+    activeCorrectionIds: ids,
+    correctionSnapshots: Object.fromEntries(
+      ids.map((id) => [
+        id,
+        {
+          geometryHash: `placeholder-${id}`,
+          instructionHash: `placeholder-${id}`,
+        },
+      ]),
+    ),
+    generatedAt: "2026-05-18T09:05:00.000Z",
+    height: 2000,
+    imageUrl: `/generated-${sourceHash}.png`,
+    model: "gemini-3-pro-image-preview",
+    resolution: "4k",
+    sourceHash,
+    width: 3000,
   };
 }
 
@@ -316,5 +342,70 @@ describe("advanced-image-domain", () => {
     expect(promoted.corrections).toEqual([]);
     expect(promoted.archivedCorrectionGroups[0].corrections).toEqual(session.corrections);
     expect(promoted.archivedCorrectionGroups[0].sourceMaster).toEqual(master);
+  });
+
+  it("appends visual history snapshots without embedding new master pixels", () => {
+    let session = addCorrection(createSession(), correction("c1"), {
+      timestamp: "2026-05-18T09:01:00.000Z",
+    });
+    session = assignAdvancedImageAppliedBatchNumber(session, ["c1"], 1, {
+      timestamp: "2026-05-18T09:02:00.000Z",
+    });
+    session = setAdvancedImageWorkingImage(session, workingImage(["c1"]), {
+      timestamp: "2026-05-18T09:03:00.000Z",
+    });
+
+    const withHistory = appendAdvancedImageHistorySnapshot(session, {}, {
+      timestamp: "2026-05-18T09:03:00.000Z",
+    });
+
+    expect(withHistory.master).toEqual(session.master);
+    expect(withHistory.historySnapshots).toHaveLength(1);
+    expect(withHistory.historySnapshots[0]).toMatchObject({
+      activeCorrectionIds: ["c1"],
+      batchNumber: 1,
+      masterContentHash: master.contentHash,
+      sourceHash: "working-hash-1",
+    });
+    expect(withHistory.historySnapshots[0].corrections).toEqual(session.corrections);
+  });
+
+  it("restores a visual history point and discards later corrections from active state", () => {
+    let session = addCorrection(createSession(), correction("c1"), {
+      timestamp: "2026-05-18T09:01:00.000Z",
+    });
+    session = assignAdvancedImageAppliedBatchNumber(session, ["c1"], 1, {
+      timestamp: "2026-05-18T09:02:00.000Z",
+    });
+    session = setAdvancedImageWorkingImage(session, workingImage(["c1"], "batch-1"), {
+      timestamp: "2026-05-18T09:03:00.000Z",
+    });
+    session = appendAdvancedImageHistorySnapshot(session, {}, {
+      timestamp: "2026-05-18T09:03:00.000Z",
+    });
+    const firstSnapshotId = session.historySnapshots[0].id;
+
+    session = addCorrection(session, correction("c2"), {
+      timestamp: "2026-05-18T09:04:00.000Z",
+    });
+    session = assignAdvancedImageAppliedBatchNumber(session, ["c2"], 2, {
+      timestamp: "2026-05-18T09:05:00.000Z",
+    });
+    session = setAdvancedImageWorkingImage(session, workingImage(["c1", "c2"], "batch-2"), {
+      timestamp: "2026-05-18T09:06:00.000Z",
+    });
+    session = appendAdvancedImageHistorySnapshot(session, {}, {
+      timestamp: "2026-05-18T09:06:00.000Z",
+    });
+
+    const restored = restoreAdvancedImageHistorySnapshot(session, firstSnapshotId, {
+      timestamp: "2026-05-18T09:07:00.000Z",
+    });
+
+    expect(restored.corrections.map((item) => item.id)).toEqual(["c1"]);
+    expect(restored.workingImage?.sourceHash).toBe("batch-1");
+    expect(restored.historySnapshots).toHaveLength(1);
+    expect(restored.master).toEqual(master);
+    expect(restored.undoStack.at(-1)?.action).toBe("restoreHistorySnapshot");
   });
 });

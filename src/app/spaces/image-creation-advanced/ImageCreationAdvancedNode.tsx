@@ -10,12 +10,14 @@ import {
   ChevronDown,
   ChevronRight,
   Clock3,
+  History,
   ImageIcon,
   Layers3,
   Maximize2,
   MoreHorizontal,
   Plus,
   RefreshCw,
+  RotateCcw,
   ShieldCheck,
   Sparkles,
   X,
@@ -30,12 +32,14 @@ import {
   markAdvancedImageCorrectionRuntime,
   promoteToMaster,
   removeCorrection,
+  restoreAdvancedImageHistorySnapshot,
   stableHash,
   setAdvancedImageWorkingImage,
   toggleCorrection,
   updateAdvancedImageGlobalAdjustment,
   type AdvancedImageCorrection,
   type AdvancedImageGenerationSettings,
+  type AdvancedImageHistorySnapshot,
   type AdvancedImageMaster,
   type AdvancedImagePoint,
   type AdvancedImageSession,
@@ -117,6 +121,17 @@ function firstImageUrlFromNode(node: Node | undefined): string {
 function compactText(value: string, max = 180): string {
   const s = value.trim().replace(/\s+/g, " ");
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;
+}
+
+function formatHistoryTimestamp(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString(undefined, {
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    month: "short",
+  });
 }
 
 function createMasterFromImage(imageUrl: string, size: { height: number; width: number }, timestamp: string): AdvancedImageMaster {
@@ -686,6 +701,7 @@ function ImageCreationAdvancedStudio({
   const [previousExpanded, setPreviousExpanded] = useState(false);
   const [expandedPreviousCorrectionId, setExpandedPreviousCorrectionId] = useState<string | null>(null);
   const [hoveredPreviousCorrectionId, setHoveredPreviousCorrectionId] = useState<string | null>(null);
+  const [historyPreviewId, setHistoryPreviewId] = useState<string | null>(null);
   const [openCardMenuId, setOpenCardMenuId] = useState<string | null>(null);
   const [promoteModalOpen, setPromoteModalOpen] = useState(false);
   const [referenceUploadError, setReferenceUploadError] = useState<string | null>(null);
@@ -700,7 +716,20 @@ function ImageCreationAdvancedStudio({
   const globalAdjustmentText = globalAdjustment?.text ?? "";
   const globalAdjustmentPending = globalAdjustmentPendingLabel(session);
   const workingUrl = session?.workingImage?.imageUrl || data.value || "";
-  const previewUrl = workingUrl || session?.master.imageUrl || imageInput;
+  const historySnapshots = session?.historySnapshots ?? [];
+  const historyPreviewSnapshot = historyPreviewId
+    ? historySnapshots.find((snapshot) => snapshot.id === historyPreviewId) ?? null
+    : null;
+  const previewUrl = historyPreviewSnapshot?.workingImage.imageUrl || workingUrl || session?.master.imageUrl || imageInput;
+  const canvasSession = useMemo(() => {
+    if (!session || !historyPreviewSnapshot) return session;
+    return {
+      ...session,
+      corrections: historyPreviewSnapshot.corrections,
+      globalAdjustment: historyPreviewSnapshot.globalAdjustment,
+      workingImage: historyPreviewSnapshot.workingImage,
+    } satisfies AdvancedImageSession;
+  }, [historyPreviewSnapshot, session]);
   const draftReadyForPopover = draftPoints.length >= 3 && !drawingMode && !isDrawing;
   const draftCanConfirm = draftText.trim().length > 0 || draftReferences.length > 0;
   const editCanSave = Boolean(editingCorrectionId) && (editText.trim().length > 0 || editReferences.length > 0);
@@ -715,7 +744,7 @@ function ImageCreationAdvancedStudio({
     () => (session ? getAdvancedImagePendingCorrectionIds(session) : []),
     [session],
   );
-  const canGenerate = Boolean(session) && (pendingCorrectionIds.length > 0 || globalAdjustmentPending);
+  const canGenerate = Boolean(session) && !historyPreviewSnapshot && (pendingCorrectionIds.length > 0 || globalAdjustmentPending);
   const correctionSections = useMemo(() => {
     if (!session) {
       return {
@@ -839,6 +868,13 @@ function ImageCreationAdvancedStudio({
   useEffect(() => {
     latestSessionRef.current = session ?? null;
   }, [session]);
+
+  useEffect(() => {
+    if (!historyPreviewId) return;
+    if (!historySnapshots.some((snapshot) => snapshot.id === historyPreviewId)) {
+      setHistoryPreviewId(null);
+    }
+  }, [historyPreviewId, historySnapshots]);
 
   const cropExtractor = useCallback<AdvancedImageCropExtractor>(
     async (request) => {
@@ -1039,6 +1075,7 @@ function ImageCreationAdvancedStudio({
         onPatch({ advancedSession: safeSessionForNodeData(baseSession), error: "Sign in before calling Gemini.", status: "error" });
         return null;
       }
+      setHistoryPreviewId(null);
       const preliminaryPlanResult = buildAdvancedImageGenerationPlan(baseSession, { batchPendingIds });
       if (!preliminaryPlanResult.ok) {
         onPatch({
@@ -1294,6 +1331,7 @@ function ImageCreationAdvancedStudio({
   const startDrawingCorrection = useCallback(() => {
     const base = ensureSession();
     if (!base) return;
+    setHistoryPreviewId(null);
     revokeReferencePreviews(draftReferences);
     revokeReferencePreviews(editReferences);
     setEditReferences([]);
@@ -1435,14 +1473,14 @@ function ImageCreationAdvancedStudio({
 
   const openCorrectionEditor = useCallback(
     (correction: AdvancedImageCorrection) => {
-      if (drawingMode || generating) return;
+      if (drawingMode || generating || historyPreviewSnapshot) return;
       revokeReferencePreviews(editReferences);
       setEditReferences([]);
       setEditText(correction.userInstruction);
       setEditingCorrectionId(correction.id);
       setReferenceUploadError(null);
     },
-    [drawingMode, editReferences, generating],
+    [drawingMode, editReferences, generating, historyPreviewSnapshot],
   );
 
   const addEditReferenceFiles = useCallback((files: FileList | null) => {
@@ -1604,6 +1642,7 @@ function ImageCreationAdvancedStudio({
       { timestamp },
     );
     setPromoteModalOpen(false);
+    setHistoryPreviewId(null);
     setPreviousExpanded(false);
     setExpandedPreviousCorrectionId(null);
     setOpenCardMenuId(null);
@@ -1617,6 +1656,31 @@ function ImageCreationAdvancedStudio({
     });
   }, [onPatch, session]);
 
+  const restoreHistorySnapshot = useCallback(
+    (snapshot: AdvancedImageHistorySnapshot) => {
+      if (!session || generating) return;
+      const confirmed = window.confirm(
+        `Return to batch #${snapshot.batchNumber}? Later corrections and generated images after this point will be discarded from the active session. You can still undo this action from the session undo stack.`,
+      );
+      if (!confirmed) return;
+      const timestamp = new Date().toISOString();
+      const next = restoreAdvancedImageHistorySnapshot(session, snapshot.id, { timestamp });
+      setHistoryPreviewId(null);
+      setPreviousExpanded(false);
+      setExpandedPreviousCorrectionId(null);
+      setOpenCardMenuId(null);
+      onPatch({
+        advancedSession: safeSessionForNodeData(next),
+        error: undefined,
+        status: next.workingImage ? "output" : "editing",
+        type: next.workingImage ? "image" : undefined,
+        value: next.workingImage?.imageUrl,
+        warning: undefined,
+      });
+    },
+    [generating, onPatch, session],
+  );
+
   const renderCardMenu = useCallback(
     (correction: AdvancedImageCorrection) => {
       const state = session ? correctionViewState(correction, session) : "pending";
@@ -1629,7 +1693,7 @@ function ImageCreationAdvancedStudio({
               event.stopPropagation();
               setOpenCardMenuId((current) => (current === correction.id ? null : correction.id));
             }}
-            disabled={generating || drawingMode}
+            disabled={generating || drawingMode || Boolean(historyPreviewSnapshot)}
             className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-white/[0.06] text-zinc-400 transition hover:bg-white/[0.1] hover:text-white disabled:opacity-40"
             aria-label="Correction menu"
           >
@@ -1692,7 +1756,7 @@ function ImageCreationAdvancedStudio({
         </div>
       );
     },
-    [deleteCorrectionOnly, drawingMode, generating, openCardMenuId, openCorrectionEditor, session, toggleCorrectionOnly],
+    [deleteCorrectionOnly, drawingMode, generating, historyPreviewSnapshot, openCardMenuId, openCorrectionEditor, session, toggleCorrectionOnly],
   );
 
   const renderFullCorrectionCard = useCallback(
@@ -1788,6 +1852,60 @@ function ImageCreationAdvancedStudio({
     [expandedPreviousCorrectionId, hoveredPreviousCorrectionId, renderFullCorrectionCard, session],
   );
 
+  const renderHistorySnapshot = useCallback(
+    (snapshot: AdvancedImageHistorySnapshot) => {
+      const selected = historyPreviewId === snapshot.id;
+      return (
+        <div
+          key={snapshot.id}
+          className={`rounded-[10px] border p-2 transition ${
+            selected ? "border-yellow-300/70 bg-yellow-300/10" : "border-white/10 bg-black/20 hover:bg-white/[0.045]"
+          }`}
+        >
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setHistoryPreviewId(snapshot.id);
+                setEditingCorrectionId(null);
+                setOpenCardMenuId(null);
+              }}
+              disabled={generating || drawingMode}
+              className="h-[58px] w-[76px] shrink-0 overflow-hidden rounded-[10px] bg-zinc-900 disabled:opacity-50"
+              aria-label={`Preview batch ${snapshot.batchNumber}`}
+            >
+              <img src={snapshot.workingImage.imageUrl} alt="" className="h-full w-full object-cover" />
+            </button>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-300">
+                    Batch #{snapshot.batchNumber}
+                  </p>
+                  <p className="mt-1 truncate text-[10px] text-zinc-500">{formatHistoryTimestamp(snapshot.createdAt)}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => restoreHistorySnapshot(snapshot)}
+                  disabled={generating}
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-white/[0.06] text-zinc-300 transition hover:bg-yellow-300 hover:text-zinc-950 disabled:opacity-40"
+                  aria-label={`Return to batch ${snapshot.batchNumber}`}
+                >
+                  <RotateCcw size={13} />
+                </button>
+              </div>
+              <p className="mt-1 line-clamp-2 text-[10px] leading-snug text-zinc-400">{snapshot.summary}</p>
+              <p className="mt-1 text-[9px] font-bold text-zinc-600">
+                {snapshot.activeCorrectionIds.length} active · {snapshot.workingImage.width}x{snapshot.workingImage.height}
+              </p>
+            </div>
+          </div>
+        </div>
+      );
+    },
+    [drawingMode, generating, historyPreviewId, restoreHistorySnapshot],
+  );
+
   const generateButtonLabel = useMemo(() => {
     if (generating) return `Generating ${progress}%`;
     if (data.error && canGenerate) {
@@ -1853,33 +1971,33 @@ function ImageCreationAdvancedStudio({
                       width: renderedRect.width,
                     }}
                   />
-                  {session ? (
+                  {canvasSession ? (
                     <svg
                       className="absolute overflow-visible"
                       style={{
-                        cursor: drawingMode ? "crosshair" : "default",
+                        cursor: drawingMode && !historyPreviewSnapshot ? "crosshair" : "default",
                         height: renderedRect.height,
                         left: renderedRect.x,
-                        pointerEvents: drawingMode ? "auto" : "none",
+                        pointerEvents: drawingMode && !historyPreviewSnapshot ? "auto" : "none",
                         top: renderedRect.y,
                         touchAction: "none",
                         width: renderedRect.width,
                       }}
-                      viewBox={`0 0 ${session.master.width} ${session.master.height}`}
+                      viewBox={`0 0 ${canvasSession.master.width} ${canvasSession.master.height}`}
                       onPointerDown={handleLassoPointerDown}
                       onPointerMove={handleLassoPointerMove}
                       onPointerUp={handleLassoPointerUp}
                       onPointerCancel={cancelDrawing}
                     >
-                      {session.corrections
+                      {canvasSession.corrections
                         .slice()
                         .sort((a, b) => a.order - b.order)
                         .map((correction) => {
-                          const state = correctionViewState(correction, session);
+                          const state = correctionViewState(correction, canvasSession);
                           if (state === "inactive") return null;
                           const points = primaryZonePoints(correction);
                           if (points.length < 3) return null;
-                          const selected = correction.id === editingCorrectionId;
+                          const selected = !historyPreviewSnapshot && correction.id === editingCorrectionId;
                           if (state === "applied" && !selected) return null;
                           const fill = state === "applied"
                             ? "rgba(68, 165, 255, 0.2)"
@@ -1898,7 +2016,7 @@ function ImageCreationAdvancedStudio({
                                 fill={fill}
                                 stroke={stroke}
                                 strokeLinejoin="round"
-                                strokeWidth={Math.max(2, session.master.width * 0.0018)}
+                                strokeWidth={Math.max(2, canvasSession.master.width * 0.0018)}
                               />
                             </g>
                           );
@@ -1909,7 +2027,7 @@ function ImageCreationAdvancedStudio({
                           fill="rgba(236, 72, 153, 0.3)"
                           stroke="rgba(244, 114, 182, 0.95)"
                           strokeLinejoin="round"
-                          strokeWidth={Math.max(2, session.master.width * 0.0018)}
+                          strokeWidth={Math.max(2, canvasSession.master.width * 0.0018)}
                         />
                       ) : (
                         <>
@@ -1920,7 +2038,7 @@ function ImageCreationAdvancedStudio({
                               stroke="#ffffff"
                               strokeLinejoin="round"
                               strokeLinecap="round"
-                              strokeWidth={Math.max(2, session.master.width * 0.0016)}
+                              strokeWidth={Math.max(2, canvasSession.master.width * 0.0016)}
                               style={{ filter: "drop-shadow(0 0 2px rgba(0,0,0,.9)) drop-shadow(0 0 5px rgba(0,0,0,.75))" }}
                             />
                           ) : null}
@@ -2136,6 +2254,26 @@ function ImageCreationAdvancedStudio({
                 {session.corrections.filter((item) => item.status === "active").length} active corrections
               </div>
             ) : null}
+            {historyPreviewSnapshot ? (
+              <div className="absolute left-1/2 top-6 flex -translate-x-1/2 items-center gap-2 rounded-[10px] bg-yellow-300 px-3 py-2 text-[11px] font-black text-zinc-950 shadow-2xl">
+                <History size={14} />
+                Preview batch #{historyPreviewSnapshot.batchNumber}
+                <button
+                  type="button"
+                  onClick={() => restoreHistorySnapshot(historyPreviewSnapshot)}
+                  className="ml-1 rounded-[8px] bg-zinc-950 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-yellow-100"
+                >
+                  Return
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setHistoryPreviewId(null)}
+                  className="rounded-[8px] bg-zinc-950/10 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-zinc-800"
+                >
+                  Current
+                </button>
+              </div>
+            ) : null}
             {drawingMode ? (
               <div className="pointer-events-none absolute left-1/2 top-6 -translate-x-1/2 rounded-[10px] bg-black/65 px-4 py-2 text-[11px] font-bold text-white shadow-2xl backdrop-blur">
                 Draw the area to edit
@@ -2228,6 +2366,32 @@ function ImageCreationAdvancedStudio({
               </section>
             ) : null}
 
+            {session ? (
+              <section className="mt-5 rounded-[10px] bg-white/[0.035] p-3">
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <p className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">
+                    <History size={13} />
+                    History
+                  </p>
+                  <span className="rounded-[8px] bg-black/25 px-2 py-1 text-[9px] font-bold text-zinc-500">
+                    {historySnapshots.length}
+                  </span>
+                </div>
+                {historySnapshots.length > 0 ? (
+                  <div className="max-h-[238px] space-y-2 overflow-y-auto pr-1">
+                    {historySnapshots
+                      .slice()
+                      .reverse()
+                      .map((snapshot) => renderHistorySnapshot(snapshot))}
+                  </div>
+                ) : (
+                  <p className="rounded-[10px] bg-black/20 p-3 text-[11px] leading-relaxed text-zinc-500">
+                    Generated states will appear here so you can preview and return to a previous point.
+                  </p>
+                )}
+              </section>
+            ) : null}
+
             <section className="mt-5 min-h-0 flex-1 overflow-y-auto">
               {session?.corrections.length ? (
                 <div className="space-y-5">
@@ -2294,7 +2458,7 @@ function ImageCreationAdvancedStudio({
                 <button
                   type="button"
                   onClick={startDrawingCorrection}
-                  disabled={!imageInput || generating}
+                  disabled={!imageInput || generating || Boolean(historyPreviewSnapshot)}
                   className="flex w-full items-center justify-center gap-2 rounded-[10px] bg-yellow-300 px-4 py-3 text-[11px] font-black uppercase tracking-[0.16em] text-zinc-950 transition hover:bg-yellow-200 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
                 >
                   <Plus size={14} />

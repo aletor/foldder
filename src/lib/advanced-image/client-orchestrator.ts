@@ -1,4 +1,5 @@
 import {
+  appendAdvancedImageHistorySnapshot,
   assignAdvancedImageAppliedBatchNumber,
   isAdvancedImageGlobalAdjustmentPending,
   markAdvancedImageCorrectionRuntime,
@@ -83,11 +84,15 @@ export async function runAdvancedImageClientGeneration(
 
   if (plan.activeCorrectionIds.length === 0 && !plan.globalAdjustmentActive && plan.globalAdjustmentPending) {
     const masterWorking = workingImageFromMaster(session, plan, options.now);
-    const nextSession = assignBatchNumberToGeneratedCorrections(
-      setAdvancedImageWorkingImage(session, masterWorking, { timestamp: options.now }),
-      plan.batchPendingIds,
-      options.now,
-      true,
+    const nextSession = appendAdvancedImageHistorySnapshot(
+      assignBatchNumberToGeneratedCorrections(
+        setAdvancedImageWorkingImage(session, masterWorking, { timestamp: options.now }),
+        plan.batchPendingIds,
+        options.now,
+        true,
+      ),
+      {},
+      { timestamp: options.now },
     );
     return {
       cacheHit: true,
@@ -120,16 +125,21 @@ export async function runAdvancedImageClientGeneration(
       options.now,
       plan.globalAdjustmentPending,
     );
+    const successSession = appendAdvancedImageHistorySnapshot(
+      markGenerationSuccess(
+        nextSession,
+        plan.activeCorrectionIds,
+        options.now,
+      ),
+      {},
+      { timestamp: options.now },
+    );
     return {
       cacheHit: true,
       plan,
       requestId: options.requestId,
       resolutionWarning: undefined,
-      session: markGenerationSuccess(
-        nextSession,
-        plan.activeCorrectionIds,
-        options.now,
-      ),
+      session: successSession,
       workingImage,
     };
   }
@@ -177,16 +187,21 @@ export async function runAdvancedImageClientGeneration(
       options.now,
       plan.globalAdjustmentPending,
     );
+    const successSession = appendAdvancedImageHistorySnapshot(
+      markGenerationSuccess(
+        nextSession,
+        plan.activeCorrectionIds,
+        options.now,
+      ),
+      {},
+      { timestamp: options.now },
+    );
     return {
       cacheHit: false,
       plan,
       requestId: options.requestId,
       resolutionWarning: resolutionWarning?.severity === "warning" ? resolutionWarning.message : undefined,
-      session: markGenerationSuccess(
-        nextSession,
-        plan.activeCorrectionIds,
-        options.now,
-      ),
+      session: successSession,
       workingImage,
     };
   } catch (error) {

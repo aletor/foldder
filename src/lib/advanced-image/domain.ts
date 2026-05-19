@@ -157,11 +157,25 @@ export type AdvancedImageArchivedCorrectionGroup = {
   sourceMaster: AdvancedImageMaster;
 };
 
+export type AdvancedImageHistorySnapshot = {
+  activeCorrectionIds: string[];
+  batchNumber: number;
+  corrections: AdvancedImageCorrection[];
+  createdAt: string;
+  globalAdjustment: AdvancedImageGlobalAdjustment;
+  id: string;
+  masterContentHash: string;
+  sourceHash: string;
+  summary: string;
+  workingImage: AdvancedImageWorkingImage;
+};
+
 export type AdvancedImageSessionState = {
   archivedCorrectionGroups: AdvancedImageArchivedCorrectionGroup[];
   corrections: AdvancedImageCorrection[];
   generationSettings: AdvancedImageGenerationSettings;
   globalAdjustment: AdvancedImageGlobalAdjustment;
+  historySnapshots: AdvancedImageHistorySnapshot[];
   id: string;
   master: AdvancedImageMaster;
   revision: number;
@@ -179,6 +193,7 @@ export type AdvancedImageUndoAction =
   | "cloneCorrection"
   | "changePinMode"
   | "updateGlobalAdjustment"
+  | "restoreHistorySnapshot"
   | "promoteToMaster";
 
 export type AdvancedImageUndoStackEntry = {
@@ -245,6 +260,7 @@ export type AdvancedImageRuntimeMeta = {
 };
 
 const DEFAULT_UNDO_DEPTH = 50;
+const MAX_HISTORY_SNAPSHOTS = 20;
 
 export function createAdvancedImageSession(args: {
   generationSettings: AdvancedImageGenerationSettings;
@@ -258,6 +274,7 @@ export function createAdvancedImageSession(args: {
     corrections: [],
     generationSettings: cloneJson(args.generationSettings),
     globalAdjustment: createDefaultAdvancedImageGlobalAdjustment(args.timestamp),
+    historySnapshots: [],
     id: args.id,
     master: cloneJson(args.master),
     redoStack: [],
@@ -471,6 +488,7 @@ export function promoteToMaster(
     draft.master = cloneJson(args.newMaster);
     draft.corrections = [];
     draft.globalAdjustment = createDefaultAdvancedImageGlobalAdjustment(meta.timestamp);
+    draft.historySnapshots = [];
     draft.workingImage = args.promotedWorkingImage ? cloneJson(args.promotedWorkingImage) : undefined;
   });
 }
@@ -510,6 +528,64 @@ export function setAdvancedImageWorkingImage(
     revision: session.revision + 1,
     updatedAt: meta.timestamp,
     workingImage: workingImage ? cloneJson(workingImage) : undefined,
+  });
+}
+
+export function appendAdvancedImageHistorySnapshot(
+  session: AdvancedImageSession,
+  args: { summary?: string } = {},
+  meta: AdvancedImageRuntimeMeta,
+): AdvancedImageSession {
+  assertAdvancedImageSessionInvariants(session);
+  if (!session.workingImage) return session;
+  const batchNumber = getLatestGeneratedBatchNumber(session);
+  const workingImage = cloneJson(session.workingImage);
+  const snapshot: AdvancedImageHistorySnapshot = {
+    activeCorrectionIds: [...workingImage.activeCorrectionIds],
+    batchNumber,
+    corrections: normalizeCorrectionOrder(cloneJson(session.corrections)),
+    createdAt: meta.timestamp,
+    globalAdjustment: normalizeGlobalAdjustment(session.globalAdjustment, meta.timestamp),
+    id: `history-${stableHash({
+      batchNumber,
+      sessionId: session.id,
+      sourceHash: workingImage.sourceHash,
+      timestamp: meta.timestamp,
+    }).slice(0, 16)}`,
+    masterContentHash: session.master.contentHash,
+    sourceHash: workingImage.sourceHash,
+    summary: args.summary ?? createHistorySummary(session, batchNumber),
+    workingImage,
+  };
+  const previous = getHistorySnapshots(session).filter(
+    (item) => item.id !== snapshot.id && item.sourceHash !== snapshot.sourceHash,
+  );
+  return assertAdvancedImageSessionInvariants({
+    ...cloneJson(session),
+    historySnapshots: [...previous, snapshot].slice(-MAX_HISTORY_SNAPSHOTS),
+    revision: session.revision + 1,
+    updatedAt: meta.timestamp,
+  });
+}
+
+export function restoreAdvancedImageHistorySnapshot(
+  session: AdvancedImageSession,
+  snapshotId: string,
+  meta: AdvancedImageOperationMeta,
+): AdvancedImageSession {
+  const history = getHistorySnapshots(session);
+  const snapshotIndex = history.findIndex((item) => item.id === snapshotId);
+  const snapshot = history[snapshotIndex];
+  if (!snapshot) throw new Error(`History snapshot '${snapshotId}' not found`);
+  return commitSessionChange(session, "restoreHistorySnapshot", meta, (draft) => {
+    draft.corrections = normalizeCorrectionOrder(
+      snapshot.corrections.map((correction) =>
+        mergeCurrentCorrectionRuntimeIntoSnapshot(correction, session.corrections.find((item) => item.id === correction.id)),
+      ),
+    );
+    draft.globalAdjustment = normalizeGlobalAdjustment(snapshot.globalAdjustment, meta.timestamp);
+    draft.historySnapshots = history.slice(0, snapshotIndex + 1);
+    draft.workingImage = cloneJson(snapshot.workingImage);
   });
 }
 
@@ -961,6 +1037,7 @@ function toSessionState(session: AdvancedImageSession): AdvancedImageSessionStat
     corrections: session.corrections,
     generationSettings: session.generationSettings,
     globalAdjustment: normalizeGlobalAdjustment(session.globalAdjustment, session.updatedAt),
+    historySnapshots: getHistorySnapshots(session),
     id: session.id,
     master: session.master,
     revision: session.revision,
@@ -972,6 +1049,48 @@ function toSessionState(session: AdvancedImageSession): AdvancedImageSessionStat
 
 function normalizeInstruction(instruction: string): string {
   return instruction.trim().replace(/\s+/g, " ");
+}
+
+function getHistorySnapshots(session: Pick<AdvancedImageSessionState, "historySnapshots">): AdvancedImageHistorySnapshot[] {
+  return Array.isArray(session.historySnapshots) ? cloneJson(session.historySnapshots) : [];
+}
+
+function getLatestGeneratedBatchNumber(session: AdvancedImageSession): number {
+  const correctionBatch = session.corrections.reduce(
+    (max, correction) => Math.max(max, correction.appliedBatchNumber ?? 0),
+    0,
+  );
+  const globalBatch = session.globalAdjustment?.appliedInBatch ?? 0;
+  const historyBatch = getHistorySnapshots(session).reduce((max, snapshot) => Math.max(max, snapshot.batchNumber), 0);
+  return Math.max(1, correctionBatch, globalBatch, historyBatch);
+}
+
+function createHistorySummary(session: AdvancedImageSession, batchNumber: number): string {
+  const activeCount = session.workingImage?.activeCorrectionIds.length ?? 0;
+  const global = isAdvancedImageGlobalAdjustmentActive(session) ? " + global" : "";
+  if (activeCount === 0 && global) return `Global adjustment batch #${batchNumber}`;
+  return `${activeCount} active correction${activeCount === 1 ? "" : "s"}${global}`;
+}
+
+function mergeCurrentCorrectionRuntimeIntoSnapshot(
+  snapshotCorrection: AdvancedImageCorrection,
+  currentCorrection: AdvancedImageCorrection | undefined,
+): AdvancedImageCorrection {
+  if (
+    !currentCorrection ||
+    currentCorrection.geometryHash !== snapshotCorrection.geometryHash ||
+    currentCorrection.instructionHash !== snapshotCorrection.instructionHash ||
+    currentCorrection.referenceHash !== snapshotCorrection.referenceHash
+  ) {
+    return normalizeCorrection(cloneJson(snapshotCorrection));
+  }
+  return normalizeCorrection({
+    ...cloneJson(snapshotCorrection),
+    analysisStatus: currentCorrection.identityAnchor ? "ready" : snapshotCorrection.analysisStatus,
+    identityAnchor: currentCorrection.identityAnchor ?? snapshotCorrection.identityAnchor,
+    lastGenerationError: currentCorrection.lastGenerationError ?? snapshotCorrection.lastGenerationError,
+    lastGenerationStatus: currentCorrection.lastGenerationStatus,
+  });
 }
 
 function normalizeBox(box: AdvancedImageBox): AdvancedImageBox {
