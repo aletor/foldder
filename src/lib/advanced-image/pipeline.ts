@@ -42,18 +42,34 @@ export type AdvancedImagePipelineReference = {
 export type AdvancedImagePromptCorrectionBlock = {
   correctionId: string;
   dependencies: string[];
+  dependencySources?: AdvancedImagePromptDependencySource[];
   identityDescription?: string;
   instruction: string;
   originalReferenceId?: string;
   originalReferenceLayout?: AdvancedImageUserReferenceGrid["layout"];
   originalReferenceRole?: "direction";
   originalReferenceSourceImageCount?: number;
-  phase: "apply" | "preserve";
+  phase: "apply" | "combined" | "preserve";
   pinMode: AdvancedImageCorrection["pinMode"];
   referenceLayout?: AdvancedImageUserReferenceGrid["layout"];
   referenceId?: string;
   referenceRole?: AdvancedImagePipelineReferenceRole;
   referenceSourceImageCount?: number;
+  zone: AdvancedImagePromptZone;
+};
+
+export type AdvancedImagePromptDependencySource = {
+  correctionId: string;
+  dependencyReason: string;
+  identityDescription?: string;
+  instruction: string;
+  originalReferenceId?: string;
+  originalReferenceLayout?: AdvancedImageUserReferenceGrid["layout"];
+  originalReferenceRole?: "direction";
+  originalReferenceSourceImageCount?: number;
+  pinMode: AdvancedImageCorrection["pinMode"];
+  referenceId?: string;
+  referenceRole?: AdvancedImagePipelineReferenceRole;
   zone: AdvancedImagePromptZone;
 };
 
@@ -171,6 +187,10 @@ export function buildAdvancedImageGenerationPlan(
   const dependencyIssues = findDependencyIssues(active);
   if (dependencyIssues.length > 0) return { issues: dependencyIssues, ok: false };
 
+  const strongDependencySourcesByPendingId = resolveStrongAppliedDependencySources(appliedCorrections, pendingCorrections);
+  const strongDependencySourceIds = new Set(
+    [...strongDependencySourcesByPendingId.values()].flatMap((sources) => sources.map((source) => source.correction.id)),
+  );
   const configuredReferenceImages = Math.max(1, session.generationSettings.maxReferenceImages || 8);
   const maxReferenceImages = Math.min(
     configuredReferenceImages,
@@ -180,6 +200,7 @@ export function buildAdvancedImageGenerationPlan(
     appliedCorrections,
     maxReferenceImages,
     pendingCorrections,
+    strongDependencySourceIds,
   });
 
   const postCompositeSteps = active
@@ -192,12 +213,16 @@ export function buildAdvancedImageGenerationPlan(
     identityReferences: referenceSelection.identityReferences,
     master: session.master,
     pendingCorrections,
+    strongDependencySourcesByPendingId,
     globalAdjustmentText: globalAdjustmentActive ? globalAdjustmentText : undefined,
   });
+  const appliedPreserveCorrectionIds = prompt.blocks
+    .filter((block) => block.phase === "preserve")
+    .map((block) => block.correctionId);
 
   const referenceCount = referenceSelection.identityReferences.length + referenceSelection.directionReferences.length;
   const geminiStateHash = stableHash({
-    appliedPreserveCorrectionIds: appliedCorrections.map((correction) => correction.id),
+    appliedPreserveCorrectionIds,
     baseGeminiStateHash: computeGeminiGenerationStateHash(session),
     batchPendingIds: pendingCorrections.map((correction) => correction.id),
       directionReferences: referenceSelection.directionReferences.map((ref) => [ref.id, ref.hash]),
@@ -218,7 +243,7 @@ export function buildAdvancedImageGenerationPlan(
     ok: true,
     plan: {
       activeCorrectionIds: active.map((correction) => correction.id),
-      appliedPreserveCorrectionIds: appliedCorrections.map((correction) => correction.id),
+      appliedPreserveCorrectionIds,
       baseImage: baseImageFromMaster(session.master),
       batchPendingIds: pendingCorrections.map((correction) => correction.id),
       cacheKeys: {
@@ -322,6 +347,7 @@ function selectOperationalReferences(args: {
   appliedCorrections: AdvancedImageCorrection[];
   maxReferenceImages: number;
   pendingCorrections: AdvancedImageCorrection[];
+  strongDependencySourceIds?: Set<string>;
 }): {
   directionReferences: AdvancedImagePipelineReference[];
   identityReferences: AdvancedImagePipelineReference[];
@@ -346,7 +372,7 @@ function selectOperationalReferences(args: {
       return {
         correction,
         priorityScore: priority.score,
-        priorityTier: 2,
+        priorityTier: args.strongDependencySourceIds?.has(correction.id) ? 3 : 4,
         reference: identityReferenceFromAnchor(correction, correction.identityAnchor!, priority.reasons),
         stableOrder: appliedReferenceStableOrder(correction),
       };
@@ -357,8 +383,14 @@ function selectOperationalReferences(args: {
     .map((correction) => ({
       correction,
       priorityScore: 0,
-      priorityTier: 3,
-      reference: directionReferenceFromGrid(correction.id, correction.userReference!, ["applied-original-direction"]),
+      priorityTier: args.strongDependencySourceIds?.has(correction.id) ? 2 : 5,
+      reference: directionReferenceFromGrid(
+        correction.id,
+        correction.userReference!,
+        args.strongDependencySourceIds?.has(correction.id)
+          ? ["strong-dependency-original-direction"]
+          : ["applied-original-direction"],
+      ),
       stableOrder: appliedReferenceStableOrder(correction),
     }));
 
@@ -371,7 +403,7 @@ function selectOperationalReferences(args: {
       return {
         correction,
         priorityScore: priority.score,
-        priorityTier: 4,
+        priorityTier: args.strongDependencySourceIds?.has(correction.id) ? 3 : 6,
         reference: identityReferenceFromAnchor(correction, correction.identityAnchor!, priority.reasons),
         stableOrder: appliedReferenceStableOrder(correction),
       };
@@ -400,8 +432,8 @@ function selectOperationalReferences(args: {
   const directionReferences = [...appliedDirectionCandidates, ...pendingDirectionCandidates]
     .filter((candidate) => selectedKeys.has(referenceSelectionKey(candidate.reference)))
     .sort((a, b) => {
-      const groupA = a.priorityTier === 3 ? 0 : 1;
-      const groupB = b.priorityTier === 3 ? 0 : 1;
+      const groupA = a.priorityTier === 2 || a.priorityTier === 5 ? 0 : 1;
+      const groupB = b.priorityTier === 2 || b.priorityTier === 5 ? 0 : 1;
       if (groupA !== groupB) return groupA - groupB;
       return a.stableOrder - b.stableOrder;
     })
@@ -413,8 +445,8 @@ function selectOperationalReferences(args: {
   const omittedDirectionReferenceCorrectionIds = [...appliedDirectionCandidates, ...pendingDirectionCandidates]
     .filter((candidate) => !selectedKeys.has(referenceSelectionKey(candidate.reference)))
     .sort((a, b) => {
-      const groupA = a.priorityTier === 3 ? 0 : 1;
-      const groupB = b.priorityTier === 3 ? 0 : 1;
+      const groupA = a.priorityTier === 2 || a.priorityTier === 5 ? 0 : 1;
+      const groupB = b.priorityTier === 2 || b.priorityTier === 5 ? 0 : 1;
       if (groupA !== groupB) return groupA - groupB;
       return a.stableOrder - b.stableOrder;
     })
@@ -536,11 +568,18 @@ function buildStructuredPrompt(args: {
   identityReferences: AdvancedImagePipelineReference[];
   master: AdvancedImageMaster;
   pendingCorrections: AdvancedImageCorrection[];
+  strongDependencySourcesByPendingId?: Map<string, Array<{ correction: AdvancedImageCorrection; reason: string }>>;
 }): AdvancedImageStructuredPrompt {
   const identityRefByCorrectionId = new Map(args.identityReferences.map((ref) => [ref.correctionId, ref]));
   const directionRefByCorrectionId = new Map(args.directionReferences.map((ref) => [ref.correctionId, ref]));
+  const strongDependencySourcesByPendingId =
+    args.strongDependencySourcesByPendingId ??
+    resolveStrongAppliedDependencySources(args.appliedCorrections, args.pendingCorrections);
+  const absorbedPreserveSourceIds = new Set(
+    [...strongDependencySourcesByPendingId.values()].flatMap((sources) => sources.map((source) => source.correction.id)),
+  );
   const blocks: AdvancedImagePromptCorrectionBlock[] = [
-    ...args.appliedCorrections.map((correction) => {
+    ...args.appliedCorrections.filter((correction) => !absorbedPreserveSourceIds.has(correction.id)).map((correction) => {
       const identityRef = identityRefByCorrectionId.get(correction.id);
       const directionRef = directionRefByCorrectionId.get(correction.id);
       return {
@@ -561,12 +600,31 @@ function buildStructuredPrompt(args: {
     }),
     ...args.pendingCorrections.map((correction) => {
       const directionRef = directionRefByCorrectionId.get(correction.id);
+      const dependencySources = strongDependencySourcesByPendingId.get(correction.id)?.map(({ correction: source, reason }) => {
+        const identityRef = identityRefByCorrectionId.get(source.id);
+        const directionRef = directionRefByCorrectionId.get(source.id);
+        return {
+          correctionId: source.id,
+          dependencyReason: reason,
+          identityDescription: source.identityAnchor?.description,
+          instruction: source.userInstruction,
+          originalReferenceId: directionRef?.id,
+          originalReferenceLayout: directionRef?.layout,
+          originalReferenceRole: directionRef ? ("direction" as const) : undefined,
+          originalReferenceSourceImageCount: source.userReference?.sourceImageCount,
+          pinMode: source.pinMode,
+          referenceId: identityRef?.id,
+          referenceRole: identityRef?.role,
+          zone: promptZoneFromZone(source.zone),
+        };
+      }) ?? [];
       return {
         correctionId: correction.id,
-        dependencies: correction.dependencies,
+        dependencies: uniqueOrdered([...correction.dependencies, ...dependencySources.map((source) => source.correctionId)]),
+        dependencySources: dependencySources.length > 0 ? dependencySources : undefined,
         identityDescription: correction.identityAnchor?.description,
         instruction: correction.userInstruction,
-        phase: "apply" as const,
+        phase: dependencySources.length > 0 ? ("combined" as const) : ("apply" as const),
         pinMode: correction.pinMode,
         referenceId: directionRef?.id,
         referenceLayout: directionRef?.layout,
@@ -585,6 +643,47 @@ function buildStructuredPrompt(args: {
   };
 }
 
+function resolveStrongAppliedDependencySources(
+  appliedCorrections: AdvancedImageCorrection[],
+  pendingCorrections: AdvancedImageCorrection[],
+): Map<string, Array<{ correction: AdvancedImageCorrection; reason: string }>> {
+  const result = new Map<string, Array<{ correction: AdvancedImageCorrection; reason: string }>>();
+  for (const pending of pendingCorrections) {
+    const sources: Array<{ correction: AdvancedImageCorrection; reason: string }> = [];
+    for (const applied of appliedCorrections) {
+      const explicit = pending.dependencies.includes(applied.id);
+      let metrics: ReturnType<typeof computeZoneOverlapMetrics> | undefined;
+      try {
+        metrics = computeZoneOverlapMetrics(pending.zone, applied.zone, 96);
+      } catch {
+        metrics = undefined;
+      }
+      const strongOverlap = Boolean(
+        metrics &&
+          (metrics.containsOldZone || metrics.intersectionOverOld > 0.3 || metrics.intersectionOverNew > 0.3),
+      );
+      if (!explicit && !strongOverlap) continue;
+      const reason = explicit
+        ? "Explicit dependency selected by the session."
+        : metrics?.containsOldZone
+          ? "The new marked zone contains the previous correction zone."
+          : metrics && metrics.intersectionOverNew > metrics.intersectionOverOld
+            ? `The new marked zone sits inside or strongly overlaps the previous correction (${Math.round(metrics.intersectionOverNew * 100)}% of the new zone overlaps it).`
+            : metrics
+              ? `The new marked zone modifies a substantial part of the previous correction (${Math.round(metrics.intersectionOverOld * 100)}% of the previous zone overlaps it).`
+              : "The new correction depends on a previous correction.";
+      sources.push({ correction: applied, reason });
+    }
+    if (sources.length > 0) {
+      result.set(
+        pending.id,
+        sources.sort((a, b) => a.correction.order - b.correction.order),
+      );
+    }
+  }
+  return result;
+}
+
 function promptZoneFromZone(zone: AdvancedImageZone): AdvancedImagePromptZone {
   return {
     areaRatio: zone.areaRatio,
@@ -601,6 +700,7 @@ function buildPromptText(
   globalAdjustmentText?: string,
 ): string {
   const preserveBlocks = blocks.filter((block) => block.phase === "preserve");
+  const combinedBlocks = blocks.filter((block) => block.phase === "combined");
   const applyBlocks = blocks.filter((block) => block.phase === "apply");
   const dependencyLines = buildDependencyLines(blocks);
   const hasGlobalAdjustment = Boolean(globalAdjustmentText?.trim());
@@ -621,6 +721,10 @@ function buildPromptText(
     lines.push("- None.");
   } else {
     preserveBlocks.forEach((block, index) => lines.push(...renderPreserveBlock(block, index + 1)));
+  }
+  if (combinedBlocks.length > 0) {
+    lines.push("", "APPLY RESOLVED CHANGES OVER PREVIOUS EDITS:");
+    combinedBlocks.forEach((block, index) => lines.push(...renderCombinedBlock(block, index + 1)));
   }
   lines.push("", "APPLY NEW CHANGES:");
   if (applyBlocks.length === 0) {
@@ -699,6 +803,65 @@ function renderPreserveBlock(block: AdvancedImagePromptCorrectionBlock, index: n
   return lines;
 }
 
+function renderCombinedBlock(block: AdvancedImagePromptCorrectionBlock, index: number): string[] {
+  const lines = [
+    `APPLY RESOLVED CHANGE ${index} (${block.correctionId}):`,
+    "- This is a strong dependency case: the current change modifies one or more previous accepted corrections.",
+    "- Do NOT send contradictory intents to the image model. Resolve the previous correction and the current override as one coherent instruction.",
+    `- Current target zone: ${formatZone(block.zone)}`,
+    `- Current local override: ${block.instruction}`,
+    "- The current local override has priority only inside the current target zone.",
+  ];
+  if (block.referenceId && block.referenceRole === "direction") {
+    lines.push(`- Current visual direction: use ${block.referenceId} as guidance for the override only.`);
+    if (block.referenceLayout && (block.referenceSourceImageCount ?? 0) > 1) {
+      lines.push(
+        `- ${block.referenceId} is a composite image of ${block.referenceSourceImageCount} references arranged in a ${block.referenceLayout.columns}x${block.referenceLayout.rows} grid: ${describeGridLayout(block.referenceLayout, block.referenceSourceImageCount ?? block.referenceLayout.usedImageCount)}. Use them collectively as visual direction for the override.`,
+      );
+    }
+  }
+  for (const source of block.dependencySources ?? []) {
+    lines.push(
+      `- Previous correction source ${source.correctionId}:`,
+      `  - Dependency reason: ${source.dependencyReason}`,
+      `  - Previous zone: ${formatZone(source.zone)}`,
+      `  - Previous original instruction: ${source.instruction}.`,
+      "  - Preserve this previous correction everywhere it should remain visible outside the current override zone.",
+    );
+    if (source.identityDescription && source.referenceId && source.referenceRole === "identity") {
+      lines.push(
+        `  - Identity to preserve: ${source.identityDescription}.`,
+        `  - Use ${source.referenceId} as identity anchor for the previous correction.`,
+      );
+    } else if (source.identityDescription) {
+      lines.push(
+        `  - Identity to preserve: ${source.identityDescription}.`,
+        "  - No image anchor is included for this previous correction; preserve from written identity description.",
+      );
+    } else {
+      lines.push("  - No identity anchor is available; preserve from the previous original instruction and zone.");
+    }
+    if (source.originalReferenceId && source.originalReferenceRole === "direction") {
+      lines.push(
+        `  - Original visual reference: ${source.originalReferenceId}. Use it as the base visual identity/material/style for the previous correction, not as a literal object to paste.`,
+      );
+      if (source.originalReferenceLayout && (source.originalReferenceSourceImageCount ?? 0) > 1) {
+        lines.push(
+          `  - ${source.originalReferenceId} is the original composite reference image of ${source.originalReferenceSourceImageCount} references arranged in a ${source.originalReferenceLayout.columns}x${source.originalReferenceLayout.rows} grid: ${describeGridLayout(source.originalReferenceLayout, source.originalReferenceSourceImageCount ?? source.originalReferenceLayout.usedImageCount)}.`,
+        );
+      }
+    } else if (source.originalReferenceSourceImageCount) {
+      lines.push("  - The original visual reference for this previous correction is not included due to the reference limit; preserve from written identity and instruction.");
+    }
+  }
+  lines.push(
+    "- Resolved instruction: rebuild the previous correction source(s) from the immutable master using their anchors/references/descriptions as visual identity, then apply the current local override inside the current target zone.",
+    "- If a previous reference, previous anchor or previous instruction conflicts with the current local override, the current local override wins only inside the current target zone.",
+    "- Keep all non-overridden parts of the previous correction coherent with their original reference/identity.",
+  );
+  return lines;
+}
+
 function renderApplyBlock(block: AdvancedImagePromptCorrectionBlock, index: number): string[] {
   const lines = [
     `APPLY NEW CHANGE ${index} (${block.correctionId}):`,
@@ -727,6 +890,9 @@ function buildDependencyLines(blocks: AdvancedImagePromptCorrectionBlock[]): str
     if (block.phase === "preserve") {
       preserveIndex += 1;
       labelById.set(block.correctionId, `PRESERVE EXISTING CHANGE ${preserveIndex} (${shortInstructionLabel(block.instruction)})`);
+    } else if (block.phase === "combined") {
+      applyIndex += 1;
+      labelById.set(block.correctionId, `APPLY RESOLVED CHANGE ${applyIndex} (${shortInstructionLabel(block.instruction)})`);
     } else {
       applyIndex += 1;
       labelById.set(block.correctionId, `APPLY NEW CHANGE ${applyIndex} (${shortInstructionLabel(block.instruction)})`);

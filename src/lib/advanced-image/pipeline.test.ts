@@ -172,7 +172,7 @@ describe("advanced-image-pipeline", () => {
     let s = addCorrection(session({ maxReferenceImages: 4 }), correction("previous", { reference: grid("previous") }), {
       timestamp: "2026-05-18T10:01:00.000Z",
     });
-    s = addCorrection(s, correction("current", { reference: grid("current") }), {
+    s = addCorrection(s, correction("current", { offset: 620, reference: grid("current") }), {
       timestamp: "2026-05-18T10:02:00.000Z",
     });
     s = markApplied(s, ["previous"]);
@@ -224,7 +224,7 @@ describe("advanced-image-pipeline", () => {
     let s = addCorrection(session({ maxReferenceImages: 4 }), correction("previous"), {
       timestamp: "2026-05-18T10:01:00.000Z",
     });
-    s = addCorrection(s, correction("current", { reference: grid("current") }), {
+    s = addCorrection(s, correction("current", { offset: 620, reference: grid("current") }), {
       timestamp: "2026-05-18T10:02:00.000Z",
     });
     s = markApplied(s, ["previous"]);
@@ -235,6 +235,47 @@ describe("advanced-image-pipeline", () => {
     if (!result.ok) return;
     expect(result.plan.directionReferences.map((ref) => ref.id)).toEqual(["REF-DIR-current"]);
     expect(result.plan.prompt.blocks.find((block) => block.correctionId === "previous")?.originalReferenceId).toBeUndefined();
+  });
+
+  it("resolves overlapping pending changes over applied corrections into a single non-contradictory block", () => {
+    let s = addCorrection(
+      session({ maxReferenceImages: 4 }),
+      {
+        ...correction("shoe", { reference: grid("shoe") }),
+        userInstruction: "Add a white sneaker with a black side logo using the visual reference.",
+      },
+      {
+        timestamp: "2026-05-18T10:01:00.000Z",
+      },
+    );
+    s = addCorrection(
+      s,
+      {
+        ...correction("logo", { offset: 5 }),
+        userInstruction: "Change only the side logo color to red.",
+      },
+      {
+        timestamp: "2026-05-18T10:02:00.000Z",
+      },
+    );
+    s = markApplied(s, ["shoe"]);
+
+    const result = buildAdvancedImageGenerationPlan(s, { batchPendingIds: ["logo"] });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.plan.appliedPreserveCorrectionIds).toEqual([]);
+    expect(result.plan.prompt.blocks.find((block) => block.correctionId === "logo")?.phase).toBe("combined");
+    expect(result.plan.prompt.promptText).not.toContain("PRESERVE EXISTING CHANGE 1 (shoe):");
+    expect(result.plan.prompt.promptText).toContain("APPLY RESOLVED CHANGE 1 (logo):");
+    expect(result.plan.prompt.promptText).toContain("Previous correction source shoe:");
+    expect(result.plan.prompt.promptText).toContain(
+      "Original visual reference: REF-DIR-shoe. Use it as the base visual identity/material/style for the previous correction",
+    );
+    expect(result.plan.prompt.promptText).toContain("Current local override: Change only the side logo color to red.");
+    expect(result.plan.prompt.promptText).toContain(
+      "If a previous reference, previous anchor or previous instruction conflicts with the current local override, the current local override wins only inside the current target zone.",
+    );
   });
 
   it("enforces reference limit with composite, overlap and recency priorities", () => {

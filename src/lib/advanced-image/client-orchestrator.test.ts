@@ -134,7 +134,7 @@ describe("advanced-image-client-orchestrator", () => {
   it("reverting a correction regenerates from master with remaining active corrections", async () => {
     const cacheStore = createAdvancedImageMemoryCacheStore();
     const t = transport();
-    let s = appendCorrection(appendCorrection(session(), "a", 0), "b", 40);
+    let s = appendCorrection(appendCorrection(session(), "a", 0), "b", 360);
     s = (await runAdvancedImageClientGeneration(s, {
       batchPendingIds: ["a", "b"],
       cacheStore,
@@ -187,7 +187,7 @@ describe("advanced-image-client-orchestrator", () => {
       ["b", 1],
     ]);
 
-    s = appendCorrection(s, "c", 80);
+    s = appendCorrection(s, "c", 720);
     const secondBatch = await runAdvancedImageClientGeneration(s, {
       batchPendingIds: ["c"],
       cacheStore,
@@ -251,7 +251,7 @@ describe("advanced-image-client-orchestrator", () => {
       transport: t,
       userEmail: "user@example.com",
     })).session;
-    s = appendCorrection(s, "b", 40);
+    s = appendCorrection(s, "b", 600);
     s = (await runAdvancedImageClientGeneration(s, {
       batchPendingIds: ["b"],
       cacheStore,
