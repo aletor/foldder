@@ -30,6 +30,8 @@ export type AdvancedImageZone = {
   bbox: AdvancedImageBox;
   geometryHash?: string;
   locationDescription: string;
+  locationAnalysisHash?: string;
+  locationAnalysisSource?: "analyze-areas" | "fallback";
   maskHash?: string;
   maskS3Key?: string;
   normalizedBBox: AdvancedImageBox;

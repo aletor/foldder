@@ -41,6 +41,7 @@ import {
   type AdvancedImageSession,
   type AdvancedImageUserReferenceGrid,
   type AdvancedImageWorkingImage,
+  type AdvancedImageZone,
 } from "@/lib/advanced-image/domain";
 import {
   executeAdvancedImageIdentityAnalysis,
@@ -265,6 +266,317 @@ function averageCanvasHash(canvas: HTMLCanvasElement): string {
   }
   const avg = values.reduce((sum, value) => sum + value, 0) / Math.max(1, values.length);
   return values.map((value) => (value >= avg ? "1" : "0")).join("");
+}
+
+const ZONE_LOCATION_ANALYSIS_PALETTE = [
+  { name: "azul", hex: "#2563eb" },
+  { name: "rojo", hex: "#ef4444" },
+  { name: "verde", hex: "#22c55e" },
+  { name: "amarillo", hex: "#eab308" },
+  { name: "magenta", hex: "#ec4899" },
+  { name: "cian", hex: "#06b6d4" },
+  { name: "naranja", hex: "#f97316" },
+  { name: "violeta", hex: "#8b5cf6" },
+  { name: "lima", hex: "#84cc16" },
+  { name: "rosa", hex: "#f472b6" },
+  { name: "indigo", hex: "#6366f1" },
+  { name: "turquesa", hex: "#14b8a6" },
+];
+
+const advancedImageZoneLocationCache = new Map<string, string>();
+
+type AdvancedImageZoneAnalysisTarget = {
+  analysisHash: string;
+  color: { hex: string; name: string };
+  correction: AdvancedImageCorrection;
+};
+
+function computeZoneLocationAnalysisHash(session: AdvancedImageSession, correction: AdvancedImageCorrection): string {
+  return stableHash({
+    geometryHash: correction.geometryHash,
+    instructionHash: correction.instructionHash,
+    masterContentHash: session.master.contentHash,
+    referenceHash: correction.referenceHash ?? null,
+    v: 1,
+  });
+}
+
+function isGenericAdvancedZoneLocation(description: string): boolean {
+  return /^(small|medium|large)\s+(upper|middle|lower)-(left|center|right)\s+region$/i.test(description.trim());
+}
+
+function shouldAnalyzeZoneLocation(
+  session: AdvancedImageSession,
+  correction: AdvancedImageCorrection,
+  pendingIds: Set<string>,
+): boolean {
+  if (correction.status !== "active") return false;
+  if (!correction.zone.strokes.some((stroke) => stroke.points.length > 0)) return false;
+  const analysisHash = computeZoneLocationAnalysisHash(session, correction);
+  if (correction.zone.locationAnalysisHash === analysisHash && !isGenericAdvancedZoneLocation(correction.zone.locationDescription)) {
+    return false;
+  }
+  return pendingIds.has(correction.id) || isGenericAdvancedZoneLocation(correction.zone.locationDescription);
+}
+
+function zoneLocationFallbackDescription(correction: AdvancedImageCorrection): string {
+  const box = correction.zone.normalizedBBox;
+  const cx = Math.round((box.x + box.width / 2) * 100);
+  const cy = Math.round((box.y + box.height / 2) * 100);
+  const x1 = Math.round(box.x * 100);
+  const y1 = Math.round(box.y * 100);
+  const x2 = Math.round((box.x + box.width) * 100);
+  const y2 = Math.round((box.y + box.height) * 100);
+  const areaPct = Math.round(correction.zone.areaRatio * 1000) / 10;
+  const row = cy < 33 ? "upper" : cy > 66 ? "lower" : "central";
+  const col = cx < 33 ? "left" : cx > 66 ? "right" : "central";
+  const quadrant = row === "central" && col === "central" ? "center of the image" : `${row}-${col} third of the frame`;
+  const size = areaPct < 3 ? "very small" : areaPct < 10 ? "small" : areaPct < 30 ? "medium" : "large";
+  return `selected ${size} region in the ${quadrant}; centroid ~${cx}% from the left and ~${cy}% from the top; bbox ${x1}%-${x2}% horizontal, ${y1}%-${y2}% vertical; ~${areaPct}% of the image`;
+}
+
+function drawAdvancedZoneMask(
+  ctx: CanvasRenderingContext2D,
+  zone: AdvancedImageZone,
+  canvasSize: { height: number; width: number },
+  color: string,
+): void {
+  const scaleX = canvasSize.width / Math.max(1, zone.sourceSize.width);
+  const scaleY = canvasSize.height / Math.max(1, zone.sourceSize.height);
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.strokeStyle = color;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  for (const stroke of zone.strokes) {
+    const points = stroke.points;
+    if (points.length === 0) continue;
+    ctx.beginPath();
+    ctx.moveTo(points[0].x * scaleX, points[0].y * scaleY);
+    for (const point of points.slice(1)) {
+      ctx.lineTo(point.x * scaleX, point.y * scaleY);
+    }
+    if (stroke.closed && points.length >= 3) {
+      ctx.closePath();
+      ctx.globalAlpha = 1;
+      ctx.fill();
+    } else {
+      ctx.lineWidth = Math.max(2, stroke.radius * Math.max(scaleX, scaleY) * 2);
+      ctx.globalAlpha = stroke.opacity ?? 1;
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
+function createZoneMaskDataUrl(zone: AdvancedImageZone, targetSize: { height: number; width: number }): string {
+  const canvas = document.createElement("canvas");
+  canvas.width = targetSize.width;
+  canvas.height = targetSize.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return "";
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawAdvancedZoneMask(ctx, zone, targetSize, "#ffffff");
+  return canvas.toDataURL("image/png");
+}
+
+function createZoneColorMapDataUrl(targets: AdvancedImageZoneAnalysisTarget[], master: AdvancedImageMaster): string {
+  const maxSide = 960;
+  const scale = Math.min(1, maxSide / Math.max(master.width, master.height));
+  const size = {
+    height: Math.max(1, Math.round(master.height * scale)),
+    width: Math.max(1, Math.round(master.width * scale)),
+  };
+  const canvas = document.createElement("canvas");
+  canvas.width = size.width;
+  canvas.height = size.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return "";
+  ctx.fillStyle = "#000000";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  for (const target of targets) {
+    drawAdvancedZoneMask(ctx, target.correction.zone, size, target.color.hex);
+  }
+  return canvas.toDataURL("image/png");
+}
+
+function spatialPayloadForZone(correction: AdvancedImageCorrection): {
+  areaPct: number;
+  bboxX1: number;
+  bboxX2: number;
+  bboxY1: number;
+  bboxY2: number;
+  posX: number;
+  posY: number;
+  quadrant: string;
+} {
+  const box = correction.zone.normalizedBBox;
+  const posX = Math.round((box.x + box.width / 2) * 100);
+  const posY = Math.round((box.y + box.height / 2) * 100);
+  const row = posY < 33 ? "tercio superior" : posY > 66 ? "tercio inferior" : "zona central";
+  const col = posX < 33 ? "izquierda" : posX > 66 ? "derecha" : "centro";
+  return {
+    areaPct: Math.round(correction.zone.areaRatio * 1000) / 10,
+    bboxX1: Math.round(box.x * 100),
+    bboxX2: Math.round((box.x + box.width) * 100),
+    bboxY1: Math.round(box.y * 100),
+    bboxY2: Math.round((box.y + box.height) * 100),
+    posX,
+    posY,
+    quadrant: col === "centro" && row === "zona central" ? "centro de la imagen" : `${row}-${col}`,
+  };
+}
+
+function extractAnalyzedZoneDescription(prompt: string, colorName: string, correction: AdvancedImageCorrection): string {
+  const lowerColor = colorName.toLowerCase();
+  const lines = prompt
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !/SALIDA DEL MODELO|NO debe reproducir|Devuelve SOLO|REFERENCIA 1|REFERENCIA 2:/i.test(line));
+  const matchIndex = lines.findIndex((line) => {
+    const lower = line.toLowerCase();
+    return lower.includes(`trazo ${lowerColor}`) || lower.includes(`[${lowerColor}]`) || lower.includes(` ${lowerColor} `);
+  });
+  if (matchIndex < 0) return zoneLocationFallbackDescription(correction);
+  const raw = [lines[matchIndex], lines[matchIndex + 1] ?? ""]
+    .join(" ")
+    .replace(/^[-•]\s*/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const cleaned = raw
+    .replace(new RegExp(`en la zona del trazo\\s+${lowerColor}\\s+en\\s+(?:REF|REFERENCIA)\\s*2`, "gi"), "in the selected marked area")
+    .replace(/(?:REF|REFERENCIA)\s*2/gi, "the selected marked area")
+    .replace(/trazo/gi, "marked area")
+    .replace(/REFERENCIA\s*3/gi, "the visual reference grid")
+    .trim();
+  return compactText(`Analyzed location: ${cleaned}`, 520);
+}
+
+async function analyzeAdvancedImageZoneLocations(
+  session: AdvancedImageSession,
+  batchPendingIds: string[],
+): Promise<{ analyzedCount: number; session: AdvancedImageSession }> {
+  const pendingIdSet = new Set(batchPendingIds);
+  if (pendingIdSet.size === 0) return { analyzedCount: 0, session };
+  const activeCorrections = session.corrections.filter((correction) => correction.status === "active");
+  const targets = activeCorrections
+    .filter((correction) => shouldAnalyzeZoneLocation(session, correction, pendingIdSet))
+    .map((correction, index) => ({
+      analysisHash: computeZoneLocationAnalysisHash(session, correction),
+      color: ZONE_LOCATION_ANALYSIS_PALETTE[index % ZONE_LOCATION_ANALYSIS_PALETTE.length],
+      correction,
+    }));
+  if (targets.length === 0) return { analyzedCount: 0, session };
+
+  const cachedDescriptions = new Map<string, string>();
+  const missingTargets: AdvancedImageZoneAnalysisTarget[] = [];
+  const fallbackCorrectionIds = new Set<string>();
+  for (const target of targets) {
+    const cached = advancedImageZoneLocationCache.get(target.analysisHash);
+    if (cached) cachedDescriptions.set(target.correction.id, cached);
+    else missingTargets.push(target);
+  }
+
+  const fetchedDescriptions = new Map<string, string>();
+  if (missingTargets.length > 0) {
+    const colorMapImage = createZoneColorMapDataUrl(missingTargets, session.master);
+    const maxSide = 960;
+    const scale = Math.min(1, maxSide / Math.max(session.master.width, session.master.height));
+    const maskSize = {
+      height: Math.max(1, Math.round(session.master.height * scale)),
+      width: Math.max(1, Math.round(session.master.width * scale)),
+    };
+    try {
+      const response = await fetch("/api/gemini/analyze-areas", {
+        body: JSON.stringify({
+          baseImage: session.master.imageUrl,
+          changes: missingTargets.map((target) => {
+            const spatial = spatialPayloadForZone(target.correction);
+            return {
+              assignedColorHex: target.color.hex,
+              areaPct: spatial.areaPct,
+              bboxX1: spatial.bboxX1,
+              bboxX2: spatial.bboxX2,
+              bboxY1: spatial.bboxY1,
+              bboxY2: spatial.bboxY2,
+              color: target.color.name,
+              description: target.correction.userInstruction,
+              isGlobal: false,
+              paintData: createZoneMaskDataUrl(target.correction.zone, maskSize),
+              posX: spatial.posX,
+              posY: spatial.posY,
+              quadrant: spatial.quadrant,
+              referenceImageData: null,
+            };
+          }),
+          colorMapImage,
+          colorMapImageKind: "abstract-map",
+        }),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      });
+      const json = await response.json().catch(() => ({}));
+      if (!response.ok || typeof json?.prompt !== "string") {
+        throw new Error(typeof json?.error === "string" ? json.error : `Zone analysis failed (${response.status}).`);
+      }
+      for (const target of missingTargets) {
+        const description = extractAnalyzedZoneDescription(json.prompt, target.color.name, target.correction);
+        fetchedDescriptions.set(target.correction.id, description);
+        advancedImageZoneLocationCache.set(target.analysisHash, description);
+      }
+      console.info("[ImageCreationAdvanced zone-analysis] success", {
+        analyzedCount: missingTargets.length,
+        correctionIds: missingTargets.map((target) => target.correction.id),
+      });
+    } catch (error) {
+      console.warn("[ImageCreationAdvanced zone-analysis] fallback", {
+        correctionIds: missingTargets.map((target) => target.correction.id),
+        error: error instanceof Error ? error.message : String(error),
+      });
+      for (const target of missingTargets) {
+        const description = zoneLocationFallbackDescription(target.correction);
+        fallbackCorrectionIds.add(target.correction.id);
+        fetchedDescriptions.set(target.correction.id, description);
+        advancedImageZoneLocationCache.set(target.analysisHash, description);
+      }
+    }
+  }
+
+  const descriptionByCorrectionId = new Map([...cachedDescriptions, ...fetchedDescriptions]);
+  let changed = false;
+  const corrections = session.corrections.map((correction) => {
+    const description = descriptionByCorrectionId.get(correction.id);
+    if (!description) return correction;
+    const analysisHash = computeZoneLocationAnalysisHash(session, correction);
+    if (
+      correction.zone.locationDescription === description &&
+      correction.zone.locationAnalysisHash === analysisHash
+    ) {
+      return correction;
+    }
+    changed = true;
+    return {
+      ...correction,
+      zone: {
+        ...correction.zone,
+        locationAnalysisHash: analysisHash,
+        locationAnalysisSource: fallbackCorrectionIds.has(correction.id) ? "fallback" as const : "analyze-areas" as const,
+        locationDescription: description,
+      },
+    };
+  });
+
+  return changed
+    ? {
+        analyzedCount: descriptionByCorrectionId.size,
+        session: {
+          ...session,
+          corrections,
+          updatedAt: new Date().toISOString(),
+        },
+      }
+    : { analyzedCount: 0, session };
 }
 
 async function createAndUploadCorrectionReferenceGrid(args: {
@@ -727,29 +1039,25 @@ function ImageCreationAdvancedStudio({
         onPatch({ advancedSession: safeSessionForNodeData(baseSession), error: "Sign in before calling Gemini.", status: "error" });
         return null;
       }
-      const planResult = buildAdvancedImageGenerationPlan(baseSession, { batchPendingIds });
-      if (!planResult.ok) {
+      const preliminaryPlanResult = buildAdvancedImageGenerationPlan(baseSession, { batchPendingIds });
+      if (!preliminaryPlanResult.ok) {
         onPatch({
           advancedSession: safeSessionForNodeData(baseSession),
-          error: planResult.issues.map((issue) => `${issue.code}: ${issue.detail}`).join("\n"),
+          error: preliminaryPlanResult.issues.map((issue) => `${issue.code}: ${issue.detail}`).join("\n"),
           status: "error",
         });
         return null;
       }
-      const planToRun = planResult.plan;
-      const now = new Date().toISOString();
-      const requestId = `advanced-image-batch-${planToRun.geminiStateHash}-${Date.now()}`;
-      const masterContentHashBefore = baseSession.master.contentHash;
-      const cached = await readAdvancedImageGeminiRawCache(advancedImageStudioCache, planToRun, now, {
-        requestId: `advanced-precheck-${planToRun.geminiStateHash}`,
-        userEmail,
-      });
-      const willCallGemini = planToRun.activeCorrectionIds.length > 0 || planToRun.globalAdjustmentActive;
-      let approvedForCost = cached.hit || !willCallGemini || skipCostConfirm;
-      if (!cached.hit && !skipCostConfirm && willCallGemini) {
-        const referenceCount = planToRun.identityReferences.length + planToRun.directionReferences.length;
+      const preliminaryPlan = preliminaryPlanResult.plan;
+      const willCallGemini = preliminaryPlan.activeCorrectionIds.length > 0 || preliminaryPlan.globalAdjustmentActive;
+      let approvedForCost = !willCallGemini || skipCostConfirm;
+      if (!skipCostConfirm && willCallGemini) {
+        const referenceCount = preliminaryPlan.identityReferences.length + preliminaryPlan.directionReferences.length;
+        const zoneAnalysisNote = batchPendingIds.length > 0
+          ? " A lightweight zone-location analysis may run first so the selected areas are described precisely."
+          : "";
         const confirmed = window.confirm(
-          `This will call Gemini (${modelLabelForConfirm(planToRun.model)}) with ${referenceCount} reference image${referenceCount === 1 ? "" : "s"} plus the master image. Continue?\n\nPress OK to continue. Tick "do not ask again" in the Studio panel to avoid this prompt for this Studio session.`,
+          `This will call Gemini (${modelLabelForConfirm(preliminaryPlan.model)}) with ${referenceCount} reference image${referenceCount === 1 ? "" : "s"} plus the master image.${zoneAnalysisNote} Continue?\n\nPress OK to continue. Tick "do not ask again" in the Studio panel to avoid this prompt for this Studio session.`,
         );
         if (!confirmed) {
           onPatch({ advancedSession: safeSessionForNodeData(baseSession), status: "plan_ready" });
@@ -759,7 +1067,44 @@ function ImageCreationAdvancedStudio({
       }
 
       setGenerating(true);
-      setProgress(cached.hit ? 100 : 0);
+      setProgress(0);
+      let sessionForGeneration = baseSession;
+      let zoneAnalysisCount = 0;
+      try {
+        if (batchPendingIds.length > 0) {
+          const analyzed = await analyzeAdvancedImageZoneLocations(baseSession, batchPendingIds);
+          sessionForGeneration = analyzed.session;
+          zoneAnalysisCount = analyzed.analyzedCount;
+          if (sessionForGeneration !== baseSession) {
+            latestSessionRef.current = sessionForGeneration;
+            onPatch({ advancedSession: safeSessionForNodeData(sessionForGeneration), error: undefined, status: "editing" });
+          }
+        }
+      } catch (error) {
+        console.warn("[ImageCreationAdvanced zone-analysis] unexpected failure", error);
+        sessionForGeneration = baseSession;
+      }
+
+      const planResult = buildAdvancedImageGenerationPlan(sessionForGeneration, { batchPendingIds });
+      if (!planResult.ok) {
+        setGenerating(false);
+        onPatch({
+          advancedSession: safeSessionForNodeData(sessionForGeneration),
+          error: planResult.issues.map((issue) => `${issue.code}: ${issue.detail}`).join("\n"),
+          status: "error",
+        });
+        return null;
+      }
+      const planToRun = planResult.plan;
+      const now = new Date().toISOString();
+      const requestId = `advanced-image-batch-${planToRun.geminiStateHash}-${Date.now()}`;
+      const masterContentHashBefore = sessionForGeneration.master.contentHash;
+      const cached = await readAdvancedImageGeminiRawCache(advancedImageStudioCache, planToRun, now, {
+        requestId: `advanced-precheck-${planToRun.geminiStateHash}`,
+        userEmail,
+      });
+      if (cached.hit) approvedForCost = true;
+      setProgress(cached.hit ? 100 : 5);
       const generationResultRef: { current: AdvancedImageClientGenerationResult | null } = { current: null };
       let generationError: unknown = null;
       console.info("[ImageCreationAdvanced batch] start", {
@@ -778,11 +1123,12 @@ function ImageCreationAdvancedStudio({
         pendingCount: planToRun.batchPendingIds.length,
         refsTotal: planToRun.identityReferences.length + planToRun.directionReferences.length,
         requestId,
+        zoneAnalysisCount,
       });
       try {
         const ok = await runAiJobWithNotification({ nodeId, label: "Image Creation Advanced" }, async () => {
           try {
-            generationResultRef.current = await runAdvancedImageClientGeneration(baseSession, {
+            generationResultRef.current = await runAdvancedImageClientGeneration(sessionForGeneration, {
               batchPendingIds: planToRun.batchPendingIds,
               cacheStore: advancedImageStudioCache,
               costApproval: {
@@ -797,7 +1143,7 @@ function ImageCreationAdvancedStudio({
               now,
               requestId,
               transport: createStreamGeminiTransport({
-                aspectRatio: aspectRatioFromMaster(baseSession.master),
+                aspectRatio: aspectRatioFromMaster(sessionForGeneration.master),
                 onProgress: (pct) => setProgress(pct),
               }),
               userEmail,
@@ -808,14 +1154,14 @@ function ImageCreationAdvancedStudio({
           }
         });
         if (!ok) {
-          const failedSession = generationError instanceof AdvancedImageClientGenerationError ? generationError.session : baseSession;
+          const failedSession = generationError instanceof AdvancedImageClientGenerationError ? generationError.session : sessionForGeneration;
           const message = generationError instanceof Error ? generationError.message : "Generation cancelled.";
           onPatch({ advancedSession: safeSessionForNodeData(failedSession), error: message, status: "error" });
           return null;
         }
         const generationResult = generationResultRef.current;
         if (!generationResult) {
-          onPatch({ advancedSession: safeSessionForNodeData(baseSession), error: "Generation cancelled.", status: "error" });
+          onPatch({ advancedSession: safeSessionForNodeData(sessionForGeneration), error: "Generation cancelled.", status: "error" });
           return null;
         }
         const nextSession = generationResult.session;
@@ -845,7 +1191,7 @@ function ImageCreationAdvancedStudio({
         return generationResult;
       } catch (error) {
         console.error("[ImageCreationAdvanced] generation failed:", error);
-        const failedSession = error instanceof AdvancedImageClientGenerationError ? error.session : baseSession;
+        const failedSession = error instanceof AdvancedImageClientGenerationError ? error.session : sessionForGeneration;
         console.info("[ImageCreationAdvanced batch] failed", {
           finalImageStateHash: planToRun.finalImageStateHash,
           geminiStateHash: planToRun.geminiStateHash,
