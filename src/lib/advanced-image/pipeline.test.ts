@@ -90,6 +90,7 @@ function correction(
     dependencies?: string[];
     offset?: number;
     reference?: AdvancedImageUserReferenceGrid;
+    strictZoneBoundary?: boolean;
   } = {},
 ): AdvancedImageAddCorrectionInput {
   const offset = args.offset ?? 0;
@@ -97,6 +98,7 @@ function correction(
     dependencies: args.dependencies,
     id,
     identityAnchor: anchor(id),
+    strictZoneBoundary: args.strictZoneBoundary,
     timestamp: "2026-05-18T10:01:00.000Z",
     userInstruction: `Apply correction ${id}`,
     userReference: args.reference,
@@ -141,6 +143,7 @@ function markApplied(base: AdvancedImageSession, ids: string[]): AdvancedImageSe
               geometryHash: item.geometryHash,
               instructionHash: item.instructionHash,
               referenceHash: item.referenceHash,
+              strictZoneBoundary: item.strictZoneBoundary,
             },
           ]),
       ),
@@ -211,6 +214,60 @@ describe("advanced-image-pipeline", () => {
     expect(result.plan.prompt.promptText).toContain("make the entire scene night time with cool moonlight");
     expect(result.plan.prompt.promptText).toContain("The GLOBAL TRANSFORMATION affects the entire image.");
     expect(result.plan.prompt.promptText).not.toContain("Only modify the explicitly marked zones.\n");
+  });
+
+  it("always reinforces marked-zone boundaries in the final rules", () => {
+    const s = addCorrection(session(), correction("local"), {
+      timestamp: "2026-05-18T10:01:00.000Z",
+    });
+
+    const result = buildAdvancedImageGenerationPlan(s, { batchPendingIds: ["local"] });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.plan.prompt.promptText).toContain(
+      "Each marked zone defines the exact boundary of its change.",
+    );
+    expect(result.plan.prompt.promptText).toContain(
+      "Do NOT extend any change to similar visual elements outside the marked zone",
+    );
+  });
+
+  it("adds strict boundary prompt lines and strict composite steps", () => {
+    const s = addCorrection(session(), correction("strict", { strictZoneBoundary: true }), {
+      timestamp: "2026-05-18T10:01:00.000Z",
+    });
+
+    const result = buildAdvancedImageGenerationPlan(s, { batchPendingIds: ["strict"] });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.plan.strictCorrectionIds).toEqual(["strict"]);
+    expect(result.plan.strictCompositeSteps).toHaveLength(1);
+    expect(result.plan.strictCompositeSteps[0]).toMatchObject({
+      correctionId: "strict",
+      featherPx: 8,
+    });
+    expect(result.plan.prompt.promptText).toContain("Strict zone boundary: enabled.");
+  });
+
+  it("marks a previously applied correction pending when strict boundary changes", () => {
+    let s = addCorrection(session(), correction("strict-toggle"), {
+      timestamp: "2026-05-18T10:01:00.000Z",
+    });
+    s = markApplied(s, ["strict-toggle"]);
+
+    expect(getAdvancedImagePendingCorrectionIds(s)).toEqual([]);
+    const edited = {
+      ...s,
+      corrections: s.corrections.map((correction) =>
+        correction.id === "strict-toggle"
+          ? { ...correction, strictZoneBoundary: true }
+          : correction,
+      ),
+    };
+
+    expect(getAdvancedImagePendingCorrectionIds(edited)).toEqual(["strict-toggle"]);
   });
 
   it("does not create REF-DIR for an applied correction without userReference", () => {
