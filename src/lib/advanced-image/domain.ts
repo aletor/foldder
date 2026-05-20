@@ -4,6 +4,13 @@ export type AdvancedImageAnalysisStatus = "pending" | "ready" | "failed";
 export type AdvancedImageGenerationStatus = "idle" | "generating" | "failed";
 export type AdvancedImageGlobalAdjustmentStatus = "draft" | "applied";
 export type AdvancedImageZoneTool = "freehand";
+export type AdvancedImageIntegrationCategory =
+  | "add_object"
+  | "change_texture_material"
+  | "environmental"
+  | "modify_attribute"
+  | "remove_object"
+  | "substitute_object";
 
 export type AdvancedImagePoint = {
   x: number;
@@ -91,6 +98,17 @@ export type AdvancedImageIdentityAnchor = {
   sourceWorkingHash: string;
 };
 
+export type AdvancedImageIntegrationContract = {
+  avoidList: string[];
+  category: AdvancedImageIntegrationCategory;
+  contract: string;
+  generatedAt: string;
+  generatedBy: string;
+  needsBinaryMask: boolean;
+  originalElement?: string;
+  targetElement?: string;
+};
+
 export type AdvancedImageCorrection = {
   appliedBatchNumber?: number;
   analysisStatus: AdvancedImageAnalysisStatus;
@@ -98,6 +116,7 @@ export type AdvancedImageCorrection = {
   geometryHash: string;
   id: string;
   identityAnchor?: AdvancedImageIdentityAnchor;
+  integrationContract?: AdvancedImageIntegrationContract;
   instructionHash: string;
   lastGenerationError?: string;
   lastGenerationStatus: AdvancedImageGenerationStatus;
@@ -232,6 +251,7 @@ export type AdvancedImageAddCorrectionInput = {
   dependencies?: string[];
   id: string;
   identityAnchor?: AdvancedImageIdentityAnchor;
+  integrationContract?: AdvancedImageIntegrationContract;
   pinMode?: AdvancedImagePinMode;
   status?: AdvancedImageCorrectionStatus;
   timestamp: string;
@@ -245,6 +265,7 @@ export type AdvancedImageEditCorrectionPatch = Partial<
     AdvancedImageCorrection,
     | "dependencies"
     | "identityAnchor"
+    | "integrationContract"
     | "pinMode"
     | "status"
     | "userInstruction"
@@ -342,6 +363,12 @@ export function editCorrection(
           : contentChanged
             ? undefined
             : previous.identityAnchor,
+      integrationContract:
+        patch.integrationContract !== undefined
+          ? patch.integrationContract
+          : contentChanged
+            ? undefined
+            : previous.integrationContract,
       analysisStatus:
         patch.identityAnchor !== undefined
           ? "ready"
@@ -613,6 +640,7 @@ export function markAdvancedImageCorrectionRuntime(
   patch: {
     analysisStatus?: AdvancedImageAnalysisStatus;
     identityAnchor?: AdvancedImageIdentityAnchor;
+    integrationContract?: AdvancedImageIntegrationContract;
     lastGenerationError?: string | null;
     lastGenerationStatus?: AdvancedImageGenerationStatus;
   },
@@ -626,6 +654,8 @@ export function markAdvancedImageCorrectionRuntime(
       analysisStatus:
         patch.identityAnchor !== undefined ? "ready" : patch.analysisStatus ?? correction.analysisStatus,
       identityAnchor: patch.identityAnchor !== undefined ? patch.identityAnchor : correction.identityAnchor,
+      integrationContract:
+        patch.integrationContract !== undefined ? patch.integrationContract : correction.integrationContract,
       lastGenerationError:
         patch.lastGenerationError === null
           ? undefined
@@ -893,6 +923,7 @@ function normalizeCorrectionInput(input: AdvancedImageAddCorrectionInput, order:
     geometryHash: "",
     id: input.id,
     identityAnchor: input.identityAnchor,
+    integrationContract: input.integrationContract,
     instructionHash: "",
     lastGenerationStatus: "idle",
     order,
@@ -948,11 +979,37 @@ function normalizeCorrection(correction: AdvancedImageCorrection & { strictZoneB
         : undefined,
     dependencies: uniqueSorted(correction.dependencies ?? []),
     geometryHash: computeZoneGeometryHash(zone),
+    integrationContract: normalizeIntegrationContract(correction.integrationContract),
     instructionHash: computeInstructionHash(correction.userInstruction),
     pinMode: correction.pinMode ?? "anchor",
     referenceHash: correction.userReference ? computeReferenceHash(correction.userReference) : undefined,
     userInstruction: normalizeInstruction(correction.userInstruction),
     zone,
+  };
+}
+
+function normalizeIntegrationContract(
+  contract: AdvancedImageIntegrationContract | undefined,
+): AdvancedImageIntegrationContract | undefined {
+  if (!contract) return undefined;
+  const categories = new Set<AdvancedImageIntegrationCategory>([
+    "add_object",
+    "change_texture_material",
+    "environmental",
+    "modify_attribute",
+    "remove_object",
+    "substitute_object",
+  ]);
+  const category = categories.has(contract.category) ? contract.category : "modify_attribute";
+  return {
+    avoidList: (contract.avoidList ?? []).map((item) => normalizeInstruction(item)).filter(Boolean).slice(0, 3),
+    category,
+    contract: normalizeInstruction(contract.contract).slice(0, 900),
+    generatedAt: contract.generatedAt || new Date(0).toISOString(),
+    generatedBy: normalizeInstruction(contract.generatedBy || "unknown"),
+    needsBinaryMask: Boolean(contract.needsBinaryMask),
+    originalElement: normalizeInstruction(contract.originalElement ?? "").slice(0, 240) || undefined,
+    targetElement: normalizeInstruction(contract.targetElement ?? "").slice(0, 240) || undefined,
   };
 }
 
@@ -978,6 +1035,17 @@ function correctionGenerationHashInput(
           cropHash: correction.identityAnchor.cropHash,
           description: correction.identityAnchor.description,
           perceptualHash: correction.identityAnchor.perceptualHash,
+        }
+      : null,
+    integrationContract: correction.integrationContract
+      ? {
+          avoidList: correction.integrationContract.avoidList,
+          category: correction.integrationContract.category,
+          contract: correction.integrationContract.contract,
+          generatedBy: correction.integrationContract.generatedBy,
+          needsBinaryMask: correction.integrationContract.needsBinaryMask,
+          originalElement: correction.integrationContract.originalElement ?? null,
+          targetElement: correction.integrationContract.targetElement ?? null,
         }
       : null,
     instructionHash: correction.instructionHash,

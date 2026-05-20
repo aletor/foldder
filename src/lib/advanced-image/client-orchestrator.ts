@@ -1,6 +1,7 @@
 import {
   appendAdvancedImageHistorySnapshot,
   assignAdvancedImageAppliedBatchNumber,
+  computeFinalImageStateHash,
   isAdvancedImageGlobalAdjustmentPending,
   markAdvancedImageCorrectionRuntime,
   markAdvancedImageGlobalAdjustmentApplied,
@@ -22,6 +23,7 @@ import {
   type AdvancedImageGeminiTransport,
 } from "./gemini-adapter";
 import { buildAdvancedImageGenerationPlan, type AdvancedImageGenerationPlan } from "./pipeline";
+import type { AdvancedImageArtifactDetector, AdvancedImageArtifactDetectorResult } from "./artifact-detector";
 
 export type AdvancedImageGenerationLogger = (event: {
   cacheKey: string;
@@ -42,6 +44,7 @@ export type AdvancedImageClientGenerationOptions = {
   requestId: string;
   transport: AdvancedImageGeminiTransport;
   userEmail: string;
+  artifactDetector?: AdvancedImageArtifactDetector;
 };
 
 export type AdvancedImageClientGenerationResult = {
@@ -51,6 +54,7 @@ export type AdvancedImageClientGenerationResult = {
   resolutionWarning?: string;
   session: AdvancedImageSession;
   workingImage: AdvancedImageWorkingImage;
+  artifactDetectorResult?: AdvancedImageArtifactDetectorResult & { retried?: boolean };
 };
 
 export async function runAdvancedImageClientGeneration(
@@ -145,13 +149,32 @@ export async function runAdvancedImageClientGeneration(
   }
 
   try {
-    const generated = await executeAdvancedImageGeminiGeneration(plan, {
+    let generated = await executeAdvancedImageGeminiGeneration(plan, {
       costApproval: options.costApproval,
       maxImageInputs: plan.referenceLimit + 1,
       requestId: options.requestId,
       transport: options.transport,
       userEmail: options.userEmail,
     });
+    let artifactDetectorResult: (AdvancedImageArtifactDetectorResult & { retried?: boolean }) | undefined;
+    if (options.artifactDetector) {
+      artifactDetectorResult = await options.artifactDetector(generated.outputUrl);
+      if (artifactDetectorResult.contaminated && artifactDetectorResult.confidence > 0.7) {
+        const retryPlan = reinforcePlanAgainstToolArtifacts(plan);
+        generated = await executeAdvancedImageGeminiGeneration(retryPlan, {
+          costApproval: options.costApproval,
+          maxImageInputs: plan.referenceLimit + 1,
+          requestId: `${options.requestId}-artifact-retry`,
+          transport: options.transport,
+          userEmail: options.userEmail,
+        });
+        const retryResult = await options.artifactDetector(generated.outputUrl);
+        artifactDetectorResult = { ...retryResult, retried: true };
+        if (retryResult.contaminated && retryResult.confidence > 0.7) {
+          throw new Error("The generated image contained editing-tool artifacts. Previous working image was kept intact.");
+        }
+      }
+    }
     const generatedDimensions = await probeGeneratedImageDimensions(generated.outputUrl);
     const resolutionWarning = evaluateGeneratedResolution({
       generated: generatedDimensions,
@@ -198,6 +221,7 @@ export async function runAdvancedImageClientGeneration(
     );
     return {
       cacheHit: false,
+      artifactDetectorResult,
       plan,
       requestId: options.requestId,
       resolutionWarning: resolutionWarning?.severity === "warning" ? resolutionWarning.message : undefined,
@@ -209,6 +233,20 @@ export async function runAdvancedImageClientGeneration(
     const next = markGenerationFailure(session, options.batchPendingIds ?? plan.batchPendingIds, message, options.now);
     throw new AdvancedImageClientGenerationError(message, next, error);
   }
+}
+
+function reinforcePlanAgainstToolArtifacts(plan: AdvancedImageGenerationPlan): AdvancedImageGenerationPlan {
+  return {
+    ...plan,
+    prompt: {
+      ...plan.prompt,
+      promptText: [
+        plan.prompt.promptText,
+        "",
+        "CRITICAL: The previous generation contained editing-tool artifacts (colored lines, selection marks, polygon overlays) which must NOT appear in the final image. Generate a clean photographic image without any tool marks, colored lines, or interface overlays. Only show the natural photographic content of the scene with the requested changes integrated naturally.",
+      ].join("\n"),
+    },
+  };
 }
 
 function assignBatchNumberToGeneratedCorrections(
@@ -289,6 +327,7 @@ function workingImageFromCached(
   generatedAt: string,
   session?: AdvancedImageSession,
 ): AdvancedImageWorkingImage {
+  const domainSourceHash = session ? computeFinalImageStateHash(session) : plan.finalImageStateHash;
   return {
     activeCorrectionIds: plan.activeCorrectionIds,
     correctionSnapshots: session ? buildCorrectionSnapshots(session, plan.activeCorrectionIds) : undefined,
@@ -298,7 +337,7 @@ function workingImageFromCached(
     model: value.model,
     resolution: value.resolution,
     s3Key: value.s3Key,
-    sourceHash: plan.finalImageStateHash,
+    sourceHash: domainSourceHash,
     width: value.width,
   };
 }
@@ -317,7 +356,7 @@ function workingImageFromMaster(
     model: session.master.sourceModel ?? "master",
     resolution: session.master.sourceResolution ?? `${session.master.width}x${session.master.height}`,
     s3Key: session.master.s3Key,
-    sourceHash: plan.finalImageStateHash || stableHash({ master: session.master.contentHash }),
+    sourceHash: computeFinalImageStateHash(session) || stableHash({ master: session.master.contentHash }),
     width: session.master.width,
   };
 }

@@ -9,6 +9,7 @@ import {
   type AdvancedImageAddCorrectionInput,
   type AdvancedImageGenerationSettings,
   type AdvancedImageIdentityAnchor,
+  type AdvancedImageIntegrationContract,
   type AdvancedImageMaster,
   type AdvancedImageSession,
   type AdvancedImageUserReferenceGrid,
@@ -81,6 +82,21 @@ function grid(id: string): AdvancedImageUserReferenceGrid {
     gridS3Key: `knowledge-files/grids/${id}.png`,
     id: `grid-${id}`,
     sourceImageCount: 3,
+  };
+}
+
+function contract(
+  category: AdvancedImageIntegrationContract["category"] = "add_object",
+  extras: Partial<AdvancedImageIntegrationContract> = {},
+): AdvancedImageIntegrationContract {
+  return {
+    avoidList: ["do not create sticker or cutout appearance"],
+    category,
+    contract: "Match scale, perspective, contact shadows, material response, focus, grain and color temperature to the surrounding photo.",
+    generatedAt: "2026-05-18T10:02:30.000Z",
+    generatedBy: "gemini-2.5-flash",
+    needsBinaryMask: category !== "environmental",
+    ...extras,
   };
 }
 
@@ -168,6 +184,69 @@ describe("advanced-image-pipeline", () => {
     expect(result.plan.prompt.promptText).not.toContain("stale-working-image");
   });
 
+  it("adds clean binary masks and integration contracts without sending previous working state", () => {
+    let s = addCorrection(
+      session({ maxReferenceImages: 4 }),
+      {
+        ...correction("shoe", { reference: grid("shoe") }),
+        integrationContract: contract("add_object"),
+        userInstruction: "Put this Nike sneaker naturally on the marked foot.",
+      },
+      { timestamp: "2026-05-18T10:01:00.000Z" },
+    );
+
+    const result = buildAdvancedImageGenerationPlan(s, { batchPendingIds: ["shoe"] });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.plan.promptVersion).toBe("v3-integration-contracts");
+    expect(result.plan.maskReferences.map((ref) => ref.id)).toEqual(["REF-MASK-shoe"]);
+    expect(result.plan.maskReferences[0].url).toContain("data:image/svg+xml");
+    expect(result.plan.maskReferences[0].url).not.toMatch(/red|green|blue|magenta|trazo/i);
+    expect(result.plan.prompt.promptText).toContain("MASK CONVENTION:");
+    expect(result.plan.prompt.promptText).toContain("Spatial guide: REF-MASK-shoe");
+    expect(result.plan.prompt.promptText).toContain("INTEGRATION REQUIREMENTS:");
+    expect(result.plan.prompt.promptText).toContain("Sticker/cutout appearance");
+    expect(result.plan.prompt.promptText).not.toContain("REF-STATE-PREVIOUS");
+  });
+
+  it("adds per-correction photographic fit guidance even without an integration contract", () => {
+    let s = addCorrection(session({ maxReferenceImages: 4 }), correction("new-object"), {
+      timestamp: "2026-05-18T10:01:00.000Z",
+    });
+
+    const result = buildAdvancedImageGenerationPlan(s, { batchPendingIds: ["new-object"] });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.plan.prompt.promptText).toContain("APPLY NEW CHANGE 1 (new-object):");
+    expect(result.plan.prompt.promptText).toContain(
+      "Photographic fit: maintain the BASE IMAGE's real perspective, camera/lens angle, lighting direction",
+    );
+    expect(result.plan.prompt.promptText).toContain(
+      "for this specific change. The result must look physically present in the original photograph",
+    );
+  });
+
+  it("adds per-correction photographic fit guidance to applied preserve blocks", () => {
+    let s = addCorrection(session({ maxReferenceImages: 4 }), correction("previous"), {
+      timestamp: "2026-05-18T10:01:00.000Z",
+    });
+    s = addCorrection(s, correction("current", { offset: 620 }), {
+      timestamp: "2026-05-18T10:02:00.000Z",
+    });
+    s = markApplied(s, ["previous"]);
+
+    const result = buildAdvancedImageGenerationPlan(s, { batchPendingIds: ["current"] });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.plan.prompt.promptText).toContain("RECONSTRUCT ACCEPTED PREVIOUS CHANGE 1 (previous):");
+    expect(result.plan.prompt.promptText).toContain(
+      "for this accepted previous change. The result must look physically present in the original photograph",
+    );
+  });
+
   it("keeps REF-DIR from an applied correction with userReference in a later batch", () => {
     let s = addCorrection(session({ maxReferenceImages: 4 }), correction("previous", { reference: grid("previous") }), {
       timestamp: "2026-05-18T10:01:00.000Z",
@@ -183,10 +262,7 @@ describe("advanced-image-pipeline", () => {
     if (!result.ok) return;
     expect(result.plan.batchPendingIds).toEqual(["current"]);
     expect(result.plan.appliedPreserveCorrectionIds).toEqual(["previous"]);
-    expect(result.plan.previousStateReference).toMatchObject({
-      id: "REF-STATE-PREVIOUS",
-      url: "/api/spaces/s3-file?key=knowledge-files/generated/working.png",
-    });
+    expect(result.plan.prompt.promptText).not.toContain("REF-STATE-PREVIOUS");
     expect(result.plan.directionReferences.map((ref) => ref.id)).toEqual(["REF-DIR-previous", "REF-DIR-current"]);
     expect(result.plan.identityReferences.map((ref) => ref.id)).toEqual(["REF-ID-previous"]);
     expect(result.plan.prompt.blocks.find((block) => block.correctionId === "current")?.referenceId).toBe("REF-DIR-current");
@@ -202,6 +278,97 @@ describe("advanced-image-pipeline", () => {
     expect(result.plan.prompt.promptText).toContain(
       "Reconstruct this previous correction only inside this exact marked zone.",
     );
+  });
+
+  it("reconstructs applied substitute-object corrections without restoring the original master element", () => {
+    let s = addCorrection(
+      session({ maxReferenceImages: 4 }),
+      {
+        ...correction("nike-shoes", { reference: grid("nike-shoes") }),
+        integrationContract: contract("substitute_object", {
+          originalElement: "pink ballet pointe shoes on the dancer's feet",
+          targetElement: "black and white Nike Dunk Low sneakers fitted naturally on the feet",
+        }),
+        userInstruction: "ponle estas zapatillas Nike",
+      },
+      { timestamp: "2026-05-18T10:01:00.000Z" },
+    );
+    s = addCorrection(
+      s,
+      {
+        ...correction("boxing-glove", { offset: 620 }),
+        integrationContract: contract("add_object"),
+        userInstruction: "añadir guante de boxeo marrón",
+      },
+      { timestamp: "2026-05-18T10:02:00.000Z" },
+    );
+    s = markApplied(s, ["nike-shoes"]);
+
+    const result = buildAdvancedImageGenerationPlan(s, { batchPendingIds: ["boxing-glove"] });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.plan.directionReferences.map((ref) => ref.id)).toContain("REF-DIR-nike-shoes");
+    expect(result.plan.maskReferences.map((ref) => ref.id)).toContain("REF-MASK-nike-shoes");
+    expect(result.plan.prompt.promptText).toContain("IMPORTANT SUBSTITUTION");
+    expect(result.plan.prompt.promptText).toContain("Do not restore the original master element");
+    expect(result.plan.prompt.promptText).toContain("Original master element that must remain replaced: pink ballet pointe shoes");
+    expect(result.plan.prompt.promptText).toContain("Accepted replacement to reconstruct: black and white Nike Dunk Low sneakers");
+  });
+
+  it("keeps uploaded visual references ahead of generated masks across later batches", () => {
+    let s = session({ maxReferenceImages: 4 });
+    s = addCorrection(
+      s,
+      {
+        ...correction("shoes", { reference: grid("shoes") }),
+        identityAnchor: undefined,
+        integrationContract: contract("substitute_object"),
+      },
+      { timestamp: "2026-05-18T10:01:00.000Z" },
+    );
+    s = addCorrection(
+      s,
+      {
+        ...correction("necklace", { offset: 180, reference: grid("necklace") }),
+        identityAnchor: undefined,
+        integrationContract: contract("add_object"),
+      },
+      { timestamp: "2026-05-18T10:02:00.000Z" },
+    );
+    s = addCorrection(
+      s,
+      {
+        ...correction("fabric", { offset: 360 }),
+        identityAnchor: undefined,
+        integrationContract: contract("change_texture_material"),
+      },
+      { timestamp: "2026-05-18T10:03:00.000Z" },
+    );
+    s = addCorrection(
+      s,
+      {
+        ...correction("glove", { offset: 540 }),
+        identityAnchor: undefined,
+        integrationContract: contract("add_object"),
+      },
+      { timestamp: "2026-05-18T10:04:00.000Z" },
+    );
+    s = markApplied(s, ["shoes", "necklace", "fabric"]);
+
+    const result = buildAdvancedImageGenerationPlan(s, { batchPendingIds: ["glove"] });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(
+      result.plan.identityReferences.length +
+        result.plan.directionReferences.length +
+        result.plan.maskReferences.length,
+    ).toBeLessThanOrEqual(result.plan.referenceLimit);
+    expect(result.plan.directionReferences.map((ref) => ref.id)).toEqual(["REF-DIR-shoes", "REF-DIR-necklace"]);
+    expect(result.plan.maskReferences.map((ref) => ref.id)).toEqual(["REF-MASK-glove", "REF-MASK-shoes"]);
+    expect(result.plan.omittedDirectionReferenceCorrectionIds).toEqual([]);
+    expect(result.plan.omittedMaskReferenceCorrectionIds).toEqual(["necklace", "fabric"]);
   });
 
   it("adds a GLOBAL TRANSFORMATION block and global-specific final rules when active", () => {
@@ -274,6 +441,9 @@ describe("advanced-image-pipeline", () => {
     expect(result.plan.prompt.promptText).toContain("APPLY RESOLVED CHANGE 1 (logo):");
     expect(result.plan.prompt.promptText).toContain("Previous correction source shoe:");
     expect(result.plan.prompt.promptText).toContain(
+      "for this previous correction source. The result must look physically present in the original photograph",
+    );
+    expect(result.plan.prompt.promptText).toContain(
       "Original visual reference: REF-DIR-shoe. Use it as the base visual identity/material/style for the previous correction",
     );
     expect(result.plan.prompt.promptText).toContain("Current local override: Change only the side logo color to red.");
@@ -306,15 +476,14 @@ describe("advanced-image-pipeline", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.plan.referenceLimit).toBe(3);
-    expect(result.plan.previousStateReference?.id).toBe("REF-STATE-PREVIOUS");
     expect(
       result.plan.identityReferences.length +
         result.plan.directionReferences.length +
-        (result.plan.previousStateReference ? 1 : 0),
+        result.plan.maskReferences.length,
     ).toBeLessThanOrEqual(result.plan.referenceLimit);
-    expect(result.plan.identityReferences.map((ref) => ref.correctionId)).toEqual(["overlap"]);
-    expect(result.plan.identityReferences[0].priorityReasons).toContain("spatial-overlap");
-    expect(result.plan.omittedIdentityReferenceCorrectionIds).toEqual(["composite-far", "recent"]);
+    expect(result.plan.identityReferences.map((ref) => ref.correctionId)).toEqual(["composite-far", "overlap"]);
+    expect(result.plan.identityReferences[1].priorityReasons).toContain("spatial-overlap");
+    expect(result.plan.omittedIdentityReferenceCorrectionIds).toEqual(["recent"]);
     expect(result.plan.consolidationRecommended).toBe(true);
   });
 
@@ -338,15 +507,14 @@ describe("advanced-image-pipeline", () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.plan.previousStateReference?.id).toBe("REF-STATE-PREVIOUS");
     expect(
       result.plan.identityReferences.length +
         result.plan.directionReferences.length +
-        (result.plan.previousStateReference ? 1 : 0),
+        result.plan.maskReferences.length,
     ).toBeLessThanOrEqual(result.plan.referenceLimit);
     expect(result.plan.identityReferences.map((ref) => ref.id)).toEqual(["REF-ID-composite"]);
-    expect(result.plan.directionReferences.map((ref) => ref.id)).toEqual(["REF-DIR-pending"]);
-    expect(result.plan.omittedDirectionReferenceCorrectionIds).toEqual(["composite", "anchor"]);
+    expect(result.plan.directionReferences.map((ref) => ref.id)).toEqual(["REF-DIR-composite", "REF-DIR-pending"]);
+    expect(result.plan.omittedDirectionReferenceCorrectionIds).toEqual(["anchor"]);
     expect(result.plan.omittedIdentityReferenceCorrectionIds).toEqual(["anchor"]);
     expect(result.plan.prompt.promptText).toContain(
       "Reference image originally used for this change is not included in this call; preserve from written description.",
@@ -374,18 +542,18 @@ describe("advanced-image-pipeline", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.plan.referenceLimit).toBe(4);
-    expect(result.plan.previousStateReference?.id).toBe("REF-STATE-PREVIOUS");
     expect(
       result.plan.identityReferences.length +
         result.plan.directionReferences.length +
-        (result.plan.previousStateReference ? 1 : 0),
+        result.plan.maskReferences.length,
     ).toBeLessThanOrEqual(4);
     expect(result.plan.directionReferences.map((ref) => ref.id)).toEqual([
       "REF-DIR-applied-a",
+      "REF-DIR-applied-b",
       "REF-DIR-pending-a",
       "REF-DIR-pending-b",
     ]);
-    expect(result.plan.omittedDirectionReferenceCorrectionIds).toEqual(["applied-b"]);
+    expect(result.plan.omittedDirectionReferenceCorrectionIds).toEqual([]);
     expect(result.plan.omittedIdentityReferenceCorrectionIds).toEqual(["applied-a", "applied-b"]);
     expect(result.plan.consolidationRecommended).toBe(true);
   });

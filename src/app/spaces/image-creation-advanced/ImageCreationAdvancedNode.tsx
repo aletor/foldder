@@ -38,8 +38,10 @@ import {
   toggleCorrection,
   updateAdvancedImageGlobalAdjustment,
   type AdvancedImageCorrection,
+  type AdvancedImageBox,
   type AdvancedImageGenerationSettings,
   type AdvancedImageHistorySnapshot,
+  type AdvancedImageIntegrationContract,
   type AdvancedImageMaster,
   type AdvancedImagePoint,
   type AdvancedImageSession,
@@ -47,11 +49,6 @@ import {
   type AdvancedImageWorkingImage,
   type AdvancedImageZone,
 } from "@/lib/advanced-image/domain";
-import {
-  executeAdvancedImageIdentityAnalysis,
-  type AdvancedImageCropExtractor,
-  type AdvancedImageIdentityDescriptionTransport,
-} from "@/lib/advanced-image/analysis";
 import { createAdvancedImageMemoryCacheStore, readAdvancedImageGeminiRawCache } from "@/lib/advanced-image/cache";
 import {
   AdvancedImageClientGenerationError,
@@ -61,6 +58,12 @@ import {
 import type { AdvancedImageGeminiTransport } from "@/lib/advanced-image/gemini-adapter";
 import { createZoneFromStrokes } from "@/lib/advanced-image/mask";
 import { buildAdvancedImageGenerationPlan, getAdvancedImagePendingCorrectionIds } from "@/lib/advanced-image/pipeline";
+import {
+  buildAdvancedImageCorrectionMasterContextHash,
+  buildAdvancedImageCorrectionContractCacheKey,
+  getAdvancedImageCorrectionsNeedingIntegrationContract,
+  getAdvancedImageCorrectionZoneSize,
+} from "@/lib/advanced-image/integration-contract";
 import { createAdvancedImageSessionSnapshot } from "@/lib/advanced-image/persistence";
 import {
   canvasToMasterPoint,
@@ -267,20 +270,19 @@ function canvasToBlob(canvas: HTMLCanvasElement, type = "image/png", quality?: n
   });
 }
 
-function averageCanvasHash(canvas: HTMLCanvasElement): string {
-  const sample = document.createElement("canvas");
-  sample.width = 8;
-  sample.height = 8;
-  const ctx = sample.getContext("2d", { willReadFrequently: true });
-  if (!ctx) return stableHash({ width: canvas.width, height: canvas.height });
-  ctx.drawImage(canvas, 0, 0, 8, 8);
-  const pixels = ctx.getImageData(0, 0, 8, 8).data;
-  const values: number[] = [];
-  for (let i = 0; i < pixels.length; i += 4) {
-    values.push((pixels[i] + pixels[i + 1] + pixels[i + 2]) / 3);
-  }
-  const avg = values.reduce((sum, value) => sum + value, 0) / Math.max(1, values.length);
-  return values.map((value) => (value >= avg ? "1" : "0")).join("");
+function padImageBox(box: AdvancedImageBox, paddingRatio: number, bounds: { height: number; width: number }): AdvancedImageBox {
+  const paddingX = box.width * paddingRatio;
+  const paddingY = box.height * paddingRatio;
+  const x = clampNumber(box.x - paddingX, 0, bounds.width);
+  const y = clampNumber(box.y - paddingY, 0, bounds.height);
+  const maxX = clampNumber(box.x + box.width + paddingX, 0, bounds.width);
+  const maxY = clampNumber(box.y + box.height + paddingY, 0, bounds.height);
+  return {
+    height: Math.max(1, maxY - y),
+    width: Math.max(1, maxX - x),
+    x,
+    y,
+  };
 }
 
 const ZONE_LOCATION_ANALYSIS_PALETTE = [
@@ -636,6 +638,48 @@ async function createAndUploadCorrectionReferenceGrid(args: {
   };
 }
 
+async function createAndUploadCorrectionMasterCrop(args: {
+  correction: AdvancedImageCorrection;
+  nodeId: string;
+  projectId: string | null;
+  session: AdvancedImageSession;
+  timestamp: string;
+}): Promise<{ hash: string; s3Key: string; url: string }> {
+  const master = args.session.master;
+  const image = await createImageElement(master.imageUrl);
+  const sourceScaleX = image.naturalWidth / Math.max(1, master.width);
+  const sourceScaleY = image.naturalHeight / Math.max(1, master.height);
+  const padded = padImageBox(args.correction.zone.bbox, 0.1, { height: master.height, width: master.width });
+  const sx = Math.max(0, Math.floor(padded.x * sourceScaleX));
+  const sy = Math.max(0, Math.floor(padded.y * sourceScaleY));
+  const sw = Math.max(1, Math.min(image.naturalWidth - sx, Math.ceil(padded.width * sourceScaleX)));
+  const sh = Math.max(1, Math.min(image.naturalHeight - sy, Math.ceil(padded.height * sourceScaleY)));
+  const ratio = Math.min(1, 512 / Math.max(sw, sh));
+  const width = Math.max(1, Math.round(sw * ratio));
+  const height = Math.max(1, Math.round(sh * ratio));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) throw new Error("Could not create master crop canvas.");
+  ctx.drawImage(image, sx, sy, sw, sh, 0, 0, width, height);
+  const blob = await canvasToBlob(canvas, "image/jpeg", 0.9);
+  const hash = await hashBlobSha256(blob);
+  const safeNodeId = args.nodeId.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const mediaId = `advanced_image_master_crop_${safeNodeId}_${args.correction.id}_${hash.slice(-8)}`;
+  const file = new File([blob], `${mediaId}.jpg`, { type: "image/jpeg" });
+  const uploaded = await uploadProjectMediaFile(file, {
+    mediaId,
+    policy: { preserveImageQuality: true },
+    projectId: args.projectId,
+  });
+  return {
+    hash,
+    s3Key: uploaded.s3Key,
+    url: uploaded.url,
+  };
+}
+
 function createStreamGeminiTransport(args: {
   aspectRatio: string;
   onProgress: (progress: number, stage: string) => void;
@@ -688,6 +732,7 @@ function ImageCreationAdvancedStudio({
   const draftReferencesRef = useRef<LocalReferencePreview[]>([]);
   const editReferencesRef = useRef<LocalReferencePreview[]>([]);
   const localReferencesRef = useRef<Record<string, LocalReferencePreview[]>>({});
+  const integrationContractCacheRef = useRef<Map<string, AdvancedImageIntegrationContract>>(new Map());
   const [imageSize, setImageSize] = useState<{ height: number; width: number }>({ height: 1024, width: 1024 });
   const [generating, setGenerating] = useState(false);
   const [drawingMode, setDrawingMode] = useState(false);
@@ -876,165 +921,103 @@ function ImageCreationAdvancedStudio({
     }
   }, [historyPreviewId, historySnapshots]);
 
-  const cropExtractor = useCallback<AdvancedImageCropExtractor>(
-    async (request) => {
-      const image = await createImageElement(request.imageUrl);
-      const sourceScaleX = image.naturalWidth / Math.max(1, session?.master.width ?? image.naturalWidth);
-      const sourceScaleY = image.naturalHeight / Math.max(1, session?.master.height ?? image.naturalHeight);
-      const sx = Math.max(0, Math.floor(request.paddedBBox.x * sourceScaleX));
-      const sy = Math.max(0, Math.floor(request.paddedBBox.y * sourceScaleY));
-      const sw = Math.max(1, Math.min(image.naturalWidth - sx, Math.ceil(request.paddedBBox.width * sourceScaleX)));
-      const sh = Math.max(1, Math.min(image.naturalHeight - sy, Math.ceil(request.paddedBBox.height * sourceScaleY)));
-      const maxSide = Math.max(1, request.targetMaxSide);
-      const ratio = Math.min(1, maxSide / Math.max(sw, sh));
-      const width = Math.max(1, Math.round(sw * ratio));
-      const height = Math.max(1, Math.round(sh * ratio));
-      const canvas = document.createElement("canvas");
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) throw new Error("Could not create crop canvas.");
-      ctx.drawImage(image, sx, sy, sw, sh, 0, 0, width, height);
-      const blob = await canvasToBlob(canvas, "image/png");
-      const cropHash = await hashBlobSha256(blob);
-      const mediaId = `advanced_image_anchor_${nodeId.replace(/[^a-zA-Z0-9_-]/g, "_")}_${request.correctionId}_${cropHash.slice(-8)}`;
-      const file = new File([blob], `${mediaId}.png`, { type: "image/png" });
-      const uploaded = await uploadProjectMediaFile(file, {
-        mediaId,
-        policy: { preserveImageQuality: true },
-        projectId,
-      });
-      return {
-        cropHash,
-        cropS3Key: uploaded.s3Key,
-        cropUrl: uploaded.url,
-        height,
-        perceptualHash: averageCanvasHash(canvas),
-        width,
-      };
-    },
-    [nodeId, projectId, session?.master.height, session?.master.width],
-  );
-
-  const descriptionTransport = useCallback<AdvancedImageIdentityDescriptionTransport>(
-    async (request) => {
-      const startedAt = performance.now();
-      const res = await fetch("/api/gemini/describe-region", {
-        body: JSON.stringify({
-          bbox: request.bbox,
-          correctionId: request.correctionId,
-          imageS3Key: request.imageS3Key,
-          imageUrl: request.imageUrl,
-          maxWords: request.maxWords,
-          model: request.model,
-          prompt: request.prompt,
-          sourceWorkingHash: request.sourceWorkingHash,
-        }),
-        headers: { "Content-Type": "application/json" },
-        method: "POST",
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(typeof json?.error === "string" ? json.error : `Identity analysis failed (${res.status}).`);
-      }
-      return {
-        description: String(json?.description ?? ""),
-        durationMs: Math.round(performance.now() - startedAt),
-        raw: json,
-      };
-    },
-    [],
-  );
-
-  const runIdentityAnalysisInBackground = useCallback(
-    (baseSession: AdvancedImageSession, correctionIds: string[]) => {
-      const workingImage = baseSession.workingImage;
-      const userEmail = authSession?.user?.email?.trim().toLowerCase();
-      if (!workingImage || !userEmail || correctionIds.length === 0) return;
-
-      for (const correctionId of correctionIds) {
-        const baseCorrection = baseSession.corrections.find((item) => item.id === correctionId);
-        if (!baseCorrection) continue;
-        if (
-          baseCorrection.analysisStatus === "ready" &&
-          baseCorrection.identityAnchor?.sourceWorkingHash === workingImage.sourceHash
-        ) {
-          console.info("[ImageCreationAdvanced analyzer] skip cached", {
+  const ensureIntegrationContractsForBatch = useCallback(
+    async (baseSession: AdvancedImageSession, correctionIds: string[]) => {
+      let nextSession = baseSession;
+      let executed = 0;
+      let cached = 0;
+      let failed = 0;
+      const targetIds = getAdvancedImageCorrectionsNeedingIntegrationContract(baseSession, correctionIds).map(
+        (correction) => correction.id,
+      );
+      for (const correctionId of targetIds) {
+        const correction = nextSession.corrections.find((item) => item.id === correctionId);
+        if (!correction || correction.integrationContract) continue;
+        const zoneSize = getAdvancedImageCorrectionZoneSize(correction);
+        const masterContextHash = buildAdvancedImageCorrectionMasterContextHash(nextSession, correction);
+        const cacheKey = buildAdvancedImageCorrectionContractCacheKey({
+          masterContextHash,
+          userInstruction: correction.userInstruction,
+          userReferenceHash: correction.referenceHash,
+          zoneSize,
+        });
+        const isPending = correctionIds.includes(correctionId);
+        const cachedContract = integrationContractCacheRef.current.get(cacheKey);
+        if (cachedContract) {
+          cached += 1;
+          console.info("[ImageCreationAdvanced pre-analysis] cached", {
             correctionId,
-            model: baseSession.generationSettings.analysisModel,
-            sourceWorkingHash: workingImage.sourceHash,
+            phase: isPending ? "pending" : "applied-legacy",
           });
+          nextSession = markAdvancedImageCorrectionRuntime(
+            nextSession,
+            correctionId,
+            { integrationContract: cachedContract },
+            { timestamp: new Date().toISOString() },
+          );
           continue;
         }
-
-        window.setTimeout(() => {
-          void (async () => {
-            const requestId = `advanced-image-analysis-${correctionId}-${Date.now()}`;
-            console.info("[ImageCreationAdvanced analyzer] start", {
-              correctionId,
-              model: baseSession.generationSettings.analysisModel,
-              requestId,
-            });
-            try {
-              const result = await executeAdvancedImageIdentityAnalysis(baseSession, correctionId, workingImage, {
-                analysisApproval: { approved: true, reason: "post_generation_required" },
-                cropExtractor,
-                descriptionTransport,
-                now: new Date().toISOString(),
-                requestId,
-                userEmail,
-              });
-              const current = latestSessionRef.current;
-              const currentCorrection = current?.corrections.find((item) => item.id === correctionId);
-              if (
-                !current ||
-                current.id !== baseSession.id ||
-                !currentCorrection ||
-                currentCorrection.geometryHash !== baseCorrection.geometryHash ||
-                currentCorrection.instructionHash !== baseCorrection.instructionHash ||
-                currentCorrection.referenceHash !== baseCorrection.referenceHash
-              ) {
-                console.info("[ImageCreationAdvanced analyzer] stale result ignored", { correctionId, requestId });
-                return;
-              }
-              const next = markAdvancedImageCorrectionRuntime(
-                current,
-                correctionId,
-                { identityAnchor: result.identityAnchor },
-                { timestamp: new Date().toISOString() },
-              );
-              latestSessionRef.current = next;
-              console.info("[ImageCreationAdvanced analyzer] success", {
-                correctionId,
-                cropS3Key: result.identityAnchor.cropS3Key,
-                descriptionDurationMs: result.descriptionDurationMs,
-                model: baseSession.generationSettings.analysisModel,
-                requestId,
-              });
-              onPatch({ advancedSession: safeSessionForNodeData(next) });
-            } catch (error) {
-              const current = latestSessionRef.current;
-              if (!current || current.id !== baseSession.id) return;
-              const next = markAdvancedImageCorrectionRuntime(
-                current,
-                correctionId,
-                { analysisStatus: "failed" },
-                { timestamp: new Date().toISOString() },
-              );
-              latestSessionRef.current = next;
-              console.warn("[ImageCreationAdvanced analyzer] failed", {
-                correctionId,
-                error: error instanceof Error ? error.message : String(error),
-                model: baseSession.generationSettings.analysisModel,
-                requestId,
-              });
-              onPatch({ advancedSession: safeSessionForNodeData(next) });
-            }
-          })();
-        }, 0);
+        try {
+          executed += 1;
+          const timestamp = new Date().toISOString();
+          const masterCrop = await createAndUploadCorrectionMasterCrop({
+            correction,
+            nodeId,
+            projectId,
+            session: nextSession,
+            timestamp,
+          });
+          console.info("[ImageCreationAdvanced pre-analysis] start", {
+            correctionId,
+            masterCropS3Key: masterCrop.s3Key,
+            masterCropUrlPresent: Boolean(masterCrop.url),
+            phase: isPending ? "pending" : "applied-legacy",
+            zoneSize,
+          });
+          const response = await fetch("/api/gemini/analyze-correction", {
+            body: JSON.stringify({
+              masterCropUrl: masterCrop.url,
+              model: nextSession.generationSettings.analysisModel,
+              referenceImageUrl: correction.userReference?.gridImageUrlStable ?? correction.userReference?.gridImageUrl,
+              userInstruction: correction.userInstruction,
+              userReferenceHash: correction.referenceHash,
+              zoneSize,
+            }),
+            headers: { "Content-Type": "application/json" },
+            method: "POST",
+          });
+          const json = await response.json().catch(() => ({}));
+          if (!response.ok || !json?.integrationContract) {
+            throw new Error(typeof json?.error === "string" ? json.error : `Correction pre-analysis failed (${response.status}).`);
+          }
+          const integrationContract = json.integrationContract as AdvancedImageIntegrationContract;
+          integrationContractCacheRef.current.set(cacheKey, integrationContract);
+          console.info("[ImageCreationAdvanced pre-analysis] success", {
+            category: integrationContract.category,
+            correctionId,
+            generatedBy: integrationContract.generatedBy,
+            masterCropHash: masterCrop.hash,
+            needsBinaryMask: integrationContract.needsBinaryMask,
+            phase: isPending ? "pending" : "applied-legacy",
+          });
+          nextSession = markAdvancedImageCorrectionRuntime(
+            nextSession,
+            correctionId,
+            { integrationContract },
+            { timestamp: new Date().toISOString() },
+          );
+        } catch (error) {
+          failed += 1;
+          console.warn("[ImageCreationAdvanced pre-analysis] failed; using fallback prompt", {
+            correctionId,
+            error: error instanceof Error ? error.message : String(error),
+            phase: isPending ? "pending" : "applied-legacy",
+          });
+        }
       }
+      return { cached, executed, failed, session: nextSession };
     },
-    [authSession?.user?.email, cropExtractor, descriptionTransport, onPatch],
+    [nodeId, projectId],
   );
 
   useEffect(() => {
@@ -1092,7 +1075,7 @@ function ImageCreationAdvancedStudio({
         const referenceCount =
           preliminaryPlan.identityReferences.length +
           preliminaryPlan.directionReferences.length +
-          (preliminaryPlan.previousStateReference ? 1 : 0);
+          preliminaryPlan.maskReferences.length;
         const zoneAnalysisNote = batchPendingIds.length > 0
           ? " A lightweight zone-location analysis may run first so the selected areas are described precisely."
           : "";
@@ -1110,11 +1093,19 @@ function ImageCreationAdvancedStudio({
       setProgress(0);
       let sessionForGeneration = baseSession;
       let zoneAnalysisCount = 0;
+      let preAnalysisCount = 0;
+      let preAnalysisCached = 0;
+      let preAnalysisFailed = 0;
       try {
         if (batchPendingIds.length > 0) {
           const analyzed = await analyzeAdvancedImageZoneLocations(baseSession, batchPendingIds);
           sessionForGeneration = analyzed.session;
           zoneAnalysisCount = analyzed.analyzedCount;
+          const preAnalyzed = await ensureIntegrationContractsForBatch(sessionForGeneration, batchPendingIds);
+          sessionForGeneration = preAnalyzed.session;
+          preAnalysisCount = preAnalyzed.executed;
+          preAnalysisCached = preAnalyzed.cached;
+          preAnalysisFailed = preAnalyzed.failed;
           if (sessionForGeneration !== baseSession) {
             latestSessionRef.current = sessionForGeneration;
             onPatch({ advancedSession: safeSessionForNodeData(sessionForGeneration), error: undefined, status: "editing" });
@@ -1152,20 +1143,26 @@ function ImageCreationAdvancedStudio({
         appliedPreserveCount: planToRun.appliedPreserveCorrectionIds.length,
         cachePrecheckHit: cached.hit,
         directionRefsSent: planToRun.directionReferences.length,
+        maskRefsSent: planToRun.maskReferences.length,
         finalImageStateHash: planToRun.finalImageStateHash,
         geminiStateHash: planToRun.geminiStateHash,
         masterContentHash: masterContentHashBefore,
         model: planToRun.model,
         omittedDirectionReferenceCorrectionIds: planToRun.omittedDirectionReferenceCorrectionIds,
         omittedIdentityReferenceCorrectionIds: planToRun.omittedIdentityReferenceCorrectionIds,
+        omittedMaskReferenceCorrectionIds: planToRun.omittedMaskReferenceCorrectionIds,
         globalAdjustmentApplied: planToRun.globalAdjustmentActive,
         globalAdjustmentText: truncateForLog(planToRun.globalAdjustmentText ?? ""),
         pendingCount: planToRun.batchPendingIds.length,
-        previousStateRefSent: Boolean(planToRun.previousStateReference),
         refsTotal:
           planToRun.identityReferences.length +
           planToRun.directionReferences.length +
-          (planToRun.previousStateReference ? 1 : 0),
+          planToRun.maskReferences.length,
+        promptVersion: planToRun.promptVersion,
+        preAnalysisCached,
+        preAnalysisCount,
+        preAnalysisFailed,
+        masksGenerated: planToRun.maskReferences.length,
         requestId,
         zoneAnalysisCount,
       });
@@ -1218,6 +1215,13 @@ function ImageCreationAdvancedStudio({
           masterUnchanged: nextSession.master.contentHash === masterContentHashBefore,
           outputS3KeyPresent: Boolean(generationResult.workingImage.s3Key),
           outputUrlPresent: Boolean(generationResult.workingImage.imageUrl),
+          artifactDetectorResult: generationResult.artifactDetectorResult
+            ? {
+                contaminated: generationResult.artifactDetectorResult.contaminated,
+                confidence: generationResult.artifactDetectorResult.confidence,
+                retried: generationResult.artifactDetectorResult.retried ?? false,
+              }
+            : undefined,
           requestId,
           resolutionWarning: generationResult.resolutionWarning,
         });
@@ -1231,7 +1235,6 @@ function ImageCreationAdvancedStudio({
           value: generationResult.workingImage.imageUrl,
           warning: generationResult.resolutionWarning,
         });
-        runIdentityAnalysisInBackground(nextSession, planToRun.batchPendingIds);
         return generationResult;
       } catch (error) {
         console.error("[ImageCreationAdvanced] generation failed:", error);
@@ -1260,7 +1263,7 @@ function ImageCreationAdvancedStudio({
         window.setTimeout(() => setProgress(0), 900);
       }
     },
-    [authSession?.user?.email, nodeId, onPatch, runIdentityAnalysisInBackground, skipCostConfirm],
+    [authSession?.user?.email, ensureIntegrationContractsForBatch, nodeId, onPatch, skipCostConfirm],
   );
 
   const confirmDraftCorrection = useCallback(async () => {
@@ -1596,13 +1599,14 @@ function ImageCreationAdvancedStudio({
 
   const updateGlobalText = useCallback(
     (text: string) => {
-      const base = ensureSession();
+      const base = session;
       if (!base) return;
+      if ((base.globalAdjustment?.text ?? "") === text) return;
       const timestamp = new Date().toISOString();
       const next = updateAdvancedImageGlobalAdjustment(base, text, { timestamp });
       onPatch({ advancedSession: safeSessionForNodeData(next), error: undefined, status: "editing" });
     },
-    [ensureSession, onPatch],
+    [onPatch, session],
   );
 
   const clearGlobalText = useCallback(() => {
@@ -1772,7 +1776,7 @@ function ImageCreationAdvancedStudio({
       const state = correctionViewState(correction, session);
       const localRefs = localReferencesByCorrectionId[correction.id] ?? [];
       const referenceGridUrl = gridUrlFromReference(correction.userReference);
-      const thumbnailUrl = correction.identityAnchor?.cropUrl || (section === "pending" ? referenceGridUrl : "");
+      const thumbnailUrl = correction.identityAnchor?.cropUrl || referenceGridUrl || localRefs[0]?.objectUrl || "";
       const hasReference = Boolean(correction.userReference || localRefs.length > 0);
       const batch = correctionBatchNumber(correction);
       return (
@@ -2489,8 +2493,8 @@ function ImageCreationAdvancedStudio({
                 Generation is guarded
               </div>
               {plan
-                ? `Plan ready: ${plan.previousStateReference ? "1 previous state ref, " : ""}${plan.identityReferences.length} identity refs, ${plan.directionReferences.length} direction refs, ${plan.batchPendingIds.length} pending${plan.globalAdjustmentActive ? ", global active" : ""}${plan.globalAdjustmentPending ? ", global pending" : ""}.`
-                : "Gemini only runs when you apply, retry, or change active corrections."}
+                ? `Plan ready: ${plan.identityReferences.length} identity refs, ${plan.directionReferences.length} direction refs, ${plan.maskReferences.length} mask refs, ${plan.batchPendingIds.length} pending${plan.globalAdjustmentActive ? ", global active" : ""}${plan.globalAdjustmentPending ? ", global pending" : ""}.`
+                : "Gemini only runs when you press Generate or Retry."}
             </section>
           </aside>
         </main>
@@ -2573,19 +2577,26 @@ export const ImageCreationAdvancedNode = memo(function ImageCreationAdvancedNode
 
   const patchData = useCallback(
     (patch: Partial<ImageCreationAdvancedNodeData>) => {
-      setNodes((nds) =>
-        nds.map((node) =>
-          node.id === id
-            ? {
-                ...node,
-                data: {
-                  ...node.data,
-                  ...patch,
-                },
-              }
-            : node,
-        ),
-      );
+      setNodes((nds) => {
+        let changed = false;
+        const nextNodes = nds.map((node) => {
+          if (node.id !== id) return node;
+          const currentData = node.data as ImageCreationAdvancedNodeData;
+          const patchChanged = Object.entries(patch).some(
+            ([key, value]) => currentData[key as keyof ImageCreationAdvancedNodeData] !== value,
+          );
+          if (!patchChanged) return node;
+          changed = true;
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              ...patch,
+            },
+          };
+        });
+        return changed ? nextNodes : nds;
+      });
     },
     [id, setNodes],
   );

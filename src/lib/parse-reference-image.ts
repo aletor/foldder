@@ -4,6 +4,7 @@
  */
 
 import { getFromS3 } from "@/lib/s3-utils";
+import sharp from "sharp";
 
 type ParseReferenceImageOptions = {
   baseUrl?: string | URL;
@@ -61,14 +62,29 @@ export async function parseReferenceImageForGemini(
   if (!image || typeof image !== "string") return null;
 
   if (image.startsWith("data:")) {
-    const marker = ";base64,";
-    const idx = image.indexOf(marker);
-    if (idx === -1) return null;
-    const meta = image.slice(5, idx);
+    const commaIdx = image.indexOf(",");
+    if (commaIdx === -1) return null;
+    const meta = image.slice(5, commaIdx);
     const mimeType = (meta.split(";")[0] || "image/png").trim();
-    const data = image.slice(idx + marker.length);
-    if (!data) return null;
-    return { data, mimeType };
+    const rawData = image.slice(commaIdx + 1);
+    if (!rawData) return null;
+
+    const isBase64 = /(?:^|;)base64(?:;|$)/i.test(meta);
+    const buffer = isBase64
+      ? Buffer.from(rawData, "base64")
+      : Buffer.from(safeDecodeUriComponent(rawData), "utf8");
+    if (!buffer.length) return null;
+
+    if (mimeType === "image/svg+xml") {
+      const png = await sharp(buffer, { failOn: "none" }).png().toBuffer();
+      return {
+        data: png.toString("base64"),
+        mimeType: "image/png",
+      };
+    }
+
+    if (!isBase64) return null;
+    return { data: rawData, mimeType };
   }
 
   const s3Key = tryExtractKnowledgeFilesKey(image, options?.baseUrl);

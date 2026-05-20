@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   addCorrection,
+  computeFinalImageStateHash,
   createAdvancedImageSession,
   editCorrection,
   toggleCorrection,
@@ -17,6 +18,7 @@ import {
   AdvancedImageClientGenerationError,
   runAdvancedImageClientGeneration,
 } from "./client-orchestrator";
+import { buildAdvancedImageIdentityAnalysisRequest } from "./analysis";
 import type { AdvancedImageGeminiTransport } from "./gemini-adapter";
 
 const settings: AdvancedImageGenerationSettings = {
@@ -118,7 +120,7 @@ describe("advanced-image-client-orchestrator", () => {
       s = result.session;
       outputs.push(result.workingImage.imageUrl);
       expect(s.master.contentHash).toBe(masterHash);
-      expect(result.workingImage.sourceHash).toBe(result.plan.finalImageStateHash);
+      expect(result.workingImage.sourceHash).toBe(computeFinalImageStateHash(s));
       expect(s.corrections.find((correction) => correction.id === id)?.appliedBatchNumber).toBe(index + 1);
       expect(result.workingImage.correctionSnapshots?.[id]).toMatchObject({
         geometryHash: s.corrections.find((correction) => correction.id === id)?.geometryHash,
@@ -132,6 +134,25 @@ describe("advanced-image-client-orchestrator", () => {
     expect(s.historySnapshots.map((snapshot) => snapshot.batchNumber)).toEqual([1, 2, 3]);
     expect(s.historySnapshots[2].workingImage.imageUrl).toBe(outputs[2]);
     expect(s.master).toEqual(master);
+  });
+
+  it("produces a working image source hash accepted by identity analysis after generation", async () => {
+    const cacheStore = createAdvancedImageMemoryCacheStore();
+    const s = appendCorrection(session(), "a");
+
+    const result = await runAdvancedImageClientGeneration(s, {
+      batchPendingIds: ["a"],
+      cacheStore,
+      costApproval: { approved: true, reason: "explicit_user_action" },
+      now: "2026-05-18T09:10:00.000Z",
+      requestId: "req-analysis-hash",
+      transport: transport(),
+      userEmail: "user@example.com",
+    });
+
+    expect(result.workingImage.sourceHash).toBe(computeFinalImageStateHash(result.session));
+    const analysisRequest = buildAdvancedImageIdentityAnalysisRequest(result.session, "a", result.workingImage);
+    expect(analysisRequest).toMatchObject({ ok: true });
   });
 
   it("reverting a correction regenerates from master with remaining active corrections", async () => {
@@ -205,11 +226,7 @@ describe("advanced-image-client-orchestrator", () => {
     expect(secondBatch.plan.appliedPreserveCorrectionIds).toEqual(["a", "b"]);
     expect(secondBatch.plan.batchPendingIds).toEqual(["c"]);
     expect(secondBatch.plan.baseImage.contentHash).toBe(masterHash);
-    expect(secondBatch.plan.previousStateReference).toMatchObject({
-      id: "REF-STATE-PREVIOUS",
-      url: firstBatch.workingImage.imageUrl,
-    });
-    expect(secondBatch.plan.prompt.promptText).toContain("REF-STATE-PREVIOUS");
+    expect(secondBatch.plan.prompt.promptText).not.toContain("REF-STATE-PREVIOUS");
     expect(secondBatch.plan.prompt.promptText).toContain("RECONSTRUCT ACCEPTED PREVIOUS CHANGES:");
     expect(secondBatch.plan.prompt.promptText).toContain("APPLY NEW CHANGES:");
     expect(secondBatch.session.master.contentHash).toBe(masterHash);

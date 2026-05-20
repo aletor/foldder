@@ -8,7 +8,7 @@ export type AdvancedImageGeminiReferenceInput = {
   correctionId?: string;
   hash: string;
   label: "MASTER" | string;
-  role: "base" | "direction" | "identity" | "previous_state";
+  role: "base" | "direction" | "identity" | "mask";
   s3Key?: string;
   url: string;
 };
@@ -252,19 +252,9 @@ function buildReferenceInputs(plan: AdvancedImageGenerationPlan): AdvancedImageG
       s3Key: plan.baseImage.s3Key,
       url: plan.baseImage.imageUrl,
     },
-    ...(plan.previousStateReference
-      ? [
-          {
-            hash: plan.previousStateReference.hash,
-            label: plan.previousStateReference.label,
-            role: plan.previousStateReference.role,
-            s3Key: plan.previousStateReference.s3Key,
-            url: plan.previousStateReference.url,
-          } satisfies AdvancedImageGeminiReferenceInput,
-        ]
-      : []),
     ...plan.identityReferences.map(referenceInputFromPlanReference),
     ...plan.directionReferences.map(referenceInputFromPlanReference),
+    ...plan.maskReferences.map(referenceInputFromPlanReference),
   ];
 }
 
@@ -307,6 +297,16 @@ function enrichPromptWithReferenceOrder(
           ),
         ]
       : [];
+  const omittedMask =
+    plan.omittedMaskReferenceCorrectionIds.length > 0
+      ? [
+          "",
+          "OMITTED BINARY MASK REFERENCES:",
+          ...plan.omittedMaskReferenceCorrectionIds.map(
+            (id) => `- ${id}: no REF-MASK image included due to reference limit; use the written spatial description only.`,
+          ),
+        ]
+      : [];
   return [
     "REFERENCE IMAGE ORDER:",
     ...referenceLines,
@@ -314,6 +314,7 @@ function enrichPromptWithReferenceOrder(
     plan.prompt.promptText,
     ...omittedIdentity,
     ...omittedDirection,
+    ...omittedMask,
   ].join("\n");
 }
 

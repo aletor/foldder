@@ -132,15 +132,14 @@ describe("advanced-image-gemini-adapter", () => {
     if (!payloadResult.ok) return;
     expect(payloadResult.payload.imageInputs).toEqual([
       master.imageUrl,
-      "/api/spaces/s3-file?key=knowledge-files%2Fgenerated%2Fworking.png",
       "/api/spaces/s3-file?key=knowledge-files%2Fanchors%2Fa.png",
       "/api/spaces/s3-file?key=knowledge-files%2Fgrids%2Fb.png",
     ]);
     expect(payloadResult.payload.prompt).toContain("REFERENCE IMAGE ORDER:");
     expect(payloadResult.payload.prompt).toContain("IMAGE 1: MASTER");
-    expect(payloadResult.payload.prompt).toContain("IMAGE 2: REF-STATE-PREVIOUS");
-    expect(payloadResult.payload.prompt).toContain("IMAGE 3: REF-ID-a");
-    expect(payloadResult.payload.prompt).toContain("IMAGE 4: REF-DIR-b");
+    expect(payloadResult.payload.prompt).not.toContain("REF-STATE-PREVIOUS");
+    expect(payloadResult.payload.prompt).toContain("IMAGE 2: REF-ID-a");
+    expect(payloadResult.payload.prompt).toContain("IMAGE 3: REF-DIR-b");
   });
 
   it("orders payload references as anchors, applied directions and pending directions", () => {
@@ -170,12 +169,13 @@ describe("advanced-image-gemini-adapter", () => {
     if (!payloadResult.ok) return;
     expect(payloadResult.payload.imageInputs).toEqual([
       master.imageUrl,
-      "/api/spaces/s3-file?key=knowledge-files%2Fgenerated%2Fworking.png",
+      "/api/spaces/s3-file?key=knowledge-files%2Fanchors%2Fb.png",
       "/api/spaces/s3-file?key=knowledge-files%2Fgrids%2Fa.png",
       "/api/spaces/s3-file?key=knowledge-files%2Fgrids%2Fb.png",
       "/api/spaces/s3-file?key=knowledge-files%2Fgrids%2Fc.png",
     ]);
-    expect(payloadResult.payload.prompt).toContain("IMAGE 2: REF-STATE-PREVIOUS");
+    expect(payloadResult.payload.prompt).not.toContain("REF-STATE-PREVIOUS");
+    expect(payloadResult.payload.prompt).toContain("IMAGE 2: REF-ID-b");
     expect(payloadResult.payload.prompt).toContain("IMAGE 3: REF-DIR-a");
     expect(payloadResult.payload.prompt).toContain("IMAGE 4: REF-DIR-b");
     expect(payloadResult.payload.prompt).toContain("IMAGE 5: REF-DIR-c");
@@ -308,7 +308,6 @@ describe("advanced-image-gemini-adapter", () => {
     expect(geminiImageGenerate.mock.calls[0][0]).toMatchObject({
       images: [
         master.imageUrl,
-        "/api/spaces/s3-file?key=knowledge-files%2Fgenerated%2Fworking.png",
         "/api/spaces/s3-file?key=knowledge-files%2Fanchors%2Fa.png",
         "/api/spaces/s3-file?key=knowledge-files%2Fgrids%2Fb.png",
       ],
