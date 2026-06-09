@@ -221,6 +221,24 @@ type AdminOperationalCosts = {
   components: AdminCostComponent[];
 };
 
+type BillingReadinessStatus = "ready" | "warning" | "blocked";
+
+type BillingReadinessCheck = {
+  id: string;
+  label: string;
+  status: BillingReadinessStatus;
+  owner: "codex" | "user" | "manual";
+  detail: string;
+  action?: string;
+};
+
+type BillingReadinessReport = {
+  generatedAt: string;
+  overallStatus: BillingReadinessStatus;
+  nextUserAction: string | null;
+  checks: BillingReadinessCheck[];
+};
+
 type OverviewResponse = {
   generatedAt: string;
   summary: {
@@ -322,6 +340,24 @@ function usageCategoryLabel(category: string): string {
   return labels[category] ?? category;
 }
 
+function readinessStatusLabel(status: BillingReadinessStatus): string {
+  if (status === "ready") return "Listo";
+  if (status === "warning") return "Revisar";
+  return "Bloqueado";
+}
+
+function readinessStatusClass(status: BillingReadinessStatus): string {
+  if (status === "ready") return "border-emerald-300/20 bg-emerald-300/10 text-emerald-100";
+  if (status === "warning") return "border-amber-300/20 bg-amber-300/10 text-amber-100";
+  return "border-rose-300/20 bg-rose-300/10 text-rose-100";
+}
+
+function readinessOwnerLabel(owner: BillingReadinessCheck["owner"]): string {
+  if (owner === "codex") return "Código";
+  if (owner === "manual") return "Manual";
+  return "Usuario";
+}
+
 function CalendarHeatmap({ days }: { days: AdminCalendarDay[] }) {
   const maxUsers = Math.max(1, ...days.map((d) => d.activeUsers));
   return (
@@ -344,6 +380,7 @@ function CalendarHeatmap({ days }: { days: AdminCalendarDay[] }) {
 
 export default function AdminPage() {
   const [data, setData] = useState<OverviewResponse | null>(null);
+  const [billingReadiness, setBillingReadiness] = useState<BillingReadinessReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
   const [gcLoading, setGcLoading] = useState(false);
@@ -386,13 +423,25 @@ export default function AdminPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/admin/overview", {
+      const overviewPromise = fetch("/api/admin/overview", {
         cache: "no-store",
         headers: apiHeaders,
       });
+      const billingReadinessPromise = fetch("/api/admin/billing-readiness", {
+        cache: "no-store",
+        headers: apiHeaders,
+      })
+        .then(async (res) => {
+          if (!res.ok) return null;
+          return (await res.json()) as BillingReadinessReport;
+        })
+        .catch(() => null);
+
+      const res = await overviewPromise;
       if (!res.ok) throw new Error(await res.text());
       const payload = (await res.json()) as OverviewResponse;
       setData(payload);
+      setBillingReadiness(await billingReadinessPromise);
       setSelectedUser((prev) =>
         prev && payload.users.some((u) => u.email === prev)
           ? prev
@@ -774,6 +823,56 @@ export default function AdminPage() {
         {activeTab === "usage" && data && (
           <section className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
             <div className="space-y-3">
+              {billingReadiness && (
+                <div className={`rounded-xl border p-4 ${readinessStatusClass(billingReadiness.overallStatus)}`}>
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs tracking-[0.1em] text-current/60 uppercase">Preparación de cobros SaaS</p>
+                      <h3 className="mt-1 text-lg font-semibold">{readinessStatusLabel(billingReadiness.overallStatus)}</h3>
+                      <p className="mt-1 max-w-2xl text-xs text-current/70">
+                        {billingReadiness.nextUserAction || "Sin acciones bloqueantes. Solo falta confirmar los checks manuales antes del primer pago real."}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl border border-current/15 bg-black/18 px-4 py-3 text-right">
+                      <p className="text-[10px] tracking-[0.12em] text-current/55 uppercase">Checks</p>
+                      <p className="mt-1 text-xl font-semibold">
+                        {billingReadiness.checks.filter((check) => check.status === "ready").length}/{billingReadiness.checks.length}
+                      </p>
+                      <p className="mt-1 text-[11px] text-current/55">
+                        {billingReadiness.checks.filter((check) => check.status === "blocked").length} bloqueos
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 grid gap-2 lg:grid-cols-2">
+                    {billingReadiness.checks.map((check) => (
+                      <div key={check.id} className="rounded-lg border border-white/10 bg-black/18 p-3 text-white">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <p className="text-sm font-medium">{check.label}</p>
+                            <p className="mt-0.5 text-[10px] tracking-[0.1em] text-white/42 uppercase">
+                              {readinessOwnerLabel(check.owner)}
+                            </p>
+                          </div>
+                          <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase ${readinessStatusClass(check.status)}`}>
+                            {readinessStatusLabel(check.status)}
+                          </span>
+                        </div>
+                        <p className="mt-2 text-xs leading-relaxed text-white/55">{check.detail}</p>
+                        {check.action && (
+                          <p className="mt-2 rounded-md border border-white/8 bg-white/[0.035] px-2.5 py-2 text-xs text-white/74">
+                            {check.action}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <p className="mt-3 text-[11px] text-current/50">
+                    Actualizado: {formatDate(billingReadiness.generatedAt)}
+                  </p>
+                </div>
+              )}
+
               <div className="rounded-xl border border-cyan-300/20 bg-cyan-300/[0.045] p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>

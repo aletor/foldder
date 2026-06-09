@@ -23,6 +23,13 @@ import {
   collectAllReferenceImageUrlsOrdered,
   parseVideoRefSlots,
 } from "@/lib/video-generator-studio";
+import {
+  reserveApiWalletCharge,
+  reserveUsdToMicros,
+  releaseApiWalletChargeOnError,
+  walletGateErrorResponse,
+  type ApiWalletCharge,
+} from "@/lib/wallet-api-gate";
 import crypto from "crypto";
 
 /** Vercel / hosting: permite polling largo (Veo suele tardar minutos). Ajusta según tu plan. */
@@ -119,6 +126,8 @@ function extractVeoVideo(pollData: Record<string, unknown>): ExtractedVeoVideo |
 
 export async function POST(req: NextRequest) {
   console.log("[Gemini Video] Request received");
+  let walletCharge: ApiWalletCharge | null = null;
+  let releaseWalletOnError = true;
   try {
     await assertApiServiceEnabled("gemini-veo");
     const authState = await requireSpacesAuthUser(req);
@@ -243,6 +252,28 @@ export async function POST(req: NextRequest) {
       console.warn("[Gemini Video] seed requested but Gemini API SDK does not support it for this endpoint; continuing without seed.");
     }
 
+    const estimatedCostUsd =
+      Math.round(
+        estimateGeminiVeoVideoUsd(effectiveDur > 0 ? effectiveDur : 8) *
+          veoResolutionMultiplier(resStr) *
+          1_000_000,
+      ) / 1_000_000;
+
+    walletCharge = await reserveApiWalletCharge({
+      req,
+      userEmail: authState.user.email,
+      serviceId: "gemini-veo",
+      provider: "gemini",
+      route: "/api/gemini/video",
+      maxCostMicros: reserveUsdToMicros(estimatedCostUsd, { multiplier: 1.15 }),
+      metadata: {
+        model: modelId,
+        durationSeconds: effectiveDur,
+        resolution: resStr,
+        aspectRatio: ar,
+      },
+    });
+
     console.log("[Gemini Video] Payload Structure Verified (SDK)");
     console.log(`[Gemini Video] Calling ${modelId}...`);
 
@@ -252,6 +283,7 @@ export async function POST(req: NextRequest) {
       ...(firstImage ? { image: firstImage } : {}),
       config,
     });
+    releaseWalletOnError = false;
     console.log(`[Gemini Video] Operation started: ${operation.name || "(unnamed)"}`);
 
     let generatedVideo: ExtractedVeoVideo | null = null;
@@ -267,6 +299,7 @@ export async function POST(req: NextRequest) {
         if (operation.error) {
           const msg = String(operation.error.message || JSON.stringify(operation.error));
           console.error("[Gemini Video] Operation error:", operation.error);
+          await walletCharge?.release({ reason: "provider_operation_error", metadata: { message: msg.slice(0, 240) } });
           throw new Error(`Veo: ${msg}`);
         }
         generatedVideo = extractVeoVideo(operation as unknown as Record<string, unknown>);
@@ -293,7 +326,7 @@ export async function POST(req: NextRequest) {
     } else {
       const videoUri = generatedVideo.uri || "";
       const downloadUrl = videoUri.startsWith("files/")
-        ? `https://generativelanguage.googleapis.com/v1beta/${videoUri}:download?key=${encodeURIComponent(apiKey)}`
+        ? `https://generativelanguage.googleapis.com/v1beta/${videoUri}:download`
         : videoUri;
       console.log("[Gemini Video] Downloading generated video...");
       const videoRes = await fetch(downloadUrl, {
@@ -312,6 +345,22 @@ export async function POST(req: NextRequest) {
     const url = stableKnowledgeFileUrlFromKey(key);
 
     const costDur = effectiveDur > 0 ? effectiveDur : 8;
+    const actualCostUsd =
+      Math.round(
+        estimateGeminiVeoVideoUsd(costDur) *
+          veoResolutionMultiplier(resStr) *
+          1_000_000,
+      ) / 1_000_000;
+    await walletCharge?.capture({
+      actualCostUsd,
+      metadata: {
+        model: modelId,
+        durationSeconds: costDur,
+        resolution: resStr,
+        operationName: operation.name,
+      },
+    });
+
     await recordApiUsage({
       provider: "gemini",
       userEmail: usageUserEmail,
@@ -321,12 +370,7 @@ export async function POST(req: NextRequest) {
       inputTokens: 0,
       outputTokens: 0,
       totalTokens: 0,
-      costUsd:
-        Math.round(
-          estimateGeminiVeoVideoUsd(costDur) *
-            veoResolutionMultiplier(resStr) *
-            1_000_000,
-        ) / 1_000_000,
+      costUsd: actualCostUsd,
       note: "Veo vídeo (coste orientativo por segundo)",
     });
 
@@ -343,6 +387,9 @@ export async function POST(req: NextRequest) {
         { status: 423 },
       );
     }
+    if (releaseWalletOnError) await releaseApiWalletChargeOnError(walletCharge, error);
+    const walletResponse = walletGateErrorResponse(error);
+    if (walletResponse) return walletResponse;
     const message = error instanceof Error ? error.message : String(error);
     console.error("[Gemini Video] Global Exception:", message);
     return NextResponse.json({ error: `Server Exception: ${message}` }, { status: 500 });

@@ -14,8 +14,19 @@ import {
   requireSpacesAuthUser,
 } from "@/lib/spaces-access-control";
 import { getPresignedUrl } from "@/lib/s3-utils";
+import {
+  linkApiWalletChargeToProviderJob,
+  reserveApiWalletCharge,
+  reserveUsdToMicros,
+  releaseApiWalletChargeOnError,
+  usdToMicros,
+  walletGateErrorResponse,
+  type ApiWalletCharge,
+} from "@/lib/wallet-api-gate";
 
 export async function POST(req: Request) {
+  let walletCharge: ApiWalletCharge | null = null;
+  let releaseWalletOnError = true;
   try {
     await assertApiServiceEnabled("grok-video");
     const authState = await requireSpacesAuthUser(req);
@@ -57,6 +68,17 @@ export async function POST(req: Request) {
 
     console.log(`[xAI Grok Request] Using endpoint: ${endpoint}`);
     console.log("[xAI Grok Request] Body:", JSON.stringify(body, null, 2));
+    const d = typeof duration === "number" && duration > 0 ? duration : 5;
+    const estimatedCostUsd = Math.round(d * 0.04 * 1_000_000) / 1_000_000;
+    walletCharge = await reserveApiWalletCharge({
+      req,
+      userEmail: authState.user.email,
+      serviceId: "grok-video",
+      provider: "grok",
+      route: "/api/grok/generate",
+      maxCostMicros: reserveUsdToMicros(estimatedCostUsd, { multiplier: 1.2 }),
+      metadata: { model: "grok-imagine-video", duration: d, endpoint },
+    });
 
     const response = await fetch(endpoint, {
       method: 'POST',
@@ -79,25 +101,52 @@ RESPONSE: ${JSON.stringify(data, null, 2)}
     fs.appendFileSync('/tmp/grok_api_debug.log', finalizedLogEntry);
 
     if (!response.ok) {
+      await walletCharge?.release({ reason: "provider_create_error", metadata: { status: response.status } });
+      releaseWalletOnError = false;
       throw new Error(data.error?.message || data.error || "xAI API error");
     }
 
-    const d = typeof duration === "number" && duration > 0 ? duration : 5;
+    const taskId =
+      (typeof data.id === "string" && data.id) ||
+      (typeof data.request_id === "string" && data.request_id) ||
+      "";
+    if (!taskId) {
+      await walletCharge?.release({ reason: "provider_missing_task_id" });
+      releaseWalletOnError = false;
+      return NextResponse.json({ error: "xAI no devolvió id de tarea" }, { status: 502 });
+    }
+    releaseWalletOnError = false;
+    await linkApiWalletChargeToProviderJob(walletCharge, {
+      userEmail: authState.user.email,
+      provider: "grok",
+      providerJobId: taskId,
+      serviceId: "grok-video",
+      route: "/api/grok/generate",
+      metadata: {
+        model: "grok-imagine-video",
+        duration: d,
+        estimatedCostMicros: usdToMicros(estimatedCostUsd),
+      },
+    });
+
     await recordApiUsage({
       provider: "grok",
       userEmail: usageUserEmail,
       serviceId: "grok-video",
       route: "/api/grok/generate",
+      operation: "start_task",
       model: "grok-imagine-video",
       inputTokens: 0,
       outputTokens: 0,
       totalTokens: 0,
-      costUsd: Math.round(d * 0.04 * 1_000_000) / 1_000_000,
-      note: "Vídeo Grok (coste orientativo por segundo)",
+      costIsKnown: false,
+      costUsd: 0,
+      metadata: { taskId, estimatedCostUsd },
+      note: "Vídeo Grok task aceptada; coste se captura al completar",
     });
 
     // Official response returns a request_id
-    return NextResponse.json({ taskId: data.id || data.request_id });
+    return NextResponse.json({ taskId });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     if (error instanceof ApiServiceDisabledError) {
@@ -106,6 +155,9 @@ RESPONSE: ${JSON.stringify(data, null, 2)}
         { status: 423 },
       );
     }
+    if (releaseWalletOnError) await releaseApiWalletChargeOnError(walletCharge, error);
+    const walletResponse = walletGateErrorResponse(error);
+    if (walletResponse) return walletResponse;
     console.error("[Grok API Error]:", error);
     return NextResponse.json({ error: message || "Internal Server Error" }, { status: 500 });
   }

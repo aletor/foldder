@@ -8,10 +8,11 @@ import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
 
 type InspirationFacet = "similar" | "textures" | "colors" | "style" | "people" | "backgrounds";
 type InspirationInputKind = "prompt" | "image";
+type InspirationProvider = "pexels" | "unsplash";
 
 type InspirationResult = {
   id: string;
-  source: "Pexels";
+  source: "Pexels" | "Unsplash";
   imageUrl: string;
   thumbUrl: string;
   title?: string;
@@ -20,6 +21,11 @@ type InspirationResult = {
   width?: number;
   height?: number;
   color?: string;
+};
+
+type InspirationCacheEntry = {
+  expiresAt: number;
+  results: InspirationResult[];
 };
 
 class InspirationProviderError extends Error {
@@ -37,6 +43,11 @@ const FACET_QUERY_SUFFIX: Record<InspirationFacet, string> = {
   people: "people, portrait, human figures, characters, lifestyle",
   backgrounds: "backgrounds, environments, interiors, locations, empty spaces, scenery",
 };
+
+const SEARCH_CACHE_TTL_MS = 30 * 60 * 1000;
+const SEARCH_CACHE_MAX_ENTRIES = 160;
+const searchCache = new Map<string, InspirationCacheEntry>();
+const inFlightSearches = new Map<string, Promise<InspirationResult[]>>();
 
 const IMAGE_DESCRIPTION_STOPWORDS = new Set([
   "a",
@@ -126,6 +137,10 @@ function normalizeInputKind(value: unknown): InspirationInputKind {
   return value === "image" ? "image" : "prompt";
 }
 
+function normalizeProvider(value: unknown): InspirationProvider {
+  return value === "unsplash" ? "unsplash" : "pexels";
+}
+
 function compactSearchText(value: string, max: number): string {
   const s = value.trim().replace(/\s+/g, " ");
   return s.length > max ? s.slice(0, max).replace(/\s+\S*$/, "").trim() : s;
@@ -169,6 +184,32 @@ function buildSearchQuery(baseQuery: string, facet: InspirationFacet, inputKind:
     .join(", ");
 }
 
+function buildCacheKey(provider: InspirationProvider, query: string, limit: number): string {
+  return `${provider}:${limit}:${query.trim().toLowerCase().replace(/\s+/g, " ")}`;
+}
+
+function readSearchCache(key: string, now = Date.now()): InspirationResult[] | null {
+  const cached = searchCache.get(key);
+  if (!cached) return null;
+  if (cached.expiresAt <= now) {
+    searchCache.delete(key);
+    return null;
+  }
+  return cached.results;
+}
+
+function writeSearchCache(key: string, results: InspirationResult[], now = Date.now()) {
+  searchCache.set(key, {
+    expiresAt: now + SEARCH_CACHE_TTL_MS,
+    results,
+  });
+  if (searchCache.size <= SEARCH_CACHE_MAX_ENTRIES) return;
+  for (const cacheKey of searchCache.keys()) {
+    searchCache.delete(cacheKey);
+    if (searchCache.size <= SEARCH_CACHE_MAX_ENTRIES) break;
+  }
+}
+
 function asNumber(value: unknown): number | undefined {
   const n = Number(value);
   return Number.isFinite(n) ? n : undefined;
@@ -204,6 +245,34 @@ function normalizePexelsPhoto(raw: unknown): InspirationResult | null {
   };
 }
 
+function normalizeUnsplashPhoto(raw: unknown): InspirationResult | null {
+  if (!raw || typeof raw !== "object") return null;
+  const photo = raw as Record<string, unknown>;
+  const urls = photo.urls && typeof photo.urls === "object" ? (photo.urls as Record<string, unknown>) : {};
+  const links = photo.links && typeof photo.links === "object" ? (photo.links as Record<string, unknown>) : {};
+  const user = photo.user && typeof photo.user === "object" ? (photo.user as Record<string, unknown>) : {};
+  const id = asString(photo.id);
+  const imageUrl =
+    asString(urls.regular) ||
+    asString(urls.full) ||
+    asString(urls.raw) ||
+    asString(urls.small);
+  const thumbUrl = asString(urls.small) || asString(urls.thumb) || imageUrl;
+  if (!id || !imageUrl || !thumbUrl) return null;
+  return {
+    id: `unsplash-${id}`,
+    source: "Unsplash",
+    imageUrl,
+    thumbUrl,
+    title: asString(photo.alt_description) || asString(photo.description),
+    author: asString(user.name) || asString(user.username),
+    sourceUrl: asString(links.html),
+    width: asNumber(photo.width),
+    height: asNumber(photo.height),
+    color: asString(photo.color),
+  };
+}
+
 async function searchPexels(query: string, limit: number): Promise<InspirationResult[]> {
   const apiKey = process.env.PEXELS_API_KEY?.trim();
   if (!apiKey) throw new Error("Missing PEXELS_API_KEY");
@@ -223,6 +292,55 @@ async function searchPexels(query: string, limit: number): Promise<InspirationRe
   return (json.photos ?? []).map(normalizePexelsPhoto).filter((item): item is InspirationResult => Boolean(item));
 }
 
+async function searchUnsplash(query: string, limit: number): Promise<InspirationResult[]> {
+  const accessKey = process.env.UNSPLASH_ACCESS_KEY?.trim();
+  if (!accessKey) throw new Error("Missing UNSPLASH_ACCESS_KEY");
+  const url = new URL("https://api.unsplash.com/search/photos");
+  url.searchParams.set("query", query);
+  url.searchParams.set("per_page", String(Math.min(limit, 30)));
+  url.searchParams.set("page", "1");
+  url.searchParams.set("order_by", "relevant");
+  url.searchParams.set("content_filter", "high");
+  const res = await fetch(url.toString(), {
+    headers: {
+      Authorization: `Client-ID ${accessKey}`,
+      "Accept-Version": "v1",
+    },
+    cache: "no-store",
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new InspirationProviderError(`Unsplash ${res.status}: ${text.slice(0, 180)}`, res.status);
+  }
+  const json = JSON.parse(text) as { results?: unknown[] };
+  return (json.results ?? []).map(normalizeUnsplashPhoto).filter((item): item is InspirationResult => Boolean(item));
+}
+
+async function searchProviderWithCache(
+  provider: InspirationProvider,
+  query: string,
+  limit: number,
+): Promise<{ results: InspirationResult[]; cached: boolean }> {
+  const cacheKey = buildCacheKey(provider, query, limit);
+  const cached = readSearchCache(cacheKey);
+  if (cached) return { results: cached, cached: true };
+
+  const existing = inFlightSearches.get(cacheKey);
+  if (existing) return { results: await existing, cached: true };
+
+  const promise = provider === "unsplash"
+    ? searchUnsplash(query, limit)
+    : searchPexels(query, limit);
+  inFlightSearches.set(cacheKey, promise);
+  try {
+    const results = await promise;
+    writeSearchCache(cacheKey, results);
+    return { results, cached: false };
+  } finally {
+    inFlightSearches.delete(cacheKey);
+  }
+}
+
 export async function POST(req: Request) {
   try {
     const authState = await requireSpacesAuthUser(req);
@@ -232,6 +350,7 @@ export async function POST(req: Request) {
       query?: unknown;
       inputKind?: unknown;
       facet?: unknown;
+      provider?: unknown;
       limit?: unknown;
     };
 
@@ -240,30 +359,35 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "query_required" }, { status: 400 });
     }
 
-    await assertApiServiceEnabled("pexels-search");
-
     const facet = normalizeFacet(body.facet);
     const inputKind = normalizeInputKind(body.inputKind);
+    const provider = normalizeProvider(body.provider);
+    const serviceId = provider === "unsplash" ? "unsplash-search" : "pexels-search";
+    await assertApiServiceEnabled(serviceId);
+
     const limit = Math.min(Math.max(Number(body.limit) || 40, 1), 40);
     const searchQuery = buildSearchQuery(baseQuery, facet, inputKind);
-    const results = await searchPexels(searchQuery, limit);
+    const { results, cached } = await searchProviderWithCache(provider, searchQuery, limit);
 
-    await recordApiUsage({
-      provider: "pexels",
-      userEmail: authState.user.email,
-      serviceId: "pexels-search",
-      route: "/api/inspiration/search",
-      operation: "pexels_photo_search",
-      costIsKnown: false,
-      costUsd: 0,
-      metadata: { source: "pexels", facet, inputKind, resultCount: results.length },
-    });
+    if (!cached) {
+      await recordApiUsage({
+        provider,
+        userEmail: authState.user.email,
+        serviceId,
+        route: "/api/inspiration/search",
+        operation: `${provider}_photo_search`,
+        costIsKnown: false,
+        costUsd: 0,
+        metadata: { source: provider, facet, inputKind, resultCount: results.length },
+      });
+    }
 
     return NextResponse.json({
-      source: "pexels",
+      source: provider,
       facet,
-      provider: "pexels",
+      provider,
       query: searchQuery,
+      cached,
       results,
     });
   } catch (error) {

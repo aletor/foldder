@@ -51,6 +51,8 @@ import { AgentHUD } from "./AgentHUD";
 import { ApiUsageHud } from "./ApiUsageHud";
 import { AiRequestHud } from "./AiRequestHud";
 import { ExternalApiBlockedModal } from "./ExternalApiBlockedModal";
+import { WalletBalanceButton } from "./WalletBalanceButton";
+import { WalletCostGuardDialog } from "./WalletCostGuardDialog";
 import { TopbarPins } from "./TopbarPins";
 import { StandardDesktopView } from "./StandardDesktopView";
 import {
@@ -6061,6 +6063,7 @@ export function SpacesContent() {
                 </button>
                 {isAuthenticated && (
                   <div className="ml-1 flex items-center gap-1.5">
+                    <WalletBalanceButton />
                     <div
                       className="h-9 w-9 overflow-hidden rounded-full border border-white/30 bg-white/10 shadow-sm"
                       title={session?.user?.email || "Usuario"}
@@ -6645,6 +6648,7 @@ export function SpacesContent() {
         )}
 
         <PerformanceHud />
+        <WalletCostGuardDialog />
 
         {typeof document !== 'undefined' &&
           projectDeleteInProgress &&

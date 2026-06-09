@@ -19,7 +19,17 @@
     "provision:dynamo": "tsx scripts/provision-dynamo.ts",
     "provision:spaces-v2": "tsx scripts/provision-spaces-v2-dynamo.ts",
     "backfill:spaces-list-index": "tsx scripts/backfill-spaces-list-index.ts",
+    "backfill:stripe-wallet": "tsx scripts/backfill-stripe-wallet-topups.ts",
+    "wallet:reconcile": "tsx scripts/reconcile-wallet.ts",
+    "wallet:reconcile:apply": "tsx scripts/reconcile-wallet.ts --apply --alert",
+    "wallet:release-expired": "tsx scripts/release-expired-wallet-reservations.ts",
+    "wallet:retry-captures": "tsx scripts/retry-pending-wallet-captures.ts",
     "budget:app": "tsx scripts/setup-app-budget.ts"
+  },
+  "overrides": {
+    "next": {
+      "postcss": "8.5.10"
+    }
   },
   "dependencies": {
     "@aws-sdk/client-budgets": "^3.1034.0",
@@ -40,15 +50,14 @@
     "@google/generative-ai": "^0.24.1",
     "@runwayml/sdk": "^3.18.0",
     "@xyflow/react": "^12.10.1",
-    "axios": "^1.13.6",
+    "axios": "1.17.0",
+    "cheerio": "1.2.0",
     "d3-ease": "^3.0.1",
-    "fabric": "^6.9.1",
-    "g-i-s": "^2.1.7",
     "jspdf": "^4.2.1",
     "jszip": "^3.10.1",
     "lucide-react": "^0.577.0",
     "mammoth": "^1.12.0",
-    "next": "16.1.6",
+    "next": "16.2.7",
     "next-auth": "^5.0.0-beta.31",
     "ogl": "^1.0.11",
     "openai": "^6.27.0",
@@ -60,6 +69,7 @@
     "react-dom": "19.2.3",
     "replicate": "^1.4.0",
     "sharp": "^0.34.1",
+    "stripe": "^22.2.0",
     "svg2pdf.js": "^2.7.0",
     "uuid": "^13.0.0"
   },
@@ -78,7 +88,7 @@
     "@types/uuid": "^10.0.0",
     "@vitejs/plugin-react": "^4.7.0",
     "eslint": "^9",
-    "eslint-config-next": "16.1.6",
+    "eslint-config-next": "16.2.7",
     "jsdom": "^26.1.0",
     "tailwindcss": "^4",
     "tsx": "^4.21.0",

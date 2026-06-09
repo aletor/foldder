@@ -3,6 +3,7 @@ import {
   parseGeminiUsageMetadata,
   recordApiUsage,
 } from "@/lib/api-usage";
+import { estimateGeminiUsd } from "@/lib/pricing-config";
 import { parseReferenceImageForGemini } from "@/lib/parse-reference-image";
 import {
   ApiServiceDisabledError,
@@ -13,6 +14,13 @@ import {
   ForbiddenMediaReferenceError,
 } from "@/lib/api-media-access";
 import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
+import {
+  reserveApiWalletCharge,
+  reserveUsdToMicros,
+  releaseApiWalletChargeOnError,
+  walletGateErrorResponse,
+  type ApiWalletCharge,
+} from "@/lib/wallet-api-gate";
 
 // Cheapest Gemini model with vision capability (text output only)
 const VISION_MODEL = "gemini-2.5-flash";
@@ -171,6 +179,8 @@ async function buildMarkedImageWithSharp(
 }
 
 export async function POST(req: NextRequest) {
+  let walletCharge: ApiWalletCharge | null = null;
+  let releaseWalletOnError = true;
   try {
     await assertApiServiceEnabled("gemini-analyze");
     const authState = await requireSpacesAuthUser(req);
@@ -182,7 +192,7 @@ export async function POST(req: NextRequest) {
     if (!apiKey) return NextResponse.json({ error: "API Key not configured" }, { status: 500 });
     if (!changes?.length) return NextResponse.json({ error: "No changes provided" }, { status: 400 });
 
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${VISION_MODEL}:generateContent?key=${apiKey}`;
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${VISION_MODEL}:generateContent`;
 
     const parts: Array<Record<string, unknown>> = [];
     const typedChanges = changes as AreaChange[];
@@ -362,9 +372,19 @@ Devuelve SOLO el prompt, sin texto adicional.`;
       generationConfig: { temperature: 0.15 },
     };
 
+    walletCharge = await reserveApiWalletCharge({
+      req,
+      userEmail: usageUserEmail,
+      serviceId: "gemini-analyze",
+      provider: "gemini",
+      route: "/api/gemini/analyze-areas",
+      maxCostMicros: reserveUsdToMicros(0.02),
+      metadata: { model: VISION_MODEL, changes: typedChanges.length },
+    });
+
     const response = await fetch(endpoint, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
       body: JSON.stringify(payload),
     });
 
@@ -372,6 +392,8 @@ Devuelve SOLO el prompt, sin texto adicional.`;
     console.log("[analyze-areas] Gemini status:", response.status, "| marked:", useMarked);
     if (data.error) {
       console.error("[analyze-areas] Gemini error:", JSON.stringify(data.error));
+      await walletCharge?.release({ reason: "provider_error", metadata: { status: response.status } });
+      releaseWalletOnError = false;
       return NextResponse.json({ error: data.error.message || "Gemini error" }, { status: 500 });
     }
 
@@ -379,9 +401,26 @@ Devuelve SOLO el prompt, sin texto adicional.`;
       data.candidates?.[0]?.content?.parts?.find(
         (p: { text?: string }) => typeof p.text === "string",
       )?.text || "";
-    if (!text) return NextResponse.json({ error: "No text response from AI" }, { status: 500 });
+    if (!text) {
+      await walletCharge?.release({ reason: "empty_provider_response", metadata: { status: response.status } });
+      releaseWalletOnError = false;
+      return NextResponse.json({ error: "No text response from AI" }, { status: 500 });
+    }
 
     const usage = parseGeminiUsageMetadata(data);
+    const actualCostUsd = usage
+      ? estimateGeminiUsd(VISION_MODEL, usage.inputTokens, usage.outputTokens)
+      : 0.02;
+    releaseWalletOnError = false;
+    await walletCharge?.capture({
+      actualCostUsd,
+      metadata: {
+        model: VISION_MODEL,
+        inputTokens: usage?.inputTokens ?? 0,
+        outputTokens: usage?.outputTokens ?? 0,
+      },
+    });
+
     if (usage) {
       await recordApiUsage({
         provider: "gemini",
@@ -403,7 +442,7 @@ Devuelve SOLO el prompt, sin texto adicional.`;
         inputTokens: 0,
         outputTokens: 0,
         totalTokens: 0,
-        costUsd: 0.02,
+        costUsd: actualCostUsd,
         note: "analyze-areas sin usageMetadata (estimado)",
       });
     }
@@ -425,6 +464,9 @@ Devuelve SOLO el prompt, sin texto adicional.`;
     if (error instanceof ForbiddenMediaReferenceError) {
       return NextResponse.json({ error: error.message }, { status: 403 });
     }
+    if (releaseWalletOnError) await releaseApiWalletChargeOnError(walletCharge, error);
+    const walletResponse = walletGateErrorResponse(error);
+    if (walletResponse) return walletResponse;
     const message = error instanceof Error ? error.message : String(error);
     console.error("[analyze-areas] Error:", message);
     return NextResponse.json({ error: message }, { status: 500 });

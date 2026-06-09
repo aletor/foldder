@@ -174,7 +174,7 @@ export async function geminiImageGenerate(
 
   const modelId =
     GEMINI_IMAGE_MODELS[modelKey as keyof typeof GEMINI_IMAGE_MODELS] || GEMINI_IMAGE_MODELS.flash31;
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`;
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent`;
 
   const startTime = Date.now();
   report(4, "prepare");
@@ -267,7 +267,7 @@ export async function geminiImageGenerate(
   try {
     response = await fetch(endpoint, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
       body: JSON.stringify(payload),
     });
   } finally {

@@ -81,6 +81,7 @@ export const USAGE_SERVICES = [
   { id: "openai-cine-analyze", label: "OpenAI · Cine análisis de guion", category: "ia-text" as const },
   { id: "openai-embeddings", label: "OpenAI · Embeddings", category: "embeddings" as const },
   { id: "pexels-search", label: "Pexels · Inspiration search", category: "external-api" as const },
+  { id: "unsplash-search", label: "Unsplash · Inspiration search", category: "external-api" as const },
   { id: "beeble-api", label: "Beeble · API proxy", category: "external-api" as const },
   { id: "runway-status", label: "Runway · Status polling", category: "ia-video" as const },
   { id: "grok-status", label: "xAI Grok · Status polling", category: "ia-video" as const },
@@ -110,6 +111,7 @@ export type UsageProvider =
   | "replicate"
   | "volcengine"
   | "pexels"
+  | "unsplash"
   | "beeble"
   | "aws";
 
@@ -210,6 +212,7 @@ export function inferServiceIdFromRecord(r: UsageRecordLine): UsageServiceId {
   if (routePath.includes("/brain/knowledge/update")) return "openai-embeddings";
   if (routePath.includes("/inspiration/search")) {
     if (r.provider === "pexels") return "pexels-search";
+    if (r.provider === "unsplash") return "unsplash-search";
     return "unknown-external";
   }
   if (routePath.includes("/beeble/")) return "beeble-api";
@@ -227,7 +230,7 @@ export function inferServiceIdFromRecord(r: UsageRecordLine): UsageServiceId {
     warnAmbiguousLegacy(`provider ${r.provider} sin ruta reconocida`, r);
     return "unknown-external";
   }
-  if (r.provider === "beeble" || r.provider === "aws") {
+  if (r.provider === "beeble" || r.provider === "aws" || r.provider === "unsplash") {
     return "unknown-external";
   }
   warnAmbiguousLegacy("proveedor desconocido", r);
@@ -237,6 +240,53 @@ export function inferServiceIdFromRecord(r: UsageRecordLine): UsageServiceId {
 function pricedCostUsd(r: UsageRecordLine): number {
   if (r.costIsKnown === false) return 0;
   return r.costUsd ?? 0;
+}
+
+async function readUsageLineSet(): Promise<Set<string>> {
+  const lineSet = new Set<string>();
+
+  if (isUsageS3Enabled()) {
+    try {
+      const s3 = await readUsageLogFromS3();
+      for (const line of s3.split("\n")) {
+        if (line.trim()) lineSet.add(line);
+      }
+    } catch (e) {
+      console.error("[api-usage] lectura S3:", e);
+    }
+  }
+
+  for (const file of usageReadPaths()) {
+    try {
+      const raw = await fs.readFile(file, "utf8");
+      for (const line of raw.split("\n")) {
+        if (line.trim()) lineSet.add(line);
+      }
+    } catch {
+      /* sin archivo */
+    }
+  }
+
+  return lineSet;
+}
+
+export async function readUsageRecordsSince(sinceIso: string): Promise<UsageRecordLine[]> {
+  const sinceMs = new Date(sinceIso).getTime();
+  const records: UsageRecordLine[] = [];
+  const lineSet = await readUsageLineSet();
+
+  for (const line of lineSet) {
+    try {
+      const record = JSON.parse(line) as UsageRecordLine;
+      const ts = new Date(record.ts).getTime();
+      if (!Number.isFinite(ts) || ts < sinceMs) continue;
+      records.push(record);
+    } catch {
+      /* línea corrupta */
+    }
+  }
+
+  return records.sort((a, b) => a.ts.localeCompare(b.ts));
 }
 
 function resolveCostUsd(partial: Omit<UsageRecordLine, "ts" | "costUsd"> & { costUsd?: number }): {
@@ -392,29 +442,7 @@ export async function aggregateUsageSince(sinceIso: string): Promise<{
     };
   }
 
-  const lineSet = new Set<string>();
-
-  if (isUsageS3Enabled()) {
-    try {
-      const s3 = await readUsageLogFromS3();
-      for (const line of s3.split("\n")) {
-        if (line.trim()) lineSet.add(line);
-      }
-    } catch (e) {
-      console.error("[api-usage] lectura S3:", e);
-    }
-  }
-
-  for (const file of usageReadPaths()) {
-    try {
-      const raw = await fs.readFile(file, "utf8");
-      for (const line of raw.split("\n")) {
-        if (line.trim()) lineSet.add(line);
-      }
-    } catch {
-      /* sin archivo */
-    }
-  }
+  const lineSet = await readUsageLineSet();
 
   let unpricedCallsAll = 0;
 
@@ -588,25 +616,7 @@ export async function getUsageDeepReportSince(sinceIso: string): Promise<{
   topServices: UsageServiceDetail[];
 }> {
   const sinceMs = new Date(sinceIso).getTime();
-  const lineSet = new Set<string>();
-
-  if (isUsageS3Enabled()) {
-    try {
-      const s3 = await readUsageLogFromS3();
-      for (const line of s3.split("\n")) if (line.trim()) lineSet.add(line);
-    } catch (e) {
-      console.error("[api-usage] deep report lectura S3:", e);
-    }
-  }
-
-  for (const file of usageReadPaths()) {
-    try {
-      const raw = await fs.readFile(file, "utf8");
-      for (const line of raw.split("\n")) if (line.trim()) lineSet.add(line);
-    } catch {
-      /* ignore */
-    }
-  }
+  const lineSet = await readUsageLineSet();
 
   const byService = new Map<UsageServiceId, UsageByService>();
   const serviceDetails = new Map<

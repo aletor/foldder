@@ -5,27 +5,76 @@ import {
   assertApiServiceEnabled,
 } from "@/lib/api-usage-controls";
 import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
-import gis from "g-i-s";
+import {
+  reserveApiWalletCharge,
+  reserveUsdToMicros,
+  releaseApiWalletChargeOnError,
+  walletGateErrorResponse,
+  type ApiWalletCharge,
+} from "@/lib/wallet-api-gate";
 
-type GisResult = { url?: string };
+type ImageSearchResult = { url?: string };
+type OpenverseImage = {
+  thumbnail?: string;
+  url?: string;
+};
+type OpenverseImageSearchResponse = {
+  results?: OpenverseImage[];
+};
 
-const searchGoogleImages = (query: string): Promise<GisResult[]> => {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      console.warn(`[Search API] Search timeout for: "${query}"`);
-      resolve([]);
-    }, 8000);
+const SEARCH_HEADERS = {
+  Accept: "application/json",
+  "User-Agent": "Foldder-SpaceAI/1.0 (contact: info@ai-spaces.studio)",
+};
 
-    gis(query, (error: unknown, results: unknown[]) => {
-      clearTimeout(timer);
-      if (error) {
-        console.error(`[Search API] GIS Error for "${query}":`, error);
-        resolve([]);
-      } else {
-        resolve((results || []) as GisResult[]);
-      }
+function httpImageUrl(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    if (parsed.hostname.includes("lookaside.fbsbx.com")) return null;
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+async function fetchJsonWithTimeout<T>(url: string, timeoutMs = 8000): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      headers: SEARCH_HEADERS,
+      signal: controller.signal,
     });
-  });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    return (await response.json()) as T;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+const searchOpenverseImages = async (query: string, pageSize: number): Promise<ImageSearchResult[]> => {
+  try {
+    const params = new URLSearchParams({
+      mature: "false",
+      page_size: String(Math.min(Math.max(pageSize, 1), 50)),
+      q: query,
+    });
+    const data = await fetchJsonWithTimeout<OpenverseImageSearchResponse>(
+      `https://api.openverse.engineering/v1/images/?${params.toString()}`,
+    );
+    return (data.results || [])
+      .map((result) => ({
+        url: httpImageUrl(result.url) || httpImageUrl(result.thumbnail) || undefined,
+      }))
+      .filter((result) => !!result.url);
+  } catch (error) {
+    console.warn(`[Search API] Openverse failed for "${query}":`, error);
+    return [];
+  }
 };
 
 const searchWikipediaImage = async (query: string): Promise<string[]> => {
@@ -85,6 +134,8 @@ const searchWikipediaImage = async (query: string): Promise<string[]> => {
 };
 
 export async function POST(req: Request) {
+  let walletCharge: ApiWalletCharge | null = null;
+  let releaseWalletOnError = true;
   try {
     const authState = await requireSpacesAuthUser(req);
     if (!authState.ok) return authState.response;
@@ -109,6 +160,15 @@ export async function POST(req: Request) {
 
     if (useVision) {
       await assertApiServiceEnabled("gemini-search-verify");
+      walletCharge = await reserveApiWalletCharge({
+        req,
+        userEmail: usageUserEmail,
+        serviceId: "gemini-search-verify",
+        provider: "gemini",
+        route: "/api/spaces/search",
+        maxCostMicros: reserveUsdToMicros(0.01, { multiplier: 1.5 }),
+        metadata: { query: query.slice(0, 160), limit, intent: intentForVision.slice(0, 160) },
+      });
     }
 
     const poolCap = useVision
@@ -119,7 +179,7 @@ export async function POST(req: Request) {
       `[Search API] Searching for: "${query}" (limit: ${limit}, vision: ${useVision})`
     );
 
-    const normalizeUrls = (raw: GisResult[]) =>
+    const normalizeUrls = (raw: ImageSearchResult[]) =>
       raw
         .map((r) => r.url)
         .filter((u): u is string => {
@@ -128,12 +188,12 @@ export async function POST(req: Request) {
         })
         .slice(0, poolCap);
 
-    let gisUrls: string[] = [];
+    let searchUrls: string[] = [];
     try {
-      const searchResults = await searchGoogleImages(query);
-      gisUrls = normalizeUrls(searchResults);
+      const searchResults = await searchOpenverseImages(query, poolCap);
+      searchUrls = normalizeUrls(searchResults);
     } catch {
-      console.warn('[Search API] GIS failed, falling back to Wikipedia');
+      console.warn('[Search API] Openverse failed, falling back to Wikipedia');
     }
 
     let wikiCache: string[] | null = null;
@@ -144,12 +204,14 @@ export async function POST(req: Request) {
       return wikiCache.slice(0, poolCap);
     };
 
-    // Sin visión: mismo comportamiento que antes (GIS, si no hay nada → Wikipedia).
+    // Sin visión: mismo comportamiento funcional (búsqueda externa, si no hay nada → Wikipedia).
     const urls: string[] =
-      gisUrls.length > 0 ? gisUrls : await getWikiPool();
+      searchUrls.length > 0 ? searchUrls : await getWikiPool();
 
+    let visionFilterCalls = 0;
     const tryVisionFilter = async (candidateUrls: string[]) => {
       if (!useVision || candidateUrls.length === 0) return candidateUrls;
+      visionFilterCalls += 1;
       return filterImageUrlsByIntent(candidateUrls, intentForVision, apiKey!, {
         targetCount: limit,
         relaxedFallback: true,
@@ -158,19 +220,34 @@ export async function POST(req: Request) {
     };
 
     if (useVision) {
-      let filtered = await tryVisionFilter(gisUrls.length > 0 ? gisUrls : urls);
+      const settleVisionWallet = async (resultCount: number) => {
+        releaseWalletOnError = false;
+        if (visionFilterCalls <= 0) {
+          await walletCharge?.release({ reason: "no_vision_candidates" });
+          return;
+        }
+        await walletCharge?.capture({
+          actualCostUsd: 0.01 * visionFilterCalls,
+          metadata: { visionFilterCalls, resultCount },
+        });
+      };
+
+      let filtered = await tryVisionFilter(searchUrls.length > 0 ? searchUrls : urls);
       if (filtered.length > 0) {
+        await settleVisionWallet(filtered.length);
         return NextResponse.json({ urls: filtered, verified: true });
       }
-      // Si había resultados GIS pero ninguno pasó, probar Wikipedia (suele acertar en astro/personas).
-      if (gisUrls.length > 0) {
-        console.log(`[Search API] Vision rejected GIS pool; trying Wikipedia for: "${query}"`);
+      // Si había resultados externos pero ninguno pasó, probar Wikipedia (suele acertar en astro/personas).
+      if (searchUrls.length > 0) {
+        console.log(`[Search API] Vision rejected search pool; trying Wikipedia for: "${query}"`);
         const wikiPool = await getWikiPool();
         filtered = await tryVisionFilter(wikiPool);
         if (filtered.length > 0) {
+          await settleVisionWallet(filtered.length);
           return NextResponse.json({ urls: filtered, verified: true });
         }
       }
+      await settleVisionWallet(0);
       return NextResponse.json({
         urls: [],
         verified: true,
@@ -189,6 +266,9 @@ export async function POST(req: Request) {
         { status: 423 },
       );
     }
+    if (releaseWalletOnError) await releaseApiWalletChargeOnError(walletCharge, error);
+    const walletResponse = walletGateErrorResponse(error);
+    if (walletResponse) return walletResponse;
     console.error('Search API Error:', error);
     const message = error instanceof Error ? error.message : String(error);
     return NextResponse.json({ error: message }, { status: 500 });

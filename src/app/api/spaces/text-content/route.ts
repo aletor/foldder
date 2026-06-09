@@ -8,6 +8,14 @@ import {
   assertApiServiceEnabled,
 } from "@/lib/api-usage-controls";
 import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
+import { estimateOpenAIUsd } from "@/lib/pricing-config";
+import {
+  reserveApiWalletCharge,
+  reserveUsdToMicros,
+  releaseApiWalletChargeOnError,
+  walletGateErrorResponse,
+  type ApiWalletCharge,
+} from "@/lib/wallet-api-gate";
 
 const TEXT_CONTENT_MODEL =
   process.env.OPENAI_TEXT_CONTENT_MODEL?.trim() ||
@@ -32,6 +40,8 @@ function isTargetLanguage(value: unknown): value is TargetLanguage {
 }
 
 export async function POST(req: Request) {
+  let walletCharge: ApiWalletCharge | null = null;
+  let releaseWalletOnError = true;
   try {
     await assertApiServiceEnabled("openai-assistant");
     const authState = await requireSpacesAuthUser(req);
@@ -65,11 +75,24 @@ export async function POST(req: Request) {
       action === "correct"
         ? "Corrige ortografía, gramática y puntuación. Mantén el idioma original, el significado, el tono, los saltos de línea y la estructura. No reescribas de forma creativa."
         : `Traduce el texto a ${LANGUAGE_LABELS[targetLanguage!]}. Mantén el significado, el tono, los saltos de línea y la estructura.`;
+    const maxTokens = Math.min(4096, Math.max(256, Math.ceil(text.length / 2) + 256));
+    const estimatedInputTokens = Math.ceil((task.length + text.length + 180) / 4);
+    const estimatedCostUsd = estimateOpenAIUsd(TEXT_CONTENT_MODEL, estimatedInputTokens, maxTokens);
+
+    walletCharge = await reserveApiWalletCharge({
+      req,
+      userEmail: usageUserEmail,
+      serviceId: "openai-assistant",
+      provider: "openai",
+      route: "/api/spaces/text-content",
+      maxCostMicros: reserveUsdToMicros(estimatedCostUsd, { multiplier: 1.6 }),
+      metadata: { model: TEXT_CONTENT_MODEL, action },
+    });
 
     const response = await openai.chat.completions.create({
       model: TEXT_CONTENT_MODEL,
       temperature: 0.2,
-      max_tokens: Math.min(4096, Math.max(256, Math.ceil(text.length / 2) + 256)),
+      max_tokens: maxTokens,
       messages: [
         {
           role: "system",
@@ -85,6 +108,20 @@ export async function POST(req: Request) {
 
     const result = response.choices[0]?.message?.content?.trim() ?? "";
     const u = response.usage;
+    const actualCostUsd = u
+      ? estimateOpenAIUsd(TEXT_CONTENT_MODEL, u.prompt_tokens, u.completion_tokens)
+      : Math.min(0.002, estimatedCostUsd);
+    releaseWalletOnError = false;
+    await walletCharge?.capture({
+      actualCostUsd,
+      metadata: {
+        model: TEXT_CONTENT_MODEL,
+        action,
+        promptTokens: u?.prompt_tokens ?? 0,
+        completionTokens: u?.completion_tokens ?? 0,
+      },
+    });
+
     if (u) {
       await recordApiUsage({
         provider: "openai",
@@ -106,7 +143,7 @@ export async function POST(req: Request) {
         inputTokens: 0,
         outputTokens: 0,
         totalTokens: 0,
-        costUsd: 0.002,
+        costUsd: actualCostUsd,
         note: "Designer content transform sin usage (estimado)",
       });
     }
@@ -119,6 +156,9 @@ export async function POST(req: Request) {
         { status: 423 },
       );
     }
+    if (releaseWalletOnError) await releaseApiWalletChargeOnError(walletCharge, error);
+    const walletResponse = walletGateErrorResponse(error);
+    if (walletResponse) return walletResponse;
     const message = error instanceof Error ? error.message : "Internal Server Error";
     console.error("[Designer Text Content] Error:", error);
     return NextResponse.json({ error: message }, { status: 500 });

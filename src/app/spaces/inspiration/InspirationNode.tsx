@@ -33,11 +33,12 @@ import { FoldderNodeHeaderTitle, FoldderStudioModeCenterButton, NodeLabel } from
 import { StudioNodePortal } from "../studio-node/studio-node-architecture";
 
 type InspirationFacet = "similar" | "textures" | "colors" | "style" | "people" | "backgrounds";
+type InspirationProvider = "pexels" | "unsplash";
 type InspirationStatus = "empty" | "ready" | "searching" | "results" | "selected" | "output" | "error";
 
 type InspirationResult = {
   id: string;
-  source: "Pexels";
+  source: "Pexels" | "Unsplash";
   imageUrl: string;
   thumbUrl: string;
   title?: string;
@@ -54,6 +55,7 @@ type InspirationNodeData = {
   manualPrompt?: string;
   imageIntent?: string;
   imageIntentSource?: string;
+  provider?: InspirationProvider;
   results?: InspirationResult[];
   selected?: InspirationResult | null;
   value?: string;
@@ -73,6 +75,11 @@ const FACETS: Array<{ id: InspirationFacet; es: string; en: string; icon: React.
   { id: "backgrounds", es: "Fondos", en: "Backgrounds", icon: <Wallpaper size={15} /> },
 ];
 
+const PROVIDERS: Array<{ id: InspirationProvider; label: string }> = [
+  { id: "pexels", label: "Pexels" },
+  { id: "unsplash", label: "Unsplash" },
+];
+
 function firstImageUrlFromNode(node: Node | undefined): string {
   const data = node?.data as Record<string, unknown> | undefined;
   const value = typeof data?.value === "string" ? data.value : "";
@@ -84,6 +91,11 @@ function firstImageUrlFromNode(node: Node | undefined): string {
 function compactText(value: string, max = 150): string {
   const s = value.trim().replace(/\s+/g, " ");
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;
+}
+
+function photoAspectRatio(width?: number, height?: number): number | null {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || !width || !height) return null;
+  return Math.min(2.4, Math.max(0.56, width / height));
 }
 
 function statusMessage(status: InspirationStatus, hasInput: boolean): string {
@@ -112,6 +124,7 @@ function InspirationStudio({
   onPatch: (patch: Partial<InspirationNodeData>) => void;
 }) {
   const facet = data.facet ?? "similar";
+  const provider = data.provider ?? "pexels";
   const results = Array.isArray(data.results) ? data.results : [];
   const selected = data.selected ?? null;
   const [manualPrompt, setManualPrompt] = useState(data.manualPrompt ?? "");
@@ -161,10 +174,17 @@ function InspirationStudio({
   }, [data.imageIntent, data.imageIntentSource, imageInput, manualPrompt, onPatch, promptInput]);
 
   const runSearch = useCallback(
-    async (nextFacet = facet) => {
+    async (nextFacet = facet, nextProvider = provider) => {
       if (!hasAnyInput) return;
       setLoading(true);
-      onPatch({ status: "searching", facet: nextFacet, manualPrompt, error: undefined, notice: undefined });
+      onPatch({
+        status: "searching",
+        facet: nextFacet,
+        provider: nextProvider,
+        manualPrompt,
+        error: undefined,
+        notice: undefined,
+      });
       try {
         let runError: string | null = null;
         const ok = await runAiJobWithNotification({ nodeId, label: "Inspiration" }, async () => {
@@ -179,6 +199,7 @@ function InspirationStudio({
               query,
               inputKind,
               facet: nextFacet,
+              provider: nextProvider,
               limit: 40,
             }),
           });
@@ -195,6 +216,7 @@ function InspirationStudio({
           const list = Array.isArray(json.results) ? json.results : [];
           onPatch({
             facet: nextFacet,
+            provider: nextProvider,
             manualPrompt,
             results: list,
             selected: null,
@@ -214,7 +236,7 @@ function InspirationStudio({
         setLoading(false);
       }
     },
-    [describeImageIfNeeded, facet, hasAnyInput, manualPrompt, nodeId, onPatch, promptInput],
+    [describeImageIfNeeded, facet, hasAnyInput, manualPrompt, nodeId, onPatch, promptInput, provider],
   );
 
   const selectResult = useCallback(
@@ -225,12 +247,13 @@ function InspirationStudio({
         selected: result,
         status: "output",
         facet,
+        provider,
         error: undefined,
         notice: undefined,
       });
       onClose();
     },
-    [facet, onClose, onPatch],
+    [facet, onClose, onPatch, provider],
   );
 
   return (
@@ -291,7 +314,7 @@ function InspirationStudio({
               className="mt-5 flex w-full shrink-0 items-center justify-center gap-2 rounded-[10px] bg-violet-500 px-5 py-4 text-[12px] font-black uppercase tracking-[0.18em] text-white shadow-[0_16px_36px_rgba(124,58,237,0.28)] transition hover:bg-violet-400 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400 disabled:shadow-none"
             >
               {loading ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
-              Search Inspiration
+              Search {PROVIDERS.find((item) => item.id === provider)?.label ?? "Inspiration"}
             </button>
 
             <section className="mt-5 shrink-0 pb-5">
@@ -318,6 +341,41 @@ function InspirationStudio({
           </aside>
 
           <section className="min-h-0 overflow-y-auto bg-[#0b0c10] p-6">
+            <div className="mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.08] pb-4">
+              <div className="inline-flex rounded-[12px] border border-white/[0.08] bg-white/[0.04] p-1">
+                {PROVIDERS.map((item) => {
+                  const active = provider === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => {
+                        if (item.id === provider) return;
+                        if (hasAnyInput) {
+                          void runSearch(facet, item.id);
+                        } else {
+                          onPatch({ provider: item.id });
+                        }
+                      }}
+                      disabled={loading}
+                      className={`rounded-[9px] px-4 py-2 text-[11px] font-black uppercase tracking-[0.14em] transition ${
+                        active
+                          ? "bg-white text-zinc-950 shadow-sm"
+                          : "text-zinc-400 hover:bg-white/[0.06] hover:text-white"
+                      } disabled:pointer-events-none disabled:opacity-50`}
+                    >
+                      {item.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-[11px] font-semibold text-zinc-500">
+                {results.length > 0
+                  ? `${results.length} referencias en ${PROVIDERS.find((item) => item.id === provider)?.label ?? "este proveedor"}`
+                  : "Busca una vez y cambia de proveedor con las pestañas."}
+              </p>
+            </div>
+
             {data.error ? (
               <div className="mb-5 rounded-[10px] bg-rose-500/12 px-4 py-3 text-[13px] text-rose-100">
                 {data.error}
@@ -397,6 +455,7 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
   const edges = useEdges();
   const { setNodes } = useReactFlow();
   const [studioOpen, setStudioOpen] = useState(false);
+  const [loadedPreviewRatio, setLoadedPreviewRatio] = useState<{ url: string; ratio: number } | null>(null);
 
   const promptEdge = useMemo(
     () => edges.find((edge) => edge.target === id && edge.targetHandle === "prompt"),
@@ -422,6 +481,11 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
   const outputUrl = typeof nodeData.value === "string" ? nodeData.value : "";
   const selectedRef = nodeData.selected ?? null;
   const resultsCount = Array.isArray(nodeData.results) ? nodeData.results.length : 0;
+  const previewUrl = outputUrl || selectedRef?.thumbUrl || selectedRef?.imageUrl || "";
+  const previewRatio =
+    photoAspectRatio(selectedRef?.width, selectedRef?.height) ||
+    (loadedPreviewRatio?.url === previewUrl ? loadedPreviewRatio.ratio : null) ||
+    16 / 9;
 
   const patchData = useCallback(
     (patch: Partial<InspirationNodeData>) => {
@@ -475,11 +539,33 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
       </div>
 
       <div className="node-content space-y-3">
-        <div className="relative aspect-video overflow-hidden rounded-[10px] bg-slate-950/70">
+        <div
+          className="relative overflow-hidden rounded-[10px] bg-slate-950/70"
+          style={{ aspectRatio: previewRatio }}
+        >
           {outputUrl ? (
-            <img src={outputUrl} alt="" className="h-full w-full object-cover" />
+            <img
+              src={outputUrl}
+              alt=""
+              className="h-full w-full object-contain"
+              onLoad={(event) => {
+                const img = event.currentTarget;
+                const ratio = photoAspectRatio(img.naturalWidth, img.naturalHeight);
+                if (ratio) setLoadedPreviewRatio({ url: outputUrl, ratio });
+              }}
+            />
           ) : selectedRef ? (
-            <img src={selectedRef.thumbUrl || selectedRef.imageUrl} alt="" className="h-full w-full object-cover opacity-90" />
+            <img
+              src={selectedRef.thumbUrl || selectedRef.imageUrl}
+              alt=""
+              className="h-full w-full object-contain opacity-90"
+              onLoad={(event) => {
+                const img = event.currentTarget;
+                const selectedUrl = selectedRef.thumbUrl || selectedRef.imageUrl;
+                const ratio = photoAspectRatio(img.naturalWidth, img.naturalHeight);
+                if (ratio) setLoadedPreviewRatio({ url: selectedUrl, ratio });
+              }}
+            />
           ) : (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-zinc-500">
               <Compass size={28} strokeWidth={1.5} />

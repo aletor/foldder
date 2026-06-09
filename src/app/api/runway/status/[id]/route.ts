@@ -6,6 +6,11 @@ import {
   assertApiServiceEnabled,
 } from "@/lib/api-usage-controls";
 import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
+import {
+  microsToUsd,
+  settleProviderJobWalletCharge,
+  walletGateErrorResponse,
+} from "@/lib/wallet-api-gate";
 
 function getRunwayClient() {
   const apiKey =
@@ -34,6 +39,32 @@ export async function GET(req: Request, props: { params: Promise<{ id: string }>
     };
 
     const usageUserEmail = await resolveUsageUserEmailFromRequest(req);
+    const normalizedStatus = String(task.status || "").toUpperCase();
+    const settlement = await settleProviderJobWalletCharge({
+      provider: "runway",
+      providerJobId: taskId,
+      status: normalizedStatus,
+      successStatuses: ["SUCCEEDED"],
+      failureStatuses: ["FAILED", "CANCELLED"],
+      metadata: { taskId, providerStatus: normalizedStatus },
+    });
+    if (settlement.action === "capture" && !settlement.duplicate) {
+      await recordApiUsage({
+        provider: "runway",
+        userEmail: usageUserEmail,
+        serviceId: "runway-gen3",
+        route: "/api/runway/status/[id]",
+        operation: "complete_task",
+        model: "gen3a_turbo",
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        costUsd: microsToUsd(settlement.capturedMicros),
+        metadata: { taskId },
+        note: "Gen-3 completado; coste capturado desde reserva wallet",
+      });
+    }
+
     await recordApiUsage({
       provider: "runway",
       userEmail: usageUserEmail,
@@ -58,6 +89,8 @@ export async function GET(req: Request, props: { params: Promise<{ id: string }>
         { status: 423 },
       );
     }
+    const walletResponse = walletGateErrorResponse(error);
+    if (walletResponse) return walletResponse;
     console.error("[Runway Status API Error]:", error);
     const message = error instanceof Error ? error.message : "Internal Server Error";
     return NextResponse.json({ error: message }, { status: 500 });

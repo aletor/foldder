@@ -81,6 +81,12 @@ describe("inferServiceIdFromRecord", () => {
       inferServiceIdFromRecord(line({ provider: "beeble", route: "/api/beeble/foo/bar" })),
     ).toBe("beeble-api");
   });
+
+  it("mapea Inspiration Unsplash sin serviceId", () => {
+    expect(
+      inferServiceIdFromRecord(line({ provider: "unsplash", route: "/api/inspiration/search" })),
+    ).toBe("unsplash-search");
+  });
 });
 
 describe("aggregateUsageSince", () => {

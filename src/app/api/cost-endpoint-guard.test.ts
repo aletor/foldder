@@ -37,6 +37,44 @@ const COST_ENDPOINTS: CostEndpointGuard[] = [
   { route: "src/app/api/spaces/video-matte/route.ts", services: ['"replicate-vmatte"'] },
 ];
 
+const PROVIDER_SECRET_SAFE_SOURCES = Array.from(
+  new Set([
+    ...COST_ENDPOINTS.map(({ route }) => route),
+    "src/lib/beeble-api.ts",
+    "src/lib/gemini-image-generate.ts",
+    "src/lib/gemini-image-intent-verify.ts",
+  ]),
+);
+
+const WALLET_GATED_SYNC_ENDPOINTS = [
+  "src/app/api/gemini/analyze-areas/route.ts",
+  "src/app/api/gemini/analyze-correction/route.ts",
+  "src/app/api/gemini/describe-region/route.ts",
+  "src/app/api/gemini/generate/route.ts",
+  "src/app/api/gemini/generate-stream/route.ts",
+  "src/app/api/gemini/video/route.ts",
+  "src/app/api/openai/enhance/route.ts",
+  "src/app/api/seedance/video/route.ts",
+  "src/app/api/spaces/cine/analyze/route.ts",
+  "src/app/api/spaces/describe/route.ts",
+  "src/app/api/spaces/matte/route.ts",
+  "src/app/api/spaces/search/route.ts",
+  "src/app/api/spaces/assistant/route.ts",
+  "src/app/api/spaces/guionista/route.ts",
+  "src/app/api/spaces/text-content/route.ts",
+  "src/app/api/spaces/video-matte/route.ts",
+] as const;
+
+const WALLET_GATED_ASYNC_START_ENDPOINTS = [
+  "src/app/api/grok/generate/route.ts",
+  "src/app/api/runway/generate/route.ts",
+] as const;
+
+const WALLET_GATED_ASYNC_STATUS_ENDPOINTS = [
+  "src/app/api/grok/status/[id]/route.ts",
+  "src/app/api/runway/status/[id]/route.ts",
+] as const;
+
 function routeSource(route: string): string {
   return readFileSync(path.join(process.cwd(), route), "utf8");
 }
@@ -57,6 +95,89 @@ describe("cost-sensitive API routes", () => {
       return services
         .filter((service) => !source.includes(`assertApiServiceEnabled(${service}`))
         .map((service) => `${route} -> ${service}`);
+    });
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("do not accept provider API keys from client request headers", () => {
+    const forbiddenPatterns = [
+      "req.headers.get(\"x-api-key\")",
+      "req.headers.get('x-api-key')",
+      "req.headers.get(\"x-beeble-api-key\")",
+      "req.headers.get('x-beeble-api-key')",
+    ];
+    const offenders = COST_ENDPOINTS.flatMap(({ route }) => {
+      const source = routeSource(route);
+      return forbiddenPatterns
+        .filter((pattern) => source.includes(pattern))
+        .map((pattern) => `${route} -> ${pattern}`);
+    });
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("do not place provider API keys in upstream query strings", () => {
+    const forbiddenPatterns = [
+      "generateContent?key=",
+      ":download?key=",
+      "?key=${apiKey}",
+      "encodeURIComponent(apiKey)",
+    ];
+    const offenders = PROVIDER_SECRET_SAFE_SOURCES.flatMap((route) => {
+      const source = routeSource(route);
+      return forbiddenPatterns
+        .filter((pattern) => source.includes(pattern))
+        .map((pattern) => `${route} -> ${pattern}`);
+    });
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("reserve and settle wallet balance before synchronous provider calls", () => {
+    const requiredPatterns = [
+      "reserveApiWalletCharge(",
+      "releaseApiWalletChargeOnError(",
+      "walletGateErrorResponse(",
+      "walletCharge?.capture(",
+    ];
+    const offenders = WALLET_GATED_SYNC_ENDPOINTS.flatMap((route) => {
+      const source = routeSource(route);
+      return requiredPatterns
+        .filter((pattern) => !source.includes(pattern))
+        .map((pattern) => `${route} missing ${pattern}`);
+    });
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("link async provider jobs to wallet reservations", () => {
+    const requiredPatterns = [
+      "reserveApiWalletCharge(",
+      "linkApiWalletChargeToProviderJob(",
+      "releaseApiWalletChargeOnError(",
+      "walletGateErrorResponse(",
+    ];
+    const offenders = WALLET_GATED_ASYNC_START_ENDPOINTS.flatMap((route) => {
+      const source = routeSource(route);
+      return requiredPatterns
+        .filter((pattern) => !source.includes(pattern))
+        .map((pattern) => `${route} missing ${pattern}`);
+    });
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("settle async provider reservations from terminal status routes", () => {
+    const requiredPatterns = [
+      "settleProviderJobWalletCharge(",
+      "walletGateErrorResponse(",
+    ];
+    const offenders = WALLET_GATED_ASYNC_STATUS_ENDPOINTS.flatMap((route) => {
+      const source = routeSource(route);
+      return requiredPatterns
+        .filter((pattern) => !source.includes(pattern))
+        .map((pattern) => `${route} missing ${pattern}`);
     });
 
     expect(offenders).toEqual([]);

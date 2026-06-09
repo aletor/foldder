@@ -15,6 +15,13 @@ import {
 } from "@/lib/api-media-access";
 import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
 import { getFromS3 } from "@/lib/s3-utils";
+import {
+  reserveApiWalletCharge,
+  reserveUsdToMicros,
+  releaseApiWalletChargeOnError,
+  walletGateErrorResponse,
+  type ApiWalletCharge,
+} from "@/lib/wallet-api-gate";
 
 function parseImageDataUrl(value: string): { buffer: Buffer; mime: string } {
   const marker = ";base64,";
@@ -31,6 +38,8 @@ function parseImageDataUrl(value: string): { buffer: Buffer; mime: string } {
 
 export async function POST(req: NextRequest) {
   console.log(`[Background Remover] POST request received`);
+  let walletCharge: ApiWalletCharge | null = null;
+  let releaseWalletOnError = true;
   try {
     await assertApiServiceEnabled("replicate-bg");
     const authState = await requireSpacesAuthUser(req);
@@ -87,6 +96,15 @@ export async function POST(req: NextRequest) {
     const replicate = new Replicate({
       auth: process.env.REPLICATE_API_TOKEN || "",
     });
+    walletCharge = await reserveApiWalletCharge({
+      req,
+      userEmail: usageUserEmail,
+      serviceId: "replicate-bg",
+      provider: "replicate",
+      route: "/api/spaces/matte",
+      maxCostMicros: reserveUsdToMicros(0.01, { multiplier: 1.25 }),
+      metadata: { model: "851-labs/background-remover" },
+    });
 
     // 1. ML Inference: Professional Matting (851-labs/background-remover)
     // Single attempt only: retries must be initiated by the user to avoid uncontrolled cost.
@@ -103,6 +121,11 @@ export async function POST(req: NextRequest) {
         },
       );
       maskUrl = Array.isArray(output) ? output[0] : output.toString();
+      releaseWalletOnError = false;
+      await walletCharge?.capture({
+        actualCostUsd: 0.01,
+        metadata: { model: "851-labs/background-remover" },
+      });
       await recordApiUsage({
         provider: "replicate",
         userEmail: usageUserEmail,
@@ -123,6 +146,8 @@ export async function POST(req: NextRequest) {
           : undefined;
       const is429 = mlMessage.includes("429") || mlStatus === 429;
       console.error("[Background Remover] ML Error:", mlErr);
+      await walletCharge?.release({ reason: "provider_inference_error", metadata: { status: mlStatus, retryable: is429 } });
+      releaseWalletOnError = false;
       return NextResponse.json(
         {
           error: is429
@@ -212,6 +237,9 @@ export async function POST(req: NextRequest) {
     if (error instanceof ForbiddenMediaReferenceError) {
       return NextResponse.json({ error: error.message }, { status: 403 });
     }
+    if (releaseWalletOnError) await releaseApiWalletChargeOnError(walletCharge, error);
+    const walletResponse = walletGateErrorResponse(error);
+    if (walletResponse) return walletResponse;
     console.error('[Background Remover] CRITICAL ERROR:', error);
     const message = error instanceof Error ? error.message : String(error);
     return NextResponse.json({ error: message }, { status: 500 });

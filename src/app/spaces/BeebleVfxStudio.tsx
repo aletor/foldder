@@ -104,7 +104,7 @@ export const BeebleVfxStudio = memo(function BeebleVfxStudio(props: BeebleVfxStu
     setLabelDraft(nodeLabel);
   }, [nodeLabel]);
 
-  const client = useMemo(() => new BeebleClient(""), []);
+  const client = useMemo(() => new BeebleClient(), []);
 
   const refreshAccount = useCallback(async () => {
     setAccountErr(null);

@@ -109,7 +109,7 @@ El array "results" debe tener exactamente ${nInline} elementos en el mismo orden
 
   parts.push({ text: prompt });
 
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${VISION_MODEL}:generateContent?key=${apiKey}`;
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${VISION_MODEL}:generateContent`;
   const payload = {
     contents: [{ role: "user", parts }],
     generationConfig: { temperature: 0.1 },
@@ -117,7 +117,7 @@ El array "results" debe tener exactamente ${nInline} elementos en el mismo orden
 
   const response = await fetch(endpoint, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
     body: JSON.stringify(payload),
   });
 

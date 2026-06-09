@@ -1,5 +1,9 @@
 import { createGuardedFetch } from "@/lib/external-api-guard";
 import { getAiRequestLabelForPathname } from "@/lib/ai-api-labels";
+import {
+  notifyWalletFromApiResponse,
+  runWalletFetchPreflight,
+} from "@/lib/wallet-fetch-preflight";
 
 export { getAiRequestLabelForPathname } from "@/lib/ai-api-labels";
 
@@ -69,9 +73,20 @@ export function installAiFetchOverlay(): () => void {
     }
 
     const label = getAiRequestLabelForPathname(pathname);
+    if (label) {
+      const preflightResponse = await runWalletFetchPreflight({
+        route: pathname,
+        requestInput: input,
+        requestInit: init,
+        fetcher: orig,
+      });
+      if (preflightResponse) return preflightResponse;
+    }
     if (label) beginDisplay(label);
     try {
-      return await orig(input, init);
+      const response = await orig(input, init);
+      if (label) void notifyWalletFromApiResponse(response.clone());
+      return response;
     } finally {
       if (label) endDisplay();
     }

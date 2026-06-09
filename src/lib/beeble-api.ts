@@ -34,16 +34,11 @@ export type BeebleAccountInfo = {
 };
 
 export class BeebleClient {
-  constructor(private apiKey: string) {}
-
   private headers(extra: Record<string, string> = {}): HeadersInit {
-    const h: Record<string, string> = {
+    return {
       "Content-Type": "application/json",
       ...extra,
     };
-    const k = this.apiKey.trim();
-    if (k) h["x-api-key"] = k;
-    return h;
   }
 
   private url(path: string) {

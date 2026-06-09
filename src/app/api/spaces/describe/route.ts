@@ -13,6 +13,14 @@ import {
 } from "@/lib/spaces-access-control";
 import { getPresignedUrl } from '@/lib/s3-utils';
 import OpenAI from 'openai';
+import { estimateOpenAIUsd } from "@/lib/pricing-config";
+import {
+  reserveApiWalletCharge,
+  reserveUsdToMicros,
+  releaseApiWalletChargeOnError,
+  walletGateErrorResponse,
+  type ApiWalletCharge,
+} from "@/lib/wallet-api-gate";
 
 const KNOWLEDGE_FILES_PREFIX = "knowledge-files/";
 
@@ -67,6 +75,8 @@ async function resolveModelReadableMediaUrl(rawUrl: string, req: Request, userEm
 }
 
 export async function POST(req: Request) {
+  let walletCharge: ApiWalletCharge | null = null;
+  let releaseWalletOnError = true;
   try {
     await assertApiServiceEnabled("openai-describe");
     const authState = await requireSpacesAuthUser(req);
@@ -113,6 +123,16 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Unsupported media type for AI analysis" }, { status: 400 });
     }
 
+    walletCharge = await reserveApiWalletCharge({
+      req,
+      userEmail: authState.user.email,
+      serviceId: "openai-describe",
+      provider: "openai",
+      route: "/api/spaces/describe",
+      maxCostMicros: reserveUsdToMicros(0.03),
+      metadata: { model: "gpt-4o", mediaType: type },
+    });
+
     const completion = await openai.chat.completions.create({
       model: "gpt-4o", // Using GPT-4o for its vision capabilities
       messages: [{ role: "user", content: contentPayload }],
@@ -122,6 +142,20 @@ export async function POST(req: Request) {
     const description = completion.choices[0].message.content || "No description available.";
 
     const u = completion.usage;
+    const actualCostUsd = u
+      ? estimateOpenAIUsd("gpt-4o", u.prompt_tokens, u.completion_tokens)
+      : 0.005;
+    releaseWalletOnError = false;
+    await walletCharge?.capture({
+      actualCostUsd,
+      metadata: {
+        model: "gpt-4o",
+        mediaType: type,
+        promptTokens: u?.prompt_tokens ?? 0,
+        completionTokens: u?.completion_tokens ?? 0,
+      },
+    });
+
     if (u) {
       await recordApiUsage({
         provider: "openai",
@@ -143,7 +177,7 @@ export async function POST(req: Request) {
         inputTokens: 0,
         outputTokens: 0,
         totalTokens: 0,
-        costUsd: 0.005,
+        costUsd: actualCostUsd,
         note: "Describe sin usage (estimado)",
       });
     }
@@ -160,6 +194,9 @@ export async function POST(req: Request) {
     if (error instanceof MediaAccessError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
+    if (releaseWalletOnError) await releaseApiWalletChargeOnError(walletCharge, error);
+    const walletResponse = walletGateErrorResponse(error);
+    if (walletResponse) return walletResponse;
     console.error("[Media Describer] Error:", error);
     const message = error instanceof Error ? error.message : "describe_failed";
     return NextResponse.json({ error: message }, { status: 500 });

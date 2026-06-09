@@ -7,9 +7,19 @@ import {
   assertApiServiceEnabled,
 } from "@/lib/api-usage-controls";
 import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
+import { estimateOpenAIUsd } from "@/lib/pricing-config";
+import {
+  reserveApiWalletCharge,
+  reserveUsdToMicros,
+  releaseApiWalletChargeOnError,
+  walletGateErrorResponse,
+  type ApiWalletCharge,
+} from "@/lib/wallet-api-gate";
 import OpenAI from "openai";
 
 export async function POST(req: NextRequest) {
+  let walletCharge: ApiWalletCharge | null = null;
+  let releaseWalletOnError = true;
   try {
     await assertApiServiceEnabled("openai-enhance");
     const authState = await requireSpacesAuthUser(req);
@@ -20,6 +30,16 @@ export async function POST(req: NextRequest) {
     if (!prompt) {
       return NextResponse.json({ error: "Prompt is required" }, { status: 400 });
     }
+
+    walletCharge = await reserveApiWalletCharge({
+      req,
+      userEmail: usageUserEmail,
+      serviceId: "openai-enhance",
+      provider: "openai",
+      route: "/api/openai/enhance",
+      maxCostMicros: reserveUsdToMicros(0.02),
+      metadata: { model: "gpt-4o", operation: "prompt_enhance" },
+    });
 
     const openai = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY || "",
@@ -43,6 +63,19 @@ export async function POST(req: NextRequest) {
     const enhanced = completion.choices[0].message.content?.trim();
 
     const u = completion.usage;
+    const actualCostUsd = u
+      ? estimateOpenAIUsd("gpt-4o", u.prompt_tokens, u.completion_tokens)
+      : 0.005;
+    releaseWalletOnError = false;
+    await walletCharge?.capture({
+      actualCostUsd,
+      metadata: {
+        model: "gpt-4o",
+        promptTokens: u?.prompt_tokens ?? 0,
+        completionTokens: u?.completion_tokens ?? 0,
+      },
+    });
+
     if (u) {
       await recordApiUsage({
         provider: "openai",
@@ -64,7 +97,7 @@ export async function POST(req: NextRequest) {
         inputTokens: 0,
         outputTokens: 0,
         totalTokens: 0,
-        costUsd: 0.005,
+        costUsd: actualCostUsd,
         note: "Enhance sin usage (estimado)",
       });
     }
@@ -77,6 +110,9 @@ export async function POST(req: NextRequest) {
         { status: 423 },
       );
     }
+    if (releaseWalletOnError) await releaseApiWalletChargeOnError(walletCharge, error);
+    const walletResponse = walletGateErrorResponse(error);
+    if (walletResponse) return walletResponse;
     console.error("OpenAI Enhance Error:", error);
     const message = error instanceof Error ? error.message : "Internal Server Error";
     return NextResponse.json({ error: message }, { status: 500 });

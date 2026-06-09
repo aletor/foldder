@@ -14,6 +14,9 @@ const authSecret =
 const trustHost = isProduction
   ? process.env.AUTH_TRUST_HOST === "true" || process.env.VERCEL === "1"
   : true;
+const authDebug =
+  !isProduction &&
+  (process.env.AUTH_DEBUG === "true" || process.env.NEXTAUTH_DEBUG === "true");
 
 if (isProduction && !authSecret) {
   throw new Error(
@@ -22,7 +25,7 @@ if (isProduction && !authSecret) {
 }
 
 export const { handlers, auth } = NextAuth({
-  debug: !isProduction,
+  debug: authDebug,
   secret: authSecret,
   trustHost,
   providers: hasGoogleProvider

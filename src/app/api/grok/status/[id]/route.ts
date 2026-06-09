@@ -5,6 +5,11 @@ import {
   assertApiServiceEnabled,
 } from "@/lib/api-usage-controls";
 import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
+import {
+  microsToUsd,
+  settleProviderJobWalletCharge,
+  walletGateErrorResponse,
+} from "@/lib/wallet-api-gate";
 
 export async function GET(req: Request, props: { params: Promise<{ id: string }> }) {
   try {
@@ -55,6 +60,30 @@ export async function GET(req: Request, props: { params: Promise<{ id: string }>
     }
 
     const videoUrl = data.video?.url || data.output?.[0];
+    const settlement = await settleProviderJobWalletCharge({
+      provider: "grok",
+      providerJobId: taskId,
+      status,
+      successStatuses: ["SUCCEEDED"],
+      failureStatuses: ["FAILED"],
+      metadata: { taskId, providerStatus: status },
+    });
+    if (settlement.action === "capture" && !settlement.duplicate) {
+      await recordApiUsage({
+        provider: "grok",
+        userEmail: usageUserEmail,
+        serviceId: "grok-video",
+        route: "/api/grok/status/[id]",
+        operation: "complete_task",
+        model: "grok-imagine-video",
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        costUsd: microsToUsd(settlement.capturedMicros),
+        metadata: { taskId },
+        note: "Vídeo Grok completado; coste capturado desde reserva wallet",
+      });
+    }
 
     return NextResponse.json({
       status: status,
@@ -69,6 +98,8 @@ export async function GET(req: Request, props: { params: Promise<{ id: string }>
         { status: 423 },
       );
     }
+    const walletResponse = walletGateErrorResponse(error);
+    if (walletResponse) return walletResponse;
     console.error("[Grok Status API Error]:", error);
     const message = error instanceof Error ? error.message : "Internal Server Error";
     return NextResponse.json({ error: message }, { status: 500 });

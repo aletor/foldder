@@ -168,7 +168,7 @@ type Props = {
 
 type SaveState = "idle" | "dirty" | "saving" | "saved";
 type StudioStage = "create" | "approaches" | "editor" | "social" | "derivative";
-type DetailPanel = "settings" | "adaptations" | "review" | "brain";
+type DetailPanel = "settings" | "improve" | "derive" | "review" | "brain";
 type DerivativeView = {
   action: string;
   version: GuionistaVersion;
@@ -331,10 +331,11 @@ function BrainPill({
     <button
       type="button"
       onClick={onClick}
-      className={`inline-flex items-center gap-2 rounded-[10px] px-3 py-2 text-[11px] font-light transition ${
+      disabled={!onClick}
+      className={`inline-flex items-center gap-2 rounded-[10px] px-3 py-2 text-[11px] font-light transition disabled:cursor-default ${
         brainConnected
           ? "bg-sky-200/10 text-sky-50 hover:bg-sky-200/14"
-          : "bg-white/[0.05] text-white/55 hover:bg-white/[0.08]"
+          : "bg-white/[0.05] text-white/55"
       }`}
     >
       <Brain className="h-3.5 w-3.5" strokeWidth={1.6} />
@@ -487,9 +488,272 @@ function DerivativePreview({
   );
 }
 
+function ProfessionalDocumentEditor({
+  version,
+  platform,
+  editorRef,
+  onChange,
+  onCaptureSelection,
+}: {
+  version: GuionistaVersion;
+  platform?: GuionistaSocialAdaptation["platform"];
+  editorRef: React.RefObject<HTMLTextAreaElement | null>;
+  onChange: (markdown: string) => void;
+  onCaptureSelection: () => void;
+}) {
+  if (version.format === "script") {
+    return (
+      <div className="mt-7 grid gap-5 xl:grid-cols-[340px_minmax(0,1fr)]">
+        <ScriptProductionPreview version={version} />
+        <DocumentTextarea
+          ref={editorRef}
+          value={version.markdown}
+          onChange={onChange}
+          onCaptureSelection={onCaptureSelection}
+          className="min-h-[72vh] bg-[#fffdf7] font-mono text-[15px] leading-[1.85] text-[#17130d]"
+        />
+      </div>
+    );
+  }
+
+  if (version.format === "slides") {
+    return (
+      <div className="mt-7 grid gap-5 xl:grid-cols-[320px_minmax(0,1fr)]">
+        <SlidesDocumentPreview markdown={version.markdown} />
+        <DocumentTextarea
+          ref={editorRef}
+          value={version.markdown}
+          onChange={onChange}
+          onCaptureSelection={onCaptureSelection}
+          className="min-h-[72vh] bg-[#fffaf0] font-serif text-[18px] leading-[1.82] text-[#15130f]"
+        />
+      </div>
+    );
+  }
+
+  if (version.format === "scenes") {
+    return (
+      <div className="mt-7 grid gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">
+        <DocumentTextarea
+          ref={editorRef}
+          value={version.markdown}
+          onChange={onChange}
+          onCaptureSelection={onCaptureSelection}
+          className="min-h-[72vh] bg-[#fffaf0] font-serif text-[18px] leading-[1.82] text-[#15130f]"
+        />
+        <ScenesBoardPreview markdown={version.markdown} />
+      </div>
+    );
+  }
+
+  if (version.format === "campaign") {
+    return (
+      <div className="mt-7 grid gap-5 xl:grid-cols-[420px_minmax(0,1fr)]">
+        <CampaignCopyPreview markdown={version.markdown} />
+        <DocumentTextarea
+          ref={editorRef}
+          value={version.markdown}
+          onChange={onChange}
+          onCaptureSelection={onCaptureSelection}
+          className="min-h-[72vh] bg-[#fffaf0] font-serif text-[18px] leading-[1.82] text-[#15130f]"
+        />
+      </div>
+    );
+  }
+
+  if (version.format === "rewrite") {
+    return (
+      <div className="mt-7 grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+        <RewriteComparisonPreview markdown={version.markdown} />
+        <DocumentTextarea
+          ref={editorRef}
+          value={version.markdown}
+          onChange={onChange}
+          onCaptureSelection={onCaptureSelection}
+          className="min-h-[72vh] bg-[#fffaf0] font-serif text-[18px] leading-[1.82] text-[#15130f]"
+        />
+      </div>
+    );
+  }
+
+  if (version.format === "post" && platform) {
+    return (
+      <div className="mt-7 grid gap-5 xl:grid-cols-[380px_minmax(0,1fr)]">
+        <SocialPostPreview version={version} platform={platform} />
+        <DocumentTextarea
+          ref={editorRef}
+          value={version.markdown}
+          onChange={onChange}
+          onCaptureSelection={onCaptureSelection}
+          className="min-h-[72vh] bg-[#fffaf0] font-serif text-[18px] leading-[1.82] text-[#15130f]"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-7 mx-auto max-w-[920px]">
+      <div className="rounded-[10px] bg-[#ede7dc] p-3 shadow-[0_40px_120px_rgba(0,0,0,0.28)]">
+        <DocumentTextarea
+          ref={editorRef}
+          value={version.markdown}
+          onChange={onChange}
+          onCaptureSelection={onCaptureSelection}
+          className="min-h-[76vh] bg-[#fffaf0] font-serif text-[19px] leading-[1.86] text-[#15130f]"
+        />
+      </div>
+    </div>
+  );
+}
+
+const DocumentTextarea = React.forwardRef<HTMLTextAreaElement, {
+  value: string;
+  onChange: (value: string) => void;
+  onCaptureSelection: () => void;
+  className: string;
+}>(
+  function DocumentTextarea({ value, onChange, onCaptureSelection, className }, ref) {
+    return (
+      <textarea
+        ref={ref}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        onSelect={onCaptureSelection}
+        onKeyUp={onCaptureSelection}
+        onMouseUp={onCaptureSelection}
+        className={`w-full resize-y rounded-[10px] px-7 py-6 shadow-inner outline-none placeholder:text-black/30 ${className}`}
+      />
+    );
+  },
+);
+
+function ScriptProductionPreview({ version }: { version: GuionistaVersion }) {
+  const sections = markdownSections(version.markdown).filter((section) => section.title !== "Texto").slice(0, 7);
+  return (
+    <aside className="rounded-[10px] bg-[#151515] p-4 shadow-[0_24px_80px_rgba(0,0,0,0.2)]">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-amber-100/48">Guion profesional</p>
+      <h3 className="mt-2 text-2xl font-light leading-tight text-white">{version.title}</h3>
+      <div className="mt-5 space-y-3">
+        {sections.length ? sections.map((section) => (
+          <article key={section.title} className="rounded-[10px] bg-white/[0.055] p-3">
+            <p className="text-[10px] font-black uppercase tracking-[0.16em] text-amber-100/55">{section.title}</p>
+            <p className="mt-2 line-clamp-5 whitespace-pre-line font-mono text-[11px] leading-relaxed text-white/66">{section.body}</p>
+          </article>
+        )) : (
+          <p className="rounded-[10px] bg-white/[0.05] p-3 text-[12px] font-light text-white/45">Estructura el guion con Voz en off, Texto en pantalla y Notas visuales.</p>
+        )}
+      </div>
+    </aside>
+  );
+}
+
+function SlidesDocumentPreview({ markdown }: { markdown: string }) {
+  const slides = markdownSections(markdown).filter((section) => /slide/i.test(section.title));
+  return (
+    <aside className="max-h-[76vh] overflow-y-auto rounded-[10px] bg-black/24 p-4">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-sky-100/48">Slides</p>
+      <div className="mt-4 space-y-3">
+        {(slides.length ? slides : markdownSections(markdown).slice(0, 5)).slice(0, 10).map((slide, index) => (
+          <article key={`${slide.title}-${index}`} className="aspect-video rounded-[10px] bg-[#f7f4eb] p-4 text-[#17140f] shadow-lg">
+            <p className="text-[9px] font-black uppercase tracking-[0.14em] text-sky-700/55">Slide {index + 1}</p>
+            <h3 className="mt-2 line-clamp-2 text-[18px] font-semibold leading-tight">{slide.title.replace(/^Slide\s*\d+\s*[·.-]?\s*/i, "") || slide.title}</h3>
+            <ul className="mt-3 space-y-1 text-[11px] leading-snug text-black/62">
+              {extractBullets(slide.body).slice(0, 4).map((bullet) => <li key={bullet}>• {bullet}</li>)}
+            </ul>
+          </article>
+        ))}
+      </div>
+    </aside>
+  );
+}
+
+function ScenesBoardPreview({ markdown }: { markdown: string }) {
+  const scenes = markdownSections(markdown).filter((section) => /escena|scene/i.test(section.title));
+  return (
+    <aside className="max-h-[76vh] overflow-y-auto rounded-[10px] bg-black/24 p-4">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-amber-100/48">Storyboard textual</p>
+      <div className="mt-4 space-y-3">
+        {(scenes.length ? scenes : markdownSections(markdown).slice(0, 5)).slice(0, 8).map((scene, index) => (
+          <article key={`${scene.title}-${index}`} className="rounded-[10px] bg-amber-100/[0.07] p-4">
+            <p className="text-[9px] font-black uppercase tracking-[0.16em] text-amber-100/55">Escena {index + 1}</p>
+            <h3 className="mt-1 text-lg font-light leading-tight text-amber-50">{scene.title.replace(/^Escena\s*\d+\s*[·.-]?\s*/i, "") || scene.title}</h3>
+            <p className="mt-3 whitespace-pre-line text-[12px] font-light leading-relaxed text-white/62">{clipText(scene.body, 420)}</p>
+          </article>
+        ))}
+      </div>
+    </aside>
+  );
+}
+
+function CampaignCopyPreview({ markdown }: { markdown: string }) {
+  const sections = markdownSections(markdown);
+  return (
+    <aside className="max-h-[76vh] overflow-y-auto rounded-[10px] bg-black/24 p-4">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-100/48">Sistema de campaña</p>
+      <div className="mt-4 grid gap-3">
+        {sections.slice(0, 8).map((section) => (
+          <article key={section.title} className="rounded-[10px] bg-emerald-100/[0.06] p-4">
+            <p className="text-[9px] font-black uppercase tracking-[0.16em] text-emerald-100/50">{section.title}</p>
+            <p className="mt-2 whitespace-pre-line text-[13px] font-light leading-relaxed text-white/68">{clipText(section.body, 300)}</p>
+          </article>
+        ))}
+      </div>
+    </aside>
+  );
+}
+
+function RewriteComparisonPreview({ markdown }: { markdown: string }) {
+  const sections = markdownSections(markdown);
+  const original = sections.find((section) => /original/i.test(section.title));
+  const rewritten = sections.find((section) => /reescrito|rewrite|nuevo/i.test(section.title));
+  return (
+    <aside className="grid gap-4 md:grid-cols-2 xl:grid-cols-1">
+      <article className="rounded-[10px] bg-white/[0.04] p-5">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/40">Original</p>
+        <p className="mt-3 whitespace-pre-line text-[14px] font-light leading-relaxed text-white/58">{original?.body || "Sin original detectado."}</p>
+      </article>
+      <article className="rounded-[10px] bg-emerald-100/[0.07] p-5">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-100/55">Reescritura</p>
+        <p className="mt-3 whitespace-pre-line text-[14px] font-light leading-relaxed text-white/70">{rewritten?.body || "Sin reescritura detectada."}</p>
+      </article>
+    </aside>
+  );
+}
+
+function SocialPostPreview({ version, platform }: { version: GuionistaVersion; platform: GuionistaSocialAdaptation["platform"] }) {
+  const style = socialStyle(platform);
+  const text = plainTextFromMarkdown(version.markdown);
+  const isX = platform === "X";
+  return (
+    <aside className="rounded-[10px] bg-black/24 p-4">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/42">Preview {style.label}</p>
+      <article className="mt-4 rounded-[10px] bg-white p-4 text-[#111] shadow-[0_24px_80px_rgba(0,0,0,0.2)]">
+        <div className="flex items-center gap-3">
+          <span className={`flex h-10 w-10 items-center justify-center rounded-[10px] text-xs font-black uppercase ${style.accent}`}>
+            {style.icon}
+          </span>
+          <div>
+            <p className="text-[13px] font-semibold">Foldder Project</p>
+            <p className="text-[11px] text-black/45">{style.label}</p>
+          </div>
+        </div>
+        <h3 className="mt-4 text-[16px] font-semibold leading-snug">{version.title}</h3>
+        <p className="mt-3 whitespace-pre-line text-[14px] leading-relaxed text-black/76">{clipText(text, isX ? 280 : 760)}</p>
+        {isX && (
+          <p className={`mt-4 text-[11px] font-semibold ${text.length > 280 ? "text-rose-600" : "text-black/45"}`}>
+            {Math.min(text.length, 999)} / 280
+          </p>
+        )}
+        {platform === "Instagram" && <div className="mt-4 aspect-square rounded-[10px] bg-gradient-to-br from-black/8 via-black/3 to-black/10" />}
+      </article>
+    </aside>
+  );
+}
+
 function DetailDrawer({
   activePanel,
   setActivePanel,
+  hasDocument,
   normalizedSettings,
   updateSettings,
   brainConnected,
@@ -512,6 +776,7 @@ function DetailDrawer({
 }: {
   activePanel: DetailPanel;
   setActivePanel: (panel: DetailPanel) => void;
+  hasDocument: boolean;
   normalizedSettings: GuionistaSettings;
   updateSettings: (patch: Partial<GuionistaSettings>) => void;
   brainConnected: boolean;
@@ -534,9 +799,14 @@ function DetailDrawer({
 }) {
   const panels: Array<{ id: DetailPanel; label: string; icon: React.ReactNode }> = [
     { id: "settings", label: "Ajustes", icon: <Settings2 className="h-3.5 w-3.5" /> },
-    { id: "adaptations", label: "Acciones", icon: <WandSparkles className="h-3.5 w-3.5" /> },
-    { id: "review", label: "Revisión", icon: <MessageSquare className="h-3.5 w-3.5" /> },
-    { id: "brain", label: "Brain", icon: <Brain className="h-3.5 w-3.5" /> },
+    ...(hasDocument
+      ? [
+          { id: "improve" as const, label: "Mejorar", icon: <WandSparkles className="h-3.5 w-3.5" /> },
+          { id: "derive" as const, label: "Derivar", icon: <Share2 className="h-3.5 w-3.5" /> },
+          { id: "review" as const, label: "Revisión", icon: <MessageSquare className="h-3.5 w-3.5" /> },
+        ]
+      : []),
+    ...(brainConnected ? [{ id: "brain" as const, label: "Brain", icon: <Brain className="h-3.5 w-3.5" /> }] : []),
   ];
 
   return (
@@ -619,7 +889,7 @@ function DetailDrawer({
           </section>
         )}
 
-      {activePanel === "adaptations" && (
+      {activePanel === "improve" && (
         <section className="space-y-5">
           <div>
             <p className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/42"><PenLine className="h-3.5 w-3.5" /> Transformar</p>
@@ -633,8 +903,14 @@ function DetailDrawer({
               {TONE_ACTIONS.map((action) => <ActionChip key={action} action={action} loadingAction={loadingAction} onClick={onQuickAction} />)}
             </div>
           </div>
+        </section>
+      )}
+
+      {activePanel === "derive" && (
+        <section className="space-y-5">
           <div>
             <p className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/42"><Share2 className="h-3.5 w-3.5" /> Derivar</p>
+            <p className="mb-3 text-[11px] font-light leading-relaxed text-white/36">Crea piezas nuevas desde la versión activa sin sustituir el documento principal.</p>
             <div className="flex flex-wrap gap-2">
               {DERIVATIVE_ACTIONS.map((action) => <ActionChip key={action} action={action} loadingAction={loadingAction} onClick={onQuickAction} />)}
             </div>
@@ -789,6 +1065,7 @@ export function GuionistaStudio({
   const normalized = useMemo(() => normalizeGuionistaData(data), [data]);
   const [stage, setStage] = useState<StudioStage>(normalized.versions?.length ? "editor" : "create");
   const [activePanel, setActivePanel] = useState<DetailPanel>("settings");
+  const [inspectorOpen, setInspectorOpen] = useState(!normalized.versions?.length);
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
@@ -831,6 +1108,19 @@ export function GuionistaStudio({
   }, [activeAsset]);
   const lastSavedRelative = useMemo(() => relativeTimeFromIso(lastSavedAt ?? activeAsset?.updatedAt), [activeAsset?.updatedAt, lastSavedAt]);
   const normalizedSettings = useMemo(() => normalizeGuionistaSettings(normalized.settings), [normalized.settings]);
+  const briefingSeed = useMemo(() => (normalized.briefing || initialBriefing || "").trim(), [initialBriefing, normalized.briefing]);
+  const hasBriefingSeed = briefingSeed.length >= 3;
+  const hasDocument = Boolean(current);
+  const inspectorVisible = !hasDocument || inspectorOpen;
+
+  useEffect(() => {
+    if (!hasDocument) {
+      if (activePanel !== "settings" && activePanel !== "brain") setActivePanel("settings");
+      setInspectorOpen(true);
+      return;
+    }
+    if (activePanel === "brain" && !brainConnected) setActivePanel("settings");
+  }, [activePanel, brainConnected, hasDocument]);
 
   useEffect(() => {
     if (!initialBriefing || normalized.briefing) return;
@@ -857,6 +1147,7 @@ export function GuionistaStudio({
     setLastSavedAt(activeAsset.updatedAt);
     setSaveState("saved");
     setStage("editor");
+    setInspectorOpen(false);
     // Load each asset only when the requested id changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeAsset?.id]);
@@ -919,6 +1210,10 @@ export function GuionistaStudio({
   }, [current, normalized, onChange, versions]);
 
   const createApproaches = useCallback(async () => {
+    if (!hasBriefingSeed) {
+      setGenerationError("Escribe una idea o conecta un texto para empezar.");
+      return;
+    }
     const request = {
       briefing: normalized.briefing || initialBriefing || "",
       format: normalized.format || "post",
@@ -947,9 +1242,13 @@ export function GuionistaStudio({
     } finally {
       endLoading();
     }
-  }, [beginLoading, brainConnected, brainContext, brainHints, endLoading, initialBriefing, normalized.approaches?.length, normalized.briefing, normalized.format, normalized.settings, onChange, setRetryableError]);
+  }, [beginLoading, brainConnected, brainContext, brainHints, endLoading, hasBriefingSeed, initialBriefing, normalized.approaches?.length, normalized.briefing, normalized.format, normalized.settings, onChange, setRetryableError]);
 
   const writeVersion = useCallback(async (approach?: GuionistaApproach | null) => {
+    if (!hasBriefingSeed) {
+      setGenerationError("Escribe una idea o conecta un texto para empezar.");
+      return;
+    }
     const request = {
       briefing: normalized.briefing || initialBriefing || "",
       format: normalized.format || "post",
@@ -967,6 +1266,7 @@ export function GuionistaStudio({
         selectedApproachId: approach?.id,
       });
       setStage("editor");
+      setInspectorOpen(false);
       retryLastActionRef.current = null;
     } catch {
       if (versions.length === 0) {
@@ -980,6 +1280,7 @@ export function GuionistaStudio({
           selectedApproachId: approach?.id,
         });
         setStage("editor");
+        setInspectorOpen(false);
       }
       setRetryableError(() => {
         void writeVersion(approach);
@@ -987,7 +1288,7 @@ export function GuionistaStudio({
     } finally {
       endLoading();
     }
-  }, [beginLoading, brainConnected, brainContext, brainHints, endLoading, initialBriefing, normalized, onChange, setRetryableError, versions]);
+  }, [beginLoading, brainConnected, brainContext, brainHints, endLoading, hasBriefingSeed, initialBriefing, normalized, onChange, setRetryableError, versions]);
 
   const updateActiveMarkdown = (markdown: string) => {
     if (!current) return;
@@ -1304,7 +1605,7 @@ export function GuionistaStudio({
   };
 
   const documentTitle = current?.title || normalized.title || "Convierte pensamiento en narrativa";
-  const layoutColumns = "lg:grid-cols-[minmax(0,1fr)_280px]";
+  const layoutColumns = inspectorVisible ? "lg:grid-cols-[minmax(0,1fr)_280px]" : "lg:grid-cols-1";
 
   const shell = (
     <div className="fixed inset-0 z-[100090] flex flex-col bg-[#101114] text-white" role="dialog" aria-modal="true">
@@ -1337,7 +1638,13 @@ export function GuionistaStudio({
             <span className={`hidden rounded-[10px] px-3 py-2 text-[11px] font-light md:inline-flex ${saveStateClass(saveState)}`}>
               {saveStateLabel(saveState, !!activeAsset, lastSavedRelative)}
             </span>
-            <BrainPill brainConnected={brainConnected} onClick={() => setActivePanel("brain")} />
+            <BrainPill
+              brainConnected={brainConnected}
+              onClick={brainConnected ? () => {
+                setActivePanel("brain");
+                setInspectorOpen(true);
+              } : undefined}
+            />
             {current && (
               <button type="button" onClick={saveActiveAsset} className="inline-flex items-center gap-2 rounded-[10px] bg-white/[0.06] px-3.5 py-2 text-[11px] font-semibold uppercase tracking-[0.13em] text-white/68 transition hover:bg-white/10 hover:text-white">
                 <Save className="h-3.5 w-3.5" /> Guardar en Foldder
@@ -1401,15 +1708,20 @@ export function GuionistaStudio({
                   ))}
                 </div>
                 <div className="mt-7 flex flex-wrap gap-3">
-                  <button type="button" onClick={createApproaches} disabled={loadingAction === "approaches"} className="inline-flex items-center gap-2 rounded-[10px] bg-white px-5 py-3 text-[12px] font-semibold uppercase tracking-[0.16em] text-black shadow-xl transition hover:bg-amber-100 disabled:cursor-wait disabled:opacity-55">
+                  <button type="button" onClick={createApproaches} disabled={!hasBriefingSeed || loadingAction === "approaches"} className="inline-flex items-center gap-2 rounded-[10px] bg-white px-5 py-3 text-[12px] font-semibold uppercase tracking-[0.16em] text-black shadow-xl transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-35">
                     <Sparkles className="h-4 w-4" />
                     Crear enfoques
                   </button>
-                  <button type="button" onClick={() => writeVersion(null)} disabled={loadingAction === "draft:direct"} className="inline-flex items-center gap-2 rounded-[10px] bg-white/[0.06] px-5 py-3 text-[12px] font-semibold uppercase tracking-[0.16em] text-white/75 transition hover:bg-white/10 hover:text-white disabled:cursor-wait disabled:opacity-55">
+                  <button type="button" onClick={() => writeVersion(null)} disabled={!hasBriefingSeed || loadingAction === "draft:direct"} className="inline-flex items-center gap-2 rounded-[10px] bg-white/[0.06] px-5 py-3 text-[12px] font-semibold uppercase tracking-[0.16em] text-white/75 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-35">
                     <PenLine className="h-4 w-4" />
                     Escribir directamente
                   </button>
                 </div>
+                {!hasBriefingSeed && (
+                  <p className="mt-3 text-[12px] font-light text-white/38">
+                    Escribe una idea o conecta un texto al nodo para activar la escritura.
+                  </p>
+                )}
               </div>
             )}
 
@@ -1441,15 +1753,49 @@ export function GuionistaStudio({
             )}
 
             {stage === "editor" && current && (
-              <div className="mx-auto max-w-5xl">
+              <div className="mx-auto max-w-[1500px]">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div>
                     <p className="text-[10px] font-light uppercase tracking-[0.24em] text-white/40">Documento activo</p>
                     <h2 className="mt-1 max-w-3xl text-4xl font-light tracking-tight text-white">{current.title}</h2>
                   </div>
-                  <span className={`rounded-[10px] px-3 py-1.5 text-[11px] font-light md:hidden ${saveStateClass(saveState)}`}>
-                    {saveStateLabel(saveState, !!activeAsset, lastSavedRelative)}
-                  </span>
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <span className={`rounded-[10px] px-3 py-1.5 text-[11px] font-light md:hidden ${saveStateClass(saveState)}`}>
+                      {saveStateLabel(saveState, !!activeAsset, lastSavedRelative)}
+                    </span>
+                    {([
+                      ["improve", "Mejorar", <WandSparkles key="i" className="h-3.5 w-3.5" />],
+                      ["derive", "Derivar", <Share2 key="d" className="h-3.5 w-3.5" />],
+                      ["review", comments.some((comment) => comment.status === "pending") ? `Revisión · ${comments.filter((comment) => comment.status === "pending").length}` : "Revisión", <MessageSquare key="r" className="h-3.5 w-3.5" />],
+                      ["settings", "Ajustes", <Settings2 key="s" className="h-3.5 w-3.5" />],
+                    ] as const).map(([panel, label, icon]) => (
+                      <button
+                        key={panel}
+                        type="button"
+                        onClick={() => {
+                          setActivePanel(panel);
+                          setInspectorOpen(true);
+                        }}
+                        className={`inline-flex items-center gap-2 rounded-[10px] px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.12em] transition ${
+                          inspectorOpen && activePanel === panel
+                            ? "bg-white text-black"
+                            : "bg-white/[0.06] text-white/58 hover:bg-white/10 hover:text-white"
+                        }`}
+                      >
+                        {icon}
+                        {label}
+                      </button>
+                    ))}
+                    {inspectorOpen && (
+                      <button
+                        type="button"
+                        onClick={() => setInspectorOpen(false)}
+                        className="rounded-[10px] bg-white/[0.04] px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-white/42 hover:bg-white/10 hover:text-white"
+                      >
+                        Ocultar panel
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <div className="mt-7 flex flex-wrap items-center gap-3 border-y border-white/8 py-4">
@@ -1471,18 +1817,13 @@ export function GuionistaStudio({
                   </button>
                 </div>
 
-                <div className="mt-7 rounded-[10px] bg-[#f5efe3] p-5 shadow-[0_30px_90px_rgba(0,0,0,0.22)] md:p-7">
-                  <StructuredPreview version={current} />
-                  <textarea
-                    ref={editorRef}
-                    value={current.markdown}
-                    onChange={(event) => updateActiveMarkdown(event.target.value)}
-                    onSelect={captureEditorSelection}
-                    onKeyUp={captureEditorSelection}
-                    onMouseUp={captureEditorSelection}
-                    className="min-h-[58vh] w-full resize-y rounded-[10px] bg-[#fffaf0] px-7 py-6 font-serif text-[18px] leading-[1.82] text-[#15130f] shadow-inner outline-none placeholder:text-black/30"
-                  />
-                </div>
+                <ProfessionalDocumentEditor
+                  version={current}
+                  platform={activeAsset?.platform}
+                  editorRef={editorRef}
+                  onChange={updateActiveMarkdown}
+                  onCaptureSelection={captureEditorSelection}
+                />
               </div>
             )}
 
@@ -1545,35 +1886,38 @@ export function GuionistaStudio({
             )}
           </section>
 
-          <DetailDrawer
-            activePanel={activePanel}
-            setActivePanel={setActivePanel}
-            normalizedSettings={normalizedSettings}
-            updateSettings={updateSettings}
-            brainConnected={brainConnected}
-            brainHints={brainHints}
-            savedMessage={savedMessage}
-            selectedText={selectedText}
-            commentDraft={commentDraft}
-            setCommentDraft={setCommentDraft}
-            comments={comments}
-            globalAdjustmentNotes={normalized.globalAdjustmentNotes || ""}
-            setGlobalAdjustmentNotes={(value) => onChange({ globalAdjustmentNotes: value, updatedAt: new Date().toISOString() })}
-            onGlobalAdjustmentNotesBlur={() => persistReviewState(comments, normalized.globalAdjustmentNotes || "")}
-            onAddComment={addReviewComment}
-            onApplyComment={(comment) => {
-              void applyReview("single", comment);
-            }}
-            onApplyAllComments={() => {
-              void applyReview("all");
-            }}
-            onResolveComment={(commentId) => updateReviewCommentStatus(commentId, "resolved")}
-            onApplyGlobalNotes={() => {
-              void applyReview("global");
-            }}
-            onQuickAction={applyQuickAction}
-            loadingAction={loadingAction}
-          />
+          {inspectorVisible && (
+            <DetailDrawer
+              activePanel={activePanel}
+              setActivePanel={setActivePanel}
+              hasDocument={hasDocument}
+              normalizedSettings={normalizedSettings}
+              updateSettings={updateSettings}
+              brainConnected={brainConnected}
+              brainHints={brainHints}
+              savedMessage={savedMessage}
+              selectedText={selectedText}
+              commentDraft={commentDraft}
+              setCommentDraft={setCommentDraft}
+              comments={comments}
+              globalAdjustmentNotes={normalized.globalAdjustmentNotes || ""}
+              setGlobalAdjustmentNotes={(value) => onChange({ globalAdjustmentNotes: value, updatedAt: new Date().toISOString() })}
+              onGlobalAdjustmentNotesBlur={() => persistReviewState(comments, normalized.globalAdjustmentNotes || "")}
+              onAddComment={addReviewComment}
+              onApplyComment={(comment) => {
+                void applyReview("single", comment);
+              }}
+              onApplyAllComments={() => {
+                void applyReview("all");
+              }}
+              onResolveComment={(commentId) => updateReviewCommentStatus(commentId, "resolved")}
+              onApplyGlobalNotes={() => {
+                void applyReview("global");
+              }}
+              onQuickAction={applyQuickAction}
+              loadingAction={loadingAction}
+            />
+          )}
         </div>
       </main>
     </div>

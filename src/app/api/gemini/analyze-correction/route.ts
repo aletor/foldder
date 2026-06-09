@@ -1,10 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { parseGeminiUsageMetadata, recordApiUsage } from "@/lib/api-usage";
+import { estimateGeminiUsd } from "@/lib/pricing-config";
 import { ApiServiceDisabledError, assertApiServiceEnabled } from "@/lib/api-usage-controls";
 import { assertUserCanAccessMediaReference, ForbiddenMediaReferenceError } from "@/lib/api-media-access";
 import { normalizeAdvancedImageIntegrationContract } from "@/lib/advanced-image/integration-contract";
 import { parseReferenceImageForGemini } from "@/lib/parse-reference-image";
 import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
+import {
+  reserveApiWalletCharge,
+  reserveUsdToMicros,
+  releaseApiWalletChargeOnError,
+  walletGateErrorResponse,
+  type ApiWalletCharge,
+} from "@/lib/wallet-api-gate";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -112,6 +120,8 @@ function fallbackAvoidList(category: string): string[] {
 }
 
 export async function POST(req: NextRequest) {
+  let walletCharge: ApiWalletCharge | null = null;
+  let releaseWalletOnError = true;
   try {
     await assertApiServiceEnabled("gemini-analyze");
     const authState = await requireSpacesAuthUser(req);
@@ -168,18 +178,30 @@ export async function POST(req: NextRequest) {
     ].join("\n");
     parts.push({ text: prompt });
 
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    walletCharge = await reserveApiWalletCharge({
+      req,
+      userEmail: authState.user.email,
+      serviceId: "gemini-analyze",
+      provider: "gemini",
+      route: ROUTE,
+      maxCostMicros: reserveUsdToMicros(0.006),
+      metadata: { model, hasMasterCrop: Boolean(masterCropUrl), hasReferenceImage: Boolean(referenceImageUrl) },
+    });
+
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
     const response = await fetch(endpoint, {
       body: JSON.stringify({
         contents: [{ role: "user", parts }],
         generationConfig: { maxOutputTokens: 520, responseMimeType: "application/json", temperature: 0.08 },
       }),
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
       method: "POST",
     });
     const data = await response.json();
     if (!response.ok || data?.error) {
       const message = data?.error?.message || `Gemini correction analysis failed (${response.status})`;
+      await walletCharge?.release({ reason: "provider_error", metadata: { status: response.status } });
+      releaseWalletOnError = false;
       return NextResponse.json({ error: message }, { status: response.ok ? 500 : response.status });
     }
 
@@ -217,6 +239,20 @@ export async function POST(req: NextRequest) {
     });
 
     const usage = parseGeminiUsageMetadata(data);
+    const actualCostUsd = usage
+      ? estimateGeminiUsd(model, usage.inputTokens, usage.outputTokens)
+      : 0.002;
+    releaseWalletOnError = false;
+    await walletCharge?.capture({
+      actualCostUsd,
+      metadata: {
+        model,
+        fallbackUsed,
+        inputTokens: usage?.inputTokens ?? 0,
+        outputTokens: usage?.outputTokens ?? 0,
+      },
+    });
+
     await recordApiUsage({
       provider: "gemini",
       userEmail: authState.user.email,
@@ -226,8 +262,7 @@ export async function POST(req: NextRequest) {
       inputTokens: usage?.inputTokens ?? 0,
       outputTokens: usage?.outputTokens ?? 0,
       totalTokens: usage?.totalTokens ?? 0,
-      costIsKnown: Boolean(usage),
-      costUsd: usage ? undefined : 0.002,
+      costUsd: usage ? undefined : actualCostUsd,
       note: usage ? undefined : "advanced-image correction contract estimate",
     });
 
@@ -239,6 +274,9 @@ export async function POST(req: NextRequest) {
     if (error instanceof ForbiddenMediaReferenceError) {
       return NextResponse.json({ error: error.message }, { status: 403 });
     }
+    if (releaseWalletOnError) await releaseApiWalletChargeOnError(walletCharge, error);
+    const walletResponse = walletGateErrorResponse(error);
+    if (walletResponse) return walletResponse;
     const message = error instanceof Error ? error.message : "analyze_correction_failed";
     console.error("[gemini/analyze-correction]", error);
     return NextResponse.json({ error: message }, { status: 500 });

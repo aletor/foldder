@@ -20,18 +20,13 @@ async function proxyRequest(req: NextRequest, pathSegments: string[]) {
     }
 
     const targetUrl = `${BEE_BASE}/${subpath}${req.nextUrl.search}`;
-    const headerKey = (
-      req.headers.get("x-api-key") ||
-      req.headers.get("x-beeble-api-key") ||
-      ""
-    ).trim();
-    const apiKey = headerKey || process.env.BEEBLE_API_KEY || "";
+    const apiKey = process.env.BEEBLE_API_KEY || "";
 
     if (!apiKey) {
       return NextResponse.json(
         {
           error:
-            "Falta API key Beeble: cabecera x-api-key o variable BEEBLE_API_KEY en el servidor.",
+            "Falta API key Beeble: configura BEEBLE_API_KEY en el servidor.",
         },
         { status: 401 },
       );

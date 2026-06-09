@@ -8,6 +8,14 @@ import {
   assertApiServiceEnabled,
 } from "@/lib/api-usage-controls";
 import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
+import { estimateOpenAIUsd } from "@/lib/pricing-config";
+import {
+  reserveApiWalletCharge,
+  reserveUsdToMicros,
+  releaseApiWalletChargeOnError,
+  walletGateErrorResponse,
+  type ApiWalletCharge,
+} from "@/lib/wallet-api-gate";
 import {
   validateAndNormalizeCineAIAnalysis,
 } from "@/app/spaces/cine-engine";
@@ -174,6 +182,8 @@ function userPrompt(request: CineAnalyzeRequest): string {
 }
 
 export async function POST(req: NextRequest) {
+  let walletCharge: ApiWalletCharge | null = null;
+  let releaseWalletOnError = true;
   try {
     await assertApiServiceEnabled("openai-cine-analyze");
     const authState = await requireSpacesAuthUser(req);
@@ -189,23 +199,49 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Guion vacío." }, { status: 400 });
     }
 
+    const promptContent = userPrompt({ ...request, script });
+    const estimatedInputTokens = Math.ceil((systemPrompt().length + promptContent.length) / 4);
+    const estimatedCostUsd = estimateOpenAIUsd(MODEL, estimatedInputTokens, 5200);
+    walletCharge = await reserveApiWalletCharge({
+      req,
+      userEmail: usageUserEmail,
+      serviceId: "openai-cine-analyze",
+      provider: "openai",
+      route: ROUTE,
+      maxCostMicros: reserveUsdToMicros(estimatedCostUsd, { multiplier: 1.5 }),
+      metadata: { model: MODEL, mode: request.mode },
+    });
+
     const openai = new OpenAI({ apiKey });
     const completion = await openai.chat.completions.create({
       model: MODEL,
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: systemPrompt() },
-        { role: "user", content: userPrompt({ ...request, script }) },
+        { role: "user", content: promptContent },
       ],
       temperature: 0.28,
       max_tokens: 5200,
     });
 
     const rawContent = completion.choices[0]?.message?.content ?? "{}";
+    const usage = completion.usage;
+    const actualCostUsd = usage
+      ? estimateOpenAIUsd(MODEL, usage.prompt_tokens, usage.completion_tokens)
+      : Math.min(0.04, estimatedCostUsd);
+    releaseWalletOnError = false;
+    await walletCharge?.capture({
+      actualCostUsd,
+      metadata: {
+        model: MODEL,
+        promptTokens: usage?.prompt_tokens ?? 0,
+        completionTokens: usage?.completion_tokens ?? 0,
+      },
+    });
+
     const parsed = parseJsonObject(rawContent);
     const normalized = validateAndNormalizeCineAIAnalysis(parsed, script);
 
-    const usage = completion.usage;
     await recordApiUsage({
       provider: "openai",
       userEmail: usageUserEmail,
@@ -223,6 +259,9 @@ export async function POST(req: NextRequest) {
     if (error instanceof ApiServiceDisabledError) {
       return NextResponse.json({ error: `API bloqueada en admin: ${error.label}` }, { status: 423 });
     }
+    if (releaseWalletOnError) await releaseApiWalletChargeOnError(walletCharge, error);
+    const walletResponse = walletGateErrorResponse(error);
+    if (walletResponse) return walletResponse;
     const message = error instanceof Error ? error.message : "No se pudo analizar el guion con IA.";
     console.error("Cine AI Analysis Error:", error);
     return NextResponse.json({ error: message }, { status: 500 });

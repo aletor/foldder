@@ -1,7 +1,19 @@
-import { NextRequest } from "next/server";
-import { geminiImageGenerate, GeminiGenerateError } from "@/lib/gemini-image-generate";
+import { NextRequest, NextResponse } from "next/server";
+import {
+  geminiImageGenerate,
+  GeminiGenerateError,
+  type GeminiImageGenerateBody,
+} from "@/lib/gemini-image-generate";
 import { ApiServiceDisabledError, assertApiServiceEnabled } from "@/lib/api-usage-controls";
 import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
+import { estimateGeminiImageGenerationUsd } from "@/lib/pricing-config";
+import {
+  reserveApiWalletCharge,
+  reserveUsdToMicros,
+  releaseApiWalletChargeOnError,
+  walletGateErrorResponse,
+  type ApiWalletCharge,
+} from "@/lib/wallet-api-gate";
 
 /**
  * Misma carga útil que POST /api/gemini/generate, pero respuesta NDJSON:
@@ -10,20 +22,62 @@ import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
  */
 export async function POST(req: NextRequest) {
   const encoder = new TextEncoder();
-  const authState = await requireSpacesAuthUser(req);
-  if (!authState.ok) return authState.response;
-  const usageUserEmail = authState.user.email;
-  const body = await req.json();
-  logAdvancedImagePromptPayload(body);
+  let walletCharge: ApiWalletCharge | null = null;
+  let usageUserEmail = "";
+  let body: GeminiImageGenerateBody = { prompt: "" };
+  let estimatedCostUsd = 0;
+
+  try {
+    await assertApiServiceEnabled("gemini-nano");
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
+    usageUserEmail = authState.user.email;
+    body = (await req.json()) as GeminiImageGenerateBody;
+    if (!body?.prompt) {
+      return NextResponse.json({ error: "Prompt is required" }, { status: 400 });
+    }
+    logAdvancedImagePromptPayload(body);
+
+    const modelKey = typeof body.model === "string" ? body.model : "flash31";
+    const resolution = typeof body.resolution === "string" ? body.resolution : undefined;
+    estimatedCostUsd = estimateGeminiImageGenerationUsd(modelKey, resolution);
+    walletCharge = await reserveApiWalletCharge({
+      req,
+      userEmail: usageUserEmail,
+      serviceId: "gemini-nano",
+      provider: "gemini",
+      route: "/api/gemini/generate-stream",
+      maxCostMicros: reserveUsdToMicros(estimatedCostUsd, { multiplier: 1.15 }),
+      metadata: { model: modelKey, resolution, responseMode: "ndjson" },
+    });
+  } catch (error: unknown) {
+    if (error instanceof ApiServiceDisabledError) {
+      return NextResponse.json(
+        { error: `API bloqueada en admin: ${error.label}` },
+        { status: 423 },
+      );
+    }
+    const walletResponse = walletGateErrorResponse(error);
+    if (walletResponse) return walletResponse;
+    const message = error instanceof Error ? error.message : String(error);
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 
   const stream = new ReadableStream({
     async start(controller) {
+      let clientClosed = false;
+      let settled = false;
+      let providerSucceeded = false;
       const send = (obj: Record<string, unknown>) => {
-        controller.enqueue(encoder.encode(`${JSON.stringify(obj)}\n`));
+        if (clientClosed) return;
+        try {
+          controller.enqueue(encoder.encode(`${JSON.stringify(obj)}\n`));
+        } catch {
+          clientClosed = true;
+        }
       };
 
       try {
-        await assertApiServiceEnabled("gemini-nano");
         const result = await geminiImageGenerate(
           body,
           (progress, stage) => {
@@ -31,6 +85,16 @@ export async function POST(req: NextRequest) {
           },
           { usageRoute: "/api/gemini/generate-stream", usageUserEmail },
         );
+        providerSucceeded = true;
+        await walletCharge?.capture({
+          actualCostUsd: estimatedCostUsd,
+          metadata: {
+            model: result.model,
+            responseMode: "ndjson",
+            clientClosedBeforeDone: clientClosed,
+          },
+        });
+        settled = true;
         const done: Record<string, unknown> = {
           type: "done",
           output: result.output,
@@ -40,6 +104,7 @@ export async function POST(req: NextRequest) {
         };
         send(done);
       } catch (err: unknown) {
+        if (!settled && !providerSucceeded) await releaseApiWalletChargeOnError(walletCharge, err);
         if (err instanceof ApiServiceDisabledError) {
           send({
             type: "error",
@@ -60,7 +125,11 @@ export async function POST(req: NextRequest) {
           send({ type: "error", error: message, status: 500 });
         }
       } finally {
-        controller.close();
+        try {
+          controller.close();
+        } catch {
+          // The browser may have cancelled the stream after the provider call; settlement above is authoritative.
+        }
       }
     },
   });

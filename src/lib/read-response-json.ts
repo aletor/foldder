@@ -9,6 +9,14 @@ export type HttpJsonError = Error & {
   status?: number;
 };
 
+function notifyWalletError(parsed: unknown, status: number): void {
+  if (typeof window === "undefined" || status !== 402) return;
+  const body = asRecord(parsed);
+  if (body?.code !== "insufficient_balance") return;
+  window.dispatchEvent(new CustomEvent("foldder:wallet-refresh", { detail: { reason: "insufficient_balance" } }));
+  window.dispatchEvent(new CustomEvent("foldder:wallet-open", { detail: { reason: "insufficient_balance" } }));
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -74,6 +82,7 @@ export async function readJsonWithHttpError<T>(res: Response, context: string): 
     throw createHttpJsonError(`${context}: respuesta no válida (${res.status}).`, context, res.status);
   }
   if (!res.ok) {
+    notifyWalletError(parsed, res.status);
     const body = asRecord(parsed);
     const msg =
       typeof body?.error === "string"

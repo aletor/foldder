@@ -88,6 +88,8 @@ export type VfxGeneratorNodeData = BaseNodeData & {
   outputAlphaUrl?: string;
 };
 
+type VfxGeneratorFlowNode = Node<VfxGeneratorNodeData>;
+
 function migrateStoredPrompt(d: VfxGeneratorNodeData): string {
   if (typeof d.prompt === "string") return d.prompt;
   if (Array.isArray(d.prompts) && d.prompts.length > 0) {
@@ -141,9 +143,9 @@ function pushAssetVersion(data: Record<string, unknown>, url: string, source: st
   return [...prev, { url, source, timestamp: Date.now() }];
 }
 
-export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<any>) => {
+export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<VfxGeneratorFlowNode>) => {
   useFoldderRenderMetric("VfxGeneratorNode", id);
-  const nodeData = data as VfxGeneratorNodeData;
+  const nodeData = data;
   const { setNodes } = useReactFlow();
   const updateNodeInternals = useUpdateNodeInternals();
   const [showStudio, setShowStudio] = useState(false);
@@ -220,7 +222,7 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<any>) =>
   const alphaMode: BeebleAlphaMode = nodeData.alphaMode ?? "auto";
   const maxResolution: 720 | 1080 = nodeData.maxResolution === 720 ? 720 : 1080;
 
-  const client = useMemo(() => new BeebleClient(""), []);
+  const client = useMemo(() => new BeebleClient(), []);
 
   const onJobPoll = useCallback(
     (job: BeebleJob) => {

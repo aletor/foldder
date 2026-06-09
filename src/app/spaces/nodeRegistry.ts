@@ -552,7 +552,7 @@ export const ASSISTANT_NODE_DATA_HINTS: Record<string, string> = {
   mediaDescriber: "value (descripción), label",
   mediaInput: "value (URL), type, metadata, label, s3Key",
   urlImage:
-    "label (consulta GIS en inglés, desambiguada), searchIntent (obligatorio: qué debe verse en la foto — verificación por visión), count, urls[], selectedIndex, value, pendingSearch",
+    "label (consulta de búsqueda de imagen en inglés, desambiguada), searchIntent (obligatorio: qué debe verse en la foto — verificación por visión), count, urls[], selectedIndex, value, pendingSearch",
   inspiration:
     "facet, manualPrompt, imageIntent, results[], selected, value (URL de la imagen seleccionada), type ('image'); entrada prompt o image; busca 40 referencias en Pexels; salida siempre image al seleccionar una imagen",
   imageExport: "format (png|jpeg), label",

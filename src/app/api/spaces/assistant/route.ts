@@ -33,6 +33,14 @@ import {
 } from "@/lib/assistant-context-trim";
 import OpenAI from "openai";
 import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
+import { estimateOpenAIUsd } from "@/lib/pricing-config";
+import {
+  reserveApiWalletCharge,
+  reserveUsdToMicros,
+  releaseApiWalletChargeOnError,
+  walletGateErrorResponse,
+  type ApiWalletCharge,
+} from "@/lib/wallet-api-gate";
 
 /**
  * Modelo OpenAI para el asistente de grafo.
@@ -49,6 +57,8 @@ type AssistantDeltaNode = {
 };
 
 export async function POST(req: Request) {
+  let walletCharge: ApiWalletCharge | null = null;
+  let releaseWalletOnError = true;
   try {
     await assertApiServiceEnabled("openai-assistant");
     const authState = await requireSpacesAuthUser(req);
@@ -110,14 +120,41 @@ export async function POST(req: Request) {
         : `${brainBlock}${selectionBlock}### Workspace is currently EMPTY.`;
 
     const systemPrompt = buildAssistantSystemPrompt();
+    const userContent = `CONTEXT:\n${contextMessage}\n\nUSER REQUEST: ${prompt}`;
+    const estimatedInputTokens = Math.ceil((systemPrompt.length + userContent.length) / 4);
+    const estimatedCostUsd = estimateOpenAIUsd(ASSISTANT_MODEL, estimatedInputTokens, 1600);
+
+    walletCharge = await reserveApiWalletCharge({
+      req,
+      userEmail: usageUserEmail,
+      serviceId: "openai-assistant",
+      provider: "openai",
+      route: "/api/spaces/assistant",
+      maxCostMicros: reserveUsdToMicros(estimatedCostUsd, { multiplier: 1.8 }),
+      metadata: { model: ASSISTANT_MODEL, omittedNodes },
+    });
 
     const response = await openai.chat.completions.create({
       model: ASSISTANT_MODEL,
       messages: [
         { role: "system", content: systemPrompt },
-        { role: "user", content: `CONTEXT:\n${contextMessage}\n\nUSER REQUEST: ${prompt}` },
+        { role: "user", content: userContent },
       ],
       response_format: { type: "json_object" },
+    });
+
+    const u = response.usage;
+    const actualCostUsd = u
+      ? estimateOpenAIUsd(ASSISTANT_MODEL, u.prompt_tokens, u.completion_tokens)
+      : Math.min(0.003, estimatedCostUsd);
+    releaseWalletOnError = false;
+    await walletCharge?.capture({
+      actualCostUsd,
+      metadata: {
+        model: ASSISTANT_MODEL,
+        promptTokens: u?.prompt_tokens ?? 0,
+        completionTokens: u?.completion_tokens ?? 0,
+      },
     });
 
     const rawContent = response.choices[0].message.content || "{}";
@@ -133,7 +170,6 @@ export async function POST(req: Request) {
     }
     console.log("[Assistant] Final GPT Response:", JSON.stringify(result, null, 2));
 
-    const u = response.usage;
     if (u) {
       await recordApiUsage({
         provider: "openai",
@@ -155,7 +191,7 @@ export async function POST(req: Request) {
         inputTokens: 0,
         outputTokens: 0,
         totalTokens: 0,
-        costUsd: 0.003,
+        costUsd: actualCostUsd,
         note: "Asistente sin campo usage en respuesta (estimado)",
       });
     }
@@ -303,6 +339,9 @@ export async function POST(req: Request) {
         { status: 423 },
       );
     }
+    if (releaseWalletOnError) await releaseApiWalletChargeOnError(walletCharge, error);
+    const walletResponse = walletGateErrorResponse(error);
+    if (walletResponse) return walletResponse;
     console.error("Assistant API Error:", error);
     const message = error instanceof Error ? error.message : "Internal Server Error";
     return NextResponse.json({ error: message }, { status: 500 });

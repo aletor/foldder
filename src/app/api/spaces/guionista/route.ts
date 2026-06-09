@@ -8,6 +8,14 @@ import {
   assertApiServiceEnabled,
 } from "@/lib/api-usage-controls";
 import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
+import { estimateOpenAIUsd } from "@/lib/pricing-config";
+import {
+  reserveApiWalletCharge,
+  reserveUsdToMicros,
+  releaseApiWalletChargeOnError,
+  walletGateErrorResponse,
+  type ApiWalletCharge,
+} from "@/lib/wallet-api-gate";
 import {
   GUI_DEFAULT_SETTINGS,
   GUI_FORMAT_LABELS,
@@ -287,6 +295,8 @@ function normalizeSocialPack(raw: unknown, request: GuionistaAiRequest): Guionis
 }
 
 export async function POST(req: NextRequest) {
+  let walletCharge: ApiWalletCharge | null = null;
+  let releaseWalletOnError = true;
   try {
     await assertApiServiceEnabled("openai-brain-content");
     const authState = await requireSpacesAuthUser(req);
@@ -294,6 +304,28 @@ export async function POST(req: NextRequest) {
     const usageUserEmail = authState.user.email;
     const request = await req.json() as GuionistaAiRequest;
     const format = isGuionistaFormat(request.format) ? request.format : request.currentVersion?.format ?? "post";
+    const normalizedRequest = { ...request, format, settings: request.settings ?? GUI_DEFAULT_SETTINGS };
+    const promptContent = userPrompt(normalizedRequest);
+    const maxTokens =
+      request.task === "social"
+        ? 1700
+        : request.task === "approaches"
+          ? 1000
+          : REVIEW_TASKS.has(request.task)
+            ? 3600
+            : 2600;
+    const estimatedInputTokens = Math.ceil((systemPrompt().length + promptContent.length) / 4);
+    const estimatedCostUsd = estimateOpenAIUsd(MODEL, estimatedInputTokens, maxTokens);
+
+    walletCharge = await reserveApiWalletCharge({
+      req,
+      userEmail: usageUserEmail,
+      serviceId: "openai-brain-content",
+      provider: "openai",
+      route: ROUTE,
+      maxCostMicros: reserveUsdToMicros(estimatedCostUsd, { multiplier: 1.6 }),
+      metadata: { model: MODEL, task: request.task, format },
+    });
 
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || "" });
     const completion = await openai.chat.completions.create({
@@ -301,17 +333,10 @@ export async function POST(req: NextRequest) {
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: systemPrompt() },
-        { role: "user", content: userPrompt({ ...request, format, settings: request.settings ?? GUI_DEFAULT_SETTINGS }) },
+        { role: "user", content: promptContent },
       ],
       temperature: request.task === "approaches" ? 0.85 : 0.72,
-      max_tokens:
-        request.task === "social"
-          ? 1700
-          : request.task === "approaches"
-            ? 1000
-            : REVIEW_TASKS.has(request.task)
-              ? 3600
-              : 2600,
+      max_tokens: maxTokens,
     });
 
     const content = completion.choices[0]?.message?.content ?? "{}";
@@ -330,6 +355,20 @@ export async function POST(req: NextRequest) {
     }
 
     const usage = completion.usage;
+    const actualCostUsd = usage
+      ? estimateOpenAIUsd(MODEL, usage.prompt_tokens, usage.completion_tokens)
+      : Math.min(0.02, estimatedCostUsd);
+    releaseWalletOnError = false;
+    await walletCharge?.capture({
+      actualCostUsd,
+      metadata: {
+        model: MODEL,
+        task: request.task,
+        promptTokens: usage?.prompt_tokens ?? 0,
+        completionTokens: usage?.completion_tokens ?? 0,
+      },
+    });
+
     await recordApiUsage({
       provider: "openai",
       userEmail: usageUserEmail,
@@ -347,6 +386,9 @@ export async function POST(req: NextRequest) {
     if (error instanceof ApiServiceDisabledError) {
       return NextResponse.json({ error: `API bloqueada en admin: ${error.label}` }, { status: 423 });
     }
+    if (releaseWalletOnError) await releaseApiWalletChargeOnError(walletCharge, error);
+    const walletResponse = walletGateErrorResponse(error);
+    if (walletResponse) return walletResponse;
     const message = error instanceof Error ? error.message : "No se pudo generar.";
     console.error("Guionista AI Error:", error);
     return NextResponse.json({ error: message }, { status: 500 });

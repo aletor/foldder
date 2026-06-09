@@ -21,6 +21,10 @@ const sharesTable =
   process.env.FOLDDER_PRESENTER_SHARES_DDB_TABLE?.trim() || "foldder-prod-presenter-shares";
 const sharesDeckGsi =
   process.env.FOLDDER_PRESENTER_SHARES_DDB_DECK_GSI?.trim() || "deckKey-createdAt-index";
+const walletTable =
+  process.env.FOLDDER_WALLET_DDB_TABLE?.trim() || "foldder-prod-wallet-ledger";
+const walletWorkGsi =
+  process.env.FOLDDER_WALLET_DDB_WORK_GSI?.trim() || "gsi1pk-gsi1sk-index";
 
 const client = new DynamoDBClient({
   region,
@@ -185,6 +189,90 @@ async function ensureSharesTable(): Promise<void> {
   });
 }
 
+async function ensureWalletTable(): Promise<void> {
+  await ensureTable({
+    tableName: walletTable,
+    create: async () => {
+      await client.send(
+        new CreateTableCommand({
+          TableName: walletTable,
+          BillingMode: "PAY_PER_REQUEST",
+          AttributeDefinitions: [
+            { AttributeName: "pk", AttributeType: "S" },
+            { AttributeName: "sk", AttributeType: "S" },
+            { AttributeName: "gsi1pk", AttributeType: "S" },
+            { AttributeName: "gsi1sk", AttributeType: "S" },
+          ],
+          KeySchema: [
+            { AttributeName: "pk", KeyType: "HASH" },
+            { AttributeName: "sk", KeyType: "RANGE" },
+          ],
+          GlobalSecondaryIndexes: [
+            {
+              IndexName: walletWorkGsi,
+              KeySchema: [
+                { AttributeName: "gsi1pk", KeyType: "HASH" },
+                { AttributeName: "gsi1sk", KeyType: "RANGE" },
+              ],
+              Projection: { ProjectionType: "ALL" },
+            },
+          ],
+        }),
+      );
+    },
+  });
+
+  await ensureWalletWorkGsi();
+}
+
+async function ensureWalletWorkGsi(): Promise<void> {
+  const describe = await client.send(new DescribeTableCommand({ TableName: walletTable }));
+  const current = describe.Table?.GlobalSecondaryIndexes?.find((gsi) => gsi.IndexName === walletWorkGsi);
+
+  if (current) {
+    const status = current.IndexStatus ?? "UNKNOWN";
+    console.log(`[provision] wallet work GSI exists: ${walletWorkGsi} (${status})`);
+    if (status !== "ACTIVE") await waitForWalletGsi();
+    return;
+  }
+
+  console.log(`[provision] adding wallet work GSI: ${walletWorkGsi}`);
+  await client.send(
+    new UpdateTableCommand({
+      TableName: walletTable,
+      AttributeDefinitions: [
+        { AttributeName: "gsi1pk", AttributeType: "S" },
+        { AttributeName: "gsi1sk", AttributeType: "S" },
+      ],
+      GlobalSecondaryIndexUpdates: [
+        {
+          Create: {
+            IndexName: walletWorkGsi,
+            KeySchema: [
+              { AttributeName: "gsi1pk", KeyType: "HASH" },
+              { AttributeName: "gsi1sk", KeyType: "RANGE" },
+            ],
+            Projection: { ProjectionType: "ALL" },
+          },
+        },
+      ],
+    }),
+  );
+  await waitForWalletGsi();
+  console.log(`[provision] wallet work GSI ready: ${walletWorkGsi}`);
+}
+
+async function waitForWalletGsi(): Promise<void> {
+  for (;;) {
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
+    const d = await client.send(new DescribeTableCommand({ TableName: walletTable }));
+    const gsi = d.Table?.GlobalSecondaryIndexes?.find((x) => x.IndexName === walletWorkGsi);
+    const status = gsi?.IndexStatus ?? "UNKNOWN";
+    if (status === "ACTIVE") break;
+    console.log(`[provision] waiting for wallet work GSI (${walletWorkGsi}) status=${status}`);
+  }
+}
+
 async function main(): Promise<void> {
   console.log(`[provision] region: ${region}`);
   console.log(`[provision] spaces table: ${spacesTable}`);
@@ -193,9 +281,12 @@ async function main(): Promise<void> {
   console.log(`[provision] spaces project GSI: ${spacesProjectGsi}`);
   console.log(`[provision] presenter table: ${sharesTable}`);
   console.log(`[provision] presenter GSI: ${sharesDeckGsi}`);
+  console.log(`[provision] wallet table: ${walletTable}`);
+  console.log(`[provision] wallet work GSI: ${walletWorkGsi}`);
 
   await ensureSpacesTable();
   await ensureSharesTable();
+  await ensureWalletTable();
 
   console.log("[provision] done");
   console.log(`[provision] export FOLDDER_SPACES_DDB_TABLE=${spacesTable}`);
@@ -204,6 +295,8 @@ async function main(): Promise<void> {
   console.log(`[provision] export FOLDDER_SPACES_DDB_PROJECT_GSI=${spacesProjectGsi}`);
   console.log(`[provision] export FOLDDER_PRESENTER_SHARES_DDB_TABLE=${sharesTable}`);
   console.log(`[provision] export FOLDDER_PRESENTER_SHARES_DDB_DECK_GSI=${sharesDeckGsi}`);
+  console.log(`[provision] export FOLDDER_WALLET_DDB_TABLE=${walletTable}`);
+  console.log(`[provision] export FOLDDER_WALLET_DDB_WORK_GSI=${walletWorkGsi}`);
 }
 
 main().catch((error) => {

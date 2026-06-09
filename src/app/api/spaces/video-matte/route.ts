@@ -13,8 +13,17 @@ import {
 } from "@/lib/api-media-access";
 import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
 import { getPresignedUrl } from "@/lib/s3-utils";
+import {
+  reserveApiWalletCharge,
+  reserveUsdToMicros,
+  releaseApiWalletChargeOnError,
+  walletGateErrorResponse,
+  type ApiWalletCharge,
+} from "@/lib/wallet-api-gate";
 
 export async function POST(req: NextRequest) {
+  let walletCharge: ApiWalletCharge | null = null;
+  let releaseWalletOnError = true;
   try {
     await assertApiServiceEnabled("replicate-vmatte");
     const authState = await requireSpacesAuthUser(req);
@@ -37,6 +46,15 @@ export async function POST(req: NextRequest) {
     const replicate = new Replicate({
       auth: process.env.REPLICATE_API_TOKEN || "",
     });
+    walletCharge = await reserveApiWalletCharge({
+      req,
+      userEmail: usageUserEmail,
+      serviceId: "replicate-vmatte",
+      provider: "replicate",
+      route: "/api/spaces/video-matte",
+      maxCostMicros: reserveUsdToMicros(0.05, { multiplier: 1.25 }),
+      metadata: { model: "robust_video_matting" },
+    });
 
     // Inference: Robust Video Matting (arielreplicate/robust_video_matting)
     // Optimized for temporal consistency
@@ -51,6 +69,11 @@ export async function POST(req: NextRequest) {
     );
 
     console.log('Video RVM Output:', output);
+    releaseWalletOnError = false;
+    await walletCharge?.capture({
+      actualCostUsd: 0.05,
+      metadata: { model: "robust_video_matting" },
+    });
 
     // RVM typically returns a URL to the processed video
     const result_url = Array.isArray(output) ? output[0] : output;
@@ -84,6 +107,9 @@ export async function POST(req: NextRequest) {
     if (error instanceof ForbiddenMediaReferenceError) {
       return NextResponse.json({ error: error.message }, { status: 403 });
     }
+    if (releaseWalletOnError) await releaseApiWalletChargeOnError(walletCharge, error);
+    const walletResponse = walletGateErrorResponse(error);
+    if (walletResponse) return walletResponse;
     console.error('[Video Matte] CRITICAL ERROR:', error);
     const message = error instanceof Error ? error.message : String(error);
     return NextResponse.json({ error: message }, { status: 500 });

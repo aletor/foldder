@@ -21,6 +21,13 @@ import {
   collectAllReferenceImageUrlsOrdered,
   parseVideoRefSlots,
 } from "@/lib/video-generator-studio";
+import {
+  reserveApiWalletCharge,
+  reserveUsdToMicros,
+  releaseApiWalletChargeOnError,
+  walletGateErrorResponse,
+  type ApiWalletCharge,
+} from "@/lib/wallet-api-gate";
 import crypto from "crypto";
 
 /** Misma ventana que Veo (generación larga). */
@@ -88,6 +95,8 @@ function buildArkContent(payload: {
 }
 
 export async function POST(req: NextRequest) {
+  let walletCharge: ApiWalletCharge | null = null;
+  let releaseWalletOnError = true;
   try {
     await assertApiServiceEnabled("seedance-video");
     const authState = await requireSpacesAuthUser(req);
@@ -179,6 +188,22 @@ export async function POST(req: NextRequest) {
       ...(audio === true ? { generate_audio: true } : {}),
     };
 
+    const estimatedCostUsd = estimateSeedanceVideoUsd(dur);
+    walletCharge = await reserveApiWalletCharge({
+      req,
+      userEmail: authState.user.email,
+      serviceId: "seedance-video",
+      provider: "volcengine",
+      route: "/api/seedance/video",
+      maxCostMicros: reserveUsdToMicros(estimatedCostUsd, { multiplier: 1.2 }),
+      metadata: {
+        model,
+        durationSeconds: dur,
+        ratio: createBody.ratio,
+        imageCount: imageUrls.length,
+      },
+    });
+
     const createUrl = `${base}/contents/generations/tasks`;
     console.log("[Seedance] POST", createUrl, "model=", model);
 
@@ -194,6 +219,8 @@ export async function POST(req: NextRequest) {
     const createData = (await createRes.json().catch(() => ({}))) as Record<string, unknown>;
     if (!createRes.ok) {
       console.error("[Seedance] create error:", createRes.status, createData);
+      await walletCharge?.release({ reason: "provider_create_error", metadata: { status: createRes.status } });
+      releaseWalletOnError = false;
       const msg =
         (createData.error as { message?: string } | undefined)?.message ||
         (typeof createData.message === "string" ? createData.message : null) ||
@@ -212,8 +239,11 @@ export async function POST(req: NextRequest) {
       "";
     if (!taskId) {
       console.error("[Seedance] sin task id:", createData);
+      await walletCharge?.release({ reason: "provider_missing_task_id" });
+      releaseWalletOnError = false;
       return NextResponse.json({ error: "Ark no devolvió id de tarea" }, { status: 502 });
     }
+    releaseWalletOnError = false;
 
     const pollUrl = `${base}/contents/generations/tasks/${encodeURIComponent(taskId)}`;
     let videoUrl = "";
@@ -279,6 +309,15 @@ export async function POST(req: NextRequest) {
     });
     await uploadBufferToS3Key(key, videoBuffer, "video/mp4");
     const url = stableKnowledgeFileUrlFromKey(key);
+    const actualCostUsd = estimateSeedanceVideoUsd(dur);
+    await walletCharge?.capture({
+      actualCostUsd,
+      metadata: {
+        model,
+        durationSeconds: dur,
+        taskId,
+      },
+    });
 
     await recordApiUsage({
       provider: "volcengine",
@@ -289,7 +328,7 @@ export async function POST(req: NextRequest) {
       inputTokens: 0,
       outputTokens: 0,
       totalTokens: 0,
-      costUsd: estimateSeedanceVideoUsd(dur),
+      costUsd: actualCostUsd,
       note: "Seedance / Ark vídeo (coste orientativo por segundo)",
     });
 
@@ -305,6 +344,9 @@ export async function POST(req: NextRequest) {
         { status: 423 },
       );
     }
+    if (releaseWalletOnError) await releaseApiWalletChargeOnError(walletCharge, error);
+    const walletResponse = walletGateErrorResponse(error);
+    if (walletResponse) return walletResponse;
     const message = error instanceof Error ? error.message : String(error);
     console.error("[Seedance] Exception:", message);
     return NextResponse.json({ error: `Server Exception: ${message}` }, { status: 500 });
