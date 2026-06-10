@@ -42,7 +42,16 @@ describe("wallet-fetch-preflight", () => {
     vi.restoreAllMocks();
   });
 
-  it("keeps quiet text operations invisible when there is enough balance", async () => {
+  it("asks for a decision even on small paid text operations", async () => {
+    let requestedLabel = "";
+    const onDecision = (event: Event) => {
+      const detail = (event as CustomEvent<WalletCostDecisionEventDetail>).detail;
+      requestedLabel = detail.request.label;
+      detail.handled = true;
+      detail.resolve({ allowed: true, reason: "approved" });
+    };
+    window.addEventListener(FOLDDER_WALLET_COST_DECISION_EVENT, onDecision);
+
     const response = await runWalletFetchPreflight({
       route: "/api/spaces/text-content",
       requestInput: "/api/spaces/text-content",
@@ -53,7 +62,10 @@ describe("wallet-fetch-preflight", () => {
       fetcher: configuredFetch(walletStatus(1_000_000)),
     });
 
+    window.removeEventListener(FOLDDER_WALLET_COST_DECISION_EVENT, onDecision);
+
     expect(response).toBeNull();
+    expect(requestedLabel).toBe("Editar texto");
   });
 
   it("blocks before the provider call when balance cannot cover the reserve", async () => {

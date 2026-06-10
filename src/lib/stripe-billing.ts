@@ -20,6 +20,7 @@ const DEFAULT_TOPUP_AMOUNTS_USD = [10, 25, 50, 100, 250];
 const WALLET_TOPUP_PURPOSE = "wallet_topup";
 const STRIPE_BACKFILL_EVENT_TYPE = "stripe.checkout.session.backfill";
 const SECONDS_PER_DAY = 86_400;
+const RETURN_PROJECT_ID_PATTERN = /^[a-zA-Z0-9_-]{1,140}$/;
 
 export class StripeBillingConfigurationError extends Error {
   constructor(message: string) {
@@ -102,14 +103,47 @@ export function absoluteAppUrl(req: Request, path: string): string {
   return new URL(path, origin.endsWith("/") ? origin : `${origin}/`).toString();
 }
 
+export function parseStripeReturnProjectId(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const projectId = value.trim();
+  if (!projectId) return null;
+  if (!RETURN_PROJECT_ID_PATTERN.test(projectId)) {
+    throw new StripeBillingValidationError("Invalid return project id.");
+  }
+  return projectId;
+}
+
+export function walletCheckoutReturnPath(input: {
+  amountCents?: number | null;
+  billing: "success" | "cancelled";
+  currency?: string | null;
+  projectId?: string | null;
+}): string {
+  const params = new URLSearchParams({ billing: input.billing });
+  const projectId = parseStripeReturnProjectId(input.projectId);
+  if (projectId) params.set("projectId", projectId);
+  if (input.billing === "success") {
+    if (Number.isSafeInteger(input.amountCents) && Number(input.amountCents) > 0) {
+      params.set("topupCents", String(input.amountCents));
+    }
+    const currency = input.currency?.trim().toLowerCase();
+    if (currency && /^[a-z]{3}$/.test(currency)) {
+      params.set("topupCurrency", currency);
+    }
+  }
+  return `/spaces?${params.toString()}`;
+}
+
 export async function createWalletCheckoutSession(input: {
   req: Request;
   userEmail: string;
   amountCents: number;
+  returnProjectId?: string | null;
 }): Promise<Stripe.Checkout.Session> {
   const amountCents = parseRequestedTopupCents({ amountCents: input.amountCents });
   const walletCreditMicros = walletCreditMicrosFromCents(amountCents);
   const currency = stripeCurrency();
+  const returnProjectId = parseStripeReturnProjectId(input.returnProjectId);
   if (currency !== "usd") {
     throw new StripeBillingConfigurationError("Wallet ledger is currently USD-only; set FOLDDER_STRIPE_CURRENCY=usd.");
   }
@@ -129,6 +163,7 @@ export async function createWalletCheckoutSession(input: {
     walletCreditMicros: String(walletCreditMicros),
     amountCents: String(amountCents),
     currency,
+    ...(returnProjectId ? { returnProjectId } : {}),
   };
 
   return stripeClient().checkout.sessions.create({
@@ -154,8 +189,19 @@ export async function createWalletCheckoutSession(input: {
       },
     ],
     metadata,
-    success_url: absoluteAppUrl(input.req, "/spaces?billing=success"),
-    cancel_url: absoluteAppUrl(input.req, "/spaces?billing=cancelled"),
+    success_url: absoluteAppUrl(
+      input.req,
+      walletCheckoutReturnPath({
+        amountCents,
+        billing: "success",
+        currency,
+        projectId: returnProjectId,
+      }),
+    ),
+    cancel_url: absoluteAppUrl(
+      input.req,
+      walletCheckoutReturnPath({ billing: "cancelled", projectId: returnProjectId }),
+    ),
   });
 }
 

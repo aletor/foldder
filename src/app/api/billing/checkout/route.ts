@@ -16,12 +16,14 @@ export async function POST(req: NextRequest) {
     const body = (await req.json().catch(() => ({}))) as {
       amountCents?: unknown;
       amountUsd?: unknown;
+      projectId?: unknown;
     };
     const amountCents = parseRequestedTopupCents(body);
     const session = await createWalletCheckoutSession({
       req,
       userEmail: authState.user.email,
       amountCents,
+      returnProjectId: typeof body.projectId === "string" ? body.projectId : null,
     });
     return NextResponse.json({ url: session.url, sessionId: session.id });
   } catch (error) {

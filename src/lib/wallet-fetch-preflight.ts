@@ -96,7 +96,7 @@ export async function runWalletFetchPreflight(input: {
     account?.status === "blocked" ||
     account?.billingReviewRequired === true ||
     availableMicros < estimate.reserveMicros;
-  const needsDecision = blocked || estimate.tone === "confirm" || estimate.tone === "strong";
+  const needsDecision = estimate.reserveMicros > 0 || blocked;
   if (!needsDecision) return null;
 
   const decision = await requestWalletCostDecision({

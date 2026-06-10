@@ -277,6 +277,13 @@ function newLocalWorkspaceScopeId(): string {
   return `lw_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
 }
 
+const URL_PROJECT_ID_PATTERN = /^[a-zA-Z0-9_-]{1,140}$/;
+
+function normalizeUrlProjectId(value: string | null | undefined): string | null {
+  const projectId = value?.trim() ?? "";
+  return projectId && URL_PROJECT_ID_PATTERN.test(projectId) ? projectId : null;
+}
+
 type SavedProjectMeta = {
   createdAt?: string;
   id: string;
@@ -573,6 +580,8 @@ export function SpacesContent() {
 
   // Persistence state
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const activeProjectIdRef = useRef<string | null>(null);
+  activeProjectIdRef.current = activeProjectId;
   const [activeProjectRevision, setActiveProjectRevision] = useState<number | null>(null);
   const activeProjectRevisionRef = useRef<number | null>(null);
   activeProjectRevisionRef.current = activeProjectRevision;
@@ -3597,6 +3606,35 @@ export function SpacesContent() {
     return readJsonWithHttpError<SavedProjectDetail>(res, 'GET /api/spaces?id=...');
   }, [devBypassHeaders]);
 
+  const readProjectIdFromUrl = useCallback((): string | null => {
+    if (typeof window === "undefined") return null;
+    try {
+      return normalizeUrlProjectId(new URL(window.location.href).searchParams.get("projectId"));
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const syncProjectIdInUrl = useCallback((projectId: string | null) => {
+    if (typeof window === "undefined") return;
+    try {
+      const url = new URL(window.location.href);
+      const nextProjectId = normalizeUrlProjectId(projectId);
+      if (nextProjectId) {
+        url.searchParams.set("projectId", nextProjectId);
+      } else {
+        url.searchParams.delete("projectId");
+      }
+      const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+      const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      if (nextUrl !== currentUrl) {
+        window.history.replaceState(window.history.state, "", nextUrl);
+      }
+    } catch {
+      // URL sync is a navigation convenience; project access remains server-authorized.
+    }
+  }, []);
+
   /** Identidad para la que debe coincidir el listado de proyectos (cambia al switchar cuenta Gmail). */
   const projectsListOwnerKey =
     sessionStatus === 'authenticated'
@@ -3785,6 +3823,7 @@ export function SpacesContent() {
         typeof savedProject.revision === "number" && Number.isFinite(savedProject.revision)
           ? savedProject.revision
           : activeProjectRevisionRef.current;
+      activeProjectIdRef.current = savedProject.id;
       setActiveProjectRevision(savedRevision);
       activeProjectRevisionRef.current = savedRevision;
       lastSavedFingerprintRef.current = projectSaveFingerprint({
@@ -3796,6 +3835,7 @@ export function SpacesContent() {
 
       if (!activeProjectId) {
         setActiveProjectId(savedProject.id);
+        syncProjectIdInUrl(savedProject.id);
         setActiveSpaceId(activeSpaceId);
         setCurrentName(savedProject.name);
         setSpacesMap(savedProject.spaces || spacesReadyForSave);
@@ -3864,6 +3904,39 @@ export function SpacesContent() {
   saveProjectRef.current = saveProject;
   const isSavingRef = useRef(false);
   isSavingRef.current = isSaving;
+
+  const prepareProjectForCheckout = useCallback(async (): Promise<{
+    ok: boolean;
+    projectId?: string | null;
+    error?: string;
+  }> => {
+    const startedAt = Date.now();
+    while (isSavingRef.current && Date.now() - startedAt < 12_000) {
+      await new Promise((resolve) => window.setTimeout(resolve, 200));
+    }
+    if (isSavingRef.current) {
+      return {
+        ok: false,
+        error: "Hay un guardado en curso. Espera unos segundos y vuelve a intentar la recarga.",
+      };
+    }
+
+    const ok = await saveProjectRef.current(undefined, {
+      reason: "manual",
+      silentError: true,
+    });
+    if (!ok) {
+      return {
+        ok: false,
+        error: "No se pudo guardar el proyecto antes de abrir Stripe. Revisa la conexión y vuelve a intentarlo.",
+      };
+    }
+    return {
+      ok: true,
+      projectId: activeProjectIdRef.current ?? readProjectIdFromUrl(),
+    };
+  }, [readProjectIdFromUrl]);
+
   const brainAssetsAutosaveTimerRef = useRef<number | null>(null);
   const hasSeenBrainAssetsChangeRef = useRef(false);
   const brainAssetsAutosaveProjectRef = useRef<string | null>(null);
@@ -4064,12 +4137,14 @@ export function SpacesContent() {
     }
     if (projectDeleteInProgress) return;
     projectMediaUploadCacheRef.current.clear();
+    syncProjectIdInUrl(null);
     flushSync(() => {
       setNodes([]);
       setEdges([]);
       setActiveSpaceId('root');
       setNavigationStack([]);
       setSpacesMap({});
+      activeProjectIdRef.current = null;
       setActiveProjectId(null);
       setActiveProjectRevision(null);
       activeProjectRevisionRef.current = null;
@@ -4088,13 +4163,13 @@ export function SpacesContent() {
     if (ok) {
       setShowNewProjectModal(false);
       setNewProjectNameInput('');
+      setShowLoadModal(false);
+      setShowWelcome(true);
       if (postAuthProjectsGate) {
         setPostAuthProjectsGate(false);
-        setShowLoadModal(false);
-        setShowWelcome(true);
       }
     }
-  }, [newProjectNameInput, projectDeleteInProgress, postAuthProjectsGate, setNodes, setEdges]);
+  }, [newProjectNameInput, projectDeleteInProgress, postAuthProjectsGate, setNodes, setEdges, syncProjectIdInUrl]);
 
   const openLoadProjectsModal = useCallback(() => {
     setShowLoadModal(true);
@@ -4112,11 +4187,16 @@ export function SpacesContent() {
     if (prevAuthRef.current) return;
     prevAuthRef.current = true;
     setShowWelcome(false);
+    if (readProjectIdFromUrl()) {
+      setShowLoadModal(false);
+      setPostAuthProjectsGate(false);
+      return;
+    }
     openLoadProjectsModal();
     setPostAuthProjectsGate(true);
-  }, [isAuthenticated, openLoadProjectsModal]);
+  }, [isAuthenticated, openLoadProjectsModal, readProjectIdFromUrl]);
 
-  const loadProject = (projectMeta: SavedProjectMeta) => {
+  const loadProject = (projectMeta: SavedProjectMeta, options?: { directUrl?: boolean }) => {
     void (async () => {
       let project: SavedProjectDetail;
       projectMediaUploadCacheRef.current.clear();
@@ -4132,12 +4212,25 @@ export function SpacesContent() {
           // Si el listado trae una entrada obsoleta, refrescamos y evitamos reintentos sobre ese id.
           await refreshProjectsList({ withLoader: true }).catch(() => undefined);
           setSavedProjects((prev) => prev.filter((p) => p.id !== projectMeta.id));
-          setProjectLoadingError('Este proyecto ya no está disponible en servidor. Se actualizó la lista.');
+          setProjectLoadingError(
+            options?.directUrl
+              ? 'No se pudo abrir el proyecto del enlace. Elige uno de tus proyectos.'
+              : 'Este proyecto ya no está disponible en servidor. Se actualizó la lista.'
+          );
+          if (options?.directUrl) setShowLoadModal(true);
           setProjectLoadingId(null);
           setProjectLoadingStage("");
           return;
         }
-        setProjectLoadingError('No se pudo leer el proyecto desde el servidor.');
+        setProjectLoadingError(
+          options?.directUrl
+            ? 'No se pudo abrir el proyecto del enlace. Elige uno de tus proyectos.'
+            : 'No se pudo leer el proyecto desde el servidor.'
+        );
+        if (options?.directUrl) {
+          await refreshProjectsList({ withLoader: true }).catch(() => undefined);
+          setShowLoadModal(true);
+        }
         setProjectLoadingId(null);
         setProjectLoadingStage("");
         return;
@@ -4207,7 +4300,9 @@ export function SpacesContent() {
       setEdges(sanitizedActiveGraph.edges);
       scheduleNodeInternalsRefresh(sanitizedActiveGraph.nodes.map((n: any) => String(n.id)));
       scheduleEdgeGeometryRefresh();
+      activeProjectIdRef.current = project.id;
       setActiveProjectId(project.id);
+      syncProjectIdInUrl(project.id);
       setActiveProjectRevision(
         typeof project.revision === "number" && Number.isFinite(project.revision)
           ? project.revision
@@ -4276,12 +4371,34 @@ export function SpacesContent() {
     })().catch((err) => {
       console.error('[loadProject] unexpected error:', err);
       setProjectLoadingError(
-        err instanceof Error && err.message ? err.message : "Error inesperado cargando el proyecto."
+        options?.directUrl
+          ? "No se pudo abrir el proyecto del enlace. Elige uno de tus proyectos."
+          : err instanceof Error && err.message ? err.message : "Error inesperado cargando el proyecto."
       );
+      if (options?.directUrl) {
+        void refreshProjectsList({ withLoader: true });
+        setShowLoadModal(true);
+      }
       setProjectLoadingId(null);
       setProjectLoadingStage("");
     });
   };
+
+  const directProjectLoadRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!isAuthenticated) {
+      directProjectLoadRef.current = null;
+      return;
+    }
+    const projectId = readProjectIdFromUrl();
+    if (!projectId || activeProjectId === projectId || projectLoadingId === projectId) return;
+    if (directProjectLoadRef.current === projectId) return;
+    directProjectLoadRef.current = projectId;
+    setShowWelcome(false);
+    setPostAuthProjectsGate(false);
+    setShowLoadModal(false);
+    loadProject({ id: projectId, name: "Proyecto", rootSpaceId: "root" }, { directUrl: true });
+  }, [activeProjectId, isAuthenticated, projectLoadingId, readProjectIdFromUrl]);
 
   const deleteProject = async (idToDelete: string): Promise<boolean> => {
     try {
@@ -4297,7 +4414,9 @@ export function SpacesContent() {
       await refreshProjectsList();
       if (activeProjectId === idToDelete) {
         projectMediaUploadCacheRef.current.clear();
+        activeProjectIdRef.current = null;
         setActiveProjectId(null);
+        syncProjectIdInUrl(null);
         setActiveProjectRevision(null);
         activeProjectRevisionRef.current = null;
         lastSavedFingerprintRef.current = null;
@@ -6063,7 +6182,10 @@ export function SpacesContent() {
                 </button>
                 {isAuthenticated && (
                   <div className="ml-1 flex items-center gap-1.5">
-                    <WalletBalanceButton />
+                    <WalletBalanceButton
+                      onBeforeCheckout={prepareProjectForCheckout}
+                      projectId={activeProjectId}
+                    />
                     <div
                       className="h-9 w-9 overflow-hidden rounded-full border border-white/30 bg-white/10 shadow-sm"
                       title={session?.user?.email || "Usuario"}

@@ -176,6 +176,48 @@ describe("stripe-billing", () => {
     );
   });
 
+  it("returns Stripe Checkout to the active project when provided", async () => {
+    stripeMock.checkoutSessionsCreate.mockResolvedValue({
+      id: "cs_checkout_ready",
+      url: "https://checkout.stripe.test/session",
+    });
+
+    await createWalletCheckoutSession({
+      req: new Request("https://foldder.test/spaces"),
+      userEmail: "Buyer@Example.com",
+      amountCents: 2500,
+      returnProjectId: " project_123-abc ",
+    });
+
+    expect(stripeMock.checkoutSessionsCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        success_url: "https://foldder.test/spaces?billing=success&projectId=project_123-abc&topupCents=2500&topupCurrency=usd",
+        cancel_url: "https://foldder.test/spaces?billing=cancelled&projectId=project_123-abc",
+        metadata: expect.objectContaining({
+          returnProjectId: "project_123-abc",
+        }),
+        payment_intent_data: expect.objectContaining({
+          metadata: expect.objectContaining({
+            returnProjectId: "project_123-abc",
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("rejects unsafe project ids for Stripe return URLs", async () => {
+    await expect(
+      createWalletCheckoutSession({
+        req: new Request("https://foldder.test/spaces"),
+        userEmail: "buyer@example.com",
+        amountCents: 2500,
+        returnProjectId: "https://evil.test/redirect",
+      }),
+    ).rejects.toThrow(StripeBillingValidationError);
+
+    expect(stripeMock.checkoutSessionsCreate).not.toHaveBeenCalled();
+  });
+
   it("can create Checkout sessions with automatic tax disabled for unconfigured Stripe test accounts", async () => {
     process.env.FOLDDER_STRIPE_AUTOMATIC_TAX_ENABLED = "0";
     stripeMock.checkoutSessionsCreate.mockResolvedValue({

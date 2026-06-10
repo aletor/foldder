@@ -166,8 +166,13 @@ export async function POST(req: Request) {
         serviceId: "gemini-search-verify",
         provider: "gemini",
         route: "/api/spaces/search",
-        maxCostMicros: reserveUsdToMicros(0.01, { multiplier: 1.5 }),
-        metadata: { query: query.slice(0, 160), limit, intent: intentForVision.slice(0, 160) },
+        maxCostMicros: reserveUsdToMicros(0.02, { multiplier: 1.5 }),
+        metadata: {
+          estimatedVisionFilterCalls: 2,
+          intent: intentForVision.slice(0, 160),
+          limit,
+          query: query.slice(0, 160),
+        },
       });
     }
 

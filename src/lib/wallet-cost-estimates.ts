@@ -200,6 +200,30 @@ export function estimateWalletCostForRoute(
     };
   }
 
+  if (route === "/api/gemini/analyze-correction") {
+    const estimated = 0.006;
+    return {
+      label: "Analizar corrección",
+      route,
+      category: "analysis",
+      estimatedCostMicros: usdToMicros(estimated),
+      reserveMicros: reserveUsdToMicros(estimated, 1.25),
+      tone: "confirm",
+    };
+  }
+
+  if (route === "/api/gemini/describe-region") {
+    const estimated = 0.004;
+    return {
+      label: "Describir región",
+      route,
+      category: "analysis",
+      estimatedCostMicros: usdToMicros(estimated),
+      reserveMicros: reserveUsdToMicros(estimated, 1.25),
+      tone: "confirm",
+    };
+  }
+
   if (route === "/api/openai/enhance") {
     const estimated = 0.02;
     return {
@@ -209,6 +233,33 @@ export function estimateWalletCostForRoute(
       estimatedCostMicros: usdToMicros(estimated),
       reserveMicros: reserveUsdToMicros(estimated, 1.25),
       tone: "quiet",
+    };
+  }
+
+  if (route === "/api/spaces/describe") {
+    const mediaType = stringValue(body.type, "image").toLowerCase();
+    if (mediaType !== "image" && mediaType !== "video") return null;
+    const estimated = 0.03;
+    return {
+      label: mediaType === "video" ? "Describir vídeo" : "Describir imagen",
+      route,
+      category: "analysis",
+      estimatedCostMicros: usdToMicros(estimated),
+      reserveMicros: reserveUsdToMicros(estimated, 1.25),
+      tone: "confirm",
+    };
+  }
+
+  if (route === "/api/spaces/search") {
+    if (body.verify === false) return null;
+    const estimated = 0.02;
+    return {
+      label: "Búsqueda visual verificada",
+      route,
+      category: "analysis",
+      estimatedCostMicros: usdToMicros(estimated),
+      reserveMicros: reserveUsdToMicros(estimated, 1.5),
+      tone: "confirm",
     };
   }
 

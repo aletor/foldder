@@ -24,11 +24,19 @@ import {
   FOLDDER_WALLET_REFRESH_EVENT,
   type WalletStatusResponse,
 } from "@/lib/wallet-client-events";
+import { useLanguage } from "@/components/LanguageProvider";
 import {
   describeWalletLedgerEntry,
   movementAmountMicros,
   visibleSpentMicros,
 } from "@/lib/wallet-display";
+
+type WalletBalanceButtonProps = {
+  onBeforeCheckout?: () =>
+    | Promise<{ ok: boolean; projectId?: string | null; error?: string }>
+    | { ok: boolean; projectId?: string | null; error?: string };
+  projectId?: string | null;
+};
 
 type LoadState =
   | { status: "idle"; data: WalletStatusResponse | null; error: null }
@@ -38,6 +46,13 @@ type LoadState =
 
 type BillingView = "overview" | "activity";
 type CheckoutNotice = "success" | "cancelled" | null;
+type CheckoutSuccessPopup = {
+  amountCents: number;
+  currency: string;
+  equivalentImages: number;
+} | null;
+
+const AI_IMAGE_EQUIVALENT_USD = 0.101;
 
 const DISPLAY_TONE_CLASS = {
   positive: "border-emerald-300/25 bg-emerald-400/10 text-emerald-100",
@@ -63,6 +78,22 @@ function formatUsd(micros: number, options?: { signed?: boolean; compact?: boole
     minimumFractionDigits: fractionDigits,
     maximumFractionDigits: fractionDigits,
   }).format(usd)}`;
+}
+
+function formatCurrencyFromCents(amountCents: number, currency: string, language: "es" | "en"): string {
+  const amount = Math.max(0, amountCents) / 100;
+  return new Intl.NumberFormat(language === "es" ? "es-ES" : "en-US", {
+    style: "currency",
+    currency: currency.toUpperCase(),
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(amount);
+}
+
+function equivalentAiImages(amountCents: number, currency: string): number {
+  const normalizedCurrency = currency.trim().toLowerCase();
+  if (normalizedCurrency !== "usd") return Math.max(1, Math.floor((amountCents / 100) / AI_IMAGE_EQUIVALENT_USD));
+  return Math.max(1, Math.floor((amountCents / 100) / AI_IMAGE_EQUIVALENT_USD));
 }
 
 function formatDateTime(iso: string): string {
@@ -93,13 +124,15 @@ function recommendedPackageCents(packages: WalletStatusResponse["topupPackages"]
   return packages.find((pkg) => pkg.amountCents >= 5000)?.amountCents ?? packages[Math.floor(packages.length / 2)]?.amountCents ?? null;
 }
 
-export function WalletBalanceButton() {
+export function WalletBalanceButton({ onBeforeCheckout, projectId = null }: WalletBalanceButtonProps) {
+  const { language } = useLanguage();
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<BillingView>("overview");
   const [state, setState] = useState<LoadState>({ status: "idle", data: null, error: null });
   const [checkoutAmount, setCheckoutAmount] = useState<number | null>(null);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [checkoutNotice, setCheckoutNotice] = useState<CheckoutNotice>(null);
+  const [checkoutSuccessPopup, setCheckoutSuccessPopup] = useState<CheckoutSuccessPopup>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
 
   const data = state.data;
@@ -167,8 +200,21 @@ export function WalletBalanceButton() {
     setOpen(true);
     setCheckoutNotice(billing);
     setView(billing === "success" ? "activity" : "overview");
+    if (billing === "success") {
+      const amountCents = Number(url.searchParams.get("topupCents") || "");
+      const currency = (url.searchParams.get("topupCurrency") || "usd").trim().toLowerCase();
+      if (Number.isSafeInteger(amountCents) && amountCents > 0 && /^[a-z]{3}$/.test(currency)) {
+        setCheckoutSuccessPopup({
+          amountCents,
+          currency,
+          equivalentImages: equivalentAiImages(amountCents, currency),
+        });
+      }
+    }
     void loadWallet();
     url.searchParams.delete("billing");
+    url.searchParams.delete("topupCents");
+    url.searchParams.delete("topupCurrency");
     window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
   }, [loadWallet]);
 
@@ -197,7 +243,13 @@ export function WalletBalanceButton() {
       setOpen(false);
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key === "Escape") {
+        if (checkoutSuccessPopup) {
+          setCheckoutSuccessPopup(null);
+          return;
+        }
+        setOpen(false);
+      }
     };
     window.addEventListener("pointerdown", onPointerDown);
     window.addEventListener("keydown", onKeyDown);
@@ -205,7 +257,7 @@ export function WalletBalanceButton() {
       window.removeEventListener("pointerdown", onPointerDown);
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [open]);
+  }, [checkoutSuccessPopup, open]);
 
   const sortedPackages = useMemo(() => {
     return [...(data?.topupPackages ?? [])].sort((a, b) => a.amountCents - b.amountCents);
@@ -221,11 +273,24 @@ export function WalletBalanceButton() {
     setCheckoutError(null);
     setCheckoutNotice(null);
     try {
+      let checkoutProjectId = projectId;
+      if (onBeforeCheckout) {
+        const beforeCheckout = await onBeforeCheckout();
+        if (!beforeCheckout.ok) {
+          throw new Error(beforeCheckout.error || "No se pudo guardar el proyecto antes de abrir Stripe.");
+        }
+        if ("projectId" in beforeCheckout) {
+          checkoutProjectId = beforeCheckout.projectId ?? null;
+        }
+      }
       const response = await fetch("/api/billing/checkout", {
         method: "POST",
         credentials: "same-origin",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ amountCents }),
+        body: JSON.stringify({
+          amountCents,
+          ...(checkoutProjectId ? { projectId: checkoutProjectId } : {}),
+        }),
       });
       const json = (await response.json().catch(() => null)) as { url?: string; error?: string } | null;
       if (!response.ok || !json?.url) {
@@ -236,7 +301,7 @@ export function WalletBalanceButton() {
       setCheckoutError(error instanceof Error ? error.message : "No se pudo iniciar Stripe Checkout.");
       setCheckoutAmount(null);
     }
-  }, [data?.configured]);
+  }, [data?.configured, onBeforeCheckout, projectId]);
 
   const renderOverview = () => (
     <div className="space-y-4">
@@ -410,6 +475,56 @@ export function WalletBalanceButton() {
         )}
         <span className="hidden max-w-[7rem] truncate sm:inline">{availableLabel}</span>
       </button>
+
+      {checkoutSuccessPopup && (
+        <div
+          className="fixed inset-0 z-[320] flex items-center justify-center bg-black/45 px-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label={language === "es" ? "Recarga confirmada" : "Top-up confirmed"}
+          data-foldder-i18n-ignore
+        >
+          <div className="w-full max-w-sm rounded-2xl border border-emerald-200/18 bg-[#10171f] p-5 text-white shadow-[0_30px_100px_rgba(0,0,0,0.55)]">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-emerald-300/25 bg-emerald-400/14 text-emerald-100">
+                <CheckCircle2 size={20} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[11px] font-black uppercase tracking-[0.14em] text-emerald-200/80">
+                  {language === "es" ? "Recarga completada" : "Top-up complete"}
+                </p>
+                <p className="mt-2 text-[15px] font-semibold leading-snug text-white">
+                  {language === "es"
+                    ? `Acabas de recargar ${formatCurrencyFromCents(
+                        checkoutSuccessPopup.amountCents,
+                        checkoutSuccessPopup.currency,
+                        language,
+                      )}, equivalente a aprox. ${checkoutSuccessPopup.equivalentImages.toLocaleString("es-ES")} imágenes AI.`
+                    : `You just topped up ${formatCurrencyFromCents(
+                        checkoutSuccessPopup.amountCents,
+                        checkoutSuccessPopup.currency,
+                        language,
+                      )}, equivalent to about ${checkoutSuccessPopup.equivalentImages.toLocaleString("en-US")} AI images.`}
+                </p>
+                <p className="mt-2 text-[12px] leading-snug text-white/50">
+                  {language === "es"
+                    ? "El saldo se actualizará cuando Stripe confirme el pago."
+                    : "Your balance will update when Stripe confirms the payment."}
+                </p>
+              </div>
+            </div>
+            <div className="mt-5 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setCheckoutSuccessPopup(null)}
+                className="rounded-xl border border-white/12 bg-white px-4 py-2 text-[11px] font-black uppercase tracking-[0.12em] text-slate-950 shadow-sm transition hover:bg-white/90"
+              >
+                {language === "es" ? "Entendido" : "Got it"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {open && (
         <div
