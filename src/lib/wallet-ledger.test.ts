@@ -15,6 +15,7 @@ import {
   listWalletLedgerEntriesForAccount,
   listExpiredWalletReservations,
   recordPendingWalletCapture,
+  releaseWalletReservation,
   reserveWalletAmount,
   walletAccountIdForEmail,
   WalletInsufficientFundsError,
@@ -37,6 +38,7 @@ function txInput() {
         Key: { pk: string; sk: string };
         UpdateExpression?: string;
         ConditionExpression?: string;
+        ExpressionAttributeNames?: Record<string, string>;
         ExpressionAttributeValues?: Record<string, unknown>;
       };
     }>;
@@ -62,10 +64,29 @@ function queryInput() {
   return call[0].input as {
     IndexName?: string;
     KeyConditionExpression?: string;
+    FilterExpression?: string;
+    ExpressionAttributeNames?: Record<string, string>;
     ExpressionAttributeValues?: Record<string, unknown>;
     ScanIndexForward?: boolean;
     Limit?: number;
   };
+}
+
+function assertNoUnusedExpressionAttributeNames(input: {
+  UpdateExpression?: string;
+  ConditionExpression?: string;
+  KeyConditionExpression?: string;
+  FilterExpression?: string;
+  ExpressionAttributeNames?: Record<string, string>;
+}) {
+  const source = [
+    input.UpdateExpression,
+    input.ConditionExpression,
+    input.KeyConditionExpression,
+    input.FilterExpression,
+  ].filter(Boolean).join(" ");
+  const unused = Object.keys(input.ExpressionAttributeNames || {}).filter((name) => !source.includes(name));
+  expect(unused).toEqual([]);
 }
 
 describe("wallet-ledger", () => {
@@ -236,6 +257,7 @@ describe("wallet-ledger", () => {
     expect(accountUpdate?.UpdateExpression).toContain("#reserved = #reserved + :amount");
     expect(accountUpdate?.UpdateExpression).toContain("#available = #available - :amount");
     expect(accountUpdate?.ExpressionAttributeValues?.[":amount"]).toBe(1_250_000);
+    assertNoUnusedExpressionAttributeNames(accountUpdate || {});
 
     const reservation = tx.TransactItems.find(
       (item) => item.Put?.Item.entityType === "wallet-reservation",
@@ -374,6 +396,7 @@ describe("wallet-ledger", () => {
       ":reservedAmount": 1_000_000,
       ":releaseAmount": 300_000,
     });
+    assertNoUnusedExpressionAttributeNames(accountUpdate || {});
 
     const ledgerItems = tx.TransactItems
       .map((item) => item.Put?.Item)
@@ -394,6 +417,44 @@ describe("wallet-ledger", () => {
         }),
       ]),
     );
+  });
+
+  it("releases reservations without unused Dynamo expression attribute names", async () => {
+    const accountId = walletAccountIdForEmail(USER_EMAIL);
+    dynamoMock.send
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({
+        Item: {
+          accountId,
+          userEmail: "creator@example.com",
+          reservationId: "rsv_release",
+          status: "reserved",
+          amountMicros: 1_000_000,
+          capturedMicros: 0,
+          releasedMicros: 0,
+          serviceId: "gemini-nano",
+          provider: "gemini",
+          route: "/api/gemini/generate",
+          requestId: "req_1",
+          createdAt: "2026-06-09T12:00:00.000Z",
+          updatedAt: "2026-06-09T12:00:00.000Z",
+        },
+      })
+      .mockResolvedValueOnce({});
+
+    await releaseWalletReservation({
+      tableName: TABLE,
+      userEmail: USER_EMAIL,
+      reservationId: "rsv_release",
+      operationId: "release_1",
+      reason: "provider_error",
+    });
+
+    const tx = txInput();
+    const accountUpdate = tx.TransactItems.find((item) => item.Update?.Key.sk === "ACCOUNT")?.Update;
+    expect(accountUpdate?.UpdateExpression).toContain("#reserved = #reserved - :reservedAmount");
+    expect(accountUpdate?.UpdateExpression).toContain("#available = #available + :reservedAmount");
+    assertNoUnusedExpressionAttributeNames(accountUpdate || {});
   });
 
   it("queries expired reserved reservations through the wallet work index", async () => {

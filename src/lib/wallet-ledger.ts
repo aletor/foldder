@@ -381,6 +381,27 @@ function baseAccountUpdateNames(): Record<string, string> {
   };
 }
 
+function existingAccountBalanceNames(): Record<string, string> {
+  return {
+    "#available": "availableMicros",
+    "#balance": "balanceMicros",
+    "#currency": "currency",
+    "#reserved": "reservedMicros",
+    "#status": "status",
+    "#updatedAt": "updatedAt",
+  };
+}
+
+function existingAccountReservationNames(): Record<string, string> {
+  return {
+    "#available": "availableMicros",
+    "#currency": "currency",
+    "#reserved": "reservedMicros",
+    "#status": "status",
+    "#updatedAt": "updatedAt",
+  };
+}
+
 async function getIdempotencyResult<T>(
   tableName: string,
   pk: string,
@@ -583,8 +604,8 @@ export async function scanWalletLedgerEntries(input?: WalletTableInput & {
             ? "#entityType = :entityType AND #createdAt >= :sinceIso"
             : "#entityType = :entityType",
           ExpressionAttributeNames: {
-            "#createdAt": "createdAt",
             "#entityType": "entityType",
+            ...(input?.sinceIso ? { "#createdAt": "createdAt" } : {}),
           },
           ExpressionAttributeValues: {
             ":entityType": "wallet-ledger-entry",
@@ -979,7 +1000,7 @@ export async function reserveWalletAmount(input: WalletTableInput & {
             "#currency = :currency",
             "#available >= :amount",
           ].join(" AND "),
-          ExpressionAttributeNames: baseAccountUpdateNames(),
+          ExpressionAttributeNames: existingAccountReservationNames(),
           ExpressionAttributeValues: {
             ":active": "active",
             ":amount": input.amountMicros,
@@ -1124,7 +1145,7 @@ export async function captureWalletReservation(input: WalletTableInput & {
           "#balance >= :captureAmount",
           "#reserved >= :reservedAmount",
         ].join(" AND "),
-        ExpressionAttributeNames: baseAccountUpdateNames(),
+        ExpressionAttributeNames: existingAccountBalanceNames(),
         ExpressionAttributeValues: {
           ":active": "active",
           ":captureAmount": input.captureMicros,
@@ -1283,7 +1304,7 @@ export async function releaseWalletReservation(input: WalletTableInput & {
             "#currency = :currency",
             "#reserved >= :reservedAmount",
           ].join(" AND "),
-          ExpressionAttributeNames: baseAccountUpdateNames(),
+          ExpressionAttributeNames: existingAccountReservationNames(),
           ExpressionAttributeValues: {
             ":active": "active",
             ":currency": WALLET_CURRENCY,
