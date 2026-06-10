@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   AlertCircle,
   CreditCard,
@@ -212,8 +213,12 @@ export function WalletCostGuardDialog() {
   const description = operationDescription(request, dialogLanguage);
   const isSpanish = dialogLanguage === "es";
 
-  return (
-    <div className="fixed inset-0 z-[100090] flex items-center justify-center p-4" data-foldder-i18n-ignore>
+  const dialog = (
+    <div
+      className="fixed inset-0 z-[100700] flex items-center justify-center p-4"
+      data-foldder-i18n-ignore
+      data-foldder-wallet-cost-guard
+    >
       <div
         className="absolute inset-0 bg-black/55 backdrop-blur-sm"
         onClick={() => close(false, "cancelled")}
@@ -350,4 +355,7 @@ export function WalletCostGuardDialog() {
       </section>
     </div>
   );
+
+  if (typeof document === "undefined") return null;
+  return createPortal(dialog, document.body);
 }
