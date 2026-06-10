@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { normalizeOwnerEmail, requireSpacesAuthUser } from "@/lib/spaces-access-control";
 import { getVideoEditorRenderStatus, markVideoEditorRenderUsageRecorded } from "@/lib/video-editor/video-editor-fargate-render";
+import { walletGateErrorResponse } from "@/lib/wallet-api-gate";
 
 export const runtime = "nodejs";
 
@@ -29,6 +30,8 @@ export async function GET(req: Request) {
       : status;
     return NextResponse.json(finalStatus);
   } catch (error) {
+    const walletResponse = walletGateErrorResponse(error);
+    if (walletResponse) return walletResponse;
     const message = error instanceof Error ? error.message : "render_status_failed";
     console.error("[video-editor-render-status]", error);
     return NextResponse.json({ status: "error", error: message }, { status: 500 });

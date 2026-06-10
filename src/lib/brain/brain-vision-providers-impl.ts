@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenAI } from "@google/genai";
 import OpenAI from "openai";
 import type { BrainVisionProviderId, BrainVisualImageAnalysis } from "@/app/spaces/project-assets-metadata";
 import { recordApiUsage, parseGeminiUsageMetadata } from "@/lib/api-usage";
@@ -191,17 +191,24 @@ export function createGeminiBrainVisionProvider(): BrainVisionProvider {
           if (ct?.startsWith("image/")) mime = ct.split(";")[0].trim();
         }
 
-        const genAI = new GoogleGenerativeAI(apiKey);
-        const model = genAI.getGenerativeModel({
+        const ai = new GoogleGenAI({ apiKey });
+        const r = await ai.models.generateContent({
           model: modelName,
-          systemInstruction:
-            "Eres un director de arte senior. Respondes únicamente con JSON válido según las instrucciones, sin markdown.",
+          contents: [
+            {
+              role: "user",
+              parts: [
+                { text: BRAIN_VISION_JSON_SCHEMA_USER_PROMPT },
+                { inlineData: { mimeType: mime, data: b64 } },
+              ],
+            },
+          ],
+          config: {
+            systemInstruction:
+              "Eres un director de arte senior. Respondes únicamente con JSON válido según las instrucciones, sin markdown.",
+          },
         });
-        const r = await model.generateContent([
-          { text: BRAIN_VISION_JSON_SCHEMA_USER_PROMPT },
-          { inlineData: { mimeType: mime, data: b64 } },
-        ]);
-        const text = r.response.text();
+        const text = r.text ?? "";
         const raw = parseJsonObjectFromVisionModelText(text);
         if (!parseVisionAnalysisJson(raw)) {
           return visionFailureFallback(
@@ -212,7 +219,7 @@ export function createGeminiBrainVisionProvider(): BrainVisionProvider {
           );
         }
         const merged = mergeVisionJsonIntoAnalysis(base, raw);
-        const u = parseGeminiUsageMetadata(r.response);
+        const u = parseGeminiUsageMetadata(r);
         await recordApiUsage({
           provider: "gemini",
           userEmail,

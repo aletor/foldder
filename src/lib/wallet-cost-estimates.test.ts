@@ -43,6 +43,36 @@ describe("wallet-cost-estimates", () => {
     expect(estimate?.reserveMicros).toBeGreaterThan(0);
   });
 
+  it("estimates video editor subtitle transcription from duration", () => {
+    const estimate = estimateWalletCostForRoute("/api/video-editor/subtitles/transcribe", {
+      durationSeconds: 120,
+    });
+
+    expect(estimate).toMatchObject({
+      label: "Transcribir subtítulos",
+      category: "utility",
+      tone: "quiet",
+      estimatedCostMicros: 12_000,
+      reserveMicros: 18_000,
+    });
+  });
+
+  it("estimates video editor render reserves from manifest shape", () => {
+    const estimate = estimateWalletCostForRoute("/api/video-editor/render", {
+      manifest: {
+        durationSeconds: 30,
+        settings: { fps: 30, width: 1920, height: 1080 },
+      },
+    });
+
+    expect(estimate).toMatchObject({
+      label: "Renderizar vídeo",
+      category: "video",
+      tone: "confirm",
+    });
+    expect(estimate?.reserveMicros).toBeGreaterThan(estimate?.estimatedCostMicros ?? 0);
+  });
+
   it("ignores routes without a wallet-facing estimate", () => {
     expect(estimateWalletCostForRoute("/api/runway/status/task_1", {})).toBeNull();
   });

@@ -7,6 +7,7 @@ import { recordApiUsage } from "@/lib/api-usage";
 import { estimateAwsFargateUsd } from "@/lib/pricing-config";
 import { BUCKET_NAME, s3Client } from "@/lib/s3-utils";
 import { spacesOwnerHash, stableKnowledgeFileUrlFromKey } from "@/lib/spaces-access-control";
+import { settleProviderJobWalletCharge } from "@/lib/wallet-api-gate";
 
 export type VideoEditorRenderJobStatus = {
   renderId: string;
@@ -24,6 +25,8 @@ export type VideoEditorRenderJobStatus = {
   usageRecordedAt?: string;
   usageEstimatedCostUsd?: number;
   usageBilledSeconds?: number;
+  walletSettlementAction?: string;
+  walletSettlementAt?: string;
 };
 
 type FargateConfig = {
@@ -106,10 +109,10 @@ export function renderJobKeys(renderId: string, userEmail?: string) {
 
 export async function createVideoEditorFargateRenderJob(
   manifest: VideoEditorRenderManifest,
-  options: { userEmail?: string } = {},
+  options: { renderId?: string; userEmail?: string } = {},
 ): Promise<VideoEditorRenderJobStatus> {
   const config = getFargateConfig();
-  const renderId = randomUUID();
+  const renderId = options.renderId?.trim() || randomUUID();
   const keys = renderJobKeys(renderId, options.userEmail);
   const now = new Date().toISOString();
   const status: VideoEditorRenderJobStatus = {
@@ -198,6 +201,21 @@ export async function markVideoEditorRenderUsageRecorded(status: VideoEditorRend
   const runtimeSeconds = Math.max(1, (finished - started) / 1000);
   const billedSeconds = Math.max(60, Math.ceil(runtimeSeconds));
   const costUsd = estimateAwsFargateUsd({ runtimeSeconds, vcpu: 2, memoryGb: 4 });
+  const walletSettlement = await settleProviderJobWalletCharge({
+    provider: "aws",
+    providerJobId: status.renderId,
+    status: status.status,
+    successStatuses: ["ready"],
+    failureStatuses: ["error"],
+    actualCostUsd: costUsd,
+    metadata: {
+      billedSeconds,
+      renderId: status.renderId,
+      runtimeSeconds: Math.round(runtimeSeconds),
+      s3Key: status.s3Key,
+      status: status.status,
+    },
+  });
   await recordApiUsage({
     provider: "aws",
     serviceId: "aws-fargate-render",
@@ -225,6 +243,8 @@ export async function markVideoEditorRenderUsageRecorded(status: VideoEditorRend
     usageRecordedAt: new Date().toISOString(),
     usageEstimatedCostUsd: costUsd,
     usageBilledSeconds: billedSeconds,
+    walletSettlementAction: walletSettlement.action,
+    walletSettlementAt: new Date().toISOString(),
   };
   await putRenderJson(bucket, statusS3Key, next);
   return next;

@@ -21,6 +21,14 @@ import {
   canUserAccessKnowledgeFileKey,
   requireSpacesAuthUser,
 } from "@/lib/spaces-access-control";
+import { estimateOpenAITranscriptionUsd } from "@/lib/pricing-config";
+import {
+  reserveApiWalletCharge,
+  reserveUsdToMicros,
+  releaseApiWalletChargeOnError,
+  walletGateErrorResponse,
+  type ApiWalletCharge,
+} from "@/lib/wallet-api-gate";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -56,6 +64,29 @@ type OpenAITranscriptionResponse = {
   duration?: number;
   language?: string;
 };
+
+function transcriptionUsdPerMinute(): number | undefined {
+  const raw = process.env.FOLDDER_OPENAI_TRANSCRIPTION_USD_PER_MINUTE?.trim();
+  if (!raw) return undefined;
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function estimateTranscriptionDurationSeconds(body: TranscribeRequestBody, sourceBytes: number): number {
+  const explicit = Number(body.durationSeconds);
+  const declaredSeconds = Number.isFinite(explicit) && explicit > 0 ? explicit : 0;
+  const conservativeBytesFloorSeconds = Math.max(0, sourceBytes) / 1_000;
+  return Math.min(
+    4 * 60 * 60,
+    Math.max(30, Math.ceil(declaredSeconds), Math.ceil(conservativeBytesFloorSeconds)),
+  );
+}
+
+function estimateTranscriptionCostUsd(durationSeconds: number): number {
+  return estimateOpenAITranscriptionUsd(durationSeconds, {
+    usdPerMinute: transcriptionUsdPerMinute(),
+  });
+}
 
 function mimeFromSource(source: string | undefined): string {
   const lower = (source || "").split("?")[0]!.toLowerCase();
@@ -187,6 +218,30 @@ async function transcribeWithOpenAI(body: TranscribeRequestBody, req: Request, u
   if (!apiKey) throw new Error("provider_not_configured:OPENAI_API_KEY");
   const source = await resolveSource(body, userEmail);
   const model = process.env.OPENAI_TRANSCRIPTION_MODEL?.trim() || "whisper-1";
+  let walletCharge: ApiWalletCharge | null = null;
+  let releaseWalletOnError = true;
+  const reserveDurationSeconds = estimateTranscriptionDurationSeconds(body, source.buffer.length);
+  const estimatedCostUsd = estimateTranscriptionCostUsd(reserveDurationSeconds);
+
+  try {
+    walletCharge = await reserveApiWalletCharge({
+      req,
+      userEmail,
+      serviceId: "openai-subtitles",
+      provider: "openai",
+      route: "/api/video-editor/subtitles/transcribe",
+      maxCostMicros: reserveUsdToMicros(estimatedCostUsd, { multiplier: 1.5 }),
+      metadata: {
+        model,
+        reserveDurationSeconds,
+        sourceBytes: source.buffer.length,
+        sourceId: source.sourceId,
+      },
+    });
+  } catch (error) {
+    throw error;
+  }
+
   const form = new FormData();
   form.append("file", new Blob([new Uint8Array(source.buffer)], { type: source.mimeType }), source.filename);
   form.append("model", model);
@@ -196,42 +251,66 @@ async function transcribeWithOpenAI(body: TranscribeRequestBody, req: Request, u
   if (body.language?.trim()) form.append("language", body.language.trim());
 
   const started = Date.now();
-  const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}` },
-    body: form,
-  });
-  const json = (await response.json().catch(() => ({}))) as OpenAITranscriptionResponse & { error?: { message?: string } };
-  if (!response.ok) {
-    throw new Error(json.error?.message || `openai_transcription_failed:${response.status}`);
-  }
-  const document = documentFromOpenAI({
-    response: json,
-    sourceAssetId: source.sourceId,
-    timelineId: body.timelineId,
-    mode: body.mode || "lines",
-    language: body.language,
-    durationSeconds: body.durationSeconds,
-  });
-  await recordApiUsage({
-    provider: "openai",
-    serviceId: "openai-subtitles",
-    route: "/api/video-editor/subtitles/transcribe",
-    model,
-    operation: "audio_transcription",
-    userEmail: await resolveUsageUserEmailFromRequest(req),
-    costUsd: 0,
-    costIsKnown: false,
-    bytes: source.buffer.length,
-    metadata: {
-      durationSeconds: document.durationSeconds,
-      segments: document.segments.length,
-      runtimeMs: Date.now() - started,
+  try {
+    const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body: form,
+    });
+    const json = (await response.json().catch(() => ({}))) as OpenAITranscriptionResponse & { error?: { message?: string } };
+    if (!response.ok) {
+      await walletCharge?.release({
+        reason: "provider_transcription_error",
+        metadata: { status: response.status },
+      });
+      releaseWalletOnError = false;
+      throw new Error(json.error?.message || `openai_transcription_failed:${response.status}`);
+    }
+    const document = documentFromOpenAI({
+      response: json,
       sourceAssetId: source.sourceId,
-    },
-    note: "OpenAI transcription usage recorded without local price estimate; review provider billing for exact cost.",
-  });
-  return document;
+      timelineId: body.timelineId,
+      mode: body.mode || "lines",
+      language: body.language,
+      durationSeconds: body.durationSeconds,
+    });
+    const actualDurationSeconds = Math.max(
+      1,
+      Math.ceil(Number(json.duration) || Number(document.durationSeconds) || reserveDurationSeconds),
+    );
+    const actualCostUsd = estimateTranscriptionCostUsd(actualDurationSeconds);
+    releaseWalletOnError = false;
+    await walletCharge?.capture({
+      actualCostUsd,
+      metadata: {
+        model,
+        actualDurationSeconds,
+        reserveDurationSeconds,
+        sourceBytes: source.buffer.length,
+      },
+    });
+    await recordApiUsage({
+      provider: "openai",
+      serviceId: "openai-subtitles",
+      route: "/api/video-editor/subtitles/transcribe",
+      model,
+      operation: "audio_transcription",
+      userEmail: await resolveUsageUserEmailFromRequest(req),
+      costUsd: actualCostUsd,
+      bytes: source.buffer.length,
+      metadata: {
+        durationSeconds: actualDurationSeconds,
+        segments: document.segments.length,
+        runtimeMs: Date.now() - started,
+        sourceAssetId: source.sourceId,
+      },
+      note: "OpenAI transcription priced from returned duration and configured per-minute rate.",
+    });
+    return document;
+  } catch (error) {
+    if (releaseWalletOnError) await releaseApiWalletChargeOnError(walletCharge, error);
+    throw error;
+  }
 }
 
 async function persistSubtitleDocument(
@@ -281,6 +360,8 @@ export async function POST(req: Request) {
         { status: 423 },
       );
     }
+    const walletResponse = walletGateErrorResponse(error);
+    if (walletResponse) return walletResponse;
     const message = error instanceof Error ? error.message : "subtitle_transcription_failed";
     const status = message.startsWith("provider_not_configured") ? 501 : 500;
     if (!message.startsWith("provider_not_")) {

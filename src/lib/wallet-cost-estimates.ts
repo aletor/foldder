@@ -1,7 +1,9 @@
 import {
   estimateGeminiImageGenerationUsd,
   estimateGeminiVeoVideoUsd,
+  estimateOpenAITranscriptionUsd,
   estimateOpenAIUsd,
+  estimateVideoEditorRenderReserveUsd,
   estimateSeedanceVideoUsd,
   veoResolutionMultiplier,
 } from "@/lib/pricing-config";
@@ -78,6 +80,10 @@ function estimateTextRoute(args: {
 
 function videoDuration(body: Record<string, unknown>, fallback: number): number {
   return numberValue(body.durationSeconds ?? body.duration, fallback);
+}
+
+function transcriptionDuration(body: Record<string, unknown>): number {
+  return Math.min(4 * 60 * 60, Math.max(30, videoDuration(body, 60)));
 }
 
 export function estimateWalletCostForRoute(
@@ -256,6 +262,37 @@ export function estimateWalletCostForRoute(
       outputTokens: 5200,
       multiplier: 1.5,
     });
+  }
+
+  if (route === "/api/video-editor/subtitles/transcribe") {
+    const estimated = estimateOpenAITranscriptionUsd(transcriptionDuration(body));
+    return {
+      label: "Transcribir subtítulos",
+      route,
+      category: "utility",
+      estimatedCostMicros: usdToMicros(estimated),
+      reserveMicros: reserveUsdToMicros(estimated, 1.5),
+      tone: "quiet",
+    };
+  }
+
+  if (route === "/api/video-editor/render") {
+    const manifest = asRecord(body.manifest);
+    const settings = asRecord(manifest.settings);
+    const estimated = estimateVideoEditorRenderReserveUsd({
+      durationSeconds: numberValue(manifest.durationSeconds, 60),
+      fps: numberValue(settings.fps, 30),
+      width: numberValue(settings.width, 1920),
+      height: numberValue(settings.height, 1080),
+    });
+    return {
+      label: "Renderizar vídeo",
+      route,
+      category: "video",
+      estimatedCostMicros: usdToMicros(estimated),
+      reserveMicros: reserveUsdToMicros(estimated, 1.25),
+      tone: "confirm",
+    };
   }
 
   return null;

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenAI } from "@google/genai";
 import {
   parseGeminiUsageMetadata,
   recordApiUsage,
@@ -58,17 +58,23 @@ export async function POST(req: NextRequest) {
     }
 
     const modelName = process.env.VISUAL_DNA_MOSAIC_INTELLIGENCE_GEMINI_MODEL?.trim() || "gemini-2.5-flash";
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({
+    const ai = new GoogleGenAI({ apiKey });
+    const result = await ai.models.generateContent({
       model: modelName,
-      systemInstruction: VISUAL_DNA_MOSAIC_INTELLIGENCE_SYSTEM_PROMPT,
+      contents: [
+        {
+          role: "user",
+          parts: [
+            { text: VISUAL_DNA_MOSAIC_INTELLIGENCE_USER_PROMPT },
+            { inlineData: { mimeType: parsed.mimeType, data: parsed.data } },
+          ],
+        },
+      ],
+      config: {
+        systemInstruction: VISUAL_DNA_MOSAIC_INTELLIGENCE_SYSTEM_PROMPT,
+      },
     });
-
-    const result = await model.generateContent([
-      { text: VISUAL_DNA_MOSAIC_INTELLIGENCE_USER_PROMPT },
-      { inlineData: { mimeType: parsed.mimeType, data: parsed.data } },
-    ]);
-    const text = result.response.text();
+    const text = result.text ?? "";
     const raw = parseJsonObjectFromVisionModelText(text);
     const intelligence = normalizeVisualDnaMosaicIntelligence({
       ...(raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {}),
@@ -79,7 +85,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Gemini respondió, pero no devolvió ejemplos útiles del mosaico." }, { status: 422 });
     }
 
-    const usage = parseGeminiUsageMetadata(result.response);
+    const usage = parseGeminiUsageMetadata(result);
     await recordApiUsage({
       provider: "gemini",
       userEmail: usageUserEmail,

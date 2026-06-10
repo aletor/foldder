@@ -43,6 +43,9 @@ next-env.d.ts
 # API usage log (local)
 /data/api-usage.jsonl
 
+# Spaces JSON store (local fallback / migration input; DynamoDB is production source of truth)
+/data/spaces-db*.json
+
 # Presenter share DB (local tokens + payloads)
 /data/presenter-shares.json
 

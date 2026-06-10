@@ -41,6 +41,15 @@ export function estimateOpenAIEmbeddingUsd(model: string | undefined, totalToken
   return (totalTokens * perM) / 1_000_000;
 }
 
+export function estimateOpenAITranscriptionUsd(
+  durationSeconds: number,
+  options?: { usdPerMinute?: number },
+): number {
+  const seconds = Math.max(1, Math.ceil(durationSeconds));
+  const usdPerMinute = options?.usdPerMinute && options.usdPerMinute > 0 ? options.usdPerMinute : 0.006;
+  return Math.round((seconds / 60) * usdPerMinute * 1_000_000) / 1_000_000;
+}
+
 export function estimateGeminiUsd(
   model: string | undefined,
   inputTokens: number,
@@ -135,6 +144,29 @@ export function estimateAwsFargateUsd(args: {
     (args.vcpu * AWS_FARGATE_US_EAST_1_VCPU_SECOND +
       args.memoryGb * AWS_FARGATE_US_EAST_1_GB_SECOND);
   return Math.round(cost * 1_000_000) / 1_000_000;
+}
+
+export function estimateVideoEditorRenderReserveUsd(args: {
+  durationSeconds: number;
+  fps?: number;
+  height?: number;
+  width?: number;
+}): number {
+  const timelineSeconds = Math.max(1, Math.ceil(args.durationSeconds));
+  const width = Math.max(1, args.width ?? 1920);
+  const height = Math.max(1, args.height ?? 1080);
+  const fps = Math.max(1, args.fps ?? 30);
+  const pixelFactor = Math.max(1, (width * height) / (1920 * 1080));
+  const fpsFactor = Math.max(1, fps / 30);
+  const estimatedRuntimeSeconds = Math.max(
+    180,
+    Math.ceil(timelineSeconds * 3.5 * pixelFactor * fpsFactor + 60),
+  );
+  return estimateAwsFargateUsd({
+    runtimeSeconds: estimatedRuntimeSeconds,
+    vcpu: 2,
+    memoryGb: 4,
+  });
 }
 
 /** Estimación previa (UI) según modelo, resolución (Veo), ratio y duración. */

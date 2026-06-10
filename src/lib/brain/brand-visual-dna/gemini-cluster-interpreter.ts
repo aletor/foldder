@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenAI } from "@google/genai";
 import { parseJsonObjectFromVisionModelText } from "@/lib/brain/brain-vision-json-from-text";
 import { recordApiUsage, parseGeminiUsageMetadata } from "@/lib/api-usage";
 import { assertApiServiceEnabled, ApiServiceDisabledError } from "@/lib/api-usage-controls";
@@ -257,13 +257,13 @@ export async function interpretClustersWithGemini(params: {
   const modelName = process.env.BRAND_VISUAL_DNA_GEMINI_MODEL?.trim() || "gemini-2.5-flash";
   const payload = JSON.stringify(aggregateClusterPayload(params.computedClusters, params.analysesById));
 
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({
+  const ai = new GoogleGenAI({ apiKey });
+  const r = await ai.models.generateContent({
     model: modelName,
-    systemInstruction: SYSTEM,
+    contents: [{ role: "user", parts: [{ text: USER_TEMPLATE(payload) }] }],
+    config: { systemInstruction: SYSTEM },
   });
-  const r = await model.generateContent([{ text: USER_TEMPLATE(payload) }]);
-  const text = r.response.text();
+  const text = r.text ?? "";
   const raw = parseJsonObjectFromVisionModelText(text);
   if (!raw || typeof raw !== "object") return null;
   const root = raw as Record<string, unknown>;
@@ -299,7 +299,7 @@ export async function interpretClustersWithGemini(params: {
     model: modelName,
     operation: "brand_visual_dna_clusters",
     ...(() => {
-      const u = parseGeminiUsageMetadata(r.response);
+      const u = parseGeminiUsageMetadata(r);
       return {
         inputTokens: u?.inputTokens,
         outputTokens: u?.outputTokens,

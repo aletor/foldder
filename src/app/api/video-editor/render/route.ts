@@ -1,16 +1,27 @@
 import { NextResponse } from "next/server";
+import { randomUUID } from "node:crypto";
 
 import type { VideoEditorRenderManifest } from "@/app/spaces/video-editor/video-editor-render-types";
 import {
   ApiServiceDisabledError,
   assertApiServiceEnabled,
 } from "@/lib/api-usage-controls";
+import { estimateVideoEditorRenderReserveUsd } from "@/lib/pricing-config";
 import {
   canUserAccessKnowledgeFileKey,
   requireSpacesAuthUser,
 } from "@/lib/spaces-access-control";
 import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
 import { createVideoEditorFargateRenderJob } from "@/lib/video-editor/video-editor-fargate-render";
+import {
+  linkApiWalletChargeToProviderJob,
+  reserveApiWalletCharge,
+  reserveUsdToMicros,
+  releaseApiWalletChargeOnError,
+  usdToMicros,
+  walletGateErrorResponse,
+  type ApiWalletCharge,
+} from "@/lib/wallet-api-gate";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -63,6 +74,8 @@ function collectManifestS3Keys(manifest: VideoEditorRenderManifest): string[] {
 }
 
 export async function POST(req: Request) {
+  let walletCharge: ApiWalletCharge | null = null;
+  let releaseWalletOnError = true;
   try {
     const authState = await requireSpacesAuthUser(req);
     if (!authState.ok) return authState.response;
@@ -82,7 +95,50 @@ export async function POST(req: Request) {
         return NextResponse.json({ renderId: "", status: "error", error: "forbidden_asset" }, { status: 403 });
       }
     }
-    const result = await createVideoEditorFargateRenderJob(manifest, { userEmail: authState.user.email });
+    const renderId = randomUUID();
+    const estimatedCostUsd = estimateVideoEditorRenderReserveUsd({
+      durationSeconds: manifest.durationSeconds,
+      fps: manifest.settings.fps,
+      height: manifest.settings.height,
+      width: manifest.settings.width,
+    });
+    walletCharge = await reserveApiWalletCharge({
+      req,
+      userEmail: authState.user.email,
+      serviceId: "aws-fargate-render",
+      provider: "aws",
+      route: "/api/video-editor/render",
+      maxCostMicros: reserveUsdToMicros(estimatedCostUsd, { multiplier: 1.25 }),
+      operationId: `/api/video-editor/render:${renderId}`,
+      requestId: renderId,
+      reservationTtlMs: 6 * 60 * 60 * 1000,
+      metadata: {
+        renderId,
+        durationSeconds: manifest.durationSeconds,
+        fps: manifest.settings.fps,
+        width: manifest.settings.width,
+        height: manifest.settings.height,
+      },
+    });
+    await linkApiWalletChargeToProviderJob(walletCharge, {
+      userEmail: authState.user.email,
+      provider: "aws",
+      providerJobId: renderId,
+      serviceId: "aws-fargate-render",
+      route: "/api/video-editor/render",
+      metadata: {
+        estimatedCostMicros: usdToMicros(estimatedCostUsd),
+        durationSeconds: manifest.durationSeconds,
+        fps: manifest.settings.fps,
+        width: manifest.settings.width,
+        height: manifest.settings.height,
+      },
+    });
+    const result = await createVideoEditorFargateRenderJob(manifest, {
+      renderId,
+      userEmail: authState.user.email,
+    });
+    releaseWalletOnError = false;
     return NextResponse.json(result);
   } catch (error) {
     if (error instanceof ApiServiceDisabledError) {
@@ -91,6 +147,9 @@ export async function POST(req: Request) {
         { status: 423 },
       );
     }
+    if (releaseWalletOnError) await releaseApiWalletChargeOnError(walletCharge, error);
+    const walletResponse = walletGateErrorResponse(error);
+    if (walletResponse) return walletResponse;
     const message = error instanceof Error ? error.message : "render_failed";
     console.error("[video-editor-render]", error);
     return NextResponse.json({ renderId: "", status: "error", error: message }, { status: 500 });
