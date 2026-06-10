@@ -26,6 +26,7 @@ export type WalletStatusResponse = {
     balanceDeltaMicros: number;
     reservedDeltaMicros: number;
     availableDeltaMicros: number;
+    reservationId?: string;
     serviceId?: string;
     provider?: string;
     route?: string;

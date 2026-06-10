@@ -9,6 +9,7 @@ import {
   History,
   Image as ImageIcon,
   LockKeyhole,
+  LogOut,
   Loader2,
   Package,
   RefreshCw,
@@ -16,7 +17,6 @@ import {
   Sparkles,
   UnlockKeyhole,
   Video,
-  Wallet,
   X,
 } from "lucide-react";
 import {
@@ -27,7 +27,7 @@ import {
 import { useLanguage } from "@/components/LanguageProvider";
 import {
   describeWalletLedgerEntry,
-  movementAmountMicros,
+  groupWalletActivityRows,
   visibleSpentMicros,
 } from "@/lib/wallet-display";
 
@@ -35,7 +35,13 @@ type WalletBalanceButtonProps = {
   onBeforeCheckout?: () =>
     | Promise<{ ok: boolean; projectId?: string | null; error?: string }>
     | { ok: boolean; projectId?: string | null; error?: string };
+  onSignOut?: () => void;
   projectId?: string | null;
+  user?: {
+    email?: string | null;
+    image?: string | null;
+    name?: string | null;
+  } | null;
 };
 
 type LoadState =
@@ -80,6 +86,12 @@ function formatUsd(micros: number, options?: { signed?: boolean; compact?: boole
   }).format(usd)}`;
 }
 
+function formatTinyUsd(micros: number): string {
+  const usd = Math.abs(microsToUsd(micros));
+  if (usd > 0 && usd < 0.01) return "<$0.01";
+  return formatUsd(Math.abs(micros), { compact: true });
+}
+
 function formatCurrencyFromCents(amountCents: number, currency: string, language: "es" | "en"): string {
   const amount = Math.max(0, amountCents) / 100;
   return new Intl.NumberFormat(language === "es" ? "es-ES" : "en-US", {
@@ -90,9 +102,7 @@ function formatCurrencyFromCents(amountCents: number, currency: string, language
   }).format(amount);
 }
 
-function equivalentAiImages(amountCents: number, currency: string): number {
-  const normalizedCurrency = currency.trim().toLowerCase();
-  if (normalizedCurrency !== "usd") return Math.max(1, Math.floor((amountCents / 100) / AI_IMAGE_EQUIVALENT_USD));
+function equivalentAiImages(amountCents: number): number {
   return Math.max(1, Math.floor((amountCents / 100) / AI_IMAGE_EQUIVALENT_USD));
 }
 
@@ -105,6 +115,40 @@ function formatDateTime(iso: string): string {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
+}
+
+function userInitial(user: WalletBalanceButtonProps["user"]): string {
+  return (user?.name || user?.email || "U").trim().charAt(0).toUpperCase() || "U";
+}
+
+function userDisplayName(user: WalletBalanceButtonProps["user"]): string {
+  return user?.name?.trim() || user?.email?.split("@")[0]?.trim() || "Usuario";
+}
+
+function AccountAvatar({
+  className,
+  user,
+}: {
+  className: string;
+  user: WalletBalanceButtonProps["user"];
+}) {
+  return (
+    <span className={`block overflow-hidden rounded-full border border-white/25 bg-white/10 shadow-sm ${className}`}>
+      {user?.image ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={user.image}
+          alt={user.name || user.email || "Perfil"}
+          className="h-full w-full object-cover"
+          referrerPolicy="no-referrer"
+        />
+      ) : (
+        <span className="flex h-full w-full items-center justify-center bg-white/[0.08] text-xs font-black text-white/82">
+          {userInitial(user)}
+        </span>
+      )}
+    </span>
+  );
 }
 
 function walletIcon(icon: ReturnType<typeof describeWalletLedgerEntry>["icon"]) {
@@ -124,7 +168,7 @@ function recommendedPackageCents(packages: WalletStatusResponse["topupPackages"]
   return packages.find((pkg) => pkg.amountCents >= 5000)?.amountCents ?? packages[Math.floor(packages.length / 2)]?.amountCents ?? null;
 }
 
-export function WalletBalanceButton({ onBeforeCheckout, projectId = null }: WalletBalanceButtonProps) {
+export function WalletBalanceButton({ onBeforeCheckout, onSignOut, projectId = null, user = null }: WalletBalanceButtonProps) {
   const { language } = useLanguage();
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<BillingView>("overview");
@@ -139,9 +183,13 @@ export function WalletBalanceButton({ onBeforeCheckout, projectId = null }: Wall
   const account = data?.account ?? null;
   const walletConfigured = data?.configured === true;
   const walletUnavailable = data?.configured === false;
-  const recentEntries = data?.recentEntries ?? [];
+  const recentEntries = useMemo(() => data?.recentEntries ?? [], [data?.recentEntries]);
+  const activityRows = useMemo(() => groupWalletActivityRows(recentEntries), [recentEntries]);
   const visibleSpendLabel = formatUsd(visibleSpentMicros(recentEntries));
   const availableLabel = account ? formatUsd(account.availableMicros, { compact: true }) : "$0.00";
+  const compactAvailableLabel = account ? formatUsd(account.availableMicros, { compact: true }) : state.status === "loading" ? "..." : "$0";
+  const displayName = userDisplayName(user);
+  const displayEmail = user?.email?.trim() || "";
   const hasBillingRisk = account?.status === "blocked" || account?.billingReviewRequired === true;
   const canCheckout = walletConfigured && checkoutAmount == null;
   const statusLabel = !data
@@ -171,7 +219,7 @@ export function WalletBalanceButton({ onBeforeCheckout, projectId = null }: Wall
   const loadWallet = useCallback(async () => {
     setState((prev) => ({ status: "loading", data: prev.data, error: null }));
     try {
-      const response = await fetch("/api/billing/wallet?limit=30", {
+      const response = await fetch("/api/billing/wallet?limit=50", {
         method: "GET",
         credentials: "same-origin",
         cache: "no-store",
@@ -207,7 +255,7 @@ export function WalletBalanceButton({ onBeforeCheckout, projectId = null }: Wall
         setCheckoutSuccessPopup({
           amountCents,
           currency,
-          equivalentImages: equivalentAiImages(amountCents, currency),
+          equivalentImages: equivalentAiImages(amountCents),
         });
       }
     }
@@ -415,37 +463,98 @@ export function WalletBalanceButton({ onBeforeCheckout, projectId = null }: Wall
       <div className="mb-2 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <History size={16} className="text-white/58" />
-          <p className="text-[12px] font-semibold text-white/78">Movimientos</p>
+          <div>
+            <p className="text-[12px] font-semibold text-white/78">Movimientos</p>
+            <p className="text-[10px] font-medium text-white/34">Agrupado por llamada y nodo</p>
+          </div>
         </div>
         {data?.recentEntriesTruncated && (
-          <span className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[10px] font-semibold text-white/42">últimos 30</span>
+          <span className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[10px] font-semibold text-white/42">últimos 50</span>
         )}
       </div>
-      <div className="space-y-2">
-        {recentEntries.length === 0 ? (
+      <div className="space-y-1.5">
+        {activityRows.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-white/12 bg-white/[0.035] px-3 py-8 text-center text-[12px] font-medium text-white/45">
             Aún no hay movimientos.
           </div>
         ) : (
-          recentEntries.map((entry) => {
-            const display = describeWalletLedgerEntry(entry);
-            const amount = movementAmountMicros(entry);
+          activityRows.map((row) => {
+            const amount = row.status === "reserved" ? -row.reserveMicros : row.netMicros;
+            const amountTone =
+              row.status === "reserved"
+                ? "text-amber-100"
+                : amount < 0
+                  ? "text-rose-200"
+                  : amount > 0
+                    ? "text-emerald-200"
+                    : "text-white/52";
+            const statusLabel =
+              row.status === "credited"
+                ? "Crédito"
+                : row.status === "reserved"
+                  ? "En curso"
+                  : row.status === "released"
+                    ? "Liberado"
+                    : row.status === "adjustment"
+                      ? "Revisión"
+                      : "Liquidado";
             return (
               <div
-                key={entry.entryId}
-                className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.045] px-3 py-2.5"
+                key={row.id}
+                className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-2.5 py-2 transition hover:border-white/16 hover:bg-white/[0.06] sm:grid-cols-[auto_minmax(0,1fr)_auto_auto]"
               >
-                <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border ${DISPLAY_TONE_CLASS[display.tone]}`}>
-                  {walletIcon(display.icon)}
+                <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border ${DISPLAY_TONE_CLASS[row.tone]}`}>
+                  {walletIcon(row.icon)}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-[12px] font-black text-white">{display.title}</p>
-                  <p className="mt-0.5 truncate text-[10px] font-medium text-white/42">
-                    {display.subtitle} · {formatDateTime(entry.createdAt)}
-                  </p>
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <p className="truncate text-[12px] font-black text-white">{row.title}</p>
+                    {row.entryCount > 1 && (
+                      <span className="hidden shrink-0 rounded-full border border-white/10 bg-black/20 px-1.5 py-0.5 text-[8px] font-black tabular-nums text-white/38 sm:inline">
+                        {row.entryCount} pasos
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px] font-semibold text-white/38">
+                    <span className="truncate text-white/58">{row.nodeLabel}</span>
+                    <span className="text-white/18">·</span>
+                    <span>{row.providerLabel}</span>
+                    <span className="text-white/18">·</span>
+                    <span>{formatDateTime(row.latestAt)}</span>
+                  </div>
+                  <div className="mt-1 flex min-w-0 flex-wrap gap-1">
+                    {row.reserveMicros > 0 && (
+                      <span className="rounded-md border border-amber-200/14 bg-amber-300/8 px-1.5 py-0.5 text-[9px] font-bold text-amber-100/70">
+                        reserva {formatTinyUsd(row.reserveMicros)}
+                      </span>
+                    )}
+                    {row.captureMicros > 0 && (
+                      <span className="rounded-md border border-rose-200/12 bg-rose-300/8 px-1.5 py-0.5 text-[9px] font-bold text-rose-100/72">
+                        consumo {formatTinyUsd(row.captureMicros)}
+                      </span>
+                    )}
+                    {row.releaseMicros > 0 && (
+                      <span className="rounded-md border border-emerald-200/12 bg-emerald-300/8 px-1.5 py-0.5 text-[9px] font-bold text-emerald-100/72">
+                        devuelto {formatTinyUsd(row.releaseMicros)}
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <p className={`shrink-0 text-[12px] font-black tabular-nums ${amount < 0 ? "text-rose-200" : amount > 0 ? "text-emerald-200" : "text-white/52"}`}>
-                  {formatUsd(amount, { signed: true })}
+                <span
+                  className={`hidden rounded-full border px-2 py-1 text-[9px] font-black uppercase tracking-[0.1em] sm:inline ${
+                    row.status === "reserved"
+                      ? "border-amber-200/20 bg-amber-300/8 text-amber-100/72"
+                      : row.status === "credited"
+                        ? "border-emerald-200/20 bg-emerald-300/8 text-emerald-100/72"
+                        : row.status === "adjustment"
+                          ? "border-rose-200/20 bg-rose-300/8 text-rose-100/72"
+                          : "border-white/10 bg-white/[0.04] text-white/44"
+                  }`}
+                >
+                  {statusLabel}
+                </span>
+                <p className={`shrink-0 text-right text-[12px] font-black tabular-nums ${amountTone}`}>
+                  {row.status === "reserved" ? `-${formatTinyUsd(row.reserveMicros)}` : formatUsd(amount, { signed: true })}
                 </p>
               </div>
             );
@@ -463,17 +572,33 @@ export function WalletBalanceButton({ onBeforeCheckout, projectId = null }: Wall
           setOpen((value) => !value);
           if (!open) void loadWallet();
         }}
-        title="Saldo de Foldder"
+        title="Cuenta y saldo Foldder"
+        aria-label="Abrir cuenta y saldo Foldder"
         aria-expanded={open}
         aria-haspopup="dialog"
-        className={`group flex h-10 items-center gap-2 rounded-xl border px-2.5 text-[10px] font-black uppercase tracking-[0.12em] shadow-sm backdrop-blur-xl transition-all hover:scale-105 hover:bg-white/[0.15] hover:text-white ${buttonTone}`}
+        className={`group relative flex h-11 w-11 items-center justify-center rounded-full border p-0.5 shadow-sm backdrop-blur-xl transition-all hover:scale-105 hover:bg-white/[0.15] hover:text-white ${buttonTone}`}
       >
+        <AccountAvatar user={user} className="h-full w-full" />
         {state.status === "loading" && !data ? (
-          <Loader2 size={15} className="animate-spin" aria-hidden />
-        ) : (
-          <Wallet size={15} aria-hidden />
-        )}
-        <span className="hidden max-w-[7rem] truncate sm:inline">{availableLabel}</span>
+          <span className="absolute inset-0 flex items-center justify-center rounded-full bg-black/42 text-white">
+            <Loader2 size={15} className="animate-spin" aria-hidden />
+          </span>
+        ) : null}
+        <span
+          className={`absolute -bottom-1.5 left-1/2 max-w-[4.7rem] -translate-x-1/2 truncate rounded-full border px-1.5 py-0.5 text-[9px] font-black leading-none tabular-nums shadow-lg ${
+            walletUnavailable
+              ? "border-amber-200/45 bg-amber-500 text-amber-950"
+              : !data
+                ? "border-white/25 bg-white text-slate-950"
+                : hasBillingRisk
+                ? "border-rose-200/55 bg-rose-500 text-white"
+                : account?.lowBalance
+                  ? "border-amber-200/55 bg-amber-400 text-amber-950"
+                  : "border-emerald-100/55 bg-emerald-400 text-emerald-950"
+          }`}
+        >
+          {compactAvailableLabel}
+        </span>
       </button>
 
       {checkoutSuccessPopup && (
@@ -528,19 +653,20 @@ export function WalletBalanceButton({ onBeforeCheckout, projectId = null }: Wall
 
       {open && (
         <div
-          className="fixed right-3 top-16 z-[260] w-[calc(100vw-1.5rem)] max-w-[560px] overflow-hidden rounded-2xl border border-white/14 bg-[#0d1117]/98 text-white shadow-[0_30px_90px_rgba(0,0,0,0.48)] backdrop-blur-2xl sm:absolute sm:right-0 sm:top-[calc(100%+10px)] sm:w-[min(92vw,560px)]"
+          className="fixed right-3 top-16 z-[260] w-[calc(100vw-1.5rem)] max-w-[560px] overflow-hidden rounded-2xl border border-white/14 bg-[#0d1117]/98 text-white shadow-[0_30px_90px_rgba(0,0,0,0.48)] backdrop-blur-2xl sm:absolute sm:right-0 sm:top-[calc(100%+12px)] sm:w-[min(92vw,560px)]"
           role="dialog"
           aria-label="Centro de consumo"
         >
           <div className="border-b border-white/10 bg-white/[0.045] px-4 py-4">
             <div className="flex items-start justify-between gap-3">
-              <div className="flex min-w-0 items-start gap-3">
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-amber-200/25 bg-amber-400/14 text-amber-100 shadow-lg shadow-black/20">
-                  <Wallet size={20} />
-                </div>
+              <div className="flex min-w-0 items-center gap-3">
+                <AccountAvatar user={user} className="h-12 w-12 shrink-0" />
                 <div className="min-w-0">
-                  <p className="text-[11px] font-semibold text-white/48">Centro de consumo</p>
-                  <h2 className="mt-0.5 text-lg font-black tracking-tight text-white">Saldo Foldder</h2>
+                  <p className="text-[10px] font-black uppercase tracking-[0.16em] text-white/38">Cuenta Foldder</p>
+                  <h2 className="mt-0.5 truncate text-lg font-black tracking-tight text-white">{displayName}</h2>
+                  <p className="truncate text-[11px] font-semibold text-white/38">
+                    {displayEmail || "Centro de consumo"}
+                  </p>
                 </div>
               </div>
               <div className="flex shrink-0 gap-1">
@@ -566,21 +692,33 @@ export function WalletBalanceButton({ onBeforeCheckout, projectId = null }: Wall
                 </button>
               </div>
             </div>
-            <div className="mt-4 flex flex-wrap items-end justify-between gap-3">
-              <div>
+            <div className="mt-4 flex items-end justify-between gap-3 rounded-2xl border border-white/10 bg-black/18 px-3 py-3">
+              <div className="min-w-0">
                 <p className="text-[11px] font-medium text-white/42">Disponible ahora</p>
-                <p className="mt-0.5 text-4xl font-black tracking-tight text-white tabular-nums">{availableLabel}</p>
+                <p className="mt-0.5 text-3xl font-black tracking-tight text-white tabular-nums">{availableLabel}</p>
               </div>
-              <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[11px] font-bold ${statusTone}`}>
-                {!data ? (
-                  <Loader2 size={13} className="animate-spin" />
-                ) : walletUnavailable || hasBillingRisk ? (
-                  <AlertCircle size={13} />
-                ) : (
-                  <CheckCircle2 size={13} />
+              <div className="flex shrink-0 flex-col items-end gap-2">
+                <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[11px] font-bold ${statusTone}`}>
+                  {!data ? (
+                    <Loader2 size={13} className="animate-spin" />
+                  ) : walletUnavailable || hasBillingRisk ? (
+                    <AlertCircle size={13} />
+                  ) : (
+                    <CheckCircle2 size={13} />
+                  )}
+                  {statusLabel}
+                </span>
+                {onSignOut && (
+                  <button
+                    type="button"
+                    onClick={onSignOut}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.045] px-2.5 py-1.5 text-[10px] font-black uppercase tracking-[0.12em] text-white/54 transition hover:bg-white/[0.1] hover:text-white"
+                  >
+                    <LogOut size={12} />
+                    Salir
+                  </button>
                 )}
-                {statusLabel}
-              </span>
+              </div>
             </div>
           </div>
 

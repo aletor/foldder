@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { describeWalletLedgerEntry, movementAmountMicros, visibleSpentMicros } from "./wallet-display";
+import {
+  describeWalletLedgerEntry,
+  groupWalletActivityRows,
+  movementAmountMicros,
+  visibleSpentMicros,
+} from "./wallet-display";
 import type { WalletStatusResponse } from "./wallet-client-events";
 
 type Entry = WalletStatusResponse["recentEntries"][number];
@@ -12,6 +17,7 @@ function entry(partial: Partial<Entry> & Pick<Entry, "type">): Entry {
     balanceDeltaMicros: partial.balanceDeltaMicros ?? 0,
     reservedDeltaMicros: partial.reservedDeltaMicros ?? 0,
     availableDeltaMicros: partial.availableDeltaMicros ?? 0,
+    reservationId: partial.reservationId,
     serviceId: partial.serviceId,
     provider: partial.provider,
     route: partial.route,
@@ -59,5 +65,77 @@ describe("wallet-display", () => {
     ];
 
     expect(visibleSpentMicros(entries)).toBe(320_000);
+  });
+
+  it("groups reserve, capture, and release from one OpenAI call into one activity row", () => {
+    const entries = [
+      entry({
+        entryId: "release_1",
+        type: "release",
+        reservationId: "rsv_openai_1",
+        amountMicros: 35_000,
+        availableDeltaMicros: 35_000,
+        serviceId: "openai-enhance",
+        provider: "openai",
+        route: "/api/openai/enhance",
+        createdAt: "2026-06-10T14:41:03.000Z",
+      }),
+      entry({
+        entryId: "capture_1",
+        type: "capture",
+        reservationId: "rsv_openai_1",
+        amountMicros: 5_000,
+        balanceDeltaMicros: -5_000,
+        serviceId: "openai-enhance",
+        provider: "openai",
+        route: "/api/openai/enhance",
+        createdAt: "2026-06-10T14:41:02.000Z",
+      }),
+      entry({
+        entryId: "reserve_1",
+        type: "reserve",
+        reservationId: "rsv_openai_1",
+        amountMicros: 40_000,
+        availableDeltaMicros: -40_000,
+        serviceId: "openai-enhance",
+        provider: "openai",
+        route: "/api/openai/enhance",
+        createdAt: "2026-06-10T14:41:01.000Z",
+      }),
+    ];
+
+    expect(groupWalletActivityRows(entries)).toEqual([
+      expect.objectContaining({
+        title: "Prompt mejorado",
+        nodeLabel: "Nodo Prompt",
+        providerLabel: "OpenAI",
+        status: "settled",
+        reserveMicros: 40_000,
+        captureMicros: 5_000,
+        releaseMicros: 35_000,
+        netMicros: -5_000,
+        entryCount: 3,
+      }),
+    ]);
+  });
+
+  it("keeps standalone purchases as compact activity rows", () => {
+    expect(
+      groupWalletActivityRows([
+        entry({
+          type: "purchase",
+          amountMicros: 25_000_000,
+          balanceDeltaMicros: 25_000_000,
+          availableDeltaMicros: 25_000_000,
+        }),
+      ]),
+    ).toEqual([
+      expect.objectContaining({
+        title: "Recarga confirmada",
+        providerLabel: "Foldder",
+        status: "credited",
+        netMicros: 25_000_000,
+      }),
+    ]);
   });
 });

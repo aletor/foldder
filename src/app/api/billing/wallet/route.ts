@@ -22,6 +22,7 @@ function sanitizeLedgerEntry(entry: WalletLedgerEntry) {
     balanceDeltaMicros: entry.balanceDeltaMicros,
     reservedDeltaMicros: entry.reservedDeltaMicros,
     availableDeltaMicros: entry.availableDeltaMicros,
+    reservationId: entry.reservationId,
     serviceId: entry.serviceId,
     provider: entry.provider,
     route: entry.route,

@@ -2,7 +2,6 @@
 
 import React, { useState, useCallback, useMemo, useRef, useEffect, useLayoutEffect } from "react";
 import { createPortal, flushSync } from "react-dom";
-import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
 import {
@@ -171,7 +170,6 @@ import {
   Languages,
   ChevronDown,
   ZoomIn,
-  LogOut,
   MessageCircle,
   CheckCircle2,
   AlertCircle,
@@ -6181,44 +6179,17 @@ export function SpacesContent() {
                   <span className="hidden sm:inline">Nuevo proyecto</span>
                 </button>
                 {isAuthenticated && (
-                  <div className="ml-1 flex items-center gap-1.5">
+                  <div className="ml-1 flex items-center">
                     <WalletBalanceButton
                       onBeforeCheckout={prepareProjectForCheckout}
-                      projectId={activeProjectId}
-                    />
-                    <div
-                      className="h-9 w-9 overflow-hidden rounded-full border border-white/30 bg-white/10 shadow-sm"
-                      title={session?.user?.email || "Usuario"}
-                    >
-                      {session?.user?.image ? (
-                        <Image
-                          src={session.user.image}
-                          alt={session.user.name || "Perfil"}
-                          width={36}
-                          height={36}
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        <div className="flex h-full w-full items-center justify-center text-xs font-bold text-white/80">
-                          {(session?.user?.name || session?.user?.email || "U")
-                            .trim()
-                            .charAt(0)
-                            .toUpperCase()}
-                        </div>
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
+                      onSignOut={() => {
                         if (sessionStatus === "authenticated") {
                           void signOut({ callbackUrl: "/" });
                         }
                       }}
-                      title="Cerrar sesión"
-                      className="group flex h-9 w-9 items-center justify-center rounded-xl border border-white/25 bg-white/[0.08] text-white/70 shadow-sm backdrop-blur-xl transition-all hover:scale-105 hover:bg-white/[0.15] hover:text-white"
-                    >
-                      <LogOut size={14} className="text-current" />
-                    </button>
+                      projectId={activeProjectId}
+                      user={session?.user}
+                    />
                   </div>
                 )}
               </div>
