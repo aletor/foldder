@@ -24,8 +24,6 @@ type BrainDoc = {
   errorMessage?: string;
 };
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
 export async function POST(req: NextRequest) {
   try {
     await assertApiServiceEnabled("openai-embeddings");
@@ -52,6 +50,11 @@ export async function POST(req: NextRequest) {
     nextDocs[idx] = { ...nextDocs[idx], extractedContext: contextString, status: "Analizado", errorMessage: undefined };
 
     try {
+      const openaiApiKey = process.env.OPENAI_API_KEY?.trim();
+      if (!openaiApiKey) {
+        throw new Error("OPENAI_API_KEY not configured");
+      }
+      const openai = new OpenAI({ apiKey: openaiApiKey });
       const embeddingResponse = await openai.embeddings.create({
         model: "text-embedding-3-small",
         input: contextString,

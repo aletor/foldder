@@ -89,7 +89,14 @@ type BrainDoc = {
   };
 };
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+let openAiClient: OpenAI | null = null;
+
+function getOpenAiClient(): OpenAI {
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  if (!apiKey) throw new Error("OPENAI_API_KEY not configured");
+  openAiClient ??= new OpenAI({ apiKey });
+  return openAiClient;
+}
 
 type AnalyzeUsageQueue = Promise<void>[];
 
@@ -782,6 +789,7 @@ async function inferVisualStyleWithLlm(
   };
 
   try {
+    const openai = getOpenAiClient();
     const completion = await openai.chat.completions.create({
       model: "gpt-4o",
       response_format: { type: "json_object" },
@@ -876,6 +884,7 @@ async function buildAutofillStrategy(
   }));
 
   try {
+    const openai = getOpenAiClient();
     const completion = await openai.chat.completions.create({
       model: "gpt-4o",
       response_format: { type: "json_object" },
@@ -1166,6 +1175,7 @@ export async function POST(req: NextRequest) {
         let analysisOrigin: BrainDoc["analysisOrigin"] = "remote_ai";
         let analysisReliability: BrainDoc["analysisReliability"] = "high";
         let isReliableForGeneration = true;
+        const openai = getOpenAiClient();
         if (doc.type === "image" || doc.format === "image" || doc.mime.startsWith("image/")) {
           const b64 = fileBuffer.toString("base64");
           try {
