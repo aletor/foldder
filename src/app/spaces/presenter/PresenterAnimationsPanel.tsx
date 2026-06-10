@@ -79,10 +79,8 @@ export function PresenterAnimationsPanel({
   const [draggingKey, setDraggingKey] = useState<string | null>(null);
   const [dropTargetKey, setDropTargetKey] = useState<string | null>(null);
 
-  if (!page) return null;
-
-  const objects = page.objects ?? [];
-  const steps = mergeStepsWithPage(page);
+  const objects = page?.objects ?? [];
+  const steps = useMemo(() => (page ? mergeStepsWithPage(page) : []), [page]);
   const hasSteps = steps.length > 0;
 
   const selectedSet = useMemo(() => new Set(selectedStepKeys), [selectedStepKeys]);
@@ -94,13 +92,15 @@ export function PresenterAnimationsPanel({
       .filter((s): s is PresenterRevealStep => s != null);
   }, [selectedStepKeys, steps]);
 
+  if (!page) return null;
+
   const setEnter = (enter: PresenterGroupEnterId) => {
     if (!selectedStepKeys.length) return;
     if (selectedStepKeys.length >= 2 && onApplyEnterToMultiSelection) {
       onApplyEnterToMultiSelection(selectedStepKeys, enter);
       return;
     }
-    let next = [...steps];
+    const next = [...steps];
     for (const k of selectedStepKeys) {
       const idx = next.findIndex((s) => presenterStepKey(s) === k);
       if (idx >= 0) {

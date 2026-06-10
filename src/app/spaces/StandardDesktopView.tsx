@@ -156,23 +156,32 @@ export function StandardDesktopView({
   const activePinType = mapAppIdToPinType(activeAppId);
   const minimizedPinType = mapAppIdToPinType(minimizedAppId);
   const noteCards = useMemo(
-    () => {
-      let nextTop = 176;
-      return notes.map((node) => {
+    () =>
+      notes.reduce<
+        Array<{
+          data: ReturnType<typeof normalizeNotesNodeData>;
+          height: number;
+          node: (typeof notes)[number];
+          top: number;
+          width: number;
+        }>
+      >((cards, node) => {
         const style = (node.style as { width?: number; height?: number } | undefined) ?? {};
         const width = Math.min(typeof style.width === "number" ? style.width : NOTE_WIDTH, NOTE_WIDTH);
         const height = typeof style.height === "number" ? style.height : NOTE_HEIGHT;
-        const top = nextTop;
-        nextTop += height + 18;
-        return {
-          node,
-          data: normalizeNotesNodeData(node.data),
-          top,
-          width,
-          height,
-        };
-      });
-    },
+        const previous = cards[cards.length - 1];
+        const top = previous ? previous.top + previous.height + 18 : 176;
+        return [
+          ...cards,
+          {
+            node,
+            data: normalizeNotesNodeData(node.data),
+            top,
+            width,
+            height,
+          },
+        ];
+      }, []),
     [notes],
   );
 

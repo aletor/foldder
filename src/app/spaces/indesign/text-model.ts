@@ -279,7 +279,7 @@ export function htmlToStoryNodes(html: string): StoryNode[] {
       });
       if (blockKids.length > 1) {
         for (const blk of blockKids) {
-          let spans = extractSpans(blk);
+          const spans = extractSpans(blk);
           if (spans.length === 0) spans.push({ id: uid("s"), text: "" });
           paragraphs.push({
             type: "paragraph",
@@ -289,7 +289,7 @@ export function htmlToStoryNodes(html: string): StoryNode[] {
           });
         }
       } else {
-        let spans = extractSpans(li);
+        const spans = extractSpans(li);
         if (spans.length === 0) spans.push({ id: uid("s"), text: "" });
         paragraphs.push({
           type: "paragraph",

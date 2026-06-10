@@ -185,7 +185,7 @@ describe("advanced-image-pipeline", () => {
   });
 
   it("adds clean binary masks and integration contracts without sending previous working state", () => {
-    let s = addCorrection(
+    const s = addCorrection(
       session({ maxReferenceImages: 4 }),
       {
         ...correction("shoe", { reference: grid("shoe") }),
@@ -211,7 +211,7 @@ describe("advanced-image-pipeline", () => {
   });
 
   it("adds per-correction photographic fit guidance even without an integration contract", () => {
-    let s = addCorrection(session({ maxReferenceImages: 4 }), correction("new-object"), {
+    const s = addCorrection(session({ maxReferenceImages: 4 }), correction("new-object"), {
       timestamp: "2026-05-18T10:01:00.000Z",
     });
 

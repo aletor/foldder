@@ -1037,7 +1037,7 @@ async function appendInvisibleSelectableTextLayerAsync(
   const useKern = conv.fontKerning !== "none";
   const ta = conv.textAlign;
 
-  let charStyles = buildCharStyleMap(conv.text, runs);
+  const charStyles = buildCharStyleMap(conv.text, runs);
   if (pdfOpts?.makeUrlsClickable) {
     applyAutoLinksToCharStyleMap(conv.text, charStyles);
   }

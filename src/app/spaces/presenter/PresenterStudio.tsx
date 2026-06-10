@@ -425,7 +425,7 @@ export function PresenterStudio({
         return;
       }
       const steps = mergeStepsWithPage(currentPage);
-      let next = [...steps];
+      const next = [...steps];
       const sel = animationSelectedKeys[0]!;
       const idx = next.findIndex((s) => presenterStepKey(s) === sel);
       if (idx >= 0) {

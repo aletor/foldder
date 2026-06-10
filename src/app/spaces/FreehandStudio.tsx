@@ -21281,7 +21281,7 @@ export function FreehandStudioCanvas({
     }
 
     if (dragState.type === "brushPaint" && dragState.brushLastPixel != null) {
-      let s = brushSessionRef.current;
+      const s = brushSessionRef.current;
       const prevPixel = dragState.brushLastPixel;
       if (!s) return;
       const pos = screenToCanvas(e.clientX, e.clientY);
@@ -21812,7 +21812,7 @@ export function FreehandStudioCanvas({
         return;
       }
       const tgt = photoGradientDrawSurface(studioCaps.layerMask, maskEditObjectIdRef.current);
-      let oid = ds.photoGradientObjectId;
+      const oid = ds.photoGradientObjectId;
 
       const startApplyForObject = (o: FreehandObject, baseUrl: string) => {
         void loadImageToBrushCanvas(baseUrl, o.width, o.height).then(({ canvas }) => {
@@ -21932,7 +21932,7 @@ export function FreehandStudioCanvas({
       const mode = subtract ? "subtract" : additive ? "add" : "replace";
       dragStateRef.current = null;
       setDragState(null);
-      let ring = [...ds.photoLassoPoints];
+      const ring = [...ds.photoLassoPoints];
       if (mode === "replace" && ring.length >= 1) {
         let minX = ring[0]!.x, maxX = ring[0]!.x, minY = ring[0]!.y, maxY = ring[0]!.y;
         for (const p of ring) {

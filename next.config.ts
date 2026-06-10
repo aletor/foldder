@@ -16,7 +16,7 @@ const nextConfig: NextConfig = {
    * disparen recompilaciones en cadena. Con Turbopack (`next dev` por defecto) esta opción no aplica
    * al bundler principal; usa `npm run dev` (webpack) para beneficiarte de esto.
    */
-  webpack: (config, { dev, isServer }) => {
+  webpack: (config, { dev, isServer, webpack }) => {
     if (dev) {
       config.watchOptions = {
         ...config.watchOptions,
@@ -29,6 +29,13 @@ const nextConfig: NextConfig = {
       canvas: false,
       "paper/dist/node/canvas.js": false,
     };
+    config.plugins = config.plugins || [];
+    config.plugins.push(
+      new webpack.IgnorePlugin({
+        resourceRegExp: /^\.\/node\/extend\.js$/,
+        contextRegExp: /paper[/\\]dist$/,
+      }),
+    );
     if (!isServer) {
       config.resolve.fallback = {
         ...(config.resolve.fallback || {}),

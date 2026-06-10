@@ -376,6 +376,8 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
   );
 });
 
+DesignerNode.displayName = "DesignerNode";
+
 function DesignerStudioLazy(props: {
   initialPages: DesignerPageState[];
   activePageIndex: number;

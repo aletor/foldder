@@ -234,3 +234,5 @@ export const PresenterNode = memo(({ id, data, selected }: NodeProps<any>) => {
     </div>
   );
 });
+
+PresenterNode.displayName = "PresenterNode";
