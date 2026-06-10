@@ -71,6 +71,7 @@ import {
   createWalletCheckoutSession,
   creditWalletFromCheckoutSession,
   parseRequestedTopupCents,
+  stripeAutomaticTaxEnabled,
   walletClawbackMicrosFromCheckoutSessionAmount,
   walletCreditMicrosFromCheckoutSession,
 } from "./stripe-billing";
@@ -103,6 +104,7 @@ describe("stripe-billing", () => {
   beforeEach(() => {
     process.env = { ...previousEnv };
     process.env.STRIPE_SECRET_KEY = "sk_test_foldder";
+    delete process.env.FOLDDER_STRIPE_AUTOMATIC_TAX_ENABLED;
     delete process.env.FOLDDER_STRIPE_TOPUP_AMOUNTS_USD;
     walletMock.creditWalletBalance.mockReset();
     walletMock.creditWalletBalance.mockResolvedValue({});
@@ -142,6 +144,12 @@ describe("stripe-billing", () => {
     expect(parseRequestedTopupCents({ amountCents: 1500 })).toBe(1500);
   });
 
+  it("keeps Stripe automatic tax enabled by default but allows explicit staging disable", () => {
+    expect(stripeAutomaticTaxEnabled()).toBe(true);
+    process.env.FOLDDER_STRIPE_AUTOMATIC_TAX_ENABLED = "0";
+    expect(stripeAutomaticTaxEnabled()).toBe(false);
+  });
+
   it("checks wallet availability before creating a Stripe Checkout session", async () => {
     stripeMock.checkoutSessionsCreate.mockResolvedValue({
       id: "cs_checkout_ready",
@@ -164,6 +172,26 @@ describe("stripe-billing", () => {
         automatic_tax: { enabled: true },
         customer_email: "Buyer@Example.com",
         mode: "payment",
+      }),
+    );
+  });
+
+  it("can create Checkout sessions with automatic tax disabled for unconfigured Stripe test accounts", async () => {
+    process.env.FOLDDER_STRIPE_AUTOMATIC_TAX_ENABLED = "0";
+    stripeMock.checkoutSessionsCreate.mockResolvedValue({
+      id: "cs_checkout_ready",
+      url: "https://checkout.stripe.test/session",
+    });
+
+    await createWalletCheckoutSession({
+      req: new Request("https://foldder.test/spaces"),
+      userEmail: "Buyer@Example.com",
+      amountCents: 2500,
+    });
+
+    expect(stripeMock.checkoutSessionsCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        automatic_tax: { enabled: false },
       }),
     );
   });

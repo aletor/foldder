@@ -1,4 +1,4 @@
-import { allowedStripeTopupCents, stripeCurrency } from "@/lib/stripe-billing";
+import { allowedStripeTopupCents, stripeAutomaticTaxEnabled, stripeCurrency } from "@/lib/stripe-billing";
 import { walletGateMode } from "@/lib/wallet-api-gate";
 import { billingNotificationsMode } from "@/lib/billing-notifications";
 import { spendControlsMode } from "@/lib/spend-controls";
@@ -127,6 +127,7 @@ function checkStripe(): BillingReadinessCheck[] {
   const currency = stripeCurrency();
   const hasSecret = present("STRIPE_SECRET_KEY");
   const hasWebhook = present("STRIPE_WEBHOOK_SECRET");
+  const automaticTax = stripeAutomaticTaxEnabled();
   return [
     {
       id: "stripe-secret-key",
@@ -151,6 +152,16 @@ function checkStripe(): BillingReadinessCheck[] {
       owner: currency === "usd" ? "codex" : "user",
       detail: `FOLDDER_STRIPE_CURRENCY=${currency}. Wallet ledger is USD-only right now.`,
       action: currency === "usd" ? undefined : "Use USD for launch or plan a ledger currency migration before paid balances exist.",
+    },
+    {
+      id: "stripe-automatic-tax",
+      label: "Stripe automatic tax",
+      status: automaticTax ? "ready" : "warning",
+      owner: "user",
+      detail: `automaticTax=${automaticTax ? "enabled" : "disabled"}.`,
+      action: automaticTax
+        ? undefined
+        : "Configure Stripe Tax head office address, then set FOLDDER_STRIPE_AUTOMATIC_TAX_ENABLED=1 before real paid launch.",
     },
     {
       id: "stripe-topups",

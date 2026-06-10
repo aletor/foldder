@@ -14,6 +14,7 @@ export const STRIPE_SECRET_KEY_ENV = "STRIPE_SECRET_KEY";
 export const STRIPE_WEBHOOK_SECRET_ENV = "STRIPE_WEBHOOK_SECRET";
 export const STRIPE_TOPUP_AMOUNTS_ENV = "FOLDDER_STRIPE_TOPUP_AMOUNTS_USD";
 export const STRIPE_CURRENCY_ENV = "FOLDDER_STRIPE_CURRENCY";
+export const STRIPE_AUTOMATIC_TAX_ENABLED_ENV = "FOLDDER_STRIPE_AUTOMATIC_TAX_ENABLED";
 
 const DEFAULT_TOPUP_AMOUNTS_USD = [10, 25, 50, 100, 250];
 const WALLET_TOPUP_PURPOSE = "wallet_topup";
@@ -48,6 +49,12 @@ export function stripeWebhookSecret(): string {
 
 export function stripeCurrency(): string {
   return (process.env[STRIPE_CURRENCY_ENV]?.trim().toLowerCase() || "usd");
+}
+
+export function stripeAutomaticTaxEnabled(): boolean {
+  const raw = process.env[STRIPE_AUTOMATIC_TAX_ENABLED_ENV]?.trim().toLowerCase();
+  if (!raw) return true;
+  return raw !== "0" && raw !== "false" && raw !== "off" && raw !== "no";
 }
 
 export function stripeClient(): Stripe {
@@ -130,7 +137,7 @@ export async function createWalletCheckoutSession(input: {
     customer_email: input.userEmail,
     customer_creation: "always",
     billing_address_collection: "required",
-    automatic_tax: { enabled: true },
+    automatic_tax: { enabled: stripeAutomaticTaxEnabled() },
     payment_intent_data: {
       metadata,
     },
