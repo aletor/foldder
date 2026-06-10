@@ -1,7 +1,5 @@
 "use client";
 
-/* eslint-disable @next/next/no-img-element */
-
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { NodeProps, Position, useEdges, useNodes, useReactFlow, type Node } from "@xyflow/react";
 import {

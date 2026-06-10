@@ -33,7 +33,6 @@ function collectFillAppearance(f: unknown, map: Map<string, number>) {
 }
 
 /** Objeto suelto del lienzo (evita import circular con FreehandStudio). */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function visitObject(o: any, map: Map<string, number>) {
   if (!o || !o.visible || o.isClipMask) return;
 
@@ -61,7 +60,6 @@ function visitObject(o: any, map: Map<string, number>) {
 export type DocumentColorStat = { hex: string; count: number };
 
 /** Colores hex del documento actual, ordenados por frecuencia descendente. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function extractDocumentColorStats(objects: any[], artboardBackgrounds?: string[]): DocumentColorStat[] {
   const map = new Map<string, number>();
   for (const o of objects) visitObject(o, map);
@@ -90,7 +88,6 @@ function replaceInFill(f: FillAppearance, from: string, to: string): FillAppeara
   return f;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function mapOne(o: any, from: string, to: string): any {
   const nf = normalizeHexColor(from);
   const nt = normalizeHexColor(to);
@@ -122,7 +119,6 @@ function mapOne(o: any, from: string, to: string): any {
 }
 
 /** Sustituye todas las apariciones de `from` por `to` en fills, trazos y stops de gradiente. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function replaceHexEverywhere(objects: any[], from: string, to: string): any[] {
   return objects.map((o) => mapOne(o, from, to));
 }

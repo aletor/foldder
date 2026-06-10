@@ -857,7 +857,6 @@ export function SpacesContent() {
         };
       }),
     // Only rebuild when the Brain-relevant identity/label signature changes; node position changes should not refresh Brain cards.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [brainFlowNodesSignature],
   );
 
@@ -900,7 +899,6 @@ export function SpacesContent() {
         generatedTextAssets,
       }),
     // Project media is driven by node type/data, not canvas x/y movement. Avoid rescanning heavy Designer pages during drag.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [metadata.assets, nodesContentSignature, projectFiles, generatedTextAssets, projectScopeId],
   );
 
@@ -1086,7 +1084,7 @@ export function SpacesContent() {
       setViewport({ x: 120, y: 80, zoom: 0.72 });
     }, 50);
     return () => clearTimeout(t);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   const performCanvasUngroup = useSpacesCanvasUngroup(
     setNodes,

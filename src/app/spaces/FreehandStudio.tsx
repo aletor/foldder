@@ -30002,7 +30002,6 @@ export function FreehandStudioCanvas({
                           className="group w-full overflow-hidden rounded-xl border border-white/[0.1] bg-[#171c25] text-left transition hover:border-sky-400/45 hover:bg-[#1a2230]"
                           title="Aplicar a la selección actual"
                         >
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img
                             src={item.url}
                             alt=""
