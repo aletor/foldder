@@ -358,9 +358,12 @@ export const GuionistaNode = memo(function GuionistaNode({ id, data, selected }:
       introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}
       minWidth={275}
       width={275}
+      className="guionista-node"
       handles={GUIONISTA_NODE_HANDLES}
+      variant="frameless"
+      material="glass"
     >
-      <div className="node-content flex min-w-0 flex-col gap-3 px-3 pb-3 pt-2">
+      <div className="node-content guionista-node-content flex min-w-0 flex-col gap-3 px-3 pb-3 pt-2">
         <div className="min-w-0">
           <div className="flex items-start gap-2">
             <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] ${activeVisualMeta.accent.replace("border-", "border border-")}`}>

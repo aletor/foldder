@@ -10,6 +10,7 @@ import { downloadS3Object, forceDownloadUrl } from "@/lib/browser-download";
 import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
 import { ScrubNumberInput } from "../ScrubNumberInput";
 import { FoldderDataHandle } from "../FoldderDataHandle";
+import { NodeLabel } from "../foldder-node-ui";
 import { readMediaListFromNode } from "../media-list-consumers";
 import type { MediaListItem, MediaListOutput } from "../media-list-output";
 import { generateTimelineAudio } from "./video-editor-audio-generation-service";
@@ -2383,18 +2384,25 @@ export const VideoEditorNode = memo(function VideoEditorNode({ id, data, selecte
 
   const label = String((data as { label?: unknown }).label || "Video Editor");
   return (
-    <div className={cx("relative w-[340px] rounded-[30px] border bg-[#111827]/94 p-4 text-white shadow-[0_18px_60px_rgba(0,0,0,0.32)] backdrop-blur-xl", selected ? "border-cyan-300/55" : "border-white/12")}>
-      <FoldderDataHandle type="target" position={Position.Left} id="media_list" dataType="generic" />
-      <div className="flex items-start justify-between gap-3">
+    <div
+      className={cx("custom-node video-editor-node foldder-node--frameless node--glass relative bg-[#111827] p-4 pt-10 text-white", selected ? "video-editor-node--selected" : undefined)}
+      style={{ width: 340, minWidth: 340, minHeight: 210 }}
+    >
+      <NodeLabel id={id} label={typeof data.label === "string" ? data.label : undefined} defaultLabel="Video Editor" />
+      <div className="handle-wrapper handle-left">
+        <FoldderDataHandle type="target" position={Position.Left} id="media_list" dataType="generic" />
+        <span className="handle-label">Media list</span>
+      </div>
+      <div className="video-editor-heading flex items-start justify-between gap-3">
         <div>
           <div className="text-[10px] font-black uppercase tracking-[0.18em] text-cyan-100/45">Video Editor</div>
           <h3 className="mt-1 text-lg font-black tracking-[-0.04em]">{label}</h3>
         </div>
-        <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-cyan-300/15 text-cyan-50">
+        <div className="video-editor-icon flex h-10 w-10 items-center justify-center rounded-2xl bg-cyan-300/15 text-cyan-50">
           <Film size={18} />
         </div>
       </div>
-      <div className="mt-4 rounded-3xl border border-white/10 bg-white/[0.055] p-4">
+      <div className="video-editor-summary mt-4 rounded-3xl border border-white/10 bg-white/[0.055] p-4">
         {sourceMediaList ? (
           <>
             <div className="text-3xl font-black tracking-[-0.06em]">{stats.clips.length} clips</div>
@@ -2407,9 +2415,9 @@ export const VideoEditorNode = memo(function VideoEditorNode({ id, data, selecte
           </>
         )}
       </div>
-      <div className="mt-3 flex items-center justify-between gap-3">
-        <span className="rounded-full bg-white/[0.07] px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.12em] text-white/46">{effectiveData.status}</span>
-        <button type="button" onClick={() => setStudioOpen(true)} className="rounded-2xl bg-cyan-300/18 px-4 py-2 text-xs font-black uppercase tracking-[0.12em] text-cyan-50">Abrir</button>
+      <div className="video-editor-actions mt-3 flex items-center justify-between gap-3">
+        <span className="video-editor-status rounded-full bg-white/[0.07] px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.12em] text-white/46">{effectiveData.status}</span>
+        <button type="button" onClick={() => setStudioOpen(true)} className="video-editor-open-button rounded-full bg-white px-3 py-1.5 text-[11px] font-semibold text-[#3a2a20] transition hover:scale-[1.02] hover:bg-[#f7f7f4]">Abrir</button>
       </div>
       {studioOpen ? <VideoEditorStudio nodeId={id} data={effectiveData} sourceMediaList={sourceMediaList} onChange={commit} onClose={() => setStudioOpen(false)} /> : null}
     </div>

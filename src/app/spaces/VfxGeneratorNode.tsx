@@ -29,7 +29,7 @@ import {
 import { BeebleClient, type BeebleJob } from "@/lib/beeble-api";
 import { useBeebleJobPoller } from "@/hooks/useBeebleJobPoller";
 import { runAiJobWithNotification } from "@/lib/ai-job-notifications";
-import { FoldderNodeHeaderTitle, FoldderStudioModeCenterButton } from "./foldder-node-ui";
+import { FoldderNodeHeaderTitle, FoldderStudioModeCenterButton, NodeLabel } from "./foldder-node-ui";
 import { loadVideoDimensions } from "./presenter/presenter-video-frame-layout";
 import {
   nodeFrameNeedsSync,
@@ -404,10 +404,11 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<VfxGener
   return (
     <div
       ref={frameRef}
-      className={`custom-node processor-node group/node ${isBusy ? "node-glow-running" : ""}`}
+      className={`custom-node processor-node vfx-generator-node group/node ${isBusy ? "node-glow-running" : ""}`}
       style={{ minWidth: 300 }}
     >
       <FoldderNodeResizerLocal minWidth={300} minHeight={220} maxWidth={960} maxHeight={VFX_STUDIO_NODE_MAX_HEIGHT} keepAspectRatio isVisible={selected} />
+      <NodeLabel id={id} label={nodeData.label} defaultLabel="VFX Generator" />
 
       <div className="handle-wrapper handle-left !top-[12%]">
         <FoldderDataHandle type="target" position={Position.Left} id="sourceVideo" dataType="video" />

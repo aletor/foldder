@@ -713,10 +713,12 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
       }
       titleClassName="min-w-0 flex-1 uppercase leading-tight tracking-tight line-clamp-2"
       badgeClassName="shrink-0"
-      baseClassName="custom-node processor-node"
-      className="group/node"
+      baseClassName="custom-node processor-node photo-room-node"
+      className="group/node foldder-frameless-label-dark"
       minWidth={260}
       handles={nodeHandles}
+      variant="frameless"
+      material="media"
       introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}
     >
       <FoldderNodeResizerLocal
@@ -730,14 +732,14 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
 
       <div
         ref={previewRef}
-        className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-b-[24px] bg-[#0a0a0a] group/out"
+        className="foldder-frameless-main relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-[#0a0a0a] group/out"
         style={{ minHeight: 120 }}
       >
         {displayUrl && nodeMediaVisible ? (
           <img
             src={displayUrl}
             alt=""
-            className="max-h-full max-w-full h-auto w-auto object-contain"
+            className="h-full w-full object-cover"
             onLoad={refreshHandleGeometry}
             onError={refreshHandleGeometry}
           />

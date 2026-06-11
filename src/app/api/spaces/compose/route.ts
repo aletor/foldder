@@ -108,12 +108,6 @@ export async function POST(req: NextRequest) {
     const filename = (body.get('filename') as string) || `Composition_${Date.now()}.${format === 'jpeg' ? 'jpg' : 'png'}`;
     const width = parseInt(body.get('width') as string) || 1920;
     const height = parseInt(body.get('height') as string) || 1080;
-    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
-      return NextResponse.json({ error: 'Invalid composition dimensions' }, { status: 400 });
-    }
-    if (width > MAX_COMPOSE_DIMENSION || height > MAX_COMPOSE_DIMENSION || width * height > MAX_COMPOSE_PIXELS) {
-      return NextResponse.json({ error: 'Composition dimensions are too large' }, { status: 413 });
-    }
     if (layersJson.length > MAX_LAYERS_JSON_CHARS) {
       return NextResponse.json({ error: 'Composition payload is too large' }, { status: 413 });
     }
@@ -162,6 +156,13 @@ export async function POST(req: NextRequest) {
           'Cache-Control': 'no-cache, no-store, must-revalidate',
         },
       });
+    }
+
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+      return NextResponse.json({ error: 'Invalid composition dimensions' }, { status: 400 });
+    }
+    if (width > MAX_COMPOSE_DIMENSION || height > MAX_COMPOSE_DIMENSION || width * height > MAX_COMPOSE_PIXELS) {
+      return NextResponse.json({ error: 'Composition dimensions are too large' }, { status: 413 });
     }
 
     const { default: sharp } = await import('sharp');

@@ -37,6 +37,9 @@ export type StudioCanvasNodeShellProps = {
   style?: React.CSSProperties;
   children: React.ReactNode;
   handles?: StudioCanvasNodeHandleSpec[];
+  variant?: "default" | "frameless";
+  material?: "media" | "glass";
+  error?: boolean;
 };
 
 export const StudioCanvasNodeShell = React.forwardRef<HTMLDivElement, StudioCanvasNodeShellProps>(function StudioCanvasNodeShell({
@@ -59,11 +62,19 @@ export const StudioCanvasNodeShell = React.forwardRef<HTMLDivElement, StudioCanv
   style,
   children,
   handles = [],
+  variant = "default",
+  material = "glass",
+  error,
 }, ref) {
+  const variantClassName =
+    variant === "frameless"
+      ? `foldder-node--frameless node--${material}${error ? " foldder-node--error" : ""}`
+      : "";
+  const nodeTypeClassName = `foldder-studio-node foldder-studio-node--${nodeType}`;
   return (
     <div
       ref={ref}
-      className={[baseClassName, className].filter(Boolean).join(" ")}
+      className={[baseClassName, nodeTypeClassName, variantClassName, className].filter(Boolean).join(" ")}
       style={{
         minWidth,
         width,
@@ -133,7 +144,7 @@ export function StudioCanvasOpenButton({
         event.stopPropagation();
         onClick();
       }}
-      className={`nodrag flex w-full items-center justify-center gap-2 rounded-xl border border-slate-300/80 bg-white/90 px-3 py-2.5 text-[11px] font-bold uppercase tracking-wide text-slate-800 shadow-sm transition hover:bg-white focus:outline-none focus-visible:ring-2 ${focusClass} ${className || ""}`}
+      className={`studio-canvas-open-button nodrag flex w-full items-center justify-center gap-2 rounded-xl border border-slate-300/80 bg-white/90 px-3 py-2.5 text-[11px] font-bold uppercase tracking-wide text-slate-800 shadow-sm transition hover:bg-white focus:outline-none focus-visible:ring-2 ${focusClass} ${className || ""}`}
     >
       {icon}
       {children}

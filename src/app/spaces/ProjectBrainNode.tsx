@@ -175,7 +175,7 @@ export const ProjectBrainNode = memo(({ id, data, selected }: NodeProps<any>) =>
 
   return (
     <div
-      className={`custom-node tool-node group/node relative text-zinc-950 ${
+      className={`custom-node tool-node project-brain-node foldder-node--frameless node--glass group/node relative text-zinc-950 ${
         expanded ? "ring-2 ring-violet-400/45" : ""
       } ${introActive ? "ring-2 ring-cyan-300/60" : ""}`}
       style={{

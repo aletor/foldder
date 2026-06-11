@@ -123,7 +123,7 @@ export const FoldderNodeHeaderTitle = memo(function FoldderNodeHeaderTitle({
   return <span className={titleClass}>{display}</span>;
 });
 
-/** Botón central unificado para abrir Studio Mode en previews de nodos. */
+/** Botón unificado para abrir Studio Mode desde el overlay del nodo. */
 export const FoldderStudioModeCenterButton = memo(function FoldderStudioModeCenterButton({
   onClick,
   disabled,
@@ -134,27 +134,20 @@ export const FoldderStudioModeCenterButton = memo(function FoldderStudioModeCent
   className?: string;
 }) {
   return (
-    <div className={`pointer-events-none absolute inset-0 z-[15] overflow-hidden opacity-0 transition-opacity duration-200 group-hover/node:opacity-100 ${className ?? ""}`}>
-      <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-2">
-        <button
-          type="button"
-          disabled={disabled}
-          title="Studio Mode"
-          onClick={(e) => {
-            e.stopPropagation();
-            if (!disabled) onClick();
-          }}
-          className="pointer-events-auto nodrag flex max-w-[min(100%,220px)] flex-col items-center gap-1.5 rounded-2xl border border-white/30 bg-white/[0.12] px-6 py-3.5 shadow-xl backdrop-blur-xl transition-all duration-300 ease-out hover:scale-[1.03] hover:bg-white/[0.22] hover:shadow-2xl disabled:pointer-events-none disabled:opacity-35"
-        >
-          <span className="font-mono text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-400">
-            Studio
-          </span>
-          <span className="flex items-center gap-2 font-mono text-[17px] font-black uppercase tracking-wide text-zinc-50">
-            <Maximize2 size={22} strokeWidth={2.5} className="shrink-0 text-violet-200" />
-            Mode
-          </span>
-        </button>
-      </div>
+    <div className={`pointer-events-none absolute bottom-3 right-3 z-[15] ${className ?? ""}`}>
+      <button
+        type="button"
+        disabled={disabled}
+        title="Open Studio"
+        onClick={(e) => {
+          e.stopPropagation();
+          if (!disabled) onClick();
+        }}
+        className="pointer-events-auto nodrag inline-flex items-center gap-1.5 rounded-full border-0 bg-white px-3 py-1.5 text-[11px] font-semibold text-[#3a2a20] shadow-none transition hover:scale-[1.02] hover:bg-[#f7f7f4] disabled:pointer-events-none disabled:opacity-35"
+      >
+        <Maximize2 size={13} strokeWidth={2.4} className="shrink-0" />
+        Open Studio
+      </button>
     </div>
   );
 });

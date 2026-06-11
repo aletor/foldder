@@ -131,7 +131,7 @@ export const PresenterNode = memo(({ id, data, selected }: NodeProps<any>) => {
   );
 
   return (
-    <div className="custom-node tool-node group/node" style={{ minWidth: 260 }}>
+    <div className="custom-node tool-node presenter-node group/node" style={{ minWidth: 260 }}>
       <PresenterNodeResizer
         minWidth={260}
         minHeight={180}

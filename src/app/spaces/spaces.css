@@ -8,6 +8,24 @@
   position: relative;
   /* Por encima de `CanvasWallpaperTransition` (z-0): el blur del fondo no debe tapar nodos/aristas */
   z-index: 10;
+  --foldder-frameless-radius: 18px;
+  --foldder-frameless-inner-radius: 14px;
+  --foldder-frameless-glass-bg: #f4f3f0;
+  --foldder-frameless-glass-blur: 24px;
+  --foldder-frameless-chip-blur: 12px;
+  --foldder-frameless-light-chip-bg: #ffffff;
+  --foldder-frameless-light-chip-bg-hover: #f7f7f4;
+  --foldder-frameless-dark-chip-bg: #20242b;
+  --foldder-frameless-media-label-color: rgba(255, 255, 255, 0.86);
+  --foldder-frameless-glass-label-color: rgba(50, 55, 62, 0.62);
+  --foldder-frameless-text-primary: #1f2328;
+  --foldder-frameless-text-secondary: rgba(31, 35, 40, 0.68);
+  --foldder-frameless-action-text: #3a2a20;
+  --foldder-frameless-label-size: 11px;
+  --foldder-frameless-label-top: 12px;
+  --foldder-frameless-label-left: 14px;
+  --foldder-frameless-overlay-bottom: 12px;
+  --foldder-frameless-overlay-side: 14px;
 }
 
 /* Sin espacio: arrastre = selección (no mano). Con espacio: pan */
@@ -21,10 +39,25 @@
   cursor: grabbing !important;
 }
 
+.spaces-canvas .react-flow__background {
+  opacity: 0.035;
+}
+
+.spaces-canvas .react-flow__edge-path,
+.spaces-canvas .react-flow__connection-path {
+  stroke-width: 2.5px !important;
+  filter: none !important;
+}
+
+.spaces-canvas .react-flow__connection-path {
+  stroke: rgba(31, 41, 55, 0.78) !important;
+}
+
 .custom-node {
   position: relative;
-  background: rgba(255, 255, 255, 0.3);
-  backdrop-filter: blur(24px);
+  background: #f7f5f1;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   border: none;
   border-radius: 12px;
   padding: 0;
@@ -50,22 +83,21 @@
  */
 .react-flow__node .custom-node:not(.canvas-group-frame) {
   border: none;
-  /* ~30% más transparente que antes (α del vidrio 0.32 → ~0.22) */
   background: color-mix(
     in srgb,
-    var(--foldder-node-header-tint-color, var(--foldder-node-output-color, #94a3b8)) 12%,
-    rgba(255, 255, 255, 0.224)
-  );
+    var(--foldder-node-header-tint-color, var(--foldder-node-output-color, #94a3b8)) 8%,
+    #f7f5f1
+  ) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 
 .react-flow__node .custom-node:not(.canvas-group-frame) .node-header {
   color: #ffffff;
-  background: color-mix(
-    in srgb,
-    var(--foldder-node-header-tint-color, var(--foldder-node-output-color, #94a3b8)) 18%,
-    rgba(255, 255, 255, 0.1)
-  );
-  border-bottom: none;
+  background: transparent !important;
+  background-image: none !important;
+  border: none !important;
+  box-shadow: none !important;
 }
 
 .react-flow__node .custom-node:not(.canvas-group-frame) .node-header__title {
@@ -84,14 +116,14 @@
 
 .react-flow__node .custom-node:not(.canvas-group-frame) .node-header .node-badge {
   color: rgba(255, 255, 255, 0.92);
-  background: rgba(0, 0, 0, 0.22);
+  background: #20242b;
 }
 
 /* Space / E-S: conservar cabecera oscura e iconos blancos */
 .react-flow__node .custom-node.space-node .node-header,
 .react-flow__node .custom-node.space-io-node .node-header {
   color: #fff;
-  background: rgba(15, 23, 42, 0.5);
+  background: transparent !important;
   border-bottom: none;
 }
 
@@ -167,43 +199,17 @@
 }
 
 .react-flow__node .custom-node:not(.canvas-group-frame):hover {
-  border: none;
-  box-shadow: 0 30px 60px -12px rgba(0, 0, 0, 0.12);
-}
-
-.spaces-canvas--performance .react-flow__node .custom-node {
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-  box-shadow: 0 8px 22px -12px rgba(0, 0, 0, 0.18) !important;
-  transition: none !important;
-}
-
-.spaces-canvas--performance .react-flow__node .custom-node:not(.canvas-group-frame) {
-  background: color-mix(
-    in srgb,
-    var(--foldder-node-header-tint-color, var(--foldder-node-output-color, #94a3b8)) 8%,
-    rgba(255, 255, 255, 0.2)
-  ) !important;
-}
-
-.spaces-canvas--performance .react-flow__node .node-header,
-.spaces-canvas--performance .react-flow__node .custom-node *,
-.spaces-canvas--performance .react-flow__edge,
-.spaces-canvas--performance .react-flow__edge * {
-  transition: none !important;
-}
-
-.spaces-canvas--performance .react-flow__edge.animated path,
-.spaces-canvas--performance .react-flow__edge.animated .react-flow__edge-path {
-  animation: none !important;
-  stroke-dasharray: none !important;
+  border: none !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08) !important;
 }
 
 /* ── Node selection (click / Shift+click) — sin anillo blanco extra ── */
 .react-flow__node.selected .custom-node:not(.canvas-group-frame) {
-  border: none;
-  box-shadow: 0 20px 40px -4px rgba(0, 0, 0, 0.1);
-  transform: none;
+  border: none !important;
+  outline: 1.5px solid var(--foldder-node-output-color, var(--foldder-frameless-accent, #6C5CE7));
+  outline-offset: 3px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08) !important;
+  transform: none !important;
 }
 
 .react-flow__node.selected .canvas-group-frame.custom-node {
@@ -352,6 +358,1537 @@
 .custom-node:hover .foldder-node-icon-wrap {
   transform: scale(1.05);
   filter: brightness(1.08);
+}
+
+.react-flow__node .custom-node:not(.canvas-group-frame) .node-header {
+  display: none !important;
+}
+
+.react-flow__node .custom-node:not(.canvas-group-frame) {
+  overflow: visible !important;
+  border: none !important;
+  border-radius: var(--foldder-frameless-radius) !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08) !important;
+  background: color-mix(
+    in srgb,
+    var(--foldder-node-header-tint-color, var(--foldder-node-output-color, #94a3b8)) 8%,
+    #f7f5f1
+  ) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.react-flow__node .custom-node:not(.canvas-group-frame) > :not(.handle-wrapper):not(.react-flow__resize-control):not([class*="group/label"]) {
+  position: relative;
+  z-index: 1;
+}
+
+.react-flow__node .custom-node:not(.canvas-group-frame) > [class*="group/label"] {
+  position: absolute !important;
+  top: var(--foldder-frameless-label-top) !important;
+  left: var(--foldder-frameless-label-left) !important;
+  z-index: 30 !important;
+  max-width: calc(100% - 28px);
+  pointer-events: auto;
+}
+
+.react-flow__node .custom-node:not(.canvas-group-frame) > [class*="group/label"] > div,
+.react-flow__node .custom-node:not(.canvas-group-frame) > [class*="group/label"] > input {
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  color: rgba(50, 55, 62, 0.7) !important;
+  font-size: var(--foldder-frameless-label-size) !important;
+  font-weight: 650 !important;
+  letter-spacing: 0.08em !important;
+  line-height: 1 !important;
+  text-transform: uppercase;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  text-shadow: none;
+}
+
+.react-flow__node .custom-node:is(.inspiration-node, .image-creation-advanced-node, .crop-node, .mask-node, .video-editor-node):not(.canvas-group-frame) > [class*="group/label"] > div,
+.react-flow__node .custom-node:is(.inspiration-node, .image-creation-advanced-node, .crop-node, .mask-node, .video-editor-node):not(.canvas-group-frame) > [class*="group/label"] > input,
+.react-flow__node .custom-node.foldder-node--frameless.node--media:not(.foldder-frameless-label-dark) > [class*="group/label"] > div,
+.react-flow__node .custom-node.foldder-node--frameless.node--media:not(.foldder-frameless-label-dark) > [class*="group/label"] > input {
+  color: rgba(255, 255, 255, 0.86) !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+.react-flow__node .custom-node.foldder-frameless-label-dark > [class*="group/label"] > div,
+.react-flow__node .custom-node.foldder-frameless-label-dark > [class*="group/label"] > input {
+  color: rgba(20, 24, 31, 0.9) !important;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.28) !important;
+}
+
+.react-flow__node .custom-node:not(.canvas-group-frame) > [class*="group/label"] > div > div {
+  width: 6px !important;
+  height: 6px !important;
+  background: var(--foldder-node-output-color, var(--foldder-frameless-accent, #94a3b8)) !important;
+  animation: none;
+}
+
+.react-flow__node .custom-node:not(.canvas-group-frame).node-glow-running > [class*="group/label"] > div > div {
+  animation: foldder-frameless-dot-pulse 900ms ease-in-out infinite;
+}
+
+.react-flow__node .custom-node:not(.canvas-group-frame):not(.foldder-node--frameless) .node-content {
+  padding-top: 42px;
+}
+
+.react-flow__node .custom-node:not(.canvas-group-frame) .handle-wrapper {
+  opacity: 1 !important;
+}
+
+/* ── Frameless node variant: editorial cards with absolute overlays ── */
+.custom-node.foldder-node--frameless {
+  position: relative;
+  overflow: visible;
+  border: none !important;
+  border-radius: var(--foldder-frameless-radius);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  padding: 0;
+  background: var(--foldder-frameless-glass-bg);
+  color: var(--foldder-frameless-text-primary);
+}
+
+.custom-node.foldder-node--frameless.node--glass {
+  background: var(--foldder-frameless-glass-bg) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.custom-node.foldder-node--frameless.node--media {
+  background: #121212 !important;
+  min-height: 240px;
+}
+
+.custom-node.foldder-node--frameless::before {
+  content: none;
+}
+
+.custom-node.foldder-node--frameless.image-creation-advanced-node,
+.custom-node.foldder-node--frameless.inspiration-node {
+  min-height: 310px;
+}
+
+.custom-node.foldder-node--frameless.processor-node {
+  min-height: 220px;
+}
+
+.custom-node.foldder-node--frameless.crop-node {
+  min-height: 340px;
+}
+
+.custom-node.foldder-node--frameless > :not(.handle-wrapper):not(.react-flow__resize-control):not([class*="group/label"]) {
+  position: relative;
+  z-index: 1;
+}
+
+.custom-node.foldder-node--frameless > [class*="group/label"] {
+  position: absolute !important;
+  top: var(--foldder-frameless-label-top) !important;
+  left: var(--foldder-frameless-label-left) !important;
+  z-index: 10 !important;
+  max-width: calc(100% - 28px);
+  pointer-events: auto;
+}
+
+.custom-node.foldder-node--frameless > [class*="group/label"] > div,
+.custom-node.foldder-node--frameless > [class*="group/label"] > input {
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  color: var(--foldder-frameless-glass-label-color) !important;
+  font-size: var(--foldder-frameless-label-size) !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.08em !important;
+  line-height: 1 !important;
+  text-transform: uppercase;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  text-shadow: none;
+}
+
+.custom-node.foldder-node--frameless.node--media:not(.foldder-frameless-label-dark) > [class*="group/label"] > div,
+.custom-node.foldder-node--frameless.node--media:not(.foldder-frameless-label-dark) > [class*="group/label"] > input {
+  color: var(--foldder-frameless-media-label-color) !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+.custom-node.foldder-node--frameless > [class*="group/label"] > div > div {
+  width: 6px !important;
+  height: 6px !important;
+  background: var(--foldder-frameless-accent, #94a3b8) !important;
+  animation: none;
+}
+
+.custom-node.foldder-node--frameless.node-glow-running > [class*="group/label"] > div > div {
+  animation: foldder-frameless-dot-pulse 900ms ease-in-out infinite;
+}
+
+.custom-node.foldder-node--frameless.node-glow-running > [class*="group/label"] > div {
+  font-size: 0 !important;
+}
+
+.custom-node.foldder-node--frameless.node-glow-running > [class*="group/label"] > div::after {
+  content: "generating...";
+  font-size: var(--foldder-frameless-label-size);
+}
+
+.custom-node.foldder-node--frameless.foldder-node--error > [class*="group/label"] > div > div {
+  background: #ef4444 !important;
+}
+
+.custom-node.foldder-node--frameless::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  height: 24px;
+  cursor: grab;
+}
+
+.custom-node.foldder-node--frameless:active::after {
+  cursor: grabbing;
+}
+
+.react-flow__node.selected .custom-node.foldder-node--frameless {
+  border: none !important;
+  outline: 1.5px solid var(--foldder-frameless-accent, #94a3b8);
+  outline-offset: 3px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.custom-node.foldder-node--frameless .node-header {
+  display: none !important;
+}
+
+.custom-node.foldder-node--frameless .foldder-node-error-dot {
+  background: #ef4444;
+}
+
+.custom-node.foldder-node--frameless .node-header__title {
+  min-width: 0;
+  flex: 0 1 auto;
+  color: inherit !important;
+  font-weight: 600;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.custom-node.foldder-node--frameless .node-header .node-badge,
+.custom-node.foldder-node--frameless .node-badge {
+  margin-left: 6px;
+  border: none;
+  border-radius: 999px;
+  background: #ffffff;
+  padding: 3px 8px;
+  color: var(--foldder-frameless-action-text);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.custom-node.foldder-node--frameless.node--media .node-badge {
+  background: #ffffff;
+}
+
+.custom-node.foldder-node--frameless .node-content {
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+  background: transparent;
+  overflow: hidden;
+  border-radius: var(--foldder-frameless-radius);
+}
+
+.custom-node.foldder-node--frameless.node--glass .node-content {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 12px;
+  padding: 42px 18px 18px;
+}
+
+.custom-node.foldder-node--frameless.node--media .node-content {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+.custom-node.foldder-node--frameless.node--media img,
+.custom-node.foldder-node--frameless.node--media video {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
+  object-fit: cover !important;
+}
+
+.custom-node.foldder-node--frameless.crop-node img {
+  object-fit: contain !important;
+}
+
+.custom-node.foldder-node--frameless.node--media .node-content > .relative,
+.custom-node.foldder-node--frameless.node--media .node-content > div:first-child,
+.custom-node.foldder-node--frameless.node--media > .node-header + div {
+  width: 100%;
+  height: 100%;
+  min-height: 0 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.custom-node.foldder-node--frameless .foldder-frameless-main,
+.custom-node.foldder-node--frameless .foldder-frameless-main > * {
+  border: none !important;
+  border-radius: var(--foldder-frameless-radius) !important;
+  box-shadow: none !important;
+  overflow: hidden;
+}
+
+.custom-node.foldder-node--frameless.node--media > .foldder-frameless-main {
+  position: absolute !important;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 0 !important;
+}
+
+.custom-node.foldder-node--frameless .foldder-frameless-footer-action {
+  position: absolute !important;
+  inset: auto 0 0 0;
+  z-index: 9;
+  display: contents !important;
+  border: none !important;
+  background: transparent !important;
+  padding: 0 !important;
+}
+
+.custom-node.foldder-node--frameless.processor-node .foldder-frameless-footer-action .execute-btn {
+  left: var(--foldder-frameless-overlay-side);
+  right: auto;
+  max-width: calc(100% - 160px);
+}
+
+.custom-node.foldder-node--frameless.processor-node .foldder-frameless-footer-action .execute-btn:only-child {
+  max-width: calc(100% - 160px);
+}
+
+.custom-node.foldder-node--frameless .foldder-frameless-secondary-panel {
+  position: absolute !important;
+  left: var(--foldder-frameless-overlay-side);
+  bottom: 48px;
+  z-index: 9;
+  max-width: calc(100% - 28px);
+  border: none !important;
+  border-radius: 18px !important;
+  background: var(--foldder-frameless-dark-chip-bg) !important;
+  color: #ffffff;
+  padding: 8px 10px !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.custom-node.foldder-node--frameless .action-btn,
+.custom-node.foldder-node--frameless .execute-btn,
+.custom-node.foldder-node--frameless .foldder-frameless-action {
+  position: absolute;
+  right: var(--foldder-frameless-overlay-side);
+  bottom: var(--foldder-frameless-overlay-bottom);
+  z-index: 9;
+  width: auto;
+  min-width: 0;
+  max-width: calc(100% - 28px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: none !important;
+  border-radius: 999px !important;
+  background: var(--foldder-frameless-light-chip-bg) !important;
+  color: var(--foldder-frameless-action-text) !important;
+  padding: 6px 14px !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  line-height: 1.2;
+  letter-spacing: 0;
+  text-transform: none;
+  box-shadow: none !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  opacity: 0.9;
+  transition: background 120ms ease, opacity 120ms ease, transform 120ms ease;
+}
+
+.custom-node.foldder-node--frameless .action-btn:hover:not(:disabled),
+.custom-node.foldder-node--frameless .execute-btn:hover:not(:disabled),
+.custom-node.foldder-node--frameless .foldder-frameless-action:hover:not(:disabled) {
+  background: var(--foldder-frameless-light-chip-bg-hover) !important;
+  opacity: 1;
+  transform: scale(1.02);
+}
+
+.custom-node.foldder-node--frameless .action-btn::after,
+.custom-node.foldder-node--frameless .execute-btn::after {
+  content: none;
+}
+
+.custom-node.foldder-node--frameless .foldder-frameless-chip,
+.custom-node.foldder-node--frameless select.foldder-frameless-chip,
+.custom-node.foldder-node--frameless .node-input.foldder-frameless-chip {
+  position: absolute;
+  left: var(--foldder-frameless-overlay-side);
+  bottom: var(--foldder-frameless-overlay-bottom);
+  z-index: 9;
+  width: auto;
+  min-width: 0;
+  max-width: calc(100% - 28px);
+  border: none !important;
+  border-radius: 999px !important;
+  background: var(--foldder-frameless-dark-chip-bg) !important;
+  color: #ffffff !important;
+  padding: 5px 12px !important;
+  font-size: 12px !important;
+  font-weight: 500;
+  line-height: 1.2;
+  box-shadow: none !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.custom-node.foldder-node--frameless .foldder-frameless-output {
+  max-height: 7.5em;
+  overflow: hidden;
+  min-height: 0 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  padding: 0 !important;
+  box-shadow: none !important;
+  color: var(--foldder-frameless-text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent);
+}
+
+.custom-node.foldder-node--frameless .foldder-frameless-output * {
+  color: inherit !important;
+  font-family: inherit !important;
+  font-size: inherit !important;
+  line-height: inherit !important;
+}
+
+.custom-node.foldder-node--frameless .foldder-frameless-error {
+  position: absolute;
+  left: var(--foldder-frameless-overlay-side);
+  bottom: var(--foldder-frameless-overlay-bottom);
+  z-index: 10;
+  max-width: calc(100% - 28px);
+  border-radius: 999px;
+  background: #dc2626;
+  color: #ffffff;
+  padding: 5px 12px;
+  font-size: 11px;
+  line-height: 1.25;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.custom-node.foldder-node--frameless.node-glow-running {
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.08),
+    inset 0 -2px 0 color-mix(in srgb, var(--foldder-frameless-accent, #94a3b8) 86%, #ffffff);
+}
+
+.custom-node.foldder-node--frameless .handle-wrapper {
+  opacity: 1 !important;
+  transition: opacity 120ms ease;
+}
+
+.custom-node.foldder-node--frameless .react-flow__handle::after {
+  content: none !important;
+}
+
+.custom-node.foldder-node--frameless .handle-label {
+  opacity: 0;
+}
+
+.custom-node.foldder-node--frameless.foldder-frameless-accent-image,
+.custom-node.foldder-node--frameless.image-creation-advanced-node {
+  --foldder-frameless-accent: #6C5CE7;
+}
+
+.custom-node.foldder-node--frameless.inspiration-node {
+  --foldder-frameless-accent: #14b8a6;
+}
+
+.custom-node.foldder-node--frameless.describer-node {
+  --foldder-frameless-accent: #10b981;
+}
+
+.custom-node.foldder-node--frameless.crop-node {
+  --foldder-frameless-accent: #f59e0b;
+}
+
+.custom-node.project-assets-node,
+.custom-node.url-image-node,
+.custom-node.grok-processor-node,
+.custom-node.project-brain-node {
+  min-height: 0;
+}
+
+.custom-node.project-assets-node .node-content,
+.custom-node.url-image-node .node-content,
+.custom-node.grok-processor-node .node-content {
+  padding: 42px 14px 14px !important;
+}
+
+.custom-node.project-assets-node .node-content :is(.rounded-xl, .rounded-2xl),
+.custom-node.url-image-node .node-content :is(.rounded-xl, .rounded-2xl),
+.custom-node.grok-processor-node .node-content :is(.rounded-xl, .rounded-2xl),
+.custom-node.project-brain-node :is(.rounded-2xl, .rounded-\[28px\], .rounded-\[13px\]) {
+  border: none !important;
+  box-shadow: none !important;
+}
+
+.custom-node.foldder-node--frameless.node--glass .node-content > :is(.rounded-xl, .rounded-2xl) {
+  border: none !important;
+  box-shadow: none !important;
+}
+
+.custom-node.project-assets-node .action-btn,
+.custom-node.project-assets-node button,
+.custom-node.grok-processor-node .execute-btn {
+  border-radius: 999px !important;
+}
+
+.custom-node.foldder-node--frameless.node--glass :is(.action-btn, .execute-btn, button[class*="rounded-xl"], button[class*="rounded-2xl"]) {
+  border: none !important;
+  border-radius: 999px !important;
+  box-shadow: none !important;
+  background: #ffffff !important;
+  color: #3a2a20 !important;
+}
+
+.custom-node.foldder-node--frameless.node--glass :is(.node-label, p[class*="uppercase"]) {
+  letter-spacing: 0.08em;
+  color: rgba(50, 55, 62, 0.56) !important;
+}
+
+.custom-node.foldder-node--frameless.node--glass :is(.rounded-xl, .rounded-2xl, .rounded-3xl, .rounded-\[10px\], .rounded-\[13px\], .rounded-\[28px\]) {
+  box-shadow: none !important;
+}
+
+.custom-node.project-assets-node .node-content,
+.custom-node.grok-processor-node .node-content,
+.custom-node.describer-node .node-content {
+  justify-content: flex-start !important;
+}
+
+.custom-node.grok-processor-node .node-content {
+  gap: 14px;
+}
+
+.custom-node.grok-processor-node .node-input {
+  border: none !important;
+  border-radius: 12px !important;
+  background: #ffffff !important;
+}
+
+.custom-node.describer-node .execute-btn {
+  right: var(--foldder-frameless-overlay-side);
+  bottom: var(--foldder-frameless-overlay-bottom);
+}
+
+.custom-node.describer-node .foldder-frameless-output {
+  margin-top: 20px;
+}
+
+.custom-node.project-brain-node {
+  --foldder-frameless-accent: #7c3aed;
+}
+
+.custom-node.guionista-node,
+.custom-node.project-assets-node {
+  --foldder-frameless-accent: #64748b;
+}
+
+.custom-node.video-editor-node {
+  --foldder-node-output-color: #67e8f9;
+  height: auto !important;
+  border: none !important;
+  border-radius: var(--foldder-frameless-radius) !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.custom-node.video-editor-node .handle-wrapper {
+  opacity: 1 !important;
+}
+
+/* ── Frameless unification pass: node-by-node cleanup ───────────── */
+.custom-node.foldder-node--frameless.node--glass {
+  min-height: 180px;
+  background: var(--foldder-frameless-glass-bg) !important;
+}
+
+.custom-node.foldder-node--frameless.node--glass .node-content {
+  justify-content: flex-start !important;
+  padding: 48px 16px 58px !important;
+  overflow: hidden;
+}
+
+.custom-node.foldder-node--frameless .studio-canvas-open-button,
+.custom-node.project-assets-node .project-assets-open-button {
+  position: absolute !important;
+  right: var(--foldder-frameless-overlay-side) !important;
+  bottom: var(--foldder-frameless-overlay-bottom) !important;
+  left: auto !important;
+  z-index: 12 !important;
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: calc(100% - 28px) !important;
+  border: none !important;
+  border-radius: 999px !important;
+  background: #ffffff !important;
+  color: var(--foldder-frameless-action-text) !important;
+  padding: 6px 14px !important;
+  font-size: 12px !important;
+  font-weight: 650 !important;
+  line-height: 1.2 !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+  box-shadow: none !important;
+}
+
+.custom-node.foldder-node--frameless.node--glass :is(.node-input, .node-textarea, select) {
+  border: none !important;
+  box-shadow: none !important;
+  background: #ffffff !important;
+  color: var(--foldder-frameless-text-primary) !important;
+}
+
+.custom-node.foldder-node--frameless.node--glass .node-label:not([class*="group/label"] *) {
+  margin: 0;
+  color: rgba(50, 55, 62, 0.52) !important;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+}
+
+.custom-node.prompt-node.foldder-node--frameless {
+  min-height: 76px !important;
+}
+
+.custom-node.prompt-node.foldder-node--frameless .node-content {
+  padding: 30px 12px 10px !important;
+}
+
+.custom-node.prompt-node.foldder-node--frameless .node-textarea {
+  min-height: 24px !important;
+  background: transparent !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+  color: var(--foldder-frameless-text-primary) !important;
+}
+
+.custom-node.url-image-node {
+  --foldder-frameless-accent: #38bdf8;
+}
+
+.custom-node.url-image-node .url-image-node-content {
+  gap: 10px;
+  padding: 48px 14px 16px !important;
+}
+
+.custom-node.url-image-node .url-image-preview {
+  margin: 0 0 12px !important;
+  border: none !important;
+  border-radius: 14px !important;
+  background: #ffffff !important;
+  box-shadow: none !important;
+}
+
+.custom-node.url-image-node .url-image-preview img {
+  object-fit: cover !important;
+}
+
+.custom-node.url-image-node .url-image-controls {
+  margin: 0 !important;
+}
+
+.custom-node.url-image-node .url-image-controls .node-label {
+  margin-bottom: 7px;
+}
+
+.custom-node.url-image-node .url-image-controls .node-input {
+  min-height: 34px;
+  border-radius: 999px !important;
+  padding: 9px 12px 9px 34px !important;
+}
+
+.custom-node.url-image-node .url-image-controls > div:last-child {
+  border-top: none !important;
+  padding-top: 0 !important;
+}
+
+.custom-node.url-image-node .url-image-controls > div:last-child > div:first-child {
+  color: rgba(50, 55, 62, 0.48) !important;
+}
+
+.custom-node.describer-node {
+  min-height: 330px !important;
+}
+
+.custom-node.describer-node .describer-node-content {
+  padding: 58px 18px 58px !important;
+}
+
+.custom-node.describer-node .describer-node-hint {
+  margin: 0 0 18px !important;
+  max-width: 230px;
+  color: rgba(50, 55, 62, 0.58) !important;
+  font-size: 11px !important;
+  font-style: normal !important;
+  line-height: 1.45;
+}
+
+.custom-node.describer-node .describer-generate-button {
+  margin: 0 !important;
+}
+
+.custom-node.describer-node .foldder-frameless-output {
+  margin: 0 !important;
+  max-height: 150px;
+  min-height: 118px !important;
+  color: rgba(31, 35, 40, 0.72) !important;
+}
+
+.custom-node.describer-node .foldder-frameless-output > div {
+  color: inherit !important;
+  font-family: inherit !important;
+  font-size: 12px !important;
+  line-height: 1.55 !important;
+}
+
+.custom-node.grok-processor-node {
+  --foldder-frameless-accent: #a855f7;
+  min-height: 210px !important;
+}
+
+.custom-node.grok-processor-node .grok-node-content {
+  justify-content: center !important;
+  padding: 62px 16px 58px !important;
+}
+
+.custom-node.grok-processor-node .grok-settings-row {
+  margin: 0 !important;
+  display: flex;
+  gap: 8px;
+}
+
+.custom-node.grok-processor-node .grok-select {
+  min-height: 36px;
+  border-radius: 999px !important;
+  padding: 0 12px !important;
+  text-align: center;
+}
+
+.custom-node.grok-processor-node .execute-btn {
+  margin: 0 !important;
+}
+
+.custom-node.grok-processor-node video {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  height: 100% !important;
+  width: 100% !important;
+  margin: 0 !important;
+  border-radius: var(--foldder-frameless-radius) !important;
+  object-fit: cover;
+}
+
+.custom-node.project-assets-node {
+  min-height: 230px !important;
+}
+
+.custom-node.project-assets-node .project-assets-node-content {
+  padding: 50px 16px 58px !important;
+}
+
+.custom-node.project-assets-node .project-assets-node-content > div > .node-label {
+  display: none;
+}
+
+.custom-node.project-assets-node .project-assets-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  border: none !important;
+  background: transparent !important;
+  padding: 0 !important;
+}
+
+.custom-node.project-assets-node .project-assets-metrics > div {
+  min-width: 0;
+  border-radius: 999px;
+  background: #ffffff;
+  padding: 7px 10px;
+  color: var(--foldder-frameless-text-primary) !important;
+}
+
+.custom-node.project-assets-node .project-assets-node-content > p {
+  margin: 2px 0 0 !important;
+  color: rgba(50, 55, 62, 0.5) !important;
+}
+
+.custom-node.foldder-studio-node--cine,
+.custom-node.cine-node {
+  --foldder-frameless-accent: #06b6d4;
+  min-height: 274px !important;
+}
+
+.custom-node.cine-node .cine-node-content {
+  padding: 52px 16px 58px !important;
+}
+
+.custom-node.cine-node .cine-summary-panel {
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  padding: 0 !important;
+  box-shadow: none !important;
+}
+
+.custom-node.cine-node .cine-summary-panel .grid span,
+.custom-node.cine-node .cine-summary-panel .rounded-full {
+  border: none !important;
+  border-radius: 999px !important;
+  background: #ffffff !important;
+  color: var(--foldder-frameless-text-primary) !important;
+  box-shadow: none !important;
+}
+
+.custom-node.cine-node .cine-summary-panel .flex.h-10.w-10 {
+  border: none !important;
+  border-radius: 999px !important;
+  background: #ffffff !important;
+  color: #0f172a !important;
+  box-shadow: none !important;
+}
+
+.custom-node.cine-node .cine-node-content--media {
+  padding: 0 !important;
+}
+
+.custom-node.cine-node .cine-node-content--media .cine-summary-panel {
+  position: absolute;
+  left: var(--foldder-frameless-overlay-side);
+  bottom: 48px;
+  z-index: 8;
+  max-width: calc(100% - 28px);
+}
+
+.custom-node.guionista-node {
+  min-height: 235px !important;
+}
+
+.custom-node.guionista-node .guionista-node-content {
+  padding: 52px 16px 58px !important;
+}
+
+.custom-node.guionista-node .guionista-node-content :is(.rounded-\[10px\], .rounded-xl, .rounded-2xl) {
+  box-shadow: none !important;
+}
+
+.custom-node.guionista-node .guionista-node-content .studio-canvas-open-button {
+  white-space: nowrap;
+}
+
+.custom-node.project-brain-node {
+  overflow: visible !important;
+}
+
+.custom-node.project-brain-node > .relative.flex {
+  position: absolute !important;
+  inset: 0;
+  z-index: 1;
+  border-radius: var(--foldder-frameless-radius) !important;
+  overflow: hidden !important;
+}
+
+.custom-node.project-brain-node > .relative.flex > .relative {
+  padding: 50px 16px 58px !important;
+}
+
+.custom-node.project-brain-node :is(.rounded-2xl, .rounded-\[28px\], .rounded-\[13px\]) {
+  border: none !important;
+  box-shadow: none !important;
+}
+
+.custom-node.project-brain-node button,
+.custom-node.project-brain-node [role="button"] {
+  border: none !important;
+  border-radius: 999px !important;
+  box-shadow: none !important;
+}
+
+.custom-node.foldder-node--frameless.node--media .foldder-frameless-main {
+  background: #111111 !important;
+}
+
+.custom-node.foldder-node--frameless.node--media .foldder-frameless-main > div:not(.absolute):not([class*="pointer-events"]) {
+  border: none !important;
+  box-shadow: none !important;
+}
+
+.custom-node.foldder-node--frameless.node--media .foldder-frameless-action,
+.custom-node.foldder-node--frameless.node--media .foldder-studio-mode-button {
+  white-space: nowrap;
+}
+
+.custom-node.image-creation-advanced-node {
+  min-height: 260px !important;
+}
+
+.custom-node.image-creation-advanced-node .node-content.foldder-frameless-main {
+  padding: 0 !important;
+}
+
+.custom-node.image-creation-advanced-node .node-content.foldder-frameless-main > .relative {
+  position: absolute !important;
+  inset: 0;
+  border-radius: var(--foldder-frameless-radius) !important;
+}
+
+.custom-node.image-creation-advanced-node .node-content.foldder-frameless-main > .relative + .foldder-frameless-chip {
+  bottom: var(--foldder-frameless-overlay-bottom);
+  max-width: calc(100% - 156px);
+}
+
+.custom-node.image-export-node {
+  --foldder-frameless-accent: #64748b;
+  min-height: 350px !important;
+}
+
+.custom-node.image-export-node .image-export-node-content {
+  padding: 50px 16px 58px !important;
+  gap: 12px;
+}
+
+.custom-node.image-export-node .image-export-controls {
+  display: contents;
+}
+
+.custom-node.image-export-node .image-export-format-row {
+  position: absolute;
+  top: 42px;
+  right: var(--foldder-frameless-overlay-side);
+  z-index: 12;
+  width: 144px;
+  gap: 4px;
+}
+
+.custom-node.image-export-node .image-export-format-option {
+  min-height: 26px;
+  border: none !important;
+  border-radius: 999px !important;
+  background: #ffffff !important;
+  color: rgba(50, 55, 62, 0.58) !important;
+  box-shadow: none !important;
+}
+
+.custom-node.image-export-node .image-export-format-option.is-active {
+  background: #20242b !important;
+  color: #ffffff !important;
+}
+
+.custom-node.image-export-node .image-export-action {
+  margin: 0 !important;
+}
+
+.custom-node.image-export-node .image-export-meta {
+  position: absolute;
+  left: var(--foldder-frameless-overlay-side);
+  bottom: var(--foldder-frameless-overlay-bottom);
+  z-index: 12;
+  max-width: calc(100% - 170px);
+  justify-content: flex-start !important;
+  gap: 8px;
+  border-radius: 999px;
+  background: #ffffff;
+  padding: 6px 11px;
+  color: rgba(50, 55, 62, 0.62) !important;
+  letter-spacing: 0;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.custom-node.image-export-node .image-export-meta span:last-child {
+  display: none;
+}
+
+.custom-node.image-export-node .image-export-preview {
+  margin: 32px 0 0 !important;
+  height: 190px !important;
+  min-height: 190px !important;
+  max-height: 190px !important;
+  flex: 0 0 190px !important;
+  border: none !important;
+  border-radius: 16px !important;
+  background: #111111 !important;
+  box-shadow: none !important;
+}
+
+.custom-node.image-export-node .image-export-preview-frame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100% !important;
+  height: 100%;
+  max-width: 100% !important;
+  aspect-ratio: auto !important;
+}
+
+.custom-node.image-export-node .image-export-preview img {
+  width: 100% !important;
+  height: 100% !important;
+  border-radius: 14px;
+  object-fit: contain !important;
+}
+
+.custom-node.video-editor-node.foldder-node--frameless {
+  --foldder-frameless-accent: #67e8f9;
+  min-height: 216px !important;
+  background: #171b22 !important;
+  padding: 52px 16px 58px !important;
+  color: #ffffff !important;
+}
+
+.custom-node.video-editor-node > [class*="group/label"] > div,
+.custom-node.video-editor-node > [class*="group/label"] > input {
+  color: rgba(255, 255, 255, 0.86) !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25) !important;
+}
+
+.custom-node.video-editor-node .video-editor-heading {
+  margin: 0 !important;
+}
+
+.custom-node.video-editor-node .video-editor-heading > div:first-child > div:first-child {
+  display: none;
+}
+
+.custom-node.video-editor-node .video-editor-heading h3 {
+  margin: 0;
+  color: #ffffff;
+  font-size: 18px;
+  line-height: 1.08;
+}
+
+.custom-node.video-editor-node .video-editor-icon {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  height: 34px;
+  width: 34px;
+  border-radius: 999px !important;
+  background: rgba(103, 232, 249, 0.18) !important;
+}
+
+.custom-node.video-editor-node .video-editor-summary {
+  margin-top: 14px !important;
+  border: none !important;
+  border-radius: 16px !important;
+  background: rgba(255, 255, 255, 0.07) !important;
+  padding: 14px !important;
+  box-shadow: none !important;
+}
+
+.custom-node.video-editor-node .video-editor-summary div:first-child {
+  color: #ffffff;
+}
+
+.custom-node.video-editor-node .video-editor-actions {
+  display: contents;
+}
+
+.custom-node.video-editor-node .video-editor-status {
+  position: absolute;
+  left: var(--foldder-frameless-overlay-side);
+  bottom: var(--foldder-frameless-overlay-bottom);
+  z-index: 12;
+  background: rgba(255, 255, 255, 0.11) !important;
+  color: rgba(255, 255, 255, 0.68) !important;
+}
+
+.custom-node.video-editor-node .video-editor-open-button {
+  position: absolute;
+  right: var(--foldder-frameless-overlay-side);
+  bottom: var(--foldder-frameless-overlay-bottom);
+  z-index: 12;
+  border: none !important;
+  background: #ffffff !important;
+  color: var(--foldder-frameless-action-text) !important;
+}
+
+.custom-node.project-brain-node .node-badge,
+.custom-node.project-brain-node [title*="ADN"] {
+  box-shadow: none !important;
+}
+
+.custom-node.project-brain-node .relative.flex.min-h-0.flex-1.flex-col.p-4 > .flex:first-child {
+  min-height: 92px;
+}
+
+.custom-node.project-brain-node .relative.flex.min-h-0.flex-1.flex-col.p-4 > .flex:first-child > div:last-child {
+  position: absolute;
+  right: 14px;
+  top: 44px;
+  border-radius: 999px !important;
+  padding: 6px 10px !important;
+  background: #ffffff !important;
+}
+
+.custom-node.project-brain-node .relative.flex.min-h-0.flex-1.flex-col.p-4 > .flex:first-child > div:last-child p:first-child {
+  display: none;
+}
+
+.custom-node.project-brain-node .relative.flex.min-h-0.flex-1.flex-col.p-4 > .flex:first-child > div:last-child p:last-child {
+  font-size: 16px !important;
+}
+
+.custom-node.project-brain-node .mb-2.mt-auto.space-y-3 > div:first-child {
+  border: none !important;
+  border-radius: 16px !important;
+  background: rgba(255, 255, 255, 0.72) !important;
+  padding: 10px !important;
+}
+
+.custom-node.project-brain-node .mb-2.mt-auto.space-y-3 .action-btn {
+  width: auto !important;
+}
+
+.custom-node.project-assets-node .project-assets-metrics {
+  grid-template-columns: 1fr 1fr;
+}
+
+.custom-node.project-assets-node .project-assets-metrics > div {
+  padding: 6px 9px;
+}
+
+.custom-node.cine-node {
+  min-height: 250px !important;
+}
+
+.custom-node.cine-node .cine-summary-panel .grid {
+  grid-template-columns: 1fr 1fr !important;
+  gap: 6px !important;
+}
+
+.custom-node.cine-node .cine-summary-panel .grid span {
+  padding: 6px 9px !important;
+  font-size: 9px !important;
+}
+
+.custom-node.grok-processor-node .grok-node-content::before {
+  content: "Video generation";
+  display: block;
+  margin-bottom: 12px;
+  color: rgba(50, 55, 62, 0.58);
+  font-size: 11px;
+  font-weight: 550;
+}
+
+.custom-node.describer-node .foldder-frameless-output {
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent);
+}
+
+.custom-node.media-input-node {
+  --foldder-frameless-accent: #3b82f6;
+}
+
+.custom-node.media-input-node.node--media {
+  min-height: 240px;
+  background: #111111 !important;
+}
+
+.custom-node.media-input-node.node--glass {
+  min-height: 220px;
+}
+
+.custom-node.media-input-node .media-input-preview {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  height: 100% !important;
+  min-height: 0 !important;
+  border-radius: var(--foldder-frameless-radius);
+  background: #111111 !important;
+}
+
+.custom-node.media-input-node.node--glass .media-input-preview {
+  position: relative;
+  min-height: 220px !important;
+  background: var(--foldder-frameless-glass-bg) !important;
+}
+
+.custom-node.media-input-node .media-input-preview img,
+.custom-node.media-input-node .media-input-preview video {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
+  object-fit: cover !important;
+}
+
+.custom-node.media-input-node .media-input-preview video {
+  object-fit: contain !important;
+}
+
+.custom-node.media-input-node .media-input-metadata-strip {
+  display: none !important;
+}
+
+.custom-node.media-input-node .media-input-type-chip {
+  left: var(--foldder-frameless-overlay-side) !important;
+  bottom: var(--foldder-frameless-overlay-bottom) !important;
+  top: auto !important;
+  z-index: 12 !important;
+  border-radius: 999px !important;
+  background: rgba(0, 0, 0, 0.34) !important;
+  color: #ffffff !important;
+  padding: 5px 12px !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.custom-node.media-input-node .media-input-fullscreen-button {
+  top: var(--foldder-frameless-overlay-bottom) !important;
+  right: var(--foldder-frameless-overlay-side) !important;
+  z-index: 12 !important;
+  border: none !important;
+  background: rgba(0, 0, 0, 0.34) !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.custom-node.media-input-node .media-input-replace-icon,
+.custom-node.media-input-node .change-media-btn {
+  display: none !important;
+}
+
+.custom-node.media-input-node .media-input-empty-state {
+  color: rgba(50, 55, 62, 0.62) !important;
+}
+
+.custom-node.media-input-node.node--media .media-input-empty-state {
+  color: rgba(255, 255, 255, 0.66) !important;
+}
+
+.custom-node.media-input-node.node--media > [class*="group/label"] > div,
+.custom-node.media-input-node.node--media > [class*="group/label"] > input {
+  color: rgba(255, 255, 255, 0.92) !important;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.4) !important;
+}
+
+.custom-node.describer-node {
+  height: 330px;
+  max-height: 330px;
+}
+
+.custom-node.describer-node.foldder-node-frame-manual {
+  height: 100%;
+  max-height: none;
+}
+
+.custom-node.describer-node .describer-node-content {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden !important;
+}
+
+.custom-node.describer-node .foldder-frameless-output {
+  height: 150px !important;
+  max-height: 150px !important;
+  min-height: 150px !important;
+  overflow: hidden !important;
+}
+
+.custom-node.describer-node .foldder-frameless-output > div {
+  max-height: 150px;
+  overflow: hidden;
+}
+
+.custom-node.image-export-node {
+  height: 350px;
+  max-height: 350px;
+}
+
+.custom-node.image-export-node.foldder-node-frame-manual {
+  height: 100%;
+  max-height: none;
+}
+
+.custom-node.image-export-node .image-export-node-content {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden !important;
+}
+
+/* ── Final node-system normalization ────────────────────────────── */
+.react-flow__node .custom-node:not(.canvas-group-frame),
+.custom-node.foldder-node--frameless {
+  border-radius: var(--foldder-frameless-radius) !important;
+}
+
+.custom-node.foldder-node--frameless :is(
+  .url-image-preview,
+  .image-export-preview,
+  .video-editor-summary,
+  .foldder-frameless-main,
+  .media-input-preview,
+  .foldder-frameless-output,
+  .cine-summary-panel,
+  .project-assets-metrics > div,
+  .node-input,
+  .node-textarea,
+  select
+) {
+  border: none !important;
+  border-radius: var(--foldder-frameless-inner-radius) !important;
+  box-shadow: none !important;
+}
+
+.custom-node.foldder-node--frameless :is(
+  button,
+  .action-btn,
+  .execute-btn,
+  .foldder-frameless-action,
+  .studio-canvas-open-button,
+  .project-assets-open-button,
+  .media-input-change-button,
+  .video-editor-open-button,
+  .image-export-format-option
+) {
+  font-weight: 850 !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase !important;
+}
+
+.custom-node.foldder-node--frameless :is(.action-btn, .execute-btn, .foldder-frameless-action, .studio-canvas-open-button, .project-assets-open-button, .media-input-change-button, .video-editor-open-button) {
+  border-radius: 999px !important;
+  padding: 6px 14px !important;
+}
+
+.custom-node.image-export-node.node--media {
+  min-height: 260px !important;
+  background: #111111 !important;
+}
+
+.custom-node.image-export-node.node--media .image-export-node-content {
+  position: absolute;
+  inset: 0;
+  padding: 0 !important;
+}
+
+.custom-node.image-export-node.node--media .image-export-preview {
+  position: absolute !important;
+  inset: 0 !important;
+  z-index: 1;
+  height: 100% !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  flex: none !important;
+  margin: 0 !important;
+  border-radius: var(--foldder-frameless-radius) !important;
+}
+
+.custom-node.image-export-node.node--media .image-export-preview-frame,
+.custom-node.image-export-node.node--media .image-export-preview-frame img {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.custom-node.image-export-node.node--media .image-export-preview-frame img {
+  border-radius: var(--foldder-frameless-radius) !important;
+  object-fit: cover !important;
+}
+
+.custom-node.image-export-node.node--media .image-export-format-row {
+  top: 34px;
+  right: var(--foldder-frameless-overlay-side);
+  width: auto;
+}
+
+.custom-node.image-export-node.node--media .image-export-format-option {
+  min-width: 46px;
+  background: rgba(255, 255, 255, 0.84) !important;
+  color: rgba(31, 35, 40, 0.66) !important;
+}
+
+.custom-node.image-export-node.node--media .image-export-format-option.is-active {
+  background: #ffffff !important;
+  color: #111827 !important;
+}
+
+.custom-node.image-export-node .image-export-action {
+  right: var(--foldder-frameless-overlay-side) !important;
+  bottom: var(--foldder-frameless-overlay-bottom) !important;
+}
+
+.custom-node.image-export-node.node--media .image-export-meta {
+  left: var(--foldder-frameless-overlay-side);
+  bottom: var(--foldder-frameless-overlay-bottom);
+  max-width: calc(100% - 165px);
+  background: rgba(0, 0, 0, 0.34);
+  color: rgba(255, 255, 255, 0.78) !important;
+}
+
+.custom-node.image-export-node .image-export-error {
+  position: absolute;
+  left: var(--foldder-frameless-overlay-side);
+  top: 34px;
+  z-index: 13;
+  max-width: calc(100% - 180px);
+  border: none !important;
+  border-radius: 999px !important;
+  background: rgba(220, 38, 38, 0.92) !important;
+  color: #ffffff !important;
+  padding: 6px 11px !important;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.custom-node.media-input-node .media-input-change-button {
+  background: #ffffff !important;
+  color: var(--foldder-frameless-action-text) !important;
+  box-shadow: none !important;
+}
+
+.custom-node.media-input-node .media-input-replace-icon {
+  display: none !important;
+}
+
+.custom-node.media-input-node .media-input-type-chip {
+  max-width: calc(100% - 166px);
+}
+
+.custom-node.foldder-studio-node--photoRoom .foldder-frameless-main > div[style],
+.custom-node.foldder-studio-node--designer .foldder-frameless-main > div[style] {
+  border: none !important;
+  box-shadow: none !important;
+}
+
+.custom-node.foldder-studio-node--photoRoom .foldder-frameless-main,
+.custom-node.foldder-studio-node--designer .foldder-frameless-main {
+  background:
+    radial-gradient(circle at 18% 18%, rgba(255, 255, 255, 0.18), transparent 30%),
+    #111111 !important;
+}
+
+.custom-node.foldder-studio-node--photoRoom .foldder-frameless-main > div,
+.custom-node.foldder-studio-node--designer .foldder-frameless-main > div {
+  border-radius: var(--foldder-frameless-radius) !important;
+}
+
+.custom-node.foldder-studio-node--photoRoom,
+.custom-node.foldder-studio-node--designer {
+  background: #111111 !important;
+}
+
+.custom-node.foldder-studio-node--photoRoom .foldder-frameless-main > div[style],
+.custom-node.foldder-studio-node--designer .foldder-frameless-main > div[style] {
+  width: 100% !important;
+  height: 100% !important;
+  aspect-ratio: auto !important;
+  background: #111111 !important;
+}
+
+.custom-node.foldder-studio-node--photoRoom .foldder-frameless-main > div.flex,
+.custom-node.foldder-studio-node--designer .foldder-frameless-main > div.flex {
+  color: rgba(255, 255, 255, 0.64) !important;
+}
+
+.custom-node.foldder-studio-node--photoRoom .foldder-frameless-main::after,
+.custom-node.foldder-studio-node--designer .foldder-frameless-main::after,
+.custom-node.inspiration-node .foldder-frameless-main::after,
+.custom-node.image-creation-advanced-node .foldder-frameless-main::after,
+.custom-node.media-input-node.node--media .media-input-preview::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  z-index: 6;
+  height: 72px;
+  pointer-events: none;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.46), transparent);
+}
+
+.custom-node.url-image-node .url-image-preview {
+  min-height: 146px !important;
+}
+
+.custom-node.url-image-node .url-image-preview + .url-image-controls {
+  font-size: 10px;
+}
+
+.custom-node.url-image-node .url-image-controls .node-input {
+  color: rgba(31, 35, 40, 0.72) !important;
+}
+
+.custom-node.project-brain-node .mb-2.mt-auto.space-y-3 {
+  margin-top: 10px !important;
+  margin-bottom: 0 !important;
+}
+
+.custom-node.project-brain-node .mt-3.flex.flex-wrap {
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.68);
+  padding: 6px 9px;
+  font-size: 11px !important;
+}
+
+.custom-node.project-assets-node .project-assets-metrics > div {
+  align-items: center;
+  font-size: 10px !important;
+}
+
+.custom-node.grok-processor-node .execute-btn {
+  right: var(--foldder-frameless-overlay-side) !important;
+  bottom: var(--foldder-frameless-overlay-bottom) !important;
+}
+
+@keyframes foldder-frameless-dot-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 .foldder-icon-pulse {
@@ -1340,4 +2877,603 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
     animation-duration: 0.28s;
     animation-timing-function: ease-out;
   }
+}
+
+/* ── Frameless visual lock: no zoom degradation, one radius, no inner frames ── */
+.react-flow__node .custom-node:is(
+  .inspiration-node,
+  .image-creation-advanced-node,
+  .media-input-node,
+  .gemini-video-node
+):not(.canvas-group-frame) {
+  border: none !important;
+  border-radius: var(--foldder-frameless-radius) !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08) !important;
+  overflow: visible !important;
+}
+
+.custom-node.inspiration-node {
+  min-height: 310px !important;
+}
+
+.custom-node.image-creation-advanced-node {
+  min-height: 260px !important;
+}
+
+.custom-node:is(.inspiration-node, .image-creation-advanced-node, .media-input-node, .gemini-video-node) :is(
+  .node-header,
+  .node-header *,
+  .node-badge
+) {
+  display: none !important;
+}
+
+.custom-node:is(.inspiration-node, .image-creation-advanced-node, .gemini-video-node) .node-content.foldder-frameless-main,
+.custom-node:is(.inspiration-node, .image-creation-advanced-node) .foldder-frameless-main,
+.custom-node.gemini-video-node .gemini-video-preview {
+  position: absolute !important;
+  inset: 0 !important;
+  z-index: 1;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  border-radius: var(--foldder-frameless-radius) !important;
+  box-shadow: none !important;
+  overflow: hidden !important;
+}
+
+.custom-node:is(.inspiration-node, .image-creation-advanced-node) .node-content.foldder-frameless-main > .relative,
+.custom-node:is(.inspiration-node, .image-creation-advanced-node) .foldder-frameless-main > .relative {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  aspect-ratio: auto !important;
+  margin: 0 !important;
+  border: none !important;
+  border-radius: var(--foldder-frameless-radius) !important;
+  box-shadow: none !important;
+  overflow: hidden !important;
+}
+
+.custom-node:is(.inspiration-node, .image-creation-advanced-node, .gemini-video-node) :is(
+  .node-content.foldder-frameless-main img,
+  .foldder-frameless-main img,
+  .gemini-video-preview video
+) {
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+  border-radius: var(--foldder-frameless-radius) !important;
+  object-fit: cover !important;
+}
+
+.custom-node.media-input-node {
+  background: #111111 !important;
+}
+
+.custom-node.media-input-node.node--glass {
+  background: #f4f3f0 !important;
+}
+
+.custom-node.media-input-node .media-input-preview,
+.custom-node.media-input-node .media-input-preview > *,
+.custom-node.media-input-node .media-input-preview img,
+.custom-node.media-input-node .media-input-preview video,
+.custom-node.media-input-node .media-input-empty-state {
+  border: none !important;
+  border-radius: var(--foldder-frameless-radius) !important;
+  box-shadow: none !important;
+  overflow: hidden !important;
+}
+
+.custom-node.media-input-node.node--media .media-input-preview {
+  position: absolute !important;
+  inset: 0 !important;
+  z-index: 1;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  margin: 0 !important;
+}
+
+.custom-node.media-input-node.node--media .media-input-preview :is(img, video) {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+}
+
+.custom-node.gemini-video-node {
+  min-height: 260px !important;
+  background: #0a0a0a !important;
+}
+
+.custom-node.gemini-video-node .foldder-frameless-footer-action .execute-btn {
+  left: var(--foldder-frameless-overlay-side) !important;
+  right: auto !important;
+  bottom: var(--foldder-frameless-overlay-bottom) !important;
+  max-width: calc(100% - 166px);
+}
+
+.custom-node:is(.inspiration-node, .image-creation-advanced-node, .media-input-node, .gemini-video-node) :is(
+  .foldder-frameless-action,
+  .studio-canvas-open-button,
+  .media-input-change-button,
+  .execute-btn
+) {
+  border: none !important;
+  border-radius: 999px !important;
+  font-weight: 850 !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase !important;
+}
+
+/* Inspiration: el card exterior queda transparente y el recorte real vive en la capa full-bleed. */
+.custom-node.inspiration-node {
+  background: transparent !important;
+}
+
+.custom-node.inspiration-node .node-content.foldder-frameless-main,
+.custom-node.inspiration-node .node-content.foldder-frameless-main > .relative,
+.custom-node.inspiration-node .node-content.foldder-frameless-main img {
+  clip-path: inset(0 round var(--foldder-frameless-radius));
+}
+
+.custom-node.inspiration-node .foldder-frameless-main::after {
+  border-radius: 0 0 var(--foldder-frameless-radius) var(--foldder-frameless-radius);
+}
+
+/* Crop es una herramienta estable, no una media full-bleed: no debe colapsar al recibir imagen. */
+.custom-node.crop-node {
+  width: 100%;
+  min-width: 340px !important;
+  min-height: 360px !important;
+  background: #111111 !important;
+  border: none !important;
+  border-radius: var(--foldder-frameless-radius) !important;
+  overflow: visible !important;
+}
+
+.custom-node.crop-node .node-header,
+.custom-node.crop-node .node-header * {
+  display: none !important;
+}
+
+.custom-node.crop-node .node-content.foldder-frameless-main {
+  position: relative !important;
+  inset: auto !important;
+  z-index: 1;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 360px !important;
+  padding: 34px 12px 12px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 10px !important;
+  background: #111111 !important;
+  border: none !important;
+  border-radius: var(--foldder-frameless-radius) !important;
+  box-shadow: none !important;
+  overflow: hidden !important;
+}
+
+.custom-node.crop-node .node-content.foldder-frameless-main > div:first-child {
+  position: relative !important;
+  inset: auto !important;
+  width: 100% !important;
+  height: auto !important;
+  min-height: 270px !important;
+  flex: 1 1 auto !important;
+  background: #050505 !important;
+  border: none !important;
+  border-radius: var(--foldder-frameless-inner-radius) !important;
+  box-shadow: none !important;
+  overflow: hidden !important;
+}
+
+.custom-node.crop-node .node-content.foldder-frameless-main img {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: contain !important;
+  border-radius: var(--foldder-frameless-inner-radius) !important;
+}
+
+.custom-node.crop-node .node-content.foldder-frameless-main > .flex.items-center {
+  position: static !important;
+  width: 100% !important;
+  padding-top: 0 !important;
+}
+
+.custom-node.crop-node select.foldder-frameless-chip {
+  position: static !important;
+  width: 100% !important;
+  max-width: none !important;
+  background: #ffffff !important;
+  color: var(--foldder-frameless-action-text) !important;
+  font-weight: 850 !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase !important;
+}
+
+/* ── Continuist node palette: one background color per node type ── */
+.spaces-canvas {
+  --foldder-palette-a: #A35C74;
+  --foldder-palette-b: #B06A63;
+  --foldder-palette-c: #B27A59;
+  --foldder-palette-d: #9E8458;
+  --foldder-palette-e: #8A8B58;
+  --foldder-palette-f: #6F8F5D;
+  --foldder-palette-g: #5E8E70;
+  --foldder-palette-h: #4F8A82;
+  --foldder-palette-i: #4C7E8F;
+  --foldder-palette-j: #56709A;
+  --foldder-palette-k: #6A679F;
+  --foldder-palette-l: #7D5F99;
+  --foldder-palette-m: #965B92;
+  --foldder-palette-n: #A35B84;
+  --foldder-palette-o: #A85772;
+  --foldder-palette-p: #9B5C66;
+  --foldder-palette-q: #8B5D74;
+  --foldder-palette-r: #7B5C82;
+  --foldder-palette-s: #6B597F;
+  --foldder-palette-t: #5B5673;
+  --foldder-palette-u: #4E5668;
+  --foldder-palette-v: #55606B;
+  --foldder-palette-w: #62605D;
+  --foldder-palette-x: #6F5E58;
+  --foldder-palette-y: #7C5B54;
+  --foldder-palette-z: #8A5755;
+  --foldder-palette-aa: #76514E;
+  --foldder-palette-ab: #614C5C;
+  --foldder-palette-ac: #4E4866;
+  --foldder-palette-ad: #3F3C58;
+  --foldder-node-card-bg: var(--foldder-palette-ad);
+  --foldder-frameless-glass-bg: var(--foldder-node-card-bg);
+  --foldder-frameless-text-primary: #ffffff;
+  --foldder-frameless-text-secondary: rgba(255, 255, 255, 0.76);
+  --foldder-frameless-glass-label-color: rgba(255, 255, 255, 0.84);
+  --foldder-frameless-media-label-color: rgba(255, 255, 255, 0.88);
+  --foldder-frameless-action-text: #ffffff;
+  --foldder-frameless-light-chip-bg: rgba(255, 255, 255, 0.16);
+  --foldder-frameless-light-chip-bg-hover: rgba(255, 255, 255, 0.24);
+  --foldder-frameless-dark-chip-bg: rgba(0, 0, 0, 0.22);
+}
+
+.custom-node { --foldder-node-card-bg: var(--foldder-palette-ad); }
+.custom-node.processor-node { --foldder-node-card-bg: var(--foldder-palette-ab); }
+.custom-node.tool-node { --foldder-node-card-bg: var(--foldder-palette-ac); }
+.custom-node.space-node { --foldder-node-card-bg: var(--foldder-palette-z); }
+.custom-node.space-io-node { --foldder-node-card-bg: var(--foldder-palette-aa); }
+
+.custom-node.inspiration-node { --foldder-node-card-bg: var(--foldder-palette-a); }
+.custom-node.foldder-studio-node--photoRoom,
+.custom-node.photo-room-node { --foldder-node-card-bg: var(--foldder-palette-b); }
+.custom-node.foldder-frameless-accent-image { --foldder-node-card-bg: var(--foldder-palette-c); }
+.custom-node.image-creation-advanced-node { --foldder-node-card-bg: var(--foldder-palette-d); }
+.custom-node.foldder-studio-node--designer,
+.custom-node.designer-node { --foldder-node-card-bg: var(--foldder-palette-e); }
+.custom-node.url-image-node { --foldder-node-card-bg: var(--foldder-palette-f); }
+.custom-node.project-brain-node { --foldder-node-card-bg: var(--foldder-palette-g); }
+.custom-node.prompt-node { --foldder-node-card-bg: var(--foldder-palette-h); }
+.custom-node.media-input-node { --foldder-node-card-bg: var(--foldder-palette-i); }
+.custom-node.describer-node { --foldder-node-card-bg: var(--foldder-palette-j); }
+.custom-node.video-editor-node { --foldder-node-card-bg: var(--foldder-palette-k); }
+.custom-node.cine-node,
+.custom-node.foldder-studio-node--cine { --foldder-node-card-bg: var(--foldder-palette-l); }
+.custom-node.project-assets-node { --foldder-node-card-bg: var(--foldder-palette-m); }
+.custom-node.grok-processor-node { --foldder-node-card-bg: var(--foldder-palette-n); }
+.custom-node.image-export-node { --foldder-node-card-bg: var(--foldder-palette-o); }
+.custom-node.gemini-video-node { --foldder-node-card-bg: var(--foldder-palette-p); }
+.custom-node.crop-node { --foldder-node-card-bg: var(--foldder-palette-q); }
+.custom-node.mask-node { --foldder-node-card-bg: var(--foldder-palette-r); }
+.custom-node.vfx-generator-node { --foldder-node-card-bg: var(--foldder-palette-s); }
+.custom-node.presenter-node { --foldder-node-card-bg: var(--foldder-palette-t); }
+.custom-node.painter-node { --foldder-node-card-bg: var(--foldder-palette-u); }
+.custom-node.note-node { --foldder-node-card-bg: var(--foldder-palette-v); }
+.custom-node.concatenator-node { --foldder-node-card-bg: var(--foldder-palette-w); }
+.custom-node.listado-node { --foldder-node-card-bg: var(--foldder-palette-x); }
+.custom-node.enhancer-node { --foldder-node-card-bg: var(--foldder-palette-y); }
+
+.react-flow__node .custom-node:not(.canvas-group-frame),
+.custom-node.foldder-node--frameless,
+.custom-node.foldder-node--frameless.node--glass,
+.custom-node.foldder-node--frameless.node--media,
+.custom-node.video-editor-node.foldder-node--frameless,
+.custom-node.cine-node,
+.custom-node.grok-processor-node,
+.custom-node.project-assets-node,
+.custom-node.project-brain-node,
+.custom-node.url-image-node,
+.custom-node.describer-node,
+.custom-node.image-export-node,
+.custom-node.media-input-node,
+.custom-node.crop-node {
+  background: linear-gradient(
+    135deg,
+    var(--foldder-node-card-bg) 0%,
+    color-mix(in srgb, var(--foldder-node-card-bg) 80%, #000000) 100%
+  ) !important;
+  color: #ffffff !important;
+}
+
+.custom-node.inspiration-node {
+  background: transparent !important;
+}
+
+.custom-node:is(.inspiration-node, .image-creation-advanced-node, .gemini-video-node) .foldder-frameless-main,
+.custom-node:is(.inspiration-node, .image-creation-advanced-node, .gemini-video-node) .node-content.foldder-frameless-main,
+.custom-node.media-input-node.node--glass .media-input-preview,
+.custom-node.media-input-node.node--media .media-input-preview,
+.custom-node.crop-node .node-content.foldder-frameless-main {
+  background: linear-gradient(
+    135deg,
+    var(--foldder-node-card-bg) 0%,
+    color-mix(in srgb, var(--foldder-node-card-bg) 80%, #000000) 100%
+  ) !important;
+}
+
+.custom-node.crop-node .node-content.foldder-frameless-main > div:first-child,
+.custom-node.image-export-node .image-export-preview,
+.custom-node.url-image-node .url-image-preview {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--foldder-node-card-bg) 72%, #000000) 0%,
+    color-mix(in srgb, var(--foldder-node-card-bg) 56%, #000000) 100%
+  ) !important;
+}
+
+.custom-node.foldder-node--frameless :is(
+  p,
+  span,
+  h1,
+  h2,
+  h3,
+  h4,
+  label,
+  small,
+  strong,
+  .node-label,
+  .node-header__title,
+  .foldder-frameless-output,
+  .describer-node-hint,
+  .video-editor-heading h3,
+  .video-editor-summary,
+  .video-editor-status,
+  .project-assets-node-content,
+  .cine-summary-panel,
+  .guionista-node-content
+),
+.custom-node.foldder-node--frameless :is(svg, .foldder-node-icon),
+.react-flow__node .custom-node:not(.canvas-group-frame) > [class*="group/label"] > div,
+.react-flow__node .custom-node:not(.canvas-group-frame) > [class*="group/label"] > input,
+.react-flow__node .custom-node.foldder-frameless-label-dark > [class*="group/label"] > div,
+.react-flow__node .custom-node.foldder-frameless-label-dark > [class*="group/label"] > input {
+  color: #ffffff !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.22) !important;
+}
+
+.custom-node.foldder-node--frameless :is(
+  .text-gray-400,
+  .text-gray-500,
+  .text-zinc-400,
+  .text-zinc-500,
+  .text-slate-400,
+  .text-slate-500,
+  .text-slate-600,
+  .text-black,
+  .text-zinc-950,
+  .text-zinc-900
+) {
+  color: rgba(255, 255, 255, 0.72) !important;
+}
+
+.custom-node.foldder-node--frameless :is(
+  .node-input,
+  .node-textarea,
+  select,
+  input,
+  textarea
+) {
+  border: none !important;
+  background: rgba(255, 255, 255, 0.14) !important;
+  color: #ffffff !important;
+  box-shadow: none !important;
+}
+
+.custom-node.foldder-node--frameless :is(input, textarea)::placeholder,
+.custom-node.foldder-node--frameless :is(.node-input, .node-textarea)::placeholder {
+  color: rgba(255, 255, 255, 0.54) !important;
+}
+
+.custom-node.foldder-node--frameless :is(
+  button,
+  .action-btn,
+  .execute-btn,
+  .foldder-frameless-action,
+  .studio-canvas-open-button,
+  .project-assets-open-button,
+  .media-input-change-button,
+  .video-editor-open-button,
+  .image-export-action,
+  .image-export-format-option
+) {
+  border: none !important;
+  background: rgba(255, 255, 255, 0.16) !important;
+  color: #ffffff !important;
+  box-shadow: none !important;
+}
+
+.custom-node.foldder-node--frameless :is(
+  button,
+  .action-btn,
+  .execute-btn,
+  .foldder-frameless-action,
+  .studio-canvas-open-button,
+  .project-assets-open-button,
+  .media-input-change-button,
+  .video-editor-open-button,
+  .image-export-action,
+  .image-export-format-option
+) :is(svg, span) {
+  color: #ffffff !important;
+}
+
+.custom-node.foldder-node--frameless :is(
+  button,
+  .action-btn,
+  .execute-btn,
+  .foldder-frameless-action,
+  .studio-canvas-open-button,
+  .project-assets-open-button,
+  .media-input-change-button,
+  .video-editor-open-button,
+  .image-export-action,
+  .image-export-format-option
+):hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.24) !important;
+}
+
+.custom-node.foldder-node--frameless :is(
+  .foldder-frameless-chip,
+  .image-export-meta,
+  .media-input-type-chip,
+  .video-editor-status,
+  .project-assets-metrics > div,
+  .cine-summary-panel .grid span,
+  .cine-summary-panel .rounded-full,
+  .project-brain-node .mb-2.mt-auto.space-y-3 > div:first-child,
+  .project-brain-node .mt-3.flex.flex-wrap
+) {
+  border: none !important;
+  background: rgba(255, 255, 255, 0.13) !important;
+  color: #ffffff !important;
+  box-shadow: none !important;
+}
+
+.custom-node.image-export-node .image-export-format-option.is-active,
+.custom-node.image-export-node.node--media .image-export-format-option.is-active {
+  background: rgba(255, 255, 255, 0.28) !important;
+  color: #ffffff !important;
+}
+
+.custom-node.project-brain-node .relative.flex.min-h-0.flex-1.flex-col.p-4 > .flex:first-child > div:last-child,
+.custom-node.cine-node .cine-summary-panel .flex.h-10.w-10 {
+  background: rgba(255, 255, 255, 0.15) !important;
+  color: #ffffff !important;
+}
+
+.custom-node.project-brain-node [title*="ADN"],
+.custom-node.project-brain-node [title*="ADN"] * {
+  color: #ffffff !important;
+}
+
+.custom-node.image-export-node.node--media .image-export-meta,
+.custom-node.media-input-node.node--media .media-input-type-chip {
+  background: rgba(0, 0, 0, 0.34) !important;
+  color: #ffffff !important;
+}
+
+.react-flow__node .custom-node:not(.canvas-group-frame):not(.foldder-node--frameless) :is(
+  p,
+  span,
+  h1,
+  h2,
+  h3,
+  h4,
+  label,
+  small,
+  strong,
+  .node-label,
+  .node-header__title,
+  .node-content,
+  svg
+) {
+  color: #ffffff !important;
+}
+
+.react-flow__node .custom-node:not(.canvas-group-frame):not(.foldder-node--frameless) :is(
+  input,
+  textarea,
+  select,
+  .node-input,
+  .node-textarea
+) {
+  border: none !important;
+  background: rgba(255, 255, 255, 0.14) !important;
+  color: #ffffff !important;
+  box-shadow: none !important;
+}
+
+.react-flow__node .custom-node:not(.canvas-group-frame):not(.foldder-node--frameless) :is(
+  button,
+  .action-btn,
+  .execute-btn
+) {
+  border: none !important;
+  background: rgba(255, 255, 255, 0.16) !important;
+  color: #ffffff !important;
+  box-shadow: none !important;
+}
+
+/* Final gradient pass: every node background tilts 20% darker on the diagonal. */
+.react-flow__node .custom-node:not(.canvas-group-frame):not(.inspiration-node),
+.custom-node.foldder-node--frameless:not(.inspiration-node),
+.custom-node.foldder-node--frameless.node--glass,
+.custom-node.foldder-node--frameless.node--media,
+.custom-node.video-editor-node.foldder-node--frameless,
+.custom-node.cine-node,
+.custom-node.grok-processor-node,
+.custom-node.project-assets-node,
+.custom-node.project-brain-node,
+.custom-node.url-image-node,
+.custom-node.describer-node,
+.custom-node.image-export-node,
+.custom-node.media-input-node,
+.custom-node.crop-node,
+.custom-node.vfx-generator-node,
+.custom-node.presenter-node,
+.custom-node.painter-node,
+.custom-node.note-node,
+.custom-node.concatenator-node,
+.custom-node.listado-node,
+.custom-node.enhancer-node {
+  background: linear-gradient(
+    135deg,
+    var(--foldder-node-card-bg) 0%,
+    color-mix(in srgb, var(--foldder-node-card-bg) 80%, #000000) 100%
+  ) !important;
+  background-color: var(--foldder-node-card-bg) !important;
+}
+
+.custom-node.inspiration-node {
+  background: transparent !important;
+  background-image: none !important;
+}
+
+.custom-node:is(.inspiration-node, .image-creation-advanced-node, .gemini-video-node) .foldder-frameless-main,
+.custom-node:is(.inspiration-node, .image-creation-advanced-node, .gemini-video-node) .node-content.foldder-frameless-main,
+.custom-node.media-input-node.node--glass .media-input-preview,
+.custom-node.media-input-node.node--media .media-input-preview,
+.custom-node.crop-node .node-content.foldder-frameless-main {
+  background: linear-gradient(
+    135deg,
+    var(--foldder-node-card-bg) 0%,
+    color-mix(in srgb, var(--foldder-node-card-bg) 80%, #000000) 100%
+  ) !important;
+  background-color: var(--foldder-node-card-bg) !important;
+}
+
+.custom-node.crop-node .node-content.foldder-frameless-main > div:first-child,
+.custom-node.image-export-node .image-export-preview,
+.custom-node.url-image-node .url-image-preview {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--foldder-node-card-bg) 72%, #000000) 0%,
+    color-mix(in srgb, var(--foldder-node-card-bg) 56%, #000000) 100%
+  ) !important;
+  background-color: color-mix(in srgb, var(--foldder-node-card-bg) 72%, #000000) !important;
 }

@@ -2769,7 +2769,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   ]);
 
   return (
-    <div className={`custom-node processor-node group/node ${isActivelyGenerating ? 'node-glow-running' : ''}`}
+    <div className={`custom-node processor-node group/node foldder-node--frameless node--media foldder-frameless-accent-image ${status === 'error' ? 'foldder-node--error' : ''} ${isActivelyGenerating ? 'node-glow-running' : ''}`}
          style={{ minWidth: 240 }}
          ref={frameRef}>
       <FoldderNodeResizer minWidth={240} minHeight={180} maxWidth={960} maxHeight={STUDIO_NODE_MAX_HEIGHT} keepAspectRatio isVisible={selected} />
@@ -2840,7 +2840,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
       {/* ── Main image area: preview encaja sin recortar (object-contain); la imagen generada sigue con su resolución real ── */}
       <div
         ref={previewRef}
-        className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-b-[24px] bg-[#0a0a0a] group/out"
+        className="foldder-frameless-main relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-b-[24px] bg-[#0a0a0a] group/out"
         style={{ minHeight: 120 }}
       >
 
@@ -2928,7 +2928,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
       </div>
 
       {promptConnected && !showStudio && (
-        <div className="nodrag flex shrink-0 border-t border-black/[0.06] bg-white/[0.04] px-2 py-2">
+        <div className="foldder-frameless-footer-action nodrag flex shrink-0 border-t border-black/[0.06] bg-white/[0.04] px-2 py-2">
           <button
             type="button"
             onClick={(e) => {
@@ -2944,7 +2944,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
       )}
 
       {brainConnected && !showStudio && (
-        <div className="nodrag flex shrink-0 flex-col gap-1 border-t border-black/[0.06] bg-violet-950/15 px-2 py-1.5">
+        <div className="foldder-frameless-secondary-panel nodrag flex shrink-0 flex-col gap-1 border-t border-black/[0.06] bg-violet-950/15 px-2 py-1.5">
           <button
             type="button"
             onClick={(e) => {

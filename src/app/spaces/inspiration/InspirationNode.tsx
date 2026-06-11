@@ -29,7 +29,7 @@ import { readJsonWithHttpError } from "@/lib/read-response-json";
 import { resolvePromptValueFromEdgeSource } from "../canvas-group-logic";
 import { FoldderDataHandle } from "../FoldderDataHandle";
 import { NodeIcon, resolveFoldderNodeState } from "../foldder-icons";
-import { FoldderNodeHeaderTitle, FoldderStudioModeCenterButton, NodeLabel } from "../foldder-node-ui";
+import { FoldderNodeHeaderTitle, NodeLabel } from "../foldder-node-ui";
 import { StudioNodePortal } from "../studio-node/studio-node-architecture";
 
 type InspirationFacet = "similar" | "textures" | "colors" | "style" | "people" | "backgrounds";
@@ -508,8 +508,8 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
 
   return (
     <div
-      className={`custom-node inspiration-node !border-0 ${status === "searching" ? "node-glow-running" : ""}`}
-      style={{ minWidth: 292, border: 0, borderRadius: 10 }}
+      className={`custom-node inspiration-node foldder-node--frameless node--media ${status === "error" ? "foldder-node--error" : ""} ${status === "searching" ? "node-glow-running" : ""}`}
+      style={{ minWidth: 292 }}
     >
       <NodeResizer minWidth={292} minHeight={310} isVisible={selected} />
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Inspiration" />
@@ -538,7 +538,7 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
         <FoldderNodeHeaderTitle introActive={!!nodeData._foldderCanvasIntro}>Inspiration</FoldderNodeHeaderTitle>
       </div>
 
-      <div className="node-content space-y-3">
+      <div className="node-content foldder-frameless-main space-y-3">
         <div
           className="relative overflow-hidden rounded-[10px] bg-slate-950/70"
           style={{ aspectRatio: previewRatio }}
@@ -576,7 +576,7 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
           )}
         </div>
 
-        <p className="min-h-[26px] text-[9px] leading-snug text-zinc-500">
+        <p className="foldder-frameless-chip min-h-[26px] text-[9px] leading-snug text-zinc-500">
           {nodeData.error || statusMessage(status, hasInput)}
         </p>
 
@@ -586,14 +586,12 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
             event.stopPropagation();
             setStudioOpen(true);
           }}
-          className="nodrag flex w-full items-center justify-center gap-2 rounded-[10px] bg-white/[0.07] px-3 py-2 text-[10px] font-black uppercase tracking-widest text-zinc-100 transition hover:bg-white/[0.12]"
+          className="foldder-frameless-action nodrag flex w-full items-center justify-center gap-2 rounded-[10px] bg-white/[0.07] px-3 py-2 text-[10px] font-black uppercase tracking-widest text-zinc-100 transition hover:bg-white/[0.12]"
         >
           <Maximize2 size={13} />
           Open Studio
         </button>
       </div>
-
-      <FoldderStudioModeCenterButton onClick={() => setStudioOpen(true)} />
 
       <div className="handle-wrapper handle-right" style={{ top: "50%" }}>
         <span className="handle-label">Image</span>

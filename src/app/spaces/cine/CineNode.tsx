@@ -342,13 +342,16 @@ export const CineNode = memo(function CineNode({ id, data, selected }: NodeProps
       introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}
       minWidth={292}
       width={292}
+      className="cine-node"
       handles={CINE_NODE_HANDLES}
+      variant="frameless"
+      material={previewImage ? "media" : "glass"}
     >
       <div
         className={
           previewImage
-            ? "node-content relative flex min-h-[410px] flex-col justify-end gap-3 overflow-hidden rounded-[28px] px-3 pb-3 pt-3"
-            : "node-content flex flex-col gap-3 px-3 pb-3 pt-2"
+            ? "node-content cine-node-content cine-node-content--media relative flex min-h-[410px] flex-col justify-end gap-3 overflow-hidden rounded-[28px] px-3 pb-3 pt-3"
+            : "node-content cine-node-content flex flex-col gap-3 px-3 pb-3 pt-2"
         }
       >
         {previewImage ? (
@@ -372,7 +375,7 @@ export const CineNode = memo(function CineNode({ id, data, selected }: NodeProps
           </>
         ) : null}
 
-        <div className={previewImage ? "relative z-10" : "rounded-2xl border border-slate-200/60 bg-slate-50/60 p-3 shadow-inner"}>
+        <div className={previewImage ? "cine-summary-panel relative z-10" : "cine-summary-panel rounded-2xl border border-slate-200/60 bg-slate-50/60 p-3 shadow-inner"}>
           {previewImage ? (
             <div className="mb-3">
               <h3 className="line-clamp-3 text-[20px] font-semibold leading-[1.02] tracking-[-0.045em] text-white drop-shadow-sm">

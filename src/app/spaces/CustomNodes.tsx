@@ -257,27 +257,20 @@ function MediaInputChangeMediaButton({
   disabled?: boolean;
 }) {
   return (
-    <div className="pointer-events-none absolute inset-0 z-[20] overflow-hidden opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-      <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-2">
-        <button
-          type="button"
-          disabled={disabled}
-          title="Subir otro archivo y reemplazar el actual"
-          onClick={(e) => {
-            e.stopPropagation();
-            if (!disabled) onClick();
-          }}
-          className="pointer-events-auto nodrag flex max-w-[min(100%,240px)] flex-col items-center gap-1.5 rounded-2xl border border-white/30 bg-white/[0.12] px-6 py-3.5 shadow-xl backdrop-blur-xl transition-all duration-300 ease-out hover:scale-[1.03] hover:bg-white/[0.22] hover:shadow-2xl disabled:pointer-events-none disabled:opacity-35"
-        >
-          <span className="font-mono text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-400">
-            Change
-          </span>
-          <span className="flex items-center gap-2 font-mono text-[17px] font-black uppercase tracking-wide text-zinc-50">
-            <Upload size={22} strokeWidth={2.5} className="shrink-0 text-violet-200" />
-            Media
-          </span>
-        </button>
-      </div>
+    <div className="pointer-events-none absolute bottom-3 right-3 z-[22]">
+      <button
+        type="button"
+        disabled={disabled}
+        title="Subir otro archivo y reemplazar el actual"
+        onClick={(e) => {
+          e.stopPropagation();
+          if (!disabled) onClick();
+        }}
+        className="media-input-change-button pointer-events-auto nodrag inline-flex items-center gap-1.5 rounded-full border-0 bg-white px-3 py-1.5 text-[11px] font-black uppercase tracking-[0.08em] text-[#3a2a20] shadow-none transition hover:scale-[1.02] hover:bg-[#f7f7f4] disabled:pointer-events-none disabled:opacity-35"
+      >
+        <Upload size={13} strokeWidth={2.5} className="shrink-0" />
+        Change media
+      </button>
     </div>
   );
 }
@@ -389,6 +382,9 @@ export const UrlImageNode = memo(function UrlImageNode({ id, data, selected }: N
   const urls = nodeData.urls || [];
   const selectedIndex = nodeData.selectedIndex ?? 0;
   const currentUrl = urls[selectedIndex] || nodeData.value || '';
+  const currentUrlDisplay = currentUrl.startsWith('data:image/')
+    ? 'Imagen embebida'
+    : currentUrl;
 
   const runCarouselSearch = useCallback(async () => {
     if (!nodeData.label) return;
@@ -472,7 +468,7 @@ export const UrlImageNode = memo(function UrlImageNode({ id, data, selected }: N
   };
 
   return (
-    <div className={`custom-node url-image-node border-cyan-500/30 ${loading ? 'node-glow-running' : ''}`} style={{ minWidth: 280 }}>
+    <div className={`custom-node url-image-node foldder-node--frameless node--glass ${loading ? 'node-glow-running' : ''}`} style={{ minWidth: 280, minHeight: 320 }}>
       <FoldderNodeResizer minWidth={280} minHeight={320} isVisible={selected} />
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Image Search" />
       <div className="node-header">
@@ -482,8 +478,8 @@ export const UrlImageNode = memo(function UrlImageNode({ id, data, selected }: N
         </FoldderNodeHeaderTitle>
         {loading && <Loader2 size={12} className="animate-spin shrink-0" />}
       </div>
-      <div className="node-content">
-        <div className="relative w-full aspect-video bg-slate-50 rounded-xl overflow-hidden border border-white/10 group mb-3 shadow-inner">
+      <div className="node-content url-image-node-content">
+        <div className="url-image-preview relative w-full aspect-video bg-slate-50 rounded-xl overflow-hidden border border-white/10 group mb-3 shadow-inner">
           {currentUrl ? (
             <img src={currentUrl} className="w-full h-full object-contain" alt="Carousel" />
           ) : (
@@ -514,7 +510,7 @@ export const UrlImageNode = memo(function UrlImageNode({ id, data, selected }: N
           )}
         </div>
 
-        <div className="space-y-4">
+        <div className="url-image-controls space-y-4">
            <div>
               <label className="node-label text-gray-500">Active URL</label>
               <div className="relative">
@@ -523,7 +519,7 @@ export const UrlImageNode = memo(function UrlImageNode({ id, data, selected }: N
                   type="text"
                   className="node-input pl-9 text-[10px]"
                   placeholder="Paste URL..."
-                  value={currentUrl}
+                  value={currentUrlDisplay}
                   onChange={(e) => {
                     const val = e.target.value;
                     const newUrls = [...urls];
@@ -576,6 +572,9 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
   const [isExporting, setIsExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [detectedSize, setDetectedSize] = useState<{ url: string; w: number; h: number } | null>(null);
+  const exportNode = nodes.find(n => n.id === id);
+  const exportNodeStyle = exportNode?.style as React.CSSProperties | undefined;
+  const hasManualExportFrame = typeof exportNodeStyle?.height === 'number' || typeof exportNodeStyle?.height === 'string';
 
   // Find the single source connected to this node
   const sourceEdge = edges.find(e => e.target === id);
@@ -621,6 +620,7 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
 
   const directImageSrc =
     sourceNode && typeof sourceNode.data?.value === 'string' ? sourceNode.data.value : null;
+  const hasExportPreview = Boolean(directImageSrc);
 
   const handleExport = async () => {
     if (!sourceNode) return alert("Connect an image first!");
@@ -698,10 +698,10 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
 
   return (
     <div
-      className="custom-node processor-node export-node border-rose-500/30"
-      style={{ minWidth: 240, maxHeight: 600 }}
+      className={`custom-node processor-node export-node image-export-node foldder-node--frameless ${hasExportPreview ? 'node--media' : 'node--glass foldder-frameless-label-dark'} ${hasManualExportFrame ? 'foldder-node-frame-manual' : ''} ${isExporting ? 'node-glow-running' : ''} ${exportError ? 'foldder-node--error' : ''}`}
+      style={{ minWidth: 280, minHeight: 350, maxHeight: 600 }}
     >
-      <FoldderNodeResizer minWidth={240} minHeight={180} maxWidth={960} maxHeight={600} isVisible={selected} />
+      <FoldderNodeResizer minWidth={280} minHeight={240} maxWidth={960} maxHeight={600} isVisible={selected} />
       <NodeLabel id={id} label={typeof data.label === "string" ? data.label : undefined} defaultLabel="Export" />
 
       <div className="handle-wrapper handle-left">
@@ -714,25 +714,25 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
           IMAGE EXPORT
         </FoldderNodeHeaderTitle>
       </div>
-      <div className="node-content flex flex-col gap-3">
-        <div className="flex shrink-0 flex-col gap-3">
-          <div className="flex gap-2">
+      <div className="node-content image-export-node-content flex flex-col gap-3">
+        <div className="image-export-controls flex shrink-0 flex-col gap-3">
+          <div className="image-export-format-row flex gap-2">
             <button
               onClick={() => setFormat('png')}
-              className={`flex-1 py-1 rounded text-[10px] font-bold transition-all ${format === 'png' ? 'bg-[#1d2433] text-white' : 'bg-white/5 text-gray-400 border border-white/10'}`}
+              className={`image-export-format-option flex-1 py-1 rounded text-[10px] font-bold transition-all ${format === 'png' ? 'is-active bg-[#1d2433] text-white' : 'bg-white/5 text-gray-400 border border-white/10'}`}
             >
               PNG
             </button>
             <button
               onClick={() => setFormat('jpeg')}
-              className={`flex-1 py-1 rounded text-[10px] font-bold transition-all ${format === 'jpeg' ? 'bg-[#1d2433] text-white' : 'bg-white/5 text-gray-400 border border-white/10'}`}
+              className={`image-export-format-option flex-1 py-1 rounded text-[10px] font-bold transition-all ${format === 'jpeg' ? 'is-active bg-[#1d2433] text-white' : 'bg-white/5 text-gray-400 border border-white/10'}`}
             >
               JPG
             </button>
           </div>
 
           <button
-            className={`execute-btn w-full justify-center ${isExporting ? 'opacity-50' : ''}`}
+            className={`execute-btn image-export-action w-full justify-center ${isExporting ? 'opacity-50' : ''}`}
             onClick={handleExport}
             disabled={isExporting}
           >
@@ -747,14 +747,14 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
             )}
           </button>
 
-          <div className="flex justify-between items-center text-[8px] font-mono text-gray-500 uppercase">
+          <div className="image-export-meta flex justify-between items-center text-[8px] font-mono text-gray-500 uppercase">
             <span>
               {exportW}×{exportH} PX{detectedSize ? ' · tamaño real' : ' · estimado'}
             </span>
             <span>EXPORT READY</span>
           </div>
           {exportError ? (
-            <div className="rounded-[10px] border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-[9px] font-semibold leading-snug text-rose-100">
+            <div className="image-export-error rounded-[10px] border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-[9px] font-semibold leading-snug text-rose-100">
               {exportError}
             </div>
           ) : null}
@@ -762,12 +762,12 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
 
         {/* Preview: marco con la misma proporción que la imagen (exportW/H); encaja en el nodo sin deformar */}
         <div
-          className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-[#0a0a0a] group/out"
+          className="image-export-preview relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-[#0a0a0a] group/out"
           style={{ minHeight: 120 }}
         >
           {directImageSrc ? (
             <div
-              className="max-h-full max-w-full min-h-0 min-w-0"
+              className="image-export-preview-frame max-h-full max-w-full min-h-0 min-w-0"
               style={{
                 aspectRatio: `${Math.max(1, exportW)} / ${Math.max(1, exportH)}`,
               }}
@@ -996,8 +996,13 @@ export const MediaInputNode = memo(function MediaInputNode({ id, data, selected 
   return (
     <div
       ref={frameRef}
-      className="custom-node"
-      style={{ padding: 0, minWidth: 280, borderRadius: 9, overflow: 'visible' }}
+      className={`custom-node media-input-node foldder-node--frameless ${hasMedia && isVisual ? 'node--media' : 'node--glass foldder-frameless-label-dark'} ${isUploading ? 'node-glow-running' : ''} ${nodeData.error ? 'foldder-node--error' : ''}`}
+      style={{
+        padding: 0,
+        minWidth: 280,
+        overflow: 'visible',
+        '--foldder-frameless-accent': getTitleColor(),
+      } as React.CSSProperties}
     >
       <FoldderNodeResizer
         minWidth={280}
@@ -1028,7 +1033,7 @@ export const MediaInputNode = memo(function MediaInputNode({ id, data, selected 
       {/* Full-bleed drop zone / preview */}
       <div
         ref={previewRef}
-        className={`group relative w-full ${mediaPreviewFrameClass} overflow-hidden bg-zinc-900 ${hasMedia ? 'cursor-default' : 'cursor-pointer'} transition-all`}
+        className={`media-input-preview group relative w-full ${mediaPreviewFrameClass} overflow-hidden bg-zinc-900 ${hasMedia ? 'cursor-default' : 'cursor-pointer'} transition-all`}
         style={{ outline: isDragOver ? `2px dashed ${FOLDDER_LOGO_BLUE}` : 'none', outlineOffset: '-2px' }}
         onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
         onDragLeave={() => setIsDragOver(false)}
@@ -1051,13 +1056,13 @@ export const MediaInputNode = memo(function MediaInputNode({ id, data, selected 
 
         {/* Preview */}
         {isUploading ? (
-          <div className="flex flex-col items-center gap-2 text-rose-400">
+          <div className="media-input-empty-state flex flex-col items-center gap-2 text-rose-400">
             <Loader2 size={28} className="animate-spin" />
             <span className="text-[9px] font-bold uppercase tracking-widest">Uploading…</span>
           </div>
         ) : nodeData.error && !hasMedia ? (
           <div
-            className="flex flex-col items-center gap-2 px-4 text-center text-rose-400"
+            className="media-input-empty-state flex flex-col items-center gap-2 px-4 text-center text-rose-400"
             onClick={(e) => e.stopPropagation()}
           >
             <AlertCircle size={28} className="shrink-0" />
@@ -1131,12 +1136,12 @@ export const MediaInputNode = memo(function MediaInputNode({ id, data, selected 
             onLoad={() => scheduleFitViewportToThisNode()}
           />
         ) : hasMedia && nodeData.type === 'audio' ? (
-          <div className="flex flex-col items-center gap-3 text-purple-400">
+          <div className="media-input-empty-state flex flex-col items-center gap-3 text-purple-400">
             <Music size={36} />
             <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Audio Loaded</span>
           </div>
         ) : (
-          <div className="flex flex-col items-center gap-3 select-none">
+          <div className="media-input-empty-state flex flex-col items-center gap-3 select-none">
             <div className="w-12 h-12 rounded-2xl bg-white/5 flex items-center justify-center">
               <FilePlus size={22} className="text-gray-600" />
             </div>
@@ -1158,7 +1163,7 @@ export const MediaInputNode = memo(function MediaInputNode({ id, data, selected 
 
         {/* Metadata overlay strip */}
         {hasMedia && nodeData.metadata && isVisual && (
-          <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between px-3 py-1.5"
+          <div className="media-input-metadata-strip absolute bottom-0 left-0 right-0 flex items-center justify-between px-3 py-1.5"
             style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.75) 0%, transparent 100%)' }}>
             <span className="text-[8px] font-mono text-white/60 uppercase">
               {nodeData.metadata.resolution}
@@ -1174,7 +1179,7 @@ export const MediaInputNode = memo(function MediaInputNode({ id, data, selected 
 
         {/* Header pill top-left */}
         {hasMedia && (
-          <div className="absolute top-2 left-2 flex items-center gap-1 px-2 py-1 rounded-full text-[8px] font-black uppercase tracking-widest"
+          <div className="media-input-type-chip absolute top-2 left-2 flex items-center gap-1 px-2 py-1 rounded-full text-[8px] font-black uppercase tracking-widest"
             style={{ background: 'rgba(0,0,0,0.55)', color: getTitleColor(), backdropFilter: 'blur(6px)' }}>
             <NodeIcon type="mediaInput" iconKey={mediaIconKey()} size={12} colorOverride={getTitleColor()} />
             <span>{nodeData.type}</span>
@@ -1184,7 +1189,7 @@ export const MediaInputNode = memo(function MediaInputNode({ id, data, selected 
         {/* Fullscreen button top-right */}
         {hasMedia && isVisual && (
           <button
-            className="absolute top-2 right-2 z-[21] w-7 h-7 rounded-full flex items-center justify-center transition-all hover:scale-110 nodrag"
+            className="media-input-fullscreen-button absolute top-2 right-2 z-[21] w-7 h-7 rounded-full flex items-center justify-center transition-all hover:scale-110 nodrag"
             style={{ background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)' }}
             onClick={(e) => { e.stopPropagation(); setShowFullSize(true); }}
             title="Ver tamaño completo"
@@ -1198,7 +1203,7 @@ export const MediaInputNode = memo(function MediaInputNode({ id, data, selected 
             <MediaInputChangeMediaButton disabled={isUploadingLocal} onClick={triggerReplaceFile} />
             <button
               type="button"
-              className="absolute bottom-2 right-2 z-[22] flex h-8 w-8 items-center justify-center rounded-full nodrag transition-opacity hover:opacity-100"
+              className="media-input-replace-icon absolute bottom-2 right-2 z-[22] flex h-8 w-8 items-center justify-center rounded-full nodrag transition-opacity hover:opacity-100"
               style={{ background: 'rgba(0,0,0,0.6)' }}
               title="Reemplazar archivo"
               onClick={(e) => {
@@ -1285,7 +1290,7 @@ export const PromptNode = memo(function PromptNode({ id, data, selected }: NodeP
   }, [nodeData.value, syncTextareaHeight, id, updateNodeInternals]);
 
   return (
-    <div className="custom-node prompt-node prompt-node--compact" style={{ minWidth: 260 }}>
+    <div className="custom-node prompt-node prompt-node--compact foldder-node--frameless node--glass" style={{ minWidth: 260, minHeight: 76 }}>
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Prompt" />
       <div className="node-header">
         <NodeIcon type="promptInput" selected={selected} size={16} />
@@ -1419,7 +1424,7 @@ export const NotesNode = memo(function NotesNode({ id, data, selected }: NodePro
 
   return (
     <div
-      className="custom-node relative"
+      className="custom-node note-node relative"
       style={{
         width,
         height,
@@ -1487,7 +1492,7 @@ export const ConcatenatorNode = memo(function ConcatenatorNode({ id, data, selec
   }, [connectedEdges, nodesById, id, nodeData.value, setNodes]);
 
   return (
-    <div className={`custom-node tool-node` } style={{ minWidth: 240 }}>
+    <div className="custom-node tool-node concatenator-node" style={{ minWidth: 240 }}>
       <FoldderNodeResizer minWidth={240} minHeight={180} maxWidth={600} maxHeight={520} isVisible={selected} />
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Concatenator" />
       {ALL_HANDLES.map((hId, index) => {
@@ -1626,7 +1631,7 @@ export const ListadoNode = memo(function ListadoNode({ id, data, selected }: Nod
   }, [options, nodeData.selectedEdgeId, nodeData.value, nodeData.label, id, setNodes]);
 
   return (
-    <div className="custom-node tool-node" style={{ minWidth: 280 }}>
+    <div className="custom-node tool-node listado-node" style={{ minWidth: 280 }}>
       <FoldderNodeResizer minWidth={280} minHeight={130} maxWidth={520} maxHeight={400} isVisible={selected} />
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Listado" />
       {ALL_HANDLES.map((hId, index) => {
@@ -1779,7 +1784,7 @@ export const EnhancerNode = memo(function EnhancerNode({ id, data, selected }: N
   useRegisterAssistantNodeRun(id, handleEnhance);
 
   return (
-    <div className="custom-node tool-node" style={{ minWidth: 240 }}>
+    <div className="custom-node tool-node enhancer-node" style={{ minWidth: 240 }}>
       <FoldderNodeResizer minWidth={240} minHeight={180} maxWidth={600} maxHeight={520} isVisible={selected} />
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Enhancer" />
 
@@ -1957,7 +1962,7 @@ export const GrokNode = memo(function GrokNode({ id, data, selected }: NodeProps
   useRegisterAssistantNodeRun(id, onRun);
 
   return (
-    <div className={`custom-node processor-node ${status === 'running' ? 'node-glow-running' : ''}`} style={{ minWidth: 300 }}>
+    <div className={`custom-node processor-node grok-processor-node foldder-node--frameless node--glass ${status === 'running' ? 'node-glow-running' : ''}`} style={{ minWidth: 300, minHeight: 210 }}>
       <FoldderNodeResizer minWidth={300} minHeight={280} maxWidth={620} maxHeight={620} isVisible={selected} />
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Grok Imagine" />
       <div className="handle-wrapper handle-left" style={{ top: '30%' }}>
@@ -1979,17 +1984,17 @@ export const GrokNode = memo(function GrokNode({ id, data, selected }: NodeProps
           GROK IMAGINE
         </FoldderNodeHeaderTitle>
       </div>
-      <div className="node-content">
-        <div className="flex gap-2 mb-3">
-          <select className="node-input text-[10px]" value={nodeData.resolution || '720p'} onChange={(e) => setNodes((nds) => nds.map((n) => n.id === id ? {...n, data: {...n.data, resolution: e.target.value}} : n))}>
+      <div className="node-content grok-node-content">
+        <div className="grok-settings-row flex gap-2 mb-3">
+          <select className="node-input grok-select text-[10px]" value={nodeData.resolution || '720p'} onChange={(e) => setNodes((nds) => nds.map((n) => n.id === id ? {...n, data: {...n.data, resolution: e.target.value}} : n))}>
             <option value="720p">720p</option>
             <option value="480p">480p</option>
           </select>
-          <select className="node-input text-[10px]" value={nodeData.aspect_ratio || '16:9'} onChange={(e) => setNodes((nds) => nds.map((n) => n.id === id ? {...n, data: {...n.data, aspect_ratio: e.target.value}} : n))}>
+          <select className="node-input grok-select text-[10px]" value={nodeData.aspect_ratio || '16:9'} onChange={(e) => setNodes((nds) => nds.map((n) => n.id === id ? {...n, data: {...n.data, aspect_ratio: e.target.value}} : n))}>
             <option value="16:9">16:9</option>
             <option value="9:16">9:16</option>
           </select>
-          <select className="node-input text-[10px]" value={nodeData.duration || 5} onChange={(e) => setNodes((nds) => nds.map((n) => n.id === id ? {...n, data: {...n.data, duration: Number(e.target.value)}} : n))}>
+          <select className="node-input grok-select text-[10px]" value={nodeData.duration || 5} onChange={(e) => setNodes((nds) => nds.map((n) => n.id === id ? {...n, data: {...n.data, duration: Number(e.target.value)}} : n))}>
             <option value={5}>5s</option>
             <option value={10}>10s</option>
           </select>
@@ -2763,6 +2768,9 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const persistedDescription = typeof nodeData.value === 'string' && nodeData.value.trim() ? nodeData.value : null;
   const visibleDescription = description || persistedDescription;
+  const describerNode = nodes.find(n => n.id === id);
+  const describerNodeStyle = describerNode?.style as React.CSSProperties | undefined;
+  const hasManualDescriberFrame = typeof describerNodeStyle?.height === 'number' || typeof describerNodeStyle?.height === 'string';
 
   const onRun = async () => {
     const inputEdge = edges.find(e => e.target === id && e.targetHandle === 'media');
@@ -2822,8 +2830,9 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
   useRegisterAssistantNodeRun(id, onRun);
 
   return (
-    <div className={`custom-node describer-node ${status === 'running' ? 'node-glow-running' : ''}`} style={{ minWidth: 300 }}>
+    <div className={`custom-node describer-node foldder-node--frameless node--glass ${hasManualDescriberFrame ? 'foldder-node-frame-manual' : ''} ${status === 'error' ? 'foldder-node--error' : ''} ${status === 'running' ? 'node-glow-running' : ''}`} style={{ minWidth: 300, minHeight: 330 }}>
       <FoldderNodeResizer minWidth={300} minHeight={300} maxWidth={700} maxHeight={720} isVisible={selected} />
+      <NodeLabel id={id} label={nodeData.label} defaultLabel="Eye Describer" />
       <div className="handle-wrapper handle-left">
         <FoldderDataHandle type="target" position={Position.Left} id="media" dataType="image" />
         <span className="handle-label">Media in</span>
@@ -2837,20 +2846,20 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
         <div className="node-badge">VISION</div>
       </div>
       
-      <div className="node-content">
-        <p className="text-[10px] text-gray-500 mb-3 italic">Analyze any media and generate a detailed prompt description.</p>
+      <div className="node-content describer-node-content">
+        <p className="describer-node-hint text-[10px] text-gray-500 mb-3 italic">Analyze any media and generate a detailed prompt description.</p>
         
-        <button className="execute-btn w-full justify-center mb-4" onClick={onRun} disabled={status === 'running'}>
+        <button className="execute-btn describer-generate-button w-full justify-center mb-4" onClick={onRun} disabled={status === 'running'}>
           {status === 'running' ? 'ANALYZING...' : 'GENERATE DESCRIPTION'}
         </button>
 
         {errorMessage ? (
-          <div className="mb-3 rounded-xl border border-rose-500/30 bg-rose-500/10 p-2.5 text-[9px] leading-snug text-rose-200">
+          <div className="foldder-frameless-error mb-3 rounded-xl border border-rose-500/30 bg-rose-500/10 p-2.5 text-[9px] leading-snug text-rose-200">
             {errorMessage}
           </div>
         ) : null}
 
-        <div className="p-3 bg-black/30 rounded-xl border border-white/10 min-h-[80px]">
+        <div className="foldder-frameless-output p-3 bg-black/30 rounded-xl border border-white/10 min-h-[80px]">
           {visibleDescription ? (
             <div className="text-[10px] text-zinc-200 leading-relaxed font-mono">{visibleDescription}</div>
           ) : (
@@ -4165,8 +4174,11 @@ export const GeminiVideoNode = memo(function GeminiVideoNode({ id, data, selecte
   return (
     <div
       ref={frameRef}
-      className={`custom-node processor-node group/node ${isActivelyGenerating ? 'node-glow-running' : ''}`}
-      style={{ minWidth: 280 }}
+      className={`custom-node processor-node gemini-video-node group/node foldder-node--frameless node--media ${status === 'error' ? 'foldder-node--error' : ''} ${isActivelyGenerating ? 'node-glow-running' : ''}`}
+      style={{
+        minWidth: 280,
+        "--foldder-frameless-accent": useSeedance ? "#f97316" : "#8b5cf6",
+      } as React.CSSProperties}
     >
       <FoldderNodeResizer minWidth={280} minHeight={200} maxWidth={960} maxHeight={STUDIO_NODE_MAX_HEIGHT} keepAspectRatio isVisible={selected} />
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Video Generator" />
@@ -4215,14 +4227,14 @@ export const GeminiVideoNode = memo(function GeminiVideoNode({ id, data, selecte
 
       <div
         ref={previewRef}
-        className="relative flex min-h-0 w-full flex-1 items-center justify-center overflow-hidden rounded-b-[24px] bg-[#0a0a0a] group/out"
+        className="gemini-video-preview foldder-frameless-main relative flex min-h-0 w-full flex-1 items-center justify-center overflow-hidden bg-[#0a0a0a] group/out"
         style={{ minHeight: 140 }}
       >
         {displayVideo ? (
           <>
             <video
               src={displayVideo}
-              className="max-h-full max-w-full object-contain"
+              className="h-full w-full object-cover"
               controls
               loop
               muted
@@ -4265,7 +4277,7 @@ export const GeminiVideoNode = memo(function GeminiVideoNode({ id, data, selecte
       </div>
 
       {!showStudio && (
-        <div className="nodrag flex shrink-0 border-t border-black/[0.06] bg-white/[0.04] px-2 py-2">
+        <div className="foldder-frameless-footer-action nodrag flex shrink-0 px-2 py-2">
           <button
             type="button"
             onClick={(e) => {
@@ -4278,7 +4290,7 @@ export const GeminiVideoNode = memo(function GeminiVideoNode({ id, data, selecte
                 ? 'Conecta un prompt o abre Studio y escribe el guion en Prompt local'
                 : undefined
             }
-            className="execute-btn nodrag w-full !py-2.5 !text-[9px] justify-center disabled:cursor-not-allowed disabled:opacity-40"
+            className="execute-btn nodrag justify-center disabled:cursor-not-allowed disabled:opacity-40"
           >
             Generar vídeo
           </button>
@@ -4680,7 +4692,7 @@ export const PainterNode = memo(function PainterNode({ id, data, selected }: Nod
   );
 
   return (
-    <div className={`custom-node bg-[#141414] border-amber-900/30` } style={{ padding: 0, overflow: 'visible', minWidth: 280, minHeight: 280 }}>
+    <div className="custom-node painter-node" style={{ padding: 0, overflow: 'visible', minWidth: 280, minHeight: 280 }}>
       <FoldderNodeResizer minWidth={280} minHeight={280} isVisible={selected} />
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Painter" />
 
@@ -4805,6 +4817,8 @@ function containedImageRect(cw: number, ch: number, nw: number, nh: number) {
   const dw = ch * ir;
   return { dw, dh, ox: (cw - dw) / 2, oy: 0 };
 }
+
+const CROP_OUTPUT_MAX_SIDE = 2048;
 
 /** Carga http(s) vía proxy POST (GET ?url= rompe con URLs prefirmadas largas) y devuelve URL lista para <img>. */
 async function resolveImageUrlForCanvasCrop(src: string): Promise<string> {
@@ -4939,9 +4953,13 @@ export const CropNode = memo(function CropNode({ id, data, selected }: NodeProps
           const ctx = canvas.getContext("2d");
           if (!ctx) return;
 
-          canvas.width = sw;
-          canvas.height = sh;
-          ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+          const outputScale = Math.min(1, CROP_OUTPUT_MAX_SIDE / Math.max(sw, sh, 1));
+          const outW = Math.max(1, Math.round(sw * outputScale));
+          const outH = Math.max(1, Math.round(sh * outputScale));
+
+          canvas.width = outW;
+          canvas.height = outH;
+          ctx.drawImage(img, sx, sy, sw, sh, 0, 0, outW, outH);
 
           let croppedDataUrl: string;
           try {
@@ -5054,16 +5072,28 @@ export const CropNode = memo(function CropNode({ id, data, selected }: NodeProps
   };
 
   return (
-    <div className={`custom-node bg-[#1e1e1e] border-slate-700 w-[340px]` }>
-            <FoldderNodeResizer minWidth={320} minHeight={340} isVisible={selected} />
-<NodeLabel id={id} label={nodeData.label} defaultLabel="Crop Asset" />
+    <div
+      className="custom-node crop-node foldder-node--frameless node--media"
+      style={{
+        minWidth: 340,
+        minHeight: 360,
+        "--foldder-frameless-accent": "#f59e0b",
+      } as React.CSSProperties}
+    >
+      <FoldderNodeResizer minWidth={340} minHeight={360} isVisible={selected} />
+      <NodeLabel id={id} label={nodeData.label} defaultLabel="Crop Asset" />
+
+      <div className="node-header">
+        <NodeIcon type="crop" selected={selected} state={resolveFoldderNodeState({ selected, done: Boolean(nodeData.value) })} size={16} />
+        <FoldderNodeHeaderTitle>Crop</FoldderNodeHeaderTitle>
+      </div>
       
       <div className="handle-wrapper handle-left">
         <FoldderDataHandle type="target" position={Position.Left} id="image" dataType="image" />
         <span className="handle-label text-emerald-500">Source Image</span>
       </div>
 
-      <div className="node-content p-3 space-y-3 flex flex-col items-center">
+      <div className="node-content foldder-frameless-main p-3 space-y-3 flex flex-col items-center">
         <div 
           ref={containerRef}
           className="relative bg-black rounded-2xl border border-white/10 overflow-hidden flex items-center justify-center min-h-[150px] w-full touch-none select-none nodrag nopan flex-1 shadow-inner"
@@ -5120,7 +5150,7 @@ export const CropNode = memo(function CropNode({ id, data, selected }: NodeProps
         </div>
 
         <div className="flex items-center gap-2 w-full pt-2">
-           <span className="text-[9px] font-black text-gray-500 uppercase tracking-widest">Aspect</span>
+           <span className="hidden text-[9px] font-black text-gray-500 uppercase tracking-widest">Aspect</span>
            <select
              value={aspectRatio}
              onChange={(e) => {
@@ -5135,7 +5165,7 @@ export const CropNode = memo(function CropNode({ id, data, selected }: NodeProps
                setCrop(next);
                window.setTimeout(() => commitCropRect(next), 0);
              }}
-             className="node-input text-[10px] w-full max-w-[140px] nodrag"
+             className="node-input foldder-frameless-chip text-[10px] w-full max-w-[140px] nodrag"
            >
              <option value="free">Freeform</option>
              <option value="1:1">1:1 Square</option>

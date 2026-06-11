@@ -78,7 +78,7 @@ import { uploadProjectMediaFile } from "../project-media-s3-save";
 import { useProjectAssetsCanvas } from "../project-assets-canvas-context";
 import { FoldderDataHandle } from "../FoldderDataHandle";
 import { NodeIcon, resolveFoldderNodeState } from "../foldder-icons";
-import { FoldderNodeHeaderTitle, FoldderStudioModeCenterButton, NodeLabel } from "../foldder-node-ui";
+import { FoldderNodeHeaderTitle, NodeLabel } from "../foldder-node-ui";
 import { resolvePromptValueFromEdgeSource } from "../canvas-group-logic";
 import { StudioNodePortal } from "../studio-node/studio-node-architecture";
 
@@ -2601,8 +2601,8 @@ export const ImageCreationAdvancedNode = memo(function ImageCreationAdvancedNode
 
   return (
     <div
-      className={`custom-node image-creation-advanced-node ${status === "error" ? "border-rose-400/60" : ""}`}
-      style={{ minWidth: 312, borderRadius: 10 }}
+      className={`custom-node image-creation-advanced-node foldder-node--frameless node--media ${status === "error" ? "foldder-node--error" : ""}`}
+      style={{ minWidth: 312 }}
     >
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Image Creation Advanced" />
 
@@ -2626,7 +2626,7 @@ export const ImageCreationAdvancedNode = memo(function ImageCreationAdvancedNode
         <div className="node-badge max-w-[118px] truncate">{session ? `${session.corrections.length} edits` : "Master"}</div>
       </div>
 
-      <div className="node-content space-y-3">
+      <div className="node-content foldder-frameless-main space-y-3">
         <div className="relative aspect-video overflow-hidden rounded-[10px] bg-slate-950/70">
           {previewUrl ? (
             <img src={previewUrl} alt="" className="h-full w-full object-cover" />
@@ -2637,7 +2637,7 @@ export const ImageCreationAdvancedNode = memo(function ImageCreationAdvancedNode
             </div>
           )}
         </div>
-        <p className="min-h-[28px] text-[9px] leading-snug text-zinc-500">
+        <p className="foldder-frameless-chip min-h-[28px] text-[9px] leading-snug text-zinc-500">
           {nodeData.error ||
             (session
               ? "Structured non destructive corrections. Generation still requires explicit guarded execution."
@@ -2649,14 +2649,12 @@ export const ImageCreationAdvancedNode = memo(function ImageCreationAdvancedNode
             event.stopPropagation();
             setStudioOpen(true);
           }}
-          className="nodrag flex w-full items-center justify-center gap-2 rounded-[10px] bg-white/[0.07] px-3 py-2 text-[10px] font-black uppercase tracking-widest text-zinc-100 transition hover:bg-white/[0.12]"
+          className="foldder-frameless-action nodrag flex w-full items-center justify-center gap-2 rounded-[10px] bg-white/[0.07] px-3 py-2 text-[10px] font-black uppercase tracking-widest text-zinc-100 transition hover:bg-white/[0.12]"
         >
           <Maximize2 size={13} />
           Open Studio
         </button>
       </div>
-
-      <FoldderStudioModeCenterButton onClick={() => setStudioOpen(true)} />
 
       <div className="handle-wrapper handle-right" style={{ top: "50%" }}>
         <span className="handle-label">Image</span>

@@ -296,9 +296,11 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
       }
       headerClassName="border-b border-violet-500/15 bg-gradient-to-r from-zinc-900/90 via-zinc-900/70 to-zinc-900/90"
       titleClassName="flex-1 truncate uppercase tracking-[0.14em] text-zinc-100"
-      className="group/node"
+      className="group/node designer-node foldder-frameless-label-dark"
       minWidth={280}
       handles={DESIGNER_NODE_HANDLES}
+      variant="frameless"
+      material="media"
       introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}
     >
       <DesignerNodeResizer
@@ -312,14 +314,14 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
 
       <div
         ref={previewRef}
-        className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-b-[24px] bg-[#0a0a0a] group/out"
+        className="foldder-frameless-main relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-[#0a0a0a] group/out"
         style={{ minHeight: 120 }}
       >
         {nodeData.value && nodeMediaVisible ? (
           <img
             src={nodeData.value}
             alt="Designer preview — página 1"
-            className="max-h-full max-w-full h-auto w-auto object-contain bg-zinc-950/80"
+            className="h-full w-full object-cover bg-zinc-950/80"
             onLoad={refreshHandleGeometry}
             onError={refreshHandleGeometry}
           />
