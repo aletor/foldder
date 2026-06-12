@@ -267,7 +267,7 @@ function InspirationStudio({
       <div className="fixed inset-0 z-[100090] flex flex-col bg-[#0b0c10] text-white" data-foldder-i18n-ignore>
         <header className="flex min-h-[72px] items-center justify-between bg-[#101116]/95 px-7 py-4 backdrop-blur-xl">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-violet-500/14 text-violet-200">
+            <div className="flex h-10 w-10 items-center justify-center rounded-none bg-violet-500/14 text-violet-200">
               <Compass size={20} />
             </div>
             <div className="min-w-0">
@@ -278,7 +278,7 @@ function InspirationStudio({
           <button
             type="button"
             onClick={onClose}
-            className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-white/[0.05] text-zinc-400 transition hover:bg-white/10 hover:text-white"
+            className="flex h-10 w-10 items-center justify-center rounded-none bg-white/[0.05] text-zinc-400 transition hover:bg-white/10 hover:text-white"
             aria-label="Close"
           >
             <X size={20} />
@@ -290,11 +290,11 @@ function InspirationStudio({
             <section className="shrink-0 space-y-3">
               <p className="mb-3 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">Current input</p>
               {promptInput ? (
-                <div className="rounded-[10px] bg-black/25 p-3 text-[13px] leading-relaxed text-zinc-200">
+                <div className="rounded-none bg-black/25 p-3 text-[13px] leading-relaxed text-zinc-200">
                   {compactText(promptInput, 320)}
                 </div>
               ) : imageInput ? (
-                <div className="rounded-[10px] bg-black/25 p-3">
+                <div className="rounded-none bg-black/25 p-3">
                   <p className="text-[12px] font-semibold text-zinc-200">Connected image input</p>
                   <p className="mt-1 text-[11px] leading-relaxed text-zinc-500">
                     The visual intent is read once and reused for every search.
@@ -308,7 +308,7 @@ function InspirationStudio({
                     onPatch({ manualPrompt: event.target.value, status: event.target.value.trim() ? "ready" : "empty" });
                   }}
                   placeholder="Write an idea to explore visual references…"
-                  className="min-h-[118px] w-full resize-none rounded-[10px] bg-black/25 p-3 text-[13px] leading-relaxed text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:bg-black/35"
+                  className="min-h-[118px] w-full resize-none rounded-none bg-black/25 p-3 text-[13px] leading-relaxed text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:bg-black/35"
                 />
               )}
             </section>
@@ -317,7 +317,7 @@ function InspirationStudio({
               type="button"
               onClick={() => void runSearch()}
               disabled={loading || !hasAnyInput}
-              className="mt-5 flex w-full shrink-0 items-center justify-center gap-2 rounded-[10px] bg-violet-500 px-5 py-4 text-[12px] font-black uppercase tracking-[0.18em] text-white shadow-[0_16px_36px_rgba(124,58,237,0.28)] transition hover:bg-violet-400 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400 disabled:shadow-none"
+              className="mt-5 flex w-full shrink-0 items-center justify-center gap-2 rounded-none bg-violet-500 px-5 py-4 text-[12px] font-black uppercase tracking-[0.18em] text-white shadow-[0_16px_36px_rgba(124,58,237,0.28)] transition hover:bg-violet-400 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400 disabled:shadow-none"
             >
               {loading ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
               Search {PROVIDERS.find((item) => item.id === provider)?.label ?? "Inspiration"}
@@ -332,7 +332,7 @@ function InspirationStudio({
                     type="button"
                     onClick={() => void runSearch(item.id)}
                     disabled={loading || !hasAnyInput}
-                    className={`flex items-center gap-2 rounded-[10px] px-3 py-3 text-left text-[12px] font-bold transition ${
+                    className={`flex items-center gap-2 rounded-none px-3 py-3 text-left text-[12px] font-bold transition ${
                       facet === item.id
                         ? "bg-violet-400/18 text-violet-100"
                         : "bg-white/[0.04] text-zinc-300 hover:bg-white/[0.08]"
@@ -348,7 +348,7 @@ function InspirationStudio({
 
           <section className="min-h-0 overflow-y-auto bg-[#0b0c10] p-6">
             <div className="mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.08] pb-4">
-              <div className="inline-flex rounded-[12px] border border-white/[0.08] bg-white/[0.04] p-1">
+              <div className="inline-flex rounded-none border border-white/[0.08] bg-white/[0.04] p-1">
                 {PROVIDERS.map((item) => {
                   const active = provider === item.id;
                   return (
@@ -364,7 +364,7 @@ function InspirationStudio({
                         }
                       }}
                       disabled={loading}
-                      className={`rounded-[9px] px-4 py-2 text-[11px] font-black uppercase tracking-[0.14em] transition ${
+                      className={`rounded-none px-4 py-2 text-[11px] font-black uppercase tracking-[0.14em] transition ${
                         active
                           ? "bg-white text-zinc-950 shadow-sm"
                           : "text-zinc-400 hover:bg-white/[0.06] hover:text-white"
@@ -383,12 +383,12 @@ function InspirationStudio({
             </div>
 
             {data.error ? (
-              <div className="mb-5 rounded-[10px] bg-rose-500/12 px-4 py-3 text-[13px] text-rose-100">
+              <div className="mb-5 rounded-none bg-rose-500/12 px-4 py-3 text-[13px] text-rose-100">
                 {data.error}
               </div>
             ) : null}
             {data.notice ? (
-              <div className="mb-5 rounded-[10px] bg-amber-300/10 px-4 py-3 text-[13px] text-amber-100">
+              <div className="mb-5 rounded-none bg-amber-300/10 px-4 py-3 text-[13px] text-amber-100">
                 {data.notice}
               </div>
             ) : null}
@@ -419,7 +419,7 @@ function InspirationStudio({
                       key={result.id}
                       type="button"
                       onClick={() => selectResult(result)}
-                      className={`group relative aspect-[4/5] overflow-hidden rounded-[10px] bg-zinc-950 text-left transition ${
+                      className={`group relative aspect-[4/5] overflow-hidden rounded-none bg-zinc-950 text-left transition ${
                         active
                           ? "scale-[0.985] brightness-110"
                           : "hover:brightness-110"
@@ -432,14 +432,14 @@ function InspirationStudio({
                         loading="lazy"
                       />
                       {active ? (
-                        <span className="absolute right-2 top-2 rounded-[10px] bg-violet-500 px-2 py-1 text-[9px] font-black uppercase tracking-[0.12em] text-white shadow-lg">
+                        <span className="absolute right-2 top-2 rounded-none bg-violet-500 px-2 py-1 text-[9px] font-black uppercase tracking-[0.12em] text-white shadow-lg">
                           Selected
                         </span>
                       ) : null}
                       <div className="absolute inset-x-0 bottom-0 translate-y-2 bg-gradient-to-t from-black/85 via-black/45 to-transparent p-3 opacity-0 transition group-hover:translate-y-0 group-hover:opacity-100">
                         <p className="text-[10px] font-black uppercase tracking-[0.14em] text-white">{result.source}</p>
                         <p className="mt-1 truncate text-[11px] text-zinc-300">{result.author || result.title || "Reference"}</p>
-                        <span className="mt-2 inline-flex rounded-[10px] bg-white px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.12em] text-zinc-950">
+                        <span className="mt-2 inline-flex rounded-none bg-white px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.12em] text-zinc-950">
                           Use this image
                         </span>
                       </div>
@@ -454,6 +454,8 @@ function InspirationStudio({
     </StudioNodePortal>
   );
 }
+
+const INSPIRATION_EMPTY_BACKGROUND_SRC = "/assets/nodes/inspiration-empty-green.png";
 
 export const InspirationNode = memo(function InspirationNode({ id, data, selected }: NodeProps) {
   const nodeData = data as InspirationNodeData;
@@ -497,6 +499,7 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
     (loadedPreviewRatio?.url === previewUrl ? loadedPreviewRatio.ratio : null) ||
     16 / 9;
   const currentNode = nodes.find((node) => node.id === id);
+  const showInspirationEmpty = !outputUrl && !selectedRef;
 
   useLayoutEffect(() => {
     if (!previewUrl || !Number.isFinite(previewRatio) || previewRatio <= 0) {
@@ -559,7 +562,7 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
   return (
     <div
       ref={frameRef}
-      className={`custom-node inspiration-node foldder-node--frameless node--media ${status === "error" ? "foldder-node--error" : ""} ${status === "searching" ? "node-glow-running" : ""}`}
+      className={`custom-node inspiration-node foldder-node--frameless node--media ${showInspirationEmpty ? "inspiration-node--empty" : ""} ${status === "error" ? "foldder-node--error" : ""} ${status === "searching" ? "node-glow-running" : ""}`}
       style={{ minWidth: 200, minHeight: 120 }}
     >
       <NodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={1400} keepAspectRatio={Boolean(previewUrl)} isVisible={selected} />
@@ -589,61 +592,83 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
         <FoldderNodeHeaderTitle introActive={!!nodeData._foldderCanvasIntro}>Inspiration</FoldderNodeHeaderTitle>
       </div>
 
-      <div className="node-content foldder-frameless-main space-y-3">
-        <div
-          ref={previewFrameRef}
-          className="relative overflow-hidden rounded-[10px] bg-slate-950/70"
-          style={{ aspectRatio: previewRatio }}
-        >
-          {outputUrl ? (
+      {showInspirationEmpty ? (
+        <div className="node-content foldder-frameless-main relative flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div className="inspiration-empty-background absolute inset-0 overflow-hidden" aria-hidden>
             <img
-              src={outputUrl}
+              src={INSPIRATION_EMPTY_BACKGROUND_SRC}
               alt=""
-              className="h-full w-full object-contain"
-              onLoad={(event) => {
-                const img = event.currentTarget;
-                const ratio = photoAspectRatio(img.naturalWidth, img.naturalHeight);
-                if (ratio) setLoadedPreviewRatio({ url: outputUrl, ratio });
-              }}
+              className="h-full w-full object-contain object-bottom"
+              draggable={false}
             />
-          ) : selectedRef ? (
-            <img
-              src={selectedRef.thumbUrl || selectedRef.imageUrl}
-              alt=""
-              className="h-full w-full object-contain opacity-90"
-              onLoad={(event) => {
-                const img = event.currentTarget;
-                const selectedUrl = selectedRef.thumbUrl || selectedRef.imageUrl;
-                const ratio = photoAspectRatio(img.naturalWidth, img.naturalHeight);
-                if (ratio) setLoadedPreviewRatio({ url: selectedUrl, ratio });
+          </div>
+          <div className="relative z-10 mt-auto flex flex-col gap-3 px-3 pb-3 pt-2">
+            <p className="foldder-frameless-chip min-h-[26px] text-[9px] leading-snug text-white/80">
+              {nodeData.error || statusMessage(status, hasInput)}
+            </p>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                setStudioOpen(true);
               }}
-            />
-          ) : (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-zinc-500">
-              <Compass size={28} strokeWidth={1.5} />
-              <span className="text-[8px] font-black uppercase tracking-[0.14em]">
-                {resultsCount > 0 ? `${resultsCount} references` : promptInput || imageInput ? "Ready" : "Open Studio"}
-              </span>
-            </div>
-          )}
+              className="foldder-frameless-action nodrag flex w-full items-center justify-center gap-2 rounded-none bg-white/[0.88] px-3 py-2 text-[10px] font-black uppercase tracking-widest text-emerald-950 transition hover:bg-white"
+            >
+              <Maximize2 size={13} />
+              Open Studio
+            </button>
+          </div>
         </div>
+      ) : (
+        <div className="node-content foldder-frameless-main space-y-3">
+          <div
+            ref={previewFrameRef}
+            className="relative overflow-hidden rounded-none bg-slate-950/70"
+            style={{ aspectRatio: previewRatio }}
+          >
+            {outputUrl ? (
+              <img
+                src={outputUrl}
+                alt=""
+                className="h-full w-full object-contain"
+                onLoad={(event) => {
+                  const img = event.currentTarget;
+                  const ratio = photoAspectRatio(img.naturalWidth, img.naturalHeight);
+                  if (ratio) setLoadedPreviewRatio({ url: outputUrl, ratio });
+                }}
+              />
+            ) : selectedRef ? (
+              <img
+                src={selectedRef.thumbUrl || selectedRef.imageUrl}
+                alt=""
+                className="h-full w-full object-contain opacity-90"
+                onLoad={(event) => {
+                  const img = event.currentTarget;
+                  const selectedUrl = selectedRef.thumbUrl || selectedRef.imageUrl;
+                  const ratio = photoAspectRatio(img.naturalWidth, img.naturalHeight);
+                  if (ratio) setLoadedPreviewRatio({ url: selectedUrl, ratio });
+                }}
+              />
+            ) : null}
+          </div>
 
-        <p className="foldder-frameless-chip min-h-[26px] text-[9px] leading-snug text-zinc-500">
-          {nodeData.error || statusMessage(status, hasInput)}
-        </p>
+          <p className="foldder-frameless-chip min-h-[26px] text-[9px] leading-snug text-zinc-500">
+            {nodeData.error || statusMessage(status, hasInput)}
+          </p>
 
-        <button
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            setStudioOpen(true);
-          }}
-          className="foldder-frameless-action nodrag flex w-full items-center justify-center gap-2 rounded-[10px] bg-white/[0.07] px-3 py-2 text-[10px] font-black uppercase tracking-widest text-zinc-100 transition hover:bg-white/[0.12]"
-        >
-          <Maximize2 size={13} />
-          Open Studio
-        </button>
-      </div>
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              setStudioOpen(true);
+            }}
+            className="foldder-frameless-action nodrag flex w-full items-center justify-center gap-2 rounded-none bg-white/[0.07] px-3 py-2 text-[10px] font-black uppercase tracking-widest text-zinc-100 transition hover:bg-white/[0.12]"
+          >
+            <Maximize2 size={13} />
+            Open Studio
+          </button>
+        </div>
+      )}
 
       <div className="handle-wrapper handle-right" style={{ top: "50%" }}>
         <span className="handle-label">Image</span>

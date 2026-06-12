@@ -40,12 +40,21 @@ type SidebarProps = {
   paletteDragActive?: boolean;
 };
 
+const SIDEBAR_TILE_BACKGROUND_SRC: Record<string, string> = {
+  cine: "/assets/nodes/cine-sidebar-bg.png",
+  designer: "/assets/nodes/designer-sidebar-bg.png",
+  guionista: "/assets/nodes/guionista-sidebar-bg.png",
+  inspiration: "/assets/nodes/inspiration-sidebar-bg.png",
+  geminiVideo: "/assets/nodes/gemini-video-sidebar-bg.png",
+  nanoBanana: "/assets/nodes/nano-banana-sidebar-bg.png",
+  photoRoom: "/assets/nodes/photoroom-sidebar-bg.png",
+};
+
 const SIDEBAR_RASTER_ICON_SRC: Record<string, string> = {
   projectAssets: '/logo_topbar.svg',
   designer: '/designer_icon.svg',
   guionista: '/guionista_icon.svg',
   cine: '/cine_icon.svg',
-  photoRoom: '/photoroom_icon.svg',
   nanoBanana: '/image_icon.svg',
   imageCreationAdvanced: '/image_icon.svg',
   geminiVideo: '/video_icon.svg',
@@ -93,6 +102,7 @@ function tileBorderClassForType(type: string, fallback: string): string {
   if (type === 'cine') return 'border-[#b48689] group-hover/tile:border-[#b48689]';
   if (type === 'photoRoom') return 'border-[#63d4fd] group-hover/tile:border-[#63d4fd]';
   if (type === 'nanoBanana') return 'border-[#e0dc52] group-hover/tile:border-[#e0dc52]';
+  if (type === 'inspiration') return 'border-emerald-400/70 group-hover/tile:border-emerald-300/90';
   if (type === 'imageCreationAdvanced') return 'border-[#f6e56e] group-hover/tile:border-[#f6e56e]';
   if (type === 'geminiVideo') return 'border-[#ed9ae0] group-hover/tile:border-[#ed9ae0]';
   if (type === 'video_editor' || type === 'videoEditor') return 'border-[#ffb2c6] group-hover/tile:border-[#ffb2c6]';
@@ -106,6 +116,7 @@ const HIGH_END_PRODUCTION_ITEMS: Array<{ type: string; label: string }> = [
   { type: 'guionista', label: 'Guionista' },
   { type: 'cine', label: 'Cine' },
   { type: 'designer', label: 'Designer' },
+  { type: 'inspiration', label: 'Inspiration' },
   { type: 'photoRoom', label: 'PhotoRoom' },
   { type: 'nanoBanana', label: 'Image Creation' },
   { type: 'imageCreationAdvanced', label: 'Image Advanced' },
@@ -119,7 +130,6 @@ const TOOL_ITEMS: Array<{ type: string; label: string }> = [
   { type: 'mediaInput', label: 'Asset' },
   { type: 'promptInput', label: 'Prompt' },
   { type: 'urlImage', label: 'Web' },
-  { type: 'inspiration', label: 'Inspiration' },
   { type: 'backgroundRemover', label: 'Matting' },
   { type: 'mediaDescriber', label: 'Eye' },
   { type: 'enhancer', label: 'Enhance' },
@@ -128,9 +138,6 @@ const TOOL_ITEMS: Array<{ type: string; label: string }> = [
   { type: 'export_multimedia', label: 'Export Multimedia' },
   { type: 'concatenator', label: 'Concat' },
   { type: 'listado', label: 'Listado' },
-  { type: 'space', label: 'Space' },
-  { type: 'spaceInput', label: 'Entry' },
-  { type: 'spaceOutput', label: 'Exit' },
   { type: 'imageExport', label: 'Export' },
   { type: 'notes', label: 'Notes' },
   { type: 'painter', label: 'Painter' },
@@ -138,13 +145,13 @@ const TOOL_ITEMS: Array<{ type: string; label: string }> = [
 ];
 
 function toolFallbackBorderClass(type: string): string {
-  if (type === 'mediaInput' || type === 'promptInput' || type === 'urlImage' || type === 'inspiration') {
+  if (type === 'mediaInput' || type === 'promptInput' || type === 'urlImage') {
     return 'border-white/25 group-hover/tile:border-emerald-400/50';
   }
   if (type === 'backgroundRemover' || type === 'mediaDescriber' || type === 'enhancer' || type === 'grokProcessor' || type === 'vfxGenerator') {
     return 'border-white/25 group-hover/tile:border-cyan-400/50';
   }
-  if (type === 'concatenator' || type === 'listado' || type === 'space' || type === 'spaceInput' || type === 'spaceOutput') {
+  if (type === 'concatenator' || type === 'listado') {
     return 'border-white/25 group-hover/tile:border-blue-400/50';
   }
   return 'border-white/25 group-hover/tile:border-amber-400/50';
@@ -217,7 +224,7 @@ const Sidebar = ({
       ? createPortal(
           <div
             role="tooltip"
-            className="pointer-events-none fixed z-[10060] rounded-[10px] border border-white/10 bg-black px-2.5 py-2 shadow-[0_10px_28px_rgba(0,0,0,0.35)]"
+            className="pointer-events-none fixed z-[10060] rounded-none border border-white/10 bg-black px-2.5 py-2 shadow-[0_10px_28px_rgba(0,0,0,0.35)]"
             style={{
               left: visibleLibraryTip.x,
               top: visibleLibraryTip.y,
@@ -253,18 +260,6 @@ const Sidebar = ({
     }
   };
 
-  const tileShellStyle: React.CSSProperties = {
-    padding: 0,
-    background: "transparent",
-    border: "none",
-    borderRadius: 0,
-    gap: 0,
-    width: "100%",
-    aspectRatio: "1 / 1",
-    overflow: "visible",
-    boxShadow: "none",
-  };
-
   const TypeIndicators = ({ nodeType }: { nodeType: string }) => {
     const meta = NODE_REGISTRY[nodeType];
     if (!meta) return <div className="type-indicator-container"><div className="type-dot" /><div className="type-dot" /></div>;
@@ -296,15 +291,18 @@ const Sidebar = ({
   // ── NORMAL MODE: vertical sidebar panel ──────────────────────────────────
   return (
     <>
-    <div className="group/sidebar absolute left-0 top-0 h-screen z-[1000]">
-      {/* Transparent hover trigger zone - wider than the pill */}
-      <div
-        className="absolute inset-0 w-12 h-full pointer-events-auto"
-        onMouseEnter={() => onSidebarStripMouseEnter?.()}
-      />
+    <div
+      className={
+        sidebarLockedCollapsed
+          ? "group/sidebar absolute left-0 top-0 z-[1000] h-screen w-12"
+          : "group/sidebar absolute left-0 top-0 z-[1000] h-screen w-12 transition-[width] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] hover:w-[178px]"
+      }
+      data-foldder-sidebar
+      onMouseEnter={() => onSidebarStripMouseEnter?.()}
+    >
 
       {/* Collapsed pill — the visible strip when not hovering */}
-      <div className="absolute left-2 top-1/2 -translate-y-1/2 w-6 h-20 bg-white/10 backdrop-blur-2xl border border-white/10 rounded-full flex items-center justify-center text-slate-400 group-hover/sidebar:opacity-0 transition-opacity duration-300 shadow-lg pointer-events-none">
+      <div className="foldder-sidebar-collapsed-pill absolute left-2 top-1/2 -translate-y-1/2 w-6 h-20 bg-white/10 backdrop-blur-2xl border border-white/10 rounded-none flex items-center justify-center text-slate-400 group-hover/sidebar:opacity-0 transition-opacity duration-300 shadow-lg pointer-events-none">
         <ChevronRight size={14} />
       </div>
 
@@ -318,55 +316,64 @@ const Sidebar = ({
         style={{ willChange: 'width' }}
       >
         <div className="h-full w-[178px] bg-transparent border-r border-white/8 flex flex-col min-h-0">
-          <div className="px-0 mb-2 pt-20 flex-1 min-h-0 overflow-y-auto custom-scrollbar">
-            {/* 🚀 HIGH END PRODUCTION */}
-            <div className="mb-4">
-              <div className="mx-auto grid w-full max-w-[164px] grid-cols-2 gap-[8px]">
-                {HIGH_END_PRODUCTION_ITEMS.map(item => (
-                  <div key={item.type}
-                    className="dndnode group/tile relative flex aspect-square w-full flex-col items-center justify-center gap-0 py-1 px-0 cursor-grab active:scale-95 transition-all text-center !bg-transparent !border-0 hover:!bg-transparent hover:!border-transparent hover:!shadow-none"
-                    style={tileShellStyle}
-                    onDragStart={(e) => onDragStart(e, item.type)} onDragEnd={() => onLibraryDragEnd?.()} draggable
+          <div className="foldder-sidebar-scroll flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+            <div className="foldder-sidebar-scroll-inner">
+            <div className="foldder-sidebar-grid foldder-sidebar-grid--production">
+              {HIGH_END_PRODUCTION_ITEMS.map((item) => {
+                const tileBackground = SIDEBAR_TILE_BACKGROUND_SRC[item.type];
+                return (
+                  <div
+                    key={item.type}
+                    className={[
+                      "foldder-sidebar-tile foldder-sidebar-tile--production group/tile",
+                      tileBackground ? "foldder-sidebar-tile--image-bg" : "",
+                      tileBorderClassForType(item.type, "border-white/25 group-hover/tile:border-white/45"),
+                    ].join(" ")}
+                    data-tile-type={tileBackground ? item.type : undefined}
+                    style={
+                      tileBackground
+                        ? { backgroundImage: `url(${tileBackground})` }
+                        : undefined
+                    }
+                    onDragStart={(e) => onDragStart(e, item.type)}
+                    onDragEnd={() => onLibraryDragEnd?.()}
+                    draggable
                     onMouseEnter={(e) => onLibraryTileEnter(e, item.type)}
                     onMouseLeave={onLibraryTileLeave}
                     onDoubleClick={(e) => handleLibraryTileDoubleClick(e, item.type)}
                     aria-label={`${item.label}. Arrastra al lienzo. Doble clic para añadir.`}
                   >
-                    <span
-                      aria-hidden
-                      className={`pointer-events-none absolute left-1/2 top-1/2 h-[97%] w-[97%] -translate-x-1/2 -translate-y-1/2 rounded-[20px] border bg-black transition-colors ${tileBorderClassForType(item.type, 'border-white/25 group-hover/tile:border-white/45')}`}
-                    />
-                    <SidebarLibraryNodeIcon type={item.type} size={26} />
-                    <span className="relative z-[1] mt-1.5 text-[7px] font-light text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.35)]">{item.label}</span>
+                    {!tileBackground ? (
+                      <>
+                        <SidebarLibraryNodeIcon type={item.type} size={26} />
+                        <span className="foldder-sidebar-tile__label">{item.label}</span>
+                      </>
+                    ) : null}
                     <TypeIndicators nodeType={item.type} />
                   </div>
-                ))}
-              </div>
+                );
+              })}
             </div>
 
-            {/* 🛠 TOOLS */}
-            <div className="mb-4">
-              <div className="mx-auto grid w-full max-w-[164px] grid-cols-3 gap-[1px]">
-                {TOOL_ITEMS.map(item => (
-                  <div key={item.type}
-                    className="dndnode group/tile relative flex aspect-square w-full flex-col items-center justify-center gap-0 py-1 px-0 cursor-grab active:scale-95 transition-all text-center !bg-transparent !border-0 hover:!bg-transparent hover:!border-transparent hover:!shadow-none"
-                    style={tileShellStyle}
-                    onDragStart={(e) => onDragStart(e, item.type)} onDragEnd={() => onLibraryDragEnd?.()} draggable
-                    onMouseEnter={(e) => onLibraryTileEnter(e, item.type)}
-                    onMouseLeave={onLibraryTileLeave}
-                    onDoubleClick={(e) => handleLibraryTileDoubleClick(e, item.type)}
-                    aria-label={`${item.label}. Arrastra al lienzo. Doble clic para añadir.`}
-                  >
-                    <span
-                      aria-hidden
-                      className={`pointer-events-none absolute left-1/2 top-1/2 h-[84%] w-[84%] -translate-x-1/2 -translate-y-1/2 rounded-[10px] border bg-black transition-colors ${tileBorderClassForType(item.type, toolFallbackBorderClass(item.type))}`}
-                    />
-                    <SidebarLibraryNodeIcon type={item.type} size={14} />
-                    <span className="relative z-[1] text-[7px] font-light text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.35)]">{item.label}</span>
-                    <TypeIndicators nodeType={item.type} />
-                  </div>
-                ))}
-              </div>
+            <div className="foldder-sidebar-grid foldder-sidebar-grid--tools">
+              {TOOL_ITEMS.map((item) => (
+                <div
+                  key={item.type}
+                  className={`foldder-sidebar-tile foldder-sidebar-tile--tool group/tile ${tileBorderClassForType(item.type, toolFallbackBorderClass(item.type))}`}
+                  onDragStart={(e) => onDragStart(e, item.type)}
+                  onDragEnd={() => onLibraryDragEnd?.()}
+                  draggable
+                  onMouseEnter={(e) => onLibraryTileEnter(e, item.type)}
+                  onMouseLeave={onLibraryTileLeave}
+                  onDoubleClick={(e) => handleLibraryTileDoubleClick(e, item.type)}
+                  aria-label={`${item.label}. Arrastra al lienzo. Doble clic para añadir.`}
+                >
+                  <SidebarLibraryNodeIcon type={item.type} size={14} />
+                  <span className="foldder-sidebar-tile__label">{item.label}</span>
+                  <TypeIndicators nodeType={item.type} />
+                </div>
+              ))}
+            </div>
             </div>
           </div>
         </div>

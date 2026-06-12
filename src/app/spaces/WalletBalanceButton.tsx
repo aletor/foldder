@@ -354,21 +354,21 @@ export function WalletBalanceButton({ onBeforeCheckout, onSignOut, projectId = n
   const renderOverview = () => (
     <div className="space-y-4">
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-        <div className="rounded-xl border border-white/10 bg-white/[0.045] px-3 py-3">
+        <div className="rounded-none border border-white/10 bg-white/[0.045] px-3 py-3">
           <p className="text-[11px] font-semibold text-white/46">Disponible</p>
           <p className="mt-1 text-lg font-black tabular-nums text-white">{formatUsd(account?.availableMicros ?? 0)}</p>
         </div>
-        <div className="rounded-xl border border-white/10 bg-white/[0.045] px-3 py-3">
+        <div className="rounded-none border border-white/10 bg-white/[0.045] px-3 py-3">
           <p className="text-[11px] font-semibold text-white/46">Reservado</p>
           <p className="mt-1 text-lg font-black tabular-nums text-white">{formatUsd(account?.reservedMicros ?? 0)}</p>
         </div>
-        <div className="rounded-xl border border-white/10 bg-white/[0.045] px-3 py-3">
+        <div className="rounded-none border border-white/10 bg-white/[0.045] px-3 py-3">
           <p className="text-[11px] font-semibold text-white/46">Últimos usos</p>
           <p className="mt-1 text-lg font-black tabular-nums text-white">{visibleSpendLabel}</p>
         </div>
       </div>
 
-      <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-3">
+      <div className="rounded-none border border-white/10 bg-white/[0.035] p-3">
         <div className="mb-3 flex items-center justify-between gap-3">
           <p className="text-[12px] font-semibold text-white/72">Cómo se consume</p>
           <span className="rounded-full border border-white/10 bg-black/20 px-2.5 py-1 text-[10px] font-semibold text-white/42">
@@ -376,21 +376,21 @@ export function WalletBalanceButton({ onBeforeCheckout, onSignOut, projectId = n
           </span>
         </div>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-          <div className="rounded-xl border border-emerald-300/18 bg-emerald-400/[0.075] px-3 py-2.5">
+          <div className="rounded-none border border-emerald-300/18 bg-emerald-400/[0.075] px-3 py-2.5">
             <div className="flex items-center gap-2 text-emerald-100">
               <FileText size={14} />
               <p className="text-[12px] font-black">Texto</p>
             </div>
             <p className="mt-1 text-[11px] font-medium leading-snug text-emerald-50/62">Coste bajo y directo</p>
           </div>
-          <div className="rounded-xl border border-sky-300/18 bg-sky-400/[0.075] px-3 py-2.5">
+          <div className="rounded-none border border-sky-300/18 bg-sky-400/[0.075] px-3 py-2.5">
             <div className="flex items-center gap-2 text-sky-100">
               <ImageIcon size={14} />
               <p className="text-[12px] font-black">Imagen</p>
             </div>
             <p className="mt-1 text-[11px] font-medium leading-snug text-sky-50/62">Reserva visible</p>
           </div>
-          <div className="rounded-xl border border-amber-300/22 bg-amber-400/[0.08] px-3 py-2.5">
+          <div className="rounded-none border border-amber-300/22 bg-amber-400/[0.08] px-3 py-2.5">
             <div className="flex items-center gap-2 text-amber-100">
               <Video size={14} />
               <p className="text-[12px] font-black">Vídeo</p>
@@ -400,7 +400,7 @@ export function WalletBalanceButton({ onBeforeCheckout, onSignOut, projectId = n
         </div>
       </div>
 
-      <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-3">
+      <div className="rounded-none border border-white/10 bg-white/[0.035] p-3">
         <div className="mb-2 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <CreditCard size={16} className="text-white/58" />
@@ -428,7 +428,7 @@ export function WalletBalanceButton({ onBeforeCheckout, onSignOut, projectId = n
                 type="button"
                 onClick={() => void startCheckout(pkg.amountCents)}
                 disabled={!canCheckout}
-                className={`relative flex min-h-[60px] flex-col items-center justify-center rounded-xl border px-2 text-center shadow-sm transition disabled:pointer-events-none disabled:shadow-none ${packageTone}`}
+                className={`relative flex min-h-[60px] flex-col items-center justify-center rounded-none border px-2 text-center shadow-sm transition disabled:pointer-events-none disabled:shadow-none ${packageTone}`}
               >
                 {recommended && walletConfigured && (
                   <span className="absolute -top-2 rounded-full border border-emerald-200/30 bg-emerald-500 px-2 py-0.5 text-[8px] font-black uppercase tracking-[0.12em] text-white shadow-sm">
@@ -450,7 +450,7 @@ export function WalletBalanceButton({ onBeforeCheckout, onSignOut, projectId = n
           })}
         </div>
         {checkoutError && (
-          <p className="mt-2 rounded-xl border border-rose-300/25 bg-rose-500/10 px-3 py-2 text-[11px] font-semibold text-rose-100">
+          <p className="mt-2 rounded-none border border-rose-300/25 bg-rose-500/10 px-3 py-2 text-[11px] font-semibold text-rose-100">
             {checkoutError}
           </p>
         )}
@@ -474,7 +474,7 @@ export function WalletBalanceButton({ onBeforeCheckout, onSignOut, projectId = n
       </div>
       <div className="space-y-1.5">
         {activityRows.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-white/12 bg-white/[0.035] px-3 py-8 text-center text-[12px] font-medium text-white/45">
+          <div className="rounded-none border border-dashed border-white/12 bg-white/[0.035] px-3 py-8 text-center text-[12px] font-medium text-white/45">
             Aún no hay movimientos.
           </div>
         ) : (
@@ -501,9 +501,9 @@ export function WalletBalanceButton({ onBeforeCheckout, onSignOut, projectId = n
             return (
               <div
                 key={row.id}
-                className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-2.5 py-2 transition hover:border-white/16 hover:bg-white/[0.06] sm:grid-cols-[auto_minmax(0,1fr)_auto_auto]"
+                className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-none border border-white/10 bg-white/[0.04] px-2.5 py-2 transition hover:border-white/16 hover:bg-white/[0.06] sm:grid-cols-[auto_minmax(0,1fr)_auto_auto]"
               >
-                <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border ${DISPLAY_TONE_CLASS[row.tone]}`}>
+                <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-none border ${DISPLAY_TONE_CLASS[row.tone]}`}>
                   {walletIcon(row.icon)}
                 </div>
                 <div className="min-w-0 flex-1">
@@ -524,17 +524,17 @@ export function WalletBalanceButton({ onBeforeCheckout, onSignOut, projectId = n
                   </div>
                   <div className="mt-1 flex min-w-0 flex-wrap gap-1">
                     {row.reserveMicros > 0 && (
-                      <span className="rounded-md border border-amber-200/14 bg-amber-300/8 px-1.5 py-0.5 text-[9px] font-bold text-amber-100/70">
+                      <span className="rounded-none border border-amber-200/14 bg-amber-300/8 px-1.5 py-0.5 text-[9px] font-bold text-amber-100/70">
                         reserva {formatTinyUsd(row.reserveMicros)}
                       </span>
                     )}
                     {row.captureMicros > 0 && (
-                      <span className="rounded-md border border-rose-200/12 bg-rose-300/8 px-1.5 py-0.5 text-[9px] font-bold text-rose-100/72">
+                      <span className="rounded-none border border-rose-200/12 bg-rose-300/8 px-1.5 py-0.5 text-[9px] font-bold text-rose-100/72">
                         consumo {formatTinyUsd(row.captureMicros)}
                       </span>
                     )}
                     {row.releaseMicros > 0 && (
-                      <span className="rounded-md border border-emerald-200/12 bg-emerald-300/8 px-1.5 py-0.5 text-[9px] font-bold text-emerald-100/72">
+                      <span className="rounded-none border border-emerald-200/12 bg-emerald-300/8 px-1.5 py-0.5 text-[9px] font-bold text-emerald-100/72">
                         devuelto {formatTinyUsd(row.releaseMicros)}
                       </span>
                     )}
@@ -565,7 +565,7 @@ export function WalletBalanceButton({ onBeforeCheckout, onSignOut, projectId = n
   );
 
   return (
-    <div className="relative" ref={panelRef}>
+    <div className="relative" ref={panelRef} data-foldder-canvas-chrome>
       <button
         type="button"
         onClick={() => {
@@ -576,7 +576,7 @@ export function WalletBalanceButton({ onBeforeCheckout, onSignOut, projectId = n
         aria-label="Abrir cuenta y saldo Foldder"
         aria-expanded={open}
         aria-haspopup="dialog"
-        className={`group relative flex h-11 w-11 items-center justify-center rounded-full border p-0.5 shadow-sm backdrop-blur-xl transition-all hover:scale-105 hover:bg-white/[0.15] hover:text-white ${buttonTone}`}
+        className={`group relative flex h-11 w-11 items-center justify-center rounded-full p-0.5 backdrop-blur-xl transition-all hover:scale-105 hover:bg-white/[0.15] hover:text-white ${buttonTone}`}
       >
         <AccountAvatar user={user} className="h-full w-full" />
         {state.status === "loading" && !data ? (
@@ -585,16 +585,16 @@ export function WalletBalanceButton({ onBeforeCheckout, onSignOut, projectId = n
           </span>
         ) : null}
         <span
-          className={`absolute -bottom-1.5 left-1/2 max-w-[4.7rem] -translate-x-1/2 truncate rounded-full border px-1.5 py-0.5 text-[9px] font-black leading-none tabular-nums shadow-lg ${
+          className={`absolute -bottom-1.5 left-1/2 max-w-[4.7rem] -translate-x-1/2 truncate rounded-full px-1.5 py-0.5 text-[9px] font-black leading-none tabular-nums ${
             walletUnavailable
-              ? "border-amber-200/45 bg-amber-500 text-amber-950"
+              ? "bg-amber-500 text-amber-950"
               : !data
-                ? "border-white/25 bg-white text-slate-950"
+                ? "bg-white text-slate-950"
                 : hasBillingRisk
-                ? "border-rose-200/55 bg-rose-500 text-white"
+                ? "bg-rose-500 text-white"
                 : account?.lowBalance
-                  ? "border-amber-200/55 bg-amber-400 text-amber-950"
-                  : "border-emerald-100/55 bg-emerald-400 text-emerald-950"
+                  ? "bg-amber-400 text-amber-950"
+                  : "bg-emerald-400 text-emerald-950"
           }`}
         >
           {compactAvailableLabel}
@@ -609,9 +609,9 @@ export function WalletBalanceButton({ onBeforeCheckout, onSignOut, projectId = n
           aria-label={language === "es" ? "Recarga confirmada" : "Top-up confirmed"}
           data-foldder-i18n-ignore
         >
-          <div className="w-full max-w-sm rounded-2xl border border-emerald-200/18 bg-[#10171f] p-5 text-white shadow-[0_30px_100px_rgba(0,0,0,0.55)]">
+          <div className="w-full max-w-sm rounded-none border border-emerald-200/18 bg-[#10171f] p-5 text-white shadow-[0_30px_100px_rgba(0,0,0,0.55)]">
             <div className="flex items-start gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-emerald-300/25 bg-emerald-400/14 text-emerald-100">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-none border border-emerald-300/25 bg-emerald-400/14 text-emerald-100">
                 <CheckCircle2 size={20} />
               </div>
               <div className="min-w-0 flex-1">
@@ -642,7 +642,7 @@ export function WalletBalanceButton({ onBeforeCheckout, onSignOut, projectId = n
               <button
                 type="button"
                 onClick={() => setCheckoutSuccessPopup(null)}
-                className="rounded-xl border border-white/12 bg-white px-4 py-2 text-[11px] font-black uppercase tracking-[0.12em] text-slate-950 shadow-sm transition hover:bg-white/90"
+                className="rounded-none border border-white/12 bg-white px-4 py-2 text-[11px] font-black uppercase tracking-[0.12em] text-slate-950 shadow-sm transition hover:bg-white/90"
               >
                 {language === "es" ? "Entendido" : "Got it"}
               </button>
@@ -653,7 +653,7 @@ export function WalletBalanceButton({ onBeforeCheckout, onSignOut, projectId = n
 
       {open && (
         <div
-          className="fixed right-3 top-16 z-[260] w-[calc(100vw-1.5rem)] max-w-[560px] overflow-hidden rounded-2xl border border-white/14 bg-[#0d1117]/98 text-white shadow-[0_30px_90px_rgba(0,0,0,0.48)] backdrop-blur-2xl sm:absolute sm:right-0 sm:top-[calc(100%+12px)] sm:w-[min(92vw,560px)]"
+          className="fixed right-3 top-16 z-[260] w-[calc(100vw-1.5rem)] max-w-[560px] overflow-hidden rounded-none border border-white/14 bg-[#0d1117]/98 text-white shadow-[0_30px_90px_rgba(0,0,0,0.48)] backdrop-blur-2xl sm:absolute sm:right-0 sm:top-[calc(100%+12px)] sm:w-[min(92vw,560px)]"
           role="dialog"
           aria-label="Centro de consumo"
         >
@@ -673,7 +673,7 @@ export function WalletBalanceButton({ onBeforeCheckout, onSignOut, projectId = n
                 <button
                   type="button"
                   onClick={() => void loadWallet()}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] text-white/58 transition hover:bg-white/[0.1] hover:text-white"
+                  className="flex h-8 w-8 items-center justify-center rounded-none border border-white/10 bg-white/[0.04] text-white/58 transition hover:bg-white/[0.1] hover:text-white"
                   title="Actualizar saldo"
                 >
                   {state.status === "loading" ? (
@@ -685,14 +685,14 @@ export function WalletBalanceButton({ onBeforeCheckout, onSignOut, projectId = n
                 <button
                   type="button"
                   onClick={() => setOpen(false)}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] text-white/58 transition hover:bg-white/[0.1] hover:text-white"
+                  className="flex h-8 w-8 items-center justify-center rounded-none border border-white/10 bg-white/[0.04] text-white/58 transition hover:bg-white/[0.1] hover:text-white"
                   title="Cerrar"
                 >
                   <X size={14} />
                 </button>
               </div>
             </div>
-            <div className="mt-4 flex items-end justify-between gap-3 rounded-2xl border border-white/10 bg-black/18 px-3 py-3">
+            <div className="mt-4 flex items-end justify-between gap-3 rounded-none border border-white/10 bg-black/18 px-3 py-3">
               <div className="min-w-0">
                 <p className="text-[11px] font-medium text-white/42">Disponible ahora</p>
                 <p className="mt-0.5 text-3xl font-black tracking-tight text-white tabular-nums">{availableLabel}</p>
@@ -712,7 +712,7 @@ export function WalletBalanceButton({ onBeforeCheckout, onSignOut, projectId = n
                   <button
                     type="button"
                     onClick={onSignOut}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.045] px-2.5 py-1.5 text-[10px] font-black uppercase tracking-[0.12em] text-white/54 transition hover:bg-white/[0.1] hover:text-white"
+                    className="inline-flex items-center gap-1.5 rounded-none border border-white/10 bg-white/[0.045] px-2.5 py-1.5 text-[10px] font-black uppercase tracking-[0.12em] text-white/54 transition hover:bg-white/[0.1] hover:text-white"
                   >
                     <LogOut size={12} />
                     Salir
@@ -724,52 +724,52 @@ export function WalletBalanceButton({ onBeforeCheckout, onSignOut, projectId = n
 
           <div className="max-h-[min(76vh,680px)] overflow-y-auto px-4 py-4">
             {checkoutNotice === "success" && (
-              <div className="mb-3 flex items-start gap-2 rounded-xl border border-emerald-300/25 bg-emerald-400/10 px-3 py-2.5 text-[12px] font-semibold text-emerald-100">
+              <div className="mb-3 flex items-start gap-2 rounded-none border border-emerald-300/25 bg-emerald-400/10 px-3 py-2.5 text-[12px] font-semibold text-emerald-100">
                 <CheckCircle2 size={14} className="mt-0.5 shrink-0" />
                 <span>Recarga recibida. El saldo se actualiza cuando Stripe confirma el pago.</span>
               </div>
             )}
 
             {checkoutNotice === "cancelled" && (
-              <div className="mb-3 flex items-start gap-2 rounded-xl border border-white/10 bg-white/[0.045] px-3 py-2.5 text-[12px] font-semibold text-white/68">
+              <div className="mb-3 flex items-start gap-2 rounded-none border border-white/10 bg-white/[0.045] px-3 py-2.5 text-[12px] font-semibold text-white/68">
                 <AlertCircle size={14} className="mt-0.5 shrink-0" />
                 <span>Recarga cancelada. No se ha añadido saldo.</span>
               </div>
             )}
 
             {state.status === "error" && (
-              <div className="mb-3 flex items-start gap-2 rounded-xl border border-rose-300/25 bg-rose-500/10 px-3 py-2.5 text-[12px] font-semibold text-rose-100">
+              <div className="mb-3 flex items-start gap-2 rounded-none border border-rose-300/25 bg-rose-500/10 px-3 py-2.5 text-[12px] font-semibold text-rose-100">
                 <AlertCircle size={14} className="mt-0.5 shrink-0" />
                 <span>{state.error}</span>
               </div>
             )}
 
             {state.status !== "loading" && walletUnavailable && (
-              <div className="mb-3 flex items-start gap-2 rounded-xl border border-amber-300/25 bg-amber-400/10 px-3 py-2.5 text-[12px] font-semibold text-amber-100">
+              <div className="mb-3 flex items-start gap-2 rounded-none border border-amber-300/25 bg-amber-400/10 px-3 py-2.5 text-[12px] font-semibold text-amber-100">
                 <AlertCircle size={14} className="mt-0.5 shrink-0" />
                 <span>Wallet no conectado en este entorno. Las recargas quedan desactivadas hasta configurar el ledger en servidor.</span>
               </div>
             )}
 
             {account?.billingReviewRequired && (
-              <div className="mb-3 flex items-start gap-2 rounded-xl border border-rose-300/25 bg-rose-500/10 px-3 py-2.5 text-[12px] font-semibold text-rose-100">
+              <div className="mb-3 flex items-start gap-2 rounded-none border border-rose-300/25 bg-rose-500/10 px-3 py-2.5 text-[12px] font-semibold text-rose-100">
                 <AlertCircle size={14} className="mt-0.5 shrink-0" />
                 <span>Cuenta en revisión por facturación. Las operaciones con coste quedan protegidas.</span>
               </div>
             )}
 
             {account?.lowBalance && account.status === "active" && (
-              <div className="mb-3 flex items-start gap-2 rounded-xl border border-amber-300/25 bg-amber-400/10 px-3 py-2.5 text-[12px] font-semibold text-amber-100">
+              <div className="mb-3 flex items-start gap-2 rounded-none border border-amber-300/25 bg-amber-400/10 px-3 py-2.5 text-[12px] font-semibold text-amber-100">
                 <AlertCircle size={14} className="mt-0.5 shrink-0" />
                 <span>Saldo bajo. Conviene recargar antes de lanzar imagen pesada o vídeo.</span>
               </div>
             )}
 
-            <div className="mb-3 grid grid-cols-2 gap-1 rounded-xl border border-white/10 bg-black/22 p-1">
+            <div className="mb-3 grid grid-cols-2 gap-1 rounded-none border border-white/10 bg-black/22 p-1">
               <button
                 type="button"
                 onClick={() => setView("overview")}
-                className={`rounded-lg px-3 py-2 text-[11px] font-bold transition ${
+                className={`rounded-none px-3 py-2 text-[11px] font-bold transition ${
                   view === "overview" ? "bg-white text-slate-950 shadow-sm" : "text-white/46 hover:bg-white/[0.055] hover:text-white"
                 }`}
               >
@@ -778,7 +778,7 @@ export function WalletBalanceButton({ onBeforeCheckout, onSignOut, projectId = n
               <button
                 type="button"
                 onClick={() => setView("activity")}
-                className={`rounded-lg px-3 py-2 text-[11px] font-bold transition ${
+                className={`rounded-none px-3 py-2 text-[11px] font-bold transition ${
                   view === "activity" ? "bg-white text-slate-950 shadow-sm" : "text-white/46 hover:bg-white/[0.055] hover:text-white"
                 }`}
               >

@@ -144,7 +144,7 @@ export function StudioCanvasOpenButton({
         event.stopPropagation();
         onClick();
       }}
-      className={`studio-canvas-open-button nodrag flex w-full items-center justify-center gap-2 rounded-xl border border-slate-300/80 bg-white/90 px-3 py-2.5 text-[11px] font-bold uppercase tracking-wide text-slate-800 shadow-sm transition hover:bg-white focus:outline-none focus-visible:ring-2 ${focusClass} ${className || ""}`}
+      className={`studio-canvas-open-button nodrag flex w-full items-center justify-center gap-2 rounded-none border border-slate-300/80 bg-white/90 px-3 py-2.5 text-[11px] font-bold uppercase tracking-wide text-slate-800 shadow-sm transition hover:bg-white focus:outline-none focus-visible:ring-2 ${focusClass} ${className || ""}`}
     >
       {icon}
       {children}

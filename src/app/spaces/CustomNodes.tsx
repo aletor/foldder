@@ -657,7 +657,7 @@ export const UrlImageNode = memo(function UrlImageNode({ id, data, selected }: N
         {loading && <Loader2 size={12} className="animate-spin shrink-0" />}
       </div>
       <div className="node-content url-image-node-content">
-        <div ref={previewFrameRef} className="url-image-preview relative w-full aspect-video bg-slate-50 rounded-xl overflow-hidden border border-white/10 group mb-3 shadow-inner">
+        <div ref={previewFrameRef} className="url-image-preview relative w-full aspect-video bg-slate-50 rounded-none overflow-hidden border border-white/10 group mb-3 shadow-inner">
           {currentUrl ? (
             <img src={currentUrl} className="w-full h-full object-contain" alt="Carousel" />
           ) : (
@@ -681,7 +681,7 @@ export const UrlImageNode = memo(function UrlImageNode({ id, data, selected }: N
               >
                 <ChevronRight size={16} />
               </button>
-              <div className="absolute bottom-2 right-2 bg-slate-100/50 backdrop-blur-md px-2 py-0.5 rounded text-[8px] font-mono text-cyan-400 border border-cyan-500/20">
+              <div className="absolute bottom-2 right-2 bg-slate-100/50 backdrop-blur-md px-2 py-0.5 rounded-none text-[8px] font-mono text-cyan-400 border border-cyan-500/20">
                 {selectedIndex + 1} / {urls.length}
               </div>
             </>
@@ -725,7 +725,7 @@ export const UrlImageNode = memo(function UrlImageNode({ id, data, selected }: N
                     <div 
                       key={i}
                       onClick={() => updateData({ selectedIndex: i, value: url, type: 'image' })}
-                      className={`flex-shrink-0 w-12 h-12 rounded-lg border transition-all cursor-pointer overflow-hidden ${i === selectedIndex ? 'border-cyan-500 ring-2 ring-cyan-500/20' : 'border-white/10 opacity-50 hover:opacity-100'}`}
+                      className={`flex-shrink-0 w-12 h-12 rounded-none border transition-all cursor-pointer overflow-hidden ${i === selectedIndex ? 'border-cyan-500 ring-2 ring-cyan-500/20' : 'border-white/10 opacity-50 hover:opacity-100'}`}
                     >
                       {url ? <img src={url} alt="" className="w-full h-full object-cover" /> : <div className="w-full h-full bg-white/5 flex items-center justify-center"><Link size={10} /></div>}
                     </div>
@@ -925,13 +925,13 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
           <div className="image-export-format-row flex gap-2">
             <button
               onClick={() => setFormat('png')}
-              className={`image-export-format-option flex-1 py-1 rounded text-[10px] font-bold transition-all ${format === 'png' ? 'is-active bg-[#1d2433] text-white' : 'bg-white/5 text-gray-400 border border-white/10'}`}
+              className={`image-export-format-option flex-1 py-1 rounded-none text-[10px] font-bold transition-all ${format === 'png' ? 'is-active bg-[#1d2433] text-white' : 'bg-white/5 text-gray-400 border border-white/10'}`}
             >
               PNG
             </button>
             <button
               onClick={() => setFormat('jpeg')}
-              className={`image-export-format-option flex-1 py-1 rounded text-[10px] font-bold transition-all ${format === 'jpeg' ? 'is-active bg-[#1d2433] text-white' : 'bg-white/5 text-gray-400 border border-white/10'}`}
+              className={`image-export-format-option flex-1 py-1 rounded-none text-[10px] font-bold transition-all ${format === 'jpeg' ? 'is-active bg-[#1d2433] text-white' : 'bg-white/5 text-gray-400 border border-white/10'}`}
             >
               JPG
             </button>
@@ -960,7 +960,7 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
             <span>EXPORT READY</span>
           </div>
           {exportError ? (
-            <div className="image-export-error rounded-[10px] border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-[9px] font-semibold leading-snug text-rose-100">
+            <div className="image-export-error rounded-none border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-[9px] font-semibold leading-snug text-rose-100">
               {exportError}
             </div>
           ) : null}
@@ -969,7 +969,7 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
         {/* Preview: marco con la misma proporción que la imagen (exportW/H); encaja en el nodo sin deformar */}
         <div
           ref={previewRef}
-          className="image-export-preview relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-[#0a0a0a] group/out"
+          className="image-export-preview relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-none border border-white/10 bg-[#0a0a0a] group/out"
           style={{ minHeight: 120 }}
         >
           {directImageSrc ? (
@@ -1277,7 +1277,7 @@ export const MediaInputNode = memo(function MediaInputNode({ id, data, selected 
             )}
             <button
               type="button"
-              className="nodrag mt-1 rounded-lg border border-white/20 bg-white/10 px-3 py-1.5 text-[9px] font-black uppercase tracking-widest text-white hover:bg-white/20"
+              className="nodrag mt-1 rounded-none border border-white/20 bg-white/10 px-3 py-1.5 text-[9px] font-black uppercase tracking-widest text-white hover:bg-white/20"
               onClick={(e) => {
                 e.stopPropagation();
                 triggerReplaceFile();
@@ -1347,7 +1347,7 @@ export const MediaInputNode = memo(function MediaInputNode({ id, data, selected 
           </div>
         ) : (
           <div className="media-input-empty-state flex flex-col items-center gap-3 select-none">
-            <div className="w-12 h-12 rounded-2xl bg-white/5 flex items-center justify-center">
+            <div className="w-12 h-12 rounded-none bg-white/5 flex items-center justify-center">
               <FilePlus size={22} className="text-gray-600" />
             </div>
             <span className="text-[10px] text-gray-500 font-bold uppercase tracking-tight text-center px-6">
@@ -1451,14 +1451,14 @@ export const MediaInputNode = memo(function MediaInputNode({ id, data, selected 
             {nodeData.type === 'video' ? (
               <video
                 src={nodeData.value}
-                className="max-w-full max-h-[85vh] rounded-2xl shadow-2xl"
+                className="max-w-full max-h-[85vh] rounded-none shadow-2xl"
                 controls
                 autoPlay
               />
             ) : (
               <img
                 src={nodeData.value}
-                className="max-w-full max-h-[85vh] rounded-2xl shadow-2xl object-contain"
+                className="max-w-full max-h-[85vh] rounded-none shadow-2xl object-contain"
                 alt="Full size"
               />
             )}
@@ -1770,7 +1770,7 @@ export const ConcatenatorNode = memo(function ConcatenatorNode({ id, data, selec
       <div className="node-content flex min-w-0 flex-col gap-3 px-3 pb-3 pt-2">
         <div className="min-w-0">
           <span className="node-label">Salida concatenada</span>
-          <div className="max-h-[180px] min-h-[50px] min-w-0 w-full max-w-full overflow-y-auto break-words whitespace-pre-wrap rounded-xl border border-slate-200/60 bg-slate-50/50 p-3 shadow-inner">
+          <div className="max-h-[180px] min-h-[50px] min-w-0 w-full max-w-full overflow-y-auto break-words whitespace-pre-wrap rounded-none border border-slate-200/60 bg-slate-50/50 p-3 shadow-inner">
             {nodeData.value?.trim() ? (
               <span className="font-mono text-[10px] leading-relaxed text-slate-900">{nodeData.value}</span>
             ) : (
@@ -1909,7 +1909,7 @@ export const ListadoNode = memo(function ListadoNode({ id, data, selected }: Nod
       <div className="node-content flex flex-col gap-2 px-3 pb-3 pt-2">
         <label className="node-label text-[9px] text-gray-500">Salida (título del nodo: texto elegido)</label>
         <select
-          className="nodrag nowheel w-full cursor-pointer rounded-lg border border-slate-200/70 bg-white/[0.92] px-2.5 py-2 text-[11px] font-medium text-slate-800 shadow-inner outline-none transition-colors focus:border-cyan-400/60 focus:ring-1 focus:ring-cyan-400/30"
+          className="nodrag nowheel w-full cursor-pointer rounded-none border border-slate-200/70 bg-white/[0.92] px-2.5 py-2 text-[11px] font-medium text-slate-800 shadow-inner outline-none transition-colors focus:border-cyan-400/60 focus:ring-1 focus:ring-cyan-400/30"
           value={nodeData.selectedEdgeId && options.some((o) => o.edgeId === nodeData.selectedEdgeId) ? nodeData.selectedEdgeId : options[0]?.edgeId || ''}
           onChange={(e) => {
             const nextId = e.target.value;
@@ -1941,7 +1941,7 @@ export const ListadoNode = memo(function ListadoNode({ id, data, selected }: Nod
             ))
           )}
         </select>
-        <div className="rounded-md border border-slate-200/40 bg-slate-50/40 px-2 py-1.5 text-[9px] leading-snug text-slate-500">
+        <div className="rounded-none border border-slate-200/40 bg-slate-50/40 px-2 py-1.5 text-[9px] leading-snug text-slate-500">
           {options.length === 0
             ? 'Conecta varios prompts por la izquierda; elige cuál enviar por la salida.'
             : `${options.length} fuente(s) · salida: «${(nodeData.label ?? '').trim() || 'Listado'}»: texto de la opción.`}
@@ -2064,7 +2064,7 @@ export const EnhancerNode = memo(function EnhancerNode({ id, data, selected }: N
       <div className="node-content flex min-w-0 flex-col gap-3 px-3 pb-3 pt-2">
         <div className="min-w-0">
           <span className="node-label">Entrada combinada</span>
-          <div className="max-h-[150px] min-h-[50px] min-w-0 w-full max-w-full overflow-y-auto break-words whitespace-pre-wrap rounded-xl border border-slate-200/60 bg-slate-50/50 p-3 shadow-inner">
+          <div className="max-h-[150px] min-h-[50px] min-w-0 w-full max-w-full overflow-y-auto break-words whitespace-pre-wrap rounded-none border border-slate-200/60 bg-slate-50/50 p-3 shadow-inner">
             {concatenated ? (
               <span className="font-mono text-[10px] leading-relaxed text-slate-800">{concatenated}</span>
             ) : (
@@ -2088,7 +2088,7 @@ export const EnhancerNode = memo(function EnhancerNode({ id, data, selected }: N
 
         <div className="min-w-0">
           <span className="node-label">Salida mejorada</span>
-          <div className="max-h-[180px] min-h-[50px] min-w-0 w-full max-w-full overflow-y-auto break-words whitespace-pre-wrap rounded-xl border border-slate-200/60 bg-slate-50/50 p-3 shadow-inner">
+          <div className="max-h-[180px] min-h-[50px] min-w-0 w-full max-w-full overflow-y-auto break-words whitespace-pre-wrap rounded-none border border-slate-200/60 bg-slate-50/50 p-3 shadow-inner">
             {nodeData.value ? (
               <span className="font-mono text-[10px] leading-relaxed text-slate-800">{String(nodeData.value)}</span>
             ) : (
@@ -2271,7 +2271,7 @@ export const GrokNode = memo(function GrokNode({ id, data, selected }: NodeProps
           </select>
         </div>
         <button className="execute-btn w-full justify-center" onClick={onRun}>{status === 'running' ? 'PROCESSING...' : 'GENERATE VIDEO'}</button>
-        {result && <video src={result} className="mt-4 rounded-lg w-full" controls />}
+        {result && <video src={result} className="mt-4 rounded-none w-full" controls />}
       </div>
       <div className="handle-wrapper handle-right">
         <span className="handle-label">Video out</span>
@@ -2449,12 +2449,12 @@ export const BackgroundRemoverNode = memo(function BackgroundRemoverNode({ id, d
       <div className="flex min-h-0 flex-1 flex-col">
           {/* PREVIEW AREA */}
           <div ref={previewRef} className="relative group/preview min-h-[180px] flex-1 overflow-hidden bg-slate-100/50 flex items-center justify-center border-b border-slate-200/60">
-             <div className="absolute top-2 left-2 z-10 flex gap-1 bg-slate-50/50 p-1 rounded-lg backdrop-blur-md border border-slate-200/60">
+             <div className="absolute top-2 left-2 z-10 flex gap-1 bg-slate-50/50 p-1 rounded-none backdrop-blur-md border border-slate-200/60">
                 {(['original', 'mask', 'cutout'] as const).map(mode => (
                   <button 
                     key={mode}
                     onClick={() => setPreviewMode(mode)}
-                    className={`px-2 py-1 rounded-md text-[7px] font-black uppercase tracking-widest transition-all ${previewMode === mode ? 'bg-cyan-500 text-black shadow-lg shadow-cyan-500/20' : 'text-white/40 hover:text-white hover:bg-white/5'}`}
+                    className={`px-2 py-1 rounded-none text-[7px] font-black uppercase tracking-widest transition-all ${previewMode === mode ? 'bg-cyan-500 text-black shadow-lg shadow-cyan-500/20' : 'text-white/40 hover:text-white hover:bg-white/5'}`}
                   >
                     {mode}
                   </button>
@@ -2501,7 +2501,7 @@ export const BackgroundRemoverNode = memo(function BackgroundRemoverNode({ id, d
                <div className="space-y-2">
                   <div className="flex justify-between items-center">
                      <span className="text-[9px] font-black uppercase tracking-widest text-gray-500">Threshold (Precision)</span>
-                     <span className="text-[10px] font-mono text-pink-500 font-black bg-pink-500/10 px-2 py-0.5 rounded">{threshold.toFixed(2)}</span>
+                     <span className="text-[10px] font-mono text-pink-500 font-black bg-pink-500/10 px-2 py-0.5 rounded-none">{threshold.toFixed(2)}</span>
                   </div>
                   <input 
                     type="range" min="0" max="1" step="0.01"
@@ -2514,7 +2514,7 @@ export const BackgroundRemoverNode = memo(function BackgroundRemoverNode({ id, d
                <div className="space-y-2">
                   <div className="flex justify-between items-center">
                      <span className="text-[9px] font-black uppercase tracking-widest text-gray-500">Expansion</span>
-                     <span className="text-[10px] font-mono text-cyan-400 font-black bg-cyan-400/10 px-2 py-0.5 rounded">{nodeData.expansion ?? 0}px</span>
+                     <span className="text-[10px] font-mono text-cyan-400 font-black bg-cyan-400/10 px-2 py-0.5 rounded-none">{nodeData.expansion ?? 0}px</span>
                   </div>
                   <input 
                     type="range" min="-10" max="10" step="1"
@@ -2527,7 +2527,7 @@ export const BackgroundRemoverNode = memo(function BackgroundRemoverNode({ id, d
                <div className="space-y-2">
                   <div className="flex justify-between items-center">
                      <span className="text-[9px] font-black uppercase tracking-widest text-gray-500">Borders (Feather)</span>
-                     <span className="text-[10px] font-mono text-blue-400 font-black bg-blue-400/10 px-2 py-0.5 rounded">{(nodeData.feather ?? 0.6).toFixed(1)}px</span>
+                     <span className="text-[10px] font-mono text-blue-400 font-black bg-blue-400/10 px-2 py-0.5 rounded-none">{(nodeData.feather ?? 0.6).toFixed(1)}px</span>
                   </div>
                   <input 
                     type="range" min="0" max="2" step="0.1"
@@ -2543,15 +2543,15 @@ export const BackgroundRemoverNode = memo(function BackgroundRemoverNode({ id, d
       <div className="flex flex-col gap-2 absolute right-[-14px] top-[40px] nodrag">
           <div className="relative group/h mb-4">
              <FoldderDataHandle type="source" position={Position.Right} id="mask" dataType="mask" className="!right-0 shadow-[0_0_10px_rgba(34,211,238,0.5)] cursor-crosshair" />
-             <span className="absolute left-6 top-1/2 -translate-y-1/2 text-[7px] font-black uppercase text-cyan-400 bg-black/90 px-1 border border-cyan-400/20 rounded opacity-0 group-hover/h:opacity-100 transition-opacity whitespace-nowrap">MASK</span>
+             <span className="absolute left-6 top-1/2 -translate-y-1/2 text-[7px] font-black uppercase text-cyan-400 bg-black/90 px-1 border border-cyan-400/20 rounded-none opacity-0 group-hover/h:opacity-100 transition-opacity whitespace-nowrap">MASK</span>
           </div>
           <div className="relative group/h mb-4">
              <FoldderDataHandle type="source" position={Position.Right} id="rgba" dataType="image" className="!right-0 shadow-[0_0_10px_rgba(236,72,153,0.5)] cursor-crosshair" />
-             <span className="absolute left-6 top-1/2 -translate-y-1/2 text-[7px] font-black uppercase text-pink-500 bg-black/90 px-1 border border-pink-500/20 rounded opacity-0 group-hover/h:opacity-100 transition-opacity whitespace-nowrap">CUTOUT</span>
+             <span className="absolute left-6 top-1/2 -translate-y-1/2 text-[7px] font-black uppercase text-pink-500 bg-black/90 px-1 border border-pink-500/20 rounded-none opacity-0 group-hover/h:opacity-100 transition-opacity whitespace-nowrap">CUTOUT</span>
           </div>
           <div className="relative group/h">
              <FoldderDataHandle type="source" position={Position.Right} id="bbox" dataType="txt" className="!right-0 shadow-[0_0_10px_rgba(245,158,11,0.5)] cursor-crosshair" />
-             <span className="absolute left-6 top-1/2 -translate-y-1/2 text-[7px] font-black uppercase text-amber-500 bg-slate-100/50 px-1 border border-amber-500/20 rounded opacity-0 group-hover/h:opacity-100 transition-opacity whitespace-nowrap">BBOX</span>
+             <span className="absolute left-6 top-1/2 -translate-y-1/2 text-[7px] font-black uppercase text-amber-500 bg-slate-100/50 px-1 border border-amber-500/20 rounded-none opacity-0 group-hover/h:opacity-100 transition-opacity whitespace-nowrap">BBOX</span>
           </div>
       </div>
 
@@ -2636,7 +2636,7 @@ const MatteStudioOverlay = ({
               {getPreviewImage() ? (
                 <img 
                   src={getPreviewImage()} 
-                  className={`max-w-full max-h-full object-contain rounded-2xl shadow-[0_40px_100px_rgba(0,0,0,0.8)] border border-slate-200/60 ${previewMode === 'mask' ? 'invert brightness-125' : ''}`} 
+                  className={`max-w-full max-h-full object-contain rounded-none shadow-[0_40px_100px_rgba(0,0,0,0.8)] border border-slate-200/60 ${previewMode === 'mask' ? 'invert brightness-125' : ''}`} 
                   alt="Studio Preview" 
                 />
               ) : (
@@ -2647,7 +2647,7 @@ const MatteStudioOverlay = ({
               )}
 
               {status === 'running' && (
-                <div className="absolute inset-0 bg-slate-50 backdrop-blur-sm flex flex-col items-center justify-center z-20 rounded-2xl">
+                <div className="absolute inset-0 bg-slate-50 backdrop-blur-sm flex flex-col items-center justify-center z-20 rounded-none">
                    <div className="w-48 h-1 bg-cyan-500/10 rounded-full overflow-hidden mb-4">
                       <div className="h-full bg-cyan-500 animate-pulse w-full" />
                    </div>
@@ -2663,7 +2663,7 @@ const MatteStudioOverlay = ({
                  <Zap size={14} />
                  <h3 className="text-[10px] font-black uppercase tracking-widest">Configuration</h3>
               </div>
-              <div className="space-y-4 bg-white/[0.02] p-4 rounded-2xl border border-slate-200/60">
+              <div className="space-y-4 bg-white/[0.02] p-4 rounded-none border border-slate-200/60">
                 <div>
                   <label className="node-label flex justify-between mb-2">Threshold <span className="text-cyan-500">{(nodeData.threshold ?? 0.9).toFixed(2)}</span></label>
                   <input 
@@ -2681,7 +2681,7 @@ const MatteStudioOverlay = ({
                  <Paintbrush size={14} />
                  <h3 className="text-[10px] font-black uppercase tracking-widest">Refinement</h3>
               </div>
-              <div className="space-y-6 bg-white/[0.02] p-6 rounded-2xl border border-slate-200/60">
+              <div className="space-y-6 bg-white/[0.02] p-6 rounded-none border border-slate-200/60">
                 <div>
                   <label className="node-label flex justify-between mb-3 uppercase tracking-tighter">Expansion <span className="text-cyan-400 font-mono">{nodeData.expansion ?? 0}px</span></label>
                   <input 
@@ -2705,7 +2705,7 @@ const MatteStudioOverlay = ({
            </section>
 
            <div className="mt-auto space-y-4 px-2">
-              <div className="flex items-center gap-3 p-4 bg-amber-500/5 border border-amber-500/10 rounded-2xl">
+              <div className="flex items-center gap-3 p-4 bg-amber-500/5 border border-amber-500/10 rounded-none">
                  <div className="w-8 h-8 rounded-full bg-amber-500/10 flex items-center justify-center text-amber-500"><Info size={16} /></div>
                  <div className="flex-1">
                     <p className="text-[9px] font-bold text-amber-500 uppercase">GPU Acceleration Active</p>
@@ -2788,7 +2788,7 @@ export const SpaceNode = memo(function SpaceNode({ id, data, selected }: NodePro
   return (
     <div className="relative" style={{ isolation: 'isolate' }}>
       {/* Ghost card layer 2 (furthest back) */}
-      <div className="absolute inset-0 rounded-[18px] border border-white/30"
+      <div className="absolute inset-0 rounded-none border border-white/30"
         style={{
           transform: 'translate(6px, 6px) rotate(1.5deg)',
           background: 'rgba(255,255,255,0.18)',
@@ -2796,7 +2796,7 @@ export const SpaceNode = memo(function SpaceNode({ id, data, selected }: NodePro
         }}
       />
       {/* Ghost card layer 1 */}
-      <div className="absolute inset-0 rounded-[18px] border border-white/40"
+      <div className="absolute inset-0 rounded-none border border-white/40"
         style={{
           transform: 'translate(3px, 3px) rotate(0.7deg)',
           background: 'rgba(255,255,255,0.25)',
@@ -2831,7 +2831,7 @@ export const SpaceNode = memo(function SpaceNode({ id, data, selected }: NodePro
       
       <div className="node-content">
         {/* Internal Blueprint Summary */}
-        <div className="flex flex-col gap-1.5 mb-3 p-2 bg-slate-50/50 border border-slate-200/60 rounded-xl shadow-inner">
+        <div className="flex flex-col gap-1.5 mb-3 p-2 bg-slate-50/50 border border-slate-200/60 rounded-none shadow-inner">
           <div className="flex justify-between items-center px-1">
              <span className="text-[7.5px] font-black text-gray-500 uppercase tracking-widest">Internal Blueprint</span>
              <NodeIcon type="space" iconKey="layout" size={12} />
@@ -2847,7 +2847,7 @@ export const SpaceNode = memo(function SpaceNode({ id, data, selected }: NodePro
 
         {/* Output media preview */}
         {nodeData.value && (nodeData.outputType === 'image' || nodeData.outputType === 'video') && (
-          <div className="relative w-full aspect-video overflow-hidden rounded-xl mb-3" style={{ background: '#0a0a0a' }}>
+          <div className="relative w-full aspect-video overflow-hidden rounded-none mb-3" style={{ background: '#0a0a0a' }}>
             {nodeData.outputType === 'video' ? (
               <video src={nodeData.value as string} className="w-full h-full object-cover" muted />
             ) : (
@@ -3129,12 +3129,12 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
         </button>
 
         {errorMessage ? (
-          <div className="foldder-frameless-error mb-3 rounded-xl border border-rose-500/30 bg-rose-500/10 p-2.5 text-[9px] leading-snug text-rose-200">
+          <div className="foldder-frameless-error mb-3 rounded-none border border-rose-500/30 bg-rose-500/10 p-2.5 text-[9px] leading-snug text-rose-200">
             {errorMessage}
           </div>
         ) : null}
 
-        <div className="foldder-frameless-output p-3 bg-black/30 rounded-xl border border-white/10 min-h-[80px]">
+        <div className="foldder-frameless-output p-3 bg-black/30 rounded-none border border-white/10 min-h-[80px]">
           {visibleDescription ? (
             <div className="text-[10px] text-zinc-200 leading-relaxed font-mono">{visibleDescription}</div>
           ) : (
@@ -3165,7 +3165,7 @@ const CameraMotionSelector = ({
   compact?: boolean;
 }) => {
   const motions = [
-    { id: '', label: 'Auto', icon: <div className="w-full h-full border border-dashed border-white/20 rounded-md" /> },
+    { id: '', label: 'Auto', icon: <div className="w-full h-full border border-dashed border-white/20 rounded-none" /> },
     { id: 'Dolly-in', label: 'Dolly-in', icon: (
       <svg viewBox="0 0 40 40" className="w-full h-full">
         <rect x="10" y="10" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1" className="animate-dolly-in" />
@@ -3206,7 +3206,7 @@ const CameraMotionSelector = ({
           type="button"
           onClick={() => onChange(m.id)}
           className={`group flex flex-col items-center border transition-all ${
-            compact ? 'gap-0.5 rounded-md p-1' : 'gap-1.5 rounded-xl p-2'
+            compact ? 'gap-0.5 rounded-none p-1' : 'gap-1.5 rounded-none p-2'
           } ${
             value === m.id
               ? 'bg-cyan-500/20 border-cyan-500 text-cyan-400'
@@ -3321,7 +3321,7 @@ function VideoStudioFrameSlot({
         <Icon className="h-3 w-3 shrink-0 text-emerald-500/80" aria-hidden />
         <span className="truncate text-[8px] font-black uppercase tracking-wider">{label}</span>
       </div>
-      <div className="relative aspect-[4/3] w-full overflow-hidden rounded-md border border-white/[0.1] bg-zinc-950/90 ring-1 ring-inset ring-white/[0.04]">
+      <div className="relative aspect-[4/3] w-full overflow-hidden rounded-none border border-white/[0.1] bg-zinc-950/90 ring-1 ring-inset ring-white/[0.04]">
         {url ? (
           <img src={url} alt="" className="h-full w-full object-cover" />
         ) : (
@@ -3552,7 +3552,7 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
       <div className="nb-studio-topbar flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-white/[0.07] bg-[#08090d] px-3 py-2">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
           <div className="flex min-w-[8rem] items-center gap-2">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-zinc-900">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-none border border-white/10 bg-zinc-900">
               <Video className="h-[18px] w-[18px] text-cyan-300" strokeWidth={1.75} aria-hidden />
             </div>
             <div className="min-w-0 leading-tight">
@@ -3592,7 +3592,7 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
                       updateData('duration', String(normalizeVeoDuration(nodeData.duration)));
                     }
                   }}
-                  className={`flex h-8 items-center gap-1 rounded-lg border px-2 text-xs font-semibold transition-colors ${
+                  className={`flex h-8 items-center gap-1 rounded-none border px-2 text-xs font-semibold transition-colors ${
                     active ? 'border-white/25 bg-white/[0.08] text-white' : 'border-white/10 bg-black/25 text-zinc-500 hover:text-zinc-200'
                   }`}
                   title={m.key === 'seedance2' ? 'Seedance / Ark' : 'Gemini Veo 3.1'}
@@ -3604,7 +3604,7 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
             })}
           </div>
 
-          <label className="flex h-8 items-center gap-1 rounded-lg border border-white/10 bg-black/25 px-2">
+          <label className="flex h-8 items-center gap-1 rounded-none border border-white/10 bg-black/25 px-2">
             <RectangleHorizontal className="h-3.5 w-3.5 shrink-0 text-zinc-500" aria-hidden />
             <select
               className="cursor-pointer border-0 bg-transparent p-0 text-xs font-semibold text-zinc-200 outline-none"
@@ -3621,7 +3621,7 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
           </label>
 
           {!useSeedance && (
-            <label className="flex h-8 items-center gap-1 rounded-lg border border-white/10 bg-black/25 px-2">
+            <label className="flex h-8 items-center gap-1 rounded-none border border-white/10 bg-black/25 px-2">
               <Cpu className="h-3.5 w-3.5 shrink-0 text-zinc-500" aria-hidden />
               <select
                 className="cursor-pointer border-0 bg-transparent p-0 text-xs font-semibold text-zinc-200 outline-none"
@@ -3638,7 +3638,7 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
             </label>
           )}
 
-          <label className="flex h-8 items-center gap-1 rounded-lg border border-white/10 bg-black/25 px-2">
+          <label className="flex h-8 items-center gap-1 rounded-none border border-white/10 bg-black/25 px-2">
             <Clock className="h-3.5 w-3.5 shrink-0 text-zinc-500" aria-hidden />
             <select
               className="cursor-pointer border-0 bg-transparent p-0 text-xs font-semibold text-zinc-200 outline-none"
@@ -3654,7 +3654,7 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
             </select>
           </label>
 
-          <div className="flex h-8 min-w-[8.5rem] items-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-950/20 px-2">
+          <div className="flex h-8 min-w-[8.5rem] items-center gap-2 rounded-none border border-emerald-500/20 bg-emerald-950/20 px-2">
             <DollarSign className="h-3.5 w-3.5 shrink-0 text-emerald-400" aria-hidden />
             <span className="text-xs font-mono tabular-nums text-emerald-300">
               ${previewCost.totalUsd.toFixed(2)}
@@ -3670,7 +3670,7 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
             type="button"
             onClick={onGenerate}
             disabled={isRunning || !hasPrompt}
-            className="flex h-9 items-center gap-2 rounded-lg border border-violet-400/40 bg-violet-600 px-3 text-xs font-bold text-white transition-colors hover:bg-violet-500 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-zinc-800 disabled:text-zinc-500"
+            className="flex h-9 items-center gap-2 rounded-none border border-violet-400/40 bg-violet-600 px-3 text-xs font-bold text-white transition-colors hover:bg-violet-500 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-zinc-800 disabled:text-zinc-500"
             title={!hasPrompt ? 'Prompt requerido' : 'Generar vídeo'}
           >
             {isRunning ? <Loader2 size={15} className="shrink-0 animate-spin" /> : <Zap size={15} className="shrink-0" />}
@@ -3679,7 +3679,7 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
           <button
             type="button"
             onClick={onClose}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] text-zinc-400 transition-colors hover:bg-white/[0.08] hover:text-white"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-none border border-white/10 bg-white/[0.04] text-zinc-400 transition-colors hover:bg-white/[0.08] hover:text-white"
             title="Cerrar"
           >
             <X size={17} strokeWidth={2.25} />
@@ -3716,11 +3716,11 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
                           updateData('value', url);
                           updateData('type', 'video');
                         }}
-                        className="relative h-14 w-full shrink-0 overflow-hidden rounded-md border border-white/10 transition-colors hover:border-cyan-500/55"
+                        className="relative h-14 w-full shrink-0 overflow-hidden rounded-none border border-white/10 transition-colors hover:border-cyan-500/55"
                         title={`Versión ${historyUrls.length - i}`}
                       >
                         <video src={url} className="h-full w-full object-cover" muted playsInline />
-                        <span className="absolute bottom-0.5 right-0.5 rounded bg-black/75 px-1 text-[9px] font-bold text-zinc-200">
+                        <span className="absolute bottom-0.5 right-0.5 rounded-none bg-black/75 px-1 text-[9px] font-bold text-zinc-200">
                           {historyUrls.length - i}
                         </span>
                       </button>
@@ -3737,7 +3737,7 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
               <video src={outputVideo} className="max-h-full max-w-full object-contain" controls loop muted playsInline />
             ) : (
               <div className="flex max-w-sm flex-col items-center justify-center gap-3 px-4 text-center">
-                <div className="flex h-16 w-16 items-center justify-center rounded-lg border border-white/[0.06] bg-zinc-900/60">
+                <div className="flex h-16 w-16 items-center justify-center rounded-none border border-white/[0.06] bg-zinc-900/60">
                   <Video size={28} className="text-zinc-600" strokeWidth={1.15} />
                 </div>
                 <p className="text-sm font-semibold text-zinc-500">Sin vídeo todavía</p>
@@ -3759,7 +3759,7 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
         <aside className="nb-studio-bottombar flex max-h-full w-full shrink-0 flex-col overflow-y-auto border-t border-white/[0.09] bg-[#07080c] lg:w-[480px] lg:border-l lg:border-t-0">
           <div className="sticky top-0 z-[1] flex items-center justify-between gap-2 border-b border-white/[0.07] bg-[#08090d]/98 px-3 py-2 backdrop-blur-md">
             <div className="flex min-w-0 items-center gap-2">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-zinc-900">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-none border border-white/10 bg-zinc-900">
                 <Sparkles className="h-4 w-4 text-violet-300" strokeWidth={1.75} aria-hidden />
               </div>
               <div className="min-w-0">
@@ -3772,7 +3772,7 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
             <button
               type="button"
               onClick={() => void navigator.clipboard?.writeText(finalPromptPreview)}
-              className="flex h-8 items-center gap-1 rounded-lg border border-white/10 bg-white/[0.04] px-2 text-xs font-semibold text-zinc-300 hover:bg-white/[0.08]"
+              className="flex h-8 items-center gap-1 rounded-none border border-white/10 bg-white/[0.04] px-2 text-xs font-semibold text-zinc-300 hover:bg-white/[0.08]"
               title="Copiar prompt final"
             >
               <FileText className="h-3.5 w-3.5" />
@@ -3781,13 +3781,13 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
           </div>
 
           <div className="grid gap-3 p-3">
-            <section className="rounded-lg border border-white/[0.08] bg-zinc-950/35 p-3">
+            <section className="rounded-none border border-white/[0.08] bg-zinc-950/35 p-3">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">
                   <Link2 className="h-4 w-4 shrink-0 text-emerald-300" aria-hidden />
                   <h2 className="truncate text-sm font-semibold text-zinc-100">Prompt</h2>
                 </div>
-                <span className="rounded-md border border-emerald-400/20 bg-emerald-950/30 px-2 py-1 text-[11px] font-semibold text-emerald-200">
+                <span className="rounded-none border border-emerald-400/20 bg-emerald-950/30 px-2 py-1 text-[11px] font-semibold text-emerald-200">
                   {activePromptSourceLabel}
                 </span>
               </div>
@@ -3797,13 +3797,13 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
                 onChange={(e) => writeActivePrompt(e.target.value)}
                 rows={8}
                 placeholder="Describe el plano, sujeto, acción, entorno, luz, estilo y locks."
-                className="min-h-[12rem] w-full resize-y rounded-lg border border-white/10 bg-black/35 px-3 py-2 text-[13px] leading-6 text-zinc-100 placeholder-zinc-600 outline-none focus:border-emerald-400/50"
+                className="min-h-[12rem] w-full resize-y rounded-none border border-white/10 bg-black/35 px-3 py-2 text-[13px] leading-6 text-zinc-100 placeholder-zinc-600 outline-none focus:border-emerald-400/50"
               />
               <div className="mt-2 flex flex-wrap gap-1.5">
                 <button
                   type="button"
                   onClick={() => insertIntoPromptLocal(DIRECTOR_PROMPT_TEMPLATE_EN)}
-                  className="flex h-8 items-center gap-1 rounded-lg border border-violet-400/25 bg-violet-950/25 px-2 text-xs font-semibold text-violet-100 hover:bg-violet-900/35"
+                  className="flex h-8 items-center gap-1 rounded-none border border-violet-400/25 bg-violet-950/25 px-2 text-xs font-semibold text-violet-100 hover:bg-violet-900/35"
                   title="Insertar plantilla"
                 >
                   <BookOpen className="h-3.5 w-3.5" />
@@ -3817,7 +3817,7 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
                       type="button"
                       title={`${c.label}: ${c.en}`}
                       onClick={() => insertIntoPromptLocal(`${c.en},`)}
-                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-cyan-500/25 bg-cyan-950/20 text-cyan-200 hover:bg-cyan-900/35"
+                      className="flex h-8 w-8 items-center justify-center rounded-none border border-cyan-500/25 bg-cyan-950/20 text-cyan-200 hover:bg-cyan-900/35"
                     >
                       <CamI className="h-4 w-4" aria-hidden />
                     </button>
@@ -3826,14 +3826,14 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
               </div>
             </section>
 
-            <section className="rounded-lg border border-white/[0.08] bg-zinc-950/35 p-3">
+            <section className="rounded-none border border-white/[0.08] bg-zinc-950/35 p-3">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">
                   <FileText className="h-4 w-4 shrink-0 text-cyan-300" aria-hidden />
                   <h2 className="truncate text-sm font-semibold text-zinc-100">Prompt final</h2>
                 </div>
                 {promptAssembly.directorEnhancement ? (
-                  <span className="rounded-md border border-cyan-400/20 bg-cyan-950/25 px-2 py-1 text-[11px] font-semibold text-cyan-200">
+                  <span className="rounded-none border border-cyan-400/20 bg-cyan-950/25 px-2 py-1 text-[11px] font-semibold text-cyan-200">
                     Enriquecido
                   </span>
                 ) : null}
@@ -3842,10 +3842,10 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
                 readOnly
                 value={finalPromptPreview}
                 rows={7}
-                className="min-h-[9.5rem] w-full resize-y rounded-lg border border-white/10 bg-black/45 px-3 py-2 font-mono text-[12px] leading-5 text-zinc-200 outline-none"
+                className="min-h-[9.5rem] w-full resize-y rounded-none border border-white/10 bg-black/45 px-3 py-2 font-mono text-[12px] leading-5 text-zinc-200 outline-none"
               />
               {!useSeedance && activeNegativePrompt.trim() ? (
-                <div className="mt-2 rounded-lg border border-rose-400/20 bg-rose-950/15 px-3 py-2">
+                <div className="mt-2 rounded-none border border-rose-400/20 bg-rose-950/15 px-3 py-2">
                   <div className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-rose-200">
                     <Ban className="h-3.5 w-3.5" />
                     Negative prompt
@@ -3855,7 +3855,7 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
               ) : null}
             </section>
 
-            <section className="rounded-lg border border-white/[0.08] bg-zinc-950/35 p-3">
+            <section className="rounded-none border border-white/[0.08] bg-zinc-950/35 p-3">
               <div className="mb-3 flex items-center gap-2">
                 <Cpu className="h-4 w-4 shrink-0 text-amber-300" />
                 <h2 className="text-sm font-semibold text-zinc-100">Ajustes</h2>
@@ -3867,7 +3867,7 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
                     Luz
                   </span>
                   <select
-                    className="h-9 w-full rounded-lg border border-white/10 bg-black/40 px-2 text-sm text-zinc-100 outline-none focus:border-amber-400/40"
+                    className="h-9 w-full rounded-none border border-white/10 bg-black/40 px-2 text-sm text-zinc-100 outline-none focus:border-amber-400/40"
                     value={nodeData.videoLightingPreset ?? ''}
                     onChange={(e) => updateData('videoLightingPreset', e.target.value || undefined)}
                   >
@@ -3884,7 +3884,7 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
                     Estilo
                   </span>
                   <select
-                    className="h-9 w-full rounded-lg border border-white/10 bg-black/40 px-2 text-sm text-zinc-100 outline-none focus:border-sky-400/40"
+                    className="h-9 w-full rounded-none border border-white/10 bg-black/40 px-2 text-sm text-zinc-100 outline-none focus:border-sky-400/40"
                     value={nodeData.videoVisualStylePreset ?? ''}
                     onChange={(e) => updateData('videoVisualStylePreset', e.target.value || undefined)}
                   >
@@ -3907,7 +3907,7 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
                     type="text"
                     value={nodeData.animationPrompt ?? ''}
                     onChange={(e) => updateData('animationPrompt', e.target.value)}
-                    className="h-9 w-full rounded-lg border border-white/10 bg-black/40 px-2 text-sm text-zinc-100 outline-none focus:border-violet-400/40"
+                    className="h-9 w-full rounded-none border border-white/10 bg-black/40 px-2 text-sm text-zinc-100 outline-none focus:border-violet-400/40"
                     placeholder="Optional motion..."
                   />
                 </label>
@@ -3932,7 +3932,7 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
                     return (
                       <label
                         key={p.id}
-                        className={`flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border px-2 text-xs transition-colors ${
+                        className={`flex min-h-9 cursor-pointer items-center gap-2 rounded-none border px-2 text-xs transition-colors ${
                           checked ? 'border-cyan-400/35 bg-cyan-950/25 text-cyan-100' : 'border-white/10 bg-black/25 text-zinc-400 hover:bg-white/[0.04]'
                         }`}
                       >
@@ -3940,7 +3940,7 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
                           type="checkbox"
                           checked={checked}
                           onChange={(e) => updateData(`videoPhysics_${p.id}`, e.target.checked)}
-                          className="h-4 w-4 rounded border-zinc-600"
+                          className="h-4 w-4 rounded-none border-zinc-600"
                         />
                         <PI className="h-3.5 w-3.5 shrink-0" aria-hidden />
                         <span className="min-w-0 truncate">{p.label}</span>
@@ -3955,7 +3955,7 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
                   <span className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-rose-100">
                     <Ban className="h-3.5 w-3.5 text-rose-300" />
                     Negative
-                    <span className="ml-auto rounded border border-white/10 px-1.5 py-0.5 text-[10px] text-zinc-500">
+                    <span className="ml-auto rounded-none border border-white/10 px-1.5 py-0.5 text-[10px] text-zinc-500">
                       {negativePromptSourceLabel}
                     </span>
                   </span>
@@ -3963,17 +3963,17 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
                     value={activeNegativePrompt}
                     onChange={(e) => writeActiveNegativePrompt(e.target.value)}
                     rows={3}
-                    className="min-h-[5rem] w-full resize-y rounded-lg border border-white/10 bg-black/40 px-2 py-1.5 text-sm leading-5 text-zinc-100 outline-none focus:border-rose-400/35"
+                    className="min-h-[5rem] w-full resize-y rounded-none border border-white/10 bg-black/40 px-2 py-1.5 text-sm leading-5 text-zinc-100 outline-none focus:border-rose-400/35"
                     placeholder="Things to avoid..."
                   />
                 </label>
                 {useSeedance ? (
-                  <label className="flex min-h-[5rem] cursor-pointer items-center gap-3 rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-zinc-300">
+                  <label className="flex min-h-[5rem] cursor-pointer items-center gap-3 rounded-none border border-white/10 bg-black/30 px-3 text-sm text-zinc-300">
                     <input
                       type="checkbox"
                       checked={!!nodeData.audio}
                       onChange={(e) => updateData('audio', e.target.checked)}
-                      className="h-4 w-4 rounded border-zinc-600"
+                      className="h-4 w-4 rounded-none border-zinc-600"
                     />
                     <Music className="h-4 w-4 text-violet-300" />
                     Generar audio
@@ -3982,13 +3982,13 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
               </div>
             </section>
 
-            <section className="rounded-lg border border-white/[0.08] bg-zinc-950/35 p-3">
+            <section className="rounded-none border border-white/[0.08] bg-zinc-950/35 p-3">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">
                   <ImageIcon className="h-4 w-4 shrink-0 text-fuchsia-300" aria-hidden />
                   <h2 className="truncate text-sm font-semibold text-zinc-100">Referencias</h2>
                 </div>
-                <span className={`rounded-md border px-2 py-1 text-[11px] font-semibold ${
+                <span className={`rounded-none border px-2 py-1 text-[11px] font-semibold ${
                   veoFramesOverrideImageRefs
                     ? 'border-amber-400/25 bg-amber-950/25 text-amber-200'
                     : 'border-fuchsia-400/20 bg-fuchsia-950/25 text-fuchsia-200'
@@ -4010,7 +4010,7 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
                   const url = refSlots[key];
                   return (
                     <div key={key} className="min-w-0">
-                      <div className="relative aspect-square overflow-hidden rounded-lg border border-white/[0.08] bg-black/35">
+                      <div className="relative aspect-square overflow-hidden rounded-none border border-white/[0.08] bg-black/35">
                         {url ? (
                           <img src={url} alt="" className="h-full w-full object-cover" />
                         ) : (
@@ -4037,14 +4037,14 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
                             type="button"
                             disabled={veoFramesOverrideImageRefs}
                             onClick={() => insertIntoPromptLocal(tag)}
-                            className="rounded-md bg-fuchsia-600/25 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-fuchsia-100 disabled:opacity-40"
+                            className="rounded-none bg-fuchsia-600/25 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-fuchsia-100 disabled:opacity-40"
                           >
                             {tag}
                           </button>
                           <button
                             type="button"
                             onClick={() => setRefSlotFile(key, null)}
-                            className="rounded-md p-1 text-zinc-500 hover:text-rose-400"
+                            className="rounded-none p-1 text-zinc-500 hover:text-rose-400"
                             title="Quitar"
                           >
                             <Trash2 className="h-3 w-3" />
@@ -4064,6 +4064,8 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
   );
 });
 GeminiVideoStudio.displayName = 'GeminiVideoStudio';
+
+const GEMINI_VIDEO_EMPTY_BACKGROUND_SRC = "/assets/nodes/gemini-video-empty-blue.png";
 
 export const GeminiVideoNode = memo(function GeminiVideoNode({ id, data, selected }: NodeProps) {
   const nodeData = data as BaseNodeData & {
@@ -4450,10 +4452,12 @@ export const GeminiVideoNode = memo(function GeminiVideoNode({ id, data, selecte
     setNodes((nds) => nds.map((n) => n.id === id ? { ...n, data: { ...n.data, [key]: val } } : n));
   };
 
+  const showGeminiVideoEmpty = !displayVideo;
+
   return (
     <div
       ref={frameRef}
-      className={`custom-node processor-node gemini-video-node group/node foldder-node--frameless node--media ${status === 'error' ? 'foldder-node--error' : ''} ${isActivelyGenerating ? 'node-glow-running' : ''}`}
+      className={`custom-node processor-node gemini-video-node group/node foldder-node--frameless node--media ${showGeminiVideoEmpty ? "gemini-video-node--empty foldder-frameless-label-dark" : ""} ${status === 'error' ? 'foldder-node--error' : ''} ${isActivelyGenerating ? 'node-glow-running' : ''}`}
       style={{
         minWidth: 200,
         minHeight: 120,
@@ -4507,7 +4511,7 @@ export const GeminiVideoNode = memo(function GeminiVideoNode({ id, data, selecte
 
       <div
         ref={previewRef}
-        className="gemini-video-preview foldder-frameless-main relative flex min-h-0 w-full flex-1 items-center justify-center overflow-hidden bg-[#0a0a0a] group/out"
+        className={`gemini-video-preview foldder-frameless-main relative flex min-h-0 w-full flex-1 items-center justify-center overflow-hidden group/out ${showGeminiVideoEmpty ? "" : "bg-[#0a0a0a]"}`}
         style={{ minHeight: 140 }}
       >
         {displayVideo ? (
@@ -4522,17 +4526,19 @@ export const GeminiVideoNode = memo(function GeminiVideoNode({ id, data, selecte
             />
             <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent opacity-0 transition-opacity group-hover/out:opacity-100" />
             <div className="pointer-events-none absolute top-2 left-2 z-20 opacity-0 transition-opacity group-hover/out:opacity-100">
-              <span className="rounded bg-black/55 px-1.5 py-0.5 text-[6px] font-black uppercase tracking-widest text-white/75">
+              <span className="rounded-none bg-black/55 px-1.5 py-0.5 text-[6px] font-black uppercase tracking-widest text-white/75">
                 {useSeedance ? videoFormatForApi : resolutionForApi} · {durationSecondsForApi}s
               </span>
             </div>
           </>
         ) : (
-          <div className="flex flex-col items-center justify-center gap-2 px-4 py-6 opacity-30">
-            <Video size={32} className="text-zinc-400" />
-            <span className="text-center text-[8px] font-black uppercase tracking-widest text-zinc-500">
-              Sin vídeo · Studio para opciones
-            </span>
+          <div className="gemini-video-empty-background absolute inset-0 overflow-hidden" aria-hidden>
+            <img
+              src={GEMINI_VIDEO_EMPTY_BACKGROUND_SRC}
+              alt=""
+              className="h-full w-full object-contain object-bottom"
+              draggable={false}
+            />
           </div>
         )}
 
@@ -4907,7 +4913,7 @@ export const PainterNode = memo(function PainterNode({ id, data, selected }: Nod
           ))}
         </div>
         <button onClick={() => setMode(mode === 'eraser' ? 'brush' : 'eraser')} title="Eraser"
-          className={`ml-1 p-1.5 rounded-lg border transition-all ${mode === 'eraser' ? 'bg-white/20 border-white/40 text-white' : 'bg-white/[0.03] border-white/10 text-zinc-500 hover:text-white'}`}>
+          className={`ml-1 p-1.5 rounded-none border transition-all ${mode === 'eraser' ? 'bg-white/20 border-white/40 text-white' : 'bg-white/[0.03] border-white/10 text-zinc-500 hover:text-white'}`}>
           <Eraser size={13} />
         </button>
         <button onClick={clearCanvas} className="ml-auto text-[9px] text-zinc-600 hover:text-red-400 transition-colors font-bold uppercase tracking-widest">Clear</button>
@@ -4931,22 +4937,22 @@ export const PainterNode = memo(function PainterNode({ id, data, selected }: Nod
       <div className="flex items-center gap-1.5">
         {PAINT_RATIOS.map(r => (
           <button key={r.value} onClick={() => updateData('aspectRatio', r.value)}
-            className={`px-2 py-0.5 rounded text-[7px] font-black border transition-all ${ratio.value === r.value ? 'bg-amber-500/20 text-amber-400 border-amber-500/40' : 'bg-white/[0.02] text-zinc-600 border-white/5 hover:text-zinc-400'}`}>
+            className={`px-2 py-0.5 rounded-none text-[7px] font-black border transition-all ${ratio.value === r.value ? 'bg-amber-500/20 text-amber-400 border-amber-500/40' : 'bg-white/[0.02] text-zinc-600 border-white/5 hover:text-zinc-400'}`}>
             {r.label}
           </button>
         ))}
         <div className="ml-auto flex gap-1.5 items-center">
           <button onClick={() => switchBg('white')} title="White bg"
-            className={`w-5 h-5 rounded border-2 transition-all ${bgColor === 'white' ? 'border-white' : 'border-zinc-600 opacity-50'}`}
+            className={`w-5 h-5 rounded-none border-2 transition-all ${bgColor === 'white' ? 'border-white' : 'border-zinc-600 opacity-50'}`}
             style={{ background: '#ffffff' }} />
           <button onClick={() => switchBg('black')} title="Black bg"
-            className={`w-5 h-5 rounded border-2 transition-all ${bgColor === 'black' ? 'border-white' : 'border-zinc-600 opacity-50'}`}
+            className={`w-5 h-5 rounded-none border-2 transition-all ${bgColor === 'black' ? 'border-white' : 'border-zinc-600 opacity-50'}`}
             style={{ background: '#111111' }} />
           {showFSButton && (
             <button onClick={() => {
               setStandardShell(null);
               setFullscreen(true);
-            }} className="p-1.5 rounded-lg border border-white/10 bg-white/[0.03] text-zinc-500 hover:text-white transition-colors">
+            }} className="p-1.5 rounded-none border border-white/10 bg-white/[0.03] text-zinc-500 hover:text-white transition-colors">
               <Maximize2 size={11} />
             </button>
           )}
@@ -4962,7 +4968,7 @@ export const PainterNode = memo(function PainterNode({ id, data, selected }: Nod
                   }),
                 );
               }
-            }} className="p-1.5 rounded-lg border border-white/10 bg-white/[0.03] text-zinc-400 hover:text-white transition-colors" title="Close fullscreen">
+            }} className="p-1.5 rounded-none border border-white/10 bg-white/[0.03] text-zinc-400 hover:text-white transition-colors" title="Close fullscreen">
               <X size={11} />
             </button>
           )}
@@ -5016,7 +5022,7 @@ export const PainterNode = memo(function PainterNode({ id, data, selected }: Nod
               }}
               className="absolute inset-0 flex items-center justify-center bg-black/0 hover:bg-black/40 transition-all group"
             >
-              <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-2 bg-amber-500 text-black px-4 py-2 rounded-xl font-black text-[9px] uppercase tracking-widest shadow-lg">
+              <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-2 bg-amber-500 text-black px-4 py-2 rounded-none font-black text-[9px] uppercase tracking-widest shadow-lg">
                 <Maximize2 size={12} />
                 Paint
               </div>
@@ -5025,14 +5031,14 @@ export const PainterNode = memo(function PainterNode({ id, data, selected }: Nod
 
           {/* Mini footer: ratio badge (read-only) + fullscreen button */}
           <div className="flex items-center justify-between px-3 py-2 border-t border-white/5">
-            <span className={`px-1.5 py-0.5 rounded text-[6px] font-black border bg-amber-500/20 text-amber-400 border-amber-500/30`}>
+            <span className={`px-1.5 py-0.5 rounded-none text-[6px] font-black border bg-amber-500/20 text-amber-400 border-amber-500/30`}>
               {ratio.label}
             </span>
             <button onClick={() => {
               setStandardShell(null);
               setFullscreen(true);
             }}
-              className="p-1.5 rounded-lg border border-amber-500/20 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition-colors">
+              className="p-1.5 rounded-none border border-amber-500/20 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition-colors">
               <Maximize2 size={11} />
             </button>
           </div>
@@ -5473,7 +5479,7 @@ export const CropNode = memo(function CropNode({ id, data, selected }: NodeProps
       <div className="node-content foldder-frameless-main p-3 space-y-3 flex flex-col items-center">
         <div 
           ref={containerRef}
-          className="relative bg-black rounded-2xl border border-white/10 overflow-hidden flex items-center justify-center min-h-[150px] w-full touch-none select-none nodrag nopan flex-1 shadow-inner"
+          className="relative bg-black rounded-none border border-white/10 overflow-hidden flex items-center justify-center min-h-[150px] w-full touch-none select-none nodrag nopan flex-1 shadow-inner"
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           onPointerLeave={handlePointerUp}

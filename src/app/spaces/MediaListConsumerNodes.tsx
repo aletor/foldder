@@ -153,7 +153,7 @@ function MediaThumb({ item, compact = false }: { item: MediaListItem; compact?: 
   const url = useMediaListItemUrl(item);
   const isPlaceholder = item.mediaType === "placeholder" || !url;
   return (
-    <div className={cx("relative overflow-hidden rounded-2xl bg-slate-200", compact ? "h-14 w-16" : "aspect-video w-full")}>
+    <div className={cx("relative overflow-hidden rounded-none bg-slate-200", compact ? "h-14 w-16" : "aspect-video w-full")}>
       {isPlaceholder ? (
         <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-slate-200 to-slate-100 text-slate-400">
           <Layers size={compact ? 16 : 24} />
@@ -187,8 +187,8 @@ function downloadJson(filename: string, value: unknown) {
 
 function EmptyState({ title, line }: { title: string; line: string }) {
   return (
-    <div className="rounded-3xl border border-dashed border-slate-300 bg-white/70 p-5 text-center">
-      <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-100 text-slate-400">
+    <div className="rounded-none border border-dashed border-slate-300 bg-white/70 p-5 text-center">
+      <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-none bg-slate-100 text-slate-400">
         <Layers size={20} />
       </div>
       <div className="mt-3 text-sm font-black uppercase tracking-[0.12em] text-slate-700">{title}</div>
@@ -264,7 +264,7 @@ function ExportMultimediaStudio({
 
   return createPortal(
     <div className="fixed inset-0 z-[100080] bg-slate-950/82 p-4 text-slate-900 backdrop-blur-md">
-      <div className="mx-auto flex h-full max-w-[1540px] flex-col overflow-hidden rounded-[32px] border border-white/60 bg-[#f4f5f6] shadow-2xl">
+      <div className="mx-auto flex h-full max-w-[1540px] flex-col overflow-hidden rounded-none border border-white/60 bg-[#f4f5f6] shadow-2xl">
         <header className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 bg-white/88 px-6 py-4">
           <div>
             <div className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">Export Multimedia</div>
@@ -273,7 +273,7 @@ function ExportMultimediaStudio({
               {output ? `Media list desde ${output.sourceNodeType || "origen"} · ${output.sourceNodeId}` : "Sin media_list conectada"}
             </p>
           </div>
-          <button type="button" onClick={onClose} className="rounded-2xl border border-slate-200 bg-white p-3 text-slate-500 hover:text-slate-900">
+          <button type="button" onClick={onClose} className="rounded-none border border-slate-200 bg-white p-3 text-slate-500 hover:text-slate-900">
             <X size={18} />
           </button>
         </header>
@@ -289,14 +289,14 @@ function ExportMultimediaStudio({
               ["Pendientes", stats.pending],
               ["Duración vídeo", `${stats.videoDuration}s`],
             ].map(([label, value]) => (
-              <div key={label} className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div key={label} className="rounded-none border border-slate-200 bg-white p-4 shadow-sm">
                 <div className="text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">{label}</div>
                 <div className="mt-1 text-2xl font-black tracking-[-0.05em] text-slate-900">{value}</div>
               </div>
             ))}
           </div>
 
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-slate-200 bg-white p-3">
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-none border border-slate-200 bg-white p-3">
             <div className="flex flex-wrap gap-2">
               {([
                 ["all", "Todos"],
@@ -332,7 +332,7 @@ function ExportMultimediaStudio({
               <button type="button" onClick={handleManifestDownload} className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-black uppercase tracking-[0.1em] text-slate-700">Manifest JSON</button>
             </div>
           </div>
-          {notice ? <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800">{notice}</div> : null}
+          {notice ? <div className="mt-3 rounded-none border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800">{notice}</div> : null}
 
           {!output ? (
             <div className="mt-5"><EmptyState title="Sin media_list conectada" line="Conecta una salida media_list para revisar y descargar multimedia." /></div>
@@ -343,7 +343,7 @@ function ExportMultimediaStudio({
               {filteredItems.map((item) => {
                 const pending = item.mediaType === "placeholder" || item.status === "missing" || item.status === "pending";
                 return (
-                  <article key={item.id} className={cx("overflow-hidden rounded-[28px] border bg-white shadow-sm", pending ? "border-slate-200 opacity-75" : "border-slate-200")}>
+                  <article key={item.id} className={cx("overflow-hidden rounded-none border bg-white shadow-sm", pending ? "border-slate-200 opacity-75" : "border-slate-200")}>
                     <div className="relative">
                       <MediaThumb item={item} />
                       <label className="absolute left-3 top-3 flex h-9 w-9 items-center justify-center rounded-full border border-white/70 bg-white/90 shadow">
@@ -374,16 +374,16 @@ function ExportMultimediaStudio({
 
       {metadataItem ? (
         <div className="fixed inset-0 z-[100090] flex items-center justify-center bg-slate-950/55 p-5">
-          <div className="max-h-[82vh] w-full max-w-3xl overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-2xl">
+          <div className="max-h-[82vh] w-full max-w-3xl overflow-hidden rounded-none border border-slate-200 bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
               <div>
                 <div className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">Metadata</div>
                 <h3 className="mt-1 text-lg font-black">{metadataItem.title}</h3>
               </div>
-              <button type="button" onClick={() => setMetadataItem(null)} className="rounded-2xl border border-slate-200 p-2 text-slate-500"><X size={17} /></button>
+              <button type="button" onClick={() => setMetadataItem(null)} className="rounded-none border border-slate-200 p-2 text-slate-500"><X size={17} /></button>
             </div>
             <div className="max-h-[62vh] overflow-auto p-5">
-              <pre className="whitespace-pre-wrap rounded-2xl bg-slate-950 p-4 text-xs leading-relaxed text-slate-100">{JSON.stringify(metadataItem, null, 2)}</pre>
+              <pre className="whitespace-pre-wrap rounded-none bg-slate-950 p-4 text-xs leading-relaxed text-slate-100">{JSON.stringify(metadataItem, null, 2)}</pre>
               <button type="button" onClick={() => void navigator.clipboard?.writeText(JSON.stringify(metadataItem, null, 2))} className="mt-3 inline-flex items-center gap-2 rounded-full bg-slate-900 px-3 py-2 text-xs font-black uppercase tracking-[0.1em] text-white">
                 <Clipboard size={14} />Copiar JSON
               </button>
@@ -424,11 +424,11 @@ export const ExportMultimediaNode = memo(function ExportMultimediaNode({ id, dat
           <div className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Export Multimedia</div>
           <h3 className="mt-1 text-lg font-black tracking-[-0.04em]">{String((data as { label?: unknown }).label || "Export Multimedia")}</h3>
         </div>
-        <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-900 text-white">
+        <div className="flex h-10 w-10 items-center justify-center rounded-none bg-slate-900 text-white">
           <Download size={18} />
         </div>
       </div>
-      <div className="mt-4 rounded-3xl border border-slate-200 bg-slate-50 p-4">
+      <div className="mt-4 rounded-none border border-slate-200 bg-slate-50 p-4">
         {output ? (
           <>
             <div className="text-3xl font-black tracking-[-0.06em]">{stats.total} archivos</div>
@@ -444,7 +444,7 @@ export const ExportMultimediaNode = memo(function ExportMultimediaNode({ id, dat
       </div>
       <div className="mt-3 flex items-center justify-between gap-3">
         <span className="rounded-full bg-slate-100 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.12em] text-slate-500">{statusLabel}</span>
-        <button type="button" onClick={() => setStudioOpen(true)} className="rounded-2xl bg-slate-900 px-4 py-2 text-xs font-black uppercase tracking-[0.12em] text-white">Abrir</button>
+        <button type="button" onClick={() => setStudioOpen(true)} className="rounded-none bg-slate-900 px-4 py-2 text-xs font-black uppercase tracking-[0.12em] text-white">Abrir</button>
       </div>
       {studioOpen ? <ExportMultimediaStudio output={output} onClose={() => setStudioOpen(false)} /> : null}
     </div>

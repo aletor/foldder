@@ -157,7 +157,7 @@ export const PresenterNode = memo(({ id, data, selected }: NodeProps<any>) => {
         {!connected && (
           <div className="min-w-0">
             <span className="node-label">Conexión</span>
-            <div className="rounded-xl border border-slate-200/60 bg-slate-50/50 p-3 text-[11px] leading-snug text-slate-700 shadow-inner">
+            <div className="rounded-none border border-slate-200/60 bg-slate-50/50 p-3 text-[11px] leading-snug text-slate-700 shadow-inner">
               Conecta la salida <span className="font-semibold text-slate-900">Document</span> del nodo{" "}
               <span className="font-medium text-slate-800">Designer</span>.
             </div>
@@ -166,7 +166,7 @@ export const PresenterNode = memo(({ id, data, selected }: NodeProps<any>) => {
         {connected && designerMissing && (
           <div className="min-w-0">
             <span className="node-label">Conexión</span>
-            <div className="rounded-xl border border-rose-200/70 bg-rose-50/80 p-3 text-[11px] leading-snug text-rose-800 shadow-inner">
+            <div className="rounded-none border border-rose-200/70 bg-rose-50/80 p-3 text-[11px] leading-snug text-rose-800 shadow-inner">
               La conexión debe venir de un nodo Designer.
             </div>
           </div>
@@ -174,7 +174,7 @@ export const PresenterNode = memo(({ id, data, selected }: NodeProps<any>) => {
         {connected && !designerMissing && slideCount === 0 && (
           <div className="min-w-0">
             <span className="node-label">Diapositivas</span>
-            <div className="rounded-xl border border-slate-200/60 bg-slate-50/50 p-3 text-[11px] text-slate-600 shadow-inner">
+            <div className="rounded-none border border-slate-200/60 bg-slate-50/50 p-3 text-[11px] text-slate-600 shadow-inner">
               El Designer no tiene páginas aún.
             </div>
           </div>
@@ -189,7 +189,7 @@ export const PresenterNode = memo(({ id, data, selected }: NodeProps<any>) => {
                 setStandardShell(null);
                 setStudioOpen(true);
               }}
-              className="nodrag flex w-full flex-col items-center justify-center gap-2 rounded-xl border border-slate-300/80 bg-white/90 px-3 py-4 text-center shadow-sm transition hover:bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/50"
+              className="nodrag flex w-full flex-col items-center justify-center gap-2 rounded-none border border-slate-300/80 bg-white/90 px-3 py-4 text-center shadow-sm transition hover:bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/50"
             >
               <Presentation className="text-slate-600" size={26} strokeWidth={1.5} aria-hidden />
               <span className="text-[11px] font-bold uppercase tracking-wide text-slate-800">

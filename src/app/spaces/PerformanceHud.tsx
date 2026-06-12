@@ -119,7 +119,7 @@ export function PerformanceHud() {
 
   const measure = sample.lastMeasure;
   return (
-    <div className="pointer-events-none fixed bottom-3 right-3 z-[10020] min-w-[180px] rounded-xl border border-white/15 bg-black/80 px-3 py-2 font-mono text-[10px] leading-relaxed text-white shadow-2xl backdrop-blur-md">
+    <div className="pointer-events-none fixed bottom-3 right-3 z-[10020] min-w-[180px] rounded-none border border-white/15 bg-black/80 px-3 py-2 font-mono text-[10px] leading-relaxed text-white shadow-2xl backdrop-blur-md" data-foldder-canvas-chrome>
       <div className="flex items-center justify-between gap-5">
         <span className="text-white/55">FPS</span>
         <span className={sample.fps >= 55 ? "text-emerald-300" : sample.fps >= 40 ? "text-amber-300" : "text-rose-300"}>

@@ -303,7 +303,7 @@ export function PhotoRoomNewDocumentPanel({
               <button
                 type="button"
                 onClick={() => setTab("web")}
-                className={`flex items-center gap-2 rounded-t-lg px-3 py-2 text-[12px] font-medium transition ${
+                className={`flex items-center gap-2 rounded-none px-3 py-2 text-[12px] font-medium transition ${
                   tab === "web"
                     ? "bg-[#1a1f28] text-zinc-100 ring-1 ring-white/10"
                     : "text-zinc-500 hover:bg-white/[0.04] hover:text-zinc-300"
@@ -315,7 +315,7 @@ export function PhotoRoomNewDocumentPanel({
               <button
                 type="button"
                 onClick={() => setTab("art")}
-                className={`flex items-center gap-2 rounded-t-lg px-3 py-2 text-[12px] font-medium transition ${
+                className={`flex items-center gap-2 rounded-none px-3 py-2 text-[12px] font-medium transition ${
                   tab === "art"
                     ? "bg-[#1a1f28] text-zinc-100 ring-1 ring-white/10"
                     : "text-zinc-500 hover:bg-white/[0.04] hover:text-zinc-300"

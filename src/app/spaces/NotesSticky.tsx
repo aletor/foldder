@@ -205,7 +205,7 @@ function ToolbarButton({
         event.stopPropagation();
         onClick();
       }}
-      className="nodrag nopan inline-flex h-7 min-w-7 items-center justify-center rounded-lg border border-black/8 bg-white/55 px-2 text-[11px] font-semibold text-[#5f5007] shadow-[0_1px_2px_rgba(73,56,0,0.08)] transition hover:bg-white/80"
+      className="nodrag nopan inline-flex h-7 min-w-7 items-center justify-center rounded-none border border-black/8 bg-white/55 px-2 text-[11px] font-semibold text-[#5f5007] shadow-[0_1px_2px_rgba(73,56,0,0.08)] transition hover:bg-white/80"
     >
       {label}
     </button>
@@ -438,7 +438,7 @@ export function NotesStickyCard({
         ref={headerRef}
         className={`notes-node__header relative z-[2] flex items-center gap-2 bg-transparent px-3 py-2 ${mode === "node" ? "notes-drag-surface" : ""}`}
       >
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-xl border border-black/8 bg-white/38 shadow-[inset_0_1px_0_rgba(255,255,255,0.3)]">
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-none border border-black/8 bg-white/38 shadow-[inset_0_1px_0_rgba(255,255,255,0.3)]">
           <NodeIcon type="notes" size={14} colorOverride="#6a5606" selected={selected} />
         </span>
         {mode === "desktop" && editingTitle ? (
@@ -455,7 +455,7 @@ export function NotesStickyCard({
                 setEditingTitle(false);
               }
             }}
-            className="nodrag nopan min-w-0 flex-1 rounded-md border border-black/10 bg-white/55 px-2 py-1 text-[12px] font-medium outline-none focus:border-[#9a7d16]"
+            className="nodrag nopan min-w-0 flex-1 rounded-none border border-black/10 bg-white/55 px-2 py-1 text-[12px] font-medium outline-none focus:border-[#9a7d16]"
           />
         ) : mode === "desktop" ? (
           <button
@@ -482,20 +482,20 @@ export function NotesStickyCard({
                 event.stopPropagation();
                 setMenuOpen((open) => !open);
               }}
-              className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-black/8 bg-white/38 text-[#6b580a] transition hover:bg-white/64"
+              className="inline-flex h-7 w-7 items-center justify-center rounded-none border border-black/8 bg-white/38 text-[#6b580a] transition hover:bg-white/64"
               title="Más acciones"
             >
               <MoreHorizontal size={14} />
             </button>
             {menuOpen ? (
-              <div className="absolute right-0 top-[calc(100%+6px)] z-[20] min-w-[152px] rounded-xl border border-black/10 bg-[#fff4be] p-1.5 text-[12px] shadow-[0_10px_22px_rgba(66,49,0,0.18)]">
+              <div className="absolute right-0 top-[calc(100%+6px)] z-[20] min-w-[152px] rounded-none border border-black/10 bg-[#fff4be] p-1.5 text-[12px] shadow-[0_10px_22px_rgba(66,49,0,0.18)]">
                 <button
                   type="button"
                   onClick={() => {
                     setMenuOpen(false);
                     onDuplicate?.();
                   }}
-                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left transition hover:bg-black/5"
+                  className="flex w-full items-center gap-2 rounded-none px-2.5 py-2 text-left transition hover:bg-black/5"
                 >
                   <Plus size={13} />
                   Duplicate note
@@ -503,7 +503,7 @@ export function NotesStickyCard({
                 <button
                   type="button"
                   onClick={copyAsPrompt}
-                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left transition hover:bg-black/5"
+                  className="flex w-full items-center gap-2 rounded-none px-2.5 py-2 text-left transition hover:bg-black/5"
                 >
                   <StickyNote size={13} />
                   Copy as prompt
@@ -514,7 +514,7 @@ export function NotesStickyCard({
                     setMenuOpen(false);
                     onDelete?.();
                   }}
-                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[#8b330f] transition hover:bg-[#ffede0]"
+                  className="flex w-full items-center gap-2 rounded-none px-2.5 py-2 text-left text-[#8b330f] transition hover:bg-[#ffede0]"
                 >
                   <span className="text-[13px]">×</span>
                   Delete note

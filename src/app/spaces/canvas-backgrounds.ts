@@ -1,7 +1,43 @@
 /** Fondos del lienzo: local + URLs directas (CDN). Persistencia: `localStorage` bajo esta clave. */
 export const CANVAS_BG_STORAGE_KEY = "foldder-canvas-bg-id";
+export const CANVAS_BG_COLOR_STORAGE_KEY = "foldder-canvas-bg-color";
+export const CANVAS_SOLID_COLOR_BG_ID = "solid-color";
+export const DEFAULT_CANVAS_SOLID_COLOR = "#f8fafc";
 
 export type CanvasBackgroundOption = { id: string; label: string; url: string };
+
+export type CanvasBackgroundSelection =
+  | { kind: "image"; url: string }
+  | { kind: "color"; color: string };
+
+export function isCanvasSolidColorBg(id: string): boolean {
+  return id === CANVAS_SOLID_COLOR_BG_ID;
+}
+
+export function normalizeCanvasSolidColor(value: string | null | undefined): string {
+  const raw = (value ?? "").trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(raw)) return raw.toLowerCase();
+  if (/^#[0-9a-fA-F]{3}$/.test(raw)) {
+    const [, r, g, b] = raw;
+    return `#${r}${r}${g}${g}${b}${b}`.toLowerCase();
+  }
+  return DEFAULT_CANVAS_SOLID_COLOR;
+}
+
+export function resolveCanvasBackgroundSelection(
+  id: string,
+  solidColor: string,
+  options: CanvasBackgroundOption[],
+): CanvasBackgroundSelection {
+  if (isCanvasSolidColorBg(id)) {
+    return { kind: "color", color: normalizeCanvasSolidColor(solidColor) };
+  }
+  return { kind: "image", url: (options.find((option) => option.id === id) ?? options[0]).url };
+}
+
+export function isValidCanvasBackgroundId(id: string, options: CanvasBackgroundOption[]): boolean {
+  return isCanvasSolidColorBg(id) || options.some((option) => option.id === id);
+}
 
 /** Solo orígenes que suelen permitir CORS para texturas WebGL (evita hotlinks rotos o sin ACAO). */
 export const CANVAS_BACKGROUNDS: CanvasBackgroundOption[] = [

@@ -463,7 +463,7 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<VfxGener
 
       <div
         ref={previewRef}
-        className="relative flex min-h-0 w-full flex-1 items-center justify-center overflow-hidden rounded-b-[24px] bg-[#0a0a0f] group/out"
+        className="relative flex min-h-0 w-full flex-1 items-center justify-center overflow-hidden rounded-none bg-[#0a0a0f] group/out"
         style={{ minHeight: 160 }}
       >
         {displayVideo && nodeMediaVisible ? (

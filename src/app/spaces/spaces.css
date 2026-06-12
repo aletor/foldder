@@ -8,8 +8,8 @@
   position: relative;
   /* Por encima de `CanvasWallpaperTransition` (z-0): el blur del fondo no debe tapar nodos/aristas */
   z-index: 10;
-  --foldder-frameless-radius: 18px;
-  --foldder-frameless-inner-radius: 14px;
+  --foldder-frameless-radius: 0px;
+  --foldder-frameless-inner-radius: 0px;
   --foldder-frameless-glass-bg: #f4f3f0;
   --foldder-frameless-glass-blur: 24px;
   --foldder-frameless-chip-blur: 12px;
@@ -20,7 +20,7 @@
   --foldder-frameless-glass-label-color: rgba(50, 55, 62, 0.62);
   --foldder-frameless-text-primary: #1f2328;
   --foldder-frameless-text-secondary: rgba(31, 35, 40, 0.68);
-  --foldder-frameless-action-text: #3a2a20;
+  --foldder-frameless-action-text: #000000;
   --foldder-frameless-label-size: 11px;
   --foldder-frameless-label-top: 12px;
   --foldder-frameless-label-left: 14px;
@@ -39,8 +39,12 @@
   cursor: grabbing !important;
 }
 
-.spaces-canvas .react-flow__background {
-  opacity: 0.15;
+.spaces-canvas .react-flow__background.foldder-canvas-grid-background .foldder-canvas-grid-lines {
+  opacity: 0.1;
+}
+
+.spaces-canvas .react-flow__background.foldder-canvas-grid-background .foldder-canvas-grid-dots {
+  opacity: 0.8;
 }
 
 .spaces-canvas .react-flow__edge-path,
@@ -59,7 +63,7 @@
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   border: none;
-  border-radius: 12px;
+  border-radius: 0;
   padding: 0;
   color: #1a1a1b;
   /* Fill the ReactFlow node wrapper so NodeResizer can control height */
@@ -157,42 +161,71 @@
   -webkit-user-select: text;
 }
 
-/* ── NodeResizer: un solo handle abajo-derecha, más pequeño y con icono diagonal ── */
+/* ── NodeResizer: un solo handle abajo-derecha; hit area amplia, chip visual pequeño ── */
 .react-flow__resize-control.handle {
   display: none !important;
-  width: 12px !important;
-  height: 12px !important;
+  width: 24px !important;
+  height: 24px !important;
   position: absolute !important;
-  background-color: rgba(30, 30, 30, 0.88) !important;
-  border: 1px solid rgba(255, 255, 255, 0.45) !important;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35) !important;
-  border-radius: 3px !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
   cursor: nwse-resize !important;
-  transition: background-color 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
+
+/* Slop invisible (~48×48 px efectivos) para poder agarrar el handle con facilidad */
+.react-flow__resize-control.handle::after {
+  content: "";
+  position: absolute;
+  inset: -12px;
+}
+
 .react-flow__resize-control.handle::before {
   content: "⤢";
   position: absolute;
-  inset: 0;
+  right: 2px;
+  bottom: 2px;
+  width: 14px;
+  height: 14px;
   display: flex;
   align-items: center;
   justify-content: center;
   color: #fff;
-  font-size: 7px;
+  font-size: 8px;
   font-weight: 700;
   line-height: 1;
+  background-color: rgba(30, 30, 30, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  border-radius: 3px;
+  transition: background-color 0.15s, border-color 0.15s, box-shadow 0.15s;
+  pointer-events: none;
 }
+
 .react-flow__resize-control.handle.bottom.right {
   display: block !important;
+  translate: calc(-50% + 4px) calc(-50% + 4px) !important;
 }
-.react-flow__resize-control.handle:hover {
-  background-color: rgba(15, 15, 15, 0.95) !important;
-  border-color: rgba(255, 255, 255, 0.65) !important;
+
+.react-flow__resize-control.handle:hover::before {
+  background-color: rgba(15, 15, 15, 0.95);
+  border-color: rgba(255, 255, 255, 0.65);
 }
-/* Único handle: ligeramente fuera del borde inferior derecho */
-.react-flow__resize-control.handle.bottom.right {
-  translate: calc(-50% + 5px) calc(-50% + 5px) !important;
+
+/* Resize por debajo de conectores externos (handle-wrapper z-index 40) */
+.custom-node.foldder-node--frameless > .react-flow__resize-control {
+  z-index: 20 !important;
+  pointer-events: auto !important;
 }
+
+.custom-node.foldder-studio-node .handle-wrapper {
+  z-index: 40 !important;
+}
+
+.foldder-data-handle.react-flow__handle {
+  pointer-events: all !important;
+}
+
 /* Sin líneas ni otros puntos de resize */
 .react-flow__resize-control.line {
   display: none !important;
@@ -474,6 +507,24 @@
   overflow-clip-margin: 56px;
 }
 
+/* Studio nodes (Guionista-style): los conectores viven fuera del borde — no recortar */
+.custom-node.foldder-studio-node--guionista.foldder-node--frameless.node--media,
+.custom-node.foldder-studio-node--designer.foldder-node--frameless.node--media,
+.custom-node.foldder-studio-node--photoRoom.foldder-node--frameless.node--media,
+.custom-node.foldder-studio-node--cine.foldder-node--frameless.node--media,
+.custom-node.nano-banana-node.foldder-node--frameless.node--media {
+  overflow: visible !important;
+  overflow-clip-margin: 0;
+}
+
+.spaces-canvas .react-flow__node:has(.foldder-studio-node--guionista),
+.spaces-canvas .react-flow__node:has(.foldder-studio-node--designer),
+.spaces-canvas .react-flow__node:has(.foldder-studio-node--photoRoom),
+.spaces-canvas .react-flow__node:has(.foldder-studio-node--cine),
+.spaces-canvas .react-flow__node:has(.nano-banana-node) {
+  overflow: visible !important;
+}
+
 .custom-node.foldder-node--frameless::before {
   content: none;
 }
@@ -648,6 +699,19 @@
   object-fit: cover !important;
 }
 
+.custom-node.foldder-node--frameless.node--media :is(
+  .photoroom-empty-background,
+  .guionista-empty-background,
+  .designer-empty-background,
+  .cine-empty-background,
+  .nano-banana-empty-background,
+  .inspiration-empty-background,
+  .gemini-video-empty-background
+) img {
+  object-fit: contain !important;
+  object-position: center bottom !important;
+}
+
 .custom-node.foldder-node--frameless.crop-node img {
   object-fit: contain !important;
 }
@@ -674,7 +738,14 @@
 
 .custom-node.foldder-node--frameless.node--media > .foldder-frameless-main,
 .custom-node.foldder-node--frameless.node--media > .foldder-frameless-main > .guionista-empty-background,
-.custom-node.foldder-node--frameless.node--media > .foldder-frameless-main > .photoroom-empty-background {
+.custom-node.foldder-node--frameless.node--media > .foldder-frameless-main > .photoroom-empty-background,
+.custom-node.foldder-node--frameless.node--media > .foldder-frameless-main > .designer-empty-background,
+.custom-node.foldder-node--frameless.node--media > .foldder-frameless-main > .cine-empty-background,
+.custom-node.foldder-node--frameless.node--media > .foldder-frameless-main > .nano-banana-empty-background,
+.custom-node.foldder-node--frameless.node--media > .foldder-frameless-main > .inspiration-empty-background,
+.custom-node.foldder-node--frameless.node--media > .node-content.foldder-frameless-main > .inspiration-empty-background,
+.custom-node.foldder-node--frameless.node--media > .foldder-frameless-main > .gemini-video-empty-background,
+.custom-node.foldder-node--frameless.node--media > .gemini-video-preview > .gemini-video-empty-background {
   border-radius: 0 !important;
 }
 
@@ -714,7 +785,7 @@
   z-index: 9;
   max-width: calc(100% - 28px);
   border: none !important;
-  border-radius: 18px !important;
+  border-radius: 0 !important;
   background: var(--foldder-frameless-dark-chip-bg) !important;
   color: #ffffff;
   padding: 8px 10px !important;
@@ -738,7 +809,7 @@
   justify-content: center;
   gap: 6px;
   border: none !important;
-  border-radius: 999px !important;
+  border-radius: 0 !important;
   background: var(--foldder-frameless-light-chip-bg) !important;
   color: var(--foldder-frameless-action-text) !important;
   padding: 6px 14px !important;
@@ -778,7 +849,7 @@
   min-width: 0;
   max-width: calc(100% - 28px);
   border: none !important;
-  border-radius: 999px !important;
+  border-radius: 0 !important;
   background: var(--foldder-frameless-dark-chip-bg) !important;
   color: #ffffff !important;
   padding: 5px 12px !important;
@@ -818,7 +889,7 @@
   bottom: var(--foldder-frameless-overlay-bottom);
   z-index: 10;
   max-width: calc(100% - 28px);
-  border-radius: 999px;
+  border-radius: 0;
   background: #dc2626;
   color: #ffffff;
   padding: 5px 12px;
@@ -1255,6 +1326,82 @@
 
 .custom-node.guionista-node .guionista-node-content .studio-canvas-open-button {
   white-space: nowrap;
+}
+
+.custom-node.cine-node.cine-node--empty,
+.custom-node.foldder-studio-node--cine.cine-node--empty {
+  background: #de323f !important;
+}
+
+.custom-node.foldder-studio-node--cine .foldder-frameless-main {
+  background: #de323f !important;
+}
+
+.custom-node.foldder-studio-node--cine .cine-empty-background {
+  background: #de323f !important;
+  border-radius: 0 !important;
+}
+
+.custom-node.foldder-studio-node--cine .cine-empty-background img {
+  display: block;
+  background: #de323f;
+  object-fit: contain !important;
+  object-position: center bottom !important;
+}
+
+.custom-node.cine-node.cine-node--empty .cine-node-content {
+  padding: 52px 16px 58px !important;
+  background: transparent !important;
+}
+
+.custom-node.nano-banana-node.nano-banana-node--empty .foldder-frameless-main {
+  background: #f16389 !important;
+}
+
+.custom-node.nano-banana-node .nano-banana-empty-background {
+  background: #f16389 !important;
+  border-radius: 0 !important;
+}
+
+.custom-node.nano-banana-node .nano-banana-empty-background img {
+  display: block;
+  background: #f16389;
+  object-fit: contain !important;
+  object-position: center bottom !important;
+}
+
+.custom-node.inspiration-node.inspiration-node--empty,
+.custom-node.inspiration-node.inspiration-node--empty .node-content.foldder-frameless-main {
+  background: #00b388 !important;
+}
+
+.custom-node.inspiration-node .inspiration-empty-background {
+  background: #00b388 !important;
+  border-radius: 0 !important;
+}
+
+.custom-node.inspiration-node .inspiration-empty-background img {
+  display: block;
+  background: #00b388;
+  object-fit: contain !important;
+  object-position: center bottom !important;
+}
+
+.custom-node.gemini-video-node.gemini-video-node--empty,
+.custom-node.gemini-video-node.gemini-video-node--empty .gemini-video-preview {
+  background: #2563eb !important;
+}
+
+.custom-node.gemini-video-node .gemini-video-empty-background {
+  background: #2563eb !important;
+  border-radius: 0 !important;
+}
+
+.custom-node.gemini-video-node .gemini-video-empty-background img {
+  display: block;
+  background: #2563eb;
+  object-fit: contain !important;
+  object-position: center bottom !important;
 }
 
 .custom-node.project-brain-node {
@@ -1834,11 +1981,12 @@
   box-shadow: none !important;
 }
 
-.custom-node.foldder-studio-node--photoRoom .foldder-frameless-main,
+.custom-node.foldder-studio-node--photoRoom .foldder-frameless-main {
+  background: #71449f !important;
+}
+
 .custom-node.foldder-studio-node--designer .foldder-frameless-main {
-  background:
-    radial-gradient(circle at 18% 18%, rgba(255, 255, 255, 0.18), transparent 30%),
-    #111111 !important;
+  background: #abbc14 !important;
 }
 
 .custom-node.foldder-studio-node--photoRoom .foldder-frameless-main > div,
@@ -1874,8 +2022,16 @@
   object-position: center bottom;
 }
 
-.custom-node.foldder-studio-node--photoRoom .foldder-frameless-main::after,
-.custom-node.foldder-studio-node--designer .foldder-frameless-main::after,
+.custom-node.foldder-studio-node--designer .foldder-frameless-main > .designer-empty-background {
+  background: #abbc14 !important;
+}
+
+.custom-node.foldder-studio-node--designer .designer-empty-background img {
+  display: block;
+  background: #abbc14;
+  object-position: center bottom;
+}
+
 .custom-node.inspiration-node .foldder-frameless-main::after,
 .custom-node.image-creation-advanced-node .foldder-frameless-main::after,
 .custom-node.media-input-node.node--media .media-input-preview::after {
@@ -2456,34 +2612,183 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
   box-shadow: none !important;
 }
 
-.dndnode {
-  padding: 8px 4px;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 20px;
+/* ── Sidebar library: mosaicos rectangulares, flush (sin gap) ── */
+.foldder-sidebar-scroll {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  margin: 0;
+}
+
+.foldder-sidebar-scroll-inner {
+  width: 100%;
+  flex-shrink: 0;
+  margin-block: auto;
+}
+
+.foldder-sidebar-grid {
+  display: grid;
+  width: 100%;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.foldder-sidebar-grid--production {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.foldder-sidebar-grid--tools {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.foldder-sidebar-tile {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  cursor: grab;
-  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-  font-size: 0.55rem;
-  font-weight: 800;
-  color: rgba(255, 255, 255, 0.75);
-  position: relative;
-  overflow: hidden;
+  gap: 0;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  margin: 0 -1px -1px 0;
+  padding: 6px 4px;
+  border-radius: 0 !important;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background-color: #000;
+  color: rgba(255, 255, 255, 0.9);
   text-align: center;
-  aspect-ratio: 1/1;
-  width: 82px;
+  cursor: grab;
+  overflow: hidden;
+  box-shadow: none !important;
+  transition:
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    filter 0.18s ease;
 }
 
-.dndnode:hover {
-  background: rgba(255, 255, 255, 0.15);
-  border-color: rgba(99, 102, 241, 0.6);
-  color: #ffffff;
-  transform: translateY(-4px);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+.foldder-sidebar-tile--production {
+  min-height: 89px;
+}
+
+.foldder-sidebar-tile--tool {
+  min-height: 59px;
+  padding: 4px 2px;
+}
+
+.foldder-sidebar-tile:hover {
+  background-color: #0a0a0a;
+  filter: brightness(1.08);
+  transform: none;
+  box-shadow: none !important;
+}
+
+.foldder-sidebar-tile:active {
+  cursor: grabbing;
+  filter: brightness(0.92);
+}
+
+.foldder-sidebar-tile__label {
+  position: relative;
+  z-index: 1;
+  margin-top: 6px;
+  font-size: 7px;
+  font-weight: 300;
+  line-height: 1.1;
+  color: rgba(255, 255, 255, 0.95);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+.foldder-sidebar-tile--tool .foldder-sidebar-tile__label {
+  margin-top: 4px;
+  font-size: 6px;
+}
+
+.foldder-sidebar-tile .type-indicator-container {
+  z-index: 3;
+  bottom: 5px;
+  left: 0;
+  right: 0;
+  padding: 0 5px;
+}
+
+.foldder-sidebar-tile--tool .type-indicator-container {
+  bottom: 3px;
+  padding: 0 3px;
+}
+
+.foldder-sidebar-tile--image-bg {
+  padding: 0;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.foldder-sidebar-tile--image-bg::before {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  z-index: 1;
+  height: 38%;
+  pointer-events: none;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.55), transparent);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.foldder-sidebar-tile--image-bg:hover::before {
+  opacity: 1;
+}
+
+.foldder-sidebar-tile--image-bg .type-indicator-container {
+  bottom: 4px;
+  padding: 0 4px;
+}
+
+.foldder-sidebar-tile--image-bg .type-dot {
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.85);
+}
+
+.foldder-sidebar-tile--image-bg:hover {
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  filter: brightness(1.08);
+}
+
+.foldder-sidebar-tile--image-bg[data-tile-type="photoRoom"],
+.foldder-sidebar-tile--image-bg[data-tile-type="photoRoom"]:hover {
+  background-color: #71449f;
+}
+
+.foldder-sidebar-tile--image-bg[data-tile-type="guionista"],
+.foldder-sidebar-tile--image-bg[data-tile-type="guionista"]:hover {
+  background-color: #1b71df;
+}
+
+.foldder-sidebar-tile--image-bg[data-tile-type="designer"],
+.foldder-sidebar-tile--image-bg[data-tile-type="designer"]:hover {
+  background-color: #abbc14;
+}
+
+.foldder-sidebar-tile--image-bg[data-tile-type="cine"],
+.foldder-sidebar-tile--image-bg[data-tile-type="cine"]:hover {
+  background-color: #de323f;
+}
+
+.foldder-sidebar-tile--image-bg[data-tile-type="nanoBanana"],
+.foldder-sidebar-tile--image-bg[data-tile-type="nanoBanana"]:hover {
+  background-color: #f16389;
+}
+
+.foldder-sidebar-tile--image-bg[data-tile-type="inspiration"],
+.foldder-sidebar-tile--image-bg[data-tile-type="inspiration"]:hover {
+  background-color: #00b388;
+}
+
+.foldder-sidebar-tile--image-bg[data-tile-type="geminiVideo"],
+.foldder-sidebar-tile--image-bg[data-tile-type="geminiVideo"]:hover {
+  background-color: #2563eb;
 }
 
 .custom-scrollbar::-webkit-scrollbar {
@@ -2528,6 +2833,7 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
   pointer-events: none;
 }
 
+.foldder-sidebar-tile:hover .type-indicator-container,
 .dndnode:hover .type-indicator-container {
   opacity: 1;
 }
@@ -2560,6 +2866,7 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
 .type-dot.pdf, .type-dot.txt { background: #f97316; color: #f97316; }
 .type-dot.json { background: #f59e0b; color: #f59e0b; }
 
+.foldder-sidebar-tile:hover .type-dot.active,
 .dndnode:hover .type-dot.active {
   transform: scale(1.4);
 }
@@ -3052,6 +3359,10 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
   background: #0a0a0a !important;
 }
 
+.custom-node.gemini-video-node.gemini-video-node--empty {
+  background: #2563eb !important;
+}
+
 .custom-node.gemini-video-node .foldder-frameless-footer-action .execute-btn {
   left: var(--foldder-frameless-overlay-side) !important;
   right: auto !important;
@@ -3079,8 +3390,14 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
 
 .custom-node.inspiration-node .node-content.foldder-frameless-main,
 .custom-node.inspiration-node .node-content.foldder-frameless-main > .relative,
-.custom-node.inspiration-node .node-content.foldder-frameless-main img {
+.custom-node.inspiration-node .node-content.foldder-frameless-main > .relative img {
   clip-path: inset(0 round var(--foldder-frameless-radius));
+}
+
+.custom-node.inspiration-node .inspiration-empty-background,
+.custom-node.inspiration-node .inspiration-empty-background img {
+  clip-path: none !important;
+  border-radius: 0 !important;
 }
 
 .custom-node.inspiration-node .foldder-frameless-main::after {
@@ -3197,9 +3514,9 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
   --foldder-frameless-text-secondary: rgba(255, 255, 255, 0.76);
   --foldder-frameless-glass-label-color: rgba(255, 255, 255, 0.84);
   --foldder-frameless-media-label-color: rgba(255, 255, 255, 0.88);
-  --foldder-frameless-action-text: #ffffff;
-  --foldder-frameless-light-chip-bg: rgba(255, 255, 255, 0.16);
-  --foldder-frameless-light-chip-bg-hover: rgba(255, 255, 255, 0.24);
+  --foldder-frameless-action-text: #000000;
+  --foldder-frameless-light-chip-bg: #ffffff;
+  --foldder-frameless-light-chip-bg-hover: #f5f5f3;
   --foldder-frameless-dark-chip-bg: rgba(0, 0, 0, 0.22);
 }
 
@@ -3243,7 +3560,7 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
 .custom-node.foldder-node--frameless.node--glass,
 .custom-node.foldder-node--frameless.node--media,
 .custom-node.video-editor-node.foldder-node--frameless,
-.custom-node.cine-node,
+.custom-node.cine-node:not(.cine-node--empty),
 .custom-node.grok-processor-node,
 .custom-node.project-assets-node,
 .custom-node.project-brain-node,
@@ -3491,7 +3808,7 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
 .custom-node.foldder-node--frameless.node--glass,
 .custom-node.foldder-node--frameless.node--media,
 .custom-node.video-editor-node.foldder-node--frameless,
-.custom-node.cine-node,
+.custom-node.cine-node:not(.cine-node--empty),
 .custom-node.grok-processor-node,
 .custom-node.project-assets-node,
 .custom-node.project-brain-node,
@@ -3520,6 +3837,21 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
   background-image: none !important;
 }
 
+.custom-node.inspiration-node.inspiration-node--empty {
+  background: #00b388 !important;
+  background-image: none !important;
+}
+
+.custom-node.cine-node.cine-node--empty {
+  background: #de323f !important;
+  background-image: none !important;
+}
+
+.custom-node.nano-banana-node.nano-banana-node--empty {
+  background: #f16389 !important;
+  background-image: none !important;
+}
+
 .custom-node:is(.inspiration-node, .image-creation-advanced-node, .gemini-video-node) .foldder-frameless-main,
 .custom-node:is(.inspiration-node, .image-creation-advanced-node, .gemini-video-node) .node-content.foldder-frameless-main,
 .custom-node.media-input-node.node--glass .media-input-preview,
@@ -3542,4 +3874,224 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
     color-mix(in srgb, var(--foldder-node-card-bg) 56%, #000000) 100%
   ) !important;
   background-color: color-mix(in srgb, var(--foldder-node-card-bg) 72%, #000000) !important;
+}
+
+/* Sharp UX corners — canvas nodes (phase 1) + lienzo chrome (phase 2) */
+
+.react-flow__node .custom-node:not(.canvas-group-frame),
+.custom-node:not(.canvas-group-frame) {
+  border-radius: 0 !important;
+}
+
+.custom-node.foldder-node--frameless :is(
+  .action-btn,
+  .execute-btn,
+  .foldder-frameless-action,
+  .foldder-frameless-chip,
+  .foldder-frameless-secondary-panel,
+  .foldder-frameless-error,
+  select.foldder-frameless-chip,
+  .node-input.foldder-frameless-chip,
+  .studio-canvas-open-button,
+  .foldder-studio-mode-center-button
+) {
+  border-radius: 0 !important;
+}
+
+.custom-node.cine-node .cine-summary-panel,
+.custom-node.cine-node .cine-summary-panel .grid span,
+.custom-node.cine-node .cine-node-content--media {
+  border-radius: 0 !important;
+}
+
+.custom-node :is(
+  .node-content.foldder-frameless-main,
+  .foldder-frameless-main,
+  .node-content.foldder-frameless-main > .relative,
+  .foldder-frameless-main > .relative,
+  .node-content.foldder-frameless-main img,
+  .foldder-frameless-main img
+) {
+  clip-path: none !important;
+}
+
+[data-foldder-top-hud] :is(
+  [class*="rounded-xl"],
+  [class*="rounded-2xl"],
+  [class*="rounded-3xl"],
+  [class*="rounded-lg"],
+  [class*="rounded-md"],
+  [class*="rounded-["]
+):not([class*="rounded-full"]),
+[data-foldder-sidebar] :is(
+  [class*="rounded-xl"],
+  [class*="rounded-2xl"],
+  [class*="rounded-3xl"],
+  [class*="rounded-lg"],
+  [class*="rounded-md"],
+  [class*="rounded-["]
+):not([class*="rounded-full"]),
+[data-foldder-canvas-modals] :is(
+  [class*="rounded-xl"],
+  [class*="rounded-2xl"],
+  [class*="rounded-3xl"],
+  [class*="rounded-lg"],
+  [class*="rounded-md"],
+  [class*="rounded-["]
+):not([class*="rounded-full"]),
+[data-foldder-canvas-toasts] :is(
+  [class*="rounded-xl"],
+  [class*="rounded-2xl"],
+  [class*="rounded-3xl"],
+  [class*="rounded-lg"],
+  [class*="rounded-md"],
+  [class*="rounded-["]
+):not([class*="rounded-full"]),
+[data-foldder-canvas-chrome] :is(
+  [class*="rounded-xl"],
+  [class*="rounded-2xl"],
+  [class*="rounded-3xl"],
+  [class*="rounded-lg"],
+  [class*="rounded-md"],
+  [class*="rounded-["]
+):not([class*="rounded-full"]) {
+  border-radius: 0 !important;
+}
+
+[data-foldder-sidebar] .foldder-sidebar-collapsed-pill {
+  border-radius: 0 !important;
+}
+
+.custom-node :is(
+  .url-image-preview,
+  .url-image-preview img,
+  .image-export-preview,
+  .image-export-preview img,
+  .video-editor-summary,
+  .video-editor-icon
+),
+.custom-node.url-image-node .url-image-controls .node-input,
+.custom-node.project-brain-node .relative.flex.min-h-0.flex-1.flex-col.p-4 > .flex:first-child > div:last-child,
+.custom-node.project-brain-node .mb-2.mt-auto.space-y-3 > div:first-child {
+  border-radius: 0 !important;
+}
+
+/* Top HUD — flat chrome (no borders, no drop shadows) */
+[data-foldder-top-hud] img {
+  filter: none !important;
+}
+
+[data-foldder-top-hud] :is(
+  button,
+  input,
+  label,
+  [class*="drop-shadow"],
+  .backdrop-blur-xl,
+  .backdrop-blur-md,
+  .backdrop-blur-2xl,
+  [role="menu"]
+) {
+  box-shadow: none !important;
+  border-width: 0 !important;
+  border-color: transparent !important;
+  --tw-shadow: 0 0 #0000 !important;
+  --tw-shadow-colored: 0 0 #0000 !important;
+  --tw-ring-offset-shadow: 0 0 #0000 !important;
+  --tw-ring-shadow: 0 0 #0000 !important;
+  --tw-ring-width: 0 !important;
+  filter: none !important;
+}
+
+[data-foldder-top-hud] :is(button, input):focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.38);
+  outline-offset: 2px;
+}
+
+[data-foldder-top-hud] [data-foldder-canvas-chrome] > button span {
+  box-shadow: none !important;
+  border-width: 0 !important;
+}
+
+/* Frameless node footer actions — black label + icon on white chip */
+.custom-node.foldder-node--frameless :is(
+  .action-btn,
+  .execute-btn,
+  .foldder-frameless-action,
+  .studio-canvas-open-button,
+  .project-assets-open-button,
+  .media-input-change-button,
+  .video-editor-open-button,
+  .image-export-action,
+  .describer-generate-button,
+  .foldder-node-footer-button
+),
+.custom-node.foldder-node--frameless .foldder-frameless-footer-action :is(button, .execute-btn) {
+  background: #ffffff !important;
+  color: #000000 !important;
+  box-shadow: none !important;
+}
+
+.custom-node.foldder-node--frameless :is(
+  .action-btn,
+  .execute-btn,
+  .foldder-frameless-action,
+  .studio-canvas-open-button,
+  .project-assets-open-button,
+  .media-input-change-button,
+  .video-editor-open-button,
+  .image-export-action,
+  .describer-generate-button,
+  .foldder-node-footer-button,
+  .foldder-frameless-footer-action button
+) :is(svg, span, strong) {
+  color: #000000 !important;
+}
+
+.custom-node.foldder-node--frameless :is(
+  .action-btn,
+  .execute-btn,
+  .foldder-frameless-action,
+  .studio-canvas-open-button,
+  .project-assets-open-button,
+  .media-input-change-button,
+  .video-editor-open-button,
+  .image-export-action,
+  .describer-generate-button,
+  .foldder-node-footer-button,
+  .foldder-frameless-footer-action button
+):hover:not(:disabled) {
+  background: #f5f5f3 !important;
+  color: #000000 !important;
+}
+
+.custom-node.foldder-node--frameless :is(
+  .action-btn,
+  .execute-btn,
+  .foldder-frameless-action,
+  .studio-canvas-open-button,
+  .project-assets-open-button,
+  .media-input-change-button,
+  .video-editor-open-button,
+  .image-export-action,
+  .describer-generate-button,
+  .foldder-node-footer-button,
+  .foldder-frameless-footer-action button
+):disabled {
+  color: rgba(0, 0, 0, 0.38) !important;
+}
+
+.custom-node.foldder-node--frameless :is(
+  .action-btn,
+  .execute-btn,
+  .foldder-frameless-action,
+  .studio-canvas-open-button,
+  .project-assets-open-button,
+  .media-input-change-button,
+  .video-editor-open-button,
+  .image-export-action,
+  .describer-generate-button,
+  .foldder-node-footer-button,
+  .foldder-frameless-footer-action button
+):disabled :is(svg, span, strong) {
+  color: rgba(0, 0, 0, 0.38) !important;
 }

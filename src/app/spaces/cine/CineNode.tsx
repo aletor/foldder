@@ -102,6 +102,7 @@ function latestCineCanvasImage(data: CineNodeData): CineCanvasPreviewImage | nul
 }
 
 const CINE_NODE_S3_URL_TTL_MS = 50 * 60 * 1000;
+const CINE_EMPTY_BACKGROUND_SRC = "/assets/nodes/cine-empty-red.png";
 const cineNodePresignedUrlCache = new globalThis.Map<string, { url: string; expiresAt: number }>();
 const cineNodePresignInFlight = new globalThis.Map<string, Promise<string | null>>();
 
@@ -324,8 +325,8 @@ export const CineNode = memo(function CineNode({ id, data, selected }: NodeProps
   const previewRetryKey = `${previewImage?.src || ""}\u0001${previewImage?.s3Key || ""}`;
   const scriptTitle = nodeData.sourceScript?.title || nodeData.label || nodeData.detected?.logline || "Cine";
   const metricClassName = previewImage
-    ? "rounded-xl border border-white/15 bg-black/35 px-2 py-1.5 text-[10px] font-semibold text-white/88 shadow-sm backdrop-blur-md"
-    : "rounded-xl border border-slate-200/70 bg-white/80 px-2 py-1.5 text-[10px] font-semibold text-slate-700";
+    ? "rounded-none border border-white/15 bg-black/35 px-2 py-1.5 text-[10px] font-semibold text-white/88 shadow-sm backdrop-blur-md"
+    : "rounded-none border border-slate-200/70 bg-white/80 px-2 py-1.5 text-[10px] font-semibold text-slate-700";
   const compactPillClassName = previewImage
     ? "rounded-full border border-white/15 bg-black/30 px-2.5 py-1 text-[10px] font-semibold text-white/78 backdrop-blur-md"
     : "";
@@ -341,63 +342,36 @@ export const CineNode = memo(function CineNode({ id, data, selected }: NodeProps
       badge={modeLabel}
       introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}
       minWidth={200}
-      className="cine-node"
+      className={previewImage ? "cine-node" : "cine-node cine-node--empty foldder-frameless-label-dark"}
       handles={CINE_NODE_HANDLES}
       variant="frameless"
-      material={previewImage ? "media" : "glass"}
+      material="media"
     >
       <NodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={2200} isVisible={selected} />
-      <div
-        className={
-          previewImage
-            ? "node-content cine-node-content cine-node-content--media relative flex min-h-0 flex-1 flex-col justify-end gap-3 overflow-hidden rounded-[28px] px-3 pb-3 pt-3"
-            : "node-content cine-node-content flex flex-col gap-3 px-3 pb-3 pt-2"
-        }
-      >
-        {previewImage ? (
-          <>
-            {previewUrl ? (
-              // S3 presigned URLs and canvas nodes need a plain img so object-cover stays deterministic inside React Flow.
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={previewUrl}
-                alt={previewImage.title}
-                className="absolute inset-0 h-full w-full object-cover"
-                draggable={false}
-                onError={() => {
-                  if (previewRetriedFor !== previewRetryKey) {
-                    setPreviewRetriedFor(previewRetryKey);
-                    refreshPreviewUrl();
-                  }
-                }}
-              />
-            ) : null}
-          </>
+      {previewImage ? (
+      <div className="node-content cine-node-content cine-node-content--media relative flex min-h-0 flex-1 flex-col justify-end gap-3 overflow-hidden rounded-none px-3 pb-3 pt-3">
+        {previewUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={previewUrl}
+            alt={previewImage.title}
+            className="absolute inset-0 h-full w-full object-cover"
+            draggable={false}
+            onError={() => {
+              if (previewRetriedFor !== previewRetryKey) {
+                setPreviewRetriedFor(previewRetryKey);
+                refreshPreviewUrl();
+              }
+            }}
+          />
         ) : null}
 
-        <div className={previewImage ? "cine-summary-panel relative z-10" : "cine-summary-panel rounded-2xl border border-slate-200/60 bg-slate-50/60 p-3 shadow-inner"}>
-          {previewImage ? (
-            <div className="mb-3">
-              <h3 className="line-clamp-3 text-[20px] font-semibold leading-[1.02] tracking-[-0.045em] text-white drop-shadow-sm">
-                {scriptTitle}
-              </h3>
-            </div>
-          ) : (
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <span className="node-label">Mesa de dirección</span>
-                <h3 className="mt-1 text-[18px] font-semibold leading-tight tracking-[-0.035em] text-slate-950">
-                  {statusLabel}
-                </h3>
-                <p className="mt-1 line-clamp-2 text-[11px] font-light leading-relaxed text-slate-600">
-                  {nodeData.detected?.logline || sourceScriptText || "Convierte guion en escenas, reparto, fondos y frames."}
-                </p>
-              </div>
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200/80 bg-slate-900 text-cyan-100 shadow-sm">
-                <Film className="h-5 w-5" strokeWidth={1.8} />
-              </div>
-            </div>
-          )}
+        <div className="cine-summary-panel relative z-10">
+          <div className="mb-3">
+            <h3 className="line-clamp-3 text-[20px] font-semibold leading-[1.02] tracking-[-0.045em] text-white drop-shadow-sm">
+              {scriptTitle}
+            </h3>
+          </div>
           <div className="mt-3 grid grid-cols-2 gap-1.5">
             <span className={metricClassName}>
               {nodeData.scenes.length} escenas
@@ -413,21 +387,8 @@ export const CineNode = memo(function CineNode({ id, data, selected }: NodeProps
             </span>
           </div>
           <div className="mt-3 flex flex-wrap gap-1.5">
-            {previewImage ? (
-              <>
-                <span className={compactPillClassName}>{brainConnected ? "Brain conectado" : "Sin Brain"}</span>
-                <span className={compactPillClassName}>{sourceScriptText ? "Guionista conectado" : "Guion manual"}</span>
-              </>
-            ) : (
-              <>
-                <StudioCanvasPill active={brainConnected} activeClassName="border-cyan-400/25 bg-cyan-400/10 text-cyan-700">
-                  {brainConnected ? "Brain conectado" : "Sin Brain"}
-                </StudioCanvasPill>
-                <StudioCanvasPill active={Boolean(sourceScriptText)} activeClassName="border-amber-400/25 bg-amber-400/10 text-amber-700">
-                  {sourceScriptText ? "Guionista conectado" : "Guion manual"}
-                </StudioCanvasPill>
-              </>
-            )}
+            <span className={compactPillClassName}>{brainConnected ? "Brain conectado" : "Sin Brain"}</span>
+            <span className={compactPillClassName}>{sourceScriptText ? "Guionista conectado" : "Guion manual"}</span>
           </div>
         </div>
 
@@ -435,11 +396,66 @@ export const CineNode = memo(function CineNode({ id, data, selected }: NodeProps
           onClick={openStudio}
           accent="cyan"
           icon={<Film className="h-4 w-4" strokeWidth={2} />}
-          className={previewImage ? "relative z-10 border-white/20 bg-white/88 shadow-[0_16px_40px_rgba(0,0,0,0.28)] backdrop-blur-md" : undefined}
+          className="relative z-10 border-white/20 bg-white/88 shadow-[0_16px_40px_rgba(0,0,0,0.28)] backdrop-blur-md"
         >
           Abrir Cine
         </StudioCanvasOpenButton>
       </div>
+      ) : (
+      <div className="foldder-frameless-main relative flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="cine-empty-background absolute inset-0 overflow-hidden" aria-hidden>
+          <img
+            src={CINE_EMPTY_BACKGROUND_SRC}
+            alt=""
+            className="h-full w-full object-contain object-bottom"
+            draggable={false}
+          />
+        </div>
+        <div className="node-content cine-node-content relative z-10 flex flex-col gap-3 px-3 pb-3 pt-2">
+        <div className="cine-summary-panel">
+          <div className="min-w-0">
+            <span className="node-label">Mesa de dirección</span>
+            <h3 className="mt-1 text-[18px] font-semibold leading-tight tracking-[-0.035em] text-slate-950">
+              {statusLabel}
+            </h3>
+            <p className="mt-1 line-clamp-2 text-[11px] font-light leading-relaxed text-slate-600">
+              {nodeData.detected?.logline || sourceScriptText || "Convierte guion en escenas, reparto, fondos y frames."}
+            </p>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-1.5">
+            <span className={metricClassName}>
+              {nodeData.scenes.length} escenas
+            </span>
+            <span className={metricClassName}>
+              {nodeData.characters.length} personajes
+            </span>
+            <span className={metricClassName}>
+              {nodeData.backgrounds.length} fondos
+            </span>
+            <span className={metricClassName}>
+              {framesPrepared}/{framesTotal || 0} frames
+            </span>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            <StudioCanvasPill active={brainConnected} activeClassName="border-cyan-400/25 bg-cyan-400/10 text-cyan-700">
+              {brainConnected ? "Brain conectado" : "Sin Brain"}
+            </StudioCanvasPill>
+            <StudioCanvasPill active={Boolean(sourceScriptText)} activeClassName="border-amber-400/25 bg-amber-400/10 text-amber-700">
+              {sourceScriptText ? "Guionista conectado" : "Guion manual"}
+            </StudioCanvasPill>
+          </div>
+        </div>
+
+        <StudioCanvasOpenButton
+          onClick={openStudio}
+          accent="cyan"
+          icon={<Film className="h-4 w-4" strokeWidth={2} />}
+        >
+          Abrir Cine
+        </StudioCanvasOpenButton>
+        </div>
+      </div>
+      )}
 
       {isStudioOpen ? (
         <CineStudio

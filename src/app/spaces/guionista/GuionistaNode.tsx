@@ -377,7 +377,7 @@ export const GuionistaNode = memo(function GuionistaNode({ id, data, selected }:
         <div className="guionista-node-content relative z-10 flex min-w-0 flex-col gap-3 px-3 pb-3 pt-2">
         <div className="min-w-0">
           <div className="flex items-start gap-2">
-            <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] ${activeVisualMeta.accent.replace("border-", "border border-")}`}>
+            <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-none ${activeVisualMeta.accent.replace("border-", "border border-")}`}>
               {activeVisualMeta.icon}
             </span>
             <div className="min-w-0 flex-1">
@@ -399,7 +399,7 @@ export const GuionistaNode = memo(function GuionistaNode({ id, data, selected }:
               {activeTextAsset ? "Guardado" : "Borrador"}
             </StudioCanvasPill>
             {activeVersionIndex > 0 && (
-              <span className="rounded-[10px] bg-slate-100 px-2 py-1 text-[9px] font-semibold text-slate-500">
+              <span className="rounded-none bg-slate-100 px-2 py-1 text-[9px] font-semibold text-slate-500">
                 V{activeVersionIndex}
               </span>
             )}
@@ -432,10 +432,10 @@ export const GuionistaNode = memo(function GuionistaNode({ id, data, selected }:
                       event.stopPropagation();
                       openAssetInThisNode(asset.id);
                     }}
-                    className="nodrag group flex items-center gap-2 rounded-[10px] bg-slate-50 px-2.5 py-2 text-left transition hover:bg-white"
+                    className="nodrag group flex items-center gap-2 rounded-none bg-slate-50 px-2.5 py-2 text-left transition hover:bg-white"
                     title="Abrir en Guionista"
                   >
-                    <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-[10px] ${meta.accent.replace("border-", "border border-")}`}>
+                    <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-none ${meta.accent.replace("border-", "border border-")}`}>
                       {meta.icon}
                     </span>
                     <div className="min-w-0 flex-1">
@@ -453,7 +453,7 @@ export const GuionistaNode = memo(function GuionistaNode({ id, data, selected }:
                     event.stopPropagation();
                     setGeneratedExpanded((value) => !value);
                   }}
-                  className="nodrag rounded-[10px] bg-slate-50 px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.13em] text-slate-500 transition hover:bg-white hover:text-slate-800"
+                  className="nodrag rounded-none bg-slate-50 px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.13em] text-slate-500 transition hover:bg-white hover:text-slate-800"
                 >
                   {generatedExpanded ? "Ocultar" : `Ver ${generatedDerivatives.length - 3} más`}
                 </button>

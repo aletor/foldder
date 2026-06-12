@@ -57,7 +57,7 @@ export const NodeLabel = ({
       {isEditing ? (
         <input
           autoFocus
-          className="min-w-[120px] cursor-text rounded-lg border-0 bg-white/20 px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-slate-900 shadow-sm outline-none backdrop-blur-xl placeholder:text-slate-500 focus:ring-2 focus:ring-cyan-400/40"
+          className="min-w-[120px] cursor-text rounded-none border-0 bg-white/20 px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-slate-900 shadow-sm outline-none backdrop-blur-xl placeholder:text-slate-500 focus:ring-2 focus:ring-cyan-400/40"
           value={val}
           onChange={(e) => setVal(e.target.value)}
           onBlur={handleBlur}
@@ -66,7 +66,7 @@ export const NodeLabel = ({
       ) : (
         <div
           onDoubleClick={() => setIsEditing(true)}
-          className="flex cursor-pointer select-none items-center gap-2 truncate rounded-lg border-0 bg-white/20 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-slate-800 shadow-sm backdrop-blur-xl transition-all hover:text-cyan-900"
+          className="flex cursor-pointer select-none items-center gap-2 truncate rounded-none border-0 bg-white/20 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-slate-800 shadow-sm backdrop-blur-xl transition-all hover:text-cyan-900"
           title="Double click to rename (max 5 words)"
         >
           <div className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-cyan-600" />
@@ -143,7 +143,7 @@ export const FoldderStudioModeCenterButton = memo(function FoldderStudioModeCent
           e.stopPropagation();
           if (!disabled) onClick();
         }}
-        className="pointer-events-auto nodrag inline-flex items-center gap-1.5 rounded-full border-0 bg-white px-3 py-1.5 text-[11px] font-semibold text-[#3a2a20] shadow-none transition hover:scale-[1.02] hover:bg-[#f7f7f4] disabled:pointer-events-none disabled:opacity-35"
+        className="foldder-node-footer-button pointer-events-auto nodrag inline-flex items-center gap-1.5 rounded-none border-0 bg-white px-3 py-1.5 text-[11px] font-semibold text-black shadow-none transition hover:scale-[1.02] hover:bg-[#f7f7f4] disabled:pointer-events-none disabled:opacity-35"
       >
         <Maximize2 size={13} strokeWidth={2.4} className="shrink-0" />
         Open Studio

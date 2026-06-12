@@ -136,7 +136,7 @@ export function ApiUsageHud() {
   return (
     <div
       id="foldder-api-usage-panel"
-      className="pointer-events-auto max-h-[min(70vh,420px)] max-w-[min(96vw,340px)] overflow-y-auto rounded-md border border-white/25 bg-neutral-950 px-2.5 py-2 shadow-xl ring-1 ring-white/10"
+      className="pointer-events-auto max-h-[min(70vh,420px)] max-w-[min(96vw,340px)] overflow-y-auto rounded-none border border-white/25 bg-neutral-950 px-2.5 py-2 shadow-xl ring-1 ring-white/10"
       aria-label="Consumo de APIs"
     >
       <p className="mb-1.5 border-b border-white/20 pb-1 font-mono text-[9px] font-semibold uppercase tracking-wide text-zinc-300">

@@ -3,7 +3,7 @@
 import { HANDLE_TYPE_LEGEND } from "./handle-type-colors";
 
 const legendChromeClass =
-  "rounded-xl bg-white/[0.08] px-2 py-1 shadow-sm backdrop-blur-xl";
+  "rounded-none bg-white/[0.08] px-2 py-1 shadow-sm backdrop-blur-xl";
 
 function LegendRow({ items }: { items: typeof HANDLE_TYPE_LEGEND }) {
   return (

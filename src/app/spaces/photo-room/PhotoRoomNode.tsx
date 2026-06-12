@@ -149,7 +149,7 @@ function PhotoRoomLibraryPreviewCard({
       defaultLabel="PhotoRoom"
       title="PhotoRoom"
       headerIcon={
-        <span className="flex h-5 w-5 items-center justify-center rounded-md bg-[#63d4fd]">
+        <span className="flex h-5 w-5 items-center justify-center rounded-none bg-[#63d4fd]">
           <img src="/photoroom_icon.svg" alt="" className="h-3.5 w-3.5 object-contain" draggable={false} />
         </span>
       }
@@ -741,19 +741,7 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
       }),
     );
     requestAnimationFrame(() => updateNodeInternals(id));
-  }, [
-    currentNodeFrameSnapshot.width,
-    currentNodeFrameSnapshot.height,
-    currentNodeFrameSnapshot.measuredWidth,
-    currentNodeFrameSnapshot.measuredHeight,
-    currentNodeFrameSnapshot.styleWidth,
-    currentNodeFrameSnapshot.styleHeight,
-    id,
-    setNodes,
-    studioArtboard.height,
-    studioArtboard.width,
-    updateNodeInternals,
-  ]);
+  }, [id, isLibraryPreview, setNodes, studioArtboard.height, studioArtboard.width, updateNodeInternals]);
 
   if (isLibraryPreview) {
     return (
@@ -776,7 +764,7 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
       title="PhotoRoom"
       badge={`${visibleSlots.length} in`}
       headerIcon={
-        <span className="flex h-5 w-5 items-center justify-center rounded-md bg-[#63d4fd]">
+        <span className="flex h-5 w-5 items-center justify-center rounded-none bg-[#63d4fd]">
           <img src="/photoroom_icon.svg" alt="" className="h-3.5 w-3.5 object-contain" draggable={false} />
         </span>
       }
@@ -801,20 +789,21 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
 
       <div
         ref={previewRef}
-        className="foldder-frameless-main relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-[#0a0a0a] group/out"
-        style={{ minHeight: 120 }}
+        className="foldder-frameless-main relative flex min-h-0 flex-1 flex-col overflow-hidden"
       >
         {showPersistedPhotoRoomPreview ? (
-          <img
-            src={displayUrl ?? ""}
-            alt=""
-            className="h-full w-full object-cover"
-            onLoad={refreshHandleGeometry}
-            onError={refreshHandleGeometry}
-          />
+          <div className="absolute inset-0 overflow-hidden" aria-hidden>
+            <img
+              src={displayUrl ?? ""}
+              alt=""
+              className="h-full w-full object-cover"
+              onLoad={refreshHandleGeometry}
+              onError={refreshHandleGeometry}
+            />
+          </div>
         ) : hasPersistedStudio ? (
           <div
-            className="h-full w-full overflow-hidden bg-[#fafafa]"
+            className="absolute inset-0 overflow-hidden bg-[#fafafa]"
             style={{
               aspectRatio: `${Math.max(1, studioArtboard.width)} / ${Math.max(1, studioArtboard.height)}`,
             }}
@@ -827,7 +816,7 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
             />
           </div>
         ) : (
-          <div className="photoroom-empty-background relative h-full w-full overflow-hidden" aria-hidden>
+          <div className="photoroom-empty-background absolute inset-0 overflow-hidden" aria-hidden>
             <img
               src={PHOTOROOM_EMPTY_BACKGROUND_SRC}
               alt=""
@@ -838,10 +827,13 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
             />
           </div>
         )}
-        <FoldderStudioModeCenterButton onClick={() => {
-          showStudioRef.current = true;
-          openStudio();
-        }} />
+        <div className="relative z-10 flex min-h-0 flex-1 flex-col pointer-events-none">
+          <div className="flex-1" />
+          <FoldderStudioModeCenterButton onClick={() => {
+            showStudioRef.current = true;
+            openStudio();
+          }} />
+        </div>
       </div>
 
       {showStudio ? (

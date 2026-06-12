@@ -7,8 +7,6 @@ import { signOut, useSession } from "next-auth/react";
 import {
   ReactFlow,
   Controls,
-  Background,
-  BackgroundVariant,
   ViewportPortal,
   addEdge,
   Node,
@@ -176,7 +174,12 @@ import {
   Wallet,
 } from "lucide-react";
 import { CanvasWallpaperTransition } from "./CanvasWallpaperTransition";
-import { CANVAS_BACKGROUNDS } from "./canvas-backgrounds";
+import {
+  CANVAS_BACKGROUNDS,
+  CANVAS_SOLID_COLOR_BG_ID,
+  isValidCanvasBackgroundId,
+  normalizeCanvasSolidColor,
+} from "./canvas-backgrounds";
 import { SpacesWelcomeChrome } from "./SpacesWelcomeChrome";
 import {
   spacesInitialNodes as initialNodes,
@@ -202,6 +205,7 @@ import {
   snapNodeChangesToGrid,
   snapPositionToGrid,
 } from "./canvas-grid-layout";
+import { FoldderCanvasGridBackground } from "./FoldderCanvasGridBackground";
 import {
   FOLDDER_LIBRARY_PREVIEW_NODE_ID,
   isClientPointOverReactFlowCanvas,
@@ -322,6 +326,7 @@ type SaveHealth = {
 type ProjectUiSnapshot = {
   activeSpaceId: string;
   canvasBgId: string;
+  canvasBgColor?: string;
   canvasViewMode: "free" | "cards";
   cardsFocusIndex: number;
   navigationStack: string[];
@@ -544,6 +549,9 @@ export function SpacesContent() {
   const {
     canvasBgId,
     setCanvasBgId,
+    canvasBgColor,
+    setCanvasBgColor,
+    selectCanvasSolidColor,
     canvasBgMenuOpen,
     setCanvasBgMenuOpen,
     canvasBgMenuRef,
@@ -2932,6 +2940,7 @@ export function SpacesContent() {
     (): ProjectUiSnapshot => ({
       activeSpaceId,
       canvasBgId,
+      canvasBgColor,
       canvasViewMode,
       cardsFocusIndex,
       navigationStack,
@@ -2942,6 +2951,7 @@ export function SpacesContent() {
     [
       activeSpaceId,
       canvasBgId,
+      canvasBgColor,
       canvasViewMode,
       cardsFocusIndex,
       navigationStack,
@@ -4393,7 +4403,10 @@ export function SpacesContent() {
         Array.isArray(nav) && nav.every((x) => typeof x === 'string') ? [...nav] : []
       );
 
-      if (ui?.canvasBgId && CANVAS_BACKGROUNDS.some((b) => b.id === ui.canvasBgId)) {
+      if (typeof ui?.canvasBgColor === "string") {
+        setCanvasBgColor(normalizeCanvasSolidColor(ui.canvasBgColor));
+      }
+      if (ui?.canvasBgId && isValidCanvasBackgroundId(ui.canvasBgId, CANVAS_BACKGROUNDS)) {
         setCanvasBgId(ui.canvasBgId);
       }
       if (ui?.canvasViewMode === 'free' || ui?.canvasViewMode === 'cards') {
@@ -5827,7 +5840,11 @@ export function SpacesContent() {
         onDrop={onDrop}
         style={{ marginLeft: 0 }}
       >
-        <CanvasWallpaperTransition activeId={canvasBgId} options={CANVAS_BACKGROUNDS} />
+        <CanvasWallpaperTransition
+          activeId={canvasBgId}
+          options={CANVAS_BACKGROUNDS}
+          solidColor={canvasBgColor}
+        />
         {/* Dentro de un Space anidado: viñeta + bordes laterales borrosos (se quita al volver a root) */}
         {isAuthenticated && activeSpaceId !== 'root' && (
           <div
@@ -6007,12 +6024,7 @@ export function SpacesContent() {
           className={`spaces-canvas${spaceHeld || middlePanHeld ? ' spaces-canvas--space-pan' : ''}${canvasViewMode === 'cards' ? ' spaces-canvas--cards-mode' : ''}${overviewModeActive ? ' foldder-overview-mode-active' : ''}${canvasPerformanceMode ? ' spaces-canvas--performance' : ''}`}
           style={reactFlowCanvasStyle}
         >
-          <Background
-            color="#111"
-            gap={FOLDDER_GRID_STEP}
-            lineWidth={0.7}
-            variant={BackgroundVariant.Lines}
-          />
+          <FoldderCanvasGridBackground gap={FOLDDER_GRID_STEP} lineWidth={0.7} color="#111" dotSize={5} />
           {libraryDragPreviewElement}
         </ReactFlow>
         </DesignerSpaceIdContext.Provider>
@@ -6023,7 +6035,7 @@ export function SpacesContent() {
         {isAuthenticated && <ExternalApiBlockedModal />}
 
         {isAuthenticated && (
-          <div className="pointer-events-none fixed bottom-4 right-4 z-[10025] flex flex-col items-end gap-2">
+          <div className="pointer-events-none fixed bottom-4 right-4 z-[10025] flex flex-col items-end gap-2" data-foldder-canvas-toasts>
             {aiJobToasts.length > 0 && (
               <div
                 className="flex w-full max-w-[min(92vw,380px)] flex-col items-stretch gap-2"
@@ -6035,7 +6047,7 @@ export function SpacesContent() {
                   return (
                     <div
                       key={t.id}
-                      className="pointer-events-auto flex items-start gap-2.5 rounded-xl border border-white/25 bg-white/[0.06] px-3 py-2.5 shadow-lg backdrop-blur-xl"
+                      className="pointer-events-auto flex items-start gap-2.5 rounded-none border border-white/25 bg-white/[0.06] px-3 py-2.5 shadow-lg backdrop-blur-xl"
                     >
                       {t.ok ? (
                         <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-white/85" aria-hidden />
@@ -6056,7 +6068,7 @@ export function SpacesContent() {
                       <div className="flex shrink-0 flex-col gap-1">
                         <button
                           type="button"
-                          className="rounded-lg border border-white/25 bg-white/[0.08] px-2.5 py-1 text-[9px] font-semibold uppercase tracking-wide text-white shadow-sm backdrop-blur-xl transition-colors hover:bg-white/[0.14]"
+                          className="rounded-none border border-white/25 bg-white/[0.08] px-2.5 py-1 text-[9px] font-semibold uppercase tracking-wide text-white shadow-sm backdrop-blur-xl transition-colors hover:bg-white/[0.14]"
                           onClick={() => {
                             focusAiJobNode(t.nodeId);
                             setAiJobToasts((p) => p.filter((x) => x.id !== t.id));
@@ -6066,7 +6078,7 @@ export function SpacesContent() {
                         </button>
                         <button
                           type="button"
-                          className="rounded px-1 py-0.5 text-[8px] text-white/45 transition-colors hover:text-white/80"
+                          className="rounded-none px-1 py-0.5 text-[8px] text-white/45 transition-colors hover:text-white/80"
                           onClick={() => setAiJobToasts((p) => p.filter((x) => x.id !== t.id))}
                         >
                           Cerrar
@@ -6083,7 +6095,7 @@ export function SpacesContent() {
               {saveHealth.state !== "idle" && (
                 <div
                   className={[
-                    "flex max-w-[min(88vw,360px)] items-center gap-2 rounded-md border px-2.5 py-1.5 text-[10px] font-semibold shadow-md backdrop-blur-md",
+                    "flex max-w-[min(88vw,360px)] items-center gap-2 rounded-none border px-2.5 py-1.5 text-[10px] font-semibold shadow-md backdrop-blur-md",
                     saveHealth.state === "saved"
                       ? "border-emerald-300/35 bg-emerald-950/70 text-emerald-100"
                       : saveHealth.state === "saving"
@@ -6103,7 +6115,7 @@ export function SpacesContent() {
                   {saveHealth.state === "conflict" && activeProjectId && (
                     <button
                       type="button"
-                      className="ml-1 shrink-0 rounded border border-white/20 bg-white/10 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-white transition-colors hover:bg-white/18"
+                      className="ml-1 shrink-0 rounded-none border border-white/20 bg-white/10 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-white transition-colors hover:bg-white/18"
                       onClick={() => {
                         const meta =
                           savedProjects.find((project) => project.id === activeProjectId) ?? {
@@ -6128,7 +6140,7 @@ export function SpacesContent() {
               <button
                 type="button"
                 data-foldder-reactflow-zoom-badge
-                className="flex select-none items-center gap-1 rounded-md border border-white/25 bg-black/55 px-2 py-1.5 font-mono text-[11px] font-medium tabular-nums text-white shadow-md backdrop-blur-md hover:bg-black/70"
+                className="flex select-none items-center gap-1 rounded-none border border-white/25 bg-black/55 px-2 py-1.5 font-mono text-[11px] font-medium tabular-nums text-white shadow-md backdrop-blur-md hover:bg-black/70"
                 aria-expanded={apiUsagePanelOpen}
                 aria-controls="foldder-api-usage-panel"
                 aria-live="polite"
@@ -6163,7 +6175,7 @@ export function SpacesContent() {
                   <img
                     src="/logo_bl.svg"
                     alt="Foldder"
-                    className="h-11 w-11 shrink-0 object-contain drop-shadow-lg"
+                    className="h-11 w-11 shrink-0 object-contain"
                     draggable={false}
                   />
                   <button
@@ -6172,8 +6184,8 @@ export function SpacesContent() {
                     title={assistantHudOpen ? "Ocultar asistente" : "Abrir asistente"}
                     aria-expanded={assistantHudOpen}
                     aria-controls="foldder-top-assistant"
-                    className={`group flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/25 bg-white/[0.08] text-white/70 shadow-sm backdrop-blur-xl transition-all hover:scale-105 hover:bg-white/[0.15] hover:text-white ${
-                      assistantHudOpen ? 'bg-white/20 text-white ring-1 ring-white/35' : ''
+                    className={`group flex h-10 w-10 shrink-0 items-center justify-center rounded-none bg-white/[0.08] text-white/70 backdrop-blur-xl transition-all hover:scale-105 hover:bg-white/[0.15] hover:text-white ${
+                      assistantHudOpen ? 'bg-white/20 text-white' : ''
                     }`}
                   >
                     <MessageCircle size={16} className="text-current" />
@@ -6187,7 +6199,7 @@ export function SpacesContent() {
                     }`}
                     aria-hidden={!assistantHudOpen}
                   >
-                    <div className="flex min-h-[40px] w-full items-center rounded-xl border border-white/25 bg-white/[0.08] px-2 py-1 shadow-sm backdrop-blur-xl">
+                    <div className="flex min-h-[40px] w-full items-center rounded-none bg-white/[0.08] px-2 py-1 backdrop-blur-xl">
                       <AgentHUD
                         variant="topbar"
                         onGenerate={onGenerateAssistant}
@@ -6197,7 +6209,7 @@ export function SpacesContent() {
                     </div>
                   </div>
                 </div>
-                <div className="pointer-events-auto relative z-[5] flex min-h-[40px] min-w-[12rem] flex-1 items-center justify-center rounded-xl bg-white/[0.08] px-2.5 py-1.5 text-center shadow-sm backdrop-blur-xl">
+                <div className="pointer-events-auto relative z-[5] flex min-h-[40px] min-w-[12rem] flex-1 items-center justify-center rounded-none bg-white/[0.08] px-2.5 py-1.5 text-center backdrop-blur-xl">
                   <label htmlFor="foldder-hud-project-name" className="sr-only">
                     Nombre del proyecto
                   </label>
@@ -6237,13 +6249,13 @@ export function SpacesContent() {
             >
               {/* Quick Actions — fondo / pantalla / Foldder (pins abajo en `TopbarPins`) */}
               <div className="flex max-w-full shrink-0 flex-nowrap items-center justify-end gap-1.5">
-                <div className="flex h-10 items-center rounded-xl border border-white/25 bg-white/[0.08] p-1 shadow-sm backdrop-blur-xl">
+                <div className="flex h-10 items-center rounded-none bg-white/[0.08] p-1 backdrop-blur-xl">
                   <button
                     type="button"
                     onClick={() => setWorkspaceViewMode('standard')}
-                    className={`flex h-8 items-center gap-1.5 rounded-lg px-2 text-[8px] font-black uppercase tracking-widest transition ${
+                    className={`flex h-8 items-center gap-1.5 rounded-none px-2 text-[8px] font-black uppercase tracking-widest transition ${
                       workspaceViewMode === 'standard'
-                        ? 'bg-white px-2 text-slate-900 shadow-sm'
+                        ? 'bg-white px-2 text-slate-900'
                         : 'text-white/70 hover:bg-white/20 hover:text-white'
                     }`}
                   >
@@ -6253,9 +6265,9 @@ export function SpacesContent() {
                   <button
                     type="button"
                     onClick={() => setWorkspaceViewMode('pro')}
-                    className={`flex h-8 items-center gap-1.5 rounded-lg px-2 text-[8px] font-black uppercase tracking-widest transition ${
+                    className={`flex h-8 items-center gap-1.5 rounded-none px-2 text-[8px] font-black uppercase tracking-widest transition ${
                       workspaceViewMode === 'pro'
-                        ? 'bg-white text-slate-900 shadow-sm'
+                        ? 'bg-white text-slate-900'
                         : 'text-white/70 hover:bg-white/20 hover:text-white'
                     }`}
                   >
@@ -6268,7 +6280,7 @@ export function SpacesContent() {
                     onClick={() => setCanvasBgMenuOpen((o) => !o)}
                     title="Fondo del lienzo e idioma"
                     aria-expanded={canvasBgMenuOpen}
-                    className="group relative flex h-10 w-10 items-center justify-center rounded-xl border border-white/25 bg-white/[0.08] text-white/70 shadow-sm backdrop-blur-xl transition-all hover:scale-105 hover:bg-white/[0.15] hover:text-white"
+                    className="group relative flex h-10 w-10 items-center justify-center rounded-none bg-white/[0.08] text-white/70 backdrop-blur-xl transition-all hover:scale-105 hover:bg-white/[0.15] hover:text-white"
                   >
                     <LayoutGrid size={16} className="text-current" />
                     <ChevronDown
@@ -6279,11 +6291,36 @@ export function SpacesContent() {
                   </button>
                   {canvasBgMenuOpen && (
                     <div
-                      className="absolute right-0 top-[calc(100%+6px)] z-[220] w-[min(94vw,380px)] overflow-hidden rounded-xl border border-white/25 bg-white/[0.94] py-1.5 shadow-xl backdrop-blur-xl dark:bg-slate-900/95"
+                      className="absolute right-0 top-[calc(100%+6px)] z-[220] w-[min(94vw,380px)] overflow-hidden rounded-none bg-white/[0.94] py-1.5 backdrop-blur-xl dark:bg-slate-900/95"
                       role="menu"
                       aria-label="Fondo del lienzo"
                     >
                       <div className="max-h-[min(58vh,440px)] overflow-y-auto px-2">
+                        <div className="mb-2 flex items-center justify-end gap-2 px-0.5">
+                          <span className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-500 dark:text-slate-300">
+                            {language === "es" ? "Color sólido" : "Solid color"}
+                          </span>
+                          <label
+                            className={`relative block h-9 w-9 shrink-0 overflow-hidden rounded-none bg-white dark:bg-slate-800 ${
+                              canvasBgId === CANVAS_SOLID_COLOR_BG_ID
+                                ? "ring-2 ring-slate-500 ring-offset-1 ring-offset-white dark:ring-offset-slate-900"
+                                : ""
+                            }`}
+                          >
+                            <span
+                              className="absolute inset-0"
+                              style={{ backgroundColor: canvasBgColor }}
+                              aria-hidden
+                            />
+                            <input
+                              type="color"
+                              value={canvasBgColor}
+                              onChange={(event) => selectCanvasSolidColor(event.target.value)}
+                              className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                              aria-label={language === "es" ? "Elegir color de fondo" : "Choose background color"}
+                            />
+                          </label>
+                        </div>
                         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                           {CANVAS_BACKGROUNDS.map((bg) => (
                             <button
@@ -6295,7 +6332,7 @@ export function SpacesContent() {
                                 setCanvasBgId(bg.id);
                                 setCanvasBgMenuOpen(false);
                               }}
-                              className={`block w-full rounded-none border border-slate-200/90 bg-slate-50/80 p-0 transition-colors hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800/80 dark:hover:bg-slate-700 ${
+                              className={`block w-full rounded-none bg-slate-50/80 p-0 transition-colors hover:bg-slate-100 dark:bg-slate-800/80 dark:hover:bg-slate-700 ${
                                 canvasBgId === bg.id
                                   ? 'ring-2 ring-slate-500 ring-offset-1 ring-offset-white dark:ring-offset-slate-900'
                                   : ''
@@ -6310,10 +6347,10 @@ export function SpacesContent() {
                         </div>
                       </div>
                       <div
-                        className="mt-1 border-t border-slate-200/80 px-1.5 pt-1.5 dark:border-slate-600/80"
+                        className="mt-1 px-1.5 pt-1.5"
                         data-foldder-i18n-ignore
                       >
-                        <div className="flex items-center justify-between gap-2 rounded-lg bg-slate-100/80 p-1.5 dark:bg-slate-800/80">
+                        <div className="flex items-center justify-between gap-2 rounded-none bg-slate-100/80 p-1.5 dark:bg-slate-800/80">
                           <div className="flex items-center gap-1.5 px-1.5 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500 dark:text-slate-300">
                             <Languages size={13} aria-hidden />
                             <span>{language === "es" ? "Idioma" : "Language"}</span>
@@ -6329,10 +6366,10 @@ export function SpacesContent() {
                                   aria-pressed={active}
                                   aria-label={option.label}
                                   title={option.label}
-                                  className={`flex h-8 w-10 items-center justify-center rounded-md border text-[11px] font-black uppercase tracking-[0.08em] transition ${
+                                  className={`flex h-8 w-10 items-center justify-center rounded-none text-[11px] font-black uppercase tracking-[0.08em] transition ${
                                     active
-                                      ? "border-slate-900 bg-slate-900 text-white shadow-sm dark:border-white dark:bg-white dark:text-slate-950"
-                                      : "border-slate-300 bg-white text-slate-600 hover:border-slate-500 hover:text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-slate-400 dark:hover:text-white"
+                                      ? "bg-slate-900 text-white dark:bg-white dark:text-slate-950"
+                                      : "bg-white text-slate-600 hover:text-slate-900 dark:bg-slate-900 dark:text-slate-300 dark:hover:text-white"
                                   }`}
                                 >
                                   {option.shortLabel}
@@ -6354,7 +6391,8 @@ export function SpacesContent() {
                       : 'Pantalla completa (ocultar barra del navegador)'
                   }
                   aria-pressed={browserFullscreen}
-                  className="group flex h-10 w-10 items-center justify-center rounded-xl border border-white/25 bg-white/[0.08] text-white/70 shadow-sm backdrop-blur-xl transition-all hover:scale-105 hover:bg-white/[0.15] hover:text-white"
+                  className="group flex h-10 w-10 items-center justify-center rounded-none bg-white/[0.08] text-white/70 backdrop-blur-xl transition-all hover:scale-105 hover:bg-white/[0.15] hover:text-white"
+                  aria-pressed={browserFullscreen}
                 >
                   {browserFullscreen ? (
                     <Minimize2 size={16} className="text-current" aria-hidden />
@@ -6369,7 +6407,7 @@ export function SpacesContent() {
                     openLoadProjectsModal();
                   }}
                   title="Abrir proyectos"
-                  className="group flex h-10 w-10 items-center justify-center rounded-xl border border-white/25 bg-white/[0.08] text-white/70 shadow-sm backdrop-blur-xl transition-all hover:scale-105 hover:bg-white/[0.15] hover:text-white"
+                  className="group flex h-10 w-10 items-center justify-center rounded-none bg-white/[0.08] text-white/70 backdrop-blur-xl transition-all hover:scale-105 hover:bg-white/[0.15] hover:text-white"
                 >
                   <FolderOpen size={16} className="text-current" />
                 </button>
@@ -6386,7 +6424,7 @@ export function SpacesContent() {
                       ? 'Espera a que termine el borrado'
                       : 'Crear un proyecto nuevo (el lienzo actual no guardado se reemplaza; el actual se guarda solo cada minuto)'
                   }
-                  className="flex h-10 items-center gap-2 rounded-xl border border-blue-500/45 bg-blue-600 px-4 text-[9px] font-black uppercase tracking-widest text-white shadow-sm shadow-blue-900/20 backdrop-blur-xl transition-all hover:scale-105 hover:bg-blue-500 disabled:opacity-50"
+                  className="flex h-10 items-center gap-2 rounded-none bg-blue-600 px-4 text-[9px] font-black uppercase tracking-widest text-white backdrop-blur-xl transition-all hover:scale-105 hover:bg-blue-500 disabled:opacity-50"
                 >
                   {isSaving ? (
                     <Loader2 size={14} className="animate-spin" />
@@ -6414,7 +6452,7 @@ export function SpacesContent() {
           </div>
           {isAuthenticated && activeSpaceId !== 'root' && (
             <div className="pointer-events-none w-full flex justify-center px-3 pt-3 sm:pt-4">
-              <p className="max-w-[min(640px,92vw)] text-center text-[10px] sm:text-[11px] font-medium leading-snug text-slate-600 drop-shadow-sm">
+              <p className="max-w-[min(640px,92vw)] text-center text-[10px] sm:text-[11px] font-medium leading-snug text-slate-600">
                 Estás dentro del space{' '}
                 <span className="font-bold text-slate-800">
                   {spacesMap[activeSpaceId]?.name || 'Space'}
@@ -6423,7 +6461,7 @@ export function SpacesContent() {
                 <button
                   type="button"
                   onClick={() => goToRootCanvas()}
-                  className="pointer-events-auto inline rounded border border-slate-400/50 bg-white/50 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-slate-700 shadow-sm align-baseline cursor-pointer transition-colors hover:bg-white/80 hover:border-slate-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50"
+                  className="pointer-events-auto inline rounded-none bg-white/50 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-slate-700 align-baseline cursor-pointer transition-colors hover:bg-white/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50"
                   aria-label="Salir del space (equivalente a ESC)"
                 >
                   ESC
@@ -6463,6 +6501,7 @@ export function SpacesContent() {
             onOpenFoldderFullscreen={() => openFoldder("fullscreen")}
             foldderOpenRequest={standardFoldderOpenRequest}
             canvasBgId={canvasBgId}
+            canvasBgColor={canvasBgColor}
           />
         )}
 
@@ -6470,7 +6509,7 @@ export function SpacesContent() {
           <button
             type="button"
             onClick={() => restoreStandardRuntimeApp(primaryMinimizedApp)}
-            className="fixed bottom-24 left-1/2 z-[95] -translate-x-1/2 rounded-2xl border border-white/18 bg-black/55 px-4 py-2 text-[11px] font-light uppercase tracking-[0.16em] text-white/75 shadow-2xl backdrop-blur-2xl transition hover:bg-black/70 hover:text-white"
+            className="fixed bottom-24 left-1/2 z-[95] -translate-x-1/2 rounded-none border border-white/18 bg-black/55 px-4 py-2 text-[11px] font-light uppercase tracking-[0.16em] text-white/75 shadow-2xl backdrop-blur-2xl transition hover:bg-black/70 hover:text-white"
           >
             Restaurar {primaryMinimizedApp.title}
           </button>
@@ -6518,14 +6557,14 @@ export function SpacesContent() {
         )}
 
         {assistantClarify && (
-          <div className="fixed inset-0 z-[10006] flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-[10006] flex items-center justify-center p-4" data-foldder-canvas-modals>
             <div
               className="absolute inset-0 bg-black/45 backdrop-blur-xl"
               onClick={() => setAssistantClarify(null)}
               aria-hidden
             />
             <div
-              className="relative z-10 w-full max-w-md rounded-3xl border border-white/25 bg-white/20 p-6 shadow-2xl shadow-black/20 backdrop-blur-xl"
+              className="relative z-10 w-full max-w-md rounded-none border border-white/25 bg-white/20 p-6 shadow-2xl shadow-black/20 backdrop-blur-xl"
               role="dialog"
               aria-modal="true"
               aria-labelledby="assistant-clarify-title"
@@ -6554,7 +6593,7 @@ export function SpacesContent() {
                     key={`${idx}-${opt.slice(0, 48)}`}
                     type="button"
                     onClick={() => onAssistantClarifyPick(opt)}
-                    className="rounded-2xl border border-white/25 bg-white/15 px-4 py-3 text-left text-sm font-bold text-slate-800 transition-all hover:bg-white/35"
+                    className="rounded-none border border-white/25 bg-white/15 px-4 py-3 text-left text-sm font-bold text-slate-800 transition-all hover:bg-white/35"
                   >
                     {opt}
                   </button>
@@ -6565,14 +6604,14 @@ export function SpacesContent() {
         )}
 
         {assistantCostApproval && (
-          <div className="fixed inset-0 z-[10007] flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-[10007] flex items-center justify-center p-4" data-foldder-canvas-modals>
             <div
               className="absolute inset-0 bg-black/45 backdrop-blur-xl"
               onClick={onAssistantCostApprovalCancel}
               aria-hidden
             />
             <div
-              className="relative z-10 w-full max-w-lg rounded-3xl border border-white/25 bg-white/20 p-6 shadow-2xl shadow-black/20 backdrop-blur-xl md:p-8"
+              className="relative z-10 w-full max-w-lg rounded-none border border-white/25 bg-white/20 p-6 shadow-2xl shadow-black/20 backdrop-blur-xl md:p-8"
               role="dialog"
               aria-modal="true"
               aria-labelledby="assistant-cost-title"
@@ -6597,7 +6636,7 @@ export function SpacesContent() {
               <p className="mb-4 text-sm leading-relaxed text-slate-700">
                 {assistantCostApproval.message}
               </p>
-              <div className="mb-4 max-h-40 overflow-y-auto rounded-2xl border border-white/15 bg-white/10 p-3 shadow-inner backdrop-blur-sm">
+              <div className="mb-4 max-h-40 overflow-y-auto rounded-none border border-white/15 bg-white/10 p-3 shadow-inner backdrop-blur-sm">
                 <ul className="list-inside list-disc space-y-1.5 text-xs text-slate-700">
                   {assistantCostApproval.apis.map((a, idx) => (
                     <li key={`${a.id}-${idx}-${a.name}`}>
@@ -6618,14 +6657,14 @@ export function SpacesContent() {
                 <button
                   type="button"
                   onClick={onAssistantCostApprovalCancel}
-                  className="rounded-2xl border border-white/25 bg-white/15 px-5 py-2.5 text-[11px] font-black uppercase tracking-widest text-slate-700 transition-all hover:bg-white/35"
+                  className="rounded-none border border-white/25 bg-white/15 px-5 py-2.5 text-[11px] font-black uppercase tracking-widest text-slate-700 transition-all hover:bg-white/35"
                 >
                   Cancelar
                 </button>
                 <button
                   type="button"
                   onClick={onAssistantCostApprovalConfirm}
-                  className="rounded-2xl border border-cyan-500/45 bg-cyan-600 px-5 py-2.5 text-[11px] font-black uppercase tracking-widest text-white shadow-lg shadow-cyan-900/20 transition-all hover:bg-cyan-500"
+                  className="rounded-none border border-cyan-500/45 bg-cyan-600 px-5 py-2.5 text-[11px] font-black uppercase tracking-widest text-white shadow-lg shadow-cyan-900/20 transition-all hover:bg-cyan-500"
                 >
                   Confirmar
                 </button>
@@ -6636,13 +6675,13 @@ export function SpacesContent() {
 
         {/* Modals — alto contraste sobre cualquier fondo del lienzo */}
         {showNewProjectModal && (
-          <div className="fixed inset-0 z-[10006] flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-[10006] flex items-center justify-center p-4" data-foldder-canvas-modals>
             <div
               className="absolute inset-0 bg-black/60 backdrop-blur-xl"
               onClick={() => !isSaving && setShowNewProjectModal(false)}
               aria-hidden
             />
-            <div className="relative z-10 w-full max-w-md rounded-3xl border border-white/12 bg-black/88 p-8 shadow-2xl shadow-black/45 backdrop-blur-xl">
+            <div className="relative z-10 w-full max-w-md rounded-none border border-white/12 bg-black/88 p-8 shadow-2xl shadow-black/45 backdrop-blur-xl">
               <div className="mb-6 flex items-center justify-between">
                 <h2 className="flex items-center gap-3 text-xl font-black uppercase tracking-wide text-white">
                   <FolderPlus size={20} className="text-blue-400" /> Nuevo proyecto
@@ -6670,13 +6709,13 @@ export function SpacesContent() {
                   if (e.key === 'Enter') void submitNewProject();
                   if (e.key === 'Escape' && !isSaving) setShowNewProjectModal(false);
                 }}
-                className="mb-6 w-full rounded-2xl border border-white/18 bg-white px-4 py-3 text-sm font-bold text-slate-950 shadow-inner outline-none transition-all placeholder:text-slate-500 focus:border-blue-400/80 focus:ring-2 focus:ring-blue-400/30"
+                className="mb-6 w-full rounded-none border border-white/18 bg-white px-4 py-3 text-sm font-bold text-slate-950 shadow-inner outline-none transition-all placeholder:text-slate-500 focus:border-blue-400/80 focus:ring-2 focus:ring-blue-400/30"
               />
               <div className="flex justify-end gap-3">
                 <button
                   type="button"
                   onClick={() => !isSaving && setShowNewProjectModal(false)}
-                  className="rounded-2xl border border-white/22 bg-white/8 px-6 py-2.5 font-black text-[11px] uppercase tracking-widest text-white/72 transition-all hover:bg-white/14 hover:text-white"
+                  className="rounded-none border border-white/22 bg-white/8 px-6 py-2.5 font-black text-[11px] uppercase tracking-widest text-white/72 transition-all hover:bg-white/14 hover:text-white"
                 >
                   Cancelar
                 </button>
@@ -6684,7 +6723,7 @@ export function SpacesContent() {
                   type="button"
                   onClick={() => void submitNewProject()}
                   disabled={isSaving}
-                  className="flex items-center gap-2 rounded-2xl border border-blue-500/45 bg-blue-600 px-6 py-2.5 font-black text-[11px] uppercase tracking-widest text-white shadow-lg shadow-blue-900/25 transition-all hover:bg-blue-500 disabled:opacity-50"
+                  className="flex items-center gap-2 rounded-none border border-blue-500/45 bg-blue-600 px-6 py-2.5 font-black text-[11px] uppercase tracking-widest text-white shadow-lg shadow-blue-900/25 transition-all hover:bg-blue-500 disabled:opacity-50"
                 >
                   {isSaving ? <Loader2 size={14} className="animate-spin" /> : <FolderPlus size={14} />} Crear
                 </button>
@@ -6694,7 +6733,7 @@ export function SpacesContent() {
         )}
 
         {showLoadModal && (
-          <div className="fixed inset-0 z-[10004] flex items-center justify-center p-3 sm:p-4">
+          <div className="fixed inset-0 z-[10004] flex items-center justify-center p-3 sm:p-4" data-foldder-canvas-modals>
             <div
               className="absolute inset-0 bg-black/45 backdrop-blur-xl"
               onClick={() => {
@@ -6702,7 +6741,7 @@ export function SpacesContent() {
               }}
               aria-hidden
             />
-            <div className="relative z-10 flex max-h-[min(85vh,560px)] w-full max-w-lg flex-col rounded-2xl border border-white/25 bg-white/20 p-4 shadow-2xl shadow-black/20 backdrop-blur-xl sm:p-5">
+            <div className="relative z-10 flex max-h-[min(85vh,560px)] w-full max-w-lg flex-col rounded-none border border-white/25 bg-white/20 p-4 shadow-2xl shadow-black/20 backdrop-blur-xl sm:p-5">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <h2 className="flex items-center gap-2 text-sm font-black uppercase tracking-wide text-slate-800">
                   <FolderOpen size={16} className="shrink-0 text-rose-500" /> Tus proyectos
@@ -6727,7 +6766,7 @@ export function SpacesContent() {
                   setShowNewProjectModal(true);
                 }}
                 disabled={!!projectDeleteInProgress}
-                className="mb-3 flex w-full items-center justify-center gap-2 rounded-xl border border-blue-500/40 bg-blue-600/90 px-4 py-3 text-[11px] font-black uppercase tracking-widest text-white shadow-md shadow-blue-900/20 transition-all hover:bg-blue-500 disabled:pointer-events-none disabled:opacity-40"
+                className="mb-3 flex w-full items-center justify-center gap-2 rounded-none border border-blue-500/40 bg-blue-600/90 px-4 py-3 text-[11px] font-black uppercase tracking-widest text-white shadow-md shadow-blue-900/20 transition-all hover:bg-blue-500 disabled:pointer-events-none disabled:opacity-40"
               >
                 <FolderPlus size={16} strokeWidth={2.5} aria-hidden />
                 Comenzar un proyecto nuevo
@@ -6742,20 +6781,20 @@ export function SpacesContent() {
               {(projectsListLoading || projectsListError || projectLoadingId || projectLoadingError) && (
                 <div className="mb-3 space-y-2">
                   {projectsListLoading && (
-                    <div className="flex items-center gap-2 rounded-xl border border-white/25 bg-white/20 px-3 py-2 text-[11px] font-semibold text-slate-700">
+                    <div className="flex items-center gap-2 rounded-none border border-white/25 bg-white/20 px-3 py-2 text-[11px] font-semibold text-slate-700">
                       <Loader2 size={13} className="animate-spin text-blue-600" />
                       Cargando listado de proyectos…
                     </div>
                   )}
                   {projectsListError && (
-                    <div className="flex items-start gap-2 rounded-xl border border-rose-300/60 bg-rose-50/70 px-3 py-2 text-[11px] font-semibold text-rose-700">
+                    <div className="flex items-start gap-2 rounded-none border border-rose-300/60 bg-rose-50/70 px-3 py-2 text-[11px] font-semibold text-rose-700">
                       <AlertCircle size={13} className="mt-0.5 shrink-0" />
                       <div className="min-w-0 flex-1">
                         <p className="break-words">{projectsListError}</p>
                         <button
                           type="button"
                           onClick={() => void refreshProjectsList({ withLoader: true })}
-                          className="mt-1 rounded-lg border border-rose-300/60 bg-white/80 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-rose-700 hover:bg-white"
+                          className="mt-1 rounded-none border border-rose-300/60 bg-white/80 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-rose-700 hover:bg-white"
                         >
                           Reintentar
                         </button>
@@ -6763,7 +6802,7 @@ export function SpacesContent() {
                     </div>
                   )}
                   {projectLoadingId && (
-                    <div className="flex items-start gap-2 rounded-xl border border-blue-300/50 bg-blue-50/70 px-3 py-2 text-[11px] font-semibold text-blue-800">
+                    <div className="flex items-start gap-2 rounded-none border border-blue-300/50 bg-blue-50/70 px-3 py-2 text-[11px] font-semibold text-blue-800">
                       <Loader2 size={13} className="mt-0.5 shrink-0 animate-spin" />
                       <div className="min-w-0">
                         <p>Cargando proyecto…</p>
@@ -6774,7 +6813,7 @@ export function SpacesContent() {
                     </div>
                   )}
                   {projectLoadingError && !projectLoadingId && (
-                    <div className="flex items-start gap-2 rounded-xl border border-rose-300/60 bg-rose-50/70 px-3 py-2 text-[11px] font-semibold text-rose-700">
+                    <div className="flex items-start gap-2 rounded-none border border-rose-300/60 bg-rose-50/70 px-3 py-2 text-[11px] font-semibold text-rose-700">
                       <AlertCircle size={13} className="mt-0.5 shrink-0" />
                       <p className="break-words">{projectLoadingError}</p>
                     </div>
@@ -6784,7 +6823,7 @@ export function SpacesContent() {
 
               <div className="custom-scrollbar min-h-0 max-h-[min(52vh,340px)] flex-1 overflow-y-auto -mx-1 px-1 pb-1 sm:max-h-[min(48vh,380px)]">
                 {!projectsListLoading && savedProjects.length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-white/30 bg-white/10 py-10 text-center backdrop-blur-sm">
+                  <div className="rounded-none border border-dashed border-white/30 bg-white/10 py-10 text-center backdrop-blur-sm">
                     <FolderOpen className="mx-auto mb-2 text-slate-400" size={28} />
                     <p className="text-xs font-bold text-slate-600">Aún no hay proyectos guardados.</p>
                   </div>
@@ -6793,9 +6832,9 @@ export function SpacesContent() {
                     {savedProjects.map((project) => (
                       <div
                         key={project.id}
-                        className="group/item flex items-center gap-2.5 rounded-xl border border-white/25 bg-white/15 px-2.5 py-2 shadow-sm backdrop-blur-sm transition-all hover:bg-white/28"
+                        className="group/item flex items-center gap-2.5 rounded-none border border-white/25 bg-white/15 px-2.5 py-2 shadow-sm backdrop-blur-sm transition-all hover:bg-white/28"
                       >
-                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-white/20 bg-white/20 text-rose-500">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-none border border-white/20 bg-white/20 text-rose-500">
                           <Workflow size={15} />
                         </div>
                         <div className="min-w-0 flex-1">
@@ -6803,7 +6842,7 @@ export function SpacesContent() {
                             <input
                               autoFocus
                               type="text"
-                              className="w-full rounded-lg border border-white/25 bg-white/35 px-2 py-1 text-xs font-black text-slate-900 shadow-inner outline-none backdrop-blur-sm placeholder:text-slate-500 focus:border-rose-400/50 focus:ring-1 focus:ring-rose-400/20"
+                              className="w-full rounded-none border border-white/25 bg-white/35 px-2 py-1 text-xs font-black text-slate-900 shadow-inner outline-none backdrop-blur-sm placeholder:text-slate-500 focus:border-rose-400/50 focus:ring-1 focus:ring-rose-400/20"
                               value={editingName}
                               onChange={(e) => setEditingName(e.target.value)}
                               onBlur={() => renameProject(project.id, editingName)}
@@ -6849,7 +6888,7 @@ export function SpacesContent() {
                             onClick={() => !projectDeleteInProgress && void duplicateProject(project)}
                             disabled={!!projectDeleteInProgress}
                             title="Duplicate"
-                            className="rounded-lg border border-white/20 bg-white/12 p-1.5 text-slate-500 transition-all hover:border-sky-400/50 hover:bg-white/35 hover:text-sky-600 disabled:pointer-events-none disabled:opacity-40"
+                            className="rounded-none border border-white/20 bg-white/12 p-1.5 text-slate-500 transition-all hover:border-sky-400/50 hover:bg-white/35 hover:text-sky-600 disabled:pointer-events-none disabled:opacity-40"
                           >
                             <Copy size={13} />
                           </button>
@@ -6858,7 +6897,7 @@ export function SpacesContent() {
                             onClick={() => !projectDeleteInProgress && setProjectToDelete(project)}
                             disabled={!!projectDeleteInProgress}
                             title="Delete"
-                            className="rounded-lg border border-white/20 bg-white/12 p-1.5 text-slate-500 transition-all hover:border-rose-400/50 hover:bg-white/35 hover:text-rose-600 disabled:pointer-events-none disabled:opacity-40"
+                            className="rounded-none border border-white/20 bg-white/12 p-1.5 text-slate-500 transition-all hover:border-rose-400/50 hover:bg-white/35 hover:text-rose-600 disabled:pointer-events-none disabled:opacity-40"
                           >
                             <Trash2 size={13} />
                           </button>
@@ -6866,7 +6905,7 @@ export function SpacesContent() {
                             type="button"
                             onClick={() => !projectDeleteInProgress && !projectLoadingId && loadProject(project)}
                             disabled={!!projectDeleteInProgress || !!projectLoadingId}
-                            className="rounded-lg border border-white/25 bg-white/35 px-3 py-1.5 text-[9px] font-black uppercase tracking-widest text-slate-800 shadow-sm transition-all hover:border-slate-400/40 hover:bg-white/50 disabled:pointer-events-none disabled:opacity-40"
+                            className="rounded-none border border-white/25 bg-white/35 px-3 py-1.5 text-[9px] font-black uppercase tracking-widest text-slate-800 shadow-sm transition-all hover:border-slate-400/40 hover:bg-white/50 disabled:pointer-events-none disabled:opacity-40"
                           >
                             {projectLoadingId === project.id ? (
                               <span className="inline-flex items-center gap-1">
@@ -6889,7 +6928,7 @@ export function SpacesContent() {
 
         {/* Delete — mismo cristal / borde que Save & Load (compacto, alto contraste) */}
         {projectToDelete && (
-          <div className="fixed inset-0 z-[10005] flex items-center justify-center p-3 sm:p-4">
+          <div className="fixed inset-0 z-[10005] flex items-center justify-center p-3 sm:p-4" data-foldder-canvas-modals>
             <div
               className="absolute inset-0 bg-black/45 backdrop-blur-xl"
               onClick={() => setProjectToDelete(null)}
@@ -6899,11 +6938,11 @@ export function SpacesContent() {
               role="dialog"
               aria-modal="true"
               aria-labelledby="delete-project-title"
-              className="relative z-10 w-full max-w-sm rounded-2xl border border-white/25 bg-white/20 p-4 shadow-2xl shadow-black/20 backdrop-blur-xl sm:p-5"
+              className="relative z-10 w-full max-w-sm rounded-none border border-white/25 bg-white/20 p-4 shadow-2xl shadow-black/20 backdrop-blur-xl sm:p-5"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-rose-500/35 bg-rose-500/12">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-none border border-rose-500/35 bg-rose-500/12">
                   <Trash2 size={18} className="text-rose-600" strokeWidth={2} />
                 </div>
                 <div className="min-w-0 flex-1">
@@ -6925,7 +6964,7 @@ export function SpacesContent() {
                   type="button"
                   onClick={() => setProjectToDelete(null)}
                   disabled={!!projectDeleteInProgress}
-                  className="flex-1 rounded-xl border border-white/25 bg-white/15 py-2 text-[10px] font-black uppercase tracking-widest text-slate-800 transition-all hover:bg-white/35 disabled:opacity-40"
+                  className="flex-1 rounded-none border border-white/25 bg-white/15 py-2 text-[10px] font-black uppercase tracking-widest text-slate-800 transition-all hover:bg-white/35 disabled:opacity-40"
                 >
                   Cancel
                 </button>
@@ -6948,7 +6987,7 @@ export function SpacesContent() {
                     })();
                   }}
                   disabled={!!projectDeleteInProgress}
-                  className="flex-1 rounded-xl border border-rose-500/45 bg-rose-600 py-2 text-[10px] font-black uppercase tracking-widest text-white shadow-md shadow-rose-900/20 transition-all hover:bg-rose-500 hover:brightness-105 disabled:opacity-50"
+                  className="flex-1 rounded-none border border-rose-500/45 bg-rose-600 py-2 text-[10px] font-black uppercase tracking-widest text-white shadow-md shadow-rose-900/20 transition-all hover:bg-rose-500 hover:brightness-105 disabled:opacity-50"
                 >
                   Delete
                 </button>
@@ -6965,12 +7004,13 @@ export function SpacesContent() {
           createPortal(
             <div
               className="fixed inset-0 z-[100070] flex items-center justify-center bg-[#07090c]/82 backdrop-blur-[3px]"
+              data-foldder-canvas-modals
               role="alertdialog"
               aria-busy="true"
               aria-live="polite"
               aria-labelledby="spaces-delete-progress-title"
             >
-              <div className="pointer-events-none mx-6 flex max-w-md flex-col items-center gap-5 rounded-2xl border border-white/[0.09] bg-[#12151a]/96 px-9 py-8 shadow-[0_24px_80px_rgba(0,0,0,0.55)] ring-1 ring-rose-500/25">
+              <div className="pointer-events-none mx-6 flex max-w-md flex-col items-center gap-5 rounded-none border border-white/[0.09] bg-[#12151a]/96 px-9 py-8 shadow-[0_24px_80px_rgba(0,0,0,0.55)] ring-1 ring-rose-500/25">
                 <div className="text-center">
                   <p id="spaces-delete-progress-title" className="text-[15px] font-semibold tracking-tight text-white">
                     Eliminando proyecto

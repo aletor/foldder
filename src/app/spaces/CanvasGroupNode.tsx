@@ -221,7 +221,7 @@ export const CanvasGroupNode = memo(function CanvasGroupNode({ id, data, selecte
 
   const shell = collapsed ? (
     <div
-      className={`custom-node relative w-full overflow-visible rounded-lg ${GROUP_FRAME_CLASS} ${
+      className={`custom-node relative w-full overflow-visible rounded-none ${GROUP_FRAME_CLASS} ${
         selected ? "ring-2 ring-violet-400/40" : ""
       }`}
       style={{ minHeight: 90, boxSizing: "border-box" }}
@@ -234,7 +234,7 @@ export const CanvasGroupNode = memo(function CanvasGroupNode({ id, data, selecte
             {editing ? (
               <input
                 autoFocus
-                className="nodrag max-w-[min(240px,55vw)] rounded border border-white/20 bg-white/90 px-2 py-0.5 text-[10px] font-bold text-slate-900"
+                className="nodrag max-w-[min(240px,55vw)] rounded-none border border-white/20 bg-white/90 px-2 py-0.5 text-[10px] font-bold text-slate-900"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 onBlur={commitTitle}
@@ -322,7 +322,7 @@ export const CanvasGroupNode = memo(function CanvasGroupNode({ id, data, selecte
     </div>
   ) : (
     <div
-      className={`custom-node relative overflow-hidden rounded-lg ${GROUP_FRAME_CLASS} ${
+      className={`custom-node relative overflow-hidden rounded-none ${GROUP_FRAME_CLASS} ${
         selected ? "ring-2 ring-violet-400/40" : ""
       }`}
       style={{ width: "100%", height: "100%", minWidth: 200, minHeight: 120 }}
@@ -334,7 +334,7 @@ export const CanvasGroupNode = memo(function CanvasGroupNode({ id, data, selecte
           {editing ? (
             <input
               autoFocus
-              className="nodrag rounded border border-white/20 bg-white/90 px-2 py-0.5 text-[10px] font-bold text-slate-900"
+              className="nodrag rounded-none border border-white/20 bg-white/90 px-2 py-0.5 text-[10px] font-bold text-slate-900"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               onBlur={commitTitle}

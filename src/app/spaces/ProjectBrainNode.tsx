@@ -190,8 +190,8 @@ export const ProjectBrainNode = memo(({ id, data, selected }: NodeProps<any>) =>
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Brain" />
 
       <div className="node-header">
-        <span className="relative flex h-4 w-4 shrink-0 items-center justify-center rounded-md border border-white/20 bg-white/10">
-          <span className="absolute inset-0 rounded-md bg-white/15 opacity-0 transition-opacity group-hover/node:opacity-100" />
+        <span className="relative flex h-4 w-4 shrink-0 items-center justify-center rounded-none border border-white/20 bg-white/10">
+          <span className="absolute inset-0 rounded-none bg-white/15 opacity-0 transition-opacity group-hover/node:opacity-100" />
           <Brain className="relative h-3.5 w-3.5" strokeWidth={2.1} aria-hidden />
         </span>
         <FoldderNodeHeaderTitle
@@ -206,7 +206,7 @@ export const ProjectBrainNode = memo(({ id, data, selected }: NodeProps<any>) =>
       </div>
 
       <div
-        className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-b-xl"
+        className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-none"
         style={{
           background: atmosphereImage
             ? `linear-gradient(180deg, rgba(255,255,255,0.68), rgba(255,255,255,0.22) 44%, rgba(255,255,255,0.82) 100%), url(${atmosphereImage}) center/cover no-repeat`
@@ -222,7 +222,7 @@ export const ProjectBrainNode = memo(({ id, data, selected }: NodeProps<any>) =>
         <div className="relative flex min-h-0 flex-1 flex-col p-4">
           <div className="flex items-start justify-between gap-3">
             <div className="flex min-h-[86px] min-w-0 flex-1 items-center justify-center">
-              <div className="flex h-24 w-24 shrink-0 items-center justify-center rounded-[28px] border border-white/60 bg-white/50 shadow-[0_18px_42px_rgba(91,68,145,0.16)] backdrop-blur-md">
+              <div className="flex h-24 w-24 shrink-0 items-center justify-center rounded-none border border-white/60 bg-white/50 shadow-[0_18px_42px_rgba(91,68,145,0.16)] backdrop-blur-md">
                 {assets.brand.logoPositive || assets.brand.logoNegative ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
@@ -237,7 +237,7 @@ export const ProjectBrainNode = memo(({ id, data, selected }: NodeProps<any>) =>
             </div>
 
             <div
-              className="shrink-0 rounded-2xl border border-violet-200/70 bg-white/54 px-3 py-2 text-center shadow-[0_12px_28px_rgba(91,68,145,0.14)] backdrop-blur-md"
+              className="shrink-0 rounded-none border border-violet-200/70 bg-white/54 px-3 py-2 text-center shadow-[0_12px_28px_rgba(91,68,145,0.14)] backdrop-blur-md"
               title={BRAIN_ADN_COMPLETENESS_TOOLTIP_ES}
             >
               <p className="text-[9px] font-black uppercase tracking-[0.16em] text-violet-600">ADN</p>
@@ -255,7 +255,7 @@ export const ProjectBrainNode = memo(({ id, data, selected }: NodeProps<any>) =>
           </div>
 
           <div className="mb-2 mt-auto space-y-3">
-            <div className="flex items-center gap-3 rounded-2xl border border-white/58 bg-white/54 px-3 py-2.5 shadow-[0_12px_28px_rgba(91,68,145,0.12)] backdrop-blur-md">
+            <div className="flex items-center gap-3 rounded-none border border-white/58 bg-white/54 px-3 py-2.5 shadow-[0_12px_28px_rgba(91,68,145,0.12)] backdrop-blur-md">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-violet-100/80 text-violet-700">
                 <Link2 className="h-[18px] w-[18px]" strokeWidth={1.9} aria-hidden />
               </div>
@@ -264,7 +264,7 @@ export const ProjectBrainNode = memo(({ id, data, selected }: NodeProps<any>) =>
                 <p className="mt-0.5 truncate text-[10px] font-medium text-zinc-500">{signalLine}</p>
               </div>
               <div className="h-8 w-px bg-zinc-300/75" />
-              <div className="shrink-0 rounded-[13px] bg-white/62 px-2.5 py-1.5 text-center shadow-sm">
+              <div className="shrink-0 rounded-none bg-white/62 px-2.5 py-1.5 text-center shadow-sm">
                 <p className="text-[22px] font-black leading-none text-violet-700">{totalLooks}</p>
                 <p className="text-[9px] font-medium text-zinc-500">looks</p>
               </div>
@@ -276,7 +276,7 @@ export const ProjectBrainNode = memo(({ id, data, selected }: NodeProps<any>) =>
                 e.stopPropagation();
                 openStudio();
               }}
-              className="nodrag action-btn group flex w-full items-center justify-center gap-3 rounded-2xl px-4 py-3 text-center text-[15px] font-black uppercase tracking-[0.16em] transition focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/70"
+              className="nodrag action-btn group flex w-full items-center justify-center gap-3 rounded-none px-4 py-3 text-center text-[15px] font-black uppercase tracking-[0.16em] transition focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/70"
             >
               Abrir Brain
               <span className="transition-transform group-hover:translate-x-1">→</span>

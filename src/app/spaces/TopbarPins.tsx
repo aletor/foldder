@@ -34,7 +34,7 @@ const DOCK_STRIP_H_DEFAULT = "min-h-[2.6rem] h-[2.6rem]";
 const DOCK_FRAME_PAD_X_FRAC = 0.14;
 /** Borde del marco: puntos finos (1px). */
 const DOCK_FRAME_BOX =
-  "rounded-xl border border-dotted border-white/35 [border-width:1px] bg-white/[0.08] shadow-sm backdrop-blur-xl";
+  "rounded-none border border-dotted border-white/35 [border-width:1px] bg-white/[0.08] shadow-sm backdrop-blur-xl";
 
 /** Centros en coords de fila [0..wRest] con todos los iconos a escala reposo (para la Gaussiana). */
 function dockRestCentersPx(n: number, chipWpx: number, gapPx: number): { centers: number[]; wRest: number } {
@@ -131,7 +131,7 @@ function PinHoverCard({ label }: { label: string }) {
       className="pointer-events-none absolute bottom-full left-1/2 z-[10020] mb-0.5 flex w-max max-w-[min(260px,78vw)] -translate-x-1/2 flex-col items-center opacity-0 translate-y-1 scale-[0.98] transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover/pin:opacity-100 group-hover/pin:translate-y-0 group-hover/pin:scale-100"
       role="tooltip"
     >
-      <div className="relative rounded-lg border border-white/20 bg-black/55 px-2.5 py-1 text-center shadow-sm backdrop-blur-md">
+      <div className="relative rounded-none border border-white/20 bg-black/55 px-2.5 py-1 text-center shadow-sm backdrop-blur-md">
         <p className="text-[11px] font-bold leading-tight tracking-tight text-white">{label}</p>
       </div>
       <div
@@ -384,9 +384,9 @@ export function TopbarPins({
     "mt-0.5 max-w-[4rem] text-center text-[6px] font-medium leading-none tracking-wide text-white uppercase sm:text-[6.5px]";
 
   const chipEmbedded =
-    "flex min-h-[3.85rem] min-w-[3.85rem] max-w-[4.25rem] cursor-pointer flex-col items-center justify-center gap-0.5 rounded-2xl border border-white/30 bg-white/15 px-1 py-1.5 transition-all duration-150 hover:bg-white/25 hover:ring-2 hover:ring-inset hover:ring-black/50 select-none";
+    "flex min-h-[3.85rem] min-w-[3.85rem] max-w-[4.25rem] cursor-pointer flex-col items-center justify-center gap-0.5 rounded-none border border-white/30 bg-white/15 px-1 py-1.5 transition-all duration-150 hover:bg-white/25 hover:ring-2 hover:ring-inset hover:ring-black/50 select-none";
   const chipDefault =
-    "flex min-h-[3.75rem] min-w-[3.75rem] max-w-[4.1rem] cursor-pointer flex-col items-center justify-center gap-0.5 rounded-xl border border-white/20 bg-white/[0.12] px-1 py-1.5 transition-all duration-150 hover:bg-white/[0.2] hover:ring-2 hover:ring-inset hover:ring-black/50 select-none";
+    "flex min-h-[3.75rem] min-w-[3.75rem] max-w-[4.1rem] cursor-pointer flex-col items-center justify-center gap-0.5 rounded-none border border-white/20 bg-white/[0.12] px-1 py-1.5 transition-all duration-150 hover:bg-white/[0.2] hover:ring-2 hover:ring-inset hover:ring-black/50 select-none";
 
   const dockStripH = pinRowSidebarStyle ? DOCK_STRIP_H_SIDEBAR : DOCK_STRIP_H_DEFAULT;
 

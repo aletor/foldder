@@ -47,6 +47,7 @@ const STATIC_NODE_GRID_PRESETS: Record<string, GridPreset> = {
 const ASPECT_RATIO_NODE_TYPES = new Set([
   "backgroundRemover",
   "crop",
+  "designer",
   "geminiVideo",
   "grokProcessor",
   "imageExport",

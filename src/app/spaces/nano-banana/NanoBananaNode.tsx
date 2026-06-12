@@ -73,6 +73,7 @@ function captureCurrentOutput(
 /** Tras soltar el resize: encuadra solo este nodo (mismo criterio que foco tras crear nodo). */
 const NODE_RESIZE_END_FIT_PADDING = 0.8;
 const STUDIO_NODE_MAX_HEIGHT = 2200;
+const NANO_BANANA_EMPTY_BACKGROUND_SRC = "/assets/nodes/nano-banana-empty-pink.png";
 
 function FoldderNodeResizer(props: ComponentProps<typeof NodeResizer>) {
   const nodeId = useNodeId();
@@ -1539,7 +1540,7 @@ const NanoBananaStudio = memo(({
               key={m.key}
               type="button"
               onClick={() => setStudioModelKey(m.key)}
-              className="flex flex-col items-start gap-0.5 px-3 py-1.5 rounded-xl text-left transition-all min-w-[4.5rem]"
+              className="flex flex-col items-start gap-0.5 px-3 py-1.5 rounded-none text-left transition-all min-w-[4.5rem]"
               style={
                 studioModelKey === m.key
                   ? {
@@ -1584,7 +1585,7 @@ const NanoBananaStudio = memo(({
                   setStudioResolution(r);
                   onResolutionChange?.(r);
                 }}
-                className="min-w-[2rem] px-2 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all"
+                className="min-w-[2rem] px-2 py-1.5 rounded-none text-[9px] font-black uppercase tracking-wider transition-all"
                 style={
                   studioResolution === r
                     ? {
@@ -1618,9 +1619,9 @@ const NanoBananaStudio = memo(({
 
         {/* Usar generada toggle */}
         {generatedOnce && (
-          <div className="flex items-center gap-2 rounded-lg px-2 py-1 bg-zinc-800/60 border border-zinc-600/40">
+          <div className="flex items-center gap-2 rounded-none px-2 py-1 bg-zinc-800/60 border border-zinc-600/40">
             {lastGenerated && (
-              <img src={lastGenerated} alt="" className="w-8 h-6 object-cover rounded border border-zinc-500/50 flex-shrink-0" />
+              <img src={lastGenerated} alt="" className="w-8 h-6 object-cover rounded-none border border-zinc-500/50 flex-shrink-0" />
             )}
             <span className="text-[9px] font-bold text-zinc-300 uppercase tracking-wide">
               {reSendGenerated ? 'Base: última gen.' : 'Base: original'}
@@ -1645,7 +1646,7 @@ const NanoBananaStudio = memo(({
           type="button"
           onClick={onGenerateCall}
           disabled={addingChange || analyzingCall || !hasPaintedZoneWithDescription}
-          className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[10px] font-black uppercase tracking-wide transition-all disabled:opacity-35 disabled:cursor-not-allowed shadow-sm border"
+          className="flex items-center gap-1.5 px-3.5 py-2 rounded-none text-[10px] font-black uppercase tracking-wide transition-all disabled:opacity-35 disabled:cursor-not-allowed shadow-sm border"
           style={{
             background: 'rgba(108,92,231,0.2)',
             color: '#ede9fe',
@@ -1658,7 +1659,7 @@ const NanoBananaStudio = memo(({
           type="button"
           onClick={onGenerate}
           disabled={genStatus === 'running' || addingChange || analyzingCall}
-          className="flex items-center gap-1.5 px-5 py-2 rounded-xl text-[11px] font-black uppercase tracking-wide transition-all disabled:opacity-45 disabled:cursor-not-allowed shadow-[0_2px_14px_rgba(108,92,231,0.4)] border border-[#6C5CE7]/50"
+          className="flex items-center gap-1.5 px-5 py-2 rounded-none text-[11px] font-black uppercase tracking-wide transition-all disabled:opacity-45 disabled:cursor-not-allowed shadow-[0_2px_14px_rgba(108,92,231,0.4)] border border-[#6C5CE7]/50"
           style={{ background: 'linear-gradient(135deg,#6C5CE7,#5548c8)', color: '#fafafa' }}
         >
           {genStatus === 'running'
@@ -1672,7 +1673,7 @@ const NanoBananaStudio = memo(({
           <button
             type="button"
             onClick={onClose}
-            className="ml-1 flex h-9 shrink-0 items-center gap-1.5 rounded-xl border border-[#6C5CE7]/40 bg-[#6C5CE7]/15 px-3 text-[10px] font-black uppercase tracking-wide text-violet-100 transition-all hover:border-[#6C5CE7]/55 hover:bg-[#6C5CE7]/25"
+            className="ml-1 flex h-9 shrink-0 items-center gap-1.5 rounded-none border border-[#6C5CE7]/40 bg-[#6C5CE7]/15 px-3 text-[10px] font-black uppercase tracking-wide text-violet-100 transition-all hover:border-[#6C5CE7]/55 hover:bg-[#6C5CE7]/25"
             title={topBarCloseMode === 'returnCine' ? "Cerrar Nano Banana Studio y volver a Cine" : "Cerrar Nano Banana Studio y volver al PhotoRoom"}
           >
             <ChevronLeft size={14} className="shrink-0" strokeWidth={2.5} />
@@ -1682,7 +1683,7 @@ const NanoBananaStudio = memo(({
           <button
             type="button"
             onClick={onClose}
-            className="ml-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-transparent text-zinc-400 transition-all hover:border-[#6C5CE7]/35 hover:bg-white/[0.08] hover:text-zinc-100"
+            className="ml-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-none border border-transparent text-zinc-400 transition-all hover:border-[#6C5CE7]/35 hover:bg-white/[0.08] hover:text-zinc-100"
             title="Cerrar Studio"
           >
             <X size={16} strokeWidth={2.5} />
@@ -1724,11 +1725,11 @@ const NanoBananaStudio = memo(({
                       /** Salida del nodo + preview del canvas: misma URL que la vista. */
                       onGenerated(url);
                     }}
-                    className="relative aspect-square w-full shrink-0 overflow-hidden rounded-lg border border-white/10 transition-colors hover:border-violet-500/55 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
+                    className="relative aspect-square w-full shrink-0 overflow-hidden rounded-none border border-white/10 transition-colors hover:border-violet-500/55 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
                     title={`Generación ${i + 1}`}
                   >
                     <img src={url} alt="" className="h-full w-full object-cover" />
-                    <span className="absolute bottom-1 right-1 rounded bg-black/75 px-1 text-[8px] font-bold text-zinc-200">
+                    <span className="absolute bottom-1 right-1 rounded-none bg-black/75 px-1 text-[8px] font-bold text-zinc-200">
                       {i + 1}
                     </span>
                   </button>
@@ -1846,7 +1847,7 @@ const NanoBananaStudio = memo(({
         {/* Drawing-mode hint */}
         {addingChange && (
           <div
-            className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-2.5 px-5 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest text-rose-50 shadow-lg"
+            className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-2.5 px-5 py-2.5 rounded-none text-[10px] font-black uppercase tracking-widest text-rose-50 shadow-lg"
             style={{
               background: 'rgba(12,10,14,0.92)',
               backdropFilter: 'blur(10px)',
@@ -1886,7 +1887,7 @@ const NanoBananaStudio = memo(({
             <div className="flex items-center gap-1.5">
               <span className="text-[9px] font-bold text-zinc-400">Color</span>
               <input type="color" value={brushColor} onChange={e => setBrushColor(e.target.value)}
-                className="w-8 h-8 rounded-lg border border-white/10 cursor-pointer" />
+                className="w-8 h-8 rounded-none border border-white/10 cursor-pointer" />
             </div>
             {/* Brush size */}
             <div className="flex items-center gap-2 flex-1 max-w-[200px]">
@@ -1899,15 +1900,15 @@ const NanoBananaStudio = memo(({
               value={newDesc}
               onChange={e => setNewDesc(e.target.value)}
               placeholder="¿Qué quieres cambiar en esta área?…"
-              className="flex-1 bg-zinc-950/80 border border-zinc-600/50 rounded-lg px-3 py-2 text-[11px] text-zinc-100 placeholder-zinc-500 outline-none focus:border-rose-400/70 focus:ring-1 focus:ring-rose-500/30"
+              className="flex-1 bg-zinc-950/80 border border-zinc-600/50 rounded-none px-3 py-2 text-[11px] text-zinc-100 placeholder-zinc-500 outline-none focus:border-rose-400/70 focus:ring-1 focus:ring-rose-500/30"
             />
             <button onClick={confirmChange}
-              className="px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all whitespace-nowrap"
+              className="px-4 py-2 rounded-none text-[10px] font-black uppercase tracking-wider transition-all whitespace-nowrap"
               style={{ background: 'rgba(251,113,133,0.2)', color: '#fb7185', border: '1px solid rgba(251,113,133,0.4)' }}>
               ✓ Confirmar
             </button>
             <button onClick={cancelChange}
-              className="px-4 py-2 rounded-lg bg-white/[0.04] text-zinc-500 border border-white/[0.08] text-[10px] font-black uppercase tracking-wider hover:text-zinc-300 transition-colors whitespace-nowrap">
+              className="px-4 py-2 rounded-none bg-white/[0.04] text-zinc-500 border border-white/[0.08] text-[10px] font-black uppercase tracking-wider hover:text-zinc-300 transition-colors whitespace-nowrap">
               Cancelar
             </button>
           </div>
@@ -1944,7 +1945,7 @@ const NanoBananaStudio = memo(({
               const hex = ch.assignedColor.hex;
               return (
                 <div key={ch.id}
-                  className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl flex-shrink-0 transition-all"
+                  className="flex items-center gap-2.5 px-3 py-2.5 rounded-none flex-shrink-0 transition-all"
                   style={ch.isGlobal || (ch.paintData && ch.description.trim())
                     ? { background: hex + '22', color: '#f4f4f5', border: '1px solid ' + hex + '66' }
                     : { background: 'rgba(39,39,48,0.85)', color: '#a1a1aa', border: '1px solid rgba(113,113,122,0.4)' }
@@ -1966,10 +1967,10 @@ const NanoBananaStudio = memo(({
                     <label className="flex items-center gap-1 cursor-pointer flex-shrink-0">
                       {ch.referenceImage ? (
                         <img src={ch.referenceImage} alt="ref"
-                          className="w-8 h-8 rounded-lg object-cover border-2 flex-shrink-0"
+                          className="w-8 h-8 rounded-none object-cover border-2 flex-shrink-0"
                           style={{ borderColor: hex + '80' }} />
                       ) : (
-                        <span className="flex items-center gap-1 px-2 py-1 rounded-lg text-[8px] font-black uppercase tracking-wide transition-all hover:opacity-80"
+                        <span className="flex items-center gap-1 px-2 py-1 rounded-none text-[8px] font-black uppercase tracking-wide transition-all hover:opacity-80"
                           style={{ background: hex + '15', color: hex, border: '1px dashed ' + hex + '50' }}>
                           <ImageIcon size={10} /> Ref
                         </span>
@@ -1995,7 +1996,7 @@ const NanoBananaStudio = memo(({
                   <button
                     type="button"
                     onClick={() => deleteChange(ch.id)}
-                    className="text-zinc-500 hover:text-rose-400 transition-colors flex-shrink-0 ml-1 p-0.5 rounded hover:bg-white/5"
+                    className="text-zinc-500 hover:text-rose-400 transition-colors flex-shrink-0 ml-1 p-0.5 rounded-none hover:bg-white/5"
                     title="Quitar cambio"
                   >
                     <Trash2 size={11} />
@@ -2018,15 +2019,15 @@ const NanoBananaStudio = memo(({
                   onChange={e => setGlobalDesc(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') addGlobalChange(globalDesc); if (e.key === 'Escape') { setShowGlobalInput(false); setGlobalDesc(''); } }}
                   placeholder="Describe el cambio global…"
-                  className="flex-1 bg-zinc-950/80 border border-violet-500/45 rounded-xl px-3 py-2.5 text-[11px] text-zinc-100 placeholder-zinc-500 outline-none focus:border-violet-400/80 focus:ring-1 focus:ring-violet-500/25"
+                  className="flex-1 bg-zinc-950/80 border border-violet-500/45 rounded-none px-3 py-2.5 text-[11px] text-zinc-100 placeholder-zinc-500 outline-none focus:border-violet-400/80 focus:ring-1 focus:ring-violet-500/25"
                 />
                 <button onClick={() => addGlobalChange(globalDesc)}
-                  className="px-3 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all whitespace-nowrap"
+                  className="px-3 py-2 rounded-none text-[10px] font-black uppercase tracking-wider transition-all whitespace-nowrap"
                   style={{ background: 'rgba(108,92,231,0.22)', color: '#ddd6fe', border: '1px solid rgba(108,92,231,0.45)' }}>
                   ✓
                 </button>
                 <button onClick={() => { setShowGlobalInput(false); setGlobalDesc(''); }}
-                  className="px-2 py-2 rounded-lg bg-white/[0.04] text-zinc-500 border border-white/[0.06] text-[10px] font-black hover:text-zinc-300 transition-colors">
+                  className="px-2 py-2 rounded-none bg-white/[0.04] text-zinc-500 border border-white/[0.06] text-[10px] font-black hover:text-zinc-300 transition-colors">
                   ✕
                 </button>
               </div>
@@ -2037,7 +2038,7 @@ const NanoBananaStudio = memo(({
               <button
                 type="button"
                 onClick={startAddChange}
-                className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex-shrink-0 whitespace-nowrap shadow-sm hover:brightness-110"
+                className="flex items-center gap-2 px-3.5 py-2.5 rounded-none text-[10px] font-black uppercase tracking-wider transition-all flex-shrink-0 whitespace-nowrap shadow-sm hover:brightness-110"
                 style={{
                   background: 'linear-gradient(180deg, rgba(251,113,133,0.22) 0%, rgba(251,113,133,0.1) 100%)',
                   color: '#fecdd3',
@@ -2052,7 +2053,7 @@ const NanoBananaStudio = memo(({
               <button
                 type="button"
                 onClick={() => setShowGlobalInput(true)}
-                className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex-shrink-0 whitespace-nowrap shadow-sm hover:brightness-110"
+                className="flex items-center gap-2 px-3.5 py-2.5 rounded-none text-[10px] font-black uppercase tracking-wider transition-all flex-shrink-0 whitespace-nowrap shadow-sm hover:brightness-110"
                 style={{
                   background: 'linear-gradient(180deg, rgba(108,92,231,0.24) 0%, rgba(108,92,231,0.1) 100%)',
                   color: '#ede9fe',
@@ -2068,7 +2069,7 @@ const NanoBananaStudio = memo(({
                 <button
                   type="button"
                   onClick={() => setShowCameraMenu(v => !v)}
-                  className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all whitespace-nowrap shadow-sm hover:brightness-110"
+                  className="flex items-center gap-2 px-3.5 py-2.5 rounded-none text-[10px] font-black uppercase tracking-wider transition-all whitespace-nowrap shadow-sm hover:brightness-110"
                   style={{
                     background: 'linear-gradient(180deg, rgba(108,92,231,0.18) 0%, rgba(108,92,231,0.08) 100%)',
                     color: '#e8e4ff',
@@ -2080,7 +2081,7 @@ const NanoBananaStudio = memo(({
                 </button>
                 {showCameraMenu && (
                   <div
-                    className="absolute bottom-full mb-2 right-0 z-[9999] rounded-xl overflow-hidden shadow-2xl"
+                    className="absolute bottom-full mb-2 right-0 z-[9999] rounded-none overflow-hidden shadow-2xl"
                     style={{
                       background: 'rgba(22,22,30,0.96)',
                       backdropFilter: 'blur(16px)',
@@ -2135,7 +2136,7 @@ const NanoBananaStudio = memo(({
           style={{ background: 'rgba(0,0,0,0.88)' }}
           data-foldder-studio-canvas=""
         >
-          <div className="w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-3xl flex flex-col"
+          <div className="w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-none flex flex-col"
                style={{ background: '#1a1a22', border: '1px solid rgba(255,255,255,0.12)' }}>
             {/* Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.1] bg-white/[0.04] backdrop-blur-md">
@@ -2143,7 +2144,7 @@ const NanoBananaStudio = memo(({
                 <span className="text-[12px] font-black uppercase tracking-[0.1em] text-violet-200">Vista previa de la llamada</span>
                 <span className="text-[10px] text-zinc-500 font-medium normal-case tracking-normal">Revisa refs y el texto que se enviará a Nano Banana</span>
               </div>
-              <button type="button" onClick={() => setCallPreview(null)} className="text-zinc-400 hover:text-white transition-colors p-1 rounded-lg hover:bg-white/10" title="Cerrar">
+              <button type="button" onClick={() => setCallPreview(null)} className="text-zinc-400 hover:text-white transition-colors p-1 rounded-none hover:bg-white/10" title="Cerrar">
                 <X size={20} />
               </button>
             </div>
@@ -2154,9 +2155,9 @@ const NanoBananaStudio = memo(({
               <div className="space-y-2">
                 <p className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Ref 1 · Imagen base</p>
                 {currentImage ? (
-                  <img src={currentImage} alt="Base" className="w-full rounded-xl border border-white/10 object-contain max-h-40" />
+                  <img src={currentImage} alt="Base" className="w-full rounded-none border border-white/10 object-contain max-h-40" />
                 ) : (
-                  <div className="w-full h-32 rounded-xl border border-white/10 flex items-center justify-center text-[9px] text-zinc-600">Sin imagen base</div>
+                  <div className="w-full h-32 rounded-none border border-white/10 flex items-center justify-center text-[9px] text-zinc-600">Sin imagen base</div>
                 )}
               </div>
 
@@ -2166,11 +2167,11 @@ const NanoBananaStudio = memo(({
                 <img
                   src={callPreview.markedRef2 || callPreview.colorMapUrl}
                   alt="Color map"
-                  className="w-full rounded-xl border border-white/10 object-contain max-h-40"
+                  className="w-full rounded-none border border-white/10 object-contain max-h-40"
                 />
                 <div className="flex flex-wrap gap-1">
                   {changes.filter(c=>c.paintData).map(c => (
-                    <div key={c.id} className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[7px] font-black uppercase"
+                    <div key={c.id} className="flex items-center gap-1 px-1.5 py-0.5 rounded-none text-[7px] font-black uppercase"
                          style={{ background: c.assignedColor.hex + '22', color: c.assignedColor.hex }}>
                       <div className="w-1.5 h-1.5 rounded-full" style={{ background: c.assignedColor.hex }} />
                       {c.assignedColor.name}
@@ -2186,10 +2187,10 @@ const NanoBananaStudio = memo(({
                   <img
                     src={callPreview.referenceGridUrl}
                     alt="Reference grid"
-                    className="w-full rounded-xl border border-violet-500/20 object-contain max-h-40"
+                    className="w-full rounded-none border border-violet-500/20 object-contain max-h-40"
                   />
                 ) : (
-                  <div className="w-full h-32 rounded-xl border border-dashed border-white/10 flex flex-col items-center justify-center gap-2 text-center px-3">
+                  <div className="w-full h-32 rounded-none border border-dashed border-white/10 flex flex-col items-center justify-center gap-2 text-center px-3">
                     <ImageIcon size={20} className="text-zinc-700" />
                     <p className="text-[8px] text-zinc-600 leading-snug">Sin imágenes de referencia.<br/>Súbelas en cada cambio con el ícono 📎.</p>
                   </div>
@@ -2204,7 +2205,7 @@ const NanoBananaStudio = memo(({
                 value={callPreview.fullPrompt}
                 onChange={e => setCallPreview(prev => prev ? { ...prev, fullPrompt: e.target.value } : null)}
                 rows={8}
-                className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2.5 text-[10px] text-zinc-300 font-mono leading-relaxed resize-none"
+                className="w-full bg-black/40 border border-white/10 rounded-none px-3 py-2.5 text-[10px] text-zinc-300 font-mono leading-relaxed resize-none"
               />
               <p className="text-[8px] text-zinc-600 leading-snug">
                 ref1 = base · ref2 = dónde editar (prioridad sobre texto si choca izq./der.) · ref3 = estilos de referencia
@@ -2213,13 +2214,13 @@ const NanoBananaStudio = memo(({
             {/* Send button */}
             <div className="px-6 py-4 border-t border-white/[0.07] flex justify-end gap-3">
               <button onClick={() => setCallPreview(null)}
-                className="px-5 py-2.5 rounded-xl text-[11px] font-black uppercase tracking-wider text-zinc-500 border border-white/[0.08] hover:text-zinc-300 transition-colors">
+                className="px-5 py-2.5 rounded-none text-[11px] font-black uppercase tracking-wider text-zinc-500 border border-white/[0.08] hover:text-zinc-300 transition-colors">
                 Cancelar
               </button>
               <button
                 onClick={() => onGenerateFromCall(callPreview.colorMapUrl, callPreview.fullPrompt, callPreview.markedRef2, callPreview.referenceGridUrl)}
                 disabled={genStatus === 'running'}
-                className="px-6 py-2.5 rounded-xl text-[11px] font-black uppercase tracking-widest flex items-center gap-2 transition-all disabled:opacity-40 shadow-[0_2px_12px_rgba(108,92,231,0.35)]"
+                className="px-6 py-2.5 rounded-none text-[11px] font-black uppercase tracking-widest flex items-center gap-2 transition-all disabled:opacity-40 shadow-[0_2px_12px_rgba(108,92,231,0.35)]"
                 style={{ background: 'linear-gradient(135deg,#6C5CE7,#5548c8)', color: '#fafafa' }}
               >
                 <Sparkles size={13} /> Generar imagen
@@ -2780,8 +2781,10 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
     updateNodeInternals,
   ]);
 
+  const showNanoEmptyBackground = !outputImage && !(refImgPreview && nodeMediaVisible);
+
   return (
-    <div className={`custom-node processor-node group/node foldder-node--frameless node--media foldder-frameless-accent-image ${status === 'error' ? 'foldder-node--error' : ''} ${isActivelyGenerating ? 'node-glow-running' : ''}`}
+    <div className={`custom-node processor-node nano-banana-node group/node foldder-node--frameless node--media foldder-frameless-accent-image ${showNanoEmptyBackground ? "nano-banana-node--empty" : ""} ${status === 'error' ? 'foldder-node--error' : ''} ${isActivelyGenerating ? 'node-glow-running' : ''}`}
          style={{ minWidth: 200, minHeight: 120 }}
          ref={frameRef}>
       <FoldderNodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={STUDIO_NODE_MAX_HEIGHT} keepAspectRatio isVisible={selected} />
@@ -2835,13 +2838,13 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
         </FoldderNodeHeaderTitle>
         <div className="flex shrink-0 flex-col items-end gap-0.5 text-[8px] font-mono font-light uppercase leading-none">
           <span
-            className={`rounded-md border px-1.5 py-0.5 ${modelInfo.borderColor} ${modelInfo.bg} ${modelInfo.color}`}
+            className={`rounded-none border px-1.5 py-0.5 ${modelInfo.borderColor} ${modelInfo.bg} ${modelInfo.color}`}
             title="Calidad del modelo"
           >
             {modelInfo.label}
           </span>
           <span
-            className="rounded-md border border-white/20 bg-black/[0.06] px-1.5 py-0.5 text-zinc-600"
+            className="rounded-none border border-white/20 bg-black/[0.06] px-1.5 py-0.5 text-zinc-600"
             title="Resolución de salida"
           >
             {nbResLabel}
@@ -2852,8 +2855,8 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
       {/* ── Main image area: preview encaja sin recortar (object-contain); la imagen generada sigue con su resolución real ── */}
       <div
         ref={previewRef}
-        className="foldder-frameless-main relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-b-[24px] bg-[#0a0a0a] group/out"
-        style={{ minHeight: 120 }}
+        className={`foldder-frameless-main relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-none group/out ${showNanoEmptyBackground ? "" : "items-center justify-center bg-[#0a0a0a]"}`}
+        style={showNanoEmptyBackground ? undefined : { minHeight: 120 }}
       >
 
         {/* OUTPUT image — preview ajustado al marco del nodo */}
@@ -2870,14 +2873,14 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
             <button
               onClick={() => setShowFullSize(true)}
               className="absolute top-2 right-2 z-20 bg-black/60 hover:bg-black/90 text-white
-                         text-[7px] font-black px-2 py-1 rounded flex items-center gap-1
+                         text-[7px] font-black px-2 py-1 rounded-none flex items-center gap-1
                          opacity-0 group-hover/out:opacity-100 transition-opacity"
             >
               <Maximize2 size={8} /> EXPAND
             </button>
             {/* Model info badge on hover */}
             <span className="absolute top-2 left-2 z-20 text-[6px] font-black uppercase text-white/70
-                             bg-black/50 px-1.5 py-0.5 rounded
+                             bg-black/50 px-1.5 py-0.5 rounded-none
                              opacity-0 group-hover/out:opacity-100 transition-opacity">
               {modelInfo.label} · {nbResLabel} · {nodeData.aspect_ratio || '16:9'}
             </span>
@@ -2901,12 +2904,13 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
               </div>
             </>
           ) : (
-            <div className="w-full h-full flex flex-col items-center justify-center gap-2"
-                 style={{ background: 'rgba(0,0,0,0.04)' }}>
-              <ImageIcon size={28} className="text-zinc-400/50" />
-              <span className="text-[7px] font-black uppercase tracking-widest text-zinc-400/60 text-center leading-tight">
-                Conecta Ref 1<br/>y abre Studio
-              </span>
+            <div className="nano-banana-empty-background absolute inset-0 overflow-hidden" aria-hidden>
+              <img
+                src={NANO_BANANA_EMPTY_BACKGROUND_SRC}
+                alt=""
+                className="h-full w-full object-contain object-bottom"
+                draggable={false}
+              />
             </div>
           )
         )}
@@ -2916,7 +2920,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
 
         {/* INPUT image badge — bottom-left corner overlay (always visible when connected) */}
         {refImgPreview && outputImage && nodeMediaVisible && (
-          <div className="absolute bottom-2 left-2 rounded overflow-hidden border-2 border-white/60 shadow-lg"
+          <div className="absolute bottom-2 left-2 rounded-none overflow-hidden border-2 border-white/60 shadow-lg"
                style={{ width: 56, height: 40 }}>
             <img src={refImgPreview} alt="ref" className="w-full h-full object-cover" />
             <span className="absolute bottom-0 left-0 right-0 text-[5px] font-black uppercase text-white bg-black/60 text-center py-px">BASE</span>
@@ -2969,7 +2973,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
           </button>
           {showBrainWhy &&
             (brainImageDiag ? (
-              <div className="max-h-40 overflow-y-auto rounded border border-white/10 bg-black/45 px-2 py-1.5 text-[7px] leading-relaxed text-zinc-200">
+              <div className="max-h-40 overflow-y-auto rounded-none border border-white/10 bg-black/45 px-2 py-1.5 text-[7px] leading-relaxed text-zinc-200">
                 <div className="mb-1 font-bold uppercase tracking-wide text-violet-200/90">Última composición</div>
                 <div>finalPromptUsed (recorte):</div>
                 <pre className="mt-0.5 max-h-24 overflow-y-auto whitespace-pre-wrap break-words text-zinc-400">
@@ -3100,7 +3104,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
           </div>
           <img
             src={outputImage}
-            className="max-h-full max-w-full w-auto h-auto rounded-2xl object-contain shadow-2xl"
+            className="max-h-full max-w-full w-auto h-auto rounded-none object-contain shadow-2xl"
             alt="Full size"
           />
         </div>

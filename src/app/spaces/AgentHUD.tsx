@@ -53,7 +53,7 @@ export const AgentHUD = ({
   );
 
   const assistantCard = (
-    <div className="bg-white/5 backdrop-blur-2xl border border-white/5 p-3 rounded-2xl shadow-xl shadow-black/10 flex flex-col gap-2.5 w-full">
+    <div className="bg-white/5 backdrop-blur-2xl border border-white/5 p-3 rounded-none shadow-xl shadow-black/10 flex flex-col gap-2.5 w-full">
       <div className="flex items-center gap-2 px-0.5">
         <Sparkles size={17} className="text-white animate-pulse opacity-60 shrink-0" />
         <h3 className="text-[13px] font-black text-white/60 uppercase tracking-[2px]">Agent Assistant</h3>
@@ -74,7 +74,7 @@ export const AgentHUD = ({
           }
         }}
         placeholder="Describe cambios… Con nodos seleccionados: «cambia el prompt», «pon resolución 4K», «conecta al Nano Banana»…"
-        className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-[14px] text-white placeholder:text-white/40 focus:outline-none focus:border-cyan-500/40 transition-all min-h-[124px] resize-none shadow-inner"
+        className="w-full bg-white/5 border border-white/10 rounded-none p-2.5 text-[14px] text-white placeholder:text-white/40 focus:outline-none focus:border-cyan-500/40 transition-all min-h-[124px] resize-none shadow-inner"
       />
 
       {isGenerating && (
@@ -101,7 +101,7 @@ export const AgentHUD = ({
         <Star
           size={15}
           strokeWidth={2.25}
-          className="shrink-0 text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)]"
+          className="shrink-0 text-white/95"
           aria-hidden
         />
         <input
@@ -120,13 +120,13 @@ export const AgentHUD = ({
               : 'Selecciona nodos en el lienzo para pedir cambios sobre unos concretos'
           }
           placeholder="Ej.: borra todo · con selección: cambia el texto del prompt, sube resolución a 4K…"
-          className="min-h-[38px] min-w-0 flex-1 rounded-lg border border-white/35 bg-white/[0.10] px-3 py-2 text-[15px] leading-snug text-white placeholder:text-white/45 shadow-inner backdrop-blur-md focus:border-white/55 focus:outline-none focus:ring-1 focus:ring-white/25"
+          className="min-h-[38px] min-w-0 flex-1 rounded-none bg-white/[0.10] px-3 py-2 text-[15px] leading-snug text-white placeholder:text-white/45 backdrop-blur-md focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
         />
         <button
           type="button"
           onClick={() => void handleGenerate()}
           disabled={isGenerating}
-          className="shrink-0 rounded-lg border border-white/35 bg-white/[0.10] px-3 py-2 text-[14px] font-black uppercase tracking-wider text-white shadow-sm backdrop-blur-md transition hover:bg-white/[0.22] hover:text-white disabled:opacity-50"
+          className="shrink-0 rounded-none bg-white/[0.10] px-3 py-2 text-[14px] font-black uppercase tracking-wider text-white backdrop-blur-md transition hover:bg-white/[0.22] hover:text-white disabled:opacity-50"
         >
           {isGenerating ? <Loader2 className="h-[18px] w-[18px] animate-spin text-white" /> : 'Run'}
         </button>

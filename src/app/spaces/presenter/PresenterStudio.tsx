@@ -780,7 +780,7 @@ export function PresenterStudio({
                 >
                   <div
                     className={`w-full overflow-hidden border border-black/[0.08] bg-[#fafafa] ${
-                      nextPage ? "rounded-t-[3px] rounded-b-none" : "rounded-[3px]"
+                      nextPage ? "rounded-none rounded-none" : "rounded-[3px]"
                     }`}
                     style={{
                       aspectRatio: `${Math.max(1, d.width)} / ${Math.max(1, d.height)}`,

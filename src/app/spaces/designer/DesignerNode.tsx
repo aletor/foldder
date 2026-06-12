@@ -12,7 +12,6 @@ import {
   type ReactFlowState,
 } from "@xyflow/react";
 import { shallow } from "zustand/shallow";
-import { Pencil } from "lucide-react";
 import { FOLDDER_FIT_VIEW_EASE } from "@/lib/fit-view-ease";
 import { FoldderStudioModeCenterButton } from "../foldder-node-ui";
 import type { IndesignPageFormatId } from "../indesign/page-formats";
@@ -41,6 +40,7 @@ import { useNodeViewportVisibility } from "../use-node-viewport-visibility";
 
 const DESIGNER_NODE_MAX_WIDTH = 960;
 const DESIGNER_NODE_MAX_HEIGHT = 2200;
+const DESIGNER_EMPTY_BACKGROUND_SRC = "/assets/nodes/designer-empty-lime.png";
 
 const DESIGNER_NODE_HANDLES: StudioCanvasNodeHandleSpec[] = [
   { side: "left", top: "50%", style: { transform: "translateY(-50%)" }, type: "target", id: "brain", dataType: "brain", label: "Brain" },
@@ -134,6 +134,7 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const currentNodeFrame = nodeFrameFromSnapshot(currentNodeFrameSnapshot);
   const frameRef = useRef<HTMLDivElement | null>(null);
   const previewRef = useRef<HTMLDivElement | null>(null);
+  const frameSyncKeyRef = useRef<string | null>(null);
   const nodeMediaVisible = useNodeViewportVisibility(id, 900);
   const canvasPerformanceModeRef = useCanvasPerformanceModeRef(
     useCallback((active: boolean) => {
@@ -161,6 +162,8 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
 
   useLayoutEffect(() => {
     if (!firstPageDims) return;
+    const syncKey = `${firstPageDims.width}x${firstPageDims.height}`;
+    if (frameSyncKeyRef.current === syncKey) return;
     const chromeHeight = resolveNodeChromeHeight(frameRef.current, previewRef.current);
     const nextFrame = resolveAspectLockedNodeFrame({
       node: currentNodeFrame,
@@ -172,33 +175,29 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
       maxHeight: DESIGNER_NODE_MAX_HEIGHT,
       chromeHeight,
     });
+    frameSyncKeyRef.current = syncKey;
     if (!nodeFrameNeedsSync(currentNodeFrame, nextFrame)) return;
+    const nextAspectRatio = firstPageDims.width / firstPageDims.height;
     setNodes((nds) =>
-      nds.map((node) =>
-        node.id === id
-          ? {
-              ...node,
-              width: nextFrame.width,
-              height: nextFrame.height,
-              style: { ...node.style, width: nextFrame.width, height: nextFrame.height },
-            }
-          : node,
-      ),
+      nds.map((node) => {
+        if (node.id !== id) return node;
+        const currentAspectRatio =
+          typeof (node.data as { _foldderAspectRatio?: unknown } | undefined)?._foldderAspectRatio === "number"
+            ? ((node.data as { _foldderAspectRatio?: number })._foldderAspectRatio ?? null)
+            : null;
+        const needsAspectSync =
+          currentAspectRatio === null || Math.abs(currentAspectRatio - nextAspectRatio) > 0.0001;
+        return {
+          ...node,
+          width: nextFrame.width,
+          height: nextFrame.height,
+          data: needsAspectSync ? { ...node.data, _foldderAspectRatio: nextAspectRatio } : node.data,
+          style: { ...node.style, width: nextFrame.width, height: nextFrame.height },
+        };
+      }),
     );
     requestAnimationFrame(() => updateNodeInternals(id));
-  }, [
-    currentNodeFrameSnapshot.width,
-    currentNodeFrameSnapshot.height,
-    currentNodeFrameSnapshot.measuredWidth,
-    currentNodeFrameSnapshot.measuredHeight,
-    currentNodeFrameSnapshot.styleWidth,
-    currentNodeFrameSnapshot.styleHeight,
-    firstPageDims?.width,
-    firstPageDims?.height,
-    id,
-    setNodes,
-    updateNodeInternals,
-  ]);
+  }, [firstPageDims?.width, firstPageDims?.height, id, setNodes, updateNodeInternals]);
 
   const onUpdatePages = useCallback(
     (next: DesignerPageState[], nextActiveIdx?: number) => {
@@ -290,7 +289,7 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
       title="Designer"
       badge="DESIGN"
       headerIcon={
-        <span className="flex h-5 w-5 items-center justify-center rounded-md bg-[#fdb04b]">
+        <span className="flex h-5 w-5 items-center justify-center rounded-none bg-[#fdb04b]">
           <img src="/designer_icon.svg" alt="" className="h-3.5 w-3.5 object-contain" draggable={false} />
         </span>
       }
@@ -314,20 +313,21 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
 
       <div
         ref={previewRef}
-        className="foldder-frameless-main relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-[#0a0a0a] group/out"
-        style={{ minHeight: 120 }}
+        className="foldder-frameless-main relative flex min-h-0 flex-1 flex-col overflow-hidden"
       >
         {nodeData.value && nodeMediaVisible ? (
-          <img
-            src={nodeData.value}
-            alt="Designer preview — página 1"
-            className="h-full w-full object-cover bg-zinc-950/80"
-            onLoad={refreshHandleGeometry}
-            onError={refreshHandleGeometry}
-          />
+          <div className="absolute inset-0 overflow-hidden" aria-hidden>
+            <img
+              src={nodeData.value}
+              alt="Designer preview — página 1"
+              className="h-full w-full object-cover bg-zinc-950/80"
+              onLoad={refreshHandleGeometry}
+              onError={refreshHandleGeometry}
+            />
+          </div>
         ) : pages[0] && (pages[0].objects?.length ?? 0) > 0 && firstPageDims ? (
           <div
-            className="h-full w-full overflow-hidden bg-[#fafafa]"
+            className="absolute inset-0 overflow-hidden bg-[#fafafa]"
             style={{
               aspectRatio: `${Math.max(1, firstPageDims.width)} / ${Math.max(1, firstPageDims.height)}`,
             }}
@@ -340,16 +340,23 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
             />
           </div>
         ) : (
-          <div className="flex flex-col items-center justify-center gap-2 py-6 opacity-40">
-            <Pencil size={28} className="text-violet-400" strokeWidth={1.5} />
-            <span className="text-[7px] font-black uppercase tracking-widest text-zinc-500">
-              Open Studio to design
-            </span>
+          <div className="designer-empty-background absolute inset-0 overflow-hidden" aria-hidden>
+            <img
+              src={DESIGNER_EMPTY_BACKGROUND_SRC}
+              alt=""
+              className="h-full w-full object-contain object-bottom"
+              draggable={false}
+              onLoad={refreshHandleGeometry}
+              onError={refreshHandleGeometry}
+            />
           </div>
         )}
-        <FoldderStudioModeCenterButton onClick={() => {
-          openStudio();
-        }} />
+        <div className="relative z-10 flex min-h-0 flex-1 flex-col pointer-events-none">
+          <div className="flex-1" />
+          <FoldderStudioModeCenterButton onClick={() => {
+            openStudio();
+          }} />
+        </div>
       </div>
 
       {isStudioOpen && (

@@ -4,16 +4,57 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { easeCircleOut, easeExpOut } from "d3-ease";
 import { Renderer, Program, Mesh, Triangle, Texture, Transform } from "ogl";
 import type { CanvasBackgroundOption } from "./canvas-backgrounds";
+import { resolveCanvasBackgroundSelection } from "./canvas-backgrounds";
 
 type Props = {
   activeId: string;
   options: CanvasBackgroundOption[];
+  solidColor?: string;
 };
 
-function useWallpaperTargetUrl(activeId: string, options: CanvasBackgroundOption[]): string {
-  return useMemo(
-    () => (options.find((o) => o.id === activeId) ?? options[0]).url,
-    [activeId, options],
+function useWallpaperTargetUrl(activeId: string, options: CanvasBackgroundOption[], solidColor?: string): string {
+  return useMemo(() => {
+    const selection = resolveCanvasBackgroundSelection(activeId, solidColor ?? "", options);
+    return selection.kind === "image" ? selection.url : "";
+  }, [activeId, options, solidColor]);
+}
+
+function CanvasSolidColorBackground({ color }: { color: string }) {
+  const [displayColor, setDisplayColor] = useState(color);
+  const [incomingColor, setIncomingColor] = useState<string | null>(null);
+  const [animKey, setAnimKey] = useState(0);
+
+  useEffect(() => {
+    if (color === displayColor) return;
+    if (incomingColor === color) return;
+    setAnimKey((key) => key + 1);
+    setIncomingColor(color);
+  }, [color, displayColor, incomingColor]);
+
+  const onIncomingEnd = () => {
+    setIncomingColor((current) => {
+      if (current) setDisplayColor(current);
+      return null;
+    });
+  };
+
+  return (
+    <div className="pointer-events-none absolute inset-0 z-0 isolate">
+      <div
+        className="absolute inset-0 transition-colors duration-300"
+        style={{ backgroundColor: displayColor }}
+        aria-hidden
+      />
+      {incomingColor ? (
+        <div
+          key={animKey}
+          className="foldder-canvas-bg-incoming pointer-events-none absolute inset-0"
+          style={{ backgroundColor: incomingColor }}
+          onAnimationEnd={onIncomingEnd}
+          aria-hidden
+        />
+      ) : null}
+    </div>
   );
 }
 
@@ -98,8 +139,8 @@ void main() {
 }
 `;
 
-function CanvasWallpaperCssFallback({ activeId, options }: Props) {
-  const targetUrl = useWallpaperTargetUrl(activeId, options);
+function CanvasWallpaperCssFallback({ activeId, options, solidColor }: Props) {
+  const targetUrl = useWallpaperTargetUrl(activeId, options, solidColor);
   const [displayUrl, setDisplayUrl] = useState(targetUrl);
   const [incomingUrl, setIncomingUrl] = useState<string | null>(null);
   const [animKey, setAnimKey] = useState(0);
@@ -147,8 +188,25 @@ type GlApi = {
 };
 
 export function CanvasWallpaperTransition(props: Props) {
-  const { activeId, options } = props;
-  const targetUrl = useWallpaperTargetUrl(activeId, options);
+  const { activeId, options, solidColor } = props;
+  const selection = useMemo(
+    () => resolveCanvasBackgroundSelection(activeId, solidColor ?? "", options),
+    [activeId, options, solidColor],
+  );
+
+  if (selection.kind === "color") {
+    return <CanvasSolidColorBackground color={selection.color} />;
+  }
+
+  return <CanvasWallpaperImageTransition activeId={activeId} options={options} solidColor={solidColor} />;
+}
+
+function CanvasWallpaperImageTransition({
+  activeId,
+  options,
+  solidColor,
+}: Props) {
+  const targetUrl = useWallpaperTargetUrl(activeId, options, solidColor);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const targetUrlRef = useRef(targetUrl);
@@ -371,7 +429,7 @@ export function CanvasWallpaperTransition(props: Props) {
   }, [targetUrl, useCssFallback, webglReady]);
 
   if (useCssFallback) {
-    return <CanvasWallpaperCssFallback activeId={activeId} options={options} />;
+    return <CanvasWallpaperCssFallback activeId={activeId} options={options} solidColor={solidColor} />;
   }
 
   return (

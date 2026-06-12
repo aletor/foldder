@@ -52,6 +52,7 @@ type StandardDesktopViewProps = {
   onOpenFoldderFullscreen: () => void;
   foldderOpenRequest?: number;
   canvasBgId: string;
+  canvasBgColor?: string;
 };
 
 function visibleFiles(files: ProjectFile[]): ProjectFile[] {
@@ -123,6 +124,7 @@ export function StandardDesktopView({
   onOpenFoldderFullscreen,
   foldderOpenRequest = 0,
   canvasBgId,
+  canvasBgColor,
 }: StandardDesktopViewProps) {
   const [folderOpen, setFolderOpen] = useState(false);
   const [folderSection, setFolderSection] = useState<FoldderDesktopSectionId>("all");
@@ -204,7 +206,7 @@ export function StandardDesktopView({
       className="absolute inset-0 z-[80] overflow-hidden bg-[#050505] text-white"
       aria-label="Vista estándar Foldder"
     >
-      <CanvasWallpaperTransition activeId={canvasBgId} options={CANVAS_BACKGROUNDS} />
+      <CanvasWallpaperTransition activeId={canvasBgId} options={CANVAS_BACKGROUNDS} solidColor={canvasBgColor} />
       <div className="pointer-events-none absolute inset-0 z-0 bg-[radial-gradient(circle_at_18%_16%,rgba(99,212,253,0.16),transparent_34%),radial-gradient(circle_at_82%_72%,rgba(253,176,75,0.12),transparent_38%),linear-gradient(180deg,rgba(0,0,0,0.03),rgba(0,0,0,0.18))]" />
 
       <div className="pointer-events-none absolute inset-0 z-[3]">

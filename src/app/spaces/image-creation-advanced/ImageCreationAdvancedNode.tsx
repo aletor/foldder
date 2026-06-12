@@ -1709,13 +1709,13 @@ function ImageCreationAdvancedStudio({
               setOpenCardMenuId((current) => (current === correction.id ? null : correction.id));
             }}
             disabled={generating || drawingMode || Boolean(historyPreviewSnapshot)}
-            className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-white/[0.06] text-zinc-400 transition hover:bg-white/[0.1] hover:text-white disabled:opacity-40"
+            className="flex h-8 w-8 items-center justify-center rounded-none bg-white/[0.06] text-zinc-400 transition hover:bg-white/[0.1] hover:text-white disabled:opacity-40"
             aria-label="Correction menu"
           >
             <MoreHorizontal size={15} />
           </button>
           {isOpen ? (
-            <div className="absolute right-0 top-9 z-30 min-w-[128px] overflow-hidden rounded-[10px] bg-[#101116] p-1 text-[11px] font-bold text-zinc-200 shadow-2xl ring-1 ring-white/10">
+            <div className="absolute right-0 top-9 z-30 min-w-[128px] overflow-hidden rounded-none bg-[#101116] p-1 text-[11px] font-bold text-zinc-200 shadow-2xl ring-1 ring-white/10">
               {state === "inactive" ? (
                 <button
                   type="button"
@@ -1724,7 +1724,7 @@ function ImageCreationAdvancedStudio({
                     toggleCorrectionOnly(correction.id);
                     setOpenCardMenuId(null);
                   }}
-                  className="block w-full rounded-[8px] px-3 py-2 text-left hover:bg-white/[0.08]"
+                  className="block w-full rounded-none px-3 py-2 text-left hover:bg-white/[0.08]"
                 >
                   Activate
                 </button>
@@ -1737,7 +1737,7 @@ function ImageCreationAdvancedStudio({
                       openCorrectionEditor(correction);
                       setOpenCardMenuId(null);
                     }}
-                    className="block w-full rounded-[8px] px-3 py-2 text-left hover:bg-white/[0.08]"
+                    className="block w-full rounded-none px-3 py-2 text-left hover:bg-white/[0.08]"
                   >
                     Edit
                   </button>
@@ -1749,7 +1749,7 @@ function ImageCreationAdvancedStudio({
                         toggleCorrectionOnly(correction.id);
                         setOpenCardMenuId(null);
                       }}
-                      className="block w-full rounded-[8px] px-3 py-2 text-left hover:bg-white/[0.08]"
+                      className="block w-full rounded-none px-3 py-2 text-left hover:bg-white/[0.08]"
                     >
                       Deactivate
                     </button>
@@ -1762,7 +1762,7 @@ function ImageCreationAdvancedStudio({
                   event.stopPropagation();
                   deleteCorrectionOnly(correction.id);
                 }}
-                className="block w-full rounded-[8px] px-3 py-2 text-left text-rose-200 hover:bg-rose-500/15"
+                className="block w-full rounded-none px-3 py-2 text-left text-rose-200 hover:bg-rose-500/15"
               >
                 Delete
               </button>
@@ -1787,10 +1787,10 @@ function ImageCreationAdvancedStudio({
         <div
           key={correction.id}
           onClick={() => openCorrectionEditor(correction)}
-          className={`cursor-pointer rounded-[10px] border p-3 transition hover:bg-white/[0.07] ${correctionCardTone(state, section)}`}
+          className={`cursor-pointer rounded-none border p-3 transition hover:bg-white/[0.07] ${correctionCardTone(state, section)}`}
         >
           <div className="flex gap-3">
-            <div className="h-[74px] w-[92px] shrink-0 overflow-hidden rounded-[10px] bg-zinc-800/70">
+            <div className="h-[74px] w-[92px] shrink-0 overflow-hidden rounded-none bg-zinc-800/70">
               {thumbnailUrl ? (
                 <img src={thumbnailUrl} alt="" className="h-full w-full object-cover" />
               ) : (
@@ -1801,7 +1801,7 @@ function ImageCreationAdvancedStudio({
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex items-start justify-between gap-2">
-                <span className={`rounded-[10px] px-2 py-1 text-[9px] font-bold ${correctionBadgeClass(state)}`}>
+                <span className={`rounded-none px-2 py-1 text-[9px] font-bold ${correctionBadgeClass(state)}`}>
                   {correctionViewLabel(state)}
                 </span>
                 {renderCardMenu(correction)}
@@ -1825,7 +1825,7 @@ function ImageCreationAdvancedStudio({
             </div>
           </div>
           {correction.lastGenerationStatus === "failed" && correction.lastGenerationError ? (
-            <p className="mt-2 rounded-[10px] bg-rose-500/10 px-2 py-1.5 text-[10px] text-rose-200">{correction.lastGenerationError}</p>
+            <p className="mt-2 rounded-none bg-rose-500/10 px-2 py-1.5 text-[10px] text-rose-200">{correction.lastGenerationError}</p>
           ) : null}
         </div>
       );
@@ -1849,15 +1849,15 @@ function ImageCreationAdvancedStudio({
           onClick={() => setExpandedPreviousCorrectionId(correction.id)}
           onMouseEnter={() => setHoveredPreviousCorrectionId(correction.id)}
           onMouseLeave={() => setHoveredPreviousCorrectionId(null)}
-          className="relative flex w-full items-center gap-2 rounded-[10px] px-2.5 py-2 text-left transition hover:bg-white/[0.055]"
+          className="relative flex w-full items-center gap-2 rounded-none px-2.5 py-2 text-left transition hover:bg-white/[0.055]"
         >
           <span className={`h-2 w-2 shrink-0 rounded-full ${state === "inactive" ? "bg-zinc-500" : "bg-emerald-300"}`} />
           <span className={`min-w-0 flex-1 truncate text-[11px] text-zinc-300 ${state === "inactive" ? "line-through opacity-60" : ""}`}>
             {correction.userInstruction}
           </span>
-          <span className="rounded-[8px] bg-white/[0.05] px-2 py-1 text-[9px] font-bold text-zinc-500">#{batch}</span>
+          <span className="rounded-none bg-white/[0.05] px-2 py-1 text-[9px] font-bold text-zinc-500">#{batch}</span>
           {hoveredPreviousCorrectionId === correction.id && cropUrl ? (
-            <span className="pointer-events-none absolute right-full top-0 z-40 mr-3 h-28 w-36 overflow-hidden rounded-[10px] bg-zinc-950 shadow-2xl ring-1 ring-white/10">
+            <span className="pointer-events-none absolute right-full top-0 z-40 mr-3 h-28 w-36 overflow-hidden rounded-none bg-zinc-950 shadow-2xl ring-1 ring-white/10">
               <img src={cropUrl} alt="" className="h-full w-full object-cover" />
             </span>
           ) : null}
@@ -1873,7 +1873,7 @@ function ImageCreationAdvancedStudio({
       return (
         <div
           key={snapshot.id}
-          className={`rounded-[10px] border p-2 transition ${
+          className={`rounded-none border p-2 transition ${
             selected ? "border-yellow-300/70 bg-yellow-300/10" : "border-white/10 bg-black/20 hover:bg-white/[0.045]"
           }`}
         >
@@ -1886,7 +1886,7 @@ function ImageCreationAdvancedStudio({
                 setOpenCardMenuId(null);
               }}
               disabled={generating || drawingMode}
-              className="h-[58px] w-[76px] shrink-0 overflow-hidden rounded-[10px] bg-zinc-900 disabled:opacity-50"
+              className="h-[58px] w-[76px] shrink-0 overflow-hidden rounded-none bg-zinc-900 disabled:opacity-50"
               aria-label={`Preview batch ${snapshot.batchNumber}`}
             >
               <img src={snapshot.workingImage.imageUrl} alt="" className="h-full w-full object-cover" />
@@ -1903,7 +1903,7 @@ function ImageCreationAdvancedStudio({
                   type="button"
                   onClick={() => restoreHistorySnapshot(snapshot)}
                   disabled={generating}
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-white/[0.06] text-zinc-300 transition hover:bg-yellow-300 hover:text-zinc-950 disabled:opacity-40"
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-none bg-white/[0.06] text-zinc-300 transition hover:bg-yellow-300 hover:text-zinc-950 disabled:opacity-40"
                   aria-label={`Return to batch ${snapshot.batchNumber}`}
                 >
                   <RotateCcw size={13} />
@@ -1946,7 +1946,7 @@ function ImageCreationAdvancedStudio({
       <div className="fixed inset-0 z-[100090] flex flex-col bg-[#0b0c10] text-white" data-foldder-i18n-ignore>
         <header className="flex min-h-[74px] items-center justify-between bg-[#101116]/95 px-7 py-4 backdrop-blur-xl">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-yellow-300/14 text-yellow-200">
+            <div className="flex h-10 w-10 items-center justify-center rounded-none bg-yellow-300/14 text-yellow-200">
               <Sparkles size={20} />
             </div>
             <div className="min-w-0">
@@ -1955,14 +1955,14 @@ function ImageCreationAdvancedStudio({
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <span className="inline-flex items-center gap-2 rounded-[10px] bg-emerald-400/10 px-3 py-2 text-[11px] font-bold text-emerald-100">
+            <span className="inline-flex items-center gap-2 rounded-none bg-emerald-400/10 px-3 py-2 text-[11px] font-bold text-emerald-100">
               <ShieldCheck size={14} />
               Editing from master
             </span>
             <button
               type="button"
               onClick={onClose}
-              className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-white/[0.05] text-zinc-400 transition hover:bg-white/10 hover:text-white"
+              className="flex h-10 w-10 items-center justify-center rounded-none bg-white/[0.05] text-zinc-400 transition hover:bg-white/10 hover:text-white"
               aria-label="Close"
             >
               <X size={20} />
@@ -1978,7 +1978,7 @@ function ImageCreationAdvancedStudio({
                   <img
                     src={previewUrl}
                     alt=""
-                    className="absolute rounded-[10px] object-fill shadow-2xl"
+                    className="absolute rounded-none object-fill shadow-2xl"
                     style={{
                       height: renderedRect.height,
                       left: renderedRect.x,
@@ -2063,7 +2063,7 @@ function ImageCreationAdvancedStudio({
                   ) : null}
                   {draftReadyForPopover && draftPopoverStyle ? (
                     <div
-                      className="absolute z-20 rounded-[10px] bg-[#111218]/95 p-3 shadow-2xl ring-1 ring-white/10 backdrop-blur-xl"
+                      className="absolute z-20 rounded-none bg-[#111218]/95 p-3 shadow-2xl ring-1 ring-white/10 backdrop-blur-xl"
                       style={{
                         left: draftPopoverStyle.left,
                         top: draftPopoverStyle.top,
@@ -2073,7 +2073,7 @@ function ImageCreationAdvancedStudio({
                       <button
                         type="button"
                         onClick={cancelDrawing}
-                        className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-[10px] text-zinc-500 transition hover:bg-white/10 hover:text-white"
+                        className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-none text-zinc-500 transition hover:bg-white/10 hover:text-white"
                         aria-label="Cancel correction"
                       >
                         <X size={14} />
@@ -2083,7 +2083,7 @@ function ImageCreationAdvancedStudio({
                         value={draftText}
                         onChange={(event) => setDraftText(event.target.value)}
                         placeholder="What should happen here?"
-                        className="mt-6 min-h-[76px] w-full resize-none rounded-[10px] bg-black/35 p-3 text-[13px] leading-relaxed text-zinc-100 outline-none placeholder:text-zinc-600 focus:bg-black/45"
+                        className="mt-6 min-h-[76px] w-full resize-none rounded-none bg-black/35 p-3 text-[13px] leading-relaxed text-zinc-100 outline-none placeholder:text-zinc-600 focus:bg-black/45"
                       />
                       <input
                         ref={referenceInputRef}
@@ -2096,7 +2096,7 @@ function ImageCreationAdvancedStudio({
                       <button
                         type="button"
                         onClick={() => referenceInputRef.current?.click()}
-                        className="mt-2 flex w-full items-center justify-center gap-2 rounded-[10px] bg-white/[0.06] px-3 py-2 text-[11px] font-bold text-zinc-200 transition hover:bg-white/[0.1]"
+                        className="mt-2 flex w-full items-center justify-center gap-2 rounded-none bg-white/[0.06] px-3 py-2 text-[11px] font-bold text-zinc-200 transition hover:bg-white/[0.1]"
                       >
                         <ImageIcon size={14} />
                         Add reference image
@@ -2104,7 +2104,7 @@ function ImageCreationAdvancedStudio({
                       {draftReferences.length > 0 ? (
                         <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
                           {draftReferences.map((reference) => (
-                            <div key={reference.id} className="relative h-14 w-14 shrink-0 overflow-hidden rounded-[10px] bg-black/35">
+                            <div key={reference.id} className="relative h-14 w-14 shrink-0 overflow-hidden rounded-none bg-black/35">
                               <img src={reference.objectUrl} alt="" className="h-full w-full object-cover" />
                               <button
                                 type="button"
@@ -2119,12 +2119,12 @@ function ImageCreationAdvancedStudio({
                         </div>
                       ) : null}
                       {draftGridLayout?.discardedImageCount ? (
-                        <p className="mt-2 rounded-[10px] bg-amber-400/10 px-2 py-1.5 text-[10px] font-bold text-amber-100">
+                        <p className="mt-2 rounded-none bg-amber-400/10 px-2 py-1.5 text-[10px] font-bold text-amber-100">
                           Only the first 16 images will be used.
                         </p>
                       ) : null}
                       {referenceUploadError ? (
-                        <p className="mt-2 rounded-[10px] bg-rose-500/15 px-2 py-1.5 text-[10px] text-rose-100">
+                        <p className="mt-2 rounded-none bg-rose-500/15 px-2 py-1.5 text-[10px] text-rose-100">
                           {referenceUploadError}
                         </p>
                       ) : null}
@@ -2133,7 +2133,7 @@ function ImageCreationAdvancedStudio({
                           type="button"
                           onClick={cancelDrawing}
                           disabled={referenceUploading}
-                          className="rounded-[10px] px-3 py-2 text-[11px] font-bold text-zinc-500 transition hover:bg-white/[0.06] hover:text-zinc-200"
+                          className="rounded-none px-3 py-2 text-[11px] font-bold text-zinc-500 transition hover:bg-white/[0.06] hover:text-zinc-200"
                         >
                           Cancel
                         </button>
@@ -2141,7 +2141,7 @@ function ImageCreationAdvancedStudio({
                           type="button"
                           onClick={() => void confirmDraftCorrection()}
                           disabled={!draftCanConfirm || referenceUploading}
-                          className="rounded-[10px] bg-yellow-300 px-4 py-2 text-[11px] font-black uppercase tracking-[0.12em] text-zinc-950 transition hover:bg-yellow-200 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
+                          className="rounded-none bg-yellow-300 px-4 py-2 text-[11px] font-black uppercase tracking-[0.12em] text-zinc-950 transition hover:bg-yellow-200 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
                         >
                           {referenceUploading ? "Saving refs..." : "Confirm correction"}
                         </button>
@@ -2150,7 +2150,7 @@ function ImageCreationAdvancedStudio({
                   ) : null}
                   {editingCorrection && editPopoverStyle ? (
                     <div
-                      className="absolute z-20 rounded-[10px] bg-[#111218]/95 p-3 shadow-2xl ring-1 ring-white/10 backdrop-blur-xl"
+                      className="absolute z-20 rounded-none bg-[#111218]/95 p-3 shadow-2xl ring-1 ring-white/10 backdrop-blur-xl"
                       style={{
                         left: editPopoverStyle.left,
                         top: editPopoverStyle.top,
@@ -2161,7 +2161,7 @@ function ImageCreationAdvancedStudio({
                         type="button"
                         onClick={cancelCorrectionEditor}
                         disabled={referenceUploading}
-                        className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-[10px] text-zinc-500 transition hover:bg-white/10 hover:text-white disabled:opacity-40"
+                        className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-none text-zinc-500 transition hover:bg-white/10 hover:text-white disabled:opacity-40"
                         aria-label="Close correction editor"
                       >
                         <X size={14} />
@@ -2173,10 +2173,10 @@ function ImageCreationAdvancedStudio({
                         value={editText}
                         onChange={(event) => setEditText(event.target.value)}
                         placeholder="What should happen here?"
-                        className="mt-3 min-h-[76px] w-full resize-none rounded-[10px] bg-black/35 p-3 text-[13px] leading-relaxed text-zinc-100 outline-none placeholder:text-zinc-600 focus:bg-black/45"
+                        className="mt-3 min-h-[76px] w-full resize-none rounded-none bg-black/35 p-3 text-[13px] leading-relaxed text-zinc-100 outline-none placeholder:text-zinc-600 focus:bg-black/45"
                       />
                       {editingCorrection.userReference && editReferences.length === 0 ? (
-                        <div className="mt-2 overflow-hidden rounded-[10px] bg-black/35">
+                        <div className="mt-2 overflow-hidden rounded-none bg-black/35">
                           <img
                             src={gridUrlFromReference(editingCorrection.userReference)}
                             alt=""
@@ -2200,7 +2200,7 @@ function ImageCreationAdvancedStudio({
                         type="button"
                         onClick={() => editReferenceInputRef.current?.click()}
                         disabled={referenceUploading}
-                        className="mt-2 flex w-full items-center justify-center gap-2 rounded-[10px] bg-white/[0.06] px-3 py-2 text-[11px] font-bold text-zinc-200 transition hover:bg-white/[0.1] disabled:opacity-40"
+                        className="mt-2 flex w-full items-center justify-center gap-2 rounded-none bg-white/[0.06] px-3 py-2 text-[11px] font-bold text-zinc-200 transition hover:bg-white/[0.1] disabled:opacity-40"
                       >
                         <RefreshCw size={14} />
                         Replace references
@@ -2208,7 +2208,7 @@ function ImageCreationAdvancedStudio({
                       {editReferences.length > 0 ? (
                         <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
                           {editReferences.map((reference) => (
-                            <div key={reference.id} className="relative h-14 w-14 shrink-0 overflow-hidden rounded-[10px] bg-black/35">
+                            <div key={reference.id} className="relative h-14 w-14 shrink-0 overflow-hidden rounded-none bg-black/35">
                               <img src={reference.objectUrl} alt="" className="h-full w-full object-cover" />
                               <button
                                 type="button"
@@ -2223,12 +2223,12 @@ function ImageCreationAdvancedStudio({
                         </div>
                       ) : null}
                       {editGridLayout?.discardedImageCount ? (
-                        <p className="mt-2 rounded-[10px] bg-amber-400/10 px-2 py-1.5 text-[10px] font-bold text-amber-100">
+                        <p className="mt-2 rounded-none bg-amber-400/10 px-2 py-1.5 text-[10px] font-bold text-amber-100">
                           Only the first 16 images will be used.
                         </p>
                       ) : null}
                       {referenceUploadError ? (
-                        <p className="mt-2 rounded-[10px] bg-rose-500/15 px-2 py-1.5 text-[10px] text-rose-100">
+                        <p className="mt-2 rounded-none bg-rose-500/15 px-2 py-1.5 text-[10px] text-rose-100">
                           {referenceUploadError}
                         </p>
                       ) : null}
@@ -2237,7 +2237,7 @@ function ImageCreationAdvancedStudio({
                           type="button"
                           onClick={cancelCorrectionEditor}
                           disabled={referenceUploading}
-                          className="rounded-[10px] px-3 py-2 text-[11px] font-bold text-zinc-500 transition hover:bg-white/[0.06] hover:text-zinc-200 disabled:opacity-40"
+                          className="rounded-none px-3 py-2 text-[11px] font-bold text-zinc-500 transition hover:bg-white/[0.06] hover:text-zinc-200 disabled:opacity-40"
                         >
                           Close
                         </button>
@@ -2245,7 +2245,7 @@ function ImageCreationAdvancedStudio({
                           type="button"
                           onClick={() => void saveCorrectionEditor()}
                           disabled={!editCanSave || referenceUploading}
-                          className="rounded-[10px] bg-yellow-300 px-4 py-2 text-[11px] font-black uppercase tracking-[0.12em] text-zinc-950 transition hover:bg-yellow-200 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
+                          className="rounded-none bg-yellow-300 px-4 py-2 text-[11px] font-black uppercase tracking-[0.12em] text-zinc-950 transition hover:bg-yellow-200 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
                         >
                           {referenceUploading ? "Saving refs..." : "Save changes"}
                         </button>
@@ -2264,39 +2264,39 @@ function ImageCreationAdvancedStudio({
               )}
             </div>
             {session ? (
-              <div className="absolute left-6 top-6 flex items-center gap-2 rounded-[10px] bg-black/55 px-3 py-2 text-[11px] font-bold text-zinc-200 backdrop-blur">
+              <div className="absolute left-6 top-6 flex items-center gap-2 rounded-none bg-black/55 px-3 py-2 text-[11px] font-bold text-zinc-200 backdrop-blur">
                 <BadgeCheck size={14} className="text-emerald-200" />
                 {session.corrections.filter((item) => item.status === "active").length} active corrections
               </div>
             ) : null}
             {historyPreviewSnapshot ? (
-              <div className="absolute left-1/2 top-6 flex -translate-x-1/2 items-center gap-2 rounded-[10px] bg-yellow-300 px-3 py-2 text-[11px] font-black text-zinc-950 shadow-2xl">
+              <div className="absolute left-1/2 top-6 flex -translate-x-1/2 items-center gap-2 rounded-none bg-yellow-300 px-3 py-2 text-[11px] font-black text-zinc-950 shadow-2xl">
                 <History size={14} />
                 Preview batch #{historyPreviewSnapshot.batchNumber}
                 <button
                   type="button"
                   onClick={() => restoreHistorySnapshot(historyPreviewSnapshot)}
-                  className="ml-1 rounded-[8px] bg-zinc-950 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-yellow-100"
+                  className="ml-1 rounded-none bg-zinc-950 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-yellow-100"
                 >
                   Return
                 </button>
                 <button
                   type="button"
                   onClick={() => setHistoryPreviewId(null)}
-                  className="rounded-[8px] bg-zinc-950/10 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-zinc-800"
+                  className="rounded-none bg-zinc-950/10 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-zinc-800"
                 >
                   Current
                 </button>
               </div>
             ) : null}
             {drawingMode ? (
-              <div className="pointer-events-none absolute left-1/2 top-6 -translate-x-1/2 rounded-[10px] bg-black/65 px-4 py-2 text-[11px] font-bold text-white shadow-2xl backdrop-blur">
+              <div className="pointer-events-none absolute left-1/2 top-6 -translate-x-1/2 rounded-none bg-black/65 px-4 py-2 text-[11px] font-bold text-white shadow-2xl backdrop-blur">
                 Draw the area to edit
               </div>
             ) : null}
             <div className="absolute bottom-6 left-1/2 flex -translate-x-1/2 flex-col items-center gap-2">
-              {data.error ? <p className="max-w-[520px] rounded-[10px] bg-rose-500/15 px-3 py-2 text-center text-[11px] text-rose-100">{data.error}</p> : null}
-              {data.warning ? <p className="max-w-[520px] rounded-[10px] bg-amber-400/15 px-3 py-2 text-center text-[11px] text-amber-100">{data.warning}</p> : null}
+              {data.error ? <p className="max-w-[520px] rounded-none bg-rose-500/15 px-3 py-2 text-center text-[11px] text-rose-100">{data.error}</p> : null}
+              {data.warning ? <p className="max-w-[520px] rounded-none bg-amber-400/15 px-3 py-2 text-center text-[11px] text-amber-100">{data.warning}</p> : null}
               <button
                 type="button"
                 onClick={() => {
@@ -2304,7 +2304,7 @@ function ImageCreationAdvancedStudio({
                   void runBatchGeneration(session, pendingCorrectionIds, data.error ? "manual_retry" : "explicit_user_action");
                 }}
                 disabled={!session || !canGenerate || generating || referenceUploading}
-                className="rounded-[10px] bg-yellow-300 px-7 py-3 text-[12px] font-black uppercase tracking-[0.16em] text-zinc-950 transition hover:bg-yellow-200 disabled:cursor-not-allowed disabled:bg-zinc-700/80 disabled:text-zinc-400"
+                className="rounded-none bg-yellow-300 px-7 py-3 text-[12px] font-black uppercase tracking-[0.16em] text-zinc-950 transition hover:bg-yellow-200 disabled:cursor-not-allowed disabled:bg-zinc-700/80 disabled:text-zinc-400"
               >
                 {generateButtonLabel}
               </button>
@@ -2318,7 +2318,7 @@ function ImageCreationAdvancedStudio({
                 type="button"
                 onClick={ensureSession}
                 disabled={!imageInput || Boolean(session)}
-                className="flex w-full items-center justify-center gap-2 rounded-[10px] bg-white/[0.06] px-3 py-3 text-[11px] font-black uppercase tracking-[0.16em] text-zinc-100 transition hover:bg-white/[0.1] disabled:cursor-not-allowed disabled:opacity-45"
+                className="flex w-full items-center justify-center gap-2 rounded-none bg-white/[0.06] px-3 py-3 text-[11px] font-black uppercase tracking-[0.16em] text-zinc-100 transition hover:bg-white/[0.1] disabled:cursor-not-allowed disabled:opacity-45"
               >
                 <ImageIcon size={14} />
                 {session ? "Master locked" : "Create master"}
@@ -2327,25 +2327,25 @@ function ImageCreationAdvancedStudio({
                 type="button"
                 onClick={() => setPromoteModalOpen(true)}
                 disabled={!session?.workingImage || generating}
-                className="flex w-full items-center justify-center gap-2 rounded-[10px] bg-white/[0.035] px-3 py-2 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-400 transition hover:bg-white/[0.08] hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-35"
+                className="flex w-full items-center justify-center gap-2 rounded-none bg-white/[0.035] px-3 py-2 text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-400 transition hover:bg-white/[0.08] hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-35"
               >
                 <Archive size={13} />
                 Promote to master
               </button>
               {promptInput ? (
-                <p className="rounded-[10px] bg-black/20 p-3 text-[12px] leading-relaxed text-zinc-400">{compactText(promptInput)}</p>
+                <p className="rounded-none bg-black/20 p-3 text-[12px] leading-relaxed text-zinc-400">{compactText(promptInput)}</p>
               ) : null}
             </section>
 
             {session ? (
-              <section className="mt-5 rounded-[10px] bg-white/[0.035] p-3">
+              <section className="mt-5 rounded-none bg-white/[0.035] p-3">
                 <div className="mb-2 flex items-center justify-between gap-3">
                   <p className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">Ajuste global</p>
                   <button
                     type="button"
                     onClick={clearGlobalText}
                     disabled={!globalAdjustmentText.trim() || generating}
-                    className="rounded-[8px] px-2 py-1 text-[9px] font-black uppercase tracking-[0.12em] text-zinc-500 transition hover:bg-white/[0.08] hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-35"
+                    className="rounded-none px-2 py-1 text-[9px] font-black uppercase tracking-[0.12em] text-zinc-500 transition hover:bg-white/[0.08] hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-35"
                   >
                     Limpiar
                   </button>
@@ -2355,24 +2355,24 @@ function ImageCreationAdvancedStudio({
                   onChange={(event) => updateGlobalText(event.target.value)}
                   disabled={generating}
                   placeholder="Iluminación, ambiente, estilo general..."
-                  className="min-h-[72px] w-full resize-none rounded-[10px] bg-black/28 p-3 text-[12px] leading-relaxed text-zinc-100 outline-none placeholder:text-zinc-600 focus:bg-black/40 disabled:opacity-55"
+                  className="min-h-[72px] w-full resize-none rounded-none bg-black/28 p-3 text-[12px] leading-relaxed text-zinc-100 outline-none placeholder:text-zinc-600 focus:bg-black/40 disabled:opacity-55"
                 />
                 <div className="mt-2 flex items-center justify-between gap-2 text-[10px] font-bold">
                   {!globalAdjustmentText.trim() ? (
                     <span className="text-zinc-600">Sin ajuste global</span>
                   ) : globalAdjustment?.status === "applied" ? (
-                    <span className="rounded-[8px] bg-emerald-400/10 px-2 py-1 text-emerald-100">
+                    <span className="rounded-none bg-emerald-400/10 px-2 py-1 text-emerald-100">
                       Aplicado en batch #{globalAdjustment.appliedInBatch ?? "?"}
                     </span>
                   ) : (
-                    <span className="rounded-[8px] bg-amber-300/10 px-2 py-1 text-amber-100">Pendiente de aplicar</span>
+                    <span className="rounded-none bg-amber-300/10 px-2 py-1 text-amber-100">Pendiente de aplicar</span>
                   )}
                   {globalAdjustmentText.trim() && globalAdjustment?.status === "applied" ? (
                     <button
                       type="button"
                       onClick={clearGlobalText}
                       disabled={generating}
-                      className="rounded-[8px] bg-white/[0.055] px-2 py-1 text-zinc-300 transition hover:bg-white/[0.1] disabled:opacity-40"
+                      className="rounded-none bg-white/[0.055] px-2 py-1 text-zinc-300 transition hover:bg-white/[0.1] disabled:opacity-40"
                     >
                       Quitar ajuste
                     </button>
@@ -2382,13 +2382,13 @@ function ImageCreationAdvancedStudio({
             ) : null}
 
             {session ? (
-              <section className="mt-5 rounded-[10px] bg-white/[0.035] p-3">
+              <section className="mt-5 rounded-none bg-white/[0.035] p-3">
                 <div className="mb-2 flex items-center justify-between gap-3">
                   <p className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">
                     <History size={13} />
                     History
                   </p>
-                  <span className="rounded-[8px] bg-black/25 px-2 py-1 text-[9px] font-bold text-zinc-500">
+                  <span className="rounded-none bg-black/25 px-2 py-1 text-[9px] font-bold text-zinc-500">
                     {historySnapshots.length}
                   </span>
                 </div>
@@ -2400,7 +2400,7 @@ function ImageCreationAdvancedStudio({
                       .map((snapshot) => renderHistorySnapshot(snapshot))}
                   </div>
                 ) : (
-                  <p className="rounded-[10px] bg-black/20 p-3 text-[11px] leading-relaxed text-zinc-500">
+                  <p className="rounded-none bg-black/20 p-3 text-[11px] leading-relaxed text-zinc-500">
                     Generated states will appear here so you can preview and return to a previous point.
                   </p>
                 )}
@@ -2442,7 +2442,7 @@ function ImageCreationAdvancedStudio({
                           setPreviousExpanded((value) => !value);
                           setExpandedPreviousCorrectionId(null);
                         }}
-                        className="flex w-full items-center justify-between rounded-[10px] px-1 py-1 text-left text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500 transition hover:text-zinc-300"
+                        className="flex w-full items-center justify-between rounded-none px-1 py-1 text-left text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500 transition hover:text-zinc-300"
                       >
                         <span className="flex items-center gap-2">
                           {previousExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
@@ -2450,7 +2450,7 @@ function ImageCreationAdvancedStudio({
                         </span>
                       </button>
                       {previousExpanded ? (
-                        <div className="space-y-1 rounded-[10px] bg-black/10 p-1">
+                        <div className="space-y-1 rounded-none bg-black/10 p-1">
                           {correctionSections.previous.map((correction) => renderCompactPreviousRow(correction))}
                         </div>
                       ) : null}
@@ -2458,7 +2458,7 @@ function ImageCreationAdvancedStudio({
                   ) : null}
                 </div>
               ) : (
-                <div className="rounded-[10px] bg-white/[0.04] p-4 text-[12px] leading-relaxed text-zinc-500">
+                <div className="rounded-none bg-white/[0.04] p-4 text-[12px] leading-relaxed text-zinc-500">
                   Corrections will appear here as editable structured objects.
                 </div>
               )}
@@ -2466,7 +2466,7 @@ function ImageCreationAdvancedStudio({
 
             <section className="mt-5 space-y-3">
               {drawingMode ? (
-                <div className="rounded-[10px] bg-yellow-300/10 px-4 py-3 text-[11px] font-bold text-yellow-100">
+                <div className="rounded-none bg-yellow-300/10 px-4 py-3 text-[11px] font-bold text-yellow-100">
                   Drawing new correction...
                 </div>
               ) : (
@@ -2474,7 +2474,7 @@ function ImageCreationAdvancedStudio({
                   type="button"
                   onClick={startDrawingCorrection}
                   disabled={!imageInput || generating || Boolean(historyPreviewSnapshot)}
-                  className="flex w-full items-center justify-center gap-2 rounded-[10px] bg-yellow-300 px-4 py-3 text-[11px] font-black uppercase tracking-[0.16em] text-zinc-950 transition hover:bg-yellow-200 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
+                  className="flex w-full items-center justify-center gap-2 rounded-none bg-yellow-300 px-4 py-3 text-[11px] font-black uppercase tracking-[0.16em] text-zinc-950 transition hover:bg-yellow-200 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
                 >
                   <Plus size={14} />
                   Add correction
@@ -2491,7 +2491,7 @@ function ImageCreationAdvancedStudio({
               </label>
             </section>
 
-            <section className="mt-5 rounded-[10px] bg-black/20 p-3 text-[11px] leading-relaxed text-zinc-500">
+            <section className="mt-5 rounded-none bg-black/20 p-3 text-[11px] leading-relaxed text-zinc-500">
               <div className="mb-1 flex items-center gap-2 text-zinc-300">
                 <Clock3 size={13} />
                 Generation is guarded
@@ -2504,7 +2504,7 @@ function ImageCreationAdvancedStudio({
         </main>
         {promoteModalOpen ? (
           <div className="fixed inset-0 z-[100100] flex items-center justify-center bg-black/55 p-6 backdrop-blur-sm">
-            <div className="w-full max-w-[520px] rounded-[10px] bg-[#15161d] p-6 text-zinc-100 shadow-2xl ring-1 ring-white/12">
+            <div className="w-full max-w-[520px] rounded-none bg-[#15161d] p-6 text-zinc-100 shadow-2xl ring-1 ring-white/12">
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <p className="text-[10px] font-black uppercase tracking-[0.18em] text-yellow-200/80">Promote</p>
@@ -2513,7 +2513,7 @@ function ImageCreationAdvancedStudio({
                 <button
                   type="button"
                   onClick={() => setPromoteModalOpen(false)}
-                  className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-white/[0.05] text-zinc-400 transition hover:bg-white/10 hover:text-white"
+                  className="flex h-9 w-9 items-center justify-center rounded-none bg-white/[0.05] text-zinc-400 transition hover:bg-white/10 hover:text-white"
                   aria-label="Close promote modal"
                 >
                   <X size={18} />
@@ -2523,11 +2523,11 @@ function ImageCreationAdvancedStudio({
                 The current image becomes the new starting point for this session. All applied corrections are archived and the active panel becomes clean for new edits from here.
               </p>
               <div className="mt-4 grid gap-3 text-[12px] leading-relaxed text-zinc-400">
-                <div className="rounded-[10px] bg-white/[0.045] p-3">
+                <div className="rounded-none bg-white/[0.045] p-3">
                   <p className="font-bold text-zinc-200">Advantages</p>
                   <p className="mt-1">Cleaner panel and faster future generations because fewer references need to travel.</p>
                 </div>
-                <div className="rounded-[10px] bg-white/[0.045] p-3">
+                <div className="rounded-none bg-white/[0.045] p-3">
                   <p className="font-bold text-zinc-200">Cost</p>
                   <p className="mt-1">The new master has one generation pass more than the original. The previous master and corrections remain archived in the session model.</p>
                 </div>
@@ -2536,7 +2536,7 @@ function ImageCreationAdvancedStudio({
                 <button
                   type="button"
                   onClick={() => setPromoteModalOpen(false)}
-                  className="rounded-[10px] bg-white/[0.06] px-4 py-2 text-[11px] font-bold text-zinc-300 transition hover:bg-white/[0.1]"
+                  className="rounded-none bg-white/[0.06] px-4 py-2 text-[11px] font-bold text-zinc-300 transition hover:bg-white/[0.1]"
                 >
                   Cancel
                 </button>
@@ -2544,7 +2544,7 @@ function ImageCreationAdvancedStudio({
                   type="button"
                   onClick={promoteCurrentWorkingToMaster}
                   disabled={!session?.workingImage}
-                  className="rounded-[10px] bg-yellow-300 px-4 py-2 text-[11px] font-black uppercase tracking-[0.12em] text-zinc-950 transition hover:bg-yellow-200 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
+                  className="rounded-none bg-yellow-300 px-4 py-2 text-[11px] font-black uppercase tracking-[0.12em] text-zinc-950 transition hover:bg-yellow-200 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
                 >
                   Promote
                 </button>
@@ -2697,7 +2697,7 @@ export const ImageCreationAdvancedNode = memo(function ImageCreationAdvancedNode
       </div>
 
       <div className="node-content foldder-frameless-main space-y-3">
-        <div ref={previewFrameRef} className="relative aspect-video overflow-hidden rounded-[10px] bg-slate-950/70">
+        <div ref={previewFrameRef} className="relative aspect-video overflow-hidden rounded-none bg-slate-950/70">
           {previewUrl ? (
             <img src={previewUrl} alt="" className="h-full w-full object-cover" />
           ) : (
@@ -2719,7 +2719,7 @@ export const ImageCreationAdvancedNode = memo(function ImageCreationAdvancedNode
             event.stopPropagation();
             setStudioOpen(true);
           }}
-          className="foldder-frameless-action nodrag flex w-full items-center justify-center gap-2 rounded-[10px] bg-white/[0.07] px-3 py-2 text-[10px] font-black uppercase tracking-widest text-zinc-100 transition hover:bg-white/[0.12]"
+          className="foldder-frameless-action nodrag flex w-full items-center justify-center gap-2 rounded-none bg-white/[0.07] px-3 py-2 text-[10px] font-black uppercase tracking-widest text-zinc-100 transition hover:bg-white/[0.12]"
         >
           <Maximize2 size={13} />
           Open Studio
