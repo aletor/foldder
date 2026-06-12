@@ -108,4 +108,16 @@ export const SIDEBAR_HOVER_HELP: Record<string, { title: string; line: string }>
     title: 'Presenter',
     line: 'Conecta la salida Document del Designer: cada página es un slide (vista previa; animaciones después)',
   },
+  video_editor: {
+    title: 'Video Editor',
+    line: 'Conecta una media_list y edita timeline con vídeo, imágenes y audio generado por prompt',
+  },
+  imageCreationAdvanced: {
+    title: 'Image Advanced',
+    line: 'Creación no destructiva: master inmutable, correcciones estructuradas y reconstrucción desde el original',
+  },
+  export_multimedia: {
+    title: 'Export Multimedia',
+    line: 'Recibe media_list: revisa, filtra, descarga medios y exporta un manifest JSON',
+  },
 };

@@ -20,6 +20,8 @@ import { FoldderNodeHeaderTitle, NodeLabel } from "./foldder-node-ui";
 import { normalizeProjectAssets } from "./project-assets-metadata";
 import { useProjectBrainCanvas } from "./project-brain-canvas-context";
 
+const BRAIN_EMPTY_BACKGROUND_SRC = "/assets/nodes/brain-empty.jpg";
+
 export type ProjectBrainNodeData = {
   label?: string;
 };
@@ -150,7 +152,6 @@ export const ProjectBrainNode = memo(({ id, data, selected }: NodeProps<any>) =>
   }, []);
   const primaryColor = normalizeCardHex(assets.brand.colorPrimary, "#7c3aed");
   const secondaryColor = normalizeCardHex(assets.brand.colorSecondary, "#f5f0ff");
-  const accentColor = normalizeCardHex(assets.brand.colorAccent, "#c4b5fd");
   const atmosphereImage =
     assets.strategy.visualReferenceAnalysis?.dnaCollageImageDataUrl ||
     assets.strategy.visualStyle.environment.imageUrl ||
@@ -172,16 +173,17 @@ export const ProjectBrainNode = memo(({ id, data, selected }: NodeProps<any>) =>
   const headerTitle = nodeData.label?.trim() && !/\.(jpg|jpeg|png|webp|mp4)$/i.test(nodeData.label.trim())
     ? nodeData.label.trim()
     : "Brain";
+  const showBrainEmptyBackground = !atmosphereImage;
 
   return (
     <div
       className={`custom-node tool-node project-brain-node foldder-node--frameless node--glass group/node relative text-zinc-950 ${
-        expanded ? "ring-2 ring-violet-400/45" : ""
-      } ${introActive ? "ring-2 ring-cyan-300/60" : ""}`}
+        showBrainEmptyBackground ? "project-brain-node--empty" : ""
+      } ${expanded ? "ring-2 ring-violet-400/45" : ""} ${introActive ? "ring-2 ring-cyan-300/60" : ""}`}
       style={{
         minWidth: 200,
         minHeight: 120,
-        backgroundColor: secondaryColor,
+        ...(showBrainEmptyBackground ? {} : { backgroundColor: secondaryColor }),
         "--foldder-node-header-tint-color": primaryColor,
         "--foldder-node-output-color": primaryColor,
       } as React.CSSProperties}
@@ -206,18 +208,39 @@ export const ProjectBrainNode = memo(({ id, data, selected }: NodeProps<any>) =>
       </div>
 
       <div
-        className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-none"
-        style={{
-          background: atmosphereImage
-            ? `linear-gradient(180deg, rgba(255,255,255,0.68), rgba(255,255,255,0.22) 44%, rgba(255,255,255,0.82) 100%), url(${atmosphereImage}) center/cover no-repeat`
-            : `radial-gradient(circle at 76% 24%, ${accentColor}72 0, transparent 32%), linear-gradient(135deg, ${secondaryColor}, #fff7f2 48%, ${primaryColor}1d)`,
-        }}
+        className={`relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-none ${
+          showBrainEmptyBackground ? "project-brain-node-visual--empty" : ""
+        }`}
+        style={
+          atmosphereImage
+            ? {
+                background: `linear-gradient(180deg, rgba(255,255,255,0.68), rgba(255,255,255,0.22) 44%, rgba(255,255,255,0.82) 100%), url(${atmosphereImage}) center/cover no-repeat`,
+              }
+            : undefined
+        }
       >
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_28%_14%,rgba(255,255,255,0.84),transparent_34%),linear-gradient(180deg,rgba(255,255,255,0.08),rgba(255,255,255,0.66))]" />
-        <div
-          className="absolute -right-12 top-9 h-44 w-44 rounded-full opacity-55 blur-2xl"
-          style={{ backgroundColor: `${primaryColor}50` }}
-        />
+        {showBrainEmptyBackground ? (
+          <div className="brain-empty-background absolute inset-0 overflow-hidden" aria-hidden>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={BRAIN_EMPTY_BACKGROUND_SRC}
+              alt=""
+              className="h-full w-full object-cover object-center"
+              draggable={false}
+            />
+          </div>
+        ) : null}
+        {atmosphereImage ? (
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_28%_14%,rgba(255,255,255,0.84),transparent_34%),linear-gradient(180deg,rgba(255,255,255,0.08),rgba(255,255,255,0.66))]" />
+        ) : (
+          <div className="absolute inset-0 bg-gradient-to-b from-white/12 via-transparent to-white/58" />
+        )}
+        {!showBrainEmptyBackground ? (
+          <div
+            className="absolute -right-12 top-9 h-44 w-44 rounded-full opacity-55 blur-2xl"
+            style={{ backgroundColor: `${primaryColor}50` }}
+          />
+        ) : null}
 
         <div className="relative flex min-h-0 flex-1 flex-col p-4">
           <div className="flex items-start justify-between gap-3">

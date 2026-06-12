@@ -1,23 +1,39 @@
 "use client";
 
+/* eslint-disable @next/next/no-img-element */
+
 import React, { memo, useCallback, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { NodeResizer, Position, useReactFlow, useStore, type Edge, type Node, type NodeProps, type ReactFlowState } from "@xyflow/react";
+import { NodeResizer, useReactFlow, useStore, type Edge, type Node, type NodeProps, type ReactFlowState } from "@xyflow/react";
 import { shallow } from "zustand/shallow";
 import { Presentation } from "lucide-react";
 import { FOLDDER_FIT_VIEW_EASE } from "@/lib/fit-view-ease";
-import { FoldderDataHandle } from "../FoldderDataHandle";
-import { NodeLabel, FoldderNodeHeaderTitle } from "../foldder-node-ui";
-import { NodeIcon } from "../foldder-icons";
 import type { DesignerNodeData, DesignerPageState } from "../designer/DesignerNode";
 import type { PresenterImageVideoPlacement } from "./presenter-image-video-types";
 import { PresenterStudio } from "./PresenterStudio";
 import { FOLDDER_STANDARD_STUDIO_CLOSE_REQUEST_EVENT, type FoldderStudioEventDetail } from "../desktop-studio-events";
 import type { StandardStudioShellConfig } from "../StandardStudioShell";
 import { useFoldderRenderMetric } from "../use-performance-metrics";
+import {
+  StudioCanvasNodeShell,
+  StudioCanvasOpenButton,
+  type StudioCanvasNodeHandleSpec,
+} from "../studio-node/studio-canvas-node";
 
 const PRESENTER_NODE_MAX_WIDTH = 960;
 const PRESENTER_NODE_MAX_HEIGHT = 2200;
+const PRESENTER_EMPTY_BACKGROUND_SRC = "/assets/nodes/presenter-empty-yellow.jpg";
+
+const PRESENTER_NODE_HANDLES: StudioCanvasNodeHandleSpec[] = [
+  {
+    id: "document",
+    label: "Document",
+    side: "left",
+    top: "50%",
+    type: "target",
+    dataType: "generic",
+  },
+];
 
 export type PresenterNodeData = {
   label?: string;
@@ -76,6 +92,12 @@ export const PresenterNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const { pages, connected, designerMissing, designerNodeId } = useDesignerDocumentPages(id);
 
   const slideCount = pages?.length ?? 0;
+  const showPresenterEmpty = slideCount === 0;
+
+  const openStudio = useCallback(() => {
+    setStandardShell(null);
+    setStudioOpen(true);
+  }, []);
 
   React.useEffect(() => {
     const onOpenStudio = (ev: Event) => {
@@ -130,8 +152,61 @@ export const PresenterNode = memo(({ id, data, selected }: NodeProps<any>) => {
     [id, setNodes],
   );
 
+  const statusPanel = useMemo(() => {
+    if (!connected) {
+      return (
+        <div className="presenter-summary-panel min-w-0">
+          <span className="node-label">Conexión</span>
+          <p className="mt-1 text-[11px] font-light leading-relaxed text-slate-800">
+            Conecta la salida <span className="font-semibold">Document</span> del nodo{" "}
+            <span className="font-medium">Designer</span>.
+          </p>
+        </div>
+      );
+    }
+    if (designerMissing) {
+      return (
+        <div className="presenter-summary-panel min-w-0">
+          <span className="node-label">Conexión</span>
+          <p className="mt-1 text-[11px] font-light leading-relaxed text-rose-900">
+            La conexión debe venir de un nodo Designer.
+          </p>
+        </div>
+      );
+    }
+    if (slideCount === 0) {
+      return (
+        <div className="presenter-summary-panel min-w-0">
+          <span className="node-label">Diapositivas</span>
+          <p className="mt-1 text-[11px] font-light leading-relaxed text-slate-800">
+            El Designer no tiene páginas aún.
+          </p>
+        </div>
+      );
+    }
+    return null;
+  }, [connected, designerMissing, slideCount]);
+
   return (
-    <div className="custom-node tool-node presenter-node group/node" style={{ minWidth: 260 }}>
+    <StudioCanvasNodeShell
+      nodeId={id}
+      nodeType="presenter"
+      selected={selected}
+      label={nodeData.label}
+      defaultLabel="Presenter"
+      title="PRESENTER"
+      badge="DECK"
+      introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}
+      minWidth={260}
+      className={
+        showPresenterEmpty
+          ? "presenter-node presenter-node--empty foldder-frameless-label-dark"
+          : "presenter-node"
+      }
+      handles={PRESENTER_NODE_HANDLES}
+      variant="frameless"
+      material="media"
+    >
       <PresenterNodeResizer
         minWidth={260}
         minHeight={180}
@@ -140,71 +215,38 @@ export const PresenterNode = memo(({ id, data, selected }: NodeProps<any>) => {
         isVisible={selected}
       />
 
-      <NodeLabel id={id} label={nodeData.label} defaultLabel="Presenter" />
-
-      <div className="node-header">
-        <NodeIcon type="presenter" selected={selected} size={16} />
-        <FoldderNodeHeaderTitle introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}>
-          PRESENTER
-        </FoldderNodeHeaderTitle>
-        <div className="node-badge">DECK</div>
-      </div>
-
-      <div
-        className="node-content relative flex min-h-0 min-w-0 flex-col gap-3 px-3 pb-3 pt-2"
-        style={{ minHeight: 120 }}
-      >
-        {!connected && (
-          <div className="min-w-0">
-            <span className="node-label">Conexión</span>
-            <div className="rounded-none border border-slate-200/60 bg-slate-50/50 p-3 text-[11px] leading-snug text-slate-700 shadow-inner">
-              Conecta la salida <span className="font-semibold text-slate-900">Document</span> del nodo{" "}
-              <span className="font-medium text-slate-800">Designer</span>.
-            </div>
+      {showPresenterEmpty ? (
+        <div className="foldder-frameless-main relative flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div className="presenter-empty-background absolute inset-0 overflow-hidden" aria-hidden>
+            <img
+              src={PRESENTER_EMPTY_BACKGROUND_SRC}
+              alt=""
+              className="h-full w-full object-contain object-bottom"
+              draggable={false}
+            />
           </div>
-        )}
-        {connected && designerMissing && (
-          <div className="min-w-0">
-            <span className="node-label">Conexión</span>
-            <div className="rounded-none border border-rose-200/70 bg-rose-50/80 p-3 text-[11px] leading-snug text-rose-800 shadow-inner">
-              La conexión debe venir de un nodo Designer.
-            </div>
+          <div className="node-content presenter-node-content relative z-10 mt-auto flex flex-col gap-3 px-3 pb-3 pt-2">
+            {statusPanel}
           </div>
-        )}
-        {connected && !designerMissing && slideCount === 0 && (
-          <div className="min-w-0">
-            <span className="node-label">Diapositivas</span>
-            <div className="rounded-none border border-slate-200/60 bg-slate-50/50 p-3 text-[11px] text-slate-600 shadow-inner">
-              El Designer no tiene páginas aún.
-            </div>
-          </div>
-        )}
-        {connected && !designerMissing && slideCount > 0 && pages && (
+        </div>
+      ) : (
+        <div className="node-content presenter-node-content relative flex min-h-0 min-w-0 flex-col gap-3 px-3 pb-3 pt-2" style={{ minHeight: 120 }}>
           <div className="min-w-0">
             <span className="node-label">Presentación</span>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setStandardShell(null);
-                setStudioOpen(true);
-              }}
-              className="nodrag flex w-full flex-col items-center justify-center gap-2 rounded-none border border-slate-300/80 bg-white/90 px-3 py-4 text-center shadow-sm transition hover:bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/50"
+            <StudioCanvasOpenButton
+              onClick={openStudio}
+              accent="slate"
+              icon={<Presentation className="h-[26px] w-[26px]" strokeWidth={1.5} aria-hidden />}
+              className="mt-1 flex-col gap-2 py-4"
             >
-              <Presentation className="text-slate-600" size={26} strokeWidth={1.5} aria-hidden />
-              <span className="text-[11px] font-bold uppercase tracking-wide text-slate-800">
-                Abrir presentación
+              <span>Abrir presentación</span>
+              <span className="text-[10px] font-medium normal-case tracking-normal text-slate-500">
+                {slideCount} slides
               </span>
-              <span className="text-[10px] font-medium text-slate-500">{slideCount} slides</span>
-            </button>
+            </StudioCanvasOpenButton>
           </div>
-        )}
-      </div>
-
-      <div className="handle-wrapper handle-left">
-        <FoldderDataHandle type="target" position={Position.Left} id="document" dataType="generic" />
-        <span className="handle-label">Document</span>
-      </div>
+        </div>
+      )}
 
       {studioOpen && pages && pages.length > 0 &&
         typeof document !== "undefined" &&
@@ -231,7 +273,7 @@ export const PresenterNode = memo(({ id, data, selected }: NodeProps<any>) => {
           />,
           document.body,
         )}
-    </div>
+    </StudioCanvasNodeShell>
   );
 });
 

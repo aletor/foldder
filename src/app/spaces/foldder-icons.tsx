@@ -18,6 +18,7 @@ export type FoldderIconKey =
   | 'enhance'
   | 'grok'
   | 'nano'
+  | 'imageAdvanced'
   | 'video'
   | 'videoEdition'
   | 'vfx'
@@ -318,6 +319,24 @@ export function FoldderNano({ state, className, size }: GlyphProps) {
         </span>
       )}
     </span>
+  );
+}
+
+/** Image Advanced — stacked frames + control sliders (sidebar / small tools). */
+export function FoldderImageAdvanced({ state, className, size }: GlyphProps) {
+  return (
+    <FoldderIcon state={state} className={className} size={size}>
+      <rect x="2.15" y="4.05" width="7.35" height="5.85" rx="0.85" opacity={0.32} />
+      <rect x="3.3" y="5.1" width="7.35" height="5.85" rx="0.85" />
+      <circle cx="5.2" cy="7.4" r="0.75" fill="currentColor" stroke="none" strokeWidth={0} opacity={0.35} />
+      <path d="M4.1 10.05 L6.25 8.05 L7.65 9.15 L9.45 7.45" opacity={0.78} strokeWidth={1.15} />
+      <path d="M11.05 5.45 H13.3" opacity={0.72} strokeWidth={1.2} />
+      <circle cx="12.3" cy="5.45" r="0.55" fill="currentColor" stroke="none" strokeWidth={0} />
+      <path d="M11.05 7.7 H13.3" opacity={0.72} strokeWidth={1.2} />
+      <circle cx="11.8" cy="7.7" r="0.55" fill="currentColor" stroke="none" strokeWidth={0} />
+      <path d="M11.05 9.95 H13.3" opacity={0.72} strokeWidth={1.2} />
+      <circle cx="12.6" cy="9.95" r="0.55" fill="currentColor" stroke="none" strokeWidth={0} />
+    </FoldderIcon>
   );
 }
 
@@ -688,6 +707,7 @@ export const FOLDDER_ICON_COLORS: Record<FoldderIconKey, string> = {
   enhance: '#a78bfa',
   grok: '#8b5cf6',
   nano: '#c4b5fd',
+  imageAdvanced: '#f6e56e',
   video: '#a855f7',
   videoEdition: '#a78bfa',
   vfx: '#67e8f9',
@@ -722,6 +742,7 @@ export const FOLDDER_NODE_ICONS: Record<FoldderIconKey, React.FC<GlyphProps>> = 
   enhance: FoldderEnhance,
   grok: FoldderGrok,
   nano: FoldderNano,
+  imageAdvanced: FoldderImageAdvanced,
   video: FoldderVideo,
   videoEdition: FoldderVideoEdition,
   vfx: FoldderVfx,
@@ -755,7 +776,7 @@ export const NODE_TYPE_TO_FOLDDER_ICON: Record<string, FoldderIconKey> = {
   enhancer: 'enhance',
   grokProcessor: 'grok',
   nanoBanana: 'nano',
-  imageCreationAdvanced: 'nano',
+  imageCreationAdvanced: 'imageAdvanced',
   geminiVideo: 'video',
   video_editor: 'videoEdition',
   videoEditor: 'videoEdition',

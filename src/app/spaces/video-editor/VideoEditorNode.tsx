@@ -62,6 +62,8 @@ const VIDEO_EDITOR_URL_TTL_MS = 50 * 60 * 1000;
 const videoEditorPresignedUrlCache = new globalThis.Map<string, { url: string; expiresAt: number }>();
 const videoEditorPresignInFlight = new globalThis.Map<string, Promise<string | null>>();
 
+const VIDEO_EDITOR_EMPTY_BACKGROUND_SRC = "/assets/nodes/video-editor-empty.jpg";
+
 function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
@@ -2385,7 +2387,10 @@ export const VideoEditorNode = memo(function VideoEditorNode({ id, data, selecte
   const label = String((data as { label?: unknown }).label || "Video Editor");
   return (
     <div
-      className={cx("custom-node video-editor-node foldder-node--frameless node--glass relative bg-[#111827] p-4 pt-10 text-white", selected ? "video-editor-node--selected" : undefined)}
+      className={cx(
+        "custom-node video-editor-node foldder-node--frameless node--media relative text-white video-editor-node--empty",
+        selected ? "video-editor-node--selected" : undefined,
+      )}
       style={{ minWidth: 200, minHeight: 120 }}
     >
       <NodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={2200} isVisible={selected} />
@@ -2394,33 +2399,67 @@ export const VideoEditorNode = memo(function VideoEditorNode({ id, data, selecte
         <FoldderDataHandle type="target" position={Position.Left} id="media_list" dataType="generic" />
         <span className="handle-label">Media list</span>
       </div>
-      <div className="video-editor-heading flex items-start justify-between gap-3">
-        <div>
-          <div className="text-[10px] font-black uppercase tracking-[0.18em] text-cyan-100/45">Video Editor</div>
-          <h3 className="mt-1 text-lg font-black tracking-[-0.04em]">{label}</h3>
+
+      <div className="foldder-frameless-main relative flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="video-editor-empty-background absolute inset-0 overflow-hidden" aria-hidden>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={VIDEO_EDITOR_EMPTY_BACKGROUND_SRC}
+            alt=""
+            className="h-full w-full object-cover object-center"
+            draggable={false}
+          />
         </div>
-        <div className="video-editor-icon flex h-10 w-10 items-center justify-center rounded-none bg-cyan-300/15 text-cyan-50">
-          <Film size={18} />
+
+        <div className="node-content video-editor-node-content relative z-10 flex min-h-0 flex-1 flex-col px-3 pb-3 pt-2">
+          <div className="video-editor-heading flex items-start justify-between gap-3">
+            <div>
+              <div className="text-[10px] font-black uppercase tracking-[0.18em] text-white/70">Video Editor</div>
+              <h3 className="mt-1 text-lg font-black tracking-[-0.04em] text-white">{label}</h3>
+            </div>
+            <div className="video-editor-icon flex h-10 w-10 items-center justify-center rounded-none bg-white/15 text-white">
+              <Film size={18} />
+            </div>
+          </div>
+          <div className="video-editor-summary mt-4 rounded-none border-none bg-white/10 p-4 backdrop-blur-sm">
+            {sourceMediaList ? (
+              <>
+                <div className="text-3xl font-black tracking-[-0.06em] text-white">{stats.clips.length} clips</div>
+                <div className="mt-2 text-sm font-semibold text-white/75">
+                  {stats.duration.toFixed(0)}s · {stats.videos} vídeos · {stats.images} imágenes · {stats.audio} audios
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="text-lg font-black tracking-[-0.04em] text-white">Sin medios conectados</div>
+                <div className="mt-1 text-sm text-white/70">Conecta una media_list</div>
+              </>
+            )}
+          </div>
+          <div className="video-editor-actions mt-auto flex items-center justify-between gap-3 pt-3">
+            <span className="video-editor-status rounded-none bg-black/35 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.12em] text-white/80">
+              {effectiveData.status}
+            </span>
+            <button
+              type="button"
+              onClick={() => setStudioOpen(true)}
+              className="video-editor-open-button rounded-none bg-white px-3 py-1.5 text-[11px] font-semibold text-black transition hover:scale-[1.02] hover:bg-[#f7f7f4]"
+            >
+              Abrir
+            </button>
+          </div>
         </div>
       </div>
-      <div className="video-editor-summary mt-4 rounded-none border border-white/10 bg-white/[0.055] p-4">
-        {sourceMediaList ? (
-          <>
-            <div className="text-3xl font-black tracking-[-0.06em]">{stats.clips.length} clips</div>
-            <div className="mt-2 text-sm font-semibold text-white/58">{stats.duration.toFixed(0)}s · {stats.videos} vídeos · {stats.images} imágenes · {stats.audio} audios</div>
-          </>
-        ) : (
-          <>
-            <div className="text-lg font-black tracking-[-0.04em]">Sin medios conectados</div>
-            <div className="mt-1 text-sm text-white/42">Conecta una media_list</div>
-          </>
-        )}
-      </div>
-      <div className="video-editor-actions mt-3 flex items-center justify-between gap-3">
-        <span className="video-editor-status rounded-full bg-white/[0.07] px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.12em] text-white/46">{effectiveData.status}</span>
-        <button type="button" onClick={() => setStudioOpen(true)} className="video-editor-open-button rounded-full bg-white px-3 py-1.5 text-[11px] font-semibold text-[#3a2a20] transition hover:scale-[1.02] hover:bg-[#f7f7f4]">Abrir</button>
-      </div>
-      {studioOpen ? <VideoEditorStudio nodeId={id} data={effectiveData} sourceMediaList={sourceMediaList} onChange={commit} onClose={() => setStudioOpen(false)} /> : null}
+
+      {studioOpen ? (
+        <VideoEditorStudio
+          nodeId={id}
+          data={effectiveData}
+          sourceMediaList={sourceMediaList}
+          onChange={commit}
+          onClose={() => setStudioOpen(false)}
+        />
+      ) : null}
     </div>
   );
 });

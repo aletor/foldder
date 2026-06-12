@@ -78,4 +78,9 @@ export const CANVAS_BACKGROUNDS: CanvasBackgroundOption[] = [
     label: "Mar",
     url: "/wallpapers/pixabay-sea-3652697.jpg",
   },
+  {
+    id: "geometric-mid-century",
+    label: "Formas geométricas",
+    url: "/wallpapers/geometric-mid-century.jpg",
+  },
 ];

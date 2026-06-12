@@ -192,7 +192,7 @@ import {
   FINAL_NODE_ID,
   XYFLOW_NO_PAN_WHEEL_GUARD_CLASS,
   FIT_VIEW_PADDING,
-  FIT_VIEW_PADDING_LIBRARY_DRAG,
+  libraryDragFitViewPadding,
   FIT_VIEW_PADDING_NODE_FOCUS,
   FIT_VIEW_PADDING_CARDS,
   fitAnim,
@@ -210,6 +210,7 @@ import {
   FOLDDER_LIBRARY_PREVIEW_NODE_ID,
   isClientPointOverReactFlowCanvas,
   libraryPreviewPositionFromFlowPoint,
+  resolveLibraryPreviewNodeFrame,
 } from "./library-drag-preview";
 import { foldderIsMacOs, foldderWheelLooksLikeMouse } from "./spaces-wheel";
 import {
@@ -686,6 +687,8 @@ export function SpacesContent() {
 
   /** Tras soltar un nodo desde la librería en el lienzo, el panel queda colapsado hasta volver a la franja izquierda */
   const [sidebarLockedCollapsed, setSidebarLockedCollapsed] = useState(false);
+  /** Tras cartel «Bienvenido»: sidebar abierto hasta rollover + salir */
+  const [sidebarPinnedAfterWelcome, setSidebarPinnedAfterWelcome] = useState(false);
 
   const [libraryDropTargetId, setLibraryDropTargetId] = useState<string | null>(null);
   /** Durante arrastre desde librería: ids de nodos que pueden conectar con el tipo arrastrado */
@@ -1015,7 +1018,7 @@ export function SpacesContent() {
       queueMicrotask(() => {
         setLibraryCompatibleIds(compatible);
         fitView({
-          padding: FIT_VIEW_PADDING_LIBRARY_DRAG,
+          padding: libraryDragFitViewPadding(nodes.length),
           duration: fitAnim(420),
           ...FOLDDER_FIT_VIEW_EASE,
         });
@@ -5414,18 +5417,17 @@ export function SpacesContent() {
 
     const previewData = defaultDataForCanvasDropNode(previewType);
     const previewStyle = defaultCanvasNodeStyleForType(previewType);
-    const frame = getNodeGridFrameForType(previewType, previewData);
-    const width = frame?.width ?? 280;
-    const height = frame?.height ?? 240;
+    const resolved = resolveLibraryPreviewNodeFrame(previewType, previewData, previewStyle);
+    const { width, height } = resolved;
     const label = previewType === "notes" ? "Note" : `${previewType} node`;
     const nodeData = {
-      ...previewData,
+      ...resolved.data,
       _foldderLibraryPreview: true,
       label,
     };
     const shellStyle = mergeNodeOutputBorderStyle(
-      { type: previewType, data: nodeData, style: previewStyle },
-      previewStyle,
+      { type: previewType, data: nodeData, style: resolved.style },
+      resolved.style,
     );
 
     return (
@@ -5514,7 +5516,7 @@ export function SpacesContent() {
       setLibraryDropTargetId(null);
       setLibraryDragPreview({
         type: t,
-        position: libraryPreviewPositionFromFlowPoint(p, t),
+        position: libraryPreviewPositionFromFlowPoint(p, t, defaultDataForCanvasDropNode(t)),
       });
     },
     [screenToFlowPosition],
@@ -5813,6 +5815,8 @@ export function SpacesContent() {
         showWelcome={showWelcome}
         onWelcomeAnimationEnd={() => {
           setShowWelcome(false);
+          setSidebarLockedCollapsed(false);
+          setSidebarPinnedAfterWelcome(true);
         }}
       />
 
@@ -5829,6 +5833,8 @@ export function SpacesContent() {
             onLibraryDragEnd={handleLibraryDragEnd}
             onLibraryTileDoubleClick={addNodeFromTopbarPinDoubleClick}
             sidebarLockedCollapsed={sidebarLockedCollapsed}
+            sidebarPinnedOpen={sidebarPinnedAfterWelcome}
+            onSidebarPinnedOpenDismiss={() => setSidebarPinnedAfterWelcome(false)}
             onSidebarStripMouseEnter={() => setSidebarLockedCollapsed(false)}
             paletteDragActive={paletteDragActive}
           />

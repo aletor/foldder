@@ -6,13 +6,13 @@ import { ChevronRight } from 'lucide-react';
 import { NODE_REGISTRY } from './nodeRegistry';
 import { NodeIcon } from './foldder-icons';
 import { SIDEBAR_HOVER_HELP } from './sidebarHoverHelp';
-import { hideNativeLibraryDragPreview } from './library-drag-preview';
+import { setLibraryDragPreviewImage } from './library-drag-preview';
 import {
   TopbarGlyphBrain,
 } from './TopbarPinIcons';
 
 const LIBRARY_TIP_WIDTH = 190;
-const LIBRARY_TIP_SHOW_DELAY_MS = 1000;
+const LIBRARY_TIP_SHOW_DELAY_MS = 250;
 
 function libraryTooltipPosition(el: HTMLElement): {
   x: number;
@@ -35,12 +35,16 @@ type SidebarProps = {
   onLibraryTileDoubleClick?: (nodeType: string) => void;
   /** Si true, el panel no se abre por hover hasta que el ratón entre en la franja izquierda */
   sidebarLockedCollapsed?: boolean;
+  /** Tras bienvenida: sidebar expandido hasta que el usuario haga rollover y salga */
+  sidebarPinnedOpen?: boolean;
+  onSidebarPinnedOpenDismiss?: () => void;
   onSidebarStripMouseEnter?: () => void;
   /** Arrastre desde la librería: sin tooltips de ayuda rollover */
   paletteDragActive?: boolean;
 };
 
 const SIDEBAR_TILE_BACKGROUND_SRC: Record<string, string> = {
+  projectBrain: "/assets/nodes/brain-sidebar-bg.png",
   cine: "/assets/nodes/cine-sidebar-bg.png",
   designer: "/assets/nodes/designer-sidebar-bg.png",
   guionista: "/assets/nodes/guionista-sidebar-bg.png",
@@ -48,15 +52,15 @@ const SIDEBAR_TILE_BACKGROUND_SRC: Record<string, string> = {
   geminiVideo: "/assets/nodes/gemini-video-sidebar-bg.png",
   nanoBanana: "/assets/nodes/nano-banana-sidebar-bg.png",
   photoRoom: "/assets/nodes/photoroom-sidebar-bg.png",
+  presenter: "/assets/nodes/presenter-sidebar-bg.png",
+  video_editor: "/assets/nodes/video-editor-sidebar-bg.png",
 };
 
 const SIDEBAR_RASTER_ICON_SRC: Record<string, string> = {
-  projectAssets: '/logo_topbar.svg',
   designer: '/designer_icon.svg',
   guionista: '/guionista_icon.svg',
   cine: '/cine_icon.svg',
   nanoBanana: '/image_icon.svg',
-  imageCreationAdvanced: '/image_icon.svg',
   geminiVideo: '/video_icon.svg',
   presenter: '/presenter_icon.svg',
   video_editor: '/video_edition_icon.svg',
@@ -96,7 +100,6 @@ function SidebarLibraryNodeIcon({ type, size = 25 }: { type: string; size?: numb
 }
 
 function tileBorderClassForType(type: string, fallback: string): string {
-  if (type === 'projectAssets') return 'border-[#b081f1] group-hover/tile:border-[#b081f1]';
   if (type === 'designer') return 'border-[#fdb04b] group-hover/tile:border-[#fdb04b]';
   if (type === 'guionista') return 'border-[#37f1e8] group-hover/tile:border-[#37f1e8]';
   if (type === 'cine') return 'border-[#b48689] group-hover/tile:border-[#b48689]';
@@ -105,7 +108,7 @@ function tileBorderClassForType(type: string, fallback: string): string {
   if (type === 'inspiration') return 'border-emerald-400/70 group-hover/tile:border-emerald-300/90';
   if (type === 'imageCreationAdvanced') return 'border-[#f6e56e] group-hover/tile:border-[#f6e56e]';
   if (type === 'geminiVideo') return 'border-[#ed9ae0] group-hover/tile:border-[#ed9ae0]';
-  if (type === 'video_editor' || type === 'videoEditor') return 'border-[#ffb2c6] group-hover/tile:border-[#ffb2c6]';
+  if (type === 'video_editor' || type === 'videoEditor') return 'border-[#5ec4cc] group-hover/tile:border-[#7dd8df]';
   if (type === 'presenter') return 'border-[#8ac091] group-hover/tile:border-[#8ac091]';
   if (type === 'projectBrain') return 'border-slate-400/60 group-hover/tile:border-slate-300/80';
   return fallback;
@@ -119,25 +122,20 @@ const HIGH_END_PRODUCTION_ITEMS: Array<{ type: string; label: string }> = [
   { type: 'inspiration', label: 'Inspiration' },
   { type: 'photoRoom', label: 'PhotoRoom' },
   { type: 'nanoBanana', label: 'Image Creation' },
-  { type: 'imageCreationAdvanced', label: 'Image Advanced' },
   { type: 'geminiVideo', label: 'Video Creation' },
-  { type: 'projectAssets', label: 'Foldder' },
   { type: 'presenter', label: 'Presenter' },
   { type: 'video_editor', label: 'Video Editor' },
 ];
 
 const TOOL_ITEMS: Array<{ type: string; label: string }> = [
-  { type: 'mediaInput', label: 'Asset' },
   { type: 'promptInput', label: 'Prompt' },
   { type: 'urlImage', label: 'Web' },
   { type: 'backgroundRemover', label: 'Matting' },
   { type: 'mediaDescriber', label: 'Eye' },
   { type: 'enhancer', label: 'Enhance' },
-  { type: 'grokProcessor', label: 'Grok' },
-  { type: 'vfxGenerator', label: 'VFX Generator' },
+  { type: 'imageCreationAdvanced', label: 'Image Advanced' },
   { type: 'export_multimedia', label: 'Export Multimedia' },
   { type: 'concatenator', label: 'Concat' },
-  { type: 'listado', label: 'Listado' },
   { type: 'imageExport', label: 'Export' },
   { type: 'notes', label: 'Notes' },
   { type: 'painter', label: 'Painter' },
@@ -145,16 +143,35 @@ const TOOL_ITEMS: Array<{ type: string; label: string }> = [
 ];
 
 function toolFallbackBorderClass(type: string): string {
-  if (type === 'mediaInput' || type === 'promptInput' || type === 'urlImage') {
+  if (type === 'promptInput' || type === 'urlImage') {
     return 'border-white/25 group-hover/tile:border-emerald-400/50';
   }
-  if (type === 'backgroundRemover' || type === 'mediaDescriber' || type === 'enhancer' || type === 'grokProcessor' || type === 'vfxGenerator') {
+  if (type === 'backgroundRemover' || type === 'mediaDescriber' || type === 'enhancer') {
     return 'border-white/25 group-hover/tile:border-cyan-400/50';
   }
-  if (type === 'concatenator' || type === 'listado') {
+  if (type === 'concatenator') {
     return 'border-white/25 group-hover/tile:border-blue-400/50';
   }
   return 'border-white/25 group-hover/tile:border-amber-400/50';
+}
+
+function resolveSidebarHoverHelp(nodeType: string, label?: string): { title: string; line: string } | null {
+  const explicit = SIDEBAR_HOVER_HELP[nodeType];
+  if (explicit) return explicit;
+  const meta = NODE_REGISTRY[nodeType];
+  if (meta) {
+    return {
+      title: meta.label || label || nodeType,
+      line: meta.description || 'Arrastra al lienzo o doble clic para añadir.',
+    };
+  }
+  if (label) {
+    return {
+      title: label,
+      line: 'Arrastra al lienzo o doble clic para añadir.',
+    };
+  }
+  return null;
 }
 
 const Sidebar = ({
@@ -162,6 +179,8 @@ const Sidebar = ({
   onLibraryDragEnd,
   onLibraryTileDoubleClick,
   sidebarLockedCollapsed = false,
+  sidebarPinnedOpen = false,
+  onSidebarPinnedOpenDismiss,
   onSidebarStripMouseEnter,
   paletteDragActive = false,
 }: SidebarProps) => {
@@ -172,6 +191,7 @@ const Sidebar = ({
   } | null>(null);
 
   const libraryTipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sidebarPinnedRolloverRef = useRef(false);
 
   const clearLibraryTipTimer = useCallback(() => {
     if (libraryTipTimerRef.current !== null) {
@@ -190,9 +210,9 @@ const Sidebar = ({
   const visibleLibraryTip = paletteDragActive ? null : libraryTip;
 
   const onLibraryTileEnter = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>, nodeType: string) => {
+    (e: React.MouseEvent<HTMLDivElement>, nodeType: string, label?: string) => {
       if (paletteDragActive) return;
-      if (!SIDEBAR_HOVER_HELP[nodeType]) return;
+      if (!resolveSidebarHoverHelp(nodeType, label)) return;
       clearLibraryTipTimer();
       const el = e.currentTarget;
       libraryTipTimerRef.current = setTimeout(() => {
@@ -219,24 +239,27 @@ const Sidebar = ({
     [clearLibraryTipTimer, onLibraryTileDoubleClick]
   );
 
+  const visibleLibraryHelp = visibleLibraryTip
+    ? resolveSidebarHoverHelp(visibleLibraryTip.type)
+    : null;
+
   const libraryTipPortal =
-    visibleLibraryTip && SIDEBAR_HOVER_HELP[visibleLibraryTip.type]
+    visibleLibraryTip && visibleLibraryHelp
       ? createPortal(
           <div
             role="tooltip"
-            className="pointer-events-none fixed z-[10060] rounded-none border border-white/10 bg-black px-2.5 py-2 shadow-[0_10px_28px_rgba(0,0,0,0.35)]"
+            className="foldder-sidebar-library-tip pointer-events-none fixed z-[10060] rounded-none border border-white/12 bg-black/88 px-2.5 py-2 shadow-[0_12px_32px_rgba(0,0,0,0.42)] backdrop-blur-md"
             style={{
               left: visibleLibraryTip.x,
               top: visibleLibraryTip.y,
               width: LIBRARY_TIP_WIDTH,
-              transform: 'translateY(-50%)',
             }}
           >
             <div className="text-[8px] font-black uppercase tracking-[0.12em] text-white/70 mb-1">
-              {SIDEBAR_HOVER_HELP[visibleLibraryTip.type].title}
+              {visibleLibraryHelp.title}
             </div>
             <p className="text-[10px] leading-snug text-white m-0">
-              {SIDEBAR_HOVER_HELP[visibleLibraryTip.type].line}
+              {visibleLibraryHelp.line}
             </p>
           </div>,
           document.body
@@ -244,7 +267,9 @@ const Sidebar = ({
       : null;
 
   const onDragStart = (event: React.DragEvent, nodeType: string) => {
-    hideNativeLibraryDragPreview(event);
+    setLibraryDragPreviewImage(event, nodeType, {
+      backgroundImage: SIDEBAR_TILE_BACKGROUND_SRC[nodeType],
+    });
     onLibraryDragStart?.(nodeType);
     try {
       event.dataTransfer.setData('text/plain', nodeType);
@@ -288,28 +313,59 @@ const Sidebar = ({
     );
   };
 
+  useEffect(() => {
+    if (!sidebarPinnedOpen) {
+      sidebarPinnedRolloverRef.current = false;
+    }
+  }, [sidebarPinnedOpen]);
+
+  const handleSidebarMouseEnter = useCallback(() => {
+    onSidebarStripMouseEnter?.();
+    if (sidebarPinnedOpen) {
+      sidebarPinnedRolloverRef.current = true;
+    }
+  }, [onSidebarStripMouseEnter, sidebarPinnedOpen]);
+
+  const handleSidebarMouseLeave = useCallback(() => {
+    if (sidebarPinnedOpen && sidebarPinnedRolloverRef.current) {
+      sidebarPinnedRolloverRef.current = false;
+      onSidebarPinnedOpenDismiss?.();
+    }
+  }, [onSidebarPinnedOpenDismiss, sidebarPinnedOpen]);
+
   // ── NORMAL MODE: vertical sidebar panel ──────────────────────────────────
   return (
     <>
     <div
       className={
-        sidebarLockedCollapsed
+        sidebarPinnedOpen
+          ? "group/sidebar absolute left-0 top-0 z-[1000] h-screen w-[178px]"
+          : sidebarLockedCollapsed
           ? "group/sidebar absolute left-0 top-0 z-[1000] h-screen w-12"
           : "group/sidebar absolute left-0 top-0 z-[1000] h-screen w-12 transition-[width] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] hover:w-[178px]"
       }
       data-foldder-sidebar
-      onMouseEnter={() => onSidebarStripMouseEnter?.()}
+      data-sidebar-pinned={sidebarPinnedOpen ? "true" : undefined}
+      onMouseEnter={handleSidebarMouseEnter}
+      onMouseLeave={handleSidebarMouseLeave}
     >
 
       {/* Collapsed pill — the visible strip when not hovering */}
-      <div className="foldder-sidebar-collapsed-pill absolute left-2 top-1/2 -translate-y-1/2 w-6 h-20 bg-white/10 backdrop-blur-2xl border border-white/10 rounded-none flex items-center justify-center text-slate-400 group-hover/sidebar:opacity-0 transition-opacity duration-300 shadow-lg pointer-events-none">
+      <div
+        className={[
+          "foldder-sidebar-collapsed-pill absolute left-2 top-1/2 -translate-y-1/2 w-6 h-20 bg-white/10 backdrop-blur-2xl border border-white/10 rounded-none flex items-center justify-center text-slate-400 transition-opacity duration-300 shadow-lg pointer-events-none",
+          sidebarPinnedOpen ? "opacity-0" : "group-hover/sidebar:opacity-0",
+        ].join(" ")}
+      >
         <ChevronRight size={14} />
       </div>
 
       {/* Expanded panel */}
       <aside
         className={
-          sidebarLockedCollapsed
+          sidebarPinnedOpen
+            ? "absolute left-0 top-0 h-full w-[178px] overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
+            : sidebarLockedCollapsed
             ? 'absolute left-0 top-0 h-full w-0 overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]'
             : 'absolute left-0 top-0 h-full w-0 overflow-hidden group-hover/sidebar:w-[178px] transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]'
         }
@@ -338,7 +394,7 @@ const Sidebar = ({
                     onDragStart={(e) => onDragStart(e, item.type)}
                     onDragEnd={() => onLibraryDragEnd?.()}
                     draggable
-                    onMouseEnter={(e) => onLibraryTileEnter(e, item.type)}
+                    onMouseEnter={(e) => onLibraryTileEnter(e, item.type, item.label)}
                     onMouseLeave={onLibraryTileLeave}
                     onDoubleClick={(e) => handleLibraryTileDoubleClick(e, item.type)}
                     aria-label={`${item.label}. Arrastra al lienzo. Doble clic para añadir.`}
@@ -363,12 +419,12 @@ const Sidebar = ({
                   onDragStart={(e) => onDragStart(e, item.type)}
                   onDragEnd={() => onLibraryDragEnd?.()}
                   draggable
-                  onMouseEnter={(e) => onLibraryTileEnter(e, item.type)}
+                  onMouseEnter={(e) => onLibraryTileEnter(e, item.type, item.label)}
                   onMouseLeave={onLibraryTileLeave}
                   onDoubleClick={(e) => handleLibraryTileDoubleClick(e, item.type)}
                   aria-label={`${item.label}. Arrastra al lienzo. Doble clic para añadir.`}
                 >
-                  <SidebarLibraryNodeIcon type={item.type} size={14} />
+                  <SidebarLibraryNodeIcon type={item.type} size={15} />
                   <span className="foldder-sidebar-tile__label">{item.label}</span>
                   <TypeIndicators nodeType={item.type} />
                 </div>

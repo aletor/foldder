@@ -28,6 +28,17 @@ export const FIT_VIEW_PADDING = 0.14;
  */
 export const FIT_VIEW_PADDING_LIBRARY_DRAG = FIT_VIEW_PADDING * 5;
 
+/** Con ≤4 nodos en lienzo: el doble de aire al arrastrar desde la librería (primeros nodos no llenan pantalla). */
+export const FIT_VIEW_PADDING_LIBRARY_DRAG_SPARSE = FIT_VIEW_PADDING_LIBRARY_DRAG * 2;
+
+export const LIBRARY_DRAG_SPARSE_CANVAS_NODE_THRESHOLD = 4;
+
+export function libraryDragFitViewPadding(placedNodeCount: number): number {
+  return placedNodeCount > LIBRARY_DRAG_SPARSE_CANVAS_NODE_THRESHOLD
+    ? FIT_VIEW_PADDING_LIBRARY_DRAG
+    : FIT_VIEW_PADDING_LIBRARY_DRAG_SPARSE;
+}
+
 /** Al encuadrar uno o pocos nodos (doble clic, nodo nuevo, etc.): un poco más de margen que el fit a todo el grafo */
 export const FIT_VIEW_PADDING_NODE_FOCUS = 0.8;
 

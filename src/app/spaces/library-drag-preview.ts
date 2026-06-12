@@ -1,5 +1,7 @@
-import type { XYPosition } from "@xyflow/react";
-import { getNodeGridFrameForType, snapPositionToGrid } from "./canvas-grid-layout";
+import type { CSSProperties } from "react";
+import type { Node, XYPosition } from "@xyflow/react";
+import { defaultDataForCanvasDropNode } from "@/lib/canvas-connect-end-drop";
+import { applyNodeGridPreset, getNodeGridFrameForType, snapPositionToGrid } from "./canvas-grid-layout";
 
 export const FOLDDER_LIBRARY_PREVIEW_NODE_ID = "__foldder_library_preview__";
 
@@ -11,25 +13,83 @@ export function isFoldderLibraryPreviewData(data: unknown): boolean {
   );
 }
 
-let emptyDragGhostEl: HTMLDivElement | null = null;
-
-function getEmptyDragGhostEl(): HTMLDivElement | null {
-  if (typeof document === "undefined") return null;
-  if (!emptyDragGhostEl) {
-    emptyDragGhostEl = document.createElement("div");
-    emptyDragGhostEl.style.cssText =
-      "position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;";
-    document.body.appendChild(emptyDragGhostEl);
+function parseStyleDimension(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) return value;
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value.replace(/px/gi, "").trim());
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
   }
-  return emptyDragGhostEl;
+  return undefined;
 }
 
-/** Oculta el ghost nativo del navegador (tile del sidebar) durante el arrastre. */
-export function hideNativeLibraryDragPreview(event: React.DragEvent) {
-  const ghost = getEmptyDragGhostEl();
-  if (ghost) {
-    event.dataTransfer.setDragImage(ghost, 0, 0);
+/** Misma resolución de tamaño que al soltar el nodo en el lienzo. */
+export function resolveLibraryPreviewNodeFrame(
+  nodeType: string,
+  data?: Record<string, unknown>,
+  baseStyle?: CSSProperties,
+): { width: number; height: number; style: CSSProperties; data: Record<string, unknown> } {
+  const nodeData = data ?? defaultDataForCanvasDropNode(nodeType);
+  const prepared = applyNodeGridPreset({
+    type: nodeType,
+    data: nodeData,
+    style: baseStyle ?? {},
+    position: { x: 0, y: 0 },
+  } as Node);
+  const nextStyle = (prepared.style ?? {}) as CSSProperties;
+  const fallback = getNodeGridFrameForType(nodeType, prepared.data);
+  const width = parseStyleDimension(nextStyle.width) ?? fallback?.width ?? 280;
+  const height = parseStyleDimension(nextStyle.height) ?? fallback?.height ?? 240;
+  return {
+    width,
+    height,
+    style: { ...nextStyle, width, height },
+    data: (prepared.data ?? nodeData) as Record<string, unknown>,
+  };
+}
+
+/** Ghost de arrastre con la proporción final del nodo (no el tile cuadrado del sidebar). */
+export function setLibraryDragPreviewImage(
+  event: React.DragEvent,
+  nodeType: string,
+  options?: { backgroundImage?: string },
+) {
+  if (typeof document === "undefined") return;
+
+  const { width, height } = resolveLibraryPreviewNodeFrame(nodeType);
+  const maxPx = 96;
+  const scale = Math.min(maxPx / width, maxPx / height);
+  const w = Math.max(40, Math.round(width * scale));
+  const h = Math.max(32, Math.round(height * scale));
+
+  const ghost = document.createElement("div");
+  ghost.style.position = "fixed";
+  ghost.style.top = "-9999px";
+  ghost.style.left = "-9999px";
+  ghost.style.width = `${w}px`;
+  ghost.style.height = `${h}px`;
+  ghost.style.borderRadius = "0";
+  ghost.style.overflow = "hidden";
+  ghost.style.opacity = "0.94";
+  ghost.style.pointerEvents = "none";
+  ghost.style.boxShadow = "0 12px 28px rgba(0, 0, 0, 0.35)";
+  ghost.style.backgroundColor = "#111827";
+  if (options?.backgroundImage) {
+    ghost.style.backgroundImage = `url(${options.backgroundImage})`;
+    ghost.style.backgroundSize = "cover";
+    ghost.style.backgroundPosition = "center";
+    ghost.style.backgroundRepeat = "no-repeat";
   }
+
+  document.body.appendChild(ghost);
+  event.dataTransfer.setDragImage(ghost, Math.round(w / 2), Math.round(h / 2));
+  requestAnimationFrame(() => {
+    ghost.remove();
+  });
+}
+
+/** @deprecated Usa setLibraryDragPreviewImage */
+export function hideNativeLibraryDragPreview(event: React.DragEvent) {
+  setLibraryDragPreviewImage(event, "promptInput");
 }
 
 /** True si el cursor está sobre el contenedor `.react-flow` del lienzo. */
@@ -58,10 +118,9 @@ export function isClientPointOverReactFlowCanvas(
 export function libraryPreviewPositionFromFlowPoint(
   flowPoint: XYPosition,
   nodeType: string,
+  data?: Record<string, unknown>,
 ): XYPosition {
-  const frame = getNodeGridFrameForType(nodeType);
-  const width = frame?.width ?? 280;
-  const height = frame?.height ?? 240;
+  const { width, height } = resolveLibraryPreviewNodeFrame(nodeType, data);
   return snapPositionToGrid({
     x: flowPoint.x - width / 2,
     y: flowPoint.y - height / 2,
