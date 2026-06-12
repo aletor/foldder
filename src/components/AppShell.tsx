@@ -22,7 +22,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       ) : (
         <div className="min-h-screen w-full bg-[var(--background)]">{children}</div>
       )}
-      {!isSpaces ? <LanguageSwitcher /> : null}
+      {!isSpaces && pathname !== "/" ? <LanguageSwitcher /> : null}
     </LanguageProvider>
   );
 }

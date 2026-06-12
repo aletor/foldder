@@ -6,13 +6,11 @@ import {
   CheckCircle2,
   CreditCard,
   FileText,
-  History,
   Image as ImageIcon,
   LockKeyhole,
   LogOut,
   Loader2,
   Package,
-  RefreshCw,
   Search,
   Sparkles,
   UnlockKeyhole,
@@ -37,6 +35,7 @@ type WalletBalanceButtonProps = {
     | { ok: boolean; projectId?: string | null; error?: string };
   onSignOut?: () => void;
   projectId?: string | null;
+  triggerLayout?: "circle" | "topbar";
   user?: {
     email?: string | null;
     image?: string | null;
@@ -127,13 +126,16 @@ function userDisplayName(user: WalletBalanceButtonProps["user"]): string {
 
 function AccountAvatar({
   className,
+  shape = "circle",
   user,
 }: {
   className: string;
+  shape?: "circle" | "square";
   user: WalletBalanceButtonProps["user"];
 }) {
+  const radiusClass = shape === "square" ? "rounded-none" : "rounded-full";
   return (
-    <span className={`block overflow-hidden rounded-full border border-white/25 bg-white/10 shadow-sm ${className}`}>
+    <span className={`block overflow-hidden ${radiusClass} border border-white/25 bg-white/10 shadow-sm ${className}`}>
       {user?.image ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
@@ -168,7 +170,13 @@ function recommendedPackageCents(packages: WalletStatusResponse["topupPackages"]
   return packages.find((pkg) => pkg.amountCents >= 5000)?.amountCents ?? packages[Math.floor(packages.length / 2)]?.amountCents ?? null;
 }
 
-export function WalletBalanceButton({ onBeforeCheckout, onSignOut, projectId = null, user = null }: WalletBalanceButtonProps) {
+export function WalletBalanceButton({
+  onBeforeCheckout,
+  onSignOut,
+  projectId = null,
+  triggerLayout = "circle",
+  user = null,
+}: WalletBalanceButtonProps) {
   const { language } = useLanguage();
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<BillingView>("overview");
@@ -186,28 +194,11 @@ export function WalletBalanceButton({ onBeforeCheckout, onSignOut, projectId = n
   const recentEntries = useMemo(() => data?.recentEntries ?? [], [data?.recentEntries]);
   const activityRows = useMemo(() => groupWalletActivityRows(recentEntries), [recentEntries]);
   const visibleSpendLabel = formatUsd(visibleSpentMicros(recentEntries));
-  const availableLabel = account ? formatUsd(account.availableMicros, { compact: true }) : "$0.00";
   const compactAvailableLabel = account ? formatUsd(account.availableMicros, { compact: true }) : state.status === "loading" ? "..." : "$0";
   const displayName = userDisplayName(user);
   const displayEmail = user?.email?.trim() || "";
   const hasBillingRisk = account?.status === "blocked" || account?.billingReviewRequired === true;
   const canCheckout = walletConfigured && checkoutAmount == null;
-  const statusLabel = !data
-    ? "Cargando"
-    : walletUnavailable
-      ? "No disponible"
-      : hasBillingRisk
-        ? "Revisión"
-        : account?.lowBalance
-          ? "Saldo bajo"
-          : "Activo";
-  const statusTone = walletUnavailable || !data
-    ? "border-white/10 bg-white/[0.08] text-white/68"
-    : hasBillingRisk
-      ? "border-rose-300/25 bg-rose-500/12 text-rose-100"
-      : account?.lowBalance
-        ? "border-amber-300/25 bg-amber-400/12 text-amber-100"
-        : "border-emerald-300/25 bg-emerald-400/12 text-emerald-100";
   const buttonTone = walletUnavailable
     ? "border-amber-300/55 bg-amber-500/18 text-amber-50"
     : hasBillingRisk
@@ -215,6 +206,15 @@ export function WalletBalanceButton({ onBeforeCheckout, onSignOut, projectId = n
     : account?.lowBalance
       ? "border-amber-300/55 bg-amber-500/18 text-amber-50"
       : "border-white/25 bg-white/[0.08] text-white/78";
+  const creditBadgeTone = walletUnavailable
+    ? "bg-amber-500 text-amber-950"
+    : !data
+      ? "bg-white text-slate-950"
+      : hasBillingRisk
+        ? "bg-rose-500 text-white"
+        : account?.lowBalance
+          ? "bg-amber-400 text-amber-950"
+          : "bg-emerald-400 text-emerald-950";
 
   const loadWallet = useCallback(async () => {
     setState((prev) => ({ status: "loading", data: prev.data, error: null }));
@@ -352,105 +352,95 @@ export function WalletBalanceButton({ onBeforeCheckout, onSignOut, projectId = n
   }, [data?.configured, onBeforeCheckout, projectId]);
 
   const renderOverview = () => (
-    <div className="space-y-4">
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-        <div className="rounded-none border border-white/10 bg-white/[0.045] px-3 py-3">
-          <p className="text-[11px] font-semibold text-white/46">Disponible</p>
-          <p className="mt-1 text-lg font-black tabular-nums text-white">{formatUsd(account?.availableMicros ?? 0)}</p>
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 divide-x divide-white/10 bg-white/[0.06]">
+        <div className="px-2.5 py-2">
+          <p className="text-[9px] font-black uppercase tracking-[0.12em] text-amber-200/70">Reservado</p>
+          <p className="mt-0.5 text-[15px] font-black tabular-nums text-white">{formatUsd(account?.reservedMicros ?? 0)}</p>
         </div>
-        <div className="rounded-none border border-white/10 bg-white/[0.045] px-3 py-3">
-          <p className="text-[11px] font-semibold text-white/46">Reservado</p>
-          <p className="mt-1 text-lg font-black tabular-nums text-white">{formatUsd(account?.reservedMicros ?? 0)}</p>
-        </div>
-        <div className="rounded-none border border-white/10 bg-white/[0.045] px-3 py-3">
-          <p className="text-[11px] font-semibold text-white/46">Últimos usos</p>
-          <p className="mt-1 text-lg font-black tabular-nums text-white">{visibleSpendLabel}</p>
+        <div className="px-2.5 py-2">
+          <p className="text-[9px] font-black uppercase tracking-[0.12em] text-sky-200/70">Últimos usos</p>
+          <p className="mt-0.5 text-[15px] font-black tabular-nums text-white">{visibleSpendLabel}</p>
         </div>
       </div>
 
-      <div className="rounded-none border border-white/10 bg-white/[0.035] p-3">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <p className="text-[12px] font-semibold text-white/72">Cómo se consume</p>
-          <span className="rounded-full border border-white/10 bg-black/20 px-2.5 py-1 text-[10px] font-semibold text-white/42">
-            Reserva antes de llamar a la API
-          </span>
+      <div className="grid grid-cols-3 divide-x divide-white/10">
+        <div className="bg-emerald-500/20 px-2 py-2">
+          <div className="flex items-center gap-1.5 text-emerald-100">
+            <FileText size={12} />
+            <p className="text-[10px] font-black uppercase tracking-[0.08em]">Texto</p>
+          </div>
+          <p className="mt-0.5 text-[9px] font-medium leading-snug text-emerald-50/55">Coste bajo</p>
         </div>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-          <div className="rounded-none border border-emerald-300/18 bg-emerald-400/[0.075] px-3 py-2.5">
-            <div className="flex items-center gap-2 text-emerald-100">
-              <FileText size={14} />
-              <p className="text-[12px] font-black">Texto</p>
-            </div>
-            <p className="mt-1 text-[11px] font-medium leading-snug text-emerald-50/62">Coste bajo y directo</p>
+        <div className="bg-sky-500/20 px-2 py-2">
+          <div className="flex items-center gap-1.5 text-sky-100">
+            <ImageIcon size={12} />
+            <p className="text-[10px] font-black uppercase tracking-[0.08em]">Imagen</p>
           </div>
-          <div className="rounded-none border border-sky-300/18 bg-sky-400/[0.075] px-3 py-2.5">
-            <div className="flex items-center gap-2 text-sky-100">
-              <ImageIcon size={14} />
-              <p className="text-[12px] font-black">Imagen</p>
-            </div>
-            <p className="mt-1 text-[11px] font-medium leading-snug text-sky-50/62">Reserva visible</p>
+          <p className="mt-0.5 text-[9px] font-medium leading-snug text-sky-50/55">Con reserva</p>
+        </div>
+        <div className="bg-amber-500/20 px-2 py-2">
+          <div className="flex items-center gap-1.5 text-amber-100">
+            <Video size={12} />
+            <p className="text-[10px] font-black uppercase tracking-[0.08em]">Vídeo</p>
           </div>
-          <div className="rounded-none border border-amber-300/22 bg-amber-400/[0.08] px-3 py-2.5">
-            <div className="flex items-center gap-2 text-amber-100">
-              <Video size={14} />
-              <p className="text-[12px] font-black">Vídeo</p>
-            </div>
-            <p className="mt-1 text-[11px] font-medium leading-snug text-amber-50/66">Siempre con confirmación</p>
-          </div>
+          <p className="mt-0.5 text-[9px] font-medium leading-snug text-amber-50/55">Confirmación</p>
         </div>
       </div>
 
-      <div className="rounded-none border border-white/10 bg-white/[0.035] p-3">
-        <div className="mb-2 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <CreditCard size={16} className="text-white/58" />
-            <div>
-              <p className="text-[12px] font-semibold text-white/78">Recargar saldo</p>
-              <p className="text-[11px] text-white/40">
-                {walletConfigured ? "Elige un paquete y Foldder abrirá Stripe Checkout." : "Se activará cuando el wallet esté configurado en servidor."}
-              </p>
-            </div>
+      <div>
+        <div className="mb-2 flex items-center justify-between gap-2 px-0.5">
+          <div className="flex items-center gap-1.5">
+            <CreditCard size={13} className="text-white/55" />
+            <p className="text-[10px] font-black uppercase tracking-[0.12em] text-white/72">Recargar</p>
           </div>
-          {checkoutAmount != null && <span className="text-[11px] font-semibold text-white/42">Redirigiendo a Stripe</span>}
+          {checkoutAmount != null && (
+            <span className="text-[9px] font-semibold uppercase tracking-[0.08em] text-white/40">Stripe…</span>
+          )}
         </div>
-        <div className="grid grid-cols-2 gap-2 pt-2 sm:grid-cols-5">
+        <div className="grid grid-cols-5 divide-x divide-white/10 bg-white/[0.06]">
           {sortedPackages.map((pkg) => {
             const active = checkoutAmount === pkg.amountCents;
             const recommended = pkg.amountCents === recommendedCents;
             const packageTone = !walletConfigured
-              ? "border-white/8 bg-white/[0.025] text-white/34"
+              ? "bg-white/[0.03] text-white/30"
               : recommended
-                ? "border-emerald-300/35 bg-emerald-400/14 text-emerald-50 shadow-emerald-950/20"
-                : "border-white/10 bg-white/[0.055] text-white hover:border-white/22 hover:bg-white/[0.09]";
+                ? "bg-emerald-400 text-emerald-950"
+                : "bg-white/[0.06] text-white hover:bg-white/[0.12]";
             return (
               <button
                 key={pkg.amountCents}
                 type="button"
                 onClick={() => void startCheckout(pkg.amountCents)}
                 disabled={!canCheckout}
-                className={`relative flex min-h-[60px] flex-col items-center justify-center rounded-none border px-2 text-center shadow-sm transition disabled:pointer-events-none disabled:shadow-none ${packageTone}`}
+                title={recommended && walletConfigured ? "Recomendado" : undefined}
+                className={`relative flex min-h-[52px] flex-col items-center justify-center px-1 py-2 text-center transition disabled:pointer-events-none disabled:opacity-40 ${packageTone}`}
               >
-                {recommended && walletConfigured && (
-                  <span className="absolute -top-2 rounded-full border border-emerald-200/30 bg-emerald-500 px-2 py-0.5 text-[8px] font-black uppercase tracking-[0.12em] text-white shadow-sm">
-                    recomendado
-                  </span>
-                )}
                 {active ? (
-                  <Loader2 size={15} className="animate-spin" />
+                  <Loader2 size={14} className="animate-spin" />
                 ) : (
                   <>
-                    <span className="text-sm font-black tabular-nums">{formatUsd(pkg.creditMicros)}</span>
-                    <span className="mt-0.5 text-[9px] font-bold uppercase tracking-[0.12em] text-white/36">
-                      {walletConfigured ? "crédito" : "no disponible"}
-                    </span>
+                    <span className="text-[13px] font-black tabular-nums leading-none">{formatUsd(pkg.creditMicros)}</span>
+                    {recommended && walletConfigured ? (
+                      <span className="mt-1 text-[7px] font-black uppercase tracking-[0.14em] opacity-80">Top</span>
+                    ) : (
+                      <span className="mt-1 text-[7px] font-bold uppercase tracking-[0.1em] text-white/30">
+                        {walletConfigured ? "USD" : "—"}
+                      </span>
+                    )}
                   </>
                 )}
               </button>
             );
           })}
         </div>
+        {!walletConfigured && (
+          <p className="mt-1.5 px-0.5 text-[9px] font-medium text-white/38">
+            Recargas desactivadas hasta configurar wallet en servidor.
+          </p>
+        )}
         {checkoutError && (
-          <p className="mt-2 rounded-none border border-rose-300/25 bg-rose-500/10 px-3 py-2 text-[11px] font-semibold text-rose-100">
+          <p className="mt-2 bg-rose-500/15 px-2.5 py-1.5 text-[10px] font-semibold text-rose-100">
             {checkoutError}
           </p>
         )}
@@ -460,21 +450,15 @@ export function WalletBalanceButton({ onBeforeCheckout, onSignOut, projectId = n
 
   const renderActivity = () => (
     <div>
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <History size={16} className="text-white/58" />
-          <div>
-            <p className="text-[12px] font-semibold text-white/78">Movimientos</p>
-            <p className="text-[10px] font-medium text-white/34">Agrupado por llamada y nodo</p>
-          </div>
-        </div>
+      <div className="mb-2 flex items-center justify-between gap-2 px-0.5">
+        <p className="text-[10px] font-black uppercase tracking-[0.12em] text-white/55">Movimientos</p>
         {data?.recentEntriesTruncated && (
-          <span className="rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[10px] font-semibold text-white/42">últimos 50</span>
+          <span className="text-[9px] font-semibold uppercase tracking-[0.08em] text-white/35">últimos 50</span>
         )}
       </div>
-      <div className="space-y-1.5">
+      <div className="divide-y divide-white/8 bg-white/[0.04]">
         {activityRows.length === 0 ? (
-          <div className="rounded-none border border-dashed border-white/12 bg-white/[0.035] px-3 py-8 text-center text-[12px] font-medium text-white/45">
+          <div className="px-3 py-6 text-center text-[11px] font-medium text-white/40">
             Aún no hay movimientos.
           </div>
         ) : (
@@ -482,7 +466,7 @@ export function WalletBalanceButton({ onBeforeCheckout, onSignOut, projectId = n
             const amount = row.status === "reserved" ? -row.reserveMicros : row.netMicros;
             const amountTone =
               row.status === "reserved"
-                ? "text-amber-100"
+                ? "text-amber-200"
                 : amount < 0
                   ? "text-rose-200"
                   : amount > 0
@@ -498,62 +482,41 @@ export function WalletBalanceButton({ onBeforeCheckout, onSignOut, projectId = n
                     : row.status === "adjustment"
                       ? "Revisión"
                       : "Liquidado";
+            const statusBg =
+              row.status === "reserved"
+                ? "bg-amber-400/20 text-amber-100"
+                : row.status === "credited"
+                  ? "bg-emerald-400/20 text-emerald-100"
+                  : row.status === "adjustment"
+                    ? "bg-rose-400/20 text-rose-100"
+                    : "bg-white/10 text-white/50";
             return (
               <div
                 key={row.id}
-                className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-none border border-white/10 bg-white/[0.04] px-2.5 py-2 transition hover:border-white/16 hover:bg-white/[0.06] sm:grid-cols-[auto_minmax(0,1fr)_auto_auto]"
+                className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 px-2 py-1.5 transition hover:bg-white/[0.06] sm:grid-cols-[auto_minmax(0,1fr)_auto_auto]"
               >
-                <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-none border ${DISPLAY_TONE_CLASS[row.tone]}`}>
+                <div className={`flex h-7 w-7 shrink-0 items-center justify-center ${DISPLAY_TONE_CLASS[row.tone]}`}>
                   {walletIcon(row.icon)}
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex min-w-0 items-center gap-1.5">
-                    <p className="truncate text-[12px] font-black text-white">{row.title}</p>
+                    <p className="truncate text-[11px] font-black text-white">{row.title}</p>
                     {row.entryCount > 1 && (
-                      <span className="hidden shrink-0 rounded-full border border-white/10 bg-black/20 px-1.5 py-0.5 text-[8px] font-black tabular-nums text-white/38 sm:inline">
-                        {row.entryCount} pasos
+                      <span className="hidden shrink-0 bg-white/10 px-1 py-0.5 text-[7px] font-black tabular-nums text-white/38 sm:inline">
+                        ×{row.entryCount}
                       </span>
                     )}
                   </div>
-                  <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px] font-semibold text-white/38">
-                    <span className="truncate text-white/58">{row.nodeLabel}</span>
-                    <span className="text-white/18">·</span>
-                    <span>{row.providerLabel}</span>
-                    <span className="text-white/18">·</span>
+                  <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1 gap-y-0 text-[9px] font-semibold text-white/35">
+                    <span className="truncate text-white/52">{row.nodeLabel}</span>
+                    <span>·</span>
                     <span>{formatDateTime(row.latestAt)}</span>
                   </div>
-                  <div className="mt-1 flex min-w-0 flex-wrap gap-1">
-                    {row.reserveMicros > 0 && (
-                      <span className="rounded-none border border-amber-200/14 bg-amber-300/8 px-1.5 py-0.5 text-[9px] font-bold text-amber-100/70">
-                        reserva {formatTinyUsd(row.reserveMicros)}
-                      </span>
-                    )}
-                    {row.captureMicros > 0 && (
-                      <span className="rounded-none border border-rose-200/12 bg-rose-300/8 px-1.5 py-0.5 text-[9px] font-bold text-rose-100/72">
-                        consumo {formatTinyUsd(row.captureMicros)}
-                      </span>
-                    )}
-                    {row.releaseMicros > 0 && (
-                      <span className="rounded-none border border-emerald-200/12 bg-emerald-300/8 px-1.5 py-0.5 text-[9px] font-bold text-emerald-100/72">
-                        devuelto {formatTinyUsd(row.releaseMicros)}
-                      </span>
-                    )}
-                  </div>
                 </div>
-                <span
-                  className={`hidden rounded-full border px-2 py-1 text-[9px] font-black uppercase tracking-[0.1em] sm:inline ${
-                    row.status === "reserved"
-                      ? "border-amber-200/20 bg-amber-300/8 text-amber-100/72"
-                      : row.status === "credited"
-                        ? "border-emerald-200/20 bg-emerald-300/8 text-emerald-100/72"
-                        : row.status === "adjustment"
-                          ? "border-rose-200/20 bg-rose-300/8 text-rose-100/72"
-                          : "border-white/10 bg-white/[0.04] text-white/44"
-                  }`}
-                >
+                <span className={`hidden px-1.5 py-0.5 text-[8px] font-black uppercase tracking-[0.08em] sm:inline ${statusBg}`}>
                   {statusLabel}
                 </span>
-                <p className={`shrink-0 text-right text-[12px] font-black tabular-nums ${amountTone}`}>
+                <p className={`shrink-0 text-right text-[11px] font-black tabular-nums ${amountTone}`}>
                   {row.status === "reserved" ? `-${formatTinyUsd(row.reserveMicros)}` : formatUsd(amount, { signed: true })}
                 </p>
               </div>
@@ -564,42 +527,67 @@ export function WalletBalanceButton({ onBeforeCheckout, onSignOut, projectId = n
     </div>
   );
 
+  const openWallet = () => {
+    setOpen((value) => !value);
+    if (!open) void loadWallet();
+  };
+
   return (
-    <div className="relative" ref={panelRef} data-foldder-canvas-chrome>
-      <button
-        type="button"
-        onClick={() => {
-          setOpen((value) => !value);
-          if (!open) void loadWallet();
-        }}
-        title="Cuenta y saldo Foldder"
-        aria-label="Abrir cuenta y saldo Foldder"
-        aria-expanded={open}
-        aria-haspopup="dialog"
-        className={`group relative flex h-11 w-11 items-center justify-center rounded-full p-0.5 backdrop-blur-xl transition-all hover:scale-105 hover:bg-white/[0.15] hover:text-white ${buttonTone}`}
-      >
-        <AccountAvatar user={user} className="h-full w-full" />
-        {state.status === "loading" && !data ? (
-          <span className="absolute inset-0 flex items-center justify-center rounded-full bg-black/42 text-white">
-            <Loader2 size={15} className="animate-spin" aria-hidden />
-          </span>
-        ) : null}
-        <span
-          className={`absolute -bottom-1.5 left-1/2 max-w-[4.7rem] -translate-x-1/2 truncate rounded-full px-1.5 py-0.5 text-[9px] font-black leading-none tabular-nums ${
-            walletUnavailable
-              ? "bg-amber-500 text-amber-950"
-              : !data
-                ? "bg-white text-slate-950"
-                : hasBillingRisk
-                ? "bg-rose-500 text-white"
-                : account?.lowBalance
-                  ? "bg-amber-400 text-amber-950"
-                  : "bg-emerald-400 text-emerald-950"
-          }`}
+    <div
+      className="relative"
+      ref={panelRef}
+      data-foldder-canvas-chrome
+      data-foldder-wallet-trigger={triggerLayout === "topbar" ? "topbar" : undefined}
+    >
+      {triggerLayout === "topbar" ? (
+        <button
+          type="button"
+          onClick={openWallet}
+          title="Cuenta y saldo Foldder"
+          aria-label="Abrir cuenta y saldo Foldder"
+          aria-expanded={open}
+          aria-haspopup="dialog"
+          className="group relative flex h-10 items-stretch overflow-hidden rounded-none bg-white/[0.08] text-white/78 backdrop-blur-xl transition-all hover:bg-white/[0.15] hover:text-white"
         >
-          {compactAvailableLabel}
-        </span>
-      </button>
+          <AccountAvatar
+            user={user}
+            shape="square"
+            className="h-10 w-10 shrink-0 border-0 shadow-none"
+          />
+          <span
+            className={`flex h-10 min-w-[3.25rem] shrink-0 items-center justify-center border-l border-white/10 px-2.5 text-[9px] font-black uppercase tracking-[0.06em] tabular-nums ${creditBadgeTone}`}
+          >
+            {compactAvailableLabel}
+          </span>
+          {state.status === "loading" && !data ? (
+            <span className="absolute inset-0 flex items-center justify-center bg-black/42 text-white">
+              <Loader2 size={15} className="animate-spin" aria-hidden />
+            </span>
+          ) : null}
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={openWallet}
+          title="Cuenta y saldo Foldder"
+          aria-label="Abrir cuenta y saldo Foldder"
+          aria-expanded={open}
+          aria-haspopup="dialog"
+          className={`group relative flex h-11 w-11 items-center justify-center rounded-full p-0.5 backdrop-blur-xl transition-all hover:scale-105 hover:bg-white/[0.15] hover:text-white ${buttonTone}`}
+        >
+          <AccountAvatar user={user} className="h-full w-full" />
+          {state.status === "loading" && !data ? (
+            <span className="absolute inset-0 flex items-center justify-center rounded-full bg-black/42 text-white">
+              <Loader2 size={15} className="animate-spin" aria-hidden />
+            </span>
+          ) : null}
+          <span
+            className={`absolute -bottom-1.5 left-1/2 max-w-[4.7rem] -translate-x-1/2 truncate rounded-full px-1.5 py-0.5 text-[9px] font-black leading-none tabular-nums ${creditBadgeTone}`}
+          >
+            {compactAvailableLabel}
+          </span>
+        </button>
+      )}
 
       {checkoutSuccessPopup && (
         <div
@@ -653,138 +641,101 @@ export function WalletBalanceButton({ onBeforeCheckout, onSignOut, projectId = n
 
       {open && (
         <div
-          className="fixed right-3 top-16 z-[260] w-[calc(100vw-1.5rem)] max-w-[560px] overflow-hidden rounded-none border border-white/14 bg-[#0d1117]/98 text-white shadow-[0_30px_90px_rgba(0,0,0,0.48)] backdrop-blur-2xl sm:absolute sm:right-0 sm:top-[calc(100%+12px)] sm:w-[min(92vw,560px)]"
+          className="fixed right-3 top-[4.25rem] z-[260] w-[calc(100vw-1.5rem)] max-w-[400px] overflow-hidden rounded-none bg-[#0b0f14]/98 text-white shadow-[0_24px_70px_rgba(0,0,0,0.55)] backdrop-blur-2xl sm:absolute sm:right-0 sm:top-[calc(100%+8px)] sm:w-[min(92vw,400px)]"
           role="dialog"
           aria-label="Centro de consumo"
+          data-foldder-wallet-panel
         >
-          <div className="border-b border-white/10 bg-white/[0.045] px-4 py-4">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex min-w-0 items-center gap-3">
-                <AccountAvatar user={user} className="h-12 w-12 shrink-0" />
-                <div className="min-w-0">
-                  <p className="text-[10px] font-black uppercase tracking-[0.16em] text-white/38">Cuenta Foldder</p>
-                  <h2 className="mt-0.5 truncate text-lg font-black tracking-tight text-white">{displayName}</h2>
-                  <p className="truncate text-[11px] font-semibold text-white/38">
-                    {displayEmail || "Centro de consumo"}
-                  </p>
-                </div>
-              </div>
-              <div className="flex shrink-0 gap-1">
-                <button
-                  type="button"
-                  onClick={() => void loadWallet()}
-                  className="flex h-8 w-8 items-center justify-center rounded-none border border-white/10 bg-white/[0.04] text-white/58 transition hover:bg-white/[0.1] hover:text-white"
-                  title="Actualizar saldo"
-                >
-                  {state.status === "loading" ? (
-                    <Loader2 size={14} className="animate-spin" />
-                  ) : (
-                    <RefreshCw size={14} />
-                  )}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setOpen(false)}
-                  className="flex h-8 w-8 items-center justify-center rounded-none border border-white/10 bg-white/[0.04] text-white/58 transition hover:bg-white/[0.1] hover:text-white"
-                  title="Cerrar"
-                >
-                  <X size={14} />
-                </button>
-              </div>
+          <div className="flex h-10 items-stretch bg-white/[0.08]">
+            <div className="flex min-w-0 flex-1 flex-col justify-center px-3">
+              <p className="truncate text-[11px] font-black leading-tight text-white">{displayName}</p>
+              {displayEmail ? (
+                <p className="truncate text-[9px] font-semibold text-white/38">{displayEmail}</p>
+              ) : null}
             </div>
-            <div className="mt-4 flex items-end justify-between gap-3 rounded-none border border-white/10 bg-black/18 px-3 py-3">
-              <div className="min-w-0">
-                <p className="text-[11px] font-medium text-white/42">Disponible ahora</p>
-                <p className="mt-0.5 text-3xl font-black tracking-tight text-white tabular-nums">{availableLabel}</p>
-              </div>
-              <div className="flex shrink-0 flex-col items-end gap-2">
-                <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[11px] font-bold ${statusTone}`}>
-                  {!data ? (
-                    <Loader2 size={13} className="animate-spin" />
-                  ) : walletUnavailable || hasBillingRisk ? (
-                    <AlertCircle size={13} />
-                  ) : (
-                    <CheckCircle2 size={13} />
-                  )}
-                  {statusLabel}
-                </span>
-                {onSignOut && (
-                  <button
-                    type="button"
-                    onClick={onSignOut}
-                    className="inline-flex items-center gap-1.5 rounded-none border border-white/10 bg-white/[0.045] px-2.5 py-1.5 text-[10px] font-black uppercase tracking-[0.12em] text-white/54 transition hover:bg-white/[0.1] hover:text-white"
-                  >
-                    <LogOut size={12} />
-                    Salir
-                  </button>
-                )}
-              </div>
-            </div>
+            {onSignOut && (
+              <button
+                type="button"
+                onClick={onSignOut}
+                title="Salir"
+                className="flex h-10 w-10 shrink-0 items-center justify-center border-l border-white/10 bg-white/[0.04] text-white/50 transition hover:bg-white/[0.12] hover:text-white"
+              >
+                <LogOut size={14} />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              title="Cerrar"
+              className="flex h-10 w-10 shrink-0 items-center justify-center border-l border-white/10 bg-white/[0.04] text-white/50 transition hover:bg-white/[0.12] hover:text-white"
+            >
+              <X size={14} />
+            </button>
           </div>
 
-          <div className="max-h-[min(76vh,680px)] overflow-y-auto px-4 py-4">
+          <div className="flex h-10 divide-x divide-white/10 bg-white/[0.06]">
+            <button
+              type="button"
+              onClick={() => setView("overview")}
+              className={`flex-1 text-[10px] font-black uppercase tracking-[0.1em] transition ${
+                view === "overview" ? "bg-white text-slate-950" : "text-white/45 hover:bg-white/[0.08] hover:text-white"
+              }`}
+            >
+              Resumen
+            </button>
+            <button
+              type="button"
+              onClick={() => setView("activity")}
+              className={`flex-1 text-[10px] font-black uppercase tracking-[0.1em] transition ${
+                view === "activity" ? "bg-white text-slate-950" : "text-white/45 hover:bg-white/[0.08] hover:text-white"
+              }`}
+            >
+              Movimientos
+            </button>
+          </div>
+
+          <div className="max-h-[min(72vh,560px)] overflow-y-auto px-3 py-2.5">
             {checkoutNotice === "success" && (
-              <div className="mb-3 flex items-start gap-2 rounded-none border border-emerald-300/25 bg-emerald-400/10 px-3 py-2.5 text-[12px] font-semibold text-emerald-100">
-                <CheckCircle2 size={14} className="mt-0.5 shrink-0" />
-                <span>Recarga recibida. El saldo se actualiza cuando Stripe confirma el pago.</span>
+              <div className="mb-2 flex items-center gap-2 bg-emerald-400/15 px-2 py-1.5 text-[10px] font-semibold text-emerald-100">
+                <CheckCircle2 size={12} className="shrink-0" />
+                <span>Recarga recibida. Se actualiza al confirmar Stripe.</span>
               </div>
             )}
 
             {checkoutNotice === "cancelled" && (
-              <div className="mb-3 flex items-start gap-2 rounded-none border border-white/10 bg-white/[0.045] px-3 py-2.5 text-[12px] font-semibold text-white/68">
-                <AlertCircle size={14} className="mt-0.5 shrink-0" />
-                <span>Recarga cancelada. No se ha añadido saldo.</span>
+              <div className="mb-2 flex items-center gap-2 bg-white/[0.06] px-2 py-1.5 text-[10px] font-semibold text-white/60">
+                <AlertCircle size={12} className="shrink-0" />
+                <span>Recarga cancelada.</span>
               </div>
             )}
 
             {state.status === "error" && (
-              <div className="mb-3 flex items-start gap-2 rounded-none border border-rose-300/25 bg-rose-500/10 px-3 py-2.5 text-[12px] font-semibold text-rose-100">
-                <AlertCircle size={14} className="mt-0.5 shrink-0" />
+              <div className="mb-2 flex items-center gap-2 bg-rose-500/15 px-2 py-1.5 text-[10px] font-semibold text-rose-100">
+                <AlertCircle size={12} className="shrink-0" />
                 <span>{state.error}</span>
               </div>
             )}
 
             {state.status !== "loading" && walletUnavailable && (
-              <div className="mb-3 flex items-start gap-2 rounded-none border border-amber-300/25 bg-amber-400/10 px-3 py-2.5 text-[12px] font-semibold text-amber-100">
-                <AlertCircle size={14} className="mt-0.5 shrink-0" />
-                <span>Wallet no conectado en este entorno. Las recargas quedan desactivadas hasta configurar el ledger en servidor.</span>
+              <div className="mb-2 flex items-center gap-2 bg-amber-400/15 px-2 py-1.5 text-[10px] font-semibold text-amber-100">
+                <AlertCircle size={12} className="shrink-0" />
+                <span>Wallet no conectado. Recargas desactivadas.</span>
               </div>
             )}
 
             {account?.billingReviewRequired && (
-              <div className="mb-3 flex items-start gap-2 rounded-none border border-rose-300/25 bg-rose-500/10 px-3 py-2.5 text-[12px] font-semibold text-rose-100">
-                <AlertCircle size={14} className="mt-0.5 shrink-0" />
-                <span>Cuenta en revisión por facturación. Las operaciones con coste quedan protegidas.</span>
+              <div className="mb-2 flex items-center gap-2 bg-rose-500/15 px-2 py-1.5 text-[10px] font-semibold text-rose-100">
+                <AlertCircle size={12} className="shrink-0" />
+                <span>Cuenta en revisión. Operaciones con coste protegidas.</span>
               </div>
             )}
 
             {account?.lowBalance && account.status === "active" && (
-              <div className="mb-3 flex items-start gap-2 rounded-none border border-amber-300/25 bg-amber-400/10 px-3 py-2.5 text-[12px] font-semibold text-amber-100">
-                <AlertCircle size={14} className="mt-0.5 shrink-0" />
-                <span>Saldo bajo. Conviene recargar antes de lanzar imagen pesada o vídeo.</span>
+              <div className="mb-2 flex items-center gap-2 bg-amber-400/15 px-2 py-1.5 text-[10px] font-semibold text-amber-100">
+                <AlertCircle size={12} className="shrink-0" />
+                <span>Saldo bajo. Recarga antes de imagen o vídeo.</span>
               </div>
             )}
-
-            <div className="mb-3 grid grid-cols-2 gap-1 rounded-none border border-white/10 bg-black/22 p-1">
-              <button
-                type="button"
-                onClick={() => setView("overview")}
-                className={`rounded-none px-3 py-2 text-[11px] font-bold transition ${
-                  view === "overview" ? "bg-white text-slate-950 shadow-sm" : "text-white/46 hover:bg-white/[0.055] hover:text-white"
-                }`}
-              >
-                Resumen
-              </button>
-              <button
-                type="button"
-                onClick={() => setView("activity")}
-                className={`rounded-none px-3 py-2 text-[11px] font-bold transition ${
-                  view === "activity" ? "bg-white text-slate-950 shadow-sm" : "text-white/46 hover:bg-white/[0.055] hover:text-white"
-                }`}
-              >
-                Movimientos
-              </button>
-            </div>
 
             {view === "overview" ? renderOverview() : renderActivity()}
           </div>

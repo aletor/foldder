@@ -25,7 +25,8 @@ import {
   Wand2,
   X,
 } from "lucide-react";
-import { StandardStudioShellHeader, type StandardStudioShellConfig } from "./StandardStudioShell";
+import type { StandardStudioShellConfig } from "./StandardStudioShell";
+import { FoldderStudioHeader } from "./FoldderStudioHeader";
 import {
   CINE_CAMERA_MOVEMENT_LABELS,
   CINE_COLOR_GRADING_LABELS,
@@ -1416,33 +1417,26 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
 
   const shell = (
     <div className="fixed inset-0 z-[100090] flex flex-col bg-[#05070b] text-white">
-      {standardShell ? <StandardStudioShellHeader shell={standardShell} /> : null}
-      <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="absolute -left-40 top-20 h-96 w-96 rounded-full bg-cyan-500/10 blur-3xl" />
-        <div className="absolute right-[-10%] top-[-10%] h-[30rem] w-[30rem] rounded-full bg-indigo-500/10 blur-3xl" />
-        <div className="absolute bottom-[-18%] left-[28%] h-[32rem] w-[32rem] rounded-full bg-amber-500/8 blur-3xl" />
-      </div>
-      <header className="relative z-10 flex shrink-0 items-center gap-4 border-b border-white/10 px-7 py-5">
-        <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-white/12 bg-white/[0.07] shadow-2xl">
-          <Clapperboard size={22} className="text-cyan-100" />
-        </div>
-        <div className="min-w-0">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-cyan-100/60">Nodo Cine</div>
-          <h1 className="truncate text-2xl font-semibold tracking-[-0.04em] text-white">Mesa de dirección audiovisual</h1>
-        </div>
-        <div className="ml-auto hidden grid-cols-4 gap-2 lg:grid">
-          <Stat label="Escenas" value={safeData.scenes.length} />
-          <Stat label="Reparto" value={safeData.characters.length} />
-          <Stat label="Fondos" value={safeData.backgrounds.length} />
-          <Stat label="Frames" value={framesPrepared} />
-        </div>
-        <div className="flex items-center gap-2">
-          <span className={cx("rounded-full border px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.13em]", brainConnected ? "border-cyan-300/30 bg-cyan-300/12 text-cyan-100" : "border-white/10 bg-white/[0.05] text-white/45")}>{brainConnected ? "Brain conectado" : "Sin Brain"}</span>
-          <button type="button" onClick={onClose} className="rounded-2xl border border-white/10 bg-white/[0.06] p-2.5 text-white/65 transition hover:bg-white/[0.12] hover:text-white">
-            <X size={18} />
-          </button>
-        </div>
-      </header>
+      <FoldderStudioHeader
+        nodeType="cine"
+        nodeLabel={standardShell?.appLabel ?? "Cine"}
+        subtitle="Mesa de dirección audiovisual"
+        onClose={onClose}
+        actions={
+          <>
+            <span className="hidden items-center px-2 text-[9px] font-black uppercase tracking-[0.08em] text-white/70 lg:flex">
+              {safeData.scenes.length} esc · {safeData.characters.length} rep · {framesPrepared} fr
+            </span>
+            <span
+              className={`flex items-center px-3 text-[9px] font-black uppercase tracking-[0.08em] ${
+                brainConnected ? "text-cyan-200" : "text-white/45"
+              }`}
+            >
+              {brainConnected ? "Brain" : "Sin Brain"}
+            </span>
+          </>
+        }
+      />
       <div className="relative z-10 flex min-h-0 flex-1">
         <aside className="w-60 shrink-0 border-r border-white/10 p-5">
           <div className="rounded-[28px] border border-white/10 bg-white/[0.055] p-2">

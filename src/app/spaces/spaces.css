@@ -4173,6 +4173,33 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
 }
 
 /* Top HUD — flat chrome (no borders, no drop shadows) */
+/* Top HUD — flush top bar, no gaps between controls */
+[data-foldder-top-hud] {
+  --foldder-top-hud-h: 40px;
+  --foldder-top-hud-offset: 0px;
+  margin: 0 !important;
+  padding: 0 !important;
+  gap: 0 !important;
+}
+
+[data-foldder-top-hud] > div {
+  min-height: var(--foldder-top-hud-h);
+}
+
+[data-foldder-top-hud] [data-foldder-wallet-trigger="topbar"] button,
+[data-foldder-top-hud] [data-foldder-wallet-trigger="topbar"] button span {
+  border-radius: 0 !important;
+}
+
+[data-foldder-top-hud] > div {
+  gap: 0 !important;
+  margin: 0 !important;
+}
+
+[data-foldder-top-hud] .pointer-events-auto.flex {
+  gap: 0 !important;
+}
+
 [data-foldder-top-hud] img {
   filter: none !important;
 }
@@ -4290,4 +4317,117 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
   .foldder-frameless-footer-action button
 ):disabled :is(svg, span, strong) {
   color: rgba(0, 0, 0, 0.38) !important;
+}
+
+/* Wallet panel — flush rectangular chrome (sidebar / top HUD style) */
+[data-foldder-wallet-panel] {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+[data-foldder-wallet-panel] :is(
+  button,
+  span,
+  div,
+  p
+):not([class*="rounded-full"]) {
+  border-radius: 0 !important;
+}
+
+[data-foldder-wallet-panel] [class*="rounded-full"] {
+  border-radius: 0 !important;
+}
+
+[data-foldder-wallet-panel] button {
+  box-shadow: none !important;
+}
+
+[data-foldder-wallet-panel] [class*="border-white"] {
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* Projects panel — same flush rectangular chrome as wallet */
+[data-foldder-projects-panel] {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+[data-foldder-projects-panel] :is(
+  button,
+  span,
+  div,
+  input,
+  h2,
+  h4
+):not([class*="rounded-full"]) {
+  border-radius: 0 !important;
+}
+
+[data-foldder-projects-panel] [class*="rounded-full"] {
+  border-radius: 0 !important;
+}
+
+[data-foldder-projects-panel] button {
+  box-shadow: none !important;
+}
+
+/* Canvas background panel — flush rectangular chrome */
+[data-foldder-canvas-bg-panel] {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+[data-foldder-canvas-bg-panel] :is(
+  button,
+  span,
+  div,
+  label
+):not([class*="rounded-full"]) {
+  border-radius: 0 !important;
+}
+
+[data-foldder-canvas-bg-panel] button {
+  box-shadow: none !important;
+}
+
+/* Inspiration studio — flush rectangular chrome */
+[data-foldder-inspiration-studio] {
+  border-radius: 0 !important;
+}
+
+[data-foldder-inspiration-studio] :is(
+  button,
+  span,
+  div,
+  textarea,
+  h1,
+  p
+):not([class*="rounded-full"]) {
+  border-radius: 0 !important;
+}
+
+[data-foldder-inspiration-studio] button {
+  box-shadow: none !important;
+}
+
+/* Studio header — node identity bar (shared across all studio modes) */
+[data-foldder-studio-header] {
+  border-radius: 0 !important;
+}
+
+[data-foldder-studio-header] :is(button, h1, p, input, span, img) {
+  border-radius: 0 !important;
+}
+
+[data-foldder-studio-header] :is(h1, p, span) {
+  text-shadow: none !important;
+  filter: none !important;
+}
+
+[data-foldder-studio-header] button {
+  box-shadow: none !important;
+}
+
+[data-foldder-studio-header] [data-foldder-studio-header-close] {
+  flex-shrink: 0;
 }

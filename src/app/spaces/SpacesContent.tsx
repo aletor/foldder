@@ -208,7 +208,9 @@ import {
 import { FoldderCanvasGridBackground } from "./FoldderCanvasGridBackground";
 import {
   FOLDDER_LIBRARY_PREVIEW_NODE_ID,
+  getReactFlowCanvasRect,
   isClientPointOverReactFlowCanvas,
+  libraryDragEdgePanDelta,
   libraryPreviewPositionFromFlowPoint,
   resolveLibraryPreviewNodeFrame,
 } from "./library-drag-preview";
@@ -708,6 +710,8 @@ export function SpacesContent() {
   const libraryDragPreviewRef = useRef<typeof libraryDragPreview>(null);
   libraryDragPreviewRef.current = libraryDragPreview;
   const libraryDragPreviewRafRef = useRef<number | null>(null);
+  const libraryDragPointerRef = useRef<{ x: number; y: number } | null>(null);
+  const libraryDragEdgePanRafRef = useRef<number | null>(null);
   const [projectBrainOpen, setProjectBrainOpen] = useState(false);
   const [brainInitialSection, setBrainInitialSection] = useState<BrainMainSection | null>(null);
   const [projectAssetsOpen, setProjectAssetsOpen] = useState(false);
@@ -1030,6 +1034,7 @@ export function SpacesContent() {
   const handleLibraryDragEnd = useCallback(() => {
     setPaletteDragActive(false);
     setLibraryDragPreview(null);
+    libraryDragPointerRef.current = null;
     const saved = libraryDragViewportRef.current;
     const dropOk = libraryCanvasDropSucceededRef.current;
     if (!dropOk && saved) {
@@ -5526,6 +5531,7 @@ export function SpacesContent() {
     (event: React.DragEvent) => {
       event.preventDefault();
       event.dataTransfer.dropEffect = "move";
+      libraryDragPointerRef.current = { x: event.clientX, y: event.clientY };
       syncLibraryDragPreviewAtClientPoint(event.clientX, event.clientY);
     },
     [syncLibraryDragPreviewAtClientPoint],
@@ -5541,6 +5547,7 @@ export function SpacesContent() {
       if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
 
       const { clientX, clientY } = event;
+      libraryDragPointerRef.current = { x: clientX, y: clientY };
       if (libraryDragPreviewRafRef.current != null) return;
       libraryDragPreviewRafRef.current = window.requestAnimationFrame(() => {
         libraryDragPreviewRafRef.current = null;
@@ -5557,6 +5564,47 @@ export function SpacesContent() {
       }
     };
   }, [paletteDragActive, syncLibraryDragPreviewAtClientPoint]);
+
+  useEffect(() => {
+    if (!paletteDragActive) return;
+
+    let running = true;
+
+    const tick = () => {
+      if (!running) return;
+      const pointer = libraryDragPointerRef.current;
+      const dragType = libraryDragTypeRef.current;
+      if (pointer && dragType) {
+        const canvasRect = getReactFlowCanvasRect(reactFlowWrapper.current);
+        if (canvasRect) {
+          const { x: panX, y: panY } = libraryDragEdgePanDelta(
+            pointer.x,
+            pointer.y,
+            canvasRect,
+          );
+          if (panX !== 0 || panY !== 0) {
+            const viewport = getViewport();
+            setViewport(
+              { x: viewport.x + panX, y: viewport.y + panY, zoom: viewport.zoom },
+              { duration: 0 },
+            );
+            syncLibraryDragPreviewAtClientPoint(pointer.x, pointer.y);
+          }
+        }
+      }
+      libraryDragEdgePanRafRef.current = window.requestAnimationFrame(tick);
+    };
+
+    libraryDragEdgePanRafRef.current = window.requestAnimationFrame(tick);
+
+    return () => {
+      running = false;
+      if (libraryDragEdgePanRafRef.current != null) {
+        window.cancelAnimationFrame(libraryDragEdgePanRafRef.current);
+        libraryDragEdgePanRafRef.current = null;
+      }
+    };
+  }, [paletteDragActive, getViewport, setViewport, syncLibraryDragPreviewAtClientPoint]);
 
   const onDrop = useCallback(
     (event: React.DragEvent) => {
@@ -6166,25 +6214,27 @@ export function SpacesContent() {
         <div
           key="action-hud"
           data-foldder-top-hud
-          className="pointer-events-none flex min-w-0 flex-col gap-2"
+          className="pointer-events-none flex min-w-0 flex-col gap-0"
           style={{
             position: 'absolute',
-            top: 24,
-            left: 24,
-            right: 24,
+            top: 0,
+            left: 0,
+            right: 0,
             zIndex: 100,
           }}
         >
-          <div className="relative flex w-full min-w-0 max-w-full items-center gap-2 sm:gap-3">
+          <div className="relative flex w-full min-w-0 max-w-full items-stretch gap-0">
             {isAuthenticated && (
               <>
-                <div className="pointer-events-auto relative z-[25] flex min-h-[40px] min-w-0 shrink-0 items-center gap-2">
-                  <img
-                    src="/logo_bl.svg"
-                    alt="Foldder"
-                    className="h-11 w-11 shrink-0 object-contain"
-                    draggable={false}
-                  />
+                <div className="pointer-events-auto relative z-[25] flex h-10 min-w-0 shrink-0 items-stretch gap-0">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center bg-white/[0.08] backdrop-blur-xl">
+                    <img
+                      src="/logo_bl.svg"
+                      alt="Foldder"
+                      className="h-7 w-7 object-contain"
+                      draggable={false}
+                    />
+                  </div>
                   <button
                     type="button"
                     onClick={() => setAssistantHudOpen((open) => !open)}
@@ -6206,7 +6256,7 @@ export function SpacesContent() {
                     }`}
                     aria-hidden={!assistantHudOpen}
                   >
-                    <div className="flex min-h-[40px] w-full items-center rounded-none bg-white/[0.08] px-2 py-1 backdrop-blur-xl">
+                    <div className="flex h-10 w-full items-center rounded-none bg-white/[0.08] px-2 py-0 backdrop-blur-xl">
                       <AgentHUD
                         variant="topbar"
                         onGenerate={onGenerateAssistant}
@@ -6216,7 +6266,7 @@ export function SpacesContent() {
                     </div>
                   </div>
                 </div>
-                <div className="pointer-events-auto relative z-[5] flex min-h-[40px] min-w-[12rem] flex-1 items-center justify-center rounded-none bg-white/[0.08] px-2.5 py-1.5 text-center backdrop-blur-xl">
+                <div className="pointer-events-auto relative z-[5] flex h-10 min-w-[12rem] flex-1 items-center justify-center rounded-none bg-white/[0.08] px-2.5 py-0 text-center backdrop-blur-xl">
                   <label htmlFor="foldder-hud-project-name" className="sr-only">
                     Nombre del proyecto
                   </label>
@@ -6250,17 +6300,17 @@ export function SpacesContent() {
             <div
               className={
                 isAuthenticated
-                  ? 'pointer-events-auto relative z-[5] ml-auto flex min-w-0 max-w-[min(100%,54rem)] shrink-0 items-center justify-end gap-2 sm:gap-3'
-                  : 'pointer-events-auto flex w-full min-w-0 flex-1 items-center justify-between gap-3'
+                  ? 'pointer-events-auto relative z-[5] ml-auto flex min-w-0 max-w-[min(100%,54rem)] shrink-0 items-stretch justify-end gap-0'
+                  : 'pointer-events-auto flex w-full min-w-0 flex-1 items-stretch justify-between gap-0'
               }
             >
               {/* Quick Actions — fondo / pantalla / Foldder (pins abajo en `TopbarPins`) */}
-              <div className="flex max-w-full shrink-0 flex-nowrap items-center justify-end gap-1.5">
-                <div className="flex h-10 items-center rounded-none bg-white/[0.08] p-1 backdrop-blur-xl">
+              <div className="flex max-w-full shrink-0 flex-nowrap items-stretch justify-end gap-0">
+                <div className="flex h-10 items-stretch rounded-none bg-white/[0.08] p-0 backdrop-blur-xl">
                   <button
                     type="button"
                     onClick={() => setWorkspaceViewMode('standard')}
-                    className={`flex h-8 items-center gap-1.5 rounded-none px-2 text-[8px] font-black uppercase tracking-widest transition ${
+                    className={`flex h-10 items-center gap-1.5 rounded-none px-2 text-[8px] font-black uppercase tracking-widest transition ${
                       workspaceViewMode === 'standard'
                         ? 'bg-white px-2 text-slate-900'
                         : 'text-white/70 hover:bg-white/20 hover:text-white'
@@ -6272,7 +6322,7 @@ export function SpacesContent() {
                   <button
                     type="button"
                     onClick={() => setWorkspaceViewMode('pro')}
-                    className={`flex h-8 items-center gap-1.5 rounded-none px-2 text-[8px] font-black uppercase tracking-widest transition ${
+                    className={`flex h-10 items-center gap-1.5 rounded-none px-2 text-[8px] font-black uppercase tracking-widest transition ${
                       workspaceViewMode === 'pro'
                         ? 'bg-white text-slate-900'
                         : 'text-white/70 hover:bg-white/20 hover:text-white'
@@ -6298,37 +6348,41 @@ export function SpacesContent() {
                   </button>
                   {canvasBgMenuOpen && (
                     <div
-                      className="absolute right-0 top-[calc(100%+6px)] z-[220] w-[min(94vw,380px)] overflow-hidden rounded-none bg-white/[0.94] py-1.5 backdrop-blur-xl dark:bg-slate-900/95"
+                      className="absolute right-0 top-[calc(100%+8px)] z-[220] w-[min(94vw,320px)] overflow-hidden rounded-none bg-[#0b0f14]/98 text-white shadow-[0_24px_70px_rgba(0,0,0,0.55)] backdrop-blur-2xl"
                       role="menu"
-                      aria-label="Fondo del lienzo"
+                      aria-label={language === "es" ? "Fondo del lienzo" : "Canvas background"}
+                      data-foldder-canvas-bg-panel
                     >
-                      <div className="max-h-[min(58vh,440px)] overflow-y-auto px-2">
-                        <div className="mb-2 flex items-center justify-end gap-2 px-0.5">
-                          <span className="text-[9px] font-black uppercase tracking-[0.14em] text-slate-500 dark:text-slate-300">
-                            {language === "es" ? "Color sólido" : "Solid color"}
+                      <div className="flex h-10 items-stretch bg-white/[0.08]">
+                        <div className="flex min-w-0 flex-1 items-center gap-2 px-3">
+                          <LayoutGrid size={14} className="shrink-0 text-violet-300" aria-hidden />
+                          <span className="truncate text-[10px] font-black uppercase tracking-[0.12em] text-white/85">
+                            {language === "es" ? "Fondo del lienzo" : "Canvas background"}
                           </span>
-                          <label
-                            className={`relative block h-9 w-9 shrink-0 overflow-hidden rounded-none bg-white dark:bg-slate-800 ${
-                              canvasBgId === CANVAS_SOLID_COLOR_BG_ID
-                                ? "ring-2 ring-slate-500 ring-offset-1 ring-offset-white dark:ring-offset-slate-900"
-                                : ""
-                            }`}
-                          >
-                            <span
-                              className="absolute inset-0"
-                              style={{ backgroundColor: canvasBgColor }}
-                              aria-hidden
-                            />
-                            <input
-                              type="color"
-                              value={canvasBgColor}
-                              onChange={(event) => selectCanvasSolidColor(event.target.value)}
-                              className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-                              aria-label={language === "es" ? "Elegir color de fondo" : "Choose background color"}
-                            />
-                          </label>
                         </div>
-                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                        <label
+                          className={`relative flex h-10 w-10 shrink-0 cursor-pointer border-l border-white/10 ${
+                            canvasBgId === CANVAS_SOLID_COLOR_BG_ID ? "ring-2 ring-inset ring-white" : ""
+                          }`}
+                          title={language === "es" ? "Color sólido" : "Solid color"}
+                        >
+                          <span
+                            className="absolute inset-0"
+                            style={{ backgroundColor: canvasBgColor }}
+                            aria-hidden
+                          />
+                          <input
+                            type="color"
+                            value={canvasBgColor}
+                            onChange={(event) => selectCanvasSolidColor(event.target.value)}
+                            className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                            aria-label={language === "es" ? "Elegir color de fondo" : "Choose background color"}
+                          />
+                        </label>
+                      </div>
+
+                      <div className="custom-scrollbar max-h-[min(50vh,340px)] overflow-y-auto">
+                        <div className="grid grid-cols-3 divide-x divide-y divide-white/10">
                           {CANVAS_BACKGROUNDS.map((bg) => (
                             <button
                               key={bg.id}
@@ -6339,52 +6393,46 @@ export function SpacesContent() {
                                 setCanvasBgId(bg.id);
                                 setCanvasBgMenuOpen(false);
                               }}
-                              className={`block w-full rounded-none bg-slate-50/80 p-0 transition-colors hover:bg-slate-100 dark:bg-slate-800/80 dark:hover:bg-slate-700 ${
-                                canvasBgId === bg.id
-                                  ? 'ring-2 ring-slate-500 ring-offset-1 ring-offset-white dark:ring-offset-slate-900'
-                                  : ''
+                              className={`relative block w-full p-0 transition hover:brightness-110 ${
+                                canvasBgId === bg.id ? "ring-2 ring-inset ring-emerald-400" : ""
                               }`}
                             >
                               <span
-                                className="block aspect-[4/3] w-full bg-slate-200 bg-cover bg-center dark:bg-slate-700"
+                                className="block aspect-[4/3] w-full bg-slate-800 bg-cover bg-center"
                                 style={{ backgroundImage: `url("${bg.url}")` }}
                               />
                             </button>
                           ))}
                         </div>
                       </div>
-                      <div
-                        className="mt-1 px-1.5 pt-1.5"
-                        data-foldder-i18n-ignore
-                      >
-                        <div className="flex items-center justify-between gap-2 rounded-none bg-slate-100/80 p-1.5 dark:bg-slate-800/80">
-                          <div className="flex items-center gap-1.5 px-1.5 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500 dark:text-slate-300">
-                            <Languages size={13} aria-hidden />
-                            <span>{language === "es" ? "Idioma" : "Language"}</span>
-                          </div>
-                          <div className="flex shrink-0 gap-1">
-                            {LANGUAGE_OPTIONS.map((option) => {
-                              const active = option.id === language;
-                              return (
-                                <button
-                                  key={option.id}
-                                  type="button"
-                                  onClick={() => setLanguage(option.id)}
-                                  aria-pressed={active}
-                                  aria-label={option.label}
-                                  title={option.label}
-                                  className={`flex h-8 w-10 items-center justify-center rounded-none text-[11px] font-black uppercase tracking-[0.08em] transition ${
-                                    active
-                                      ? "bg-slate-900 text-white dark:bg-white dark:text-slate-950"
-                                      : "bg-white text-slate-600 hover:text-slate-900 dark:bg-slate-900 dark:text-slate-300 dark:hover:text-white"
-                                  }`}
-                                >
-                                  {option.shortLabel}
-                                </button>
-                              );
-                            })}
-                          </div>
+
+                      <div className="flex h-10 divide-x divide-white/10 border-t border-white/10 bg-white/[0.06]" data-foldder-i18n-ignore>
+                        <div className="flex min-w-0 flex-1 items-center gap-1.5 px-3">
+                          <Languages size={13} className="shrink-0 text-sky-300" aria-hidden />
+                          <span className="truncate text-[10px] font-black uppercase tracking-[0.1em] text-white/50">
+                            {language === "es" ? "Idioma" : "Language"}
+                          </span>
                         </div>
+                        {LANGUAGE_OPTIONS.map((option) => {
+                          const active = option.id === language;
+                          return (
+                            <button
+                              key={option.id}
+                              type="button"
+                              onClick={() => setLanguage(option.id)}
+                              aria-pressed={active}
+                              aria-label={option.label}
+                              title={option.label}
+                              className={`flex w-12 shrink-0 items-center justify-center text-[11px] font-black uppercase tracking-[0.08em] transition ${
+                                active
+                                  ? "bg-white text-slate-950"
+                                  : "bg-white/[0.04] text-white/45 hover:bg-white/[0.12] hover:text-white"
+                              }`}
+                            >
+                              {option.shortLabel}
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
                   )}
@@ -6440,8 +6488,9 @@ export function SpacesContent() {
                   <span className="hidden sm:inline">Nuevo proyecto</span>
                 </button>
                 {isAuthenticated && (
-                  <div className="ml-1 flex items-center">
+                  <div className="flex items-stretch">
                     <WalletBalanceButton
+                      triggerLayout="topbar"
                       onBeforeCheckout={prepareProjectForCheckout}
                       onSignOut={() => {
                         if (sessionStatus === "authenticated") {
@@ -6683,80 +6732,94 @@ export function SpacesContent() {
         {showNewProjectModal && (
           <div className="fixed inset-0 z-[10006] flex items-center justify-center p-4" data-foldder-canvas-modals>
             <div
-              className="absolute inset-0 bg-black/60 backdrop-blur-xl"
+              className="absolute inset-0 bg-black/45 backdrop-blur-sm"
               onClick={() => !isSaving && setShowNewProjectModal(false)}
               aria-hidden
             />
-            <div className="relative z-10 w-full max-w-md rounded-none border border-white/12 bg-black/88 p-8 shadow-2xl shadow-black/45 backdrop-blur-xl">
-              <div className="mb-6 flex items-center justify-between">
-                <h2 className="flex items-center gap-3 text-xl font-black uppercase tracking-wide text-white">
-                  <FolderPlus size={20} className="text-blue-400" /> Nuevo proyecto
-                </h2>
+            <div
+              className="relative z-10 w-full max-w-[400px] overflow-hidden rounded-none bg-[#0b0f14]/98 text-white shadow-[0_24px_70px_rgba(0,0,0,0.55)] backdrop-blur-2xl"
+              data-foldder-projects-panel
+            >
+              <div className="flex h-10 items-stretch bg-white/[0.08]">
+                <div className="flex min-w-0 flex-1 items-center gap-2 px-3">
+                  <FolderPlus size={14} className="shrink-0 text-blue-400" aria-hidden />
+                  <h2 className="truncate text-[10px] font-black uppercase tracking-[0.12em] text-white/85">
+                    Nuevo proyecto
+                  </h2>
+                </div>
                 <button
                   type="button"
                   onClick={() => !isSaving && setShowNewProjectModal(false)}
-                  className="rounded-full p-2 text-white/50 transition-colors hover:bg-white/10 hover:text-white"
+                  className="flex h-10 w-10 shrink-0 items-center justify-center border-l border-white/10 bg-white/[0.04] text-white/50 transition hover:bg-white/[0.12] hover:text-white"
                   aria-label="Cerrar"
                 >
-                  <X size={16} />
+                  <X size={14} />
                 </button>
               </div>
-              <p className="mb-4 text-sm leading-relaxed text-white/68">
-                Elige un nombre. Se creará un lienzo vacío y se guardará en el servidor; a partir de ahí el proyecto se
-                guardará solo cada minuto.
+              <p className="border-b border-white/8 px-3 py-2 text-[10px] leading-snug text-white/45">
+                El lienzo vacío se guardará en el servidor y se sincronizará cada minuto.
               </p>
-              <input
-                type="text"
-                autoFocus
-                placeholder="Nombre del proyecto"
-                value={newProjectNameInput}
-                onChange={(e) => setNewProjectNameInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void submitNewProject();
-                  if (e.key === 'Escape' && !isSaving) setShowNewProjectModal(false);
-                }}
-                className="mb-6 w-full rounded-none border border-white/18 bg-white px-4 py-3 text-sm font-bold text-slate-950 shadow-inner outline-none transition-all placeholder:text-slate-500 focus:border-blue-400/80 focus:ring-2 focus:ring-blue-400/30"
-              />
-              <div className="flex justify-end gap-3">
-                <button
-                  type="button"
-                  onClick={() => !isSaving && setShowNewProjectModal(false)}
-                  className="rounded-none border border-white/22 bg-white/8 px-6 py-2.5 font-black text-[11px] uppercase tracking-widest text-white/72 transition-all hover:bg-white/14 hover:text-white"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void submitNewProject()}
-                  disabled={isSaving}
-                  className="flex items-center gap-2 rounded-none border border-blue-500/45 bg-blue-600 px-6 py-2.5 font-black text-[11px] uppercase tracking-widest text-white shadow-lg shadow-blue-900/25 transition-all hover:bg-blue-500 disabled:opacity-50"
-                >
-                  {isSaving ? <Loader2 size={14} className="animate-spin" /> : <FolderPlus size={14} />} Crear
-                </button>
+              <div className="p-3">
+                <input
+                  type="text"
+                  autoFocus
+                  placeholder="Nombre del proyecto"
+                  value={newProjectNameInput}
+                  onChange={(e) => setNewProjectNameInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void submitNewProject();
+                    if (e.key === 'Escape' && !isSaving) setShowNewProjectModal(false);
+                  }}
+                  className="mb-3 h-10 w-full bg-white/[0.10] px-3 text-[13px] font-bold text-white outline-none placeholder:text-white/35 focus:bg-white/[0.16]"
+                />
+                <div className="grid grid-cols-2 divide-x divide-white/10">
+                  <button
+                    type="button"
+                    onClick={() => !isSaving && setShowNewProjectModal(false)}
+                    className="h-10 bg-white/[0.06] text-[10px] font-black uppercase tracking-[0.1em] text-white/55 transition hover:bg-white/[0.12] hover:text-white"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void submitNewProject()}
+                    disabled={isSaving}
+                    className="flex h-10 items-center justify-center gap-2 bg-blue-600 text-[10px] font-black uppercase tracking-[0.1em] text-white transition hover:bg-blue-500 disabled:opacity-50"
+                  >
+                    {isSaving ? <Loader2 size={14} className="animate-spin" /> : <FolderPlus size={14} />}
+                    Crear
+                  </button>
+                </div>
               </div>
             </div>
           </div>
         )}
 
         {showLoadModal && (
-          <div className="fixed inset-0 z-[10004] flex items-center justify-center p-3 sm:p-4" data-foldder-canvas-modals>
+          <div className="fixed inset-0 z-[10004] flex items-start justify-center p-3 pt-[4.5rem] sm:items-center sm:p-4" data-foldder-canvas-modals>
             <div
-              className="absolute inset-0 bg-black/45 backdrop-blur-xl"
+              className="absolute inset-0 bg-black/45 backdrop-blur-sm"
               onClick={() => {
                 if (!postAuthProjectsGate) setShowLoadModal(false);
               }}
               aria-hidden
             />
-            <div className="relative z-10 flex max-h-[min(85vh,560px)] w-full max-w-lg flex-col rounded-none border border-white/25 bg-white/20 p-4 shadow-2xl shadow-black/20 backdrop-blur-xl sm:p-5">
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <h2 className="flex items-center gap-2 text-sm font-black uppercase tracking-wide text-slate-800">
-                  <FolderOpen size={16} className="shrink-0 text-rose-500" /> Tus proyectos
-                </h2>
+            <div
+              className="relative z-10 flex max-h-[min(85vh,520px)] w-full max-w-[400px] flex-col overflow-hidden rounded-none bg-[#0b0f14]/98 text-white shadow-[0_24px_70px_rgba(0,0,0,0.55)] backdrop-blur-2xl"
+              data-foldder-projects-panel
+            >
+              <div className="flex h-10 items-stretch bg-white/[0.08]">
+                <div className="flex min-w-0 flex-1 items-center gap-2 px-3">
+                  <FolderOpen size={14} className="shrink-0 text-sky-300" aria-hidden />
+                  <h2 className="truncate text-[10px] font-black uppercase tracking-[0.12em] text-white/85">
+                    Tus proyectos
+                  </h2>
+                </div>
                 {!postAuthProjectsGate && (
                   <button
                     type="button"
                     onClick={() => setShowLoadModal(false)}
-                    className="shrink-0 rounded-full p-1 text-slate-500 transition-colors hover:bg-white/40 hover:text-slate-800"
+                    className="flex h-10 w-10 shrink-0 items-center justify-center border-l border-white/10 bg-white/[0.04] text-white/50 transition hover:bg-white/[0.12] hover:text-white"
                     aria-label="Cerrar"
                   >
                     <X size={14} />
@@ -6772,35 +6835,35 @@ export function SpacesContent() {
                   setShowNewProjectModal(true);
                 }}
                 disabled={!!projectDeleteInProgress}
-                className="mb-3 flex w-full items-center justify-center gap-2 rounded-none border border-blue-500/40 bg-blue-600/90 px-4 py-3 text-[11px] font-black uppercase tracking-widest text-white shadow-md shadow-blue-900/20 transition-all hover:bg-blue-500 disabled:pointer-events-none disabled:opacity-40"
+                className="flex h-10 w-full items-center justify-center gap-2 bg-blue-600 text-[10px] font-black uppercase tracking-[0.1em] text-white transition hover:bg-blue-500 disabled:pointer-events-none disabled:opacity-40"
               >
-                <FolderPlus size={16} strokeWidth={2.5} aria-hidden />
-                Comenzar un proyecto nuevo
+                <FolderPlus size={14} strokeWidth={2.5} aria-hidden />
+                Comenzar proyecto nuevo
               </button>
 
-              <p className="mb-3 text-[11px] leading-snug text-slate-600">
+              <p className="border-b border-white/8 px-3 py-1.5 text-[9px] leading-snug text-white/38">
                 {postAuthProjectsGate
                   ? 'Abre un proyecto guardado o crea uno nuevo para continuar.'
                   : 'Elige un proyecto para cargarlo en el lienzo.'}
               </p>
 
               {(projectsListLoading || projectsListError || projectLoadingId || projectLoadingError) && (
-                <div className="mb-3 space-y-2">
+                <div className="space-y-0 divide-y divide-white/8 border-b border-white/8">
                   {projectsListLoading && (
-                    <div className="flex items-center gap-2 rounded-none border border-white/25 bg-white/20 px-3 py-2 text-[11px] font-semibold text-slate-700">
-                      <Loader2 size={13} className="animate-spin text-blue-600" />
-                      Cargando listado de proyectos…
+                    <div className="flex items-center gap-2 px-3 py-2 text-[10px] font-semibold text-white/65">
+                      <Loader2 size={12} className="animate-spin text-sky-300" />
+                      Cargando listado…
                     </div>
                   )}
                   {projectsListError && (
-                    <div className="flex items-start gap-2 rounded-none border border-rose-300/60 bg-rose-50/70 px-3 py-2 text-[11px] font-semibold text-rose-700">
-                      <AlertCircle size={13} className="mt-0.5 shrink-0" />
+                    <div className="flex items-start gap-2 bg-rose-500/15 px-3 py-2 text-[10px] font-semibold text-rose-100">
+                      <AlertCircle size={12} className="mt-0.5 shrink-0" />
                       <div className="min-w-0 flex-1">
                         <p className="break-words">{projectsListError}</p>
                         <button
                           type="button"
                           onClick={() => void refreshProjectsList({ withLoader: true })}
-                          className="mt-1 rounded-none border border-rose-300/60 bg-white/80 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-rose-700 hover:bg-white"
+                          className="mt-1 bg-white/10 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-white hover:bg-white/18"
                         >
                           Reintentar
                         </button>
@@ -6808,47 +6871,47 @@ export function SpacesContent() {
                     </div>
                   )}
                   {projectLoadingId && (
-                    <div className="flex items-start gap-2 rounded-none border border-blue-300/50 bg-blue-50/70 px-3 py-2 text-[11px] font-semibold text-blue-800">
-                      <Loader2 size={13} className="mt-0.5 shrink-0 animate-spin" />
+                    <div className="flex items-start gap-2 bg-sky-500/15 px-3 py-2 text-[10px] font-semibold text-sky-100">
+                      <Loader2 size={12} className="mt-0.5 shrink-0 animate-spin" />
                       <div className="min-w-0">
                         <p>Cargando proyecto…</p>
-                        <p className="mt-0.5 text-[10px] font-bold text-blue-700/90">
-                          {projectLoadingStage || "Preparando datos…"}
+                        <p className="mt-0.5 text-[9px] font-bold text-sky-200/80">
+                          {projectLoadingStage || 'Preparando datos…'}
                         </p>
                       </div>
                     </div>
                   )}
                   {projectLoadingError && !projectLoadingId && (
-                    <div className="flex items-start gap-2 rounded-none border border-rose-300/60 bg-rose-50/70 px-3 py-2 text-[11px] font-semibold text-rose-700">
-                      <AlertCircle size={13} className="mt-0.5 shrink-0" />
+                    <div className="flex items-start gap-2 bg-rose-500/15 px-3 py-2 text-[10px] font-semibold text-rose-100">
+                      <AlertCircle size={12} className="mt-0.5 shrink-0" />
                       <p className="break-words">{projectLoadingError}</p>
                     </div>
                   )}
                 </div>
               )}
 
-              <div className="custom-scrollbar min-h-0 max-h-[min(52vh,340px)] flex-1 overflow-y-auto -mx-1 px-1 pb-1 sm:max-h-[min(48vh,380px)]">
+              <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto">
                 {!projectsListLoading && savedProjects.length === 0 ? (
-                  <div className="rounded-none border border-dashed border-white/30 bg-white/10 py-10 text-center backdrop-blur-sm">
-                    <FolderOpen className="mx-auto mb-2 text-slate-400" size={28} />
-                    <p className="text-xs font-bold text-slate-600">Aún no hay proyectos guardados.</p>
+                  <div className="px-3 py-10 text-center">
+                    <FolderOpen className="mx-auto mb-2 text-white/25" size={24} />
+                    <p className="text-[11px] font-semibold text-white/45">Aún no hay proyectos guardados.</p>
                   </div>
                 ) : (
-                  <div className="flex flex-col gap-1.5">
+                  <div className="divide-y divide-white/8">
                     {savedProjects.map((project) => (
                       <div
                         key={project.id}
-                        className="group/item flex items-center gap-2.5 rounded-none border border-white/25 bg-white/15 px-2.5 py-2 shadow-sm backdrop-blur-sm transition-all hover:bg-white/28"
+                        className="group/item flex min-h-12 items-stretch transition hover:bg-white/[0.05]"
                       >
-                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-none border border-white/20 bg-white/20 text-rose-500">
-                          <Workflow size={15} />
+                        <div className="flex w-10 shrink-0 items-center justify-center bg-sky-500/18 text-sky-200">
+                          <Workflow size={14} />
                         </div>
-                        <div className="min-w-0 flex-1">
+                        <div className="min-w-0 flex-1 border-l border-white/10 px-2.5 py-1.5">
                           {editingId === project.id ? (
                             <input
                               autoFocus
                               type="text"
-                              className="w-full rounded-none border border-white/25 bg-white/35 px-2 py-1 text-xs font-black text-slate-900 shadow-inner outline-none backdrop-blur-sm placeholder:text-slate-500 focus:border-rose-400/50 focus:ring-1 focus:ring-rose-400/20"
+                              className="w-full bg-white/[0.12] px-2 py-1 text-[11px] font-black text-white outline-none placeholder:text-white/35 focus:bg-white/[0.18]"
                               value={editingName}
                               onChange={(e) => setEditingName(e.target.value)}
                               onBlur={() => renameProject(project.id, editingName)}
@@ -6868,33 +6931,33 @@ export function SpacesContent() {
                                   setEditingName(project.name);
                                 }
                               }}
-                              className="group/title flex cursor-pointer items-center gap-1.5 truncate text-[13px] font-black leading-tight tracking-tight text-slate-800 hover:text-rose-600"
+                              className="group/title flex cursor-pointer items-center gap-1 truncate text-[12px] font-black leading-tight text-white hover:text-sky-200"
                             >
                               {project.name}
                               <Edit2
                                 size={10}
-                                className="shrink-0 text-slate-400 opacity-0 transition-opacity group-hover/title:opacity-100"
+                                className="shrink-0 text-white/30 opacity-0 transition-opacity group-hover/title:opacity-100"
                               />
                             </h4>
                           )}
-                          <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0 text-[9px] font-bold uppercase tracking-wider text-slate-500">
-                            <div className="flex items-center gap-1">
-                              <Calendar size={10} />{" "}
-                              {project.updatedAt ? new Date(project.updatedAt).toLocaleDateString() : "-"}
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <Settings2 size={10} />{" "}
-                              {typeof project.spacesCount === 'number' ? project.spacesCount : '...'} spaces
-                            </div>
+                          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0 text-[8px] font-bold uppercase tracking-[0.08em] text-white/35">
+                            <span className="inline-flex items-center gap-1">
+                              <Calendar size={9} />
+                              {project.updatedAt ? new Date(project.updatedAt).toLocaleDateString() : '-'}
+                            </span>
+                            <span className="inline-flex items-center gap-1">
+                              <Settings2 size={9} />
+                              {typeof project.spacesCount === 'number' ? project.spacesCount : '…'} spaces
+                            </span>
                           </div>
                         </div>
-                        <div className="flex shrink-0 items-center gap-1">
+                        <div className="flex shrink-0 items-stretch divide-x divide-white/10 border-l border-white/10">
                           <button
                             type="button"
                             onClick={() => !projectDeleteInProgress && void duplicateProject(project)}
                             disabled={!!projectDeleteInProgress}
-                            title="Duplicate"
-                            className="rounded-none border border-white/20 bg-white/12 p-1.5 text-slate-500 transition-all hover:border-sky-400/50 hover:bg-white/35 hover:text-sky-600 disabled:pointer-events-none disabled:opacity-40"
+                            title="Duplicar"
+                            className="flex w-10 items-center justify-center bg-white/[0.03] text-white/45 transition hover:bg-sky-500/20 hover:text-sky-200 disabled:pointer-events-none disabled:opacity-40"
                           >
                             <Copy size={13} />
                           </button>
@@ -6902,8 +6965,8 @@ export function SpacesContent() {
                             type="button"
                             onClick={() => !projectDeleteInProgress && setProjectToDelete(project)}
                             disabled={!!projectDeleteInProgress}
-                            title="Delete"
-                            className="rounded-none border border-white/20 bg-white/12 p-1.5 text-slate-500 transition-all hover:border-rose-400/50 hover:bg-white/35 hover:text-rose-600 disabled:pointer-events-none disabled:opacity-40"
+                            title="Eliminar"
+                            className="flex w-10 items-center justify-center bg-white/[0.03] text-white/45 transition hover:bg-rose-500/20 hover:text-rose-200 disabled:pointer-events-none disabled:opacity-40"
                           >
                             <Trash2 size={13} />
                           </button>
@@ -6911,12 +6974,12 @@ export function SpacesContent() {
                             type="button"
                             onClick={() => !projectDeleteInProgress && !projectLoadingId && loadProject(project)}
                             disabled={!!projectDeleteInProgress || !!projectLoadingId}
-                            className="rounded-none border border-white/25 bg-white/35 px-3 py-1.5 text-[9px] font-black uppercase tracking-widest text-slate-800 shadow-sm transition-all hover:border-slate-400/40 hover:bg-white/50 disabled:pointer-events-none disabled:opacity-40"
+                            className="flex min-w-[4.25rem] items-center justify-center bg-white/[0.08] px-2.5 text-[9px] font-black uppercase tracking-[0.08em] text-white transition hover:bg-white hover:text-slate-950 disabled:pointer-events-none disabled:opacity-40"
                           >
                             {projectLoadingId === project.id ? (
                               <span className="inline-flex items-center gap-1">
                                 <Loader2 size={11} className="animate-spin" />
-                                Cargando
+                                …
                               </span>
                             ) : (
                               'Abrir'
@@ -6936,7 +6999,7 @@ export function SpacesContent() {
         {projectToDelete && (
           <div className="fixed inset-0 z-[10005] flex items-center justify-center p-3 sm:p-4" data-foldder-canvas-modals>
             <div
-              className="absolute inset-0 bg-black/45 backdrop-blur-xl"
+              className="absolute inset-0 bg-black/45 backdrop-blur-sm"
               onClick={() => setProjectToDelete(null)}
               aria-hidden
             />
@@ -6944,35 +7007,38 @@ export function SpacesContent() {
               role="dialog"
               aria-modal="true"
               aria-labelledby="delete-project-title"
-              className="relative z-10 w-full max-w-sm rounded-none border border-white/25 bg-white/20 p-4 shadow-2xl shadow-black/20 backdrop-blur-xl sm:p-5"
+              className="relative z-10 w-full max-w-[400px] overflow-hidden rounded-none bg-[#0b0f14]/98 text-white shadow-[0_24px_70px_rgba(0,0,0,0.55)] backdrop-blur-2xl"
+              data-foldder-projects-panel
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="flex gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-none border border-rose-500/35 bg-rose-500/12">
-                  <Trash2 size={18} className="text-rose-600" strokeWidth={2} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <h2
-                    id="delete-project-title"
-                    className="text-sm font-black uppercase tracking-wide text-slate-900"
-                  >
-                    Delete project?
+              <div className="flex h-10 items-stretch bg-rose-500/20">
+                <div className="flex min-w-0 flex-1 items-center gap-2 px-3">
+                  <Trash2 size={14} className="shrink-0 text-rose-200" strokeWidth={2} />
+                  <h2 id="delete-project-title" className="truncate text-[10px] font-black uppercase tracking-[0.12em] text-rose-50">
+                    ¿Eliminar proyecto?
                   </h2>
-                  <p className="mt-2 text-left text-[11px] font-medium leading-snug text-slate-800">
-                    This will permanently remove{' '}
-                    <span className="font-bold text-slate-950">&quot;{projectToDelete.name}&quot;</span>. This cannot be
-                    undone.
-                  </p>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setProjectToDelete(null)}
+                  className="flex h-10 w-10 shrink-0 items-center justify-center border-l border-white/10 bg-white/[0.04] text-white/50 transition hover:bg-white/[0.12] hover:text-white"
+                  aria-label="Cerrar"
+                >
+                  <X size={14} />
+                </button>
               </div>
-              <div className="mt-4 flex gap-2">
+              <p className="border-b border-white/8 px-3 py-2.5 text-[10px] leading-snug text-white/55">
+                Se eliminará permanentemente{' '}
+                <span className="font-bold text-white">&quot;{projectToDelete.name}&quot;</span>. No se puede deshacer.
+              </p>
+              <div className="grid grid-cols-2 divide-x divide-white/10">
                 <button
                   type="button"
                   onClick={() => setProjectToDelete(null)}
                   disabled={!!projectDeleteInProgress}
-                  className="flex-1 rounded-none border border-white/25 bg-white/15 py-2 text-[10px] font-black uppercase tracking-widest text-slate-800 transition-all hover:bg-white/35 disabled:opacity-40"
+                  className="h-10 bg-white/[0.06] text-[10px] font-black uppercase tracking-[0.1em] text-white/55 transition hover:bg-white/[0.12] hover:text-white disabled:opacity-40"
                 >
-                  Cancel
+                  Cancelar
                 </button>
                 <button
                   type="button"
@@ -6993,9 +7059,9 @@ export function SpacesContent() {
                     })();
                   }}
                   disabled={!!projectDeleteInProgress}
-                  className="flex-1 rounded-none border border-rose-500/45 bg-rose-600 py-2 text-[10px] font-black uppercase tracking-widest text-white shadow-md shadow-rose-900/20 transition-all hover:bg-rose-500 hover:brightness-105 disabled:opacity-50"
+                  className="flex h-10 items-center justify-center bg-rose-600 text-[10px] font-black uppercase tracking-[0.1em] text-white transition hover:bg-rose-500 disabled:opacity-50"
                 >
-                  Delete
+                  Eliminar
                 </button>
               </div>
             </div>

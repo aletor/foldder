@@ -97,7 +97,7 @@ export const AgentHUD = ({
 
   if (variant === 'topbar') {
     return (
-      <div className="flex w-full min-w-0 items-center gap-2.5">
+      <div className="flex w-full min-w-0 items-center gap-0">
         <Star
           size={15}
           strokeWidth={2.25}
@@ -120,13 +120,13 @@ export const AgentHUD = ({
               : 'Selecciona nodos en el lienzo para pedir cambios sobre unos concretos'
           }
           placeholder="Ej.: borra todo · con selección: cambia el texto del prompt, sube resolución a 4K…"
-          className="min-h-[38px] min-w-0 flex-1 rounded-none bg-white/[0.10] px-3 py-2 text-[15px] leading-snug text-white placeholder:text-white/45 backdrop-blur-md focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
+          className="h-10 min-w-0 flex-1 rounded-none bg-white/[0.10] px-3 py-0 text-[15px] leading-snug text-white placeholder:text-white/45 backdrop-blur-md focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
         />
         <button
           type="button"
           onClick={() => void handleGenerate()}
           disabled={isGenerating}
-          className="shrink-0 rounded-none bg-white/[0.10] px-3 py-2 text-[14px] font-black uppercase tracking-wider text-white backdrop-blur-md transition hover:bg-white/[0.22] hover:text-white disabled:opacity-50"
+          className="flex h-10 shrink-0 items-center rounded-none bg-white/[0.10] px-3 py-0 text-[14px] font-black uppercase tracking-wider text-white backdrop-blur-md transition hover:bg-white/[0.22] hover:text-white disabled:opacity-50"
         >
           {isGenerating ? <Loader2 className="h-[18px] w-[18px] animate-spin text-white" /> : 'Run'}
         </button>

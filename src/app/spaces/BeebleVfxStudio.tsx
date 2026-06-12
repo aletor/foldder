@@ -19,7 +19,12 @@ import {
 } from "lucide-react";
 import type { BeebleJob } from "@/lib/beeble-api";
 import { BeebleClient, estimateBeebleCredits, type BeebleAccountInfo } from "@/lib/beeble-api";
-import { StandardStudioShellHeader, type StandardStudioShellConfig } from "./StandardStudioShell";
+import type { StandardStudioShellConfig } from "./StandardStudioShell";
+import {
+  FoldderStudioHeader,
+  foldderStudioHeaderActionClassName,
+  foldderStudioHeaderIconActionClassName,
+} from "./FoldderStudioHeader";
 
 export type BeebleAlphaMode = "auto" | "fill" | "select" | "custom";
 
@@ -164,69 +169,38 @@ export const BeebleVfxStudio = memo(function BeebleVfxStudio(props: BeebleVfxStu
       data-foldder-studio-canvas=""
       data-beeble-vfx-studio=""
     >
-      {standardShell ? <StandardStudioShellHeader shell={standardShell} /> : null}
-      {/* Fondo sutil */}
-      <div
-        className="pointer-events-none absolute inset-0 opacity-[0.45]"
-        style={{
-          background:
-            "radial-gradient(ellipse 80% 50% at 50% -20%, rgba(124,58,237,0.35), transparent), radial-gradient(ellipse 60% 40% at 100% 50%, rgba(236,72,153,0.12), transparent)",
-        }}
-      />
-
-      <header className="relative z-10 flex shrink-0 items-center gap-3 border-b border-white/[0.07] bg-[#07070d]/90 px-4 py-3 backdrop-blur-md">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-600/40 to-fuchsia-600/30 ring-1 ring-white/15 shadow-lg shadow-violet-950/40">
-          <Clapperboard className="h-5 w-5 text-violet-100" strokeWidth={1.5} />
-        </div>
-        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+      <FoldderStudioHeader
+        nodeType="vfxGenerator"
+        nodeLabel={labelDraft.trim() || standardShell?.appLabel || "VFX"}
+        subtitle="Beeble SwitchX · VFX sobre vídeo"
+        onClose={onClose}
+        titleSlot={
           <input
             value={labelDraft}
             onChange={(e) => {
               setLabelDraft(e.target.value);
               updatePatch({ label: e.target.value });
             }}
-            className="min-w-0 max-w-[min(100%,20rem)] rounded-lg border border-white/10 bg-black/35 px-3 py-1.5 text-sm font-semibold text-zinc-50 outline-none placeholder:text-zinc-600 focus:border-violet-500/40 focus:ring-2 focus:ring-violet-500/20"
+            className="min-w-0 w-full max-w-[min(100%,20rem)] bg-transparent text-[11px] font-black uppercase tracking-[0.08em] text-white outline-none placeholder:text-white/35"
             placeholder="Nombre del nodo"
           />
-          <p className="text-[10px] text-zinc-500">Beeble SwitchX · VFX sobre vídeo</p>
-        </div>
-        <span
-          className={`hidden shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide sm:inline-flex ${jobBadge.className}`}
-        >
-          {jobBadge.text}
-        </span>
-        <div className="hidden max-w-[12rem] flex-col items-end gap-0.5 text-right text-[9px] leading-tight text-zinc-500 md:flex">
-          {accountInfo?.spending_used != null && accountInfo?.spending_limit != null ? (
-            <span className="font-mono text-zinc-400">
-              ${Number(accountInfo.spending_used).toFixed(2)} / ${Number(accountInfo.spending_limit).toFixed(0)}
+        }
+        actions={
+          <>
+            <span className={`hidden items-center px-3 text-[9px] font-black uppercase tracking-[0.08em] sm:flex ${jobBadge.className}`}>
+              {jobBadge.text}
             </span>
-          ) : (
-            <span>Cuenta —</span>
-          )}
-          {accountInfo?.rate_limits?.rpm && (
-            <span>
-              RPM {accountInfo.rate_limits.rpm.usage}/{accountInfo.rate_limits.rpm.limit}
-            </span>
-          )}
-          {accountErr && <span className="text-rose-400">{accountErr}</span>}
-        </div>
-        <button
-          type="button"
-          onClick={() => void refreshAccount()}
-          className="rounded-xl border border-white/10 bg-white/[0.04] p-2 text-zinc-400 transition hover:bg-white/[0.08] hover:text-zinc-200"
-          title="Actualizar cuenta"
-        >
-          <RefreshCw className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded-xl border border-white/10 bg-white/[0.04] p-2 text-zinc-400 transition hover:bg-rose-500/15 hover:text-rose-200"
-          title="Cerrar"
-        >
-          <X className="h-4 w-4" />
-        </button>
-      </header>
+            <button
+              type="button"
+              onClick={() => void refreshAccount()}
+              className={foldderStudioHeaderIconActionClassName()}
+              title="Actualizar cuenta"
+            >
+              <RefreshCw className="h-4 w-4" />
+            </button>
+          </>
+        }
+      />
 
       <div className="relative z-10 flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
         {/* Columna izquierda: medios y técnica */}

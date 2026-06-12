@@ -53,7 +53,11 @@ import type { PresenterImageVideoCanvasBinding, PresenterImageVideoPlacement } f
 import { collectPresenterImageTargets } from "./presenter-image-video-collect";
 import { PresenterVideoPropertiesPanel } from "./PresenterVideoPropertiesPanel";
 import { findVideoPlacementForCanvasSelection } from "./presenter-video-selection";
-import { StandardStudioShellHeader, type StandardStudioShellConfig } from "../StandardStudioShell";
+import type { StandardStudioShellConfig } from "../StandardStudioShell";
+import {
+  FoldderStudioHeader,
+  foldderStudioHeaderActionClassName,
+} from "../FoldderStudioHeader";
 
 /** Pausa entre pasos encadenados en la vista previa del panel (tras `PRESENTER_GROUP_ENTER_ANIM_MS`). */
 const PRESENTER_EDITOR_PREVIEW_GAP_MS = 72;
@@ -681,44 +685,32 @@ export function PresenterStudio({
       aria-modal="true"
       aria-labelledby="presenter-studio-title"
     >
-      {standardShell ? <StandardStudioShellHeader shell={standardShell} /> : null}
-      <header className="flex shrink-0 items-center justify-between gap-3 border-b border-white/[0.08] bg-[#12151a]/95 px-4 py-3 backdrop-blur-md">
-        <div className="flex min-w-0 items-center gap-2">
-          <Presentation className="shrink-0 text-amber-400" size={20} strokeWidth={1.75} aria-hidden />
-          <h1 id="presenter-studio-title" className="truncate text-sm font-bold tracking-tight text-white">
-            Presenter
-          </h1>
-          <span className="hidden text-[11px] text-zinc-500 sm:inline">
-            Vista previa · {pages.length} {pages.length === 1 ? "slide" : "slides"}
-          </span>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <button
-            type="button"
-            onClick={enterPlay}
-            className="flex items-center gap-1.5 rounded-md border border-zinc-500/45 bg-zinc-500/15 px-2.5 py-1.5 text-[11px] font-semibold text-zinc-200 transition-colors hover:bg-zinc-500/25"
-            title="Modo presentación (tecla P); pantalla completa desde la barra inferior"
-          >
-            <Play className="h-3.5 w-3.5 shrink-0 fill-zinc-200 text-zinc-200" strokeWidth={0} aria-hidden />
-            Play
-          </button>
-          <button
-            type="button"
-            onClick={() => setShareOpen(true)}
-            className="rounded-md bg-sky-600 px-2.5 py-1.5 text-[11px] font-semibold text-white transition-colors hover:bg-sky-500"
-          >
-            Share
-          </button>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg border border-white/10 bg-white/[0.06] p-2 text-zinc-400 transition-colors hover:bg-white/10 hover:text-white"
-            aria-label="Cerrar"
-          >
-            <X size={18} strokeWidth={1.5} />
-          </button>
-        </div>
-      </header>
+      <FoldderStudioHeader
+        nodeType="presenter"
+        nodeLabel={standardShell?.appLabel ?? "Presenter"}
+        subtitle={`${pages.length} ${pages.length === 1 ? "slide" : "slides"}`}
+        onClose={onClose}
+        actions={
+          <>
+            <button
+              type="button"
+              onClick={enterPlay}
+              className={foldderStudioHeaderActionClassName()}
+              title="Modo presentación (P)"
+            >
+              <Play className="h-3.5 w-3.5 shrink-0 fill-current" strokeWidth={0} aria-hidden />
+              Play
+            </button>
+            <button
+              type="button"
+              onClick={() => setShareOpen(true)}
+              className={foldderStudioHeaderActionClassName("bg-sky-600/90 hover:bg-sky-500")}
+            >
+              Share
+            </button>
+          </>
+        }
+      />
 
       <div className="flex min-h-0 flex-1 flex-col gap-2 p-2 lg:flex-row lg:gap-3 lg:p-3">
         <aside className="flex shrink-0 flex-row gap-2 overflow-x-auto pb-1 md:w-[7.25rem] md:flex-col md:overflow-y-auto md:pb-0 md:pr-0">

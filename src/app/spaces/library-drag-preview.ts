@@ -126,3 +126,41 @@ export function libraryPreviewPositionFromFlowPoint(
     y: flowPoint.y - height / 2,
   });
 }
+
+/** Ancho de la franja en px (dentro y fuera del lienzo) que activa auto-pan al arrastrar. */
+export const LIBRARY_DRAG_EDGE_PAN_ZONE_PX = 200;
+
+/** Velocidad máxima de pan en px de pantalla por frame (~60fps). */
+export const LIBRARY_DRAG_EDGE_PAN_MAX_SPEED_PX = 16;
+
+function edgePanStrength(clientCoord: number, edgeCoord: number): number {
+  const zone = LIBRARY_DRAG_EDGE_PAN_ZONE_PX;
+  return Math.min(1, Math.max(0, (zone - (clientCoord - edgeCoord)) / zone));
+}
+
+/** Delta de viewport (px pantalla) según proximidad del cursor a cada borde del lienzo. */
+export function libraryDragEdgePanDelta(
+  clientX: number,
+  clientY: number,
+  canvasRect: DOMRect,
+): { x: number; y: number } {
+  const maxSpeed = LIBRARY_DRAG_EDGE_PAN_MAX_SPEED_PX;
+  const panX =
+    edgePanStrength(clientX, canvasRect.left) * maxSpeed -
+    edgePanStrength(canvasRect.right, clientX) * maxSpeed;
+  const panY =
+    edgePanStrength(clientY, canvasRect.top) * maxSpeed -
+    edgePanStrength(canvasRect.bottom, clientY) * maxSpeed;
+  return { x: panX, y: panY };
+}
+
+export function getReactFlowCanvasRect(root?: ParentNode | null): DOMRect | null {
+  if (typeof document === "undefined") return null;
+  const host =
+    root instanceof HTMLElement || root instanceof DocumentFragment
+      ? root
+      : document;
+  const canvas = host.querySelector?.(".react-flow");
+  if (!(canvas instanceof HTMLElement)) return null;
+  return canvas.getBoundingClientRect();
+}

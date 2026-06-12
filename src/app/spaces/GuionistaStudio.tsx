@@ -49,6 +49,10 @@ import {
   type GuionistaVersion,
 } from "./guionista-types";
 import { StudioNodePortal } from "./studio-node/studio-node-architecture";
+import {
+  FoldderStudioHeader,
+  foldderStudioHeaderActionClassName,
+} from "./FoldderStudioHeader";
 
 const FORMAT_OPTIONS: Array<{ id: GuionistaFormat; title: string; help: string }> = [
   { id: "post", title: "Post", help: "LinkedIn, redes o publicaciones cortas." },
@@ -1609,53 +1613,60 @@ export function GuionistaStudio({
 
   const shell = (
     <div className="fixed inset-0 z-[100090] flex flex-col bg-[#101114] text-white" role="dialog" aria-modal="true">
-      <header className="shrink-0 bg-[#0c0d10]/92 px-6 py-4 backdrop-blur-2xl">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-5">
-          <div className="flex min-w-0 items-center gap-4">
-            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[10px] bg-amber-100/10 text-amber-100">
-              <PenLine className="h-5 w-5" strokeWidth={1.8} />
-            </span>
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-white/48">Guionista</p>
-                <span className="text-[10px] uppercase tracking-[0.18em] text-white/22">·</span>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-100/68">{formatName(current?.format || normalized.format)}</p>
-              </div>
-              <input
-                value={documentTitle}
-                onChange={(event) => renameCurrent(event.target.value)}
-                className="mt-1 w-full max-w-[58vw] truncate bg-transparent text-[21px] font-light leading-tight tracking-tight text-white outline-none placeholder:text-white/25"
-                placeholder="Título del texto"
-              />
-              {sourceAssetLabel && (
-                <p className="mt-2 block max-w-[58vw] truncate text-left text-[11px] font-light text-white/38" title={sourceAssetLabel}>
-                  Derivado de: {sourceAssetLabel}
-                </p>
-              )}
+      <FoldderStudioHeader
+        nodeType="guionista"
+        nodeLabel="Guionista"
+        onClose={onClose}
+        closeLabel="Cerrar Guionista"
+        titleSlot={
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-0">
+              <span className="text-[9px] font-black uppercase tracking-[0.12em] text-white/55">
+                {formatName(current?.format || normalized.format)}
+              </span>
+              {sourceAssetLabel ? (
+                <>
+                  <span className="text-[9px] text-white/25">·</span>
+                  <span className="truncate text-[9px] font-semibold text-white/45">{sourceAssetLabel}</span>
+                </>
+              ) : null}
             </div>
+            <input
+              value={documentTitle}
+              onChange={(event) => renameCurrent(event.target.value)}
+              className="mt-0.5 w-full max-w-[min(100%,36rem)] truncate bg-transparent text-[12px] font-black uppercase tracking-[0.06em] text-white outline-none placeholder:text-white/35"
+              placeholder="Título del texto"
+            />
           </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <span className={`hidden rounded-[10px] px-3 py-2 text-[11px] font-light md:inline-flex ${saveStateClass(saveState)}`}>
+        }
+        actions={
+          <>
+            <span
+              className={`hidden items-center px-3 text-[9px] font-black uppercase tracking-[0.08em] md:flex ${saveStateClass(saveState)}`}
+            >
               {saveStateLabel(saveState, !!activeAsset, lastSavedRelative)}
             </span>
-            <BrainPill
-              brainConnected={brainConnected}
-              onClick={brainConnected ? () => {
+            <button
+              type="button"
+              onClick={() => {
+                if (!brainConnected) return;
                 setActivePanel("brain");
                 setInspectorOpen(true);
-              } : undefined}
-            />
-            {current && (
-              <button type="button" onClick={saveActiveAsset} className="inline-flex items-center gap-2 rounded-[10px] bg-white/[0.06] px-3.5 py-2 text-[11px] font-semibold uppercase tracking-[0.13em] text-white/68 transition hover:bg-white/10 hover:text-white">
-                <Save className="h-3.5 w-3.5" /> Guardar en Foldder
-              </button>
-            )}
-            <button type="button" onClick={onClose} className="rounded-[10px] bg-white/[0.06] p-2.5 text-white/65 transition hover:bg-white/12 hover:text-white" aria-label="Cerrar Guionista">
-              <X className="h-4 w-4" />
+              }}
+              disabled={!brainConnected}
+              className={foldderStudioHeaderActionClassName()}
+            >
+              Brain
             </button>
-          </div>
-        </div>
-      </header>
+            {current ? (
+              <button type="button" onClick={saveActiveAsset} className={foldderStudioHeaderActionClassName()}>
+                <Save className="h-3.5 w-3.5" aria-hidden />
+                Guardar
+              </button>
+            ) : null}
+          </>
+        }
+      />
 
       <main className="min-h-0 flex-1 overflow-y-auto bg-[radial-gradient(circle_at_18%_18%,rgba(253,176,75,0.13),transparent_32%),radial-gradient(circle_at_88%_20%,rgba(99,212,253,0.11),transparent_34%),linear-gradient(180deg,#121318,#08090b)] px-5 py-6">
         <div className={`mx-auto grid max-w-7xl gap-5 ${layoutColumns}`}>

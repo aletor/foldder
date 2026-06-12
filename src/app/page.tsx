@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { GoogleAccessButton } from "@/components/GoogleAccessButton";
 import { useLanguage } from "@/components/LanguageProvider";
+import { LANGUAGE_OPTIONS } from "@/lib/i18n";
 import type { AppLanguage } from "@/lib/i18n";
 import type { ReactNode } from "react";
 import {
@@ -20,6 +21,7 @@ import {
   Sparkles,
   Workflow,
 } from "lucide-react";
+import "./home.css";
 
 type Capability = {
   icon: ReactNode;
@@ -28,26 +30,27 @@ type Capability = {
   tone: string;
 };
 
-const HOME_COPY: Record<AppLanguage, {
-  headlineBeforeGradient: string;
-  headlineGradientOne: string;
-  headlineAfterGradient: string;
-  headlineGradientTwo: string;
-  googleLabel: string;
-  googleAuthenticatedLabel: string;
-  secureLine: string;
-  capabilities: string[];
-  sectionEyebrow: string;
-  sectionTitle: string;
-  sectionText: string;
-  featureRows: Array<{ title: string; text: string }>;
-  cards: Array<{ title: string; text: string }>;
-}> = {
+const HOME_COPY: Record<
+  AppLanguage,
+  {
+    headlineBeforeAccent: string;
+    headlineAccent: string;
+    headlineAfterAccent: string;
+    googleLabel: string;
+    googleAuthenticatedLabel: string;
+    secureLine: string;
+    capabilities: string[];
+    sectionEyebrow: string;
+    sectionTitle: string;
+    sectionText: string;
+    featureRows: Array<{ title: string; text: string }>;
+    cards: Array<{ title: string; text: string }>;
+  }
+> = {
   es: {
-    headlineBeforeGradient: "Un",
-    headlineGradientOne: "workspace",
-    headlineAfterGradient: "para producción",
-    headlineGradientTwo: "creativa completa.",
+    headlineBeforeAccent: "Un",
+    headlineAccent: "workspace",
+    headlineAfterAccent: "para producción creativa completa.",
     googleLabel: "Continuar con Google",
     googleAuthenticatedLabel: "Elegir cuenta de Google",
     secureLine: "Acceso seguro con Google. Sin pasos extra.",
@@ -98,10 +101,9 @@ const HOME_COPY: Record<AppLanguage, {
     ],
   },
   en: {
-    headlineBeforeGradient: "One",
-    headlineGradientOne: "workspace",
-    headlineAfterGradient: "for complete",
-    headlineGradientTwo: "creative production.",
+    headlineBeforeAccent: "One",
+    headlineAccent: "workspace",
+    headlineAfterAccent: "for complete creative production.",
     googleLabel: "Continue with Google",
     googleAuthenticatedLabel: "Choose Google account",
     secureLine: "Secure sign-in with Google. No extra steps.",
@@ -154,46 +156,100 @@ const HOME_COPY: Record<AppLanguage, {
 };
 
 const capabilityIcons = [
-  <PenTool key="design" size={17} />,
-  <Sparkles key="generate" size={17} />,
-  <Presentation key="present" size={17} />,
-  <FolderKanban key="organize" size={17} />,
+  <PenTool key="design" size={15} strokeWidth={2.25} />,
+  <Sparkles key="generate" size={15} strokeWidth={2.25} />,
+  <Presentation key="present" size={15} strokeWidth={2.25} />,
+  <FolderKanban key="organize" size={15} strokeWidth={2.25} />,
 ];
 
 const cardIcons: Array<Pick<Capability, "icon" | "tone">> = [
-  { icon: <Film size={18} />, tone: "bg-violet-100 text-violet-600" },
-  { icon: <Megaphone size={18} />, tone: "bg-orange-100 text-orange-500" },
-  { icon: <PenTool size={18} />, tone: "bg-emerald-100 text-emerald-600" },
-  { icon: <Heart size={18} />, tone: "bg-pink-100 text-pink-500" },
-  { icon: <FileText size={18} />, tone: "bg-sky-100 text-sky-600" },
-  { icon: <Presentation size={18} />, tone: "bg-violet-100 text-violet-600" },
+  { icon: <Film size={16} strokeWidth={2.25} />, tone: "bg-violet-600 text-white" },
+  { icon: <Megaphone size={16} strokeWidth={2.25} />, tone: "bg-orange-500 text-white" },
+  { icon: <PenTool size={16} strokeWidth={2.25} />, tone: "bg-emerald-600 text-white" },
+  { icon: <Heart size={16} strokeWidth={2.25} />, tone: "bg-pink-500 text-white" },
+  { icon: <FileText size={16} strokeWidth={2.25} />, tone: "bg-sky-600 text-white" },
+  { icon: <Presentation size={16} strokeWidth={2.25} />, tone: "bg-indigo-600 text-white" },
 ];
+
+const featureIcons = [
+  <Brain key="brain" size={15} strokeWidth={2.25} />,
+  <Workflow key="workflow" size={15} strokeWidth={2.25} />,
+  <CheckCircle2 key="check" size={15} strokeWidth={2.25} />,
+];
+
+function HomeTopBar() {
+  const { language, setLanguage } = useLanguage();
+
+  return (
+    <header data-foldder-home-topbar className="flex shrink-0 items-stretch">
+      <Link
+        href="/"
+        data-foldder-home-link
+        className="flex h-10 w-10 shrink-0 items-center justify-center border-r border-zinc-950/10 bg-zinc-950/[0.03]"
+        aria-label="Foldder home"
+      >
+        <Image src="/logo_big.svg" alt="" width={28} height={28} className="h-7 w-7 object-contain" priority />
+      </Link>
+
+      <div className="flex min-w-0 flex-1 items-center border-r border-zinc-950/10 px-3">
+        <p className="truncate text-[10px] font-black uppercase tracking-[0.14em] text-zinc-950/85">Foldder</p>
+        <p className="ml-2 hidden truncate text-[9px] font-semibold uppercase tracking-[0.08em] text-zinc-950/40 sm:inline">
+          Creative production workspace
+        </p>
+      </div>
+
+      <div data-foldder-home-lang className="flex shrink-0 items-stretch divide-x divide-zinc-950/10" data-foldder-i18n-ignore>
+        {LANGUAGE_OPTIONS.map((option) => {
+          const active = option.id === language;
+          return (
+            <button
+              key={option.id}
+              type="button"
+              aria-label={option.label}
+              aria-pressed={active}
+              onClick={() => setLanguage(option.id)}
+              className={`flex h-10 min-w-10 items-center justify-center px-3 text-[10px] font-black uppercase tracking-[0.1em] transition ${
+                active ? "bg-zinc-950 text-white" : "bg-white text-zinc-950/45 hover:bg-zinc-950/[0.04] hover:text-zinc-950"
+              }`}
+            >
+              {option.shortLabel}
+            </button>
+          );
+        })}
+      </div>
+    </header>
+  );
+}
 
 function AccessPanel({ copy }: { copy: (typeof HOME_COPY)[AppLanguage] }) {
   return (
-    <div className="w-full max-w-[360px] rounded-[15px] border-0 bg-white/88 p-3 shadow-[0_18px_50px_rgba(69,49,110,0.12)] backdrop-blur-xl">
+    <div data-foldder-home-panel className="w-full max-w-[380px]">
       <GoogleAccessButton
         label={copy.googleLabel}
         authenticatedLabel={copy.googleAuthenticatedLabel}
-        className="inline-flex w-full items-center justify-center gap-2.5 rounded-[15px] border border-zinc-200/80 bg-white px-4 py-3 text-sm font-semibold text-zinc-950 shadow-sm transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-70"
+        className="flex h-10 w-full items-center justify-center gap-2 bg-blue-600 px-4 text-[10px] font-black uppercase tracking-[0.1em] text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
       />
-      <p className="mt-3 flex items-center justify-center gap-1.5 text-center text-[11px] leading-5 text-zinc-500">
-        <Lock size={12} className="text-violet-500" />
+      <div
+        data-foldder-home-row
+        className="flex items-center justify-center gap-1.5 bg-zinc-950/[0.03] px-3 text-[9px] font-semibold text-zinc-950/48"
+      >
+        <Lock size={11} className="shrink-0 text-violet-600" aria-hidden />
         {copy.secureLine}
-      </p>
+      </div>
     </div>
   );
 }
 
-function CapabilityCard({ item }: { item: Capability }) {
+function CapabilityCell({ item }: { item: Capability }) {
   return (
-    <article className="flex min-h-[104px] gap-3 rounded-[15px] border border-zinc-200 bg-white p-3 sm:min-h-[112px] sm:p-4">
-      <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-[13px] sm:h-10 sm:w-10 ${item.tone}`}>
-        {item.icon}
-      </div>
-      <div className="min-w-0">
-        <h3 className="text-[13px] font-semibold leading-snug text-zinc-950 sm:text-sm">{item.title}</h3>
-        <p className="mt-1.5 text-[11px] leading-5 text-zinc-500 sm:text-xs">{item.text}</p>
+    <article
+      data-foldder-home-cell
+      className="flex min-h-[108px] gap-0 border-b border-r border-zinc-950/10 bg-white transition hover:bg-zinc-950/[0.02] sm:min-h-[116px]"
+    >
+      <div className={`flex h-10 w-10 shrink-0 items-center justify-center ${item.tone}`}>{item.icon}</div>
+      <div className="min-w-0 flex-1 border-l border-zinc-950/10 p-3">
+        <h3 className="text-[10px] font-black uppercase tracking-[0.08em] text-zinc-950">{item.title}</h3>
+        <p className="mt-2 text-[10px] leading-relaxed text-zinc-950/48">{item.text}</p>
       </div>
     </article>
   );
@@ -209,13 +265,11 @@ function FeatureRow({
   text: string;
 }) {
   return (
-    <article className="flex gap-3 rounded-[15px] border border-zinc-200 bg-white p-3">
-      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[13px] bg-violet-100 text-violet-600">
-        {icon}
-      </div>
-      <div className="min-w-0">
-        <h3 className="text-[13px] font-semibold leading-snug text-zinc-950 sm:text-sm">{title}</h3>
-        <p className="mt-1 text-[11px] leading-5 text-zinc-500 sm:text-xs">{text}</p>
+    <article data-foldder-home-row className="flex items-stretch bg-white">
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center bg-violet-600 text-white">{icon}</div>
+      <div className="min-w-0 flex-1 border-l border-zinc-950/10 px-3 py-2.5">
+        <h3 className="text-[10px] font-black uppercase tracking-[0.08em] text-zinc-950">{title}</h3>
+        <p className="mt-1.5 text-[10px] leading-relaxed text-zinc-950/48">{text}</p>
       </div>
     </article>
   );
@@ -230,107 +284,76 @@ export default function Home() {
   }));
 
   return (
-    <div className="min-h-screen overflow-x-hidden bg-white text-zinc-950">
-      <section className="relative min-h-[620px] px-6 py-6 sm:min-h-[660px] sm:px-12 lg:min-h-[76vh] lg:px-20 lg:py-7 xl:px-28">
-        <Image
-          src="/home-hero-1920.png"
-          alt=""
-          fill
-          priority
-          sizes="100vw"
-          className="object-cover object-[58%_center]"
-        />
-        <div className="relative z-10 mx-auto flex min-h-[calc(620px-3rem)] w-full max-w-7xl flex-col sm:min-h-[calc(660px-3rem)] lg:min-h-[calc(76vh-3.5rem)]">
-          <header className="flex items-center justify-between">
-            <Link
-              href="/"
-              className="inline-flex translate-y-[58px] items-center sm:translate-y-[78px] lg:translate-y-[100px]"
-              aria-label="Foldder home"
-            >
-              <Image
-                src="/logo_big.svg"
-                alt="Foldder"
-                width={168}
-                height={58}
-                className="h-auto w-[136px] sm:w-[153px] lg:w-[165px]"
-                priority
-              />
-            </Link>
-          </header>
+    <div data-foldder-home className="flex min-h-screen flex-col overflow-x-hidden">
+      <HomeTopBar />
 
-          <div className="flex flex-1 items-center pb-8 pt-16 sm:pt-20 lg:pb-12 lg:pt-36">
-            <div className="flex w-full max-w-[560px] flex-col items-start">
-              <h1 className="max-w-[520px] text-[clamp(2.55rem,4.45vw,4.45rem)] font-black leading-[0.88] text-zinc-950">
-                {copy.headlineBeforeGradient}{" "}
-                <span className="bg-gradient-to-r from-violet-700 via-fuchsia-500 to-indigo-500 bg-clip-text text-transparent">
-                  {copy.headlineGradientOne}
-                </span>{" "}
-                {copy.headlineAfterGradient}
-                <br />
-                <span className="bg-gradient-to-r from-zinc-950 via-violet-700 to-fuchsia-500 bg-clip-text text-transparent">
-                  {copy.headlineGradientTwo}
-                </span>
-              </h1>
-
-              <div className="mt-7">
-                <AccessPanel copy={copy} />
-              </div>
-              <div className="mt-6 grid w-full max-w-[430px] grid-cols-4 gap-3 text-center text-[11px] font-medium text-zinc-600">
-                {copy.capabilities.map((label, index) => (
-                  <div key={label} className="flex flex-col items-center gap-2">
-                    <span className="flex h-8 w-8 items-center justify-center rounded-[13px] bg-white/74 text-violet-600 shadow-[0_8px_22px_rgba(69,49,110,0.06)]">
-                      {capabilityIcons[index]}
-                    </span>
-                    {label}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
+      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+        <div className="relative min-h-[240px] flex-1 shrink-0 border-b border-zinc-950/10 sm:min-h-[280px] lg:min-h-0 lg:w-[min(44vw,560px)] lg:border-b-0 lg:border-r">
+          <Image
+            src="/home-hero-1920.png"
+            alt=""
+            fill
+            priority
+            sizes="(max-width: 1024px) 100vw, 44vw"
+            className="object-cover object-[58%_center]"
+          />
+          <div className="absolute inset-0 bg-gradient-to-r from-white/20 via-white/5 to-white/70 lg:from-white/10 lg:to-white/55" />
         </div>
-      </section>
 
-      <main className="relative z-10 mx-auto w-full max-w-7xl bg-white px-6 pb-12 pt-8 sm:px-10 md:px-12 lg:px-20 lg:pt-10 xl:px-28">
-        <section id="posibilidades">
-          <div className="grid gap-8 md:grid-cols-[minmax(230px,0.4fr)_minmax(0,0.6fr)] md:items-start lg:gap-10">
-            <div className="flex flex-col md:pr-2 lg:pr-6">
-              <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-violet-600">
-                {copy.sectionEyebrow}
-              </p>
-              <h2 className="mt-3 max-w-[430px] text-[1.65rem] font-semibold leading-[1.08] text-zinc-950 sm:text-3xl md:text-[1.75rem] lg:text-3xl">
-                {copy.sectionTitle}
-              </h2>
-              <p className="mt-4 max-w-[430px] text-sm leading-6 text-zinc-500">
-                {copy.sectionText}
-              </p>
-              <div className="mt-5 grid gap-4">
-                <FeatureRow
-                  icon={<Brain size={17} />}
-                  title={copy.featureRows[0].title}
-                  text={copy.featureRows[0].text}
-                />
-                <FeatureRow
-                  icon={<Workflow size={17} />}
-                  title={copy.featureRows[1].title}
-                  text={copy.featureRows[1].text}
-                />
-                <FeatureRow
-                  icon={<CheckCircle2 size={17} />}
-                  title={copy.featureRows[2].title}
-                  text={copy.featureRows[2].text}
-                />
+        <section className="flex min-w-0 flex-1 flex-col justify-center px-5 py-8 sm:px-8 lg:px-10 lg:py-10 xl:px-14">
+          <p className="text-[10px] font-black uppercase tracking-[0.14em] text-violet-600">Foldder</p>
+          <h1 className="mt-3 max-w-[540px] text-[clamp(2rem,4vw,3.35rem)] font-black uppercase leading-[0.92] tracking-[-0.03em] text-zinc-950">
+            {copy.headlineBeforeAccent}{" "}
+            <span className="text-blue-600">{copy.headlineAccent}</span> {copy.headlineAfterAccent}
+          </h1>
+
+          <div className="mt-7">
+            <AccessPanel copy={copy} />
+          </div>
+
+          <div
+            data-foldder-home-panel
+            className="mt-5 grid w-full max-w-[380px] grid-cols-4 divide-x divide-zinc-950/10"
+          >
+            {copy.capabilities.map((label, index) => (
+              <div key={label} className="flex flex-col items-center bg-zinc-950/[0.02] px-1 py-3 text-center">
+                <span className="flex h-10 w-10 items-center justify-center bg-white text-violet-600">{capabilityIcons[index]}</span>
+                <span className="mt-2 text-[8px] font-black uppercase tracking-[0.08em] text-zinc-950/55">{label}</span>
               </div>
-            </div>
-            <div className="grid auto-rows-fr gap-3 sm:grid-cols-2 md:gap-4 lg:gap-x-8 lg:gap-y-7">
-              {capabilities.map((item) => (
-                <CapabilityCard key={item.title} item={item} />
+            ))}
+          </div>
+        </section>
+      </div>
+
+      <main className="border-t border-zinc-950/10 bg-white">
+        <div className="flex h-10 items-center border-b border-zinc-950/10 bg-zinc-950/[0.03] px-5 sm:px-8 lg:px-10 xl:px-14">
+          <p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-950/70">{copy.sectionEyebrow}</p>
+        </div>
+
+        <div className="mx-auto grid max-w-7xl gap-0 lg:grid-cols-[minmax(280px,360px)_1fr] lg:divide-x lg:divide-zinc-950/10">
+          <div className="border-b border-zinc-950/10 px-5 py-6 sm:px-8 lg:border-b-0 lg:px-10 lg:py-8 xl:px-14">
+            <h2 className="max-w-[340px] text-xl font-black uppercase leading-tight tracking-[-0.02em] text-zinc-950 sm:text-2xl">
+              {copy.sectionTitle}
+            </h2>
+            <p className="mt-4 max-w-[340px] text-[11px] leading-relaxed text-zinc-950/48">{copy.sectionText}</p>
+
+            <div data-foldder-home-panel className="mt-5 overflow-hidden">
+              {copy.featureRows.map((row, index) => (
+                <FeatureRow key={row.title} icon={featureIcons[index]} title={row.title} text={row.text} />
               ))}
             </div>
           </div>
-        </section>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+            {capabilities.map((item) => (
+              <CapabilityCell key={item.title} item={item} />
+            ))}
+          </div>
+        </div>
       </main>
-      <footer className="flex min-h-10 items-center justify-center bg-black px-6 py-3 text-[11px] font-medium tracking-wide text-white/75">
-        Foldder 2026
+
+      <footer className="flex h-10 shrink-0 items-center justify-center border-t border-zinc-950/10 bg-zinc-950 px-4">
+        <p className="text-[10px] font-black uppercase tracking-[0.12em] text-white/72">Foldder 2026</p>
       </footer>
     </div>
   );
