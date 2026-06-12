@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { readJsonWithHttpError, type HttpJsonError } from "./read-response-json";
+import {
+  readJsonWithHttpError,
+  sanitizeUserFacingErrorMessage,
+  type HttpJsonError,
+} from "./read-response-json";
 
 describe("readJsonWithHttpError", () => {
   it("preserves structured error metadata from JSON responses", async () => {
@@ -31,5 +35,18 @@ describe("readJsonWithHttpError", () => {
       message: "POST /api/spaces: respuesta no válida (413).",
       status: 413,
     } satisfies Partial<HttpJsonError>);
+  });
+});
+
+describe("sanitizeUserFacingErrorMessage", () => {
+  it("replaces Next.js HTML error pages with a short message", () => {
+    const html = '<!DOCTYPE html><html id="__next_error__"><head></head><body>Error</body></html>';
+    expect(sanitizeUserFacingErrorMessage(html, { status: 500 })).toBe(
+      "El servidor devolvió un error (500). Reintenta en unos segundos.",
+    );
+  });
+
+  it("keeps plain JSON error strings", () => {
+    expect(sanitizeUserFacingErrorMessage("Saldo insuficiente")).toBe("Saldo insuficiente");
   });
 });

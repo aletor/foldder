@@ -25,6 +25,47 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function looksLikeHtmlErrorPage(text: string): boolean {
+  const trimmed = text.trim();
+  return (
+    trimmed.startsWith("<!DOCTYPE") ||
+    trimmed.startsWith("<!doctype") ||
+    trimmed.startsWith("<html") ||
+    trimmed.includes("__next_error__") ||
+    /<html[\s>]/i.test(trimmed)
+  );
+}
+
+/** Evita mostrar páginas HTML de error de Next/Vercel en toasts o alerts. */
+export function sanitizeUserFacingErrorMessage(
+  text: string,
+  options?: { status?: number; maxLength?: number },
+): string {
+  const trimmed = text.trim();
+  const maxLength = options?.maxLength ?? 300;
+  const status = options?.status;
+
+  if (!trimmed) {
+    return status ? `Error del servidor (${status}).` : "Error inesperado del servidor.";
+  }
+
+  if (looksLikeHtmlErrorPage(trimmed)) {
+    return status
+      ? `El servidor devolvió un error (${status}). Reintenta en unos segundos.`
+      : "El servidor devolvió un error inesperado. Reintenta en unos segundos.";
+  }
+
+  if (/<[a-z][^>]*>/i.test(trimmed) && trimmed.length > 120) {
+    return status ? `Error del servidor (${status}).` : "Error del servidor.";
+  }
+
+  if (trimmed.length > maxLength) {
+    return `${trimmed.slice(0, maxLength)}…`;
+  }
+
+  return trimmed;
+}
+
 function createHttpJsonError(message: string, context: string, status: number, parsed?: unknown): HttpJsonError {
   const error = new Error(message) as HttpJsonError;
   const body = asRecord(parsed);
@@ -45,11 +86,7 @@ function createHttpJsonError(message: string, context: string, status: number, p
 export async function readResponseJson<T>(res: Response, context: string): Promise<T | null> {
   const text = await res.text();
   const trimmed = text.trim();
-  if (
-    trimmed.startsWith("<!DOCTYPE") ||
-    trimmed.startsWith("<!doctype") ||
-    trimmed.startsWith("<html")
-  ) {
+  if (looksLikeHtmlErrorPage(trimmed)) {
     console.warn(
       `[${context}] Expected JSON but received HTML (status ${res.status}). Check the API route or dev server.`
     );
@@ -70,11 +107,7 @@ export async function readResponseJson<T>(res: Response, context: string): Promi
 export async function readJsonWithHttpError<T>(res: Response, context: string): Promise<T> {
   const text = await res.text();
   const trimmed = text.trim();
-  if (
-    trimmed.startsWith("<!DOCTYPE") ||
-    trimmed.startsWith("<!doctype") ||
-    trimmed.startsWith("<html")
-  ) {
+  if (looksLikeHtmlErrorPage(trimmed)) {
     throw createHttpJsonError(
       `${context}: el servidor devolvió HTML (${res.status}), no JSON. Revisa la ruta API o el límite del cuerpo.`,
       context,

@@ -3,6 +3,8 @@
  * Los nodos llaman a `runAiJobWithNotification`; la UI escucha `foldder-ai-job-complete`.
  */
 
+import { sanitizeUserFacingErrorMessage } from "@/lib/read-response-json";
+
 export const AI_JOB_COMPLETE_EVENT = "foldder-ai-job-complete";
 
 /** Enfocar el lienzo completo (asistente, acciones sin nodo concreto). */
@@ -35,7 +37,7 @@ export async function runAiJobWithNotification(
     emitAiJobComplete({ nodeId: meta.nodeId, label: meta.label, ok: true });
     return true;
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : String(e);
+    const message = sanitizeUserFacingErrorMessage(e instanceof Error ? e.message : String(e));
     emitAiJobComplete({ nodeId: meta.nodeId, label: meta.label, ok: false, message });
     return false;
   }

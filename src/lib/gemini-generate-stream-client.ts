@@ -2,6 +2,8 @@
  * Cliente para POST /api/gemini/generate-stream (NDJSON con fases y progreso real de servidor).
  */
 
+import { sanitizeUserFacingErrorMessage } from "@/lib/read-response-json";
+
 export type GeminiStreamResult = {
   output: string;
   key?: string;
@@ -97,7 +99,11 @@ async function uploadGeminiReferenceFile(file: File): Promise<string> {
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(text || `No se pudo subir la referencia visual (${res.status}).`);
+    throw new Error(
+      sanitizeUserFacingErrorMessage(text || `No se pudo subir la referencia visual (${res.status}).`, {
+        status: res.status,
+      }),
+    );
   }
   const json = (await res.json()) as { url?: string };
   if (!json.url) throw new Error("La subida de referencia visual no devolvió URL.");
@@ -190,9 +196,9 @@ export async function geminiGenerateWithServerProgress(
       if (j?.message) msg = String(j.message);
       else if (j?.details) msg = String(j.details);
       else if (j?.error) msg = String(j.error);
-      else if (t) msg = t.slice(0, 300);
+      else if (t) msg = sanitizeUserFacingErrorMessage(t, { status: res.status });
     } catch {
-      if (t) msg = t.slice(0, 300);
+      if (t) msg = sanitizeUserFacingErrorMessage(t, { status: res.status });
     }
     throw new Error(msg);
   }
@@ -239,7 +245,11 @@ export async function geminiGenerateWithServerProgress(
       const main = typeof msg.error === "string" && msg.error.trim() ? msg.error.trim() : "Error en generación";
       const det =
         typeof msg.details === "string" && msg.details.trim() ? msg.details.trim().slice(0, 600) : "";
-      const normalized = normalizeStreamErrorMessage(msg.status, det ? `${main} — ${det}` : main);
+      const combined = det ? `${main} — ${det}` : main;
+      const normalized = normalizeStreamErrorMessage(
+        msg.status,
+        sanitizeUserFacingErrorMessage(combined, { status: msg.status }),
+      );
       throw new Error(normalized);
     }
   };
