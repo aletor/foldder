@@ -530,8 +530,12 @@
 }
 
 .custom-node.foldder-node--frameless.image-creation-advanced-node,
-.custom-node.foldder-node--frameless.inspiration-node {
+.custom-node.foldder-node--frameless.inspiration-node.inspiration-node--empty {
   min-height: 310px;
+}
+
+.custom-node.foldder-node--frameless.inspiration-node.inspiration-node--has-preview {
+  min-height: 0;
 }
 
 .custom-node.foldder-node--frameless.processor-node {
@@ -3223,66 +3227,55 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
 .animate-pan { animation: pan 3s infinite ease-in-out alternate; }
 .animate-crane { animation: crane 3s infinite ease-in-out alternate; }
 
-/* Nano Banana Studio — Foldder violet + glass chrome */
+/* Nano Banana Studio — Foldder violet + flush chrome */
 .nb-studio-root {
   --foldder-violet: #6c5ce7;
   --foldder-violet-mid: rgba(108, 92, 231, 0.35);
   --foldder-glass: rgba(255, 255, 255, 0.06);
   --foldder-glass-border: rgba(255, 255, 255, 0.1);
-  background: #0d0d12;
-  /* Por encima del HUD del lienzo (z~100) y modales; evita que el cristal deje ver el logo de fondo */
-  z-index: 10050;
+  background: #0b0f14;
+  z-index: 100090;
   isolation: isolate;
 }
 
-.nb-studio-topbar,
+.nb-studio-controls,
 .nb-studio-bottombar {
-  background: var(--foldder-glass);
-  backdrop-filter: blur(20px) saturate(1.08);
-  -webkit-backdrop-filter: blur(20px) saturate(1.08);
-}
-
-.nb-studio-topbar {
-  border-bottom: 1px solid var(--foldder-glass-border);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04);
-  /* Capa opaca bajo el cristal para que no se superponga visualmente el HUD oculto del lienzo */
-  background:
-    linear-gradient(180deg, rgba(13, 13, 18, 0.97), rgba(13, 13, 18, 0.94)),
-    var(--foldder-glass);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .nb-studio-bottombar {
-  border-top: 1px solid var(--foldder-glass-border);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+[data-foldder-nano-banana-studio] {
+  border-radius: 0 !important;
+}
+
+[data-foldder-nano-banana-studio] :is(
+  button,
+  span,
+  div,
+  input,
+  textarea,
+  h1,
+  p
+):not([class*="rounded-full"]) {
+  border-radius: 0 !important;
+}
+
+[data-foldder-nano-banana-studio] button {
+  box-shadow: none !important;
+}
+
+[data-foldder-nano-banana-gallery] {
+  max-width: 148px;
 }
 
 @media (max-height: 720px) {
-  .nb-studio-topbar {
-    padding-top: 0.5rem !important;
-    padding-bottom: 0.5rem !important;
-    row-gap: 0.375rem !important;
-  }
-
-  .nb-studio-topbar .nb-studio-brand-sub {
-    display: none;
-  }
-
   .nb-studio-changes-row {
-    padding-top: 0.75rem !important;
-    padding-bottom: 0.75rem !important;
-    min-height: 3.5rem !important;
-  }
-
-  .nb-studio-topbar .nb-studio-model-sub {
-    font-size: 0.5625rem;
-    line-height: 1;
-  }
-}
-
-@media (max-width: 480px) {
-  .nb-studio-topbar {
-    padding-left: 0.75rem !important;
-    padding-right: 0.75rem !important;
-    column-gap: 0.5rem !important;
+    padding-top: 0.375rem !important;
+    padding-bottom: 0.375rem !important;
+    min-height: 2.75rem !important;
   }
 }
 
@@ -3440,8 +3433,19 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
   overflow: visible !important;
 }
 
-.custom-node.inspiration-node {
+.custom-node.inspiration-node.inspiration-node--empty {
   min-height: 310px !important;
+}
+
+.custom-node.inspiration-node.inspiration-node--has-preview {
+  min-height: 0 !important;
+}
+
+.custom-node.inspiration-node.inspiration-node--has-preview :is(
+  .node-content.foldder-frameless-main img,
+  .foldder-frameless-main img
+) {
+  object-fit: contain !important;
 }
 
 .custom-node.image-creation-advanced-node {
@@ -4371,6 +4375,26 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
   box-shadow: none !important;
 }
 
+/* Wallet cost guard — flush rectangular chrome */
+[data-foldder-wallet-cost-panel] {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+[data-foldder-wallet-cost-panel] :is(
+  button,
+  span,
+  div,
+  p,
+  h2
+):not([class*="rounded-full"]) {
+  border-radius: 0 !important;
+}
+
+[data-foldder-wallet-cost-panel] button {
+  box-shadow: none !important;
+}
+
 /* Canvas background panel — flush rectangular chrome */
 [data-foldder-canvas-bg-panel] {
   border-radius: 0 !important;
@@ -4408,6 +4432,14 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
 
 [data-foldder-inspiration-studio] button {
   box-shadow: none !important;
+}
+
+[data-foldder-inspiration-sidebar] {
+  max-width: 148px;
+}
+
+[data-foldder-inspiration-sidebar] textarea {
+  field-sizing: content;
 }
 
 /* Studio header — node identity bar (shared across all studio modes) */

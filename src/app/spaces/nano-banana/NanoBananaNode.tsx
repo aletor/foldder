@@ -27,6 +27,10 @@ import { useBrainNodeTelemetry } from "@/lib/brain/use-brain-node-telemetry";
 import { FoldderDataHandle } from "../FoldderDataHandle";
 import { NodeIcon, resolveFoldderNodeState } from "../foldder-icons";
 import { FoldderNodeHeaderTitle, FoldderStudioModeCenterButton, NodeLabel } from "../foldder-node-ui";
+import {
+  FoldderStudioHeader,
+  foldderStudioHeaderActionClassName,
+} from "../FoldderStudioHeader";
 import { StandardStudioShellHeader, type StandardStudioShellConfig } from "../StandardStudioShell";
 import { FOLDDER_STANDARD_STUDIO_CLOSE_REQUEST_EVENT, type FoldderStudioEventDetail } from "../desktop-studio-events";
 import { applyCanvasGroupCollapse, resolvePromptValueFromEdgeSourceMap } from "../canvas-group-logic";
@@ -478,6 +482,7 @@ function normalizeNanoBananaResolution(r: string | undefined): '1k' | '2k' | '4k
 
 interface NanoBananaStudioProps {
   nodeId: string;
+  nodeLabel?: string;
   initialImage: string | null;   // connected image (ref slot 0)
   lastGenerated: string | null;  // last generated image
   modelKey: string;
@@ -638,7 +643,7 @@ function mergeNanoBananaStudioPromptWithBrain(
 }
 
 const NanoBananaStudio = memo(({
-  nodeId, initialImage, lastGenerated, modelKey, aspectRatio, resolution,
+  nodeId, nodeLabel = "Nano Banana", initialImage, lastGenerated, modelKey, aspectRatio, resolution,
   thinking, prompt, externalPromptIgnored,
   composeBrainImageGeneratorPrompt: composeBrainImageGeneratorPromptProp,
   onBrainImageGeneratorDiagnostics,
@@ -1510,207 +1515,183 @@ const NanoBananaStudio = memo(({
 
     return createPortal(
     <div
-      className="nb-studio-root fixed inset-0 flex flex-col"
-      data-foldder-studio-canvas=""
+      className="nb-studio-root fixed inset-0 z-[100090] flex flex-col bg-[#0b0f14] text-white"
+      data-foldder-studio-panel
+      data-foldder-studio-canvas
+      data-foldder-nano-banana-studio
+      data-foldder-i18n-ignore
     >
       {standardShell ? <StandardStudioShellHeader shell={standardShell} /> : null}
 
-      {/* ══ TOP BAR: Header + Model + Resolution + Usar generada ══════════════ */}
-      <div
-        className="nb-studio-topbar flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 flex-shrink-0"
-      >
-
-        {/* Logo / title */}
-        <div className="flex items-center gap-2 pr-4 shrink-0" style={{ borderRight: '1px solid rgba(255,255,255,0.12)' }}>
-          <Sparkles size={14} className="text-[#a78bfa] shrink-0" aria-hidden />
-          <div className="flex flex-col leading-tight">
-            <span className="text-[11px] font-black uppercase tracking-[0.14em] text-zinc-100">Studio</span>
-            <span className="nb-studio-brand-sub text-[9px] font-semibold text-zinc-400 font-mono tracking-tight">Nano Banana</span>
-          </div>
-        </div>
-
-        {/* Model pills — active ring = Foldder violet; dot keeps model hue */}
-        <div className="flex items-center gap-2" role="group" aria-label="Modelo de imagen">
-          {[
-            { key: 'flash25',  label: 'NB 1',  sub: 'Rápido',   color: '#34d399' },
-            { key: 'flash31',  label: 'NB 2',  sub: 'Calidad',  color: '#38bdf8' },
-            { key: 'pro3',     label: 'Pro',   sub: 'Máximo',   color: '#fbbf24' },
-          ].map(m => (
-            <button
-              key={m.key}
-              type="button"
-              onClick={() => setStudioModelKey(m.key)}
-              className="flex flex-col items-start gap-0.5 px-3 py-1.5 rounded-none text-left transition-all min-w-[4.5rem]"
-              style={
-                studioModelKey === m.key
-                  ? {
-                      background: 'rgba(108,92,231,0.16)',
-                      color: '#ede9fe',
-                      border: '2px solid #6C5CE7',
-                      boxShadow: '0 0 0 1px rgba(108,92,231,0.35)',
-                    }
-                  : {
-                      background: 'rgba(39,39,48,0.9)',
-                      color: '#d4d4d8',
-                      border: '1px solid rgba(113,113,122,0.45)',
-                    }
-              }
-            >
-              <span className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wide leading-none">
-                <span className="w-1.5 h-1.5 rounded-full shrink-0 ring-1 ring-white/15" style={{ background: m.color }} />
-                {m.label}
-              </span>
-              <span
-                className="nb-studio-model-sub text-[9px] font-semibold normal-case tracking-normal leading-none"
-                style={{ color: studioModelKey === m.key ? '#c4b5fd' : '#a1a1aa' }}
-              >
-                {m.sub}
-              </span>
-            </button>
-          ))}
-        </div>
-
-        {/* Divider */}
-        <div className="h-6 w-px bg-zinc-600/60 shrink-0" aria-hidden />
-
-        {/* Resolution chips — only non-flash25 */}
-        {studioModelKey !== 'flash25' && (
-          <div className="flex items-center gap-1.5" role="group" aria-label="Resolución de salida">
-            <span className="text-[9px] font-black text-zinc-400 uppercase tracking-wider mr-0.5">Res</span>
-            {(['1k', '2k', '4k'] as const).map(r => (
+      {!standardShell ? (
+        <FoldderStudioHeader
+          nodeType="nanoBanana"
+          nodeLabel={nodeLabel}
+          subtitle="Iterative image edits"
+          onClose={topBarCloseMode === "default" ? onClose : undefined}
+          actions={
+            topBarCloseMode !== "default" ? (
               <button
-                key={r}
                 type="button"
-                onClick={() => {
-                  setStudioResolution(r);
-                  onResolutionChange?.(r);
-                }}
-                className="min-w-[2rem] px-2 py-1.5 rounded-none text-[9px] font-black uppercase tracking-wider transition-all"
-                style={
-                  studioResolution === r
-                    ? {
-                        background: 'rgba(108,92,231,0.22)',
-                        color: '#ede9fe',
-                        border: '2px solid rgba(108,92,231,0.65)',
-                      }
-                    : {
-                        background: 'rgba(39,39,48,0.9)',
-                        color: '#d4d4d8',
-                        border: '1px solid rgba(113,113,122,0.45)',
-                      }
-                }
+                onClick={onClose}
+                className={foldderStudioHeaderActionClassName()}
+                title={topBarCloseMode === "returnCine" ? "Volver a Cine" : "Volver a PhotoRoom"}
               >
-                {r}
+                <ChevronLeft size={14} strokeWidth={2.5} aria-hidden />
+                <span className="hidden sm:inline">
+                  {topBarCloseMode === "returnCine" ? "Cine" : "PhotoRoom"}
+                </span>
               </button>
-            ))}
+            ) : undefined
+          }
+        />
+      ) : null}
+
+      <div className="nb-studio-controls flex h-9 shrink-0 items-stretch divide-x divide-white/10 border-b border-white/10 bg-white/[0.04]">
+        <div className="flex items-stretch" role="group" aria-label="Modelo de imagen">
+          {[
+            { key: "flash25", label: "NB 1", color: "#34d399" },
+            { key: "flash31", label: "NB 2", color: "#38bdf8" },
+            { key: "pro3", label: "Pro", color: "#fbbf24" },
+          ].map((m) => {
+            const active = studioModelKey === m.key;
+            return (
+              <button
+                key={m.key}
+                type="button"
+                onClick={() => setStudioModelKey(m.key)}
+                className={`flex h-full items-center gap-1 px-2.5 text-[8px] font-black uppercase tracking-[0.06em] transition ${
+                  active
+                    ? "bg-white text-slate-950"
+                    : "text-white/45 hover:bg-white/[0.08] hover:text-white/85"
+                }`}
+              >
+                <span
+                  className="h-1.5 w-1.5 shrink-0 rounded-full ring-1 ring-black/10"
+                  style={{ background: m.color }}
+                />
+                {m.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {studioModelKey !== "flash25" ? (
+          <div className="flex items-stretch" role="group" aria-label="Resolución de salida">
+            {(["1k", "2k", "4k"] as const).map((r) => {
+              const active = studioResolution === r;
+              return (
+                <button
+                  key={r}
+                  type="button"
+                  onClick={() => {
+                    setStudioResolution(r);
+                    onResolutionChange?.(r);
+                  }}
+                  className={`min-w-[2.25rem] px-2 text-[8px] font-black uppercase tracking-[0.06em] transition ${
+                    active
+                      ? "bg-[#6C5CE7]/28 text-violet-100"
+                      : "text-white/40 hover:bg-white/[0.07] hover:text-white/80"
+                  }`}
+                >
+                  {r}
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="flex max-w-[9rem] items-center px-2 text-[7px] font-semibold leading-tight text-amber-200/80">
+            1K fijo
           </div>
         )}
-        {studioModelKey === 'flash25' && (
-          <span
-            className="max-w-[11rem] shrink-0 text-[8px] font-semibold leading-tight text-amber-200/85"
-            title="NB 1 (rápido) solo genera en 1K. Para 2K/4K usa NB 2 o Pro. Varios pasos img→img pueden suavizar detalle."
-          >
-            1K fijo · img→img puede perder nitidez
-          </span>
-        )}
 
-        {/* Divider */}
-        {generatedOnce && <div className="h-6 w-px bg-zinc-600/60 shrink-0" aria-hidden />}
-
-        {/* Usar generada toggle */}
-        {generatedOnce && (
-          <div className="flex items-center gap-2 rounded-none px-2 py-1 bg-zinc-800/60 border border-zinc-600/40">
-            {lastGenerated && (
-              <img src={lastGenerated} alt="" className="w-8 h-6 object-cover rounded-none border border-zinc-500/50 flex-shrink-0" />
-            )}
-            <span className="text-[9px] font-bold text-zinc-300 uppercase tracking-wide">
-              {reSendGenerated ? 'Base: última gen.' : 'Base: original'}
+        {generatedOnce ? (
+          <div className="flex items-center gap-1.5 px-2">
+            {lastGenerated ? (
+              <img
+                src={lastGenerated}
+                alt=""
+                className="h-5 w-6 shrink-0 border border-white/15 object-cover"
+              />
+            ) : null}
+            <span className="hidden text-[7px] font-bold uppercase tracking-[0.06em] text-white/45 sm:inline">
+              {reSendGenerated ? "Última gen." : "Original"}
             </span>
             <button
               type="button"
-              onClick={() => setReSendGenerated(v => !v)}
-              className="w-9 h-5 rounded-full flex items-center px-0.5 transition-all shrink-0"
-              style={{ background: reSendGenerated ? '#6C5CE7' : 'rgba(63,63,70,0.95)', justifyContent: reSendGenerated ? 'flex-end' : 'flex-start' }}
-              title={reSendGenerated ? 'Usar imagen conectada como base' : 'Usar última generación como base'}
+              onClick={() => setReSendGenerated((v) => !v)}
+              className="flex h-4 w-7 shrink-0 items-center px-0.5 transition-all"
+              style={{
+                background: reSendGenerated ? "#6C5CE7" : "rgba(63,63,70,0.95)",
+                justifyContent: reSendGenerated ? "flex-end" : "flex-start",
+              }}
+              title={reSendGenerated ? "Usar imagen conectada como base" : "Usar última generación como base"}
             >
-              <div className="w-3.5 h-3.5 rounded-full shadow-sm" style={{ background: reSendGenerated ? '#0a0a0f' : '#e4e4e7' }} />
+              <div
+                className="h-3 w-3 rounded-full shadow-sm"
+                style={{ background: reSendGenerated ? "#0a0a0f" : "#e4e4e7" }}
+              />
             </button>
           </div>
-        )}
+        ) : null}
 
-        {/* Spacer */}
-        <div className="flex-1 min-w-[1rem]" />
+        <div className="min-w-[0.5rem] flex-1" />
 
-        {/* Generate buttons in top bar */}
         <button
           type="button"
           onClick={onGenerateCall}
           disabled={addingChange || analyzingCall || !hasPaintedZoneWithDescription}
-          className="flex items-center gap-1.5 px-3.5 py-2 rounded-none text-[10px] font-black uppercase tracking-wide transition-all disabled:opacity-35 disabled:cursor-not-allowed shadow-sm border"
-          style={{
-            background: 'rgba(108,92,231,0.2)',
-            color: '#ede9fe',
-            borderColor: 'rgba(108,92,231,0.45)',
-          }}
+          className="flex h-full items-center gap-1 px-3 text-[8px] font-black uppercase tracking-[0.06em] text-violet-100 transition hover:bg-white/[0.07] disabled:cursor-not-allowed disabled:opacity-35"
         >
-          {analyzingCall ? <><Loader2 size={11} className="animate-spin shrink-0" /> Analizando…</> : <><Eye size={11} className="shrink-0" /> Ver llamada</>}
+          {analyzingCall ? (
+            <>
+              <Loader2 size={11} className="animate-spin shrink-0" /> Analizando
+            </>
+          ) : (
+            <>
+              <Eye size={11} className="shrink-0" /> Llamada
+            </>
+          )}
         </button>
         <button
           type="button"
           onClick={onGenerate}
-          disabled={genStatus === 'running' || addingChange || analyzingCall}
-          className="flex items-center gap-1.5 px-5 py-2 rounded-none text-[11px] font-black uppercase tracking-wide transition-all disabled:opacity-45 disabled:cursor-not-allowed shadow-[0_2px_14px_rgba(108,92,231,0.4)] border border-[#6C5CE7]/50"
-          style={{ background: 'linear-gradient(135deg,#6C5CE7,#5548c8)', color: '#fafafa' }}
+          disabled={genStatus === "running" || addingChange || analyzingCall}
+          className="flex h-full items-center gap-1.5 bg-[#6C5CE7] px-4 text-[8px] font-black uppercase tracking-[0.08em] text-white transition hover:bg-[#5b4ed4] disabled:cursor-not-allowed disabled:opacity-45"
         >
-          {genStatus === 'running'
-            ? <><Loader2 size={12} className="animate-spin shrink-0" /> Generando…</>
-            : <><Sparkles size={12} className="shrink-0" /> Generar</>
-          }
+          {genStatus === "running" ? (
+            <>
+              <Loader2 size={11} className="animate-spin shrink-0" /> Gen…
+            </>
+          ) : (
+            <>
+              <Sparkles size={11} className="shrink-0" /> Generar
+            </>
+          )}
         </button>
-
-        {/* Close — desde PhotoRoom/Cine: volver al Studio origen; resto: X */}
-        {topBarCloseMode === 'returnPhotoRoom' || topBarCloseMode === 'returnCine' ? (
-          <button
-            type="button"
-            onClick={onClose}
-            className="ml-1 flex h-9 shrink-0 items-center gap-1.5 rounded-none border border-[#6C5CE7]/40 bg-[#6C5CE7]/15 px-3 text-[10px] font-black uppercase tracking-wide text-violet-100 transition-all hover:border-[#6C5CE7]/55 hover:bg-[#6C5CE7]/25"
-            title={topBarCloseMode === 'returnCine' ? "Cerrar Nano Banana Studio y volver a Cine" : "Cerrar Nano Banana Studio y volver al PhotoRoom"}
-          >
-            <ChevronLeft size={14} className="shrink-0" strokeWidth={2.5} />
-            {topBarCloseMode === 'returnCine' ? 'Volver a Cine' : 'Volver a PhotoRoom'}
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={onClose}
-            className="ml-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-none border border-transparent text-zinc-400 transition-all hover:border-[#6C5CE7]/35 hover:bg-white/[0.08] hover:text-zinc-100"
-            title="Cerrar Studio"
-          >
-            <X size={16} strokeWidth={2.5} />
-          </button>
-        )}
       </div>
 
-      {/* ══ Galería (historial) + lienzo ═════════════════════════════════════════ */}
+      {/* Galería (historial) + lienzo */}
       <div className="flex min-h-0 w-full flex-1 flex-row">
         <div
           className="flex shrink-0 flex-col overflow-hidden border-r border-white/[0.08] bg-[#08080c]/98 transition-[width] duration-200 ease-out"
-          style={{ width: galleryOpen ? 200 : 44 }}
+          style={{ width: galleryOpen ? 148 : 36 }}
+          data-foldder-nano-banana-gallery
         >
           <button
             type="button"
             onClick={() => setGalleryOpen((o) => !o)}
-            className="flex items-center justify-center gap-1 border-b border-white/[0.08] px-2 py-2.5 text-[9px] font-black uppercase tracking-wider text-zinc-400 transition-colors hover:bg-white/[0.04] hover:text-zinc-200"
-            title={galleryOpen ? 'Ocultar historial' : 'Mostrar historial de generaciones'}
+            className="flex h-8 items-center justify-center gap-1 border-b border-white/[0.08] px-1 text-[8px] font-black uppercase tracking-[0.06em] text-white/40 transition-colors hover:bg-white/[0.04] hover:text-white/75"
+            title={galleryOpen ? "Ocultar historial" : "Mostrar historial de generaciones"}
           >
-            <ChevronRight size={14} className={`shrink-0 transition-transform ${galleryOpen ? 'rotate-180' : ''}`} aria-hidden />
-            {galleryOpen && <span className="truncate">Historial</span>}
+            <ChevronRight size={12} className={`shrink-0 transition-transform ${galleryOpen ? "rotate-180" : ""}`} aria-hidden />
+            {galleryOpen ? <span className="truncate">Hist</span> : null}
           </button>
-          {galleryOpen && (
-            <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overflow-x-hidden p-2">
+          {galleryOpen ? (
+            <div className="custom-scrollbar flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overflow-x-hidden p-1.5">
               {generationHistory.length === 0 ? (
-                <p className="px-1 text-[9px] leading-snug text-zinc-600">
-                  Cada generación añade la imagen anterior y la nueva al historial. La última miniatura coincide con la vista actual. Pulsa cualquiera para recuperarla.
+                <p className="px-0.5 text-[8px] leading-snug text-white/28">
+                  Cada generación se guarda aquí.
                 </p>
               ) : (
                 generationHistory.map((url, i) => (
@@ -1722,21 +1703,20 @@ const NanoBananaStudio = memo(({
                       currentImageRef.current = url;
                       setGeneratedOnce(true);
                       setReSendGenerated(true);
-                      /** Salida del nodo + preview del canvas: misma URL que la vista. */
                       onGenerated(url);
                     }}
-                    className="relative aspect-square w-full shrink-0 overflow-hidden rounded-none border border-white/10 transition-colors hover:border-violet-500/55 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
+                    className="relative aspect-square w-full shrink-0 overflow-hidden border border-white/10 transition-colors hover:border-violet-500/55 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
                     title={`Generación ${i + 1}`}
                   >
                     <img src={url} alt="" className="h-full w-full object-cover" />
-                    <span className="absolute bottom-1 right-1 rounded-none bg-black/75 px-1 text-[8px] font-bold text-zinc-200">
+                    <span className="absolute bottom-0.5 right-0.5 bg-black/75 px-1 text-[7px] font-bold text-zinc-200">
                       {i + 1}
                     </span>
                   </button>
                 ))
               )}
             </div>
-          )}
+          ) : null}
         </div>
 
       {/* ══ CANVAS (flex-1) ════════════════════════════════════════════════════ */}
@@ -1846,16 +1826,9 @@ const NanoBananaStudio = memo(({
 
         {/* Drawing-mode hint */}
         {addingChange && (
-          <div
-            className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-2.5 px-5 py-2.5 rounded-none text-[10px] font-black uppercase tracking-widest text-rose-50 shadow-lg"
-            style={{
-              background: 'rgba(12,10,14,0.92)',
-              backdropFilter: 'blur(10px)',
-              border: '1px solid rgba(251,113,133,0.5)',
-            }}
-          >
-            <span className="w-2 h-2 rounded-full bg-rose-400 animate-pulse shadow-[0_0_10px_rgba(251,113,133,0.8)]" />
-            Dibuja el área · Arrastra para mover la vista
+          <div className="absolute left-1/2 top-2 flex -translate-x-1/2 items-center gap-2 border border-rose-400/45 bg-black/85 px-3 py-1.5 text-[8px] font-black uppercase tracking-[0.08em] text-rose-100 backdrop-blur-md">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-rose-400" />
+            Dibuja · arrastra para mover
           </div>
         )}
 
@@ -1876,209 +1849,215 @@ const NanoBananaStudio = memo(({
         {/* Active drawing controls */}
         {addingChange && activeChangeId && (
           <div
-            className="flex items-center gap-4 px-4 py-3.5"
-            style={{ background: 'rgba(251,113,133,0.08)', borderBottom: '1px solid rgba(251,113,133,0.25)' }}
+            className="flex items-center gap-3 border-b border-rose-400/25 bg-rose-500/[0.08] px-3 py-2"
           >
-            <span className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-rose-300 flex-shrink-0">
-              <span className="w-2 h-2 rounded-full bg-rose-400 animate-pulse shadow-[0_0_8px_rgba(251,113,133,0.6)]" />
-              Dibujando área
+            <span className="flex shrink-0 items-center gap-1 text-[8px] font-black uppercase tracking-[0.06em] text-rose-300">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-rose-400" />
+              Dibujando
             </span>
-            {/* Color */}
-            <div className="flex items-center gap-1.5">
-              <span className="text-[9px] font-bold text-zinc-400">Color</span>
-              <input type="color" value={brushColor} onChange={e => setBrushColor(e.target.value)}
-                className="w-8 h-8 rounded-none border border-white/10 cursor-pointer" />
+            <div className="flex items-center gap-1">
+              <input
+                type="color"
+                value={brushColor}
+                onChange={(e) => setBrushColor(e.target.value)}
+                className="h-7 w-7 cursor-pointer border border-white/10"
+              />
             </div>
-            {/* Brush size */}
-            <div className="flex items-center gap-2 flex-1 max-w-[200px]">
-              <span className="text-[9px] font-bold text-zinc-400 flex-shrink-0">Grosor {brushSize}px</span>
-              <input type="range" min={4} max={48} value={brushSize} onChange={e => setBrushSize(+e.target.value)}
-                className="flex-1" />
+            <div className="flex max-w-[160px] flex-1 items-center gap-2">
+              <span className="shrink-0 text-[8px] font-bold text-white/40">{brushSize}px</span>
+              <input
+                type="range"
+                min={4}
+                max={48}
+                value={brushSize}
+                onChange={(e) => setBrushSize(+e.target.value)}
+                className="flex-1"
+              />
             </div>
-            {/* Description */}
             <input
               value={newDesc}
-              onChange={e => setNewDesc(e.target.value)}
-              placeholder="¿Qué quieres cambiar en esta área?…"
-              className="flex-1 bg-zinc-950/80 border border-zinc-600/50 rounded-none px-3 py-2 text-[11px] text-zinc-100 placeholder-zinc-500 outline-none focus:border-rose-400/70 focus:ring-1 focus:ring-rose-500/30"
+              onChange={(e) => setNewDesc(e.target.value)}
+              placeholder="¿Qué cambiar en esta área?"
+              className="min-w-0 flex-1 border border-white/10 bg-black/40 px-2 py-1.5 text-[10px] text-white outline-none placeholder:text-white/30 focus:border-rose-400/60"
             />
-            <button onClick={confirmChange}
-              className="px-4 py-2 rounded-none text-[10px] font-black uppercase tracking-wider transition-all whitespace-nowrap"
-              style={{ background: 'rgba(251,113,133,0.2)', color: '#fb7185', border: '1px solid rgba(251,113,133,0.4)' }}>
-              ✓ Confirmar
+            <button
+              onClick={confirmChange}
+              className="shrink-0 border border-rose-400/40 bg-rose-500/15 px-2.5 py-1.5 text-[8px] font-black uppercase tracking-[0.06em] text-rose-200"
+            >
+              ✓
             </button>
-            <button onClick={cancelChange}
-              className="px-4 py-2 rounded-none bg-white/[0.04] text-zinc-500 border border-white/[0.08] text-[10px] font-black uppercase tracking-wider hover:text-zinc-300 transition-colors whitespace-nowrap">
-              Cancelar
+            <button
+              onClick={cancelChange}
+              className="shrink-0 border border-white/10 bg-white/[0.04] px-2.5 py-1.5 text-[8px] font-black uppercase tracking-[0.06em] text-white/45"
+            >
+              ✕
             </button>
           </div>
         )}
 
-        {/* Changes list row — chips in scrollable section, buttons outside scroll */}
-        <div className="nb-studio-changes-row flex items-center gap-0 px-4 py-4" style={{ minHeight: 72 }}>
-          {/* Label */}
+        <div className="nb-studio-changes-row flex items-center gap-0 px-2 py-2" style={{ minHeight: 52 }}>
           <div
-            className="flex flex-col gap-0.5 flex-shrink-0 pr-3 mr-2"
-            style={{ borderRight: '1px solid rgba(255,255,255,0.12)' }}
+            className="mr-2 flex shrink-0 flex-col gap-0 pr-2"
+            style={{ borderRight: "1px solid rgba(255,255,255,0.1)" }}
           >
-            <span className="text-[10px] font-black text-zinc-200 uppercase tracking-[0.12em]">Cambios</span>
-            <span className="text-[8px] font-medium text-zinc-500 normal-case tracking-normal max-w-[11rem] leading-tight">
-              En REF 2: 1.º azul · 2.º rojo · 3.º verde… (orden de creación)
-            </span>
+            <span className="text-[8px] font-black uppercase tracking-[0.1em] text-white/70">Cambios</span>
+            <span className="max-w-[7rem] text-[7px] leading-tight text-white/35">REF2: azul · rojo · verde…</span>
           </div>
 
-          {/* Scrollable chips — overflow isolated here */}
-          <div className="flex items-center gap-3 flex-1 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
-            {changes.length === 0 && (
-              <div className="flex flex-col gap-1 flex-shrink-0 py-0.5">
-                <span className="text-[10px] font-semibold text-zinc-300">Ningún cambio todavía</span>
-                <span className="text-[9px] text-zinc-500 leading-snug max-w-md">
-                  Usa <span className="text-rose-300 font-semibold">Zona</span> para pintar qué editar, o{' '}
-                  <span className="text-violet-300 font-semibold">Global</span> /{' '}
-                  <span className="text-violet-200 font-semibold">Cámara</span> para el resto.
-                </span>
-              </div>
-            )}
+          <div className="flex items-center gap-2 flex-1 overflow-x-auto" style={{ scrollbarWidth: "none" }}>
+            {changes.length === 0 ? (
+              <span className="shrink-0 text-[8px] text-white/35">
+                Zona · Global · Cámara
+              </span>
+            ) : null}
 
-            {/* Change chips — larger and with ref upload */}
             {changes.map((ch) => {
               const hex = ch.assignedColor.hex;
               return (
-                <div key={ch.id}
-                  className="flex items-center gap-2.5 px-3 py-2.5 rounded-none flex-shrink-0 transition-all"
-                  style={ch.isGlobal || (ch.paintData && ch.description.trim())
-                    ? { background: hex + '22', color: '#f4f4f5', border: '1px solid ' + hex + '66' }
-                    : { background: 'rgba(39,39,48,0.85)', color: '#a1a1aa', border: '1px solid rgba(113,113,122,0.4)' }
+                <div
+                  key={ch.id}
+                  className="flex shrink-0 items-center gap-1.5 border px-2 py-1.5 transition-all"
+                  style={
+                    ch.isGlobal || (ch.paintData && ch.description.trim())
+                      ? { background: hex + "22", color: "#f4f4f5", borderColor: hex + "66" }
+                      : { background: "rgba(39,39,48,0.85)", color: "#a1a1aa", borderColor: "rgba(113,113,122,0.4)" }
                   }
                 >
-                  {/* Color dot — mismo color que REF 2 / API (assignedColor), no el índice en lista */}
-                  {ch.isGlobal
-                    ? <Globe size={11} className="flex-shrink-0" style={{ color: hex }} />
-                    : <span className="w-3 h-3 rounded-full flex-shrink-0 ring-1 ring-white/20" style={{ background: hex }} title={ch.assignedColor.name} />
-                  }
+                  {ch.isGlobal ? (
+                    <Globe size={10} className="shrink-0" style={{ color: hex }} />
+                  ) : (
+                    <span
+                      className="h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-white/20"
+                      style={{ background: hex }}
+                      title={ch.assignedColor.name}
+                    />
+                  )}
 
-                  {/* Description */}
-                  <span className="text-[10px] font-bold uppercase tracking-wide max-w-[160px] truncate">
-                    {ch.description || 'Sin descripción'}
+                  <span className="max-w-[120px] truncate text-[8px] font-bold uppercase tracking-wide">
+                    {ch.description || "Sin descripción"}
                   </span>
 
-                  {/* Reference image preview or upload — only for painted changes */}
-                  {!ch.isGlobal && (
-                    <label className="flex items-center gap-1 cursor-pointer flex-shrink-0">
+                  {!ch.isGlobal ? (
+                    <label className="flex shrink-0 cursor-pointer items-center gap-1">
                       {ch.referenceImage ? (
-                        <img src={ch.referenceImage} alt="ref"
-                          className="w-8 h-8 rounded-none object-cover border-2 flex-shrink-0"
-                          style={{ borderColor: hex + '80' }} />
+                        <img
+                          src={ch.referenceImage}
+                          alt="ref"
+                          className="h-6 w-6 shrink-0 border object-cover"
+                          style={{ borderColor: hex + "80" }}
+                        />
                       ) : (
-                        <span className="flex items-center gap-1 px-2 py-1 rounded-none text-[8px] font-black uppercase tracking-wide transition-all hover:opacity-80"
-                          style={{ background: hex + '15', color: hex, border: '1px dashed ' + hex + '50' }}>
-                          <ImageIcon size={10} /> Ref
+                        <span
+                          className="flex items-center gap-0.5 border border-dashed px-1.5 py-0.5 text-[7px] font-black uppercase"
+                          style={{ background: hex + "15", color: hex, borderColor: hex + "50" }}
+                        >
+                          <ImageIcon size={9} /> Ref
                         </span>
                       )}
-                      <input type="file" accept="image/*" className="hidden"
-                        onChange={e => {
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
                           const file = e.target.files?.[0];
                           if (!file) return;
                           const reader = new FileReader();
-                          reader.onload = ev => {
+                          reader.onload = (ev) => {
                             const url = ev.target?.result as string;
                             setCachedPromptData(null);
-                            setChanges(prev => prev.map(c => c.id === ch.id ? { ...c, referenceImage: url } : c));
+                            setChanges((prev) =>
+                              prev.map((c) => (c.id === ch.id ? { ...c, referenceImage: url } : c)),
+                            );
                           };
                           reader.readAsDataURL(file);
-                          e.target.value = '';
+                          e.target.value = "";
                         }}
                       />
                     </label>
-                  )}
+                  ) : null}
 
-                  {/* Delete */}
                   <button
                     type="button"
                     onClick={() => deleteChange(ch.id)}
-                    className="text-zinc-500 hover:text-rose-400 transition-colors flex-shrink-0 ml-1 p-0.5 rounded-none hover:bg-white/5"
+                    className="ml-0.5 shrink-0 p-0.5 text-white/35 transition-colors hover:bg-white/5 hover:text-rose-400"
                     title="Quitar cambio"
                   >
-                    <Trash2 size={11} />
+                    <Trash2 size={10} />
                   </button>
                 </div>
               );
             })}
-          </div>{/* end scrollable chips */}
+          </div>
 
-          {/* ── Action buttons — OUTSIDE overflow-x-auto so dropdowns aren't clipped ── */}
-          <div className="flex items-center gap-2 flex-shrink-0 pl-3" style={{ borderLeft: '1px solid rgba(255,255,255,0.12)' }}>
+          <div
+            className="flex shrink-0 items-center gap-1 pl-2"
+            style={{ borderLeft: "1px solid rgba(255,255,255,0.1)" }}
+          >
 
-            {/* Global change inline input */}
-            {showGlobalInput && (
-              <div className="flex items-center gap-2" style={{ minWidth: 340 }}>
-                <Globe size={12} className="text-violet-400 flex-shrink-0" aria-hidden />
+            {showGlobalInput ? (
+              <div className="flex items-center gap-1.5" style={{ minWidth: 280 }}>
+                <Globe size={11} className="shrink-0 text-violet-400" aria-hidden />
                 <input
                   autoFocus
                   value={globalDesc}
-                  onChange={e => setGlobalDesc(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') addGlobalChange(globalDesc); if (e.key === 'Escape') { setShowGlobalInput(false); setGlobalDesc(''); } }}
-                  placeholder="Describe el cambio global…"
-                  className="flex-1 bg-zinc-950/80 border border-violet-500/45 rounded-none px-3 py-2.5 text-[11px] text-zinc-100 placeholder-zinc-500 outline-none focus:border-violet-400/80 focus:ring-1 focus:ring-violet-500/25"
+                  onChange={(e) => setGlobalDesc(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") addGlobalChange(globalDesc);
+                    if (e.key === "Escape") {
+                      setShowGlobalInput(false);
+                      setGlobalDesc("");
+                    }
+                  }}
+                  placeholder="Cambio global…"
+                  className="min-w-0 flex-1 border border-violet-500/40 bg-black/40 px-2 py-1.5 text-[10px] text-white outline-none placeholder:text-white/30 focus:border-violet-400/70"
                 />
-                <button onClick={() => addGlobalChange(globalDesc)}
-                  className="px-3 py-2 rounded-none text-[10px] font-black uppercase tracking-wider transition-all whitespace-nowrap"
-                  style={{ background: 'rgba(108,92,231,0.22)', color: '#ddd6fe', border: '1px solid rgba(108,92,231,0.45)' }}>
+                <button
+                  onClick={() => addGlobalChange(globalDesc)}
+                  className="border border-violet-500/40 bg-violet-500/15 px-2 py-1.5 text-[8px] font-black uppercase text-violet-100"
+                >
                   ✓
                 </button>
-                <button onClick={() => { setShowGlobalInput(false); setGlobalDesc(''); }}
-                  className="px-2 py-2 rounded-none bg-white/[0.04] text-zinc-500 border border-white/[0.06] text-[10px] font-black hover:text-zinc-300 transition-colors">
+                <button
+                  onClick={() => {
+                    setShowGlobalInput(false);
+                    setGlobalDesc("");
+                  }}
+                  className="border border-white/10 bg-white/[0.04] px-2 py-1.5 text-[8px] font-black uppercase text-white/45"
+                >
                   ✕
                 </button>
               </div>
-            )}
+            ) : null}
 
-            {!addingChange && !showGlobalInput && (<>
-              {/* Pintar área */}
-              <button
-                type="button"
-                onClick={startAddChange}
-                className="flex items-center gap-2 px-3.5 py-2.5 rounded-none text-[10px] font-black uppercase tracking-wider transition-all flex-shrink-0 whitespace-nowrap shadow-sm hover:brightness-110"
-                style={{
-                  background: 'linear-gradient(180deg, rgba(251,113,133,0.22) 0%, rgba(251,113,133,0.1) 100%)',
-                  color: '#fecdd3',
-                  border: '1px solid rgba(251,113,133,0.45)',
-                }}
-                title="Pinta sobre la imagen qué parte quieres cambiar"
-              >
-                <Plus size={12} strokeWidth={2.5} /> Zona
-              </button>
-
-              {/* Global */}
-              <button
-                type="button"
-                onClick={() => setShowGlobalInput(true)}
-                className="flex items-center gap-2 px-3.5 py-2.5 rounded-none text-[10px] font-black uppercase tracking-wider transition-all flex-shrink-0 whitespace-nowrap shadow-sm hover:brightness-110"
-                style={{
-                  background: 'linear-gradient(180deg, rgba(108,92,231,0.24) 0%, rgba(108,92,231,0.1) 100%)',
-                  color: '#ede9fe',
-                  border: '1px solid rgba(108,92,231,0.45)',
-                }}
-                title="Instrucción que afecta a toda la imagen"
-              >
-                <Globe size={12} strokeWidth={2.5} /> Global
-              </button>
-
-              {/* Camera — dropdown goes UPWARD, no overflow clipping because parent has no overflow-x-auto */}
-              <div className="relative flex-shrink-0">
+            {!addingChange && !showGlobalInput ? (
+              <>
                 <button
                   type="button"
-                  onClick={() => setShowCameraMenu(v => !v)}
-                  className="flex items-center gap-2 px-3.5 py-2.5 rounded-none text-[10px] font-black uppercase tracking-wider transition-all whitespace-nowrap shadow-sm hover:brightness-110"
-                  style={{
-                    background: 'linear-gradient(180deg, rgba(108,92,231,0.18) 0%, rgba(108,92,231,0.08) 100%)',
-                    color: '#e8e4ff',
-                    border: '1px solid rgba(108,92,231,0.4)',
-                  }}
-                  title="Solo ajustes suaves de encuadre (recomendado para esta API)"
+                  onClick={startAddChange}
+                  className="flex shrink-0 items-center gap-1 border border-rose-400/40 bg-rose-500/10 px-2.5 py-1.5 text-[8px] font-black uppercase tracking-[0.06em] text-rose-100 transition hover:bg-rose-500/18"
+                  title="Pinta sobre la imagen qué parte quieres cambiar"
                 >
-                  <Camera size={12} strokeWidth={2.5} /> Cámara ▾
+                  <Plus size={11} strokeWidth={2.5} /> Zona
                 </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowGlobalInput(true)}
+                  className="flex shrink-0 items-center gap-1 border border-violet-500/40 bg-violet-500/10 px-2.5 py-1.5 text-[8px] font-black uppercase tracking-[0.06em] text-violet-100 transition hover:bg-violet-500/18"
+                  title="Instrucción que afecta a toda la imagen"
+                >
+                  <Globe size={11} strokeWidth={2.5} /> Global
+                </button>
+
+                <div className="relative shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setShowCameraMenu((v) => !v)}
+                    className="flex items-center gap-1 border border-violet-500/35 bg-violet-500/8 px-2.5 py-1.5 text-[8px] font-black uppercase tracking-[0.06em] text-violet-100 transition hover:bg-violet-500/15"
+                    title="Ajustes suaves de encuadre"
+                  >
+                    <Camera size={11} strokeWidth={2.5} /> Cam ▾
+                  </button>
                 {showCameraMenu && (
                   <div
                     className="absolute bottom-full mb-2 right-0 z-[9999] rounded-none overflow-hidden shadow-2xl"
@@ -2122,12 +2101,13 @@ const NanoBananaStudio = memo(({
                     ))}
                   </div>
                 )}
-              </div>
-            </>)}
+                </div>
+              </>
+            ) : null}
 
-          </div>{/* end action buttons */}
-        </div>{/* end bottom bar row */}
-      </div>{/* end canvas+bottom flex column */}
+          </div>
+        </div>
+      </div>
 
       {/* ── Call Preview Modal ─────────────────────────────────────────── */}
       {callPreview && (
@@ -3027,6 +3007,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
         return (
           <NanoBananaStudio
             nodeId={id}
+            nodeLabel={nodeData.label?.trim() || "Nano Banana"}
             initialImage={connected0}
             lastGenerated={studioLastGenerated}
             modelKey={nodeData.modelKey || 'flash31'}

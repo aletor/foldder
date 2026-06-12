@@ -42,12 +42,12 @@ function formatUsd(micros: number, language: DialogLanguage): string {
 }
 
 function categoryIcon(category: WalletCostDecisionRequest["category"]) {
-  if (category === "video") return <Video size={19} />;
-  if (category === "image") return <ImageIcon size={19} />;
-  if (category === "analysis") return <Search size={19} />;
-  if (category === "text") return <FileText size={19} />;
-  if (category === "utility") return <ShieldCheck size={19} />;
-  return <Sparkles size={19} />;
+  if (category === "video") return <Video size={14} />;
+  if (category === "image") return <ImageIcon size={14} />;
+  if (category === "analysis") return <Search size={14} />;
+  if (category === "text") return <FileText size={14} />;
+  if (category === "utility") return <ShieldCheck size={14} />;
+  return <Sparkles size={14} />;
 }
 
 function englishTitle(request: WalletCostDecisionRequest): string {
@@ -215,12 +215,12 @@ export function WalletCostGuardDialog() {
 
   const dialog = (
     <div
-      className="fixed inset-0 z-[100700] flex items-center justify-center p-4"
+      className="fixed inset-0 z-[100700] flex items-center justify-center p-3 sm:p-4"
       data-foldder-i18n-ignore
       data-foldder-wallet-cost-guard
     >
       <div
-        className="absolute inset-0 bg-black/55 backdrop-blur-sm"
+        className="absolute inset-0 bg-black/45 backdrop-blur-sm"
         onClick={() => close(false, "cancelled")}
         aria-hidden
       />
@@ -229,101 +229,108 @@ export function WalletCostGuardDialog() {
         aria-modal="true"
         aria-labelledby="wallet-cost-title"
         aria-describedby="wallet-cost-description"
-        className="relative z-10 w-full max-w-[500px] overflow-hidden rounded-2xl border border-white/14 bg-[#10171f] text-white shadow-[0_30px_100px_rgba(0,0,0,0.55)]"
+        data-foldder-wallet-cost-panel
+        className="relative z-10 w-full max-w-[400px] overflow-hidden rounded-none bg-[#0b0f14]/98 text-white shadow-[0_24px_70px_rgba(0,0,0,0.55)] backdrop-blur-2xl"
       >
-        <div className="border-b border-white/10 bg-white/[0.045] px-5 py-4">
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex min-w-0 items-start gap-3">
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-amber-200/25 bg-amber-400/14 text-amber-100 shadow-lg shadow-black/20">
-                {categoryIcon(request.category)}
-              </div>
-              <div className="min-w-0">
-                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-100/80">
-                  {isSpanish ? "Advertencia de pago" : "Payment warning"}
-                </p>
-                <h2 id="wallet-cost-title" className="mt-1 text-lg font-black tracking-tight text-white">
-                  {title}
-                </h2>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => close(false, "cancelled")}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/[0.04] text-white/55 transition hover:bg-white/[0.1] hover:text-white"
-              title={isSpanish ? "Cerrar" : "Close"}
-            >
-              <X size={15} />
-            </button>
+        <div className="flex h-10 items-stretch border-b border-white/8 bg-white/[0.08]">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center border-r border-white/10 bg-amber-500/10 text-amber-100">
+            {categoryIcon(request.category)}
           </div>
-        </div>
-
-        <div className="space-y-4 px-5 py-4">
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-            <div className="rounded-xl border border-white/10 bg-white/[0.05] px-3 py-3">
-              <p className="text-[9px] font-black uppercase tracking-[0.16em] text-white/42">
-                {isSpanish ? "Estimación" : "Estimate"}
-              </p>
-              <p className="mt-1 text-lg font-black text-white">{formatUsd(request.estimatedCostMicros, dialogLanguage)}</p>
-            </div>
-            <div className="rounded-xl border border-white/10 bg-white/[0.05] px-3 py-3">
-              <p className="text-[9px] font-black uppercase tracking-[0.16em] text-white/42">
-                {isSpanish ? "Reserva máxima" : "Max reserve"}
-              </p>
-              <p className="mt-1 text-lg font-black text-white">{formatUsd(request.reserveMicros, dialogLanguage)}</p>
-            </div>
-            <div className="rounded-xl border border-white/10 bg-white/[0.05] px-3 py-3">
-              <p className="text-[9px] font-black uppercase tracking-[0.16em] text-white/42">
-                {isSpanish ? "Disponible" : "Available"}
-              </p>
-              <p className={`mt-1 text-lg font-black ${insufficient || blocked ? "text-rose-200" : "text-emerald-200"}`}>
-                {formatUsd(availableMicros, dialogLanguage)}
-              </p>
-            </div>
+          <div className="flex min-w-0 flex-1 flex-col justify-center px-3">
+            <p className="text-[8px] font-black uppercase tracking-[0.12em] text-amber-200/65">
+              {isSpanish ? "Operación de pago" : "Paid operation"}
+            </p>
+            <h2
+              id="wallet-cost-title"
+              className="truncate text-[10px] font-black uppercase tracking-[0.08em] text-white"
+            >
+              {title}
+            </h2>
           </div>
-
-          {blocked && (
-            <div
-              id="wallet-cost-description"
-              className="flex gap-2 rounded-xl border border-rose-300/25 bg-rose-500/12 px-3 py-2.5 text-[12px] font-semibold leading-relaxed text-rose-100"
-            >
-              <AlertCircle size={15} className="mt-0.5 shrink-0" />
-              <span>
-                {isSpanish
-                  ? "Tu cuenta está en revisión de facturación. No se lanzarán operaciones con coste hasta resolverlo."
-                  : "Your account is under billing review. Paid operations will not run until this is resolved."}
-              </span>
-            </div>
-          )}
-
-          {insufficient && !blocked && (
-            <div
-              id="wallet-cost-description"
-              className="flex gap-2 rounded-xl border border-amber-300/25 bg-amber-400/12 px-3 py-2.5 text-[12px] font-semibold leading-relaxed text-amber-100"
-            >
-              <AlertCircle size={15} className="mt-0.5 shrink-0" />
-              <span>
-                {isSpanish
-                  ? "Falta saldo para cubrir la reserva máxima. Recarga y vuelve a lanzar la operación."
-                  : "There is not enough balance to cover the maximum reserve. Top up and run the operation again."}
-              </span>
-            </div>
-          )}
-
-          {!insufficient && !blocked && (
-            <div
-              id="wallet-cost-description"
-              className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-[12px] font-medium leading-relaxed text-white/64"
-            >
-              {description}
-            </div>
-          )}
-        </div>
-
-        <div className="flex flex-wrap justify-end gap-2 border-t border-white/10 bg-white/[0.03] px-5 py-4">
           <button
             type="button"
             onClick={() => close(false, "cancelled")}
-            className="rounded-xl border border-white/12 bg-white/[0.04] px-4 py-2.5 text-[10px] font-black uppercase tracking-[0.16em] text-white/70 transition hover:bg-white/[0.1] hover:text-white"
+            className="flex h-10 w-10 shrink-0 items-center justify-center border-l border-white/10 bg-white/[0.04] text-white/50 transition hover:bg-white/[0.12] hover:text-white"
+            title={isSpanish ? "Cerrar" : "Close"}
+            aria-label={isSpanish ? "Cerrar" : "Close"}
+          >
+            <X size={14} />
+          </button>
+        </div>
+
+        <div className="grid grid-cols-3 divide-x divide-white/10 border-b border-white/8">
+          <div className="px-3 py-2.5">
+            <p className="text-[8px] font-black uppercase tracking-[0.1em] text-white/38">
+              {isSpanish ? "Estimación" : "Estimate"}
+            </p>
+            <p className="mt-0.5 text-[15px] font-black tabular-nums text-white">
+              {formatUsd(request.estimatedCostMicros, dialogLanguage)}
+            </p>
+          </div>
+          <div className="px-3 py-2.5">
+            <p className="text-[8px] font-black uppercase tracking-[0.1em] text-white/38">
+              {isSpanish ? "Reserva máx." : "Max reserve"}
+            </p>
+            <p className="mt-0.5 text-[15px] font-black tabular-nums text-white">
+              {formatUsd(request.reserveMicros, dialogLanguage)}
+            </p>
+          </div>
+          <div className="px-3 py-2.5">
+            <p className="text-[8px] font-black uppercase tracking-[0.1em] text-white/38">
+              {isSpanish ? "Disponible" : "Available"}
+            </p>
+            <p
+              className={`mt-0.5 text-[15px] font-black tabular-nums ${
+                insufficient || blocked ? "text-rose-300" : "text-emerald-300"
+              }`}
+            >
+              {formatUsd(availableMicros, dialogLanguage)}
+            </p>
+          </div>
+        </div>
+
+        {blocked ? (
+          <div
+            id="wallet-cost-description"
+            className="flex gap-2 border-b border-rose-400/20 bg-rose-500/10 px-3 py-2 text-[9px] font-semibold leading-snug text-rose-100"
+          >
+            <AlertCircle size={13} className="mt-0.5 shrink-0" />
+            <span>
+              {isSpanish
+                ? "Tu cuenta está en revisión de facturación. No se lanzarán operaciones con coste hasta resolverlo."
+                : "Your account is under billing review. Paid operations will not run until this is resolved."}
+            </span>
+          </div>
+        ) : null}
+
+        {insufficient && !blocked ? (
+          <div
+            id="wallet-cost-description"
+            className="flex gap-2 border-b border-amber-400/20 bg-amber-500/10 px-3 py-2 text-[9px] font-semibold leading-snug text-amber-100"
+          >
+            <AlertCircle size={13} className="mt-0.5 shrink-0" />
+            <span>
+              {isSpanish
+                ? "Falta saldo para cubrir la reserva máxima. Recarga y vuelve a lanzar la operación."
+                : "There is not enough balance to cover the maximum reserve. Top up and run the operation again."}
+            </span>
+          </div>
+        ) : null}
+
+        {!insufficient && !blocked ? (
+          <p
+            id="wallet-cost-description"
+            className="border-b border-white/8 px-3 py-2 text-[9px] leading-snug text-white/42"
+          >
+            {description}
+          </p>
+        ) : null}
+
+        <div className="grid grid-cols-2 divide-x divide-white/10">
+          <button
+            type="button"
+            onClick={() => close(false, "cancelled")}
+            className="flex h-10 items-center justify-center bg-white/[0.06] text-[10px] font-black uppercase tracking-[0.1em] text-white/55 transition hover:bg-white/[0.12] hover:text-white"
           >
             {isSpanish ? "Cancelar" : "Cancel"}
           </button>
@@ -335,20 +342,20 @@ export function WalletCostGuardDialog() {
                 dispatchWalletOpen("cost_guard");
                 close(false, insufficient ? "insufficient_balance" : "cancelled");
               }}
-              className="inline-flex items-center gap-2 rounded-xl border border-emerald-300/30 bg-emerald-500 px-4 py-2.5 text-[10px] font-black uppercase tracking-[0.16em] text-white shadow-lg shadow-emerald-950/25 transition hover:bg-emerald-400"
+              className="flex h-10 items-center justify-center gap-1.5 bg-blue-600 text-[10px] font-black uppercase tracking-[0.1em] text-white transition hover:bg-blue-500"
             >
-              <CreditCard size={14} />
-              {isSpanish ? "Recargar saldo" : "Top up"}
+              <CreditCard size={13} aria-hidden />
+              {isSpanish ? "Recargar" : "Top up"}
             </button>
           ) : (
             <button
               type="button"
               ref={primaryButtonRef}
               onClick={() => close(true, "approved")}
-              className="inline-flex items-center gap-2 rounded-xl border border-amber-200/30 bg-white px-4 py-2.5 text-[10px] font-black uppercase tracking-[0.16em] text-slate-950 shadow-lg shadow-black/15 transition hover:bg-white/90"
+              className="flex h-10 items-center justify-center gap-1.5 bg-blue-600 text-[10px] font-black uppercase tracking-[0.1em] text-white transition hover:bg-blue-500"
             >
-              <Wallet size={14} />
-              {isSpanish ? "Aceptar y continuar" : "Accept and continue"}
+              <Wallet size={13} aria-hidden />
+              {isSpanish ? "Continuar" : "Continue"}
             </button>
           )}
         </div>

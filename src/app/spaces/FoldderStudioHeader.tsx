@@ -56,14 +56,8 @@ export function FoldderStudioHeader({
   return (
     <header
       data-foldder-studio-header
-      className={`relative z-[100020] flex h-10 shrink-0 items-stretch overflow-hidden ${className}`.trim()}
+      className={`relative z-[100020] flex h-10 shrink-0 items-stretch overflow-hidden border-b border-white/10 bg-white/[0.08] ${className}`.trim()}
     >
-      <div className="pointer-events-none absolute inset-0 z-0" aria-hidden>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={backgroundSrc} alt="" className="h-full w-full scale-105 object-cover object-center" draggable={false} />
-        <div className="absolute inset-0 bg-gradient-to-r from-black/62 via-black/48 to-black/62" />
-      </div>
-
       <div className="relative z-10 flex min-w-0 flex-1 items-stretch">
         <div className="flex h-10 w-10 shrink-0 overflow-hidden border-r border-white/20">
           {/* eslint-disable-next-line @next/next/no-img-element */}

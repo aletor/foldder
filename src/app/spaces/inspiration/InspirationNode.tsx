@@ -34,7 +34,6 @@ import {
   loadImageDimensions,
   nodeFrameNeedsSync,
   resolveAspectLockedNodeFrame,
-  resolveNodeChromeHeight,
 } from "../studio-node-aspect";
 import { StudioNodePortal } from "../studio-node/studio-node-architecture";
 import {
@@ -112,27 +111,58 @@ function syncInspirationNodeFrame(
   nodeId: string,
   contentWidth: number,
   contentHeight: number,
-  targetNode?: Node,
-): Node[] {
-  const ratio = photoAspectRatio(contentWidth, contentHeight) ?? contentWidth / Math.max(1, contentHeight);
+): { nodes: Node[]; didSync: boolean; frame: { width: number; height: number } | null } {
+  const safeWidth = Math.max(1, contentWidth);
+  const safeHeight = Math.max(1, contentHeight);
+  const ratio = photoAspectRatio(safeWidth, safeHeight) ?? safeWidth / safeHeight;
+  const targetNode = nodes.find((node) => node.id === nodeId);
+  if (!targetNode) return { nodes, didSync: false, frame: null };
+
   const nextFrame = resolveAspectLockedNodeFrame({
     node: targetNode,
-    contentWidth: ratio,
-    contentHeight: 1,
+    contentWidth: safeWidth,
+    contentHeight: safeHeight,
     minWidth: 200,
     maxWidth: 960,
     minHeight: 120,
     maxHeight: 1400,
   });
-  return nodes.map((node) => {
+
+  let didSync = false;
+  const nextNodes = nodes.map((node) => {
     if (node.id !== nodeId) return node;
+    const needsFrameSync = nodeFrameNeedsSync(node, nextFrame);
+    const currentRatio =
+      typeof (node.data as { _foldderAspectRatio?: unknown } | undefined)?._foldderAspectRatio === "number"
+        ? ((node.data as { _foldderAspectRatio?: number })._foldderAspectRatio ?? null)
+        : null;
+    const needsRatioSync = currentRatio === null || Math.abs(currentRatio - ratio) > 0.0001;
+    if (!needsFrameSync && !needsRatioSync) return node;
+    didSync = true;
     return {
       ...node,
       width: nextFrame.width,
       height: nextFrame.height,
+      measured: { width: nextFrame.width, height: nextFrame.height },
       data: { ...node.data, _foldderAspectRatio: ratio },
       style: { ...node.style, width: nextFrame.width, height: nextFrame.height },
     };
+  });
+
+  return { nodes: didSync ? nextNodes : nodes, didSync, frame: nextFrame };
+}
+
+function inspirationFrameSyncKey(previewUrl: string, width: number, height: number): string {
+  return `${previewUrl}:${width}x${height}`;
+}
+
+function scheduleInspirationNodeInternalsRefresh(
+  nodeId: string,
+  updateNodeInternals: (id: string) => void,
+) {
+  requestAnimationFrame(() => {
+    updateNodeInternals(nodeId);
+    requestAnimationFrame(() => updateNodeInternals(nodeId));
   });
 }
 
@@ -259,7 +289,6 @@ function InspirationStudio({
             provider: nextProvider,
             manualPrompt,
             results: list,
-            selected: null,
             status: list.length > 0 ? "results" : "error",
             error: list.length > 0 ? undefined : "No references found.",
             notice: typeof json.notice === "string" && json.notice.trim() ? json.notice : undefined,
@@ -301,6 +330,7 @@ function InspirationStudio({
       <div
         className="fixed inset-0 z-[100090] flex flex-col bg-[#0b0f14] text-white"
         data-foldder-studio-panel
+        data-foldder-studio-canvas
         data-foldder-inspiration-studio
         data-foldder-i18n-ignore
       >
@@ -311,60 +341,56 @@ function InspirationStudio({
           onClose={onClose}
         />
 
-        <div className="grid min-h-0 flex-1 grid-cols-[minmax(272px,320px)_1fr] divide-x divide-white/10">
-          <aside className="flex min-h-0 flex-col overflow-hidden bg-white/[0.02]">
-            <div className="shrink-0 border-b border-white/10">
-              <div className="flex h-8 items-center bg-white/[0.04] px-3">
-                <p className="text-[9px] font-black uppercase tracking-[0.12em] text-white/45">Current input</p>
-              </div>
-              <div className="px-3 py-2">
-                {promptInput ? (
-                  <p className="text-[11px] leading-relaxed text-white/78">{compactText(promptInput, 320)}</p>
-                ) : imageInput ? (
-                  <div>
-                    <p className="text-[11px] font-semibold text-white/78">Connected image</p>
-                    <p className="mt-1 text-[9px] leading-relaxed text-white/38">
-                      Visual intent is read once and reused for every search.
-                    </p>
-                  </div>
-                ) : (
-                  <textarea
-                    value={manualPrompt}
-                    onChange={(event) => {
-                      setManualPrompt(event.target.value);
-                      onPatch({
-                        manualPrompt: event.target.value,
-                        status: event.target.value.trim() ? "ready" : "empty",
-                      });
-                    }}
-                    placeholder="Write an idea to explore…"
-                    className="min-h-[88px] w-full resize-none bg-white/[0.06] px-2.5 py-2 text-[12px] leading-relaxed text-white outline-none placeholder:text-white/30 focus:bg-white/[0.10]"
-                  />
-                )}
-              </div>
+        <div className="grid min-h-0 flex-1 grid-cols-[148px_minmax(0,1fr)] divide-x divide-white/10">
+          <aside
+            className="flex min-h-0 w-[148px] shrink-0 flex-col overflow-hidden bg-white/[0.02]"
+            data-foldder-inspiration-sidebar
+          >
+            <div className="shrink-0 border-b border-white/8 px-2 py-1.5">
+              {promptInput ? (
+                <p className="line-clamp-3 text-[9px] leading-snug text-white/62" title={promptInput}>
+                  {compactText(promptInput, 120)}
+                </p>
+              ) : imageInput ? (
+                <p className="text-[9px] leading-snug text-white/45">Linked image</p>
+              ) : (
+                <textarea
+                  value={manualPrompt}
+                  onChange={(event) => {
+                    setManualPrompt(event.target.value);
+                    onPatch({
+                      manualPrompt: event.target.value,
+                      status: event.target.value.trim() ? "ready" : "empty",
+                    });
+                  }}
+                  placeholder="Idea…"
+                  rows={2}
+                  className="min-h-[40px] w-full resize-none bg-white/[0.05] px-1.5 py-1 text-[10px] leading-snug text-white outline-none placeholder:text-white/28 focus:bg-white/[0.09]"
+                />
+              )}
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto border-b border-white/10">
-              <div className="flex h-8 items-center bg-white/[0.04] px-3">
-                <p className="text-[9px] font-black uppercase tracking-[0.12em] text-white/45">Explore</p>
-              </div>
-              <div className="grid grid-cols-2 divide-x divide-y divide-white/10">
+            <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto py-1">
+              <div className="flex flex-col gap-px px-1">
                 {FACETS.map((item) => {
                   const active = facet === item.id;
                   return (
                     <button
                       key={item.id}
                       type="button"
+                      title={item.en}
                       onClick={() => void runSearch(item.id)}
                       disabled={loading || !hasAnyInput}
-                      className={`flex min-h-[52px] items-center gap-2 px-2.5 py-2 text-left transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                      className={`flex h-8 items-center gap-1.5 px-1.5 text-left transition disabled:cursor-not-allowed disabled:opacity-35 ${
                         active
-                          ? "bg-emerald-500/22 text-emerald-100"
-                          : "bg-white/[0.03] text-white/65 hover:bg-white/[0.08] hover:text-white"
+                          ? "bg-emerald-500/24 text-emerald-100"
+                          : "text-white/55 hover:bg-white/[0.07] hover:text-white/90"
                       }`}
                     >
-                      <span className={active ? "text-emerald-200" : "text-white/45"}>{item.icon}</span>
-                      <span className="text-[10px] font-black uppercase tracking-[0.06em]">{item.en}</span>
+                      <span className={`shrink-0 ${active ? "text-emerald-200" : "text-white/40"}`}>
+                        {React.cloneElement(item.icon as React.ReactElement<{ size?: number }>, { size: 12 })}
+                      </span>
+                      <span className="truncate text-[8px] font-black uppercase tracking-[0.04em]">{item.en}</span>
                     </button>
                   );
                 })}
@@ -373,11 +399,12 @@ function InspirationStudio({
 
             <button
               type="button"
+              title="Search"
               onClick={() => void runSearch()}
               disabled={loading || !hasAnyInput}
-              className="flex h-10 shrink-0 items-center justify-center gap-2 bg-emerald-600 text-[10px] font-black uppercase tracking-[0.1em] text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-white/[0.06] disabled:text-white/30"
+              className="flex h-8 shrink-0 items-center justify-center gap-1.5 border-t border-white/8 bg-emerald-600/90 text-[8px] font-black uppercase tracking-[0.08em] text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-white/[0.04] disabled:text-white/25"
             >
-              {loading ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
+              {loading ? <Loader2 size={12} className="animate-spin" /> : <Search size={12} />}
               Search
             </button>
           </aside>
@@ -450,7 +477,7 @@ function InspirationStudio({
                   </p>
                 </div>
               ) : (
-                <div className="grid grid-cols-3 divide-x divide-y divide-white/10 xl:grid-cols-5 2xl:grid-cols-8">
+                <div className="grid grid-cols-3 divide-x divide-y divide-white/10 lg:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8">
                   {results.map((result) => {
                     const active = selected?.id === result.id;
                     return (
@@ -540,11 +567,8 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
     if (apiWidth && apiHeight) return { url: previewUrl, width: apiWidth, height: apiHeight };
     return null;
   }, [measuredPreviewSize, previewUrl, selectedRef?.height, selectedRef?.width]);
-  const previewRatio =
-    (previewImageSize ? photoAspectRatio(previewImageSize.width, previewImageSize.height) : null) ||
-    photoAspectRatio(selectedRef?.width, selectedRef?.height) ||
-    16 / 9;
-  const currentNode = nodes.find((node) => node.id === id);
+  const previewImageWidth = previewImageSize?.width ?? null;
+  const previewImageHeight = previewImageSize?.height ?? null;
   const showInspirationEmpty = !outputUrl && !selectedRef;
 
   useEffect(() => {
@@ -574,61 +598,38 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
   }, [outputUrl, previewUrl, selectedRef?.imageUrl]);
 
   useLayoutEffect(() => {
-    if (showInspirationEmpty || !previewUrl || !previewImageSize || previewImageSize.url !== previewUrl) return;
+    if (showInspirationEmpty || !previewUrl || !previewImageWidth || !previewImageHeight) return;
 
-    const syncKey = `${previewUrl}:${previewImageSize.width}x${previewImageSize.height}`;
+    const syncKey = inspirationFrameSyncKey(previewUrl, previewImageWidth, previewImageHeight);
     if (frameSyncKeyRef.current === syncKey) return;
 
-    const ratio =
-      photoAspectRatio(previewImageSize.width, previewImageSize.height) ??
-      previewImageSize.width / previewImageSize.height;
-    const nextFrame = resolveAspectLockedNodeFrame({
-      node: currentNode,
-      contentWidth: ratio,
-      contentHeight: 1,
-      minWidth: 200,
-      maxWidth: 960,
-      minHeight: 120,
-      maxHeight: 1400,
-      chromeHeight: resolveNodeChromeHeight(frameRef.current, previewFrameRef.current),
+    let didSync = false;
+    setNodes((nds) => {
+      const result = syncInspirationNodeFrame(nds, id, previewImageWidth, previewImageHeight);
+      didSync = result.didSync;
+      return result.nodes;
     });
 
     frameSyncKeyRef.current = syncKey;
-    setNodes((nds) =>
-      nds.map((node) => {
-        if (node.id !== id) return node;
-        const needsFrameSync = nodeFrameNeedsSync(node, nextFrame);
-        const currentRatio =
-          typeof (node.data as { _foldderAspectRatio?: unknown } | undefined)?._foldderAspectRatio === "number"
-            ? ((node.data as { _foldderAspectRatio?: number })._foldderAspectRatio ?? null)
-            : null;
-        const needsRatioSync = currentRatio === null || Math.abs(currentRatio - ratio) > 0.0001;
-        if (!needsFrameSync && !needsRatioSync) return node;
-        return {
-          ...node,
-          ...(needsFrameSync ? { width: nextFrame.width, height: nextFrame.height } : {}),
-          data: { ...node.data, _foldderAspectRatio: ratio },
-          style: needsFrameSync ? { ...node.style, width: nextFrame.width, height: nextFrame.height } : node.style,
-        };
-      }),
-    );
-    requestAnimationFrame(() => updateNodeInternals(id));
-  }, [currentNode, id, previewImageSize, previewUrl, setNodes, showInspirationEmpty, updateNodeInternals]);
+    if (didSync) {
+      scheduleInspirationNodeInternalsRefresh(id, updateNodeInternals);
+    }
+  }, [
+    id,
+    previewImageHeight,
+    previewImageWidth,
+    previewUrl,
+    setNodes,
+    showInspirationEmpty,
+    updateNodeInternals,
+  ]);
 
   const patchData = useCallback(
     (patch: Partial<InspirationNodeData>) => {
       const immediateWidth = patch.selected?.width;
       const immediateHeight = patch.selected?.height;
-      const nextUrl =
-        typeof patch.value === "string"
-          ? patch.value
-          : patch.selected?.imageUrl || patch.selected?.thumbUrl || "";
 
-      if (immediateWidth && immediateHeight && nextUrl) {
-        frameSyncKeyRef.current = `${nextUrl}:${immediateWidth}x${immediateHeight}`;
-      } else if ("value" in patch || "selected" in patch) {
-        frameSyncKeyRef.current = null;
-      }
+      let shouldRefreshInternals = false;
 
       setNodes((nds) => {
         let nextNodes = nds.map((node) =>
@@ -642,22 +643,30 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
               }
             : node,
         );
+
         if (immediateWidth && immediateHeight) {
-          const targetNode = nextNodes.find((node) => node.id === id);
-          nextNodes = syncInspirationNodeFrame(nextNodes, id, immediateWidth, immediateHeight, targetNode);
+          const result = syncInspirationNodeFrame(nextNodes, id, immediateWidth, immediateHeight);
+          nextNodes = result.nodes;
+          shouldRefreshInternals = result.didSync;
+        } else if ("value" in patch && patch.value !== (nodeData.value ?? undefined)) {
+          frameSyncKeyRef.current = null;
         }
+
         return nextNodes;
       });
-      requestAnimationFrame(() => updateNodeInternals(id));
+
+      if (shouldRefreshInternals) {
+        scheduleInspirationNodeInternalsRefresh(id, updateNodeInternals);
+      }
     },
-    [id, setNodes, updateNodeInternals],
+    [id, nodeData.value, setNodes, updateNodeInternals],
   );
 
   return (
     <div
       ref={frameRef}
-      className={`custom-node inspiration-node foldder-node--frameless node--media ${showInspirationEmpty ? "inspiration-node--empty" : ""} ${status === "error" ? "foldder-node--error" : ""} ${status === "searching" ? "node-glow-running" : ""}`}
-      style={{ minWidth: 200, minHeight: 120 }}
+      className={`custom-node inspiration-node foldder-node--frameless node--media group/node ${showInspirationEmpty ? "inspiration-node--empty" : "inspiration-node--has-preview"} ${status === "error" ? "foldder-node--error" : ""} ${status === "searching" ? "node-glow-running" : ""}`}
+      style={{ minWidth: 200, minHeight: showInspirationEmpty ? 120 : 0 }}
     >
       <NodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={1400} keepAspectRatio={Boolean(previewUrl)} isVisible={selected} />
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Inspiration" />
@@ -714,37 +723,29 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
           </div>
         </div>
       ) : (
-        <div className="node-content foldder-frameless-main space-y-3">
-          <div
-            ref={previewFrameRef}
-            className="relative overflow-hidden rounded-none bg-slate-950/70"
-            style={{ aspectRatio: previewRatio }}
-          >
+        <div className="node-content foldder-frameless-main relative flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div ref={previewFrameRef} className="relative h-full w-full overflow-hidden bg-slate-950/70">
             {outputUrl ? (
-              <img src={outputUrl} alt="" className="h-full w-full object-contain" />
+              <img src={outputUrl} alt="" className="h-full w-full object-contain" draggable={false} />
             ) : selectedRef ? (
               <img
                 src={selectedRef.thumbUrl || selectedRef.imageUrl}
                 alt=""
                 className="h-full w-full object-contain opacity-90"
+                draggable={false}
               />
             ) : null}
           </div>
-
-          <p className="foldder-frameless-chip min-h-[26px] text-[9px] leading-snug text-zinc-500">
-            {nodeData.error || statusMessage(status, hasInput)}
-          </p>
-
           <button
             type="button"
             onClick={(event) => {
               event.stopPropagation();
               setStudioOpen(true);
             }}
-            className="foldder-frameless-action nodrag flex w-full items-center justify-center gap-2 rounded-none bg-white/[0.07] px-3 py-2 text-[10px] font-black uppercase tracking-widest text-zinc-100 transition hover:bg-white/[0.12]"
+            className="foldder-frameless-action nodrag absolute bottom-3 right-3 z-10 flex items-center gap-1.5 rounded-none bg-black/55 px-2.5 py-1.5 text-[9px] font-black uppercase tracking-[0.1em] text-white/90 opacity-0 transition hover:bg-black/70 group-hover/node:opacity-100 focus-visible:opacity-100"
           >
-            <Maximize2 size={13} />
-            Open Studio
+            <Maximize2 size={12} />
+            Studio
           </button>
         </div>
       )}
