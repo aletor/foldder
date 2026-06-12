@@ -11,6 +11,9 @@ import {
   type ApiWalletCharge,
 } from "@/lib/wallet-api-gate";
 
+export const runtime = "nodejs";
+export const maxDuration = 300;
+
 export async function POST(req: NextRequest) {
   console.log("[Gemini REST] Request received");
   let walletCharge: ApiWalletCharge | null = null;

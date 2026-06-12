@@ -4,7 +4,6 @@
  */
 
 import { getFromS3 } from "@/lib/s3-utils";
-import sharp from "sharp";
 
 type ParseReferenceImageOptions = {
   baseUrl?: string | URL;
@@ -76,6 +75,7 @@ export async function parseReferenceImageForGemini(
     if (!buffer.length) return null;
 
     if (mimeType === "image/svg+xml") {
+      const { default: sharp } = await import("sharp");
       const png = await sharp(buffer, { failOn: "none" }).png().toBuffer();
       return {
         data: png.toString("base64"),

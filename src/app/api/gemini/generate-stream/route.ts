@@ -15,6 +15,9 @@ import {
   type ApiWalletCharge,
 } from "@/lib/wallet-api-gate";
 
+export const runtime = "nodejs";
+export const maxDuration = 300;
+
 /**
  * Misma carga útil que POST /api/gemini/generate, pero respuesta NDJSON:
  * líneas {"type":"phase"|"progress","progress":n,"stage":"..."} y cierre {"type":"done",...}
