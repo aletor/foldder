@@ -1,5 +1,8 @@
 import type { CSSProperties } from "react";
 import type { Node } from "@xyflow/react";
+import {
+  resolveGridFrameFromAspectRatio,
+} from "./canvas-grid-layout";
 
 const DEFAULT_HEADER_HEIGHT = 30;
 
@@ -30,10 +33,6 @@ export function resolveNodeFrameHeight(node: Pick<Node, "height" | "measured" | 
   );
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
-
 export function resolveAspectLockedNodeFrame(args: {
   node?: Pick<Node, "width" | "height" | "measured" | "style">;
   contentWidth: number;
@@ -43,24 +42,24 @@ export function resolveAspectLockedNodeFrame(args: {
   minHeight: number;
   maxHeight: number;
   chromeHeight?: number;
+  maxGridCols?: number;
+  maxGridRows?: number;
+  minGridCols?: number;
+  minGridRows?: number;
 }): { width: number; height: number } {
-  const chromeHeight = args.chromeHeight ?? DEFAULT_HEADER_HEIGHT;
   const safeContentWidth = Math.max(1, args.contentWidth);
   const safeContentHeight = Math.max(1, args.contentHeight);
   const contentRatio = safeContentWidth / safeContentHeight;
-  const minBodyHeight = Math.max(1, args.minHeight - chromeHeight);
-  const maxBodyHeight = Math.max(minBodyHeight, args.maxHeight - chromeHeight);
-  const minWidthByHeight = minBodyHeight * contentRatio;
-  const maxWidthByHeight = maxBodyHeight * contentRatio;
-  const effectiveMinWidth = Math.max(args.minWidth, minWidthByHeight);
-  const effectiveMaxWidth = Math.max(effectiveMinWidth, Math.min(args.maxWidth, maxWidthByHeight));
-  const currentWidth = resolveNodeFrameWidth(args.node, effectiveMinWidth);
-  const width = clamp(currentWidth, effectiveMinWidth, effectiveMaxWidth);
-  const height = clamp(chromeHeight + width / contentRatio, args.minHeight, args.maxHeight);
+  const frame = resolveGridFrameFromAspectRatio(contentRatio, {
+    minCols: args.minGridCols ?? 1,
+    minRows: args.minGridRows ?? 1,
+    maxCols: args.maxGridCols ?? 5,
+    maxRows: args.maxGridRows ?? 5,
+  });
 
   return {
-    width: Math.round(width),
-    height: Math.round(height),
+    width: Math.round(frame.width),
+    height: Math.round(frame.height),
   };
 }
 

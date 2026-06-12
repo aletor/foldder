@@ -1,7 +1,7 @@
 "use client";
 
 import React, { memo, useCallback, useMemo } from "react";
-import { Position, type NodeProps } from "@xyflow/react";
+import { NodeResizer, Position, type NodeProps } from "@xyflow/react";
 import { FileStack, FolderOpen, Images, Sparkles } from "lucide-react";
 import { FoldderDataHandle } from "./FoldderDataHandle";
 import { NodeIcon } from "./foldder-icons";
@@ -53,7 +53,8 @@ export const ProjectAssetsNode = memo(({ id, data, selected }: NodeProps) => {
   }, [ctx]);
 
   return (
-    <div className="custom-node tool-node project-assets-node foldder-node--frameless node--glass" style={{ minWidth: 260, minHeight: 230 }}>
+    <div className="custom-node tool-node project-assets-node foldder-node--frameless node--glass" style={{ minWidth: 200, minHeight: 120 }}>
+      <NodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={2200} isVisible={selected} />
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Foldder" />
 
       <div className="node-header">

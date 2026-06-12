@@ -1,7 +1,7 @@
 "use client";
 
 import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
-import { Position, type NodeProps } from "@xyflow/react";
+import { NodeResizer, Position, type NodeProps } from "@xyflow/react";
 import { Brain, Link2 } from "lucide-react";
 import { BRAIN_ADN_COMPLETENESS_TOOLTIP_ES, computeAdnScore } from "@/lib/brain/brain-adn-score";
 import { listDownstreamBrainClients } from "@/lib/brain/brain-canvas-brain-links";
@@ -179,13 +179,14 @@ export const ProjectBrainNode = memo(({ id, data, selected }: NodeProps<any>) =>
         expanded ? "ring-2 ring-violet-400/45" : ""
       } ${introActive ? "ring-2 ring-cyan-300/60" : ""}`}
       style={{
-        width: 332,
-        height: 332,
+        minWidth: 200,
+        minHeight: 120,
         backgroundColor: secondaryColor,
         "--foldder-node-header-tint-color": primaryColor,
         "--foldder-node-output-color": primaryColor,
       } as React.CSSProperties}
     >
+      <NodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={2200} isVisible={selected} />
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Brain" />
 
       <div className="node-header">

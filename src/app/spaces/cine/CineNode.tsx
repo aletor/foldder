@@ -1,7 +1,7 @@
 "use client";
 
 import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
-import { NodeProps, useReactFlow, useStore, type Edge, type Node, type ReactFlowState } from "@xyflow/react";
+import { NodeResizer, NodeProps, useReactFlow, useStore, type Edge, type Node, type ReactFlowState } from "@xyflow/react";
 import { shallow } from "zustand/shallow";
 import { Film } from "lucide-react";
 import { defaultDataForCanvasDropNode } from "@/lib/canvas-connect-end-drop";
@@ -340,17 +340,17 @@ export const CineNode = memo(function CineNode({ id, data, selected }: NodeProps
       title="CINE"
       badge={modeLabel}
       introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}
-      minWidth={292}
-      width={292}
+      minWidth={200}
       className="cine-node"
       handles={CINE_NODE_HANDLES}
       variant="frameless"
       material={previewImage ? "media" : "glass"}
     >
+      <NodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={2200} isVisible={selected} />
       <div
         className={
           previewImage
-            ? "node-content cine-node-content cine-node-content--media relative flex min-h-[410px] flex-col justify-end gap-3 overflow-hidden rounded-[28px] px-3 pb-3 pt-3"
+            ? "node-content cine-node-content cine-node-content--media relative flex min-h-0 flex-1 flex-col justify-end gap-3 overflow-hidden rounded-[28px] px-3 pb-3 pt-3"
             : "node-content cine-node-content flex flex-col gap-3 px-3 pb-3 pt-2"
         }
       >

@@ -2,7 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element */
 
-import React, { memo, useCallback, useMemo, useRef, useState } from "react";
+import React, { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   NodeProps,
   NodeResizer,
@@ -10,6 +10,7 @@ import {
   useEdges,
   useNodes,
   useReactFlow,
+  useUpdateNodeInternals,
   type Node,
 } from "@xyflow/react";
 import {
@@ -30,6 +31,11 @@ import { resolvePromptValueFromEdgeSource } from "../canvas-group-logic";
 import { FoldderDataHandle } from "../FoldderDataHandle";
 import { NodeIcon, resolveFoldderNodeState } from "../foldder-icons";
 import { FoldderNodeHeaderTitle, NodeLabel } from "../foldder-node-ui";
+import {
+  nodeFrameNeedsSync,
+  resolveAspectLockedNodeFrame,
+  resolveNodeChromeHeight,
+} from "../studio-node-aspect";
 import { StudioNodePortal } from "../studio-node/studio-node-architecture";
 
 type InspirationFacet = "similar" | "textures" | "colors" | "style" | "people" | "backgrounds";
@@ -454,8 +460,12 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
   const nodes = useNodes();
   const edges = useEdges();
   const { setNodes } = useReactFlow();
+  const updateNodeInternals = useUpdateNodeInternals();
   const [studioOpen, setStudioOpen] = useState(false);
   const [loadedPreviewRatio, setLoadedPreviewRatio] = useState<{ url: string; ratio: number } | null>(null);
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const previewFrameRef = useRef<HTMLDivElement | null>(null);
+  const frameSyncKeyRef = useRef<string | null>(null);
 
   const promptEdge = useMemo(
     () => edges.find((edge) => edge.target === id && edge.targetHandle === "prompt"),
@@ -486,6 +496,46 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
     photoAspectRatio(selectedRef?.width, selectedRef?.height) ||
     (loadedPreviewRatio?.url === previewUrl ? loadedPreviewRatio.ratio : null) ||
     16 / 9;
+  const currentNode = nodes.find((node) => node.id === id);
+
+  useLayoutEffect(() => {
+    if (!previewUrl || !Number.isFinite(previewRatio) || previewRatio <= 0) {
+      frameSyncKeyRef.current = null;
+      return;
+    }
+    const syncKey = `${previewUrl}:${previewRatio.toFixed(4)}`;
+    if (frameSyncKeyRef.current === syncKey) return;
+    const nextFrame = resolveAspectLockedNodeFrame({
+      node: currentNode,
+      contentWidth: previewRatio,
+      contentHeight: 1,
+      minWidth: 200,
+      maxWidth: 960,
+      minHeight: 120,
+      maxHeight: 1400,
+      chromeHeight: resolveNodeChromeHeight(frameRef.current, previewFrameRef.current),
+    });
+    frameSyncKeyRef.current = syncKey;
+    setNodes((nds) =>
+      nds.map((node) => {
+        if (node.id !== id) return node;
+        const needsFrameSync = nodeFrameNeedsSync(node, nextFrame);
+        const currentRatio =
+          typeof (node.data as { _foldderAspectRatio?: unknown } | undefined)?._foldderAspectRatio === "number"
+            ? ((node.data as { _foldderAspectRatio?: number })._foldderAspectRatio ?? null)
+            : null;
+        const needsRatioSync = currentRatio === null || Math.abs(currentRatio - previewRatio) > 0.0001;
+        if (!needsFrameSync && !needsRatioSync) return node;
+        return {
+          ...node,
+          ...(needsFrameSync ? { width: nextFrame.width, height: nextFrame.height } : {}),
+          data: { ...node.data, _foldderAspectRatio: previewRatio },
+          style: needsFrameSync ? { ...node.style, width: nextFrame.width, height: nextFrame.height } : node.style,
+        };
+      }),
+    );
+    requestAnimationFrame(() => updateNodeInternals(id));
+  }, [currentNode, id, previewRatio, previewUrl, setNodes, updateNodeInternals]);
 
   const patchData = useCallback(
     (patch: Partial<InspirationNodeData>) => {
@@ -508,10 +558,11 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
 
   return (
     <div
+      ref={frameRef}
       className={`custom-node inspiration-node foldder-node--frameless node--media ${status === "error" ? "foldder-node--error" : ""} ${status === "searching" ? "node-glow-running" : ""}`}
-      style={{ minWidth: 292 }}
+      style={{ minWidth: 200, minHeight: 120 }}
     >
-      <NodeResizer minWidth={292} minHeight={310} isVisible={selected} />
+      <NodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={1400} keepAspectRatio={Boolean(previewUrl)} isVisible={selected} />
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Inspiration" />
 
       <div className="handle-wrapper handle-left" style={{ top: "31%" }}>
@@ -540,6 +591,7 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
 
       <div className="node-content foldder-frameless-main space-y-3">
         <div
+          ref={previewFrameRef}
           className="relative overflow-hidden rounded-[10px] bg-slate-950/70"
           style={{ aspectRatio: previewRatio }}
         >

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { memo, useCallback, useMemo, useState, type ComponentProps } from "react";
-import { NodeProps, useReactFlow, useStore, type Edge, type Node, type ReactFlowState } from "@xyflow/react";
+import { NodeResizer, NodeProps, useReactFlow, useStore, type Edge, type Node, type ReactFlowState } from "@xyflow/react";
 import { shallow } from "zustand/shallow";
 import { BookOpen, CheckCircle2, ChevronRight, FileText, Film, LayoutTemplate, PenLine, RefreshCw, Sparkles } from "lucide-react";
 import { GuionistaStudio } from "../GuionistaStudio";
@@ -34,6 +34,8 @@ const GUIONISTA_NODE_HANDLES: StudioCanvasNodeHandleSpec[] = [
   { side: "right", top: "38%", type: "source", id: "text", dataType: "txt", label: "Text out" },
   { side: "right", top: "68%", type: "source", id: "prompt", dataType: "prompt", label: "Prompt out" },
 ];
+
+const GUIONISTA_EMPTY_BACKGROUND_SRC = "/assets/nodes/guionista-empty-blue.png";
 
 function summarizeGuionistaBrainContext(assetsMetadata: unknown, enabled: boolean): GuionistaBrainContext {
   if (!enabled) return { enabled: false };
@@ -356,14 +358,23 @@ export const GuionistaNode = memo(function GuionistaNode({ id, data, selected }:
       title="GUIONISTA"
       badge={compactTypeLabel}
       introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}
-      minWidth={275}
-      width={275}
-      className="guionista-node"
+      minWidth={200}
+      className="guionista-node foldder-frameless-label-dark"
       handles={GUIONISTA_NODE_HANDLES}
       variant="frameless"
-      material="glass"
+      material="media"
     >
-      <div className="node-content guionista-node-content flex min-w-0 flex-col gap-3 px-3 pb-3 pt-2">
+      <NodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={2200} isVisible={selected} />
+      <div className="foldder-frameless-main relative flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="guionista-empty-background absolute inset-0 overflow-hidden" aria-hidden>
+          <img
+            src={GUIONISTA_EMPTY_BACKGROUND_SRC}
+            alt=""
+            className="h-full w-full object-contain object-bottom"
+            draggable={false}
+          />
+        </div>
+        <div className="guionista-node-content relative z-10 flex min-w-0 flex-col gap-3 px-3 pb-3 pt-2">
         <div className="min-w-0">
           <div className="flex items-start gap-2">
             <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] ${activeVisualMeta.accent.replace("border-", "border border-")}`}>
@@ -459,6 +470,7 @@ export const GuionistaNode = memo(function GuionistaNode({ id, data, selected }:
           >
             {currentVersion ? "Abrir" : "Empezar"}
           </StudioCanvasOpenButton>
+        </div>
         </div>
       </div>
 

@@ -2,7 +2,9 @@
  * Parse fetch Response bodies as JSON without throwing when the server returns HTML (404/500 pages).
  */
 export type HttpJsonError = Error & {
+  actualRevision?: number;
   code?: string;
+  conflict?: boolean;
   context?: string;
   detail?: unknown;
   retryable?: boolean;
@@ -29,6 +31,10 @@ function createHttpJsonError(message: string, context: string, status: number, p
   error.context = context;
   error.status = status;
   if (typeof body?.code === "string") error.code = body.code;
+  if (body?.conflict === true) error.conflict = true;
+  if (typeof body?.actualRevision === "number" && Number.isFinite(body.actualRevision)) {
+    error.actualRevision = body.actualRevision;
+  }
   if (typeof body?.retryable === "boolean") error.retryable = body.retryable;
   if (body && Object.prototype.hasOwnProperty.call(body, "detail")) {
     error.detail = body.detail;

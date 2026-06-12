@@ -2,7 +2,7 @@
 
 import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { Position, useStore, type Edge, type Node, type NodeProps, type ReactFlowState } from "@xyflow/react";
+import { NodeResizer, Position, useStore, type Edge, type Node, type NodeProps, type ReactFlowState } from "@xyflow/react";
 import { shallow } from "zustand/shallow";
 import { Clipboard, Download, File, Layers, Music, Search, X } from "lucide-react";
 
@@ -410,7 +410,14 @@ export const ExportMultimediaNode = memo(function ExportMultimediaNode({ id, dat
         : "media list recibida";
 
   return (
-    <div className={cx("relative w-[330px] rounded-[30px] border bg-white/90 p-4 text-slate-900 shadow-[0_18px_50px_rgba(15,23,42,0.18)] backdrop-blur-xl", selected ? "border-cyan-400/60" : "border-white/70")}>
+    <div
+      className={cx(
+        "custom-node export-multimedia-node foldder-node--frameless node--glass relative p-4 text-slate-900",
+        selected ? "export-multimedia-node--selected" : undefined,
+      )}
+      style={{ minWidth: 200, minHeight: 120 }}
+    >
+      <NodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={2200} isVisible={selected} />
       <FoldderDataHandle type="target" position={Position.Left} id="media_list" dataType="generic" />
       <div className="flex items-start justify-between gap-3">
         <div>

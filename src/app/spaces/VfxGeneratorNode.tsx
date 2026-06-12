@@ -163,6 +163,7 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<VfxGener
   const currentNodeFrame = nodeFrameFromSnapshot(currentFrameSnapshot);
   const frameRef = useRef<HTMLDivElement | null>(null);
   const previewRef = useRef<HTMLDivElement | null>(null);
+  const frameSyncKeyRef = useRef<string | null>(null);
   const nodeMediaVisible = useNodeViewportVisibility(id, 900);
   const [videoSize, setVideoSize] = useState<{ width: number; height: number } | null>(null);
 
@@ -359,29 +360,39 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<VfxGener
 
   useLayoutEffect(() => {
     if (!videoSize) return;
+    const syncKey = `${aspectVideoUrl}:${videoSize.width}x${videoSize.height}`;
+    if (frameSyncKeyRef.current === syncKey) return;
     const chromeHeight = resolveNodeChromeHeight(frameRef.current, previewRef.current);
     const nextFrame = resolveAspectLockedNodeFrame({
       node: currentNodeFrame,
       contentWidth: videoSize.width,
       contentHeight: videoSize.height,
-      minWidth: 300,
+      minWidth: 200,
       maxWidth: 960,
-      minHeight: 220,
+      minHeight: 120,
       maxHeight: VFX_STUDIO_NODE_MAX_HEIGHT,
       chromeHeight,
     });
-    if (!nodeFrameNeedsSync(currentNodeFrame, nextFrame)) return;
+    frameSyncKeyRef.current = syncKey;
+    const nextAspectRatio = videoSize.width / videoSize.height;
     setNodes((nds) =>
-      nds.map((node) =>
-        node.id === id
-          ? {
-              ...node,
-              width: nextFrame.width,
-              height: nextFrame.height,
-              style: { ...node.style, width: nextFrame.width, height: nextFrame.height },
-            }
-          : node,
-      ),
+      nds.map((node) => {
+        if (node.id !== id) return node;
+        const needsFrameSync = nodeFrameNeedsSync(node, nextFrame);
+        const currentAspectRatio =
+          typeof (node.data as { _foldderAspectRatio?: unknown } | undefined)?._foldderAspectRatio === "number"
+            ? ((node.data as { _foldderAspectRatio?: number })._foldderAspectRatio ?? null)
+            : null;
+        const needsAspectSync =
+          currentAspectRatio === null || Math.abs(currentAspectRatio - nextAspectRatio) > 0.0001;
+        if (!needsFrameSync && !needsAspectSync) return node;
+        return {
+          ...node,
+          ...(needsFrameSync ? { width: nextFrame.width, height: nextFrame.height } : {}),
+          data: { ...node.data, _foldderAspectRatio: nextAspectRatio },
+          style: needsFrameSync ? { ...node.style, width: nextFrame.width, height: nextFrame.height } : node.style,
+        };
+      }),
     );
     requestAnimationFrame(() => updateNodeInternals(id));
   }, [
@@ -391,6 +402,7 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<VfxGener
     currentFrameSnapshot.measuredHeight,
     currentFrameSnapshot.styleWidth,
     currentFrameSnapshot.styleHeight,
+    aspectVideoUrl,
     id,
     setNodes,
     updateNodeInternals,
@@ -405,9 +417,9 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<VfxGener
     <div
       ref={frameRef}
       className={`custom-node processor-node vfx-generator-node group/node ${isBusy ? "node-glow-running" : ""}`}
-      style={{ minWidth: 300 }}
+      style={{ minWidth: 200, minHeight: 120 }}
     >
-      <FoldderNodeResizerLocal minWidth={300} minHeight={220} maxWidth={960} maxHeight={VFX_STUDIO_NODE_MAX_HEIGHT} keepAspectRatio isVisible={selected} />
+      <FoldderNodeResizerLocal minWidth={200} minHeight={120} maxWidth={960} maxHeight={VFX_STUDIO_NODE_MAX_HEIGHT} keepAspectRatio isVisible={selected} />
       <NodeLabel id={id} label={nodeData.label} defaultLabel="VFX Generator" />
 
       <div className="handle-wrapper handle-left !top-[12%]">

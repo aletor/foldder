@@ -4,6 +4,7 @@ import React, { memo, useCallback, useEffect, useState } from "react";
 import {
   type Edge,
   type Node,
+  NodeResizer,
   NodeProps,
   Position,
   useReactFlow,
@@ -225,6 +226,7 @@ export const CanvasGroupNode = memo(function CanvasGroupNode({ id, data, selecte
       }`}
       style={{ minHeight: 90, boxSizing: "border-box" }}
     >
+      <NodeResizer minWidth={200} minHeight={90} maxWidth={2200} maxHeight={2200} isVisible={selected} />
       <div className="pointer-events-auto relative z-20 flex min-h-[90px] flex-col justify-center gap-1.5 px-3 py-2.5">
         <div className="flex items-center justify-between gap-2">
           <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -325,6 +327,7 @@ export const CanvasGroupNode = memo(function CanvasGroupNode({ id, data, selecte
       }`}
       style={{ width: "100%", height: "100%", minWidth: 200, minHeight: 120 }}
     >
+      <NodeResizer minWidth={200} minHeight={120} maxWidth={3000} maxHeight={3000} isVisible={selected} />
       <div className="pointer-events-auto absolute left-3 right-3 top-2 z-20 flex items-center justify-between gap-2">
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <Layers className="h-4 w-4 shrink-0 text-white/85" strokeWidth={2} />

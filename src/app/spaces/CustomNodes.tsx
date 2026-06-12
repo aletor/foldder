@@ -64,6 +64,7 @@ import {
   FOLDDER_STANDARD_STUDIO_CLOSE_REQUEST_EVENT,
   type FoldderStudioEventDetail,
 } from './desktop-studio-events';
+import { getNodeGridFrameForType } from './canvas-grid-layout';
 
 
 /** Snapshot current output into _assetVersions for version history. */
@@ -174,6 +175,116 @@ type CropRect = {
   h: number;
 };
 
+type CropDragAction = 'move' | 'nw' | 'ne' | 'sw' | 'se';
+type CropResizeAction = Exclude<CropDragAction, 'move'>;
+
+const CROP_MIN_PERCENT = 5;
+const CROP_ASPECT_RATIOS: Record<string, number> = {
+  "1:1": 1,
+  "16:9": 16 / 9,
+  "9:16": 9 / 16,
+};
+
+function cropAspectRatioValue(value: string | undefined): number | null {
+  if (!value || value === "free") return null;
+  return CROP_ASPECT_RATIOS[value] ?? null;
+}
+
+function clampCropRect(rect: CropRect): CropRect {
+  const w = Math.max(CROP_MIN_PERCENT, Math.min(100, rect.w));
+  const h = Math.max(CROP_MIN_PERCENT, Math.min(100, rect.h));
+  return {
+    x: Math.max(0, Math.min(100 - w, rect.x)),
+    y: Math.max(0, Math.min(100 - h, rect.y)),
+    w,
+    h,
+  };
+}
+
+function fitCropRectToVisualAspect(rect: CropRect, ratio: number, container: DOMRect): CropRect {
+  const safeRatio = Number.isFinite(ratio) && ratio > 0 ? ratio : 1;
+  const cw = Math.max(1, container.width);
+  const ch = Math.max(1, container.height);
+  const current = clampCropRect(rect);
+  const centerX = ((current.x + current.w / 2) / 100) * cw;
+  const centerY = ((current.y + current.h / 2) / 100) * ch;
+  const maxW = Math.max(1, 2 * Math.min(centerX, cw - centerX));
+  const maxH = Math.max(1, 2 * Math.min(centerY, ch - centerY));
+  const currentW = Math.max(1, (current.w / 100) * cw);
+  const currentH = Math.max(1, (current.h / 100) * ch);
+  const currentArea = currentW * currentH;
+  let nextW = Math.sqrt(currentArea * safeRatio);
+  let nextH = nextW / safeRatio;
+
+  if (nextW > maxW) {
+    nextW = maxW;
+    nextH = nextW / safeRatio;
+  }
+  if (nextH > maxH) {
+    nextH = maxH;
+    nextW = nextH * safeRatio;
+  }
+
+  return clampCropRect({
+    x: ((centerX - nextW / 2) / cw) * 100,
+    y: ((centerY - nextH / 2) / ch) * 100,
+    w: (nextW / cw) * 100,
+    h: (nextH / ch) * 100,
+  });
+}
+
+function resizeCropRectToVisualAspect(
+  rect: CropRect,
+  action: CropResizeAction,
+  deltaXPercent: number,
+  deltaYPercent: number,
+  ratio: number,
+  container: DOMRect,
+): CropRect {
+  const safeRatio = Number.isFinite(ratio) && ratio > 0 ? ratio : 1;
+  const cw = Math.max(1, container.width);
+  const ch = Math.max(1, container.height);
+  const current = clampCropRect(rect);
+  const left = (current.x / 100) * cw;
+  const top = (current.y / 100) * ch;
+  const width = (current.w / 100) * cw;
+  const height = (current.h / 100) * ch;
+  const right = left + width;
+  const bottom = top + height;
+  const dx = (deltaXPercent / 100) * cw;
+  const dy = (deltaYPercent / 100) * ch;
+
+  const geometry = {
+    nw: { anchorX: right, anchorY: bottom, dragX: left + dx, dragY: top + dy, signX: -1, signY: -1 },
+    ne: { anchorX: left, anchorY: bottom, dragX: right + dx, dragY: top + dy, signX: 1, signY: -1 },
+    sw: { anchorX: right, anchorY: top, dragX: left + dx, dragY: bottom + dy, signX: -1, signY: 1 },
+    se: { anchorX: left, anchorY: top, dragX: right + dx, dragY: bottom + dy, signX: 1, signY: 1 },
+  }[action];
+
+  const rawWidth = Math.max(1, geometry.signX * (geometry.dragX - geometry.anchorX));
+  const rawHeight = Math.max(1, geometry.signY * (geometry.dragY - geometry.anchorY));
+  const maxWidthFromAnchor = geometry.signX > 0 ? cw - geometry.anchorX : geometry.anchorX;
+  const maxHeightFromAnchor = geometry.signY > 0 ? ch - geometry.anchorY : geometry.anchorY;
+  const maxWidth = Math.max(1, Math.min(maxWidthFromAnchor, maxHeightFromAnchor * safeRatio));
+  const minWidth = Math.min(
+    maxWidth,
+    Math.max((CROP_MIN_PERCENT / 100) * cw, (CROP_MIN_PERCENT / 100) * ch * safeRatio),
+  );
+  const projectedT = (rawWidth * safeRatio + rawHeight) / (safeRatio * safeRatio + 1);
+  const projectedWidth = Number.isFinite(projectedT) ? projectedT * safeRatio : width;
+  const nextWidth = Math.max(minWidth, Math.min(maxWidth, projectedWidth));
+  const nextHeight = nextWidth / safeRatio;
+  const nextLeft = geometry.signX > 0 ? geometry.anchorX : geometry.anchorX - nextWidth;
+  const nextTop = geometry.signY > 0 ? geometry.anchorY : geometry.anchorY - nextHeight;
+
+  return clampCropRect({
+    x: (nextLeft / cw) * 100,
+    y: (nextTop / ch) * 100,
+    w: (nextWidth / cw) * 100,
+    h: (nextHeight / ch) * 100,
+  });
+}
+
 function createNodeFrameSnapshot(
   node: Pick<Node, "width" | "height" | "measured" | "style"> | undefined,
 ): Pick<Node, "width" | "height" | "measured" | "style"> | undefined {
@@ -232,16 +343,39 @@ function syncAspectLockedFrameForNode(
   nodes: Node[],
   id: string,
   nextFrame: { width: number; height: number },
+  aspectRatio?: number,
 ): Node[] {
   let didSync = false;
+  const safeAspectRatio =
+    typeof aspectRatio === "number" && Number.isFinite(aspectRatio) && aspectRatio > 0
+      ? aspectRatio
+      : null;
   const nextNodes = nodes.map((node) => {
-    if (node.id !== id || !nodeFrameNeedsSync(node, nextFrame)) return node;
+    if (node.id !== id) return node;
+    const needsFrameSync = nodeFrameNeedsSync(node, nextFrame);
+    const currentAspectRatio =
+      typeof (node.data as { _foldderAspectRatio?: unknown } | undefined)?._foldderAspectRatio === "number"
+        ? ((node.data as { _foldderAspectRatio?: number })._foldderAspectRatio ?? null)
+        : null;
+    const needsAspectSync =
+      safeAspectRatio !== null &&
+      (currentAspectRatio === null || Math.abs(currentAspectRatio - safeAspectRatio) > 0.0001);
+    if (!needsFrameSync && !needsAspectSync) return node;
     didSync = true;
     return {
       ...node,
-      width: nextFrame.width,
-      height: nextFrame.height,
-      style: { ...node.style, width: nextFrame.width, height: nextFrame.height },
+      ...(needsFrameSync ? { width: nextFrame.width, height: nextFrame.height } : {}),
+      ...(needsAspectSync
+        ? {
+            data: {
+              ...node.data,
+              _foldderAspectRatio: safeAspectRatio,
+            },
+          }
+        : {}),
+      style: needsFrameSync
+        ? { ...node.style, width: nextFrame.width, height: nextFrame.height }
+        : node.style,
     };
   });
 
@@ -376,8 +510,14 @@ export const UrlImageNode = memo(function UrlImageNode({ id, data, selected }: N
     searchIntent?: string,
     count?: number,
   };
+  const nodes = useNodes();
   const { setNodes } = useReactFlow();
+  const updateNodeInternals = useUpdateNodeInternals();
   const [loading, setLoading] = useState(false);
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const previewFrameRef = useRef<HTMLDivElement | null>(null);
+  const frameSyncKeyRef = useRef<string | null>(null);
+  const [activeImageSize, setActiveImageSize] = useState<{ url: string; width: number; height: number } | null>(null);
   
   const urls = nodeData.urls || [];
   const selectedIndex = nodeData.selectedIndex ?? 0;
@@ -385,6 +525,44 @@ export const UrlImageNode = memo(function UrlImageNode({ id, data, selected }: N
   const currentUrlDisplay = currentUrl.startsWith('data:image/')
     ? 'Imagen embebida'
     : currentUrl;
+  const currentNode = nodes.find((node) => node.id === id);
+
+  useEffect(() => {
+    if (!currentUrl) {
+      frameSyncKeyRef.current = null;
+      return;
+    }
+    let cancelled = false;
+    loadImageDimensions(currentUrl)
+      .then(({ width, height }) => {
+        if (!cancelled) setActiveImageSize({ url: currentUrl, width, height });
+      })
+      .catch(() => {
+        /* keep default square frame if the remote image cannot be measured */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUrl]);
+
+  useLayoutEffect(() => {
+    if (!currentUrl || activeImageSize?.url !== currentUrl) return;
+    const syncKey = `${currentUrl}:${activeImageSize.width}x${activeImageSize.height}`;
+    if (frameSyncKeyRef.current === syncKey) return;
+    const nextFrame = resolveAspectLockedNodeFrame({
+      node: currentNode,
+      contentWidth: activeImageSize.width,
+      contentHeight: activeImageSize.height,
+      minWidth: 200,
+      maxWidth: 960,
+      minHeight: 120,
+      maxHeight: STUDIO_NODE_MAX_HEIGHT,
+      chromeHeight: resolveNodeChromeHeight(frameRef.current, previewFrameRef.current),
+    });
+    frameSyncKeyRef.current = syncKey;
+    setNodes((nds) => syncAspectLockedFrameForNode(nds as Node[], id, nextFrame, activeImageSize.width / activeImageSize.height));
+    requestAnimationFrame(() => updateNodeInternals(id));
+  }, [activeImageSize, currentNode, currentUrl, id, setNodes, updateNodeInternals]);
 
   const runCarouselSearch = useCallback(async () => {
     if (!nodeData.label) return;
@@ -468,8 +646,8 @@ export const UrlImageNode = memo(function UrlImageNode({ id, data, selected }: N
   };
 
   return (
-    <div className={`custom-node url-image-node foldder-node--frameless node--glass ${loading ? 'node-glow-running' : ''}`} style={{ minWidth: 280, minHeight: 320 }}>
-      <FoldderNodeResizer minWidth={280} minHeight={320} isVisible={selected} />
+    <div ref={frameRef} className={`custom-node url-image-node foldder-node--frameless node--glass ${loading ? 'node-glow-running' : ''}`} style={{ minWidth: 200, minHeight: 120 }}>
+      <FoldderNodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={STUDIO_NODE_MAX_HEIGHT} keepAspectRatio={Boolean(currentUrl)} isVisible={selected} />
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Image Search" />
       <div className="node-header">
         <NodeIcon type="urlImage" loading={loading} selected={selected} size={16} />
@@ -479,7 +657,7 @@ export const UrlImageNode = memo(function UrlImageNode({ id, data, selected }: N
         {loading && <Loader2 size={12} className="animate-spin shrink-0" />}
       </div>
       <div className="node-content url-image-node-content">
-        <div className="url-image-preview relative w-full aspect-video bg-slate-50 rounded-xl overflow-hidden border border-white/10 group mb-3 shadow-inner">
+        <div ref={previewFrameRef} className="url-image-preview relative w-full aspect-video bg-slate-50 rounded-xl overflow-hidden border border-white/10 group mb-3 shadow-inner">
           {currentUrl ? (
             <img src={currentUrl} className="w-full h-full object-contain" alt="Carousel" />
           ) : (
@@ -568,10 +746,15 @@ export const UrlImageNode = memo(function UrlImageNode({ id, data, selected }: N
 export const ImageExportNode = memo(function ImageExportNode({ id, data, selected }: NodeProps) {
   const nodes = useNodes();
   const edges = useEdges();
+  const { setNodes } = useReactFlow();
+  const updateNodeInternals = useUpdateNodeInternals();
   const [format, setFormat] = useState<'png' | 'jpeg'>('png');
   const [isExporting, setIsExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [detectedSize, setDetectedSize] = useState<{ url: string; w: number; h: number } | null>(null);
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const previewRef = useRef<HTMLDivElement | null>(null);
+  const frameSyncKeyRef = useRef<string | null>(null);
   const exportNode = nodes.find(n => n.id === id);
   const exportNodeStyle = exportNode?.style as React.CSSProperties | undefined;
   const hasManualExportFrame = typeof exportNodeStyle?.height === 'number' || typeof exportNodeStyle?.height === 'string';
@@ -621,6 +804,28 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
   const directImageSrc =
     sourceNode && typeof sourceNode.data?.value === 'string' ? sourceNode.data.value : null;
   const hasExportPreview = Boolean(directImageSrc);
+
+  useLayoutEffect(() => {
+    if (!directImageSrc) {
+      frameSyncKeyRef.current = null;
+      return;
+    }
+    const syncKey = `${directImageSrc}:${exportW}x${exportH}`;
+    if (frameSyncKeyRef.current === syncKey) return;
+    const nextFrame = resolveAspectLockedNodeFrame({
+      node: exportNode,
+      contentWidth: exportW,
+      contentHeight: exportH,
+      minWidth: 200,
+      maxWidth: 960,
+      minHeight: 120,
+      maxHeight: STUDIO_NODE_MAX_HEIGHT,
+      chromeHeight: resolveNodeChromeHeight(frameRef.current, previewRef.current),
+    });
+    frameSyncKeyRef.current = syncKey;
+    setNodes((nds) => syncAspectLockedFrameForNode(nds as Node[], id, nextFrame, exportW / exportH));
+    requestAnimationFrame(() => updateNodeInternals(id));
+  }, [directImageSrc, exportH, exportNode, exportW, id, setNodes, updateNodeInternals]);
 
   const handleExport = async () => {
     if (!sourceNode) return alert("Connect an image first!");
@@ -698,10 +903,11 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
 
   return (
     <div
+      ref={frameRef}
       className={`custom-node processor-node export-node image-export-node foldder-node--frameless ${hasExportPreview ? 'node--media' : 'node--glass foldder-frameless-label-dark'} ${hasManualExportFrame ? 'foldder-node-frame-manual' : ''} ${isExporting ? 'node-glow-running' : ''} ${exportError ? 'foldder-node--error' : ''}`}
-      style={{ minWidth: 280, minHeight: 350, maxHeight: 600 }}
+      style={{ minWidth: 200, minHeight: 120 }}
     >
-      <FoldderNodeResizer minWidth={280} minHeight={240} maxWidth={960} maxHeight={600} isVisible={selected} />
+      <FoldderNodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={STUDIO_NODE_MAX_HEIGHT} keepAspectRatio={hasExportPreview} isVisible={selected} />
       <NodeLabel id={id} label={typeof data.label === "string" ? data.label : undefined} defaultLabel="Export" />
 
       <div className="handle-wrapper handle-left">
@@ -762,6 +968,7 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
 
         {/* Preview: marco con la misma proporción que la imagen (exportW/H); encaja en el nodo sin deformar */}
         <div
+          ref={previewRef}
           className="image-export-preview relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-[#0a0a0a] group/out"
           style={{ minHeight: 120 }}
         >
@@ -957,25 +1164,21 @@ export const MediaInputNode = memo(function MediaInputNode({ id, data, selected 
 
   useLayoutEffect(() => {
     if (!hasSizedVisualMedia || visualMediaWidth == null || visualMediaHeight == null) return;
+    const frameSyncKey = `${nodeData.value ?? "empty"}:${visualMediaWidth}x${visualMediaHeight}`;
+    if (frameSyncKeyRef.current === frameSyncKey) return;
     const chromeHeight = resolveNodeChromeHeight(frameRef.current, previewRef.current);
     const nextFrame = resolveAspectLockedNodeFrame({
       node: currentFrameNode,
       contentWidth: visualMediaWidth,
       contentHeight: visualMediaHeight,
-      minWidth: 280,
+      minWidth: 200,
       maxWidth: 960,
-      minHeight: 200,
+      minHeight: 120,
       maxHeight: STUDIO_NODE_MAX_HEIGHT,
       chromeHeight,
     });
-    if (!nodeFrameNeedsSync(currentFrameNode, nextFrame)) {
-      frameSyncKeyRef.current = null;
-      return;
-    }
-    const frameSyncKey = `${nextFrame.width}x${nextFrame.height}`;
-    if (frameSyncKeyRef.current === frameSyncKey) return;
     frameSyncKeyRef.current = frameSyncKey;
-    setNodes((nds) => syncAspectLockedFrameForNode(nds as Node[], id, nextFrame));
+    setNodes((nds) => syncAspectLockedFrameForNode(nds as Node[], id, nextFrame, visualMediaWidth / visualMediaHeight));
     requestAnimationFrame(() => {
       updateNodeInternals(id);
       scheduleFitViewportToThisNode();
@@ -986,6 +1189,7 @@ export const MediaInputNode = memo(function MediaInputNode({ id, data, selected 
     hasSizedVisualMedia,
     id,
     isVisual,
+    nodeData.value,
     scheduleFitViewportToThisNode,
     setNodes,
     updateNodeInternals,
@@ -999,14 +1203,15 @@ export const MediaInputNode = memo(function MediaInputNode({ id, data, selected 
       className={`custom-node media-input-node foldder-node--frameless ${hasMedia && isVisual ? 'node--media' : 'node--glass foldder-frameless-label-dark'} ${isUploading ? 'node-glow-running' : ''} ${nodeData.error ? 'foldder-node--error' : ''}`}
       style={{
         padding: 0,
-        minWidth: 280,
+        minWidth: 200,
+        minHeight: 120,
         overflow: 'visible',
         '--foldder-frameless-accent': getTitleColor(),
       } as React.CSSProperties}
     >
       <FoldderNodeResizer
-        minWidth={280}
-        minHeight={hasMedia && isVisual ? 200 : 320}
+        minWidth={200}
+        minHeight={hasMedia && isVisual ? 120 : 200}
         maxWidth={hasMedia && isVisual ? 960 : undefined}
         maxHeight={hasMedia && isVisual ? STUDIO_NODE_MAX_HEIGHT : undefined}
         keepAspectRatio={hasSizedVisualMedia}
@@ -1273,6 +1478,7 @@ export const MediaInputNode = memo(function MediaInputNode({ id, data, selected 
 
 export const PromptNode = memo(function PromptNode({ id, data, selected }: NodeProps) {
   const nodeData = data as BaseNodeData;
+  const promptValue = nodeData.value;
   const { setNodes } = useReactFlow();
   const updateNodeInternals = useUpdateNodeInternals();
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -1289,8 +1495,39 @@ export const PromptNode = memo(function PromptNode({ id, data, selected }: NodeP
     updateNodeInternals(id);
   }, [nodeData.value, syncTextareaHeight, id, updateNodeInternals]);
 
+  useEffect(() => {
+    const requiredFrame = getNodeGridFrameForType("promptInput", { value: promptValue });
+    if (!requiredFrame) return;
+    setNodes((nds) =>
+      nds.map((n) => {
+        if (n.id !== id) return n;
+        const style = (n.style ?? {}) as React.CSSProperties;
+        const currentWidth = typeof style.width === "number" ? style.width : 0;
+        const currentHeight = typeof style.height === "number" ? style.height : 0;
+        const nextWidth = Math.max(currentWidth, requiredFrame.width);
+        const nextHeight = Math.max(currentHeight, requiredFrame.height);
+        if (currentWidth === nextWidth && currentHeight === nextHeight) return n;
+        return {
+          ...n,
+          style: {
+            ...style,
+            width: nextWidth,
+            height: nextHeight,
+          },
+        };
+      }),
+    );
+  }, [id, promptValue, setNodes]);
+
   return (
     <div className="custom-node prompt-node prompt-node--compact foldder-node--frameless node--glass" style={{ minWidth: 260, minHeight: 76 }}>
+      <FoldderNodeResizer
+        minWidth={260}
+        minHeight={76}
+        maxWidth={960}
+        maxHeight={524}
+        isVisible={selected}
+      />
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Prompt" />
       <div className="node-header">
         <NodeIcon type="promptInput" selected={selected} size={16} />
@@ -1397,6 +1634,7 @@ export const NotesNode = memo(function NotesNode({ id, data, selected }: NodePro
       nds.map((node) => {
         if (node.id !== id) return node;
         const currentStyle = (node.style as React.CSSProperties | undefined) ?? {};
+        const currentWidth = typeof currentStyle.width === "number" ? currentStyle.width : NOTE_WIDTH;
         if (typeof currentStyle.height === "number" && Math.abs(currentStyle.height - nextHeight) < 2) {
           return node;
         }
@@ -1405,12 +1643,12 @@ export const NotesNode = memo(function NotesNode({ id, data, selected }: NodePro
           height: nextHeight,
           measured: {
             ...(node.measured ?? {}),
-            width: NOTE_WIDTH,
+            width: currentWidth,
             height: nextHeight,
           },
           style: {
             ...currentStyle,
-            width: NOTE_WIDTH,
+            width: currentWidth,
             height: nextHeight,
           },
         };
@@ -1431,6 +1669,7 @@ export const NotesNode = memo(function NotesNode({ id, data, selected }: NodePro
         minHeight: NOTE_MIN_HEIGHT,
       }}
     >
+      <FoldderNodeResizer minWidth={200} minHeight={NOTE_MIN_HEIGHT} maxWidth={960} maxHeight={2200} isVisible={selected} />
       <NotesStickyCard
         nodeId={id}
         mode="node"
@@ -1876,10 +2115,15 @@ export const EnhancerNode = memo(function EnhancerNode({ id, data, selected }: N
 export const GrokNode = memo(function GrokNode({ id, data, selected }: NodeProps) {
   const nodeData = data as BaseNodeData;
   const { setNodes } = useReactFlow();
+  const updateNodeInternals = useUpdateNodeInternals();
   const nodes = useNodes();
   const edges = useEdges();
   const [status, setStatus] = useState('idle');
   const [result, setResult] = useState<string | null>(null);
+  const currentNode = nodes.find((node) => node.id === id);
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const previewRef = useRef<HTMLDivElement | null>(null);
+  const frameSyncKeyRef = useRef<string | null>(null);
 
   const onRun = async () => {
     const video = nodes.find(n => n.id === edges.find(e => e.target === id && e.targetHandle === 'video')?.source)?.data.value;
@@ -1960,10 +2204,37 @@ export const GrokNode = memo(function GrokNode({ id, data, selected }: NodeProps
   };
 
   useRegisterAssistantNodeRun(id, onRun);
+  const grokAspect = parseAspectRatioValue(nodeData.aspect_ratio || '16:9') ?? { width: 16, height: 9 };
+
+  useLayoutEffect(() => {
+    const syncKey = `${nodeData.aspect_ratio || '16:9'}:${grokAspect.width}x${grokAspect.height}`;
+    if (frameSyncKeyRef.current === syncKey) return;
+    const nextFrame = resolveAspectLockedNodeFrame({
+      node: currentNode,
+      contentWidth: grokAspect.width,
+      contentHeight: grokAspect.height,
+      minWidth: 200,
+      maxWidth: 960,
+      minHeight: 120,
+      maxHeight: STUDIO_NODE_MAX_HEIGHT,
+      chromeHeight: resolveNodeChromeHeight(frameRef.current, previewRef.current),
+    });
+    frameSyncKeyRef.current = syncKey;
+    setNodes((nds) => syncAspectLockedFrameForNode(nds as Node[], id, nextFrame, grokAspect.width / grokAspect.height));
+    requestAnimationFrame(() => updateNodeInternals(id));
+  }, [
+    currentNode,
+    grokAspect.height,
+    grokAspect.width,
+    id,
+    nodeData.aspect_ratio,
+    setNodes,
+    updateNodeInternals,
+  ]);
 
   return (
-    <div className={`custom-node processor-node grok-processor-node foldder-node--frameless node--glass ${status === 'running' ? 'node-glow-running' : ''}`} style={{ minWidth: 300, minHeight: 210 }}>
-      <FoldderNodeResizer minWidth={300} minHeight={280} maxWidth={620} maxHeight={620} isVisible={selected} />
+    <div ref={frameRef} className={`custom-node processor-node grok-processor-node foldder-node--frameless node--glass ${status === 'running' ? 'node-glow-running' : ''}`} style={{ minWidth: 200, minHeight: 120 }}>
+      <FoldderNodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={STUDIO_NODE_MAX_HEIGHT} keepAspectRatio isVisible={selected} />
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Grok Imagine" />
       <div className="handle-wrapper handle-left" style={{ top: '30%' }}>
         <FoldderDataHandle type="target" position={Position.Left} id="video" dataType="video" />
@@ -1984,7 +2255,7 @@ export const GrokNode = memo(function GrokNode({ id, data, selected }: NodeProps
           GROK IMAGINE
         </FoldderNodeHeaderTitle>
       </div>
-      <div className="node-content grok-node-content">
+      <div ref={previewRef} className="node-content grok-node-content">
         <div className="grok-settings-row flex gap-2 mb-3">
           <select className="node-input grok-select text-[10px]" value={nodeData.resolution || '720p'} onChange={(e) => setNodes((nds) => nds.map((n) => n.id === id ? {...n, data: {...n.data, resolution: e.target.value}} : n))}>
             <option value="720p">720p</option>
@@ -2025,6 +2296,7 @@ export const BackgroundRemoverNode = memo(function BackgroundRemoverNode({ id, d
   const currentFrameNode = useCurrentNodeFrameSnapshot(currentNode);
   const frameRef = useRef<HTMLDivElement | null>(null);
   const previewRef = useRef<HTMLDivElement | null>(null);
+  const frameSyncKeyRef = useRef<string | null>(null);
   const [aspectImageSize, setAspectImageSize] = useState<{ url: string; width: number; height: number } | null>(null);
 
   const updateNestedData = (key: string, val: unknown) => {
@@ -2118,21 +2390,24 @@ export const BackgroundRemoverNode = memo(function BackgroundRemoverNode({ id, d
 
   useLayoutEffect(() => {
     if (aspectContentWidth == null || aspectContentHeight == null) return;
+    const syncKey = `${aspectImageUrl ?? "empty"}:${aspectContentWidth}x${aspectContentHeight}`;
+    if (frameSyncKeyRef.current === syncKey) return;
     const chromeHeight = resolveNodeChromeHeight(frameRef.current, previewRef.current);
     const nextFrame = resolveAspectLockedNodeFrame({
       node: currentFrameNode,
       contentWidth: aspectContentWidth,
       contentHeight: aspectContentHeight,
-      minWidth: 320,
-      maxWidth: 700,
-      minHeight: 320,
+      minWidth: 200,
+      maxWidth: 960,
+      minHeight: 120,
       maxHeight: STUDIO_NODE_MAX_HEIGHT,
       chromeHeight,
     });
-    if (!nodeFrameNeedsSync(currentFrameNode, nextFrame)) return;
-    setNodes((nds) => syncAspectLockedFrameForNode(nds as Node[], id, nextFrame));
+    frameSyncKeyRef.current = syncKey;
+    setNodes((nds) => syncAspectLockedFrameForNode(nds as Node[], id, nextFrame, aspectContentWidth / aspectContentHeight));
     requestAnimationFrame(() => updateNodeInternals(id));
   }, [
+    aspectImageUrl,
     aspectContentHeight,
     aspectContentWidth,
     currentFrameNode,
@@ -2151,8 +2426,8 @@ export const BackgroundRemoverNode = memo(function BackgroundRemoverNode({ id, d
   };
 
   return (
-    <div ref={frameRef} className={`custom-node mask-node group/node ${status === 'running' ? 'node-glow-running' : ''}`} style={{ minWidth: 320 }}>
-      <FoldderNodeResizer minWidth={320} minHeight={320} maxWidth={700} maxHeight={STUDIO_NODE_MAX_HEIGHT} keepAspectRatio isVisible={selected} />
+    <div ref={frameRef} className={`custom-node mask-node group/node ${status === 'running' ? 'node-glow-running' : ''}`} style={{ minWidth: 200, minHeight: 120 }}>
+      <FoldderNodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={STUDIO_NODE_MAX_HEIGHT} keepAspectRatio isVisible={selected} />
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Background Remover" />
       <div className="handle-wrapper handle-left">
         <FoldderDataHandle type="target" position={Position.Left} id="media" dataType="image" />
@@ -3822,6 +4097,7 @@ export const GeminiVideoNode = memo(function GeminiVideoNode({ id, data, selecte
   const currentFrameNode = useCurrentNodeFrameSnapshot(currentNode);
   const frameRef = useRef<HTMLDivElement | null>(null);
   const previewRef = useRef<HTMLDivElement | null>(null);
+  const frameSyncKeyRef = useRef<string | null>(null);
 
   const openVideoStudioFromPresenter = Boolean(
     (nodeData as { _foldderOpenVideoStudio?: boolean })._foldderOpenVideoStudio,
@@ -3953,25 +4229,28 @@ export const GeminiVideoNode = memo(function GeminiVideoNode({ id, data, selecte
   const videoAspect = parseAspectRatioValue(videoFormatForApi) ?? { width: 16, height: 9 };
 
   useLayoutEffect(() => {
+    const syncKey = `${videoFormatForApi}:${videoAspect.width}x${videoAspect.height}`;
+    if (frameSyncKeyRef.current === syncKey) return;
     const chromeHeight = resolveNodeChromeHeight(frameRef.current, previewRef.current);
     const nextFrame = resolveAspectLockedNodeFrame({
       node: currentFrameNode,
       contentWidth: videoAspect.width,
       contentHeight: videoAspect.height,
-      minWidth: 280,
+      minWidth: 200,
       maxWidth: 960,
-      minHeight: 200,
+      minHeight: 120,
       maxHeight: STUDIO_NODE_MAX_HEIGHT,
       chromeHeight,
     });
-    if (!nodeFrameNeedsSync(currentFrameNode, nextFrame)) return;
-    setNodes((nds) => syncAspectLockedFrameForNode(nds as Node[], id, nextFrame));
+    frameSyncKeyRef.current = syncKey;
+    setNodes((nds) => syncAspectLockedFrameForNode(nds as Node[], id, nextFrame, videoAspect.width / videoAspect.height));
     requestAnimationFrame(() => updateNodeInternals(id));
   }, [
     currentFrameNode,
     id,
     setNodes,
     updateNodeInternals,
+    videoFormatForApi,
     videoAspect.height,
     videoAspect.width,
   ]);
@@ -4176,11 +4455,12 @@ export const GeminiVideoNode = memo(function GeminiVideoNode({ id, data, selecte
       ref={frameRef}
       className={`custom-node processor-node gemini-video-node group/node foldder-node--frameless node--media ${status === 'error' ? 'foldder-node--error' : ''} ${isActivelyGenerating ? 'node-glow-running' : ''}`}
       style={{
-        minWidth: 280,
+        minWidth: 200,
+        minHeight: 120,
         "--foldder-frameless-accent": useSeedance ? "#f97316" : "#8b5cf6",
       } as React.CSSProperties}
     >
-      <FoldderNodeResizer minWidth={280} minHeight={200} maxWidth={960} maxHeight={STUDIO_NODE_MAX_HEIGHT} keepAspectRatio isVisible={selected} />
+      <FoldderNodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={STUDIO_NODE_MAX_HEIGHT} keepAspectRatio isVisible={selected} />
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Video Generator" />
 
       <div className="handle-wrapper handle-left !top-[20%]">
@@ -4864,8 +5144,11 @@ async function resolveImageUrlForCanvasCrop(src: string): Promise<string> {
 // --- CROP NODE ---
 export const CropNode = memo(function CropNode({ id, data, selected }: NodeProps) {
   const { setNodes } = useReactFlow();
+  const updateNodeInternals = useUpdateNodeInternals();
   const edges = useEdges();
   const nodes = useNodes();
+  const currentNode = nodes.find((node) => node.id === id);
+  const currentFrameNode = useCurrentNodeFrameSnapshot(currentNode);
   
   const nodeData = data as BaseNodeData & { 
     aspectRatio?: string,
@@ -4876,14 +5159,41 @@ export const CropNode = memo(function CropNode({ id, data, selected }: NodeProps
   const [crop, setCrop] = useState<CropRect>(nodeData.cropConfig || { x: 10, y: 10, w: 80, h: 80 }); 
   
   const previewRef = useRef<HTMLImageElement>(null);
+  const frameRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const cropFrameSyncKeyRef = useRef<string | null>(null);
+  const [sourceImageSize, setSourceImageSize] = useState<{ url: string; width: number; height: number } | null>(null);
   
-  const [draggingAction, setDraggingAction] = useState<'move' | 'nw' | 'ne' | 'sw' | 'se' | null>(null);
+  const [draggingAction, setDraggingAction] = useState<CropDragAction | null>(null);
   const [dragStartInfo, setDragStartInfo] = useState<{ startX: number, startY: number, initialCrop: CropRect } | null>(null);
+  const aspectRatioRef = useRef(aspectRatio);
   const latestCropRef = useRef(crop);
   useEffect(() => {
     latestCropRef.current = crop;
   }, [crop]);
+  useEffect(() => {
+    aspectRatioRef.current = aspectRatio;
+  }, [aspectRatio]);
+  useEffect(() => {
+    const persistedAspectRatio = nodeData.aspectRatio || 'free';
+    if (persistedAspectRatio !== aspectRatioRef.current) {
+      aspectRatioRef.current = persistedAspectRatio;
+      setAspectRatio(persistedAspectRatio);
+    }
+  }, [nodeData.aspectRatio]);
+  useEffect(() => {
+    if (!nodeData.cropConfig) return;
+    const nextCrop = clampCropRect(nodeData.cropConfig);
+    const currentCrop = latestCropRef.current;
+    const changed =
+      Math.abs(currentCrop.x - nextCrop.x) > 0.01 ||
+      Math.abs(currentCrop.y - nextCrop.y) > 0.01 ||
+      Math.abs(currentCrop.w - nextCrop.w) > 0.01 ||
+      Math.abs(currentCrop.h - nextCrop.h) > 0.01;
+    if (!changed) return;
+    latestCropRef.current = nextCrop;
+    setCrop(nextCrop);
+  }, [nodeData.cropConfig]);
 
   const inputEdge = edges.find(e => e.target === id && e.targetHandle === 'image');
   const inputNode = nodes.find(n => n.id === inputEdge?.source);
@@ -4894,13 +5204,64 @@ export const CropNode = memo(function CropNode({ id, data, selected }: NodeProps
     
   const sourceImage = typeof rawValue === 'string' ? rawValue : undefined;
 
-  const updateData = (key: string, val: unknown) => {
+  useEffect(() => {
+    if (!sourceImage) {
+      cropFrameSyncKeyRef.current = null;
+      return;
+    }
+    let cancelled = false;
+    loadImageDimensions(sourceImage)
+      .then(({ width, height }) => {
+        if (!cancelled) setSourceImageSize({ url: sourceImage, width, height });
+      })
+      .catch(() => {
+        if (!cancelled) setSourceImageSize(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sourceImage]);
+
+  useLayoutEffect(() => {
+    if (!sourceImage || sourceImageSize?.url !== sourceImage) return;
+    const syncKey = `${sourceImage}:${sourceImageSize.width}x${sourceImageSize.height}`;
+    if (cropFrameSyncKeyRef.current === syncKey) return;
+    const nextFrame = resolveAspectLockedNodeFrame({
+      node: currentFrameNode,
+      contentWidth: sourceImageSize.width,
+      contentHeight: sourceImageSize.height,
+      minWidth: 200,
+      maxWidth: 960,
+      minHeight: 120,
+      maxHeight: STUDIO_NODE_MAX_HEIGHT,
+      chromeHeight: resolveNodeChromeHeight(frameRef.current, containerRef.current),
+    });
+    cropFrameSyncKeyRef.current = syncKey;
+    setNodes((nds) => syncAspectLockedFrameForNode(nds as Node[], id, nextFrame, sourceImageSize.width / sourceImageSize.height));
+    requestAnimationFrame(() => updateNodeInternals(id));
+  }, [
+    currentFrameNode,
+    id,
+    setNodes,
+    sourceImage,
+    sourceImageSize,
+    updateNodeInternals,
+  ]);
+
+  const updateData = useCallback((key: string, val: unknown) => {
     setNodes((nds) => nds.map((n) => n.id === id ? { ...n, data: { ...n.data, [key]: val } } : n));
-  };
+  }, [id, setNodes]);
+
+  const setCropAspectMode = useCallback((nextAspectRatio: string) => {
+    aspectRatioRef.current = nextAspectRatio;
+    setAspectRatio(nextAspectRatio);
+    updateData('aspectRatio', nextAspectRatio);
+  }, [updateData]);
   
   const commitCropRect = useCallback(
-    (rect: { x: number; y: number; w: number; h: number }) => {
+    (rect: CropRect, rectAspectRatio = aspectRatioRef.current) => {
       if (!sourceImage || !containerRef.current) return;
+      const boundedRect = clampCropRect(rect);
 
       void (async () => {
         let loadUrl: string;
@@ -4934,10 +5295,10 @@ export const CropNode = memo(function CropNode({ id, data, selected }: NodeProps
 
           const { dw, dh, ox, oy } = containedImageRect(cw, ch, nw, nh);
 
-          const cropLeft = (rect.x / 100) * cw;
-          const cropTop = (rect.y / 100) * ch;
-          const cropWpx = (rect.w / 100) * cw;
-          const cropHpx = (rect.h / 100) * ch;
+          const cropLeft = (boundedRect.x / 100) * cw;
+          const cropTop = (boundedRect.y / 100) * ch;
+          const cropWpx = (boundedRect.w / 100) * cw;
+          const cropHpx = (boundedRect.h / 100) * ch;
 
           let sx = ((cropLeft - ox) / dw) * nw;
           let sy = ((cropTop - oy) / dh) * nh;
@@ -4978,8 +5339,8 @@ export const CropNode = memo(function CropNode({ id, data, selected }: NodeProps
                       ...n.data,
                       value: croppedDataUrl,
                       type: "image",
-                      cropConfig: rect,
-                      aspectRatio,
+                      cropConfig: boundedRect,
+                      aspectRatio: rectAspectRatio,
                     },
                   }
                 : n,
@@ -4996,7 +5357,7 @@ export const CropNode = memo(function CropNode({ id, data, selected }: NodeProps
         img.src = loadUrl;
       })();
     },
-    [sourceImage, id, setNodes, aspectRatio],
+    [sourceImage, id, setNodes],
   );
 
   useEffect(() => {
@@ -5007,7 +5368,7 @@ export const CropNode = memo(function CropNode({ id, data, selected }: NodeProps
     return () => clearTimeout(t);
   }, [commitCropRect, sourceImage]);
 
-  const handlePointerDown = (e: React.PointerEvent, action: 'move' | 'nw' | 'ne' | 'sw' | 'se') => {
+  const handlePointerDown = (e: React.PointerEvent, action: CropDragAction) => {
     e.preventDefault();
     e.stopPropagation();
     setDraggingAction(action);
@@ -5022,6 +5383,21 @@ export const CropNode = memo(function CropNode({ id, data, selected }: NodeProps
     const rect = containerRef.current.getBoundingClientRect();
     const deltaX = ((e.clientX - dragStartInfo.startX) / rect.width) * 100;
     const deltaY = ((e.clientY - dragStartInfo.startY) / rect.height) * 100;
+
+    const lockedRatio = cropAspectRatioValue(aspectRatioRef.current);
+    if (draggingAction !== 'move' && lockedRatio) {
+      const next = resizeCropRectToVisualAspect(
+        dragStartInfo.initialCrop,
+        draggingAction,
+        deltaX,
+        deltaY,
+        lockedRatio,
+        rect,
+      );
+      latestCropRef.current = next;
+      setCrop(next);
+      return;
+    }
 
     let newX = dragStartInfo.initialCrop.x;
     let newY = dragStartInfo.initialCrop.y;
@@ -5054,7 +5430,7 @@ export const CropNode = memo(function CropNode({ id, data, selected }: NodeProps
     if (newX + newW > 100) newW = 100 - newX;
     if (newY + newH > 100) newH = 100 - newY;
 
-    const next = { x: newX, y: newY, w: newW, h: newH };
+    const next = clampCropRect({ x: newX, y: newY, w: newW, h: newH });
     latestCropRef.current = next;
     setCrop(next);
   };
@@ -5073,14 +5449,15 @@ export const CropNode = memo(function CropNode({ id, data, selected }: NodeProps
 
   return (
     <div
+      ref={frameRef}
       className="custom-node crop-node foldder-node--frameless node--media"
       style={{
-        minWidth: 340,
-        minHeight: 360,
+        minWidth: 200,
+        minHeight: 120,
         "--foldder-frameless-accent": "#f59e0b",
       } as React.CSSProperties}
     >
-      <FoldderNodeResizer minWidth={340} minHeight={360} isVisible={selected} />
+      <FoldderNodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={STUDIO_NODE_MAX_HEIGHT} keepAspectRatio={Boolean(sourceImage)} isVisible={selected} />
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Crop Asset" />
 
       <div className="node-header">
@@ -5155,15 +5532,16 @@ export const CropNode = memo(function CropNode({ id, data, selected }: NodeProps
              value={aspectRatio}
              onChange={(e) => {
                const v = e.target.value;
-               setAspectRatio(v);
-               updateData('aspectRatio', v);
-               let next = { ...latestCropRef.current };
-               if (v === '1:1') next = { x: 25, y: 10, w: 50, h: 80 };
-               if (v === '16:9') next = { x: 10, y: 25, w: 80, h: 50 };
-               if (v === '9:16') next = { x: 30, y: 10, w: 40, h: 80 };
+               setCropAspectMode(v);
+               const targetRatio = cropAspectRatioValue(v);
+               const bounds = containerRef.current?.getBoundingClientRect();
+               let next = clampCropRect({ ...latestCropRef.current });
+               if (targetRatio && bounds) {
+                 next = fitCropRectToVisualAspect(next, targetRatio, bounds);
+               }
                latestCropRef.current = next;
                setCrop(next);
-               window.setTimeout(() => commitCropRect(next), 0);
+               window.setTimeout(() => commitCropRect(next, v), 0);
              }}
              className="node-input foldder-frameless-chip text-[10px] w-full max-w-[140px] nodrag"
            >

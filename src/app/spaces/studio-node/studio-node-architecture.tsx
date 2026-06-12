@@ -194,6 +194,8 @@ type StudioEventDetail = FoldderStudioEventDetail & Record<string, unknown>;
 type UseStudioNodeControllerOptions = {
   nodeId: string;
   nodeType: string;
+  /** false en preview de arrastre desde librería: sin listeners ni apertura de studio */
+  enabled?: boolean;
   openEvents?: string[];
   closeEvents?: string[];
   matchOpen?: (detail: StudioEventDetail) => boolean;
@@ -220,6 +222,7 @@ function shellFromDetail(detail: StudioEventDetail, nodeId: string, nodeType: st
 export function useStudioNodeController({
   nodeId,
   nodeType,
+  enabled = true,
   openEvents = [],
   closeEvents = [],
   matchOpen,
@@ -294,6 +297,7 @@ export function useStudioNodeController({
   );
 
   useEffect(() => {
+    if (!enabled) return;
     const handleOpen = (event: Event) => {
       const detail = ((event as CustomEvent<StudioEventDetail>).detail ?? {}) as StudioEventDetail;
       if (!matchesOpen(detail)) return;
@@ -310,7 +314,7 @@ export function useStudioNodeController({
       openEventNames.forEach((eventName) => window.removeEventListener(eventName, handleOpen as EventListener));
       closeEventNames.forEach((eventName) => window.removeEventListener(eventName, handleClose as EventListener));
     };
-  }, [closeEventNames, closeStudio, matchesClose, matchesOpen, openEventNames, openStudio]);
+  }, [closeEventNames, closeStudio, enabled, matchesClose, matchesOpen, openEventNames, openStudio]);
 
   return useMemo(
     () => ({

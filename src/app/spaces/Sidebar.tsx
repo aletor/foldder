@@ -6,6 +6,7 @@ import { ChevronRight } from 'lucide-react';
 import { NODE_REGISTRY } from './nodeRegistry';
 import { NodeIcon } from './foldder-icons';
 import { SIDEBAR_HOVER_HELP } from './sidebarHoverHelp';
+import { hideNativeLibraryDragPreview } from './library-drag-preview';
 import {
   TopbarGlyphBrain,
 } from './TopbarPinIcons';
@@ -236,6 +237,7 @@ const Sidebar = ({
       : null;
 
   const onDragStart = (event: React.DragEvent, nodeType: string) => {
+    hideNativeLibraryDragPreview(event);
     onLibraryDragStart?.(nodeType);
     try {
       event.dataTransfer.setData('text/plain', nodeType);

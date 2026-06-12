@@ -2,7 +2,7 @@
 
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Position, useReactFlow, useStore, type Edge, type Node, type NodeProps, type ReactFlowState } from "@xyflow/react";
+import { NodeResizer, Position, useReactFlow, useStore, type Edge, type Node, type NodeProps, type ReactFlowState } from "@xyflow/react";
 import { shallow } from "zustand/shallow";
 import { AlertTriangle, Captions, CheckCircle2, Clock, Copy, Download, Eye, EyeOff, File, Film, ImageIcon, Layers, Lock, Music, Pause, Play, Plus, RefreshCw, Scissors, SkipBack, SkipForward, StepBack, StepForward, Trash2, Unlock, Video, Volume2, VolumeX, X } from "lucide-react";
 
@@ -2386,8 +2386,9 @@ export const VideoEditorNode = memo(function VideoEditorNode({ id, data, selecte
   return (
     <div
       className={cx("custom-node video-editor-node foldder-node--frameless node--glass relative bg-[#111827] p-4 pt-10 text-white", selected ? "video-editor-node--selected" : undefined)}
-      style={{ width: 340, minWidth: 340, minHeight: 210 }}
+      style={{ minWidth: 200, minHeight: 120 }}
     >
+      <NodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={2200} isVisible={selected} />
       <NodeLabel id={id} label={typeof data.label === "string" ? data.label : undefined} defaultLabel="Video Editor" />
       <div className="handle-wrapper handle-left">
         <FoldderDataHandle type="target" position={Position.Left} id="media_list" dataType="generic" />

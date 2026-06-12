@@ -15,7 +15,6 @@ import {
   type ReactFlowState,
 } from "@xyflow/react";
 import { shallow } from "zustand/shallow";
-import { ImageIcon } from "lucide-react";
 import { FOLDDER_FIT_VIEW_EASE } from "@/lib/fit-view-ease";
 import { defaultDataForCanvasDropNode } from "@/lib/canvas-connect-end-drop";
 import { FoldderStudioModeCenterButton } from "../foldder-node-ui";
@@ -44,6 +43,7 @@ import { useFoldderRenderMetric } from "../use-performance-metrics";
 import { useNodeViewportVisibility } from "../use-node-viewport-visibility";
 import type { PhotoRoomNodeStudioData } from "./photo-room-types";
 import { registerPendingNanoStudioOpenFromPhotoRoom } from "./photo-room-nano-open-pending";
+import { isFoldderLibraryPreviewData } from "../library-drag-preview";
 
 /** Tras `flushSync`, el `useEffect` del Nano aún puede no haber registrado el listener; `requestAnimationFrame` va después. */
 function dispatchOpenNanoStudioFromPhotoRoom(nanoNodeId: string, photoRoomNodeId: string) {
@@ -57,6 +57,7 @@ function dispatchOpenNanoStudioFromPhotoRoom(nanoNodeId: string, photoRoomNodeId
 const NODE_RESIZE_END_FIT_PADDING = 0.8;
 const PHOTOROOM_NODE_MAX_WIDTH = 960;
 const PHOTOROOM_NODE_MAX_HEIGHT = 2200;
+const PHOTOROOM_EMPTY_BACKGROUND_SRC = "/assets/nodes/photoroom-empty-purple.jpg";
 
 const PhotoRoomStudioLazy = React.lazy(() => import("./PhotoRoomStudio"));
 
@@ -130,9 +131,53 @@ function selectPhotoRoomFlowSnapshot(state: ReactFlowState<Node, Edge>, nodeId: 
   return result;
 }
 
+function PhotoRoomLibraryPreviewCard({
+  id,
+  selected,
+  label,
+}: {
+  id: string;
+  selected?: boolean;
+  label?: string;
+}) {
+  return (
+    <StudioCanvasNodeShell
+      nodeId={id}
+      nodeType="photoRoom"
+      selected={selected}
+      label={label}
+      defaultLabel="PhotoRoom"
+      title="PhotoRoom"
+      headerIcon={
+        <span className="flex h-5 w-5 items-center justify-center rounded-md bg-[#63d4fd]">
+          <img src="/photoroom_icon.svg" alt="" className="h-3.5 w-3.5 object-contain" draggable={false} />
+        </span>
+      }
+      titleClassName="min-w-0 flex-1 uppercase leading-tight tracking-tight line-clamp-2"
+      baseClassName="custom-node processor-node photo-room-node"
+      className="group/node foldder-frameless-label-dark"
+      handles={[]}
+      variant="frameless"
+      material="media"
+    >
+      <div className="foldder-frameless-main relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-[#0a0a0a]">
+        <div className="photoroom-empty-background relative h-full w-full overflow-hidden" aria-hidden>
+          <img
+            src={PHOTOROOM_EMPTY_BACKGROUND_SRC}
+            alt=""
+            className="h-full w-full object-contain object-bottom"
+            draggable={false}
+          />
+        </div>
+      </div>
+    </StudioCanvasNodeShell>
+  );
+}
+
 export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
   useFoldderRenderMetric("PhotoRoomNode", id);
   const nodeData = data as PhotoRoomNodeData;
+  const isLibraryPreview = isFoldderLibraryPreviewData(nodeData);
   const [liveStudioData, setLiveStudioData] = useState<Partial<PhotoRoomNodeData> | null>(null);
   const liveStudioDataRef = useRef<Partial<PhotoRoomNodeData> | null>(null);
   const { setNodes, setEdges, getNodes, getEdges, fitView } = useReactFlow();
@@ -146,6 +191,7 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
   } = useStudioNodeController({
     nodeId: id,
     nodeType: "photoRoom",
+    enabled: !isLibraryPreview,
     openEvents: ["foldder-open-photo-room-studio"],
     matchOpen: (detail) => detail.nodeId === id || detail.photoRoomNodeId === id,
     matchClose: (detail) => detail.nodeId === id || detail.photoRoomNodeId === id,
@@ -157,6 +203,7 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const studioApiRef = useRef<DesignerStudioApi | null>(null);
   const frameRef = useRef<HTMLDivElement | null>(null);
   const previewRef = useRef<HTMLDivElement | null>(null);
+  const frameSyncKeyRef = useRef<string | null>(null);
   const nodeMediaVisible = useNodeViewportVisibility(id, 900);
   const canvasPerformanceModeRef = useCanvasPerformanceModeRef(
     useCallback((active: boolean) => {
@@ -555,17 +602,19 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
   }, [id, updateNodeInternals]);
 
   useEffect(() => {
+    if (isLibraryPreview) return;
     refreshHandleGeometry();
-  }, [refreshHandleGeometry, visibleSlots.join(",")]);
+  }, [isLibraryPreview, refreshHandleGeometry, visibleSlots.join(",")]);
 
   useEffect(() => {
+    if (isLibraryPreview) return;
     const raf = requestAnimationFrame(() => refreshHandleGeometry());
     const t = window.setTimeout(() => refreshHandleGeometry(), 180);
     return () => {
       cancelAnimationFrame(raf);
       window.clearTimeout(t);
     };
-  }, [refreshHandleGeometry, brainConnected, showStudio, studioObjects.length, effectiveNodeData.value]);
+  }, [isLibraryPreview, refreshHandleGeometry, brainConnected, showStudio, studioObjects.length, effectiveNodeData.value]);
 
   const photoRoomInputsSig = useMemo(
     () => photoRoomConnectedInputs.map((c) => `${c.slot}:${c.src}`).join("|"),
@@ -577,7 +626,7 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
    * la miniatura usa preview/export vía `displayUrl` y borrar el PNG exportado dejaba el thumb negro).
    */
   useEffect(() => {
-    if (showStudio) return;
+    if (isLibraryPreview || showStudio) return;
     const connectedSlots = new Set(photoRoomConnectedInputs.map((c) => c.slot));
     setNodes((nds: any) =>
       nds.map((n: any) => {
@@ -592,14 +641,14 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
         return { ...n, data: { ...n.data, studioObjects: stripped } };
       }),
     );
-  }, [photoRoomInputsSig, showStudio, id, setNodes]);
+  }, [isLibraryPreview, photoRoomInputsSig, showStudio, id, setNodes]);
 
   /**
    * Sin documento de studio: `data.value` sigue la primera imagen conectada (salida del nodo).
    * Con studio guardado no pisamos `value` aquí; la miniatura usa `previewUrl` en `displayUrl`.
    */
   useEffect(() => {
-    if (showStudio) return;
+    if (isLibraryPreview || showStudio) return;
     setNodes((nds: any) =>
       nds.map((n: any) => {
         if (n.id !== id) return n;
@@ -615,7 +664,7 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
         return n;
       }),
     );
-  }, [anyInputEdge, id, previewUrl, setNodes, showStudio]);
+  }, [anyInputEdge, id, isLibraryPreview, previewUrl, setNodes, showStudio]);
 
   /**
    * Miniatura del nodo:
@@ -631,10 +680,11 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const displayUrl = hasPersistedStudio
     ? exportedThumb ?? previewUrl ?? null
     : previewUrl ?? exportedThumb ?? null;
+  const showPersistedPhotoRoomPreview = hasPersistedStudio && Boolean(displayUrl) && nodeMediaVisible;
 
   /** Studio abierto: actualizar miniatura del nodo al cambiar entradas (mismo PNG que al cerrar). */
   useEffect(() => {
-    if (!showStudio) return;
+    if (isLibraryPreview || !showStudio) return;
     if (canvasPerformanceModeRef.current) return;
     let cancelled = false;
     const timer = window.setTimeout(() => {
@@ -654,32 +704,41 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [photoRoomInputsSig, showStudio, handleStudioExportPreview]);
+  }, [isLibraryPreview, photoRoomInputsSig, showStudio, handleStudioExportPreview]);
 
   useLayoutEffect(() => {
+    if (isLibraryPreview) return;
+    const syncKey = `${studioArtboard.width}x${studioArtboard.height}`;
+    if (frameSyncKeyRef.current === syncKey) return;
     const chromeHeight = resolveNodeChromeHeight(frameRef.current, previewRef.current);
     const nextFrame = resolveAspectLockedNodeFrame({
       node: currentNodeFrame,
       contentWidth: studioArtboard.width,
       contentHeight: studioArtboard.height,
-      minWidth: 260,
+      minWidth: 200,
       maxWidth: PHOTOROOM_NODE_MAX_WIDTH,
-      minHeight: 200,
+      minHeight: 120,
       maxHeight: PHOTOROOM_NODE_MAX_HEIGHT,
       chromeHeight,
     });
-    if (!nodeFrameNeedsSync(currentNodeFrame, nextFrame)) return;
+    frameSyncKeyRef.current = syncKey;
+    const nextAspectRatio = studioArtboard.width / studioArtboard.height;
     setNodes((nds: any) =>
-      nds.map((node: any) =>
-        node.id === id
-          ? {
-              ...node,
-              width: nextFrame.width,
-              height: nextFrame.height,
-              style: { ...node.style, width: nextFrame.width, height: nextFrame.height },
-            }
-          : node,
-      ),
+      nds.map((node: any) => {
+        if (node.id !== id) return node;
+        const needsFrameSync = nodeFrameNeedsSync(node, nextFrame);
+        const currentAspectRatio =
+          typeof node.data?._foldderAspectRatio === "number" ? node.data._foldderAspectRatio : null;
+        const needsAspectSync =
+          currentAspectRatio === null || Math.abs(currentAspectRatio - nextAspectRatio) > 0.0001;
+        if (!needsFrameSync && !needsAspectSync) return node;
+        return {
+          ...node,
+          ...(needsFrameSync ? { width: nextFrame.width, height: nextFrame.height } : {}),
+          data: { ...node.data, _foldderAspectRatio: nextAspectRatio },
+          style: needsFrameSync ? { ...node.style, width: nextFrame.width, height: nextFrame.height } : node.style,
+        };
+      }),
     );
     requestAnimationFrame(() => updateNodeInternals(id));
   }, [
@@ -695,6 +754,16 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
     studioArtboard.width,
     updateNodeInternals,
   ]);
+
+  if (isLibraryPreview) {
+    return (
+      <PhotoRoomLibraryPreviewCard
+        id={id}
+        selected={selected}
+        label={effectiveNodeData.label}
+      />
+    );
+  }
 
   return (
     <StudioCanvasNodeShell
@@ -715,15 +784,15 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
       badgeClassName="shrink-0"
       baseClassName="custom-node processor-node photo-room-node"
       className="group/node foldder-frameless-label-dark"
-      minWidth={260}
+      minWidth={200}
       handles={nodeHandles}
       variant="frameless"
       material="media"
       introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}
     >
       <FoldderNodeResizerLocal
-        minWidth={260}
-        minHeight={200}
+        minWidth={200}
+        minHeight={120}
         maxWidth={PHOTOROOM_NODE_MAX_WIDTH}
         maxHeight={PHOTOROOM_NODE_MAX_HEIGHT}
         keepAspectRatio
@@ -735,9 +804,9 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
         className="foldder-frameless-main relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-[#0a0a0a] group/out"
         style={{ minHeight: 120 }}
       >
-        {displayUrl && nodeMediaVisible ? (
+        {showPersistedPhotoRoomPreview ? (
           <img
-            src={displayUrl}
+            src={displayUrl ?? ""}
             alt=""
             className="h-full w-full object-cover"
             onLoad={refreshHandleGeometry}
@@ -758,13 +827,15 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
             />
           </div>
         ) : (
-          <div className="flex w-full flex-col items-center justify-center gap-2 py-8">
-            <ImageIcon size={28} className="text-zinc-400/50" />
-            <span className="text-center text-[7px] font-black uppercase tracking-widest text-zinc-400/60">
-              Conecta imágenes
-              <br />
-              y abre Studio
-            </span>
+          <div className="photoroom-empty-background relative h-full w-full overflow-hidden" aria-hidden>
+            <img
+              src={PHOTOROOM_EMPTY_BACKGROUND_SRC}
+              alt=""
+              className="h-full w-full object-contain object-bottom"
+              draggable={false}
+              onLoad={refreshHandleGeometry}
+              onError={refreshHandleGeometry}
+            />
           </div>
         )}
         <FoldderStudioModeCenterButton onClick={() => {

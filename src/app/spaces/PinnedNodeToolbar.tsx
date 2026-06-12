@@ -4,6 +4,7 @@ import React from 'react';
 import { X } from 'lucide-react';
 import { NODE_REGISTRY } from './nodeRegistry';
 import { NodeIcon } from './foldder-icons';
+import { hideNativeLibraryDragPreview } from './library-drag-preview';
 
 export const MAX_PINNED_NODES = 5;
 export const PINNED_NODES_STORAGE_KEY = "foldder-pinned-node-types";
@@ -72,6 +73,7 @@ export function PinnedNodeToolbar({
               key={type}
               draggable
               onDragStart={(e) => {
+                hideNativeLibraryDragPreview(e);
                 onLibraryDragStart?.(type);
                 e.dataTransfer.setData("application/reactflow", type);
                 e.dataTransfer.effectAllowed = "move";

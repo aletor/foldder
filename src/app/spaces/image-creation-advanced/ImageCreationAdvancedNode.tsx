@@ -1,7 +1,7 @@
 "use client";
 
-import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { NodeProps, Position, useEdges, useNodes, useReactFlow, type Node } from "@xyflow/react";
+import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { NodeProps, NodeResizer, Position, useEdges, useNodes, useReactFlow, useUpdateNodeInternals, type Node } from "@xyflow/react";
 import {
   Archive,
   BadgeCheck,
@@ -80,6 +80,12 @@ import { FoldderDataHandle } from "../FoldderDataHandle";
 import { NodeIcon, resolveFoldderNodeState } from "../foldder-icons";
 import { FoldderNodeHeaderTitle, NodeLabel } from "../foldder-node-ui";
 import { resolvePromptValueFromEdgeSource } from "../canvas-group-logic";
+import {
+  loadImageDimensions,
+  nodeFrameNeedsSync,
+  resolveAspectLockedNodeFrame,
+  resolveNodeChromeHeight,
+} from "../studio-node-aspect";
 import { StudioNodePortal } from "../studio-node/studio-node-architecture";
 
 type ImageCreationAdvancedNodeData = {
@@ -2556,8 +2562,13 @@ export const ImageCreationAdvancedNode = memo(function ImageCreationAdvancedNode
   const nodes = useNodes();
   const edges = useEdges();
   const { setNodes } = useReactFlow();
+  const updateNodeInternals = useUpdateNodeInternals();
   const projectAssetsCtx = useProjectAssetsCanvas();
   const [studioOpen, setStudioOpen] = useState(false);
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const previewFrameRef = useRef<HTMLDivElement | null>(null);
+  const frameSyncKeyRef = useRef<string | null>(null);
+  const [previewImageSize, setPreviewImageSize] = useState<{ url: string; width: number; height: number } | null>(null);
 
   const imageEdge = useMemo(() => edges.find((edge) => edge.target === id && edge.targetHandle === "image"), [edges, id]);
   const promptEdge = useMemo(() => edges.find((edge) => edge.target === id && edge.targetHandle === "prompt"), [edges, id]);
@@ -2572,6 +2583,63 @@ export const ImageCreationAdvancedNode = memo(function ImageCreationAdvancedNode
   const outputUrl = nodeData.value || session?.workingImage?.imageUrl || "";
   const previewUrl = outputUrl || session?.master.imageUrl || imageInput;
   const status = nodeData.status ?? (outputUrl ? "output" : imageInput ? "ready" : "empty");
+  const currentNode = nodes.find((node) => node.id === id);
+
+  useEffect(() => {
+    if (!previewUrl) {
+      frameSyncKeyRef.current = null;
+      return;
+    }
+    let cancelled = false;
+    loadImageDimensions(previewUrl)
+      .then(({ width, height }) => {
+        if (!cancelled) setPreviewImageSize({ url: previewUrl, width, height });
+      })
+      .catch(() => {
+        /* keep default square frame until the image can be measured */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [previewUrl]);
+
+  useLayoutEffect(() => {
+    if (!previewUrl || previewImageSize?.url !== previewUrl) return;
+    const syncKey = `${previewUrl}:${previewImageSize.width}x${previewImageSize.height}`;
+    if (frameSyncKeyRef.current === syncKey) return;
+    const nextFrame = resolveAspectLockedNodeFrame({
+      node: currentNode,
+      contentWidth: previewImageSize.width,
+      contentHeight: previewImageSize.height,
+      minWidth: 200,
+      maxWidth: 960,
+      minHeight: 120,
+      maxHeight: 1400,
+      chromeHeight: resolveNodeChromeHeight(frameRef.current, previewFrameRef.current),
+    });
+    frameSyncKeyRef.current = syncKey;
+    const nextAspectRatio = previewImageSize.width / previewImageSize.height;
+    setNodes((nds) =>
+      nds.map((node) => {
+        if (node.id !== id) return node;
+        const needsFrameSync = nodeFrameNeedsSync(node, nextFrame);
+        const currentAspectRatio =
+          typeof (node.data as { _foldderAspectRatio?: unknown } | undefined)?._foldderAspectRatio === "number"
+            ? ((node.data as { _foldderAspectRatio?: number })._foldderAspectRatio ?? null)
+            : null;
+        const needsAspectSync =
+          currentAspectRatio === null || Math.abs(currentAspectRatio - nextAspectRatio) > 0.0001;
+        if (!needsFrameSync && !needsAspectSync) return node;
+        return {
+          ...node,
+          ...(needsFrameSync ? { width: nextFrame.width, height: nextFrame.height } : {}),
+          data: { ...node.data, _foldderAspectRatio: nextAspectRatio },
+          style: needsFrameSync ? { ...node.style, width: nextFrame.width, height: nextFrame.height } : node.style,
+        };
+      }),
+    );
+    requestAnimationFrame(() => updateNodeInternals(id));
+  }, [currentNode, id, previewImageSize, previewUrl, setNodes, updateNodeInternals]);
 
   const patchData = useCallback(
     (patch: Partial<ImageCreationAdvancedNodeData>) => {
@@ -2601,9 +2669,11 @@ export const ImageCreationAdvancedNode = memo(function ImageCreationAdvancedNode
 
   return (
     <div
+      ref={frameRef}
       className={`custom-node image-creation-advanced-node foldder-node--frameless node--media ${status === "error" ? "foldder-node--error" : ""}`}
-      style={{ minWidth: 312 }}
+      style={{ minWidth: 200, minHeight: 120 }}
     >
+      <NodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={1400} keepAspectRatio={Boolean(previewUrl)} isVisible={selected} />
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Image Creation Advanced" />
 
       <div className="handle-wrapper handle-left" style={{ top: "34%" }}>
@@ -2627,7 +2697,7 @@ export const ImageCreationAdvancedNode = memo(function ImageCreationAdvancedNode
       </div>
 
       <div className="node-content foldder-frameless-main space-y-3">
-        <div className="relative aspect-video overflow-hidden rounded-[10px] bg-slate-950/70">
+        <div ref={previewFrameRef} className="relative aspect-video overflow-hidden rounded-[10px] bg-slate-950/70">
           {previewUrl ? (
             <img src={previewUrl} alt="" className="h-full w-full object-cover" />
           ) : (

@@ -40,7 +40,7 @@
 }
 
 .spaces-canvas .react-flow__background {
-  opacity: 0.035;
+  opacity: 0.15;
 }
 
 .spaces-canvas .react-flow__edge-path,
@@ -196,6 +196,8 @@
 /* Sin líneas ni otros puntos de resize */
 .react-flow__resize-control.line {
   display: none !important;
+  background: transparent !important;
+  border-color: transparent !important;
 }
 
 .react-flow__node .custom-node:not(.canvas-group-frame):hover {
@@ -223,6 +225,10 @@
 /* Remove ReactFlow's default blue outline on selected nodes */
 .react-flow__node.selected {
   outline: none !important;
+}
+
+.spaces-canvas .react-flow__node {
+  background: transparent !important;
 }
 
 /*
@@ -464,6 +470,8 @@
 .custom-node.foldder-node--frameless.node--media {
   background: #121212 !important;
   min-height: 240px;
+  overflow: clip !important;
+  overflow-clip-margin: 56px;
 }
 
 .custom-node.foldder-node--frameless::before {
@@ -662,6 +670,12 @@
   border-radius: var(--foldder-frameless-radius) !important;
   box-shadow: none !important;
   overflow: hidden;
+}
+
+.custom-node.foldder-node--frameless.node--media > .foldder-frameless-main,
+.custom-node.foldder-node--frameless.node--media > .foldder-frameless-main > .guionista-empty-background,
+.custom-node.foldder-node--frameless.node--media > .foldder-frameless-main > .photoroom-empty-background {
+  border-radius: 0 !important;
 }
 
 .custom-node.foldder-node--frameless.node--media > .foldder-frameless-main {
@@ -1211,11 +1225,28 @@
 }
 
 .custom-node.guionista-node {
-  min-height: 235px !important;
+  background: #1b71df !important;
+}
+
+.custom-node.foldder-studio-node--guionista .foldder-frameless-main {
+  background: #1b71df !important;
+}
+
+.custom-node.foldder-studio-node--guionista .guionista-empty-background {
+  background: #1b71df !important;
+  border-radius: 0 !important;
+}
+
+.custom-node.foldder-studio-node--guionista .guionista-empty-background img {
+  display: block;
+  background: #1b71df;
+  object-fit: contain !important;
+  object-position: center bottom !important;
 }
 
 .custom-node.guionista-node .guionista-node-content {
   padding: 52px 16px 58px !important;
+  background: transparent !important;
 }
 
 .custom-node.guionista-node .guionista-node-content :is(.rounded-\[10px\], .rounded-xl, .rounded-2xl) {
@@ -1833,6 +1864,16 @@
   color: rgba(255, 255, 255, 0.64) !important;
 }
 
+.custom-node.foldder-studio-node--photoRoom .foldder-frameless-main > .photoroom-empty-background {
+  background: #71449f !important;
+}
+
+.custom-node.foldder-studio-node--photoRoom .photoroom-empty-background img {
+  display: block;
+  background: #71449f;
+  object-position: center bottom;
+}
+
 .custom-node.foldder-studio-node--photoRoom .foldder-frameless-main::after,
 .custom-node.foldder-studio-node--designer .foldder-frameless-main::after,
 .custom-node.inspiration-node .foldder-frameless-main::after,
@@ -2394,6 +2435,25 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
   display: none !important;
   visibility: hidden !important;
   pointer-events: none !important;
+}
+
+.foldder-library-preview-node {
+  opacity: 0.94;
+  pointer-events: none !important;
+  filter: drop-shadow(0 16px 36px rgba(0, 0, 0, 0.38));
+  z-index: 12000 !important;
+}
+
+.foldder-library-preview-node .react-flow__resize-control,
+.foldder-library-preview-node .handle-wrapper,
+.foldder-library-preview-node .react-flow__handle {
+  display: none !important;
+}
+
+.foldder-library-preview-node.selected,
+.react-flow__node.foldder-library-preview-node.selected {
+  outline: none !important;
+  box-shadow: none !important;
 }
 
 .dndnode {
@@ -3030,8 +3090,8 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
 /* Crop es una herramienta estable, no una media full-bleed: no debe colapsar al recibir imagen. */
 .custom-node.crop-node {
   width: 100%;
-  min-width: 340px !important;
-  min-height: 360px !important;
+  min-width: 200px !important;
+  min-height: 120px !important;
   background: #111111 !important;
   border: none !important;
   border-radius: var(--foldder-frameless-radius) !important;
@@ -3049,7 +3109,7 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
   z-index: 1;
   width: 100% !important;
   height: 100% !important;
-  min-height: 360px !important;
+  min-height: 120px !important;
   padding: 34px 12px 12px !important;
   display: flex !important;
   flex-direction: column !important;
@@ -3066,7 +3126,7 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
   inset: auto !important;
   width: 100% !important;
   height: auto !important;
-  min-height: 270px !important;
+  min-height: 0 !important;
   flex: 1 1 auto !important;
   background: #050505 !important;
   border: none !important;
@@ -3202,6 +3262,12 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
 
 .custom-node.inspiration-node {
   background: transparent !important;
+}
+
+.react-flow__node .custom-node.guionista-node:not(.canvas-group-frame),
+.custom-node.guionista-node.foldder-node--frameless.node--media,
+.custom-node.guionista-node.foldder-node--frameless.node--glass {
+  background: #1b71df !important;
 }
 
 .custom-node:is(.inspiration-node, .image-creation-advanced-node, .gemini-video-node) .foldder-frameless-main,
@@ -3420,8 +3486,8 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
 }
 
 /* Final gradient pass: every node background tilts 20% darker on the diagonal. */
-.react-flow__node .custom-node:not(.canvas-group-frame):not(.inspiration-node),
-.custom-node.foldder-node--frameless:not(.inspiration-node),
+.react-flow__node .custom-node:not(.canvas-group-frame):not(.inspiration-node):not(.guionista-node),
+.custom-node.foldder-node--frameless:not(.inspiration-node):not(.guionista-node),
 .custom-node.foldder-node--frameless.node--glass,
 .custom-node.foldder-node--frameless.node--media,
 .custom-node.video-editor-node.foldder-node--frameless,

@@ -1,5 +1,6 @@
 import type { Edge, Node } from '@xyflow/react';
 import { NODE_REGISTRY } from './nodeRegistry';
+import { getNodeGridFrameForType } from './canvas-grid-layout';
 import {
   parseCanvasGroupInHandle,
   parseCanvasGroupOutHandle,
@@ -91,6 +92,15 @@ export function areNodesConnectable(
 }
 
 const PHANTOM_ID = '__library_phantom__';
+
+function parseStyleDimension(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+  if (typeof value === 'string') {
+    const parsed = Number.parseFloat(value.replace(/px/gi, '').trim());
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return undefined;
+}
 
 export type LibraryDropPlan = {
   direction: 'existing-to-new' | 'new-to-existing';
@@ -282,12 +292,17 @@ const DEFAULT_W: Record<string, number> = {
   space: 320,
   projectBrain: 340,
   projectAssets: 260,
+  guionista: 524,
 };
 
 export function estimateNodeWidth(node: Node): number {
   const w = (node as { width?: number; measured?: { width?: number } }).width
     ?? (node as { measured?: { width?: number } }).measured?.width;
   if (w && w > 0) return w;
+  const styleW = parseStyleDimension((node.style as { width?: unknown } | undefined)?.width);
+  if (styleW) return styleW;
+  const gridFrame = getNodeGridFrameForType(node.type as string | undefined, node.data);
+  if (gridFrame) return gridFrame.width;
   return DEFAULT_W[node.type as string] ?? 300;
 }
 
@@ -295,6 +310,10 @@ export function estimateNodeHeight(node: Node): number {
   const h = (node as { height?: number; measured?: { height?: number } }).height
     ?? (node as { measured?: { height?: number } }).measured?.height;
   if (h && h > 0) return h;
+  const styleH = parseStyleDimension((node.style as { height?: unknown } | undefined)?.height);
+  if (styleH) return styleH;
+  const gridFrame = getNodeGridFrameForType(node.type as string | undefined, node.data);
+  if (gridFrame) return gridFrame.height;
   if (node.type === "projectBrain") return 248;
   return 240;
 }
@@ -378,7 +397,7 @@ export function findEmptyPositionForNewNode(
   nodeList: Node[],
   preferredCenter: { x: number; y: number }
 ): { x: number; y: number } {
-  const nw = DEFAULT_W[newType] ?? 300;
+  const nw = estimateNodeWidth({ type: newType } as Node);
   const nh = estimateNodeHeight({ type: newType } as Node);
   const margin = 36;
 

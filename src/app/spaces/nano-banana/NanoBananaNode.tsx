@@ -2289,6 +2289,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   );
   const frameRef = useRef<HTMLDivElement | null>(null);
   const previewRef = useRef<HTMLDivElement | null>(null);
+  const frameSyncKeyRef = useRef<string | null>(null);
   const nodeMediaVisible = useNodeViewportVisibility(id, 900);
   /** Al abrir Studio desde PhotoRoom «Modificar imagen con IA»: id del nodo PhotoRoom para fitView + reabrir su Studio. */
   const photoRoomReturnTargetRef = useRef<string | null>(null);
@@ -2734,29 +2735,39 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   const nanoAspect = parseAspectRatioValue(nodeData.aspect_ratio || '16:9') ?? { width: 16, height: 9 };
 
   useLayoutEffect(() => {
+    const syncKey = `${nodeData.aspect_ratio || '16:9'}:${nanoAspect.width}x${nanoAspect.height}`;
+    if (frameSyncKeyRef.current === syncKey) return;
     const chromeHeight = resolveNodeChromeHeight(frameRef.current, previewRef.current);
     const nextFrame = resolveAspectLockedNodeFrame({
       node: currentFrameNode,
       contentWidth: nanoAspect.width,
       contentHeight: nanoAspect.height,
-      minWidth: 240,
+      minWidth: 200,
       maxWidth: 960,
-      minHeight: 180,
+      minHeight: 120,
       maxHeight: STUDIO_NODE_MAX_HEIGHT,
       chromeHeight,
     });
-    if (!nodeFrameNeedsSync(currentFrameNode, nextFrame)) return;
+    frameSyncKeyRef.current = syncKey;
+    const nextAspectRatio = nanoAspect.width / nanoAspect.height;
     setNodes((nds) =>
-      nds.map((node) =>
-        node.id === id
-          ? {
-              ...node,
-              width: nextFrame.width,
-              height: nextFrame.height,
-              style: { ...node.style, width: nextFrame.width, height: nextFrame.height },
-            }
-          : node,
-      ),
+      nds.map((node) => {
+        if (node.id !== id) return node;
+        const needsFrameSync = nodeFrameNeedsSync(node, nextFrame);
+        const currentAspectRatio =
+          typeof (node.data as { _foldderAspectRatio?: unknown } | undefined)?._foldderAspectRatio === "number"
+            ? ((node.data as { _foldderAspectRatio?: number })._foldderAspectRatio ?? null)
+            : null;
+        const needsAspectSync =
+          currentAspectRatio === null || Math.abs(currentAspectRatio - nextAspectRatio) > 0.0001;
+        if (!needsFrameSync && !needsAspectSync) return node;
+        return {
+          ...node,
+          ...(needsFrameSync ? { width: nextFrame.width, height: nextFrame.height } : {}),
+          data: { ...node.data, _foldderAspectRatio: nextAspectRatio },
+          style: needsFrameSync ? { ...node.style, width: nextFrame.width, height: nextFrame.height } : node.style,
+        };
+      }),
     );
     requestAnimationFrame(() => updateNodeInternals(id));
   }, [
@@ -2764,15 +2775,16 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
     id,
     nanoAspect.height,
     nanoAspect.width,
+    nodeData.aspect_ratio,
     setNodes,
     updateNodeInternals,
   ]);
 
   return (
     <div className={`custom-node processor-node group/node foldder-node--frameless node--media foldder-frameless-accent-image ${status === 'error' ? 'foldder-node--error' : ''} ${isActivelyGenerating ? 'node-glow-running' : ''}`}
-         style={{ minWidth: 240 }}
+         style={{ minWidth: 200, minHeight: 120 }}
          ref={frameRef}>
-      <FoldderNodeResizer minWidth={240} minHeight={180} maxWidth={960} maxHeight={STUDIO_NODE_MAX_HEIGHT} keepAspectRatio isVisible={selected} />
+      <FoldderNodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={STUDIO_NODE_MAX_HEIGHT} keepAspectRatio isVisible={selected} />
       <NodeLabel id={id} label={nodeData.label} defaultLabel="CREACION DE IMAGEN" />
 
       {/* ── Handles ── */}

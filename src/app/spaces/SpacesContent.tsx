@@ -8,8 +8,8 @@ import {
   ReactFlow,
   Controls,
   Background,
-  applyNodeChanges,
-  applyEdgeChanges,
+  BackgroundVariant,
+  ViewportPortal,
   addEdge,
   Node,
   Edge,
@@ -186,10 +186,6 @@ import {
   spacesDefaultEdgeOptions as defaultEdgeOptions,
 } from "./spaces-react-flow-config";
 import {
-  NANO_BANANA_DEFAULT_H,
-  NANO_BANANA_DEFAULT_W,
-  GEMINI_VIDEO_DEFAULT_H,
-  GEMINI_VIDEO_DEFAULT_W,
   FINAL_NODE_ID,
   XYFLOW_NO_PAN_WHEEL_GUARD_CLASS,
   FIT_VIEW_PADDING,
@@ -199,6 +195,18 @@ import {
   fitAnim,
 } from "./spaces-view-constants";
 import { withFoldderCanvasIntro } from "./spaces-canvas-intro";
+import {
+  FOLDDER_GRID_STEP,
+  applyNodeGridPreset,
+  getNodeGridFrameForType,
+  snapNodeChangesToGrid,
+  snapPositionToGrid,
+} from "./canvas-grid-layout";
+import {
+  FOLDDER_LIBRARY_PREVIEW_NODE_ID,
+  isClientPointOverReactFlowCanvas,
+  libraryPreviewPositionFromFlowPoint,
+} from "./library-drag-preview";
 import { foldderIsMacOs, foldderWheelLooksLikeMouse } from "./spaces-wheel";
 import {
   getNodeLayoutDimensions,
@@ -349,7 +357,7 @@ function classifyProjectSaveError(err: unknown): {
   const status = httpError?.status;
   const code = httpError?.code;
 
-  if (isRevisionConflictMessage(message)) {
+  if (httpError?.conflict === true || httpError?.status === 409 || isRevisionConflictMessage(message)) {
     return {
       alertMessage: "This project changed on another device. Reload it before saving again.",
       healthMessage: "Project changed elsewhere. Reload before saving.",
@@ -456,12 +464,6 @@ function standardShellForRuntimeApp(app: StandardRuntimeApp): FoldderStudioEvent
 }
 
 function defaultCanvasNodeStyleForType(type: string): React.CSSProperties | undefined {
-  if (type === "nanoBanana") {
-    return { width: NANO_BANANA_DEFAULT_W, height: NANO_BANANA_DEFAULT_H };
-  }
-  if (type === "geminiVideo" || type === "vfxGenerator") {
-    return { width: GEMINI_VIDEO_DEFAULT_W, height: GEMINI_VIDEO_DEFAULT_H };
-  }
   if (type === "notes") {
     return {
       width: NOTE_WIDTH,
@@ -469,7 +471,8 @@ function defaultCanvasNodeStyleForType(type: string): React.CSSProperties | unde
       minHeight: NOTE_MIN_HEIGHT,
     };
   }
-  return undefined;
+  const frame = getNodeGridFrameForType(type);
+  return frame ? { width: frame.width, height: frame.height } : undefined;
 }
 
 function defaultCanvasNodeDragHandle(type: string): string | undefined {
@@ -479,26 +482,35 @@ function defaultCanvasNodeDragHandle(type: string): string | undefined {
 function normalizeNotesNodeForRuntime<T extends Node>(node: T): T {
   if (node.type !== "notes") return node;
   const style = (node.style as React.CSSProperties | undefined) ?? {};
+  const styleWidth = typeof style.width === "number" ? style.width : undefined;
+  const measuredWidth = typeof node.measured?.width === "number" ? node.measured.width : undefined;
+  const nodeWidth = typeof node.width === "number" ? node.width : undefined;
   const styleHeight = typeof style.height === "number" ? style.height : undefined;
   const measuredHeight = typeof node.measured?.height === "number" ? node.measured.height : undefined;
   const nodeHeight = typeof node.height === "number" ? node.height : undefined;
+  const width = Math.max(NOTE_WIDTH, styleWidth ?? 0, measuredWidth ?? 0, nodeWidth ?? 0);
   const height = Math.max(NOTE_HEIGHT, styleHeight ?? 0, measuredHeight ?? 0, nodeHeight ?? 0);
   return {
     ...node,
     dragHandle: ".notes-drag-surface",
+    width,
     height,
     measured: {
       ...(node.measured ?? {}),
-      width: NOTE_WIDTH,
+      width,
       height,
     },
     style: {
       ...style,
-      width: NOTE_WIDTH,
+      width,
       height,
       minHeight: NOTE_MIN_HEIGHT,
     },
   };
+}
+
+function prepareCanvasNodeForCreate<T extends Node | Record<string, unknown>>(node: T): T {
+  return normalizeNotesNodeForRuntime(applyNodeGridPreset(node as Node) as Node) as T;
 }
 
 export function SpacesContent() {
@@ -521,6 +533,8 @@ export function SpacesContent() {
   const canvasInteractionStartedAtRef = useRef<number | null>(null);
   const pendingProjectSaveAfterInteractionRef = useRef(false);
   const pendingProjectSaveAfterInFlightRef = useRef(false);
+  const saveInFlightRef = useRef(false);
+  const projectSaveBlockedByConflictRef = useRef(false);
   const nodeDataSignatureTokensRef = useRef(new WeakMap<object, number>());
   const nodeDataSignatureCounterRef = useRef(0);
   const { screenToFlowPosition, setViewport, fitView, getViewport } = useReactFlow();
@@ -676,6 +690,13 @@ export function SpacesContent() {
   const libraryCanvasDropSucceededRef = useRef(false);
   /** Arrastre activo desde la librería: oculta tooltips rollover y evita solapes de UI */
   const [paletteDragActive, setPaletteDragActive] = useState(false);
+  const [libraryDragPreview, setLibraryDragPreview] = useState<{
+    type: string;
+    position: { x: number; y: number };
+  } | null>(null);
+  const libraryDragPreviewRef = useRef<typeof libraryDragPreview>(null);
+  libraryDragPreviewRef.current = libraryDragPreview;
+  const libraryDragPreviewRafRef = useRef<number | null>(null);
   const [projectBrainOpen, setProjectBrainOpen] = useState(false);
   const [brainInitialSection, setBrainInitialSection] = useState<BrainMainSection | null>(null);
   const [projectAssetsOpen, setProjectAssetsOpen] = useState(false);
@@ -997,6 +1018,7 @@ export function SpacesContent() {
 
   const handleLibraryDragEnd = useCallback(() => {
     setPaletteDragActive(false);
+    setLibraryDragPreview(null);
     const saved = libraryDragViewportRef.current;
     const dropOk = libraryCanvasDropSucceededRef.current;
     if (!dropOk && saved) {
@@ -1291,7 +1313,7 @@ export function SpacesContent() {
 
     const defaultStyleForType = defaultCanvasNodeStyleForType(type);
 
-    const newNode = {
+    const newNode = prepareCanvasNodeForCreate({
       id: newId,
       type,
       position,
@@ -1302,7 +1324,7 @@ export function SpacesContent() {
         ...extraData,
       }),
       ...(defaultStyleForType ? { style: defaultStyleForType } : {}),
-    };
+    });
 
     takeSnapshot(); // snapshot BEFORE adding node
     setNodes(nds => {
@@ -1364,7 +1386,7 @@ export function SpacesContent() {
         x: posVid.x - 360,
         y: posVid.y - 300,
       });
-      const promptNode = {
+      const promptNode = prepareCanvasNodeForCreate({
         id: promptId,
         type: "promptInput" as const,
         position: posPrompt,
@@ -1373,8 +1395,8 @@ export function SpacesContent() {
           label: "Video — intención",
           value: videoPrompt.trim(),
         }),
-      };
-      const urlNode = {
+      });
+      const urlNode = prepareCanvasNodeForCreate({
         id: urlId,
         type: "urlImage" as const,
         position: posUrl,
@@ -1386,8 +1408,8 @@ export function SpacesContent() {
           selectedIndex: 0,
           type: "image",
         }),
-      };
-      const vidNode = {
+      });
+      const vidNode = prepareCanvasNodeForCreate({
         id: vidId,
         type: "geminiVideo" as const,
         position: posVid,
@@ -1396,11 +1418,7 @@ export function SpacesContent() {
           label: "Video Generator",
           _foldderOpenVideoStudio: true,
         }),
-        style: {
-          width: GEMINI_VIDEO_DEFAULT_W,
-          height: GEMINI_VIDEO_DEFAULT_H,
-        } as React.CSSProperties,
-      };
+      });
       const edgePrompt = {
         id: `ae-${promptId}-${vidId}-prompt`,
         source: promptId,
@@ -1462,7 +1480,7 @@ export function SpacesContent() {
       const position = findEmptyPositionForNewNode(reactFlowType, nodes, center);
       const newId = `node_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
       const pinStyle: React.CSSProperties | undefined = defaultCanvasNodeStyleForType(reactFlowType);
-      const newNode = {
+      const newNode = prepareCanvasNodeForCreate({
         id: newId,
         type: reactFlowType,
         position,
@@ -1473,7 +1491,7 @@ export function SpacesContent() {
           label: reactFlowType === "notes" ? "Note" : `${reactFlowType} node`,
         }),
         ...(pinStyle ? { style: pinStyle } : {}),
-      };
+      });
       takeSnapshot();
       setNodes((nds) => [...nds, newNode]);
       scheduleFoldderCanvasIntroEnd(newId);
@@ -1487,6 +1505,7 @@ export function SpacesContent() {
 
   const scheduleProjectSave = useCallback(() => {
     if (typeof window === "undefined") return;
+    if (projectSaveBlockedByConflictRef.current) return;
     if (projectSaveDebounceTimerRef.current !== null) {
       window.clearTimeout(projectSaveDebounceTimerRef.current);
     }
@@ -1958,7 +1977,7 @@ export function SpacesContent() {
       const position = findEmptyPositionForNewNode(reactFlowType, nodes, preferred ?? viewportCenter);
       const nodeId = `node_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
       const standardStyle: React.CSSProperties | undefined = defaultCanvasNodeStyleForType(reactFlowType);
-      const newNode = {
+      const newNode = prepareCanvasNodeForCreate({
         id: nodeId,
         type: reactFlowType,
         position,
@@ -1968,7 +1987,7 @@ export function SpacesContent() {
           label: baseName,
         }),
         ...(standardStyle ? { style: standardStyle } : {}),
-      };
+      });
       const file = createProjectFileForStudioNode({
         node: newNode as Node,
         name: baseName,
@@ -2100,13 +2119,13 @@ export function SpacesContent() {
       }
     }
     delete rawData._foldderCanvasIntro;
-    const newNode = {
+    const newNode = prepareCanvasNodeForCreate({
       ...original,
       id: newId,
       position: { x: original.position.x + 36, y: original.position.y + 36 },
       selected: false,
       data: withFoldderCanvasIntro(String(original.type), { ...rawData, label }),
-    };
+    });
     const newFile = createProjectFileForStudioNode({
       node: newNode as Node,
       name: nextName,
@@ -2210,7 +2229,7 @@ export function SpacesContent() {
 
     const nodeId = `presenter_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     const nodeLabel = `Presentar ${file.name.replace(/\.design$/i, "")}`;
-    const presenterNode = {
+    const presenterNode = prepareCanvasNodeForCreate({
       id: nodeId,
       type: "presenter",
       position: {
@@ -2221,7 +2240,7 @@ export function SpacesContent() {
         ...defaultDataForCanvasDropNode("presenter"),
         label: nodeLabel,
       }),
-    };
+    });
     const edge = {
       id: `std-present-${file.backingNodeId}-${nodeId}-${Date.now()}`,
       source: file.backingNodeId,
@@ -3660,6 +3679,22 @@ export function SpacesContent() {
     nameToSave?: string,
     options?: SaveProjectOptions
   ): Promise<boolean> => {
+    if (projectSaveBlockedByConflictRef.current) {
+      if (!options?.silentError) {
+        alert("This project changed on another device. Reload it before saving again.");
+      }
+      setSaveHealth({
+        state: "conflict",
+        message: "Project changed elsewhere. Reload before saving.",
+        at: Date.now(),
+      });
+      return false;
+    }
+    if (saveInFlightRef.current) {
+      pendingProjectSaveAfterInFlightRef.current = true;
+      return false;
+    }
+    saveInFlightRef.current = true;
     const metadataVersionAtSaveStart = metadataVersionRef.current;
     lastSaveWasSkippedRef.current = false;
     try {
@@ -3818,7 +3853,9 @@ export function SpacesContent() {
       const savedRevision =
         typeof savedProject.revision === "number" && Number.isFinite(savedProject.revision)
           ? savedProject.revision
-          : activeProjectRevisionRef.current;
+          : typeof activeProjectRevisionRef.current === "number" && Number.isFinite(activeProjectRevisionRef.current)
+            ? activeProjectRevisionRef.current + 1
+            : 1;
       activeProjectIdRef.current = savedProject.id;
       setActiveProjectRevision(savedRevision);
       activeProjectRevisionRef.current = savedRevision;
@@ -3859,11 +3896,22 @@ export function SpacesContent() {
       return true;
     } catch (err) {
       console.error('Save error:', err);
+      const httpError = getHttpJsonError(err);
       const message = err instanceof Error ? err.message : String(err ?? "");
-      if (isRevisionConflictMessage(message)) {
-        console.warn("[FOLDDER save] Conflicto de revisión: otro dispositivo guardó este proyecto antes.");
-      }
       const classifiedSaveError = classifyProjectSaveError(err);
+      if (classifiedSaveError.state === "conflict") {
+        projectSaveBlockedByConflictRef.current = true;
+        console.warn("[FOLDDER save] Conflicto de revisión: otro dispositivo guardó este proyecto antes.");
+        const actualRevision = httpError?.actualRevision;
+        const conflictProjectId = activeProjectIdRef.current;
+        if (typeof actualRevision === "number" && conflictProjectId) {
+          setSavedProjects((prev) =>
+            prev.map((project) =>
+              project.id === conflictProjectId ? { ...project, revision: actualRevision } : project,
+            ),
+          );
+        }
+      }
       setSaveHealth({
         state: classifiedSaveError.state,
         message: classifiedSaveError.healthMessage,
@@ -3874,12 +3922,15 @@ export function SpacesContent() {
       }
       return false;
     } finally {
+      saveInFlightRef.current = false;
       setIsSaving(false);
-      if (pendingProjectSaveAfterInFlightRef.current) {
+      if (pendingProjectSaveAfterInFlightRef.current && !projectSaveBlockedByConflictRef.current) {
         pendingProjectSaveAfterInFlightRef.current = false;
         if (typeof window !== "undefined") {
           window.setTimeout(() => scheduleProjectSave(), 120);
         }
+      } else if (projectSaveBlockedByConflictRef.current) {
+        pendingProjectSaveAfterInFlightRef.current = false;
       }
     }
   };
@@ -3967,6 +4018,7 @@ export function SpacesContent() {
         g.openLoad ||
         g.openNew ||
         g.deleting ||
+        projectSaveBlockedByConflictRef.current ||
         isSavingRef.current ||
         canvasPerformanceModeRef.current
       ) {
@@ -4001,7 +4053,17 @@ export function SpacesContent() {
     projectSaveDebounceTimerRef.current = window.setTimeout(() => {
       projectSaveDebounceTimerRef.current = null;
       const g = autosaveGateRef.current;
-      if (!g.authenticated || !g.hasProject || g.openLoad || g.openNew || g.deleting || isSavingRef.current) return;
+      if (
+        !g.authenticated ||
+        !g.hasProject ||
+        g.openLoad ||
+        g.openNew ||
+        g.deleting ||
+        projectSaveBlockedByConflictRef.current ||
+        isSavingRef.current
+      ) {
+        return;
+      }
       if (canvasPerformanceModeRef.current) {
         pendingProjectSaveAfterInteractionRef.current = true;
         return;
@@ -4284,9 +4346,11 @@ export function SpacesContent() {
         (spaces[rootSpaceId] as { nodes?: any[]; edges?: any[] });
 
       const nextNodes = stripLegacyFinal([...(targetSpace?.nodes || [])]).map((n: any) => {
-        if (!n.data || typeof n.data !== 'object') return normalizeNotesNodeForRuntime(n as Node);
+        if (!n.data || typeof n.data !== 'object') {
+          return normalizeNotesNodeForRuntime(applyNodeGridPreset(n as Node) as Node);
+        }
         const { _foldderCanvasIntro: _i, ...rest } = n.data as Record<string, unknown>;
-        return normalizeNotesNodeForRuntime({ ...n, data: rest } as Node);
+        return normalizeNotesNodeForRuntime(applyNodeGridPreset({ ...n, data: rest } as Node) as Node);
       });
       const nextEdges = stripEdgesToFinal([...(targetSpace?.edges || [])]);
       const sanitizedActiveGraph = sanitizeLegacyRemovedNodesFromGraph(nextNodes as Node[], nextEdges as Edge[]);
@@ -4296,6 +4360,7 @@ export function SpacesContent() {
       setEdges(sanitizedActiveGraph.edges);
       scheduleNodeInternalsRefresh(sanitizedActiveGraph.nodes.map((n: any) => String(n.id)));
       scheduleEdgeGeometryRefresh();
+      projectSaveBlockedByConflictRef.current = false;
       activeProjectIdRef.current = project.id;
       setActiveProjectId(project.id);
       syncProjectIdInUrl(project.id);
@@ -4415,6 +4480,7 @@ export function SpacesContent() {
         syncProjectIdInUrl(null);
         setActiveProjectRevision(null);
         activeProjectRevisionRef.current = null;
+        projectSaveBlockedByConflictRef.current = false;
         lastSavedFingerprintRef.current = null;
         lastSavedUiFingerprintRef.current = null;
         setLocalWorkspaceScopeId(newLocalWorkspaceScopeId());
@@ -4870,12 +4936,12 @@ export function SpacesContent() {
         }
       : { x: pointerFlow.x - 160, y: pointerFlow.y - 80 };
 
-    const newNode = {
+    const newNode = prepareCanvasNodeForCreate({
       id: newNodeId,
       type: newType,
       position: initialPos,
       data: withFoldderCanvasIntro(newType, defaultDataForCanvasDropNode(newType)),
-    };
+    });
 
     /** Alinea el conector del nodo nuevo con el del origen (misma Y; X con separación HANDLE_GAP). */
     const snapNewNodeToAnchor = () => {
@@ -5158,7 +5224,7 @@ export function SpacesContent() {
     };
 
     const spaceNodeId = `node_space_${Date.now()}`;
-    const newNode = {
+    const newNode = prepareCanvasNodeForCreate({
       id: spaceNodeId,
       type: 'space',
       position: { x: avgX, y: avgY },
@@ -5171,7 +5237,7 @@ export function SpacesContent() {
         value: autoOutputValue,
         internalCategories: structure.internalCategories,
       }),
-    };
+    });
 
     const remainingNodes = nodes.filter((n) => !selectedIds.has(n.id));
     const remainingEdges = edges.filter(
@@ -5294,7 +5360,7 @@ export function SpacesContent() {
       });
     }
 
-    return nodes.map((n: any) => {
+    const mapped = nodes.map((n: any) => {
       const isCompat = compatSet.has(n.id);
       const isHover = n.id === libraryDropTargetId;
       const isOverviewHover = n.id === overviewHoverHighlightId;
@@ -5313,6 +5379,8 @@ export function SpacesContent() {
         style: mergeNodeOutputBorderStyle(n),
       };
     });
+
+    return mapped;
   }, [
     nodes,
     libraryDropTargetId,
@@ -5322,6 +5390,65 @@ export function SpacesContent() {
     cardsIntroTick,
     overviewHoverHighlightId,
   ]);
+
+  const libraryDragPreviewElement = useMemo(() => {
+    if (!libraryDragPreview || canvasViewMode !== "free") return null;
+
+    const previewType = libraryDragPreview.type;
+    const PreviewNodeComponent = nodeTypes[previewType];
+    if (!PreviewNodeComponent) return null;
+
+    const previewData = defaultDataForCanvasDropNode(previewType);
+    const previewStyle = defaultCanvasNodeStyleForType(previewType);
+    const frame = getNodeGridFrameForType(previewType, previewData);
+    const width = frame?.width ?? 280;
+    const height = frame?.height ?? 240;
+    const label = previewType === "notes" ? "Note" : `${previewType} node`;
+    const nodeData = {
+      ...previewData,
+      _foldderLibraryPreview: true,
+      label,
+    };
+    const shellStyle = mergeNodeOutputBorderStyle(
+      { type: previewType, data: nodeData, style: previewStyle },
+      previewStyle,
+    );
+
+    return (
+      <ViewportPortal>
+        <div
+          className="foldder-library-preview-node nodrag nopan"
+          style={{
+            position: "absolute",
+            left: libraryDragPreview.position.x,
+            top: libraryDragPreview.position.y,
+            width,
+            height,
+            zIndex: 12000,
+            pointerEvents: "none",
+            ...shellStyle,
+          }}
+        >
+          <PreviewNodeComponent
+            id={FOLDDER_LIBRARY_PREVIEW_NODE_ID}
+            type={previewType}
+            data={nodeData}
+            selected={false}
+            dragging={false}
+            draggable={false}
+            selectable={false}
+            deletable={false}
+            isConnectable={false}
+            zIndex={12000}
+            position={libraryDragPreview.position}
+            positionAbsolute={libraryDragPreview.position}
+            width={width}
+            height={height}
+          />
+        </div>
+      </ViewportPortal>
+    );
+  }, [libraryDragPreview, canvasViewMode]);
 
   const flowEdges = useMemo(
     () => filterEdgesForCollapsedCanvasGroups(nodes, edges),
@@ -5335,35 +5462,85 @@ export function SpacesContent() {
     return areNodesConnectable(sourceNode, targetNode, connection, nodes);
   }, [nodes]);
 
+  const syncLibraryDragPreviewAtClientPoint = useCallback(
+    (clientX: number, clientY: number) => {
+      const t = libraryDragTypeRef.current;
+      if (!t || canvasViewModeRef.current !== "free") {
+        setLibraryDragPreview(null);
+        return;
+      }
+
+      if (
+        !isClientPointOverReactFlowCanvas(
+          clientX,
+          clientY,
+          reactFlowWrapper.current,
+        )
+      ) {
+        libraryDropTargetIdRef.current = null;
+        setLibraryDropTargetId(null);
+        setLibraryDragPreview(null);
+        return;
+      }
+
+      const p = screenToFlowPosition({ x: clientX, y: clientY });
+      const liveNodes = liveNodesRef.current;
+      const liveEdges = liveEdgesRef.current;
+      const hit = findTopNodeUnderFlowPoint(p, liveNodes);
+      const plan = hit ? findLibraryDropPlan(t, hit, liveEdges) : null;
+      if (hit && plan) {
+        libraryDropTargetIdRef.current = hit.id;
+        setLibraryDropTargetId(hit.id);
+        const wirePosition = snapPositionToGrid(computeLibraryDropPosition(hit, t, plan));
+        setLibraryDragPreview({ type: t, position: wirePosition });
+        return;
+      }
+
+      libraryDropTargetIdRef.current = null;
+      setLibraryDropTargetId(null);
+      setLibraryDragPreview({
+        type: t,
+        position: libraryPreviewPositionFromFlowPoint(p, t),
+      });
+    },
+    [screenToFlowPosition],
+  );
+
   const onDragOver = useCallback(
     (event: React.DragEvent) => {
       event.preventDefault();
-      event.dataTransfer.dropEffect = 'move';
+      event.dataTransfer.dropEffect = "move";
+      syncLibraryDragPreviewAtClientPoint(event.clientX, event.clientY);
+    },
+    [syncLibraryDragPreviewAtClientPoint],
+  );
 
+  useEffect(() => {
+    if (!paletteDragActive) return;
+
+    const onDocumentDragOver = (event: DragEvent) => {
       const t = libraryDragTypeRef.current;
       if (!t) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
 
-      const p = screenToFlowPosition({
-        x: event.clientX,
-        y: event.clientY,
+      const { clientX, clientY } = event;
+      if (libraryDragPreviewRafRef.current != null) return;
+      libraryDragPreviewRafRef.current = window.requestAnimationFrame(() => {
+        libraryDragPreviewRafRef.current = null;
+        syncLibraryDragPreviewAtClientPoint(clientX, clientY);
       });
-      const hit = findTopNodeUnderFlowPoint(p, nodes);
-      if (!hit) {
-        libraryDropTargetIdRef.current = null;
-        setLibraryDropTargetId(null);
-        return;
+    };
+
+    document.addEventListener("dragover", onDocumentDragOver);
+    return () => {
+      document.removeEventListener("dragover", onDocumentDragOver);
+      if (libraryDragPreviewRafRef.current != null) {
+        window.cancelAnimationFrame(libraryDragPreviewRafRef.current);
+        libraryDragPreviewRafRef.current = null;
       }
-      const plan = findLibraryDropPlan(t, hit, edges);
-      if (!plan) {
-        libraryDropTargetIdRef.current = null;
-        setLibraryDropTargetId(null);
-        return;
-      }
-      libraryDropTargetIdRef.current = hit.id;
-      setLibraryDropTargetId(hit.id);
-    },
-    [screenToFlowPosition, nodes, edges]
-  );
+    };
+  }, [paletteDragActive, syncLibraryDragPreviewAtClientPoint]);
 
   const onDrop = useCallback(
     (event: React.DragEvent) => {
@@ -5379,11 +5556,13 @@ export function SpacesContent() {
       const libraryType = rawType && NODE_REGISTRY[rawType] ? rawType : '';
 
       const snapTargetId = libraryDropTargetIdRef.current;
+      const previewSnapshot = libraryDragPreviewRef.current;
 
       libraryDragTypeRef.current = null;
       libraryDropTargetIdRef.current = null;
       setLibraryDropTargetId(null);
       setLibraryCompatibleIds([]);
+      setLibraryDragPreview(null);
 
       const files = Array.from(dt.files);
 
@@ -5391,6 +5570,8 @@ export function SpacesContent() {
         x: event.clientX,
         y: event.clientY,
       });
+      const previewPlacement =
+        previewSnapshot?.type === libraryType ? previewSnapshot.position : null;
 
       // Librería / pins: prioridad sobre archivos (algunos navegadores rellenan `files` o no exponen MIME custom hasta el drop)
       if (libraryType) {
@@ -5402,24 +5583,22 @@ export function SpacesContent() {
 
         if (targetNode && plan && snapTargetId === targetNode.id) {
           libraryCanvasDropSucceededRef.current = true;
-          const dropPos = computeLibraryDropPosition(targetNode, libraryType, plan);
-          const placement = findEmptyPositionForNewNode(libraryType, nodes, {
-            x: dropPos.x + 160,
-            y: dropPos.y + 120,
-          });
+          const placement =
+            previewPlacement ??
+            snapPositionToGrid(computeLibraryDropPosition(targetNode, libraryType, plan));
           const newId = `node_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-          const newNode = {
+          const newNode = prepareCanvasNodeForCreate({
             id: newId,
             type: libraryType,
             position: placement,
             dragHandle: defaultCanvasNodeDragHandle(libraryType),
-        data: withFoldderCanvasIntro(libraryType, {
-          ...defaultDataForCanvasDropNode(libraryType),
-          value: '',
-          label: libraryType === "notes" ? "Note" : `${libraryType} node`,
-        }),
+            data: withFoldderCanvasIntro(libraryType, {
+              ...defaultDataForCanvasDropNode(libraryType),
+              value: '',
+              label: libraryType === "notes" ? "Note" : `${libraryType} node`,
+            }),
             ...(defaultCanvasNodeStyleForType(libraryType) ? { style: defaultCanvasNodeStyleForType(libraryType) } : {}),
-          };
+          });
 
           const edgeId = `e-lib-${newId}-${targetNode.id}-${Date.now()}`;
           const newEdge =
@@ -5458,12 +5637,10 @@ export function SpacesContent() {
         }
 
         libraryCanvasDropSucceededRef.current = true;
-        const placement = findEmptyPositionForNewNode(libraryType, nodes, {
-          x: position.x + 160,
-          y: position.y + 120,
-        });
+        const placement =
+          previewPlacement ?? libraryPreviewPositionFromFlowPoint(position, libraryType);
         const libDropId = `node_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-        const newNode = {
+        const newNode = prepareCanvasNodeForCreate({
           id: libDropId,
           type: libraryType,
           position: placement,
@@ -5474,7 +5651,7 @@ export function SpacesContent() {
             label: libraryType === "notes" ? "Note" : `${libraryType} node`,
           }),
           ...(defaultCanvasNodeStyleForType(libraryType) ? { style: defaultCanvasNodeStyleForType(libraryType) } : {}),
-        };
+        });
 
         takeSnapshot();
         setNodes((nds) => [...nds, newNode]);
@@ -5532,7 +5709,7 @@ export function SpacesContent() {
             } as Node,
           ];
 
-          const newNode = {
+          const newNode = prepareCanvasNodeForCreate({
             id: nodeId,
             type: 'mediaInput',
             position: placement,
@@ -5543,7 +5720,7 @@ export function SpacesContent() {
               loading: true,
               source: 'upload',
             }),
-          };
+          });
 
           setNodes((nds) => [...nds, newNode]);
           scheduleFoldderCanvasIntroEnd(nodeId);
@@ -5643,7 +5820,13 @@ export function SpacesContent() {
           />
         </div>
       )}
-      <div className="flex-1 relative" onContextMenu={(e) => e.preventDefault()} style={{ marginLeft: 0 }}>
+      <div
+        className="flex-1 relative"
+        onContextMenu={(e) => e.preventDefault()}
+        onDragOver={onDragOver}
+        onDrop={onDrop}
+        style={{ marginLeft: 0 }}
+      >
         <CanvasWallpaperTransition activeId={canvasBgId} options={CANVAS_BACKGROUNDS} />
         {/* Dentro de un Space anidado: viñeta + bordes laterales borrosos (se quita al volver a root) */}
         {isAuthenticated && activeSpaceId !== 'root' && (
@@ -5693,6 +5876,7 @@ export function SpacesContent() {
             const nds = liveNodesRef.current;
             const studioOpen = typeof document !== 'undefined' && !!document.querySelector('[data-foldder-studio-canvas]');
             const filtered = changes.filter((c) => {
+              if ((c as { id?: string }).id === FOLDDER_LIBRARY_PREVIEW_NODE_ID) return false;
               if (c.type !== "remove") return true;
               if (studioOpen) return false;
               const id = (c as { id?: string }).id;
@@ -5706,10 +5890,39 @@ export function SpacesContent() {
               // Orphans are removed when the whole project is deleted (api/spaces DELETE).
               takeSnapshot();
             }
-            onNodesChange(filtered);
+            const snapped = snapNodeChangesToGrid(filtered, nds);
+            onNodesChange(snapped);
+
+            const completedResizeChanges = snapped.filter(
+              (c): c is typeof c & { id: string; dimensions: { width: number; height: number } } =>
+                c.type === "dimensions" &&
+                Boolean((c as { id?: string }).id) &&
+                Boolean((c as { dimensions?: { width?: number; height?: number } }).dimensions) &&
+                (c as { resizing?: boolean }).resizing === false,
+            );
+            if (completedResizeChanges.length > 0) {
+              const resizedById = new Map(
+                completedResizeChanges.map((c) => [c.id, c.dimensions]),
+              );
+              setNodes((prev) =>
+                prev.map((node) => {
+                  const dimensions = resizedById.get(node.id);
+                  if (!dimensions) return node;
+                  const style = (node.style ?? {}) as React.CSSProperties;
+                  return {
+                    ...node,
+                    style: {
+                      ...style,
+                      width: dimensions.width,
+                      height: dimensions.height,
+                    },
+                  };
+                }),
+              );
+            }
 
             const changedCanvasGroupIds = new Set<string>();
-            for (const c of filtered) {
+            for (const c of snapped) {
               if (c.type !== "dimensions" && c.type !== "position") continue;
               const id = (c as { id?: string }).id;
               if (!id) continue;
@@ -5753,8 +5966,6 @@ export function SpacesContent() {
           }}
           onConnect={onConnect}
           isValidConnection={isValidConnection}
-           onDrop={onDrop}
-          onDragOver={onDragOver}
           onPaneClick={onPaneClick}
           onPaneContextMenu={onPaneContextMenu}
           onDoubleClick={onCanvasDoubleClick}
@@ -5773,6 +5984,8 @@ export function SpacesContent() {
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
           defaultEdgeOptions={defaultEdgeOptions}
+          snapToGrid
+          snapGrid={[FOLDDER_GRID_STEP, FOLDDER_GRID_STEP]}
           defaultViewport={{ x: -559, y: 134, zoom: 0.7 }}
           minZoom={0.05}
           maxZoom={4}
@@ -5794,7 +6007,13 @@ export function SpacesContent() {
           className={`spaces-canvas${spaceHeld || middlePanHeld ? ' spaces-canvas--space-pan' : ''}${canvasViewMode === 'cards' ? ' spaces-canvas--cards-mode' : ''}${overviewModeActive ? ' foldder-overview-mode-active' : ''}${canvasPerformanceMode ? ' spaces-canvas--performance' : ''}`}
           style={reactFlowCanvasStyle}
         >
-          <Background color="#111" gap={40} size={1} />
+          <Background
+            color="#111"
+            gap={FOLDDER_GRID_STEP}
+            lineWidth={0.7}
+            variant={BackgroundVariant.Lines}
+          />
+          {libraryDragPreviewElement}
         </ReactFlow>
         </DesignerSpaceIdContext.Provider>
         </ProjectBrainCanvasContext.Provider>
