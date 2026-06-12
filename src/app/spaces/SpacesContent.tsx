@@ -4335,6 +4335,7 @@ export function SpacesContent() {
       const ui = project.metadata?.ui as
         | {
             canvasBgId?: string;
+            canvasBgColor?: string;
             canvasViewMode?: 'free' | 'cards';
             workspaceViewMode?: WorkspaceViewMode;
             cardsFocusIndex?: number;
@@ -6392,7 +6393,6 @@ export function SpacesContent() {
                   }
                   aria-pressed={browserFullscreen}
                   className="group flex h-10 w-10 items-center justify-center rounded-none bg-white/[0.08] text-white/70 backdrop-blur-xl transition-all hover:scale-105 hover:bg-white/[0.15] hover:text-white"
-                  aria-pressed={browserFullscreen}
                 >
                   {browserFullscreen ? (
                     <Minimize2 size={16} className="text-current" aria-hidden />
