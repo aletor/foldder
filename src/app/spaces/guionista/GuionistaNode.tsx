@@ -23,6 +23,7 @@ import {
   StudioCanvasPill,
   type StudioCanvasNodeHandleSpec,
 } from "../studio-node/studio-canvas-node";
+import { hasFoldderStudioTouched, touchStudioNodeData } from "../studio-node/foldder-studio-touched";
 import { useStudioNodeController } from "../studio-node/studio-node-architecture";
 import { textFromStudioSourceNode } from "../studio-node/source-node-text";
 import { useFoldderRenderMetric } from "../use-performance-metrics";
@@ -319,11 +320,10 @@ export const GuionistaNode = memo(function GuionistaNode({ id, data, selected }:
           node.id === id
             ? {
                 ...node,
-                data: {
-                  ...node.data,
+                data: touchStudioNodeData(node.data as Record<string, unknown>, {
                   ...patch,
                   value: patch.value ?? patch.promptValue ?? (patch.versions?.find((version) => version.id === patch.activeVersionId)?.markdown) ?? (node.data as Record<string, unknown> | undefined)?.value ?? "",
-                },
+                }),
               }
             : node,
         ),
@@ -363,6 +363,7 @@ export const GuionistaNode = memo(function GuionistaNode({ id, data, selected }:
       handles={GUIONISTA_NODE_HANDLES}
       variant="frameless"
       material="media"
+      studioTouched={hasFoldderStudioTouched(nodeData as Record<string, unknown>)}
     >
       <NodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={2200} isVisible={selected} />
       <div className="foldder-frameless-main relative flex min-h-0 flex-1 flex-col overflow-hidden">

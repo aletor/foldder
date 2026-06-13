@@ -30,6 +30,8 @@ import { BeebleClient, type BeebleJob } from "@/lib/beeble-api";
 import { useBeebleJobPoller } from "@/hooks/useBeebleJobPoller";
 import { runAiJobWithNotification } from "@/lib/ai-job-notifications";
 import { FoldderNodeHeaderTitle, FoldderStudioModeCenterButton, NodeLabel } from "./foldder-node-ui";
+import { hasFoldderStudioTouched, touchStudioNodeData } from "./studio-node/foldder-studio-touched";
+import { FoldderStudioTouchedMark } from "./studio-node/foldder-studio-touched-mark";
 import { loadVideoDimensions } from "./presenter/presenter-video-frame-layout";
 import {
   nodeFrameNeedsSync,
@@ -149,6 +151,10 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<VfxGener
   const { setNodes } = useReactFlow();
   const updateNodeInternals = useUpdateNodeInternals();
   const [showStudio, setShowStudio] = useState(false);
+  const showStudioRef = useRef(false);
+  useEffect(() => {
+    showStudioRef.current = showStudio;
+  }, [showStudio]);
   const [standardShell, setStandardShell] = useState<StandardStudioShellConfig | null>(null);
   const [isLaunching, setIsLaunching] = useState(false);
   const [historyJobs, setHistoryJobs] = useState<BeebleJob[]>([]);
@@ -170,7 +176,16 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<VfxGener
   const updatePatch = useCallback(
     (patch: Record<string, unknown>) => {
       setNodes((nds) =>
-        nds.map((n) => (n.id === id ? { ...n, data: { ...n.data, ...patch } } : n)),
+        nds.map((n) =>
+          n.id === id
+            ? {
+                ...n,
+                data: showStudioRef.current
+                  ? touchStudioNodeData(n.data as Record<string, unknown>, patch)
+                  : { ...n.data, ...patch },
+              }
+            : n,
+        ),
       );
     },
     [id, setNodes],
@@ -233,19 +248,21 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<VfxGener
             if (n.id !== id) return n;
             const d = n.data as Record<string, unknown>;
             const versions = pushAssetVersion(d, job.output!.render, "beeble-vfx");
+            const outputPatch = {
+              activeJobStatus: job.status,
+              activeJobProgress: job.progress ?? 100,
+              outputRenderUrl: job.output!.render,
+              outputSourceUrl: job.output!.source,
+              outputAlphaUrl: job.output!.alpha,
+              value: job.output!.render,
+              type: "video",
+              _assetVersions: versions,
+            };
             return {
               ...n,
-              data: {
-                ...d,
-                activeJobStatus: job.status,
-                activeJobProgress: job.progress ?? 100,
-                outputRenderUrl: job.output!.render,
-                outputSourceUrl: job.output!.source,
-                outputAlphaUrl: job.output!.alpha,
-                value: job.output!.render,
-                type: "video",
-                _assetVersions: versions,
-              },
+              data: showStudioRef.current
+                ? touchStudioNodeData(d, outputPatch)
+                : { ...d, ...outputPatch },
             };
           }),
         );
@@ -420,6 +437,7 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<VfxGener
       style={{ minWidth: 200, minHeight: 120 }}
     >
       <FoldderNodeResizerLocal minWidth={200} minHeight={120} maxWidth={960} maxHeight={VFX_STUDIO_NODE_MAX_HEIGHT} keepAspectRatio isVisible={selected} />
+      {hasFoldderStudioTouched(nodeData as Record<string, unknown>) ? <FoldderStudioTouchedMark nodeType="vfxGenerator" /> : null}
       <NodeLabel id={id} label={nodeData.label} defaultLabel="VFX Generator" />
 
       <div className="handle-wrapper handle-left !top-[12%]">

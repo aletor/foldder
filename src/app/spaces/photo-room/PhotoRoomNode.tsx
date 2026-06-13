@@ -32,6 +32,7 @@ import type { DesignerStudioApi, FreehandObject } from "../FreehandStudio";
 import { DesignerPagePreview } from "../designer/DesignerPagePreview";
 import { dispatchFoldderExportCreated } from "../foldder-export-events";
 import { StudioCanvasNodeShell, type StudioCanvasNodeHandleSpec } from "../studio-node/studio-canvas-node";
+import { hasFoldderStudioTouched, touchStudioNodeData } from "../studio-node/foldder-studio-touched";
 import { useStudioNodeController } from "../studio-node/studio-node-architecture";
 import {
   clearLiveStudioNodeData,
@@ -283,7 +284,7 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
     setLiveStudioData(null);
     setNodes((nds: Node[]) =>
       nds.map((n) =>
-        n.id === id ? { ...n, data: { ...((n.data ?? {}) as Record<string, unknown>), ...patch } } : n,
+        n.id === id ? { ...n, data: touchStudioNodeData(n.data as Record<string, unknown>, patch as Record<string, unknown>) } : n,
       ),
     );
   }, [id, setNodes]);
@@ -777,6 +778,7 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
       variant="frameless"
       material="media"
       introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}
+      studioTouched={hasFoldderStudioTouched(effectiveNodeData as Record<string, unknown>)}
     >
       <FoldderNodeResizerLocal
         minWidth={200}

@@ -317,6 +317,7 @@ export async function geminiImageGenerate(
       const msgMap: Record<string, string> = {
         SAFETY: "Safety violation: Prompt or content blocked.",
         OTHER: "Content blocked (copyright/safety filter). Try a more generic prompt.",
+        NO_IMAGE: "No image was generated. Try a different prompt or model.",
         UNKNOWN: "No image was generated. Try a different prompt.",
       };
       throw new GeminiGenerateError(

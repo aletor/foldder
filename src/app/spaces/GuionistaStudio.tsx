@@ -82,7 +82,19 @@ const ACTION_LABELS: Record<string, string> = {
 };
 
 const BASE_CONTROL_CLASS =
-  "rounded-[10px] bg-white/[0.055] px-3 py-2 text-xs text-white/82 outline-none transition focus:bg-white/[0.09]";
+  "bg-white/[0.06] px-3 py-2 text-xs text-white/82 outline-none transition focus:bg-white/[0.1]";
+
+const GUI_STUDIO_TOOLBAR =
+  "mb-4 flex h-10 shrink-0 divide-x divide-white/10 border border-white/10 bg-white/[0.04]";
+const GUI_STUDIO_TOOLBAR_BTN =
+  "inline-flex h-full flex-1 items-center justify-center gap-2 px-3 text-[10px] font-black uppercase tracking-[0.08em] transition disabled:cursor-not-allowed disabled:opacity-35";
+const GUI_STUDIO_TOOLBAR_BTN_ACTIVE = "bg-white text-slate-950";
+const GUI_STUDIO_TOOLBAR_BTN_IDLE = "text-white/55 hover:bg-white/[0.08] hover:text-white";
+const GUI_STUDIO_CTA_PRIMARY =
+  "guionista-studio-btn-primary inline-flex items-center gap-2 bg-[#1b71df] px-5 py-3 text-[11px] font-black uppercase tracking-[0.1em] text-white transition hover:bg-[#1a66cb] disabled:cursor-not-allowed disabled:opacity-35";
+const GUI_STUDIO_CTA_SECONDARY =
+  "inline-flex items-center gap-2 bg-white/[0.06] px-5 py-3 text-[11px] font-black uppercase tracking-[0.1em] text-white/75 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-35";
+const GUI_STUDIO_PAPER_WRAP = "guionista-studio-paper border border-black/10 bg-[#f4ead8] p-2";
 
 function formatIcon(format?: GuionistaFormat, className = "h-4 w-4") {
   switch (format) {
@@ -237,7 +249,7 @@ function saveStateLabel(saveState: SaveState, hasAsset: boolean, lastSavedRelati
 
 function saveStateClass(saveState: SaveState): string {
   if (saveState === "saved") return "border-emerald-300/20 bg-emerald-300/10 text-emerald-100";
-  if (saveState === "saving") return "border-amber-200/20 bg-amber-200/10 text-amber-50";
+  if (saveState === "saving") return "border-[#1b71df]/25 bg-[#1b71df]/12 text-white";
   if (saveState === "dirty") return "border-orange-300/20 bg-orange-300/10 text-orange-100";
   return "border-white/10 bg-white/[0.06] text-white/52";
 }
@@ -316,7 +328,7 @@ function ActionChip({
       type="button"
       onClick={() => onClick(action)}
       disabled={loadingAction === `quick:${action}`}
-      className="inline-flex items-center gap-2 rounded-[10px] bg-white/[0.055] px-3 py-2 text-[11px] font-light text-white/72 transition hover:bg-white/[0.1] hover:text-white disabled:cursor-wait disabled:opacity-45"
+      className="inline-flex items-center gap-2 bg-white/[0.06] px-3 py-2 text-[11px] font-light text-white/72 transition hover:bg-white/[0.1] hover:text-white disabled:cursor-wait disabled:opacity-45"
     >
       {actionIcon(action)}
       {actionName(action)}
@@ -336,9 +348,9 @@ function BrainPill({
       type="button"
       onClick={onClick}
       disabled={!onClick}
-      className={`inline-flex items-center gap-2 rounded-[10px] px-3 py-2 text-[11px] font-light transition disabled:cursor-default ${
+      className={`inline-flex items-center gap-2 px-3 py-2 text-[11px] font-light transition disabled:cursor-default ${
         brainConnected
-          ? "bg-sky-200/10 text-sky-50 hover:bg-sky-200/14"
+          ? "bg-[#1b71df]/14 text-white hover:bg-[#1b71df]/20"
           : "bg-white/[0.05] text-white/55"
       }`}
     >
@@ -596,8 +608,8 @@ function ProfessionalDocumentEditor({
   }
 
   return (
-    <div className="mt-7 mx-auto max-w-[920px]">
-      <div className="rounded-[10px] bg-[#ede7dc] p-3 shadow-[0_40px_120px_rgba(0,0,0,0.28)]">
+    <div className="mx-auto max-w-[920px]">
+      <div className={GUI_STUDIO_PAPER_WRAP}>
         <DocumentTextarea
           ref={editorRef}
           value={version.markdown}
@@ -625,7 +637,7 @@ const DocumentTextarea = React.forwardRef<HTMLTextAreaElement, {
         onSelect={onCaptureSelection}
         onKeyUp={onCaptureSelection}
         onMouseUp={onCaptureSelection}
-        className={`w-full resize-y rounded-[10px] px-7 py-6 shadow-inner outline-none placeholder:text-black/30 ${className}`}
+        className={`w-full resize-y px-7 py-6 outline-none placeholder:text-black/30 ${className}`}
       />
     );
   },
@@ -814,15 +826,15 @@ function DetailDrawer({
   ];
 
   return (
-    <aside className="h-full min-h-0 w-[280px] shrink-0 overflow-hidden rounded-[10px] bg-black/20 p-3 backdrop-blur-2xl">
-      <div className="grid grid-cols-2 gap-1.5">
+    <aside className="flex h-full min-h-0 w-full shrink-0 flex-col overflow-hidden bg-white/[0.02]" data-foldder-guionista-sidebar>
+      <div className="grid shrink-0 grid-cols-2 divide-x divide-y divide-white/10 border-b border-white/10">
         {panels.map((panel) => (
           <button
             key={panel.id}
             type="button"
             onClick={() => setActivePanel(panel.id)}
-            className={`flex min-w-0 items-center justify-center gap-1.5 rounded-[10px] px-2 py-2 text-[9px] font-semibold uppercase tracking-[0.08em] ${
-              activePanel === panel.id ? "bg-white text-black" : "bg-white/[0.055] text-white/52 hover:bg-white/[0.09] hover:text-white"
+            className={`flex h-10 min-w-0 items-center justify-center gap-1.5 px-2 text-[9px] font-black uppercase tracking-[0.08em] transition ${
+              activePanel === panel.id ? "bg-white text-slate-950" : "text-white/52 hover:bg-white/[0.07] hover:text-white"
             }`}
             title={panel.label}
           >
@@ -832,7 +844,7 @@ function DetailDrawer({
         ))}
       </div>
 
-      <div className="mt-4 max-h-[calc(100vh-170px)] overflow-y-auto pr-1">
+      <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto p-3">
         {activePanel === "settings" && (
           <section className="space-y-3">
             <div>
@@ -1609,10 +1621,17 @@ export function GuionistaStudio({
   };
 
   const documentTitle = current?.title || normalized.title || "Convierte pensamiento en narrativa";
-  const layoutColumns = inspectorVisible ? "lg:grid-cols-[minmax(0,1fr)_280px]" : "lg:grid-cols-1";
+  const layoutColumns = inspectorVisible ? "grid-cols-[minmax(0,1fr)_280px]" : "grid-cols-1";
 
   const shell = (
-    <div className="fixed inset-0 z-[100090] flex flex-col bg-[#101114] text-white" role="dialog" aria-modal="true">
+    <div
+      className="fixed inset-0 z-[100090] flex flex-col bg-[#0b0f14] text-white"
+      data-foldder-studio-panel
+      data-foldder-studio-canvas
+      data-foldder-guionista-studio
+      role="dialog"
+      aria-modal="true"
+    >
       <FoldderStudioHeader
         nodeType="guionista"
         nodeLabel="Guionista"
@@ -1642,7 +1661,7 @@ export function GuionistaStudio({
         actions={
           <>
             <span
-              className={`hidden items-center px-3 text-[9px] font-black uppercase tracking-[0.08em] md:flex ${saveStateClass(saveState)}`}
+              className={`hidden items-center border px-3 text-[9px] font-black uppercase tracking-[0.08em] md:flex ${saveStateClass(saveState)}`}
             >
               {saveStateLabel(saveState, !!activeAsset, lastSavedRelative)}
             </span>
@@ -1668,14 +1687,14 @@ export function GuionistaStudio({
         }
       />
 
-      <main className="min-h-0 flex-1 overflow-y-auto bg-[radial-gradient(circle_at_18%_18%,rgba(253,176,75,0.13),transparent_32%),radial-gradient(circle_at_88%_20%,rgba(99,212,253,0.11),transparent_34%),linear-gradient(180deg,#121318,#08090b)] px-5 py-6">
-        <div className={`mx-auto grid max-w-7xl gap-5 ${layoutColumns}`}>
-          <section className="min-w-0 p-2 md:p-4">
+      <main className="min-h-0 flex-1 overflow-hidden">
+        <div className={`grid h-full min-h-0 ${layoutColumns} divide-x divide-white/10`}>
+          <section className="custom-scrollbar min-h-0 overflow-y-auto px-4 py-4 md:px-6 md:py-5">
             {(loadingLabel || generationError) && (
-              <div className={`mb-5 flex flex-wrap items-center justify-between gap-3 rounded-[10px] px-4 py-3 text-[12px] font-light ${
+              <div className={`mb-5 flex flex-wrap items-center justify-between gap-3 border px-4 py-3 text-[12px] font-light ${
                 loadingLabel
-                  ? "bg-amber-200/10 text-amber-50"
-                  : "bg-rose-400/10 text-rose-100"
+                  ? "border-[#1b71df]/25 bg-[#1b71df]/12 text-white"
+                  : "border-rose-400/25 bg-rose-400/10 text-rose-100"
               }`}>
                 <span>{loadingLabel || generationError}</span>
                 {generationError && retryLastActionRef.current && !loadingAction && (
@@ -1691,39 +1710,43 @@ export function GuionistaStudio({
             )}
 
             {stage === "create" && (
-              <div className="mx-auto max-w-4xl py-8 md:py-12">
-                <p className="inline-flex items-center gap-2 text-[11px] font-light uppercase tracking-[0.22em] text-white/42"><PenLine className="h-4 w-4" /> Guionista</p>
-                <h2 className="mt-4 max-w-2xl text-5xl font-light tracking-tight text-white">¿Qué quieres escribir?</h2>
-                <textarea
-                  value={normalized.briefing || ""}
-                  onChange={(event) => onChange({ briefing: event.target.value, updatedAt: new Date().toISOString() })}
-                  placeholder="Escribe una idea, briefing, nota o pega un texto aquí. No hace falta que esté perfecto."
-                  className="mt-8 min-h-56 w-full resize-y rounded-[10px] bg-[#f4ead8] px-7 py-6 font-serif text-[19px] leading-[1.75] text-[#17140f] shadow-[0_24px_80px_rgba(0,0,0,0.16)] outline-none placeholder:text-[#17140f]/35"
-                />
-                <div className="mt-7 grid grid-cols-2 gap-2 md:grid-cols-4 lg:grid-cols-7">
+              <div className="mx-auto max-w-4xl py-6 md:py-10">
+                <p className="inline-flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.14em] text-[#1b71df]">
+                  <PenLine className="h-4 w-4" /> Guionista
+                </p>
+                <h2 className="mt-3 max-w-2xl text-4xl font-light tracking-tight text-white md:text-5xl">¿Qué quieres escribir?</h2>
+                <div className={`mt-8 ${GUI_STUDIO_PAPER_WRAP}`}>
+                  <textarea
+                    value={normalized.briefing || ""}
+                    onChange={(event) => onChange({ briefing: event.target.value, updatedAt: new Date().toISOString() })}
+                    placeholder="Escribe una idea, briefing, nota o pega un texto aquí. No hace falta que esté perfecto."
+                    className="min-h-56 w-full resize-y bg-[#fffaf0] px-6 py-5 font-serif text-[18px] leading-[1.75] text-[#17140f] outline-none placeholder:text-[#17140f]/35 md:px-7 md:py-6 md:text-[19px]"
+                  />
+                </div>
+                <div className="mt-6 grid grid-cols-2 gap-px bg-white/10 md:grid-cols-4 lg:grid-cols-7">
                   {FORMAT_OPTIONS.map((format) => (
                     <button
                       key={format.id}
                       type="button"
                       onClick={() => onChange({ format: format.id, updatedAt: new Date().toISOString() })}
-                      className={`rounded-[10px] px-3 py-3 text-left transition ${
+                      className={`px-3 py-3 text-left transition ${
                         normalized.format === format.id
-                          ? "bg-amber-200/14 text-amber-50"
-                          : "bg-white/[0.045] text-white/64 hover:bg-white/[0.08]"
+                          ? "bg-[#1b71df]/28 text-white ring-1 ring-inset ring-[#1b71df]/50"
+                          : "bg-[#0b0f14] text-white/64 hover:bg-white/[0.05] hover:text-white"
                       }`}
                     >
                       <span className="mb-2 block text-white/70">{formatIcon(format.id)}</span>
-                      <span className="block text-[12px] font-semibold uppercase tracking-[0.12em]">{format.title}</span>
+                      <span className="block text-[11px] font-black uppercase tracking-[0.1em]">{format.title}</span>
                       <span className="mt-1 block text-[10px] font-light leading-snug opacity-58">{format.help}</span>
                     </button>
                   ))}
                 </div>
-                <div className="mt-7 flex flex-wrap gap-3">
-                  <button type="button" onClick={createApproaches} disabled={!hasBriefingSeed || loadingAction === "approaches"} className="inline-flex items-center gap-2 rounded-[10px] bg-white px-5 py-3 text-[12px] font-semibold uppercase tracking-[0.16em] text-black shadow-xl transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-35">
+                <div className="mt-6 flex flex-wrap gap-px bg-white/10 p-px">
+                  <button type="button" onClick={createApproaches} disabled={!hasBriefingSeed || loadingAction === "approaches"} className={`${GUI_STUDIO_CTA_PRIMARY} min-w-[12rem] flex-1 justify-center py-3.5`}>
                     <Sparkles className="h-4 w-4" />
                     Crear enfoques
                   </button>
-                  <button type="button" onClick={() => writeVersion(null)} disabled={!hasBriefingSeed || loadingAction === "draft:direct"} className="inline-flex items-center gap-2 rounded-[10px] bg-white/[0.06] px-5 py-3 text-[12px] font-semibold uppercase tracking-[0.16em] text-white/75 transition hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-35">
+                  <button type="button" onClick={() => writeVersion(null)} disabled={!hasBriefingSeed || loadingAction === "draft:direct"} className={`${GUI_STUDIO_CTA_SECONDARY} min-w-[12rem] flex-1 justify-center bg-[#0b0f14] py-3.5`}>
                     <PenLine className="h-4 w-4" />
                     Escribir directamente
                   </button>
@@ -1737,23 +1760,23 @@ export function GuionistaStudio({
             )}
 
             {stage === "approaches" && (
-              <div className="py-4">
-                <button type="button" onClick={() => setStage("create")} className="text-[11px] font-light uppercase tracking-[0.18em] text-white/45 hover:text-white">
+              <div className="py-2">
+                <button type="button" onClick={() => setStage("create")} className="text-[10px] font-black uppercase tracking-[0.12em] text-white/45 hover:text-white">
                   Volver
                 </button>
-                <h2 className="mt-4 text-4xl font-light tracking-tight">Elige un enfoque editorial</h2>
+                <h2 className="mt-4 text-3xl font-light tracking-tight md:text-4xl">Elige un enfoque editorial</h2>
                 <p className="mt-2 max-w-2xl text-sm font-light leading-relaxed text-white/48">Tres formas de convertir la misma idea en narrativa. Elige una y Guionista escribe el primer borrador.</p>
-                <div className="mt-7 grid gap-4 md:grid-cols-3">
+                <div className="mt-6 grid gap-px bg-white/10 md:grid-cols-3">
                   {(normalized.approaches ?? []).slice(0, 3).map((approach) => (
-                    <article key={approach.id} className="flex min-h-72 flex-col rounded-[10px] bg-white/[0.04] p-5">
-                      <Sparkles className="h-5 w-5 text-amber-200" strokeWidth={1.6} />
+                    <article key={approach.id} className="flex min-h-72 flex-col bg-[#0b0f14] p-5">
+                      <Sparkles className="h-5 w-5 text-[#1b71df]" strokeWidth={1.6} />
                       <h3 className="mt-5 text-2xl font-light leading-tight text-white">{approach.title}</h3>
                       <p className="mt-4 text-sm font-light leading-relaxed text-white/64">{approach.idea}</p>
-                      <p className="mt-4 text-[11px] font-light uppercase tracking-[0.12em] text-white/42">Tono: {approach.tone}</p>
+                      <p className="mt-4 text-[10px] font-black uppercase tracking-[0.12em] text-white/42">Tono: {approach.tone}</p>
                       {approach.rationale && (
                         <p className="mt-3 text-[11px] font-light leading-relaxed text-white/42">{approach.rationale}</p>
                       )}
-                      <button type="button" onClick={() => writeVersion(approach)} disabled={loadingAction === `draft:${approach.id}`} className="mt-auto inline-flex items-center justify-center gap-2 rounded-[10px] bg-white px-4 py-2.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-black transition hover:bg-amber-100 disabled:cursor-wait disabled:opacity-55">
+                      <button type="button" onClick={() => writeVersion(approach)} disabled={loadingAction === `draft:${approach.id}`} className={`${GUI_STUDIO_CTA_PRIMARY} mt-auto w-full justify-center py-2.5 text-[10px] disabled:cursor-wait disabled:opacity-55`}>
                         <Check className="h-3.5 w-3.5" />
                         Usar este enfoque
                       </button>
@@ -1764,67 +1787,71 @@ export function GuionistaStudio({
             )}
 
             {stage === "editor" && current && (
-              <div className="mx-auto max-w-[1500px]">
-                <div className="flex flex-wrap items-start justify-between gap-4">
-                  <div>
-                    <p className="text-[10px] font-light uppercase tracking-[0.24em] text-white/40">Documento activo</p>
-                    <h2 className="mt-1 max-w-3xl text-4xl font-light tracking-tight text-white">{current.title}</h2>
+              <div className="mx-auto flex max-w-[1500px] flex-col">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-black uppercase tracking-[0.12em] text-[#1b71df]">
+                      {formatName(current.format)} · {versionLabel(Math.max(0, versions.findIndex((version) => version.id === current.id)), current)}
+                    </p>
+                    <p className="mt-1 truncate text-sm font-light text-white/62">{current.title}</p>
                   </div>
-                  <div className="flex flex-wrap items-center justify-end gap-2">
-                    <span className={`rounded-[10px] px-3 py-1.5 text-[11px] font-light md:hidden ${saveStateClass(saveState)}`}>
-                      {saveStateLabel(saveState, !!activeAsset, lastSavedRelative)}
-                    </span>
-                    {([
-                      ["improve", "Mejorar", <WandSparkles key="i" className="h-3.5 w-3.5" />],
-                      ["derive", "Derivar", <Share2 key="d" className="h-3.5 w-3.5" />],
-                      ["review", comments.some((comment) => comment.status === "pending") ? `Revisión · ${comments.filter((comment) => comment.status === "pending").length}` : "Revisión", <MessageSquare key="r" className="h-3.5 w-3.5" />],
-                      ["settings", "Ajustes", <Settings2 key="s" className="h-3.5 w-3.5" />],
-                    ] as const).map(([panel, label, icon]) => (
-                      <button
-                        key={panel}
-                        type="button"
-                        onClick={() => {
-                          setActivePanel(panel);
-                          setInspectorOpen(true);
-                        }}
-                        className={`inline-flex items-center gap-2 rounded-[10px] px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.12em] transition ${
-                          inspectorOpen && activePanel === panel
-                            ? "bg-white text-black"
-                            : "bg-white/[0.06] text-white/58 hover:bg-white/10 hover:text-white"
-                        }`}
-                      >
-                        {icon}
-                        {label}
-                      </button>
-                    ))}
-                    {inspectorOpen && (
-                      <button
-                        type="button"
-                        onClick={() => setInspectorOpen(false)}
-                        className="rounded-[10px] bg-white/[0.04] px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-white/42 hover:bg-white/10 hover:text-white"
-                      >
-                        Ocultar panel
-                      </button>
-                    )}
-                  </div>
+                  <span className={`border px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.08em] md:hidden ${saveStateClass(saveState)}`}>
+                    {saveStateLabel(saveState, !!activeAsset, lastSavedRelative)}
+                  </span>
                 </div>
 
-                <div className="mt-7 flex flex-wrap items-center gap-3 border-y border-white/8 py-4">
-                  <div className="mr-2 text-[12px] font-light text-white/52">
-                    Versión actual: <span className="text-white/80">{versionLabel(Math.max(0, versions.findIndex((version) => version.id === current.id)), current)}</span>
-                  </div>
+                <div className={GUI_STUDIO_TOOLBAR}>
+                  {([
+                    ["improve", "Mejorar", <WandSparkles key="i" className="h-3.5 w-3.5" />],
+                    ["derive", "Derivar", <Share2 key="d" className="h-3.5 w-3.5" />],
+                    ["review", comments.some((comment) => comment.status === "pending") ? `Revisión · ${comments.filter((comment) => comment.status === "pending").length}` : "Revisión", <MessageSquare key="r" className="h-3.5 w-3.5" />],
+                    ["settings", "Ajustes", <Settings2 key="s" className="h-3.5 w-3.5" />],
+                  ] as const).map(([panel, label, icon]) => (
+                    <button
+                      key={panel}
+                      type="button"
+                      onClick={() => {
+                        setActivePanel(panel);
+                        setInspectorOpen(true);
+                      }}
+                      className={`${GUI_STUDIO_TOOLBAR_BTN} ${
+                        inspectorOpen && activePanel === panel ? GUI_STUDIO_TOOLBAR_BTN_ACTIVE : GUI_STUDIO_TOOLBAR_BTN_IDLE
+                      }`}
+                    >
+                      {icon}
+                      {label}
+                    </button>
+                  ))}
+                  {inspectorOpen ? (
+                    <button
+                      type="button"
+                      onClick={() => setInspectorOpen(false)}
+                      className={`${GUI_STUDIO_TOOLBAR_BTN} ${GUI_STUDIO_TOOLBAR_BTN_IDLE} max-w-[9rem]`}
+                    >
+                      Ocultar panel
+                    </button>
+                  ) : null}
+                </div>
+
+                <div className="mb-4 flex flex-wrap items-center gap-px border border-white/10 bg-white/[0.03] p-px">
                   {versions.map((version, index) => (
                     <button
                       key={version.id}
                       type="button"
                       onClick={() => onChange(mergeVersionIntoData(normalized, version, versions))}
-                      className={`rounded-[10px] px-3 py-1.5 text-[11px] transition ${version.id === current.id ? "bg-white text-black" : "bg-white/[0.04] text-white/54 hover:bg-white/10 hover:text-white"}`}
+                      className={`px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.08em] transition ${
+                        version.id === current.id ? "bg-white text-slate-950" : "bg-[#0b0f14] text-white/54 hover:bg-white/[0.06] hover:text-white"
+                      }`}
                     >
                       V{index + 1}
                     </button>
                   ))}
-                  <button type="button" onClick={() => onChange(mergeVersionIntoData(normalized, current, versions))} className="rounded-[10px] bg-white/[0.035] px-3 py-1.5 text-[10px] uppercase tracking-[0.14em] text-white/45 transition hover:bg-white/10 hover:text-white">
-                    Restaurar esta versión
+                  <button
+                    type="button"
+                    onClick={() => onChange(mergeVersionIntoData(normalized, current, versions))}
+                    className="bg-[#0b0f14] px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.08em] text-white/45 transition hover:bg-white/[0.06] hover:text-white"
+                  >
+                    Restaurar
                   </button>
                 </div>
 
@@ -1849,7 +1876,7 @@ export function GuionistaStudio({
                     <h2 className="mt-1 text-4xl font-light tracking-tight">Adaptaciones sociales</h2>
                     <p className="mt-2 max-w-2xl text-sm font-light leading-relaxed text-white/52">Estas adaptaciones se guardarán como posts independientes en Generated Media.</p>
                   </div>
-                  <button type="button" onClick={saveSocialPack} className="inline-flex items-center gap-2 rounded-[10px] bg-white px-5 py-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-black transition hover:bg-amber-100">
+                  <button type="button" onClick={saveSocialPack} className={`${GUI_STUDIO_CTA_PRIMARY} py-3`}>
                     <Save className="h-4 w-4" />
                     Guardar adaptaciones
                   </button>

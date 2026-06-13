@@ -5,6 +5,7 @@ import { Position } from "@xyflow/react";
 import { FoldderDataHandle, type FoldderHandleDataType } from "../FoldderDataHandle";
 import { NodeIcon } from "../foldder-icons";
 import { FoldderNodeHeaderTitle, NodeLabel } from "../foldder-node-ui";
+import { FoldderStudioTouchedMark } from "./foldder-studio-touched-mark";
 
 export type StudioCanvasNodeHandleSpec = {
   id: string;
@@ -40,6 +41,7 @@ export type StudioCanvasNodeShellProps = {
   variant?: "default" | "frameless";
   material?: "media" | "glass";
   error?: boolean;
+  studioTouched?: boolean;
 };
 
 export const StudioCanvasNodeShell = React.forwardRef<HTMLDivElement, StudioCanvasNodeShellProps>(function StudioCanvasNodeShell({
@@ -65,6 +67,7 @@ export const StudioCanvasNodeShell = React.forwardRef<HTMLDivElement, StudioCanv
   variant = "default",
   material = "glass",
   error,
+  studioTouched = false,
 }, ref) {
   const variantClassName =
     variant === "frameless"
@@ -74,13 +77,16 @@ export const StudioCanvasNodeShell = React.forwardRef<HTMLDivElement, StudioCanv
   return (
     <div
       ref={ref}
-      className={[baseClassName, nodeTypeClassName, variantClassName, className].filter(Boolean).join(" ")}
+      className={[baseClassName, nodeTypeClassName, variantClassName, className, studioTouched ? "foldder-node--studio-touched" : ""]
+        .filter(Boolean)
+        .join(" ")}
       style={{
         minWidth,
         width,
         ...style,
       }}
     >
+      {studioTouched ? <FoldderStudioTouchedMark nodeType={nodeType} /> : null}
       <NodeLabel id={nodeId} label={label} defaultLabel={defaultLabel} />
 
       <div className={["node-header", headerClassName].filter(Boolean).join(" ")}>

@@ -4,6 +4,7 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronRight } from 'lucide-react';
 import { NODE_REGISTRY } from './nodeRegistry';
+import { NODE_SIDEBAR_TILE_BACKGROUND_SRC } from './node-sidebar-tile-bg';
 import { NodeIcon } from './foldder-icons';
 import { SIDEBAR_HOVER_HELP } from './sidebarHoverHelp';
 import { setLibraryDragPreviewImage } from './library-drag-preview';
@@ -43,18 +44,7 @@ type SidebarProps = {
   paletteDragActive?: boolean;
 };
 
-const SIDEBAR_TILE_BACKGROUND_SRC: Record<string, string> = {
-  projectBrain: "/assets/nodes/brain-sidebar-bg.png",
-  cine: "/assets/nodes/cine-sidebar-bg.png",
-  designer: "/assets/nodes/designer-sidebar-bg.png",
-  guionista: "/assets/nodes/guionista-sidebar-bg.png",
-  inspiration: "/assets/nodes/inspiration-sidebar-bg.png",
-  geminiVideo: "/assets/nodes/gemini-video-sidebar-bg.png",
-  nanoBanana: "/assets/nodes/nano-banana-sidebar-bg.png",
-  photoRoom: "/assets/nodes/photoroom-sidebar-bg.png",
-  presenter: "/assets/nodes/presenter-sidebar-bg.png",
-  video_editor: "/assets/nodes/video-editor-sidebar-bg.png",
-};
+const SIDEBAR_TILE_BACKGROUND_SRC = NODE_SIDEBAR_TILE_BACKGROUND_SRC;
 
 const SIDEBAR_RASTER_ICON_SRC: Record<string, string> = {
   designer: '/designer_icon.svg',

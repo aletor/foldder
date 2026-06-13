@@ -7,6 +7,7 @@ import {
   Position,
   useNodeId,
   useReactFlow,
+  useNodes,
   useStore,
   useUpdateNodeInternals,
   type Edge,
@@ -45,6 +46,8 @@ import { nodeFrameFromSnapshot, selectNodeFrameSnapshot } from "../react-flow-se
 import { useCanvasPerformanceModeRef } from "../use-canvas-performance-mode";
 import { useFoldderRenderMetric } from "../use-performance-metrics";
 import { useNodeViewportVisibility } from "../use-node-viewport-visibility";
+import { hasFoldderStudioTouched, hasNanoBananaStudioTouched, touchStudioNodeData } from "../studio-node/foldder-studio-touched";
+import { FoldderStudioTouchedMark } from "../studio-node/foldder-studio-touched-mark";
 
 interface BaseNodeData {
   value?: string;
@@ -2218,7 +2221,9 @@ NanoBananaStudio.displayName = 'NanoBananaStudio';
 
 export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected }: NodeProps) {
   useFoldderRenderMetric("NanoBananaNode", id);
-  const nodeData = data as BaseNodeData & {
+  const nodes = useNodes();
+  const flowNode = nodes.find((node) => node.id === id);
+  const nodeData = (flowNode?.data ?? data) as BaseNodeData & {
     aspect_ratio?: string;
     resolution?: string;
     modelKey?: string;
@@ -2232,6 +2237,9 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   const [result, setResult] = useState<string | null>(null);
   const [showFullSize, setShowFullSize] = useState(false);
   const [showStudio, setShowStudio] = useState(false);
+  const [studioTouched, setStudioTouched] = useState(
+    () => hasNanoBananaStudioTouched(data as Record<string, unknown>),
+  );
   const [standardShell, setStandardShell] = useState<StandardStudioShellConfig | null>(null);
   const currentFrameSnapshot = useStore(
     useCallback((state: ReactFlowState<Node, Edge>) => selectNodeFrameSnapshot(state, id), [id]),
@@ -2650,8 +2658,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
           const versions = captureCurrentOutput(n.data, out, 'graph-run');
           return {
             ...n,
-            data: {
-              ...n.data,
+            data: touchStudioNodeData(n.data as Record<string, unknown>, {
               value: out,
               type: 'image',
               ...(typeof json.key === 'string' ? { s3Key: json.key } : {}),
@@ -2659,10 +2666,11 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
               generatedByAiSource: "gemini-image-generator",
               generationHistory: h,
               _assetVersions: versions,
-            },
+            }),
           };
         }));
         genFinishedOk = true;
+        setStudioTouched(true);
         setBrainImageDiagSync(diagForRun);
         brainTelemetry.track({
           kind: "IMAGE_GENERATED",
@@ -2763,11 +2771,25 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
 
   const showNanoEmptyBackground = !outputImage && !(refImgPreview && nodeMediaVisible);
 
+  useEffect(() => {
+    if (hasNanoBananaStudioTouched(nodeData as Record<string, unknown>)) {
+      setStudioTouched(true);
+      if (!hasFoldderStudioTouched(nodeData as Record<string, unknown>)) {
+        setNodes((nds) =>
+          nds.map((n) =>
+            n.id === id ? { ...n, data: touchStudioNodeData(n.data as Record<string, unknown>) } : n,
+          ),
+        );
+      }
+    }
+  }, [id, nodeData, setNodes]);
+
   return (
-    <div className={`custom-node processor-node nano-banana-node group/node foldder-node--frameless node--media foldder-frameless-accent-image ${showNanoEmptyBackground ? "nano-banana-node--empty" : ""} ${status === 'error' ? 'foldder-node--error' : ''} ${isActivelyGenerating ? 'node-glow-running' : ''}`}
+    <div className={`custom-node processor-node nano-banana-node group/node foldder-node--frameless node--media foldder-frameless-accent-image ${studioTouched ? "foldder-node--studio-touched" : ""} ${showNanoEmptyBackground ? "nano-banana-node--empty" : ""} ${status === 'error' ? 'foldder-node--error' : ''} ${isActivelyGenerating ? 'node-glow-running' : ''}`}
          style={{ minWidth: 200, minHeight: 120 }}
          ref={frameRef}>
       <FoldderNodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={STUDIO_NODE_MAX_HEIGHT} keepAspectRatio isVisible={selected} />
+      {studioTouched ? <FoldderStudioTouchedMark nodeType="nanoBanana" /> : null}
       <NodeLabel id={id} label={nodeData.label} defaultLabel="CREACION DE IMAGEN" />
 
       {/* ── Handles ── */}
@@ -3054,15 +3076,15 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
                 custom: { surface: "studio_output_committed" },
               });
               setResult(url);
+              setStudioTouched(true);
               setNodes((nds) => nds.map((n) => {
                 if (n.id !== id) return n;
-                const data: Record<string, unknown> = {
-                  ...n.data,
+                const data: Record<string, unknown> = touchStudioNodeData(n.data as Record<string, unknown>, {
                   value: url,
                   type: 'image',
                   generatedByAi: true,
                   generatedByAiSource: "gemini-image-generator:studio",
-                };
+                });
                 if (s3Key) data.s3Key = s3Key;
                 else delete data.s3Key;
                 return { ...n, data };

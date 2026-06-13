@@ -120,6 +120,12 @@ const MULTI_SLOT_NODES: Record<string, Record<string, string[]>> = {
   photoRoom: {
     image: ['in_0', 'in_1', 'in_2', 'in_3', 'in_4', 'in_5', 'in_6', 'in_7'],
   },
+  video_editor: {
+    video: ['video_0', 'video_1', 'video_2', 'video_3', 'video_4', 'video_5', 'video_6', 'video_7'],
+  },
+  videoEditor: {
+    video: ['video_0', 'video_1', 'video_2', 'video_3', 'video_4', 'video_5', 'video_6', 'video_7'],
+  },
   vfxGenerator: { prompt: ['prompt'] },
 };
 

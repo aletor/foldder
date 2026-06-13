@@ -170,6 +170,10 @@ async function compactGeminiStreamReferences(body: Record<string, unknown>): Pro
   return next;
 }
 
+function isTechnicalGeminiDetail(detail: string): boolean {
+  return /^(finishReason|promptFeedback):/i.test(detail.trim());
+}
+
 export async function geminiGenerateWithServerProgress(
   body: Record<string, unknown>,
   onProgress: (pct: number, stage: string) => void
@@ -245,7 +249,7 @@ export async function geminiGenerateWithServerProgress(
       const main = typeof msg.error === "string" && msg.error.trim() ? msg.error.trim() : "Error en generación";
       const det =
         typeof msg.details === "string" && msg.details.trim() ? msg.details.trim().slice(0, 600) : "";
-      const combined = det ? `${main} — ${det}` : main;
+      const combined = det && !isTechnicalGeminiDetail(det) ? `${main} — ${det}` : main;
       const normalized = normalizeStreamErrorMessage(
         msg.status,
         sanitizeUserFacingErrorMessage(combined, { status: msg.status }),

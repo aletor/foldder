@@ -54,24 +54,9 @@ export const CANVAS_BACKGROUNDS: CanvasBackgroundOption[] = [
     url: "/wallpapers/unsplash-city-night.jpg",
   },
   {
-    id: "unsplash-earth-space",
-    label: "Tierra · espacio",
-    url: "/wallpapers/unsplash-earth-space.jpg",
-  },
-  {
-    id: "unsplash-forest",
-    label: "Bosque",
-    url: "/wallpapers/unsplash-forest.jpg",
-  },
-  {
     id: "unsplash-abstract-gradient",
     label: "Gradiente suave",
     url: "/wallpapers/unsplash-abstract-gradient.jpg",
-  },
-  {
-    id: "pixabay-mountain-5242534",
-    label: "Montañas",
-    url: "/wallpapers/pixabay-mountain-5242534.jpg",
   },
   {
     id: "pixabay-sea-3652697",

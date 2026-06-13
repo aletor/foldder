@@ -86,6 +86,8 @@ import {
   resolveAspectLockedNodeFrame,
   resolveNodeChromeHeight,
 } from "../studio-node-aspect";
+import { hasFoldderStudioTouched, touchStudioNodeData } from "../studio-node/foldder-studio-touched";
+import { FoldderStudioTouchedMark } from "../studio-node/foldder-studio-touched-mark";
 import { StudioNodePortal } from "../studio-node/studio-node-architecture";
 
 type ImageCreationAdvancedNodeData = {
@@ -2643,6 +2645,11 @@ export const ImageCreationAdvancedNode = memo(function ImageCreationAdvancedNode
 
   const patchData = useCallback(
     (patch: Partial<ImageCreationAdvancedNodeData>) => {
+      const patchOutputUrl = (patch as Record<string, unknown>).outputUrl;
+      const shouldMarkTouched =
+        (typeof patch.value === "string" && patch.value.length > 0) ||
+        (typeof patchOutputUrl === "string" && patchOutputUrl.length > 0);
+
       setNodes((nds) => {
         let changed = false;
         const nextNodes = nds.map((node) => {
@@ -2653,12 +2660,12 @@ export const ImageCreationAdvancedNode = memo(function ImageCreationAdvancedNode
           );
           if (!patchChanged) return node;
           changed = true;
+          const nextData = shouldMarkTouched
+            ? touchStudioNodeData(node.data as Record<string, unknown>, patch as Record<string, unknown>)
+            : { ...node.data, ...patch };
           return {
             ...node,
-            data: {
-              ...node.data,
-              ...patch,
-            },
+            data: nextData,
           };
         });
         return changed ? nextNodes : nds;
@@ -2674,6 +2681,7 @@ export const ImageCreationAdvancedNode = memo(function ImageCreationAdvancedNode
       style={{ minWidth: 200, minHeight: 120 }}
     >
       <NodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={1400} keepAspectRatio={Boolean(previewUrl)} isVisible={selected} />
+      {hasFoldderStudioTouched(nodeData as Record<string, unknown>) ? <FoldderStudioTouchedMark nodeType="imageCreationAdvanced" /> : null}
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Image Creation Advanced" />
 
       <div className="handle-wrapper handle-left" style={{ top: "34%" }}>

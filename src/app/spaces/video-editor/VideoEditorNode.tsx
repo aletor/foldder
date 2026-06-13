@@ -2,15 +2,19 @@
 
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { NodeResizer, Position, useReactFlow, useStore, type Edge, type Node, type NodeProps, type ReactFlowState } from "@xyflow/react";
+import { NodeResizer, Position, useNodeId, useReactFlow, useStore, useUpdateNodeInternals, type Edge, type Node, type NodeProps, type ReactFlowState } from "@xyflow/react";
 import { shallow } from "zustand/shallow";
 import { AlertTriangle, Captions, CheckCircle2, Clock, Copy, Download, Eye, EyeOff, File, Film, ImageIcon, Layers, Lock, Music, Pause, Play, Plus, RefreshCw, Scissors, SkipBack, SkipForward, StepBack, StepForward, Trash2, Unlock, Video, Volume2, VolumeX, X } from "lucide-react";
 
 import { downloadS3Object, forceDownloadUrl } from "@/lib/browser-download";
+import { FOLDDER_FIT_VIEW_EASE } from "@/lib/fit-view-ease";
 import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
 import { ScrubNumberInput } from "../ScrubNumberInput";
 import { FoldderDataHandle } from "../FoldderDataHandle";
-import { NodeLabel } from "../foldder-node-ui";
+import { FoldderStudioHeader, foldderStudioHeaderActionClassName } from "../FoldderStudioHeader";
+import { NodeLabel, FoldderStudioModeCenterButton } from "../foldder-node-ui";
+import { hasVideoEditorStudioTouched, touchStudioNodeData } from "../studio-node/foldder-studio-touched";
+import { FoldderStudioTouchedMark } from "../studio-node/foldder-studio-touched-mark";
 import { readMediaListFromNode } from "../media-list-consumers";
 import type { MediaListItem, MediaListOutput } from "../media-list-output";
 import { generateTimelineAudio } from "./video-editor-audio-generation-service";
@@ -29,6 +33,7 @@ import {
   getActiveVisualClipAtTime,
   getVideoEditorClipMaxDuration,
   getVideoEditorTimelineTracks,
+  getVideoEditorNodePreviewClip,
   ingestMediaListToVideoEditor,
   moveVideoEditorClip,
   normalizeVideoEditorData,
@@ -41,6 +46,14 @@ import {
   splitVideoEditorClipAtTime,
   trimVideoEditorClipStart,
 } from "./video-editor-engine";
+import {
+  buildMediaListFromConnectedVideos,
+  getVisibleVideoEditorVideoSlots,
+  mergeVideoEditorIncomingMedia,
+  selectVideoEditorVideoInputState,
+  VIDEO_EDITOR_VIDEO_SLOT_IDS,
+  VIDEO_EDITOR_VIDEO_SLOTS,
+} from "./video-editor-connected-media";
 import {
   createDefaultVideoEditorRenderState,
   type TimelineAudioRequest,
@@ -57,12 +70,48 @@ import {
   exportSubtitleDocumentToVtt,
 } from "./subtitle-utils";
 import { useFoldderRenderMetric } from "../use-performance-metrics";
+import { useNodeViewportVisibility } from "../use-node-viewport-visibility";
+import {
+  foldderGridFrame,
+  getStaticNodeGridAspectRatio,
+  snapAspectDimensionsToGrid,
+} from "../canvas-grid-layout";
 
 const VIDEO_EDITOR_URL_TTL_MS = 50 * 60 * 1000;
 const videoEditorPresignedUrlCache = new globalThis.Map<string, { url: string; expiresAt: number }>();
 const videoEditorPresignInFlight = new globalThis.Map<string, Promise<string | null>>();
 
 const VIDEO_EDITOR_EMPTY_BACKGROUND_SRC = "/assets/nodes/video-editor-empty.jpg";
+const VIDEO_EDITOR_NODE_MAX_HEIGHT = 2200;
+const VIDEO_EDITOR_ASPECT_RATIO = getStaticNodeGridAspectRatio("video_editor") ?? 524 / 308;
+const VIDEO_EDITOR_MIN_WIDTH = 200;
+const VIDEO_EDITOR_MIN_HEIGHT = Math.max(120, Math.round(VIDEO_EDITOR_MIN_WIDTH / VIDEO_EDITOR_ASPECT_RATIO));
+const NODE_RESIZE_END_FIT_PADDING = 0.8;
+
+function VideoEditorNodeResizer(props: React.ComponentProps<typeof NodeResizer>) {
+  const nodeId = useNodeId();
+  const { fitView } = useReactFlow();
+  const { onResizeEnd, ...rest } = props;
+  return (
+    <NodeResizer
+      {...rest}
+      onResizeEnd={(event, params) => {
+        onResizeEnd?.(event, params);
+        if (nodeId) {
+          requestAnimationFrame(() => {
+            void fitView({
+              nodes: [{ id: nodeId }],
+              padding: NODE_RESIZE_END_FIT_PADDING,
+              duration: 560,
+              interpolate: "smooth",
+              ...FOLDDER_FIT_VIEW_EASE,
+            });
+          });
+        }
+      }}
+    />
+  );
+}
 
 function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -193,6 +242,34 @@ function useConnectedMediaList(nodeId: string): MediaListOutput | null {
   }, [source]);
 }
 
+function useVideoEditorIncomingMedia(nodeId: string) {
+  const videoInputState = useStore(
+    useCallback((state: ReactFlowState<Node, Edge>) => selectVideoEditorVideoInputState(state, nodeId), [nodeId]),
+    shallow,
+  );
+  const sourceMediaList = useConnectedMediaList(nodeId);
+  const connectedVideosMediaList = useMemo(
+    () => buildMediaListFromConnectedVideos(videoInputState.slots),
+    [videoInputState.slots],
+  );
+  const combinedSourceMediaList = useMemo(
+    () => mergeVideoEditorIncomingMedia(sourceMediaList, connectedVideosMediaList),
+    [connectedVideosMediaList, sourceMediaList],
+  );
+  const visibleVideoSlotIds = useMemo(
+    () => getVisibleVideoEditorVideoSlots(videoInputState.connectedBySlot),
+    [videoInputState.connectedBySlot],
+  );
+  return {
+    sourceMediaList,
+    connectedVideosMediaList,
+    combinedSourceMediaList,
+    connectedByVideoSlot: videoInputState.connectedBySlot,
+    visibleVideoSlotIds,
+    connectedVideoCount: connectedVideosMediaList?.items.length ?? 0,
+  };
+}
+
 function clipStats(data: VideoEditorNodeData) {
   const clips = Object.values(data.tracks).flat();
   return {
@@ -258,11 +335,11 @@ function ClipPreview({
     }
   }, [clip, isPlaying, mediaVisible, playheadTime]);
   if (!clip) {
-    return <div className="flex h-full items-center justify-center rounded-none border border-dashed border-white/12 bg-black text-sm text-white/32">Sin clip visual en este punto.</div>;
+    return <div className="flex h-full items-center justify-center bg-black text-sm text-white/32">Sin clip visual en este punto.</div>;
   }
   if (!mediaVisible && (clip.mediaType === "video" || clip.mediaType === "image")) {
     return (
-      <div className="flex h-full items-center justify-center rounded-none border border-white/10 bg-black text-xs font-black uppercase tracking-[0.14em] text-white/32">
+      <div className="flex h-full items-center justify-center bg-black text-xs font-black uppercase tracking-[0.12em] text-white/32">
         Preview pausada fuera de viewport
       </div>
     );
@@ -439,6 +516,9 @@ function TimelineClipFace({ clip, mediaVisible }: { clip: VideoEditorClip; media
   );
 }
 
+const VIDEO_EDITOR_INSPECTOR_INPUT =
+  "w-full rounded-none border border-white/10 bg-white/[0.055] px-2 py-1 text-[11px] text-white outline-none";
+
 function NumberInput({
   value,
   onChange,
@@ -468,7 +548,7 @@ function NumberInput({
       onScrubEnd={() => undefined}
       roundFn={round}
       title="Arrastra horizontalmente para ajustar. Mayús = x10."
-      className="w-full cursor-ew-resize rounded-none border border-white/10 bg-white/[0.055] px-3 py-2 text-sm text-white outline-none"
+      className={`${VIDEO_EDITOR_INSPECTOR_INPUT} cursor-ew-resize`}
     />
   );
 }
@@ -476,15 +556,66 @@ function NumberInput({
 function InspectorSection({
   title,
   children,
+  compact,
 }: {
   title: string;
   children: React.ReactNode;
+  compact?: boolean;
 }) {
   return (
-    <section className="rounded-none border border-white/10 bg-black/18 p-3">
-      <div className="mb-3 text-[10px] font-black uppercase tracking-[0.14em] text-white/36">{title}</div>
-      <div className="grid gap-3">{children}</div>
+    <section className={cx("grid", compact ? "gap-1" : "gap-2")}>
+      <div className={cx("font-black uppercase tracking-[0.12em] text-white/36", compact ? "text-[9px]" : "text-[10px] tracking-[0.14em]")}>{title}</div>
+      <div className={cx("grid", compact ? "gap-1.5" : "gap-2")}>{children}</div>
     </section>
+  );
+}
+
+function TimelineClipActions({
+  selectedClip,
+  canSplitSelectedClip,
+  onSplit,
+  onDuplicate,
+  onDelete,
+}: {
+  selectedClip: VideoEditorClip | null;
+  canSplitSelectedClip: boolean;
+  onSplit: () => void;
+  onDuplicate: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div className="flex shrink-0 items-center gap-0.5 border-r border-white/10 pr-2">
+      <button
+        type="button"
+        disabled={!selectedClip || !canSplitSelectedClip}
+        onClick={onSplit}
+        title="Cortar clip en el playhead"
+        className="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-black uppercase tracking-[0.06em] text-white/55 hover:bg-white/[0.06] hover:text-white/85 disabled:cursor-not-allowed disabled:opacity-30"
+      >
+        <Scissors size={12} />
+        Cortar
+      </button>
+      <button
+        type="button"
+        disabled={!selectedClip}
+        onClick={onDuplicate}
+        title="Duplicar clip seleccionado"
+        className="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-black uppercase tracking-[0.06em] text-white/55 hover:bg-white/[0.06] hover:text-white/85 disabled:cursor-not-allowed disabled:opacity-30"
+      >
+        <Copy size={12} />
+        Duplicar
+      </button>
+      <button
+        type="button"
+        disabled={!selectedClip}
+        onClick={onDelete}
+        title="Borrar clip seleccionado"
+        className="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-black uppercase tracking-[0.06em] text-rose-200/75 hover:bg-rose-500/10 hover:text-rose-100 disabled:cursor-not-allowed disabled:opacity-30"
+      >
+        <Trash2 size={12} />
+        Borrar
+      </button>
+    </div>
   );
 }
 
@@ -839,6 +970,7 @@ function VideoEditorStudio({
   const timelineViewportRef = useRef<HTMLDivElement | null>(null);
   const [audioModalType, setAudioModalType] = useState<TimelineAudioRequest["type"] | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [previewFullscreen, setPreviewFullscreen] = useState(false);
   const [livePlayhead, setLivePlayhead] = useState(data.playheadTime);
   const [mediaFilter, setMediaFilter] = useState<"all" | "video" | "image" | "audio" | "pending">("all");
   const [inspectorTab, setInspectorTab] = useState<VideoEditorInspectorTab>("clip");
@@ -1038,6 +1170,7 @@ function VideoEditorStudio({
   }, [timelineClips, timelineTracks]);
 
   const closeStudio = useCallback(() => {
+    setPreviewFullscreen(false);
     commit({ ...data, playheadTime: livePlayhead });
     onClose();
   }, [commit, data, livePlayhead, onClose]);
@@ -1145,6 +1278,10 @@ function VideoEditorStudio({
       if (event.key.toLowerCase() === "x") {
         event.preventDefault();
         splitSelectedClip();
+      }
+      if (event.key.toLowerCase() === "p") {
+        event.preventDefault();
+        setPreviewFullscreen((current) => !current);
       }
     };
     window.addEventListener("keydown", onKeyDown, true);
@@ -1550,38 +1687,105 @@ function VideoEditorStudio({
   }, [renderReadyKey, renderState.status]);
 
   return createPortal(
-    <div ref={studioRootRef} tabIndex={-1} data-foldder-studio-canvas="video-editor" className="fixed inset-0 z-[100070] bg-slate-950/88 p-4 text-white backdrop-blur-md outline-none">
-      <div className="mx-auto grid h-full max-w-[1720px] grid-rows-[auto_1fr] overflow-hidden rounded-none border border-white/12 bg-[#070b12] shadow-2xl">
-        <header className="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 bg-white/[0.035] px-5 py-4">
-          <div>
-            <div className="text-[10px] font-black uppercase tracking-[0.18em] text-cyan-100/42">Video Editor</div>
-            <h2 className="text-2xl font-black tracking-[-0.05em]">Timeline editable</h2>
-            <p className="mt-1 text-sm text-white/42">{sourceMediaList ? `Media list desde ${sourceMediaList.sourceNodeType} · ${sourceMediaList.items.length} items` : "Sin medios conectados"}</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
+    <div
+      ref={studioRootRef}
+      tabIndex={-1}
+      data-foldder-studio-canvas="video-editor"
+      data-foldder-video-editor-studio=""
+      className="fixed inset-0 z-[100070] flex h-[100dvh] max-h-[100dvh] flex-col overflow-hidden overscroll-none bg-[#0b0f14] text-white outline-none"
+      data-foldder-video-editor-preview-fullscreen={previewFullscreen ? "" : undefined}
+    >
+      <FoldderStudioHeader
+        nodeType="video_editor"
+        nodeLabel="Video Editor"
+        subtitle={
+          previewFullscreen
+            ? "Pantalla completa · P para salir"
+            : sourceMediaList
+              ? `${sourceMediaList.items.length} medios · ${formatTime(data.totalDurationSeconds)} timeline`
+              : "Conecta vídeos o una media list"
+        }
+        onClose={closeStudio}
+        closeLabel="Cerrar Studio"
+        actions={
+          <>
             <button
               type="button"
               onClick={openRenderConfirmation}
               disabled={renderState.status === "preparing" || renderState.status === "rendering" || renderState.status === "uploading"}
-              className="inline-flex items-center gap-2 rounded-none bg-cyan-300/18 px-4 py-2 text-xs font-black uppercase tracking-[0.1em] text-cyan-50 disabled:opacity-45"
+              className={`${foldderStudioHeaderActionClassName()} bg-[#3a8f96]/25 hover:bg-[#3a8f96]/35 disabled:bg-black/30`}
             >
-              <Film size={14} />
-              {renderState.status === "ready" ? "Renderizar de nuevo" : renderState.status === "error" ? "Reintentar render" : renderState.status === "preparing" || renderState.status === "rendering" || renderState.status === "uploading" ? "Renderizando..." : "Render"}
+              <Film size={14} className="shrink-0" />
+              {renderState.status === "ready" ? "Render de nuevo" : renderState.status === "error" ? "Reintentar" : renderState.status === "preparing" || renderState.status === "rendering" || renderState.status === "uploading" ? "Renderizando..." : "Render"}
             </button>
-            <button type="button" onClick={refreshMedia} disabled={!sourceMediaList} className="inline-flex items-center gap-2 rounded-none border border-white/10 bg-white/[0.055] px-3 py-2 text-xs font-black uppercase tracking-[0.1em] text-white/68 disabled:opacity-35"><RefreshCw size={14} />Actualizar medios</button>
-            <button type="button" onClick={closeStudio} className="rounded-none border border-white/10 p-2 text-white/55"><X size={18} /></button>
-          </div>
-        </header>
+            <button
+              type="button"
+              onClick={refreshMedia}
+              disabled={!sourceMediaList}
+              className={`${foldderStudioHeaderActionClassName()} disabled:opacity-35`}
+              title="Actualizar medios conectados"
+            >
+              <RefreshCw size={14} className="shrink-0" />
+              Actualizar
+            </button>
+          </>
+        }
+      />
 
-        <main
-          className="grid min-h-0 grid-cols-[300px_minmax(0,1fr)_360px] gap-3 p-3"
-          style={{ gridTemplateRows: `minmax(0, 1fr) 12px ${timelineHeight}px` }}
-        >
-          <aside className="min-h-0 overflow-hidden rounded-none border border-white/10 bg-white/[0.035]">
-            <div className="border-b border-white/10 px-4 py-3">
-              <div className="text-[10px] font-black uppercase tracking-[0.16em] text-white/36">Medios recibidos</div>
-              <div className="mt-1 text-sm text-white/58">{sourceMediaList?.items.length ?? 0} items · {placeholders.length} pendientes</div>
-              <div className="mt-3 flex flex-wrap gap-1.5">
+      {previewFullscreen ? (
+        <div className="relative flex min-h-0 flex-1 flex-col bg-black">
+          <div className="relative min-h-0 flex-1 overflow-hidden">
+            <ClipPreview clip={activeVisualClip} playheadTime={livePlayhead} isPlaying={isPlaying} mediaVisible onDurationKnown={patchClipSourceDuration} />
+            <SubtitlePreviewOverlay track={activeSubtitleTrack} currentTime={livePlayhead} />
+          </div>
+          <div className="shrink-0 border-t border-white/10 px-4 py-2">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold text-white/75">{activeVisualClip?.title ?? "Sin clip visual activo"}</div>
+                <div className="text-[10px] font-black uppercase tracking-[0.1em] text-white/32">P · salir</div>
+              </div>
+              <div className="text-xs font-semibold tabular-nums text-white/50">{formatTime(livePlayhead)} / {formatTime(data.totalDurationSeconds)}</div>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-1">
+                <button type="button" onClick={() => setPlayhead(0)} className="p-1.5 text-white/50 hover:text-white/80"><SkipBack size={14} /></button>
+                <button type="button" onClick={() => setPlayhead(livePlayhead - 1)} className="p-1.5 text-white/50 hover:text-white/80"><StepBack size={14} /></button>
+                <button type="button" onClick={() => moveToRelativeClip(-1)} className="px-2 py-1 text-[10px] font-black uppercase text-white/45">−</button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isPlaying) commit({ ...data, playheadTime: livePlayhead });
+                    setIsPlaying(!isPlaying);
+                  }}
+                  className="bg-[#3a8f96]/25 p-2 text-white"
+                >
+                  {isPlaying ? <Pause size={16} /> : <Play size={16} />}
+                </button>
+                <button type="button" onClick={() => moveToRelativeClip(1)} className="px-2 py-1 text-[10px] font-black uppercase text-white/45">+</button>
+                <button type="button" onClick={() => setPlayhead(livePlayhead + 1)} className="p-1.5 text-white/50 hover:text-white/80"><StepForward size={14} /></button>
+                <button type="button" onClick={() => setPlayhead(data.totalDurationSeconds)} className="p-1.5 text-white/50 hover:text-white/80"><SkipForward size={14} /></button>
+              </div>
+              <div className="flex items-center gap-1 text-[10px] font-black uppercase tracking-[0.1em] text-white/30">
+                <Volume2 size={12} />
+                {activeAudioClips.length ? `${activeAudioClips.length} audio` : "—"}
+              </div>
+            </div>
+          </div>
+          {activeAudioClips.map((clip) => (
+            <TimelineAudioPlayer key={clip.id} clip={clip} playheadTime={livePlayhead} isPlaying={isPlaying} />
+          ))}
+          <TimelineAssetPreloader clips={preloadClips} onDurationKnown={patchClipSourceDuration} />
+        </div>
+      ) : (
+      <main
+        className="grid min-h-0 flex-1 grid-cols-[240px_minmax(0,1fr)_220px]"
+        style={{ gridTemplateRows: `minmax(0, 1fr) 8px ${timelineHeight}px` }}
+      >
+          <aside className="flex min-h-0 flex-col overflow-hidden border-r border-white/10">
+            <div className="shrink-0 border-b border-white/10 px-3 py-2">
+              <div className="text-[10px] font-black uppercase tracking-[0.16em] text-white/36">Medios</div>
+              <div className="mt-0.5 text-[11px] text-white/45">{sourceMediaList?.items.length ?? 0} items · {placeholders.length} pendientes</div>
+              <div className="mt-2 flex flex-wrap gap-0.5">
                 {[
                   ["all", "Todos"],
                   ["video", "Vídeos"],
@@ -1593,70 +1797,69 @@ function VideoEditorStudio({
                     key={value}
                     type="button"
                     onClick={() => setMediaFilter(value as typeof mediaFilter)}
-                    className={cx("rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.1em]", mediaFilter === value ? "border-cyan-200/45 bg-cyan-300/14 text-cyan-50" : "border-white/10 text-white/40")}
+                    className={cx("px-2 py-1 text-[10px] font-black uppercase tracking-[0.08em] transition", mediaFilter === value ? "bg-[#3a8f96]/20 text-white" : "text-white/38 hover:text-white/65")}
                   >
                     {label}
                   </button>
                 ))}
               </div>
             </div>
-            <div className="max-h-full space-y-2 overflow-auto p-3">
+            <div className="min-h-0 flex-1 space-y-1 overflow-auto px-3 py-2">
               {filteredMediaItems.map((item) => {
                 const disabled = item.mediaType === "placeholder" || (!item.assetId && !item.url);
                 const alreadyInTimeline = Object.values(data.tracks).some((clips) => clips.some((clip) => clip.sourceItemId === item.id));
                 return (
-                  <div key={item.id} className={cx("grid grid-cols-[62px_1fr] gap-3 rounded-none border p-2", disabled ? "border-white/8 bg-white/[0.025] opacity-55" : "border-white/10 bg-white/[0.045]")}>
-                    <div className="h-14 overflow-hidden rounded-none"><MediaPreview item={item} /></div>
+                  <div key={item.id} className={cx("grid grid-cols-[52px_1fr] gap-2 py-1.5", disabled && "opacity-50")}>
+                    <div className="h-12 overflow-hidden"><MediaPreview item={item} /></div>
                     <div className="min-w-0">
-                      <div className="truncate text-sm font-bold">{item.title}</div>
-                      <div className="mt-1 text-[10px] font-bold uppercase tracking-[0.1em] text-white/34">{item.mediaType}{item.sceneOrder ? ` · Escena ${item.sceneOrder}` : ""}</div>
-                      <button type="button" disabled={disabled} onClick={() => commit(addMediaListItemToTimeline(data, item))} className="mt-2 rounded-full border border-white/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.1em] text-white/58 disabled:text-white/20">{alreadyInTimeline ? "Añadir otra vez" : "Añadir"}</button>
+                      <div className="truncate text-xs font-semibold">{item.title}</div>
+                      <div className="mt-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-white/32">{item.mediaType}{item.sceneOrder ? ` · E${item.sceneOrder}` : ""}</div>
+                      <button type="button" disabled={disabled} onClick={() => commit(addMediaListItemToTimeline(data, item))} className="mt-1 text-[10px] font-black uppercase tracking-[0.08em] text-[#3a8f96]/90 hover:text-[#3a8f96] disabled:text-white/20">{alreadyInTimeline ? "+ otra vez" : "+ añadir"}</button>
                     </div>
                   </div>
                 );
               })}
-              {!sourceMediaList ? <div className="rounded-none border border-dashed border-white/10 p-4 text-sm text-white/35">Conecta una media_list para cargar medios.</div> : null}
+              {!sourceMediaList ? <div className="py-4 text-xs text-white/35">Conecta vídeos o una media list.</div> : null}
             </div>
           </aside>
 
-          <section className="min-h-0 rounded-none border border-white/10 bg-black/35 p-4">
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <div>
-                <div className="text-[10px] font-black uppercase tracking-[0.16em] text-white/35">Preview</div>
-                <div className="mt-1 text-sm font-semibold text-white/62">{activeVisualClip?.title ?? "Negro / sin visual activo"}</div>
+          <section className="flex min-h-0 flex-col border-r border-white/10 px-3 py-2">
+            <div className="mb-2 flex shrink-0 items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="truncate text-xs font-semibold text-white/70">{activeVisualClip?.title ?? "Sin visual activo"}</div>
               </div>
-              <label className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.055] px-3 py-2 text-xs text-white/58">
-                <Clock size={13} />
-                <input type="number" step={0.1} value={livePlayhead.toFixed(1)} onChange={(event) => setPlayhead(Number(event.target.value))} className="w-20 bg-transparent outline-none" />
+              <label className="flex shrink-0 items-center gap-1.5 text-xs tabular-nums text-white/45">
+                <Clock size={12} />
+                <input type="number" step={0.1} value={livePlayhead.toFixed(1)} onChange={(event) => setPlayhead(Number(event.target.value))} className="w-16 bg-transparent outline-none" />
               </label>
             </div>
-            <div className="relative h-[calc(100%-112px)] min-h-[228px] overflow-hidden rounded-none">
+            <div className="relative min-h-[200px] flex-1 overflow-hidden bg-black">
               <ClipPreview clip={activeVisualClip} playheadTime={livePlayhead} isPlaying={isPlaying} mediaVisible onDurationKnown={patchClipSourceDuration} />
               <SubtitlePreviewOverlay track={activeSubtitleTrack} currentTime={livePlayhead} />
             </div>
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5">
-                <button type="button" onClick={() => setPlayhead(0)} className="rounded-full border border-white/10 p-2 text-white/55"><SkipBack size={15} /></button>
-                <button type="button" onClick={() => setPlayhead(livePlayhead - 1)} className="rounded-full border border-white/10 p-2 text-white/55"><StepBack size={15} /></button>
-                <button type="button" onClick={() => moveToRelativeClip(-1)} className="rounded-full border border-white/10 px-2.5 py-2 text-[10px] font-black uppercase tracking-[0.1em] text-white/55">Clip -</button>
+            <div className="mt-2 flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-2">
+              <div className="flex items-center gap-1">
+                <button type="button" onClick={() => setPlayhead(0)} className="p-1.5 text-white/50 hover:text-white/80"><SkipBack size={14} /></button>
+                <button type="button" onClick={() => setPlayhead(livePlayhead - 1)} className="p-1.5 text-white/50 hover:text-white/80"><StepBack size={14} /></button>
+                <button type="button" onClick={() => moveToRelativeClip(-1)} className="px-2 py-1 text-[10px] font-black uppercase tracking-[0.08em] text-white/45 hover:text-white/70">−</button>
                 <button
                   type="button"
                   onClick={() => {
                     if (isPlaying) commit({ ...data, playheadTime: livePlayhead });
                     setIsPlaying(!isPlaying);
                   }}
-                  className="rounded-full bg-cyan-300/18 p-3 text-cyan-50"
+                  className="bg-[#3a8f96]/25 p-2 text-white hover:bg-[#3a8f96]/35"
                 >
-                  {isPlaying ? <Pause size={18} /> : <Play size={18} />}
+                  {isPlaying ? <Pause size={16} /> : <Play size={16} />}
                 </button>
-                <button type="button" onClick={() => moveToRelativeClip(1)} className="rounded-full border border-white/10 px-2.5 py-2 text-[10px] font-black uppercase tracking-[0.1em] text-white/55">Clip +</button>
-                <button type="button" onClick={() => setPlayhead(livePlayhead + 1)} className="rounded-full border border-white/10 p-2 text-white/55"><StepForward size={15} /></button>
-                <button type="button" onClick={() => setPlayhead(data.totalDurationSeconds)} className="rounded-full border border-white/10 p-2 text-white/55"><SkipForward size={15} /></button>
+                <button type="button" onClick={() => moveToRelativeClip(1)} className="px-2 py-1 text-[10px] font-black uppercase tracking-[0.08em] text-white/45 hover:text-white/70">+</button>
+                <button type="button" onClick={() => setPlayhead(livePlayhead + 1)} className="p-1.5 text-white/50 hover:text-white/80"><StepForward size={14} /></button>
+                <button type="button" onClick={() => setPlayhead(data.totalDurationSeconds)} className="p-1.5 text-white/50 hover:text-white/80"><SkipForward size={14} /></button>
               </div>
-              <div className="text-xs font-bold tabular-nums text-white/52">{formatTime(livePlayhead)} / {formatTime(data.totalDurationSeconds)}</div>
-              <div className="flex items-center gap-1 text-[10px] font-black uppercase tracking-[0.12em] text-white/34">
-                <Volume2 size={13} />
-                {activeAudioClips.length ? `${activeAudioClips.length} audio activo` : "sin audio activo"}
+              <div className="text-[11px] font-semibold tabular-nums text-white/45">{formatTime(livePlayhead)} / {formatTime(data.totalDurationSeconds)}</div>
+              <div className="flex items-center gap-1 text-[10px] font-black uppercase tracking-[0.1em] text-white/30">
+                <Volume2 size={12} />
+                {activeAudioClips.length ? `${activeAudioClips.length} audio` : "—"}
               </div>
             </div>
             {activeAudioClips.map((clip) => (
@@ -1665,15 +1868,8 @@ function VideoEditorStudio({
             <TimelineAssetPreloader clips={preloadClips} onDurationKnown={patchClipSourceDuration} />
           </section>
 
-          <aside className="min-h-0 overflow-auto rounded-none border border-white/10 bg-white/[0.035] p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <div className="text-[10px] font-black uppercase tracking-[0.16em] text-white/36">Inspector</div>
-                <div className="mt-1 truncate text-sm font-semibold text-white/62">{selectedClip?.title ?? "Timeline"}</div>
-              </div>
-              <div className="rounded-full border border-white/10 px-2 py-1 text-[10px] font-black uppercase tracking-[0.1em] text-white/36">{formatTime(livePlayhead)}</div>
-            </div>
-            <div className="mt-3 grid grid-cols-4 gap-1 rounded-none border border-white/10 bg-black/22 p-1">
+          <aside data-foldder-video-editor-inspector="" className="flex min-h-0 flex-col overflow-hidden border-l border-white/[0.06]">
+            <div className="flex shrink-0 items-center border-b border-white/10">
               {[
                 ["clip", "Clip", Film],
                 ["audio", "Audio", Music],
@@ -1683,63 +1879,69 @@ function VideoEditorStudio({
                 <button
                   key={String(value)}
                   type="button"
+                  title={label as string}
                   onClick={() => setInspectorTab(value as VideoEditorInspectorTab)}
-                  className={cx("inline-flex items-center justify-center gap-1 rounded-none px-2 py-2 text-[10px] font-black uppercase tracking-[0.08em]", inspectorTab === value ? "bg-cyan-300/18 text-cyan-50" : "text-white/38 hover:bg-white/[0.055]")}
+                  className={cx("inline-flex flex-1 flex-col items-center justify-center gap-0.5 py-1.5 transition", inspectorTab === value ? "border-b-2 border-[#3a8f96] bg-white/[0.03] text-white" : "border-b-2 border-transparent text-white/35 hover:text-white/60")}
                 >
                   {React.createElement(Icon as typeof Film, { size: 12 })}
-                  {label as string}
+                  <span className="text-[8px] font-black uppercase tracking-[0.04em]">{label as string}</span>
                 </button>
               ))}
             </div>
+            <div className="min-h-0 flex-1 overflow-auto px-2 py-1.5">
+            <div className="mb-1.5 flex items-center justify-between gap-1 border-b border-white/[0.06] pb-1">
+              <div className="min-w-0 truncate text-[10px] font-semibold text-white/55">{selectedClip?.title ?? (inspectorTab === "render" ? "Render" : inspectorTab === "audio" ? "Audio" : inspectorTab === "subtitles" ? "Subtítulos" : "Timeline")}</div>
+              <div className="shrink-0 text-[9px] font-semibold tabular-nums text-white/30">{formatTime(livePlayhead)}</div>
+            </div>
             {inspectorTab === "subtitles" ? (
-              <div className="mt-4 grid gap-3">
-                <InspectorSection title="Subtítulos">
+              <div className="grid gap-2">
+                <InspectorSection title="Subtítulos" compact>
                   <div className="flex items-center justify-between gap-2">
-                    <div className="min-w-0 text-xs text-white/48">{primarySubtitleTrack ? `${subtitleSegments.length} segmentos` : "Transcribe vídeo/audio o pega SRT/VTT."}</div>
+                    <div className="min-w-0 text-xs text-white/45">{primarySubtitleTrack ? `${subtitleSegments.length} segmentos` : "Transcribe vídeo/audio o pega SRT/VTT."}</div>
                     {primarySubtitleTrack ? (
-                      <label className="flex items-center gap-2 rounded-full border border-white/10 px-2 py-1 text-[10px] text-white/55">
+                      <label className="flex items-center gap-2 text-[10px] text-white/50">
                         <input type="checkbox" checked={primarySubtitleTrack.enabled} onChange={(event) => patchSubtitleTrack(primarySubtitleTrack.id, { enabled: event.target.checked })} />
                         ON
                       </label>
                     ) : null}
                   </div>
-                  <div className="grid gap-2 rounded-none border border-white/10 bg-white/[0.035] p-2">
+                  <div className="grid gap-2">
                     <div className="flex items-center justify-between gap-2">
                       <div className="min-w-0">
-                        <div className="text-[10px] font-black uppercase tracking-[0.12em] text-white/35">Fuente</div>
-                        <div className="mt-0.5 truncate text-xs text-white/62">{subtitleTranscriptionSource?.title || "Selecciona un clip de vídeo/audio o renderiza el timeline"}</div>
+                        <div className="text-[10px] font-black uppercase tracking-[0.1em] text-white/32">Fuente</div>
+                        <div className="mt-0.5 truncate text-xs text-white/55">{subtitleTranscriptionSource?.title || "Selecciona un clip o renderiza el timeline"}</div>
                       </div>
                       <button
                         type="button"
                         disabled={subtitleTranscribing || !subtitleTranscriptionSource}
                         onClick={() => void generateSubtitlesFromMedia()}
-                        className="shrink-0 rounded-none bg-cyan-300/18 px-3 py-2 text-[10px] font-black uppercase tracking-[0.1em] text-cyan-50 disabled:opacity-35"
+                        className="shrink-0 bg-[#3a8f96]/20 px-2.5 py-1.5 text-[10px] font-black uppercase tracking-[0.08em] text-white disabled:opacity-35"
                       >
                         {subtitleTranscribing ? "Transcribiendo..." : primarySubtitleTrack ? "Regenerar" : "Generar"}
                       </button>
                     </div>
                     {subtitleTranscriptionError ? (
-                      <p className="rounded-none border border-rose-300/20 bg-rose-300/10 px-2 py-1.5 text-[11px] text-rose-100/80">{subtitleTranscriptionError}</p>
+                      <p className="text-[11px] text-rose-200/80">{subtitleTranscriptionError}</p>
                     ) : null}
                   </div>
                 </InspectorSection>
 
                 {!primarySubtitleTrack ? (
-                  <InspectorSection title="Crear pista">
+                  <InspectorSection title="Crear pista" compact>
                     <textarea
                       value={subtitleDraft}
                       onChange={(event) => setSubtitleDraft(event.target.value)}
-                      rows={5}
+                      rows={4}
                       placeholder={"1\n00:00:00,000 --> 00:00:02,400\nHola, bienvenidos a Foldder.\n\nO pega texto normal, una frase por línea."}
-                      className="rounded-none border border-white/10 bg-white/[0.055] px-3 py-2 text-xs leading-relaxed outline-none"
+                      className={`${VIDEO_EDITOR_INSPECTOR_INPUT} leading-relaxed`}
                     />
-                    <div className="grid grid-cols-2 gap-2">
-                      <select value={subtitleMode} onChange={(event) => setSubtitleMode(event.target.value as RenderSubtitleMode)} className="rounded-none border border-white/10 bg-white/[0.055] px-3 py-2 text-xs outline-none">
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <select value={subtitleMode} onChange={(event) => setSubtitleMode(event.target.value as RenderSubtitleMode)} className={VIDEO_EDITOR_INSPECTOR_INPUT}>
                         <option value="lines">Lines</option>
                         <option value="word-by-word">Word by word</option>
                         <option value="karaoke">Karaoke</option>
                       </select>
-                      <select value={subtitlePreset} onChange={(event) => setSubtitlePreset(event.target.value as SubtitleStyle["preset"])} className="rounded-none border border-white/10 bg-white/[0.055] px-3 py-2 text-xs outline-none">
+                      <select value={subtitlePreset} onChange={(event) => setSubtitlePreset(event.target.value as SubtitleStyle["preset"])} className={VIDEO_EDITOR_INSPECTOR_INPUT}>
                         <option value="minimal">Minimal</option>
                         <option value="creator">Creator</option>
                         <option value="cinematic">Cinematic</option>
@@ -1748,20 +1950,20 @@ function VideoEditorStudio({
                         <option value="karaoke">Karaoke</option>
                       </select>
                     </div>
-                    <button type="button" disabled={!subtitleDraft.trim()} onClick={createSubtitles} className="rounded-none bg-cyan-300/18 px-3 py-2 text-xs font-black uppercase tracking-[0.1em] text-cyan-50 disabled:opacity-40">Crear subtítulos</button>
+                    <button type="button" disabled={!subtitleDraft.trim()} onClick={createSubtitles} className="bg-[#3a8f96]/20 px-2 py-1.5 text-[10px] font-black uppercase tracking-[0.06em] text-white disabled:opacity-40">Crear subtítulos</button>
                   </InspectorSection>
                 ) : (
                   <>
-                    <InspectorSection title="Salida">
-                      <div className="grid grid-cols-2 gap-2">
-                        <label className="flex items-center gap-2 rounded-none border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-white/55">
+                    <InspectorSection title="Salida" compact>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <label className="flex items-center gap-1.5 text-[10px] text-white/50">
                           <input type="checkbox" checked={primarySubtitleTrack.burnIn} onChange={(event) => patchSubtitleTrack(primarySubtitleTrack.id, { burnIn: event.target.checked })} />
-                          Quemar en render
+                          Quemar
                         </label>
                         <select
                           value={primarySubtitleTrack.mode}
                           onChange={(event) => patchSubtitleTrack(primarySubtitleTrack.id, { mode: event.target.value as RenderSubtitleMode, document: { ...primarySubtitleTrack.document, mode: event.target.value as RenderSubtitleMode } })}
-                          className="rounded-none border border-white/10 bg-white/[0.055] px-3 py-2 text-xs outline-none"
+                          className={VIDEO_EDITOR_INSPECTOR_INPUT}
                         >
                           <option value="lines">Lines</option>
                           <option value="word-by-word">Word by word</option>
@@ -1769,24 +1971,24 @@ function VideoEditorStudio({
                         </select>
                       </div>
                       <div className="grid grid-cols-3 gap-1">
-                        <button type="button" onClick={() => downloadTextFile("foldder-subtitles.srt", exportSubtitleDocumentToSrt(primarySubtitleTrack.document), "text/plain;charset=utf-8")} className="rounded-full border border-white/10 px-2 py-1.5 text-[10px] font-black text-white/58"><Download size={11} className="inline" /> SRT</button>
-                        <button type="button" onClick={() => downloadTextFile("foldder-subtitles.vtt", exportSubtitleDocumentToVtt(primarySubtitleTrack.document), "text/vtt;charset=utf-8")} className="rounded-full border border-white/10 px-2 py-1.5 text-[10px] font-black text-white/58"><Download size={11} className="inline" /> VTT</button>
-                        <button type="button" onClick={() => downloadTextFile("foldder-subtitles.ass", exportSubtitleDocumentToAss(primarySubtitleTrack.document), "text/plain;charset=utf-8")} className="rounded-full border border-white/10 px-2 py-1.5 text-[10px] font-black text-white/58"><Download size={11} className="inline" /> ASS</button>
+                        <button type="button" onClick={() => downloadTextFile("foldder-subtitles.srt", exportSubtitleDocumentToSrt(primarySubtitleTrack.document), "text/plain;charset=utf-8")} className="px-2 py-1 text-[10px] font-black text-white/50 hover:text-white/75"><Download size={11} className="inline" /> SRT</button>
+                        <button type="button" onClick={() => downloadTextFile("foldder-subtitles.vtt", exportSubtitleDocumentToVtt(primarySubtitleTrack.document), "text/vtt;charset=utf-8")} className="px-2 py-1 text-[10px] font-black text-white/50 hover:text-white/75"><Download size={11} className="inline" /> VTT</button>
+                        <button type="button" onClick={() => downloadTextFile("foldder-subtitles.ass", exportSubtitleDocumentToAss(primarySubtitleTrack.document), "text/plain;charset=utf-8")} className="px-2 py-1 text-[10px] font-black text-white/50 hover:text-white/75"><Download size={11} className="inline" /> ASS</button>
                       </div>
                     </InspectorSection>
 
-                    <InspectorSection title="Segmentos">
-                      <button type="button" onClick={() => addSubtitleSegmentAtPlayhead()} className="inline-flex items-center justify-center gap-2 rounded-none border border-white/10 bg-white/[0.045] px-3 py-2 text-xs font-black uppercase tracking-[0.1em] text-white/62">
-                        <Plus size={13} />
-                        Añadir en playhead
+                    <InspectorSection title="Segmentos" compact>
+                      <button type="button" onClick={() => addSubtitleSegmentAtPlayhead()} className="inline-flex items-center justify-center gap-1 px-1.5 py-1 text-[10px] font-black uppercase tracking-[0.06em] text-white/55 hover:text-white/80">
+                        <Plus size={12} />
+                        + playhead
                       </button>
-                      <div className="max-h-52 space-y-2 overflow-auto pr-1">
+                      <div className="max-h-40 space-y-0.5 overflow-auto">
                         {subtitleSegments.map((segment) => (
                           <button
                             key={segment.id}
                             type="button"
                             onClick={() => selectSubtitleSegment(segment.id, segment.start)}
-                            className={cx("w-full rounded-none border p-2 text-left text-xs", data.selectedSubtitleSegmentId === segment.id ? "border-cyan-200/50 bg-cyan-300/12" : "border-white/10 bg-white/[0.035]")}
+                            className={cx("w-full p-1.5 text-left text-xs transition", data.selectedSubtitleSegmentId === segment.id ? "bg-[#3a8f96]/15 text-white" : "text-white/55 hover:bg-white/[0.04]")}
                           >
                             <div className="mb-1 flex items-center justify-between gap-2 text-[10px] font-black uppercase tracking-[0.1em] text-white/34">
                               <span>{formatTime(segment.start)} → {formatTime(segment.end)}</span>
@@ -1799,22 +2001,22 @@ function VideoEditorStudio({
                     </InspectorSection>
 
                     {selectedSubtitleSegment ? (
-                      <InspectorSection title="Editar segmento">
-                        <div className="grid grid-cols-2 gap-2">
-                          <label className="grid gap-1"><span className="text-xs text-white/40">Inicio</span><NumberInput value={selectedSubtitleSegment.start} onChange={(value) => patchSubtitleSegment(primarySubtitleTrack.id, selectedSubtitleSegment.id, { start: value })} step={0.1} /></label>
-                          <label className="grid gap-1"><span className="text-xs text-white/40">Final</span><NumberInput value={selectedSubtitleSegment.end} onChange={(value) => patchSubtitleSegment(primarySubtitleTrack.id, selectedSubtitleSegment.id, { end: value })} step={0.1} /></label>
+                      <InspectorSection title="Editar" compact>
+                        <div className="grid grid-cols-2 gap-1.5">
+                          <label className="grid gap-0.5"><span className="text-[10px] text-white/40">Inicio</span><NumberInput value={selectedSubtitleSegment.start} onChange={(value) => patchSubtitleSegment(primarySubtitleTrack.id, selectedSubtitleSegment.id, { start: value })} step={0.1} /></label>
+                          <label className="grid gap-0.5"><span className="text-[10px] text-white/40">Final</span><NumberInput value={selectedSubtitleSegment.end} onChange={(value) => patchSubtitleSegment(primarySubtitleTrack.id, selectedSubtitleSegment.id, { end: value })} step={0.1} /></label>
                         </div>
-                        <textarea value={selectedSubtitleSegment.text} onChange={(event) => patchSubtitleSegment(primarySubtitleTrack.id, selectedSubtitleSegment.id, { text: event.target.value })} rows={3} className="w-full rounded-none border border-white/10 bg-white/[0.055] px-3 py-2 text-xs outline-none" />
+                        <textarea value={selectedSubtitleSegment.text} onChange={(event) => patchSubtitleSegment(primarySubtitleTrack.id, selectedSubtitleSegment.id, { text: event.target.value })} rows={2} className={`${VIDEO_EDITOR_INSPECTOR_INPUT} leading-relaxed`} />
                         <div className="flex flex-wrap gap-2">
                           <button type="button" disabled={selectedSubtitleSegmentIndex <= 0} onClick={() => {
                             const previous = subtitleSegments[selectedSubtitleSegmentIndex - 1];
                             if (previous) selectSubtitleSegment(previous.id, previous.start);
-                          }} className="rounded-full border border-white/10 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.1em] text-white/58 disabled:opacity-35">Anterior</button>
+                          }} className="text-[10px] font-black uppercase tracking-[0.08em] text-white/50 disabled:opacity-35">Anterior</button>
                           <button type="button" disabled={selectedSubtitleSegmentIndex < 0 || selectedSubtitleSegmentIndex >= subtitleSegments.length - 1} onClick={() => {
                             const next = subtitleSegments[selectedSubtitleSegmentIndex + 1];
                             if (next) selectSubtitleSegment(next.id, next.start);
-                          }} className="rounded-full border border-white/10 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.1em] text-white/58 disabled:opacity-35">Siguiente</button>
-                          <button type="button" onClick={() => removeSubtitleSegment(primarySubtitleTrack.id, selectedSubtitleSegment.id)} className="rounded-full border border-rose-200/15 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.1em] text-rose-100/75"><Trash2 size={11} className="inline" /> Eliminar</button>
+                          }} className="text-[10px] font-black uppercase tracking-[0.08em] text-white/50 disabled:opacity-35">Siguiente</button>
+                          <button type="button" onClick={() => removeSubtitleSegment(primarySubtitleTrack.id, selectedSubtitleSegment.id)} className="text-[10px] font-black uppercase tracking-[0.08em] text-rose-200/75"><Trash2 size={11} className="inline" /> Eliminar</button>
                         </div>
                       </InspectorSection>
                     ) : null}
@@ -1823,69 +2025,69 @@ function VideoEditorStudio({
               </div>
             ) : null}
             {inspectorTab === "clip" ? (selectedClip ? (
-              <div className="mt-4 grid gap-3">
-                <InspectorSection title="Clip">
-                  <label className="grid gap-1">
-                    <span className="text-xs text-white/40">Título</span>
-                    <input value={selectedClip.title} onChange={(event) => commit(patchVideoEditorClip(data, selectedClip.id, { title: event.target.value }))} className="rounded-none border border-white/10 bg-white/[0.055] px-3 py-2 text-sm outline-none" />
+              <div className="grid gap-2">
+                <InspectorSection title="Clip" compact>
+                  <label className="grid gap-0.5">
+                    <span className="text-[10px] text-white/40">Título</span>
+                    <input value={selectedClip.title} onChange={(event) => commit(patchVideoEditorClip(data, selectedClip.id, { title: event.target.value }))} className={VIDEO_EDITOR_INSPECTOR_INPUT} />
                   </label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <label className="grid gap-1">
-                      <span className="text-xs text-white/40">Pista</span>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <label className="grid gap-0.5">
+                      <span className="text-[10px] text-white/40">Pista</span>
                       <select
                         value={selectedClip.track}
                         onChange={(event) => commit(moveVideoEditorClip(data, selectedClip.id, selectedClip.startTime, event.target.value as VideoEditorClip["track"]))}
-                        className="rounded-none border border-white/10 bg-white/[0.055] px-3 py-2 text-sm outline-none"
+                        className={VIDEO_EDITOR_INSPECTOR_INPUT}
                       >
                         {selectedClipCompatibleTracks.map((track) => <option key={track.id} value={track.id}>{track.label}</option>)}
                       </select>
                     </label>
-                    <label className="flex items-center gap-2 rounded-none border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-white/55">
+                    <label className="flex items-end gap-1.5 pb-1 text-[10px] text-white/50">
                       <input type="checkbox" checked={Boolean(selectedClip.locked)} onChange={(event) => commit(patchVideoEditorClip(data, selectedClip.id, { locked: event.target.checked }))} />
                       Bloquear
                     </label>
                   </div>
                 </InspectorSection>
 
-                <InspectorSection title="Tiempo">
-                  <div className="grid grid-cols-2 gap-2">
-                    <label className="grid gap-1"><span className="text-xs text-white/40">Inicio</span><NumberInput value={selectedClip.startTime} onChange={(value) => commit(moveVideoEditorClip(data, selectedClip.id, value))} step={0.1} /></label>
-                    <label className="grid gap-1">
-                      <span className="text-xs text-white/40">Duración{Number.isFinite(selectedClipMaxDuration) ? ` · máx ${selectedClipMaxDuration.toFixed(1)}s` : ""}</span>
+                <InspectorSection title="Tiempo" compact>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <label className="grid gap-0.5"><span className="text-[10px] text-white/40">Inicio</span><NumberInput value={selectedClip.startTime} onChange={(value) => commit(moveVideoEditorClip(data, selectedClip.id, value))} step={0.1} /></label>
+                    <label className="grid gap-0.5">
+                      <span className="text-[10px] text-white/40">Duración{Number.isFinite(selectedClipMaxDuration) ? ` · máx ${selectedClipMaxDuration.toFixed(1)}s` : ""}</span>
                       <NumberInput value={selectedClip.durationSeconds} onChange={(value) => commit(resizeVideoEditorClip(data, selectedClip.id, value))} min={0.1} step={0.1} />
                     </label>
                   </div>
                   {selectedClip.mediaType !== "image" ? (
-                    <div className="grid grid-cols-2 gap-2">
-                      <label className="grid gap-1"><span className="text-xs text-white/40">Trim inicio</span><NumberInput value={selectedClip.trimStart ?? 0} onChange={(value) => commit(setVideoEditorClipStartTrim(data, selectedClip.id, value))} step={0.1} /></label>
-                      <label className="grid gap-1"><span className="text-xs text-white/40">Trim final</span><NumberInput value={selectedClip.trimEnd ?? 0} onChange={(value) => commit(setVideoEditorClipEndTrim(data, selectedClip.id, value))} step={0.1} /></label>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <label className="grid gap-0.5"><span className="text-[10px] text-white/40">Trim in</span><NumberInput value={selectedClip.trimStart ?? 0} onChange={(value) => commit(setVideoEditorClipStartTrim(data, selectedClip.id, value))} step={0.1} /></label>
+                      <label className="grid gap-0.5"><span className="text-[10px] text-white/40">Trim out</span><NumberInput value={selectedClip.trimEnd ?? 0} onChange={(value) => commit(setVideoEditorClipEndTrim(data, selectedClip.id, value))} step={0.1} /></label>
                     </div>
                   ) : null}
                 </InspectorSection>
 
                 {selectedClip.mediaType === "video" ? (
-                  <InspectorSection title="Audio del vídeo">
-                    <div className="grid grid-cols-2 gap-2">
-                      <label className="grid gap-1"><span className="text-xs text-white/40">Volumen</span><NumberInput value={selectedClip.volume ?? 1} onChange={(value) => commit(patchVideoEditorClip(data, selectedClip.id, { volume: value }))} step={0.1} /></label>
-                      <label className="flex items-center gap-2 rounded-none border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-white/55"><input type="checkbox" checked={Boolean(selectedClip.mute)} onChange={(event) => commit(patchVideoEditorClip(data, selectedClip.id, { mute: event.target.checked }))} /> Silenciar</label>
+                  <InspectorSection title="Audio vídeo" compact>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <label className="grid gap-0.5"><span className="text-[10px] text-white/40">Vol</span><NumberInput value={selectedClip.volume ?? 1} onChange={(value) => commit(patchVideoEditorClip(data, selectedClip.id, { volume: value }))} step={0.1} /></label>
+                      <label className="flex items-end gap-1.5 pb-1 text-[10px] text-white/50"><input type="checkbox" checked={Boolean(selectedClip.mute)} onChange={(event) => commit(patchVideoEditorClip(data, selectedClip.id, { mute: event.target.checked }))} /> Mute</label>
                     </div>
                   </InspectorSection>
                 ) : null}
 
                 {selectedClip.mediaType === "image" ? (
-                  <InspectorSection title="Imagen">
-                    <div className="grid grid-cols-2 gap-2">
-                      <label className="grid gap-1">
-                        <span className="text-xs text-white/40">Encuadre</span>
-                        <select value={selectedClip.framing ?? "fill"} onChange={(event) => commit(patchVideoEditorClip(data, selectedClip.id, { framing: event.target.value as VideoEditorClip["framing"] }))} className="rounded-none border border-white/10 bg-white/[0.055] px-3 py-2 text-sm outline-none">
+                  <InspectorSection title="Imagen" compact>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <label className="grid gap-0.5">
+                        <span className="text-[10px] text-white/40">Encuadre</span>
+                        <select value={selectedClip.framing ?? "fill"} onChange={(event) => commit(patchVideoEditorClip(data, selectedClip.id, { framing: event.target.value as VideoEditorClip["framing"] }))} className={VIDEO_EDITOR_INSPECTOR_INPUT}>
                           <option value="fit">Fit</option>
                           <option value="fill">Fill</option>
                           <option value="crop_center">Crop center</option>
                         </select>
                       </label>
-                      <label className="grid gap-1">
-                        <span className="text-xs text-white/40">Movimiento</span>
-                        <select value={selectedClip.motion ?? "none"} onChange={(event) => commit(patchVideoEditorClip(data, selectedClip.id, { motion: event.target.value as VideoEditorClip["motion"] }))} className="rounded-none border border-white/10 bg-white/[0.055] px-3 py-2 text-sm outline-none">
+                      <label className="grid gap-0.5">
+                        <span className="text-[10px] text-white/40">Movimiento</span>
+                        <select value={selectedClip.motion ?? "none"} onChange={(event) => commit(patchVideoEditorClip(data, selectedClip.id, { motion: event.target.value as VideoEditorClip["motion"] }))} className={VIDEO_EDITOR_INSPECTOR_INPUT}>
                           <option value="none">Ninguno</option>
                           <option value="slow_zoom_in">Zoom in lento</option>
                           <option value="slow_zoom_out">Zoom out lento</option>
@@ -1898,84 +2100,79 @@ function VideoEditorStudio({
                 ) : null}
 
                 {selectedClip.mediaType === "audio" ? (
-                  <InspectorSection title="Audio">
-                    <label className="grid gap-1"><span className="text-xs text-white/40">Volumen</span><NumberInput value={selectedClip.volume ?? 1} onChange={(value) => commit(patchVideoEditorClip(data, selectedClip.id, { volume: value }))} step={0.1} /></label>
-                    <div className="grid grid-cols-2 gap-2">
-                      <label className="grid gap-1"><span className="text-xs text-white/40">Fade in</span><NumberInput value={selectedClip.fadeInSeconds ?? 0} onChange={(value) => commit(patchVideoEditorClip(data, selectedClip.id, { fadeInSeconds: value }))} step={0.1} /></label>
-                      <label className="grid gap-1"><span className="text-xs text-white/40">Fade out</span><NumberInput value={selectedClip.fadeOutSeconds ?? 0} onChange={(value) => commit(patchVideoEditorClip(data, selectedClip.id, { fadeOutSeconds: value }))} step={0.1} /></label>
+                  <InspectorSection title="Audio" compact>
+                    <label className="grid gap-0.5"><span className="text-[10px] text-white/40">Vol</span><NumberInput value={selectedClip.volume ?? 1} onChange={(value) => commit(patchVideoEditorClip(data, selectedClip.id, { volume: value }))} step={0.1} /></label>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <label className="grid gap-0.5"><span className="text-[10px] text-white/40">Fade in</span><NumberInput value={selectedClip.fadeInSeconds ?? 0} onChange={(value) => commit(patchVideoEditorClip(data, selectedClip.id, { fadeInSeconds: value }))} step={0.1} /></label>
+                      <label className="grid gap-0.5"><span className="text-[10px] text-white/40">Fade out</span><NumberInput value={selectedClip.fadeOutSeconds ?? 0} onChange={(value) => commit(patchVideoEditorClip(data, selectedClip.id, { fadeOutSeconds: value }))} step={0.1} /></label>
                     </div>
-                    <label className="flex items-center gap-2 rounded-none border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-white/55"><input type="checkbox" checked={Boolean(selectedClip.mute)} onChange={(event) => commit(patchVideoEditorClip(data, selectedClip.id, { mute: event.target.checked }))} /> Silenciar</label>
+                    <label className="flex items-center gap-1.5 text-[10px] text-white/50"><input type="checkbox" checked={Boolean(selectedClip.mute)} onChange={(event) => commit(patchVideoEditorClip(data, selectedClip.id, { mute: event.target.checked }))} /> Mute</label>
                   </InspectorSection>
                 ) : null}
 
-                <div className="flex flex-wrap gap-2">
-                  <button type="button" disabled={!canSplitSelectedClip} onClick={splitSelectedClip} className="rounded-full border border-white/10 px-3 py-2 text-xs font-black uppercase tracking-[0.1em] text-white/58 disabled:opacity-35"><Scissors size={13} className="inline" /> Cortar</button>
-                  <button type="button" onClick={() => commit(duplicateVideoEditorClip(data, selectedClip.id))} className="rounded-full border border-white/10 px-3 py-2 text-xs font-black uppercase tracking-[0.1em] text-white/58"><Copy size={13} className="inline" /> Duplicar</button>
-                  <button type="button" onClick={() => commit(removeVideoEditorClip(data, selectedClip.id))} className="rounded-full border border-rose-200/15 px-3 py-2 text-xs font-black uppercase tracking-[0.1em] text-rose-100/75"><Trash2 size={13} className="inline" /> Eliminar</button>
-                </div>
-                <details className="rounded-none border border-white/10 bg-black/22 p-3">
-                  <summary className="cursor-pointer text-xs font-black uppercase tracking-[0.12em] text-white/40">Metadata</summary>
-                  <pre className="mt-3 max-h-56 overflow-auto whitespace-pre-wrap text-[11px] leading-relaxed text-white/58">{JSON.stringify(selectedClip.metadata ?? {}, null, 2)}</pre>
+                <details className="pt-0.5">
+                  <summary className="cursor-pointer text-[9px] font-black uppercase tracking-[0.08em] text-white/30">Metadata</summary>
+                  <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap text-[10px] leading-relaxed text-white/45">{JSON.stringify(selectedClip.metadata ?? {}, null, 2)}</pre>
                 </details>
               </div>
             ) : (
-              <p className="mt-4 text-sm leading-relaxed text-white/38">Sin clip seleccionado.</p>
+              <p className="text-[11px] leading-relaxed text-white/35">Sin clip seleccionado.</p>
             )) : null}
             {inspectorTab === "audio" ? (
-              <div className="mt-4 grid gap-3">
-                <div className="rounded-none border border-white/10 bg-black/20 p-3">
-                  <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.14em] text-cyan-100/45"><Volume2 size={13} /> Audio activo</div>
-                  <div className="mt-2 text-sm text-white/58">{activeAudioClips.length ? activeAudioClips.map((clip) => clip.title).join(", ") : "No hay audio bajo el playhead."}</div>
+              <div className="grid gap-2">
+                <div>
+                  <div className="text-[9px] font-black uppercase tracking-[0.1em] text-white/32"><Volume2 size={11} className="inline" /> Activo</div>
+                  <div className="mt-0.5 text-[10px] leading-snug text-white/45">{activeAudioClips.length ? activeAudioClips.map((clip) => clip.title).join(", ") : "Sin audio bajo playhead."}</div>
                 </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <button type="button" onClick={() => setAudioModalType("sfx")} className="rounded-none border border-white/10 bg-white/[0.045] px-3 py-2 text-xs font-black uppercase tracking-[0.1em] text-white/62">+ SFX</button>
-                  <button type="button" onClick={() => setAudioModalType("music")} className="rounded-none border border-white/10 bg-white/[0.045] px-3 py-2 text-xs font-black uppercase tracking-[0.1em] text-white/62">+ Música</button>
-                  <button type="button" onClick={() => setAudioModalType("ambience")} className="rounded-none border border-white/10 bg-white/[0.045] px-3 py-2 text-xs font-black uppercase tracking-[0.1em] text-white/62">+ Ambiente</button>
-                  <button type="button" onClick={() => setAudioModalType("voiceover")} className="rounded-none border border-white/10 bg-white/[0.045] px-3 py-2 text-xs font-black uppercase tracking-[0.1em] text-white/38">+ Voz</button>
+                <div className="grid grid-cols-2 gap-0.5">
+                  <button type="button" onClick={() => setAudioModalType("sfx")} className="px-1.5 py-1 text-[10px] font-black uppercase tracking-[0.06em] text-white/55 hover:bg-white/[0.04]">+ SFX</button>
+                  <button type="button" onClick={() => setAudioModalType("music")} className="px-1.5 py-1 text-[10px] font-black uppercase tracking-[0.06em] text-white/55 hover:bg-white/[0.04]">+ Música</button>
+                  <button type="button" onClick={() => setAudioModalType("ambience")} className="px-1.5 py-1 text-[10px] font-black uppercase tracking-[0.06em] text-white/55 hover:bg-white/[0.04]">+ Ambiente</button>
+                  <button type="button" onClick={() => setAudioModalType("voiceover")} className="px-1.5 py-1 text-[10px] font-black uppercase tracking-[0.06em] text-white/38">+ Voz</button>
                 </div>
-                <div className="grid gap-2">
+                <div className="grid gap-0.5">
                   {data.audioRequests.length ? data.audioRequests.map((request) => (
-                    <div key={request.id} className="rounded-none border border-white/10 bg-black/18 p-3 text-xs">
+                    <div key={request.id} className="border-b border-white/[0.06] py-1.5 text-[10px] last:border-0">
                       <div className="flex items-center justify-between gap-2">
-                        <div className="font-black uppercase tracking-[0.12em] text-white/50">{request.type} · {request.status}</div>
-                        <span className="tabular-nums text-white/32">{formatTime(request.startTime)}</span>
+                        <div className="font-black uppercase tracking-[0.1em] text-white/45">{request.type} · {request.status}</div>
+                        <span className="tabular-nums text-white/30">{formatTime(request.startTime)}</span>
                       </div>
-                      <p className="mt-1 line-clamp-2 text-white/54">{request.prompt}</p>
-                      {request.errorMessage ? <p className="mt-2 text-amber-100/70">{request.errorCode}: {request.errorMessage}</p> : null}
+                      <p className="mt-0.5 line-clamp-2 text-white/50">{request.prompt}</p>
+                      {request.errorMessage ? <p className="mt-1 text-amber-100/65">{request.errorCode}: {request.errorMessage}</p> : null}
                       {request.generatedAssetIds?.length ? (
-                        <div className="mt-2 flex flex-wrap gap-1">
+                        <div className="mt-1.5 flex flex-wrap gap-1">
                           {request.generatedAssetIds.map((assetId, index) => (
-                            <button key={assetId} type="button" onClick={() => commit(approveTimelineAudioVariation(data, request.id, assetId, index))} className="rounded-full border border-white/10 px-2 py-1 text-[10px] text-white/60">Usar {index + 1}</button>
+                            <button key={assetId} type="button" onClick={() => commit(approveTimelineAudioVariation(data, request.id, assetId, index))} className="text-[10px] text-[#3a8f96]/85 hover:text-[#3a8f96]">Usar {index + 1}</button>
                           ))}
                         </div>
                       ) : null}
                     </div>
                   )) : (
-                    <p className="rounded-none border border-dashed border-white/10 p-4 text-sm text-white/36">Sin solicitudes de audio.</p>
+                    <p className="py-2 text-[10px] text-white/35">Sin solicitudes.</p>
                   )}
                 </div>
               </div>
             ) : null}
             {inspectorTab === "render" ? (
-              <div className="mt-4 grid gap-3">
-                <div className="grid grid-cols-2 gap-2">
-                  <label className="grid gap-1">
-                    <span className="text-xs text-white/40">Calidad</span>
+              <div className="grid gap-2">
+                <div className="grid grid-cols-2 gap-1.5">
+                  <label className="grid gap-0.5">
+                    <span className="text-[10px] text-white/40">Calidad</span>
                     <select
                       value={renderState.settings.quality}
                       onChange={(event) => commit({ ...data, render: { ...renderState, settings: { ...renderState.settings, quality: event.target.value as VideoEditorRenderState["settings"]["quality"] } } })}
-                      className="rounded-none border border-white/10 bg-white/[0.055] px-3 py-2 text-sm outline-none"
+                      className={VIDEO_EDITOR_INSPECTOR_INPUT}
                     >
                       <option value="preview">Preview</option>
                       <option value="high">Alta</option>
                     </select>
                   </label>
-                  <label className="grid gap-1">
-                    <span className="text-xs text-white/40">FPS</span>
+                  <label className="grid gap-0.5">
+                    <span className="text-[10px] text-white/40">FPS</span>
                     <select
                       value={renderState.settings.fps}
                       onChange={(event) => commit({ ...data, render: { ...renderState, settings: { ...renderState.settings, fps: Number(event.target.value) as VideoEditorRenderState["settings"]["fps"] } } })}
-                      className="rounded-none border border-white/10 bg-white/[0.055] px-3 py-2 text-sm outline-none"
+                      className={VIDEO_EDITOR_INSPECTOR_INPUT}
                     >
                       <option value={24}>24</option>
                       <option value={25}>25</option>
@@ -1983,14 +2180,14 @@ function VideoEditorStudio({
                     </select>
                   </label>
                 </div>
-                <div className="rounded-none border border-white/10 bg-black/20 p-3">
-                  <div className="text-[10px] font-black uppercase tracking-[0.14em] text-white/36">Estado</div>
-                  <div className={cx("mt-1 text-sm font-bold", renderState.status === "error" ? "text-rose-100/80" : "text-white/68")}>
-                    {renderState.status === "idle" ? "Sin render" : renderState.status === "ready" ? "MP4 listo" : renderState.status === "error" ? renderState.error || "Error de render" : `Renderizando ${renderState.progress ?? 0}%`}
+                <div>
+                  <div className="text-[9px] font-black uppercase tracking-[0.1em] text-white/32">Estado</div>
+                  <div className={cx("mt-0.5 text-[11px] font-semibold", renderState.status === "error" ? "text-rose-200/80" : "text-white/60")}>
+                    {renderState.status === "idle" ? "Sin render" : renderState.status === "ready" ? "MP4 listo" : renderState.status === "error" ? renderState.error || "Error" : `${renderState.progress ?? 0}%`}
                   </div>
                   {renderState.status !== "idle" && renderState.status !== "ready" && renderState.status !== "error" ? (
-                    <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/10">
-                      <div className="h-full rounded-full bg-cyan-200" style={{ width: `${Math.max(10, renderState.progress ?? 35)}%` }} />
+                    <div className="mt-1.5 h-1 overflow-hidden bg-white/10">
+                      <div className="h-full bg-[#3a8f96]" style={{ width: `${Math.max(10, renderState.progress ?? 35)}%` }} />
                     </div>
                   ) : null}
                 </div>
@@ -1998,14 +2195,14 @@ function VideoEditorStudio({
                   type="button"
                   onClick={openRenderConfirmation}
                   disabled={renderState.status === "preparing" || renderState.status === "rendering" || renderState.status === "uploading"}
-                  className="inline-flex items-center justify-center gap-2 rounded-none bg-cyan-300/18 px-4 py-3 text-xs font-black uppercase tracking-[0.1em] text-cyan-50 disabled:opacity-45"
+                  className="inline-flex items-center justify-center gap-1.5 bg-[#3a8f96]/20 px-2 py-1.5 text-[10px] font-black uppercase tracking-[0.06em] text-white disabled:opacity-45"
                 >
-                  <Film size={14} />
-                  {renderState.status === "ready" ? "Renderizar de nuevo" : renderState.status === "error" ? "Reintentar render" : renderState.status === "preparing" || renderState.status === "rendering" || renderState.status === "uploading" ? "Renderizando..." : "Renderizar MP4"}
+                  <Film size={12} />
+                  {renderState.status === "ready" ? "De nuevo" : renderState.status === "error" ? "Reintentar" : renderState.status === "preparing" || renderState.status === "rendering" || renderState.status === "uploading" ? "Render..." : "Render MP4"}
                 </button>
                 {renderState.status === "ready" && (renderPreviewUrl || renderState.outputUrl) ? (
-                  <div className="grid grid-cols-2 gap-2">
-                    <button type="button" onClick={() => setShowRenderReadyModal(true)} className="rounded-none border border-white/10 px-3 py-2 text-xs font-black uppercase tracking-[0.1em] text-white/64">Ver</button>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => setShowRenderReadyModal(true)} className="text-[10px] font-black uppercase tracking-[0.06em] text-white/55 hover:text-white/80">Ver</button>
                     <button
                       type="button"
                       onClick={() => {
@@ -2015,7 +2212,7 @@ function VideoEditorStudio({
                         }
                         void forceDownloadUrl(renderPreviewUrl || renderState.outputUrl || "", "foldder-video-render.mp4");
                       }}
-                      className="rounded-none border border-white/10 px-3 py-2 text-xs font-black uppercase tracking-[0.1em] text-white/64"
+                      className="text-[10px] font-black uppercase tracking-[0.06em] text-white/55 hover:text-white/80"
                     >
                       Descargar
                     </button>
@@ -2023,6 +2220,7 @@ function VideoEditorStudio({
                 ) : null}
               </div>
             ) : null}
+            </div>
           </aside>
 
           <div
@@ -2038,37 +2236,39 @@ function VideoEditorStudio({
             <div className="h-1 w-20 rounded-full bg-white/12 hover:bg-cyan-200/35" />
           </div>
 
-          <section className="col-span-3 min-h-0 rounded-none border border-white/10 bg-[#191b20] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <div className="text-[10px] font-black uppercase tracking-[0.16em] text-white/36">Timeline · {formatTime(data.totalDurationSeconds)}</div>
-                <div className="mt-1 text-xs text-white/38">Capa activa: {selectedTrack?.label ?? "ninguna"}</div>
+          <section className="col-span-3 min-h-0 border-t border-white/10 px-2 py-1.5">
+            <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+              <TimelineClipActions
+                selectedClip={selectedClip ?? null}
+                canSplitSelectedClip={canSplitSelectedClip}
+                onSplit={splitSelectedClip}
+                onDuplicate={() => selectedClip && commit(duplicateVideoEditorClip(data, selectedClip.id))}
+                onDelete={deleteSelectedClip}
+              />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-[10px] font-black uppercase tracking-[0.1em] text-white/35">
+                  Timeline · {formatTime(data.totalDurationSeconds)}
+                </div>
+                <div className="truncate text-[10px] text-white/40">
+                  {selectedClip ? (
+                    <>
+                      <span className="font-semibold text-white/60">{selectedClip.title}</span>
+                      <span className="ml-1.5 tabular-nums">{formatTime(selectedClip.startTime)} → {formatTime(selectedClip.startTime + selectedClip.durationSeconds)}</span>
+                    </>
+                  ) : (
+                    selectedTrack?.label ?? "Sin clip seleccionado"
+                  )}
+                </div>
               </div>
-              <div className="flex flex-wrap gap-2">
-                <button type="button" onClick={() => commit({ ...data, timelineZoom: Math.max(8, timelineScale - 4) })} className="rounded-full border border-white/10 px-3 py-1.5 text-xs font-bold text-white/62">Zoom -</button>
-                <button type="button" onClick={fitTimelineZoom} className="rounded-full border border-white/10 px-3 py-1.5 text-xs font-bold text-white/62">Fit</button>
-                <button type="button" onClick={() => commit({ ...data, timelineZoom: Math.min(80, timelineScale + 4) })} className="rounded-full border border-white/10 px-3 py-1.5 text-xs font-bold text-white/62">Zoom +</button>
-                <button type="button" onClick={() => commit(createVideoEditorTimelineTrack(data, "visual"))} className="rounded-full border border-white/10 px-3 py-1.5 text-xs font-bold text-white/62">+ Video</button>
-                <button type="button" onClick={() => commit(createVideoEditorTimelineTrack(data, "audio"))} className="rounded-full border border-white/10 px-3 py-1.5 text-xs font-bold text-white/62">+ Audio</button>
-                <button type="button" onClick={() => setInspectorTab("audio")} className="rounded-full border border-white/10 px-3 py-1.5 text-xs font-bold text-white/62">Audio</button>
-                <button type="button" onClick={() => setInspectorTab("render")} className="rounded-full border border-white/10 px-3 py-1.5 text-xs font-bold text-white/62">Render</button>
+              <div className="flex flex-wrap items-center gap-0.5">
+                <button type="button" onClick={() => commit({ ...data, timelineZoom: Math.max(8, timelineScale - 4) })} className="px-1.5 py-0.5 text-[10px] font-semibold text-white/45 hover:text-white/70" title="Alejar">−</button>
+                <button type="button" onClick={fitTimelineZoom} className="px-1.5 py-0.5 text-[10px] font-semibold text-white/45 hover:text-white/70" title="Ajustar zoom">Fit</button>
+                <button type="button" onClick={() => commit({ ...data, timelineZoom: Math.min(80, timelineScale + 4) })} className="px-1.5 py-0.5 text-[10px] font-semibold text-white/45 hover:text-white/70" title="Acercar">+</button>
+                <button type="button" onClick={() => commit(createVideoEditorTimelineTrack(data, "visual"))} className="px-1.5 py-0.5 text-[10px] font-semibold text-white/45 hover:text-white/70" title="Añadir pista de vídeo">+ Vid</button>
+                <button type="button" onClick={() => commit(createVideoEditorTimelineTrack(data, "audio"))} className="px-1.5 py-0.5 text-[10px] font-semibold text-white/45 hover:text-white/70" title="Añadir pista de audio">+ Aud</button>
               </div>
             </div>
-            {selectedClip ? (
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-none border border-cyan-200/14 bg-cyan-300/[0.055] px-3 py-2">
-                <div className="min-w-0 text-xs text-white/58">
-                  <span className="font-black text-cyan-50/82">{selectedClip.title}</span>
-                  <span className="ml-2 tabular-nums">{formatTime(selectedClip.startTime)} → {formatTime(selectedClip.startTime + selectedClip.durationSeconds)}</span>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <button type="button" onClick={() => focusClip(selectedClip)} className="rounded-full border border-white/10 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.1em] text-white/62">Ir al inicio</button>
-                  <button type="button" disabled={!canSplitSelectedClip} onClick={splitSelectedClip} className="rounded-full border border-white/10 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.1em] text-white/62 disabled:opacity-35"><Scissors size={11} className="inline" /> Cortar</button>
-                  <button type="button" onClick={() => commit(duplicateVideoEditorClip(data, selectedClip.id))} className="rounded-full border border-white/10 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.1em] text-white/62"><Copy size={11} className="inline" /> Duplicar</button>
-                  <button type="button" onClick={deleteSelectedClip} className="rounded-full border border-rose-200/15 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.1em] text-rose-100/75"><Trash2 size={11} className="inline" /> Eliminar</button>
-                </div>
-              </div>
-            ) : null}
-            <div ref={timelineViewportRef} className="relative h-[calc(100%-78px)] min-h-[92px] overflow-auto rounded-none border border-white/10 bg-[#111318]">
+            <div ref={timelineViewportRef} className="relative h-[calc(100%-40px)] min-h-[88px] overflow-auto bg-[#0a0c10]">
               <div className="relative min-w-full" style={{ width: TIMELINE_LABEL_WIDTH + timelineWidth }}>
                 <div className="sticky top-0 z-30 grid border-b border-white/10 bg-[#202329]" style={{ gridTemplateColumns: `${TIMELINE_LABEL_WIDTH}px ${timelineWidth}px` }}>
                   <div className="sticky left-0 z-30 flex h-9 items-center border-r border-black/45 bg-[#202329] px-3 text-[10px] font-black uppercase tracking-[0.12em] text-white/32">Timecode</div>
@@ -2331,7 +2531,7 @@ function VideoEditorStudio({
             ) : null}
           </section>
         </main>
-      </div>
+      )}
       {audioModalType ? (
         <AudioRequestModal
           type={audioModalType}
@@ -2357,16 +2557,118 @@ function VideoEditorStudio({
   );
 }
 
+function VideoEditorNodeExteriorPreview({
+  clip,
+  previewUrl,
+  mediaVisible,
+}: {
+  clip: VideoEditorClip;
+  previewUrl?: string;
+  mediaVisible: boolean;
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const pauseAt = clip.trimStart ?? 0;
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || clip.mediaType !== "video") return;
+    const seek = () => {
+      if (video.readyState > 0 && Math.abs(video.currentTime - pauseAt) > 0.05) {
+        video.currentTime = pauseAt;
+      }
+      video.pause();
+    };
+    seek();
+    video.addEventListener("loadeddata", seek);
+    return () => video.removeEventListener("loadeddata", seek);
+  }, [clip.mediaType, pauseAt, previewUrl]);
+  if (!mediaVisible) {
+    return (
+      <div className="flex h-full w-full flex-col items-center justify-center gap-2 bg-[#0a0a0a] text-white/35">
+        <Film size={28} />
+        <span className="text-center text-[8px] font-black uppercase tracking-widest">Preview pausada</span>
+      </div>
+    );
+  }
+  if (clip.mediaType === "image" && previewUrl) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img src={previewUrl} alt={clip.title} className="h-full w-full object-cover" draggable={false} />
+    );
+  }
+  if (clip.mediaType === "video" && previewUrl) {
+    return (
+      <video
+        ref={videoRef}
+        src={previewUrl}
+        className="h-full w-full object-cover"
+        muted
+        playsInline
+        preload="metadata"
+      />
+    );
+  }
+  return (
+    <div className="flex h-full w-full items-center justify-center bg-[#0a0a0a] text-white/30">
+      <Film size={28} />
+    </div>
+  );
+}
+
 export const VideoEditorNode = memo(function VideoEditorNode({ id, data, selected }: NodeProps) {
   useFoldderRenderMetric("VideoEditorNode", id);
-  const sourceMediaList = useConnectedMediaList(id);
+  const {
+    combinedSourceMediaList,
+    connectedByVideoSlot,
+    connectedVideoCount,
+    visibleVideoSlotIds,
+  } = useVideoEditorIncomingMedia(id);
+  const updateNodeInternals = useUpdateNodeInternals();
   const { setNodes } = useReactFlow();
   const nodeData = normalizeVideoEditorData(data);
-  const effectiveData = sourceMediaList && !nodeData.tracks.video.length && !nodeData.tracks.audio.length && nodeData.status === "empty"
-    ? ingestMediaListToVideoEditor(sourceMediaList, nodeData)
+  const effectiveData = combinedSourceMediaList && !nodeData.tracks.video.length && !nodeData.tracks.audio.length && nodeData.status === "empty"
+    ? ingestMediaListToVideoEditor(combinedSourceMediaList, nodeData)
     : nodeData;
   const stats = clipStats(effectiveData);
+  const previewClip = useMemo(() => getVideoEditorNodePreviewClip(effectiveData), [effectiveData]);
+  const nodeMediaVisible = useNodeViewportVisibility(id, 900);
+  const previewUrl = useVideoEditorAssetUrl(
+    previewClip?.url || previewClip?.assetId,
+    previewClip?.s3Key,
+    nodeMediaVisible && Boolean(previewClip),
+  );
+  const showPreview = Boolean(previewClip);
+  const studioTouched = hasVideoEditorStudioTouched(data as Record<string, unknown>) || stats.clips.length > 0;
   const [studioOpen, setStudioOpen] = useState(false);
+
+  useEffect(() => {
+    updateNodeInternals(id);
+  }, [id, updateNodeInternals, visibleVideoSlotIds.join(",")]);
+
+  useEffect(() => {
+    const record = data as Record<string, unknown>;
+    if (record._foldderAspectRatio === VIDEO_EDITOR_ASPECT_RATIO) return;
+    setNodes((nodes) =>
+      nodes.map((node) => {
+        if (node.id !== id) return node;
+        const style = (node.style ?? {}) as React.CSSProperties;
+        const parsedWidth = typeof style.width === "number" ? style.width : Number.parseFloat(String(style.width ?? ""));
+        const parsedHeight = typeof style.height === "number" ? style.height : Number.parseFloat(String(style.height ?? ""));
+        const nextFrame =
+          Number.isFinite(parsedWidth) && parsedWidth > 0 && Number.isFinite(parsedHeight) && parsedHeight > 0
+            ? snapAspectDimensionsToGrid({ width: parsedWidth, height: parsedHeight }, VIDEO_EDITOR_ASPECT_RATIO)
+            : foldderGridFrame(5, 3);
+        return {
+          ...node,
+          data: { ...(node.data as Record<string, unknown>), _foldderAspectRatio: VIDEO_EDITOR_ASPECT_RATIO },
+          style: {
+            ...style,
+            width: nextFrame.width,
+            height: nextFrame.height,
+          },
+        };
+      }),
+    );
+  }, [data, id, setNodes]);
 
   const commit = useCallback((next: VideoEditorNodeData) => {
     setNodes((nodes) =>
@@ -2374,10 +2676,7 @@ export const VideoEditorNode = memo(function VideoEditorNode({ id, data, selecte
         node.id === id
           ? {
               ...node,
-              data: {
-                ...node.data,
-                ...next,
-              },
+              data: touchStudioNodeData(node.data as Record<string, unknown>, next as unknown as Record<string, unknown>),
             }
           : node,
       ),
@@ -2388,19 +2687,66 @@ export const VideoEditorNode = memo(function VideoEditorNode({ id, data, selecte
   return (
     <div
       className={cx(
-        "custom-node video-editor-node foldder-node--frameless node--media relative text-white video-editor-node--empty",
+        "custom-node video-editor-node foldder-node--frameless node--media relative text-white group/node",
+        showPreview ? "video-editor-node--has-preview foldder-frameless-label-dark" : "video-editor-node--empty",
+        studioTouched ? "foldder-node--studio-touched" : undefined,
         selected ? "video-editor-node--selected" : undefined,
       )}
-      style={{ minWidth: 200, minHeight: 120 }}
+      style={{ width: "100%", height: "100%", minWidth: VIDEO_EDITOR_MIN_WIDTH, minHeight: VIDEO_EDITOR_MIN_HEIGHT }}
     >
-      <NodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={2200} isVisible={selected} />
+      <VideoEditorNodeResizer
+        minWidth={VIDEO_EDITOR_MIN_WIDTH}
+        minHeight={VIDEO_EDITOR_MIN_HEIGHT}
+        maxWidth={960}
+        maxHeight={VIDEO_EDITOR_NODE_MAX_HEIGHT}
+        keepAspectRatio
+        isVisible={selected}
+      />
+      {studioTouched ? <FoldderStudioTouchedMark nodeType="video_editor" /> : null}
       <NodeLabel id={id} label={typeof data.label === "string" ? data.label : undefined} defaultLabel="Video Editor" />
-      <div className="handle-wrapper handle-left">
+      {VIDEO_EDITOR_VIDEO_SLOTS.filter((slot) => visibleVideoSlotIds.includes(slot.id)).map((slot, index) => (
+        <div
+          key={slot.id}
+          className="handle-wrapper handle-left"
+          style={{
+            top: slot.top,
+            opacity: index === 0 || connectedByVideoSlot[VIDEO_EDITOR_VIDEO_SLOT_IDS[index - 1]!] ? 1 : 0.35,
+          }}
+        >
+          <FoldderDataHandle type="target" position={Position.Left} id={slot.id} dataType="video" />
+          <span
+            className="handle-label"
+            style={{ color: connectedByVideoSlot[slot.id] ? "#3a8f96" : undefined }}
+          >
+            {connectedByVideoSlot[slot.id] ? `✓ ${slot.label}` : slot.label}
+          </span>
+        </div>
+      ))}
+      <div className="handle-wrapper handle-left" style={{ top: "92%" }}>
         <FoldderDataHandle type="target" position={Position.Left} id="media_list" dataType="generic" />
         <span className="handle-label">Media list</span>
       </div>
 
       <div className="foldder-frameless-main relative flex min-h-0 flex-1 flex-col overflow-hidden">
+        {showPreview && previewClip ? (
+          <>
+            <VideoEditorNodeExteriorPreview
+              clip={previewClip}
+              previewUrl={previewUrl}
+              mediaVisible={nodeMediaVisible}
+            />
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[11] bg-gradient-to-t from-black/75 via-black/25 to-transparent px-3 pb-2 pt-8">
+              <div className="text-[10px] font-black uppercase tracking-[0.12em] text-white/55">
+                {stats.clips.length} clips · {stats.duration.toFixed(0)}s
+              </div>
+            </div>
+            <span className="video-editor-status rounded-none bg-black/35 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.12em] text-white/80">
+              {effectiveData.status}
+            </span>
+            <FoldderStudioModeCenterButton onClick={() => setStudioOpen(true)} />
+          </>
+        ) : (
+          <>
         <div className="video-editor-empty-background absolute inset-0 overflow-hidden" aria-hidden>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
@@ -2422,17 +2768,18 @@ export const VideoEditorNode = memo(function VideoEditorNode({ id, data, selecte
             </div>
           </div>
           <div className="video-editor-summary mt-4 rounded-none border-none bg-white/10 p-4 backdrop-blur-sm">
-            {sourceMediaList ? (
+            {combinedSourceMediaList ? (
               <>
                 <div className="text-3xl font-black tracking-[-0.06em] text-white">{stats.clips.length} clips</div>
                 <div className="mt-2 text-sm font-semibold text-white/75">
                   {stats.duration.toFixed(0)}s · {stats.videos} vídeos · {stats.images} imágenes · {stats.audio} audios
+                  {connectedVideoCount > 0 ? ` · ${connectedVideoCount} conectado${connectedVideoCount === 1 ? "" : "s"}` : ""}
                 </div>
               </>
             ) : (
               <>
                 <div className="text-lg font-black tracking-[-0.04em] text-white">Sin medios conectados</div>
-                <div className="mt-1 text-sm text-white/70">Conecta una media_list</div>
+                <div className="mt-1 text-sm text-white/70">Conecta vídeos o una media list</div>
               </>
             )}
           </div>
@@ -2449,13 +2796,15 @@ export const VideoEditorNode = memo(function VideoEditorNode({ id, data, selecte
             </button>
           </div>
         </div>
+          </>
+        )}
       </div>
 
       {studioOpen ? (
         <VideoEditorStudio
           nodeId={id}
           data={effectiveData}
-          sourceMediaList={sourceMediaList}
+          sourceMediaList={combinedSourceMediaList}
           onChange={commit}
           onClose={() => setStudioOpen(false)}
         />

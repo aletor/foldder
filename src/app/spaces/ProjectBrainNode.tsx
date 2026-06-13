@@ -17,6 +17,8 @@ import { labelForBrainNodeSource } from "@/lib/brain/brain-review-labels";
 import { readResponseJson } from "@/lib/read-response-json";
 import { FoldderDataHandle } from "./FoldderDataHandle";
 import { FoldderNodeHeaderTitle, NodeLabel } from "./foldder-node-ui";
+import { hasFoldderStudioTouched } from "./studio-node/foldder-studio-touched";
+import { FoldderStudioTouchedMark } from "./studio-node/foldder-studio-touched-mark";
 import { normalizeProjectAssets } from "./project-assets-metadata";
 import { useProjectBrainCanvas } from "./project-brain-canvas-context";
 
@@ -189,6 +191,7 @@ export const ProjectBrainNode = memo(({ id, data, selected }: NodeProps<any>) =>
       } as React.CSSProperties}
     >
       <NodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={2200} isVisible={selected} />
+      {hasFoldderStudioTouched(nodeData as Record<string, unknown>) ? <FoldderStudioTouchedMark nodeType="projectBrain" /> : null}
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Brain" />
 
       <div className="node-header">

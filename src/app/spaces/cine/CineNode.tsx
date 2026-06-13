@@ -36,6 +36,7 @@ import {
   StudioCanvasPill,
   type StudioCanvasNodeHandleSpec,
 } from "../studio-node/studio-canvas-node";
+import { hasFoldderStudioTouched, touchStudioNodeData } from "../studio-node/foldder-studio-touched";
 import { useStudioNodeController } from "../studio-node/studio-node-architecture";
 import { textFromStudioSourceNode } from "../studio-node/source-node-text";
 import {
@@ -211,13 +212,12 @@ export const CineNode = memo(function CineNode({ id, data, selected }: NodeProps
           node.id === id
             ? {
                 ...node,
-                data: {
-                  ...node.data,
+                data: touchStudioNodeData(node.data as Record<string, unknown>, {
                   ...next,
                   mediaListOutput,
                   media_list: mediaListOutput,
                   value: JSON.stringify(mediaListOutput),
-                },
+                }),
               }
             : node,
         ),
@@ -346,6 +346,7 @@ export const CineNode = memo(function CineNode({ id, data, selected }: NodeProps
       handles={CINE_NODE_HANDLES}
       variant="frameless"
       material="media"
+      studioTouched={hasFoldderStudioTouched(nodeData as Record<string, unknown>)}
     >
       <NodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={2200} isVisible={selected} />
       {previewImage ? (

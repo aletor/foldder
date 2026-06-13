@@ -40,8 +40,8 @@ const STATIC_NODE_GRID_PRESETS: Record<string, GridPreset> = {
   spaceOutput: { cols: 3, rows: 1 },
   urlImage: { cols: 5, rows: 5 },
   vfxGenerator: { cols: 5, rows: 3 },
-  videoEditor: { cols: 5, rows: 4 },
-  video_editor: { cols: 5, rows: 4 },
+  videoEditor: { cols: 5, rows: 3 },
+  video_editor: { cols: 5, rows: 3 },
 };
 
 const ASPECT_RATIO_NODE_TYPES = new Set([
@@ -58,6 +58,8 @@ const ASPECT_RATIO_NODE_TYPES = new Set([
   "photoRoom",
   "urlImage",
   "vfxGenerator",
+  "videoEditor",
+  "video_editor",
 ]);
 
 export const FOLDDER_VISUAL_MAX_GRID_COLS = 5;
@@ -82,6 +84,14 @@ export function foldderGridFrame(cols: number, rows: number): { width: number; h
     width: gridLength(cols),
     height: gridLength(rows),
   };
+}
+
+export function getStaticNodeGridAspectRatio(type: string | undefined): number | null {
+  if (!type) return null;
+  const preset = STATIC_NODE_GRID_PRESETS[type];
+  if (!preset) return null;
+  const frame = foldderGridFrame(preset.cols, preset.rows);
+  return frame.width / frame.height;
 }
 
 export function gridUnitsForDimension(value: number): number {
@@ -269,7 +279,7 @@ export function nodeAspectRatioFromData(type: string | undefined, data?: unknown
   const width = typeof record.width === "number" ? record.width : undefined;
   const height = typeof record.height === "number" ? record.height : undefined;
   if (width && height && width > 0 && height > 0) return width / height;
-  return null;
+  return getStaticNodeGridAspectRatio(type);
 }
 
 export function getNodeGridFrameForType(
@@ -298,7 +308,8 @@ export function applyNodeGridPreset<T extends Node | Record<string, unknown>>(no
   const existingHeight = parseStyleDimension(style.height);
   const aspectRatio =
     nodeAspectRatioFromData(type, node.data) ??
-    (existingWidth && existingHeight ? existingWidth / existingHeight : null);
+    (existingWidth && existingHeight ? existingWidth / existingHeight : null) ??
+    getStaticNodeGridAspectRatio(type);
   const nextFrame =
     existingWidth || existingHeight
       ? isAspectRatioGridNodeType(type) && aspectRatio
@@ -311,9 +322,17 @@ export function applyNodeGridPreset<T extends Node | Record<string, unknown>>(no
             height: existingHeight ? snapCanvasDimensionToGrid(existingHeight) : frame.height,
           }
       : frame;
+  const nextData =
+    isAspectRatioGridNodeType(type) && aspectRatio
+      ? {
+          ...(typeof node.data === "object" && node.data !== null ? (node.data as Record<string, unknown>) : {}),
+          _foldderAspectRatio: aspectRatio,
+        }
+      : node.data;
   return {
     ...node,
     ...(position ? { position } : {}),
+    data: nextData,
     style: {
       ...style,
       width: nextFrame.width,
@@ -339,7 +358,8 @@ export function snapNodeChangesToGrid(changes: NodeChange[], nodes: Node[] = [])
       const currentRatio =
         nodeAspectRatioFromData(node?.type, node?.data) ??
         (styleWidth && styleHeight ? styleWidth / styleHeight : null) ??
-        (node?.width && node?.height ? node.width / node.height : null);
+        (node?.width && node?.height ? node.width / node.height : null) ??
+        getStaticNodeGridAspectRatio(node?.type);
       const isResizeEnd = (change as { resizing?: boolean }).resizing === false;
       if (isAspectRatioGridNodeType(node?.type) && currentRatio) {
         return {

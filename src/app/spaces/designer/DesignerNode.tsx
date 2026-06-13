@@ -27,6 +27,7 @@ import {
 } from "../foldder-export-events";
 import type { StandardStudioShellConfig } from "../StandardStudioShell";
 import { StudioCanvasNodeShell, type StudioCanvasNodeHandleSpec } from "../studio-node/studio-canvas-node";
+import { hasFoldderStudioTouched, touchStudioNodeData } from "../studio-node/foldder-studio-touched";
 import { StudioNodePortal, useStudioNodeController } from "../studio-node/studio-node-architecture";
 import type { PresenterGroupStep } from "../presenter/presenter-group-animations";
 import {
@@ -244,10 +245,7 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
         n.id === id
           ? {
               ...n,
-              data: {
-                ...n.data,
-                ...patch,
-              },
+              data: touchStudioNodeData(n.data as Record<string, unknown>, patch as Record<string, unknown>),
             }
           : n,
       ),
@@ -260,7 +258,7 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
     (dataUrl: string) => {
       setNodes((nds) =>
         nds.map((n) =>
-          n.id === id ? { ...n, data: { ...n.data, value: dataUrl } } : n,
+          n.id === id ? { ...n, data: touchStudioNodeData(n.data as Record<string, unknown>, { value: dataUrl }) } : n,
         ),
       );
     },
@@ -301,6 +299,7 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
       variant="frameless"
       material="media"
       introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}
+      studioTouched={hasFoldderStudioTouched(nodeData as Record<string, unknown>)}
     >
       <DesignerNodeResizer
         minWidth={280}

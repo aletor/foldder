@@ -204,8 +204,11 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
 	  video_editor: {
 	    type: 'video_editor',
 	    label: 'Video Editor',
-	    description: 'Recibe una media_list y la convierte en una timeline editable simple con vídeo, imágenes y audio generado por prompt.',
-	    inputs: [{ id: 'media_list', label: 'Media List', type: 'media_list' as HandleType, required: true }],
+	    description: 'Recibe vídeos individuales o una media_list y los convierte en una timeline editable con vídeo, imágenes y audio generado por prompt.',
+	    inputs: [
+	      { id: 'video-n', label: 'Videos', type: 'video' },
+	      { id: 'media_list', label: 'Media List', type: 'media_list' as HandleType },
+	    ],
 	    outputs: [],
 	    dataSchema: {
 	      sourceMediaList: 'MediaListOutput',
@@ -220,7 +223,10 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
 	    type: 'videoEditor',
 	    label: 'Video Editor',
 	    description: 'Alias legacy de Video Editor.',
-	    inputs: [{ id: 'media_list', label: 'Media List', type: 'media_list' as HandleType, required: true }],
+	    inputs: [
+	      { id: 'video-n', label: 'Videos', type: 'video' },
+	      { id: 'media_list', label: 'Media List', type: 'media_list' as HandleType },
+	    ],
 	    outputs: [],
 	    dataSchema: {
 	      label: 'string',

@@ -39,6 +39,11 @@ import { StudioNodePortal } from "../studio-node/studio-node-architecture";
 import {
   FoldderStudioHeader,
 } from "../FoldderStudioHeader";
+import {
+  hasFoldderStudioTouched,
+  touchStudioNodeData,
+} from "../studio-node/foldder-studio-touched";
+import { FoldderStudioTouchedMark } from "../studio-node/foldder-studio-touched-mark";
 
 type InspirationFacet = "similar" | "textures" | "colors" | "style" | "people" | "backgrounds";
 type InspirationProvider = "pexels" | "unsplash";
@@ -72,6 +77,7 @@ type InspirationNodeData = {
   error?: string;
   notice?: string;
   _foldderCanvasIntro?: boolean;
+  _foldderStudioTouched?: boolean;
 };
 
 const FACETS: Array<{ id: InspirationFacet; es: string; en: string; icon: React.ReactNode }> = [
@@ -523,12 +529,16 @@ function InspirationStudio({
 const INSPIRATION_EMPTY_BACKGROUND_SRC = "/assets/nodes/inspiration-empty-green.png";
 
 export const InspirationNode = memo(function InspirationNode({ id, data, selected }: NodeProps) {
-  const nodeData = data as InspirationNodeData;
   const nodes = useNodes();
+  const flowNode = nodes.find((node) => node.id === id);
+  const nodeData = (flowNode?.data ?? data) as InspirationNodeData;
   const edges = useEdges();
   const { setNodes } = useReactFlow();
   const updateNodeInternals = useUpdateNodeInternals();
   const [studioOpen, setStudioOpen] = useState(false);
+  const [studioTouched, setStudioTouched] = useState(
+    () => hasFoldderStudioTouched(data as Record<string, unknown>),
+  );
   const [measuredPreviewSize, setMeasuredPreviewSize] = useState<{ url: string; width: number; height: number } | null>(null);
   const frameRef = useRef<HTMLDivElement | null>(null);
   const previewFrameRef = useRef<HTMLDivElement | null>(null);
@@ -570,6 +580,12 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
   const previewImageWidth = previewImageSize?.width ?? null;
   const previewImageHeight = previewImageSize?.height ?? null;
   const showInspirationEmpty = !outputUrl && !selectedRef;
+
+  useEffect(() => {
+    if (hasFoldderStudioTouched(nodeData as Record<string, unknown>)) {
+      setStudioTouched(true);
+    }
+  }, [nodeData]);
 
   useEffect(() => {
     if (!previewUrl) {
@@ -631,18 +647,22 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
 
       let shouldRefreshInternals = false;
 
+      const shouldMarkTouched =
+        Boolean(patch.selected) ||
+        (typeof patch.value === "string" && patch.value.trim().length > 0);
+
+      if (shouldMarkTouched) {
+        setStudioTouched(true);
+      }
+
       setNodes((nds) => {
-        let nextNodes = nds.map((node) =>
-          node.id === id
-            ? {
-                ...node,
-                data: {
-                  ...node.data,
-                  ...patch,
-                },
-              }
-            : node,
-        );
+        let nextNodes = nds.map((node) => {
+          if (node.id !== id) return node;
+          const nextData = shouldMarkTouched
+            ? touchStudioNodeData(node.data as Record<string, unknown>, patch as Record<string, unknown>)
+            : { ...node.data, ...patch };
+          return { ...node, data: nextData };
+        });
 
         if (immediateWidth && immediateHeight) {
           const result = syncInspirationNodeFrame(nextNodes, id, immediateWidth, immediateHeight);
@@ -669,6 +689,7 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
       style={{ minWidth: 200, minHeight: showInspirationEmpty ? 120 : 0 }}
     >
       <NodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={1400} keepAspectRatio={Boolean(previewUrl)} isVisible={selected} />
+      {studioTouched ? <FoldderStudioTouchedMark nodeType="inspiration" /> : null}
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Inspiration" />
 
       <div className="handle-wrapper handle-left" style={{ top: "31%" }}>

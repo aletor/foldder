@@ -83,6 +83,8 @@ import {
 } from "@/lib/ai-job-notifications";
 import { FOLDDER_FIT_VIEW_EASE } from "@/lib/fit-view-ease";
 import "./spaces.css";
+import { touchStudioNodeData } from "./studio-node/foldder-studio-touched";
+import { type ProjectAssetsMetadata } from "./project-assets-metadata";
 import { NODE_REGISTRY } from "./nodeRegistry";
 import {
   createProjectFileForStudioNode,
@@ -316,6 +318,8 @@ type SaveProjectOptions = {
   reason?: "autosave" | "brain-assets" | "debounced" | "manual" | "text-asset";
   silentError?: boolean;
   skipIfUnchanged?: boolean;
+  /** Internal: one auto-retry after syncing revision from a 409 conflict. */
+  _conflictRetried?: boolean;
 };
 
 type SaveHealthState = "idle" | "saving" | "saved" | "error" | "conflict" | "too-large";
@@ -991,6 +995,22 @@ export function SpacesContent() {
     [primaryMinimizedApp?.appId],
   );
 
+  const onBrainAssetsMetadataChange = useCallback(
+    (next: ProjectAssetsMetadata) => {
+      setMetadata((m: Record<string, unknown>) => ({ ...m, assets: next }));
+      if (projectBrainOpen) {
+        setNodes((nds) =>
+          nds.map((n) =>
+            n.type === "projectBrain"
+              ? { ...n, data: touchStudioNodeData(n.data as Record<string, unknown>) }
+              : n,
+          ),
+        );
+      }
+    },
+    [projectBrainOpen, setNodes],
+  );
+
   useEffect(() => {
     const onOpenBrain = () => {
       setBrainInitialSection(null);
@@ -1150,6 +1170,8 @@ export function SpacesContent() {
       enhancer:     { prompt: ['p0','p1','p2','p3','p4','p5','p6','p7','p8','p9','p10','p11','p12','p13','p14','p15'] },
       vfxGenerator: { prompt: ['prompt'] },
       photoRoom: { image: ['in_0','in_1','in_2','in_3','in_4','in_5','in_6','in_7'] },
+      video_editor: { video: ['video_0','video_1','video_2','video_3','video_4','video_5','video_6','video_7'] },
+      videoEditor: { video: ['video_0','video_1','video_2','video_3','video_4','video_5','video_6','video_7'] },
     };
     // Per-handle-type slot counters, reset per new node creation
     const slotCounters: Record<string, number> = {};
@@ -3913,22 +3935,35 @@ export function SpacesContent() {
       }
       return true;
     } catch (err) {
-      console.error('Save error:', err);
       const httpError = getHttpJsonError(err);
       const message = err instanceof Error ? err.message : String(err ?? "");
       const classifiedSaveError = classifyProjectSaveError(err);
       if (classifiedSaveError.state === "conflict") {
-        projectSaveBlockedByConflictRef.current = true;
-        console.warn("[FOLDDER save] Conflicto de revisión: otro dispositivo guardó este proyecto antes.");
         const actualRevision = httpError?.actualRevision;
         const conflictProjectId = activeProjectIdRef.current;
-        if (typeof actualRevision === "number" && conflictProjectId) {
+        if (typeof actualRevision === "number" && Number.isFinite(actualRevision) && conflictProjectId) {
           setSavedProjects((prev) =>
             prev.map((project) =>
               project.id === conflictProjectId ? { ...project, revision: actualRevision } : project,
             ),
           );
+          setActiveProjectRevision(actualRevision);
+          activeProjectRevisionRef.current = actualRevision;
         }
+        if (
+          typeof actualRevision === "number" &&
+          Number.isFinite(actualRevision) &&
+          !options?._conflictRetried
+        ) {
+          console.warn(
+            `[FOLDDER save] Revisión desincronizada (esperada ≠ servidor). Reintento automático con revisión ${actualRevision}.`,
+          );
+          return saveProject(nameToSave, { ...options, _conflictRetried: true });
+        }
+        projectSaveBlockedByConflictRef.current = true;
+        console.warn("[FOLDDER save] Conflicto de revisión persistente. Recarga el proyecto antes de volver a guardar.");
+      } else {
+        console.error("Save error:", err);
       }
       setSaveHealth({
         state: classifiedSaveError.state,
@@ -6102,28 +6137,36 @@ export function SpacesContent() {
                   return (
                     <div
                       key={t.id}
-                      className="pointer-events-auto flex items-start gap-2.5 rounded-none border border-white/25 bg-white/[0.06] px-3 py-2.5 shadow-lg backdrop-blur-xl"
+                      className={`pointer-events-auto flex items-start gap-2.5 rounded-none border px-3 py-2.5 shadow-xl backdrop-blur-xl ${
+                        t.ok
+                          ? "border-emerald-300/35 bg-emerald-950/90 text-emerald-50"
+                          : "border-red-300/35 bg-red-950/92 text-red-50"
+                      }`}
                     >
                       {t.ok ? (
-                        <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-white/85" aria-hidden />
+                        <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-200" aria-hidden />
                       ) : (
-                        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-white/75" aria-hidden />
+                        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-200" aria-hidden />
                       )}
                       <div className="min-w-0 flex-1">
-                        <p className="text-[10px] font-semibold leading-snug text-white">
-                          {t.ok ? 'Listo' : 'Error'} · <span className="text-white/90">{t.label}</span>
+                        <p className="text-[10px] font-semibold leading-snug">
+                          {t.ok ? "Listo" : "Error"} · <span className="opacity-90">{t.label}</span>
                         </p>
                         {!t.ok && t.message && (
-                          <p className="mt-0.5 line-clamp-3 text-[9px] leading-snug text-white/65">{t.message}</p>
+                          <p className="mt-0.5 line-clamp-3 text-[9px] leading-snug opacity-80">{t.message}</p>
                         )}
                         {t.ok && (
-                          <p className="mt-0.5 text-[9px] text-white/55">La petición anterior ha terminado.</p>
+                          <p className="mt-0.5 text-[9px] opacity-70">La petición anterior ha terminado.</p>
                         )}
                       </div>
                       <div className="flex shrink-0 flex-col gap-1">
                         <button
                           type="button"
-                          className="rounded-none border border-white/25 bg-white/[0.08] px-2.5 py-1 text-[9px] font-semibold uppercase tracking-wide text-white shadow-sm backdrop-blur-xl transition-colors hover:bg-white/[0.14]"
+                          className={`rounded-none border px-2.5 py-1 text-[9px] font-semibold uppercase tracking-wide shadow-sm transition-colors ${
+                            t.ok
+                              ? "border-emerald-200/30 bg-emerald-900/60 hover:bg-emerald-900/80"
+                              : "border-red-200/30 bg-red-900/60 hover:bg-red-900/80"
+                          }`}
                           onClick={() => {
                             focusAiJobNode(t.nodeId);
                             setAiJobToasts((p) => p.filter((x) => x.id !== t.id));
@@ -6133,7 +6176,7 @@ export function SpacesContent() {
                         </button>
                         <button
                           type="button"
-                          className="rounded-none px-1 py-0.5 text-[8px] text-white/45 transition-colors hover:text-white/80"
+                          className="rounded-none px-1 py-0.5 text-[8px] opacity-55 transition-colors hover:opacity-90"
                           onClick={() => setAiJobToasts((p) => p.filter((x) => x.id !== t.id))}
                         >
                           Cerrar
@@ -6589,9 +6632,7 @@ export function SpacesContent() {
             onBrainAssetsFullReset={() => setVisualReferenceAnalysisDirty(false)}
             onSaveProjectFromBrain={() => saveProject(undefined, { silentError: true })}
             isSavingProject={isSaving}
-            onAssetsMetadataChange={(next) =>
-              setMetadata((m: Record<string, unknown>) => ({ ...m, assets: next }))
-            }
+            onAssetsMetadataChange={onBrainAssetsMetadataChange}
           />
         )}
 

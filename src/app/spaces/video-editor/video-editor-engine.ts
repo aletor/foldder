@@ -841,6 +841,35 @@ export function approveTimelineAudioVariation(data: VideoEditorNodeData, request
   };
 }
 
+export function getVideoEditorNodePreviewClip(data: VideoEditorNodeData): VideoEditorClip | null {
+  const render = data.render;
+  if (
+    render?.status === "ready"
+    && (render.outputUrl || render.outputAssetId || render.s3Key)
+  ) {
+    return {
+      id: "render_preview",
+      assetId: render.outputAssetId || render.outputUrl || "",
+      url: render.outputUrl,
+      s3Key: render.s3Key,
+      mediaType: "video",
+      track: "video",
+      title: "Render",
+      startTime: 0,
+      durationSeconds: Math.max(1, data.totalDurationSeconds || 1),
+    };
+  }
+  const clips = Object.values(data.tracks)
+    .flat()
+    .filter(
+      (clip) =>
+        (clip.mediaType === "video" || clip.mediaType === "image")
+        && Boolean(clip.url || clip.assetId || clip.s3Key),
+    )
+    .sort((a, b) => a.startTime - b.startTime || a.title.localeCompare(b.title));
+  return clips[0] ?? null;
+}
+
 export function buildVideoEditorMediaListOutput(data: VideoEditorNodeData): MediaListOutput {
   const clips = Object.values(data.tracks).flat();
   return {
