@@ -3399,8 +3399,8 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
 .foldder-edge-ball-dot {
   transform-box: fill-box;
   transform-origin: center;
-  /* Ciclo de 4s = 2s de viaje (la onda recorre la línea) + 2s de pausa. */
-  animation: foldder-edge-ball 4s linear infinite;
+  /* Ciclo de 6s = 2s de viaje (la onda recorre la línea) + 4s de pausa. */
+  animation: foldder-edge-ball 6s linear infinite;
   will-change: transform;
 }
 
@@ -3408,10 +3408,10 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
   0% {
     transform: scale(1);
   }
-  3% {
+  2% {
     transform: scale(2.7);
   }
-  7% {
+  4.7% {
     transform: scale(1);
   }
   100% {
@@ -4672,6 +4672,32 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
 }
 
 [data-foldder-wallet-panel] [class*="border-white"] {
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* Layer Style modal (Freehand / PhotoRoom) — flush rectangular chrome */
+[data-foldder-layer-style-panel] {
+  border-radius: 0 !important;
+}
+
+[data-foldder-layer-style-panel] :is(
+  button,
+  span,
+  div,
+  p,
+  h2,
+  label,
+  input,
+  select
+):not([class*="rounded-full"]) {
+  border-radius: 0 !important;
+}
+
+[data-foldder-layer-style-panel] button {
+  box-shadow: none !important;
+}
+
+[data-foldder-layer-style-panel] [class*="border-white"] {
   border-color: rgba(255, 255, 255, 0.1) !important;
 }
 

@@ -12,7 +12,7 @@ import {
 } from "./layer-effects-types";
 
 const PROP_PANEL_SCRUB_CLASS =
-  "cursor-ew-resize rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 font-mono text-[12px] text-zinc-100 outline-none focus:border-violet-500/50";
+  "cursor-ew-resize rounded-none border border-white/10 bg-black/30 px-2 py-1 font-mono text-[11px] tabular-nums text-white outline-none focus:border-[#71449f] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none";
 const PROP_PANEL_SCRUB_HINT = "Arrastra horizontalmente · Mayús = ×10";
 
 const BLEND_OPTIONS: { value: LayerEffectBlendMode; label: string }[] = [
@@ -83,111 +83,80 @@ export function LayerStylesModal({
   const ogEnabled = !!og.enabled;
 
   /** No usar `<label>` + `<button>` anidados: en varios navegadores el clic no llega a `setTab` y el panel no cambia. */
+  const tabItems: {
+    id: EffectTab;
+    label: string;
+    enabled: boolean;
+    onToggle: (checked: boolean) => void;
+  }[] = [
+    {
+      id: "colorOverlay",
+      label: "Color Overlay",
+      enabled: coEnabled,
+      onToggle: (c) => onDraftChange({ ...draft, colorOverlay: { ...co, enabled: c } }),
+    },
+    {
+      id: "gradientOverlay",
+      label: "Gradient Overlay",
+      enabled: goEnabled,
+      onToggle: (c) => onDraftChange({ ...draft, gradientOverlay: { ...go, enabled: c } }),
+    },
+    {
+      id: "outerGlow",
+      label: "Outer Glow",
+      enabled: ogEnabled,
+      onToggle: (c) => onDraftChange({ ...draft, outerGlow: { ...og, enabled: c } }),
+    },
+  ];
+
   const sidebar = (
     <div
-      className="flex w-[200px] shrink-0 flex-col border-r border-white/[0.08] bg-[#14171c] py-2"
+      className="flex w-[150px] shrink-0 flex-col border-r border-white/10 bg-white/[0.03]"
       role="tablist"
       aria-label="Efectos de capa"
     >
-      <p className="px-3 pb-2 text-[9px] font-bold uppercase tracking-widest text-zinc-500">Effects</p>
-      <div
-        id="fh-layer-style-tab-colorOverlay"
-        role="tab"
-        tabIndex={0}
-        aria-selected={tab === "colorOverlay"}
-        className={`flex cursor-pointer items-center gap-2 px-3 py-2 text-left text-[12px] outline-none hover:bg-white/[0.04] focus-visible:ring-1 focus-visible:ring-violet-500/60 ${
-          tab === "colorOverlay" ? "bg-white/[0.07]" : ""
-        }`}
-        onClick={() => setTab("colorOverlay")}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            setTab("colorOverlay");
-          }
-        }}
-      >
-        <input
-          type="checkbox"
-          checked={coEnabled}
-          onClick={(e) => e.stopPropagation()}
-          onChange={(e) =>
-            onDraftChange({
-              ...draft,
-              colorOverlay: { ...co, enabled: e.target.checked },
-            })
-          }
-          className="rounded border-white/20"
-          aria-label="Activar color overlay"
-        />
-        <span className={`min-w-0 flex-1 truncate ${tab === "colorOverlay" ? "font-medium text-violet-200" : "text-zinc-300"}`}>
-          Color Overlay
-        </span>
+      <div className="flex h-9 shrink-0 items-center border-b border-white/10 px-3">
+        <span className="text-[8px] font-black uppercase tracking-[0.12em] text-white/40">Efectos</span>
       </div>
-      <div
-        id="fh-layer-style-tab-gradientOverlay"
-        role="tab"
-        tabIndex={0}
-        aria-selected={tab === "gradientOverlay"}
-        className={`flex cursor-pointer items-center gap-2 px-3 py-2 text-left text-[12px] outline-none hover:bg-white/[0.04] focus-visible:ring-1 focus-visible:ring-violet-500/60 ${
-          tab === "gradientOverlay" ? "bg-white/[0.07]" : ""
-        }`}
-        onClick={() => setTab("gradientOverlay")}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            setTab("gradientOverlay");
-          }
-        }}
-      >
-        <input
-          type="checkbox"
-          checked={goEnabled}
-          onClick={(e) => e.stopPropagation()}
-          onChange={(e) =>
-            onDraftChange({
-              ...draft,
-              gradientOverlay: { ...go, enabled: e.target.checked },
-            })
-          }
-          className="rounded border-white/20"
-          aria-label="Activar gradient overlay"
-        />
-        <span className={`min-w-0 flex-1 truncate ${tab === "gradientOverlay" ? "font-medium text-violet-200" : "text-zinc-300"}`}>
-          Gradient Overlay
-        </span>
-      </div>
-      <div
-        id="fh-layer-style-tab-outerGlow"
-        role="tab"
-        tabIndex={0}
-        aria-selected={tab === "outerGlow"}
-        className={`flex cursor-pointer items-center gap-2 px-3 py-2 text-left text-[12px] outline-none hover:bg-white/[0.04] focus-visible:ring-1 focus-visible:ring-violet-500/60 ${
-          tab === "outerGlow" ? "bg-white/[0.07]" : ""
-        }`}
-        onClick={() => setTab("outerGlow")}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            setTab("outerGlow");
-          }
-        }}
-      >
-        <input
-          type="checkbox"
-          checked={ogEnabled}
-          onClick={(e) => e.stopPropagation()}
-          onChange={(e) =>
-            onDraftChange({
-              ...draft,
-              outerGlow: { ...og, enabled: e.target.checked },
-            })
-          }
-          className="rounded border-white/20"
-          aria-label="Activar outer glow"
-        />
-        <span className={`min-w-0 flex-1 truncate ${tab === "outerGlow" ? "font-medium text-violet-200" : "text-zinc-300"}`}>
-          Outer Glow
-        </span>
+      <div className="divide-y divide-white/[0.06]">
+        {tabItems.map((t) => {
+          const active = tab === t.id;
+          return (
+            <div
+              key={t.id}
+              id={`fh-layer-style-tab-${t.id}`}
+              role="tab"
+              tabIndex={0}
+              aria-selected={active}
+              className={`flex cursor-pointer items-center gap-2 px-3 py-2 text-left outline-none transition focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-[#71449f]/60 ${
+                active ? "bg-[#71449f]/20" : "hover:bg-white/[0.04]"
+              }`}
+              onClick={() => setTab(t.id)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setTab(t.id);
+                }
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={t.enabled}
+                onClick={(e) => e.stopPropagation()}
+                onChange={(e) => t.onToggle(e.target.checked)}
+                className="h-3 w-3 shrink-0 accent-[#71449f]"
+                aria-label={`Activar ${t.label}`}
+              />
+              <span
+                className={`min-w-0 flex-1 truncate text-[11px] ${
+                  active ? "font-semibold text-white" : "text-white/55"
+                }`}
+              >
+                {t.label}
+              </span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -229,22 +198,9 @@ export function LayerStylesModal({
 
   const panel =
     tab === "colorOverlay" ? (
-      <div className="space-y-3 p-4">
-        <label className="flex items-center gap-2 text-[12px] text-zinc-300">
-          <input
-            type="checkbox"
-            checked={coEnabled}
-            onChange={(e) =>
-              onDraftChange({
-                ...draft,
-                colorOverlay: { ...co, enabled: e.target.checked },
-              })
-            }
-          />
-          Enabled
-        </label>
+      <div className="space-y-2.5 p-3">
         <div className="space-y-1">
-          <span className="text-[10px] uppercase tracking-wider text-zinc-500">Blend mode</span>
+          <span className="text-[8px] font-black uppercase tracking-[0.12em] text-white/40">Fusión</span>
           <select
             value={co.blendMode}
             onChange={(e) =>
@@ -253,7 +209,7 @@ export function LayerStylesModal({
                 colorOverlay: { ...co, blendMode: e.target.value as LayerEffectBlendMode },
               })
             }
-            className="w-full rounded-md border border-white/[0.1] bg-[#1a1d24] px-2 py-1.5 text-[12px] text-zinc-100"
+            className="w-full rounded-none border border-white/10 bg-black/30 px-2 py-1.5 text-[11px] text-white outline-none"
           >
             {BLEND_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
@@ -264,7 +220,7 @@ export function LayerStylesModal({
         </div>
         <div className="space-y-1">
           <div className="flex items-center justify-between gap-2">
-            <span className="text-[10px] uppercase tracking-wider text-zinc-500">Opacity</span>
+            <span className="text-[8px] font-black uppercase tracking-[0.12em] text-white/40">Opacidad</span>
             <ScrubNumberInput
               value={Math.round(co.opacity * 100)}
               onKeyboardCommit={(n) =>
@@ -299,11 +255,11 @@ export function LayerStylesModal({
                 colorOverlay: { ...co, opacity: Number(e.target.value) / 100 },
               })
             }
-            className="w-full accent-violet-500"
+            className="w-full accent-[#71449f]"
           />
         </div>
         <div className="space-y-1">
-          <span className="text-[10px] uppercase tracking-wider text-zinc-500">Color</span>
+          <span className="text-[8px] font-black uppercase tracking-[0.12em] text-white/40">Color</span>
           <div className="flex items-center gap-2">
             <input
               type="color"
@@ -314,7 +270,7 @@ export function LayerStylesModal({
                   colorOverlay: { ...co, color: e.target.value },
                 })
               }
-              className="h-9 w-12 cursor-pointer rounded border border-white/[0.12] bg-transparent"
+              className="h-8 w-10 shrink-0 cursor-pointer rounded-none border border-white/10 bg-transparent"
             />
             <input
               type="text"
@@ -325,28 +281,15 @@ export function LayerStylesModal({
                   colorOverlay: { ...co, color: e.target.value },
                 })
               }
-              className="min-w-0 flex-1 rounded-md border border-white/[0.1] bg-[#1a1d24] px-2 py-1.5 font-mono text-[11px] text-zinc-100"
+              className="min-w-0 flex-1 rounded-none border border-white/10 bg-black/30 px-2 py-1.5 font-mono text-[11px] text-white outline-none"
             />
           </div>
         </div>
       </div>
     ) : tab === "gradientOverlay" ? (
-      <div className="space-y-3 p-4">
-        <label className="flex items-center gap-2 text-[12px] text-zinc-300">
-          <input
-            type="checkbox"
-            checked={goEnabled}
-            onChange={(e) =>
-              onDraftChange({
-                ...draft,
-                gradientOverlay: { ...go, enabled: e.target.checked },
-              })
-            }
-          />
-          Enabled
-        </label>
+      <div className="space-y-2.5 p-3">
         <div className="space-y-1">
-          <span className="text-[10px] uppercase tracking-wider text-zinc-500">Blend mode</span>
+          <span className="text-[8px] font-black uppercase tracking-[0.12em] text-white/40">Fusión</span>
           <select
             value={go.blendMode}
             onChange={(e) =>
@@ -355,7 +298,7 @@ export function LayerStylesModal({
                 gradientOverlay: { ...go, blendMode: e.target.value as LayerEffectBlendMode },
               })
             }
-            className="w-full rounded-md border border-white/[0.1] bg-[#1a1d24] px-2 py-1.5 text-[12px] text-zinc-100"
+            className="w-full rounded-none border border-white/10 bg-black/30 px-2 py-1.5 text-[11px] text-white outline-none"
           >
             {BLEND_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
@@ -366,7 +309,7 @@ export function LayerStylesModal({
         </div>
         <div className="space-y-1">
           <div className="flex items-center justify-between gap-2">
-            <span className="text-[10px] uppercase tracking-wider text-zinc-500">Opacity</span>
+            <span className="text-[8px] font-black uppercase tracking-[0.12em] text-white/40">Opacidad</span>
             <ScrubNumberInput
               value={Math.round(go.opacity * 100)}
               onKeyboardCommit={(n) =>
@@ -401,12 +344,12 @@ export function LayerStylesModal({
                 gradientOverlay: { ...go, opacity: Number(e.target.value) / 100 },
               })
             }
-            className="w-full accent-violet-500"
+            className="w-full accent-[#71449f]"
           />
         </div>
         <div className="grid grid-cols-2 gap-2">
           <div className="space-y-1">
-            <span className="text-[10px] uppercase tracking-wider text-zinc-500">Style</span>
+            <span className="text-[8px] font-black uppercase tracking-[0.12em] text-white/40">Estilo</span>
             <select
               value={go.gradient.type}
               onChange={(e) =>
@@ -418,15 +361,16 @@ export function LayerStylesModal({
                   },
                 })
               }
-              className="w-full rounded-md border border-white/[0.1] bg-[#1a1d24] px-2 py-1.5 text-[12px] text-zinc-100"
+              className="w-full rounded-none border border-white/10 bg-black/30 px-2 py-1.5 text-[11px] text-white outline-none"
             >
-              <option value="linear">Linear</option>
+              <option value="linear">Lineal</option>
               <option value="radial">Radial</option>
             </select>
           </div>
-          <label className="flex items-end gap-2 pb-1 text-[11px] text-zinc-400">
+          <label className="flex items-end gap-2 pb-1.5 text-[11px] text-white/55">
             <input
               type="checkbox"
+              className="h-3 w-3 accent-[#71449f]"
               checked={go.gradient.reverse}
               onChange={(e) =>
                 onDraftChange({
@@ -438,12 +382,12 @@ export function LayerStylesModal({
                 })
               }
             />
-            Reverse
+            Invertir
           </label>
         </div>
         <div className="grid grid-cols-2 gap-2">
           <div className="space-y-1">
-            <span className="text-[10px] uppercase tracking-wider text-zinc-500">Angle</span>
+            <span className="text-[8px] font-black uppercase tracking-[0.12em] text-white/40">Ángulo</span>
             <ScrubNumberInput
               value={Math.round(go.gradient.angle)}
               onKeyboardCommit={(n) => {
@@ -470,7 +414,7 @@ export function LayerStylesModal({
             />
           </div>
           <div className="space-y-1">
-            <span className="text-[10px] uppercase tracking-wider text-zinc-500">Scale</span>
+            <span className="text-[8px] font-black uppercase tracking-[0.12em] text-white/40">Escala</span>
             <ScrubNumberInput
               value={go.gradient.scale}
               onKeyboardCommit={(n) => {
@@ -505,8 +449,8 @@ export function LayerStylesModal({
             />
           </div>
         </div>
-        <div className="space-y-2 rounded-md border border-white/[0.08] bg-[#14171c] p-2">
-          <span className="text-[10px] uppercase tracking-wider text-zinc-500">Stops</span>
+        <div className="space-y-2 border border-white/10 bg-white/[0.03] p-2">
+          <span className="text-[8px] font-black uppercase tracking-[0.12em] text-white/40">Paradas</span>
           {go.gradient.stops.map((s, idx) => (
             <div key={idx} className="flex flex-wrap items-center gap-2">
               <ScrubNumberInput
@@ -553,7 +497,7 @@ export function LayerStylesModal({
                     gradientOverlay: { ...go, gradient: { ...go.gradient, stops } },
                   });
                 }}
-                className="h-8 w-10 cursor-pointer rounded border border-white/[0.12] bg-transparent"
+                className="h-7 w-9 shrink-0 cursor-pointer rounded-none border border-white/10 bg-transparent"
               />
               <input
                 type="text"
@@ -567,29 +511,16 @@ export function LayerStylesModal({
                     gradientOverlay: { ...go, gradient: { ...go.gradient, stops } },
                   });
                 }}
-                className="min-w-0 flex-1 rounded border border-white/[0.1] bg-[#1a1d24] px-1 py-0.5 font-mono text-[10px] text-zinc-100"
+                className="min-w-0 flex-1 rounded-none border border-white/10 bg-black/30 px-1.5 py-1 font-mono text-[10px] text-white outline-none"
               />
             </div>
           ))}
         </div>
       </div>
     ) : (
-      <div className="space-y-3 p-4">
-        <label className="flex items-center gap-2 text-[12px] text-zinc-300">
-          <input
-            type="checkbox"
-            checked={ogEnabled}
-            onChange={(e) =>
-              onDraftChange({
-                ...draft,
-                outerGlow: { ...og, enabled: e.target.checked },
-              })
-            }
-          />
-          Enabled
-        </label>
+      <div className="space-y-2.5 p-3">
         <div className="space-y-1">
-          <span className="text-[10px] uppercase tracking-wider text-zinc-500">Blend mode</span>
+          <span className="text-[8px] font-black uppercase tracking-[0.12em] text-white/40">Fusión</span>
           <select
             value={og.blendMode}
             onChange={(e) =>
@@ -598,7 +529,7 @@ export function LayerStylesModal({
                 outerGlow: { ...og, blendMode: e.target.value as LayerEffectBlendMode },
               })
             }
-            className="w-full rounded-md border border-white/[0.1] bg-[#1a1d24] px-2 py-1.5 text-[12px] text-zinc-100"
+            className="w-full rounded-none border border-white/10 bg-black/30 px-2 py-1.5 text-[11px] text-white outline-none"
           >
             {BLEND_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
@@ -609,7 +540,7 @@ export function LayerStylesModal({
         </div>
         <div className="space-y-1">
           <div className="flex items-center justify-between gap-2">
-            <span className="text-[10px] uppercase tracking-wider text-zinc-500">Opacity</span>
+            <span className="text-[8px] font-black uppercase tracking-[0.12em] text-white/40">Opacidad</span>
             <ScrubNumberInput
               value={Math.round(og.opacity * 100)}
               onKeyboardCommit={(n) =>
@@ -644,12 +575,12 @@ export function LayerStylesModal({
                 outerGlow: { ...og, opacity: Number(e.target.value) / 100 },
               })
             }
-            className="w-full accent-violet-500"
+            className="w-full accent-[#71449f]"
           />
         </div>
         <div className="space-y-1">
           <div className="flex items-center justify-between gap-2">
-            <span className="text-[10px] uppercase tracking-wider text-zinc-500">Noise</span>
+            <span className="text-[8px] font-black uppercase tracking-[0.12em] text-white/40">Ruido</span>
             <ScrubNumberInput
               value={Math.round(og.noise)}
               onKeyboardCommit={(n) =>
@@ -684,12 +615,12 @@ export function LayerStylesModal({
                 outerGlow: { ...og, noise: clamp(Number(e.target.value), 0, 100) },
               })
             }
-            className="w-full accent-violet-500"
+            className="w-full accent-[#71449f]"
           />
         </div>
         <div className="grid grid-cols-2 gap-2">
           <div className="space-y-1">
-            <span className="text-[10px] uppercase tracking-wider text-zinc-500">Fill</span>
+            <span className="text-[8px] font-black uppercase tracking-[0.12em] text-white/40">Relleno</span>
             <select
               value={og.fill}
               onChange={(e) =>
@@ -698,14 +629,14 @@ export function LayerStylesModal({
                   outerGlow: { ...og, fill: e.target.value as "color" | "gradient" },
                 })
               }
-              className="w-full rounded-md border border-white/[0.1] bg-[#1a1d24] px-2 py-1.5 text-[12px] text-zinc-100"
+              className="w-full rounded-none border border-white/10 bg-black/30 px-2 py-1.5 text-[11px] text-white outline-none"
             >
               <option value="color">Color</option>
-              <option value="gradient">Gradient</option>
+              <option value="gradient">Degradado</option>
             </select>
           </div>
           <div className="space-y-1">
-            <span className="text-[10px] uppercase tracking-wider text-zinc-500">Technique</span>
+            <span className="text-[8px] font-black uppercase tracking-[0.12em] text-white/40">Técnica</span>
             <select
               value={og.technique}
               onChange={(e) =>
@@ -714,16 +645,16 @@ export function LayerStylesModal({
                   outerGlow: { ...og, technique: e.target.value as OuterGlowTechnique },
                 })
               }
-              className="w-full rounded-md border border-white/[0.1] bg-[#1a1d24] px-2 py-1.5 text-[12px] text-zinc-100"
+              className="w-full rounded-none border border-white/10 bg-black/30 px-2 py-1.5 text-[11px] text-white outline-none"
             >
-              <option value="softer">Softer</option>
-              <option value="precise">Precise</option>
+              <option value="softer">Suave</option>
+              <option value="precise">Preciso</option>
             </select>
           </div>
         </div>
         {og.fill === "color" ? (
           <div className="space-y-1">
-            <span className="text-[10px] uppercase tracking-wider text-zinc-500">Color</span>
+            <span className="text-[8px] font-black uppercase tracking-[0.12em] text-white/40">Color</span>
             <div className="flex items-center gap-2">
               <input
                 type="color"
@@ -734,7 +665,7 @@ export function LayerStylesModal({
                     outerGlow: { ...og, color: e.target.value },
                   })
                 }
-                className="h-9 w-12 cursor-pointer rounded border border-white/[0.12] bg-transparent"
+                className="h-8 w-10 shrink-0 cursor-pointer rounded-none border border-white/10 bg-transparent"
               />
               <input
                 type="text"
@@ -745,16 +676,16 @@ export function LayerStylesModal({
                     outerGlow: { ...og, color: e.target.value },
                   })
                 }
-                className="min-w-0 flex-1 rounded-md border border-white/[0.1] bg-[#1a1d24] px-2 py-1.5 font-mono text-[11px] text-zinc-100"
+                className="min-w-0 flex-1 rounded-none border border-white/10 bg-black/30 px-2 py-1.5 font-mono text-[11px] text-white outline-none"
               />
             </div>
           </div>
         ) : (
-          <div className="space-y-2 rounded-md border border-white/[0.08] bg-[#14171c] p-2">
-            <span className="text-[10px] uppercase tracking-wider text-zinc-500">Gradient</span>
+          <div className="space-y-2 border border-white/10 bg-white/[0.03] p-2">
+            <span className="text-[8px] font-black uppercase tracking-[0.12em] text-white/40">Degradado</span>
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
-                <span className="text-[10px] uppercase tracking-wider text-zinc-500">Style</span>
+                <span className="text-[8px] font-black uppercase tracking-[0.12em] text-white/40">Estilo</span>
                 <select
                   value={og.gradient.type}
                   onChange={(e) =>
@@ -766,15 +697,16 @@ export function LayerStylesModal({
                       },
                     })
                   }
-                  className="w-full rounded-md border border-white/[0.1] bg-[#1a1d24] px-2 py-1.5 text-[12px] text-zinc-100"
+                  className="w-full rounded-none border border-white/10 bg-black/30 px-2 py-1.5 text-[11px] text-white outline-none"
                 >
-                  <option value="linear">Linear</option>
+                  <option value="linear">Lineal</option>
                   <option value="radial">Radial</option>
                 </select>
               </div>
-              <label className="flex items-end gap-2 pb-1 text-[11px] text-zinc-400">
+              <label className="flex items-end gap-2 pb-1.5 text-[11px] text-white/55">
                 <input
                   type="checkbox"
+                  className="h-3 w-3 accent-[#71449f]"
                   checked={og.gradient.reverse}
                   onChange={(e) =>
                     onDraftChange({
@@ -786,12 +718,12 @@ export function LayerStylesModal({
                     })
                   }
                 />
-                Reverse
+                Invertir
               </label>
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
-                <span className="text-[10px] uppercase tracking-wider text-zinc-500">Angle</span>
+                <span className="text-[8px] font-black uppercase tracking-[0.12em] text-white/40">Ángulo</span>
                 <ScrubNumberInput
                   value={Math.round(og.gradient.angle)}
                   onKeyboardCommit={(n) => {
@@ -818,7 +750,7 @@ export function LayerStylesModal({
                 />
               </div>
               <div className="space-y-1">
-                <span className="text-[10px] uppercase tracking-wider text-zinc-500">Scale</span>
+                <span className="text-[8px] font-black uppercase tracking-[0.12em] text-white/40">Escala</span>
                 <ScrubNumberInput
                   value={og.gradient.scale}
                   onKeyboardCommit={(n) => {
@@ -854,7 +786,7 @@ export function LayerStylesModal({
               </div>
             </div>
             <div className="space-y-2">
-              <span className="text-[10px] uppercase tracking-wider text-zinc-500">Stops</span>
+              <span className="text-[8px] font-black uppercase tracking-[0.12em] text-white/40">Paradas</span>
               {og.gradient.stops.map((s, idx) => (
                 <div key={idx} className="flex flex-wrap items-center gap-2">
                   <ScrubNumberInput
@@ -901,7 +833,7 @@ export function LayerStylesModal({
                         outerGlow: { ...og, gradient: { ...og.gradient, stops } },
                       });
                     }}
-                    className="h-8 w-10 cursor-pointer rounded border border-white/[0.12] bg-transparent"
+                    className="h-7 w-9 shrink-0 cursor-pointer rounded-none border border-white/10 bg-transparent"
                   />
                   <input
                     type="text"
@@ -915,7 +847,7 @@ export function LayerStylesModal({
                         outerGlow: { ...og, gradient: { ...og.gradient, stops } },
                       });
                     }}
-                    className="min-w-0 flex-1 rounded border border-white/[0.1] bg-[#1a1d24] px-1 py-0.5 font-mono text-[10px] text-zinc-100"
+                    className="min-w-0 flex-1 rounded-none border border-white/10 bg-black/30 px-1.5 py-1 font-mono text-[10px] text-white outline-none"
                   />
                 </div>
               ))}
@@ -924,7 +856,7 @@ export function LayerStylesModal({
         )}
         <div className="grid grid-cols-3 gap-2">
           <div className="space-y-1">
-            <span className="text-[10px] uppercase tracking-wider text-zinc-500">Spread</span>
+            <span className="text-[8px] font-black uppercase tracking-[0.12em] text-white/40">Expansión</span>
             <ScrubNumberInput
               value={Math.round(og.spread)}
               onKeyboardCommit={(n) =>
@@ -949,7 +881,7 @@ export function LayerStylesModal({
             />
           </div>
           <div className="space-y-1">
-            <span className="text-[10px] uppercase tracking-wider text-zinc-500">Size</span>
+            <span className="text-[8px] font-black uppercase tracking-[0.12em] text-white/40">Tamaño</span>
             <ScrubNumberInput
               value={Math.round(og.size * 10) / 10}
               onKeyboardCommit={(n) => {
@@ -978,7 +910,7 @@ export function LayerStylesModal({
             />
           </div>
           <div className="space-y-1">
-            <span className="text-[10px] uppercase tracking-wider text-zinc-500">Range</span>
+            <span className="text-[8px] font-black uppercase tracking-[0.12em] text-white/40">Rango</span>
             <ScrubNumberInput
               value={Math.round(og.range)}
               onKeyboardCommit={(n) =>
@@ -1008,46 +940,49 @@ export function LayerStylesModal({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[100200] flex items-center justify-center bg-black/55 p-4"
+      className="fixed inset-0 z-[100200] flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="fh-layer-style-title"
       onClick={onCancel}
     >
       <div
-        className="flex max-h-[90vh] w-full max-w-[720px] flex-col overflow-hidden rounded-xl border border-white/[0.12] bg-[#0f1115] shadow-2xl shadow-black/60"
+        data-foldder-layer-style-panel
+        className="flex max-h-[88vh] w-[min(94vw,520px)] flex-col overflow-hidden rounded-none border border-white/10 bg-[#0b0f14] shadow-[0_24px_70px_rgba(0,0,0,0.55)]"
         style={{ transform: `translate(${dragOffset.x}px, ${dragOffset.y}px)` }}
         onClick={(e) => e.stopPropagation()}
       >
-        <header className="flex shrink-0 items-stretch border-b border-white/[0.08]">
+        <header className="flex h-10 shrink-0 items-stretch border-b border-white/10 bg-white/[0.04]">
           <div
-            className="flex min-w-0 flex-1 cursor-grab touch-none select-none items-center px-4 py-3 active:cursor-grabbing"
+            className="flex min-w-0 flex-1 cursor-grab touch-none select-none items-center gap-2.5 px-4 active:cursor-grabbing"
             onPointerDown={onDragHandlePointerDown}
             onPointerMove={onDragHandlePointerMove}
             onPointerUp={endDrag}
             onPointerCancel={endDrag}
           >
-            <h2 id="fh-layer-style-title" className="text-[13px] font-semibold tracking-wide text-zinc-100">
-              Layer Style
+            <span className="h-2 w-2 shrink-0 bg-[#71449f]" aria-hidden />
+            <h2
+              id="fh-layer-style-title"
+              className="truncate text-[10px] font-black uppercase tracking-[0.12em] text-white"
+            >
+              Estilo de capa
             </h2>
           </div>
-          <div className="flex shrink-0 items-center pr-2">
-            <button
-              type="button"
-              className="rounded-md p-1 text-zinc-500 hover:bg-white/10 hover:text-white"
-              aria-label="Cerrar"
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={onCancel}
-            >
-              <X size={18} strokeWidth={2} />
-            </button>
-          </div>
+          <button
+            type="button"
+            className="flex w-10 shrink-0 items-center justify-center border-l border-white/10 text-white/45 transition hover:bg-white/[0.06] hover:text-white"
+            aria-label="Cerrar"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={onCancel}
+          >
+            <X size={15} strokeWidth={2} />
+          </button>
         </header>
         <div className="flex min-h-0 flex-1 overflow-hidden">
           {sidebar}
           <div
             key={tab}
-            className="min-h-0 flex-1 overflow-y-auto"
+            className="custom-scrollbar min-h-0 flex-1 overflow-y-auto"
             role="tabpanel"
             id={`fh-layer-style-panel-${tab}`}
             aria-labelledby={`fh-layer-style-tab-${tab}`}
@@ -1055,24 +990,24 @@ export function LayerStylesModal({
             {panel}
           </div>
         </div>
-        <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-white/[0.08] px-4 py-3">
+        <footer className="flex h-10 shrink-0 items-stretch justify-end divide-x divide-white/10 border-t border-white/10 bg-white/[0.04]">
           <button
             type="button"
-            className="rounded-md px-3 py-1.5 text-[12px] text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-200"
+            className="px-4 text-[9px] font-black uppercase tracking-[0.1em] text-white/45 transition hover:bg-white/[0.06] hover:text-white"
             onClick={onReset}
           >
-            Reset
+            Reiniciar
           </button>
           <button
             type="button"
-            className="rounded-md px-3 py-1.5 text-[12px] text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-200"
+            className="px-4 text-[9px] font-black uppercase tracking-[0.1em] text-white/45 transition hover:bg-white/[0.06] hover:text-white"
             onClick={onCancel}
           >
-            Cancel
+            Cancelar
           </button>
           <button
             type="button"
-            className="rounded-md bg-violet-600 px-4 py-1.5 text-[12px] font-medium text-white hover:bg-violet-500"
+            className="bg-[#71449f] px-6 text-[9px] font-black uppercase tracking-[0.1em] text-white transition hover:bg-[#8055b0]"
             onClick={onOk}
           >
             OK

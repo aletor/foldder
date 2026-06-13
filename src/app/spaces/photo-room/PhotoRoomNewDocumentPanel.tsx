@@ -1,6 +1,8 @@
 "use client";
 
-import React, { useCallback, useLayoutEffect, useMemo, useState, type ComponentProps } from "react";
+import React, { useCallback, useLayoutEffect, useMemo, useRef, useState, type ComponentProps } from "react";
+import { Link2, Link2Off } from "lucide-react";
+import { ScrubNumberInput } from "../ScrubNumberInput";
 import type { NewDocumentConfig } from "./new-document-model";
 
 export interface NewDocumentPanelProps {
@@ -355,6 +357,8 @@ export function PhotoRoomNewDocumentPanel({
   const [activePresetId, setActivePresetId] = useState<string | null>(() =>
     isResize ? initPreset : "web-large",
   );
+  const [lockAspect, setLockAspect] = useState(false);
+  const aspectRef = useRef<number>((isResize ? initW : 1920) / (isResize ? initH : 1080));
 
   const widthNum = useMemo(() => {
     const n = Number.parseInt(widthStr, 10);
@@ -377,22 +381,48 @@ export function PhotoRoomNewDocumentPanel({
   const applyPreset = useCallback((p: PresetDef) => {
     setWidthStr(String(p.width));
     setHeightStr(String(p.height));
+    aspectRef.current = p.width / p.height;
     setActivePresetId(p.id);
   }, []);
 
-  const onWidthChange = useCallback((v: string) => {
-    setWidthStr(v.replace(/\D/g, ""));
-    setActivePresetId(null);
-  }, []);
+  const applyWidth = useCallback(
+    (n: number) => {
+      const w = Math.max(1, Math.round(n));
+      setWidthStr(String(w));
+      if (lockAspect && aspectRef.current > 0) {
+        setHeightStr(String(Math.max(1, Math.round(w / aspectRef.current))));
+      }
+      setActivePresetId(null);
+    },
+    [lockAspect],
+  );
 
-  const onHeightChange = useCallback((v: string) => {
-    setHeightStr(v.replace(/\D/g, ""));
-    setActivePresetId(null);
-  }, []);
+  const applyHeight = useCallback(
+    (n: number) => {
+      const h = Math.max(1, Math.round(n));
+      setHeightStr(String(h));
+      if (lockAspect && aspectRef.current > 0) {
+        setWidthStr(String(Math.max(1, Math.round(h * aspectRef.current))));
+      }
+      setActivePresetId(null);
+    },
+    [lockAspect],
+  );
+
+  const toggleLockAspect = useCallback(() => {
+    setLockAspect((prev) => {
+      const next = !prev;
+      if (next && widthNum > 0 && heightNum > 0) {
+        aspectRef.current = widthNum / heightNum;
+      }
+      return next;
+    });
+  }, [widthNum, heightNum]);
 
   const swapOrientation = useCallback(() => {
     setWidthStr(String(heightNum || 0));
     setHeightStr(String(widthNum || 0));
+    if (aspectRef.current > 0) aspectRef.current = 1 / aspectRef.current;
     setActivePresetId(null);
   }, [widthNum, heightNum]);
 
@@ -529,35 +559,56 @@ export function PhotoRoomNewDocumentPanel({
               <span className="text-[9px] font-black uppercase tracking-[0.12em] text-white/50">Medidas</span>
             </div>
             <div className="flex min-h-0 flex-1 flex-col gap-4 p-4">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-2">
                 <div>
                   <label className="mb-1.5 block text-[8px] font-black uppercase tracking-[0.12em] text-white/40">
                     Anchura
                   </label>
                   <div className="flex items-stretch border border-white/10 bg-black/30">
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      value={widthStr}
-                      onChange={(e) => onWidthChange(e.target.value)}
-                      className="nodrag min-w-0 flex-1 bg-transparent px-2.5 py-2 text-[12px] tabular-nums text-white outline-none"
+                    <ScrubNumberInput
+                      value={widthNum}
+                      onKeyboardCommit={applyWidth}
+                      onScrubLive={applyWidth}
+                      onScrubEnd={() => {}}
+                      step={2}
+                      title="Arrastra horizontalmente · Mayús = ×10"
+                      className="nodrag min-w-0 flex-1 cursor-ew-resize bg-transparent px-2.5 py-2 text-[12px] tabular-nums text-white outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                     />
                     <span className="flex items-center border-l border-white/10 px-2 text-[9px] font-semibold uppercase tracking-wide text-white/35">
                       px
                     </span>
                   </div>
                 </div>
+                <button
+                  type="button"
+                  onClick={toggleLockAspect}
+                  aria-pressed={lockAspect}
+                  title={
+                    lockAspect
+                      ? "Escala bloqueada — se mantiene la proporción"
+                      : "Bloquear escala (mantener proporción)"
+                  }
+                  className={`nodrag flex items-center justify-center self-end border px-2 py-2 transition ${
+                    lockAspect
+                      ? "border-[#71449f] bg-[#71449f]/25 text-white"
+                      : "border-white/10 bg-black/30 text-white/40 hover:bg-white/[0.04] hover:text-white/75"
+                  }`}
+                >
+                  {lockAspect ? <Link2 className="h-4 w-4" /> : <Link2Off className="h-4 w-4" />}
+                </button>
                 <div>
                   <label className="mb-1.5 block text-[8px] font-black uppercase tracking-[0.12em] text-white/40">
                     Altura
                   </label>
                   <div className="flex items-stretch border border-white/10 bg-black/30">
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      value={heightStr}
-                      onChange={(e) => onHeightChange(e.target.value)}
-                      className="nodrag min-w-0 flex-1 bg-transparent px-2.5 py-2 text-[12px] tabular-nums text-white outline-none"
+                    <ScrubNumberInput
+                      value={heightNum}
+                      onKeyboardCommit={applyHeight}
+                      onScrubLive={applyHeight}
+                      onScrubEnd={() => {}}
+                      step={2}
+                      title="Arrastra horizontalmente · Mayús = ×10"
+                      className="nodrag min-w-0 flex-1 cursor-ew-resize bg-transparent px-2.5 py-2 text-[12px] tabular-nums text-white outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                     />
                     <span className="flex items-center border-l border-white/10 px-2 text-[9px] font-semibold uppercase tracking-wide text-white/35">
                       px
