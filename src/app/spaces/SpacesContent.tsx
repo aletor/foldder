@@ -187,6 +187,7 @@ import {
   spacesInitialEdges as initialEdges,
   spacesNodeTypes as nodeTypes,
   spacesEdgeTypes as edgeTypes,
+  spacesConnectionLineComponent as connectionLineComponent,
   spacesDefaultEdgeOptions as defaultEdgeOptions,
 } from "./spaces-react-flow-config";
 import {
@@ -614,6 +615,24 @@ function computeConnectDropPlan(
     fromHandleId,
     fromType,
   };
+}
+
+/**
+ * Posición del nodo nuevo al tirar de una entrada: el cursor queda en el borde
+ * derecho del nodo (el nodo aparece a la izquierda del puntero), centrado en vertical.
+ */
+function connectDropPositionFromFlowPoint(
+  flowPoint: { x: number; y: number },
+  nodeType: string,
+): { x: number; y: number } {
+  const { width, height } = resolveLibraryPreviewNodeFrame(
+    nodeType,
+    defaultDataForCanvasDropNode(nodeType),
+  );
+  return snapPositionToGrid({
+    x: flowPoint.x - width,
+    y: flowPoint.y - height / 2,
+  });
 }
 
 export function SpacesContent() {
@@ -5001,16 +5020,20 @@ export function SpacesContent() {
         handleType?: 'source' | 'target' | null;
       },
     ) => {
+      connectDragPlanRef.current = null;
       if (canvasViewModeRef.current !== 'free') return;
+      // Solo los conectores de ENTRADA (target / izquierda) autogeneran nodo.
+      if (params.handleType !== 'target') return;
       const plan = computeConnectDropPlan(
         liveNodesRef.current,
         liveEdgesRef.current,
         params.nodeId ?? undefined,
         params.handleId ?? undefined,
-        (params.handleType as 'source' | 'target' | undefined) ?? undefined,
+        'target',
       );
       connectDragPlanRef.current = plan;
       setConnectDragPreview(null);
+      if (!plan) return;
       setConnectDragActive(true);
     },
     [liveNodesRef, liveEdgesRef],
@@ -5038,11 +5061,8 @@ export function SpacesContent() {
       }
       setConnectDragPreview({
         type: plan.newType,
-        position: libraryPreviewPositionFromFlowPoint(
-          p,
-          plan.newType,
-          defaultDataForCanvasDropNode(plan.newType),
-        ),
+        // Nodo alineado a la izquierda del cursor (cursor en su borde derecho).
+        position: connectDropPositionFromFlowPoint(p, plan.newType),
         // El prompt hereda el color del nodo que lo genera.
         cardBg:
           plan.newType === 'promptInput'
@@ -5093,12 +5113,8 @@ export function SpacesContent() {
     const pointerFlow = screenToFlowPosition({ x: clientX, y: clientY });
     if (findTopNodeUnderFlowPoint(pointerFlow, liveNodesRef.current)) return;
 
-    // Posición centrada en el cursor (idéntica al preview y al drop del sidebar).
-    const initialPos = libraryPreviewPositionFromFlowPoint(
-      pointerFlow,
-      newType,
-      defaultDataForCanvasDropNode(newType),
-    );
+    // Nodo alineado a la izquierda del cursor (cursor en su borde derecho), igual que el preview.
+    const initialPos = connectDropPositionFromFlowPoint(pointerFlow, newType);
 
     // El prompt nace con el color del nodo que lo genera (sin flash al color por defecto).
     const baseData = defaultDataForCanvasDropNode(newType);
@@ -6151,6 +6167,7 @@ export function SpacesContent() {
 
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
+          connectionLineComponent={connectionLineComponent}
           defaultEdgeOptions={defaultEdgeOptions}
           snapToGrid
           snapGrid={[FOLDDER_GRID_STEP, FOLDDER_GRID_STEP]}

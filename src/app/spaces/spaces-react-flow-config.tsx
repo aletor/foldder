@@ -26,6 +26,7 @@ import {
   ProjectAssetsNode,
   PresenterNode,
   ButtonEdge,
+  FoldderConnectionLine,
 } from "./CustomNodes";
 import { CineNode } from "./cine/CineNode";
 import { GuionistaNode } from "./guionista/GuionistaNode";
@@ -81,6 +82,8 @@ export const spacesEdgeTypes = {
   buttonEdge: ButtonEdge,
   default: ButtonEdge,
 };
+
+export const spacesConnectionLineComponent = FoldderConnectionLine;
 
 export const spacesDefaultEdgeOptions = {
   type: "buttonEdge",

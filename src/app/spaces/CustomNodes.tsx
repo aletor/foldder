@@ -4,7 +4,8 @@
 
 import React, { memo, useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef, type ComponentProps } from 'react';
 import { createPortal } from 'react-dom';
-import { Position, NodeProps, BaseEdge, EdgeLabelRenderer, getBezierPath, EdgeProps, useReactFlow, useUpdateNodeInternals, useNodes, useEdges, NodeResizer, useNodeId, type Node } from '@xyflow/react';
+import { Position, NodeProps, BaseEdge, getSmoothStepPath, EdgeProps, useReactFlow, useStore, useUpdateNodeInternals, useNodes, useEdges, NodeResizer, useNodeId, type Node, type ReactFlowState, type ConnectionLineComponentProps } from '@xyflow/react';
+import { getSmartOrthogonalPath, type SmartEdgeRect } from './smart-edge-routing';
 import {
   Video, 
   Play, 
@@ -421,8 +422,72 @@ function MediaInputChangeMediaButton({
   );
 }
 
+/** Tipos de nodo que NO actúan como obstáculo (contenedores). */
+const SMART_EDGE_OBSTACLE_SKIP_TYPES = new Set(["canvasGroup"]);
+
+/**
+ * Firma compacta de las cajas absolutas de los nodos (redondeada para limitar
+ * recomputaciones durante el arrastre). Cambia solo cuando cambian de verdad.
+ */
+function nodeRectsSignature(state: ReactFlowState): string {
+  let sig = "";
+  state.nodeLookup.forEach((n) => {
+    const t = (n.type ?? "") as string;
+    if (SMART_EDGE_OBSTACLE_SKIP_TYPES.has(t)) return;
+    const w = n.measured?.width ?? 0;
+    const h = n.measured?.height ?? 0;
+    if (!w || !h) return;
+    const p = n.internals.positionAbsolute;
+    sig += `${n.id}|${t}|${Math.round(p.x / 8) * 8}|${Math.round(p.y / 8) * 8}|${Math.round(w)}|${Math.round(h)};`;
+  });
+  return sig;
+}
+
+/** Color heredado por un nodo prompt según el/los nodo(s) a los que alimenta. */
+function resolvePromptInheritedColor(
+  nodeId: string,
+  nodes: Node[],
+  edges: ReturnType<typeof useEdges>,
+): string | null {
+  const targetIds = new Set<string>();
+  for (const edge of edges) {
+    if (edge.source !== nodeId) continue;
+    const handle = edge.sourceHandle ?? "prompt";
+    if (handle !== "prompt") continue;
+    targetIds.add(edge.target);
+  }
+  if (targetIds.size === 0) return null;
+  if (targetIds.size > 1) return PROMPT_MULTI_TARGET_CARD_BG;
+  const targetType = nodes.find((n) => n.id === [...targetIds][0])?.type;
+  return getNodeCardBackgroundColor(targetType);
+}
+
+/** Tiempo que tarda la bola en recorrer la conexión (s); el ciclo completo dura el doble (viaje + pausa). */
+const EDGE_BALL_TRAVEL_S = 2;
+/** Separación entre puntos a lo largo del trazado (px de flujo). */
+const EDGE_DOT_SPACING = 9;
+/** Tope de puntos por conexión (rendimiento en líneas muy largas). */
+const EDGE_DOT_MAX = 130;
+
+/** Color realmente mostrado por un nodo (el prompt cambia según a quién alimenta). */
+function resolveNodeDisplayColor(
+  node: Node | undefined,
+  nodes: Node[],
+  edges: ReturnType<typeof useEdges>,
+): string {
+  if (!node?.type) return DEFAULT_EDGE_COLOR;
+  if (node.type === "promptInput") {
+    const inherited = resolvePromptInheritedColor(node.id, nodes, edges);
+    if (inherited) return inherited;
+    const override = (node.data as { _foldderCardBg?: string })?._foldderCardBg;
+    return override ?? PROMPT_DEFAULT_CARD_BG;
+  }
+  return getNodeCardBackgroundColor(node.type);
+}
+
 export const ButtonEdge = ({
   id,
+  source,
   sourceX,
   sourceY,
   targetX,
@@ -433,57 +498,194 @@ export const ButtonEdge = ({
   style = {},
   markerEnd,
 }: EdgeProps) => {
-  const { setEdges } = useReactFlow();
   const nodes = useNodes();
-  const [edgePath, labelX, labelY] = getBezierPath({
-    sourceX,
-    sourceY,
-    sourcePosition,
-    targetX,
-    targetY,
-    targetPosition,
-  });
+  const edges = useEdges();
+  const rectsSig = useStore(nodeRectsSignature);
 
-  const strokeColor = useMemo(() => {
-    const targetNode = nodes.find((n) => n.id === target);
-    if (!targetNode?.type) return DEFAULT_EDGE_COLOR;
-    return getNodeCardBackgroundColor(targetNode.type);
-  }, [nodes, target]);
+  const smartPath = useMemo(() => {
+    const obstacles: SmartEdgeRect[] = [];
+    if (rectsSig) {
+      for (const part of rectsSig.split(";")) {
+        if (!part) continue;
+        const fields = part.split("|");
+        const nodeId = fields[0];
+        if (nodeId === source || nodeId === target) continue;
+        obstacles.push({
+          x: Number(fields[2]),
+          y: Number(fields[3]),
+          width: Number(fields[4]),
+          height: Number(fields[5]),
+        });
+      }
+    }
+    return getSmartOrthogonalPath({
+      source: { x: sourceX, y: sourceY, position: sourcePosition },
+      target: { x: targetX, y: targetY, position: targetPosition },
+      obstacles,
+    });
+  }, [rectsSig, source, target, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition]);
 
-  const onEdgeClick = () => {
-    setEdges((edges) => edges.filter((edge) => edge.id !== id));
-  };
+  let edgePath: string;
+  if (smartPath) {
+    edgePath = smartPath.svgPath;
+  } else {
+    [edgePath] = getSmoothStepPath({
+      sourceX,
+      sourceY,
+      sourcePosition,
+      targetX,
+      targetY,
+      targetPosition,
+      borderRadius: 10,
+    });
+  }
+
+  const sourceColor = useMemo(
+    () => resolveNodeDisplayColor(nodes.find((n) => n.id === source), nodes, edges),
+    [nodes, edges, source],
+  );
+
+  const targetColor = useMemo(
+    () => resolveNodeDisplayColor(nodes.find((n) => n.id === target), nodes, edges),
+    [nodes, edges, target],
+  );
+
+  const gradientId = `foldder-edge-grad-${id}`;
+
+  // Muestrea el trazado en puntos equiespaciados para dibujar los "puntos" del tubo.
+  const measureRef = useRef<SVGPathElement>(null);
+  const [dots, setDots] = useState<{ x: number; y: number; t: number }[]>([]);
+
+  useLayoutEffect(() => {
+    const el = measureRef.current;
+    if (!el) return;
+    let len = 0;
+    try {
+      len = el.getTotalLength();
+    } catch {
+      len = 0;
+    }
+    if (!len || !Number.isFinite(len)) {
+      setDots([]);
+      return;
+    }
+    const count = Math.min(EDGE_DOT_MAX, Math.max(2, Math.round(len / EDGE_DOT_SPACING)));
+    const step = len / count;
+    const next: { x: number; y: number; t: number }[] = [];
+    for (let i = 0; i <= count; i++) {
+      const d = i * step;
+      const p = el.getPointAtLength(d);
+      next.push({ x: p.x, y: p.y, t: d / len });
+    }
+    setDots(next);
+  }, [edgePath]);
 
   return (
     <>
-      <BaseEdge 
-        path={edgePath} 
-        markerEnd={markerEnd} 
-        style={{ 
-          ...style, 
-          stroke: strokeColor,
-          strokeWidth: 2,
-        }} 
-      />
-      <EdgeLabelRenderer>
-        <div
-          key={id}
-          style={{
-            position: 'absolute',
-            transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
-            fontSize: 12,
-            pointerEvents: 'all',
-          }}
-          className="nodrag nopan"
+      <defs>
+        <linearGradient
+          id={gradientId}
+          gradientUnits="userSpaceOnUse"
+          x1={sourceX}
+          y1={sourceY}
+          x2={targetX}
+          y2={targetY}
         >
-          <button className="edgebutton" onClick={onEdgeClick} title="Disconnect">
-            <X size={10} strokeWidth={4} />
-          </button>
-        </div>
-      </EdgeLabelRenderer>
+          <stop offset="0%" stopColor={sourceColor} />
+          <stop offset="100%" stopColor={targetColor} />
+        </linearGradient>
+      </defs>
+      {/* Path oculto solo para medir/muestrear el trazado. */}
+      <path ref={measureRef} d={edgePath} fill="none" stroke="none" />
+      {/* Trazado base invisible: mantiene selección/borrado y el hit-area auto de React Flow. */}
+      <BaseEdge
+        path={edgePath}
+        markerEnd={markerEnd}
+        style={{
+          ...style,
+          stroke: "transparent",
+        }}
+      />
+      <g className="foldder-edge-dots">
+        {dots.map((dot, i) => (
+          <circle
+            key={i}
+            cx={dot.x}
+            cy={dot.y}
+            r={1.6}
+            fill={`url(#${gradientId})`}
+            className="foldder-edge-ball-dot"
+            style={{ animationDelay: `${(dot.t * EDGE_BALL_TRAVEL_S).toFixed(3)}s` }}
+          />
+        ))}
+      </g>
     </>
   );
 };
+
+/**
+ * Línea que se ve mientras se arrastra una conexión: mismo sistema rectangular
+ * (ortogonal) y de puntos que las conexiones definitivas. Queda ajustada al
+ * cursor (= borde derecho del nodo-preview que aparece a la izquierda).
+ */
+export function FoldderConnectionLine({
+  fromX,
+  fromY,
+  fromPosition,
+  toX,
+  toY,
+  toPosition,
+  fromNode,
+}: ConnectionLineComponentProps) {
+  const rectsSig = useStore(nodeRectsSignature);
+  const fromId = fromNode?.id;
+
+  const path = useMemo(() => {
+    const obstacles: SmartEdgeRect[] = [];
+    if (rectsSig) {
+      for (const part of rectsSig.split(";")) {
+        if (!part) continue;
+        const fields = part.split("|");
+        if (fields[0] === fromId) continue;
+        obstacles.push({
+          x: Number(fields[2]),
+          y: Number(fields[3]),
+          width: Number(fields[4]),
+          height: Number(fields[5]),
+        });
+      }
+    }
+    const smart = getSmartOrthogonalPath({
+      source: { x: fromX, y: fromY, position: fromPosition },
+      target: { x: toX, y: toY, position: toPosition ?? Position.Right },
+      obstacles,
+    });
+    if (smart) return smart.svgPath;
+    const [p] = getSmoothStepPath({
+      sourceX: fromX,
+      sourceY: fromY,
+      sourcePosition: fromPosition,
+      targetX: toX,
+      targetY: toY,
+      targetPosition: toPosition ?? Position.Right,
+      borderRadius: 10,
+    });
+    return p;
+  }, [rectsSig, fromId, fromX, fromY, fromPosition, toX, toY, toPosition]);
+
+  const color = getNodeCardBackgroundColor(fromNode?.type);
+
+  return (
+    <path
+      d={path}
+      fill="none"
+      stroke={color}
+      strokeWidth={2.4}
+      strokeLinecap="round"
+      strokeDasharray="0.1 9"
+    />
+  );
+}
 
 /** Tras soltar el resize: encuadra solo este nodo (mismo criterio que foco tras crear nodo). */
 const NODE_RESIZE_END_FIT_PADDING = 0.8;
