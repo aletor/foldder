@@ -8,6 +8,7 @@ import { NODE_SIDEBAR_TILE_BACKGROUND_SRC } from './node-sidebar-tile-bg';
 import { NodeIcon } from './foldder-icons';
 import { SIDEBAR_HOVER_HELP } from './sidebarHoverHelp';
 import { setLibraryDragPreviewImage } from './library-drag-preview';
+import { getNodeCardBackgroundColor } from './node-card-palette';
 import {
   TopbarGlyphBrain,
 } from './TopbarPinIcons';
@@ -164,6 +165,33 @@ function resolveSidebarHoverHelp(nodeType: string, label?: string): { title: str
   return null;
 }
 
+function SidebarTileInfoButton({
+  label,
+  onEnter,
+  onLeave,
+}: {
+  label?: string;
+  onEnter: (e: React.MouseEvent<HTMLElement>) => void;
+  onLeave: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="foldder-sidebar-tile__info nodrag"
+      draggable={false}
+      aria-label={label ? `Información sobre ${label}` : 'Información'}
+      onMouseEnter={onEnter}
+      onMouseLeave={onLeave}
+      onDragStart={(e) => e.preventDefault()}
+      onClick={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      <span aria-hidden>i</span>
+    </button>
+  );
+}
+
 const Sidebar = ({
   onLibraryDragStart,
   onLibraryDragEnd,
@@ -200,14 +228,16 @@ const Sidebar = ({
   const visibleLibraryTip = paletteDragActive ? null : libraryTip;
 
   const onLibraryTileEnter = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>, nodeType: string, label?: string) => {
+    (e: React.MouseEvent<HTMLElement>, nodeType: string, label?: string) => {
       if (paletteDragActive) return;
       if (!resolveSidebarHoverHelp(nodeType, label)) return;
       clearLibraryTipTimer();
-      const el = e.currentTarget;
+      const tile =
+        (e.currentTarget.closest('.foldder-sidebar-tile') as HTMLElement | null) ??
+        e.currentTarget;
       libraryTipTimerRef.current = setTimeout(() => {
         libraryTipTimerRef.current = null;
-        setLibraryTip({ type: nodeType, ...libraryTooltipPosition(el) });
+        setLibraryTip({ type: nodeType, ...libraryTooltipPosition(tile) });
       }, LIBRARY_TIP_SHOW_DELAY_MS);
     },
     [clearLibraryTipTimer, paletteDragActive]
@@ -238,19 +268,26 @@ const Sidebar = ({
       ? createPortal(
           <div
             role="tooltip"
-            className="foldder-sidebar-library-tip pointer-events-none fixed z-[10060] rounded-none border border-white/12 bg-black/88 px-2.5 py-2 shadow-[0_12px_32px_rgba(0,0,0,0.42)] backdrop-blur-md"
+            key={`${visibleLibraryTip.type}-${visibleLibraryTip.x}-${visibleLibraryTip.y}`}
+            className="foldder-sidebar-library-tip pointer-events-none fixed z-[10060]"
             style={{
               left: visibleLibraryTip.x,
               top: visibleLibraryTip.y,
               width: LIBRARY_TIP_WIDTH,
-            }}
+              '--foldder-tip-color': getNodeCardBackgroundColor(visibleLibraryTip.type),
+            } as React.CSSProperties}
           >
-            <div className="text-[8px] font-black uppercase tracking-[0.12em] text-white/70 mb-1">
-              {visibleLibraryHelp.title}
+            <div className="foldder-sidebar-library-tip__fill" aria-hidden />
+            <div className="foldder-sidebar-library-tip__content rounded-none border border-white/12 bg-black/88 px-2.5 py-2 shadow-[0_12px_32px_rgba(0,0,0,0.42)] backdrop-blur-md">
+              <div className="foldder-sidebar-library-tip__text">
+                <div className="text-[8px] font-black uppercase tracking-[0.12em] text-white/70 mb-1">
+                  {visibleLibraryHelp.title}
+                </div>
+                <p className="text-[10px] leading-snug text-white m-0">
+                  {visibleLibraryHelp.line}
+                </p>
+              </div>
             </div>
-            <p className="text-[10px] leading-snug text-white m-0">
-              {visibleLibraryHelp.line}
-            </p>
           </div>,
           document.body
         )
@@ -384,11 +421,14 @@ const Sidebar = ({
                     onDragStart={(e) => onDragStart(e, item.type)}
                     onDragEnd={() => onLibraryDragEnd?.()}
                     draggable
-                    onMouseEnter={(e) => onLibraryTileEnter(e, item.type, item.label)}
-                    onMouseLeave={onLibraryTileLeave}
                     onDoubleClick={(e) => handleLibraryTileDoubleClick(e, item.type)}
                     aria-label={`${item.label}. Arrastra al lienzo. Doble clic para añadir.`}
                   >
+                    <SidebarTileInfoButton
+                      label={item.label}
+                      onEnter={(e) => onLibraryTileEnter(e, item.type, item.label)}
+                      onLeave={onLibraryTileLeave}
+                    />
                     {!tileBackground ? (
                       <>
                         <SidebarLibraryNodeIcon type={item.type} size={26} />
@@ -409,11 +449,14 @@ const Sidebar = ({
                   onDragStart={(e) => onDragStart(e, item.type)}
                   onDragEnd={() => onLibraryDragEnd?.()}
                   draggable
-                  onMouseEnter={(e) => onLibraryTileEnter(e, item.type, item.label)}
-                  onMouseLeave={onLibraryTileLeave}
                   onDoubleClick={(e) => handleLibraryTileDoubleClick(e, item.type)}
                   aria-label={`${item.label}. Arrastra al lienzo. Doble clic para añadir.`}
                 >
+                  <SidebarTileInfoButton
+                    label={item.label}
+                    onEnter={(e) => onLibraryTileEnter(e, item.type, item.label)}
+                    onLeave={onLibraryTileLeave}
+                  />
                   <SidebarLibraryNodeIcon type={item.type} size={15} />
                   <span className="foldder-sidebar-tile__label">{item.label}</span>
                   <TypeIndicators nodeType={item.type} />

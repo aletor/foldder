@@ -10,38 +10,59 @@ export type GridPreset = {
   rows: number;
 };
 
+/**
+ * Tamaño por defecto de cada nodo sobre la base 5×5 (techo al que se puede
+ * redimensionar). El tamaño refleja la relevancia/rol del nodo:
+ *   · Tier 1 (5×4): creación principal (resultado visual/creativo).
+ *   · Tier 2 (5×3): captura y procesado visual.
+ *   · Tier 3 (4×3): texto / contenido.
+ *   · Tier 4 (3×2): utilidades y export.
+ *   · Tier 5 (3×1): conectores de space.
+ * `canvasGroup` es un contenedor (5×4). `promptInput`/`notes` tienen tamaño dinámico propio.
+ */
 const STATIC_NODE_GRID_PRESETS: Record<string, GridPreset> = {
-  backgroundRemover: { cols: 5, rows: 5 },
-  canvasGroup: { cols: 5, rows: 4 },
-  cine: { cols: 5, rows: 4 },
-  concatenator: { cols: 5, rows: 4 },
-  crop: { cols: 5, rows: 5 },
+  // Tier 1 — 5×4 · creación principal
   designer: { cols: 5, rows: 4 },
-  enhancer: { cols: 5, rows: 4 },
-  exportMultiple: { cols: 5, rows: 4 },
-  export_multimedia: { cols: 5, rows: 4 },
-  geminiVideo: { cols: 5, rows: 3 },
-  grokProcessor: { cols: 5, rows: 3 },
-  guionista: { cols: 5, rows: 3 },
-  imageExport: { cols: 5, rows: 3 },
-  imageCreationAdvanced: { cols: 5, rows: 5 },
-  inspiration: { cols: 5, rows: 5 },
-  listado: { cols: 5, rows: 4 },
-  mediaDescriber: { cols: 5, rows: 4 },
-  mediaInput: { cols: 5, rows: 5 },
-  nanoBanana: { cols: 5, rows: 3 },
-  painter: { cols: 5, rows: 4 },
-  photoRoom: { cols: 5, rows: 5 },
-  presenter: { cols: 5, rows: 4 },
-  projectAssets: { cols: 5, rows: 4 },
-  projectBrain: { cols: 5, rows: 4 },
-  space: { cols: 5, rows: 4 },
+  imageCreationAdvanced: { cols: 5, rows: 4 },
+  photoRoom: { cols: 5, rows: 4 },
+  nanoBanana: { cols: 5, rows: 4 },
+  cine: { cols: 5, rows: 4 },
+  geminiVideo: { cols: 5, rows: 4 },
+  videoEditor: { cols: 5, rows: 4 },
+  video_editor: { cols: 5, rows: 4 },
+  inspiration: { cols: 5, rows: 4 },
+
+  // Tier 2 — 5×3 · captura y procesado visual
+  mediaInput: { cols: 5, rows: 3 },
+  urlImage: { cols: 5, rows: 3 },
+  crop: { cols: 5, rows: 3 },
+  backgroundRemover: { cols: 5, rows: 3 },
+  vfxGenerator: { cols: 5, rows: 3 },
+  painter: { cols: 5, rows: 3 },
+  presenter: { cols: 5, rows: 3 },
+
+  // Tier 3 — 4×3 · texto / contenido
+  guionista: { cols: 4, rows: 3 },
+  grokProcessor: { cols: 4, rows: 3 },
+  enhancer: { cols: 4, rows: 3 },
+  concatenator: { cols: 4, rows: 3 },
+  listado: { cols: 4, rows: 3 },
+  mediaDescriber: { cols: 4, rows: 3 },
+
+  // Tier 4 — 3×2 · utilidades y export
+  imageExport: { cols: 3, rows: 2 },
+  export_multimedia: { cols: 3, rows: 2 },
+  exportMultiple: { cols: 3, rows: 2 },
+  projectBrain: { cols: 3, rows: 2 },
+  projectAssets: { cols: 3, rows: 2 },
+  space: { cols: 3, rows: 2 },
+
+  // Tier 5 — 3×1 · conectores de space
   spaceInput: { cols: 3, rows: 1 },
   spaceOutput: { cols: 3, rows: 1 },
-  urlImage: { cols: 5, rows: 5 },
-  vfxGenerator: { cols: 5, rows: 3 },
-  videoEditor: { cols: 5, rows: 3 },
-  video_editor: { cols: 5, rows: 3 },
+
+  // Contenedor
+  canvasGroup: { cols: 5, rows: 4 },
 };
 
 const ASPECT_RATIO_NODE_TYPES = new Set([

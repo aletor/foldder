@@ -2963,6 +2963,49 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
 }
 
+/* Botón "i" de información: único disparador del rollover de ayuda. */
+.foldder-sidebar-tile__info {
+  position: absolute;
+  top: 2px;
+  right: 3px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.55);
+  font-family: Georgia, "Times New Roman", serif;
+  font-style: italic;
+  font-weight: 700;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 0.16s ease,
+    color 0.16s ease;
+}
+
+/* Área de acción ampliada (invisible) para facilitar el rollover. */
+.foldder-sidebar-tile__info::after {
+  content: "";
+  position: absolute;
+  inset: -8px;
+}
+
+.foldder-sidebar-tile:hover .foldder-sidebar-tile__info {
+  opacity: 1;
+}
+
+.foldder-sidebar-tile__info:hover {
+  opacity: 1;
+  color: #ffffff;
+}
+
 .foldder-sidebar-tile--tool .foldder-sidebar-tile__label {
   margin-top: 4px;
   font-size: 7px;
@@ -2970,22 +3013,115 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
   color: #ffffff;
 }
 
-@keyframes foldder-sidebar-library-tip-in {
-  0% {
-    opacity: 0;
-    transform: translateY(-50%) translateX(-5px) scale(0.94);
-  }
-  100% {
-    opacity: 1;
-    transform: translateY(-50%) translateX(0) scale(1);
-  }
-}
-
+/* Sidebar hover help: cuadrado del color del nodo que parpadea, crece con
+   easing expo agresivo y deja paso al texto. Total: 1s. */
 .foldder-sidebar-library-tip {
   transform: translateY(-50%);
   transform-origin: left center;
-  animation: foldder-sidebar-library-tip-in 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
+  min-height: 54px;
+}
+
+.foldder-sidebar-library-tip__fill {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: var(--foldder-tip-color, #3f3c58);
+  transform-origin: left center;
+  /* Arranca como cuadrado (ancho ≈ alto del popup) a la izquierda. */
+  transform: scaleX(0.284);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.42);
+  animation: foldder-tip-fill 1s both;
   will-change: transform, opacity;
+}
+
+@keyframes foldder-tip-fill {
+  /* Fase 1 (0–28%): aparece y parpadea como cuadrado pequeño. */
+  0% {
+    opacity: 0;
+    transform: scaleX(0.284);
+  }
+  4% {
+    opacity: 1;
+    transform: scaleX(0.284);
+  }
+  10% {
+    opacity: 0.35;
+  }
+  16% {
+    opacity: 1;
+  }
+  22% {
+    opacity: 0.45;
+  }
+  /* Fin del parpadeo; aún cuadrado. Curva expo agresiva para el tramo de crecimiento. */
+  28% {
+    opacity: 1;
+    transform: scaleX(0.284);
+    animation-timing-function: cubic-bezier(0.19, 1, 0.22, 1);
+  }
+  /* Fase 2 (28–62%): crece hasta ocupar todo el ancho del popup. */
+  62% {
+    transform: scaleX(1);
+  }
+  100% {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+}
+
+.foldder-sidebar-library-tip__content {
+  position: relative;
+  z-index: 1;
+  min-height: 54px;
+  /* Acento del color del nodo que persiste a la izquierda. */
+  border-left: 3px solid var(--foldder-tip-color, #3f3c58) !important;
+  /* Fase 3: el panel oscuro entra tras el crecimiento. */
+  opacity: 0;
+  animation: foldder-tip-content 1s both;
+  will-change: opacity;
+}
+
+@keyframes foldder-tip-content {
+  0%,
+  58% {
+    opacity: 0;
+  }
+  82%,
+  100% {
+    opacity: 1;
+  }
+}
+
+.foldder-sidebar-library-tip__text {
+  /* El texto aparece al final, deslizando suave. */
+  opacity: 0;
+  transform: translateX(6px);
+  animation: foldder-tip-text 1s both;
+  will-change: transform, opacity;
+}
+
+@keyframes foldder-tip-text {
+  0%,
+  66% {
+    opacity: 0;
+    transform: translateX(6px);
+  }
+  88% {
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .foldder-sidebar-library-tip__fill,
+  .foldder-sidebar-library-tip__content,
+  .foldder-sidebar-library-tip__text {
+    animation-duration: 0.01s;
+    animation-delay: 0s;
+  }
 }
 
 .foldder-sidebar-tile .type-indicator-container {

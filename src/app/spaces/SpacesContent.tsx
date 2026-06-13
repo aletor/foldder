@@ -67,9 +67,8 @@ import {
   resolveHandleMetaForCanvasDrop,
   pickNewNodeTypeForCanvasDrop,
   defaultDataForCanvasDropNode,
-  getHandleCenterFlowPosition,
-  getNodeFlowRect,
 } from "@/lib/canvas-connect-end-drop";
+import { getNodeCardBackgroundColor } from "./node-card-palette";
 import { matchesClearCanvasIntent } from "@/lib/clear-canvas-intent";
 import { matchesAddSpaceNodeIntent } from "@/lib/assistant-quick-intents";
 import { installAiFetchOverlay } from "@/lib/ai-request-overlay";
@@ -525,6 +524,98 @@ function prepareCanvasNodeForCreate<T extends Node | Record<string, unknown>>(no
   return normalizeNotesNodeForRuntime(applyNodeGridPreset(node as Node) as Node) as T;
 }
 
+/**
+ * Resuelve qué nodo nuevo se crearía al "tirar" de un conector hacia el vacío.
+ * Compartido entre el preview que sigue al cursor (onConnectStart) y la
+ * creación real (onConnectEnd) para que ambos coincidan exactamente.
+ */
+function computeConnectDropPlan(
+  nodes: any[],
+  edges: any[],
+  fromNodeId: string | undefined,
+  fromHandleId: string | undefined,
+  fromType: 'source' | 'target' | undefined,
+): {
+  newType: string;
+  newHandle: string;
+  wireType: string;
+  srcNodeType: string | undefined;
+  mediaAssetType: string | undefined;
+  handleType: string;
+  fromNodeId: string;
+  fromHandleId: string;
+  fromType: 'source' | 'target';
+} | null {
+  if (!fromNodeId || !fromHandleId || (fromType !== 'source' && fromType !== 'target')) return null;
+
+  const srcNode = nodes.find((n: any) => n.id === fromNodeId);
+  const srcNodeType = srcNode?.type as string | undefined;
+  const mediaAssetType =
+    srcNodeType === 'mediaInput' ? (srcNode?.data as { type?: string })?.type : undefined;
+
+  const allowMultiFromMedia =
+    srcNodeType === 'mediaInput' && fromType === 'source' && fromHandleId === 'media';
+  const alreadyConnected =
+    !allowMultiFromMedia &&
+    edges.some((e: any) => {
+      if (fromType === 'source') return e.source === fromNodeId && e.sourceHandle === fromHandleId;
+      return e.target === fromNodeId && e.targetHandle === fromHandleId;
+    });
+  if (alreadyConnected) return null;
+
+  const handleMeta = resolveHandleMetaForCanvasDrop(srcNodeType, fromHandleId, fromType);
+  if (!handleMeta) return null;
+
+  const lookupKey = `${handleMeta.type}:${fromType}`;
+  let newType = pickNewNodeTypeForCanvasDrop(lookupKey, {
+    srcNodeType,
+    fromHandleId,
+    fromFlow: fromType,
+  });
+  if (
+    srcNodeType === 'mediaInput' &&
+    fromType === 'source' &&
+    fromHandleId === 'media' &&
+    mediaAssetType === 'image'
+  ) {
+    newType = 'nanoBanana';
+  }
+  if (!newType) return null;
+
+  const newMeta = NODE_REGISTRY[newType];
+  const wireType =
+    srcNodeType === 'mediaInput' && mediaAssetType === 'image' && newType === 'nanoBanana'
+      ? 'image'
+      : handleMeta.type;
+
+  let newHandle: string | undefined;
+  if (fromType === 'source') {
+    if (
+      wireType === 'prompt' &&
+      (newType === 'enhancer' || newType === 'concatenator' || newType === 'listado')
+    ) {
+      newHandle = 'p0';
+    } else {
+      newHandle = newMeta?.inputs.find((i: any) => i.type === wireType)?.id;
+    }
+  } else {
+    newHandle = newMeta?.outputs.find((o: any) => o.type === handleMeta.type)?.id;
+  }
+  if (!newHandle) return null;
+
+  return {
+    newType,
+    newHandle,
+    wireType,
+    srcNodeType,
+    mediaAssetType,
+    handleType: handleMeta.type,
+    fromNodeId,
+    fromHandleId,
+    fromType,
+  };
+}
+
 export function SpacesContent() {
   useFoldderRenderMetric("SpacesContent");
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
@@ -716,6 +807,16 @@ export function SpacesContent() {
   const libraryDragPreviewRafRef = useRef<number | null>(null);
   const libraryDragPointerRef = useRef<{ x: number; y: number } | null>(null);
   const libraryDragEdgePanRafRef = useRef<number | null>(null);
+
+  /** Arrastre desde un conector de nodo: preview que sigue al cursor (igual que el sidebar). */
+  const [connectDragActive, setConnectDragActive] = useState(false);
+  const connectDragPlanRef = useRef<ReturnType<typeof computeConnectDropPlan> | null>(null);
+  const [connectDragPreview, setConnectDragPreview] = useState<{
+    type: string;
+    position: { x: number; y: number };
+    cardBg?: string;
+  } | null>(null);
+  const connectDragRafRef = useRef<number | null>(null);
   const [projectBrainOpen, setProjectBrainOpen] = useState(false);
   const [brainInitialSection, setBrainInitialSection] = useState<BrainMainSection | null>(null);
   const [projectAssetsOpen, setProjectAssetsOpen] = useState(false);
@@ -4878,184 +4979,140 @@ export function SpacesContent() {
 
   // ── Handle→Node: soltar conexión en el lienzo vacío crea el nodo más probable (ver canvas-connect-end-drop).
   // Requiere connectionMode={ConnectionMode.Loose} para poder arrastrar desde entradas (target).
+  // El nodo se previsualiza siguiendo el cursor (igual que arrastrar desde el sidebar) y se
+  // deposita exactamente donde se suelta el conector.
+
+  const resetConnectDrag = useCallback(() => {
+    connectDragPlanRef.current = null;
+    setConnectDragActive(false);
+    setConnectDragPreview(null);
+    if (connectDragRafRef.current != null) {
+      window.cancelAnimationFrame(connectDragRafRef.current);
+      connectDragRafRef.current = null;
+    }
+  }, []);
+
+  const onConnectStart = useCallback(
+    (
+      _event: any,
+      params: {
+        nodeId?: string | null;
+        handleId?: string | null;
+        handleType?: 'source' | 'target' | null;
+      },
+    ) => {
+      if (canvasViewModeRef.current !== 'free') return;
+      const plan = computeConnectDropPlan(
+        liveNodesRef.current,
+        liveEdgesRef.current,
+        params.nodeId ?? undefined,
+        params.handleId ?? undefined,
+        (params.handleType as 'source' | 'target' | undefined) ?? undefined,
+      );
+      connectDragPlanRef.current = plan;
+      setConnectDragPreview(null);
+      setConnectDragActive(true);
+    },
+    [liveNodesRef, liveEdgesRef],
+  );
+
+  // Preview del nodo siguiendo el cursor mientras se arrastra desde un conector.
+  useEffect(() => {
+    if (!connectDragActive) return;
+
+    const updateAt = (clientX: number, clientY: number) => {
+      const plan = connectDragPlanRef.current;
+      if (!plan || canvasViewModeRef.current !== 'free') {
+        setConnectDragPreview(null);
+        return;
+      }
+      if (!isClientPointOverReactFlowCanvas(clientX, clientY, reactFlowWrapper.current)) {
+        setConnectDragPreview(null);
+        return;
+      }
+      const p = screenToFlowPosition({ x: clientX, y: clientY });
+      // Sobre un nodo existente el gesto conecta a ese nodo: no mostrar el ghost.
+      if (findTopNodeUnderFlowPoint(p, liveNodesRef.current)) {
+        setConnectDragPreview(null);
+        return;
+      }
+      setConnectDragPreview({
+        type: plan.newType,
+        position: libraryPreviewPositionFromFlowPoint(
+          p,
+          plan.newType,
+          defaultDataForCanvasDropNode(plan.newType),
+        ),
+        // El prompt hereda el color del nodo que lo genera.
+        cardBg:
+          plan.newType === 'promptInput'
+            ? getNodeCardBackgroundColor(plan.srcNodeType)
+            : undefined,
+      });
+    };
+
+    const onMove = (e: PointerEvent) => {
+      const { clientX, clientY } = e;
+      if (connectDragRafRef.current != null) return;
+      connectDragRafRef.current = window.requestAnimationFrame(() => {
+        connectDragRafRef.current = null;
+        updateAt(clientX, clientY);
+      });
+    };
+
+    window.addEventListener('pointermove', onMove, { passive: true });
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      if (connectDragRafRef.current != null) {
+        window.cancelAnimationFrame(connectDragRafRef.current);
+        connectDragRafRef.current = null;
+      }
+    };
+  }, [connectDragActive, screenToFlowPosition]);
 
   const onConnectEnd = useCallback((event: any, connectionState: any) => {
+    const plan = connectDragPlanRef.current;
+    resetConnectDrag();
+
     // Solo si no se completó una conexión válida a otro nodo / handle
     if (connectionState?.isValid) return;
     if (connectionState?.toNode != null) return;
+    if (!plan) return;
 
-    const fromNodeId =
-      connectionState?.fromNode?.id ?? connectionState?.from?.id ?? connectionState?.nodeId;
-    const fromHandle = connectionState?.fromHandle ?? connectionState?.handle;
-    const fromHandleId = fromHandle?.id as string | undefined;
-    const fromType = (fromHandle?.type ?? connectionState?.fromHandle?.type) as
-      | 'source'
-      | 'target'
-      | undefined;
-    if (!fromNodeId || !fromHandleId || (fromType !== 'source' && fromType !== 'target')) return;
-
-    const srcNode = nodes.find((n: any) => n.id === fromNodeId);
-    const srcNodeType = srcNode?.type as string | undefined;
-    const mediaAssetType = srcNodeType === 'mediaInput' ? (srcNode?.data as { type?: string })?.type : undefined;
-
-    // Media output can fan out to several targets (e.g. multiple Nano Bananas)
-    const allowMultiFromMedia =
-      srcNodeType === 'mediaInput' && fromType === 'source' && fromHandleId === 'media';
-
-    const alreadyConnected = !allowMultiFromMedia && edges.some((e: any) => {
-      if (fromType === 'source') return e.source === fromNodeId && e.sourceHandle === fromHandleId;
-      return e.target === fromNodeId && e.targetHandle === fromHandleId;
-    });
-    if (alreadyConnected) return;
-
-    const handleMeta = resolveHandleMetaForCanvasDrop(srcNodeType, fromHandleId, fromType);
-    if (!handleMeta) return;
-
-    const lookupKey = `${handleMeta.type}:${fromType}`;
-    let newType = pickNewNodeTypeForCanvasDrop(lookupKey, {
-      srcNodeType,
-      fromHandleId,
-      fromFlow: fromType,
-    });
-
-    // Registry types media output as `url`, but an uploaded image behaves as image → Nano Banana on canvas drop
-    if (srcNodeType === 'mediaInput' && fromType === 'source' && fromHandleId === 'media' && mediaAssetType === 'image') {
-      newType = 'nanoBanana';
-    }
-
-    if (!newType) return;
+    const { newType, newHandle, fromNodeId, fromHandleId, fromType, srcNodeType } = plan;
 
     const newNodeId = `${newType}_${Date.now()}`;
     const edgeId = `ae-${fromNodeId}-${newNodeId}-${fromHandleId}-${Date.now()}`;
-    const newMeta = NODE_REGISTRY[newType];
-
-    // Pick the connecting handle on the new node
-    const wireType =
-      srcNodeType === 'mediaInput' && mediaAssetType === 'image' && newType === 'nanoBanana'
-        ? 'image'
-        : handleMeta.type;
-
-    let newHandle: string | undefined;
-    if (fromType === 'source') {
-      // new node should receive: find its input matching the handle type
-      // enhancer / concatenator / listado usan p0… en el DOM; el registry aún puede decir
-      // `prompt` (igual que la salida) → XY Flow enlazaba al handle de salida.
-      if (
-        wireType === 'prompt' &&
-        (newType === 'enhancer' || newType === 'concatenator' || newType === 'listado')
-      ) {
-        newHandle = 'p0';
-      } else {
-        newHandle = newMeta?.inputs.find((i: any) => i.type === wireType)?.id;
-      }
-    } else {
-      // new node should provide: find its output matching the handle type
-      newHandle = newMeta?.outputs.find((o: any) => o.type === handleMeta.type)?.id;
-    }
-    if (!newHandle) return;
 
     const clientX = event.clientX ?? event.changedTouches?.[0]?.clientX ?? 0;
     const clientY = event.clientY ?? event.changedTouches?.[0]?.clientY ?? 0;
-    const pointerFlow = screenToFlowPosition({ x: clientX, y: clientY });
 
-    const anchor = getHandleCenterFlowPosition({
-      nodeId: fromNodeId,
-      handleId: fromHandleId,
-      screenToFlowPosition,
-    });
-    const fromNodeFlowRect = getNodeFlowRect({
-      nodeId: fromNodeId,
-      screenToFlowPosition,
-    });
-    /** Separación horizontal entre centros de conectores (coords flujo). PhotoRoom: más margen para que Nano no roce el marco. */
-    const HANDLE_GAP_BASE = 76;
-    const handleGap =
-      srcNodeType === "photoRoom" &&
-      fromType === "target" &&
-      /^in_\d+$/.test(fromHandleId)
-        ? 120
-        : HANDLE_GAP_BASE;
-    /** Nano Banana: ancho típico en lienzo > minWidth 240; evita primer frame solapado con PhotoRoom. */
-    const defaultWidthHint =
-      newType === "nanoBanana" && srcNodeType === "photoRoom" && fromType === "target" ? 400 : 280;
-    /** Heurística offset handle izquierdo → esquina sup. izq. del nodo nuevo (el snap afina). */
-    const newNodeLeftInsetHint = 56;
-    /** Primera Y: cercana al ancla; snapNewNodeToAnchor corrige al centro real del handle en el siguiente frame. */
-    const initialPos = anchor
-      ? {
-          x:
-            fromType === 'source'
-              ? fromNodeFlowRect
-                ? fromNodeFlowRect.right + HANDLE_GAP_BASE - newNodeLeftInsetHint
-                : anchor.x + HANDLE_GAP_BASE
-              : anchor.x - handleGap - defaultWidthHint,
-          y: anchor.y - 48,
-        }
-      : { x: pointerFlow.x - 160, y: pointerFlow.y - 80 };
+    // Solo se crea sobre espacio libre: si se suelta fuera del lienzo o encima de
+    // un nodo existente, se cancela la operación y no se crea nada.
+    if (!isClientPointOverReactFlowCanvas(clientX, clientY, reactFlowWrapper.current)) return;
+    const pointerFlow = screenToFlowPosition({ x: clientX, y: clientY });
+    if (findTopNodeUnderFlowPoint(pointerFlow, liveNodesRef.current)) return;
+
+    // Posición centrada en el cursor (idéntica al preview y al drop del sidebar).
+    const initialPos = libraryPreviewPositionFromFlowPoint(
+      pointerFlow,
+      newType,
+      defaultDataForCanvasDropNode(newType),
+    );
+
+    // El prompt nace con el color del nodo que lo genera (sin flash al color por defecto).
+    const baseData = defaultDataForCanvasDropNode(newType);
+    const seededData =
+      newType === 'promptInput'
+        ? { ...baseData, _foldderCardBg: getNodeCardBackgroundColor(srcNodeType) }
+        : baseData;
 
     const newNode = prepareCanvasNodeForCreate({
       id: newNodeId,
       type: newType,
       position: initialPos,
-      data: withFoldderCanvasIntro(newType, defaultDataForCanvasDropNode(newType)),
+      data: withFoldderCanvasIntro(newType, seededData),
     });
-
-    /** Alinea el conector del nodo nuevo con el del origen (misma Y; X con separación HANDLE_GAP). */
-    const snapNewNodeToAnchor = () => {
-      const anchorFlow = getHandleCenterFlowPosition({
-        nodeId: fromNodeId,
-        handleId: fromHandleId,
-        screenToFlowPosition,
-      });
-      const newH = getHandleCenterFlowPosition({
-        nodeId: newNodeId,
-        handleId: newHandle,
-        screenToFlowPosition,
-      });
-      if (!anchorFlow || !newH) return;
-      const srcRectNow =
-        getNodeFlowRect({ nodeId: fromNodeId, screenToFlowPosition }) ?? fromNodeFlowRect;
-
-      setNodes((nds: any) => {
-        const n = nds.find((x: any) => x.id === newNodeId);
-        if (!n) return nds;
-        const handleOffsetX = newH.x - n.position.x;
-        let desiredX: number;
-        if (fromType === 'source') {
-          const handleToHandle = anchorFlow.x + HANDLE_GAP_BASE;
-          const clearSourceBody =
-            srcRectNow != null
-              ? srcRectNow.right + HANDLE_GAP_BASE + handleOffsetX
-              : handleToHandle;
-          desiredX = Math.max(handleToHandle, clearSourceBody);
-        } else {
-          /** Entrada (p. ej. PhotoRoom): nodo fuente a la izquierda; alinear handles y asegurar que el cuerpo no invada PhotoRoom. */
-          desiredX = anchorFlow.x - handleGap;
-          const nbRect = getNodeFlowRect({
-            nodeId: newNodeId,
-            screenToFlowPosition,
-          });
-          if (srcNodeType === "photoRoom" && srcRectNow != null && nbRect != null) {
-            const bodyPad = 32;
-            const limitRight = srcRectNow.left - bodyPad;
-            if (nbRect.right > limitRight) {
-              desiredX -= nbRect.right - limitRight;
-            }
-          }
-        }
-        const desiredY = anchorFlow.y;
-        return nds.map((node: any) => {
-          if (node.id !== newNodeId) return node;
-          return {
-            ...node,
-            position: {
-              x: node.position.x + (desiredX - newH.x),
-              y: node.position.y + (desiredY - newH.y),
-            },
-          };
-        });
-      });
-    };
 
     takeSnapshot();
 
@@ -5071,12 +5128,6 @@ export function SpacesContent() {
 
     setNodes((nds: any) => [...nds, newNode]);
     scheduleFoldderCanvasIntroEnd(newNodeId);
-    queueMicrotask(() => {
-      requestAnimationFrame(() => {
-        snapNewNodeToAnchor();
-        requestAnimationFrame(snapNewNodeToAnchor);
-      });
-    });
 
     // Delay edge slightly so ReactFlow's drag-cancel doesn't wipe it; luego recalcular handles (Enhancer, etc.)
     setTimeout(() => {
@@ -5088,15 +5139,10 @@ export function SpacesContent() {
       queueMicrotask(refreshHandles);
       requestAnimationFrame(() => {
         refreshHandles();
-        snapNewNodeToAnchor();
-        requestAnimationFrame(() => {
-          refreshHandles();
-          snapNewNodeToAnchor();
-        });
+        requestAnimationFrame(refreshHandles);
       });
-      fitViewToNodeIds([newNodeId], 600);
     }, 30);
-  }, [edges, nodes, screenToFlowPosition, setNodes, setEdges, takeSnapshot, fitViewToNodeIds, updateNodeInternals, scheduleFoldderCanvasIntroEnd]);
+  }, [resetConnectDrag, screenToFlowPosition, setNodes, setEdges, takeSnapshot, updateNodeInternals, scheduleFoldderCanvasIntroEnd]);
 
 
 
@@ -5448,63 +5494,77 @@ export function SpacesContent() {
     overviewHoverHighlightId,
   ]);
 
-  const libraryDragPreviewElement = useMemo(() => {
-    if (!libraryDragPreview || canvasViewMode !== "free") return null;
+  const renderCanvasDragPreview = useCallback(
+    (preview: { type: string; position: { x: number; y: number }; cardBg?: string } | null) => {
+      if (!preview || canvasViewMode !== "free") return null;
 
-    const previewType = libraryDragPreview.type;
-    const PreviewNodeComponent = nodeTypes[previewType];
-    if (!PreviewNodeComponent) return null;
+      const previewType = preview.type;
+      const PreviewNodeComponent = nodeTypes[previewType];
+      if (!PreviewNodeComponent) return null;
 
-    const previewData = defaultDataForCanvasDropNode(previewType);
-    const previewStyle = defaultCanvasNodeStyleForType(previewType);
-    const resolved = resolveLibraryPreviewNodeFrame(previewType, previewData, previewStyle);
-    const { width, height } = resolved;
-    const label = previewType === "notes" ? "Note" : `${previewType} node`;
-    const nodeData = {
-      ...resolved.data,
-      _foldderLibraryPreview: true,
-      label,
-    };
-    const shellStyle = mergeNodeOutputBorderStyle(
-      { type: previewType, data: nodeData, style: resolved.style },
-      resolved.style,
-    );
+      const previewData = defaultDataForCanvasDropNode(previewType);
+      const previewStyle = defaultCanvasNodeStyleForType(previewType);
+      const resolved = resolveLibraryPreviewNodeFrame(previewType, previewData, previewStyle);
+      const { width, height } = resolved;
+      const label = previewType === "notes" ? "Note" : `${previewType} node`;
+      const nodeData = {
+        ...resolved.data,
+        _foldderLibraryPreview: true,
+        ...(preview.cardBg ? { _foldderCardBg: preview.cardBg } : {}),
+        label,
+      };
+      const shellStyle = mergeNodeOutputBorderStyle(
+        { type: previewType, data: nodeData, style: resolved.style },
+        resolved.style,
+      );
 
-    return (
-      <ViewportPortal>
-        <div
-          className="foldder-library-preview-node nodrag nopan"
-          style={{
-            position: "absolute",
-            left: libraryDragPreview.position.x,
-            top: libraryDragPreview.position.y,
-            width,
-            height,
-            zIndex: 12000,
-            pointerEvents: "none",
-            ...shellStyle,
-          }}
-        >
-          <PreviewNodeComponent
-            id={FOLDDER_LIBRARY_PREVIEW_NODE_ID}
-            type={previewType}
-            data={nodeData}
-            selected={false}
-            dragging={false}
-            draggable={false}
-            selectable={false}
-            deletable={false}
-            isConnectable={false}
-            zIndex={12000}
-            position={libraryDragPreview.position}
-            positionAbsolute={libraryDragPreview.position}
-            width={width}
-            height={height}
-          />
-        </div>
-      </ViewportPortal>
-    );
-  }, [libraryDragPreview, canvasViewMode]);
+      return (
+        <ViewportPortal>
+          <div
+            className="foldder-library-preview-node nodrag nopan"
+            style={{
+              position: "absolute",
+              left: preview.position.x,
+              top: preview.position.y,
+              width,
+              height,
+              zIndex: 12000,
+              pointerEvents: "none",
+              ...shellStyle,
+            }}
+          >
+            <PreviewNodeComponent
+              id={FOLDDER_LIBRARY_PREVIEW_NODE_ID}
+              type={previewType}
+              data={nodeData}
+              selected={false}
+              dragging={false}
+              draggable={false}
+              selectable={false}
+              deletable={false}
+              isConnectable={false}
+              zIndex={12000}
+              position={preview.position}
+              positionAbsolute={preview.position}
+              width={width}
+              height={height}
+            />
+          </div>
+        </ViewportPortal>
+      );
+    },
+    [canvasViewMode],
+  );
+
+  const libraryDragPreviewElement = useMemo(
+    () => renderCanvasDragPreview(libraryDragPreview),
+    [renderCanvasDragPreview, libraryDragPreview],
+  );
+
+  const connectDragPreviewElement = useMemo(
+    () => renderCanvasDragPreview(connectDragPreview),
+    [renderCanvasDragPreview, connectDragPreview],
+  );
 
   const flowEdges = useMemo(
     () => filterEdgesForCollapsedCanvasGroups(nodes, edges),
@@ -6072,6 +6132,7 @@ export function SpacesContent() {
             onEdgesChange(changes);
           }}
           onConnect={onConnect}
+          onConnectStart={onConnectStart}
           isValidConnection={isValidConnection}
           onPaneClick={onPaneClick}
           onPaneContextMenu={onPaneContextMenu}
@@ -6116,6 +6177,7 @@ export function SpacesContent() {
         >
           <FoldderCanvasGridBackground gap={FOLDDER_GRID_STEP} lineWidth={0.7} color="#111" dotSize={5} />
           {libraryDragPreviewElement}
+          {connectDragPreviewElement}
         </ReactFlow>
         </DesignerSpaceIdContext.Provider>
         </ProjectBrainCanvasContext.Provider>

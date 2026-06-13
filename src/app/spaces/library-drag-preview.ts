@@ -47,41 +47,37 @@ export function resolveLibraryPreviewNodeFrame(
   };
 }
 
-/** Ghost de arrastre con la proporción final del nodo (no el tile cuadrado del sidebar). */
+/**
+ * Oculta el ghost de arrastre nativo del navegador para que durante el drag
+ * solo se vea el nodo preview a tamaño real en el lienzo (no un tile pequeño).
+ *
+ * Se mantiene la firma (`nodeType` / `options`) por compatibilidad con las
+ * llamadas existentes, pero ya no se renderiza ningún tile: se asigna una
+ * imagen de arrastre transparente de 1×1.
+ */
 export function setLibraryDragPreviewImage(
   event: React.DragEvent,
-  nodeType: string,
-  options?: { backgroundImage?: string },
+  _nodeType?: string,
+  _options?: { backgroundImage?: string },
 ) {
   if (typeof document === "undefined") return;
-
-  const { width, height } = resolveLibraryPreviewNodeFrame(nodeType);
-  const maxPx = 96;
-  const scale = Math.min(maxPx / width, maxPx / height);
-  const w = Math.max(40, Math.round(width * scale));
-  const h = Math.max(32, Math.round(height * scale));
 
   const ghost = document.createElement("div");
   ghost.style.position = "fixed";
   ghost.style.top = "-9999px";
   ghost.style.left = "-9999px";
-  ghost.style.width = `${w}px`;
-  ghost.style.height = `${h}px`;
-  ghost.style.borderRadius = "0";
-  ghost.style.overflow = "hidden";
-  ghost.style.opacity = "0.94";
+  ghost.style.width = "1px";
+  ghost.style.height = "1px";
+  ghost.style.opacity = "0";
   ghost.style.pointerEvents = "none";
-  ghost.style.boxShadow = "0 12px 28px rgba(0, 0, 0, 0.35)";
-  ghost.style.backgroundColor = "#111827";
-  if (options?.backgroundImage) {
-    ghost.style.backgroundImage = `url(${options.backgroundImage})`;
-    ghost.style.backgroundSize = "cover";
-    ghost.style.backgroundPosition = "center";
-    ghost.style.backgroundRepeat = "no-repeat";
-  }
+  ghost.style.background = "transparent";
 
   document.body.appendChild(ghost);
-  event.dataTransfer.setDragImage(ghost, Math.round(w / 2), Math.round(h / 2));
+  try {
+    event.dataTransfer.setDragImage(ghost, 0, 0);
+  } catch {
+    /* Safari / permisos */
+  }
   requestAnimationFrame(() => {
     ghost.remove();
   });
@@ -89,7 +85,7 @@ export function setLibraryDragPreviewImage(
 
 /** @deprecated Usa setLibraryDragPreviewImage */
 export function hideNativeLibraryDragPreview(event: React.DragEvent) {
-  setLibraryDragPreviewImage(event, "promptInput");
+  setLibraryDragPreviewImage(event);
 }
 
 /** True si el cursor está sobre el contenedor `.react-flow` del lienzo. */

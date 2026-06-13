@@ -1515,15 +1515,18 @@ export const PromptNode = memo(function PromptNode({ id, data, selected }: NodeP
     return getNodeCardBackgroundColor(targetType);
   }, [edges, id, nodes]);
 
+  /** Color sugerido al crearse (p. ej. al tirar de un conector): el del nodo que lo genera. */
+  const overrideCardBg = (nodeData as { _foldderCardBg?: string })._foldderCardBg;
+
   const promptNodeStyle = useMemo((): React.CSSProperties => {
-    const cardBg = inheritedCardBg ?? PROMPT_DEFAULT_CARD_BG;
+    const cardBg = inheritedCardBg ?? overrideCardBg ?? PROMPT_DEFAULT_CARD_BG;
     return {
       minWidth: 260,
       minHeight: 76,
       "--foldder-node-card-bg": cardBg,
       "--foldder-frameless-glass-bg": cardBg,
     } as React.CSSProperties;
-  }, [inheritedCardBg]);
+  }, [inheritedCardBg, overrideCardBg]);
 
   const syncTextareaHeight = useCallback(() => {
     const el = taRef.current;

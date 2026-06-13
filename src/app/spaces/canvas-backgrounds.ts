@@ -68,4 +68,9 @@ export const CANVAS_BACKGROUNDS: CanvasBackgroundOption[] = [
     label: "Formas geométricas",
     url: "/wallpapers/geometric-mid-century.jpg",
   },
+  {
+    id: "synthwave-sunset",
+    label: "Atardecer synthwave",
+    url: "/wallpapers/synthwave-sunset.png",
+  },
 ];
