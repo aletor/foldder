@@ -9,6 +9,7 @@ import { NodeIcon } from './foldder-icons';
 import { SIDEBAR_HOVER_HELP } from './sidebarHoverHelp';
 import { setLibraryDragPreviewImage } from './library-drag-preview';
 import { getNodeCardBackgroundColor } from './node-card-palette';
+import { useInputMode } from './input-mode-context';
 import {
   TopbarGlyphBrain,
 } from './TopbarPinIcons';
@@ -35,6 +36,8 @@ type SidebarProps = {
   onLibraryDragEnd?: () => void;
   /** Doble clic en un mosaico: mismo comportamiento que doble clic en la barra inferior de accesos */
   onLibraryTileDoubleClick?: (nodeType: string) => void;
+  /** Tap en mosaico (modo touch): añadir nodo al lienzo */
+  onLibraryTileClick?: (nodeType: string) => void;
   /** Si true, el panel no se abre por hover hasta que el ratón entre en la franja izquierda */
   sidebarLockedCollapsed?: boolean;
   /** Tras bienvenida: sidebar expandido hasta que el usuario haga rollover y salga */
@@ -196,12 +199,15 @@ const Sidebar = ({
   onLibraryDragStart,
   onLibraryDragEnd,
   onLibraryTileDoubleClick,
+  onLibraryTileClick,
   sidebarLockedCollapsed = false,
   sidebarPinnedOpen = false,
   onSidebarPinnedOpenDismiss,
   onSidebarStripMouseEnter,
   paletteDragActive = false,
 }: SidebarProps) => {
+  const { isTouchUI } = useInputMode();
+  const [sidebarTouchOpen, setSidebarTouchOpen] = useState(false);
   const [libraryTip, setLibraryTip] = useState<{
     type: string;
     x: number;
@@ -259,6 +265,74 @@ const Sidebar = ({
     [clearLibraryTipTimer, onLibraryTileDoubleClick]
   );
 
+  const handleLibraryTileTap = useCallback(
+    (e: React.MouseEvent | React.PointerEvent, nodeType: string) => {
+      if (!isTouchUI || !onLibraryTileClick) return;
+      e.preventDefault();
+      e.stopPropagation();
+      clearLibraryTipTimer();
+      setLibraryTip(null);
+      onLibraryTileClick(nodeType);
+      setSidebarTouchOpen(false);
+    },
+    [clearLibraryTipTimer, isTouchUI, onLibraryTileClick]
+  );
+
+  const sidebarExpanded =
+    sidebarPinnedOpen || (isTouchUI && sidebarTouchOpen) || (!isTouchUI && !sidebarLockedCollapsed);
+
+  const sidebarOuterClass = sidebarPinnedOpen
+    ? "group/sidebar absolute left-0 top-0 z-[1000] h-screen w-[178px]"
+    : isTouchUI
+      ? sidebarTouchOpen
+        ? "group/sidebar absolute left-0 top-0 z-[1000] h-screen w-[178px]"
+        : "group/sidebar absolute left-0 top-0 z-[1000] h-screen w-12"
+      : sidebarLockedCollapsed
+        ? "group/sidebar absolute left-0 top-0 z-[1000] h-screen w-12"
+        : "group/sidebar absolute left-0 top-0 z-[1000] h-screen w-12 transition-[width] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] hover:w-[178px]";
+
+  const sidebarAsideClass = sidebarPinnedOpen
+    ? "absolute left-0 top-0 h-full w-[178px] overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
+    : isTouchUI
+      ? sidebarTouchOpen
+        ? "absolute left-0 top-0 h-full w-[178px] overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
+        : "absolute left-0 top-0 h-full w-0 overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
+      : sidebarLockedCollapsed
+        ? "absolute left-0 top-0 h-full w-0 overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
+        : "absolute left-0 top-0 h-full w-0 overflow-hidden group-hover/sidebar:w-[178px] transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]";
+
+  const onDragStart = (event: React.DragEvent, nodeType: string) => {
+    setLibraryDragPreviewImage(event, nodeType, {
+      backgroundImage: SIDEBAR_TILE_BACKGROUND_SRC[nodeType],
+    });
+    onLibraryDragStart?.(nodeType);
+    try {
+      event.dataTransfer.setData('text/plain', nodeType);
+      event.dataTransfer.setData('application/reactflow', nodeType);
+      event.dataTransfer.effectAllowed = 'copyMove';
+    } catch {
+      try {
+        event.dataTransfer.setData('application/reactflow', nodeType);
+        event.dataTransfer.effectAllowed = 'move';
+      } catch {
+        /* Safari / permisos */
+      }
+    }
+  };
+
+  const renderTileHandlers = (nodeType: string) =>
+    isTouchUI
+      ? {
+          draggable: false as const,
+          onClick: (e: React.MouseEvent) => handleLibraryTileTap(e, nodeType),
+        }
+      : {
+          draggable: true as const,
+          onDragStart: (e: React.DragEvent) => onDragStart(e, nodeType),
+          onDragEnd: () => onLibraryDragEnd?.(),
+          onDoubleClick: (e: React.MouseEvent) => handleLibraryTileDoubleClick(e, nodeType),
+        };
+
   const visibleLibraryHelp = visibleLibraryTip
     ? resolveSidebarHoverHelp(visibleLibraryTip.type)
     : null;
@@ -292,25 +366,6 @@ const Sidebar = ({
           document.body
         )
       : null;
-
-  const onDragStart = (event: React.DragEvent, nodeType: string) => {
-    setLibraryDragPreviewImage(event, nodeType, {
-      backgroundImage: SIDEBAR_TILE_BACKGROUND_SRC[nodeType],
-    });
-    onLibraryDragStart?.(nodeType);
-    try {
-      event.dataTransfer.setData('text/plain', nodeType);
-      event.dataTransfer.setData('application/reactflow', nodeType);
-      event.dataTransfer.effectAllowed = 'copyMove';
-    } catch {
-      try {
-        event.dataTransfer.setData('application/reactflow', nodeType);
-        event.dataTransfer.effectAllowed = 'move';
-      } catch {
-        /* Safari / permisos */
-      }
-    }
-  };
 
   const TypeIndicators = ({ nodeType }: { nodeType: string }) => {
     const meta = NODE_REGISTRY[nodeType];
@@ -360,42 +415,40 @@ const Sidebar = ({
     }
   }, [onSidebarPinnedOpenDismiss, sidebarPinnedOpen]);
 
+  const handleSidebarTouchStripTap = useCallback(() => {
+    if (!isTouchUI || sidebarPinnedOpen) return;
+    setSidebarTouchOpen((open) => !open);
+  }, [isTouchUI, sidebarPinnedOpen]);
+
   // ── NORMAL MODE: vertical sidebar panel ──────────────────────────────────
   return (
     <>
     <div
-      className={
-        sidebarPinnedOpen
-          ? "group/sidebar absolute left-0 top-0 z-[1000] h-screen w-[178px]"
-          : sidebarLockedCollapsed
-          ? "group/sidebar absolute left-0 top-0 z-[1000] h-screen w-12"
-          : "group/sidebar absolute left-0 top-0 z-[1000] h-screen w-12 transition-[width] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] hover:w-[178px]"
-      }
+      className={sidebarOuterClass}
       data-foldder-sidebar
       data-sidebar-pinned={sidebarPinnedOpen ? "true" : undefined}
+      data-sidebar-touch-open={isTouchUI && sidebarTouchOpen ? "true" : undefined}
       onMouseEnter={handleSidebarMouseEnter}
       onMouseLeave={handleSidebarMouseLeave}
+      onClick={isTouchUI && !sidebarExpanded ? handleSidebarTouchStripTap : undefined}
     >
 
       {/* Collapsed pill — the visible strip when not hovering */}
       <div
         className={[
-          "foldder-sidebar-collapsed-pill absolute left-2 top-1/2 -translate-y-1/2 w-6 h-20 bg-white/10 backdrop-blur-2xl border border-white/10 rounded-none flex items-center justify-center text-slate-400 transition-opacity duration-300 shadow-lg pointer-events-none",
-          sidebarPinnedOpen ? "opacity-0" : "group-hover/sidebar:opacity-0",
+          "foldder-sidebar-collapsed-pill absolute left-2 top-1/2 -translate-y-1/2 w-6 h-20 bg-white/10 backdrop-blur-2xl border border-white/10 rounded-none flex items-center justify-center text-slate-400 transition-opacity duration-300 shadow-lg",
+          sidebarExpanded ? "opacity-0 pointer-events-none" : isTouchUI ? "pointer-events-auto cursor-pointer" : "pointer-events-none group-hover/sidebar:opacity-0",
         ].join(" ")}
+        onClick={isTouchUI && !sidebarExpanded ? (e) => { e.stopPropagation(); handleSidebarTouchStripTap(); } : undefined}
+        role={isTouchUI && !sidebarExpanded ? "button" : undefined}
+        aria-label={isTouchUI && !sidebarExpanded ? "Abrir librería de nodos" : undefined}
       >
         <ChevronRight size={14} />
       </div>
 
       {/* Expanded panel */}
       <aside
-        className={
-          sidebarPinnedOpen
-            ? "absolute left-0 top-0 h-full w-[178px] overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
-            : sidebarLockedCollapsed
-            ? 'absolute left-0 top-0 h-full w-0 overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]'
-            : 'absolute left-0 top-0 h-full w-0 overflow-hidden group-hover/sidebar:w-[178px] transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]'
-        }
+        className={sidebarAsideClass}
         style={{ willChange: 'width' }}
       >
         <div className="h-full w-[178px] bg-transparent border-r border-white/8 flex flex-col min-h-0">
@@ -418,11 +471,12 @@ const Sidebar = ({
                         ? { backgroundImage: `url(${tileBackground})` }
                         : undefined
                     }
-                    onDragStart={(e) => onDragStart(e, item.type)}
-                    onDragEnd={() => onLibraryDragEnd?.()}
-                    draggable
-                    onDoubleClick={(e) => handleLibraryTileDoubleClick(e, item.type)}
-                    aria-label={`${item.label}. Arrastra al lienzo. Doble clic para añadir.`}
+                    {...renderTileHandlers(item.type)}
+                    aria-label={
+                      isTouchUI
+                        ? `${item.label}. Toca para añadir al lienzo.`
+                        : `${item.label}. Arrastra al lienzo. Doble clic para añadir.`
+                    }
                   >
                     <SidebarTileInfoButton
                       label={item.label}
@@ -446,11 +500,12 @@ const Sidebar = ({
                 <div
                   key={item.type}
                   className={`foldder-sidebar-tile foldder-sidebar-tile--tool group/tile ${tileBorderClassForType(item.type, toolFallbackBorderClass(item.type))}`}
-                  onDragStart={(e) => onDragStart(e, item.type)}
-                  onDragEnd={() => onLibraryDragEnd?.()}
-                  draggable
-                  onDoubleClick={(e) => handleLibraryTileDoubleClick(e, item.type)}
-                  aria-label={`${item.label}. Arrastra al lienzo. Doble clic para añadir.`}
+                  {...renderTileHandlers(item.type)}
+                  aria-label={
+                    isTouchUI
+                      ? `${item.label}. Toca para añadir al lienzo.`
+                      : `${item.label}. Arrastra al lienzo. Doble clic para añadir.`
+                  }
                 >
                   <SidebarTileInfoButton
                     label={item.label}

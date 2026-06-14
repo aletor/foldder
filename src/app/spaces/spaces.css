@@ -41,6 +41,37 @@
   cursor: grabbing !important;
 }
 
+/* Modo tablet/iPad: pan con un dedo; evita scroll/zoom del sistema en el lienzo */
+.spaces-canvas--touch {
+  touch-action: none;
+  -webkit-touch-callout: none;
+}
+.spaces-canvas--touch .react-flow__pane {
+  cursor: grab !important;
+}
+.spaces-canvas--touch .react-flow__pane:active {
+  cursor: grabbing !important;
+}
+.spaces-canvas--touch .react-flow__handle {
+  min-width: 22px;
+  min-height: 22px;
+}
+
+[data-foldder-studio-canvas] {
+  touch-action: none;
+  -webkit-touch-callout: none;
+}
+
+[data-foldder-touch-ui] .foldder-sidebar-collapsed-pill {
+  pointer-events: auto;
+  cursor: pointer;
+}
+[data-foldder-touch-ui] .group\/pin button[aria-label="Quitar de la barra"] {
+  opacity: 1;
+  min-width: 28px;
+  min-height: 28px;
+}
+
 .spaces-canvas .react-flow__background.foldder-canvas-grid-background .foldder-canvas-grid-lines {
   opacity: 0.1;
 }
@@ -3086,6 +3117,17 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
 
 .foldder-sidebar-grid--tools {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+[data-foldder-sidebar][data-sidebar-touch-open="true"] {
+  width: 178px !important;
+}
+[data-foldder-sidebar][data-sidebar-touch-open="true"] aside {
+  width: 178px !important;
+  overflow: visible !important;
+}
+[data-foldder-sidebar][data-sidebar-touch-open="true"] .foldder-sidebar-collapsed-pill {
+  opacity: 0;
 }
 
 .foldder-sidebar-tile {

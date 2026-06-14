@@ -96,7 +96,7 @@ import './spaces.css';
 import { FOLDDER_FIT_VIEW_EASE } from '@/lib/fit-view-ease';
 import { estimateVideoGeneratorPreviewUsd } from '@/lib/pricing-config';
 import { runAiJobWithNotification } from '@/lib/ai-job-notifications';
-import { readJsonWithHttpError } from '@/lib/read-response-json';
+import { readJsonWithHttpError, sanitizeUserFacingErrorMessage } from '@/lib/read-response-json';
 import { isFoldderMediaPreviewAutoFitSuppressed } from '@/lib/media-preview-fit-suppress';
 import { fetchBlobViaSpacesProxy } from '@/lib/spaces-proxy-fetch';
 import { NODE_REGISTRY } from './nodeRegistry';
@@ -127,6 +127,12 @@ import {
   resolvePromptValueFromEdgeSource,
   resolvePromptValueFromEdgeSourceMap,
 } from './canvas-group-logic';
+import {
+  ensureServerReadableMediaUrl,
+  resolveMediaUrlFromEdgeSource,
+  resolvePhotoRoomDocumentSize,
+} from './resolve-connected-media-url';
+import { mergeLiveStudioNodeDataIntoNodes } from './studio-live-documents';
 import {
   buildVideoPromptAssembly,
   buildPhysicsFlagsFromNodeData,
@@ -995,7 +1001,12 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
   const [format, setFormat] = useState<'png' | 'jpeg'>('png');
   const [isExporting, setIsExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
-  const [detectedSize, setDetectedSize] = useState<{ url: string; w: number; h: number } | null>(null);
+  const [detectedSize, setDetectedSize] = useState<{
+    url: string;
+    w: number;
+    h: number;
+    measured: boolean;
+  } | null>(null);
   const frameRef = useRef<HTMLDivElement | null>(null);
   const previewRef = useRef<HTMLDivElement | null>(null);
   const frameSyncKeyRef = useRef<string | null>(null);
@@ -1006,47 +1017,67 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
   // Find the single source connected to this node
   const sourceEdge = edges.find(e => e.target === id);
   const sourceNode = sourceEdge ? nodes.find(n => n.id === sourceEdge.source) : null;
-  const sourceNodeDimensions = sourceNode?.data as { width?: number; height?: number } | undefined;
+  const documentSize = resolvePhotoRoomDocumentSize(sourceNode);
+
+  const resolvedImageUrl = useMemo(() => {
+    if (!sourceEdge) return "";
+    return resolveMediaUrlFromEdgeSource(sourceEdge, nodes, edges).trim();
+  }, [sourceEdge, nodes, edges]);
 
   const layers = useMemo(() => {
-    if (!sourceNode) return [];
+    if (!sourceNode || !resolvedImageUrl) return [];
     const sourceData = sourceNode.data as Record<string, unknown>;
     const s3Key = typeof sourceData.s3Key === "string" ? sourceData.s3Key : undefined;
     return [{
       type: sourceNode.type,
-      value: s3Key ? undefined : sourceData.value as string | undefined,
+      value: s3Key ? undefined : resolvedImageUrl,
       s3Key,
-      width: sourceNodeDimensions?.width || 0,
-      height: sourceNodeDimensions?.height || 0
     }].filter(l => l.value || l.s3Key);
-  }, [sourceNode, sourceNodeDimensions?.height, sourceNodeDimensions?.width]);
+  }, [resolvedImageUrl, sourceNode]);
 
-  // Native pixel size of the connected image (data URLs from Crop, http(s), blob: — all measured the same)
-  const imageUrl = sourceNode?.data?.value as string | undefined;
+  const imageUrl = resolvedImageUrl || undefined;
   const activeDetectedSize =
     imageUrl && detectedSize?.url === imageUrl ? detectedSize : null;
   useEffect(() => {
-    if (!imageUrl || typeof imageUrl !== 'string') return;
+    if (!imageUrl) {
+      setDetectedSize(null);
+      return;
+    }
     const img = new Image();
     img.onload = () => {
       if (img.naturalWidth > 0 && img.naturalHeight > 0) {
-        setDetectedSize({ url: imageUrl, w: img.naturalWidth, h: img.naturalHeight });
+        setDetectedSize({
+          url: imageUrl,
+          w: img.naturalWidth,
+          h: img.naturalHeight,
+          measured: true,
+        });
       }
     };
     img.onerror = () => {
-      const w = Number(sourceNodeDimensions?.width);
-      const h = Number(sourceNodeDimensions?.height);
-      if (w > 0 && h > 0) setDetectedSize({ url: imageUrl, w, h });
+      if (documentSize) {
+        setDetectedSize({
+          url: imageUrl,
+          w: documentSize.w,
+          h: documentSize.h,
+          measured: false,
+        });
+      }
     };
     img.src = imageUrl;
-  }, [imageUrl, sourceNode?.id, sourceNodeDimensions?.height, sourceNodeDimensions?.width]);
+  }, [documentSize, imageUrl]);
 
-  // Export canvas = tamaño real de la imagen (p. ej. recorte); si aún no se midió, datos del nodo o fallback
-  const exportW = activeDetectedSize?.w || Number(sourceNodeDimensions?.width) || 1920;
-  const exportH = activeDetectedSize?.h || Number(sourceNodeDimensions?.height) || 1080;
+  const actualExportW = activeDetectedSize?.w ?? null;
+  const actualExportH = activeDetectedSize?.h ?? null;
+  const exportW = actualExportW || documentSize?.w || 1920;
+  const exportH = actualExportH || documentSize?.h || 1080;
+  const composeW = actualExportW ?? exportW;
+  const composeH = actualExportH ?? exportH;
+  const resolutionMismatch =
+    Boolean(documentSize && actualExportW && actualExportH) &&
+    (actualExportW! < documentSize!.w * 0.9 || actualExportH! < documentSize!.h * 0.9);
 
-  const directImageSrc =
-    sourceNode && typeof sourceNode.data?.value === 'string' ? sourceNode.data.value : null;
+  const directImageSrc = imageUrl || null;
   const hasExportPreview = Boolean(directImageSrc);
 
   useLayoutEffect(() => {
@@ -1074,6 +1105,14 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
   const handleExport = async () => {
     if (!sourceNode) return alert("Connect an image first!");
     if (!layers.length) return alert("The connected node has no image to export.");
+    if (!activeDetectedSize?.measured) {
+      return alert("Espera a que se mida la imagen conectada antes de exportar.");
+    }
+    if (resolutionMismatch && documentSize) {
+      return alert(
+        `PhotoRoom exportó a ${actualExportW}×${actualExportH} px pero el documento mide ${documentSize.w}×${documentSize.h} px. Cierra PhotoRoom (exporta a tamaño completo) y vuelve a intentar.`,
+      );
+    }
 
     const extension = format === 'jpeg' ? 'jpg' : 'png';
     const filename = `AI_Space_Output_${Date.now()}.${extension}`;
@@ -1081,10 +1120,10 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
     body.set("layers", JSON.stringify(layers));
     body.set("filename", filename);
     body.set("format", format);
-    body.set("width", String(exportW));
-    body.set("height", String(exportH));
-    body.set("previewWidth", String(exportW));
-    body.set("previewHeight", String(exportH));
+    body.set("width", String(composeW));
+    body.set("height", String(composeH));
+    body.set("previewWidth", String(composeW));
+    body.set("previewHeight", String(composeH));
 
     setExportError(null);
     setIsExporting(true);
@@ -1128,8 +1167,8 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
         exportFormat: extension,
         metadata: {
           exportNodeId: id,
-          width: exportW,
-          height: exportH,
+          width: composeW,
+          height: composeH,
         },
       });
     } catch (error) {
@@ -1199,10 +1238,21 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
 
           <div className="image-export-meta flex justify-between items-center text-[8px] font-mono text-gray-500 uppercase">
             <span>
-              {exportW}×{exportH} PX{detectedSize ? ' · tamaño real' : ' · estimado'}
+              {(actualExportW ?? exportW)}×{(actualExportH ?? exportH)} PX
+              {activeDetectedSize?.measured
+                ? resolutionMismatch && documentSize
+                  ? ` · doc ${documentSize.w}×${documentSize.h} (cierra PhotoRoom)`
+                  : " · píxeles reales"
+                : " · midiendo…"}
             </span>
-            <span>EXPORT READY</span>
+            <span>{resolutionMismatch ? "BAJA RES" : "EXPORT READY"}</span>
           </div>
+          {resolutionMismatch && documentSize ? (
+            <div className="rounded-none border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-[9px] font-semibold leading-snug text-amber-100">
+              PhotoRoom guardó una miniatura de {actualExportW}×{actualExportH} px. Cierra el studio para exportar a{" "}
+              {documentSize.w}×{documentSize.h} px.
+            </div>
+          ) : null}
           {exportError ? (
             <div className="image-export-error rounded-none border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-[9px] font-semibold leading-snug text-rose-100">
               {exportError}
@@ -3187,9 +3237,8 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
 
   const onRun = async () => {
     const inputEdge = edges.find(e => e.target === id && e.targetHandle === 'media');
-    const inputNode = nodes.find(n => n.id === inputEdge?.source);
-    
-    if (!inputNode) {
+
+    if (!inputEdge) {
       setStatus('error');
       setErrorMessage("Connect an image before generating a description.");
       return;
@@ -3198,46 +3247,59 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
     setStatus('running');
     setErrorMessage(null);
 
+    let capturedError = "";
     const ok = await runAiJobWithNotification({ nodeId: id, label: 'Image Describer' }, async () => {
-      let finalMediaUrl = inputNode.data?.value as string | undefined;
-      let finalMediaType: string;
+      try {
+        const mergedNodes = mergeLiveStudioNodeDataIntoNodes(nodes);
+        const inputNode = mergedNodes.find((n) => n.id === inputEdge.source);
+        if (!inputNode) throw new Error("Connect an image before generating a description.");
 
-      if (inputNode.type === 'space') {
-        const sd = inputNode.data as { value?: string; outputType?: string; type?: string };
-        finalMediaUrl = sd?.value;
-        finalMediaType = (sd.outputType || sd.type || 'image') as string;
-      } else {
-        finalMediaType = ((inputNode.data as { type?: string })?.type || 'image') as string;
-      }
+        const resolvedMediaUrl = resolveMediaUrlFromEdgeSource(inputEdge, nodes, edges);
+        if (!resolvedMediaUrl) throw new Error("No media URL available to describe.");
 
-      if (!finalMediaUrl) throw new Error("No media URL available to describe.");
+        const finalMediaUrl = await ensureServerReadableMediaUrl(resolvedMediaUrl);
+        let finalMediaType: string;
 
-      const res = await fetch('/api/spaces/describe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          url: finalMediaUrl,
-          type: finalMediaType,
-          metadata: inputNode.data.metadata
-        })
-      });
-      const json = await readJsonWithHttpError<{ description?: string; error?: string }>(
-        res,
-        'POST /api/spaces/describe',
-      );
+        if (inputNode.type === 'space') {
+          const sd = inputNode.data as { outputType?: string; type?: string };
+          finalMediaType = (sd.outputType || sd.type || 'image') as string;
+        } else {
+          finalMediaType = ((inputNode.data as { type?: string })?.type || 'image') as string;
+        }
 
-      if (json.description) {
-        setDescription(json.description);
-        userManuallyResizedRef.current = false;
-        setNodes((nds) => nds.map((n) => (n.id === id ? { ...n, data: { ...n.data, value: json.description } } : n)));
-      } else {
-        throw new Error(json.error || "Failed to analyze");
+        const res = await fetch('/api/spaces/describe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            url: finalMediaUrl,
+            type: finalMediaType,
+            metadata: inputNode.data.metadata
+          })
+        });
+        const json = await readJsonWithHttpError<{ description?: string; error?: string }>(
+          res,
+          'POST /api/spaces/describe',
+        );
+
+        if (json.description) {
+          setDescription(json.description);
+          userManuallyResizedRef.current = false;
+          setNodes((nds) => nds.map((n) => (n.id === id ? { ...n, data: { ...n.data, value: json.description } } : n)));
+        } else {
+          throw new Error(json.error || "Failed to analyze");
+        }
+      } catch (e: unknown) {
+        capturedError = sanitizeUserFacingErrorMessage(e instanceof Error ? e.message : String(e));
+        throw e;
       }
     });
     setStatus(ok ? 'success' : 'error');
     if (!ok) {
-      setErrorMessage("The visual description could not be generated. Check the connected image or API access.");
-      console.error("Describe error");
+      setErrorMessage(
+        capturedError ||
+          "The visual description could not be generated. Check the connected image or API access.",
+      );
+      console.error("Describe error", capturedError);
     }
   };
 

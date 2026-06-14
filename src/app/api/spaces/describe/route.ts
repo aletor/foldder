@@ -8,11 +8,15 @@ import {
   assertApiServiceEnabled,
 } from '@/lib/api-usage-controls';
 import {
-  canUserAccessKnowledgeFileKey,
   requireSpacesAuthUser,
 } from "@/lib/spaces-access-control";
-import { getPresignedUrl } from '@/lib/s3-utils';
+import { ForbiddenMediaReferenceError } from '@/lib/api-media-access';
 import OpenAI from 'openai';
+import {
+  isVisionRefusalText,
+  prepareOpenAiVisionImageUrl,
+  VisionMediaPrepareError,
+} from '@/lib/vision-media-prepare';
 import { estimateOpenAIUsd } from "@/lib/pricing-config";
 import {
   reserveApiWalletCharge,
@@ -22,57 +26,9 @@ import {
   type ApiWalletCharge,
 } from "@/lib/wallet-api-gate";
 
-const KNOWLEDGE_FILES_PREFIX = "knowledge-files/";
-
 type OpenAiDescribeContentPart =
   | { type: "text"; text: string }
-  | { type: "image_url"; image_url: { url: string; detail: "high" } };
-
-function safeDecodeUriComponent(value: string): string {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
-}
-
-function tryExtractKnowledgeFilesKey(value: string, baseUrl: string): string | null {
-  const raw = value.trim();
-  if (raw.startsWith(KNOWLEDGE_FILES_PREFIX)) return raw;
-  try {
-    const url = new URL(raw, baseUrl);
-    const routeKey = url.pathname === "/api/spaces/s3-file" ? url.searchParams.get("key")?.trim() : "";
-    if (routeKey?.startsWith(KNOWLEDGE_FILES_PREFIX)) return routeKey;
-    const decodedPath = safeDecodeUriComponent(url.pathname.replace(/^\/+/, ""));
-    const idx = decodedPath.indexOf(KNOWLEDGE_FILES_PREFIX);
-    return idx >= 0 ? decodedPath.slice(idx) : null;
-  } catch {
-    return null;
-  }
-}
-
-class MediaAccessError extends Error {
-  constructor(message: string, public status: number) {
-    super(message);
-    this.name = "MediaAccessError";
-  }
-}
-
-async function resolveModelReadableMediaUrl(rawUrl: string, req: Request, userEmail: string): Promise<string> {
-  const trimmed = rawUrl.trim();
-  if (!trimmed || trimmed.startsWith("data:")) return trimmed;
-  const s3Key = tryExtractKnowledgeFilesKey(trimmed, req.url);
-  if (s3Key) {
-    const allowed = await canUserAccessKnowledgeFileKey(userEmail, s3Key);
-    if (!allowed) throw new MediaAccessError("forbidden_key", 403);
-    return getPresignedUrl(s3Key);
-  }
-  try {
-    return new URL(trimmed, req.url).toString();
-  } catch {
-    return trimmed;
-  }
-}
+  | { type: "image_url"; image_url: { url: string; detail: "auto" | "high" | "low" } };
 
 export async function POST(req: Request) {
   let walletCharge: ApiWalletCharge | null = null;
@@ -92,9 +48,12 @@ export async function POST(req: Request) {
       apiKey: process.env.OPENAI_API_KEY || "",
     });
 
-    const mediaUrlForModel = await resolveModelReadableMediaUrl(url, req, authState.user.email);
+    const mediaUrlForModel =
+      type === "image"
+        ? await prepareOpenAiVisionImageUrl(url, req.url, authState.user.email)
+        : url.trim();
 
-    console.log(`[Media Describer] Analyzing ${type} at ${mediaUrlForModel.startsWith("data:") ? "data-url" : mediaUrlForModel}`);
+    console.log(`[Media Describer] Analyzing ${type} (prepared vision URL)`);
 
     let prompt = "";
     let contentPayload: OpenAiDescribeContentPart[] = [];
@@ -106,7 +65,7 @@ export async function POST(req: Request) {
         { type: "text", text: prompt },
         {
           type: "image_url",
-          image_url: { url: mediaUrlForModel, detail: "high" }
+          image_url: { url: mediaUrlForModel, detail: "auto" }
         }
       ];
     } else if (type === 'pdf' || type === 'txt') {
@@ -140,6 +99,17 @@ export async function POST(req: Request) {
     });
 
     const description = completion.choices[0].message.content || "No description available.";
+    if (isVisionRefusalText(description)) {
+      await releaseApiWalletChargeOnError(walletCharge, new Error("vision_refusal"));
+      releaseWalletOnError = false;
+      return NextResponse.json(
+        {
+          error:
+            "The vision model could not read this image. Close PhotoRoom to export the result, then run Image Describer again.",
+        },
+        { status: 422 },
+      );
+    }
 
     const u = completion.usage;
     const actualCostUsd = u
@@ -191,8 +161,11 @@ export async function POST(req: Request) {
         { status: 423 },
       );
     }
-    if (error instanceof MediaAccessError) {
+    if (error instanceof VisionMediaPrepareError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+    if (error instanceof ForbiddenMediaReferenceError) {
+      return NextResponse.json({ error: error.message }, { status: 403 });
     }
     if (releaseWalletOnError) await releaseApiWalletChargeOnError(walletCharge, error);
     const walletResponse = walletGateErrorResponse(error);

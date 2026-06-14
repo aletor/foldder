@@ -1364,8 +1364,12 @@ export interface DesignerStudioApi {
   getVectorPdfMarkupForCurrentPage?: (pdfOpts?: VectorPdfExportOptions) => Promise<string>;
   /** Same value as `nodeId` / studio key — used to wait until export API matches the active page after remount. */
   getExportSessionKey?: () => string;
-  /** PNG data URL del pliego actual (miniatura escalada) para preview del nodo / rail de páginas. */
-  getNodePreviewPngDataUrl?: (opts?: { maxSide?: number; brainExportTelemetry?: boolean }) => Promise<string | null>;
+  /** PNG data URL del pliego actual. `fullResolution: true` = tamaño real del documento; `maxSide` = miniatura escalada. */
+  getNodePreviewPngDataUrl?: (opts?: {
+    maxSide?: number;
+    fullResolution?: boolean;
+    brainExportTelemetry?: boolean;
+  }) => Promise<string | null>;
 }
 
 interface ContextMenuItem {
@@ -11678,7 +11682,11 @@ export function FreehandStudioCanvas({
         }
         return strRaw;
       },
-      getNodePreviewPngDataUrl: async (opts?: { maxSide?: number; brainExportTelemetry?: boolean }) => {
+      getNodePreviewPngDataUrl: async (opts?: {
+        maxSide?: number;
+        fullResolution?: boolean;
+        brainExportTelemetry?: boolean;
+      }) => {
         try {
           const svg = svgRef.current;
           if (!svg) return null;
@@ -11688,8 +11696,9 @@ export function FreehandStudioCanvas({
           if (bounds.w < 1 || bounds.h < 1) return null;
           const ab = pickPrimaryArtboard(abs, null);
           const bg: "transparent" | string = ab?.background ?? "transparent";
-          const maxSide = opts?.maxSide ?? 800;
-          const scale = Math.min(1, maxSide / Math.max(bounds.w, bounds.h));
+          const scale = opts?.fullResolution
+            ? 1
+            : Math.min(1, (opts?.maxSide ?? 800) / Math.max(bounds.w, bounds.h));
           const strRaw = buildStandaloneSvgFromCanvasDom(svg, {
             exportIds: null,
             bounds,
@@ -17360,7 +17369,7 @@ export function FreehandStudioCanvas({
           }
         }
       }
-      onClose();
+      await Promise.resolve(onClose());
     } finally {
       closeInFlight.current = false;
     }
@@ -17611,6 +17620,9 @@ export function FreehandStudioCanvas({
         const canvas = await svgStringToCanvasSafe(str, bw, bh, bgForCanvas);
         const mime = opts.format === "jpg" ? "image/jpeg" : "image/png";
         const quality = opts.format === "jpg" ? 0.92 : undefined;
+        if (photoRoomStudioEmbed && opts.format === "png" && onExport) {
+          onExport(canvasToPngDataUrlSafe(canvas));
+        }
         await new Promise<void>((res) => {
           canvas.toBlob(
             (blob) => {
@@ -17817,7 +17829,7 @@ export function FreehandStudioCanvas({
         window.setTimeout(() => setToast(null), 3000);
       }
     },
-    [exportModalScope, triggerExportFlash, onFinalExport, photoRoomStudioEmbed, designerMode],
+    [exportModalScope, triggerExportFlash, onFinalExport, onExport, photoRoomStudioEmbed, designerMode],
   );
 
   // ── Keyboard ──────────────────────────────────────────────────────

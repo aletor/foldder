@@ -279,12 +279,17 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
       setLiveStudioData(null);
       return;
     }
+    const { previewThumb: _previewThumb, ...persistPatch } = patch as PhotoRoomNodeData & {
+      previewThumb?: string;
+    };
     clearLiveStudioNodeData(id);
     liveStudioDataRef.current = null;
     setLiveStudioData(null);
     setNodes((nds: Node[]) =>
       nds.map((n) =>
-        n.id === id ? { ...n, data: touchStudioNodeData(n.data as Record<string, unknown>, patch as Record<string, unknown>) } : n,
+        n.id === id
+          ? { ...n, data: touchStudioNodeData(n.data as Record<string, unknown>, persistPatch as Record<string, unknown>) }
+          : n,
       ),
     );
   }, [id, setNodes]);
@@ -678,12 +683,20 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const hasPersistedStudio = Array.isArray(studioObjects) && studioObjects.length > 0;
   const exportedThumb =
     typeof effectiveNodeData.value === "string" && effectiveNodeData.value.length > 0 ? effectiveNodeData.value : null;
-  const displayUrl = hasPersistedStudio
-    ? exportedThumb ?? previewUrl ?? null
-    : previewUrl ?? exportedThumb ?? null;
+  const livePreviewThumb =
+    typeof (effectiveNodeData as { previewThumb?: string }).previewThumb === "string" &&
+    (effectiveNodeData as { previewThumb?: string }).previewThumb!.length > 0
+      ? (effectiveNodeData as { previewThumb?: string }).previewThumb!
+      : null;
+  const displayUrl =
+    showStudio && livePreviewThumb
+      ? livePreviewThumb
+      : hasPersistedStudio
+        ? exportedThumb ?? previewUrl ?? null
+        : previewUrl ?? exportedThumb ?? null;
   const showPersistedPhotoRoomPreview = hasPersistedStudio && Boolean(displayUrl) && nodeMediaVisible;
 
-  /** Studio abierto: actualizar miniatura del nodo al cambiar entradas (mismo PNG que al cerrar). */
+  /** Studio abierto: miniatura ligera en el nodo (no pisa `value`, salida del grafo = export completo al cerrar). */
   useEffect(() => {
     if (isLibraryPreview || !showStudio) return;
     if (canvasPerformanceModeRef.current) return;
@@ -693,8 +706,15 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
         const api = studioApiRef.current;
         if (!api?.getNodePreviewPngDataUrl || cancelled) return;
         try {
-          const url = await api.getNodePreviewPngDataUrl({ maxSide: 720 });
+          const url = await api.getNodePreviewPngDataUrl({ maxSide: 480 });
           if (!url || cancelled) return;
+          if (showStudioRef.current) {
+            const next = { ...(liveStudioDataRef.current ?? {}), previewThumb: url };
+            liveStudioDataRef.current = next;
+            setLiveStudioNodeData(id, next as Record<string, unknown>);
+            setLiveStudioData(next);
+            return;
+          }
           handleStudioExportPreview(url);
         } catch {
           /* noop */
@@ -705,7 +725,7 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [isLibraryPreview, photoRoomInputsSig, showStudio, handleStudioExportPreview]);
+  }, [isLibraryPreview, photoRoomInputsSig, showStudio, handleStudioExportPreview, id]);
 
   useLayoutEffect(() => {
     if (isLibraryPreview) return;

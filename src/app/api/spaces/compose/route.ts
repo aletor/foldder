@@ -142,17 +142,28 @@ export async function POST(req: NextRequest) {
       if (imageBuffer.length > MAX_LAYER_IMAGE_BYTES) {
         return NextResponse.json({ error: 'Image is too large to export.' }, { status: 413 });
       }
-      const detectedMimeType = mimeTypeFromImageBuffer(imageBuffer, format === "jpeg" ? "image/jpeg" : "image/png");
+      const { default: sharp } = await import('sharp');
+      const meta = await sharp(imageBuffer).metadata();
+      const actualW = meta.width ?? 0;
+      const actualH = meta.height ?? 0;
+      let pipeline = sharp(imageBuffer);
+      const outputBuffer =
+        format === 'jpeg'
+          ? await pipeline.jpeg({ quality: 95 }).toBuffer()
+          : await pipeline.png().toBuffer();
+      const detectedMimeType = format === 'jpeg' ? 'image/jpeg' : 'image/png';
       const extension = extensionFromMimeType(detectedMimeType, format === "jpeg" ? "jpg" : "png");
       const safeFilename = withFilenameExtension(filename, extension).replace(/[^a-z0-9.]/gi, '_');
 
-      console.log(`[Compose API] PASSTHROUGH: Exported ${safeFilename} (${Math.round(imageBuffer.length / 1024)} KB)`);
-      return new Response(new Uint8Array(imageBuffer), {
+      console.log(
+        `[Compose API] PASSTHROUGH: Exported ${safeFilename} (${Math.round(outputBuffer.length / 1024)} KB, ${actualW}x${actualH}px native)`,
+      );
+      return new Response(new Uint8Array(outputBuffer), {
         status: 200,
         headers: {
           'Content-Type': detectedMimeType,
           'Content-Disposition': `attachment; filename="${safeFilename}"`,
-          'Content-Length': imageBuffer.length.toString(),
+          'Content-Length': outputBuffer.length.toString(),
           'Cache-Control': 'no-cache, no-store, must-revalidate',
         },
       });

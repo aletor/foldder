@@ -44,6 +44,7 @@ import {
 } from "./canvas-group-logic";
 
 import Sidebar from "./Sidebar";
+import { useInputMode } from "./input-mode-context";
 import { AgentHUD } from "./AgentHUD";
 import { ApiUsageHud } from "./ApiUsageHud";
 import { AiRequestHud } from "./AiRequestHud";
@@ -648,6 +649,7 @@ export function SpacesContent() {
   const { data: session, status: sessionStatus } = useSession();
   const { language, setLanguage } = useLanguage();
   const isAuthenticated = sessionStatus === "authenticated";
+  const { isTouchUI } = useInputMode();
   const [nodes, setNodes, onNodesChange] = useNodesState<any>(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<any>(initialEdges);
   /** Siempre la misma referencia que `nodes` / `edges` (sync en render, no en useEffect) */
@@ -2841,7 +2843,7 @@ export function SpacesContent() {
   /** Lienzo con clase CSS: animación de rollover + bloqueo de clics en controles de nodos. */
   const [overviewModeActive, setOverviewModeActive] = useState(false);
   useEffect(() => {
-    const onMove = (e: MouseEvent) => {
+    const onMove = (e: MouseEvent | PointerEvent) => {
       lastPointerClientRef.current = { x: e.clientX, y: e.clientY };
       if (!spaceHeldForOverviewRef.current) return;
       const raw = getReactFlowNodeIdAtClientPoint(e.clientX, e.clientY);
@@ -2849,8 +2851,12 @@ export function SpacesContent() {
         raw && liveNodesRef.current.some((n) => n.id === raw) ? raw : null;
       setOverviewHoverHighlightId((prev) => (prev === id ? prev : id));
     };
-    window.addEventListener('mousemove', onMove, { passive: true });
-    return () => window.removeEventListener('mousemove', onMove);
+    window.addEventListener("mousemove", onMove, { passive: true });
+    window.addEventListener("pointermove", onMove, { passive: true });
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("pointermove", onMove);
+    };
   }, []);
 
   useEffect(() => {
@@ -5997,6 +6003,7 @@ export function SpacesContent() {
             onLibraryDragStart={handleLibraryDragStart}
             onLibraryDragEnd={handleLibraryDragEnd}
             onLibraryTileDoubleClick={addNodeFromTopbarPinDoubleClick}
+            onLibraryTileClick={isTouchUI ? addNodeFromTopbarPinDoubleClick : undefined}
             sidebarLockedCollapsed={sidebarLockedCollapsed}
             sidebarPinnedOpen={sidebarPinnedAfterWelcome}
             onSidebarPinnedOpenDismiss={() => setSidebarPinnedAfterWelcome(false)}
@@ -6182,8 +6189,13 @@ export function SpacesContent() {
           maxZoom={4}
           proOptions={{ hideAttribution: true }}
           multiSelectionKeyCode="Shift"
-          panOnDrag={spaceHeld ? true : [1]}
-          selectionOnDrag={!spaceHeld && canvasViewMode === 'free'}
+          panOnDrag={spaceHeld || middlePanHeld || (isTouchUI && canvasViewMode === "free") ? true : [1]}
+          selectionOnDrag={
+            !spaceHeld &&
+            !middlePanHeld &&
+            !(isTouchUI && canvasViewMode === "free") &&
+            canvasViewMode === "free"
+          }
           selectionMode={SelectionMode.Partial}
           panOnScroll={false}
           panOnScrollSpeed={1}
@@ -6195,7 +6207,7 @@ export function SpacesContent() {
           nodesDraggable={canvasViewMode === 'free'}
           nodesConnectable={canvasViewMode === 'free' && !overviewModeActive}
 
-          className={`spaces-canvas${spaceHeld || middlePanHeld ? ' spaces-canvas--space-pan' : ''}${canvasViewMode === 'cards' ? ' spaces-canvas--cards-mode' : ''}${overviewModeActive ? ' foldder-overview-mode-active' : ''}${canvasPerformanceMode ? ' spaces-canvas--performance' : ''}`}
+          className={`spaces-canvas${spaceHeld || middlePanHeld ? " spaces-canvas--space-pan" : ""}${isTouchUI ? " spaces-canvas--touch" : ""}${canvasViewMode === "cards" ? " spaces-canvas--cards-mode" : ""}${overviewModeActive ? " foldder-overview-mode-active" : ""}${canvasPerformanceMode ? " spaces-canvas--performance" : ""}`}
           style={reactFlowCanvasStyle}
         >
           <FoldderCanvasGridBackground gap={FOLDDER_GRID_STEP} lineWidth={0.7} color="#111" dotSize={5} />

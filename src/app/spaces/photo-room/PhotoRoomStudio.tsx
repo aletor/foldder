@@ -358,20 +358,21 @@ export default function PhotoRoomStudio({
   }, []);
 
   /**
-   * Cierre instantáneo en PhotoRoom:
-   * evita esperar el export síncrono del motor y captura miniatura en segundo plano.
+   * Cierre PhotoRoom: exporta a resolución completa del documento antes de cerrar
+   * (la miniatura del nodo y la salida del grafo usan el mismo PNG a tamaño real).
    */
-  const handleCloseInstant = useCallback(() => {
+  const handleCloseInstant = useCallback(async () => {
     const api = studioApiRef?.current;
     if (api?.getNodePreviewPngDataUrl) {
-      void api
-        .getNodePreviewPngDataUrl({ maxSide: 720, brainExportTelemetry: true })
-        .then((url) => {
-          if (url) onExportPreview(url);
-        })
-        .catch(() => {
-          // noop
+      try {
+        const url = await api.getNodePreviewPngDataUrl({
+          fullResolution: true,
+          brainExportTelemetry: true,
         });
+        if (url) onExportPreview(url);
+      } catch {
+        // noop
+      }
     }
     onClose();
   }, [onClose, onExportPreview, studioApiRef]);
