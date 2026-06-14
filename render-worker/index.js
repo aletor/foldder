@@ -55,15 +55,29 @@ async function putStatus(status, extra = {}) {
 
 function extractKnowledgeKey(value) {
   if (!value || typeof value !== "string") return null;
-  if (value.startsWith("knowledge-files/")) return value;
+  const trimmed = value.trim();
+  if (trimmed.startsWith("knowledge-files/")) return trimmed;
   try {
-    const url = new URL(value);
-    const path = url.pathname.replace(/^\/+/, "");
+    const url = new URL(trimmed, "http://foldder.local");
+    const routeKey = url.pathname === "/api/spaces/s3-file" || url.pathname === "/api/spaces/s3-download"
+      ? url.searchParams.get("key")?.trim()
+      : "";
+    if (routeKey?.startsWith("knowledge-files/")) return routeKey;
+    const path = decodeURIComponent(url.pathname.replace(/^\/+/, ""));
     const idx = path.indexOf("knowledge-files/");
-    return idx >= 0 ? path.slice(idx) : null;
+    if (idx >= 0) return path.slice(idx);
   } catch {
-    return null;
+    // fall through to repair heuristic
   }
+  const repair = trimmed.match(/\/api\/spaces\/s3-fi-assets(?:%2F|\/)([^/%]+)(?:%2F|\/)(.+)$/i);
+  if (repair) {
+    const ownerHash = decodeURIComponent(repair[1] ?? "");
+    const filename = decodeURIComponent((repair[2] ?? "").split("?")[0] ?? "");
+    if (ownerHash && filename && !filename.includes("..")) {
+      return `knowledge-files/user-assets/${ownerHash}/${filename}`;
+    }
+  }
+  return null;
 }
 
 function safeExt(clip) {

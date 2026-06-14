@@ -10,6 +10,31 @@ function safeDecodeUriComponent(value: string): string {
   }
 }
 
+/** Repara URLs rotas del tipo `/api/spaces/s3-fi-assets%2F{hash}%2F{file}`. */
+function tryRepairCorruptedS3FileRouteUrl(url: string): string | null {
+  const match = url.match(/\/api\/spaces\/s3-fi-assets(?:%2F|\/)([^/%]+)(?:%2F|\/)(.+)$/i);
+  if (!match) return null;
+  const ownerHash = safeDecodeUriComponent(match[1] ?? "");
+  const filename = safeDecodeUriComponent((match[2] ?? "").split("?")[0] ?? "");
+  if (!ownerHash || !filename || filename.includes("..")) return null;
+  return `${KNOWLEDGE_FILES_PREFIX}user-assets/${ownerHash}/${filename}`;
+}
+
+/** Resuelve la clave S3 desde refs persistidas (`s3Key`, URL estable, clave directa). */
+export function resolveKnowledgeFilesS3Key(...refs: Array<string | undefined | null>): string | null {
+  for (const ref of refs) {
+    if (!ref || typeof ref !== "string") continue;
+    const trimmed = ref.trim();
+    if (!trimmed) continue;
+    if (trimmed.startsWith(KNOWLEDGE_FILES_PREFIX)) return trimmed;
+    const fromUrl = tryExtractKnowledgeFilesKeyFromUrl(trimmed);
+    if (fromUrl) return fromUrl;
+    const repaired = tryRepairCorruptedS3FileRouteUrl(trimmed);
+    if (repaired) return repaired;
+  }
+  return null;
+}
+
 /** Extrae la clave `knowledge-files/...` de una URL prefirmada del bucket. */
 export function tryExtractKnowledgeFilesKeyFromUrl(url: string): string | null {
   if (!url || typeof url !== "string" || url.startsWith("blob:") || url.startsWith("data:")) {

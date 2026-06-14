@@ -27,11 +27,13 @@ export type ConnectedVideoSlot = {
   sourceNodeId: string;
   sourceNodeType?: string;
   url: string;
+  s3Key?: string;
 };
 
 function buildMediaListItemFromConnectedVideo(slot: ConnectedVideoSlot, order: number): MediaListItem {
   const index = VIDEO_EDITOR_VIDEO_SLOT_IDS.indexOf(slot.slotId);
   const title = slot.sourceNodeType ? `${slot.sourceNodeType} · Video ${index + 1}` : `Video ${index + 1}`;
+  const s3Key = slot.s3Key;
   return {
     id: `ve_conn_${slot.sourceNodeId}_${slot.slotId}`,
     order,
@@ -39,6 +41,7 @@ function buildMediaListItemFromConnectedVideo(slot: ConnectedVideoSlot, order: n
     mediaType: "video",
     url: slot.url,
     assetId: slot.url,
+    s3Key,
     status: "generated",
     metadata: {
       connectedFromNodeId: slot.sourceNodeId,
@@ -103,11 +106,13 @@ export function selectConnectedVideoSlots(state: ReactFlowState<Node, Edge>, nod
     const url = resolvePromptValueFromEdgeSourceMap(edge, nodesById).trim();
     if (!url) continue;
     const source = state.nodeLookup.get(edge.source);
+    const sourceS3Key = typeof source?.data?.s3Key === "string" ? source.data.s3Key.trim() : undefined;
     out.push({
       slotId,
       sourceNodeId: edge.source,
       sourceNodeType: source?.type,
       url,
+      s3Key: sourceS3Key || undefined,
     });
   }
   return out;

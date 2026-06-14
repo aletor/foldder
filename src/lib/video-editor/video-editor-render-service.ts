@@ -6,7 +6,7 @@ import { tmpdir } from "os";
 import { promisify } from "util";
 
 import { getFromS3, getPresignedUrl, uploadBufferToS3Key } from "@/lib/s3-utils";
-import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
+import { resolveKnowledgeFilesS3Key } from "@/lib/s3-media-hydrate";
 import type { VideoEditorRenderClip, VideoEditorRenderManifest } from "@/app/spaces/video-editor/video-editor-render-types";
 import { exportSubtitleDocumentToAss } from "@/app/spaces/video-editor/subtitle-utils";
 
@@ -47,11 +47,7 @@ function safeExtForClip(clip: VideoEditorRenderClip): string {
 }
 
 function resolveClipS3Key(clip: VideoEditorRenderClip): string | null {
-  if (clip.s3Key?.startsWith("knowledge-files/")) return clip.s3Key;
-  if (clip.assetId?.startsWith("knowledge-files/")) return clip.assetId;
-  if (clip.url) return tryExtractKnowledgeFilesKeyFromUrl(clip.url);
-  if (clip.assetId) return tryExtractKnowledgeFilesKeyFromUrl(clip.assetId);
-  return null;
+  return resolveKnowledgeFilesS3Key(clip.s3Key, clip.url, clip.assetId);
 }
 
 async function downloadClipToFile(clip: VideoEditorRenderClip, dir: string): Promise<ResolvedRenderClip> {

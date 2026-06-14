@@ -280,6 +280,31 @@ describe("video editor engine", () => {
     expect(trimmedEnd.tracks.video[0]?.durationSeconds).toBe(4.5);
   });
 
+  it("resolves corrupted s3-file route urls into s3 keys in the render manifest", () => {
+    const corruptedUrl =
+      "/api/spaces/s3-fi-assets%2F1d760e9bdac7a6cce988%2Fg2a318d16-8868-448e-8505-e4950432aeb46b08c70ce9.mp4";
+    const data = ingestMediaListToVideoEditor(mediaList([
+      {
+        id: "video_1",
+        order: 1,
+        title: "Video",
+        mediaType: "video",
+        role: "scene_video",
+        url: corruptedUrl,
+        assetId: corruptedUrl,
+        status: "generated",
+        durationSeconds: 8,
+      },
+    ]), createEmptyVideoEditorData());
+
+    const result = buildVideoEditorRenderManifest(data, "editor_1");
+
+    expect(result.ok).toBe(true);
+    expect(result.manifest?.tracks.video[0]?.s3Key).toBe(
+      "knowledge-files/user-assets/1d760e9bdac7a6cce988/g2a318d16-8868-448e-8505-e4950432aeb46b08c70ce9.mp4",
+    );
+  });
+
   it("builds a render manifest and preserves trim and volume", () => {
     const data = ingestMediaListToVideoEditor(mediaList([
       { id: "video_1", order: 1, title: "Video", mediaType: "video", role: "scene_video", assetId: "knowledge-files/video.mp4", status: "generated", durationSeconds: 8 },

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 
-import type { VideoEditorRenderManifest } from "@/app/spaces/video-editor/video-editor-render-types";
+import type { VideoEditorRenderClip, VideoEditorRenderManifest } from "@/app/spaces/video-editor/video-editor-render-types";
 import {
   ApiServiceDisabledError,
   assertApiServiceEnabled,
@@ -11,7 +11,7 @@ import {
   canUserAccessKnowledgeFileKey,
   requireSpacesAuthUser,
 } from "@/lib/spaces-access-control";
-import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
+import { resolveKnowledgeFilesS3Key } from "@/lib/s3-media-hydrate";
 import { createVideoEditorFargateRenderJob } from "@/lib/video-editor/video-editor-fargate-render";
 import {
   linkApiWalletChargeToProviderJob,
@@ -52,8 +52,7 @@ function validateManifest(manifest: VideoEditorRenderManifest): string | null {
 function collectManifestS3Keys(manifest: VideoEditorRenderManifest): string[] {
   const keys = new Set<string>();
   const collect = (value: string | undefined) => {
-    if (!value) return;
-    const key = value.startsWith("knowledge-files/") ? value : tryExtractKnowledgeFilesKeyFromUrl(value);
+    const key = resolveKnowledgeFilesS3Key(value);
     if (key) keys.add(key);
   };
   for (const clips of Object.values(manifest.tracks)) {
@@ -73,6 +72,17 @@ function collectManifestS3Keys(manifest: VideoEditorRenderManifest): string[] {
   return [...keys];
 }
 
+function enrichManifestWithResolvedS3Keys(manifest: VideoEditorRenderManifest): VideoEditorRenderManifest {
+  const enrichClip = (clip: VideoEditorRenderClip) => {
+    const s3Key = resolveKnowledgeFilesS3Key(clip.s3Key, clip.url, clip.assetId) ?? clip.s3Key;
+    return s3Key ? { ...clip, s3Key } : clip;
+  };
+  const tracks = Object.fromEntries(
+    Object.entries(manifest.tracks).map(([track, clips]) => [track, (clips ?? []).map(enrichClip)]),
+  ) as VideoEditorRenderManifest["tracks"];
+  return { ...manifest, tracks };
+}
+
 export async function POST(req: Request) {
   let walletCharge: ApiWalletCharge | null = null;
   let releaseWalletOnError = true;
@@ -89,7 +99,8 @@ export async function POST(req: Request) {
     if (validationError) {
       return NextResponse.json({ renderId: "", status: "error", error: validationError }, { status: 400 });
     }
-    for (const key of collectManifestS3Keys(manifest)) {
+    const enrichedManifest = enrichManifestWithResolvedS3Keys(manifest);
+    for (const key of collectManifestS3Keys(enrichedManifest)) {
       const allowed = await canUserAccessKnowledgeFileKey(authState.user.email, key);
       if (!allowed) {
         return NextResponse.json({ renderId: "", status: "error", error: "forbidden_asset" }, { status: 403 });
@@ -134,7 +145,7 @@ export async function POST(req: Request) {
         height: manifest.settings.height,
       },
     });
-    const result = await createVideoEditorFargateRenderJob(manifest, {
+    const result = await createVideoEditorFargateRenderJob(enrichedManifest, {
       renderId,
       userEmail: authState.user.email,
     });

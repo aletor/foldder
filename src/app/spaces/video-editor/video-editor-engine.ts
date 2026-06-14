@@ -1,3 +1,5 @@
+import { resolveKnowledgeFilesS3Key } from "@/lib/s3-media-hydrate";
+
 import type { MediaListItem, MediaListOutput } from "../media-list-output";
 import type { VideoEditorRenderManifest, VideoEditorRenderManifestResult } from "./video-editor-render-types";
 import {
@@ -148,11 +150,13 @@ export function buildVideoEditorRenderManifest(
         if (!keep) ignoredClips++;
         return keep;
       })
-      .map((clip) => ({
+      .map((clip) => {
+        const s3Key = resolveKnowledgeFilesS3Key(clip.s3Key, clip.url, clip.assetId) ?? clip.s3Key;
+        return {
         id: clip.id,
         assetId: clip.assetId || clip.url || "",
         url: clip.url,
-        s3Key: clip.s3Key,
+        s3Key,
         mediaType: clip.mediaType,
         track,
         startTime: Math.max(0, clip.startTime),
@@ -169,7 +173,8 @@ export function buildVideoEditorRenderManifest(
         motion: clip.motion,
         title: clip.title,
         metadata: clip.metadata,
-      }))
+      };
+      })
       .sort((a, b) => a.startTime - b.startTime);
     return acc;
   }, {} as VideoEditorRenderManifest["tracks"]);
@@ -300,12 +305,13 @@ function trackForMediaItem(item: MediaListItem): VideoEditorTrackKind {
 
 export function clipFromMediaListItem(item: MediaListItem, startTime: number): VideoEditorClip {
   const durationSeconds = item.durationSeconds ?? (item.mediaType === "image" ? 4 : 5);
+  const s3Key = resolveKnowledgeFilesS3Key(item.s3Key, item.url, item.assetId) ?? item.s3Key;
   return {
     id: `clip_${item.id}`,
     sourceItemId: item.id,
     assetId: item.assetId || item.url,
     url: item.url,
-    s3Key: item.s3Key,
+    s3Key,
     mediaType: item.mediaType === "audio" ? "audio" : item.mediaType === "video" ? "video" : "image",
     track: trackForMediaItem(item),
     title: item.title,

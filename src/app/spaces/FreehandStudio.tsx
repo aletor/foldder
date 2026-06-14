@@ -10306,39 +10306,30 @@ export function FreehandStudioCanvas({
    */
   const photoRoomConnectedInputsSyncRef = useRef(photoRoomConnectedInputs);
   photoRoomConnectedInputsSyncRef.current = photoRoomConnectedInputs;
-  const initialObjectsSyncRef = useRef(initialObjects);
-  initialObjectsSyncRef.current = initialObjects;
 
   /**
    * PhotoRoom embed: rehidratar desde el nodo solo cuando cambia `photoRoomInputsSig` (cables / URLs de imagen).
    * Los movimientos locales ya están en el estado del lienzo; persistir no debe disparar este efecto.
+   * Importante: fusionar sobre el estado actual del lienzo (no `initialObjects`), para no perder capas
+   * recién rasterizadas al desconectar la ranura.
    */
   useLayoutEffect(() => {
     if (photoRoomConnectedInputs === undefined) return;
     photoRoomSizedRef.current.clear();
     const inputs = photoRoomConnectedInputsSyncRef.current ?? [];
-    if (isPhotoRoomStudioEmbed) {
-      const next = computeStudioInitialObjects(
-        initialObjectsSyncRef.current,
-        inputs,
-        nodeId,
-        artboardW,
-        artboardH,
-      );
-      setObjects(next);
-      setSelectedIds((sel) => {
-        const ok = new Set(next.map((o) => o.id));
-        const kept = [...sel].filter((id) => ok.has(id));
-        return kept.length > 0 ? new Set(kept) : new Set();
-      });
-      return;
-    }
     setObjects((prev) => {
       const next = mergePhotoRoomInputLayers(prev, inputs, nodeId, artboardW, artboardH);
-      queueMicrotask(() => onUpdateObjectsRef.current(next));
+      queueMicrotask(() => {
+        onUpdateObjectsRef.current(next);
+        setSelectedIds((sel) => {
+          const ok = new Set(next.map((o) => o.id));
+          const kept = [...sel].filter((id) => ok.has(id));
+          return kept.length > 0 ? new Set(kept) : new Set();
+        });
+      });
       return next;
     });
-  }, [photoRoomInputsSig, nodeId, artboardW, artboardH, isPhotoRoomStudioEmbed]);
+  }, [photoRoomInputsSig, nodeId, artboardW, artboardH]);
 
   /** Indicadores Ctrl/⌘ (+) y Alt/Option (−) en marco PhotoRoom; refs evitan desfase con React. */
   const [photoRectMarqueeAddModHeld, setPhotoRectMarqueeAddModHeld] = useState(false);
@@ -27005,7 +26996,8 @@ export function FreehandStudioCanvas({
                             });
                             return next;
                           });
-                          /** Persistencia en el nodo la hace SpacesContent con el snapshot (evita carrera con el filtro que quitaba la capa). */
+                          /** Persistir antes de desconectar la ranura (evita que la rehidratación borre la capa). */
+                          onUpdateObjectsRef.current(next);
                           photoRoomOnRasterizeInputImage?.({
                             imageObjectId: newId,
                             photoRoomInputSlot: slot,
