@@ -11,6 +11,7 @@ import {
   addEdge,
   Node,
   Edge,
+  NodeChange,
   OnConnect,
   ConnectionMode,
   useReactFlow,
@@ -44,6 +45,7 @@ import {
 } from "./canvas-group-logic";
 
 import Sidebar from "./Sidebar";
+import { TouchSelectionToolbar } from "./TouchSelectionToolbar";
 import { useInputMode } from "./input-mode-context";
 import { AgentHUD } from "./AgentHUD";
 import { ApiUsageHud } from "./ApiUsageHud";
@@ -2843,6 +2845,7 @@ export function SpacesContent() {
   /** Lienzo con clase CSS: animación de rollover + bloqueo de clics en controles de nodos. */
   const [overviewModeActive, setOverviewModeActive] = useState(false);
   useEffect(() => {
+    if (isTouchUI) return;
     const onMove = (e: MouseEvent | PointerEvent) => {
       lastPointerClientRef.current = { x: e.clientX, y: e.clientY };
       if (!spaceHeldForOverviewRef.current) return;
@@ -2857,7 +2860,7 @@ export function SpacesContent() {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("pointermove", onMove);
     };
-  }, []);
+  }, [isTouchUI]);
 
   useEffect(() => {
     const typingTarget = (t: EventTarget | null) => {
@@ -5424,6 +5427,133 @@ export function SpacesContent() {
   groupSelectedToCanvasGroupRef.current = groupSelectedToCanvasGroup;
   ungroupSelectedCanvasGroupRef.current = ungroupSelectedCanvasGroup;
 
+  const handleFlowNodesChange = useCallback(
+    (changes: NodeChange[]) => {
+      const nds = liveNodesRef.current;
+      const studioOpen =
+        typeof document !== "undefined" && !!document.querySelector("[data-foldder-studio-canvas]");
+      const filtered = changes.filter((c) => {
+        if ((c as { id?: string }).id === FOLDDER_LIBRARY_PREVIEW_NODE_ID) return false;
+        if (c.type !== "remove") return true;
+        if (studioOpen) return false;
+        const id = (c as { id?: string }).id;
+        if (!id) return true;
+        const node = nds.find((n) => n.id === id);
+        return node?.type !== "canvasGroup";
+      });
+      const removals = filtered.filter((c) => c.type === "remove");
+      if (removals.length > 0) {
+        takeSnapshot();
+      }
+      const snapped = snapNodeChangesToGrid(filtered, nds);
+      onNodesChange(snapped);
+
+      const completedResizeChanges = snapped.filter(
+        (c): c is typeof c & { id: string; dimensions: { width: number; height: number } } =>
+          c.type === "dimensions" &&
+          Boolean((c as { id?: string }).id) &&
+          Boolean((c as { dimensions?: { width?: number; height?: number } }).dimensions) &&
+          (c as { resizing?: boolean }).resizing === false,
+      );
+      if (completedResizeChanges.length > 0) {
+        const resizedById = new Map(completedResizeChanges.map((c) => [c.id, c.dimensions]));
+        setNodes((prev) =>
+          prev.map((node) => {
+            const dimensions = resizedById.get(node.id);
+            if (!dimensions) return node;
+            const style = (node.style ?? {}) as React.CSSProperties;
+            return {
+              ...node,
+              style: {
+                ...style,
+                width: dimensions.width,
+                height: dimensions.height,
+              },
+            };
+          }),
+        );
+      }
+
+      const changedCanvasGroupIds = new Set<string>();
+      for (const c of snapped) {
+        if (c.type !== "dimensions" && c.type !== "position") continue;
+        const id = (c as { id?: string }).id;
+        if (!id) continue;
+        const node = nds.find((n) => n.id === id);
+        if (node?.parentId) changedCanvasGroupIds.add(node.parentId);
+      }
+      if (removals.length > 0) {
+        setTimeout(() => {
+          setNodes((prev) => {
+            const reframed = recomputeCanvasGroupFrames(prev);
+            const { nodes: nextNodes, edges: nextEdges } = removeEmptyCanvasGroups(
+              reframed,
+              liveEdgesRef.current,
+            );
+            setEdges(nextEdges);
+            return nextNodes;
+          });
+        }, 0);
+      } else if (changedCanvasGroupIds.size > 0) {
+        scheduleCanvasGroupRefit(changedCanvasGroupIds);
+      }
+
+      if (removals.length > 0) {
+        setTimeout(() => {
+          void fitView({
+            padding: FIT_VIEW_PADDING_NODE_FOCUS,
+            duration: fitAnim(650),
+            interpolate: "smooth",
+            ...FOLDDER_FIT_VIEW_EASE,
+          });
+        }, 80);
+      }
+    },
+    [
+      fitView,
+      onNodesChange,
+      scheduleCanvasGroupRefit,
+      setEdges,
+      setNodes,
+      takeSnapshot,
+    ],
+  );
+
+  const deleteSelectedCanvasNodes = useCallback(() => {
+    const studioOpen =
+      typeof document !== "undefined" && !!document.querySelector("[data-foldder-studio-canvas]");
+    if (studioOpen) return;
+
+    const ids = liveNodesRef.current
+      .filter(
+        (n) =>
+          n.selected &&
+          n.type !== "canvasGroup" &&
+          n.id !== FOLDDER_LIBRARY_PREVIEW_NODE_ID,
+      )
+      .map((n) => n.id);
+    if (ids.length === 0) return;
+
+    handleFlowNodesChange(ids.map((id) => ({ type: "remove", id })));
+  }, [handleFlowNodesChange]);
+
+  const clearCanvasNodeSelection = useCallback(() => {
+    setNodes((nds) => {
+      if (!nds.some((n) => n.selected)) return nds;
+      return nds.map((n) => (n.selected ? { ...n, selected: false } : n));
+    });
+  }, [setNodes]);
+
+  const touchDeletableSelectedCount = useMemo(() => {
+    if (!isTouchUI || canvasViewMode !== "free") return 0;
+    return nodes.filter(
+      (n) =>
+        n.selected &&
+        n.type !== "canvasGroup" &&
+        n.id !== FOLDDER_LIBRARY_PREVIEW_NODE_ID,
+    ).length;
+  }, [canvasViewMode, isTouchUI, nodes]);
+
   const flowNodes = useMemo(() => {
     const compatSet = new Set(libraryCompatibleIds);
 
@@ -6068,90 +6198,7 @@ export function SpacesContent() {
           onInit={onCanvasInit}
           nodes={flowNodes}
           edges={flowEdges}
-          onNodesChange={(changes) => {
-            const nds = liveNodesRef.current;
-            const studioOpen = typeof document !== 'undefined' && !!document.querySelector('[data-foldder-studio-canvas]');
-            const filtered = changes.filter((c) => {
-              if ((c as { id?: string }).id === FOLDDER_LIBRARY_PREVIEW_NODE_ID) return false;
-              if (c.type !== "remove") return true;
-              if (studioOpen) return false;
-              const id = (c as { id?: string }).id;
-              if (!id) return true;
-              const node = nds.find((n) => n.id === id);
-              return node?.type !== "canvasGroup";
-            });
-            const removals = filtered.filter((c) => c.type === "remove");
-            if (removals.length > 0) {
-              // S3 objects are not deleted here so undo/history and version restore keep working.
-              // Orphans are removed when the whole project is deleted (api/spaces DELETE).
-              takeSnapshot();
-            }
-            const snapped = snapNodeChangesToGrid(filtered, nds);
-            onNodesChange(snapped);
-
-            const completedResizeChanges = snapped.filter(
-              (c): c is typeof c & { id: string; dimensions: { width: number; height: number } } =>
-                c.type === "dimensions" &&
-                Boolean((c as { id?: string }).id) &&
-                Boolean((c as { dimensions?: { width?: number; height?: number } }).dimensions) &&
-                (c as { resizing?: boolean }).resizing === false,
-            );
-            if (completedResizeChanges.length > 0) {
-              const resizedById = new Map(
-                completedResizeChanges.map((c) => [c.id, c.dimensions]),
-              );
-              setNodes((prev) =>
-                prev.map((node) => {
-                  const dimensions = resizedById.get(node.id);
-                  if (!dimensions) return node;
-                  const style = (node.style ?? {}) as React.CSSProperties;
-                  return {
-                    ...node,
-                    style: {
-                      ...style,
-                      width: dimensions.width,
-                      height: dimensions.height,
-                    },
-                  };
-                }),
-              );
-            }
-
-            const changedCanvasGroupIds = new Set<string>();
-            for (const c of snapped) {
-              if (c.type !== "dimensions" && c.type !== "position") continue;
-              const id = (c as { id?: string }).id;
-              if (!id) continue;
-              const node = nds.find((n) => n.id === id);
-              if (node?.parentId) changedCanvasGroupIds.add(node.parentId);
-            }
-            if (removals.length > 0) {
-              setTimeout(() => {
-                setNodes((prev) => {
-                  const reframed = recomputeCanvasGroupFrames(prev);
-                  const { nodes: nextNodes, edges: nextEdges } = removeEmptyCanvasGroups(
-                    reframed,
-                    liveEdgesRef.current
-                  );
-                  setEdges(nextEdges);
-                  return nextNodes;
-                });
-              }, 0);
-            } else if (changedCanvasGroupIds.size > 0) {
-              scheduleCanvasGroupRefit(changedCanvasGroupIds);
-            }
-
-            if (removals.length > 0) {
-              setTimeout(() => {
-                void fitView({
-                  padding: FIT_VIEW_PADDING_NODE_FOCUS,
-                  duration: fitAnim(650),
-                  interpolate: "smooth",
-                  ...FOLDDER_FIT_VIEW_EASE,
-                });
-              }, 80);
-            }
-          }}
+          onNodesChange={handleFlowNodesChange}
           onEdgesChange={(changes) => {
             if (typeof document !== 'undefined' && document.querySelector('[data-foldder-studio-canvas]')) {
               const safe = changes.filter((c) => c.type !== 'remove');
@@ -6176,7 +6223,9 @@ export function SpacesContent() {
           onMoveEnd={endCanvasPerformanceInteraction}
           onConnectEnd={onConnectEnd}
           connectionMode={ConnectionMode.Loose}
-          elevateEdgesOnSelect
+          elevateEdgesOnSelect={!isTouchUI}
+          elevateNodesOnSelect={!isTouchUI}
+          onlyRenderVisibleElements={isTouchUI}
 
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
@@ -6218,6 +6267,14 @@ export function SpacesContent() {
         </ProjectBrainCanvasContext.Provider>
         </ProjectAssetsCanvasContext.Provider>
         </SpacesActiveProjectIdContext.Provider>
+
+        {isAuthenticated && isTouchUI && canvasViewMode === "free" && (
+          <TouchSelectionToolbar
+            selectedCount={touchDeletableSelectedCount}
+            onDelete={deleteSelectedCanvasNodes}
+            onClearSelection={clearCanvasNodeSelection}
+          />
+        )}
 
         {isAuthenticated && <ExternalApiBlockedModal />}
 

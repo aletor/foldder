@@ -5334,3 +5334,59 @@ body.foldder-studio-flush .left-toolbar-flyout-panel {
 body.foldder-studio-flush .left-toolbar-flyout-panel :is(button, span, div):not([class*="rounded-full"]) {
   border-radius: 0 !important;
 }
+
+/* ── Touch / iPad performance: lighter compositing, fewer animations ── */
+[data-foldder-touch-ui] .custom-node,
+.spaces-canvas--touch .custom-node {
+  box-shadow: 0 2px 8px -2px rgba(0, 0, 0, 0.1) !important;
+}
+
+[data-foldder-touch-ui] .react-flow__node.foldder-node-canvas-intro .custom-node,
+.spaces-canvas--touch .react-flow__node.foldder-node-canvas-intro .custom-node {
+  animation: none !important;
+  opacity: 1 !important;
+  transform: none !important;
+}
+
+[data-foldder-touch-ui] .react-flow__node.library-drop-compatible .custom-node,
+[data-foldder-touch-ui] .react-flow__node.library-drop-highlight .custom-node,
+.spaces-canvas--touch .react-flow__node.library-drop-compatible .custom-node,
+.spaces-canvas--touch .react-flow__node.library-drop-highlight .custom-node {
+  animation: none !important;
+  will-change: auto !important;
+  filter: none !important;
+  opacity: 1 !important;
+}
+
+[data-foldder-touch-ui] [data-foldder-top-hud] :is(.backdrop-blur-xl, .backdrop-blur-md, .backdrop-blur-2xl),
+[data-foldder-touch-ui] .touch-selection-toolbar {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+[data-foldder-touch-ui] [data-foldder-top-hud] :is(button, div):hover {
+  transform: none !important;
+}
+
+[data-foldder-touch-ui] .spaces-canvas .react-flow__controls button {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* During pan/zoom: strip transitions that fight the compositor */
+.spaces-canvas--performance .custom-node,
+.spaces-canvas--performance .react-flow__edge-path,
+.spaces-canvas--performance .react-flow__connection-path {
+  transition: none !important;
+  animation: none !important;
+  filter: none !important;
+  will-change: auto !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-foldder-touch-ui] .react-flow__node .custom-node,
+  .spaces-canvas--touch .react-flow__node .custom-node {
+    animation: none !important;
+    transition: none !important;
+  }
+}
