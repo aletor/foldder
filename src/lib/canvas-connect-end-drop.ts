@@ -177,13 +177,13 @@ export function defaultDataForCanvasDropNode(nodeType: string): Record<string, u
       return { label: "", value: "" };
     case "mediaInput":
       return { label: "", value: "", type: "image" };
-    /** Salida pide imageSize a Gemini (1K/2K/4K). Máxima calidad por defecto; el usuario puede bajar en el nodo. */
+    /** Salida pide imageSize a Gemini (1K/2K/4K). 2K por defecto en iPad/desktop; el usuario puede subir en el nodo. */
     case "nanoBanana":
       return {
         label: "",
         modelKey: "flash31",
         aspect_ratio: "16:9",
-        resolution: "4k",
+        resolution: "2k",
       };
     case "geminiVideo":
       return {

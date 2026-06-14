@@ -4,7 +4,7 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronRight } from 'lucide-react';
 import { NODE_REGISTRY } from './nodeRegistry';
-import { NODE_SIDEBAR_TILE_BACKGROUND_SRC } from './node-sidebar-tile-bg';
+import { NODE_SIDEBAR_TILE_BACKGROUND_SRC, resolveSidebarTileThumbBackground } from './node-sidebar-tile-bg';
 import { NodeIcon } from './foldder-icons';
 import { SIDEBAR_HOVER_HELP } from './sidebarHoverHelp';
 import { setLibraryDragPreviewImage } from './library-drag-preview';
@@ -281,6 +281,8 @@ const Sidebar = ({
   const sidebarExpanded =
     sidebarPinnedOpen || (isTouchUI && sidebarTouchOpen) || (!isTouchUI && !sidebarLockedCollapsed);
 
+  const mountLibraryGrid = !isTouchUI || sidebarExpanded;
+
   const sidebarOuterClass = sidebarPinnedOpen
     ? "group/sidebar absolute left-0 top-0 z-[1000] h-screen w-[178px]"
     : isTouchUI
@@ -295,8 +297,8 @@ const Sidebar = ({
     ? "absolute left-0 top-0 h-full w-[178px] overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
     : isTouchUI
       ? sidebarTouchOpen
-        ? "absolute left-0 top-0 h-full w-[178px] overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
-        : "absolute left-0 top-0 h-full w-0 overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
+        ? "absolute left-0 top-0 h-full w-[178px] overflow-hidden"
+        : "absolute left-0 top-0 h-full w-0 overflow-hidden"
       : sidebarLockedCollapsed
         ? "absolute left-0 top-0 h-full w-0 overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]"
         : "absolute left-0 top-0 h-full w-0 overflow-hidden group-hover/sidebar:w-[178px] transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]";
@@ -338,7 +340,7 @@ const Sidebar = ({
     : null;
 
   const libraryTipPortal =
-    visibleLibraryTip && visibleLibraryHelp
+    !isTouchUI && visibleLibraryTip && visibleLibraryHelp
       ? createPortal(
           <div
             role="tooltip"
@@ -420,9 +422,27 @@ const Sidebar = ({
     setSidebarTouchOpen((open) => !open);
   }, [isTouchUI, sidebarPinnedOpen]);
 
+  const closeSidebarTouch = useCallback(() => {
+    setSidebarTouchOpen(false);
+  }, []);
+
+  const touchDismissPortal =
+    isTouchUI && sidebarTouchOpen && !sidebarPinnedOpen
+      ? createPortal(
+          <button
+            type="button"
+            className="foldder-sidebar-touch-dismiss fixed inset-0 z-[10002] cursor-default border-0 bg-black/25 p-0"
+            aria-label="Cerrar librería de nodos"
+            onClick={closeSidebarTouch}
+          />,
+          document.body,
+        )
+      : null;
+
   // ── NORMAL MODE: vertical sidebar panel ──────────────────────────────────
   return (
     <>
+    {touchDismissPortal}
     <div
       className={sidebarOuterClass}
       data-foldder-sidebar
@@ -449,14 +469,15 @@ const Sidebar = ({
       {/* Expanded panel */}
       <aside
         className={sidebarAsideClass}
-        style={{ willChange: 'width' }}
+        style={isTouchUI ? undefined : { willChange: 'width' }}
       >
         <div className="h-full w-[178px] bg-transparent border-r border-white/8 flex flex-col min-h-0">
           <div className="foldder-sidebar-scroll flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+            {mountLibraryGrid ? (
             <div className="foldder-sidebar-scroll-inner">
             <div className="foldder-sidebar-grid foldder-sidebar-grid--production">
               {HIGH_END_PRODUCTION_ITEMS.map((item) => {
-                const tileBackground = SIDEBAR_TILE_BACKGROUND_SRC[item.type];
+                const tileBackground = resolveSidebarTileThumbBackground(item.type);
                 return (
                   <div
                     key={item.type}
@@ -478,11 +499,13 @@ const Sidebar = ({
                         : `${item.label}. Arrastra al lienzo. Doble clic para añadir.`
                     }
                   >
-                    <SidebarTileInfoButton
-                      label={item.label}
-                      onEnter={(e) => onLibraryTileEnter(e, item.type, item.label)}
-                      onLeave={onLibraryTileLeave}
-                    />
+                    {!isTouchUI ? (
+                      <SidebarTileInfoButton
+                        label={item.label}
+                        onEnter={(e) => onLibraryTileEnter(e, item.type, item.label)}
+                        onLeave={onLibraryTileLeave}
+                      />
+                    ) : null}
                     {!tileBackground ? (
                       <>
                         <SidebarLibraryNodeIcon type={item.type} size={26} />
@@ -507,11 +530,13 @@ const Sidebar = ({
                       : `${item.label}. Arrastra al lienzo. Doble clic para añadir.`
                   }
                 >
-                  <SidebarTileInfoButton
-                    label={item.label}
-                    onEnter={(e) => onLibraryTileEnter(e, item.type, item.label)}
-                    onLeave={onLibraryTileLeave}
-                  />
+                  {!isTouchUI ? (
+                    <SidebarTileInfoButton
+                      label={item.label}
+                      onEnter={(e) => onLibraryTileEnter(e, item.type, item.label)}
+                      onLeave={onLibraryTileLeave}
+                    />
+                  ) : null}
                   <SidebarLibraryNodeIcon type={item.type} size={15} />
                   <span className="foldder-sidebar-tile__label">{item.label}</span>
                   <TypeIndicators nodeType={item.type} />
@@ -519,6 +544,7 @@ const Sidebar = ({
               ))}
             </div>
             </div>
+            ) : null}
           </div>
         </div>
       </aside>

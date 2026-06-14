@@ -3151,6 +3151,18 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
   opacity: 0;
 }
 
+[data-foldder-touch-ui] [data-foldder-sidebar] aside {
+  transition: none !important;
+}
+
+[data-foldder-touch-ui] .foldder-sidebar-tile {
+  transition: none !important;
+}
+
+[data-foldder-touch-ui] .foldder-sidebar-tile--image-bg::after {
+  display: none !important;
+}
+
 .foldder-sidebar-tile {
   position: relative;
   display: flex;
