@@ -48,6 +48,7 @@ import Sidebar from "./Sidebar";
 import { TouchSelectionToolbar } from "./TouchSelectionToolbar";
 import { TouchNodeContextMenu } from "./TouchNodeContextMenu";
 import { useTouchNodeLongPress } from "./use-touch-node-long-press";
+import { TouchLiteEdge } from "./touch-lite-edge";
 import { useInputMode } from "./input-mode-context";
 import type { TouchCanvasTool } from "./touch-canvas-tool";
 import { useStudioCanvasOpen } from "./hooks/use-studio-canvas-open";
@@ -1762,6 +1763,7 @@ export function SpacesContent() {
     if (canvasPerformanceReleaseTimerRef.current !== null) {
       window.clearTimeout(canvasPerformanceReleaseTimerRef.current);
     }
+    const releaseMs = isTouchUI ? 450 : 180;
     canvasPerformanceReleaseTimerRef.current = window.setTimeout(() => {
       canvasPerformanceReleaseTimerRef.current = null;
       canvasPerformanceModeRef.current = false;
@@ -1769,6 +1771,12 @@ export function SpacesContent() {
       canvasInteractionStartedAtRef.current = null;
       setCanvasPerformanceMode(false);
       dispatchFoldderCanvasPerformanceMode(false);
+      if (isTouchUI) {
+        const vp = viewportRef.current;
+        if (vp && typeof vp.zoom === "number" && Number.isFinite(vp.zoom)) {
+          setCanvasZoom(vp.zoom);
+        }
+      }
       if (startedAt !== null) {
         dispatchFoldderPerformanceMeasure({
           name: "canvas.interaction",
@@ -1779,8 +1787,8 @@ export function SpacesContent() {
         pendingProjectSaveAfterInteractionRef.current = false;
         scheduleProjectSave();
       }
-    }, 180);
-  }, [scheduleProjectSave]);
+    }, releaseMs);
+  }, [isTouchUI, scheduleProjectSave]);
 
   useEffect(() => {
     if (!edges.some((edge) => edge.animated)) return;
@@ -3220,13 +3228,16 @@ export function SpacesContent() {
   const onViewportChangeFromFlow = useCallback(
     (vp: { x: number; y: number; zoom: number }) => {
       viewportRef.current = vp;
-      if (typeof vp.zoom === 'number' && Number.isFinite(vp.zoom)) {
+      const gesturing = isTouchUI && canvasPerformanceModeRef.current;
+      if (typeof vp.zoom === "number" && Number.isFinite(vp.zoom) && !gesturing) {
         setViewportZoomCssVar(vp.zoom);
         setCanvasZoom(vp.zoom);
       }
-      scheduleProjectUiSave();
+      if (!gesturing) {
+        scheduleProjectUiSave();
+      }
     },
-    [scheduleProjectUiSave, setViewportZoomCssVar]
+    [isTouchUI, scheduleProjectUiSave, setViewportZoomCssVar],
   );
 
   useOnViewportChange({ onChange: onViewportChangeFromFlow });
@@ -5838,9 +5849,19 @@ export function SpacesContent() {
     [renderCanvasDragPreview, connectDragPreview],
   );
 
-  const flowEdges = useMemo(
-    () => filterEdgesForCollapsedCanvasGroups(nodes, edges),
-    [nodes, edges]
+  const flowEdges = useMemo(() => {
+    const base = filterEdgesForCollapsedCanvasGroups(nodes, edges);
+    if (!isTouchUI) return base;
+    return base.map((edge) => ({ ...edge, type: "touchLite" as const }));
+  }, [nodes, edges, isTouchUI]);
+
+  const touchCanvasEdgeTypes = useMemo(
+    () => ({
+      buttonEdge: TouchLiteEdge,
+      default: TouchLiteEdge,
+      touchLite: TouchLiteEdge,
+    }),
+    [],
   );
 
   const isValidConnection = useCallback((connection: any) => {
@@ -6355,7 +6376,7 @@ export function SpacesContent() {
           onlyRenderVisibleElements={isTouchUI}
 
           nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
+          edgeTypes={isTouchUI ? touchCanvasEdgeTypes : edgeTypes}
           connectionLineComponent={connectionLineComponent}
           defaultEdgeOptions={defaultEdgeOptions}
           snapToGrid
@@ -6391,7 +6412,7 @@ export function SpacesContent() {
           }
           nodesConnectable={canvasViewMode === "free" && !overviewModeActive && !isTouchUI}
 
-          className={`spaces-canvas${spaceHeld || middlePanHeld ? " spaces-canvas--space-pan" : ""}${touchFreeCanvas ? " spaces-canvas--touch spaces-canvas--touch-perf" : ""}${touchFreeCanvas && touchCanvasTool === "select" ? " spaces-canvas--touch-select" : ""}${touchFreeCanvas && touchCanvasTool === "connect" ? " spaces-canvas--touch-connect" : ""}${touchGraphSuspended ? " spaces-canvas--touch-graph-suspended" : ""}${canvasViewMode === "cards" ? " spaces-canvas--cards-mode" : ""}${overviewModeActive ? " foldder-overview-mode-active" : ""}${canvasPerformanceMode ? " spaces-canvas--performance" : ""}`}
+          className={`spaces-canvas${spaceHeld || middlePanHeld ? " spaces-canvas--space-pan" : ""}${touchFreeCanvas ? " spaces-canvas--touch spaces-canvas--touch-perf spaces-canvas--touch-turbo" : ""}${touchFreeCanvas && touchCanvasTool === "select" ? " spaces-canvas--touch-select" : ""}${touchFreeCanvas && touchCanvasTool === "connect" ? " spaces-canvas--touch-connect" : ""}${touchGraphSuspended ? " spaces-canvas--touch-graph-suspended" : ""}${canvasViewMode === "cards" ? " spaces-canvas--cards-mode" : ""}${overviewModeActive ? " foldder-overview-mode-active" : ""}${canvasPerformanceMode ? " spaces-canvas--performance" : ""}`}
           style={reactFlowCanvasStyle}
         >
           <FoldderCanvasGridBackground gap={FOLDDER_GRID_STEP} lineWidth={0.7} color="#111" dotSize={5} />

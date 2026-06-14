@@ -5477,6 +5477,46 @@ body.foldder-studio-flush .left-toolbar-flyout-panel :is(button, span, div):not(
   display: none;
 }
 
+/* iPad turbo: mínimo GPU — nodos planos, sin decoración, contenido oculto al panear */
+.spaces-canvas--touch-turbo .react-flow__background {
+  display: none !important;
+}
+
+.spaces-canvas--touch-turbo .react-flow__node {
+  content-visibility: auto;
+  contain-intrinsic-size: 320px 240px;
+}
+
+.spaces-canvas--touch-turbo .custom-node {
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.spaces-canvas--touch-turbo .react-flow__node:not(.selected) .custom-node {
+  background-image: none !important;
+}
+
+.spaces-canvas--touch-turbo .react-flow__node:not(.selected) img,
+.spaces-canvas--touch-turbo .react-flow__node:not(.selected) video,
+.spaces-canvas--touch-turbo .react-flow__node:not(.selected) canvas {
+  display: none !important;
+}
+
+.spaces-canvas--touch-turbo .foldder-edge-dots,
+.spaces-canvas--touch-turbo .foldder-edge-ball-dot {
+  display: none !important;
+}
+
+.spaces-canvas--touch-turbo.spaces-canvas--performance .react-flow__node .custom-node > *:not(.node-header) {
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+.spaces-canvas--touch-turbo.spaces-canvas--performance .react-flow__node .custom-node .node-header {
+  opacity: 0.92;
+}
+
 /* During pan/zoom on desktop: strip transitions that fight the compositor */
 .spaces-canvas--performance .custom-node,
 .spaces-canvas--performance .react-flow__edge-path,

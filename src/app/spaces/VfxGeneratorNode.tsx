@@ -170,7 +170,7 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<VfxGener
   const frameRef = useRef<HTMLDivElement | null>(null);
   const previewRef = useRef<HTMLDivElement | null>(null);
   const frameSyncKeyRef = useRef<string | null>(null);
-  const nodeMediaVisible = useNodeViewportVisibility(id, 900);
+  const nodeMediaVisible = useNodeViewportVisibility(id, 900, selected);
   const [videoSize, setVideoSize] = useState<{ width: number; height: number } | null>(null);
 
   const updatePatch = useCallback(

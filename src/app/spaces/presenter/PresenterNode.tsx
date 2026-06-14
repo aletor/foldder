@@ -107,7 +107,7 @@ export const PresenterNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const [studioOpen, setStudioOpen] = useState(false);
   const [standardShell, setStandardShell] = useState<StandardStudioShellConfig | null>(null);
   const { pages, connected, designerMissing, designerNodeId, designerPreviewUrl } = useDesignerDocumentPages(id);
-  const nodeMediaVisible = useNodeViewportVisibility(id, 900);
+  const nodeMediaVisible = useNodeViewportVisibility(id, 900, selected);
 
   const slideCount = pages?.length ?? 0;
   const showPresenterEmpty = slideCount === 0;

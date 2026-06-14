@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useStore, type Edge, type Node, type ReactFlowState } from "@xyflow/react";
 import { useInputMode } from "./input-mode-context";
+import { FOLDDER_CANVAS_PERFORMANCE_MODE_EVENT } from "./performance-events";
 import { FOLDDER_TOUCH_NODE_VISIBILITY_MARGIN_PX } from "./touch-canvas-tool";
 
 function selectNodeViewportVisibility(
@@ -34,14 +35,37 @@ function selectNodeViewportVisibility(
   );
 }
 
-export function useNodeViewportVisibility(nodeId: string, marginPx = 800): boolean {
+function useTouchCanvasGesturing(): boolean {
   const { isTouchUI } = useInputMode();
-  const effectiveMargin = isTouchUI ? Math.min(marginPx, FOLDDER_TOUCH_NODE_VISIBILITY_MARGIN_PX) : marginPx;
-  return useStore(
+  const [gesturing, setGesturing] = useState(false);
+
+  useEffect(() => {
+    if (!isTouchUI) return;
+    const onMode = (event: Event) => {
+      const detail = (event as CustomEvent<{ active?: boolean }>).detail;
+      setGesturing(Boolean(detail?.active));
+    };
+    window.addEventListener(FOLDDER_CANVAS_PERFORMANCE_MODE_EVENT, onMode);
+    return () => window.removeEventListener(FOLDDER_CANVAS_PERFORMANCE_MODE_EVENT, onMode);
+  }, [isTouchUI]);
+
+  return isTouchUI && gesturing;
+}
+
+export function useNodeViewportVisibility(nodeId: string, marginPx = 800, selected = false): boolean {
+  const { isTouchUI } = useInputMode();
+  const canvasGesturing = useTouchCanvasGesturing();
+  const effectiveMargin = isTouchUI ? FOLDDER_TOUCH_NODE_VISIBILITY_MARGIN_PX : marginPx;
+  const inViewport = useStore(
     useCallback(
       (state: ReactFlowState<Node, Edge>) =>
         selectNodeViewportVisibility(state, nodeId, effectiveMargin),
       [effectiveMargin, nodeId],
     ),
   );
+
+  if (!isTouchUI) return inViewport;
+  if (canvasGesturing) return false;
+  if (!selected) return false;
+  return inViewport;
 }

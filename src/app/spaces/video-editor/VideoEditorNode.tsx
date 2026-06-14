@@ -2630,7 +2630,7 @@ export const VideoEditorNode = memo(function VideoEditorNode({ id, data, selecte
     : nodeData;
   const stats = clipStats(effectiveData);
   const previewClip = useMemo(() => getVideoEditorNodePreviewClip(effectiveData), [effectiveData]);
-  const nodeMediaVisible = useNodeViewportVisibility(id, 900);
+  const nodeMediaVisible = useNodeViewportVisibility(id, 900, selected);
   const previewUrl = useVideoEditorAssetUrl(
     previewClip?.url || previewClip?.assetId,
     previewClip?.s3Key,

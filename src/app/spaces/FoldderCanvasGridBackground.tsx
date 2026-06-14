@@ -34,6 +34,8 @@ export function FoldderCanvasGridBackground({
     shallow,
   );
 
+  if (isTouchUI) return null;
+
   const zoom = transform[2] || 1;
   const scaledGap = gap * zoom || 1;
   const scaledLineWidth = lineWidth * zoom;

@@ -2333,7 +2333,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   const frameRef = useRef<HTMLDivElement | null>(null);
   const previewRef = useRef<HTMLDivElement | null>(null);
   const frameSyncKeyRef = useRef<string | null>(null);
-  const nodeMediaVisible = useNodeViewportVisibility(id, 900);
+  const nodeMediaVisible = useNodeViewportVisibility(id, 900, selected);
   /** Al abrir Studio desde PhotoRoom «Modificar imagen con IA»: id del nodo PhotoRoom para fitView + reabrir su Studio. */
   const photoRoomReturnTargetRef = useRef<string | null>(null);
   const cineReturnSessionRef = useRef<CineImageStudioSession | null>(null);

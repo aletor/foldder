@@ -136,7 +136,7 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const frameRef = useRef<HTMLDivElement | null>(null);
   const previewRef = useRef<HTMLDivElement | null>(null);
   const frameSyncKeyRef = useRef<string | null>(null);
-  const nodeMediaVisible = useNodeViewportVisibility(id, 900);
+  const nodeMediaVisible = useNodeViewportVisibility(id, 900, selected);
   const canvasPerformanceModeRef = useCanvasPerformanceModeRef(
     useCallback((active: boolean) => {
       if (!active) requestAnimationFrame(() => updateNodeInternals(id));
