@@ -43,6 +43,8 @@ type Props = {
     busy: boolean;
     onExport: (opts: VectorPdfExportOptions) => void | Promise<void>;
   } | null;
+  /** Variante Flush Chrome (PhotoRoom): rectangular, sin sombras, fondo plano. */
+  flush?: boolean;
 };
 
 export function FreehandExportModal({
@@ -56,6 +58,7 @@ export function FreehandExportModal({
   artboardList = [],
   onExport,
   designerMultipageVectorPdf = null,
+  flush = false,
 }: Props) {
   const [format, setFormat] = useState<ExportFormat>("png");
   const [scalePreset, setScalePreset] = useState<ExportScalePreset>(1);
@@ -121,7 +124,10 @@ export function FreehandExportModal({
       role="presentation"
     >
       <div
-        className="w-full max-w-md rounded-xl border border-white/[0.12] bg-[#12151a] shadow-2xl transition-transform duration-150 ease-out"
+        data-foldder-studio-flush={flush ? "" : undefined}
+        className={`w-full max-w-md border border-white/[0.12] transition-transform duration-150 ease-out ${
+          flush ? "bg-[#0b0f14] shadow-[0_24px_70px_rgba(0,0,0,0.55)]" : "rounded-xl bg-[#12151a] shadow-2xl"
+        }`}
         style={{ fontFamily: "var(--font-geist-sans), ui-sans-serif, system-ui" }}
         onClick={(e) => e.stopPropagation()}
       >

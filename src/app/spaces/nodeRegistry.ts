@@ -329,9 +329,7 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
       { id: 'media', label: 'Image', type: 'image' }
     ],
     outputs: [
-      { id: 'mask', label: 'Mask', type: 'mask' },
       { id: 'rgba', label: 'Cutout', type: 'image' },
-      { id: 'bbox', label: 'BBox', type: 'json' }
     ],
     dataSchema: {
       threshold: 0.9,
@@ -341,7 +339,7 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
   },
   mediaDescriber: {
     type: 'mediaDescriber',
-    label: 'Vision Describer',
+    label: 'Image Describer',
     description: 'Analyzes an image and returns a text description of its content.',
     inputs: [
       { id: 'media', label: 'Image Input', type: 'image' }

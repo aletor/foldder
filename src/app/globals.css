@@ -275,3 +275,43 @@ input *, textarea *, [contenteditable="true"] * {
     opacity: 1 !important;
   }
 }
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Background radio — onda/ecualizador minimalista (animación decorativa CSS,
+ * coste casi nulo: solo transform: scaleY sobre 5 barras).
+ * ────────────────────────────────────────────────────────────────────────── */
+@keyframes foldder-eq {
+  0%,
+  100% {
+    transform: scaleY(0.22);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+.foldder-eq-bar {
+  width: 2px;
+  height: 14px;
+  background: currentColor;
+  border-radius: 1px;
+  transform: scaleY(0.28);
+  transform-origin: bottom center;
+}
+
+.foldder-eq--playing .foldder-eq-bar {
+  animation: foldder-eq 0.85s ease-in-out infinite;
+}
+
+.foldder-eq--loading .foldder-eq-bar {
+  animation: foldder-eq 1.4s ease-in-out infinite;
+  opacity: 0.6;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .foldder-eq--playing .foldder-eq-bar,
+  .foldder-eq--loading .foldder-eq-bar {
+    animation: none !important;
+    transform: scaleY(0.6);
+  }
+}

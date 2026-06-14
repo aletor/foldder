@@ -174,6 +174,12 @@ type Props = {
   onReplaceDocumentColor: (fromHex: string, toHex: string) => void;
   onCommitHistory: () => void;
   embedded?: boolean;
+  /** Variante Flush Chrome (PhotoRoom/Designer): propaga el estilo plano al modal de color. */
+  flush?: boolean;
+  /** Clases de acento por studio para el modal de color. */
+  accentClass?: string;
+  accentRangeClass?: string;
+  accentFocusClass?: string;
 };
 
 const FIXED_BLACK = "#000000";
@@ -199,6 +205,10 @@ export function ColorPickerModal({
   initialHex,
   onClose,
   onConfirm,
+  flush = false,
+  accentClass = "bg-[#71449f] hover:bg-[#8055b0] text-white",
+  accentRangeClass = "accent-[#71449f]",
+  accentFocusClass = "focus:border-[#71449f]",
 }: {
   open: boolean;
   title: string;
@@ -206,6 +216,12 @@ export function ColorPickerModal({
   initialHex: string;
   onClose: () => void;
   onConfirm: (hex: string) => void;
+  /** Variante Flush Chrome (PhotoRoom/Designer): contenedor rectangular, fondo plano, sin sombra. */
+  flush?: boolean;
+  /** Clases de acento por studio (CTA bg+hover, slider, foco). Por defecto morado PhotoRoom. */
+  accentClass?: string;
+  accentRangeClass?: string;
+  accentFocusClass?: string;
 }) {
   const [h, setH] = useState(0);
   const [s, setS] = useState(1);
@@ -389,7 +405,9 @@ export function ColorPickerModal({
       />
       <div
         data-fh-color-picker-modal
-        className="fixed z-[100026] w-[min(320px,calc(100vw-16px))] rounded-xl border border-white/[0.12] bg-[#151820] p-4 shadow-2xl"
+        className={`fixed z-[100026] w-[min(320px,calc(100vw-16px))] border border-white/[0.12] p-4 ${
+          flush ? "bg-[#0b0f14] shadow-[0_24px_70px_rgba(0,0,0,0.55)]" : "rounded-xl bg-[#151820] shadow-2xl"
+        }`}
         style={{ left: panelPos.left, top: panelPos.top }}
         role="dialog"
         aria-modal="true"
@@ -400,18 +418,29 @@ export function ColorPickerModal({
         }}
       >
         <div
-          className="mb-3 flex cursor-grab select-none items-center gap-2 border-b border-white/[0.06] pb-2.5 active:cursor-grabbing"
+          className={`mb-3 flex cursor-grab select-none items-center gap-2 border-b pb-2.5 active:cursor-grabbing ${
+            flush ? "border-white/10" : "border-white/[0.06]"
+          }`}
           onPointerDown={onPanelHeaderPointerDown}
           onPointerMove={onPanelHeaderPointerMove}
           onPointerUp={onPanelHeaderPointerUp}
           onPointerCancel={onPanelHeaderPointerUp}
         >
-          <h2 id="fh-color-modal-title" className="min-w-0 flex-1 text-[11px] font-bold uppercase tracking-widest text-zinc-400">
+          <h2
+            id="fh-color-modal-title"
+            className={`min-w-0 flex-1 uppercase ${
+              flush
+                ? "text-[10px] font-black tracking-[0.12em] text-white/85"
+                : "text-[11px] font-bold tracking-widest text-zinc-400"
+            }`}
+          >
             {title}
           </h2>
           <button
             type="button"
-            className="shrink-0 cursor-pointer rounded-md border border-white/10 bg-white/[0.06] p-1.5 text-zinc-300 hover:bg-white/[0.1] disabled:cursor-not-allowed disabled:opacity-40"
+            className={`shrink-0 cursor-pointer border border-white/10 p-1.5 text-zinc-300 disabled:cursor-not-allowed disabled:opacity-40 ${
+              flush ? "bg-white/[0.06] hover:bg-white/[0.12]" : "rounded-md bg-white/[0.06] hover:bg-white/[0.1]"
+            }`}
             disabled={!eyeSupported || eyeBusy}
             title={
               eyeSupported
@@ -435,7 +464,9 @@ export function ColorPickerModal({
           <div className="flex gap-3">
             <div
               ref={svRef}
-              className="relative h-[140px] w-[140px] shrink-0 cursor-crosshair overflow-hidden rounded-md border border-white/15 select-none touch-none"
+              className={`relative h-[140px] w-[140px] shrink-0 cursor-crosshair overflow-hidden border border-white/15 select-none touch-none ${
+                flush ? "" : "rounded-md"
+              }`}
               onPointerDown={(e) => {
                 e.preventDefault();
                 const el = e.currentTarget as HTMLDivElement;
@@ -472,7 +503,7 @@ export function ColorPickerModal({
             </div>
             <div className="flex min-w-0 flex-1 flex-col gap-2">
               <div
-                className="h-3 w-full rounded-full border border-white/15"
+                className={`h-3 w-full border border-white/15 ${flush ? "" : "rounded-full"}`}
                 style={{
                   background:
                     "linear-gradient(to right,#f00 0%,#ff0 17%,#0f0 33%,#0ff 50%,#00f 67%,#f0f 83%,#f00 100%)",
@@ -485,42 +516,64 @@ export function ColorPickerModal({
                 step={0.25}
                 value={h}
                 onChange={(e) => applyHsvToDraft(Number(e.target.value), s, v)}
-                className="w-full accent-violet-500"
+                className={`w-full ${flush ? accentRangeClass : "accent-violet-500"}`}
                 aria-label="Matiz"
               />
               <div
                 draggable
                 title="Color actual — arrastra a relleno, trazo o muestras"
-                className="mt-1 h-10 w-full shrink-0 cursor-grab rounded-md border border-white/15 active:cursor-grabbing"
+                className={`mt-1 h-10 w-full shrink-0 cursor-grab border border-white/15 active:cursor-grabbing ${
+                  flush ? "" : "rounded-md"
+                }`}
                 style={{ backgroundColor: hsvToHex(h, s, v) }}
                 onDragStart={(e) => {
                   const n = normalizeHexColor(hexDraft) ?? hsvToHex(h, s, v);
                   setColorDragData(e, n);
                 }}
               />
-              <label className="block text-[9px] font-medium uppercase tracking-wider text-zinc-500">Hex</label>
+              <label
+                className={`block uppercase ${
+                  flush
+                    ? "text-[8px] font-black tracking-[0.12em] text-white/40"
+                    : "text-[9px] font-medium tracking-wider text-zinc-500"
+                }`}
+              >
+                Hex
+              </label>
               <input
                 type="text"
                 value={hexDraft}
                 onChange={(e) => setHexDraft(e.target.value)}
                 onBlur={onHexBlur}
                 spellCheck={false}
-                className="w-full rounded-md border border-white/[0.1] bg-white/[0.06] px-2 py-1.5 font-mono text-[12px] text-zinc-100 outline-none focus:border-violet-500/50"
+                className={`w-full px-2 py-1.5 font-mono text-[12px] outline-none ${
+                  flush
+                    ? `border border-white/10 bg-black/30 text-white ${accentFocusClass}`
+                    : "rounded-md border border-white/[0.1] bg-white/[0.06] text-zinc-100 focus:border-violet-500/50"
+                }`}
                 placeholder="#000000"
               />
             </div>
           </div>
-          <div className="flex justify-end gap-2 pt-1">
+          <div className={`flex pt-1 ${flush ? "items-stretch divide-x divide-white/10 border border-white/10" : "justify-end gap-2"}`}>
             <button
               type="button"
-              className="rounded-md border border-white/10 bg-white/[0.04] px-3 py-1.5 text-[11px] text-zinc-300 hover:bg-white/[0.08]"
+              className={`text-[11px] text-zinc-300 ${
+                flush
+                  ? "flex-1 bg-white/[0.04] px-3 py-2 font-black uppercase tracking-[0.1em] text-white/45 hover:bg-white/[0.08] hover:text-white"
+                  : "rounded-md border border-white/10 bg-white/[0.04] px-3 py-1.5 hover:bg-white/[0.08]"
+              }`}
               onClick={onClose}
             >
               Cancelar
             </button>
             <button
               type="submit"
-              className="rounded-md border border-violet-500/40 bg-violet-600/70 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-violet-600"
+              className={`text-[11px] font-medium text-white ${
+                flush
+                  ? `flex-1 px-3 py-2 font-black uppercase tracking-[0.1em] ${accentClass}`
+                  : "rounded-md border border-violet-500/40 bg-violet-600/70 px-3 py-1.5 hover:bg-violet-600"
+              }`}
             >
               {confirmLabel}
             </button>
@@ -541,6 +594,10 @@ export function FreehandColorPalette({
   onReplaceDocumentColor,
   onCommitHistory,
   embedded = false,
+  flush = false,
+  accentClass,
+  accentRangeClass,
+  accentFocusClass,
 }: Props) {
   const [colorModal, setColorModal] = useState<null | ColorModalKind>(null);
   const [ctx, setCtx] = useState<CtxState>(null);
@@ -649,6 +706,10 @@ export function FreehandColorPalette({
 
       <ColorPickerModal
         open={colorModal != null}
+        flush={flush}
+        accentClass={accentClass}
+        accentRangeClass={accentRangeClass}
+        accentFocusClass={accentFocusClass}
         title={modalTitle}
         confirmLabel={modalConfirm}
         initialHex={modalInitialHex()}

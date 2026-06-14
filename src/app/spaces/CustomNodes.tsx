@@ -20,7 +20,6 @@ import {
   Zap,
   ImageIcon,
   RefreshCw,
-  Scissors,
   Layers,
   Link,
   FilePlus,
@@ -30,8 +29,6 @@ import {
   Paintbrush,
   ChevronLeft,
   ChevronRight,
-  ChevronDown,
-  ChevronUp,
   Plus,
   Sparkles,
   Eraser,
@@ -71,7 +68,7 @@ import {
   FOLDDER_STANDARD_STUDIO_CLOSE_REQUEST_EVENT,
   type FoldderStudioEventDetail,
 } from './desktop-studio-events';
-import { getNodeGridFrameForType, growCanvasDimensionToGrid } from './canvas-grid-layout';
+import { getNodeGridFrameForType } from './canvas-grid-layout';
 import {
   getNodeCardBackgroundColor,
   PROMPT_DEFAULT_CARD_BG,
@@ -112,7 +109,6 @@ import { loadVideoDimensions } from './presenter/presenter-video-frame-layout';
 import {
   NodeIcon,
   resolveFoldderNodeState,
-  foldderIconKeyForSpaceOutputType,
   FOLDDER_INTERNAL_CATEGORY_TO_ICON,
   type FoldderIconKey,
 } from './foldder-icons';
@@ -2548,7 +2544,6 @@ export const BackgroundRemoverNode = memo(function BackgroundRemoverNode({ id, d
   const updateNodeInternals = useUpdateNodeInternals();
   const [status, setStatus] = useState('idle');
   const [previewMode, setPreviewMode] = useState<MattePreviewMode>('cutout');
-  const [isStudioOpen, setIsStudioOpen] = useState(false);
   const currentNode = nodes.find((node) => node.id === id);
   const currentFrameNode = useCurrentNodeFrameSnapshot(currentNode);
   const frameRef = useRef<HTMLDivElement | null>(null);
@@ -2624,9 +2619,12 @@ export const BackgroundRemoverNode = memo(function BackgroundRemoverNode({ id, d
 
   useRegisterAssistantNodeRun(id, onRun);
 
-  const sourceEdge = edges.find(e => e.target === id && e.targetHandle === 'media');
+  const sourceEdge = edges.find(e => e.target === id && e.targetHandle === 'media') ?? edges.find(e => e.target === id);
   const sourceNode = nodes.find(n => n.id === sourceEdge?.source);
-  const originalPreview = sourceNode?.data.value as string | undefined;
+  const resolvedSourceValue = sourceEdge ? resolvePromptValueFromEdgeSource(sourceEdge, nodes) : undefined;
+  const originalPreview = (typeof resolvedSourceValue === 'string' && resolvedSourceValue
+    ? resolvedSourceValue
+    : (sourceNode?.data.value as string | undefined));
   const aspectImageUrl = originalPreview || nodeData.result_rgba || nodeData.result_mask || null;
   const activeAspectImageSize =
     aspectImageUrl && aspectImageSize?.url === aspectImageUrl ? aspectImageSize : null;
@@ -2676,21 +2674,35 @@ export const BackgroundRemoverNode = memo(function BackgroundRemoverNode({ id, d
   const getPreviewImage = () => {
     switch (previewMode) {
       case 'original': return originalPreview;
-      case 'mask': return nodeData.result_mask;
-      case 'cutout': return nodeData.result_rgba;
+      case 'mask': return nodeData.result_mask ?? originalPreview;
+      case 'cutout': return nodeData.result_rgba ?? originalPreview;
       default: return originalPreview;
     }
   };
 
+  const hasPreview = Boolean(getPreviewImage());
+  const hasResult = Boolean(nodeData.result_rgba || nodeData.result_mask);
+  const hasInput = Boolean(originalPreview);
+
   return (
-    <div ref={frameRef} className={`custom-node mask-node group/node ${status === 'running' ? 'node-glow-running' : ''}`} style={{ minWidth: 200, minHeight: 120 }}>
-      <FoldderNodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={STUDIO_NODE_MAX_HEIGHT} keepAspectRatio isVisible={selected} />
+    <div
+      ref={frameRef}
+      className={`custom-node mask-node foldder-node--frameless node--media group/node ${hasPreview ? 'mask-node--has-preview' : 'mask-node--empty'} ${status === 'running' ? 'node-glow-running' : ''}`}
+      style={{
+        minWidth: 200,
+        minHeight: 120,
+        "--foldder-frameless-accent": "#22d3ee",
+      } as React.CSSProperties}
+    >
+      <FoldderNodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={STUDIO_NODE_MAX_HEIGHT} keepAspectRatio={Boolean(aspectImageUrl)} isVisible={selected} />
+      {hasInput ? <FoldderStudioTouchedMark nodeType="backgroundRemover" /> : null}
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Background Remover" />
+
       <div className="handle-wrapper handle-left">
         <FoldderDataHandle type="target" position={Position.Left} id="media" dataType="image" />
-        <span className="handle-label">Media Input</span>
+        <span className="handle-label text-emerald-400">Media Input</span>
       </div>
-      
+
       <div className="node-header">
         <NodeIcon
           type="backgroundRemover"
@@ -2702,281 +2714,101 @@ export const BackgroundRemoverNode = memo(function BackgroundRemoverNode({ id, d
           Remove Background
         </FoldderNodeHeaderTitle>
       </div>
-      
-      <div className="flex min-h-0 flex-1 flex-col">
-          {/* PREVIEW AREA */}
-          <div ref={previewRef} className="relative group/preview min-h-[180px] flex-1 overflow-hidden bg-slate-100/50 flex items-center justify-center border-b border-slate-200/60">
-             <div className="absolute top-2 left-2 z-10 flex gap-1 bg-slate-50/50 p-1 rounded-none backdrop-blur-md border border-slate-200/60">
-                {(['original', 'mask', 'cutout'] as const).map(mode => (
-                  <button 
-                    key={mode}
-                    onClick={() => setPreviewMode(mode)}
-                    className={`px-2 py-1 rounded-none text-[7px] font-black uppercase tracking-widest transition-all ${previewMode === mode ? 'bg-cyan-500 text-black shadow-lg shadow-cyan-500/20' : 'text-white/40 hover:text-white hover:bg-white/5'}`}
-                  >
-                    {mode}
-                  </button>
-                ))}
-             </div>
 
-            {getPreviewImage() ? (
-              <img 
-                src={getPreviewImage()} 
-                className={`w-full h-full object-contain ${previewMode === 'mask' ? 'invert brightness-150' : ''}`} 
-                alt="Remover Preview" 
+      <div ref={previewRef} className="node-content foldder-frameless-main">
+        {hasPreview ? (
+          <img
+            src={getPreviewImage()}
+            draggable={false}
+            className={`pointer-events-none absolute inset-0 h-full w-full object-contain ${previewMode === 'mask' ? 'invert brightness-150' : ''}`}
+            alt="Cutout preview"
+          />
+        ) : null}
+
+        {status === 'running' && (
+          <div className="absolute inset-0 z-[7] flex flex-col items-center justify-center gap-2 bg-black/55 backdrop-blur-sm">
+            <Loader2 size={22} className="animate-spin text-cyan-300" />
+            <span className="text-[8px] font-black uppercase tracking-[0.25em] text-white/80">Processing Alpha</span>
+          </div>
+        )}
+
+        {hasInput && (
+          <div className="foldder-frameless-secondary-panel nodrag flex w-[150px] flex-col gap-2">
+            <label className="flex flex-col gap-1">
+              <span className="flex items-center justify-between text-[7px] font-black uppercase tracking-[0.12em] text-white/55">
+                Precision <span className="font-mono text-white/85">{threshold.toFixed(2)}</span>
+              </span>
+              <input
+                type="range" min="0" max="1" step="0.01"
+                value={threshold}
+                onChange={(e) => updateNestedData('threshold', parseFloat(e.target.value))}
+                className="node-slider nodrag h-1 w-full accent-cyan-400"
               />
-            ) : (
-              <div className="flex flex-col items-center gap-2 opacity-20">
-                 <Scissors size={40} className="text-cyan-400" />
-                 <span className="text-[10px] font-bold uppercase tracking-widest">Awaiting Output</span>
-              </div>
-            )}
-
-            {status !== 'running' && (
-              <FoldderStudioModeCenterButton onClick={() => setIsStudioOpen(true)} />
-            )}
-
-            {status === 'running' && (
-              <div className="absolute inset-0 bg-slate-50 backdrop-blur-sm flex flex-col items-center justify-center z-20">
-                 <Loader2 size={24} className="animate-spin text-cyan-400 mb-2" />
-                 <span className="text-[9px] font-black text-white uppercase tracking-widest">Processing Alpha...</span>
-              </div>
-            )}
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="flex items-center justify-between text-[7px] font-black uppercase tracking-[0.12em] text-white/55">
+                Expansion <span className="font-mono text-white/85">{nodeData.expansion ?? 0}px</span>
+              </span>
+              <input
+                type="range" min="-10" max="10" step="1"
+                value={nodeData.expansion ?? 0}
+                onChange={(e) => updateNestedData('expansion', parseInt(e.target.value))}
+                className="node-slider nodrag h-1 w-full accent-cyan-400"
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="flex items-center justify-between text-[7px] font-black uppercase tracking-[0.12em] text-white/55">
+                Feather <span className="font-mono text-white/85">{(nodeData.feather ?? 0.6).toFixed(1)}px</span>
+              </span>
+              <input
+                type="range" min="0" max="2" step="0.1"
+                value={nodeData.feather ?? 0.6}
+                onChange={(e) => updateNestedData('feather', parseFloat(e.target.value))}
+                className="node-slider nodrag h-1 w-full accent-pink-400"
+              />
+            </label>
           </div>
+        )}
 
-          {/* CONTROLS */}
-          <div className="p-4 space-y-5">
-            <button 
-              onClick={onRun}
-              disabled={status === 'running'}
-              className="execute-btn w-full"
+        <button
+          onClick={onRun}
+          disabled={status === 'running'}
+          className="execute-btn nodrag"
+        >
+          {status === 'running' ? <Loader2 size={13} className="animate-spin" /> : <Zap size={13} />}
+          <span>{status === 'running' ? 'Removing…' : 'Remove BG'}</span>
+        </button>
+      </div>
+
+      {hasResult && (
+        <div
+          className="nodrag nopan flex gap-1"
+          style={{ position: 'absolute', top: 8, right: 8, zIndex: 60, pointerEvents: 'auto' }}
+        >
+          {(['original', 'mask', 'cutout'] as const).map(mode => (
+            <button
+              key={mode}
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setPreviewMode(mode);
+              }}
+              style={{ pointerEvents: 'auto', cursor: 'pointer' }}
+              className={`nodrag px-2 py-1 text-[7px] font-black uppercase tracking-[0.15em] transition-colors ${previewMode === mode ? 'bg-white text-black' : 'bg-black/45 text-white/55 hover:text-white'}`}
             >
-              {status === 'running' ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
-              <span>{status === 'running' ? 'REMOVING...' : 'REMOVE BACKGROUND'}</span>
+              {mode}
             </button>
-
-            <div className="space-y-4 pt-2 border-t border-slate-200/60">
-               <div className="space-y-2">
-                  <div className="flex justify-between items-center">
-                     <span className="text-[9px] font-black uppercase tracking-widest text-gray-500">Threshold (Precision)</span>
-                     <span className="text-[10px] font-mono text-pink-500 font-black bg-pink-500/10 px-2 py-0.5 rounded-none">{threshold.toFixed(2)}</span>
-                  </div>
-                  <input 
-                    type="range" min="0" max="1" step="0.01"
-                    value={threshold}
-                    onChange={(e) => updateNestedData('threshold', parseFloat(e.target.value))}
-                    className="node-slider nodrag accent-pink-500"
-                  />
-               </div>
-
-               <div className="space-y-2">
-                  <div className="flex justify-between items-center">
-                     <span className="text-[9px] font-black uppercase tracking-widest text-gray-500">Expansion</span>
-                     <span className="text-[10px] font-mono text-cyan-400 font-black bg-cyan-400/10 px-2 py-0.5 rounded-none">{nodeData.expansion ?? 0}px</span>
-                  </div>
-                  <input 
-                    type="range" min="-10" max="10" step="1"
-                    value={nodeData.expansion ?? 0}
-                    onChange={(e) => updateNestedData('expansion', parseInt(e.target.value))}
-                    className="node-slider nodrag accent-cyan-500"
-                  />
-               </div>
-
-               <div className="space-y-2">
-                  <div className="flex justify-between items-center">
-                     <span className="text-[9px] font-black uppercase tracking-widest text-gray-500">Borders (Feather)</span>
-                     <span className="text-[10px] font-mono text-blue-400 font-black bg-blue-400/10 px-2 py-0.5 rounded-none">{(nodeData.feather ?? 0.6).toFixed(1)}px</span>
-                  </div>
-                  <input 
-                    type="range" min="0" max="2" step="0.1"
-                    value={nodeData.feather ?? 0.6}
-                    onChange={(e) => updateNestedData('feather', parseFloat(e.target.value))}
-                    className="node-slider nodrag accent-blue-400"
-                  />
-               </div>
-            </div>
-          </div>
-      </div>
-
-      <div className="flex flex-col gap-2 absolute right-[-14px] top-[40px] nodrag">
-          <div className="relative group/h mb-4">
-             <FoldderDataHandle type="source" position={Position.Right} id="mask" dataType="mask" className="!right-0 shadow-[0_0_10px_rgba(34,211,238,0.5)] cursor-crosshair" />
-             <span className="absolute left-6 top-1/2 -translate-y-1/2 text-[7px] font-black uppercase text-cyan-400 bg-black/90 px-1 border border-cyan-400/20 rounded-none opacity-0 group-hover/h:opacity-100 transition-opacity whitespace-nowrap">MASK</span>
-          </div>
-          <div className="relative group/h mb-4">
-             <FoldderDataHandle type="source" position={Position.Right} id="rgba" dataType="image" className="!right-0 shadow-[0_0_10px_rgba(236,72,153,0.5)] cursor-crosshair" />
-             <span className="absolute left-6 top-1/2 -translate-y-1/2 text-[7px] font-black uppercase text-pink-500 bg-black/90 px-1 border border-pink-500/20 rounded-none opacity-0 group-hover/h:opacity-100 transition-opacity whitespace-nowrap">CUTOUT</span>
-          </div>
-          <div className="relative group/h">
-             <FoldderDataHandle type="source" position={Position.Right} id="bbox" dataType="txt" className="!right-0 shadow-[0_0_10px_rgba(245,158,11,0.5)] cursor-crosshair" />
-             <span className="absolute left-6 top-1/2 -translate-y-1/2 text-[7px] font-black uppercase text-amber-500 bg-slate-100/50 px-1 border border-amber-500/20 rounded-none opacity-0 group-hover/h:opacity-100 transition-opacity whitespace-nowrap">BBOX</span>
-          </div>
-      </div>
-
-      {isStudioOpen && createPortal(
-        <MatteStudioOverlay 
-          nodeData={nodeData}
-          previewMode={previewMode}
-          setPreviewMode={setPreviewMode}
-          onRun={onRun}
-          status={status}
-          updateNestedData={updateNestedData}
-          onClose={() => setIsStudioOpen(false)}
-          getPreviewImage={getPreviewImage}
-        />,
-        document.body
+          ))}
+        </div>
       )}
+
+      <div className="handle-wrapper handle-right">
+        <span className="handle-label text-pink-400">Cutout</span>
+        <FoldderDataHandle type="source" position={Position.Right} id="rgba" dataType="image" />
+      </div>
     </div>
   );
 });
-
-interface MatteStudioOverlayProps {
-  nodeData: BackgroundRemoverNodeData;
-  previewMode: MattePreviewMode;
-  setPreviewMode: React.Dispatch<React.SetStateAction<MattePreviewMode>>;
-  onRun: () => void;
-  status: string;
-  updateNestedData: (key: string, val: unknown) => void;
-  onClose: () => void;
-  getPreviewImage: () => string | undefined;
-}
-
-const MatteStudioOverlay = ({ 
-  nodeData, 
-  previewMode, 
-  setPreviewMode, 
-  onRun, 
-  status, 
-  updateNestedData, 
-  onClose,
-  getPreviewImage 
-}: MatteStudioOverlayProps) => {
-  return (
-    <div
-      className="fixed inset-0 z-[9999] bg-black/95 backdrop-blur-xl flex flex-col studio-overlay nodrag nopan"
-      data-foldder-studio-canvas=""
-    >
-      <div className="h-16 border-b border-slate-200/60 bg-slate-50/50 flex items-center px-8 gap-6 backdrop-blur-md">
-        <button onClick={onClose} className="text-gray-500 hover:text-white transition-colors cursor-pointer"><X size={20} /></button>
-        <div className="h-6 w-px bg-white/10" />
-        <div className="flex items-center gap-3">
-          <Scissors className="text-cyan-500" size={18} />
-          <span className="text-[11px] font-black uppercase tracking-[3px] text-white">Background Remover <span className="text-cyan-500/50">Studio</span></span>
-        </div>
-        <div className="ml-auto flex items-center gap-4">
-          <button 
-            onClick={onRun}
-            disabled={status === 'running'}
-            className="group relative bg-cyan-500 hover:bg-cyan-400 text-black px-10 py-2.5 rounded-full text-[10px] font-black uppercase tracking-[2px] transition-all shadow-[0_0_20px_rgba(6,182,212,0.3)] flex items-center gap-2"
-          >
-            {status === 'running' ? <Loader2 size={12} className="animate-spin" /> : <Play size={10} />}
-            {status === 'running' ? 'Computing...' : 'Run Extraction'}
-            <div className="absolute inset-0 rounded-full group-hover:animate-ping bg-cyan-500/20 pointer-events-none"></div>
-          </button>
-        </div>
-      </div>
-
-      <div className="flex-1 flex overflow-hidden">
-        <div className="flex-1 bg-slate-50/50 relative flex items-center justify-center p-12">
-           <div className="absolute top-8 left-8 z-10 flex gap-2">
-              {(['original', 'mask', 'cutout'] as const).map(mode => (
-                <button 
-                  key={mode}
-                  onClick={() => setPreviewMode(mode)}
-                  className={`px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest transition-all ${previewMode === mode ? 'bg-cyan-500 text-black shadow-[0_0_15px_rgba(6,182,212,0.4)]' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}
-                >
-                  {mode}
-                </button>
-              ))}
-           </div>
-
-           <div className="w-full h-full relative group/canvas flex items-center justify-center">
-              {getPreviewImage() ? (
-                <img 
-                  src={getPreviewImage()} 
-                  className={`max-w-full max-h-full object-contain rounded-none shadow-[0_40px_100px_rgba(0,0,0,0.8)] border border-slate-200/60 ${previewMode === 'mask' ? 'invert brightness-125' : ''}`} 
-                  alt="Studio Preview" 
-                />
-              ) : (
-                <div className="text-gray-800 flex flex-col items-center gap-4">
-                  <ImageIcon size={64} opacity={0.2} />
-                  <span className="text-sm font-black uppercase tracking-widest opacity-20">Waiting for media</span>
-                </div>
-              )}
-
-              {status === 'running' && (
-                <div className="absolute inset-0 bg-slate-50 backdrop-blur-sm flex flex-col items-center justify-center z-20 rounded-none">
-                   <div className="w-48 h-1 bg-cyan-500/10 rounded-full overflow-hidden mb-4">
-                      <div className="h-full bg-cyan-500 animate-pulse w-full" />
-                   </div>
-                   <span className="text-xs font-black text-cyan-400 uppercase tracking-[4px] animate-pulse">Neural Processing...</span>
-                </div>
-              )}
-           </div>
-        </div>
-
-        <div className="w-[380px] border-l border-slate-200/60 bg-slate-50/50 backdrop-blur-xl p-8 overflow-y-auto flex flex-col gap-8">
-           <section className="space-y-4">
-              <div className="flex items-center gap-2 text-cyan-400">
-                 <Zap size={14} />
-                 <h3 className="text-[10px] font-black uppercase tracking-widest">Configuration</h3>
-              </div>
-              <div className="space-y-4 bg-white/[0.02] p-4 rounded-none border border-slate-200/60">
-                <div>
-                  <label className="node-label flex justify-between mb-2">Threshold <span className="text-cyan-500">{(nodeData.threshold ?? 0.9).toFixed(2)}</span></label>
-                  <input 
-                    type="range" min="0" max="1" step="0.01"
-                    value={nodeData.threshold ?? 0.9}
-                    onChange={(e) => updateNestedData('threshold', parseFloat(e.target.value))}
-                    className="w-full h-1.5 accent-cyan-500 bg-white/5 rounded-full appearance-none"
-                  />
-                </div>
-              </div>
-           </section>
-
-           <section className="space-y-4">
-              <div className="flex items-center gap-2 text-pink-500">
-                 <Paintbrush size={14} />
-                 <h3 className="text-[10px] font-black uppercase tracking-widest">Refinement</h3>
-              </div>
-              <div className="space-y-6 bg-white/[0.02] p-6 rounded-none border border-slate-200/60">
-                <div>
-                  <label className="node-label flex justify-between mb-3 uppercase tracking-tighter">Expansion <span className="text-cyan-400 font-mono">{nodeData.expansion ?? 0}px</span></label>
-                  <input 
-                    type="range" min="-10" max="10" step="1"
-                    value={nodeData.expansion ?? 0}
-                    onChange={(e) => updateNestedData('expansion', parseInt(e.target.value))}
-                    className="w-full h-1.5 accent-cyan-500 bg-white/5 rounded-full appearance-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="node-label flex justify-between mb-3 uppercase tracking-tighter">Feather <span className="text-pink-500 font-mono">{(nodeData.feather ?? 0.6).toFixed(1)}px</span></label>
-                  <input 
-                    type="range" min="0" max="2" step="0.1"
-                    value={nodeData.feather ?? 0.6}
-                    onChange={(e) => updateNestedData('feather', parseFloat(e.target.value))}
-                    className="w-full h-1.5 accent-pink-500 bg-white/5 rounded-full appearance-none"
-                  />
-                </div>
-              </div>
-           </section>
-
-           <div className="mt-auto space-y-4 px-2">
-              <div className="flex items-center gap-3 p-4 bg-amber-500/5 border border-amber-500/10 rounded-none">
-                 <div className="w-8 h-8 rounded-full bg-amber-500/10 flex items-center justify-center text-amber-500"><Info size={16} /></div>
-                 <div className="flex-1">
-                    <p className="text-[9px] font-bold text-amber-500 uppercase">GPU Acceleration Active</p>
-                    <p className="text-[8px] text-gray-500">851-labs Professional Engine</p>
-                 </div>
-              </div>
-           </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-
 
 export const SpaceNode = memo(function SpaceNode({ id, data, selected }: NodeProps) {
   const nodeData = data as BaseNodeData & { 
@@ -3042,99 +2874,91 @@ export const SpaceNode = memo(function SpaceNode({ id, data, selected }: NodePro
     return <NodeIcon key={cat} type="space" iconKey={key} size={14} />;
   };
 
+  const hasMediaPreview = Boolean(
+    nodeData.value && (nodeData.outputType === 'image' || nodeData.outputType === 'video'),
+  );
+
   return (
     <div className="relative" style={{ isolation: 'isolate' }}>
-      {/* Ghost card layer 2 (furthest back) */}
-      <div className="absolute inset-0 rounded-none border border-white/30"
+      {/* Ghost card stack (nested-space identity) — capas con colores PhotoRoom / Designer / Presenter */}
+      <div className="absolute inset-0 rounded-none border border-white/20"
         style={{
-          transform: 'translate(6px, 6px) rotate(1.5deg)',
-          background: 'rgba(255,255,255,0.18)',
+          transform: 'translate(20px, 20px) rotate(3deg)',
+          background: '#f5b91b',
+          zIndex: -3,
+        }}
+      />
+      <div className="absolute inset-0 rounded-none border border-white/20"
+        style={{
+          transform: 'translate(13px, 13px) rotate(2deg)',
+          background: '#abbc14',
           zIndex: -2,
         }}
       />
-      {/* Ghost card layer 1 */}
-      <div className="absolute inset-0 rounded-none border border-white/40"
+      <div className="absolute inset-0 rounded-none border border-white/20"
         style={{
-          transform: 'translate(3px, 3px) rotate(0.7deg)',
-          background: 'rgba(255,255,255,0.25)',
+          transform: 'translate(6px, 6px) rotate(1deg)',
+          background: '#71449f',
           zIndex: -1,
         }}
       />
 
-      {/* Main node card */}
-      <div className={`custom-node space-node border-cyan-500/30` } style={{ position: 'relative', zIndex: 0 }}>
-            <FoldderNodeResizer minWidth={280} minHeight={180} isVisible={selected} />
-<NodeLabel id={id} label={nodeData.label} defaultLabel="Space" />
-      
-      {/* Input handle only if space has an internal InputNode */}
-      {nodeData.hasInput !== false && (
-        <div className="handle-wrapper handle-left">
-          <FoldderDataHandle type="target" position={Position.Left} id="in" dataType={foldderDataTypeFromHandleClass(getInputHandleClass())} />
-          <span className="handle-label">Data In</span>
-        </div>
-      )}
-      
-      <div className="node-header">
-        <NodeIcon
-          type="space"
-          iconKey={foldderIconKeyForSpaceOutputType(nodeData.outputType)}
-          selected={selected}
-          size={16}
-        />
-        <FoldderNodeHeaderTitle className="uppercase" introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}>
-          {nodeData.outputType ? `${nodeData.outputType} Space` : 'NESTED SPACE'}
-        </FoldderNodeHeaderTitle>
-      </div>
-      
-      <div className="node-content">
-        {/* Internal Blueprint Summary */}
-        <div className="flex flex-col gap-1.5 mb-3 p-2 bg-slate-50/50 border border-slate-200/60 rounded-none shadow-inner">
-          <div className="flex justify-between items-center px-1">
-             <span className="text-[7.5px] font-black text-gray-500 uppercase tracking-widest">Internal Blueprint</span>
-             <NodeIcon type="space" iconKey="layout" size={12} />
-          </div>
-          <div className="flex items-center justify-center gap-3 py-1 min-h-[24px]">
-            {nodeData.internalCategories && nodeData.internalCategories.length > 0 ? (
-              nodeData.internalCategories.map(cat => renderInternalIcon(cat))
-            ) : (
-              <span className="text-[8px] text-gray-700 font-bold uppercase tracking-tighter">Initializing...</span>
-            )}
-          </div>
-        </div>
+      {/* Main node card — patrón canónico frameless media (como Inspiration/NanoBanana) */}
+      <div
+        className={`custom-node space-node foldder-node--frameless node--media group/node ${hasMediaPreview ? 'space-node--has-preview' : 'space-node--empty'}`}
+        style={{ position: 'relative', zIndex: 0, '--foldder-frameless-accent': '#8A5755' } as React.CSSProperties}
+      >
+        <FoldderNodeResizer minWidth={280} minHeight={180} isVisible={selected} />
+        <NodeLabel id={id} label={nodeData.label} defaultLabel="Space" />
 
-        {/* Output media preview */}
-        {nodeData.value && (nodeData.outputType === 'image' || nodeData.outputType === 'video') && (
-          <div className="relative w-full aspect-video overflow-hidden rounded-none mb-3" style={{ background: '#0a0a0a' }}>
-            {nodeData.outputType === 'video' ? (
-              <video src={nodeData.value as string} className="w-full h-full object-cover" muted />
-            ) : (
-              <img src={nodeData.value as string} className="w-full h-full object-cover" alt="Space output" />
-            )}
-            <div className="absolute inset-0" style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.55) 0%, transparent 60%)' }} />
-            <div className="absolute bottom-2 left-2 px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest"
-              style={{ background: 'rgba(0,0,0,0.6)', color: FOLDDER_LOGO_BLUE, backdropFilter: 'blur(6px)' }}>
-              {nodeData.outputType} output
-            </div>
+        {/* Input handle only if space has an internal InputNode */}
+        {nodeData.hasInput !== false && (
+          <div className="handle-wrapper handle-left">
+            <FoldderDataHandle type="target" position={Position.Left} id="in" dataType={foldderDataTypeFromHandleClass(getInputHandleClass())} />
+            <span className="handle-label">Data In</span>
           </div>
         )}
-        
-        <button 
-          onClick={onEnterSpace}
-          className="execute-btn w-full flex items-center justify-center gap-2 !py-3 text-[11px] font-black transition-all active:scale-95 group/btn"
-        >
-          <Maximize2 size={16} className="group-hover/btn:scale-110 transition-transform" /> ENTER SPACE
-        </button>
-      </div>
 
+        <div className="node-content foldder-frameless-main">
+          {/* Media a sangre (ocupa todo el nodo) */}
+          {hasMediaPreview ? (
+            nodeData.outputType === 'video' ? (
+              <video src={nodeData.value as string} className="absolute inset-0 h-full w-full object-cover" muted />
+            ) : (
+              <img src={nodeData.value as string} className="absolute inset-0 h-full w-full object-cover" alt="Space output" />
+            )
+          ) : null}
 
-      {/* Output handle only if space has an internal OutputNode */}
-      {nodeData.hasOutput !== false && (
-        <div className="handle-wrapper handle-right">
-          <span className="handle-label">Result Out</span>
-          <FoldderDataHandle type="source" position={Position.Right} id="out" dataType={foldderDataTypeFromHandleClass(getHandleClass())} />
+          {/* Chip de blueprint interno (overlay abajo-izquierda) */}
+          <div className="absolute bottom-3 left-3.5 z-[9] flex items-center gap-2 bg-black/45 px-2 py-1 text-white nodrag">
+            <span className="text-[7px] font-black uppercase tracking-[0.18em] text-white/55">Blueprint</span>
+            <div className="flex items-center gap-2.5 [&_svg]:text-white">
+              {nodeData.internalCategories && nodeData.internalCategories.length > 0 ? (
+                nodeData.internalCategories.map(cat => renderInternalIcon(cat))
+              ) : (
+                <NodeIcon type="space" iconKey="layout" size={12} />
+              )}
+            </div>
+          </div>
+
+          {/* Botón "Enter Space" — chip blanco cuadrado abajo-derecha (CTA canónico) */}
+          <button
+            onClick={onEnterSpace}
+            className="execute-btn nodrag"
+            type="button"
+          >
+            <Maximize2 size={13} /> Enter Space
+          </button>
         </div>
-      )}
-    </div>
+
+        {/* Output handle only if space has an internal OutputNode */}
+        {nodeData.hasOutput !== false && (
+          <div className="handle-wrapper handle-right">
+            <span className="handle-label">Result Out</span>
+            <FoldderDataHandle type="source" position={Position.Right} id="out" dataType={foldderDataTypeFromHandleClass(getHandleClass())} />
+          </div>
+        )}
+      </div>
     </div>
   );
 });
@@ -3298,7 +3122,6 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
   const [description, setDescription] = useState<string | null>(
     typeof nodeData.value === 'string' && nodeData.value.trim() ? nodeData.value : null,
   );
-  const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const outputRef = useRef<HTMLDivElement>(null);
   const userManuallyResizedRef = useRef(false);
@@ -3311,41 +3134,25 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
    * paddings) se obtiene restando la zona visible del texto a la altura
    * total del nodo, así cualquier cambio de estilos queda contemplado.
    */
-  const fitDescriberNodeHeight = useCallback((expanded: boolean) => {
+  // El nodo se mantiene a su altura base; el texto siempre hace scroll interno.
+  const fitDescriberNodeHeight = useCallback(() => {
     if (userManuallyResizedRef.current) return;
     const baseFrame = getNodeGridFrameForType('mediaDescriber');
     const baseHeight = baseFrame?.height ?? 416;
-    let nextHeight = baseHeight;
-
-    if (expanded) {
-      const textEl = outputRef.current;
-      const nodeEl = textEl?.closest('.describer-node') as HTMLElement | null;
-      if (!textEl || !nodeEl) return;
-      const chrome = nodeEl.offsetHeight - textEl.clientHeight;
-      const desired = growCanvasDimensionToGrid(chrome + textEl.scrollHeight);
-      nextHeight = Math.max(baseHeight, Math.min(STUDIO_NODE_MAX_HEIGHT, desired));
-    }
-
     setNodes((nds) =>
       nds.map((n) => {
         if (n.id !== id) return n;
         const style = (n.style ?? {}) as React.CSSProperties;
-        if (style.height === nextHeight) return n;
-        return { ...n, style: { ...style, height: nextHeight } };
+        if (style.height === baseHeight) return n;
+        return { ...n, style: { ...style, height: baseHeight } };
       }),
     );
     updateNodeInternals(id);
   }, [id, setNodes, updateNodeInternals]);
 
-  // Tras pintar el estado expandido/plegado, el DOM ya refleja las clases y
-  // la medición es exacta.
   useLayoutEffect(() => {
-    fitDescriberNodeHeight(descriptionExpanded);
-  }, [fitDescriberNodeHeight, descriptionExpanded, visibleDescription]);
-
-  const toggleDescriptionExpanded = useCallback(() => {
-    setDescriptionExpanded((expanded) => !expanded);
-  }, []);
+    fitDescriberNodeHeight();
+  }, [fitDescriberNodeHeight, visibleDescription]);
 
   const onRun = async () => {
     const inputEdge = edges.find(e => e.target === id && e.targetHandle === 'media');
@@ -3360,7 +3167,7 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
     setStatus('running');
     setErrorMessage(null);
 
-    const ok = await runAiJobWithNotification({ nodeId: id, label: 'Eye Describer' }, async () => {
+    const ok = await runAiJobWithNotification({ nodeId: id, label: 'Image Describer' }, async () => {
       let finalMediaUrl = inputNode.data?.value as string | undefined;
       let finalMediaType: string;
 
@@ -3390,7 +3197,6 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
 
       if (json.description) {
         setDescription(json.description);
-        setDescriptionExpanded(false);
         userManuallyResizedRef.current = false;
         setNodes((nds) => nds.map((n) => (n.id === id ? { ...n, data: { ...n.data, value: json.description } } : n)));
       } else {
@@ -3407,7 +3213,7 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
   useRegisterAssistantNodeRun(id, onRun);
 
   return (
-    <div className={`custom-node describer-node foldder-node--frameless node--glass ${descriptionExpanded ? 'describer-node--expanded' : 'describer-node--collapsed'} ${status === 'error' ? 'foldder-node--error' : ''} ${status === 'running' ? 'node-glow-running' : ''}`} style={{ minWidth: 300, minHeight: 330 }}>
+    <div className={`custom-node describer-node foldder-node--frameless node--glass describer-node--expanded ${status === 'error' ? 'foldder-node--error' : ''} ${status === 'running' ? 'node-glow-running' : ''}`} style={{ minWidth: 300, minHeight: 330 }}>
       <FoldderNodeResizer
         minWidth={300}
         minHeight={300}
@@ -3418,7 +3224,7 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
           userManuallyResizedRef.current = true;
         }}
       />
-      <NodeLabel id={id} label={nodeData.label} defaultLabel="Eye Describer" />
+      <NodeLabel id={id} label={nodeData.label} defaultLabel="Image Describer" />
       <div className="handle-wrapper handle-left">
         <FoldderDataHandle type="target" position={Position.Left} id="media" dataType="image" />
         <span className="handle-label">Media in</span>
@@ -3427,7 +3233,7 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
       <div className="node-header">
         <NodeIcon type="mediaDescriber" selected={selected} state={resolveFoldderNodeState({ loading: status === 'running', done: status === 'success', error: status === 'error' })} size={16} />
         <FoldderNodeHeaderTitle introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}>
-          Eye Describer
+          Image Describer
         </FoldderNodeHeaderTitle>
         <div className="node-badge">VISION</div>
       </div>
@@ -3447,32 +3253,15 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
           {visibleDescription ? (
             <div
               ref={outputRef}
-              className={`describer-output-text ${descriptionExpanded ? 'describer-output-text--expanded nowheel nodrag' : 'describer-output-text--collapsed'}`}
+              className="describer-output-text describer-output-text--expanded nowheel"
             >
               {visibleDescription}
             </div>
-          ) : (
-            <div className="describer-output-empty">
-              <Zap size={24} className="mb-2" />
-              <span className="text-[8px] font-bold uppercase">Awaiting analysis</span>
-            </div>
-          )}
+          ) : null}
         </div>
       </div>
 
       <div className="foldder-frameless-footer-action nodrag describer-node-footer">
-        {visibleDescription ? (
-          <button
-            type="button"
-            className="execute-btn describer-expand-btn nodrag"
-            onClick={toggleDescriptionExpanded}
-            title={descriptionExpanded ? 'Plegar' : 'Desplegar'}
-            aria-label={descriptionExpanded ? 'Plegar' : 'Desplegar'}
-            aria-expanded={descriptionExpanded}
-          >
-            {descriptionExpanded ? <ChevronUp size={14} strokeWidth={2.4} /> : <ChevronDown size={14} strokeWidth={2.4} />}
-          </button>
-        ) : null}
         <button
           type="button"
           className="execute-btn describer-generate-button nodrag"

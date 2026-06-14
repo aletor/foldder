@@ -29,56 +29,61 @@ export function DesignerFormatModal({
 
   return (
     <div
-      className="fixed inset-0 z-[10060] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-[10060] flex items-center justify-center bg-black/55 p-4"
       role="dialog"
       aria-modal="true"
+      data-foldder-studio-flush=""
     >
-      <div className="w-full max-w-sm rounded-2xl border border-white/12 bg-gradient-to-b from-zinc-900/98 to-[#12121a] p-5 shadow-2xl shadow-black/60 ring-1 ring-white/[0.06]">
-        <p className="text-sm font-bold tracking-tight text-zinc-100">
-          {formatModal.kind === "add" ? "Nueva página" : "Tamaño del pliego"}
-        </p>
-        <p className="mt-1 text-[11px] text-zinc-500">
-          {formatModal.kind === "add"
-            ? "Elige el preset del pliego que se añadirá al final."
-            : "Aplica un preset de tamaño a esta página (se sustituyen ancho y alto personalizados)."}
-        </p>
-        <div className="mt-4 space-y-2">
-          {INDESIGN_PAGE_FORMATS.map((f) => (
-            <label
-              key={f.id}
-              className={`flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5 text-xs transition ${
-                pendingFormat === f.id
-                  ? "border-violet-400/40 bg-violet-500/10 text-zinc-100"
-                  : "border-white/[0.08] bg-black/20 text-zinc-400 hover:border-white/15"
-              }`}
-            >
-              <input
-                type="radio"
-                name="fmt"
-                className="accent-violet-500"
-                checked={pendingFormat === f.id}
-                onChange={() => onPendingFormatChange(f.id)}
-              />
-              <span>
-                {f.label}{" "}
-                <span className="text-zinc-600">
-                  ({f.width}×{f.height})
-                </span>
-              </span>
-            </label>
-          ))}
+      <div className="w-full max-w-sm border border-white/10 bg-[#0b0f14]">
+        <div className="border-b border-white/10 px-4 py-3">
+          <p className="text-[10px] font-black uppercase tracking-[0.1em] text-white">
+            {formatModal.kind === "add" ? "Nueva página" : "Tamaño del pliego"}
+          </p>
+          <p className="mt-1 text-[11px] text-zinc-500">
+            {formatModal.kind === "add"
+              ? "Elige el preset del pliego que se añadirá al final."
+              : "Aplica un preset de tamaño a esta página (se sustituyen ancho y alto personalizados)."}
+          </p>
         </div>
-        <div className="mt-5 flex justify-end gap-2">
+        <div className="max-h-[50vh] overflow-y-auto p-3">
+          <div className="space-y-1">
+            {INDESIGN_PAGE_FORMATS.map((f) => (
+              <label
+                key={f.id}
+                className={`flex cursor-pointer items-center gap-3 border px-3 py-2 text-xs transition ${
+                  pendingFormat === f.id
+                    ? "border-[#534AB7] bg-[#534AB7]/15 text-zinc-100"
+                    : "border-white/[0.08] bg-black/20 text-zinc-400 hover:border-white/15"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="fmt"
+                  className="accent-[#534AB7]"
+                  checked={pendingFormat === f.id}
+                  onChange={() => onPendingFormatChange(f.id)}
+                />
+                <span>
+                  {f.label}{" "}
+                  <span className="text-zinc-600">
+                    ({f.width}×{f.height})
+                  </span>
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
+        <div className="flex items-stretch divide-x divide-white/10 border-t border-white/10">
           <button
             type="button"
-            className="rounded-lg border border-white/12 px-4 py-2 text-xs font-medium text-zinc-300 transition hover:bg-white/5"
+            className="flex-1 bg-white/[0.04] px-3 py-2 text-[11px] font-black uppercase tracking-[0.1em] text-white/45 transition hover:bg-white/[0.08] hover:text-white"
             onClick={onDismiss}
           >
             Cancelar
           </button>
           <button
             type="button"
-            className="rounded-lg bg-gradient-to-b from-violet-500 to-purple-600 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-violet-950/40"
+            className="flex-1 bg-[#534AB7] px-3 py-2 text-[11px] font-black uppercase tracking-[0.1em] text-white transition hover:bg-[#6357c9]"
             onClick={formatModal.kind === "add" ? onConfirmAdd : onConfirmResize}
           >
             {formatModal.kind === "add" ? "Añadir" : "Aplicar"}

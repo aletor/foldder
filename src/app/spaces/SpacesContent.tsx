@@ -525,6 +525,12 @@ function prepareCanvasNodeForCreate<T extends Node | Record<string, unknown>>(no
   return normalizeNotesNodeForRuntime(applyNodeGridPreset(node as Node) as Node) as T;
 }
 
+/** Etiqueta por defecto al crear un nodo: nombre amigable del registro, no "<type> node". */
+function defaultCanvasNodeLabel(type: string): string {
+  if (type === "notes") return "Note";
+  return NODE_REGISTRY[type]?.label ?? `${type} node`;
+}
+
 /**
  * Resuelve qué nodo nuevo se crearía al "tirar" de un conector hacia el vacío.
  * Compartido entre el preview que sigue al cursor (onConnectStart) y la
@@ -1646,7 +1652,7 @@ export function SpacesContent() {
         data: withFoldderCanvasIntro(reactFlowType, {
           ...defaultDataForCanvasDropNode(reactFlowType),
           value: '',
-          label: reactFlowType === "notes" ? "Note" : `${reactFlowType} node`,
+          label: defaultCanvasNodeLabel(reactFlowType),
         }),
         ...(pinStyle ? { style: pinStyle } : {}),
       });
@@ -5522,7 +5528,7 @@ export function SpacesContent() {
       const previewStyle = defaultCanvasNodeStyleForType(previewType);
       const resolved = resolveLibraryPreviewNodeFrame(previewType, previewData, previewStyle);
       const { width, height } = resolved;
-      const label = previewType === "notes" ? "Note" : `${previewType} node`;
+      const label = defaultCanvasNodeLabel(previewType);
       const nodeData = {
         ...resolved.data,
         _foldderLibraryPreview: true,
@@ -5769,13 +5775,13 @@ export function SpacesContent() {
             dragHandle: defaultCanvasNodeDragHandle(libraryType),
             data: withFoldderCanvasIntro(libraryType, {
               ...defaultDataForCanvasDropNode(libraryType),
-              value: '',
-              label: libraryType === "notes" ? "Note" : `${libraryType} node`,
-            }),
-            ...(defaultCanvasNodeStyleForType(libraryType) ? { style: defaultCanvasNodeStyleForType(libraryType) } : {}),
-          });
+            value: '',
+            label: defaultCanvasNodeLabel(libraryType),
+          }),
+          ...(defaultCanvasNodeStyleForType(libraryType) ? { style: defaultCanvasNodeStyleForType(libraryType) } : {}),
+        });
 
-          const edgeId = `e-lib-${newId}-${targetNode.id}-${Date.now()}`;
+        const edgeId = `e-lib-${newId}-${targetNode.id}-${Date.now()}`;
           const newEdge =
             plan.direction === 'existing-to-new'
               ? {
@@ -5823,7 +5829,7 @@ export function SpacesContent() {
           data: withFoldderCanvasIntro(libraryType, {
             ...defaultDataForCanvasDropNode(libraryType),
             value: '',
-            label: libraryType === "notes" ? "Note" : `${libraryType} node`,
+            label: defaultCanvasNodeLabel(libraryType),
           }),
           ...(defaultCanvasNodeStyleForType(libraryType) ? { style: defaultCanvasNodeStyleForType(libraryType) } : {}),
         });

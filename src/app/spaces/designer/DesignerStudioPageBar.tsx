@@ -20,9 +20,9 @@ export function DesignerStudioPageBar({ pages, activePageIndex, onGoToPage }: Pr
           onClick={() => {
             onGoToPage(i);
           }}
-          className={`min-w-[1.75rem] rounded-md px-2 py-1 text-[10px] font-bold tabular-nums transition ${
+          className={`min-w-[1.75rem] rounded-none px-2 py-1 text-[10px] font-bold tabular-nums transition ${
             i === activePageIndex
-              ? "bg-violet-500/25 text-violet-200 ring-1 ring-violet-400/30"
+              ? "bg-[#534AB7] text-white"
               : "text-zinc-600 hover:bg-white/[0.06] hover:text-zinc-300"
           }`}
         >

@@ -3,6 +3,7 @@
 import { ReactNode, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { cleanupLegacyUnscopedBrainSuggestionStorageOnce } from "@/app/spaces/brain-image-suggestions-cache";
+import { BackgroundRadioPlayer } from "@/components/BackgroundRadioPlayer";
 import { LanguageProvider, LanguageSwitcher } from "@/components/LanguageProvider";
 
 /** Full-viewport shell: composer canvas without marketing sidebar/topbar. */
@@ -23,6 +24,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <div className="min-h-screen w-full bg-[var(--background)]">{children}</div>
       )}
       {!isSpaces && pathname !== "/" ? <LanguageSwitcher /> : null}
+      {pathname !== "/" ? <BackgroundRadioPlayer /> : null}
     </LanguageProvider>
   );
 }

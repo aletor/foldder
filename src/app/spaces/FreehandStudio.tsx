@@ -617,6 +617,15 @@ import {
   type PhotoRasterGradientStyle,
   type PhotoRasterGradientTarget,
 } from "./freehand/photo-raster-gradient";
+import {
+  applyPhotoImageAdjustmentsToImageData,
+  computeLuminanceHistogram,
+  defaultPhotoImageAdjustments,
+  isPhotoImageAdjustmentsNeutral,
+  type PhotoAdjSelection,
+  type PhotoImageAdjustments,
+} from "./freehand/photo-image-adjustments";
+import { PhotoImageAdjustmentsModal } from "./photo-room/PhotoImageAdjustmentsModal";
 import { LayerStylesModal } from "./freehand/LayerStylesModal";
 import {
   buildStandaloneSvgFromCanvasDom,
@@ -1063,6 +1072,8 @@ interface FreehandObjectBase {
   photoRasterGradientLayer?: PhotoRasterGradientPersistV1 | null;
   /** PhotoRoom: degradado raster sobre la máscara de capa. */
   photoRasterGradientMask?: PhotoRasterGradientPersistV1 | null;
+  /** PhotoRoom: ajustes de imagen (brillo/contraste, saturación, niveles) re-editables desde Propiedades. */
+  photoImageAdjustments?: PhotoImageAdjustments | null;
   rotation: number;
   /** Designer: local skew applied from transform-box edge drags. Degrees. */
   skewX?: number;
@@ -5633,6 +5644,42 @@ function fillPhotoMarqueePixelMaskPath(
   }
 }
 
+/**
+ * Construye una máscara de cobertura (0..255 por píxel, canal único) de la selección PhotoRoom
+ * en el espacio de píxeles del bitmap natural (iw×ih). Aplica desenfoque para el feather.
+ * Se usa para limitar ajustes de imagen a la región seleccionada.
+ */
+function buildSelectionAlphaArray(
+  imgObj: ImageObject,
+  iw: number,
+  ih: number,
+  sel: PhotoAdjSelection,
+): Uint8ClampedArray | null {
+  if (typeof document === "undefined" || iw < 1 || ih < 1) return null;
+  const m = document.createElement("canvas");
+  m.width = iw;
+  m.height = ih;
+  const c = m.getContext("2d");
+  if (!c) return null;
+  c.fillStyle = "#000";
+  c.fillRect(0, 0, iw, ih);
+  const feather = Math.max(0, Math.min(200, sel.featherPx || 0));
+  if (feather > 0.5) c.filter = `blur(${feather}px)`;
+  c.fillStyle = "#fff";
+  fillPhotoMarqueePixelMaskPath(c, imgObj, iw, ih, sel.rects, sel.polys, sel.ellipses);
+  c.fill("evenodd");
+  c.filter = "none";
+  let data: Uint8ClampedArray;
+  try {
+    data = c.getImageData(0, 0, iw, ih).data;
+  } catch {
+    return null;
+  }
+  const out = new Uint8ClampedArray(iw * ih);
+  for (let i = 0, p = 0; i < data.length; i += 4, p++) out[p] = data[i]!;
+  return out;
+}
+
 type PhotoMarqueeFloatTf = { rotationDeg: number; scaleX: number; scaleY: number };
 
 async function rasterCommitPhotoMarqueeFloatToImage(
@@ -10092,6 +10139,31 @@ export function FreehandStudioCanvas({
 
   /** Studio del nodo PhotoRoom (incluye solo imágenes importadas en el lienzo; no exige cables al grafo). */
   const isPhotoRoomStudioEmbed = photoRoomStudioEmbed === true || studioPhotoRoomCanvasPanel != null;
+  /** Variante visual "Flush Chrome" del chrome del studio: PhotoRoom y Designer (Freehand suelto queda intacto). */
+  const flushChrome = isPhotoRoomStudioEmbed || !!designerMode;
+  /** Atributo hook que activa las reglas CSS Flush Chrome en un contenedor de chrome. */
+  const flushAttr = flushChrome ? "" : undefined;
+  /** Color de acento por studio (PhotoRoom morado · Designer violeta), su acento histórico. */
+  const flushAccentHex = isPhotoRoomStudioEmbed ? "#71449f" : "#534AB7";
+  /** Clases Tailwind (estáticas) del CTA primario flush por studio. */
+  const flushCtaClass = isPhotoRoomStudioEmbed
+    ? "bg-[#71449f] hover:bg-[#8055b0] text-white"
+    : "bg-[#534AB7] hover:bg-[#6357c9] text-white";
+  /** Clase del acento para sliders nativos por studio. */
+  const flushRangeAccentClass = isPhotoRoomStudioEmbed ? "accent-[#71449f]" : "accent-[#534AB7]";
+  /** Clase de borde de foco para inputs flush por studio. */
+  const flushFocusClass = isPhotoRoomStudioEmbed ? "focus:border-[#71449f]" : "focus:border-[#534AB7]";
+
+  /** Marca el body mientras un studio (PhotoRoom/Designer) está montado para aplanar popovers compartidos (menú contextual, flyout). */
+  useEffect(() => {
+    if (!flushChrome || typeof document === "undefined") return undefined;
+    document.body.classList.add("foldder-studio-flush");
+    document.body.style.setProperty("--foldder-studio-accent", flushAccentHex);
+    return () => {
+      document.body.classList.remove("foldder-studio-flush");
+      document.body.style.removeProperty("--foldder-studio-accent");
+    };
+  }, [flushChrome, flushAccentHex]);
 
   const studioCaps = useMemo(
     () =>
@@ -10649,6 +10721,22 @@ export function FreehandStudioCanvas({
   const photoGradientApplyGenRef = useRef(0);
   /** Última aplicación async durante scrub numérico (panel degradado). */
   const photoRasterGradientScrubApplyRef = useRef<Promise<void> | null>(null);
+
+  /** Ajustes de imagen (PhotoRoom): sesión activa mientras el modal está abierto. */
+  type PhotoAdjustmentsSession = PhotoImageAdjustments & {
+    objectId: string;
+    /** src de la capa al abrir el modal, para revertir al cancelar. */
+    openSrc: string;
+    /** meta de ajustes al abrir, para revertir al cancelar. */
+    openMeta: PhotoImageAdjustments | null;
+  };
+  const [photoAdjustmentsSession, setPhotoAdjustmentsSession] = useState<PhotoAdjustmentsSession | null>(null);
+  const photoAdjustmentsSessionRef = useRef(photoAdjustmentsSession);
+  photoAdjustmentsSessionRef.current = photoAdjustmentsSession;
+  const photoAdjustmentsApplyGenRef = useRef(0);
+  const photoAdjustmentsScrubApplyRef = useRef<Promise<void> | null>(null);
+  /** Histograma de luminancia de la base (con selección), recalculado al abrir el modal. */
+  const [photoAdjustmentsHistogram, setPhotoAdjustmentsHistogram] = useState<number[] | null>(null);
 
   useEffect(() => {
     if (activeTool !== "photoGradient") {
@@ -14777,6 +14865,206 @@ export function FreehandStudioCanvas({
     if (activeTool !== "photoGradient" || !photoGradientSessionRef.current) return;
     void applyPhotoRasterGradientSession(photoGradientSessionRef.current, {});
   }, [strokeColor, fillColor, activeTool, applyPhotoRasterGradientSession]);
+
+  /** PhotoRoom: rehornea los ajustes de imagen desde la instantánea base hacia `ImageObject.src`. */
+  const applyPhotoImageAdjustmentsSession = useCallback(
+    async (sess: PhotoAdjustmentsSession, opts?: { recordHistory?: boolean }) => {
+      const recordHistory = opts?.recordHistory !== false;
+      const gen = ++photoAdjustmentsApplyGenRef.current;
+      const o = objectsRef.current.find((x) => x.id === sess.objectId);
+      if (!o || o.type !== "image" || (o as ImageObject).photoRoomInputSlot) return;
+      try {
+        const { canvas, ctx } = await loadImageToBrushCanvas(sess.baseSnapshotUrl, o.width, o.height);
+        if (gen !== photoAdjustmentsApplyGenRef.current) return;
+        const cw = canvas.width;
+        const ch = canvas.height;
+        const baseData = ctx.getImageData(0, 0, cw, ch);
+        const adjData = ctx.createImageData(cw, ch);
+        adjData.data.set(baseData.data);
+        applyPhotoImageAdjustmentsToImageData(adjData, sess);
+        // Si hay selección, mezclar ajuste solo dentro de la máscara (resto = original).
+        if (sess.selection) {
+          const alpha = buildSelectionAlphaArray(o as ImageObject, cw, ch, sess.selection);
+          if (alpha) {
+            const b = baseData.data;
+            const a = adjData.data;
+            for (let i = 0, p = 0; i < a.length; i += 4, p++) {
+              const cov = alpha[p]! / 255;
+              if (cov >= 0.999) continue;
+              if (cov <= 0.001) {
+                a[i] = b[i]!;
+                a[i + 1] = b[i + 1]!;
+                a[i + 2] = b[i + 2]!;
+                continue;
+              }
+              a[i] = Math.round(b[i]! * (1 - cov) + a[i]! * cov);
+              a[i + 1] = Math.round(b[i + 1]! * (1 - cov) + a[i + 1]! * cov);
+              a[i + 2] = Math.round(b[i + 2]! * (1 - cov) + a[i + 2]! * cov);
+            }
+          }
+        }
+        ctx.putImageData(adjData, 0, 0);
+        const url = canvas.toDataURL("image/png");
+        if (gen !== photoAdjustmentsApplyGenRef.current) return;
+        const oid = sess.objectId;
+        const persist: PhotoImageAdjustments = {
+          baseSnapshotUrl: sess.baseSnapshotUrl,
+          brightness: sess.brightness,
+          contrast: sess.contrast,
+          saturation: sess.saturation,
+          levels: { ...sess.levels },
+          selection: sess.selection ?? null,
+        };
+        setObjects((prev) => {
+          const next = prev.map((obj) =>
+            obj.id === oid && obj.type === "image"
+              ? ({ ...obj, src: url, photoImageAdjustments: persist } as ImageObject)
+              : obj,
+          );
+          if (recordHistory) pushHistory(next, new Set([oid]));
+          return next;
+        });
+      } catch {
+        /* decode / canvas errors: skip */
+      }
+    },
+    [pushHistory],
+  );
+
+  /** PhotoRoom: abre el modal de ajustes capturando base, selección activa e histograma. */
+  const openPhotoImageAdjustments = useCallback(
+    async (obj: ImageObject) => {
+      if (obj.type !== "image" || obj.photoRoomInputSlot) return;
+      const meta = obj.photoImageAdjustments ?? null;
+      const baseSnapshotUrl = meta?.baseSnapshotUrl ?? obj.src;
+      const rects = photoRectMarqueeSelectionRef.current;
+      const polys = photoPolygonMarqueeSelectionRef.current;
+      const ellipses = photoEllipseMarqueeSelectionRef.current;
+      const hasMarquee = rects.length > 0 || polys.length > 0 || ellipses.length > 0;
+      const selection: PhotoAdjSelection | null = hasMarquee
+        ? {
+            rects: rects.map((r) => ({ ...r })),
+            polys: polys.map((ring) => ring.map((p) => ({ ...p }))),
+            ellipses: ellipses.map((e) => ({ ...e })),
+            featherPx: photoMarqueeMaskFeatherPxRef.current,
+          }
+        : meta?.selection ?? null;
+      let histogram: number[] = new Array<number>(256).fill(0);
+      try {
+        const { canvas, ctx } = await loadImageToBrushCanvas(baseSnapshotUrl, obj.width, obj.height);
+        const iw = canvas.width;
+        const ih = canvas.height;
+        const baseData = ctx.getImageData(0, 0, iw, ih);
+        const alpha = selection ? buildSelectionAlphaArray(obj, iw, ih, selection) : null;
+        histogram = computeLuminanceHistogram(baseData, alpha);
+      } catch {
+        /* mantener histograma vacío */
+      }
+      const base = meta ?? defaultPhotoImageAdjustments(baseSnapshotUrl);
+      const session: PhotoAdjustmentsSession = {
+        baseSnapshotUrl,
+        brightness: base.brightness,
+        contrast: base.contrast,
+        saturation: base.saturation,
+        levels: { ...base.levels },
+        selection,
+        objectId: obj.id,
+        openSrc: obj.src,
+        openMeta: meta,
+      };
+      ++photoAdjustmentsApplyGenRef.current;
+      setPhotoAdjustmentsHistogram(histogram);
+      setPhotoAdjustmentsSession(session);
+      photoAdjustmentsSessionRef.current = session;
+    },
+    [],
+  );
+
+  /** PhotoRoom: aplica cambios en vivo del modal (sin registrar historial hasta aceptar). */
+  const updatePhotoImageAdjustments = useCallback(
+    (values: {
+      brightness: number;
+      contrast: number;
+      saturation: number;
+      levels: PhotoImageAdjustments["levels"];
+    }) => {
+      const sess = photoAdjustmentsSessionRef.current;
+      if (!sess) return;
+      const merged: PhotoAdjustmentsSession = {
+        ...sess,
+        brightness: values.brightness,
+        contrast: values.contrast,
+        saturation: values.saturation,
+        levels: { ...values.levels },
+      };
+      setPhotoAdjustmentsSession(merged);
+      photoAdjustmentsSessionRef.current = merged;
+      const p = applyPhotoImageAdjustmentsSession(merged, { recordHistory: false });
+      photoAdjustmentsScrubApplyRef.current = p;
+    },
+    [applyPhotoImageAdjustmentsSession],
+  );
+
+  /** PhotoRoom: vuelve a valores neutros sin cerrar el modal (re-hornea en vivo). */
+  const resetPhotoImageAdjustmentsModal = useCallback(() => {
+    const sess = photoAdjustmentsSessionRef.current;
+    if (!sess) return;
+    const neutralLevels = defaultPhotoImageAdjustments(sess.baseSnapshotUrl).levels;
+    const merged: PhotoAdjustmentsSession = {
+      ...sess,
+      brightness: 0,
+      contrast: 0,
+      saturation: 0,
+      levels: { ...neutralLevels },
+    };
+    setPhotoAdjustmentsSession(merged);
+    photoAdjustmentsSessionRef.current = merged;
+    const p = applyPhotoImageAdjustmentsSession(merged, { recordHistory: false });
+    photoAdjustmentsScrubApplyRef.current = p;
+  }, [applyPhotoImageAdjustmentsSession]);
+
+  /** PhotoRoom: cancela el modal y revierte la capa al estado previo a abrirlo. */
+  const cancelPhotoImageAdjustments = useCallback(() => {
+    const sess = photoAdjustmentsSessionRef.current;
+    ++photoAdjustmentsApplyGenRef.current;
+    if (sess) {
+      const oid = sess.objectId;
+      setObjects((prev) =>
+        prev.map((obj) => {
+          if (obj.id !== oid || obj.type !== "image") return obj;
+          const rest = { ...obj } as ImageObject & { photoImageAdjustments?: unknown };
+          if (sess.openMeta) rest.photoImageAdjustments = sess.openMeta;
+          else delete rest.photoImageAdjustments;
+          return { ...rest, src: sess.openSrc } as ImageObject;
+        }),
+      );
+    }
+    setPhotoAdjustmentsSession(null);
+    photoAdjustmentsSessionRef.current = null;
+    setPhotoAdjustmentsHistogram(null);
+  }, []);
+
+  /** PhotoRoom: acepta el modal registrando un único paso de historial. */
+  const commitPhotoImageAdjustments = useCallback(async () => {
+    const sess = photoAdjustmentsSessionRef.current;
+    try {
+      await photoAdjustmentsScrubApplyRef.current;
+    } catch {
+      /* noop */
+    }
+    if (sess) {
+      const oid = sess.objectId;
+      setObjects((prev) => {
+        const cur = prev.find((o) => o.id === oid) as ImageObject | undefined;
+        if (cur && cur.src !== sess.openSrc) pushHistory(prev, new Set([oid]));
+        return prev;
+      });
+    }
+    ++photoAdjustmentsApplyGenRef.current;
+    setPhotoAdjustmentsSession(null);
+    photoAdjustmentsSessionRef.current = null;
+    setPhotoAdjustmentsHistogram(null);
+  }, [pushHistory]);
 
   useEffect(() => {
     if (dragState?.type === "brushPaint" && dragState.brushLastPixel != null) {
@@ -23221,7 +23509,10 @@ export function FreehandStudioCanvas({
       ref={studioShellRef}
       data-foldder-studio-canvas
       className="fixed inset-0 z-[9999] flex min-h-0 flex-col bg-[#0b0d10] text-zinc-200"
-      style={{ fontFamily: "var(--font-geist-sans), ui-sans-serif, Inter, system-ui" }}
+      style={{
+        fontFamily: "var(--font-geist-sans), ui-sans-serif, Inter, system-ui",
+        ...(flushChrome ? ({ "--foldder-studio-accent": flushAccentHex } as React.CSSProperties) : {}),
+      }}
       onDrop={handleDrop}
       onDragOver={handleDragOver}
       onDragEnter={handleDragEnter}
@@ -23258,22 +23549,41 @@ export function FreehandStudioCanvas({
       />
 
       {!canvasZenMode && (
-      <header className="relative z-30 flex h-14 shrink-0 items-center gap-3 border-b border-white/[0.08] bg-[#12151a] px-3 min-w-0">
+      <header
+        data-foldder-studio-flush={flushAttr}
+        className={`relative z-30 flex shrink-0 items-center border-b border-white/[0.08] min-w-0 ${
+          flushChrome ? "h-10 gap-2 bg-[#0b0f14] px-2" : "h-14 gap-3 bg-[#12151a] px-3"
+        }`}
+      >
         <div className="min-w-0 shrink flex items-center gap-2">
           {studioHeaderNodeGlyph ? (
-            <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] border border-white/10 bg-black/45">
+            <span
+              className={`inline-flex shrink-0 items-center justify-center border border-white/10 bg-black/45 ${
+                flushChrome ? "h-7 w-7" : "h-7 w-7 rounded-[8px]"
+              }`}
+            >
               {studioHeaderNodeGlyph}
             </span>
           ) : null}
           <div className="min-w-0">
-            <div className="truncate text-[13px] font-semibold tracking-tight text-white">{studioHeaderTitle}</div>
-            <div className="truncate text-[10px] text-zinc-500">{studioHeaderSubtitle}</div>
+            <div
+              className={`truncate text-white ${
+                flushChrome
+                  ? "text-[11px] font-black uppercase tracking-[0.1em]"
+                  : "text-[13px] font-semibold tracking-tight"
+              }`}
+            >
+              {studioHeaderTitle}
+            </div>
+            {flushChrome ? null : (
+              <div className="truncate text-[10px] text-zinc-500">{studioHeaderSubtitle}</div>
+            )}
           </div>
         </div>
         {studioHeaderAccessory ? (
           <div className="flex min-w-0 shrink items-center gap-2">{studioHeaderAccessory}</div>
         ) : null}
-        <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-2">
+        <div className={`ml-auto flex min-w-0 flex-wrap items-center justify-end ${flushChrome ? "gap-1" : "gap-2"}`}>
         <div
           className="flex min-w-0 flex-wrap items-center gap-px rounded-lg border border-white/[0.08] bg-[#0b0d10] px-1 py-0.5"
           title="Alinear (selecciona 2+ objetos)"
@@ -23463,7 +23773,11 @@ export function FreehandStudioCanvas({
             setExportModalScope(selectedIds.size > 0 ? "selection" : "full");
             setShowExportModal(true);
           }}
-          className="flex shrink-0 items-center gap-2 rounded-lg bg-sky-600 px-3 py-2 text-[12px] font-semibold text-white shadow-lg shadow-sky-900/25 transition-colors duration-150 hover:bg-sky-500"
+          className={`flex shrink-0 items-center gap-2 transition-colors duration-150 ${
+            flushChrome
+              ? `h-8 px-3.5 text-[10px] font-black uppercase tracking-[0.1em] ${flushCtaClass}`
+              : "rounded-lg bg-sky-600 px-3 py-2 text-[12px] font-semibold text-white shadow-lg shadow-sky-900/25 hover:bg-sky-500"
+          }`}
         >
           <Download size={16} strokeWidth={1.5} />
           Export
@@ -23484,7 +23798,12 @@ export function FreehandStudioCanvas({
       <div className={`flex min-h-0 min-w-0 flex-1 flex-row${canvasZenMode ? " w-full" : ""}`}>
       {!canvasZenMode && (
       // Flyouts render in a body portal (`fixed`); keep this column above the canvas for chevrons/hover stacking.
-      <div className="relative z-30 flex w-[52px] shrink-0 flex-col items-center gap-0.5 overflow-y-auto border-r border-white/[0.08] bg-[#12151a] px-1.5 py-2.5">
+      <div
+        data-foldder-studio-flush={flushAttr}
+        className={`relative z-30 flex w-[52px] shrink-0 flex-col items-center gap-0.5 overflow-y-auto border-r border-white/[0.08] px-1.5 py-2.5 ${
+          flushChrome ? "bg-[#0b0f14]" : "bg-[#12151a]"
+        }`}
+      >
         <ToolBtn active={activeTool === "select"} onClick={() => { setActiveTool("select"); setSelectedPoints(new Map()); }} title="Selection (V)">
           <MousePointer2 size={19} strokeWidth={TOOLBAR_ICON_STROKE} />
         </ToolBtn>
@@ -23977,7 +24296,10 @@ export function FreehandStudioCanvas({
             <div
               ref={leftToolbarColorPopoverRef}
               data-left-toolbar-color-popover
-              className="fixed z-[100050] max-h-[min(420px,calc(100vh-24px))] w-[232px] overflow-y-auto rounded-[6px] border border-white/[0.08] bg-[#12151a] p-3.5 shadow-xl"
+              data-foldder-studio-flush={flushAttr}
+              className={`fixed z-[100050] max-h-[min(420px,calc(100vh-24px))] w-[232px] overflow-y-auto border border-white/[0.08] p-3.5 ${
+                flushChrome ? "bg-[#0b0f14]" : "rounded-[6px] bg-[#12151a] shadow-xl"
+              }`}
               style={{ top: leftToolbarColorPos.top, left: leftToolbarColorPos.left }}
               onMouseDown={(e) => e.stopPropagation()}
               onMouseEnter={() => {
@@ -24132,6 +24454,10 @@ export function FreehandStudioCanvas({
         {leftToolbarColorTarget ? (
           <ColorPickerModal
             open={leftToolbarAdvancedPickerOpen}
+            flush={flushChrome}
+            accentClass={flushCtaClass}
+            accentRangeClass={flushRangeAccentClass}
+            accentFocusClass={flushFocusClass}
             title={leftToolbarColorTarget === "fill" ? "Elegir color de relleno" : "Elegir color de trazo"}
             confirmLabel="Aplicar y guardar"
             initialHex={leftToolbarPickerInitialHex}
@@ -24389,10 +24715,11 @@ export function FreehandStudioCanvas({
             photoEllipseMarqueeSelection.length > 0) &&
           photoRectMarqueeAddModHeld && (
             <div
-              className="pointer-events-none absolute bottom-5 left-1/2 z-[120] flex -translate-x-1/2 items-center gap-2 rounded-full border border-orange-400/35 bg-[#0f1217]/95 px-3 py-1.5 text-[12px] text-orange-100 shadow-lg shadow-black/40"
+              data-foldder-studio-flush={flushAttr}
+              className="pointer-events-none absolute bottom-5 left-1/2 z-[120] flex -translate-x-1/2 items-center gap-2 border border-orange-400/35 bg-[#0b0f14] px-3 py-1.5 text-[12px] text-orange-100"
               data-ui="photo-marquee-add-hint"
             >
-              <span className="flex h-6 w-6 items-center justify-center rounded-md bg-orange-500/25 text-[18px] font-light leading-none text-orange-50">
+              <span className="flex h-6 w-6 items-center justify-center bg-orange-500/25 text-[18px] font-light leading-none text-orange-50">
                 +
               </span>
               <span className="max-w-[min(20rem,85vw)] text-[11px] text-zinc-300">
@@ -24408,10 +24735,11 @@ export function FreehandStudioCanvas({
             activeTool === "polygonMarquee") &&
           photoRectMarqueeAltModHeld && (
             <div
-              className="pointer-events-none absolute bottom-[4.25rem] left-1/2 z-[120] flex -translate-x-1/2 items-center gap-2 rounded-full border border-fuchsia-500/35 bg-[#0f1217]/95 px-3 py-1.5 text-[12px] text-fuchsia-100 shadow-lg shadow-black/40"
+              data-foldder-studio-flush={flushAttr}
+              className="pointer-events-none absolute bottom-[4.25rem] left-1/2 z-[120] flex -translate-x-1/2 items-center gap-2 border border-fuchsia-500/35 bg-[#0b0f14] px-3 py-1.5 text-[12px] text-fuchsia-100"
               data-ui="photo-marquee-subtract-hint"
             >
-              <span className="flex h-6 w-6 items-center justify-center rounded-md bg-fuchsia-600/25 text-[18px] font-light leading-none text-fuchsia-50">
+              <span className="flex h-6 w-6 items-center justify-center bg-fuchsia-600/25 text-[18px] font-light leading-none text-fuchsia-50">
                 −
               </span>
               <span className="max-w-[min(20rem,85vw)] text-[11px] text-zinc-300">
@@ -26318,18 +26646,38 @@ export function FreehandStudioCanvas({
       <div className={`relative flex h-full min-h-0 shrink-0 ${propertiesPanelCollapsed ? "w-0" : ""}`}>
         <button
           type="button"
+          data-foldder-studio-flush={flushAttr}
           onClick={() => setPropertiesPanelCollapsed((v) => !v)}
-          className="absolute -left-3 top-3 z-40 flex h-6 w-6 items-center justify-center rounded-md border border-white/[0.12] bg-[#12151a] text-zinc-300 shadow-lg transition hover:bg-[#1a1f28] hover:text-white"
+          className={`absolute -left-3 top-3 z-40 flex h-6 w-6 items-center justify-center border border-white/[0.12] text-zinc-300 shadow-lg transition hover:text-white ${
+            flushChrome ? "bg-[#0b0f14] hover:bg-white/[0.08]" : "rounded-md bg-[#12151a] hover:bg-[#1a1f28]"
+          }`}
           title={propertiesPanelCollapsed ? "Mostrar propiedades" : "Ocultar propiedades"}
           aria-label={propertiesPanelCollapsed ? "Mostrar propiedades" : "Ocultar propiedades"}
         >
           {propertiesPanelCollapsed ? <ChevronRight size={14} strokeWidth={2} /> : <ChevronLeft size={14} strokeWidth={2} />}
         </button>
       {!propertiesPanelCollapsed && (
-      <div className="flex h-full w-[260px] shrink-0 flex-col min-h-0 overflow-hidden border-l border-white/[0.08] bg-[#12151a]">
+      <div
+        data-foldder-studio-flush={flushAttr}
+        className={`flex h-full w-[260px] shrink-0 flex-col min-h-0 overflow-hidden border-l border-white/[0.08] ${
+          flushChrome ? "bg-[#0b0f14]" : "bg-[#12151a]"
+        }`}
+      >
         {/* Header */}
-        <div className="px-3 py-2 border-b border-white/10 shrink-0">
-          <span className="text-[11px] font-bold uppercase tracking-widest text-zinc-400">Propiedades</span>
+        <div
+          className={`shrink-0 border-b border-white/10 ${
+            flushChrome ? "flex h-10 items-center bg-white/[0.04] px-3" : "px-3 py-2"
+          }`}
+        >
+          <span
+            className={`uppercase text-zinc-400 ${
+              flushChrome
+                ? "text-[10px] font-black tracking-[0.12em] text-white/85"
+                : "text-[11px] font-bold tracking-widest"
+            }`}
+          >
+            Propiedades
+          </span>
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -27179,6 +27527,10 @@ export function FreehandStudioCanvas({
                 <>
                   <FreehandColorPalette
                     embedded
+                    flush={flushChrome}
+                    accentClass={flushCtaClass}
+                    accentRangeClass={flushRangeAccentClass}
+                    accentFocusClass={flushFocusClass}
                     inUse={documentColorStats}
                     brainColors={brainConnected ? brainPaletteColors : []}
                     savedColors={savedPaletteColors}
@@ -27974,6 +28326,31 @@ export function FreehandStudioCanvas({
                     </button>
                   </div>
                 )}
+                {isPhotoRoomStudioEmbed &&
+                  firstSelected.type === "image" &&
+                  !(firstSelected as ImageObject).photoRoomInputSlot &&
+                  (() => {
+                    const img = firstSelected as ImageObject & FreehandObjectBase;
+                    const meta = img.photoImageAdjustments;
+                    const modified = !!meta && !isPhotoImageAdjustmentsNeutral(meta);
+                    return (
+                      <div className="border-b border-white/[0.08] px-[14px] py-3">
+                        <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                          Ajustes
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void openPhotoImageAdjustments(img)}
+                          className="flex h-8 w-full items-center justify-center gap-2 rounded-[6px] border border-violet-400/35 bg-violet-500/15 text-[11px] font-semibold text-violet-100 transition hover:bg-violet-500/25"
+                        >
+                          Brillo, contraste y niveles…
+                          {modified ? (
+                            <span className="h-1.5 w-1.5 rounded-full bg-violet-300" aria-hidden />
+                          ) : null}
+                        </button>
+                      </div>
+                    );
+                  })()}
                 {isPhotoRoomStudioEmbed &&
                   studioCaps.toolPhotoGradient &&
                   (() => {
@@ -29789,9 +30166,13 @@ export function FreehandStudioCanvas({
         </div>
 
         {/* Status bar */}
-        <div className="flex shrink-0 flex-col gap-1.5 border-t border-white/[0.08] px-3 py-2">
-          <div className="flex items-center justify-between text-[9px] text-zinc-500">
-            <span>
+        <div
+          className={`flex shrink-0 border-t border-white/[0.08] ${
+            flushChrome ? "h-10 items-center bg-white/[0.04] px-3" : "flex-col gap-1.5 px-3 py-2"
+          }`}
+        >
+          <div className="flex w-full items-center justify-between text-[9px] text-zinc-500">
+            <span className={flushChrome ? "font-black uppercase tracking-[0.1em] text-white/45" : ""}>
               {objects.length} objects · {selectedIds.size} selected
               {isolationDepth > 0 ? ` · Isolation (depth ${isolationDepth})` : ""}
             </span>
@@ -29948,7 +30329,10 @@ export function FreehandStudioCanvas({
               aria-hidden
             />
             <div
-              className="relative z-10 w-full max-w-5xl overflow-hidden rounded-2xl border border-white/[0.12] bg-[#12161d] shadow-[0_30px_90px_rgba(0,0,0,0.6)]"
+              data-foldder-studio-flush={flushAttr}
+              className={`relative z-10 w-full max-w-5xl overflow-hidden border border-white/[0.12] ${
+                flushChrome ? "bg-[#0b0f14] shadow-[0_24px_70px_rgba(0,0,0,0.55)]" : "rounded-2xl bg-[#12161d] shadow-[0_30px_90px_rgba(0,0,0,0.6)]"
+              }`}
               role="dialog"
               aria-modal="true"
               aria-labelledby="foldder-image-picker-title"
@@ -30064,6 +30448,7 @@ export function FreehandStudioCanvas({
           artboardList={[]}
           onExport={runProfessionalExport}
           designerMultipageVectorPdf={designerMultipageVectorPdfExport ?? null}
+          flush={flushChrome}
         />
       )}
 
@@ -30089,7 +30474,12 @@ export function FreehandStudioCanvas({
         )}
 
       {canvasZenMode && (
-        <div className="pointer-events-none fixed bottom-5 left-1/2 z-[100002] -translate-x-1/2 rounded-md border border-white/[0.08] bg-black/45 px-3 py-1.5 text-[10px] text-zinc-500">
+        <div
+          data-foldder-studio-flush={flushAttr}
+          className={`pointer-events-none fixed bottom-5 left-1/2 z-[100002] -translate-x-1/2 border border-white/[0.08] px-3 py-1.5 text-[10px] text-zinc-500 ${
+            flushChrome ? "bg-[#0b0f14] uppercase tracking-[0.08em]" : "rounded-md bg-black/45"
+          }`}
+        >
           P o Esc · salir del modo lienzo
         </div>
       )}
@@ -30097,6 +30487,10 @@ export function FreehandStudioCanvas({
       {photoGradientPickerOpen ? (
         <ColorPickerModal
           open
+          flush={flushChrome}
+          accentClass={flushCtaClass}
+          accentRangeClass={flushRangeAccentClass}
+          accentFocusClass={flushFocusClass}
           title={
             photoGradientPickerOpen === "start"
               ? "Trazo (inicio del degradado)"
@@ -30147,8 +30541,34 @@ export function FreehandStudioCanvas({
         />
       ) : null}
 
+      {photoAdjustmentsSession && photoAdjustmentsHistogram ? (
+        <PhotoImageAdjustmentsModal
+          open
+          histogram={photoAdjustmentsHistogram}
+          hasSelection={!!photoAdjustmentsSession.selection}
+          values={{
+            brightness: photoAdjustmentsSession.brightness,
+            contrast: photoAdjustmentsSession.contrast,
+            saturation: photoAdjustmentsSession.saturation,
+            levels: photoAdjustmentsSession.levels,
+          }}
+          onChange={(next) => updatePhotoImageAdjustments(next)}
+          onScrubEnd={() => {}}
+          onReset={resetPhotoImageAdjustmentsModal}
+          onCancel={cancelPhotoImageAdjustments}
+          onApply={() => void commitPhotoImageAdjustments()}
+        />
+      ) : null}
+
       {toast && (
-        <div className="pointer-events-none fixed bottom-8 left-1/2 z-[100001] -translate-x-1/2 rounded-lg border border-white/[0.12] bg-[#1a1f28] px-4 py-2 text-[12px] font-medium text-white shadow-xl">
+        <div
+          data-foldder-studio-flush={flushAttr}
+          className={`pointer-events-none fixed bottom-8 left-1/2 z-[100001] -translate-x-1/2 border px-4 py-2 text-[12px] font-medium text-white ${
+            flushChrome
+              ? "border-white/10 bg-[#0b0f14]"
+              : "rounded-lg border-white/[0.12] bg-[#1a1f28] shadow-xl"
+          }`}
+        >
           {toast}
         </div>
       )}

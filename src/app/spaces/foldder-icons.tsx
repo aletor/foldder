@@ -232,13 +232,13 @@ export function FoldderMatting({ state, className, size }: GlyphProps) {
   );
 }
 
-/** System vision: frame + focal cross, not a literal eye */
+/** Image describer: literal eye (almond lid + iris + pupil) */
 export function FoldderEye({ state, className, size }: GlyphProps) {
   return (
     <FoldderIcon state={state} className={className} size={size}>
-      <rect x="4" y="4" width="8" height="8" rx="1.1" />
-      <circle cx="8" cy="8" r="1.15" fill="currentColor" stroke="none" strokeWidth={0} />
-      <path d="M8 4.85 V5.85 M8 10.15 V11.15 M4.85 8 H5.85 M10.15 8 H11.15" strokeWidth={1.25} opacity={0.55} />
+      <path d="M2.5 8 Q8 3.1 13.5 8 Q8 12.9 2.5 8 Z" />
+      <circle cx="8" cy="8" r="2.35" />
+      <circle cx="8" cy="8" r="1" fill="currentColor" stroke="none" strokeWidth={0} />
     </FoldderIcon>
   );
 }

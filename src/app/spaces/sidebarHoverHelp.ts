@@ -81,7 +81,7 @@ export const SIDEBAR_HOVER_HELP: Record<string, { title: string; line: string }>
     line: 'Elimina fondo de la imagen',
   },
   mediaDescriber: {
-    title: 'Vision / Media Describer',
+    title: 'Image Describer',
     line: 'Describe imagen como prompt',
   },
   imageExport: {

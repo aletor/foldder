@@ -121,8 +121,8 @@ const HIGH_END_PRODUCTION_ITEMS: Array<{ type: string; label: string }> = [
 const TOOL_ITEMS: Array<{ type: string; label: string }> = [
   { type: 'promptInput', label: 'Prompt' },
   { type: 'urlImage', label: 'Web' },
-  { type: 'backgroundRemover', label: 'Matting' },
-  { type: 'mediaDescriber', label: 'Eye' },
+  { type: 'backgroundRemover', label: 'BG Remover' },
+  { type: 'mediaDescriber', label: 'Image Describer' },
   { type: 'enhancer', label: 'Enhance' },
   { type: 'imageCreationAdvanced', label: 'Image Advanced' },
   { type: 'export_multimedia', label: 'Export Multimedia' },

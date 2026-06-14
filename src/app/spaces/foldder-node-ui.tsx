@@ -19,14 +19,22 @@ export const NodeLabel = ({
   const [isEditing, setIsEditing] = useState(false);
   const [val, setVal] = useState(label || "");
   const { setNodes } = useReactFlow();
+  const nodeType = useStore(
+    useCallback((state: { nodes: Node[] }) => state.nodes.find((n) => n.id === id)?.type, [id]),
+  );
   const isSystemLabel = label && (label.startsWith("AI_SPACE_") || label.match(/\.(jpg|jpeg|png|webp|mp4)$/i));
+  // Etiqueta auto-generada antigua ("<type> node"): tratar como no-personalizada y usar el nombre amigable.
+  const isGenericTypeLabel = Boolean(
+    label && nodeType && label.trim().toLowerCase() === `${nodeType.toLowerCase()} node`,
+  );
+  const hasCustomLabel = Boolean(label) && !isSystemLabel && !isGenericTypeLabel;
   const needsGeneratedIndex = !label || Boolean(isSystemLabel);
   const index = useStore(
     useCallback((state: { nodes: Node[] }) => {
       if (!needsGeneratedIndex) return 0;
-      const nodeType = state.nodes.find((n) => n.id === id)?.type;
+      const t = state.nodes.find((n) => n.id === id)?.type;
       const sameTypeNodes = state.nodes
-        .filter((n) => n.type === nodeType)
+        .filter((n) => n.type === t)
         .sort((a, b) => {
           if (a.position.y !== b.position.y) return a.position.y - b.position.y;
           return a.position.x - b.position.x;
@@ -34,7 +42,11 @@ export const NodeLabel = ({
       return sameTypeNodes.findIndex((n) => n.id === id) + 1;
     }, [id, needsGeneratedIndex]),
   );
-  const displayLabel = label && !isSystemLabel ? label : `${defaultLabel} ${index}`;
+  const displayLabel: string = hasCustomLabel
+    ? (label as string)
+    : isGenericTypeLabel
+      ? defaultLabel
+      : `${defaultLabel} ${index}`;
 
   const handleBlur = () => {
     setIsEditing(false);
@@ -57,16 +69,27 @@ export const NodeLabel = ({
       {isEditing ? (
         <input
           autoFocus
-          className="min-w-[120px] cursor-text rounded-none border-0 bg-white/20 px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-slate-900 shadow-sm outline-none backdrop-blur-xl placeholder:text-slate-500 focus:ring-2 focus:ring-cyan-400/40"
+          className="nodrag min-w-[120px] cursor-text rounded-none border-0 bg-white/20 px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-slate-900 shadow-sm outline-none backdrop-blur-xl placeholder:text-slate-500 focus:ring-2 focus:ring-cyan-400/40"
           value={val}
           onChange={(e) => setVal(e.target.value)}
           onBlur={handleBlur}
           onKeyDown={handleKeyDown}
+          onPointerDown={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            e.currentTarget.select();
+          }}
         />
       ) : (
         <div
-          onDoubleClick={() => setIsEditing(true)}
-          className="flex cursor-pointer select-none items-center gap-2 truncate rounded-none border-0 bg-white/20 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-slate-800 shadow-sm backdrop-blur-xl transition-all hover:text-cyan-900"
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            setVal(displayLabel);
+            setIsEditing(true);
+          }}
+          className="nodrag flex cursor-pointer select-none items-center gap-2 truncate rounded-none border-0 bg-white/20 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-slate-800 shadow-sm backdrop-blur-xl transition-all hover:text-cyan-900"
           title="Double click to rename (max 5 words)"
         >
           <div className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-cyan-600" />

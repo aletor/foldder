@@ -73,4 +73,9 @@ export const CANVAS_BACKGROUNDS: CanvasBackgroundOption[] = [
     label: "Atardecer synthwave",
     url: "/wallpapers/synthwave-sunset.png",
   },
+  {
+    id: "abstract-flow-dark",
+    label: "Flujo abstracto",
+    url: "/wallpapers/abstract-flow-dark.png",
+  },
 ];

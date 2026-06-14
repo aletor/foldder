@@ -38,13 +38,13 @@ function PhotoRoomCanvasSideControls({
 }) {
   const isLandscape = artboard.width >= artboard.height;
   const isPortrait = artboard.height > artboard.width;
-  const btnBase =
-    "nodrag flex flex-1 items-center justify-center rounded-md p-2 transition-colors";
-  const btnOn = "bg-white/[0.12] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]";
-  const btnOff = "text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-200";
+  const orientBase = "nodrag flex h-8 flex-1 items-center justify-center transition-colors";
+  const orientOn = "bg-white text-slate-950";
+  const orientOff = "text-white/45 hover:bg-white/[0.08] hover:text-white";
   return (
-    <div className="flex w-full flex-col gap-2">
-      <div className="flex min-w-0 items-center gap-1 rounded-lg border border-white/[0.1] bg-[#0b0d10] px-2 py-1.5">
+    <div data-foldder-studio-flush className="flex w-full flex-col gap-2">
+      {/* W × H — fila flush con divisores */}
+      <div className="flex min-w-0 items-stretch border border-white/10 bg-black/30">
         <label className="sr-only" htmlFor={`pr-w-${nodeId}`}>
           Ancho px
         </label>
@@ -53,11 +53,13 @@ function PhotoRoomCanvasSideControls({
           type="number"
           min={64}
           max={8192}
-          className="nodrag min-w-0 flex-1 rounded border border-white/10 bg-black/30 px-1.5 py-0.5 text-[11px] text-zinc-100 tabular-nums"
+          className="nodrag min-w-0 flex-1 bg-transparent px-2 py-1.5 text-center font-mono text-[11px] tabular-nums text-white outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
           value={artboard.width}
           onChange={(e) => applySize(Number(e.target.value), artboard.height)}
         />
-        <span className="shrink-0 text-[11px] text-zinc-500">×</span>
+        <span className="flex shrink-0 items-center border-x border-white/10 px-1.5 text-[11px] text-white/40">
+          ×
+        </span>
         <label className="sr-only" htmlFor={`pr-h-${nodeId}`}>
           Alto px
         </label>
@@ -66,47 +68,49 @@ function PhotoRoomCanvasSideControls({
           type="number"
           min={64}
           max={8192}
-          className="nodrag min-w-0 flex-1 rounded border border-white/10 bg-black/30 px-1.5 py-0.5 text-[11px] text-zinc-100 tabular-nums"
+          className="nodrag min-w-0 flex-1 bg-transparent px-2 py-1.5 text-center font-mono text-[11px] tabular-nums text-white outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
           value={artboard.height}
           onChange={(e) => applySize(artboard.width, Number(e.target.value))}
         />
-        <span className="shrink-0 pl-0.5 text-[9px] font-medium uppercase tracking-wide text-zinc-500">
+        <span className="flex shrink-0 items-center border-l border-white/10 px-2 text-[8px] font-black uppercase tracking-[0.1em] text-white/40">
           px
         </span>
       </div>
-      <div className="flex gap-0.5 rounded-lg border border-white/[0.1] bg-[#0b0d10] p-0.5">
+      {/* Orientación — segment control flush */}
+      <div className="flex items-stretch divide-x divide-white/10 border border-white/10 bg-white/[0.04]">
         <button
           type="button"
           title="Orientación horizontal (intercambia alto y ancho si está en vertical)"
-          className={`${btnBase} ${isLandscape ? btnOn : btnOff}`}
+          className={`${orientBase} ${isLandscape ? orientOn : orientOff}`}
           onClick={() => {
             if (artboard.height > artboard.width) {
               applySize(artboard.height, artboard.width);
             }
           }}
         >
-          <Monitor size={16} strokeWidth={1.75} className="shrink-0" />
+          <Monitor size={16} strokeWidth={2} className="shrink-0" />
         </button>
         <button
           type="button"
           title="Orientación vertical (intercambia alto y ancho si está en horizontal)"
-          className={`${btnBase} ${isPortrait ? btnOn : btnOff}`}
+          className={`${orientBase} ${isPortrait ? orientOn : orientOff}`}
           onClick={() => {
             if (artboard.width > artboard.height) {
               applySize(artboard.height, artboard.width);
             }
           }}
         >
-          <Smartphone size={16} strokeWidth={1.75} className="shrink-0" />
+          <Smartphone size={16} strokeWidth={2} className="shrink-0" />
         </button>
       </div>
+      {/* Presets — CTA azul full-bleed flush */}
       <button
         type="button"
         title="Abrir presets Web/Arte, fondo y medidas avanzadas"
         onClick={onOpenPresetModal}
-        className="nodrag flex w-full items-center justify-center gap-1.5 rounded-lg border border-white/[0.12] bg-[#0f1318] px-2 py-1.5 text-[10px] font-medium text-zinc-300 transition hover:border-sky-500/35 hover:bg-sky-500/10 hover:text-zinc-100"
+        className="nodrag flex h-9 w-full items-center justify-center gap-2 bg-[#71449f] px-2 text-[10px] font-black uppercase tracking-[0.1em] text-white transition hover:bg-[#8055b0]"
       >
-        <LayoutGrid size={14} strokeWidth={2} className="shrink-0 text-sky-400/90" aria-hidden />
+        <LayoutGrid size={14} strokeWidth={2.5} className="shrink-0" aria-hidden />
         Presets y fondo…
       </button>
     </div>

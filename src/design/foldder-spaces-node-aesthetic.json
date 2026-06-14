@@ -1,206 +1,119 @@
 {
   "meta": {
     "name": "Foldder Spaces — estética de nodos (canvas)",
-    "version": "1.0.0",
-    "referenceNode": "mediaDescriber (Gemini Describer / Vision)",
-    "description": "Tokens derivados del nodo Vision Describer y estilos globales .custom-node / .node-header / .execute-btn en spaces.css. Usar como contrato visual al diseñar nuevos nodos.",
+    "version": "2.0.0",
+    "updated": "2026-06-14",
+    "referenceNodes": ["inspiration", "nanoBanana", "geminiVideo", "crop", "backgroundRemover", "mediaDescriber"],
+    "description": "Contrato visual VIGENTE de los nodos del canvas (Foldder Spaces). Sustituye a la v1 (glass + esquinas redondeadas), que ya no aplica. El sistema actual es: chrome plano y nítido (border-radius 0 en TODO), tarjetas frameless, media a sangre con controles superpuestos, y botones en chip blanco cuadrado. Usar como única fuente de verdad al crear o tocar nodos.",
     "implementation": {
       "globalCss": "src/app/spaces/spaces.css",
-      "exampleComponent": "MediaDescriberNode en src/app/spaces/CustomNodes.tsx"
+      "components": "src/app/spaces/CustomNodes.tsx (+ subcarpetas nano-banana/, video-editor/, photo-room/, designer/, presenter/)",
+      "sharedUi": "src/app/spaces/foldder-node-ui.tsx (NodeLabel, FoldderNodeHeaderTitle, FoldderStudioModeCenterButton, FoldderNodeResizer)"
     }
   },
+
+  "corePrinciples": [
+    "Esquinas SIEMPRE rectas: border-radius 0 en tarjeta, botones, chips, inputs, paneles y badges. No usar rounded-xl/2xl/full salvo el equalizer de audio u otros elementos marcados explícitamente.",
+    "Plano: sin sombras dramáticas, sin gradientes decorativos por tipo, sin backdrop-blur en los controles del nodo.",
+    "El título del nodo NO se muestra en una cabecera interna: la .node-header está oculta globalmente y el título sale por la etiqueta flotante (NodeLabel) arriba-izquierda, en mayúsculas y blanco.",
+    "Color de identidad por nodo vía --foldder-node-card-bg / --foldder-frameless-accent. El contenido va siempre en blanco sobre ese color.",
+    "Controles superpuestos sobre la media (no apilados debajo) en nodos de tipo media."
+  ],
+
   "radius": {
-    "nodeCard": { "px": 12, "css": "12px", "tailwind": "rounded-xl", "note": "Contenedor principal .custom-node (mitad vs 24px)" },
-    "nodeHeaderTop": { "px": 12, "css": "12px 12px 0 0", "note": ".node-header border-top-left/right-radius" },
-    "innerPanel": { "px": 6, "tailwind": "rounded-lg", "note": "Bloques inset (p. ej. preview slate en Describer)" },
-    "primaryButton": { "px": 8, "css": "8px", "note": ".execute-btn / .action-btn" },
-    "badgePill": { "px": 4, "css": "4px", "note": ".node-header .node-badge" },
-    "inputField": { "px": 7, "note": ".node-input, .node-textarea" },
-    "approximateOuterFrameFromScreenshot": { "px": 24, "note": "Opcional / más dramático; el código actual usa 12px en canvas" }
+    "all": { "px": 0, "css": "0", "note": "Regla 'Sharp UX corners' en spaces.css. Tarjeta, botones, chips, inputs, badges y paneles = 0." },
+    "exceptions": ["Audio equalizer (BackgroundRadioPlayer)", "elementos con [data-foldder-keep-round]"]
   },
-  "glassSurface": {
-    "nodeCard": {
-      "background": "rgba(255, 255, 255, 0.3)",
-      "backdropFilter": "blur(24px)",
-      "border": "none",
-      "boxShadowDefault": "0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 20px 40px -4px rgba(0, 0, 0, 0.08)",
-      "boxShadowHover": "0 30px 60px -12px rgba(0, 0, 0, 0.12)"
+
+  "nodeArchetypes": {
+    "framelessMedia": {
+      "classes": "custom-node <tipo>-node foldder-node--frameless node--media",
+      "use": "Nodos cuyo resultado es imagen/vídeo (inspiration, nanoBanana, geminiVideo, crop, backgroundRemover).",
+      "layout": {
+        "main": ".node-content.foldder-frameless-main → position:absolute; inset:0; bg #111; la media llena el nodo.",
+        "controlsArePositionedOverlays": "Los controles (.execute-btn, .foldder-frameless-chip, .foldder-frameless-secondary-panel) DEBEN ir DENTRO de .node-content para que su position:absolute funcione. Si se ponen como hijos directos del .custom-node, una regla global les fuerza position:relative y se rompen (se van arriba a todo el ancho).",
+        "emptyStateBg": "Color sólido de identidad vía '.<tipo>-node--empty { background: <hex> }' (sin imagen)."
+      }
     },
-    "nodeHeader": {
-      "backgroundDefault": "rgba(255, 255, 255, 0.1)",
-      "borderBottom": "1px solid rgba(0, 0, 0, 0.04)",
-      "accentGradientExample": "linear-gradient horizontal from-indigo-600/20 to-blue-600/20 (Tailwind: bg-gradient-to-r from-indigo-600/20 to-blue-600/20)"
-    }
-  },
-  "header": {
-    "layout": "flex row, align center; gap/padding ×0.7 vs base 12px/16px20px (header ~30% más bajo)",
-    "title": {
-      "textTransform": "uppercase",
-      "fontWeight": 300,
-      "fontSizeRem": "calc(0.7 * 1.9 * 0.8 * 0.7)",
-      "letterSpacingEm": 0.1,
-      "color": "#ffffff",
-      "textShadow": "none"
-    },
-    "icon": {
-      "sizePx": "calc(24 * 0.7) en cabecera (SVG)",
-      "color": "#ffffff",
-      "dropShadow": "none"
-    },
-    "badge": {
-      "class": "node-badge",
-      "marginLeft": "auto",
-      "background": "rgba(0, 0, 0, 0.2)",
-      "padding": "calc(3px*0.7) calc(10px*0.7)",
-      "borderRadiusPx": "calc(4 * 0.7)",
-      "fontSizePx": "calc(10 * 0.8 * 0.7)",
-      "fontWeight": 300,
-      "color": "rgba(255, 255, 255, 0.88)",
-      "letterSpacingEm": 0.15,
-      "textTransform": "uppercase",
-      "textShadow": "none"
-    }
-  },
-  "typography": {
-    "fontFamily": {
-      "ui": "system-ui, -apple-system, Segoe UI, sans-serif",
-      "monoOutput": "ui-monospace, SFMono-Regular, Menlo, monospace (p. ej. texto de descripción generada)"
-    },
-    "body": {
-      "helperItalic": {
-        "fontSizePx": 10,
-        "classExample": "text-[10px] text-gray-500 mb-3 italic",
-        "color": "#6b7280",
-        "style": "italic"
+    "glassStructured": {
+      "classes": "custom-node <tipo>-node foldder-node--frameless node--glass",
+      "use": "Nodos con contenido estructurado/texto (mediaDescriber, mediaInput, guionista).",
+      "layout": {
+        "content": ".node-content.foldder-frameless-main con padding (p.ej. 48px 16px 56px) y texto blanco.",
+        "footer": ".foldder-frameless-footer-action (overlay inferior) con el/los botón(es) CTA."
       },
-      "labelUppercase": {
-        "class": "node-label",
-        "fontSizeRem": 0.65,
-        "fontWeight": 800,
-        "letterSpacingEm": 0.1,
-        "textTransform": "uppercase",
-        "color": "#94a3b8"
-      }
-    },
-    "emptyState": {
-      "iconSizePx": 24,
-      "caption": {
-        "fontSizePx": 8,
-        "fontWeight": 700,
-        "textTransform": "uppercase",
-        "opacity": 0.2
-      }
+      "background": "Gradiente diagonal a partir de --foldder-node-card-bg (o color/imagen propios si el nodo lo define con mayor especificidad)."
     }
   },
-  "colors": {
-    "text": {
-      "onHeader": "#ffffff",
-      "primaryDark": "#1a1a1b",
-      "muted": "#6b7280",
-      "slateLabel": "#94a3b8"
-    },
-    "surfaces": {
-      "insetLight": "bg-slate-50/50 con borde border-slate-200/60 (Describer preview)",
-      "executeButton": {
-        "backgroundNavy": "#1d2433",
-        "background": "#1d2433",
-        "backgroundHover": "#161b27",
-        "disabled": "#475569"
-      }
-    },
-    "selection": {
-      "nodeRing": "rgba(255, 255, 255, 0.55)",
-      "nodeGlow": "rgba(255, 255, 255, 0.45)"
-    }
+
+  "title": {
+    "source": "NodeLabel flotante (no la node-header, que está display:none).",
+    "position": "absolute; top:12px; left:14px",
+    "style": { "textTransform": "uppercase", "color": "#ffffff", "letterSpacingEm": 0.1, "fontWeight": 300 },
+    "note": "Las pestañas/controles superiores deben ir a la DERECHA (top-right) para no solaparse con el título."
   },
+
   "buttons": {
-    "primaryExecute": {
-      "class": "execute-btn",
-      "width": "100%",
-      "display": "flex",
-      "alignItems": "center",
-      "justifyContent": "center",
-      "gapPx": 10,
-      "paddingPx": 14,
-      "background": "linear-gradient(135deg, #1d2433 0%, #2a3448 48%, #35425a 100%)",
-      "border": "1px solid rgba(29, 36, 51, 0.45)",
-      "borderRadiusPx": 8,
-      "color": "#f8fafc",
-      "fontSizePx": 11,
-      "fontWeight": 900,
-      "letterSpacingEm": 0.1,
-      "textTransform": "uppercase",
-      "boxShadow": "0 4px 12px rgba(29, 36, 51, 0.28)",
-      "transition": "0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-      "hover": {
-        "transform": "translateY(-2px)",
-        "background": "#161b27",
-        "boxShadow": "0 12px 24px rgba(29, 36, 51, 0.4)"
-      },
-      "active": { "transform": "translateY(0)" },
-      "disabled": { "opacity": 0.35, "cursor": "not-allowed", "background": "#475569" }
+    "canonicalCTA": {
+      "name": "Chip blanco cuadrado (footer/overlay)",
+      "class": "execute-btn (o foldder-node-footer-button)",
+      "shape": "rectangular, border-radius 0",
+      "background": "#ffffff",
+      "text": "#000000",
+      "backgroundHover": "#f5f5f3",
+      "disabledText": "rgba(0,0,0,0.38)",
+      "padding": "6px 14px",
+      "weight": "850, uppercase, letter-spacing 0.08em",
+      "frameless": "En frameless, .execute-btn se posiciona absolute abajo-derecha (--foldder-frameless-overlay-side/bottom). No darle width:100%.",
+      "examples": ["GENERATE IMAGEN CON PROMPT (nanoBanana)", "GENERATE VIDEO (gemini)", "GENERATE DESCRIPTION (describer)", "REMOVE BG (backgroundRemover)"]
     },
-    "note": "Mismo estilo en todos los tipos de nodo (sin gradientes por tipo). Azul marino canónico del CTA: #1d2433."
-  },
-  "contentArea": {
-    "class": "node-content",
-    "paddingPx": 20,
-    "flex": "1",
-    "minHeight": 0,
-    "background": "transparent",
-    "scrollbar": { "widthPx": 4, "thumb": "rgba(255, 255, 255, 0.1)", "thumbRadiusPx": 10 }
-  },
-  "previewInset": {
-    "description": "Área secundaria tipo 'resultado / placeholder' dentro del nodo",
-    "example": {
-      "padding": "p-3",
-      "background": "bg-slate-50/50",
-      "borderRadius": "rounded-xl",
-      "border": "border border-slate-200/60",
-      "minHeightPx": 80,
-      "shadowInner": "shadow-inner (bloques de texto prompt / Enhancer)"
+    "openStudio": {
+      "component": "FoldderStudioModeCenterButton",
+      "shape": "chip blanco cuadrado, abajo-derecha (absolute bottom-3 right-3)",
+      "label": "Open Studio",
+      "note": "Solo en nodos que tienen Studio. backgroundRemover NO lleva Studio."
     },
-    "promptTextReadable": {
-      "note": "Sobre fondo slate-50/50 el cuerpo legible debe ser oscuro (no text-gray-400).",
-      "content": {
-        "tailwind": "font-mono text-[10px] leading-relaxed text-slate-800",
-        "hex": "#1a1a1b",
-        "mapsTo": "colors.text.primaryDark"
-      },
-      "placeholder": {
-        "tailwind": "text-[10px] italic text-slate-500",
-        "mapsTo": "colors.text.muted (#6b7280 aprox.)"
-      }
+    "secondaryChip": {
+      "class": "foldder-frameless-chip",
+      "background": "chip oscuro (var --foldder-frameless-dark-chip-bg)",
+      "shape": "cuadrado, overlay abajo-izquierda"
     },
-    "overflow": "El contenedor del preview debe usar overflow-hidden + border-radius inferior alineado al nodo si hay imagen a pantalla completa (evitar picos en esquinas)."
+    "deprecated": "NADA de píldoras (border-radius 999px) ni del CTA azul marino #1d2433 de la v1."
   },
+
+  "overlays": {
+    "vars": { "--foldder-frameless-overlay-bottom": "12px", "--foldder-frameless-overlay-side": "14px" },
+    "previewTabs": "Botones tipo pestaña (original/mask/cutout, etc.): cuadrados, arriba-derecha, activo = bg blanco + texto negro; inactivo = bg negro/45 + texto blanco/55. Llevar type=button, nodrag y stopPropagation para que el clic registre sobre la media.",
+    "secondaryPanel": ".foldder-frameless-secondary-panel: panel oscuro plano (overlay) para ajustes finos (sliders). Puede revelarse en hover."
+  },
+
+  "accentPerNode": {
+    "var": "--foldder-frameless-accent",
+    "note": "Color de acento (slider/handle/focus) por nodo. Ejemplos: crop #f59e0b, backgroundRemover #22d3ee, describer (palette-j).",
+    "cardColorVar": "--foldder-node-card-bg",
+    "examples": { "inspiration": "#0ac38a", "photoRoom": "#71449f", "designer": "palette-e", "describer": "imagen + #fb339a" }
+  },
+
   "handles": {
-    "class": "handle-wrapper",
-    "gapPx": 6,
-    "label": {
-      "class": "handle-label",
-      "opacityHover": "custom-node:hover aumenta visibilidad (ver spaces.css)"
-    }
+    "input": "<div class='handle-wrapper handle-left'> + FoldderDataHandle(target, Position.Left) + <span class='handle-label'>",
+    "output": "<div class='handle-wrapper handle-right'> + FoldderDataHandle(source, Position.Right)",
+    "multiple": "Para varias salidas en el mismo lado, repartir con style={{ top: '30%' | '50%' | '70%' }} en el wrapper (tiene prioridad sobre el top:50% por defecto).",
+    "labels": ".handle-label aparece en hover; puede teñirse con text-<color> según el dataType."
   },
-  "motion": {
-    "selection": {
-      "transform": "translateY(-2px) scale(1.005)",
-      "transition": "heredado del hover/selected .custom-node"
-    }
+
+  "content": {
+    "textOnCard": "Texto e iconos en blanco (#fff) o blancos translúcidos (rgba(255,255,255,.5-.9)).",
+    "emptyState": { "iconSizePx": 24, "caption": { "fontSizePx": 8, "fontWeight": 700, "textTransform": "uppercase", "opacity": 0.25 } }
   },
-  "tokensFlat": {
-    "radius.card": "12px",
-    "radius.headerTop": "12px",
-    "radius.buttonPrimary": "8px",
-    "radius.badge": "4px",
-    "radius.inset": "6px",
-    "blur.card": "24px",
-    "color.button.navy": "#1d2433",
-    "color.execute.bg": "#1d2433",
-    "color.execute.bgHover": "#161b27",
-    "color.header.text": "#ffffff",
-    "type.header.tracking": "0.1em",
-    "type.button.tracking": "0.1em",
-    "shadow.card": "0 4px 6px -1px rgba(0,0,0,0.05), 0 20px 40px -4px rgba(0,0,0,0.08)"
-  }
+
+  "selection": {
+    "ring": "outline 1.5px solid var(--foldder-node-output-color, --foldder-frameless-accent); offset 3px. Sin anillo blanco extra ni transform."
+  },
+
+  "pitfalls": [
+    "CSS :is(): la especificidad de un :is(...) es la MÁXIMA de sus argumentos. Mezclar selectores de atributo (p.ej. button[class*='rounded-2xl']) con clases en un :is() inflaba la especificidad y hacía que una regla 'glass' ganara a las reglas por-nodo. Causa real del CTA del describer en píldora.",
+    "Hijos directos de .custom-node: reglas globales (spaces.css ~422 y ~551) fuerzan position:relative; los overlays absolutos deben colgar de .node-content, no del .custom-node.",
+    ".node-header está oculta en todos los nodos: no confiar en ella para el título; usar NodeLabel.",
+    "node--media hace que .foldder-frameless-main sea absolute inset:0 con bg #111: dar bg/preview dentro, no esperar flujo normal."
+  ]
 }
