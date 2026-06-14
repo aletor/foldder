@@ -283,6 +283,66 @@ export function findLibraryDropPlan(
   return null;
 }
 
+export type TouchConnectPlan = {
+  source: string;
+  target: string;
+  sourceHandle: string;
+  targetHandle: string;
+};
+
+function tryTouchConnectPair(
+  sourceNode: Node,
+  targetNode: Node,
+  edgeList: Pick<Edge, 'source' | 'sourceHandle' | 'target' | 'targetHandle'>[],
+  allNodes: Node[],
+): TouchConnectPlan | null {
+  const sourceOut = NODE_REGISTRY[sourceNode.type as string]?.outputs ?? [];
+  const targetIn = NODE_REGISTRY[targetNode.type as string]?.inputs ?? [];
+  for (const out of sourceOut) {
+    for (const inp of targetIn) {
+      if (!sourceHandleIsFree(sourceNode.id, out.id, edgeList)) continue;
+      const freeTarget = firstFreeTargetHandleOnNode(
+        targetNode.id,
+        targetNode.type as string,
+        inp.type,
+        inp.id,
+        edgeList,
+      );
+      if (!freeTarget) continue;
+      if (
+        areNodesConnectable(
+          sourceNode,
+          targetNode,
+          { sourceHandle: out.id, targetHandle: freeTarget },
+          allNodes,
+        )
+      ) {
+        return {
+          source: sourceNode.id,
+          target: targetNode.id,
+          sourceHandle: out.id,
+          targetHandle: freeTarget,
+        };
+      }
+    }
+  }
+  return null;
+}
+
+/** Best handle pair to connect two existing nodes on touch (tries both directions). */
+export function findTouchConnectPlan(
+  nodeA: Node,
+  nodeB: Node,
+  edgeList: Pick<Edge, 'source' | 'sourceHandle' | 'target' | 'targetHandle'>[],
+  allNodes: Node[],
+): TouchConnectPlan | null {
+  if (nodeA.id === nodeB.id) return null;
+  return (
+    tryTouchConnectPair(nodeA, nodeB, edgeList, allNodes) ??
+    tryTouchConnectPair(nodeB, nodeA, edgeList, allNodes)
+  );
+}
+
 /** Approximate width for layout when React Flow has not measured the node yet. */
 const DEFAULT_W: Record<string, number> = {
   mediaInput: 300,

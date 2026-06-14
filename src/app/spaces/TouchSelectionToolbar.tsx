@@ -1,12 +1,14 @@
 "use client";
 
-import { BoxSelect, Hand, Trash2, X } from "lucide-react";
+import { BoxSelect, Hand, Link2, Trash2, X } from "lucide-react";
 import type { TouchCanvasTool } from "./touch-canvas-tool";
 
 type TouchSelectionToolbarProps = {
   tool: TouchCanvasTool;
   onToolChange: (tool: TouchCanvasTool) => void;
   selectedCount: number;
+  connectSourceId: string | null;
+  onClearConnectSource: () => void;
   onDelete: () => void;
   onClearSelection: () => void;
 };
@@ -15,6 +17,8 @@ export function TouchSelectionToolbar({
   tool,
   onToolChange,
   selectedCount,
+  connectSourceId,
+  onClearConnectSource,
   onDelete,
   onClearSelection,
 }: TouchSelectionToolbarProps) {
@@ -24,6 +28,13 @@ export function TouchSelectionToolbar({
       : selectedCount === 1
         ? "1 nodo"
         : `${selectedCount} nodos`;
+
+  const connectHint =
+    tool === "connect"
+      ? connectSourceId
+        ? "Toca otro nodo"
+        : "Toca origen"
+      : null;
 
   return (
     <div
@@ -54,11 +65,37 @@ export function TouchSelectionToolbar({
         >
           <BoxSelect size={18} strokeWidth={2} aria-hidden />
         </button>
+        <button
+          type="button"
+          onClick={() => onToolChange("connect")}
+          className={`flex min-h-[44px] min-w-[44px] items-center justify-center rounded-none border-l border-white/10 ${
+            tool === "connect" ? "bg-white/15 text-white" : "text-white/55 active:bg-white/10"
+          }`}
+          aria-label="Conectar nodos"
+          aria-pressed={tool === "connect"}
+        >
+          <Link2 size={18} strokeWidth={2} aria-hidden />
+        </button>
       </div>
 
-      <span className="hidden min-w-[4.5rem] truncate px-2 text-[11px] text-white/60 sm:inline">{countLabel}</span>
+      {connectHint ? (
+        <span className="max-w-[5.5rem] truncate px-2 text-[11px] font-medium text-sky-200/90">{connectHint}</span>
+      ) : (
+        <span className="hidden min-w-[4.5rem] truncate px-2 text-[11px] text-white/60 sm:inline">{countLabel}</span>
+      )}
 
-      {selectedCount > 0 ? (
+      {connectSourceId ? (
+        <button
+          type="button"
+          onClick={onClearConnectSource}
+          className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-none text-white/60 active:bg-white/10"
+          aria-label="Cancelar conexión"
+        >
+          <X size={18} strokeWidth={2} aria-hidden />
+        </button>
+      ) : null}
+
+      {selectedCount > 0 && tool !== "connect" ? (
         <>
           <button
             type="button"

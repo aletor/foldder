@@ -46,6 +46,8 @@ import {
 
 import Sidebar from "./Sidebar";
 import { TouchSelectionToolbar } from "./TouchSelectionToolbar";
+import { TouchNodeContextMenu } from "./TouchNodeContextMenu";
+import { useTouchNodeLongPress } from "./use-touch-node-long-press";
 import { useInputMode } from "./input-mode-context";
 import type { TouchCanvasTool } from "./touch-canvas-tool";
 import { useStudioCanvasOpen } from "./hooks/use-studio-canvas-open";
@@ -148,6 +150,7 @@ import { useNodeExecutionRunner } from "./NodeExecutionBridge";
 import {
   areNodesConnectable,
   findLibraryDropPlan,
+  findTouchConnectPlan,
   computeLibraryDropPosition,
   findTopNodeUnderFlowPoint,
   findEmptyPositionForNewNode,
@@ -660,7 +663,11 @@ export function SpacesContent() {
   const [touchCanvasTool, setTouchCanvasTool] = useState<TouchCanvasTool>("pan");
   const touchCanvasToolRef = useRef<TouchCanvasTool>("pan");
   touchCanvasToolRef.current = touchCanvasTool;
+  const [touchConnectSourceId, setTouchConnectSourceId] = useState<string | null>(null);
+  const touchConnectSourceRef = useRef<string | null>(null);
+  touchConnectSourceRef.current = touchConnectSourceId;
   const touchPreClickSelectionRef = useRef<Set<string>>(new Set());
+  const touchConnectNodesRef = useRef<(sourceId: string, targetId: string) => void>(() => {});
   const [nodes, setNodes, onNodesChange] = useNodesState<any>(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<any>(initialEdges);
   /** Siempre la misma referencia que `nodes` / `edges` (sync en render, no en useEffect) */
@@ -2528,6 +2535,18 @@ export function SpacesContent() {
       if (idx >= 0) setCardsFocusIndex(idx);
       return;
     }
+
+    if (isTouchUI && canvasViewModeRef.current === "free" && touchCanvasToolRef.current === "connect") {
+      const sourceId = touchConnectSourceRef.current;
+      if (!sourceId || sourceId === node.id) {
+        setTouchConnectSourceId(sourceId === node.id ? null : node.id);
+        return;
+      }
+      touchConnectNodesRef.current(sourceId, node.id);
+      setTouchConnectSourceId(null);
+      return;
+    }
+
     setNodes((nds) => {
       let next = nds;
 
@@ -2576,6 +2595,8 @@ export function SpacesContent() {
   /** Clic en el vacío: migrar `style.zIndex` legado → `node.zIndex` en todos los nodos. */
   const onPaneClick = useCallback(() => {
     if (canvasViewModeRef.current === 'cards') return;
+    setTouchConnectSourceId(null);
+    setContextMenu(null);
     setNodes((nds) => {
       let changed = false;
       const next = nds.map((n) => {
@@ -5053,6 +5074,29 @@ export function SpacesContent() {
     [setEdges, takeSnapshot, fitViewToNodeIds, updateNodeInternals, liveNodesRef]
   );
 
+  useEffect(() => {
+    touchConnectNodesRef.current = (sourceId, targetId) => {
+      const allNodes = liveNodesRef.current;
+      const nodeA = allNodes.find((n) => n.id === sourceId);
+      const nodeB = allNodes.find((n) => n.id === targetId);
+      if (!nodeA || !nodeB) return;
+      const plan = findTouchConnectPlan(nodeA, nodeB, liveEdgesRef.current, allNodes);
+      if (!plan) return;
+      onConnect({
+        source: plan.source,
+        target: plan.target,
+        sourceHandle: plan.sourceHandle,
+        targetHandle: plan.targetHandle,
+      });
+    };
+  }, [onConnect]);
+
+  useEffect(() => {
+    if (touchCanvasTool !== "connect") {
+      setTouchConnectSourceId(null);
+    }
+  }, [touchCanvasTool]);
+
   // ── Handle→Node: soltar conexión en el lienzo vacío crea el nodo más probable (ver canvas-connect-end-drop).
   // Requiere connectionMode={ConnectionMode.Loose} para poder arrastrar desde entradas (target).
   // El nodo se previsualiza siguiendo el cursor (igual que arrastrar desde el sidebar) y se
@@ -5552,7 +5596,7 @@ export function SpacesContent() {
         setTimeout(() => {
           void fitView({
             padding: FIT_VIEW_PADDING_NODE_FOCUS,
-            duration: fitAnim(650),
+            duration: isTouchUI ? 0 : fitAnim(650),
             interpolate: "smooth",
             ...FOLDDER_FIT_VIEW_EASE,
           });
@@ -5594,6 +5638,21 @@ export function SpacesContent() {
       return nds.map((n) => (n.selected ? { ...n, selected: false } : n));
     });
   }, [setNodes]);
+
+  const handleTouchNodeLongPress = useCallback(
+    ({ nodeId, clientX, clientY }: { nodeId: string; clientX: number; clientY: number }) => {
+      if (touchCanvasToolRef.current === "connect") return;
+      setNodes((nds) => nds.map((n) => ({ ...n, selected: n.id === nodeId })));
+      setContextMenu({ x: clientX, y: clientY, nodeId });
+    },
+    [setNodes],
+  );
+
+  useTouchNodeLongPress({
+    enabled: touchFreeCanvas && !touchGraphSuspended,
+    containerRef: reactFlowWrapper,
+    onLongPress: handleTouchNodeLongPress,
+  });
 
   const touchDeletableSelectedCount = useMemo(() => {
     if (!isTouchUI || canvasViewMode !== "free") return 0;
@@ -5682,6 +5741,7 @@ export function SpacesContent() {
         isCompat && 'library-drop-compatible',
         isHover && 'library-drop-highlight',
         isOverviewHover && 'foldder-ctrl-overview-hover',
+        touchConnectSourceId && n.id === touchConnectSourceId && 'foldder-touch-connect-source',
       ]
         .filter(Boolean)
         .join(' ');
@@ -5703,6 +5763,7 @@ export function SpacesContent() {
     activeIntroIds,
     isNodeInCanvasIntro,
     overviewHoverHighlightId,
+    touchConnectSourceId,
   ]);
 
   const renderCanvasDragPreview = useCallback(
@@ -6325,10 +6386,12 @@ export function SpacesContent() {
           zoomActivationKeyCode={null}
           noPanClassName={XYFLOW_NO_PAN_WHEEL_GUARD_CLASS}
           zoomOnDoubleClick={false}
-          nodesDraggable={canvasViewMode === 'free'}
-          nodesConnectable={canvasViewMode === 'free' && !overviewModeActive}
+          nodesDraggable={
+            canvasViewMode === "free" && (!touchFreeCanvas || touchCanvasTool === "select")
+          }
+          nodesConnectable={canvasViewMode === "free" && !overviewModeActive && !isTouchUI}
 
-          className={`spaces-canvas${spaceHeld || middlePanHeld ? " spaces-canvas--space-pan" : ""}${touchFreeCanvas ? " spaces-canvas--touch spaces-canvas--touch-perf" : ""}${touchFreeCanvas && touchCanvasTool === "select" ? " spaces-canvas--touch-select" : ""}${touchGraphSuspended ? " spaces-canvas--touch-graph-suspended" : ""}${canvasViewMode === "cards" ? " spaces-canvas--cards-mode" : ""}${overviewModeActive ? " foldder-overview-mode-active" : ""}${canvasPerformanceMode ? " spaces-canvas--performance" : ""}`}
+          className={`spaces-canvas${spaceHeld || middlePanHeld ? " spaces-canvas--space-pan" : ""}${touchFreeCanvas ? " spaces-canvas--touch spaces-canvas--touch-perf" : ""}${touchFreeCanvas && touchCanvasTool === "select" ? " spaces-canvas--touch-select" : ""}${touchFreeCanvas && touchCanvasTool === "connect" ? " spaces-canvas--touch-connect" : ""}${touchGraphSuspended ? " spaces-canvas--touch-graph-suspended" : ""}${canvasViewMode === "cards" ? " spaces-canvas--cards-mode" : ""}${overviewModeActive ? " foldder-overview-mode-active" : ""}${canvasPerformanceMode ? " spaces-canvas--performance" : ""}`}
           style={reactFlowCanvasStyle}
         >
           <FoldderCanvasGridBackground gap={FOLDDER_GRID_STEP} lineWidth={0.7} color="#111" dotSize={5} />
@@ -6345,8 +6408,37 @@ export function SpacesContent() {
             tool={touchCanvasTool}
             onToolChange={setTouchCanvasTool}
             selectedCount={touchDeletableSelectedCount}
+            connectSourceId={touchConnectSourceId}
+            onClearConnectSource={() => setTouchConnectSourceId(null)}
             onDelete={deleteSelectedCanvasNodes}
             onClearSelection={clearCanvasNodeSelection}
+          />
+        )}
+
+        {isAuthenticated && touchFreeCanvas && contextMenu?.nodeId && (
+          <TouchNodeContextMenu
+            x={contextMenu.x}
+            y={contextMenu.y}
+            nodeId={contextMenu.nodeId}
+            nodeType={nodes.find((n) => n.id === contextMenu.nodeId)?.type}
+            canGroup={
+              nodes.filter(
+                (n) => n.selected && n.type !== "canvasGroup" && n.id !== FOLDDER_LIBRARY_PREVIEW_NODE_ID,
+              ).length >= 2
+            }
+            onClose={() => setContextMenu(null)}
+            onDelete={() => handleFlowNodesChange([{ type: "remove", id: contextMenu.nodeId! }])}
+            onDuplicateNote={
+              nodes.find((n) => n.id === contextMenu.nodeId)?.type === "notes"
+                ? () => duplicateStandardNote(contextMenu.nodeId!)
+                : undefined
+            }
+            onGroup={() => groupSelectedToCanvasGroup()}
+            onStartConnect={() => {
+              setTouchCanvasTool("connect");
+              setTouchConnectSourceId(contextMenu.nodeId!);
+              setContextMenu(null);
+            }}
           />
         )}
 

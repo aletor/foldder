@@ -6,12 +6,12 @@ Modo **desktop** intacto; modo **touch** activo en `(pointer: coarse)` o prefere
 
 | Fase | Estado | Notas |
 |------|--------|-------|
-| 0 — Infra (`input-mode`, viewport, `touch-action`) | ✅ En progreso | `InputModeProvider`, CSS base |
-| 1 — Grafo (pan 1 dedo, tap-to-add sidebar) | ✅ En progreso | React Flow props en touch |
-| 2 — Nodos del grafo | ✅ En progreso | Multi-select touch (Pan/Select + tap acumulativo); barra eliminar |
-| 3 — FreehandStudio / PhotoRoom | ✅ En progreso | Pointer events en canvas; pinch/pan 2 dedos |
-| 4 — Flujos secundarios | ⏳ Pendiente | Brain, wallet, assistant |
-| 5 — Polish CSS coarse | ✅ En progreso | Safe areas, hover off, perf CSS |
+| 0 — Infra (`input-mode`, viewport, `touch-action`) | ✅ Hecho | `InputModeProvider`, CSS base |
+| 1 — Grafo (pan 1 dedo, tap-to-add sidebar) | ✅ Hecho | React Flow props en touch |
+| 2 — Nodos del grafo | ✅ Hecho | Pan/Select/Connect + tap acumulativo; barra inferior |
+| 3 — FreehandStudio / PhotoRoom | ✅ Hecho | Pointer events; pinch/pan 2 dedos |
+| 4 — Flujos secundarios | ⏳ Parcial | Brain/wallet/assistant pendientes |
+| 5 — Polish CSS coarse | ✅ Hecho | Safe areas top/bottom, hover off, perf CSS |
 | 6 — QA release | ⏳ Pendiente | Checklist iPad |
 
 ## Preferencia de input
@@ -22,37 +22,34 @@ localStorage.setItem('foldder-input-mode-preference', 'auto' | 'desktop' | 'touc
 
 ## Gestos (touch)
 
-- **1 dedo en vacío (grafo):** pan
+- **1 dedo en vacío (modo Pan):** pan del lienzo
 - **Pinch:** zoom
-- **Tap en nodo:** seleccionar
+- **Tap en nodo (Pan):** seleccionar; con selección previa, tap suma/quita
+- **Modo Seleccionar:** caja de selección en vacío; tap toggle por nodo; arrastrar nodos
+- **Modo Conectar:** tap origen → tap destino (conexión automática de handles compatibles)
+- **Long-press en nodo:** menú contextual (eliminar, duplicar nota, agrupar, conectar)
 - **Tap en tile sidebar:** añadir nodo
-- **Tap en franja sidebar:** expandir librería
-- **1 dedo en studio (PhotoRoom/Designer):** dibujar / seleccionar / mover (delegado a handlers existentes)
+- **Tap fuera sidebar:** cerrar librería
+- **1 dedo en studio (PhotoRoom/Designer/Nano):** dibujar / seleccionar / mover
 - **2 dedos en studio:** pan + pinch zoom del viewport
-- **Modo Pan (default):** 1 dedo mueve el lienzo; tap selecciona 1 nodo; con nodos ya seleccionados, tap suma/quita
-- **Modo Seleccionar:** 1 dedo en vacío = caja de selección; tap toggle por nodo
-- **Barra inferior:** Pan / Select + Eliminar / Deseleccionar
-- **Long-press (futuro):** menú contextual / colocación
+- **Barra inferior:** Pan / Select / Connect + Eliminar / Deseleccionar
 
 ## Rendimiento (touch / iPad)
 
-Análisis e intervenciones aplicadas en el lienzo Spaces:
+| Área | Cambio | Impacto |
+|------|--------|---------|
+| React Flow | `onlyRenderVisibleElements` en touch | Menos nodos fuera de viewport |
+| React Flow | `elevateNodesOnSelect` / `elevateEdgesOnSelect` off | Menos re-mounts |
+| React Flow | `nodesDraggable` solo en modo Select | Pan sin arrastres accidentales |
+| React Flow | `nodesConnectable` off; modo Connect | Sin handles difíciles de tocar |
+| CSS touch | Sin blur HUD/toolbar; safe-area top/bottom | Menos GPU en Safari iPad |
+| JS | Grafo suspendido con studio abierto | Menos RAM/GPU en edición |
+| JS | Margen viewport previews 360px | Menos decodificación de imágenes |
+| JS | `fitView` instantáneo al borrar en touch | Menos jank post-delete |
+| JS | Autosave diferido durante pan/zoom | Menos I/O en gestos |
 
-| Área | Cambio | Impacto esperado |
-|------|--------|------------------|
-| React Flow | `onlyRenderVisibleElements` en touch | Menos nodos/aristas pintados fuera de viewport |
-| React Flow | `elevateNodesOnSelect` / `elevateEdgesOnSelect` off en touch | Menos re-mounts al seleccionar |
-| CSS `[data-foldder-touch-ui]` | Sin blur en HUD/topbar y toolbar de selección | Menos capas GPU en Safari iPad |
-| CSS touch | Sombras y animaciones de intro/drop simplificadas | Menos repaints durante pan |
-| CSS `.spaces-canvas--performance` | Sin transiciones/filtros durante pan/zoom | Compositor más estable al mover el grafo |
-| JS | Grafo oculto con studio abierto en touch | Menos GPU/RAM mientras editas PhotoRoom/Designer |
-| JS | Previews de nodos: margen viewport 360px en touch (antes 900) | Menos decodificación de imágenes fuera de pantalla |
-| JS | FreehandStudio touch: sin anillos de preview del pincel | Menos rAF y repaints al pintar en iPad |
+### Pendiente
 
-### Pendiente / recomendaciones
-
-- Memoizar nodos pesados (PhotoRoom preview, Designer) con comparación shallow de `data`
-- Virtualizar previews de imagen en nodos fuera de viewport
-- Reducir `fitView` animado tras borrar en touch (opcional, UX vs perf)
-
-Ver plan completo en conversación / tickets de fase 1–6.
+- Apple Pencil pressure/tilt en FreehandStudio
+- Touch básico en Video Editor viewer (pinch/pan timeline preview)
+- QA checklist iPad Safari / PWA

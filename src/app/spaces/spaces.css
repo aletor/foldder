@@ -66,6 +66,16 @@
   cursor: crosshair !important;
 }
 
+.spaces-canvas--touch.spaces-canvas--touch-connect .react-flow__pane,
+.spaces-canvas--touch.spaces-canvas--touch-connect .react-flow__pane:active {
+  cursor: cell !important;
+}
+
+.react-flow__node.foldder-touch-connect-source .custom-node {
+  outline: 2px solid rgba(59, 130, 246, 0.85);
+  outline-offset: 2px;
+}
+
 /* Studio abierto en iPad: no pintar ni procesar puntero en el grafo de fondo */
 .foldder-touch-graph-suspended .react-flow,
 .spaces-canvas--touch-graph-suspended {
@@ -4808,6 +4818,10 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
   margin: 0 !important;
   padding: 0 !important;
   gap: 0 !important;
+}
+
+[data-foldder-touch-ui] [data-foldder-top-hud] {
+  padding-top: env(safe-area-inset-top) !important;
 }
 
 [data-foldder-top-hud] > div {
