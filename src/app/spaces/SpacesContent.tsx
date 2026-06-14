@@ -202,7 +202,8 @@ import {
   FIT_VIEW_PADDING_CARDS,
   fitAnim,
 } from "./spaces-view-constants";
-import { withFoldderCanvasIntro } from "./spaces-canvas-intro";
+import { stripEphemeralNodeClassNames, withFoldderCanvasIntro } from "./spaces-canvas-intro";
+import { FoldderCanvasIntroContext } from "./foldder-canvas-intro-context";
 import {
   FOLDDER_GRID_STEP,
   applyNodeGridPreset,
@@ -685,12 +686,18 @@ export function SpacesContent() {
     reactFlowCanvasStyle,
   } = useSpacesCanvasBackground();
 
-  const { scheduleFoldderCanvasIntroEnd } = useFoldderCanvasIntro(
+  const { scheduleFoldderCanvasIntroEnd, isNodeInCanvasIntro, activeIntroIds, markCanvasNodesIntroCompleted } =
+    useFoldderCanvasIntro(
     nodes,
     setNodes,
     liveNodesRef,
     liveEdgesRef,
     updateNodeInternals,
+  );
+
+  const foldderCanvasIntroContextValue = useMemo(
+    () => ({ scheduleFoldderCanvasIntroEnd, isNodeInCanvasIntro }),
+    [scheduleFoldderCanvasIntroEnd, isNodeInCanvasIntro],
   );
 
   const { takeSnapshot, undo, redo } = useSpacesUndoRedo(setNodes, setEdges, liveNodesRef, liveEdgesRef);
@@ -3595,6 +3602,7 @@ export function SpacesContent() {
       setSpacesMap(mapToCommit);
       const nextSpaceNodes = [...targetSpace.nodes];
       setNodes(nextSpaceNodes);
+      markCanvasNodesIntroCompleted(nextSpaceNodes.map((n: Node) => n.id));
       setEdges([...(targetSpace.edges || [])]);
       scheduleNodeInternalsRefresh(nextSpaceNodes.map((n: any) => String(n.id)));
       scheduleEdgeGeometryRefresh();
@@ -3602,7 +3610,7 @@ export function SpacesContent() {
       setActiveSpaceId(targetSpaceId);
       setTimeout(() => fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(800), ...FOLDDER_FIT_VIEW_EASE }), 100);
     }
-  }, [activeSpaceId, nodes, edges, spacesMap, setNodes, setEdges, fitView, syncCurrentSpaceState, scheduleNodeInternalsRefresh, scheduleEdgeGeometryRefresh]);
+  }, [activeSpaceId, nodes, edges, spacesMap, setNodes, setEdges, fitView, syncCurrentSpaceState, scheduleNodeInternalsRefresh, scheduleEdgeGeometryRefresh, markCanvasNodesIntroCompleted]);
 
   /** Vuelve al lienzo root con sync; fit a todo el grafo tras aplicar nodos (doble rAF = tras pintar). */
   const goToRootCanvas = useCallback(() => {
@@ -3613,6 +3621,7 @@ export function SpacesContent() {
     setSpacesMap(updatedSpacesMap);
     const nextRootNodes = [...rootSpace.nodes];
     setNodes(nextRootNodes);
+    markCanvasNodesIntroCompleted(nextRootNodes.map((n: Node) => n.id));
     setEdges([...(rootSpace.edges || [])]);
     scheduleNodeInternalsRefresh(nextRootNodes.map((n: any) => String(n.id)));
     scheduleEdgeGeometryRefresh();
@@ -3623,7 +3632,7 @@ export function SpacesContent() {
         void fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(480), interpolate: 'smooth', ...FOLDDER_FIT_VIEW_EASE });
       });
     });
-  }, [activeSpaceId, nodes, edges, spacesMap, setNodes, setEdges, fitView, syncCurrentSpaceState, scheduleNodeInternalsRefresh, scheduleEdgeGeometryRefresh]);
+  }, [activeSpaceId, nodes, edges, spacesMap, setNodes, setEdges, fitView, syncCurrentSpaceState, scheduleNodeInternalsRefresh, scheduleEdgeGeometryRefresh, markCanvasNodesIntroCompleted]);
 
   const handleEscapeNavigation = useCallback((): boolean => {
     if (assistantClarify) {
@@ -4545,6 +4554,7 @@ export function SpacesContent() {
       const sanitizedActiveGraph = sanitizeLegacyRemovedNodesFromGraph(nextNodes as Node[], nextEdges as Edge[]);
 
       setProjectLoadingStage("Montando nodos y conexiones en el lienzo…");
+      markCanvasNodesIntroCompleted(sanitizedActiveGraph.nodes.map((n: Node) => n.id));
       setNodes(sanitizedActiveGraph.nodes);
       setEdges(sanitizedActiveGraph.edges);
       scheduleNodeInternalsRefresh(sanitizedActiveGraph.nodes.map((n: any) => String(n.id)));
@@ -4799,6 +4809,7 @@ export function SpacesContent() {
     );
 
     setNodes(sanitized.nodes);
+    markCanvasNodesIntroCompleted(sanitized.nodes.map((n) => n.id));
     setEdges(sanitized.edges);
     scheduleNodeInternalsRefresh(sanitized.nodes.map((n: any) => String(n.id)));
     scheduleEdgeGeometryRefresh();
@@ -5573,8 +5584,8 @@ export function SpacesContent() {
         const stackIdx = orderedIndexById.get(node.id) ?? -1;
         if (stackIdx === -1) {
           const cls = [
-            node.className,
-            node.data?._foldderCanvasIntro && 'foldder-node-canvas-intro',
+            stripEphemeralNodeClassNames(node.className),
+            isNodeInCanvasIntro(node.id) && 'foldder-node-canvas-intro',
             isCompat && 'library-drop-compatible',
             isHover && 'library-drop-highlight',
             isOverviewHover && 'foldder-ctrl-overview-hover',
@@ -5586,8 +5597,8 @@ export function SpacesContent() {
 
         const isFocused = stackIdx === f;
         const cls = [
-          node.className,
-          node.data?._foldderCanvasIntro && 'foldder-node-canvas-intro',
+          stripEphemeralNodeClassNames(node.className),
+          isNodeInCanvasIntro(node.id) && 'foldder-node-canvas-intro',
           isCompat && 'library-drop-compatible',
           isHover && 'library-drop-highlight',
           isOverviewHover && 'foldder-ctrl-overview-hover',
@@ -5626,8 +5637,8 @@ export function SpacesContent() {
       const isHover = n.id === libraryDropTargetId;
       const isOverviewHover = n.id === overviewHoverHighlightId;
       const cls = [
-        n.className,
-        n.data?._foldderCanvasIntro && 'foldder-node-canvas-intro',
+        stripEphemeralNodeClassNames(n.className),
+        isNodeInCanvasIntro(n.id) && 'foldder-node-canvas-intro',
         isCompat && 'library-drop-compatible',
         isHover && 'library-drop-highlight',
         isOverviewHover && 'foldder-ctrl-overview-hover',
@@ -5649,6 +5660,8 @@ export function SpacesContent() {
     canvasViewMode,
     cardsFocusIndex,
     cardsIntroTick,
+    activeIntroIds,
+    isNodeInCanvasIntro,
     overviewHoverHighlightId,
   ]);
 
@@ -6110,6 +6123,7 @@ export function SpacesContent() {
   );
 
   return (
+    <FoldderCanvasIntroContext.Provider value={foldderCanvasIntroContextValue}>
     <div className="flex w-full h-full" ref={reactFlowWrapper} style={{ flexDirection: 'column' }}>
 
       <SpacesWelcomeChrome
@@ -6167,6 +6181,8 @@ export function SpacesContent() {
                   'radial-gradient(ellipse 72% 58% at 50% 48%, rgba(15,23,42,0) 0%, rgba(15,23,42,0.14) 58%, rgba(15,23,42,0.38) 100%)',
               }}
             />
+            {!isTouchUI ? (
+              <>
             <div
               className="absolute left-0 top-0 bottom-0 w-[min(26vw,380px)]"
               style={{
@@ -6187,6 +6203,8 @@ export function SpacesContent() {
                 WebkitMaskImage: 'linear-gradient(to left, black 0%, black 35%, transparent 100%)',
               }}
             />
+              </>
+            ) : null}
           </div>
         )}
         {/* Wheel: listener global (ratón→zoom, trackpad→pan); panOnScroll false para no solapar con XY Flow. noPanClassName placeholder evita .nopan bloqueando wheel en nodos */}
@@ -6223,6 +6241,10 @@ export function SpacesContent() {
           onMoveEnd={endCanvasPerformanceInteraction}
           onConnectEnd={onConnectEnd}
           connectionMode={ConnectionMode.Loose}
+          autoPanOnNodeDrag={!isTouchUI}
+          autoPanOnConnect={!isTouchUI}
+          nodesFocusable={!isTouchUI}
+          edgesFocusable={!isTouchUI}
           elevateEdgesOnSelect={!isTouchUI}
           elevateNodesOnSelect={!isTouchUI}
           onlyRenderVisibleElements={isTouchUI}
@@ -6256,7 +6278,7 @@ export function SpacesContent() {
           nodesDraggable={canvasViewMode === 'free'}
           nodesConnectable={canvasViewMode === 'free' && !overviewModeActive}
 
-          className={`spaces-canvas${spaceHeld || middlePanHeld ? " spaces-canvas--space-pan" : ""}${isTouchUI ? " spaces-canvas--touch" : ""}${canvasViewMode === "cards" ? " spaces-canvas--cards-mode" : ""}${overviewModeActive ? " foldder-overview-mode-active" : ""}${canvasPerformanceMode ? " spaces-canvas--performance" : ""}`}
+          className={`spaces-canvas${spaceHeld || middlePanHeld ? " spaces-canvas--space-pan" : ""}${isTouchUI ? " spaces-canvas--touch spaces-canvas--touch-perf" : ""}${canvasViewMode === "cards" ? " spaces-canvas--cards-mode" : ""}${overviewModeActive ? " foldder-overview-mode-active" : ""}${canvasPerformanceMode ? " spaces-canvas--performance" : ""}`}
           style={reactFlowCanvasStyle}
         >
           <FoldderCanvasGridBackground gap={FOLDDER_GRID_STEP} lineWidth={0.7} color="#111" dotSize={5} />
@@ -7300,5 +7322,6 @@ export function SpacesContent() {
       </div>
       </div>
     </div>
+    </FoldderCanvasIntroContext.Provider>
   );
 }

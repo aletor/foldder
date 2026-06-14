@@ -2,6 +2,7 @@
 
 import { useStore } from "@xyflow/react";
 import { shallow } from "zustand/shallow";
+import { useInputMode } from "./input-mode-context";
 
 const GRID_BG_STYLE = {
   position: "absolute",
@@ -24,6 +25,7 @@ export function FoldderCanvasGridBackground({
   color = "#111",
   dotSize = 5,
 }: FoldderCanvasGridBackgroundProps) {
+  const { isTouchUI } = useInputMode();
   const { transform, patternId } = useStore(
     (state) => ({
       transform: state.transform,
@@ -73,13 +75,15 @@ export function FoldderCanvasGridBackground({
             strokeWidth={scaledLineWidth}
             className="foldder-canvas-grid-lines"
           />
-          <circle
-            cx={0}
-            cy={0}
-            r={dotRadius}
-            fill={color}
-            className="foldder-canvas-grid-dots"
-          />
+          {!isTouchUI ? (
+            <circle
+              cx={0}
+              cy={0}
+              r={dotRadius}
+              fill={color}
+              className="foldder-canvas-grid-dots"
+            />
+          ) : null}
         </pattern>
       </defs>
       <rect width="100%" height="100%" fill={`url(#${patternId})`} />

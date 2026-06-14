@@ -447,6 +447,7 @@ function shouldPreserveImageQualityForMediaField(
 }
 
 const SAVE_RUNTIME_KEYS = new Set([
+  "_foldderCanvasIntro",
   "redoStack",
   "undoStack",
   "localObjectUrl",

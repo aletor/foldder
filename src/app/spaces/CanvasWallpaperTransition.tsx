@@ -5,6 +5,7 @@ import { easeCircleOut, easeExpOut } from "d3-ease";
 import { Renderer, Program, Mesh, Triangle, Texture, Transform } from "ogl";
 import type { CanvasBackgroundOption } from "./canvas-backgrounds";
 import { resolveCanvasBackgroundSelection } from "./canvas-backgrounds";
+import { useInputMode } from "./input-mode-context";
 
 type Props = {
   activeId: string;
@@ -39,7 +40,7 @@ function CanvasSolidColorBackground({ color }: { color: string }) {
   };
 
   return (
-    <div className="pointer-events-none absolute inset-0 z-0 isolate">
+    <div className="pointer-events-none absolute inset-0 z-0 isolate foldder-canvas-wallpaper-layer">
       <div
         className="absolute inset-0 transition-colors duration-300"
         style={{ backgroundColor: displayColor }}
@@ -61,14 +62,18 @@ function CanvasSolidColorBackground({ color }: { color: string }) {
 const CLEAR = [248 / 255, 250 / 255, 252 / 255, 1] as const;
 const TRANSITION_MS = 1120;
 
-const bgLayerStyle = (url: string): React.CSSProperties => ({
-  backgroundColor: "#f8fafc",
-  backgroundImage: `url("${url}")`,
-  backgroundSize: "cover",
-  backgroundPosition: "center",
-  backgroundRepeat: "no-repeat",
-  backgroundAttachment: "fixed",
-});
+/** Cover dentro del contenedor del lienzo — sin `fixed` (provoca parpadeo al resize). */
+function canvasWallpaperCoverStyle(url: string): React.CSSProperties {
+  return {
+    backgroundColor: "#f8fafc",
+    backgroundImage: url ? `url("${url}")` : undefined,
+    backgroundSize: "cover",
+    backgroundPosition: "center",
+    backgroundRepeat: "no-repeat",
+  };
+}
+
+const bgLayerStyle = canvasWallpaperCoverStyle;
 
 function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -160,7 +165,7 @@ function CanvasWallpaperCssFallback({ activeId, options, solidColor }: Props) {
   };
 
   return (
-    <div className="pointer-events-none absolute inset-0 z-0 isolate">
+    <div className="pointer-events-none absolute inset-0 z-0 isolate foldder-canvas-wallpaper-layer">
       <div style={bgLayerStyle(displayUrl)} className="absolute inset-0" aria-hidden />
       {incomingUrl ? (
         <div
@@ -187,15 +192,40 @@ type GlApi = {
   uResolution: { value: Float32Array };
 };
 
+function CanvasWallpaperTouchStatic({ activeId, options, solidColor }: Props) {
+  const targetUrl = useWallpaperTargetUrl(activeId, options, solidColor);
+  return (
+    <div
+      className="pointer-events-none absolute inset-0 z-0 isolate bg-[#f8fafc] foldder-canvas-wallpaper-layer"
+      style={canvasWallpaperCoverStyle(targetUrl)}
+      aria-hidden
+    />
+  );
+}
+
 export function CanvasWallpaperTransition(props: Props) {
   const { activeId, options, solidColor } = props;
+  const { isTouchUI } = useInputMode();
   const selection = useMemo(
     () => resolveCanvasBackgroundSelection(activeId, solidColor ?? "", options),
     [activeId, options, solidColor],
   );
 
   if (selection.kind === "color") {
+    if (isTouchUI) {
+      return (
+        <div
+          className="pointer-events-none absolute inset-0 z-0 isolate bg-[#f8fafc] foldder-canvas-wallpaper-layer"
+          style={{ backgroundColor: selection.color }}
+          aria-hidden
+        />
+      );
+    }
     return <CanvasSolidColorBackground color={selection.color} />;
+  }
+
+  if (isTouchUI) {
+    return <CanvasWallpaperTouchStatic activeId={activeId} options={options} solidColor={solidColor} />;
   }
 
   return <CanvasWallpaperImageTransition activeId={activeId} options={options} solidColor={solidColor} />;
@@ -238,6 +268,7 @@ function CanvasWallpaperImageTransition({
         depth: false,
         stencil: false,
         antialias: false,
+        preserveDrawingBuffer: true,
         powerPreference: "low-power",
       });
       const { gl } = renderer;
@@ -303,6 +334,7 @@ function CanvasWallpaperImageTransition({
       gl.canvas.style.display = "block";
       gl.canvas.style.width = "100%";
       gl.canvas.style.height = "100%";
+      gl.canvas.style.backgroundColor = "#f8fafc";
 
       const api: GlApi = {
         renderer,
@@ -317,13 +349,21 @@ function CanvasWallpaperImageTransition({
       };
       apiRef.current = api;
 
+      let resizeRafId = 0;
       const resize = () => {
-        if (!containerRef.current || cancelled) return;
-        const w = Math.max(1, containerRef.current.clientWidth);
-        const h = Math.max(1, containerRef.current.clientHeight);
-        renderer.setSize(w, h);
-        uResolution.value[0] = w;
-        uResolution.value[1] = h;
+        if (resizeRafId) cancelAnimationFrame(resizeRafId);
+        resizeRafId = requestAnimationFrame(() => {
+          resizeRafId = 0;
+          if (cancelled || !containerRef.current) return;
+          const w = Math.max(1, containerRef.current.clientWidth);
+          const h = Math.max(1, containerRef.current.clientHeight);
+          renderer.setSize(w, h);
+          uResolution.value[0] = w;
+          uResolution.value[1] = h;
+          program.uniforms.uMix.value = 0;
+          program.uniforms.uBulge.value = 0;
+          renderer.render({ scene });
+        });
       };
       resize();
       const ro = new ResizeObserver(resize);
@@ -373,6 +413,7 @@ function CanvasWallpaperImageTransition({
       dispose = () => {
         cancelled = true;
         ro.disconnect();
+        if (resizeRafId) cancelAnimationFrame(resizeRafId);
         if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
         rafRef.current = null;
         apiRef.current = null;
@@ -435,7 +476,7 @@ function CanvasWallpaperImageTransition({
   return (
     <div
       ref={containerRef}
-      className="pointer-events-none absolute inset-0 z-0 isolate overflow-hidden bg-[#f8fafc]"
+      className="pointer-events-none absolute inset-0 z-0 isolate overflow-hidden bg-[#f8fafc] foldder-canvas-wallpaper-layer"
       aria-hidden
     />
   );

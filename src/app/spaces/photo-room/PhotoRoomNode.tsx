@@ -28,6 +28,7 @@ import {
   resolvePromptValueFromEdgeSourceMap,
 } from "../canvas-group-logic";
 import { withFoldderCanvasIntro } from "../spaces-canvas-intro";
+import { FOLDDER_REGISTER_CANVAS_INTRO_EVENT } from "../hooks/use-foldder-canvas-intro";
 import type { DesignerStudioApi, FreehandObject } from "../FreehandStudio";
 import { DesignerPagePreview } from "../designer/DesignerPagePreview";
 import { dispatchFoldderExportCreated } from "../foldder-export-events";
@@ -442,6 +443,12 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
         setNodes(mergedNodes as any);
         setEdges(edgesWithChains as any);
       });
+
+      window.dispatchEvent(
+        new CustomEvent(FOLDDER_REGISTER_CANVAS_INTRO_EVENT, {
+          detail: { nodeIds: [mediaId, nanoId] },
+        }),
+      );
 
       requestAnimationFrame(() => {
         updateNodeInternals(flowPhotoRoomId);

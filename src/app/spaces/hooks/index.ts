@@ -1,4 +1,4 @@
-export { useFoldderCanvasIntro } from "./use-foldder-canvas-intro";
+export { useFoldderCanvasIntro, FOLDDER_REGISTER_CANVAS_INTRO_EVENT } from "./use-foldder-canvas-intro";
 export { useSpacesBrowserFullscreen } from "./use-spaces-browser-fullscreen";
 export { useSpacesCanvasBackground } from "./use-spaces-canvas-background";
 export {

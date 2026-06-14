@@ -16,6 +16,8 @@ import React, {
 } from "react";
 import { createPortal, flushSync } from "react-dom";
 import { usePreventBrowserPinchZoom } from "@/lib/use-prevent-browser-pinch-zoom";
+import { useInputMode } from "./input-mode-context";
+import { useFreehandStudioTouchCanvasHandlers } from "./freehand/freehand-studio-touch";
 import { useClampedFixedPosition } from "@/lib/use-clamped-fixed-position";
 import { fetchBlobViaSpacesProxy } from "@/lib/spaces-proxy-fetch";
 import type { VisualDnaSlot } from "@/lib/brain/visual-dna-slot/types";
@@ -10385,6 +10387,9 @@ export function FreehandStudioCanvas({
   }, [isPhotoRoomStudioEmbed, studioCaps.toolPhotoMarquee, activeTool]);
 
   const [viewport, setViewport] = useState({ x: 0, y: 0, zoom: 1 });
+  const viewportRef = useRef(viewport);
+  viewportRef.current = viewport;
+  const { isTouchUI } = useInputMode();
   const studioShellRef = useRef<HTMLDivElement>(null);
   usePreventBrowserPinchZoom(studioShellRef);
 
@@ -22850,6 +22855,38 @@ export function FreehandStudioCanvas({
     applyPhotoRasterGradientSession,
   ]);
 
+  const clearCanvasHoverState = useCallback(() => {
+    setHoverCanvasId(null);
+    penCloseEndpointHoverRef.current = null;
+    setPenCloseEndpointHover(null);
+    scissorsCutHoverRef.current = null;
+    setScissorsCutHover(null);
+    prToolCursorBlockedRef.current = false;
+    setPrToolCursorBlocked(false);
+    cancelBrushCursorOverlayRaf();
+    brushPreviewRingRef.current = null;
+    brushPreviewLastWorldRef.current = null;
+    setBrushPreviewRings(null);
+  }, [cancelBrushCursorOverlayRaf]);
+
+  const cancelStudioTouchGesture = useCallback(() => {
+    photoRectMarqueePendingRef.current = null;
+    dragStateRef.current = null;
+    setDragState(null);
+  }, []);
+
+  const touchCanvasHandlers = useFreehandStudioTouchCanvasHandlers({
+    enabled: isTouchUI,
+    containerRef: designerPageSlideLayerRef,
+    getViewport: () => viewportRef.current,
+    setViewport,
+    handleMouseDown,
+    handleMouseMove,
+    handleMouseUp,
+    onClearHover: clearCanvasHoverState,
+    cancelActiveGesture: cancelStudioTouchGesture,
+  });
+
   const handleWheel = useCallback(
     (e: ReactWheelEvent) => {
       if ((e.target as HTMLElement).closest?.("[data-fh-text-editor]")) {
@@ -24515,22 +24552,14 @@ export function FreehandStudioCanvas({
           designerCanvasRasterLoad.phase,
         )}`}
         style={{ cursor }}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={() => {
-          setHoverCanvasId(null);
-          penCloseEndpointHoverRef.current = null;
-          setPenCloseEndpointHover(null);
-          scissorsCutHoverRef.current = null;
-          setScissorsCutHover(null);
-          prToolCursorBlockedRef.current = false;
-          setPrToolCursorBlocked(false);
-          cancelBrushCursorOverlayRaf();
-          brushPreviewRingRef.current = null;
-          brushPreviewLastWorldRef.current = null;
-          setBrushPreviewRings(null);
-        }}
+        onMouseDown={isTouchUI ? undefined : handleMouseDown}
+        onMouseMove={isTouchUI ? undefined : handleMouseMove}
+        onMouseUp={isTouchUI ? undefined : handleMouseUp}
+        onMouseLeave={isTouchUI ? undefined : clearCanvasHoverState}
+        onPointerDown={isTouchUI ? touchCanvasHandlers.onPointerDown : undefined}
+        onPointerMove={isTouchUI ? touchCanvasHandlers.onPointerMove : undefined}
+        onPointerUp={isTouchUI ? touchCanvasHandlers.onPointerUp : undefined}
+        onPointerCancel={isTouchUI ? touchCanvasHandlers.onPointerCancel : undefined}
         onWheel={handleWheel}
         onContextMenu={handleContextMenu}
         onDoubleClick={(e) => {

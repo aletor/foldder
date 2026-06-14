@@ -1,5 +1,6 @@
 import type { Edge, Node } from "@xyflow/react";
 import { NODE_REGISTRY } from "./nodeRegistry";
+import { stripEphemeralNodeClassNames, stripFoldderCanvasIntroFromNodeData } from "./spaces-canvas-intro";
 
 const LEGACY_REMOVED_CANVAS_NODE_TYPES = new Set(["background", "imageComposer", "bezierMask", "textOverlay"]);
 
@@ -270,7 +271,12 @@ export function normalizeCanvasGroupNodeZ(n: Node): Node {
 
 /** Un nodo antes de guardar o tras cargar: `zIndex` solo en propiedad del nodo, no en `style`. */
 export function normalizeNodeForPersistence(n: Node): Node {
-  return n.type === "canvasGroup" ? normalizeCanvasGroupNodeZ(n) : normalizeNodeZIndexForXYFlow(n);
+  const base = n.type === "canvasGroup" ? normalizeCanvasGroupNodeZ(n) : normalizeNodeZIndexForXYFlow(n);
+  const nextData = stripFoldderCanvasIntroFromNodeData(base.data);
+  const nextClassName = stripEphemeralNodeClassNames(base.className);
+  const withData = nextData === base.data ? base : { ...base, data: nextData };
+  if (nextClassName === base.className) return withData;
+  return { ...withData, className: nextClassName };
 }
 
 export function normalizeNodesForPersistence(nodes: Node[]): Node[] {

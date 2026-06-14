@@ -30,6 +30,7 @@ import {
   getEffectiveLocationSheetS3Key,
 } from "../cine-engine";
 import { withFoldderCanvasIntro } from "../spaces-canvas-intro";
+import { FOLDDER_REGISTER_CANVAS_INTRO_EVENT } from "../hooks/use-foldder-canvas-intro";
 import {
   StudioCanvasNodeShell,
   StudioCanvasOpenButton,
@@ -253,6 +254,11 @@ export const CineNode = memo(function CineNode({ id, data, selected }: NodeProps
       }),
     };
     setNodes((nds) => [...nds, nanoNode as (typeof nds)[number]]);
+    window.dispatchEvent(
+      new CustomEvent(FOLDDER_REGISTER_CANVAS_INTRO_EVENT, {
+        detail: { nodeIds: [nanoId] },
+      }),
+    );
     return nanoId;
   }, [getNodes, id, setNodes]);
 

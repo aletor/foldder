@@ -30,6 +30,12 @@
   --foldder-frameless-overlay-side: 14px;
 }
 
+.foldder-canvas-wallpaper-layer {
+  contain: paint;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
 /* Sin espacio: arrastre = selección (no mano). Con espacio: pan */
 .spaces-canvas:not(.spaces-canvas--space-pan) .react-flow__pane {
   cursor: crosshair;
@@ -5338,7 +5344,47 @@ body.foldder-studio-flush .left-toolbar-flyout-panel :is(button, span, div):not(
 /* ── Touch / iPad performance: lighter compositing, fewer animations ── */
 [data-foldder-touch-ui] .custom-node,
 .spaces-canvas--touch .custom-node {
-  box-shadow: 0 2px 8px -2px rgba(0, 0, 0, 0.1) !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1) !important;
+}
+
+/* Modo rendimiento permanente en iPad (sin esperar a pan/zoom) */
+[data-foldder-touch-ui] .spaces-canvas--touch-perf .custom-node,
+[data-foldder-touch-ui] .spaces-canvas--touch-perf .react-flow__edge-path,
+[data-foldder-touch-ui] .spaces-canvas--touch-perf .react-flow__connection-path,
+[data-foldder-touch-ui] .spaces-canvas--touch-perf .react-flow__handle,
+.spaces-canvas--touch.spaces-canvas--touch-perf .custom-node,
+.spaces-canvas--touch.spaces-canvas--touch-perf .react-flow__edge-path,
+.spaces-canvas--touch.spaces-canvas--touch-perf .react-flow__connection-path,
+.spaces-canvas--touch.spaces-canvas--touch-perf .react-flow__handle {
+  transition: none !important;
+  animation: none !important;
+  filter: none !important;
+  will-change: auto !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+[data-foldder-touch-ui] .spaces-canvas .custom-node::before,
+[data-foldder-touch-ui] .spaces-canvas .custom-node::after,
+.spaces-canvas--touch .custom-node::before,
+.spaces-canvas--touch .custom-node::after {
+  animation: none !important;
+  filter: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+[data-foldder-touch-ui] .spaces-canvas .custom-node.node-glow-running,
+.spaces-canvas--touch .custom-node.node-glow-running {
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12) !important;
+}
+
+[data-foldder-touch-ui] .spaces-canvas .node-header,
+[data-foldder-touch-ui] .spaces-canvas .node-header__title,
+.spaces-canvas--touch .node-header,
+.spaces-canvas--touch .node-header__title {
+  animation: none !important;
+  transition: none !important;
 }
 
 [data-foldder-touch-ui] .react-flow__node.foldder-node-canvas-intro .custom-node,
@@ -5350,30 +5396,47 @@ body.foldder-studio-flush .left-toolbar-flyout-panel :is(button, span, div):not(
 
 [data-foldder-touch-ui] .react-flow__node.library-drop-compatible .custom-node,
 [data-foldder-touch-ui] .react-flow__node.library-drop-highlight .custom-node,
+[data-foldder-touch-ui] .react-flow__node.foldder-ctrl-overview-hover .custom-node,
 .spaces-canvas--touch .react-flow__node.library-drop-compatible .custom-node,
-.spaces-canvas--touch .react-flow__node.library-drop-highlight .custom-node {
+.spaces-canvas--touch .react-flow__node.library-drop-highlight .custom-node,
+.spaces-canvas--touch .react-flow__node.foldder-ctrl-overview-hover .custom-node {
   animation: none !important;
   will-change: auto !important;
   filter: none !important;
   opacity: 1 !important;
-}
-
-[data-foldder-touch-ui] [data-foldder-top-hud] :is(.backdrop-blur-xl, .backdrop-blur-md, .backdrop-blur-2xl),
-[data-foldder-touch-ui] .touch-selection-toolbar {
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-}
-
-[data-foldder-touch-ui] [data-foldder-top-hud] :is(button, div):hover {
   transform: none !important;
 }
 
+[data-foldder-touch-ui] [data-foldder-top-hud] :is(.backdrop-blur-xl, .backdrop-blur-md, .backdrop-blur-2xl, .backdrop-blur-sm),
+[data-foldder-touch-ui] .touch-selection-toolbar,
+[data-foldder-touch-ui] [data-foldder-sidebar] .foldder-sidebar-collapsed-pill,
+[data-foldder-touch-ui] [data-foldder-pins] > div,
 [data-foldder-touch-ui] .spaces-canvas .react-flow__controls button {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.18) !important;
 }
 
-/* During pan/zoom: strip transitions that fight the compositor */
+[data-foldder-touch-ui] [data-foldder-top-hud] :is(button, div):hover,
+[data-foldder-touch-ui] .foldder-sidebar-tile:hover {
+  transform: none !important;
+  filter: none !important;
+}
+
+[data-foldder-touch-ui] .foldder-canvas-bg-incoming,
+.spaces-canvas--touch .foldder-canvas-bg-incoming {
+  animation: none !important;
+}
+
+[data-foldder-touch-ui] .spaces-canvas .react-flow__background.foldder-canvas-grid-background {
+  opacity: 0.72;
+}
+
+[data-foldder-touch-ui] .spaces-canvas .foldder-canvas-grid-dots {
+  display: none;
+}
+
+/* During pan/zoom on desktop: strip transitions that fight the compositor */
 .spaces-canvas--performance .custom-node,
 .spaces-canvas--performance .react-flow__edge-path,
 .spaces-canvas--performance .react-flow__connection-path {

@@ -1,8 +1,10 @@
 "use client";
 
 import React, { memo, useCallback, useState, useEffect } from "react";
-import { useReactFlow, useStore, type Node } from "@xyflow/react";
+import { useReactFlow, useStore, useNodeId, type Node } from "@xyflow/react";
 import { Maximize2 } from "lucide-react";
+import { useFoldderCanvasIntroContext } from "./foldder-canvas-intro-context";
+import { useInputMode } from "./input-mode-context";
 
 const FOLDDER_HEADER_TYPEWRITER_DELAY_MS = 1000;
 
@@ -103,13 +105,19 @@ export const NodeLabel = ({
 /** Título de cabecera: estilo global + typewriter si intro. */
 export const FoldderNodeHeaderTitle = memo(function FoldderNodeHeaderTitle({
   children,
-  introActive,
+  introActive: introActiveProp,
   className,
 }: {
   children: string;
   introActive?: boolean;
   className?: string;
 }) {
+  const nodeId = useNodeId();
+  const { isTouchUI } = useInputMode();
+  const { isNodeInCanvasIntro } = useFoldderCanvasIntroContext();
+  const introActive =
+    !isTouchUI &&
+    ((nodeId ? isNodeInCanvasIntro(nodeId) : false) || !!introActiveProp);
   const [display, setDisplay] = useState(() => (introActive ? "" : children));
 
   useEffect(() => {
