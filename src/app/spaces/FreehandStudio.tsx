@@ -14579,6 +14579,7 @@ export function FreehandStudioCanvas({
   }, []);
 
   const flushCloneAlignedBrushOverlay = useCallback(() => {
+    if (isTouchUI) return;
     const ds = dragStateRef.current;
     if (ds?.type !== "brushPaint" || ds.brushLastPixel == null) return;
     const s = brushSessionRef.current;
@@ -14599,7 +14600,7 @@ export function FreehandStudioCanvas({
     if (url) {
       setCloneStampBrushPreview({ dataUrl: url, centerWorld: { ...posW }, sizeWorld: sizeW });
     }
-  }, [cancelBrushCursorOverlayRaf]);
+  }, [cancelBrushCursorOverlayRaf, isTouchUI]);
 
   const scheduleCloneAlignedBrushOverlay = useCallback(() => {
     if (cloneAlignedBrushOverlayRafRef.current != null) return;
@@ -15106,6 +15107,15 @@ export function FreehandStudioCanvas({
   }, [activeTool]);
 
   useEffect(() => {
+    if (isTouchUI) {
+      cancelBrushCursorOverlayRaf();
+      cancelCloneAlignedBrushOverlayRaf();
+      brushPreviewRingRef.current = null;
+      brushPreviewLastWorldRef.current = null;
+      setBrushPreviewRings(null);
+      setCloneStampBrushPreview(null);
+      return;
+    }
     if (activeTool !== "brush" && activeTool !== "cloneStamp") {
       cancelBrushCursorOverlayRaf();
       cancelCloneAlignedBrushOverlayRaf();
@@ -15153,6 +15163,7 @@ export function FreehandStudioCanvas({
     cancelBrushCursorOverlayRaf,
     cancelCloneAlignedBrushOverlayRaf,
     viewport.zoom,
+    isTouchUI,
   ]);
 
   /** Al elegir color de trazo, si el grosor es 0 se pone a 2 para que se vea el borde. Otros valores no se tocan. */
@@ -21226,7 +21237,7 @@ export function FreehandStudioCanvas({
           setPenHoverCanvasRaw(null);
         }
       }
-      if ((activeTool === "brush" || activeTool === "cloneStamp") && !spaceHeld) {
+      if ((activeTool === "brush" || activeTool === "cloneStamp") && !spaceHeld && !isTouchUI) {
         brushPreviewLastWorldRef.current = pos;
         const rings = buildBrushPreviewRingsWorld(
           pos,

@@ -2,6 +2,8 @@
 
 import { useCallback } from "react";
 import { useStore, type Edge, type Node, type ReactFlowState } from "@xyflow/react";
+import { useInputMode } from "./input-mode-context";
+import { FOLDDER_TOUCH_NODE_VISIBILITY_MARGIN_PX } from "./touch-canvas-tool";
 
 function selectNodeViewportVisibility(
   state: ReactFlowState<Node, Edge>,
@@ -33,10 +35,13 @@ function selectNodeViewportVisibility(
 }
 
 export function useNodeViewportVisibility(nodeId: string, marginPx = 800): boolean {
+  const { isTouchUI } = useInputMode();
+  const effectiveMargin = isTouchUI ? Math.min(marginPx, FOLDDER_TOUCH_NODE_VISIBILITY_MARGIN_PX) : marginPx;
   return useStore(
     useCallback(
-      (state: ReactFlowState<Node, Edge>) => selectNodeViewportVisibility(state, nodeId, marginPx),
-      [marginPx, nodeId],
+      (state: ReactFlowState<Node, Edge>) =>
+        selectNodeViewportVisibility(state, nodeId, effectiveMargin),
+      [effectiveMargin, nodeId],
     ),
   );
 }

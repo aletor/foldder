@@ -47,6 +47,8 @@ import {
 import Sidebar from "./Sidebar";
 import { TouchSelectionToolbar } from "./TouchSelectionToolbar";
 import { useInputMode } from "./input-mode-context";
+import type { TouchCanvasTool } from "./touch-canvas-tool";
+import { useStudioCanvasOpen } from "./hooks/use-studio-canvas-open";
 import { AgentHUD } from "./AgentHUD";
 import { ApiUsageHud } from "./ApiUsageHud";
 import { AiRequestHud } from "./AiRequestHud";
@@ -653,6 +655,12 @@ export function SpacesContent() {
   const { language, setLanguage } = useLanguage();
   const isAuthenticated = sessionStatus === "authenticated";
   const { isTouchUI } = useInputMode();
+  const studioCanvasOpen = useStudioCanvasOpen();
+  const touchGraphSuspended = isTouchUI && studioCanvasOpen;
+  const [touchCanvasTool, setTouchCanvasTool] = useState<TouchCanvasTool>("pan");
+  const touchCanvasToolRef = useRef<TouchCanvasTool>("pan");
+  touchCanvasToolRef.current = touchCanvasTool;
+  const touchPreClickSelectionRef = useRef<Set<string>>(new Set());
   const [nodes, setNodes, onNodesChange] = useNodesState<any>(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<any>(initialEdges);
   /** Siempre la misma referencia que `nodes` / `edges` (sync en render, no en useEffect) */
@@ -1215,6 +1223,7 @@ export function SpacesContent() {
   const freeLayoutSnapshotRef = useRef<Record<string, { x: number; y: number }>>({});
   const canvasViewModeRef = useRef<'free' | 'cards'>('free');
   canvasViewModeRef.current = canvasViewMode;
+  const touchFreeCanvas = isTouchUI && canvasViewMode === "free";
 
   const exitCardsViewMode = useCallback(() => {
     if (canvasViewModeRef.current === 'free') return;
@@ -2520,16 +2529,38 @@ export function SpacesContent() {
       return;
     }
     setNodes((nds) => {
-      const target = nds.find((n) => n.id === node.id);
-      if (!target) return nds;
+      let next = nds;
+
+      if (isTouchUI && canvasViewModeRef.current === "free") {
+        const pre = touchPreClickSelectionRef.current;
+        const tool = touchCanvasToolRef.current;
+        const clickedWasSelected = pre.has(node.id);
+        const hadSelection = pre.size > 0;
+        const customSelect = tool === "select" || hadSelection;
+
+        if (customSelect) {
+          next = nds.map((n) => {
+            if (n.id === node.id) {
+              return { ...n, selected: clickedWasSelected ? false : true };
+            }
+            if (tool === "select" || (hadSelection && !clickedWasSelected)) {
+              return { ...n, selected: pre.has(n.id) };
+            }
+            return n;
+          });
+        }
+      }
+
+      const target = next.find((n) => n.id === node.id);
+      if (!target) return next;
       const styleSrc = target.style as Record<string, unknown> | undefined;
       const hasLegacyStyleZ = !!styleSrc && Object.prototype.hasOwnProperty.call(styleSrc, "zIndex");
-      const maxZ = nds.reduce((m, n) => Math.max(m, Number.isFinite(n.zIndex as number) ? (n.zIndex as number) : 0), 0);
+      const maxZ = next.reduce((m, n) => Math.max(m, Number.isFinite(n.zIndex as number) ? (n.zIndex as number) : 0), 0);
       const currentZ = Number.isFinite(target.zIndex as number) ? (target.zIndex as number) : 0;
-      if (!hasLegacyStyleZ && currentZ >= maxZ) return nds;
+      if (!hasLegacyStyleZ && currentZ >= maxZ) return next;
       lastClickedRef.current = Math.max(lastClickedRef.current ?? 0, maxZ) + 1;
       const nextZ = lastClickedRef.current;
-      return nds.map((n) => {
+      return next.map((n) => {
         if (n.id !== node.id) return n;
         const style = n.style ? { ...(n.style as Record<string, unknown>) } : {};
         delete (style as { zIndex?: number }).zIndex;
@@ -2540,7 +2571,7 @@ export function SpacesContent() {
         };
       });
     });
-  }, [setNodes]);
+  }, [isTouchUI, setNodes]);
 
   /** Clic en el vacío: migrar `style.zIndex` legado → `node.zIndex` en todos los nodos. */
   const onPaneClick = useCallback(() => {
@@ -5440,6 +5471,14 @@ export function SpacesContent() {
 
   const handleFlowNodesChange = useCallback(
     (changes: NodeChange[]) => {
+      if (isTouchUI && canvasViewModeRef.current === "free") {
+        if (changes.some((c) => c.type === "select")) {
+          touchPreClickSelectionRef.current = new Set(
+            liveNodesRef.current.filter((n) => n.selected).map((n) => n.id),
+          );
+        }
+      }
+
       const nds = liveNodesRef.current;
       const studioOpen =
         typeof document !== "undefined" && !!document.querySelector("[data-foldder-studio-canvas]");
@@ -5522,6 +5561,7 @@ export function SpacesContent() {
     },
     [
       fitView,
+      isTouchUI,
       onNodesChange,
       scheduleCanvasGroupRefit,
       setEdges,
@@ -6124,7 +6164,11 @@ export function SpacesContent() {
 
   return (
     <FoldderCanvasIntroContext.Provider value={foldderCanvasIntroContextValue}>
-    <div className="flex w-full h-full" ref={reactFlowWrapper} style={{ flexDirection: 'column' }}>
+    <div
+      className={`flex w-full h-full${touchGraphSuspended ? " foldder-touch-graph-suspended" : ""}`}
+      ref={reactFlowWrapper}
+      style={{ flexDirection: 'column' }}
+    >
 
       <SpacesWelcomeChrome
         showWelcome={showWelcome}
@@ -6260,12 +6304,18 @@ export function SpacesContent() {
           maxZoom={4}
           proOptions={{ hideAttribution: true }}
           multiSelectionKeyCode="Shift"
-          panOnDrag={spaceHeld || middlePanHeld || (isTouchUI && canvasViewMode === "free") ? true : [1]}
+          panOnDrag={
+            spaceHeld || middlePanHeld
+              ? true
+              : touchFreeCanvas
+                ? touchCanvasTool === "pan"
+                : [1]
+          }
           selectionOnDrag={
             !spaceHeld &&
             !middlePanHeld &&
-            !(isTouchUI && canvasViewMode === "free") &&
-            canvasViewMode === "free"
+            canvasViewMode === "free" &&
+            (touchFreeCanvas ? touchCanvasTool === "select" : true)
           }
           selectionMode={SelectionMode.Partial}
           panOnScroll={false}
@@ -6278,7 +6328,7 @@ export function SpacesContent() {
           nodesDraggable={canvasViewMode === 'free'}
           nodesConnectable={canvasViewMode === 'free' && !overviewModeActive}
 
-          className={`spaces-canvas${spaceHeld || middlePanHeld ? " spaces-canvas--space-pan" : ""}${isTouchUI ? " spaces-canvas--touch spaces-canvas--touch-perf" : ""}${canvasViewMode === "cards" ? " spaces-canvas--cards-mode" : ""}${overviewModeActive ? " foldder-overview-mode-active" : ""}${canvasPerformanceMode ? " spaces-canvas--performance" : ""}`}
+          className={`spaces-canvas${spaceHeld || middlePanHeld ? " spaces-canvas--space-pan" : ""}${touchFreeCanvas ? " spaces-canvas--touch spaces-canvas--touch-perf" : ""}${touchFreeCanvas && touchCanvasTool === "select" ? " spaces-canvas--touch-select" : ""}${touchGraphSuspended ? " spaces-canvas--touch-graph-suspended" : ""}${canvasViewMode === "cards" ? " spaces-canvas--cards-mode" : ""}${overviewModeActive ? " foldder-overview-mode-active" : ""}${canvasPerformanceMode ? " spaces-canvas--performance" : ""}`}
           style={reactFlowCanvasStyle}
         >
           <FoldderCanvasGridBackground gap={FOLDDER_GRID_STEP} lineWidth={0.7} color="#111" dotSize={5} />
@@ -6290,8 +6340,10 @@ export function SpacesContent() {
         </ProjectAssetsCanvasContext.Provider>
         </SpacesActiveProjectIdContext.Provider>
 
-        {isAuthenticated && isTouchUI && canvasViewMode === "free" && (
+        {isAuthenticated && touchFreeCanvas && (
           <TouchSelectionToolbar
+            tool={touchCanvasTool}
+            onToolChange={setTouchCanvasTool}
             selectedCount={touchDeletableSelectedCount}
             onDelete={deleteSelectedCanvasNodes}
             onClearSelection={clearCanvasNodeSelection}

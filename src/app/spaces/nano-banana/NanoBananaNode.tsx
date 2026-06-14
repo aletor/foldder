@@ -23,6 +23,8 @@ import { aiHudNanoBananaJobEnd, aiHudNanoBananaJobProgress, aiHudNanoBananaJobSt
 import { geminiGenerateWithServerProgress } from "@/lib/gemini-generate-stream-client";
 import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
 import { usePreventBrowserPinchZoom } from "@/lib/use-prevent-browser-pinch-zoom";
+import { useInputMode } from "../input-mode-context";
+import { useNanoBananaViewerTouch } from "./nano-banana-viewer-touch";
 import { composeBrainImageGeneratorPromptWithRuntime, type BrainImageGeneratorPromptDiagnostics } from "@/lib/brain/build-brain-visual-prompt-context";
 import { useBrainNodeTelemetry } from "@/lib/brain/use-brain-node-telemetry";
 import { FoldderDataHandle } from "../FoldderDataHandle";
@@ -654,6 +656,7 @@ const NanoBananaStudio = memo(({
   generationHistory, onGenerationHistoryChange,
   standardShell,
 }: NanoBananaStudioProps) => {
+  const { isTouchUI } = useInputMode();
   // ── Generation state ────────────────────────────────────────────────────
   const [genStatus, setGenStatus] = useState<'idle'|'running'|'success'|'error'>('idle');
   const [progress, setProgress] = useState(0);
@@ -775,17 +778,51 @@ const NanoBananaStudio = memo(({
     if (zoomLabelRef.current) {
       const pct = Math.round(vZoom.current * 100);
       zoomLabelRef.current.style.display = vZoom.current === 1 ? 'none' : 'flex';
-      zoomLabelRef.current.textContent = `✕ ${pct}% · doble clic`;
+      zoomLabelRef.current.textContent = isTouchUI
+        ? `✕ ${pct}% · pinch · doble tap`
+        : `✕ ${pct}% · doble clic`;
     }
   };
   const resetViewTransform = () => {
     vZoom.current = 1; vPan.current = { x: 0, y: 0 }; applyViewTransform();
   };
 
+  const addingChangeRef = useRef(addingChange);
+  addingChangeRef.current = addingChange;
+
   // ── Canvas size ─────────────────────────────────────────────────────────
   const containerRef = useRef<HTMLDivElement>(null);
   /** Pinch/trackpad zoom must not change browser zoom; only this viewer (same pattern as FreehandStudio). */
   usePreventBrowserPinchZoom(containerRef);
+
+  const getViewerTransform = useCallback(
+    () => ({ zoom: vZoom.current, pan: { ...vPan.current } }),
+    [],
+  );
+  const setViewerTransform = useCallback((view: { zoom: number; pan: { x: number; y: number } }) => {
+    vZoom.current = view.zoom;
+    vPan.current = { ...view.pan };
+    applyViewTransform();
+  }, []);
+
+  const touchViewerHandlers = useNanoBananaViewerTouch({
+    enabled: isTouchUI,
+    containerRef,
+    canInteract: () => !addingChangeRef.current,
+    getView: getViewerTransform,
+    setView: setViewerTransform,
+    minZoom: 0.25,
+    maxZoom: 10,
+    onDragActiveChange: (active) => {
+      if (!containerRef.current) return;
+      containerRef.current.style.cursor = active
+        ? "grabbing"
+        : addingChangeRef.current
+          ? "crosshair"
+          : "grab";
+    },
+  });
+
   const imgRef = useRef<HTMLImageElement>(null);
   // Natural image dimensions (resolution for the color map canvas)
   const [imgNat, setImgNat] = useState({ w: 1280, h: 720 });
@@ -1740,6 +1777,10 @@ const NanoBananaStudio = memo(({
             applyViewTransform();
           }}
           onPointerDown={e => {
+            if (isTouchUI && e.pointerType !== "mouse") {
+              touchViewerHandlers.onPointerDown(e);
+              return;
+            }
             if (e.button === 0 && !addingChange) {
               e.preventDefault();
               vIsDragging.current = true;
@@ -1749,13 +1790,26 @@ const NanoBananaStudio = memo(({
             }
           }}
           onPointerMove={e => {
+            if (isTouchUI && e.pointerType !== "mouse") {
+              touchViewerHandlers.onPointerMove(e);
+              return;
+            }
             if (!vIsDragging.current) return;
             vPan.current = { x: vDragStart.current.px + e.clientX - vDragStart.current.mx, y: vDragStart.current.py + e.clientY - vDragStart.current.my };
             applyViewTransform();
           }}
-          onPointerUp={() => {
+          onPointerUp={e => {
+            if (isTouchUI && e.pointerType !== "mouse") {
+              touchViewerHandlers.onPointerUp(e);
+              return;
+            }
             vIsDragging.current = false;
             if (containerRef.current) containerRef.current.style.cursor = addingChange ? 'crosshair' : 'grab';
+          }}
+          onPointerCancel={e => {
+            if (isTouchUI && e.pointerType !== "mouse") {
+              touchViewerHandlers.onPointerCancel(e);
+            }
           }}
           onDoubleClick={() => resetViewTransform()}
         >

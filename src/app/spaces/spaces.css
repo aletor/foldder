@@ -58,6 +58,21 @@
 .spaces-canvas--touch .react-flow__pane:active {
   cursor: grabbing !important;
 }
+
+.spaces-canvas--touch.spaces-canvas--touch-select .react-flow__pane {
+  cursor: crosshair !important;
+}
+.spaces-canvas--touch.spaces-canvas--touch-select .react-flow__pane:active {
+  cursor: crosshair !important;
+}
+
+/* Studio abierto en iPad: no pintar ni procesar puntero en el grafo de fondo */
+.foldder-touch-graph-suspended .react-flow,
+.spaces-canvas--touch-graph-suspended {
+  visibility: hidden !important;
+  pointer-events: none !important;
+  content-visibility: hidden;
+}
 .spaces-canvas--touch .react-flow__handle {
   min-width: 22px;
   min-height: 22px;
