@@ -515,7 +515,8 @@
 .custom-node.foldder-studio-node--photoRoom.foldder-node--frameless.node--media,
 .custom-node.foldder-studio-node--cine.foldder-node--frameless.node--media,
 .custom-node.nano-banana-node.foldder-node--frameless.node--media,
-.custom-node.mask-node.foldder-node--frameless.node--media {
+.custom-node.mask-node.foldder-node--frameless.node--media,
+.custom-node.url-image-node.foldder-node--frameless.node--media {
   overflow: visible !important;
   overflow-clip-margin: 0;
 }
@@ -524,7 +525,8 @@
 .spaces-canvas .react-flow__node:has(.foldder-studio-node--designer),
 .spaces-canvas .react-flow__node:has(.foldder-studio-node--photoRoom),
 .spaces-canvas .react-flow__node:has(.foldder-studio-node--cine),
-.spaces-canvas .react-flow__node:has(.nano-banana-node) {
+.spaces-canvas .react-flow__node:has(.nano-banana-node),
+.spaces-canvas .react-flow__node:has(.url-image-node) {
   overflow: visible !important;
 }
 
@@ -595,6 +597,17 @@
 }
 
 .custom-node.mask-node > .foldder-studio-touched-mark {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  z-index: 28 !important;
+  width: var(--foldder-studio-touched-size, 60px) !important;
+  height: var(--foldder-studio-touched-size, 60px) !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+.custom-node.url-image-node > .foldder-studio-touched-mark {
   position: absolute !important;
   top: 0 !important;
   left: 0 !important;
@@ -1038,13 +1051,11 @@
 }
 
 .custom-node.project-assets-node .node-content,
-.custom-node.url-image-node .node-content,
 .custom-node.grok-processor-node .node-content {
   padding: 42px 14px 14px !important;
 }
 
 .custom-node.project-assets-node .node-content :is(.rounded-xl, .rounded-2xl),
-.custom-node.url-image-node .node-content :is(.rounded-xl, .rounded-2xl),
 .custom-node.grok-processor-node .node-content :is(.rounded-xl, .rounded-2xl),
 .custom-node.project-brain-node :is(.rounded-2xl, .rounded-\[28px\], .rounded-\[13px\]) {
   border: none !important;
@@ -1190,47 +1201,210 @@
 }
 
 .custom-node.url-image-node {
-  --foldder-frameless-accent: #38bdf8;
+  --foldder-frameless-accent: #aaaaaa;
 }
 
-.custom-node.url-image-node .url-image-node-content {
-  gap: 10px;
-  padding: 48px 14px 16px !important;
+.custom-node.url-image-node.url-image-node--empty {
+  min-height: 300px !important;
 }
 
-.custom-node.url-image-node .url-image-preview {
-  margin: 0 0 12px !important;
+.custom-node.url-image-node .url-image-node-main {
+  position: absolute !important;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden !important;
+}
+
+.custom-node.url-image-node.url-image-node--empty .url-image-node-main {
+  background: transparent !important;
+  bottom: 0;
+}
+
+.custom-node.url-image-node .url-image-url-dock {
+  position: absolute !important;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  padding: 12px 14px 14px;
+  pointer-events: auto;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.62) 0%, rgba(0, 0, 0, 0.38) 55%, transparent 100%);
+}
+
+.custom-node.url-image-node.url-image-node--empty .url-image-url-dock {
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.72) 0%, rgba(0, 0, 0, 0.28) 70%, transparent 100%);
+}
+
+.custom-node.url-image-node .url-image-url-field {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+}
+
+.custom-node.url-image-node .url-image-url-icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  z-index: 2;
+  transform: translateY(-50%);
+  color: rgba(255, 255, 255, 0.55);
+  pointer-events: none;
+}
+
+.custom-node.url-image-node .url-image-url-input {
+  position: relative !important;
+  left: auto !important;
+  right: auto !important;
+  top: auto !important;
+  bottom: auto !important;
+  display: block;
+  width: 100% !important;
+  min-width: 0;
+  max-width: none !important;
+  min-height: 40px;
+  padding: 10px 14px 10px 38px !important;
   border: none !important;
-  border-radius: 14px !important;
-  background: #ffffff !important;
+  border-radius: 0 !important;
+  background: rgba(255, 255, 255, 0.94) !important;
+  color: #1f2328 !important;
+  font-size: 12px !important;
+  font-weight: 500;
+  line-height: 1.25;
   box-shadow: none !important;
 }
 
-.custom-node.url-image-node .url-image-preview img {
-  object-fit: cover !important;
+.custom-node.url-image-node .url-image-url-input::placeholder {
+  color: rgba(31, 35, 40, 0.45) !important;
 }
 
-.custom-node.url-image-node .url-image-controls {
-  margin: 0 !important;
+.custom-node.url-image-node.url-image-node--has-preview .url-image-url-input {
+  background: rgba(0, 0, 0, 0.52) !important;
+  color: #ffffff !important;
 }
 
-.custom-node.url-image-node .url-image-controls .node-label {
-  margin-bottom: 7px;
+.custom-node.url-image-node.url-image-node--has-preview .url-image-url-input::placeholder {
+  color: rgba(255, 255, 255, 0.45) !important;
 }
 
-.custom-node.url-image-node .url-image-controls .node-input {
-  min-height: 34px;
-  border-radius: 999px !important;
-  padding: 9px 12px 9px 34px !important;
+.custom-node.url-image-node.url-image-node--has-preview .url-image-url-icon {
+  color: rgba(255, 255, 255, 0.55);
 }
 
-.custom-node.url-image-node .url-image-controls > div:last-child {
-  border-top: none !important;
-  padding-top: 0 !important;
+.custom-node.url-image-node .url-image-carousel-nav {
+  position: absolute;
+  top: 50%;
+  z-index: 11;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  transform: translateY(-50%);
+  border: none;
+  background: rgba(0, 0, 0, 0.45);
+  color: #ffffff;
+  opacity: 0;
+  transition: opacity 120ms ease, background 120ms ease;
+  pointer-events: auto;
 }
 
-.custom-node.url-image-node .url-image-controls > div:last-child > div:first-child {
-  color: rgba(50, 55, 62, 0.48) !important;
+.custom-node.url-image-node.group\/node:hover .url-image-carousel-nav,
+.custom-node.url-image-node .url-image-carousel-nav:focus-visible {
+  opacity: 1;
+}
+
+.custom-node.url-image-node .url-image-carousel-nav:hover {
+  background: rgba(0, 0, 0, 0.62);
+}
+
+.custom-node.url-image-node .url-image-carousel-nav--prev {
+  left: 10px;
+}
+
+.custom-node.url-image-node .url-image-carousel-nav--next {
+  right: 10px;
+}
+
+.custom-node.url-image-node .url-image-carousel-counter {
+  position: absolute;
+  right: var(--foldder-frameless-overlay-side);
+  top: 42px;
+  z-index: 11;
+  padding: 3px 8px;
+  background: rgba(0, 0, 0, 0.5);
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 9px;
+  font-family: ui-monospace, monospace;
+  letter-spacing: 0.04em;
+}
+
+.custom-node.url-image-node .url-image-gallery-strip {
+  position: absolute;
+  top: 8px;
+  right: var(--foldder-frameless-overlay-side);
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: calc(100% - 28px);
+  pointer-events: auto;
+}
+
+.custom-node.url-image-node .url-image-gallery-scroll {
+  display: flex;
+  gap: 3px;
+  overflow-x: auto;
+  max-width: 180px;
+}
+
+.custom-node.url-image-node .url-image-gallery-thumb {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(0, 0, 0, 0.35);
+  color: rgba(255, 255, 255, 0.7);
+  opacity: 0.62;
+  transition: opacity 120ms ease, border-color 120ms ease;
+}
+
+.custom-node.url-image-node .url-image-gallery-thumb.is-active {
+  border-color: #ffffff;
+  opacity: 1;
+}
+
+.custom-node.url-image-node .url-image-gallery-thumb:hover {
+  opacity: 1;
+}
+
+.custom-node.url-image-node .url-image-gallery-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: rgba(255, 255, 255, 0.88);
+  color: #1f2328;
+}
+
+.custom-node.url-image-node.url-image-node--has-preview .url-image-node-main {
+  background: #121212 !important;
+}
+
+.custom-node.url-image-node.url-image-node--has-preview .url-image-node-main img {
+  object-fit: contain !important;
+}
+
+.custom-node.url-image-node.url-image-node--has-preview .url-image-node-main::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  z-index: 6;
+  height: 88px;
+  pointer-events: none;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.46), transparent);
 }
 
 .custom-node.describer-node {
@@ -2091,7 +2265,6 @@
 }
 
 .custom-node.foldder-node--frameless :is(
-  .url-image-preview,
   .image-export-preview,
   .video-editor-summary,
   .foldder-frameless-main,
@@ -2290,18 +2463,6 @@
   height: 72px;
   pointer-events: none;
   background: linear-gradient(to top, rgba(0, 0, 0, 0.46), transparent);
-}
-
-.custom-node.url-image-node .url-image-preview {
-  min-height: 146px !important;
-}
-
-.custom-node.url-image-node .url-image-preview + .url-image-controls {
-  font-size: 10px;
-}
-
-.custom-node.url-image-node .url-image-controls .node-input {
-  color: rgba(31, 35, 40, 0.72) !important;
 }
 
 .custom-node.project-brain-node .mb-2.mt-auto.space-y-3 {
@@ -4014,7 +4175,7 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
   --foldder-palette-c: #B27A59;
   --foldder-palette-d: #9E8458;
   --foldder-palette-e: #8A8B58;
-  --foldder-palette-f: #6F8F5D;
+  --foldder-palette-f: #aaaaaa;
   --foldder-palette-g: #5E8E70;
   --foldder-palette-h: #4F8A82;
   --foldder-palette-i: #4C7E8F;
@@ -4131,8 +4292,7 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
 }
 
 .custom-node.crop-node .node-content.foldder-frameless-main > div:first-child,
-.custom-node.image-export-node .image-export-preview,
-.custom-node.url-image-node .url-image-preview {
+.custom-node.image-export-node .image-export-preview {
   background: linear-gradient(
     135deg,
     color-mix(in srgb, var(--foldder-node-card-bg) 72%, #000000) 0%,
@@ -4393,6 +4553,23 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
   background: transparent !important;
 }
 
+/* URL Image node: imagen de fondo en estado idle (sin preview).
+   Mismo patrón que mask-node/describer: doble selector para lienzo y preview de arrastre.
+   El tile del sidebar no usa estas reglas. */
+.react-flow__node .custom-node.foldder-node--frameless.url-image-node.node--media.url-image-node--empty,
+.foldder-library-preview-node .custom-node.foldder-node--frameless.url-image-node.node--media.url-image-node--empty {
+  background-color: #aaaaaa !important;
+  background-image: url("/nodes/url-image-bg.png") !important;
+  background-size: cover !important;
+  background-position: center !important;
+  background-repeat: no-repeat !important;
+}
+
+.custom-node.url-image-node.url-image-node--empty .url-image-node-main {
+  background: transparent !important;
+  background-image: none !important;
+}
+
 .custom-node.inspiration-node {
   background: transparent !important;
   background-image: none !important;
@@ -4442,8 +4619,7 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
 }
 
 .custom-node.crop-node .node-content.foldder-frameless-main > div:first-child,
-.custom-node.image-export-node .image-export-preview,
-.custom-node.url-image-node .url-image-preview {
+.custom-node.image-export-node .image-export-preview {
   background: linear-gradient(
     135deg,
     color-mix(in srgb, var(--foldder-node-card-bg) 72%, #000000) 0%,
@@ -4539,14 +4715,11 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
 }
 
 .custom-node :is(
-  .url-image-preview,
-  .url-image-preview img,
   .image-export-preview,
   .image-export-preview img,
   .video-editor-summary,
   .video-editor-icon
 ),
-.custom-node.url-image-node .url-image-controls .node-input,
 .custom-node.project-brain-node .relative.flex.min-h-0.flex-1.flex-col.p-4 > .flex:first-child > div:last-child,
 .custom-node.project-brain-node .mb-2.mt-auto.space-y-3 > div:first-child {
   border-radius: 0 !important;
@@ -5042,6 +5215,7 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
 .custom-node.foldder-studio-node--cine { --foldder-studio-touched-color: #de323f; }
 .custom-node.video-editor-node { --foldder-studio-touched-color: #3a8f96; }
 .custom-node.gemini-video-node { --foldder-studio-touched-color: #3239ba; }
+.custom-node.url-image-node { --foldder-studio-touched-color: #aaaaaa; }
 .custom-node.vfx-generator-node { --foldder-studio-touched-color: #2563eb; }
 .custom-node.presenter-node,
 .custom-node.foldder-studio-node--presenter { --foldder-studio-touched-color: #f5b91b; }

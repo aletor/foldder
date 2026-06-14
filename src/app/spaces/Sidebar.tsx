@@ -120,7 +120,7 @@ const HIGH_END_PRODUCTION_ITEMS: Array<{ type: string; label: string }> = [
 
 const TOOL_ITEMS: Array<{ type: string; label: string }> = [
   { type: 'promptInput', label: 'Prompt' },
-  { type: 'urlImage', label: 'Web' },
+  { type: 'urlImage', label: 'URL Image' },
   { type: 'backgroundRemover', label: 'BG Remover' },
   { type: 'mediaDescriber', label: 'Image Describer' },
   { type: 'enhancer', label: 'Enhance' },

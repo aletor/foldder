@@ -5,7 +5,7 @@ export const FOLDDER_NODE_CARD_BG: Record<string, string> = {
   nanoBanana: "#f16389",
   imageCreationAdvanced: "#9E8458",
   designer: "#8A8B58",
-  urlImage: "#6F8F5D",
+  urlImage: "#aaaaaa",
   projectBrain: "#5E8E70",
   promptInput: "#4F8A82",
   mediaInput: "#4C7E8F",

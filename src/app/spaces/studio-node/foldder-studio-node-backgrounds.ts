@@ -18,6 +18,7 @@ export const FOLDDER_NODE_STUDIO_BACKGROUND_SRC: Record<string, string> = {
   imageCreationAdvanced: "/assets/nodes/nano-banana-empty-pink.png",
   vfxGenerator: "/assets/nodes/gemini-video-empty-blue.png",
   exportMultimedia: "/assets/nodes/video-editor-empty.jpg",
+  urlImage: "/nodes/url-image-bg.png",
 };
 
 const NODE_TYPE_ALIASES: Record<string, string> = {

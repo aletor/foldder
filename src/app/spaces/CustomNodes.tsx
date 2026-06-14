@@ -858,96 +858,127 @@ export const UrlImageNode = memo(function UrlImageNode({ id, data, selected }: N
     updateData({ selectedIndex: prevIdx, value: urls[prevIdx], type: 'image' });
   };
 
+  const hasPreview = Boolean(currentUrl);
+  const URL_IMAGE_TOUCHED_MARK_SRC = "/nodes/url-image-mark.png";
+
   return (
-    <div ref={frameRef} className={`custom-node url-image-node foldder-node--frameless node--glass ${loading ? 'node-glow-running' : ''}`} style={{ minWidth: 200, minHeight: 120 }}>
+    <div
+      ref={frameRef}
+      className={`custom-node url-image-node foldder-node--frameless node--media group/node ${hasPreview ? 'url-image-node--has-preview' : 'url-image-node--empty'} ${loading ? 'node-glow-running' : ''}`}
+      style={{
+        minWidth: 200,
+        minHeight: hasPreview ? 120 : 300,
+        "--foldder-frameless-accent": "#aaaaaa",
+      } as React.CSSProperties}
+    >
       <FoldderNodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={STUDIO_NODE_MAX_HEIGHT} keepAspectRatio={Boolean(currentUrl)} isVisible={selected} />
+      {hasPreview ? <FoldderStudioTouchedMark nodeType="urlImage" backgroundSrc={URL_IMAGE_TOUCHED_MARK_SRC} /> : null}
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Image Search" />
       <div className="node-header">
         <NodeIcon type="urlImage" loading={loading} selected={selected} size={16} />
         <FoldderNodeHeaderTitle className="flex-1" introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}>
-          CAROUSEL
+          Image Search
         </FoldderNodeHeaderTitle>
         {loading && <Loader2 size={12} className="animate-spin shrink-0" />}
       </div>
-      <div className="node-content url-image-node-content">
-        <div ref={previewFrameRef} className="url-image-preview relative w-full aspect-video bg-slate-50 rounded-none overflow-hidden border border-white/10 group mb-3 shadow-inner">
-          {currentUrl ? (
-            <img src={currentUrl} className="w-full h-full object-contain" alt="Carousel" />
-          ) : (
-            <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-700 gap-2">
-              <Globe size={32} />
-              <span className="text-[9px] font-black uppercase tracking-tighter">No URL provided</span>
+
+      <div ref={previewFrameRef} className="node-content foldder-frameless-main url-image-node-main">
+        {currentUrl ? (
+          <img
+            src={currentUrl}
+            draggable={false}
+            className="pointer-events-none absolute inset-0 h-full w-full object-contain"
+            alt="Carousel"
+          />
+        ) : null}
+
+        {loading && (
+          <div className="absolute inset-0 z-[7] flex flex-col items-center justify-center gap-2 bg-black/55 backdrop-blur-sm">
+            <Loader2 size={22} className="animate-spin text-white/90" />
+            <span className="text-[8px] font-black uppercase tracking-[0.25em] text-white/80">Searching Images</span>
+          </div>
+        )}
+
+        {urls.length > 1 && (
+          <>
+            <button
+              type="button"
+              onClick={prev}
+              className="url-image-carousel-nav url-image-carousel-nav--prev nodrag"
+              aria-label="Previous image"
+            >
+              <ChevronLeft size={16} />
+            </button>
+            <button
+              type="button"
+              onClick={next}
+              className="url-image-carousel-nav url-image-carousel-nav--next nodrag"
+              aria-label="Next image"
+            >
+              <ChevronRight size={16} />
+            </button>
+            <div className="url-image-carousel-counter nodrag">
+              {selectedIndex + 1} / {urls.length}
             </div>
-          )}
-          
-          {urls.length > 1 && (
-            <>
-              <button 
-                onClick={prev}
-                className="absolute left-2 top-1/2 -translate-y-1/2 p-1.5 bg-slate-100/50 backdrop-blur-md rounded-full text-white border border-white/10 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-cyan-500/20"
-              >
-                <ChevronLeft size={16} />
-              </button>
-              <button 
-                onClick={next}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 bg-slate-100/50 backdrop-blur-md rounded-full text-white border border-white/10 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-cyan-500/20"
-              >
-                <ChevronRight size={16} />
-              </button>
-              <div className="absolute bottom-2 right-2 bg-slate-100/50 backdrop-blur-md px-2 py-0.5 rounded-none text-[8px] font-mono text-cyan-400 border border-cyan-500/20">
-                {selectedIndex + 1} / {urls.length}
-              </div>
-            </>
-          )}
-        </div>
+          </>
+        )}
 
-        <div className="url-image-controls space-y-4">
-           <div>
-              <label className="node-label text-gray-500">Active URL</label>
-              <div className="relative">
-                <Link className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600" size={12} />
-                <input 
-                  type="text"
-                  className="node-input pl-9 text-[10px]"
-                  placeholder="Paste URL..."
-                  value={currentUrlDisplay}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    const newUrls = [...urls];
-                    if (newUrls.length === 0) newUrls.push(val);
-                    else newUrls[selectedIndex] = val;
-                    updateData({ urls: newUrls, value: val, type: 'image' });
+        {urls.length > 0 && (
+          <div className="url-image-gallery-strip nodrag nopan">
+            <div className="url-image-gallery-scroll no-scrollbar">
+              {urls.map((url, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    updateData({ selectedIndex: i, value: url, type: 'image' });
                   }}
-                />
-              </div>
-           </div>
+                  className={`url-image-gallery-thumb nodrag ${i === selectedIndex ? 'is-active' : ''}`}
+                >
+                  {url ? (
+                    <img src={url} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <Link size={10} />
+                  )}
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                updateData({ urls: [...urls, ''] });
+              }}
+              className="url-image-gallery-add nodrag"
+              aria-label="Add URL"
+            >
+              <Plus size={10} />
+            </button>
+          </div>
+        )}
 
-           {urls.length > 0 && (
-             <div className="pt-2 border-t border-slate-200/60">
-                <div className="text-[8px] font-black text-gray-600 uppercase mb-2 tracking-widest flex justify-between items-center">
-                  <span>Gallery Stack</span>
-                  <button 
-                    onClick={() => updateData({ urls: [...urls, ''] })}
-                    className="text-cyan-500 hover:text-cyan-400 flex items-center gap-1 transition-colors"
-                  >
-                    <Plus size={10} /> ADD URL
-                  </button>
-                </div>
-                <div className="flex gap-1 overflow-x-auto pb-2 custom-scrollbar no-scrollbar">
-                  {urls.map((url, i) => (
-                    <div 
-                      key={i}
-                      onClick={() => updateData({ selectedIndex: i, value: url, type: 'image' })}
-                      className={`flex-shrink-0 w-12 h-12 rounded-none border transition-all cursor-pointer overflow-hidden ${i === selectedIndex ? 'border-cyan-500 ring-2 ring-cyan-500/20' : 'border-white/10 opacity-50 hover:opacity-100'}`}
-                    >
-                      {url ? <img src={url} alt="" className="w-full h-full object-cover" /> : <div className="w-full h-full bg-white/5 flex items-center justify-center"><Link size={10} /></div>}
-                    </div>
-                  ))}
-                </div>
-             </div>
-           )}
+      </div>
+
+      <div className="url-image-url-dock nodrag nopan">
+        <div className="url-image-url-field">
+          <Link className="url-image-url-icon" size={14} aria-hidden />
+          <input
+            type="text"
+            className="node-input url-image-url-input nodrag"
+            placeholder="Paste URL..."
+            value={currentUrlDisplay}
+            onChange={(e) => {
+              const val = e.target.value;
+              const newUrls = [...urls];
+              if (newUrls.length === 0) newUrls.push(val);
+              else newUrls[selectedIndex] = val;
+              updateData({ urls: newUrls, value: val, type: 'image' });
+            }}
+          />
         </div>
       </div>
+
       <div className="handle-wrapper handle-right">
         <span className="handle-label">Image Out</span>
         <FoldderDataHandle type="source" position={Position.Right} id="image" dataType="image" />
