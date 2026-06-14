@@ -10387,8 +10387,6 @@ export function FreehandStudioCanvas({
   }, [isPhotoRoomStudioEmbed, studioCaps.toolPhotoMarquee, activeTool]);
 
   const [viewport, setViewport] = useState({ x: 0, y: 0, zoom: 1 });
-  const viewportRef = useRef(viewport);
-  viewportRef.current = viewport;
   const { isTouchUI } = useInputMode();
   const studioShellRef = useRef<HTMLDivElement>(null);
   usePreventBrowserPinchZoom(studioShellRef);
