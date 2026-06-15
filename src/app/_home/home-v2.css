@@ -355,12 +355,23 @@ html:has([data-foldder-home-v2]) :is(button, [role="button"]) {
   color: transparent;
 }
 
+[data-foldder-home-v2] [data-home-v2-hero-primary] {
+  display: block;
+}
+
 [data-foldder-home-v2] [data-home-v2-hero-emphasis] {
-  font-size: 1.15em;
+  display: inline-block;
+  font-size: 1.5em;
+  line-height: 0.92;
   background: none;
   color: transparent;
   -webkit-text-fill-color: transparent;
-  -webkit-text-stroke: 2px #d899ff;
+  -webkit-text-stroke: 1px #d899ff;
+}
+
+[data-foldder-home-v2] [data-home-v2-hero-line="gradient"]:last-of-type {
+  display: block;
+  margin-top: 0.08em;
 }
 
 [data-foldder-home-v2] [data-home-v2-module--hero] [data-home-v2-headline] .text-blue-600 {

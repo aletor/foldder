@@ -156,9 +156,14 @@ export default function HomePage() {
               <br />
               crea por ti.
             </span>
-            <span data-home-v2-hero-line="gradient">un </span>
-            <span data-home-v2-hero-emphasis>estudio creativo</span>
-            <span data-home-v2-hero-line="gradient"> que crea contigo</span>
+            <span data-home-v2-hero-primary>
+              <span data-home-v2-hero-emphasis>
+                el estudio
+                <br />
+                creativo
+              </span>
+            </span>
+            <span data-home-v2-hero-line="gradient">que crea ...contigo</span>
           </h1>
           <p data-home-v2-hero-lead className="max-w-md text-[11px] leading-relaxed text-white/45">
             Tú diriges cada decisión. Foldder conecta textos, imágenes, vídeos, marcas y presentaciones para convertir
