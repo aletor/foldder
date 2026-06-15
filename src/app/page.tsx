@@ -5,200 +5,54 @@ import Link from "next/link";
 import { GoogleAccessButton } from "@/components/GoogleAccessButton";
 import { useLanguage } from "@/components/LanguageProvider";
 import { LANGUAGE_OPTIONS } from "@/lib/i18n";
-import type { AppLanguage } from "@/lib/i18n";
-import type { ReactNode } from "react";
-import {
-  Brain,
-  CheckCircle2,
-  FileText,
-  Film,
-  FolderKanban,
-  Heart,
-  Lock,
-  Megaphone,
-  PenTool,
-  Presentation,
-  Sparkles,
-  Workflow,
-} from "lucide-react";
-import "./home.css";
+import { BrainColorWaveBackground } from "./_home/BrainColorWaveBackground";
+import { HeroPhotoColumnsBackground } from "./_home/HeroPhotoColumnsBackground";
+import { ManifestoParticleBackground } from "./_home/ManifestoParticleBackground";
+import { FlowsCanvasDemo } from "./_home/FlowsCanvasDemo";
+import { FlowsWallpaperBackground } from "./_home/FlowsWallpaperBackground";
+import { NodePerspectiveGallery } from "./_home/NodePerspectiveGallery";
+import "./_home/home-v2.css";
 
-type Capability = {
-  icon: ReactNode;
-  title: string;
-  text: string;
-  tone: string;
-};
-
-const HOME_COPY: Record<
-  AppLanguage,
+const REAL_FLOWS = [
   {
-    headlineBeforeAccent: string;
-    headlineAccent: string;
-    headlineAfterAccent: string;
-    googleLabel: string;
-    googleAuthenticatedLabel: string;
-    secureLine: string;
-    capabilities: string[];
-    sectionEyebrow: string;
-    sectionTitle: string;
-    sectionText: string;
-    featureRows: Array<{ title: string; text: string }>;
-    cards: Array<{ title: string; text: string }>;
-  }
-> = {
-  es: {
-    headlineBeforeAccent: "Un",
-    headlineAccent: "workspace",
-    headlineAfterAccent: "para producción creativa completa.",
-    googleLabel: "Continuar con Google",
-    googleAuthenticatedLabel: "Elegir cuenta de Google",
-    secureLine: "Acceso seguro con Google. Sin pasos extra.",
-    capabilities: ["Diseña", "Genera", "Presenta", "Organiza"],
-    sectionEyebrow: "Qué puedes crear",
-    sectionTitle: "Sistemas creativos completos, no outputs aislados.",
-    sectionText:
-      "Foldder conecta guion, diseño, vídeo, edición, assets y memoria de marca para convertir cualquier idea en una pieza final.",
-    featureRows: [
-      {
-        title: "Memoria creativa",
-        text: "Reutiliza ideas, assets y conocimiento en todos tus proyectos.",
-      },
-      {
-        title: "Flujo visual",
-        text: "Todo se conecta en un flujo visual de principio a fin.",
-      },
-      {
-        title: "Entrega final",
-        text: "Entrega piezas pulidas, coherentes y listas para marca.",
-      },
-    ],
-    cards: [
-      {
-        title: "Películas y vídeo",
-        text: "Guiones, escenas, storyboards, planos generados, edición, audio y subtítulos.",
-      },
-      {
-        title: "Anuncios y campañas",
-        text: "Conceptos, claims, rutas visuales y entregables adaptados a cada canal.",
-      },
-      {
-        title: "Diseño gráfico",
-        text: "Layouts, carteles, assets de marca y composiciones visuales editables.",
-      },
-      {
-        title: "Redes sociales",
-        text: "Posts, carruseles, vídeos cortos, captions y adaptaciones de contenido.",
-      },
-      {
-        title: "Guiones y contenido",
-        text: "Artículos, guiones, tono editorial, reescrituras y sistemas de contenido.",
-      },
-      {
-        title: "Presentaciones",
-        text: "Slides, decks, PDFs, historias visuales y materiales listos para cliente.",
-      },
-    ],
+    title: "Cartel para redes",
+    nodes: ["Inspiration", "Brain", "Image Creation", "Designer"],
   },
-  en: {
-    headlineBeforeAccent: "One",
-    headlineAccent: "workspace",
-    headlineAfterAccent: "for complete creative production.",
-    googleLabel: "Continue with Google",
-    googleAuthenticatedLabel: "Choose Google account",
-    secureLine: "Secure sign-in with Google. No extra steps.",
-    capabilities: ["Design", "Generate", "Present", "Organize"],
-    sectionEyebrow: "What you can create",
-    sectionTitle: "Complete creative systems, not isolated outputs.",
-    sectionText:
-      "Foldder connects script, design, video, editing, assets and brand memory so any idea can become a finished piece.",
-    featureRows: [
-      {
-        title: "Creative Memory",
-        text: "Reuse ideas, assets and knowledge across every project.",
-      },
-      {
-        title: "Visual Workflow",
-        text: "Everything connects in a visual flow from start to finish.",
-      },
-      {
-        title: "Final Delivery",
-        text: "Deliver polished, consistent and on-brand everywhere.",
-      },
-    ],
-    cards: [
-      {
-        title: "Films & Video",
-        text: "Scripts, scenes, storyboards, generated shots, editing, audio and subtitles.",
-      },
-      {
-        title: "Ads & Campaigns",
-        text: "Concepts, claims, visual routes and deliverables adapted to every channel.",
-      },
-      {
-        title: "Graphic Design",
-        text: "Layouts, posters, brand assets and editable visual compositions.",
-      },
-      {
-        title: "Social Media",
-        text: "Posts, carousels, short videos, captions and content adaptations.",
-      },
-      {
-        title: "Scripts & Content",
-        text: "Articles, scripts, editorial tone, rewrites and structured content systems.",
-      },
-      {
-        title: "Presentations",
-        text: "Slides, decks, PDFs, visual stories and polished client-ready materials.",
-      },
-    ],
+  {
+    title: "Vídeo para web",
+    nodes: ["Brain", "Cine", "Video Editor", "Export"],
   },
-};
+  {
+    title: "Artículo + publicación",
+    nodes: ["Notes", "Brain", "Guionista", "Enhancer", "Export"],
+  },
+  {
+    title: "Branding completo",
+    nodes: ["Inspiration", "Brain", "Designer", "Image Creation", "Presenter"],
+  },
+  {
+    title: "Presentación interactiva",
+    nodes: ["Brain", "Designer", "Presenter", "Export"],
+  },
+  {
+    title: "Producto ecommerce",
+    nodes: ["Inspiration", "Brain", "Image Creation", "PhotoRoom", "Export"],
+  },
+] as const;
 
-const capabilityIcons = [
-  <PenTool key="design" size={15} strokeWidth={2.25} />,
-  <Sparkles key="generate" size={15} strokeWidth={2.25} />,
-  <Presentation key="present" size={15} strokeWidth={2.25} />,
-  <FolderKanban key="organize" size={15} strokeWidth={2.25} />,
-];
+const BILLING_STEPS = ["Recarga", "Genera", "Controla"] as const;
 
-const cardIcons: Array<Pick<Capability, "icon" | "tone">> = [
-  { icon: <Film size={16} strokeWidth={2.25} />, tone: "bg-violet-600 text-white" },
-  { icon: <Megaphone size={16} strokeWidth={2.25} />, tone: "bg-orange-500 text-white" },
-  { icon: <PenTool size={16} strokeWidth={2.25} />, tone: "bg-emerald-600 text-white" },
-  { icon: <Heart size={16} strokeWidth={2.25} />, tone: "bg-pink-500 text-white" },
-  { icon: <FileText size={16} strokeWidth={2.25} />, tone: "bg-sky-600 text-white" },
-  { icon: <Presentation size={16} strokeWidth={2.25} />, tone: "bg-indigo-600 text-white" },
-];
-
-const featureIcons = [
-  <Brain key="brain" size={15} strokeWidth={2.25} />,
-  <Workflow key="workflow" size={15} strokeWidth={2.25} />,
-  <CheckCircle2 key="check" size={15} strokeWidth={2.25} />,
-];
-
-function HomeTopBar() {
+function HeroChrome() {
   const { language, setLanguage } = useLanguage();
 
   return (
-    <header data-foldder-home-topbar className="flex shrink-0 items-stretch">
-      <Link
-        href="/"
-        data-foldder-home-link
-        className="flex h-10 w-10 shrink-0 items-center justify-center border-r border-zinc-950/10 bg-zinc-950/[0.03]"
-        aria-label="Foldder home"
+    <div data-home-v2-hero-chrome className="relative z-[2] flex items-center justify-end gap-4">
+      <div
+        data-foldder-home-lang
+        data-home-v2-hero-lang
+        className="flex shrink-0 items-stretch divide-x divide-white/15 border border-white/15"
+        data-foldder-i18n-ignore
       >
-        <Image src="/logo_big.svg" alt="" width={28} height={28} className="h-7 w-7 object-contain" priority />
-      </Link>
-
-      <div className="flex min-w-0 flex-1 items-center border-r border-zinc-950/10 px-3">
-        <p className="truncate text-[10px] font-black uppercase tracking-[0.14em] text-zinc-950/85">Foldder</p>
-        <p className="ml-2 hidden truncate text-[9px] font-semibold uppercase tracking-[0.08em] text-zinc-950/40 sm:inline">
-          Creative production workspace
-        </p>
-      </div>
-
-      <div data-foldder-home-lang className="flex shrink-0 items-stretch divide-x divide-zinc-950/10" data-foldder-i18n-ignore>
         {LANGUAGE_OPTIONS.map((option) => {
           const active = option.id === language;
           return (
@@ -209,7 +63,9 @@ function HomeTopBar() {
               aria-pressed={active}
               onClick={() => setLanguage(option.id)}
               className={`flex h-10 min-w-10 items-center justify-center px-3 text-[10px] font-black uppercase tracking-[0.1em] transition ${
-                active ? "bg-zinc-950 text-white" : "bg-white text-zinc-950/45 hover:bg-zinc-950/[0.04] hover:text-zinc-950"
+                active
+                  ? "bg-white text-zinc-950"
+                  : "bg-black/40 text-white/45 hover:bg-white/10 hover:text-white"
               }`}
             >
               {option.shortLabel}
@@ -217,140 +73,272 @@ function HomeTopBar() {
           );
         })}
       </div>
-    </header>
-  );
-}
-
-function AccessPanel({ copy }: { copy: (typeof HOME_COPY)[AppLanguage] }) {
-  return (
-    <div data-foldder-home-panel className="w-full max-w-[380px]">
-      <GoogleAccessButton
-        label={copy.googleLabel}
-        authenticatedLabel={copy.googleAuthenticatedLabel}
-        className="flex h-10 w-full items-center justify-center gap-2 bg-blue-600 px-4 text-[10px] font-black uppercase tracking-[0.1em] text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
-      />
-      <div
-        data-foldder-home-row
-        className="flex items-center justify-center gap-1.5 bg-zinc-950/[0.03] px-3 text-[9px] font-semibold text-zinc-950/48"
-      >
-        <Lock size={11} className="shrink-0 text-violet-600" aria-hidden />
-        {copy.secureLine}
-      </div>
     </div>
   );
 }
 
-function CapabilityCell({ item }: { item: Capability }) {
+function PillFlow({ nodes }: { nodes: readonly string[] }) {
   return (
-    <article
-      data-foldder-home-cell
-      className="flex min-h-[108px] gap-0 border-b border-r border-zinc-950/10 bg-white transition hover:bg-zinc-950/[0.02] sm:min-h-[116px]"
-    >
-      <div className={`flex h-10 w-10 shrink-0 items-center justify-center ${item.tone}`}>{item.icon}</div>
-      <div className="min-w-0 flex-1 border-l border-zinc-950/10 p-3">
-        <h3 className="text-[10px] font-black uppercase tracking-[0.08em] text-zinc-950">{item.title}</h3>
-        <p className="mt-2 text-[10px] leading-relaxed text-zinc-950/48">{item.text}</p>
-      </div>
-    </article>
+    <div data-foldder-home-pills>
+      {nodes.map((node, index) => (
+        <span key={`${node}-${index}`} className="inline-flex items-center gap-1">
+          {index > 0 ? <span data-foldder-home-pill-arrow aria-hidden>→</span> : null}
+          <span data-foldder-home-pill>{node}</span>
+        </span>
+      ))}
+    </div>
   );
 }
 
-function FeatureRow({
-  icon,
-  title,
-  text,
-}: {
-  icon: ReactNode;
-  title: string;
-  text: string;
-}) {
+function BrainHubVisual() {
+  const spokes = [
+    { label: "Guionista", className: "top-3 left-1/2 -translate-x-1/2" },
+    { label: "Designer", className: "right-4 top-1/2 -translate-y-1/2" },
+    { label: "Image Creation", className: "left-4 top-1/2 -translate-y-1/2" },
+    { label: "Cine", className: "bottom-8 left-1/4 -translate-x-1/2" },
+    { label: "Presenter", className: "bottom-8 right-1/4 translate-x-1/2" },
+  ];
+
   return (
-    <article data-foldder-home-row className="flex items-stretch bg-white">
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center bg-violet-600 text-white">{icon}</div>
-      <div className="min-w-0 flex-1 border-l border-zinc-950/10 px-3 py-2.5">
-        <h3 className="text-[10px] font-black uppercase tracking-[0.08em] text-zinc-950">{title}</h3>
-        <p className="mt-1.5 text-[10px] leading-relaxed text-zinc-950/48">{text}</p>
-      </div>
-    </article>
+    <div data-home-v2-brain-hub className="grid place-items-center" aria-hidden>
+      <svg data-home-v2-brain-lines className="absolute inset-0 h-full w-full" aria-hidden>
+        <line x1="50%" y1="50%" x2="50%" y2="14%" />
+        <line x1="50%" y1="50%" x2="86%" y2="50%" />
+        <line x1="50%" y1="50%" x2="14%" y2="50%" />
+        <line x1="50%" y1="50%" x2="28%" y2="82%" />
+        <line x1="50%" y1="50%" x2="72%" y2="82%" />
+      </svg>
+      <span data-home-v2-brain-core className="px-4 py-2 text-[10px] font-black uppercase tracking-[0.12em]">
+        Brain
+      </span>
+      {spokes.map((spoke) => (
+        <span key={spoke.label} data-home-v2-brain-spoke className={`absolute ${spoke.className}`}>
+          {spoke.label}
+        </span>
+      ))}
+    </div>
   );
 }
 
-export default function Home() {
-  const { language } = useLanguage();
-  const copy = HOME_COPY[language];
-  const capabilities = copy.cards.map((card, index) => ({
-    ...card,
-    ...cardIcons[index],
-  }));
+function scrollToId(id: string) {
+  document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
 
+export default function HomePage() {
   return (
-    <div data-foldder-home className="flex min-h-screen flex-col overflow-x-hidden">
-      <HomeTopBar />
-
-      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-        <div className="relative min-h-[240px] flex-1 shrink-0 border-b border-zinc-950/10 sm:min-h-[280px] lg:min-h-0 lg:w-[min(44vw,560px)] lg:border-b-0 lg:border-r">
-          <Image
-            src="/home-hero-1920.png"
-            alt=""
-            fill
-            priority
-            sizes="(max-width: 1024px) 100vw, 44vw"
-            className="object-cover object-[58%_center]"
-          />
-          <div className="absolute inset-0 bg-gradient-to-r from-white/20 via-white/5 to-white/70 lg:from-white/10 lg:to-white/55" />
-        </div>
-
-        <section className="flex min-w-0 flex-1 flex-col justify-center px-5 py-8 sm:px-8 lg:px-10 lg:py-10 xl:px-14">
-          <p className="text-[10px] font-black uppercase tracking-[0.14em] text-violet-600">Foldder</p>
-          <h1 className="mt-3 max-w-[540px] text-[clamp(2rem,4vw,3.35rem)] font-black uppercase leading-[0.92] tracking-[-0.03em] text-zinc-950">
-            {copy.headlineBeforeAccent}{" "}
-            <span className="text-blue-600">{copy.headlineAccent}</span> {copy.headlineAfterAccent}
+    <div data-foldder-home-v2 className="flex min-h-screen flex-col overflow-x-hidden">
+      <section
+        data-home-v2-module
+        data-home-v2-module--hero
+        id="hero"
+        aria-labelledby="hero-heading"
+        className="relative flex min-h-[100dvh] flex-col overflow-hidden px-5 py-8 sm:px-8 sm:py-10 lg:px-12 xl:px-16"
+      >
+        <HeroPhotoColumnsBackground />
+        <HeroChrome />
+        <div
+          data-home-v2-hero-content
+          className="relative z-[1] mr-auto flex w-full max-w-xl flex-1 flex-col justify-center pb-6 pt-4"
+        >
+          <Link href="/" data-home-v2-hero-logo data-foldder-home-link aria-label="Foldder">
+            <Image
+              src="/logo_home.svg"
+              alt=""
+              width={80}
+              height={38}
+              className="h-auto w-full max-w-none shrink-0 object-contain"
+              priority
+            />
+          </Link>
+          <h1 id="hero-heading" data-home-v2-headline data-home-v2-headline--on-dark data-home-v2-headline--balance>
+            <span data-home-v2-hero-line="struck">
+              una app que
+              <br />
+              crea por ti.
+            </span>
+            <span data-home-v2-hero-line="gradient">un </span>
+            <span data-home-v2-hero-emphasis>estudio creativo</span>
+            <span data-home-v2-hero-line="gradient"> que crea contigo</span>
           </h1>
-
-          <div className="mt-7">
-            <AccessPanel copy={copy} />
+          <p data-home-v2-hero-lead className="max-w-md text-[11px] leading-relaxed text-white/45">
+            Tú diriges cada decisión. Foldder conecta textos, imágenes, vídeos, marcas y presentaciones para convertir
+            una idea en piezas completas con inteligencia artificial.
+          </p>
+          <div data-home-v2-hero-actions className="flex flex-wrap items-stretch gap-0 border border-white/15">
+            <GoogleAccessButton
+              label="Empieza a crear"
+              authenticatedLabel="Entrar en Foldder"
+              className="flex h-10 min-w-[10rem] flex-1 items-center justify-center gap-2 bg-blue-600 px-4 text-[10px] font-black uppercase tracking-[0.1em] text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60 sm:flex-none"
+            />
+            <button
+              type="button"
+              onClick={() => scrollToId("flows")}
+              className="flex h-10 min-w-[10rem] flex-1 items-center justify-center border-l border-white/15 bg-black/40 px-4 text-[10px] font-black uppercase tracking-[0.1em] text-white transition hover:bg-white/10 sm:flex-none"
+            >
+              Ver flujos
+            </button>
           </div>
+        </div>
+      </section>
 
-          <div
-            data-foldder-home-panel
-            className="mt-5 grid w-full max-w-[380px] grid-cols-4 divide-x divide-zinc-950/10"
-          >
-            {copy.capabilities.map((label, index) => (
-              <div key={label} className="flex flex-col items-center bg-zinc-950/[0.02] px-1 py-3 text-center">
-                <span className="flex h-10 w-10 items-center justify-center bg-white text-violet-600">{capabilityIcons[index]}</span>
-                <span className="mt-2 text-[8px] font-black uppercase tracking-[0.08em] text-zinc-950/55">{label}</span>
-              </div>
+      <section
+        data-home-v2-module
+        data-home-v2-module--manifesto
+        id="manifesto"
+        aria-labelledby="manifesto-heading"
+        className="relative flex flex-col justify-center overflow-hidden px-5 py-16 sm:px-8 lg:px-12 xl:px-16"
+      >
+        <ManifestoParticleBackground />
+        <div className="relative z-[1] mx-auto w-full max-w-4xl">
+          <h2 id="manifesto-heading" className="sr-only">
+            Manifiesto
+          </h2>
+          <div className="space-y-2 sm:space-y-3">
+            {(["Tú decides.", "Foldder conecta.", "La IA acelera."] as const).map((line) => (
+              <p key={line} data-home-v2-manifesto-line data-home-v2-headline>
+                {line}
+              </p>
             ))}
           </div>
-        </section>
-      </div>
-
-      <main className="border-t border-zinc-950/10 bg-white">
-        <div className="flex h-10 items-center border-b border-zinc-950/10 bg-zinc-950/[0.03] px-5 sm:px-8 lg:px-10 xl:px-14">
-          <p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-950/70">{copy.sectionEyebrow}</p>
+          <p className="mt-8 max-w-lg text-[11px] leading-relaxed text-zinc-950/48">
+            Foldder trabaja como un equipo creativo expandido, pero cada decisión sigue estando en tus manos.
+          </p>
         </div>
+      </section>
 
-        <div className="mx-auto grid max-w-7xl gap-0 lg:grid-cols-[minmax(280px,360px)_1fr] lg:divide-x lg:divide-zinc-950/10">
-          <div className="border-b border-zinc-950/10 px-5 py-6 sm:px-8 lg:border-b-0 lg:px-10 lg:py-8 xl:px-14">
-            <h2 className="max-w-[340px] text-xl font-black uppercase leading-tight tracking-[-0.02em] text-zinc-950 sm:text-2xl">
-              {copy.sectionTitle}
+      <section data-home-v2-module id="flows" aria-labelledby="flows-heading">
+        <div data-home-v2-flows-stage>
+          <FlowsWallpaperBackground />
+          <div data-home-v2-flows-stage-content>
+            <div className="flows-stage-header px-5 pt-10 sm:px-8 lg:px-12 xl:px-16">
+              <h2 id="flows-heading" data-home-v2-headline data-home-v2-headline--on-dark className="mx-auto max-w-6xl">
+                Flujos
+              </h2>
+              <p className="mx-auto mt-4 max-w-2xl text-[11px] leading-relaxed text-white/70">
+                Conecta un nodo Prompt a Nano Banana: el texto viaja por el conector y la imagen se genera en el nodo de
+                destino.
+              </p>
+            </div>
+            <FlowsCanvasDemo />
+          </div>
+        </div>
+        <div className="px-5 pb-8 pt-2 sm:px-8 lg:px-12 xl:px-16">
+          <h3 data-home-v2-headline className="mx-auto max-w-6xl text-[clamp(1.1rem,2.5vw,1.75rem)]">
+            Flujos reales
+          </h3>
+        </div>
+        <div className="px-5 pb-8 pt-4 sm:px-8 lg:px-12 xl:px-16">
+          <div className="mx-auto grid max-w-6xl grid-cols-1 divide-y divide-zinc-950/10 border border-zinc-950/10 sm:grid-cols-2 sm:divide-x lg:grid-cols-3">
+            {REAL_FLOWS.map((flow) => (
+              <article
+                key={flow.title}
+                data-foldder-home-cell
+                className="flex min-h-[200px] flex-col justify-between gap-6 bg-white p-4 sm:min-h-[240px]"
+              >
+                <h3 data-home-v2-headline>{flow.title}</h3>
+                <PillFlow nodes={flow.nodes} />
+              </article>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section
+        data-home-v2-module
+        data-home-v2-module--brain
+        id="brain"
+        aria-labelledby="brain-heading"
+        className="relative overflow-hidden"
+      >
+        <BrainColorWaveBackground />
+        <div className="relative z-[1] mx-auto grid max-w-6xl gap-0 lg:grid-cols-[minmax(280px,1fr)_minmax(300px,1.1fr)] lg:divide-x lg:divide-white/10">
+          <div className="border-b border-white/10 px-5 py-10 sm:px-8 lg:border-b-0 lg:px-10 lg:py-14">
+            <p className="text-[10px] font-black uppercase tracking-[0.14em] text-violet-300">Brain</p>
+            <h2 id="brain-heading" data-home-v2-headline data-home-v2-headline--on-dark className="mt-3">
+              El cerebro de tu proyecto.
             </h2>
-            <p className="mt-4 max-w-[340px] text-[11px] leading-relaxed text-zinc-950/48">{copy.sectionText}</p>
+            <p className="mt-4 max-w-md text-[11px] leading-relaxed text-white/45">
+              Sube tu marca, referencias, documentos y reglas. Brain convierte ese conocimiento en contexto activo para
+              todos tus nodos.
+            </p>
+          </div>
+          <div className="px-5 py-10 sm:px-8 lg:px-10 lg:py-14">
+            <BrainHubVisual />
+          </div>
+        </div>
+      </section>
 
-            <div data-foldder-home-panel className="mt-5 overflow-hidden">
-              {copy.featureRows.map((row, index) => (
-                <FeatureRow key={row.title} icon={featureIcons[index]} title={row.title} text={row.text} />
+      <section data-home-v2-module id="nodes" aria-labelledby="nodes-heading">
+        <div className="mx-auto max-w-6xl">
+          <div className="px-5 pt-10 pb-1 sm:px-8 lg:px-10 lg:pt-14 lg:pb-2">
+            <p className="text-[10px] font-black uppercase tracking-[0.14em] text-violet-300">Nodos</p>
+            <h2 id="nodes-heading" data-home-v2-headline className="mt-3">
+              Parte del proceso.
+            </h2>
+            <p className="mt-4 max-w-md text-[11px] leading-relaxed text-zinc-950/48">
+              Sube tu marca, referencias, documentos y reglas. Brain convierte ese conocimiento en contexto activo para
+              todos tus nodos.
+            </p>
+          </div>
+          <div className="-mt-3 px-5 pb-12 sm:px-8 sm:-mt-4 lg:px-10 lg:-mt-5 lg:pb-14">
+            <NodePerspectiveGallery />
+          </div>
+        </div>
+      </section>
+
+      <section data-home-v2-module id="billing" aria-labelledby="billing-heading">
+        <div className="px-5 py-10 sm:px-8 lg:px-12 xl:px-16">
+          <div className="mx-auto max-w-6xl">
+            <h2 id="billing-heading" data-home-v2-headline data-home-v2-headline--balance>
+              Saldo prepago. Coste visible. Control total.
+            </h2>
+            <div className="mt-8 grid grid-cols-1 gap-0 border border-zinc-950/10 sm:grid-cols-3">
+              {BILLING_STEPS.map((step, index) => (
+                <div
+                  key={step}
+                  data-home-v2-billing-step
+                  className={`flex flex-col border-b border-zinc-950/10 bg-white p-5 sm:border-b-0 ${
+                    index < BILLING_STEPS.length - 1 ? "sm:border-r sm:border-zinc-950/10" : ""
+                  }`}
+                >
+                  <span className="text-[9px] font-black uppercase tracking-[0.12em] text-zinc-950/35">
+                    0{index + 1}
+                  </span>
+                  <span data-home-v2-headline className="mt-2">
+                    {step}
+                  </span>
+                </div>
               ))}
             </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-            {capabilities.map((item) => (
-              <CapabilityCell key={item.title} item={item} />
-            ))}
+            <button
+              type="button"
+              onClick={() => scrollToId("start")}
+              className="mt-6 flex h-10 items-center border border-zinc-950/10 bg-zinc-950/[0.03] px-4 text-[10px] font-black uppercase tracking-[0.1em] text-zinc-950 transition hover:bg-zinc-950/[0.06]"
+            >
+              Ver precios
+            </button>
           </div>
         </div>
-      </main>
+      </section>
+
+      <section data-home-v2-module id="start" aria-labelledby="start-heading">
+        <div className="flex flex-col items-center px-5 py-16 text-center sm:px-8 lg:px-12 xl:px-16">
+          <h2 id="start-heading" data-home-v2-headline data-home-v2-headline--balance className="max-w-4xl">
+            Tu Foldder no será igual que el de nadie.
+          </h2>
+          <p className="mt-5 max-w-xl text-[11px] leading-relaxed text-zinc-950/48">
+            Úsalo para escribir, diseñar, montar, presentar, vender, explorar, crear campañas o construir tu propio
+            sistema creativo.
+          </p>
+          <div className="mt-10 w-full max-w-[380px] border border-zinc-950/10">
+            <GoogleAccessButton
+              label="Empieza"
+              authenticatedLabel="Entrar en Foldder"
+              className="flex h-12 w-full items-center justify-center gap-2 bg-blue-600 px-6 text-[11px] font-black uppercase tracking-[0.1em] text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
+            />
+          </div>
+        </div>
+      </section>
 
       <footer className="flex h-10 shrink-0 items-center justify-center border-t border-zinc-950/10 bg-zinc-950 px-4">
         <p className="text-[10px] font-black uppercase tracking-[0.12em] text-white/72">Foldder 2026</p>

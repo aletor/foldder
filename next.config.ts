@@ -3,6 +3,9 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   serverExternalPackages: ["sharp"],
   turbopack: {},
+  async redirects() {
+    return [{ source: "/home_v2", destination: "/", permanent: true }];
+  },
   images: {
     remotePatterns: [
       {

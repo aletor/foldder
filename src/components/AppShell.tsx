@@ -16,12 +16,18 @@ export function AppShell({ children }: { children: ReactNode }) {
     cleanupLegacyUnscopedBrainSuggestionStorageOnce();
   }, []);
 
+  const isHome = pathname === "/";
+
   return (
     <LanguageProvider>
       {isSpaces ? (
         <main className="h-screen w-screen overflow-hidden">{children}</main>
       ) : (
-        <div className="min-h-screen w-full bg-[var(--background)]">{children}</div>
+        <div
+          className={`min-h-screen w-full ${isHome ? "bg-black" : "bg-[var(--background)]"}`}
+        >
+          {children}
+        </div>
       )}
       {!isSpaces && pathname !== "/" ? <LanguageSwitcher /> : null}
       {pathname !== "/" ? <BackgroundRadioPlayer /> : null}
