@@ -23559,7 +23559,7 @@ export function FreehandStudioCanvas({
       data-foldder-studio-canvas
       className="fixed inset-0 z-[9999] flex min-h-0 flex-col bg-[#0b0d10] text-zinc-200"
       style={{
-        fontFamily: "var(--font-inter), ui-sans-serif, system-ui, sans-serif",
+        fontFamily: '"Passion One", ui-sans-serif, system-ui, sans-serif',
         ...(flushChrome ? ({ "--foldder-studio-accent": flushAccentHex } as React.CSSProperties) : {}),
       }}
       onDrop={handleDrop}

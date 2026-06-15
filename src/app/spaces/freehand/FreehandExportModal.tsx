@@ -128,7 +128,7 @@ export function FreehandExportModal({
         className={`w-full max-w-md border border-white/[0.12] transition-transform duration-150 ease-out ${
           flush ? "bg-[#0b0f14] shadow-[0_24px_70px_rgba(0,0,0,0.55)]" : "rounded-xl bg-[#12151a] shadow-2xl"
         }`}
-        style={{ fontFamily: "var(--font-inter), ui-sans-serif, system-ui, sans-serif" }}
+        style={{ fontFamily: '"Passion One", ui-sans-serif, system-ui, sans-serif' }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-white/[0.08] px-4 py-3">

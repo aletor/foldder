@@ -1,14 +1,7 @@
 import type { Metadata, Viewport } from "next";
-import { Inter } from "next/font/google";
 import "./globals.css";
 import { AppShell } from "@/components/AppShell";
 import { AuthSessionProvider } from "@/components/AuthSessionProvider";
-
-const inter = Inter({
-  subsets: ["latin"],
-  display: "swap",
-  variable: "--font-inter",
-});
 
 export const metadata: Metadata = {
   title: "Foldder",
@@ -31,8 +24,16 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" translate="no" className={`${inter.variable} notranslate`} suppressHydrationWarning>
-      <body className={`${inter.className} notranslate antialiased`} translate="no">
+    <html lang="en" translate="no" className="notranslate" suppressHydrationWarning>
+      <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link
+          href="https://fonts.googleapis.com/css2?family=Passion+One:wght@400;700&display=swap"
+          rel="stylesheet"
+        />
+      </head>
+      <body className="notranslate antialiased" translate="no">
         <AuthSessionProvider>
           <AppShell>{children}</AppShell>
         </AuthSessionProvider>

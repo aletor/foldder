@@ -52,7 +52,7 @@
 body {
   background-color: var(--background);
   color: var(--text-main);
-  font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  font-family: "Passion One", ui-sans-serif, system-ui, sans-serif;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
