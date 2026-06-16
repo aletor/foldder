@@ -10,39 +10,27 @@ import { BrainSectionVisual } from "./_home/BrainSectionVisual";
 import { HeroPhotoColumnsBackground } from "./_home/HeroPhotoColumnsBackground";
 import { ManifestoParticleBackground } from "./_home/ManifestoParticleBackground";
 import { FlowsCanvasDemo } from "./_home/FlowsCanvasDemo";
+import { FlowsPresetButtons } from "./_home/FlowsPresetButtons";
 import { FlowsWallpaperBackground } from "./_home/FlowsWallpaperBackground";
 import { LetterImageSwapHeadline } from "./_home/LetterImageSwapHeadline";
 import { NodePerspectiveGallery } from "./_home/NodePerspectiveGallery";
+import { scrollHomeToSection, useHomeSectionScroll } from "./_home/useHomeSectionScroll";
 import "./_home/home-v2.css";
 
-const REAL_FLOWS = [
+const BILLING_CARDS = [
   {
-    title: "Cartel para redes",
-    nodes: ["Inspiration", "Brain", "Image Creation", "Designer"],
+    title: "Elige",
+    description: "Suscripción, bolsa fija o créditos.",
   },
   {
-    title: "Vídeo para web",
-    nodes: ["Brain", "Cine", "Video Editor", "Export"],
+    title: "Crea",
+    description: "Genera, edita, monta o presenta.",
   },
   {
-    title: "Artículo + publicación",
-    nodes: ["Notes", "Brain", "Guionista", "Enhancer", "Export"],
-  },
-  {
-    title: "Branding completo",
-    nodes: ["Inspiration", "Brain", "Designer", "Image Creation", "Presenter"],
-  },
-  {
-    title: "Presentación interactiva",
-    nodes: ["Brain", "Designer", "Presenter", "Export"],
-  },
-  {
-    title: "Producto ecommerce",
-    nodes: ["Inspiration", "Brain", "Image Creation", "PhotoRoom", "Export"],
+    title: "Controla",
+    description: "Confirma cada acción antes de usar recursos.",
   },
 ] as const;
-
-const BILLING_STEPS = ["Recarga", "Genera", "Controla"] as const;
 
 function HeroChrome() {
   const { language, setLanguage } = useLanguage();
@@ -79,24 +67,13 @@ function HeroChrome() {
   );
 }
 
-function PillFlow({ nodes }: { nodes: readonly string[] }) {
-  return (
-    <div data-foldder-home-pills>
-      {nodes.map((node, index) => (
-        <span key={`${node}-${index}`} className="inline-flex items-center gap-1">
-          {index > 0 ? <span data-foldder-home-pill-arrow aria-hidden>→</span> : null}
-          <span data-foldder-home-pill>{node}</span>
-        </span>
-      ))}
-    </div>
-  );
-}
-
 function scrollToId(id: string) {
-  document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  scrollHomeToSection(id);
 }
 
 export default function HomePage() {
+  useHomeSectionScroll();
+
   return (
     <div data-foldder-home-v2 className="flex min-h-screen flex-col overflow-x-hidden">
       <section
@@ -189,44 +166,46 @@ export default function HomePage() {
         <div data-home-v2-flows-stage>
           <FlowsWallpaperBackground />
           <div data-home-v2-flows-stage-content>
-            <div className="flows-stage-header pt-10" data-home-v2-section-inset>
-              <div data-home-v2-section-copy>
-                <h2 id="flows-heading" data-home-v2-headline data-home-v2-headline--on-dark>
-                  Flujos
-                </h2>
-                <p data-home-v2-body className="max-w-2xl text-white/70">
-                Conecta un nodo Prompt a Nano Banana: el texto viaja por el conector y la imagen se genera en el nodo de
-                destino.
-                </p>
-              </div>
+            <div className="flows-stage-header" data-home-v2-flows-copy data-home-v2-section-copy data-home-v2-section-inset>
+              <p data-home-v2-eyebrow className="text-[10px] uppercase tracking-[0.14em] text-violet-300/90">
+                Flujos
+              </p>
+              <h2 id="flows-heading" data-home-v2-headline data-home-v2-headline--on-dark>
+                <span data-home-v2-brain-claim-line>ELIGE TU CAMINO</span>
+                <br />
+                <span data-home-v2-brain-claim-line>PARA UN GRAN RESULTADO.</span>
+              </h2>
+              <FlowsPresetButtons />
             </div>
             <FlowsCanvasDemo />
-          </div>
-        </div>
-        <div className="pb-8 pt-2" data-home-v2-section-inset>
-          <h3 data-home-v2-headline className="max-w-[42rem] text-[clamp(1.1rem,2.5vw,1.75rem)]">
-            Flujos reales
-          </h3>
-        </div>
-        <div className="pb-8 pt-4" data-home-v2-section-inset>
-          <div className="grid max-w-6xl grid-cols-1 divide-y divide-zinc-950/10 border border-zinc-950/10 sm:grid-cols-2 sm:divide-x lg:grid-cols-3">
-            {REAL_FLOWS.map((flow) => (
-              <article
-                key={flow.title}
-                data-foldder-home-cell
-                className="flex min-h-[200px] flex-col justify-between gap-6 bg-white p-4 sm:min-h-[240px]"
-              >
-                <h3 data-home-v2-headline>{flow.title}</h3>
-                <PillFlow nodes={flow.nodes} />
-              </article>
-            ))}
           </div>
         </div>
       </section>
 
       <section
         data-home-v2-module
+        data-home-v2-module--nodes
+        data-home-v2-scroll-align="start"
+        id="nodes"
+        aria-labelledby="nodes-heading"
+      >
+        <div data-home-v2-section-copy data-home-v2-section-inset data-home-v2-nodes-copy>
+          <p data-home-v2-eyebrow className="text-[10px] uppercase tracking-[0.14em] text-violet-300">Nodos</p>
+          <h2 id="nodes-heading" data-home-v2-headline>
+            <span data-home-v2-brain-claim-line>HERRAMIENTAS</span>
+            <br />
+            <span data-home-v2-brain-claim-line>QUE SE CONECTAN.</span>
+          </h2>
+        </div>
+        <div data-home-v2-nodes-gallery aria-label="Galería de nodos">
+          <NodePerspectiveGallery />
+        </div>
+      </section>
+
+      <section
+        data-home-v2-module
         data-home-v2-module--brain
+        data-home-v2-scroll-align="start"
         id="brain"
         aria-labelledby="brain-heading"
         className="relative"
@@ -273,66 +252,48 @@ export default function HomePage() {
         </div>
       </section>
 
-      <section data-home-v2-module id="nodes" aria-labelledby="nodes-heading">
-        <div data-home-v2-section-copy data-home-v2-section-inset className="pt-10 pb-1 lg:pt-14 lg:pb-2">
-          <p data-home-v2-eyebrow className="text-[10px] uppercase tracking-[0.14em] text-violet-300">Nodos</p>
-          <h2 id="nodes-heading" data-home-v2-headline>
-            Parte del proceso.
-          </h2>
-          <p data-home-v2-body className="max-w-md text-zinc-950/48">
-            Sube tu marca, referencias, documentos y reglas. Brain convierte ese conocimiento en contexto activo para
-            todos tus nodos.
-          </p>
-        </div>
-        <div className="-mt-2 px-0 pb-10 sm:mt-0 sm:pb-12 lg:pb-14">
-          <NodePerspectiveGallery />
-        </div>
-      </section>
-
-      <section data-home-v2-module id="billing" aria-labelledby="billing-heading">
-        <div className="py-10" data-home-v2-section-inset>
-          <div data-home-v2-section-copy>
-            <h2 id="billing-heading" data-home-v2-headline data-home-v2-headline--balance>
-              Saldo prepago. Coste visible. Control total.
-            </h2>
-            <div className="mt-8 grid grid-cols-1 gap-0 border border-zinc-950/10 sm:grid-cols-3">
-              {BILLING_STEPS.map((step, index) => (
-                <div
-                  key={step}
-                  data-home-v2-billing-step
-                  className={`flex flex-col border-b border-zinc-950/10 bg-white p-5 sm:border-b-0 ${
-                    index < BILLING_STEPS.length - 1 ? "sm:border-r sm:border-zinc-950/10" : ""
-                  }`}
-                >
-                  <span data-home-v2-eyebrow className="text-[9px] uppercase tracking-[0.12em] text-zinc-950/35">
-                    0{index + 1}
-                  </span>
-                  <span data-home-v2-headline className="mt-2">
-                    {step}
-                  </span>
-                </div>
-              ))}
-            </div>
-            <button
-              type="button"
-              onClick={() => scrollToId("start")}
-              className="mt-6 flex h-10 items-center border border-zinc-950/10 bg-zinc-950/[0.03] px-4 text-[10px] font-black uppercase tracking-[0.1em] text-zinc-950 transition hover:bg-zinc-950/[0.06]"
-            >
-              Ver precios
-            </button>
-          </div>
-        </div>
-      </section>
-
       <section
         data-home-v2-module
         data-home-v2-module--start
+        data-home-v2-scroll-align="start"
         id="start"
-        aria-labelledby="start-heading"
+        aria-labelledby="billing-heading start-heading"
         className="relative overflow-hidden"
       >
         <ColorWaveBackground />
-        <div className="relative z-[1] flex flex-col items-center px-5 py-16 text-center sm:px-8 lg:px-12 xl:px-16">
+        <div data-home-v2-start-inner className="relative z-[1] flex w-full flex-col py-16">
+          <div
+            data-home-v2-start-billing
+            data-home-v2-billing-copy
+            data-home-v2-section-copy
+            data-home-v2-section-inset
+          >
+            <p data-home-v2-eyebrow className="text-[10px] uppercase tracking-[0.14em] text-violet-300/90">
+              Saldo
+            </p>
+            <h2 id="billing-heading" data-home-v2-headline data-home-v2-headline--on-dark data-home-v2-headline--balance>
+              <span data-home-v2-brain-claim-line>LA IA SOLO TRABAJA</span>
+              <br />
+              <span data-home-v2-brain-claim-line>CUANDO TÚ LO DECIDES.</span>
+            </h2>
+            <p data-home-v2-body className="max-w-2xl text-white/52">
+              Usa Foldder con suscripción, bolsa fija o créditos. Cada acción de IA se confirma antes de ejecutarse,
+              para que siempre tengas control sobre lo que creas y lo que consumes.
+            </p>
+            <ul data-home-v2-billing-features>
+              {BILLING_CARDS.map((card) => (
+                <li key={card.title} data-home-v2-billing-feature>
+                  <p data-home-v2-billing-feature-title>{card.title}</p>
+                  <p data-home-v2-billing-feature-desc>{card.description}</p>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div
+            data-home-v2-start-closing
+            className="flex flex-col items-center px-5 text-center sm:px-8 lg:px-12 xl:px-16"
+          >
           <h2
             id="start-heading"
             data-home-v2-headline
@@ -352,6 +313,7 @@ export default function HomePage() {
               authenticatedLabel="Entrar en Foldder"
               className="flex h-12 w-full items-center justify-center gap-2 bg-blue-600 px-6 text-[11px] font-black uppercase tracking-[0.1em] text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
             />
+          </div>
           </div>
         </div>
       </section>

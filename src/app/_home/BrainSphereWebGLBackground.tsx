@@ -7,8 +7,8 @@ const LINE_COUNT = 50;
 const DOT_COUNT = 50;
 const BASE_RADIUS = 100;
 
-const COLOR_MUTED = 0x3a3a44;
-const COLOR_ACCENT = 0x6d5bd0;
+const COLOR_MUTED = 0x52525f;
+const COLOR_ACCENT = 0x8b7ae8;
 
 type LineUserData = {
   speed: number;
@@ -88,8 +88,8 @@ export function BrainSphereWebGLBackground() {
     const sphere = new THREE.Group();
     scene.add(sphere);
 
-    const matMuted = new THREE.LineBasicMaterial({ color: COLOR_MUTED, transparent: true, opacity: 0.55 });
-    const matAccent = new THREE.LineBasicMaterial({ color: COLOR_ACCENT, transparent: true, opacity: 0.72 });
+    const matMuted = new THREE.LineBasicMaterial({ color: COLOR_MUTED, transparent: true, opacity: 0.62 });
+    const matAccent = new THREE.LineBasicMaterial({ color: COLOR_ACCENT, transparent: true, opacity: 0.82 });
     const materials = [matMuted, matAccent];
 
     for (let i = 0; i < LINE_COUNT; i++) {

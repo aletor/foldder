@@ -36,68 +36,70 @@ const NODE_HERO_VIDEO_SRC: Record<string, string> = {
   nanoBanana: "/home-v2/hero/trusted-access.mp4",
   geminiVideo: "/home-v2/hero/video-post-oaro-3.mp4",
   cine: "/home-v2/hero/oaro-id-secure.mp4",
+  vfxGenerator: "/home-v2/hero/der2.mp4",
+  designer: "/home-v2/hero/main.mp4",
 };
 
 /** 12 nodos con imagen de fondo — una sola pila en home_v2. */
 export const HOME_V2_NODE_CARDS: readonly { label: string; description: string; type: string }[] = [
   {
     label: "Inspiration",
-    description: "Busca referencias visuales desde prompt o imagen y devuelve una imagen seleccionada.",
+    description: "Busca **referencias visuales** desde prompt o imagen y devuelve una **selección curada**.",
     type: "inspiration",
   },
   {
     label: "Guionista",
-    description: "Convierte ideas, notas o Brain en textos versionados: posts, guiones, slides y campañas.",
+    description: "Convierte ideas, notas o **Brain** en **posts, guiones, slides y campañas** versionados.",
     type: "guionista",
   },
   {
     label: "Image Creation",
-    description: "Genera imagen desde prompt y referencias visuales conectadas.",
+    description: "Genera imagen desde **prompt y referencias** visuales conectadas.",
     type: "nanoBanana",
   },
   {
     label: "PhotoRoom",
-    description: "Retoque y composición de imagen con varias entradas conectadas.",
+    description: "**Retoque y composición** de imagen con varias entradas conectadas.",
     type: "photoRoom",
   },
   {
     label: "Background Remover",
-    description: "Elimina el fondo de la imagen con precisión.",
+    description: "Elimina el **fondo** de la imagen con **precisión**.",
     type: "backgroundRemover",
   },
   {
     label: "Image Describer",
-    description: "Analiza una imagen y la convierte en descripción reutilizable como prompt o referencia.",
+    description: "Analiza una imagen y la convierte en **descripción reutilizable** como prompt.",
     type: "mediaDescriber",
   },
   {
     label: "Cine",
-    description: "Preproducción audiovisual: guion, reparto, storyboard y prompts de frames.",
+    description: "**Preproducción** audiovisual: guion, reparto, **storyboard** y prompts de frames.",
     type: "cine",
   },
   {
     label: "Video Generator",
-    description: "Genera vídeo con prompt y frames opcionales.",
+    description: "Genera **vídeo** con prompt y **frames** opcionales.",
     type: "geminiVideo",
   },
   {
     label: "VFX",
-    description: "Efectos VFX sobre vídeo con prompt e imagen de referencia.",
+    description: "**Efectos VFX** sobre vídeo con prompt e **imagen de referencia**.",
     type: "vfxGenerator",
   },
   {
     label: "Video Editor",
-    description: "Timeline editable con vídeo, imágenes y audio generado por prompt.",
+    description: "**Timeline** editable con vídeo, imágenes y **audio generado por prompt**.",
     type: "videoEditor",
   },
   {
     label: "Designer",
-    description: "Diseño completo: vectores, páginas, cajas de texto y marcos de imagen.",
+    description: "**Diseño completo**: vectores, páginas, textos y marcos de imagen.",
     type: "designer",
   },
   {
     label: "Presenter",
-    description: "Convierte las páginas del Designer en diapositivas listas para presentar.",
+    description: "Convierte **Designer** en **diapositivas** listas para presentar.",
     type: "presenter",
   },
 ];

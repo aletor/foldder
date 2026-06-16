@@ -2,6 +2,7 @@
 
 import {
   forwardRef,
+  memo,
   useCallback,
   useEffect,
   useImperativeHandle,
@@ -9,6 +10,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type KeyboardEvent,
   type MouseEvent,
 } from "react";
 import {
@@ -21,10 +23,22 @@ import {
 } from "motion/react";
 import { buildHomeV2NodeCards, type HomeV2NodeCard } from "./home-v2-nodes";
 
-const DESKTOP_ITEM_WIDTH = 360;
+const DESKTOP_ITEM_WIDTH = 504;
+const DESKTOP_ITEM_HEIGHT = 284;
+const MOBILE_ITEM_WIDTH = 368;
+const MOBILE_ITEM_HEIGHT = 208;
+const OVERLAY_SIZE_RATIO = 0.2;
 const AUTOPLAY_MS = 3500;
-const ICON_SIZE_RATIO = 0.4;
 const FLOAT_VARIANTS = ["a", "b", "c"] as const;
+/** Center-to-center distance as a fraction of card width — lower = tighter stack, ~5 visible on desktop */
+const COVERFLOW_STEP_RATIO = 0.33;
+
+function getCoverflowMotionRanges(itemWidth: number, isMobile: boolean) {
+  return {
+    rotateAmount: isMobile ? 16 : 20,
+    parallaxShift: Math.round(itemWidth * 0.025),
+  };
+}
 
 type CoverflowMetrics = {
   itemWidth: number;
@@ -34,20 +48,24 @@ type CoverflowMetrics = {
 };
 
 function getCoverflowMetrics(viewportWidth: number): CoverflowMetrics {
-  const itemWidth =
-    viewportWidth <= 0
-      ? DESKTOP_ITEM_WIDTH
-      : viewportWidth < 640
-        ? Math.min(292, Math.max(232, Math.round(viewportWidth * 0.76)))
-        : DESKTOP_ITEM_WIDTH;
-  const itemHeight = Math.round((itemWidth * 3) / 4);
-  const gap = viewportWidth > 0 && viewportWidth < 640 ? 8 : 10;
+  if (viewportWidth > 0 && viewportWidth < 640) {
+    const itemWidth = MOBILE_ITEM_WIDTH;
+    const step = Math.round(itemWidth * COVERFLOW_STEP_RATIO);
+    return {
+      itemWidth,
+      itemHeight: MOBILE_ITEM_HEIGHT,
+      gap: step - itemWidth,
+      step,
+    };
+  }
 
+  const itemWidth = DESKTOP_ITEM_WIDTH;
+  const step = Math.round(itemWidth * COVERFLOW_STEP_RATIO);
   return {
     itemWidth,
-    itemHeight,
-    gap,
-    step: itemWidth + gap,
+    itemHeight: DESKTOP_ITEM_HEIGHT,
+    gap: step - itemWidth,
+    step,
   };
 }
 
@@ -116,10 +134,13 @@ function CoverflowItem({
   scrollX,
   viewportWidth,
   metrics,
-  reducedMotion,
   selectedIndex,
 }: CoverflowItemProps) {
   const { itemWidth, itemHeight, step } = metrics;
+  const overlaySize = Math.round(itemWidth * OVERLAY_SIZE_RATIO);
+  const isMobile = viewportWidth > 0 && viewportWidth < 640;
+  const { rotateAmount, parallaxShift } = getCoverflowMotionRanges(itemWidth, isMobile);
+  const itemOverlap = step - itemWidth;
 
   const offset = useTransform(scrollX, (x) => {
     if (viewportWidth <= 0) return 0;
@@ -128,25 +149,39 @@ function CoverflowItem({
     return itemCenter - viewportWidth / 2;
   });
 
-  const rotateRange = viewportWidth < 640 ? 140 : 200;
-  const rotateAmount = viewportWidth < 640 ? 14 : 20;
-  const rotateY = useTransform(offset, [-rotateRange, 0, rotateRange], [rotateAmount, 0, -rotateAmount]);
-  const scale = useTransform(offset, [-rotateRange, 0, rotateRange], [0.76, 1, 0.76]);
-  const parallaxX = useTransform(offset, [-800, -200, 200, 800], ["100%", "0%", "0%", "-100%"]);
-  const zIndex = useTransform(offset, (value) => Math.max(0, Math.round(1000 - Math.abs(value))));
-  const blur = useTransform(offset, (value) => {
-    if (reducedMotion) return 0;
-    const distance = Math.abs(value);
-    if (distance <= 28) return 0;
-    return Math.min(1, ((distance - 28) / 210) * 1);
-  });
-  const filter = useTransform(blur, (amount) => `blur(${amount.toFixed(2)}px)`);
+  const oneStep = step;
+  const twoSteps = step * 2;
+  const halfStep = step * 0.45;
+
+  const rotateY = useTransform(
+    offset,
+    [-twoSteps, -oneStep, 0, oneStep, twoSteps],
+    [rotateAmount, rotateAmount * 0.55, 0, -rotateAmount * 0.55, -rotateAmount],
+  );
+  const scale = useTransform(
+    offset,
+    [-twoSteps, -oneStep, 0, oneStep, twoSteps],
+    [0.72, 0.86, 1, 0.86, 0.72],
+  );
+  const translateZ = useTransform(
+    offset,
+    [-twoSteps, -oneStep, 0, oneStep, twoSteps],
+    [-220, -110, 0, -110, -220],
+  );
+  const parallaxX = useTransform(
+    offset,
+    [-oneStep, -halfStep, halfStep, oneStep],
+    [-parallaxShift, 0, 0, parallaxShift],
+  );
+  const zIndex = useTransform(offset, (value) =>
+    Math.max(0, Math.round(1000 - (Math.abs(value) / oneStep) * 120)),
+  );
 
   return (
     <motion.li
       data-home-v2-coverflow-item
       data-selected={selectedIndex === index ? "true" : undefined}
-      style={{ width: itemWidth, height: itemHeight, zIndex }}
+      style={{ width: itemWidth, height: itemHeight, zIndex, marginRight: itemOverlap }}
     >
       <motion.button
         type="button"
@@ -158,8 +193,8 @@ function CoverflowItem({
           x: parallaxX,
           rotateY,
           scale,
-          filter,
-          transformPerspective: 500,
+          z: translateZ,
+          transformPerspective: 900,
         }}
         onPointerDown={(event) => {
           event.stopPropagation();
@@ -172,24 +207,34 @@ function CoverflowItem({
             src={card.detailImageSrc}
             alt=""
             draggable={false}
+            decoding="async"
+            loading="lazy"
           />
         </div>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          data-home-v2-coverflow-item-overlay
-          src={card.imageSrc}
-          alt=""
-          draggable={false}
-          style={coverflowIconFloatStyle(index)}
-        />
-        <div data-home-v2-coverflow-item-copy>
-          <p data-home-v2-coverflow-item-title>{card.label}</p>
-          <p data-home-v2-coverflow-item-desc>{card.description}</p>
-        </div>
+        <span
+          data-home-v2-coverflow-item-overlay-slot
+          style={{
+            ...coverflowIconFloatStyle(index),
+            width: overlaySize,
+            height: overlaySize,
+          }}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            data-home-v2-coverflow-item-overlay
+            src={card.imageSrc}
+            alt=""
+            draggable={false}
+            decoding="async"
+            loading="lazy"
+          />
+        </span>
       </motion.button>
     </motion.li>
   );
 }
+
+const MemoCoverflowItem = memo(CoverflowItem);
 
 export const NodeCoverflowCarousel = forwardRef<NodeCoverflowCarouselHandle, NodeCoverflowCarouselProps>(
   function NodeCoverflowCarousel({ onActiveIndexChange }, ref) {
@@ -230,7 +275,13 @@ export const NodeCoverflowCarousel = forwardRef<NodeCoverflowCarouselHandle, Nod
       if (reducedMotion) {
         scrollX.set(target);
       } else {
-        animate(scrollX, target, { type: "spring", stiffness: 200, damping: 40 });
+        animate(scrollX, target, {
+          type: "spring",
+          stiffness: 320,
+          damping: 36,
+          mass: 0.85,
+          restDelta: 0.5,
+        });
       }
 
       activeIndexRef.current = normalized;
@@ -285,12 +336,6 @@ export const NodeCoverflowCarousel = forwardRef<NodeCoverflowCarouselHandle, Nod
   }, [cards.length, reducedMotion, scrollToIndex]);
 
   const paddingLeft = viewportWidth > 0 ? viewportWidth / 2 - metrics.itemWidth / 2 : 0;
-  const iconOverhangPx = Math.round(metrics.itemWidth * ICON_SIZE_RATIO * 0.5);
-  const viewportStyle = {
-    ["--home-v2-coverflow-icon-overhang" as string]: `${iconOverhangPx}px`,
-    ["--home-v2-coverflow-card-w" as string]: `${metrics.itemWidth}px`,
-    ["--home-v2-coverflow-card-h" as string]: `${metrics.itemHeight}px`,
-  } satisfies CSSProperties;
 
   const handleViewportClickCapture = useCallback(
     (event: MouseEvent<HTMLDivElement>) => {
@@ -304,15 +349,38 @@ export const NodeCoverflowCarousel = forwardRef<NodeCoverflowCarouselHandle, Nod
     [selectCard],
   );
 
+  const handleViewportKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLDivElement>) => {
+      if (
+        event.key !== "ArrowLeft" &&
+        event.key !== "ArrowRight" &&
+        event.key !== "Left" &&
+        event.key !== "Right"
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      if (event.key === "ArrowRight" || event.key === "Right") goNext();
+      else goPrev();
+    },
+    [goNext, goPrev],
+  );
+
   return (
     <div data-home-v2-coverflow-wrap>
       <div
         ref={viewportRef}
         data-home-v2-coverflow-viewport
-        style={viewportStyle}
+        role="group"
+        aria-roledescription="carousel"
+        aria-label="Galería de nodos"
+        tabIndex={0}
+        onKeyDown={handleViewportKeyDown}
         onClickCapture={handleViewportClickCapture}
         onPointerEnter={() => {
           pauseAutoplayRef.current = true;
+          viewportRef.current?.focus({ preventScroll: true });
         }}
         onPointerLeave={() => {
           if (!autoplayLockedRef.current) pauseAutoplayRef.current = false;
@@ -320,10 +388,11 @@ export const NodeCoverflowCarousel = forwardRef<NodeCoverflowCarouselHandle, Nod
       >
         <motion.ul
           data-home-v2-coverflow-track
-          style={{ x: scrollX, paddingLeft, gap: metrics.gap }}
+          style={{ x: scrollX, paddingLeft }}
           drag="x"
-          dragElastic={0.06}
+          dragElastic={0.04}
           dragMomentum={false}
+          dragTransition={{ power: 0.2, timeConstant: 200 }}
           onDragStart={() => {
             trackDraggedRef.current = false;
             pauseAutoplayRef.current = true;
@@ -341,7 +410,7 @@ export const NodeCoverflowCarousel = forwardRef<NodeCoverflowCarouselHandle, Nod
           }}
         >
           {cards.map((card, index) => (
-            <CoverflowItem
+            <MemoCoverflowItem
               key={card.type}
               card={card}
               index={index}

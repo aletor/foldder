@@ -19,12 +19,14 @@ export type HomeV2NodeDetailFeatureIcon =
   | "workflow";
 
 export type HomeV2NodeDetailFeature = {
-  title: string;
-  description: string;
+  id: string;
+  /** Breve línea descriptiva; envuelve en **texto** las palabras a resaltar. */
+  line: string;
   icon: HomeV2NodeDetailFeatureIcon;
 };
 
 export type HomeV2NodeDetailContent = {
+  /** Párrafo breve; envuelve en **texto** las palabras a resaltar. */
   intro: string;
   features: readonly HomeV2NodeDetailFeature[];
 };
@@ -32,126 +34,126 @@ export type HomeV2NodeDetailContent = {
 const NODE_DETAIL_CONTENT: Record<string, HomeV2NodeDetailContent> = {
   photoRoom: {
     intro:
-      "PhotoRoom es la cápsula de composición visual de Foldder: permite combinar imágenes en un lienzo, trabajar por capas, retocar, aplicar máscaras y modificar elementos con IA dentro del mismo flujo creativo.",
+      "**Composición visual** en un lienzo: **capas**, retoque, máscaras e **IA** en el mismo flujo.",
     features: [
       {
-        title: "Capas conectadas",
-        description: "Cada imagen entra como una capa editable.",
+        id: "layers",
+        line: "Cada imagen entra como **capa editable**.",
         icon: "layers",
       },
       {
-        title: "Retoque visual",
-        description: "Pincel, clonado, selecciones, máscaras y estilos.",
+        id: "retouch",
+        line: "**Pincel, máscaras y estilos** en el mismo flujo.",
         icon: "brush",
       },
       {
-        title: "IA integrada",
-        description: "Modifica elementos sin salir del proyecto.",
+        id: "ai",
+        line: "**IA integrada** sin salir del proyecto.",
         icon: "sparkles",
       },
     ],
   },
   designer: {
     intro:
-      "Designer es la cápsula de diseño editorial de Foldder: permite crear piezas visuales, documentos multipágina, layouts, textos, imágenes y composiciones con control profesional, listas para exportar o convertir en presentación.",
+      "**Diseño editorial** multipágina: layouts, textos e imágenes listos para **exportar o presentar**.",
     features: [
       {
-        title: "Diseño multipágina",
-        description: "Crea documentos, slides, piezas de marca o layouts editoriales.",
+        id: "multipage",
+        line: "**Documentos y slides** con layout editorial.",
         icon: "layout",
       },
       {
-        title: "Control visual",
-        description: "Trabaja con textos, imágenes, formas, páginas, guías y composición.",
+        id: "control",
+        line: "**Textos, formas y guías** bajo control total.",
         icon: "pen",
       },
       {
-        title: "Conectado a Presenter",
-        description: "Convierte tus diseños en presentaciones interactivas y compartibles.",
+        id: "presenter",
+        line: "Pasa a **Presenter** interactivo al instante.",
         icon: "presentation",
       },
     ],
   },
   nanoBanana: {
     intro:
-      "Image Creation es la cápsula de creación de imagen de Foldder: permite generar o editar imágenes desde texto, referencias visuales o una imagen base, con control sobre estilo, formato, resolución y coherencia de marca.",
+      "**Genera o edita** imágenes desde texto, referencias o imagen base, con **estilo y coherencia de marca**.",
     features: [
       {
-        title: "Genera y edita",
-        description: "Crea imágenes desde cero o transforma imágenes existentes.",
+        id: "generate",
+        line: "**Genera o transforma** imágenes al vuelo.",
         icon: "wand",
       },
       {
-        title: "Usa referencias",
-        description: "Trabaja con prompts, imágenes base y referencias visuales.",
+        id: "references",
+        line: "Prompts, **referencias** e imagen base.",
         icon: "images",
       },
       {
-        title: "Conectada al Brain",
-        description: "Mantiene estilo, paleta y ADN de marca en cada resultado.",
+        id: "brain",
+        line: "**Estilo y ADN de marca** con Brain.",
         icon: "brain",
       },
     ],
   },
   mediaDescriber: {
     intro:
-      "Image Describer es la cápsula de lectura visual de Foldder: analiza una imagen y la convierte en una descripción útil para reutilizarla como prompt, referencia creativa o punto de partida para nuevas piezas.",
+      "**Analiza una imagen** y la convierte en descripción reutilizable como **prompt o referencia creativa**.",
     features: [
       {
-        title: "Imagen a prompt",
-        description: "Transforma una referencia visual en texto reutilizable.",
+        id: "prompt",
+        line: "Convierte la imagen en **prompt reutilizable**.",
         icon: "scanText",
       },
       {
-        title: "Entiende el estilo",
-        description: "Describe composición, colores, luz, objetos y atmósfera.",
+        id: "style",
+        line: "Lee **composición, luz y atmósfera**.",
         icon: "eye",
       },
       {
-        title: "Conecta el flujo",
-        description: "Permite regenerar, adaptar o transformar imágenes desde una referencia.",
+        id: "flow",
+        line: "**Conecta el flujo** para regenerar o adaptar.",
         icon: "workflow",
       },
     ],
   },
   geminiVideo: {
     intro:
-      "Video Generator es la cápsula de vídeo de Foldder: permite crear clips desde texto, imágenes o frames inicial/final, definiendo duración, formato, cámara, movimiento, estilo visual y atmósfera.",
+      "Crea **clips** desde texto, imagen o frames: controla **cámara, movimiento, estilo** y duración.",
     features: [
       {
-        title: "Texto o imagen a vídeo",
-        description: "Genera clips desde prompts, referencias o frames.",
+        id: "source",
+        line: "**Texto o imagen** a clip en segundos.",
         icon: "clapperboard",
       },
       {
-        title: "Dirección visual",
-        description: "Controla cámara, luz, movimiento, estilo y duración.",
+        id: "direction",
+        line: "**Cámara, movimiento y estilo** bajo control.",
         icon: "camera",
       },
       {
-        title: "Listo para montar",
-        description: "Envía los vídeos al flujo de edición y exportación.",
+        id: "edit",
+        line: "Listo para **montar y exportar**.",
         icon: "scissors",
       },
     ],
   },
   videoEditor: {
     intro:
-      "Video Editor es la cápsula de montaje de Foldder: permite ordenar clips, imágenes, audio y subtítulos en una línea de tiempo para crear el vídeo final listo para exportar.",
+      "**Montaje** en timeline: ordena clips, audio y subtítulos hasta el **vídeo final exportable**.",
     features: [
       {
-        title: "Línea de tiempo",
-        description: "Monta vídeos, imágenes, audio y subtítulos.",
+        id: "timeline",
+        line: "**Timeline** con vídeo, audio y subtítulos.",
         icon: "timeline",
       },
       {
-        title: "Control de edición",
-        description: "Recorta, mueve, duplica, divide, ajusta volumen y fundidos.",
+        id: "edit",
+        line: "Recorta y ajusta **volumen y fundidos**.",
         icon: "sliders",
       },
       {
-        title: "Render final",
-        description: "Exporta la pieza terminada en MP4.",
+        id: "export",
+        line: "Exporta en **MP4** listo para publicar.",
         icon: "download",
       },
     ],

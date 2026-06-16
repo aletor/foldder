@@ -48,17 +48,6 @@ export function NodePerspectiveGallery() {
               <ChevronRight strokeWidth={1.5} aria-hidden="true" />
             </button>
           </div>
-          <div data-home-v2-node-gallery-mobile-nav role="group" aria-label="Navegación de nodos">
-            <button type="button" aria-label="Nodo anterior" onClick={() => handleNavigate(-1)}>
-              <ChevronLeft strokeWidth={1.75} />
-            </button>
-            <span>
-              {String(activeIndex + 1).padStart(2, "0")} / {String(cards.length).padStart(2, "0")}
-            </span>
-            <button type="button" aria-label="Nodo siguiente" onClick={() => handleNavigate(1)}>
-              <ChevronRight strokeWidth={1.75} />
-            </button>
-          </div>
         </>
       ) : null}
     </div>
