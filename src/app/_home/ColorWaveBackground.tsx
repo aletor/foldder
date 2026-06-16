@@ -7,7 +7,7 @@ import { HOME_V2_NODE_WAVE_COLORS } from "./home-v2-nodes";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
-export function BrainColorWaveBackground() {
+export function ColorWaveBackground() {
   const reactId = useId().replace(/:/g, "");
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -18,23 +18,23 @@ export function BrainColorWaveBackground() {
     const defs = defsRef.current;
     if (!svg || !defs) return;
 
-    const paths = Array.from(svg.querySelectorAll<SVGPathElement>("[data-home-v2-brain-wave-path]"));
+    const paths = Array.from(svg.querySelectorAll<SVGPathElement>("[data-home-v2-color-wave-path]"));
     const clones: SVGPathElement[] = [];
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
     paths.forEach((path, index) => {
       const clone = path.cloneNode(true) as SVGPathElement;
-      clone.removeAttribute("data-home-v2-brain-wave-path");
+      clone.removeAttribute("data-home-v2-color-wave-path");
       clone.removeAttribute("mask");
       clone.setAttribute("stroke-dasharray", "");
 
       const mask = document.createElementNS(SVG_NS, "mask");
-      mask.setAttribute("id", `brain-wave-mask-${reactId}-${index}`);
+      mask.setAttribute("id", `color-wave-mask-${reactId}-${index}`);
       mask.appendChild(clone);
       defs.appendChild(mask);
       clones.push(clone);
 
-      path.setAttribute("mask", `url(#brain-wave-mask-${reactId}-${index})`);
+      path.setAttribute("mask", `url(#color-wave-mask-${reactId}-${index})`);
 
       const length = clone.getTotalLength();
       if (reducedMotion) return;
@@ -65,10 +65,10 @@ export function BrainColorWaveBackground() {
   }, [reactId]);
 
   return (
-    <div ref={wrapRef} data-home-v2-brain-wave-wrap aria-hidden>
+    <div ref={wrapRef} data-home-v2-color-wave-wrap aria-hidden>
       <svg
         ref={svgRef}
-        data-home-v2-brain-wave
+        data-home-v2-color-wave
         viewBox="0 0 921.5 600"
         preserveAspectRatio="xMidYMid slice"
       >
@@ -76,7 +76,7 @@ export function BrainColorWaveBackground() {
         {wavePaths.map((path, index) => (
           <path
             key={index}
-            data-home-v2-brain-wave-path
+            data-home-v2-color-wave-path
             d={path.d}
             fill="none"
             stroke={HOME_V2_NODE_WAVE_COLORS[index % HOME_V2_NODE_WAVE_COLORS.length]}

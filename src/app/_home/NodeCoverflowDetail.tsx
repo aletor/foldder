@@ -59,6 +59,7 @@ function DetailCopy({ card }: { card: HomeV2NodeCard }) {
 
     return (
       <div data-home-v2-coverflow-detail-columns>
+        <p data-home-v2-coverflow-detail-label>{card.label}</p>
         <p data-home-v2-coverflow-detail-intro>{intro}</p>
         <ul data-home-v2-coverflow-detail-features>
           {features.map((feature) => {
@@ -66,12 +67,10 @@ function DetailCopy({ card }: { card: HomeV2NodeCard }) {
 
             return (
               <li key={feature.title} data-home-v2-coverflow-detail-feature>
-                <div data-home-v2-coverflow-detail-feature-head>
-                  <span data-home-v2-coverflow-detail-feature-icon aria-hidden="true">
-                    <Icon strokeWidth={2.1} />
-                  </span>
-                  <p data-home-v2-coverflow-detail-feature-title>{feature.title}</p>
-                </div>
+                <span data-home-v2-coverflow-detail-feature-icon aria-hidden="true">
+                  <Icon strokeWidth={2.1} />
+                </span>
+                <p data-home-v2-coverflow-detail-feature-title>{feature.title}</p>
                 <p data-home-v2-coverflow-detail-feature-desc>{feature.description}</p>
               </li>
             );
@@ -82,10 +81,10 @@ function DetailCopy({ card }: { card: HomeV2NodeCard }) {
   }
 
   return (
-    <>
+    <div data-home-v2-coverflow-detail-columns data-home-v2-coverflow-detail-columns--simple>
       <p data-home-v2-coverflow-detail-label>{card.label}</p>
       <p data-home-v2-coverflow-detail-desc>{card.description}</p>
-    </>
+    </div>
   );
 }
 
@@ -122,13 +121,6 @@ export function NodeCoverflowDetail({ card, activeIndex, totalCount, onNavigate 
             exit={reducedMotion ? undefined : { opacity: 0, y: -8 }}
             transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
           >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              data-home-v2-coverflow-detail-image
-              src={card.detailImageSrc}
-              alt=""
-              draggable={false}
-            />
             <div
               data-home-v2-coverflow-detail-copy
               data-rich={card.detailContent ? "true" : undefined}

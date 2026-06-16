@@ -69,26 +69,6 @@ function createScrollTimeline(card: PhotoCard, progress: number) {
   return tl;
 }
 
-function createBoxCopy(card: HomeV2NodeCard): HTMLDivElement {
-  const copy = document.createElement("div");
-  copy.dataset.homeV2HeroPhotoCopy = "true";
-
-  const stripe = document.createElement("span");
-  stripe.dataset.homeV2HeroPhotoStripe = "true";
-  stripe.style.backgroundColor = card.tabColor;
-
-  const title = document.createElement("h3");
-  title.dataset.homeV2HeroPhotoTitle = "true";
-  title.textContent = card.label;
-
-  const desc = document.createElement("p");
-  desc.dataset.homeV2HeroPhotoDesc = "true";
-  desc.textContent = card.description;
-
-  copy.append(stripe, title, desc);
-  return copy;
-}
-
 function createPhotoCard(card: HomeV2NodeCard, columnIndex: number, withHeroVideo = false): PhotoCard {
   const scrollEl = document.createElement("div");
   scrollEl.dataset.homeV2HeroPhotoScroll = "true";
@@ -100,7 +80,6 @@ function createPhotoCard(card: HomeV2NodeCard, columnIndex: number, withHeroVide
 
   const videoEl = withHeroVideo ? createHeroVideo(card) : null;
   if (videoEl) box.appendChild(videoEl);
-  box.appendChild(createBoxCopy(card));
   scrollEl.appendChild(box);
 
   gsap.set(box, {
@@ -115,7 +94,6 @@ function createPhotoCard(card: HomeV2NodeCard, columnIndex: number, withHeroVide
     scale: BASE_SCALE,
     transformOrigin: "50% 50%",
   });
-  gsap.set(box.querySelector("[data-home-v2-hero-photo-copy]"), { autoAlpha: 0 });
 
   playHeroVideo(videoEl);
 
@@ -289,15 +267,12 @@ export function HeroPhotoColumnsBackground() {
       zooming = true;
       const card = currentCard;
       const saved = savedCardState.get(card);
-      const copy = card.box.querySelector<HTMLElement>("[data-home-v2-hero-photo-copy]");
 
       hideCloseButton();
       root.removeAttribute("data-expanded");
 
       const duration = reducedMotion ? 0.01 : 0.55;
       const sceneScale = fitSceneScale();
-
-      gsap.to(copy, { autoAlpha: 0, duration: duration * 0.35, overwrite: "auto" });
 
       gsap.to(card.scrollEl, {
         duration,
@@ -364,7 +339,6 @@ export function HeroPhotoColumnsBackground() {
       card.scrollEl.setAttribute("data-expanded", "true");
       card.box.setAttribute("data-expanded", "true");
 
-      const copy = card.box.querySelector<HTMLElement>("[data-home-v2-hero-photo-copy]");
       const duration = reducedMotion ? 0.01 : 0.65;
       const { targetW, targetH, targetX, targetY } = getExpandedMetrics();
 
@@ -409,11 +383,6 @@ export function HeroPhotoColumnsBackground() {
         onComplete: () => {
           zooming = false;
           playHeroVideo(card.videoEl);
-          gsap.to(copy, {
-            autoAlpha: 1,
-            duration: reducedMotion ? 0.01 : 0.35,
-            delay: reducedMotion ? 0 : 0.08,
-          });
         },
       });
     };
