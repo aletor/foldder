@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef } from "react";
 import gsap from "gsap";
 import wavePaths from "./brain-color-wave-paths.json";
+import { readHomeV2DeviceProfile } from "./home-v2-device";
 import { HOME_V2_NODE_WAVE_COLORS } from "./home-v2-nodes";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -21,6 +22,8 @@ export function ColorWaveBackground() {
     const paths = Array.from(svg.querySelectorAll<SVGPathElement>("[data-home-v2-color-wave-path]"));
     const clones: SVGPathElement[] = [];
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const { perfMode } = readHomeV2DeviceProfile();
+    const animateWave = !reducedMotion && !perfMode;
 
     paths.forEach((path, index) => {
       const clone = path.cloneNode(true) as SVGPathElement;
@@ -37,7 +40,7 @@ export function ColorWaveBackground() {
       path.setAttribute("mask", `url(#color-wave-mask-${reactId}-${index})`);
 
       const length = clone.getTotalLength();
-      if (reducedMotion) return;
+      if (!animateWave) return;
 
       gsap.set(clone, { strokeDasharray: length, strokeDashoffset: length });
       gsap.to(clone, {

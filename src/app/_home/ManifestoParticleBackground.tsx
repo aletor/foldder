@@ -2,8 +2,10 @@
 
 import { useEffect, useRef } from "react";
 import { FOLDDER_NODE_CARD_BG } from "@/app/spaces/node-card-palette";
+import { readHomeV2DeviceProfile } from "./home-v2-device";
 
-const MAX_PARTICLES = 70;
+const MAX_PARTICLES_DESKTOP = 70;
+const MAX_PARTICLES_TOUCH = 28;
 const PARTICLE_COLORS = [...new Set(Object.values(FOLDDER_NODE_CARD_BG))];
 
 type ParticleType = "bubble" | "line";
@@ -127,6 +129,9 @@ export function ManifestoParticleBackground() {
     const motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
     if (motionQuery.matches) return;
 
+    const { perfMode } = readHomeV2DeviceProfile();
+    const maxParticles = perfMode ? MAX_PARTICLES_TOUCH : MAX_PARTICLES_DESKTOP;
+
     const context = canvas.getContext("2d");
     if (!context) return;
 
@@ -135,9 +140,10 @@ export function ManifestoParticleBackground() {
     let height = 0;
     let dpr = 1;
     let raf = 0;
+    let visible = true;
 
     const resize = () => {
-      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      dpr = perfMode ? 1 : Math.min(window.devicePixelRatio || 1, 2);
       width = container.clientWidth;
       height = container.clientHeight;
       canvas.width = Math.floor(width * dpr);
@@ -149,7 +155,7 @@ export function ManifestoParticleBackground() {
     };
 
     const generate = () => {
-      while (particles.length < MAX_PARTICLES) {
+      while (particles.length < maxParticles) {
         const particle = new Particle(width, height);
         particle.setBounds(width, height);
         particles.push(particle);
@@ -157,7 +163,12 @@ export function ManifestoParticleBackground() {
     };
 
     const tick = () => {
-      if (particles.length < MAX_PARTICLES - 5) {
+      if (!visible) {
+        raf = requestAnimationFrame(tick);
+        return;
+      }
+
+      if (particles.length < maxParticles - 5) {
         generate();
       }
 
@@ -174,6 +185,14 @@ export function ManifestoParticleBackground() {
     const observer = new ResizeObserver(resize);
     observer.observe(container);
 
+    const visibilityObserver = new IntersectionObserver(
+      ([entry]) => {
+        visible = entry?.isIntersecting ?? true;
+      },
+      { threshold: 0.08 },
+    );
+    visibilityObserver.observe(container);
+
     const stopOnReduce = (event: MediaQueryListEvent) => {
       if (event.matches) {
         cancelAnimationFrame(raf);
@@ -186,6 +205,7 @@ export function ManifestoParticleBackground() {
     return () => {
       cancelAnimationFrame(raf);
       observer.disconnect();
+      visibilityObserver.disconnect();
       motionQuery.removeEventListener("change", stopOnReduce);
     };
   }, []);

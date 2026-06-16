@@ -1,9 +1,9 @@
 import { useEffect } from "react";
+import { readHomeV2DeviceProfile } from "./home-v2-device";
 
 const SCROLL_DURATION_MS = 820;
 const WHEEL_THRESHOLD = 6;
 const GESTURE_RESET_MS = 140;
-const SWIPE_THRESHOLD_PX = 52;
 const ROOT_SELECTOR = "[data-foldder-home-v2]";
 const SECTION_SELECTOR = "[data-home-v2-module]";
 
@@ -30,7 +30,7 @@ function getSectionScrollOffset(section: HTMLElement) {
   return Number.isFinite(value) ? value : 0;
 }
 
-function getSectionScrollTarget(section: HTMLElement) {
+export function getSectionScrollTarget(section: HTMLElement) {
   const viewportHeight = window.innerHeight;
   const align = section.getAttribute("data-home-v2-scroll-align");
   const anchor = section.querySelector<HTMLElement>("[data-home-v2-scroll-anchor]");
@@ -139,11 +139,17 @@ function animateScrollTo(state: ScrollState, targetY: number, startY: number, re
 }
 
 export function scrollHomeToSection(id: string) {
-  const root = document.querySelector<HTMLElement>(ROOT_SELECTOR);
   const section = document.getElementById(id);
-  if (!root || !section) return;
+  if (!section) return;
 
-  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const { isTouch, reducedMotion } = readHomeV2DeviceProfile();
+  const targetY = getSectionScrollTarget(section);
+
+  if (isTouch || reducedMotion) {
+    window.scrollTo({ top: targetY, behavior: reducedMotion ? "auto" : "smooth" });
+    return;
+  }
+
   const state: ScrollState = {
     animating: false,
     gestureLocked: false,
@@ -153,7 +159,7 @@ export function scrollHomeToSection(id: string) {
     rafId: 0,
   };
 
-  animateScrollTo(state, getSectionScrollTarget(section), window.scrollY, reducedMotion);
+  animateScrollTo(state, targetY, window.scrollY, reducedMotion);
 }
 
 export function useHomeSectionScroll() {
@@ -161,8 +167,8 @@ export function useHomeSectionScroll() {
     const root = document.querySelector<HTMLElement>(ROOT_SELECTOR);
     if (!root) return;
 
-    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reducedMotion) return;
+    const { isTouch, reducedMotion } = readHomeV2DeviceProfile();
+    if (reducedMotion || isTouch) return;
 
     const state: ScrollState = {
       animating: false,
@@ -232,53 +238,14 @@ export function useHomeSectionScroll() {
       goToIndex(next, lockedY);
     };
 
-    let touchStartY = 0;
-
-    const onTouchStart = (event: TouchEvent) => {
-      touchStartY = event.touches[0]?.clientY ?? 0;
-    };
-
-    const onTouchMove = (event: TouchEvent) => {
-      if (state.animating || state.gestureLocked) event.preventDefault();
-    };
-
-    const onTouchEnd = (event: TouchEvent) => {
-      if (animatingOrLocked(state) || shouldBypassSnap(event.target)) return;
-
-      const endY = event.changedTouches[0]?.clientY ?? touchStartY;
-      const delta = touchStartY - endY;
-      if (Math.abs(delta) < SWIPE_THRESHOLD_PX) return;
-
-      const sections = getSections(root);
-      if (sections.length < 2) return;
-
-      const direction = delta > 0 ? 1 : -1;
-      const current = getActiveSectionIndex(sections);
-      const next = current + direction;
-
-      if (next < 0 || next >= sections.length) return;
-
-      goToIndex(next, window.scrollY);
-    };
-
     window.addEventListener("wheel", onWheel, { passive: false });
-    window.addEventListener("touchstart", onTouchStart, { passive: true });
-    window.addEventListener("touchmove", onTouchMove, { passive: false });
-    window.addEventListener("touchend", onTouchEnd, { passive: true });
 
     return () => {
       window.removeEventListener("wheel", onWheel);
-      window.removeEventListener("touchstart", onTouchStart);
-      window.removeEventListener("touchmove", onTouchMove);
-      window.removeEventListener("touchend", onTouchEnd);
       if (state.wheelResetTimer) clearTimeout(state.wheelResetTimer);
       if (state.gestureUnlockTimer) clearTimeout(state.gestureUnlockTimer);
       cancelScrollAnimation(state);
       state.gestureLocked = false;
     };
   }, []);
-}
-
-function animatingOrLocked(state: ScrollState) {
-  return state.animating || state.gestureLocked;
 }

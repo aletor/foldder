@@ -2,9 +2,12 @@
 
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
+import { readHomeV2DeviceProfile } from "./home-v2-device";
 
-const LINE_COUNT = 50;
-const DOT_COUNT = 50;
+const LINE_COUNT_DESKTOP = 50;
+const LINE_COUNT_PERF = 22;
+const DOT_COUNT_DESKTOP = 50;
+const DOT_COUNT_PERF = 22;
 const BASE_RADIUS = 100;
 
 const COLOR_MUTED = 0x52525f;
@@ -15,12 +18,12 @@ type LineUserData = {
   radius: number;
 };
 
-function createWaveLine(materials: THREE.LineBasicMaterial[]): THREE.Line {
+function createWaveLine(materials: THREE.LineBasicMaterial[], dotCount: number): THREE.Line {
   const radius = Math.floor(BASE_RADIUS + (Math.random() - 0.5) * (BASE_RADIUS * 0.2));
-  const positions = new Float32Array(DOT_COUNT * 3);
+  const positions = new Float32Array(dotCount * 3);
 
-  for (let j = 0; j < DOT_COUNT; j++) {
-    const x = (j / DOT_COUNT) * radius * 2 - radius;
+  for (let j = 0; j < dotCount; j++) {
+    const x = (j / dotCount) * radius * 2 - radius;
     positions[j * 3] = x;
     positions[j * 3 + 1] = 0;
     positions[j * 3 + 2] = 0;
@@ -42,13 +45,13 @@ function createWaveLine(materials: THREE.LineBasicMaterial[]): THREE.Line {
   return line;
 }
 
-function updateDots(sphere: THREE.Group, time: number) {
-  for (let i = 0; i < LINE_COUNT; i++) {
+function updateDots(sphere: THREE.Group, time: number, lineCount: number, dotCount: number) {
+  for (let i = 0; i < lineCount; i++) {
     const line = sphere.children[i] as THREE.Line;
     const { speed, radius } = line.userData as LineUserData;
     const positions = line.geometry.attributes.position.array as Float32Array;
 
-    for (let j = 0; j < DOT_COUNT; j++) {
+    for (let j = 0; j < dotCount; j++) {
       const x = positions[j * 3];
       const ratio = 1 - (radius - Math.abs(x)) / radius;
       positions[j * 3 + 1] = Math.sin(time / speed + j * 0.15) * 12 * ratio;
@@ -68,6 +71,9 @@ export function BrainSphereWebGLBackground() {
     if (!canvas || !wrap) return;
 
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const { perfMode } = readHomeV2DeviceProfile();
+    const lineCount = perfMode ? LINE_COUNT_PERF : LINE_COUNT_DESKTOP;
+    const dotCount = perfMode ? DOT_COUNT_PERF : DOT_COUNT_DESKTOP;
 
     let width = wrap.clientWidth;
     let height = wrap.clientHeight;
@@ -75,9 +81,9 @@ export function BrainSphereWebGLBackground() {
     const renderer = new THREE.WebGLRenderer({
       canvas,
       alpha: true,
-      antialias: true,
+      antialias: !perfMode,
     });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(perfMode ? 1 : Math.min(window.devicePixelRatio, 2));
     renderer.setSize(width, height);
     renderer.setClearColor(0x000000, 0);
 
@@ -92,8 +98,8 @@ export function BrainSphereWebGLBackground() {
     const matAccent = new THREE.LineBasicMaterial({ color: COLOR_ACCENT, transparent: true, opacity: 0.82 });
     const materials = [matMuted, matAccent];
 
-    for (let i = 0; i < LINE_COUNT; i++) {
-      sphere.add(createWaveLine(materials));
+    for (let i = 0; i < lineCount; i++) {
+      sphere.add(createWaveLine(materials, dotCount));
     }
 
     let frameId = 0;
@@ -104,14 +110,14 @@ export function BrainSphereWebGLBackground() {
       if (!running) return;
       frameId = requestAnimationFrame(render);
 
-      if (!reducedMotion) {
+      if (!reducedMotion && running) {
         time = now;
-        updateDots(sphere, time);
+        updateDots(sphere, time, lineCount, dotCount);
         sphere.rotation.y = time * 0.0001;
         sphere.rotation.x = -time * 0.0001;
       }
 
-      renderer.render(scene, camera);
+      if (running) renderer.render(scene, camera);
     };
 
     frameId = requestAnimationFrame(render);

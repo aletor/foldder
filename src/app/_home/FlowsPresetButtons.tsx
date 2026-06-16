@@ -1,5 +1,7 @@
 "use client";
 
+import { FormattedText } from "./FormattedText";
+
 const FLOW_PRESET_COLORS = [
   "#71449f",
   "#f16389",
@@ -20,7 +22,7 @@ export function FlowsPresetButtons() {
           style={{ ["--flows-preset-color" as string]: color }}
         >
           <span data-home-v2-flows-preset-title>Carteles para Redes</span>
-          <span data-home-v2-flows-preset-subtitle>con ADN de marca</span>
+          <FormattedText as="span" data-home-v2-flows-preset-subtitle text="con **ADN de marca**" />
         </button>
       ))}
     </div>

@@ -54,7 +54,7 @@ export const HOME_V2_NODE_CARDS: readonly { label: string; description: string; 
   },
   {
     label: "Image Creation",
-    description: "Genera imagen desde **prompt y referencias** visuales conectadas.",
+    description: "**Genera imagen** desde **prompt y referencias** visuales conectadas.",
     type: "nanoBanana",
   },
   {
@@ -69,7 +69,7 @@ export const HOME_V2_NODE_CARDS: readonly { label: string; description: string; 
   },
   {
     label: "Image Describer",
-    description: "Analiza una imagen y la convierte en **descripción reutilizable** como prompt.",
+    description: "**Analiza una imagen** y la convierte en **descripción reutilizable** como prompt.",
     type: "mediaDescriber",
   },
   {
@@ -79,7 +79,7 @@ export const HOME_V2_NODE_CARDS: readonly { label: string; description: string; 
   },
   {
     label: "Video Generator",
-    description: "Genera **vídeo** con prompt y **frames** opcionales.",
+    description: "**Genera vídeo** con prompt y **frames** opcionales.",
     type: "geminiVideo",
   },
   {

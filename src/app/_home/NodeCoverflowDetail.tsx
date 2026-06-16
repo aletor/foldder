@@ -23,6 +23,7 @@ import {
   Workflow,
   type LucideIcon,
 } from "lucide-react";
+import { FormattedText } from "./FormattedText";
 import type { HomeV2NodeDetailFeatureIcon } from "./home-v2-node-details";
 import type { HomeV2NodeCard } from "./home-v2-nodes";
 
@@ -89,33 +90,6 @@ function useMobileDetailLayout() {
   return isMobile;
 }
 
-function FormattedText({
-  text,
-  dataAttr,
-}: {
-  text: string;
-  dataAttr: "intro" | "desc" | "feature-line";
-}) {
-  const parts = text.split(/(\*\*[^*]+\*\*)/g);
-  const content = parts.map((part, index) =>
-    part.startsWith("**") && part.endsWith("**") ? (
-      <strong key={index}>{part.slice(2, -2)}</strong>
-    ) : (
-      part
-    ),
-  );
-
-  if (dataAttr === "intro") {
-    return <p data-home-v2-coverflow-detail-intro>{content}</p>;
-  }
-
-  if (dataAttr === "desc") {
-    return <p data-home-v2-coverflow-detail-desc>{content}</p>;
-  }
-
-  return <span data-home-v2-coverflow-detail-feature-line>{content}</span>;
-}
-
 function DetailCopy({
   card,
   animateCopy,
@@ -141,7 +115,7 @@ function DetailCopy({
           {card.label}
         </motion.p>
         <motion.div variants={itemVariants}>
-          <FormattedText text={intro} dataAttr="intro" />
+          <FormattedText text={intro} as="p" data-home-v2-coverflow-detail-intro />
         </motion.div>
         <motion.ul data-home-v2-coverflow-detail-features>
           {features.map((feature) => {
@@ -156,7 +130,7 @@ function DetailCopy({
                 <span data-home-v2-coverflow-detail-feature-icon aria-hidden="true">
                   <Icon strokeWidth={2.1} />
                 </span>
-                <FormattedText text={feature.line} dataAttr="feature-line" />
+                <FormattedText text={feature.line} data-home-v2-coverflow-detail-feature-line />
               </motion.li>
             );
           })}
@@ -175,7 +149,7 @@ function DetailCopy({
         {card.label}
       </motion.p>
       <motion.div variants={itemVariants}>
-        <FormattedText text={card.description} dataAttr="desc" />
+        <FormattedText text={card.description} as="p" data-home-v2-coverflow-detail-desc />
       </motion.div>
     </motion.div>
   );

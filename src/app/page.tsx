@@ -14,21 +14,23 @@ import { FlowsPresetButtons } from "./_home/FlowsPresetButtons";
 import { FlowsWallpaperBackground } from "./_home/FlowsWallpaperBackground";
 import { LetterImageSwapHeadline } from "./_home/LetterImageSwapHeadline";
 import { NodePerspectiveGallery } from "./_home/NodePerspectiveGallery";
+import { FormattedText } from "./_home/FormattedText";
+import { useHomeV2DeviceProfile } from "./_home/home-v2-device";
 import { scrollHomeToSection, useHomeSectionScroll } from "./_home/useHomeSectionScroll";
 import "./_home/home-v2.css";
 
 const BILLING_CARDS = [
   {
     title: "Elige",
-    description: "Suscripción, bolsa fija o créditos.",
+    description: "**Suscripción, bolsa fija o créditos.**",
   },
   {
     title: "Crea",
-    description: "Genera, edita, monta o presenta.",
+    description: "**Genera, edita, monta** o presenta.",
   },
   {
     title: "Controla",
-    description: "Confirma cada acción antes de usar recursos.",
+    description: "**Confirma cada acción** antes de usar recursos.",
   },
 ] as const;
 
@@ -72,6 +74,7 @@ function scrollToId(id: string) {
 }
 
 export default function HomePage() {
+  useHomeV2DeviceProfile();
   useHomeSectionScroll();
 
   return (
@@ -101,25 +104,22 @@ export default function HomePage() {
             />
           </Link>
           <h1 id="hero-heading" data-home-v2-headline data-home-v2-headline--on-dark data-home-v2-headline--balance>
-            <span data-home-v2-hero-line="struck">
-              una app que
-              <br />
-              crea por ti.
-            </span>
             <span data-home-v2-hero-primary>
               <span data-home-v2-hero-emphasis>
-                el estudio
+                NO CREA
                 <br />
-                creativo
+                POR TI,
               </span>
             </span>
-            <span data-home-v2-hero-line="gradient">que crea ...contigo</span>
+            <span data-home-v2-hero-line="gradient">CREA CONTIGO.</span>
           </h1>
-          <p data-home-v2-hero-lead className="max-w-md text-white/45">
-            Tú diriges cada decisión. Foldder conecta textos, imágenes, vídeos, marcas y presentaciones para convertir
-            una idea en piezas completas con inteligencia artificial.
-          </p>
-          <div data-home-v2-hero-actions className="flex flex-wrap items-stretch gap-0 border border-white/15">
+          <FormattedText
+            as="p"
+            data-home-v2-hero-lead
+            className="text-white/45"
+            text="**FOLDDER** es un **estudio creativo modular** donde **tú diriges cada decisión**. Conecta **cápsulas** de escritura, imagen, vídeo, diseño y marca para convertir una idea en **piezas completas** con inteligencia artificial."
+          />
+          <div data-home-v2-hero-actions className="flex flex-wrap items-stretch">
             <GoogleAccessButton
               label="Empieza a crear"
               authenticatedLabel="Entrar en Foldder"
@@ -128,12 +128,24 @@ export default function HomePage() {
             <button
               type="button"
               onClick={() => scrollToId("flows")}
-              className="flex h-10 min-w-[10rem] flex-1 items-center justify-center border-l border-white/15 bg-black/40 px-4 text-[10px] font-black uppercase tracking-[0.1em] text-white transition hover:bg-white/10 sm:flex-none"
+              className="flex h-10 min-w-[10rem] flex-1 items-center justify-center border border-white/15 bg-black/40 px-4 text-[10px] font-black uppercase tracking-[0.1em] text-white transition hover:bg-white/10 sm:flex-none"
             >
               Ver flujos
             </button>
           </div>
         </div>
+        <p data-home-v2-hero-caption aria-label="Hecho con Foldder">
+          <span data-home-v2-hero-caption-text>Hecho con </span>
+          <span data-home-v2-hero-caption-mark>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/logo_home.svg"
+              alt=""
+              data-home-v2-hero-caption-icon
+            />
+            <span data-home-v2-hero-caption-brand>FOLDDER</span>
+          </span>
+        </p>
       </section>
 
       <section
@@ -156,9 +168,12 @@ export default function HomePage() {
               </p>
             ))}
           </div>
-          <p data-home-v2-body className="max-w-lg text-zinc-950/48">
-            Foldder trabaja como un equipo creativo expandido, pero cada decisión sigue estando en tus manos.
-          </p>
+          <FormattedText
+            as="p"
+            data-home-v2-body
+            className="max-w-lg text-zinc-950/48"
+            text="Foldder trabaja como un **equipo creativo expandido**, pero **cada decisión** sigue estando **en tus manos**."
+          />
         </div>
       </section>
 
@@ -224,25 +239,36 @@ export default function HomePage() {
               <br />
               <span data-home-v2-brain-claim-line>DE TU PROYECTO.</span>
             </h2>
-            <p data-home-v2-body className="text-white/48">
-              Brain convierte tu marca, referencias y reglas en contexto activo para todo lo que creas.
-            </p>
+            <FormattedText
+              as="p"
+              data-home-v2-body
+              className="text-white/48"
+              text="Brain convierte tu **marca, referencias y reglas** en **contexto activo** para todo lo que creas."
+            />
             <ul data-home-v2-brain-features>
               <li data-home-v2-brain-feature>
                 <p data-home-v2-brain-feature-title>Recuerda tu marca</p>
-                <p data-home-v2-brain-feature-desc>Tono, claims, paleta, referencias y reglas.</p>
+                <FormattedText
+                  as="p"
+                  data-home-v2-brain-feature-desc
+                  text="**Tono, claims y paleta**, referencias y reglas."
+                />
               </li>
               <li data-home-v2-brain-feature>
                 <p data-home-v2-brain-feature-title>Conecta el criterio</p>
-                <p data-home-v2-brain-feature-desc>
-                  Texto, imagen, vídeo, diseño y presentación crean con el mismo ADN.
-                </p>
+                <FormattedText
+                  as="p"
+                  data-home-v2-brain-feature-desc
+                  text="Texto, imagen, vídeo, diseño y presentación crean con el **mismo ADN**."
+                />
               </li>
               <li data-home-v2-brain-feature>
                 <p data-home-v2-brain-feature-title>Aprende de ti</p>
-                <p data-home-v2-brain-feature-desc>
-                  Acepta, corrige, descarta y Brain entiende mejor tu forma de crear.
-                </p>
+                <FormattedText
+                  as="p"
+                  data-home-v2-brain-feature-desc
+                  text="**Acepta, corrige, descarta** y Brain entiende mejor **tu forma de crear**."
+                />
               </li>
             </ul>
           </div>
@@ -276,15 +302,17 @@ export default function HomePage() {
               <br />
               <span data-home-v2-brain-claim-line>CUANDO TÚ LO DECIDES.</span>
             </h2>
-            <p data-home-v2-body className="max-w-2xl text-white/52">
-              Usa Foldder con suscripción, bolsa fija o créditos. Cada acción de IA se confirma antes de ejecutarse,
-              para que siempre tengas control sobre lo que creas y lo que consumes.
-            </p>
+            <FormattedText
+              as="p"
+              data-home-v2-body
+              className="max-w-2xl text-white/52"
+              text="Usa Foldder con **suscripción, bolsa fija o créditos**. Cada acción de IA **se confirma antes de ejecutarse**, para que siempre tengas **control** sobre lo que creas y lo que consumes."
+            />
             <ul data-home-v2-billing-features>
               {BILLING_CARDS.map((card) => (
                 <li key={card.title} data-home-v2-billing-feature>
                   <p data-home-v2-billing-feature-title>{card.title}</p>
-                  <p data-home-v2-billing-feature-desc>{card.description}</p>
+                  <FormattedText as="p" data-home-v2-billing-feature-desc text={card.description} />
                 </li>
               ))}
             </ul>
@@ -303,10 +331,12 @@ export default function HomePage() {
           >
             <LetterImageSwapHeadline text="Tu Foldder no será igual que el de nadie." />
           </h2>
-          <p data-home-v2-body className="mt-5 max-w-xl text-white/48">
-            Úsalo para escribir, diseñar, montar, presentar, vender, explorar, crear campañas o construir tu propio
-            sistema creativo.
-          </p>
+          <FormattedText
+            as="p"
+            data-home-v2-body
+            className="mt-5 max-w-xl text-white/48"
+            text="Úsalo para **escribir, diseñar, montar y presentar**, vender, explorar, crear campañas o construir tu **propio sistema creativo**."
+          />
           <div className="mt-10 w-full max-w-[380px] border border-white/12">
             <GoogleAccessButton
               label="Empieza"

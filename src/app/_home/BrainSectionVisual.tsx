@@ -6,6 +6,7 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { buildHomeV2NodeCards } from "./home-v2-nodes";
 import { BrainLightningOverlay } from "./BrainLightningOverlay";
 import { BrainSphereWebGLBackground } from "./BrainSphereWebGLBackground";
+import { useHomeV2DeviceProfile } from "./home-v2-device";
 
 const BRAIN_FIGURE_WIDTH = 1024;
 const BRAIN_FIGURE_HEIGHT = 576;
@@ -69,6 +70,8 @@ export function BrainSectionVisual() {
   const [carouselIndex, setCarouselIndex] = useState(0);
   const [hoveredCapsule, setHoveredCapsule] = useState<CapsuleLabel | null>(null);
   const reducedMotion = useReducedMotion();
+  const { perfMode } = useHomeV2DeviceProfile();
+  const animateMotion = !reducedMotion && !perfMode;
 
   const nodeBackgrounds = useMemo(() => {
     const map = new Map<string, string>();
@@ -96,14 +99,14 @@ export function BrainSectionVisual() {
   const focusedCapsule = hoveredCapsule ?? CAPSULES[carouselIndex].label;
 
   useEffect(() => {
-    if (reducedMotion || hoveredCapsule) return;
+    if (!animateMotion || hoveredCapsule) return;
 
     const timer = window.setInterval(() => {
       setCarouselIndex((index) => (index + 1) % CAPSULES.length);
     }, CAROUSEL_MS);
 
     return () => window.clearInterval(timer);
-  }, [hoveredCapsule, reducedMotion]);
+  }, [animateMotion, hoveredCapsule]);
 
   return (
     <div
@@ -140,29 +143,29 @@ export function BrainSectionVisual() {
                 opacity: isDimmed ? 0.72 : 1,
               }}
               transition={
-                reducedMotion
-                  ? { duration: 0.2 }
-                  : {
+                animateMotion
+                  ? {
                       type: "spring",
                       stiffness: 280,
                       damping: 32,
                       bounce: 0,
                     }
+                  : { duration: 0.2 }
               }
             >
               <motion.div
                 data-home-v2-brain-capsule-float
                 initial={false}
-                animate={{ y: reducedMotion ? 0 : [0, -3, 0] }}
+                animate={{ y: animateMotion ? [0, -3, 0] : 0 }}
                 transition={
-                  reducedMotion
-                    ? { duration: 0 }
-                    : {
+                  animateMotion
+                    ? {
                         duration: 5.2,
                         repeat: Infinity,
                         ease: "easeInOut",
                         delay: capsule.floatDelay,
                       }
+                    : { duration: 0 }
                 }
               >
                 <button
@@ -188,11 +191,10 @@ export function BrainSectionVisual() {
                     key={`${capsule.label}-caption`}
                     data-home-v2-brain-capsule-caption
                     aria-live="polite"
-                    initial={reducedMotion ? false : { opacity: 0, y: 6, scale: 0.98 }}
+                    initial={animateMotion ? { opacity: 0, y: 6, scale: 0.98 } : false}
                     animate={
-                      reducedMotion
-                        ? { opacity: 1, y: 0, scale: 1 }
-                        : {
+                      animateMotion
+                        ? {
                             opacity: 1,
                             y: 0,
                             scale: 1,
@@ -203,11 +205,11 @@ export function BrainSectionVisual() {
                               mass: 0.92,
                             },
                           }
+                        : { opacity: 1, y: 0, scale: 1 }
                     }
                     exit={
-                      reducedMotion
-                        ? { opacity: 0 }
-                        : {
+                      animateMotion
+                        ? {
                             opacity: 0,
                             y: 4,
                             scale: 0.99,
@@ -216,6 +218,7 @@ export function BrainSectionVisual() {
                               ease: [0.22, 1.08, 0.36, 1],
                             },
                           }
+                        : { opacity: 0 }
                     }
                   >
                     {capsule.message}
@@ -243,7 +246,7 @@ export function BrainSectionVisual() {
         <BrainLightningOverlay
           stageRef={stageRef}
           activeCapsule={focusedCapsule}
-          enabled={!reducedMotion}
+          enabled={animateMotion}
         />
       </div>
     </div>

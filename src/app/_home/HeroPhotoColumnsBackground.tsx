@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import gsap from "gsap";
+import { readHomeV2DeviceProfile } from "./home-v2-device";
 import { buildHomeV2NodeCards, type HomeV2NodeCard } from "./home-v2-nodes";
 
 const BOX_WIDTH = 480;
@@ -37,20 +38,21 @@ function playHeroVideo(video: HTMLVideoElement | null) {
   });
 }
 
-function createHeroVideo(card: HomeV2NodeCard): HTMLVideoElement | null {
+function createHeroVideo(card: HomeV2NodeCard, autoplay: boolean): HTMLVideoElement | null {
   if (!card.heroVideoSrc) return null;
 
+  const { perfMode } = readHomeV2DeviceProfile();
   const video = document.createElement("video");
   video.dataset.homeV2HeroPhotoVideo = "true";
   video.src = card.heroVideoSrc;
   video.poster = card.imageSrc;
   video.muted = true;
   video.loop = true;
-  video.autoplay = true;
+  video.autoplay = autoplay;
   video.playsInline = true;
   video.setAttribute("playsinline", "");
   video.setAttribute("webkit-playsinline", "");
-  video.preload = "auto";
+  video.preload = perfMode ? "metadata" : "auto";
   return video;
 }
 
@@ -69,16 +71,26 @@ function createScrollTimeline(card: PhotoCard, progress: number) {
   return tl;
 }
 
-function createPhotoCard(card: HomeV2NodeCard, columnIndex: number, withHeroVideo = false): PhotoCard {
+function createPhotoCard(
+  card: HomeV2NodeCard,
+  columnIndex: number,
+  withHeroVideo = false,
+  autoplayVideo = true,
+): PhotoCard {
   const scrollEl = document.createElement("div");
   scrollEl.dataset.homeV2HeroPhotoScroll = "true";
 
   const box = document.createElement("div");
   box.dataset.homeV2HeroPhotoBox = "true";
-  box.setAttribute("role", "button");
-  box.setAttribute("aria-label", card.label);
 
-  const videoEl = withHeroVideo ? createHeroVideo(card) : null;
+  const videoEl = withHeroVideo ? createHeroVideo(card, autoplayVideo) : null;
+  if (videoEl) {
+    box.dataset.hasVideo = "true";
+    box.setAttribute("role", "button");
+    box.setAttribute("aria-label", card.label);
+  } else {
+    box.setAttribute("aria-hidden", "true");
+  }
   if (videoEl) box.appendChild(videoEl);
   scrollEl.appendChild(box);
 
@@ -95,9 +107,28 @@ function createPhotoCard(card: HomeV2NodeCard, columnIndex: number, withHeroVide
     transformOrigin: "50% 50%",
   });
 
-  playHeroVideo(videoEl);
+  if (autoplayVideo) playHeroVideo(videoEl);
 
   return { scrollEl, box, videoEl, columnIndex, boxIndex: 0 };
+}
+
+function syncHeroVideos(cards: PhotoCard[], heroVisible: boolean, currentCard: PhotoCard | null, perfMode: boolean) {
+  cards.forEach((card) => {
+    if (!card.videoEl) return;
+
+    if (!heroVisible) {
+      card.videoEl.pause();
+      return;
+    }
+
+    if (perfMode) {
+      if (currentCard === card) playHeroVideo(card.videoEl);
+      else card.videoEl.pause();
+      return;
+    }
+
+    playHeroVideo(card.videoEl);
+  });
 }
 
 function pickCardAt(clientX: number, clientY: number, cards: PhotoCard[]): PhotoCard | null {
@@ -106,7 +137,7 @@ function pickCardAt(clientX: number, clientY: number, cards: PhotoCard[]): Photo
     const match = el.closest("[data-home-v2-hero-photo-box]");
     if (!match) continue;
     const card = cards.find((c) => c.box === match || c.scrollEl.contains(match));
-    if (card) return card;
+    if (card?.videoEl) return card;
   }
   return null;
 }
@@ -123,7 +154,8 @@ export function HeroPhotoColumnsBackground() {
     if (!root || !boxesEl || !closeBtn) return;
 
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const isTouch = window.matchMedia("(hover: none), (pointer: coarse)").matches;
+    const { isTouch, perfMode } = readHomeV2DeviceProfile();
+    const staticHero = reducedMotion || perfMode;
     const nodeCards = buildHomeV2NodeCards();
 
     const cards: PhotoCard[] = [];
@@ -136,7 +168,7 @@ export function HeroPhotoColumnsBackground() {
     let hoveredCard: PhotoCard | null = null;
     let leaveTimer: gsap.core.Tween | null = null;
 
-    gsap.set(root, { perspective: 800 });
+    gsap.set(root, { perspective: perfMode ? 0 : 800 });
     gsap.set(boxesEl, {
       position: "absolute",
       top: "50%",
@@ -145,10 +177,10 @@ export function HeroPhotoColumnsBackground() {
       yPercent: -50,
       width: SCENE_WIDTH,
       height: SCENE_HEIGHT,
-      rotationX: 14,
-      rotationY: -15,
-      rotationZ: 10,
-      transformStyle: "preserve-3d",
+      rotationX: perfMode ? 0 : 14,
+      rotationY: perfMode ? 0 : -15,
+      rotationZ: perfMode ? 0 : 10,
+      transformStyle: perfMode ? "flat" : "preserve-3d",
     });
 
     gsap.set(closeBtn, { autoAlpha: 0, pointerEvents: "none" });
@@ -176,6 +208,12 @@ export function HeroPhotoColumnsBackground() {
         height: BOX_HEIGHT,
         clearProps: "zIndex",
       });
+
+      if (staticHero) {
+        const col = COLUMN_CONFIG[card.columnIndex];
+        gsap.set(card.scrollEl, { y: (col.yFrom + col.yTo) / 2, rotation: 0 });
+        return;
+      }
 
       createScrollTimeline(card, saved.tlProgress);
       card.scrollTl!.play();
@@ -291,6 +329,7 @@ export function HeroPhotoColumnsBackground() {
           zooming = false;
           resumeCardScroll(card);
           playAllColumns();
+          syncHeroVideos(cards, heroVisible, currentCard, perfMode);
         },
       });
 
@@ -304,9 +343,9 @@ export function HeroPhotoColumnsBackground() {
 
       gsap.to(boxesEl, {
         duration,
-        rotationX: 14,
-        rotationY: -15,
-        rotationZ: 10,
+        rotationX: perfMode ? 0 : 14,
+        rotationY: perfMode ? 0 : -15,
+        rotationZ: perfMode ? 0 : 10,
         scale: sceneScale,
         ease: "power3.inOut",
         overwrite: "auto",
@@ -318,7 +357,7 @@ export function HeroPhotoColumnsBackground() {
     };
 
     const expandCard = (card: PhotoCard) => {
-      if (zooming) return;
+      if (zooming || !card.videoEl) return;
       zooming = true;
       currentCard = card;
       hoveredCard = null;
@@ -383,6 +422,7 @@ export function HeroPhotoColumnsBackground() {
         onComplete: () => {
           zooming = false;
           playHeroVideo(card.videoEl);
+          syncHeroVideos(cards, heroVisible, currentCard, perfMode);
         },
       });
     };
@@ -434,6 +474,19 @@ export function HeroPhotoColumnsBackground() {
       if (event.key === "Escape" && currentCard) collapseExpanded();
     };
 
+    let heroVisible = true;
+
+    const heroVisibilityObserver = new IntersectionObserver(
+      ([entry]) => {
+        heroVisible = entry?.isIntersecting ?? true;
+        syncHeroVideos(cards, heroVisible, currentCard, perfMode);
+        if (!heroVisible) pauseAllColumns();
+        else if (!currentCard && !staticHero) playAllColumns();
+      },
+      { threshold: 0.12 },
+    );
+    heroVisibilityObserver.observe(root);
+
     closeBtn.addEventListener("click", onCloseClick);
     root.addEventListener("pointermove", onScenePointerMove);
     root.addEventListener("pointerleave", onScenePointerLeave);
@@ -453,16 +506,19 @@ export function HeroPhotoColumnsBackground() {
           : baseCard;
       const useHeroVideo = Boolean(nodeCard.heroVideoSrc) && !heroVideoTypes.has(nodeCard.type);
       if (useHeroVideo) heroVideoTypes.add(nodeCard.type);
-      const card = createPhotoCard(nodeCard, column, useHeroVideo);
+      const card = createPhotoCard(nodeCard, column, useHeroVideo, !perfMode);
       card.boxIndex = i;
-      card.box.setAttribute("tabindex", reducedMotion ? "-1" : "0");
+      const isInteractive = Boolean(card.videoEl);
+      if (isInteractive) {
+        card.box.setAttribute("tabindex", reducedMotion ? "-1" : "0");
+      }
       boxesEl.appendChild(card.scrollEl);
       cards.push(card);
 
       gsap.set(card.scrollEl, {
         position: "absolute",
         overflow: "visible",
-        cursor: reducedMotion || isTouch ? "default" : "pointer",
+        cursor: isInteractive && !reducedMotion && !isTouch ? "pointer" : "default",
         x: col.x,
         width: BOX_WIDTH,
         height: BOX_HEIGHT,
@@ -470,28 +526,30 @@ export function HeroPhotoColumnsBackground() {
         opacity: reducedMotion ? 0.75 : 0,
       });
 
-      if (reducedMotion) {
-        gsap.set(card.scrollEl, { y: (col.yFrom + col.yTo) / 2, rotation: 0 });
+      if (staticHero) {
+        gsap.set(card.scrollEl, { y: (col.yFrom + col.yTo) / 2, rotation: 0, opacity: reducedMotion ? 0.75 : 1 });
         continue;
       }
 
       const tl = createScrollTimeline(card, (i % 4) / 4);
       tl.play();
 
-      card.box.addEventListener("keydown", (event) => {
-        if (event.key !== "Enter" && event.key !== " ") return;
-        event.preventDefault();
-        if (zooming) return;
-        if (currentCard === card) {
-          collapseExpanded();
-          return;
-        }
-        if (currentCard) return;
-        expandCard(card);
-      });
+      if (isInteractive) {
+        card.box.addEventListener("keydown", (event) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          if (zooming) return;
+          if (currentCard === card) {
+            collapseExpanded();
+            return;
+          }
+          if (currentCard) return;
+          expandCard(card);
+        });
+      }
     }
 
-    if (!reducedMotion) {
+    if (!reducedMotion && !staticHero) {
       gsap.to(
         cards.map((c) => c.scrollEl),
         { opacity: 1, duration: 0.6, ease: "power2.inOut" },
@@ -514,6 +572,7 @@ export function HeroPhotoColumnsBackground() {
     observer.observe(root);
 
     return () => {
+      heroVisibilityObserver.disconnect();
       observer.disconnect();
       if (leaveTimer) leaveTimer.kill();
       closeBtn.removeEventListener("click", onCloseClick);

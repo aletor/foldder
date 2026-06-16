@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import gsap from "gsap";
+import { readHomeV2DeviceProfile } from "./home-v2-device";
 import { buildHomeV2NodeCards } from "./home-v2-nodes";
 
 type LetterImageSwapHeadlineProps = {
@@ -39,7 +40,8 @@ export function LetterImageSwapHeadline({ text }: LetterImageSwapHeadlineProps) 
     if (!root || !mediasRoot) return;
 
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reducedMotion) return;
+    const { perfMode } = readHomeV2DeviceProfile();
+    if (reducedMotion || perfMode) return;
 
     const slots: LetterSlot[] = [];
     root.querySelectorAll<HTMLSpanElement>("[data-home-v2-letter-swap-char]").forEach((el) => {
