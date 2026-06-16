@@ -273,6 +273,7 @@ html:has([data-foldder-home-v2]) :is(button, [role="button"]) {
   min-height: 100dvh;
   background: var(--home-v2-hero-gradient);
   padding-inline: var(--home-v2-inset-x);
+  --home-v2-hero-edge-gap: clamp(1.65rem, 3.25vw, 2.15rem);
 }
 
 [data-foldder-home-v2] [data-home-v2-hero-chrome] {
@@ -284,7 +285,7 @@ html:has([data-foldder-home-v2]) :is(button, [role="button"]) {
 [data-foldder-home-v2] [data-home-v2-hero-content] {
   position: relative;
   z-index: 2;
-  transform: translateY(clamp(-1.5rem, -3vw, -2.75rem));
+  transform: translateY(clamp(-2rem, -4vw, -3.25rem));
   pointer-events: none;
 }
 
@@ -293,7 +294,7 @@ html:has([data-foldder-home-v2]) :is(button, [role="button"]) {
 }
 
 [data-foldder-home-v2] [data-home-v2-hero-actions] {
-  margin-top: clamp(2.25rem, 4vw, 2.75rem);
+  margin-top: var(--home-v2-hero-edge-gap);
   gap: 0.65rem;
 }
 
@@ -366,11 +367,11 @@ html:has([data-foldder-home-v2]) :is(button, [role="button"]) {
   display: block;
   width: fit-content;
   margin-top: clamp(-3rem, -6vw, -2rem);
-  margin-bottom: clamp(0.75rem, 2vw, 1.25rem);
+  margin-bottom: var(--home-v2-hero-edge-gap);
 }
 
 [data-foldder-home-v2] [data-home-v2-hero-logo] img {
-  width: clamp(1.92rem, 5.376vw, 3.072rem);
+  width: clamp(2.1rem, 5.8vw, 3.35rem);
   height: auto;
 }
 
@@ -508,7 +509,7 @@ html:has([data-foldder-home-v2]) :is(button, [role="button"]) {
 
 [data-foldder-home-v2] [data-home-v2-module--hero] [data-home-v2-headline] {
   color: #ffffff;
-  margin-top: clamp(2rem, 4vw, 2.5rem);
+  margin-top: 0;
   line-height: 0.8;
 }
 

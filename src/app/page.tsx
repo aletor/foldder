@@ -95,10 +95,10 @@ export default function HomePage() {
         >
           <Link href="/" data-home-v2-hero-logo data-foldder-home-link aria-label="Foldder">
             <Image
-              src="/logo_home.svg"
+              src="/home-v2/hero-logo-line.png"
               alt=""
-              width={80}
-              height={38}
+              width={627}
+              height={794}
               className="h-auto w-full max-w-none shrink-0 object-contain"
               priority
             />
@@ -117,7 +117,7 @@ export default function HomePage() {
             as="p"
             data-home-v2-hero-lead
             className="text-white/45"
-            text="**FOLDDER** es un **estudio creativo modular** donde **tú diriges cada decisión**. Conecta **cápsulas** de escritura, imagen, vídeo, diseño y marca para convertir una idea en **piezas completas** con inteligencia artificial."
+            text="**FOLDDER** es el lugar donde ocurre tu **proceso creativo**: inspiración, escritura, imagen, vídeo, diseño y presentación trabajando dentro de **un mismo sistema**."
           />
           <div data-home-v2-hero-actions className="flex flex-wrap items-stretch">
             <GoogleAccessButton
