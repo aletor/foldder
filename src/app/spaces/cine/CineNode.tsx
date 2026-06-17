@@ -1,9 +1,10 @@
 "use client";
 
-import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
-import { NodeResizer, NodeProps, useReactFlow, useStore, type Edge, type Node, type ReactFlowState } from "@xyflow/react";
+import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps } from "react";
+import { NodeResizer, NodeProps, useNodeId, useReactFlow, useStore, useUpdateNodeInternals, type Edge, type Node, type ReactFlowState } from "@xyflow/react";
 import { shallow } from "zustand/shallow";
-import { Film } from "lucide-react";
+import { Brain, Clapperboard, Film, FileText, Frame, ImageIcon, Users } from "lucide-react";
+import { FOLDDER_FIT_VIEW_EASE } from "@/lib/fit-view-ease";
 import { defaultDataForCanvasDropNode } from "@/lib/canvas-connect-end-drop";
 import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
 import { CineStudio } from "../CineStudio";
@@ -45,6 +46,41 @@ import {
   registerPendingNanoStudioOpenFromCine,
 } from "./cine-nano-open-pending";
 import { useFoldderRenderMetric } from "../use-performance-metrics";
+import { nodeFrameFromSnapshot, selectNodeFrameSnapshot } from "../react-flow-selectors";
+import {
+  nodeFrameNeedsSync,
+  parseAspectRatioValue,
+  resolveAspectLockedNodeFrame,
+  resolveNodeChromeHeight,
+} from "../studio-node-aspect";
+
+const CINE_NODE_MAX_HEIGHT = 2200;
+const NODE_RESIZE_END_FIT_PADDING = 0.8;
+
+function FoldderNodeResizer(props: ComponentProps<typeof NodeResizer>) {
+  const nodeId = useNodeId();
+  const { fitView } = useReactFlow();
+  const { onResizeEnd, ...rest } = props;
+  return (
+    <NodeResizer
+      {...rest}
+      onResizeEnd={(event, params) => {
+        onResizeEnd?.(event, params);
+        if (nodeId) {
+          requestAnimationFrame(() => {
+            void fitView({
+              nodes: [{ id: nodeId }],
+              padding: NODE_RESIZE_END_FIT_PADDING,
+              duration: 560,
+              interpolate: "smooth",
+              ...FOLDDER_FIT_VIEW_EASE,
+            });
+          });
+        }
+      }}
+    />
+  );
+}
 
 type CineInputSnapshot = {
   sourceScriptText: string;
@@ -177,10 +213,38 @@ const CINE_NODE_HANDLES: StudioCanvasNodeHandleSpec[] = [
   { side: "right", top: "52%", type: "source", id: "media_list", dataType: "generic", label: "Media List" },
 ];
 
+function CineNodeMediaMetric({
+  icon,
+  value,
+  title,
+}: {
+  icon: React.ReactNode;
+  value: string | number;
+  title: string;
+}) {
+  return (
+    <span className="cine-node-media-metric inline-flex items-center gap-1" title={title}>
+      <span className="cine-node-media-metric__icon" aria-hidden>{icon}</span>
+      <span className="cine-node-media-metric__value">{value}</span>
+    </span>
+  );
+}
+
 export const CineNode = memo(function CineNode({ id, data, selected }: NodeProps) {
   useFoldderRenderMetric("CineNode", id);
   const nodeData = normalizeCineData(data);
   const { setNodes, getNodes, fitView } = useReactFlow();
+  const updateNodeInternals = useUpdateNodeInternals();
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const previewRef = useRef<HTMLDivElement | null>(null);
+  const frameSyncKeyRef = useRef<string | null>(null);
+  const currentFrameSnapshot = useStore(
+    useCallback((state: ReactFlowState<Node, Edge>) => selectNodeFrameSnapshot(state, id), [id]),
+    shallow,
+  );
+  const currentFrameNode = useMemo(() => nodeFrameFromSnapshot(currentFrameSnapshot), [currentFrameSnapshot]);
+  const directorAspectRatio = nodeData.visualDirection.aspectRatio || "16:9";
+  const cineAspect = parseAspectRatioValue(directorAspectRatio) ?? { width: 16, height: 9 };
   const cineInputSnapshot = useStore(
     useCallback((state: ReactFlowState<Node, Edge>) => selectCineInputSnapshot(state, id), [id]),
     shallow,
@@ -330,15 +394,63 @@ export const CineNode = memo(function CineNode({ id, data, selected }: NodeProps
   const [previewRetriedFor, setPreviewRetriedFor] = useState<string | null>(null);
   const previewRetryKey = `${previewImage?.src || ""}\u0001${previewImage?.s3Key || ""}`;
   const scriptTitle = nodeData.sourceScript?.title || nodeData.label || nodeData.detected?.logline || "Cine";
-  const metricClassName = previewImage
-    ? "rounded-none border border-white/15 bg-black/35 px-2 py-1.5 text-[10px] font-semibold text-white/88 shadow-sm backdrop-blur-md"
-    : "rounded-none border border-slate-200/70 bg-white/80 px-2 py-1.5 text-[10px] font-semibold text-slate-700";
-  const compactPillClassName = previewImage
-    ? "rounded-full border border-white/15 bg-black/30 px-2.5 py-1 text-[10px] font-semibold text-white/78 backdrop-blur-md"
-    : "";
+  const metricClassName = "rounded-none border border-slate-200/70 bg-white/80 px-2 py-1.5 text-[10px] font-semibold text-slate-700";
+
+  useLayoutEffect(() => {
+    const syncKey = `${directorAspectRatio}:${cineAspect.width}x${cineAspect.height}`;
+    if (frameSyncKeyRef.current === syncKey) return;
+    const chromeHeight = resolveNodeChromeHeight(frameRef.current, previewRef.current);
+    const nextFrame = resolveAspectLockedNodeFrame({
+      node: currentFrameNode,
+      contentWidth: cineAspect.width,
+      contentHeight: cineAspect.height,
+      minWidth: 200,
+      maxWidth: 960,
+      minHeight: 120,
+      maxHeight: CINE_NODE_MAX_HEIGHT,
+      chromeHeight,
+    });
+    frameSyncKeyRef.current = syncKey;
+    const nextAspectRatio = cineAspect.width / cineAspect.height;
+    setNodes((nds) =>
+      nds.map((node) => {
+        if (node.id !== id) return node;
+        const needsFrameSync = nodeFrameNeedsSync(node, nextFrame);
+        const currentAspectRatio =
+          typeof (node.data as { _foldderAspectRatio?: unknown } | undefined)?._foldderAspectRatio === "number"
+            ? ((node.data as { _foldderAspectRatio?: number })._foldderAspectRatio ?? null)
+            : null;
+        const needsAspectSync =
+          currentAspectRatio === null || Math.abs(currentAspectRatio - nextAspectRatio) > 0.0001;
+        if (!needsFrameSync && !needsAspectSync) return node;
+        return {
+          ...node,
+          ...(needsFrameSync ? { width: nextFrame.width, height: nextFrame.height } : {}),
+          data: { ...node.data, _foldderAspectRatio: nextAspectRatio },
+          style: needsFrameSync ? { ...node.style, width: nextFrame.width, height: nextFrame.height } : node.style,
+        };
+      }),
+    );
+    requestAnimationFrame(() => updateNodeInternals(id));
+  }, [
+    cineAspect.height,
+    cineAspect.width,
+    currentFrameNode,
+    currentFrameSnapshot.height,
+    currentFrameSnapshot.measuredHeight,
+    currentFrameSnapshot.measuredWidth,
+    currentFrameSnapshot.styleHeight,
+    currentFrameSnapshot.styleWidth,
+    currentFrameSnapshot.width,
+    directorAspectRatio,
+    id,
+    setNodes,
+    updateNodeInternals,
+  ]);
 
   return (
     <StudioCanvasNodeShell
+      ref={frameRef}
       nodeId={id}
       nodeType="cine"
       selected={selected}
@@ -348,15 +460,22 @@ export const CineNode = memo(function CineNode({ id, data, selected }: NodeProps
       badge={modeLabel}
       introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}
       minWidth={200}
-      className={previewImage ? "cine-node" : "cine-node cine-node--empty foldder-frameless-label-dark"}
+      className={previewImage ? "cine-node cine-node--has-preview" : "cine-node cine-node--empty foldder-frameless-label-dark"}
       handles={CINE_NODE_HANDLES}
       variant="frameless"
       material="media"
       studioTouched={hasFoldderStudioTouched(nodeData as Record<string, unknown>)}
     >
-      <NodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={2200} isVisible={selected} />
+      <FoldderNodeResizer
+        minWidth={200}
+        minHeight={120}
+        maxWidth={960}
+        maxHeight={CINE_NODE_MAX_HEIGHT}
+        keepAspectRatio
+        isVisible={selected}
+      />
       {previewImage ? (
-      <div className="node-content cine-node-content cine-node-content--media relative flex min-h-0 flex-1 flex-col justify-end gap-3 overflow-hidden rounded-none px-3 pb-3 pt-3">
+      <div ref={previewRef} className="node-content cine-node-content cine-node-content--media relative min-h-0 flex-1 overflow-hidden">
         {previewUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -371,42 +490,51 @@ export const CineNode = memo(function CineNode({ id, data, selected }: NodeProps
               }
             }}
           />
-        ) : null}
+        ) : (
+          <div className="absolute inset-0 bg-[#0c0c0c]" aria-hidden />
+        )}
 
-        <div className="cine-summary-panel relative z-10">
-          <div className="mb-3">
-            <h3 className="line-clamp-3 text-[20px] font-semibold leading-[1.02] tracking-[-0.045em] text-white drop-shadow-sm">
-              {scriptTitle}
-            </h3>
-          </div>
-          <div className="mt-3 grid grid-cols-2 gap-1.5">
-            <span className={metricClassName}>
-              {nodeData.scenes.length} escenas
-            </span>
-            <span className={metricClassName}>
-              {nodeData.characters.length} personajes
-            </span>
-            <span className={metricClassName}>
-              {nodeData.backgrounds.length} fondos
-            </span>
-            <span className={metricClassName}>
-              {framesPrepared}/{framesTotal || 0} frames
-            </span>
-          </div>
-          <div className="mt-3 flex flex-wrap gap-1.5">
-            <span className={compactPillClassName}>{brainConnected ? "Brain conectado" : "Sin Brain"}</span>
-            <span className={compactPillClassName}>{sourceScriptText ? "Guionista conectado" : "Guion manual"}</span>
+        <div className="cine-node-media-scrim pointer-events-none absolute inset-0 z-[2]" aria-hidden />
+
+        <span className="cine-node-media-tag absolute left-3 top-[42px] z-[8] max-w-[calc(100%-24px)] truncate">
+          {previewImage.label}
+        </span>
+
+        <div className="cine-node-media-footer absolute inset-x-0 bottom-0 z-[8] px-3 pb-3 pt-10">
+          <div className="flex items-end gap-2">
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[12px] font-semibold leading-tight tracking-[-0.02em] text-white">
+                {scriptTitle}
+              </p>
+              <div className="cine-node-media-metrics mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-0.5">
+                <CineNodeMediaMetric icon={<Clapperboard size={11} strokeWidth={2.2} />} value={nodeData.scenes.length} title="Escenas" />
+                <CineNodeMediaMetric icon={<Users size={11} strokeWidth={2.2} />} value={nodeData.characters.length} title="Personajes" />
+                <CineNodeMediaMetric icon={<ImageIcon size={11} strokeWidth={2.2} />} value={nodeData.backgrounds.length} title="Fondos" />
+                <CineNodeMediaMetric icon={<Frame size={11} strokeWidth={2.2} />} value={`${framesPrepared}/${framesTotal || 0}`} title="Frames" />
+              </div>
+              <div className="cine-node-media-signals mt-1 flex items-center gap-2.5">
+                <span className="inline-flex items-center gap-1" title={brainConnected ? "Brain conectado" : "Sin Brain"}>
+                  <Brain size={11} strokeWidth={2.2} className={brainConnected ? "text-white/92" : "text-white/28"} />
+                </span>
+                <span className="inline-flex items-center gap-1" title={sourceScriptText ? "Guionista conectado" : "Guion manual"}>
+                  <FileText size={11} strokeWidth={2.2} className={sourceScriptText ? "text-white/92" : "text-white/28"} />
+                </span>
+                <span className="cine-node-media-mode truncate">{modeLabel}</span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                openStudio();
+              }}
+              className="cine-node-open-btn foldder-node-footer-button nodrag inline-flex shrink-0 items-center gap-1.5 rounded-none border-0 bg-white px-2.5 py-1.5 text-[10px] font-semibold text-black shadow-none transition hover:bg-[#f7f7f4]"
+            >
+              <Film size={12} strokeWidth={2.3} />
+              Open Cine
+            </button>
           </div>
         </div>
-
-        <StudioCanvasOpenButton
-          onClick={openStudio}
-          accent="cyan"
-          icon={<Film className="h-4 w-4" strokeWidth={2} />}
-          className="relative z-10 border-white/20 bg-white/88 shadow-[0_16px_40px_rgba(0,0,0,0.28)] backdrop-blur-md"
-        >
-          Abrir Cine
-        </StudioCanvasOpenButton>
       </div>
       ) : (
       <div className="foldder-frameless-main relative flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -418,7 +546,7 @@ export const CineNode = memo(function CineNode({ id, data, selected }: NodeProps
             draggable={false}
           />
         </div>
-        <div className="node-content cine-node-content relative z-10 flex flex-col gap-3 px-3 pb-3 pt-2">
+        <div ref={previewRef} className="node-content cine-node-content relative z-10 flex flex-col gap-3 px-3 pb-3 pt-2">
         <div className="cine-summary-panel">
           <div className="min-w-0">
             <span className="node-label">Mesa de dirección</span>

@@ -7,23 +7,33 @@ import {
   Camera,
   Check,
   Clapperboard,
+  Clock,
+  Cloud,
+  Contrast,
   Copy,
+  Eye,
   Film,
   Layers,
   Lock,
   Map,
+  Megaphone,
   Moon,
+  Music,
+  Package,
   Palette,
-  Paintbrush,
   Plus,
-  Ratio,
+  Shirt,
+  Smartphone,
   Sparkles,
   Sun,
+  SunMedium,
   Trash2,
   Unlock,
   Users,
+  Video,
   Wand2,
   X,
+  Zap,
 } from "lucide-react";
 import type { StandardStudioShellConfig } from "./StandardStudioShell";
 import { FoldderStudioHeader } from "./FoldderStudioHeader";
@@ -90,8 +100,42 @@ import type { MediaListItem } from "./media-list-output";
 import { StudioNodePortal } from "./studio-node/studio-node-architecture";
 import { geminiGenerateWithServerProgress } from "@/lib/gemini-generate-stream-client";
 import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
+import {
+  CineStudioAssetCard,
+  CineStudioBadge,
+  CineStudioLockedPanel,
+  CineStudioMetricsBar,
+  CineStudioSection,
+  CineStudioTabBar,
+  CineStudioWorkflowBar,
+  ChromeIconButton,
+  ChoiceGrid,
+  DirectionChoiceCard,
+  DirectionHeaderBar,
+  DirectionInlineToggle,
+  DirectionPromptPreview,
+  DirectionSection,
+  DirectionStat,
+  DirectionStatRow,
+  FieldLabel,
+  PillButton,
+  PrimaryButton,
+  Stat,
+  StatRow,
+  Select,
+  TextArea,
+  TextInput,
+  cx,
+} from "./cine/CineStudioChrome";
+import {
+  getCineRecommendedTab,
+  getCineTabAccess,
+  getCineWorkflowHint,
+  getCineWorkflowSnapshot,
+  isCineTabUnlocked,
+  type CineStudioTab,
+} from "./cine/cine-studio-workflow";
 
-type CineStudioTab = "direction" | "script" | "cast" | "backgrounds" | "storyboard" | "output";
 type CineAnalyzerMode = "ai" | "local";
 type CineGeneratingTarget = string | null;
 type CineFrameSelection = Record<string, boolean>;
@@ -158,8 +202,93 @@ const CINE_LIGHTING_STYLE_DESCRIPTIONS: Record<CineLightingStyle, string> = {
   bright: "Alta clave, claridad y limpieza.",
 };
 
-function cx(...parts: Array<string | false | null | undefined>): string {
-  return parts.filter(Boolean).join(" ");
+const CINE_MODE_SHORT_LABELS: Record<CineMode, string> = {
+  short_film: "Corto",
+  advertising: "Spot",
+  fashion_film: "Fashion",
+  documentary: "Docu",
+  product_video: "Producto",
+  music_video: "Clip",
+  brand_story: "Marca",
+  social_video: "Social",
+};
+
+const CINE_MODE_ICONS: Record<CineMode, React.ReactNode> = {
+  short_film: <Film size={14} strokeWidth={2} />,
+  advertising: <Megaphone size={14} strokeWidth={2} />,
+  fashion_film: <Shirt size={14} strokeWidth={2} />,
+  documentary: <Video size={14} strokeWidth={2} />,
+  product_video: <Package size={14} strokeWidth={2} />,
+  music_video: <Music size={14} strokeWidth={2} />,
+  brand_story: <Layers size={14} strokeWidth={2} />,
+  social_video: <Smartphone size={14} strokeWidth={2} />,
+};
+
+const CINE_VISUAL_STYLE_SHORT_LABELS: Record<CineVisualStyle, string> = {
+  naturalistic_realistic: "Natural",
+  commercial_cinematic: "Comercial",
+  black_white_noir: "Noir",
+  animation_cartoon: "Animación",
+  retro_vintage: "Retro",
+  futuristic_sci_fi: "Sci-Fi",
+  surreal_dreamlike: "Onírico",
+  raw_documentary: "Crudo",
+};
+
+const CINE_VISUAL_STYLE_ICONS: Record<CineVisualStyle, React.ReactNode> = {
+  naturalistic_realistic: <Eye size={14} strokeWidth={2} />,
+  commercial_cinematic: <Sparkles size={14} strokeWidth={2} />,
+  black_white_noir: <Contrast size={14} strokeWidth={2} />,
+  animation_cartoon: <Palette size={14} strokeWidth={2} />,
+  retro_vintage: <Clock size={14} strokeWidth={2} />,
+  futuristic_sci_fi: <Zap size={14} strokeWidth={2} />,
+  surreal_dreamlike: <Cloud size={14} strokeWidth={2} />,
+  raw_documentary: <Camera size={14} strokeWidth={2} />,
+};
+
+const CINE_COLOR_GRADING_SHORT_LABELS: Record<CineColorGrading, string> = {
+  teal_orange: "Teal",
+  golden_hour_warm: "Golden",
+  cool_blue_desaturated: "Cool",
+  pastel_soft_film: "Pastel",
+  high_contrast_crunchy: "Crunchy",
+  film_emulation_kodak_fuji: "Film",
+  vibrant_commercial_pop: "Vibrant",
+  bleach_bypass: "Bleach",
+  low_contrast_fade_matte: "Matte",
+  monochrome_color_cast: "Mono",
+};
+
+const CINE_COLOR_GRADING_SWATCHES: Record<CineColorGrading, string> = {
+  teal_orange: "from-cyan-400 via-slate-500 to-orange-400",
+  golden_hour_warm: "from-amber-200 via-orange-300 to-rose-300",
+  cool_blue_desaturated: "from-slate-400 via-blue-400 to-slate-500",
+  pastel_soft_film: "from-pink-200 via-sky-200 to-lime-200",
+  high_contrast_crunchy: "from-black via-zinc-500 to-white",
+  film_emulation_kodak_fuji: "from-amber-300 via-rose-200 to-emerald-300",
+  vibrant_commercial_pop: "from-fuchsia-400 via-yellow-300 to-cyan-400",
+  bleach_bypass: "from-zinc-300 via-zinc-500 to-zinc-200",
+  low_contrast_fade_matte: "from-stone-400 via-stone-300 to-stone-500",
+  monochrome_color_cast: "from-indigo-400 via-indigo-300 to-indigo-500",
+};
+
+function CineAspectRatioIcon({ ratio }: { ratio: CineAspectRatio }) {
+  const [w, h] = ratio.split(":").map(Number);
+  const landscape = w >= h;
+  return (
+    <span
+      className="inline-block border border-current opacity-80"
+      style={{
+        width: landscape ? 16 : Math.round(16 * (w / h)),
+        height: landscape ? Math.round(16 * (h / w)) : 16,
+      }}
+      aria-hidden
+    />
+  );
+}
+
+function CineColorGradingIcon({ grading }: { grading: CineColorGrading }) {
+  return <span className={`inline-block h-3 w-5 bg-gradient-to-r ${CINE_COLOR_GRADING_SWATCHES[grading]}`} aria-hidden />;
 }
 
 const CINE_S3_URL_TTL_MS = 50 * 60 * 1000;
@@ -264,46 +393,6 @@ function nextStatus(data: CineNodeData): CineNodeData["status"] {
   return "empty";
 }
 
-function FieldLabel({ children }: { children: React.ReactNode }) {
-  return <label className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">{children}</label>;
-}
-
-function TextInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
-  return (
-    <input
-      {...props}
-      className={cx(
-        "w-full rounded-2xl border border-white/10 bg-white/[0.055] px-3 py-2 text-sm text-white outline-none transition placeholder:text-white/25 focus:border-cyan-300/40 focus:bg-white/[0.08]",
-        props.className,
-      )}
-    />
-  );
-}
-
-function TextArea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return (
-    <textarea
-      {...props}
-      className={cx(
-        "w-full resize-y rounded-2xl border border-white/10 bg-white/[0.055] px-3 py-2 text-sm leading-relaxed text-white outline-none transition placeholder:text-white/25 focus:border-cyan-300/40 focus:bg-white/[0.08]",
-        props.className,
-      )}
-    />
-  );
-}
-
-function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
-  return (
-    <select
-      {...props}
-      className={cx(
-        "w-full rounded-2xl border border-white/10 bg-[#121722] px-3 py-2 text-sm text-white outline-none transition focus:border-cyan-300/40",
-        props.className,
-      )}
-    />
-  );
-}
-
 function SceneCameraControls({
   scene,
   onPatch,
@@ -313,10 +402,10 @@ function SceneCameraControls({
 }) {
   const updateShot = (patch: Partial<CineShot>) => onPatch({ shot: { ...scene.shot, ...patch } });
   return (
-    <div className="rounded-3xl border border-white/10 bg-white/[0.028] p-3">
+    <div className="border-b border-white/10 py-3">
       <div className="flex items-center justify-between gap-3">
         <FieldLabel>Cámara</FieldLabel>
-        <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/32">
+        <span className="text-[9px] font-black uppercase tracking-[0.1em] text-white/38">
           {CINE_CAMERA_MOVEMENT_LABELS[scene.shot.cameraMovementType ?? "none"]}
         </span>
       </div>
@@ -335,89 +424,6 @@ function SceneCameraControls({
         />
       </div>
     </div>
-  );
-}
-
-function PillButton(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  return (
-    <button
-      {...props}
-      className={cx(
-        "inline-flex items-center justify-center gap-2 rounded-full border border-white/10 bg-white/[0.055] px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-white/70 transition hover:bg-white/[0.1] hover:text-white disabled:cursor-not-allowed disabled:opacity-40",
-        props.className,
-      )}
-    />
-  );
-}
-
-function PrimaryButton(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  return (
-    <button
-      {...props}
-      className={cx(
-        "inline-flex items-center justify-center gap-2 rounded-2xl border border-cyan-200/25 bg-cyan-300/15 px-4 py-2 text-xs font-bold uppercase tracking-[0.14em] text-cyan-50 shadow-[0_12px_35px_rgba(34,211,238,0.10)] transition hover:bg-cyan-300/22 disabled:cursor-not-allowed disabled:opacity-40",
-        props.className,
-      )}
-    />
-  );
-}
-
-function SectionCard({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <section className={cx("rounded-[28px] border border-white/10 bg-white/[0.055] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.22)] backdrop-blur-xl", className)}>{children}</section>;
-}
-
-function Stat({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2">
-      <div className="text-[9px] font-semibold uppercase tracking-[0.16em] text-white/35">{label}</div>
-      <div className="mt-1 text-lg font-semibold text-white">{value}</div>
-    </div>
-  );
-}
-
-function DirectionChoiceCard({
-  active,
-  icon,
-  title,
-  description,
-  onClick,
-  accent = "cyan",
-}: {
-  active: boolean;
-  icon: React.ReactNode;
-  title: string;
-  description: string;
-  onClick: () => void;
-  accent?: "cyan" | "amber" | "violet" | "slate";
-}) {
-  const activeClass = {
-    cyan: "border-cyan-200/42 bg-cyan-300/14 text-cyan-50 shadow-[0_18px_42px_rgba(34,211,238,0.10)]",
-    amber: "border-amber-200/42 bg-amber-300/14 text-amber-50 shadow-[0_18px_42px_rgba(251,191,36,0.10)]",
-    violet: "border-violet-200/42 bg-violet-300/14 text-violet-50 shadow-[0_18px_42px_rgba(167,139,250,0.10)]",
-    slate: "border-white/26 bg-white/[0.09] text-white shadow-[0_18px_42px_rgba(255,255,255,0.06)]",
-  }[accent];
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cx(
-        "group min-h-[116px] rounded-[24px] border p-4 text-left transition hover:-translate-y-0.5 hover:border-white/24 hover:bg-white/[0.08]",
-        active ? activeClass : "border-white/10 bg-white/[0.038] text-white/64",
-      )}
-    >
-      <div className="flex items-start gap-3">
-        <div className={cx(
-          "flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border transition",
-          active ? "border-white/18 bg-white/12 text-white" : "border-white/10 bg-black/18 text-white/40 group-hover:text-white/70",
-        )}>
-          {icon}
-        </div>
-        <div className="min-w-0">
-          <div className="text-sm font-semibold tracking-[-0.02em]">{title}</div>
-          <p className="mt-1 text-xs leading-relaxed text-white/45">{description}</p>
-        </div>
-      </div>
-    </button>
   );
 }
 
@@ -442,7 +448,7 @@ function CineVisualAssetHero({
   const retryKey = `${src || ""}\u0001${s3Key || ""}`;
   const [retriedFor, setRetriedFor] = useState<string | null>(null);
   return (
-    <div className="relative aspect-[4/3] min-h-[260px] overflow-hidden rounded-t-[28px] bg-slate-950">
+    <div className="relative aspect-[4/3] min-h-[240px] overflow-hidden bg-slate-950">
       {url ? (
         // S3 presigned URLs inside React Flow/Studio cards need deterministic object-cover behavior.
         // eslint-disable-next-line @next/next/no-img-element
@@ -457,20 +463,20 @@ function CineVisualAssetHero({
           }}
         />
       ) : (
-        <div className="flex h-full w-full flex-col items-center justify-center bg-[radial-gradient(circle_at_50%_26%,rgba(103,232,249,0.12),rgba(15,23,42,0.20)_42%,rgba(2,6,23,0.82))] text-white/42">
-          <div className="mb-4 rounded-3xl border border-white/10 bg-white/[0.04] p-4">{icon}</div>
-          <span className="text-[10px] font-semibold uppercase tracking-[0.18em]">{kicker}</span>
-          <span className="mt-1 text-xs text-white/30">Imagen pendiente</span>
+        <div className="flex h-full w-full flex-col items-center justify-center bg-[#0b0f14] text-white/42">
+          <div className="mb-4 border border-white/10 bg-white/[0.04] p-4">{icon}</div>
+          <span className="text-[9px] font-black uppercase tracking-[0.14em]">{kicker}</span>
+          <span className="mt-1 text-[11px] text-white/30">Imagen pendiente</span>
         </div>
       )}
       {status ? (
-        <span className="absolute right-3 top-3 rounded-full border border-white/15 bg-black/45 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-white/72 backdrop-blur-md">
+        <span className="absolute right-3 top-3 border border-white/15 bg-black/70 px-2.5 py-1 text-[9px] font-black uppercase tracking-[0.1em] text-white/72">
           {status}
         </span>
       ) : null}
-      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/48 to-transparent p-4 pt-16">
-        <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-cyan-100/70">{kicker}</div>
-        <h3 className="mt-1 line-clamp-2 text-xl font-semibold tracking-[-0.04em] text-white">{title}</h3>
+      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/92 via-black/50 to-transparent p-4 pt-14">
+        <div className="text-[9px] font-black uppercase tracking-[0.12em] text-[var(--foldder-studio-accent,#de323f)]">{kicker}</div>
+        <h3 className="mt-1 line-clamp-2 text-lg font-semibold tracking-[-0.03em] text-white">{title}</h3>
         {subtitle ? <p className="mt-2 line-clamp-2 text-sm leading-relaxed text-white/58">{subtitle}</p> : null}
       </div>
     </div>
@@ -827,9 +833,45 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
     }));
   }, [safeData.scenes, storyboardStatusFilter]);
 
+  const workflowSnapshot = useMemo(
+    () => getCineWorkflowSnapshot(script, Boolean(safeData.detected), safeData.scenes.length),
+    [safeData.detected, safeData.scenes.length, script],
+  );
+  const tabAccess = useMemo(() => getCineTabAccess(workflowSnapshot), [workflowSnapshot]);
+  const workflowHint = getCineWorkflowHint(workflowSnapshot);
+  const tabsWithAccess = useMemo(
+    () =>
+      tabs.map((tab) => {
+        const access = tabAccess.find((item) => item.id === tab.id);
+        return { ...tab, unlocked: access?.unlocked ?? true, lockReason: access?.lockReason };
+      }),
+    [tabAccess, tabs],
+  );
+
   useEffect(() => {
     if (initialTab) setActiveTab(initialTab);
   }, [initialTab, initialSceneId]);
+
+  useEffect(() => {
+    if (isCineTabUnlocked(activeTab, workflowSnapshot)) return;
+    setActiveTab(getCineRecommendedTab(workflowSnapshot, initialTab));
+  }, [activeTab, initialTab, workflowSnapshot]);
+
+  const goToRecommended = useCallback(() => {
+    setActiveTab(getCineRecommendedTab(workflowSnapshot));
+  }, [workflowSnapshot]);
+
+  const renderLockedTab = (tab: CineStudioTab) => {
+    const access = tabAccess.find((item) => item.id === tab);
+    return (
+      <CineStudioLockedPanel
+        title="Paso bloqueado"
+        message={access?.lockReason ?? "Completa el paso anterior para continuar."}
+        actionLabel={!workflowSnapshot.hasScript ? "Ir al guion" : "Ir a analizar guion"}
+        onAction={goToRecommended}
+      />
+    );
+  };
 
   const openCharacterImageStudio = useCallback(async (character: CineCharacter, mode: "generate" | "edit") => {
     if (!onOpenImageStudio) return;
@@ -1416,224 +1458,224 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
   };
 
   const shell = (
-    <div className="fixed inset-0 z-[100090] flex flex-col bg-[#05070b] text-white">
+    <div
+      className="fixed inset-0 z-[100090] flex flex-col bg-[#0b0f14] text-white"
+      data-foldder-studio-panel
+      data-foldder-studio-flush
+      data-foldder-cine-studio
+      role="dialog"
+      aria-modal="true"
+      aria-label="Cine studio"
+      style={{ ["--foldder-studio-accent" as string]: "#de323f" }}
+    >
       <FoldderStudioHeader
         nodeType="cine"
         nodeLabel={standardShell?.appLabel ?? "Cine"}
         subtitle="Mesa de dirección audiovisual"
         onClose={onClose}
-        actions={
-          <>
-            <span className="hidden items-center px-2 text-[9px] font-black uppercase tracking-[0.08em] text-white/70 lg:flex">
-              {safeData.scenes.length} esc · {safeData.characters.length} rep · {framesPrepared} fr
-            </span>
-            <span
-              className={`flex items-center px-3 text-[9px] font-black uppercase tracking-[0.08em] ${
-                brainConnected ? "text-cyan-200" : "text-white/45"
-              }`}
-            >
-              {brainConnected ? "Brain" : "Sin Brain"}
-            </span>
-          </>
-        }
       />
-      <div className="relative z-10 flex min-h-0 flex-1">
-        <aside className="w-60 shrink-0 border-r border-white/10 p-5">
-          <div className="rounded-[28px] border border-white/10 bg-white/[0.055] p-2">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setActiveTab(tab.id)}
-                className={cx(
-                  "mb-1 flex w-full items-center gap-2 rounded-2xl px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-[0.13em] transition last:mb-0",
-                  activeTab === tab.id ? "bg-cyan-300/15 text-cyan-50 shadow-inner" : "text-white/48 hover:bg-white/[0.06] hover:text-white/80",
-                )}
-              >
-                {tab.icon}
-                {tab.label}
-              </button>
-            ))}
-          </div>
-          <div className="mt-4 rounded-[24px] border border-white/10 bg-black/20 p-4">
-            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35">Estado</div>
-            <div className="mt-2 text-sm font-semibold text-white">{CINE_STATUS_LABELS[safeData.status]}</div>
-            <p className="mt-2 text-xs leading-relaxed text-white/42">Cine prepara continuidad, frames y salida. No modifica VideoNode ni Brain.</p>
-            {generationMessage ? (
-              <p className={cx("mt-3 rounded-2xl border px-3 py-2 text-xs leading-relaxed", generatingTarget ? "border-cyan-200/20 bg-cyan-300/10 text-cyan-50/75" : "border-white/10 bg-white/[0.04] text-white/50")}>
-                {generationMessage}
-              </p>
-            ) : null}
-          </div>
-        </aside>
-        <main className="min-w-0 flex-1 overflow-y-auto p-7">
+      <CineStudioTabBar
+        tabs={tabsWithAccess}
+        activeTab={activeTab}
+        onTabChange={(tab) => {
+          if (!isCineTabUnlocked(tab, workflowSnapshot)) {
+            setActiveTab(getCineRecommendedTab(workflowSnapshot));
+            return;
+          }
+          setActiveTab(tab);
+        }}
+      />
+      <CineStudioWorkflowBar snapshot={workflowSnapshot} tabAccess={tabAccess} />
+      {workflowHint ? (
+        <p className="border-b border-white/10 bg-[var(--foldder-studio-accent,#de323f)]/10 px-4 py-2 text-[10px] font-black uppercase tracking-[0.08em] text-white/72">
+          {workflowHint}
+        </p>
+      ) : null}
+      <CineStudioMetricsBar
+        statusLabel={CINE_STATUS_LABELS[safeData.status]}
+        sceneCount={safeData.scenes.length}
+        characterCount={safeData.characters.length}
+        frameCount={framesPrepared}
+        brainConnected={brainConnected}
+      />
+      <main className="custom-scrollbar min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6 md:py-5">
           {activeTab === "direction" ? (
-            <div className="mx-auto grid max-w-7xl gap-5">
-              <SectionCard className="overflow-hidden">
-                <div className="flex flex-wrap items-start justify-between gap-4">
-                  <div className="max-w-2xl">
-                    <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-cyan-100/55">Dirección audiovisual</div>
-                    <h2 className="mt-2 text-3xl font-semibold tracking-[-0.05em] text-white">Define cómo debe sentirse la pieza antes de producirla.</h2>
-                    <p className="mt-3 text-sm leading-relaxed text-white/50">
-                      Esta dirección guiará análisis, escenas, cámara, personajes, fondos, frames y planes de vídeo.
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <PillButton onClick={() => setActiveTab("script")}><BookOpen size={13} />Editar guion</PillButton>
-                    <PrimaryButton disabled={!script.trim() || analysisState.status === "running"} onClick={() => void runAnalysis()}>
-                      <Wand2 size={14} />{analysisState.status === "running" ? "Produciendo..." : "Producir el guion"}
-                    </PrimaryButton>
-                  </div>
-                </div>
-                <div className="mt-5 rounded-[24px] border border-white/10 bg-black/22 p-4">
-                  <div className="grid gap-3 md:grid-cols-4">
-                    <Stat label="Pieza" value={CINE_MODE_LABELS[safeData.visualDirection.mode]} />
-                    <Stat label="Formato" value={safeData.visualDirection.aspectRatio} />
-                    <Stat label="Estilo" value={CINE_VISUAL_STYLE_LABELS[safeData.visualDirection.visualStyle]} />
-                    <Stat label="Luz" value={CINE_LIGHTING_STYLE_LABELS[safeData.visualDirection.lightingStyle]} />
-                  </div>
-                  <pre className="mt-4 max-h-40 overflow-auto whitespace-pre-wrap rounded-2xl border border-white/10 bg-white/[0.035] p-3 text-xs leading-relaxed text-white/46">
-                    {buildCineVisualDirectionPrompt(safeData.visualDirection)}
-                  </pre>
-                </div>
-              </SectionCard>
+            <div className="mx-auto max-w-7xl" data-cine-direction-panel>
+              <DirectionHeaderBar
+                action={
+                  <ChromeIconButton onClick={() => setActiveTab("script")} title="Ir al guion">
+                    <BookOpen size={14} strokeWidth={2} />
+                  </ChromeIconButton>
+                }
+              >
+                <DirectionStatRow>
+                  <DirectionStat label="Pieza" value={CINE_MODE_SHORT_LABELS[safeData.visualDirection.mode]} />
+                  <DirectionStat label="Formato" value={safeData.visualDirection.aspectRatio} />
+                  <DirectionStat label="Estilo" value={CINE_VISUAL_STYLE_SHORT_LABELS[safeData.visualDirection.visualStyle]} />
+                  <DirectionStat label="Color" value={CINE_COLOR_GRADING_SHORT_LABELS[safeData.visualDirection.colorGrading]} />
+                  <DirectionStat label="Luz" value={CINE_LIGHTING_STYLE_LABELS[safeData.visualDirection.lightingStyle]} />
+                </DirectionStatRow>
+              </DirectionHeaderBar>
 
-              <SectionCard>
-                <div className="mb-4 flex items-center gap-2">
-                  <Clapperboard size={18} className="text-cyan-100/70" />
-                  <h3 className="text-lg font-semibold tracking-[-0.03em]">Tipo de pieza</h3>
-                </div>
-                <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+              <DirectionPromptPreview>
+                {buildCineVisualDirectionPrompt(safeData.visualDirection)}
+              </DirectionPromptPreview>
+
+              <DirectionSection title="Tipo de pieza">
+                <ChoiceGrid columns={8}>
                   {cineModes.map((mode) => (
                     <DirectionChoiceCard
                       key={mode}
                       active={safeData.visualDirection.mode === mode}
-                      icon={<Film size={20} />}
+                      icon={CINE_MODE_ICONS[mode]}
                       title={CINE_MODE_LABELS[mode]}
+                      shortLabel={CINE_MODE_SHORT_LABELS[mode]}
                       description={CINE_MODE_DESCRIPTIONS[mode]}
-                      onClick={() => mutations.commit((draft) => ({ ...draft, mode, visualDirection: { ...draft.visualDirection, mode } }))}
+                      onClick={() => mutations.commit((draft) => ({ ...draft, visualDirection: { ...draft.visualDirection, mode } }))}
                     />
                   ))}
-                </div>
-              </SectionCard>
+                </ChoiceGrid>
+              </DirectionSection>
 
-              <SectionCard>
-                <div className="mb-4 flex items-center gap-2">
-                  <Ratio size={18} className="text-cyan-100/70" />
-                  <h3 className="text-lg font-semibold tracking-[-0.03em]">Formato</h3>
-                </div>
-                <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-5">
-                  {aspectRatios.map((ratio) => (
-                    <DirectionChoiceCard
-                      key={ratio}
-                      active={safeData.visualDirection.aspectRatio === ratio}
-                      icon={<span className="text-sm font-black">{ratio}</span>}
-                      title={ratio}
-                      description={ratio === "2.39:1" ? "Panorámico cine." : ratio === "9:16" ? "Vertical social." : "Composición segura."}
-                      onClick={() => mutations.commit((draft) => ({ ...draft, visualDirection: { ...draft.visualDirection, aspectRatio: ratio } }))}
-                      accent="slate"
-                    />
-                  ))}
-                </div>
-              </SectionCard>
+              <div className="grid gap-0 lg:grid-cols-2 lg:divide-x lg:divide-white/10">
+                <DirectionSection title="Formato">
+                  <ChoiceGrid columns={5}>
+                    {aspectRatios.map((ratio) => (
+                      <DirectionChoiceCard
+                        key={ratio}
+                        active={safeData.visualDirection.aspectRatio === ratio}
+                        icon={<CineAspectRatioIcon ratio={ratio} />}
+                        title={ratio}
+                        shortLabel={ratio}
+                        description={ratio === "2.39:1" ? "Anamórfico · genera en 21:9." : ratio === "9:16" ? "Vertical social." : "Composición segura."}
+                        onClick={() => mutations.commit((draft) => ({ ...draft, visualDirection: { ...draft.visualDirection, aspectRatio: ratio } }))}
+                      />
+                    ))}
+                  </ChoiceGrid>
+                </DirectionSection>
 
-              <SectionCard>
-                <div className="mb-4 flex items-center gap-2">
-                  <Paintbrush size={18} className="text-cyan-100/70" />
-                  <h3 className="text-lg font-semibold tracking-[-0.03em]">Estilo visual</h3>
-                </div>
-                <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+                <DirectionSection title="Luz" className="lg:pl-3">
+                  <ChoiceGrid columns={3}>
+                    {lightingStyles.map((lighting) => (
+                      <DirectionChoiceCard
+                        key={lighting}
+                        active={safeData.visualDirection.lightingStyle === lighting}
+                        icon={
+                          lighting === "dark" ? (
+                            <Moon size={14} strokeWidth={2} />
+                          ) : lighting === "bright" ? (
+                            <Sun size={14} strokeWidth={2} />
+                          ) : (
+                            <SunMedium size={14} strokeWidth={2} />
+                          )
+                        }
+                        title={CINE_LIGHTING_STYLE_LABELS[lighting]}
+                        shortLabel={CINE_LIGHTING_STYLE_LABELS[lighting]}
+                        description={CINE_LIGHTING_STYLE_DESCRIPTIONS[lighting]}
+                        onClick={() => mutations.commit((draft) => ({ ...draft, visualDirection: { ...draft.visualDirection, lightingStyle: lighting } }))}
+                      />
+                    ))}
+                  </ChoiceGrid>
+                </DirectionSection>
+              </div>
+
+              <DirectionSection title="Estilo visual">
+                <ChoiceGrid columns={8}>
                   {visualStyles.map((style) => (
                     <DirectionChoiceCard
                       key={style}
                       active={safeData.visualDirection.visualStyle === style}
-                      icon={<Sparkles size={20} />}
+                      icon={CINE_VISUAL_STYLE_ICONS[style]}
                       title={CINE_VISUAL_STYLE_LABELS[style]}
+                      shortLabel={CINE_VISUAL_STYLE_SHORT_LABELS[style]}
                       description={CINE_VISUAL_STYLE_DESCRIPTIONS[style]}
                       onClick={() => mutations.commit((draft) => ({ ...draft, visualDirection: { ...draft.visualDirection, visualStyle: style } }))}
-                      accent="violet"
                     />
                   ))}
-                </div>
-              </SectionCard>
+                </ChoiceGrid>
+              </DirectionSection>
 
-              <SectionCard>
-                <div className="mb-4 flex items-center gap-2">
-                  <Palette size={18} className="text-amber-100/80" />
-                  <h3 className="text-lg font-semibold tracking-[-0.03em]">Color grading</h3>
-                </div>
-                <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-5">
+              <DirectionSection title="Color grading">
+                <ChoiceGrid columns={10}>
                   {colorGradings.map((grading) => (
                     <DirectionChoiceCard
                       key={grading}
                       active={safeData.visualDirection.colorGrading === grading}
-                      icon={<div className="h-5 w-8 rounded-full bg-gradient-to-r from-cyan-300/80 via-amber-200/70 to-rose-300/80" />}
+                      icon={<CineColorGradingIcon grading={grading} />}
                       title={CINE_COLOR_GRADING_LABELS[grading]}
+                      shortLabel={CINE_COLOR_GRADING_SHORT_LABELS[grading]}
                       description={CINE_COLOR_GRADING_DESCRIPTIONS[grading]}
                       onClick={() => mutations.commit((draft) => ({ ...draft, visualDirection: { ...draft.visualDirection, colorGrading: grading } }))}
-                      accent="amber"
                     />
                   ))}
-                </div>
-              </SectionCard>
+                </ChoiceGrid>
+              </DirectionSection>
 
-              <SectionCard>
-                <div className="mb-4 flex items-center gap-2">
-                  <Sun size={18} className="text-amber-100/80" />
-                  <h3 className="text-lg font-semibold tracking-[-0.03em]">Luz</h3>
-                </div>
-                <div className="grid gap-2 md:grid-cols-3">
-                  {lightingStyles.map((lighting) => (
-                    <DirectionChoiceCard
-                      key={lighting}
-                      active={safeData.visualDirection.lightingStyle === lighting}
-                      icon={lighting === "dark" ? <Moon size={20} /> : <Sun size={20} />}
-                      title={CINE_LIGHTING_STYLE_LABELS[lighting]}
-                      description={CINE_LIGHTING_STYLE_DESCRIPTIONS[lighting]}
-                      onClick={() => mutations.commit((draft) => ({ ...draft, visualDirection: { ...draft.visualDirection, lightingStyle: lighting } }))}
-                    />
-                  ))}
-                </div>
-                <div className="mt-5 grid gap-4 lg:grid-cols-3">
-                  <div className="lg:col-span-2">
-                    <FieldLabel>Dirección visual general</FieldLabel>
+              <DirectionSection title="Notas de dirección">
+                <div className="grid gap-0 border-t border-l border-white/10 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_auto] lg:divide-x lg:divide-white/10">
+                  <div className="border-b border-r border-white/10 p-2 lg:border-b-0">
+                    <FieldLabel>Dirección visual</FieldLabel>
                     <TextArea
                       value={safeData.visualDirection.globalStylePrompt ?? ""}
                       onChange={(event) => mutations.commit((draft) => ({ ...draft, visualDirection: { ...draft.visualDirection, globalStylePrompt: event.target.value } }))}
-                      rows={4}
-                      placeholder="Notas de dirección: ópticas, textura, atmósfera, referencias internas..."
+                      rows={2}
+                      placeholder="Ópticas, textura, atmósfera..."
+                      className="min-h-0 py-1.5 text-[12px]"
                     />
                   </div>
-                  <div className="grid gap-3">
-                    <div><FieldLabel>Estilo de cámara</FieldLabel><TextInput value={safeData.visualDirection.cameraStyle ?? ""} onChange={(event) => mutations.commit((draft) => ({ ...draft, visualDirection: { ...draft.visualDirection, cameraStyle: event.target.value } }))} placeholder="Cámara en mano suave, ópticas naturales..." /></div>
-                    <label className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-white/70"><span>Usar Brain conectado</span><input type="checkbox" checked={Boolean(safeData.visualDirection.useBrain)} onChange={(event) => mutations.commit((draft) => ({ ...draft, visualDirection: { ...draft.visualDirection, useBrain: event.target.checked } }))} /></label>
+                  <div className="border-b border-r border-white/10 p-2 lg:border-b-0">
+                    <FieldLabel>Cámara</FieldLabel>
+                    <TextInput
+                      value={safeData.visualDirection.cameraStyle ?? ""}
+                      onChange={(event) => mutations.commit((draft) => ({ ...draft, visualDirection: { ...draft.visualDirection, cameraStyle: event.target.value } }))}
+                      placeholder="Mano suave, ópticas naturales..."
+                      className="py-1.5 text-[12px]"
+                    />
+                  </div>
+                  <div className="flex items-center border-b border-white/10 p-2 lg:border-b-0 lg:justify-center">
+                    <DirectionInlineToggle
+                      checked={Boolean(safeData.visualDirection.useBrain)}
+                      onChange={(event) => mutations.commit((draft) => ({ ...draft, visualDirection: { ...draft.visualDirection, useBrain: event.target.checked } }))}
+                      label="Usar Brain"
+                    />
                   </div>
                 </div>
-              </SectionCard>
+              </DirectionSection>
             </div>
           ) : null}
 
           {activeTab === "script" ? (
-            <div className="mx-auto grid max-w-6xl gap-5 xl:grid-cols-[1fr_360px]">
-              <SectionCard>
-                <div className="mb-4 flex items-center justify-between gap-3">
-                  <div>
-                    <h2 className="text-xl font-semibold tracking-[-0.03em]">Guion</h2>
-                    <p className="mt-1 text-sm text-white/45">Pega un texto o importa el guion conectado desde Guionista.</p>
-                  </div>
+            <div className="mx-auto grid max-w-6xl gap-0 xl:grid-cols-[1fr_360px] xl:divide-x xl:divide-white/10">
+              <CineStudioSection kicker="Paso 2" title="Guion">
+                <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                  <p className="max-w-xl text-sm leading-relaxed text-white/45">
+                    Pega un texto o importa el guion conectado. Después analízalo para desbloquear reparto, fondos, storyboard y salida.
+                  </p>
                   <div className="flex flex-wrap gap-2">
-                    <PrimaryButton disabled={!script.trim() || analysisState.status === "running"} onClick={() => void runAnalysis()}><Wand2 size={14} />{analysisState.status === "running" ? "Produciendo..." : "Producir el guion"}</PrimaryButton>
-                    <PillButton disabled={!script.trim()} onClick={() => mutations.createStoryboard(script)}><Clapperboard size={14} />Crear storyboard</PillButton>
+                    <PrimaryButton disabled={!script.trim() || analysisState.status === "running"} onClick={() => void runAnalysis()}>
+                      <Wand2 size={14} />
+                      {analysisState.status === "running" ? "Analizando..." : "Analiza el guion"}
+                    </PrimaryButton>
+                    {workflowSnapshot.hasAnalysis ? (
+                      <PillButton disabled={!script.trim()} onClick={() => mutations.createStoryboard(script)}>
+                        <Clapperboard size={14} />Crear storyboard
+                      </PillButton>
+                    ) : null}
                   </div>
                 </div>
-                <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-black/20 p-2">
-                  <div className="flex rounded-full border border-white/10 bg-white/[0.04] p-1">
+                {!workflowSnapshot.hasAnalysis && script.trim() ? (
+                  <div className="mb-4 border-b border-[var(--foldder-studio-accent,#de323f)]/25 bg-[var(--foldder-studio-accent,#de323f)]/10 px-4 py-3 text-xs leading-relaxed text-white/72">
+                    Tienes texto en el guion. Pulsa <strong className="font-black uppercase tracking-[0.06em]">Analiza el guion</strong> para continuar.
+                  </div>
+                ) : null}
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-4">
+                  <div className="flex h-10 divide-x divide-white/10 border border-white/10">
                     <button
                       type="button"
                       onClick={() => setAnalyzerMode("ai")}
                       className={cx(
-                        "rounded-full px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] transition",
-                        analyzerMode === "ai" ? "bg-cyan-300/18 text-cyan-50" : "text-white/45 hover:text-white/75",
+                        "px-3 text-[10px] font-black uppercase tracking-[0.1em] transition",
+                        analyzerMode === "ai" ? "bg-white text-slate-950" : "bg-white/[0.04] text-white/45 hover:bg-white/[0.08] hover:text-white/75",
                       )}
                     >
                       Analizar con IA
@@ -1642,8 +1684,8 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
                       type="button"
                       onClick={() => setAnalyzerMode("local")}
                       className={cx(
-                        "rounded-full px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] transition",
-                        analyzerMode === "local" ? "bg-white/12 text-white" : "text-white/45 hover:text-white/75",
+                        "px-3 text-[10px] font-black uppercase tracking-[0.1em] transition",
+                        analyzerMode === "local" ? "bg-white text-slate-950" : "bg-white/[0.04] text-white/45 hover:bg-white/[0.08] hover:text-white/75",
                       )}
                     >
                       Parser local
@@ -1657,11 +1699,9 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
                   </p>
                 </div>
                 {sourceScriptText ? (
-                  <div className="mb-4 rounded-2xl border border-cyan-200/15 bg-cyan-300/8 p-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="min-w-0 text-sm text-cyan-50/80">Guion conectado disponible</div>
-                      <PillButton onClick={() => mutations.useConnectedScript(sourceScriptText, sourceScriptNodeId)}>Usar conectado</PillButton>
-                    </div>
+                  <div className="mb-4 flex items-center justify-between gap-3 border-b border-cyan-400/20 bg-cyan-500/10 px-4 py-3">
+                    <div className="min-w-0 text-sm text-cyan-50/80">Guion conectado disponible</div>
+                    <PillButton onClick={() => mutations.useConnectedScript(sourceScriptText, sourceScriptNodeId)}>Usar conectado</PillButton>
                   </div>
                 ) : null}
                 <TextArea
@@ -1670,44 +1710,55 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
                   placeholder="Pega aqui el guion, texto narrativo o estructura de escenas..."
                   className="min-h-[360px]"
                 />
-              </SectionCard>
-              <SectionCard>
-                <div className="flex items-center justify-between gap-3">
-                  <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-white/70">Dirección aplicada</h3>
+              </CineStudioSection>
+              <CineStudioSection title="Dirección aplicada" className="xl:pl-6">
+                <div className="mb-4 flex items-center justify-between gap-3">
                   <PillButton onClick={() => setActiveTab("direction")}>Editar dirección</PillButton>
                 </div>
-                <div className="mt-4 grid gap-3">
+                <StatRow>
                   <Stat label="Pieza" value={CINE_MODE_LABELS[safeData.visualDirection.mode]} />
                   <Stat label="Formato" value={safeData.visualDirection.aspectRatio} />
+                </StatRow>
+                <StatRow>
                   <Stat label="Estilo" value={CINE_VISUAL_STYLE_LABELS[safeData.visualDirection.visualStyle]} />
                   <Stat label="Color" value={CINE_COLOR_GRADING_LABELS[safeData.visualDirection.colorGrading]} />
+                </StatRow>
+                <StatRow>
                   <Stat label="Luz" value={CINE_LIGHTING_STYLE_LABELS[safeData.visualDirection.lightingStyle]} />
-                </div>
+                </StatRow>
                 <p className="mt-4 text-xs leading-relaxed text-white/42">
                   El análisis usará esta dirección para crear escenas, localizaciones, personajes, cámara y atmósfera.
                 </p>
-              </SectionCard>
+              </CineStudioSection>
               {safeData.detected ? (
-                <SectionCard className="xl:col-span-2">
-                  <div className="flex items-center justify-between gap-3"><h3 className="text-lg font-semibold">Análisis</h3><PillButton onClick={() => setActiveTab("storyboard")}>Ver storyboard <ArrowRight size={13} /></PillButton></div>
-                  <div className="mt-4 grid gap-3 md:grid-cols-3"><Stat label="Tono" value={safeData.detected.tone || "-"} /><Stat label="Modo sugerido" value={safeData.detected.suggestedMode ? CINE_MODE_LABELS[safeData.detected.suggestedMode] : "-"} /><Stat label="Escenas" value={safeData.scenes.length} /></div>
+                <CineStudioSection className="xl:col-span-2" title="Análisis">
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <PillButton onClick={() => setActiveTab("cast")}>Ir a producción <ArrowRight size={13} /></PillButton>
+                  </div>
+                  <StatRow>
+                    <Stat label="Tono" value={safeData.detected.tone || "-"} />
+                    <Stat label="Modo sugerido" value={safeData.detected.suggestedMode ? CINE_MODE_LABELS[safeData.detected.suggestedMode] : "-"} />
+                    <Stat label="Escenas" value={safeData.scenes.length} />
+                  </StatRow>
                   <p className="mt-4 text-sm leading-relaxed text-white/55">{safeData.detected.summary}</p>
-                </SectionCard>
+                </CineStudioSection>
               ) : null}
             </div>
           ) : null}
 
           {activeTab === "cast" ? (
+            !isCineTabUnlocked("cast", workflowSnapshot) ? (
+              renderLockedTab("cast")
+            ) : (
             <div className="mx-auto max-w-[1500px]">
-              <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-xl font-semibold tracking-[-0.03em]">Reparto</h2>
-                  <p className="mt-1 text-sm text-white/45">Identidad visual de personajes. Primero imagen, después detalles.</p>
+              <CineStudioSection kicker="Producción" title="Reparto">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-sm text-white/45">Identidad visual de personajes. Primero imagen, después detalles.</p>
+                  <PrimaryButton onClick={() => mutations.addCharacter()}><Plus size={14} />Añadir personaje</PrimaryButton>
                 </div>
-                <PrimaryButton onClick={() => mutations.addCharacter()}><Plus size={14} />Añadir personaje</PrimaryButton>
-              </div>
+              </CineStudioSection>
 
-              <article className="mb-3 overflow-hidden rounded-[28px] border border-white/10 bg-[#0b111b] shadow-[0_18px_50px_rgba(0,0,0,0.20)]">
+              <CineStudioAssetCard className="mb-3">
                 <div className="grid gap-0 lg:grid-cols-[420px_1fr]">
                   <CineVisualAssetHero src={characterSheetAsset} s3Key={characterSheetS3Key} title="Identidad visual del reparto" kicker="Hoja de continuidad" subtitle={`${safeData.characters.length} personajes incluidos · layout ${getCineCharacterSheetLayout(safeData)}`} status={safeData.continuity?.characterSheet?.status ?? "sin hoja"} icon={<Users size={34} />} />
                   <div className="flex flex-col justify-between p-5">
@@ -1717,7 +1768,7 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
                       <p className="mt-3 max-w-2xl text-sm leading-relaxed text-white/48">Esta hoja funciona como referencia global para frames. No genera vídeo ni abre Nano; solo refuerza continuidad visual.</p>
                     </div>
                     <div className="mt-5 flex flex-wrap items-center gap-2">
-                      <label className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-semibold text-white/65">
+                      <label className="flex h-10 items-center gap-2 border-b border-white/10 px-0 py-2 text-xs font-semibold text-white/65">
                         <input type="checkbox" checked={Boolean(safeData.continuity?.useCharacterSheetForFrames)} onChange={(event) => mutations.commit((draft) => ({ ...draft, continuity: { ...draft.continuity, useCharacterSheetForFrames: event.target.checked } }))} />
                         Usar en frames
                       </label>
@@ -1726,7 +1777,7 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
                     </div>
                   </div>
                 </div>
-              </article>
+              </CineStudioAssetCard>
 
               <div className="grid gap-2 md:grid-cols-2 2xl:grid-cols-3">
                 {safeData.characters.map((character) => {
@@ -1734,20 +1785,20 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
                   const s3Key = getEffectiveCineCharacterS3Key(character);
                   const status = character.approvedImageAssetId ? "aprobado" : character.editedImageAssetId ? "editado" : character.generatedImageAssetId ? "generado" : "pendiente";
                   return (
-                    <article key={character.id} className="overflow-hidden rounded-[28px] border border-white/10 bg-[#0b111b] shadow-[0_18px_50px_rgba(0,0,0,0.20)] transition hover:border-white/18">
+                    <CineStudioAssetCard key={character.id}>
                       <CineVisualAssetHero src={asset} s3Key={s3Key} title={character.name || "Personaje"} kicker={character.role === "protagonist" ? "Protagonista" : character.role} subtitle={character.description || character.visualPrompt || "Referencia visual pendiente."} status={status} icon={<Users size={34} />} />
                       <div className="p-3">
-                        <div className="flex flex-wrap gap-1.5">
-                          <span className="rounded-full border border-cyan-200/15 bg-cyan-300/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.1em] text-cyan-50/72">{character.role}</span>
-                          {character.isLocked ? <span className="rounded-full border border-emerald-200/15 bg-emerald-300/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.1em] text-emerald-50/72">Identidad bloqueada</span> : null}
-                          {character.wardrobe ? <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.1em] text-white/50">Vestuario</span> : null}
+                        <div className="flex flex-wrap gap-2">
+                          <CineStudioBadge tone="accent">{character.role}</CineStudioBadge>
+                          {character.isLocked ? <CineStudioBadge tone="success">Identidad bloqueada</CineStudioBadge> : null}
+                          {character.wardrobe ? <CineStudioBadge tone="neutral">Vestuario</CineStudioBadge> : null}
                         </div>
                         <div className="mt-3 flex flex-wrap gap-1.5">
                           <PillButton disabled={Boolean(generatingTarget)} onClick={() => void generateImageInCine(characterSession(character, "generate"), `character:${character.id}`)}><Camera size={13} />{generatingTarget === `character:${character.id}` ? "Generando 2K..." : asset ? "Regenerar" : "Generar"}</PillButton>
                           <PillButton disabled={!onOpenImageStudio || !asset} onClick={() => void openCharacterImageStudio(character, "edit")}>Editar</PillButton>
                           <PillButton onClick={() => mutations.patchCharacter(character.id, { isLocked: !character.isLocked })}>{character.isLocked ? <Lock size={13} /> : <Unlock size={13} />}{character.isLocked ? "Bloqueado" : "Bloquear"}</PillButton>
                         </div>
-                        <details className="mt-3 rounded-2xl border border-white/10 bg-black/18 p-3">
+                        <details className="mt-3 border-t border-white/10 pt-3">
                           <summary className="cursor-pointer text-[11px] font-bold uppercase tracking-[0.14em] text-white/45">Ver detalles</summary>
                           <div className="mt-3 grid gap-3">
                             <div><FieldLabel>Nombre</FieldLabel><TextInput value={character.name} onChange={(event) => mutations.patchCharacter(character.id, { name: event.target.value })} className="text-base font-semibold" /></div>
@@ -1763,24 +1814,27 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
                           </div>
                         </details>
                       </div>
-                    </article>
+                    </CineStudioAssetCard>
                   );
                 })}
               </div>
             </div>
+            )
           ) : null}
 
           {activeTab === "backgrounds" ? (
+            !isCineTabUnlocked("backgrounds", workflowSnapshot) ? (
+              renderLockedTab("backgrounds")
+            ) : (
             <div className="mx-auto max-w-[1500px]">
-              <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-xl font-semibold tracking-[-0.03em]">Fondos</h2>
-                  <p className="mt-1 text-sm text-white/45">Localizaciones reutilizables. Imagen, atmósfera y continuidad antes que formulario.</p>
+              <CineStudioSection kicker="Producción" title="Fondos">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-sm text-white/45">Localizaciones reutilizables. Imagen, atmósfera y continuidad antes que formulario.</p>
+                  <PrimaryButton onClick={() => mutations.addBackground()}><Plus size={14} />Añadir fondo</PrimaryButton>
                 </div>
-                <PrimaryButton onClick={() => mutations.addBackground()}><Plus size={14} />Añadir fondo</PrimaryButton>
-              </div>
+              </CineStudioSection>
 
-              <article className="mb-3 overflow-hidden rounded-[28px] border border-white/10 bg-[#0b111b] shadow-[0_18px_50px_rgba(0,0,0,0.20)]">
+              <CineStudioAssetCard className="mb-3">
                 <div className="grid gap-0 lg:grid-cols-[420px_1fr]">
                   <CineVisualAssetHero src={locationSheetAsset} s3Key={locationSheetS3Key} title="Coherencia visual de fondos" kicker="Hoja de localizaciones" subtitle={`${safeData.backgrounds.length} fondos incluidos · layout ${safeData.backgrounds.length <= 1 ? "single" : "grid"}`} status={safeData.continuity?.locationSheet?.status ?? "sin hoja"} icon={<Map size={34} />} />
                   <div className="flex flex-col justify-between p-5">
@@ -1790,13 +1844,13 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
                       <p className="mt-3 max-w-2xl text-sm leading-relaxed text-white/48">Esta hoja compone las localizaciones como referencia global para los frames. No crea vídeo ni cambia el VideoNode.</p>
                     </div>
                     <div className="mt-5 flex flex-wrap items-center gap-2">
-                      <label className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-semibold text-white/65"><input type="checkbox" checked={Boolean(safeData.continuity?.useLocationSheetForFrames)} onChange={(event) => mutations.commit((draft) => ({ ...draft, continuity: { ...draft.continuity, useLocationSheetForFrames: event.target.checked } }))} />Usar en frames</label>
+                      <label className="flex h-10 items-center gap-2 border-b border-white/10 px-0 py-2 text-xs font-semibold text-white/65"><input type="checkbox" checked={Boolean(safeData.continuity?.useLocationSheetForFrames)} onChange={(event) => mutations.commit((draft) => ({ ...draft, continuity: { ...draft.continuity, useLocationSheetForFrames: event.target.checked } }))} />Usar en frames</label>
                       <PillButton disabled={!safeData.backgrounds.length || Boolean(generatingTarget)} onClick={() => void generateImageInCine(locationSheetSession("generate"), "location-sheet")}><Camera size={13} />{generatingTarget === "location-sheet" ? "Generando 2K..." : locationSheetAsset ? "Regenerar hoja" : "Crear hoja"}</PillButton>
                       <PillButton disabled={!onOpenImageStudio || !locationSheetAsset} onClick={() => void openSheetImageStudio(locationSheetSession("edit"))}>Editar</PillButton>
                     </div>
                   </div>
                 </div>
-              </article>
+              </CineStudioAssetCard>
 
               <div className="grid gap-2 md:grid-cols-2 2xl:grid-cols-3">
                 {safeData.backgrounds.map((background) => {
@@ -1804,21 +1858,21 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
                   const s3Key = getEffectiveCineBackgroundS3Key(background);
                   const status = background.approvedImageAssetId ? "aprobado" : background.editedImageAssetId ? "editado" : background.generatedImageAssetId ? "generado" : "pendiente";
                   return (
-                    <article key={background.id} className="overflow-hidden rounded-[28px] border border-white/10 bg-[#0b111b] shadow-[0_18px_50px_rgba(0,0,0,0.20)] transition hover:border-white/18">
+                    <CineStudioAssetCard key={background.id}>
                       <CineVisualAssetHero src={asset} s3Key={s3Key} title={background.name || "Fondo"} kicker={background.type ?? "Localización"} subtitle={background.description || background.visualPrompt || "Referencia visual pendiente."} status={status} icon={<Map size={34} />} />
                       <div className="p-3">
-                        <div className="flex flex-wrap gap-1.5">
-                          <span className="rounded-full border border-cyan-200/15 bg-cyan-300/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.1em] text-cyan-50/72">{background.type ?? "other"}</span>
-                          {background.isLocked ? <span className="rounded-full border border-emerald-200/15 bg-emerald-300/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.1em] text-emerald-50/72">Fondo bloqueado</span> : null}
-                          {background.lighting ? <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.1em] text-white/50">Luz definida</span> : null}
-                          {background.textures?.length ? <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.1em] text-white/50">Texturas</span> : null}
+                        <div className="flex flex-wrap gap-2">
+                          <CineStudioBadge tone="accent">{background.type ?? "other"}</CineStudioBadge>
+                          {background.isLocked ? <CineStudioBadge tone="success">Fondo bloqueado</CineStudioBadge> : null}
+                          {background.lighting ? <CineStudioBadge tone="neutral">Luz definida</CineStudioBadge> : null}
+                          {background.textures?.length ? <CineStudioBadge tone="neutral">Texturas</CineStudioBadge> : null}
                         </div>
                         <div className="mt-3 flex flex-wrap gap-1.5">
                           <PillButton disabled={Boolean(generatingTarget)} onClick={() => void generateImageInCine(backgroundSession(background, "generate"), `background:${background.id}`)}><Camera size={13} />{generatingTarget === `background:${background.id}` ? "Generando 2K..." : asset ? "Regenerar" : "Generar"}</PillButton>
                           <PillButton disabled={!onOpenImageStudio || !asset} onClick={() => void openBackgroundImageStudio(background, "edit")}>Editar</PillButton>
                           <PillButton onClick={() => mutations.patchBackground(background.id, { isLocked: !background.isLocked })}>{background.isLocked ? <Lock size={13} /> : <Unlock size={13} />}{background.isLocked ? "Bloqueado" : "Bloquear"}</PillButton>
                         </div>
-                        <details className="mt-3 rounded-2xl border border-white/10 bg-black/18 p-3">
+                        <details className="mt-3 border-t border-white/10 pt-3">
                           <summary className="cursor-pointer text-[11px] font-bold uppercase tracking-[0.14em] text-white/45">Ver detalles</summary>
                           <div className="mt-3 grid gap-3">
                             <div><FieldLabel>Nombre</FieldLabel><TextInput value={background.name} onChange={(event) => mutations.patchBackground(background.id, { name: event.target.value })} className="text-base font-semibold" /></div>
@@ -1835,57 +1889,62 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
                           </div>
                         </details>
                       </div>
-                    </article>
+                    </CineStudioAssetCard>
                   );
                 })}
               </div>
             </div>
+            )
           ) : null}
 
           {activeTab === "storyboard" ? (
+            !isCineTabUnlocked("storyboard", workflowSnapshot) ? (
+              renderLockedTab("storyboard")
+            ) : (
             <div className="mx-auto max-w-[1500px]">
-              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-xl font-semibold tracking-[-0.03em]">Storyboard</h2>
-                  <p className="mt-1 text-sm text-white/45">Una cuadrícula visual de escenas. La imagen manda; los controles acompañan.</p>
+              <CineStudioSection kicker="Producción" title="Storyboard">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-sm text-white/45">Cuadrícula visual de escenas. La imagen manda; los controles acompañan.</p>
+                  <div className="flex flex-wrap gap-2">
+                    <PillButton disabled={!selectedFrameCount || Boolean(generatingTarget)} onClick={() => void generateSelectedFrames()}><Camera size={13} />Generar seleccionados · {selectedFrameCount}</PillButton>
+                    <PrimaryButton disabled={!script.trim()} onClick={() => mutations.createStoryboard(script)}><Sparkles size={14} />Generar storyboard completo</PrimaryButton>
+                  </div>
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  <PillButton disabled={!selectedFrameCount || Boolean(generatingTarget)} onClick={() => void generateSelectedFrames()}><Camera size={13} />Generar seleccionados · {selectedFrameCount}</PillButton>
-                  <PrimaryButton disabled={!script.trim()} onClick={() => mutations.createStoryboard(script)}><Sparkles size={14} />Generar storyboard completo</PrimaryButton>
-                </div>
-              </div>
+              </CineStudioSection>
 
-              <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-[24px] border border-white/10 bg-white/[0.035] p-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <PillButton onClick={() => setStoryboardView("grid")} className={storyboardView === "grid" ? "bg-cyan-300/18 text-cyan-50" : ""}>Vista grid</PillButton>
-                  <PillButton onClick={() => setStoryboardView("list")} className={storyboardView === "list" ? "bg-cyan-300/18 text-cyan-50" : ""}>Vista lista</PillButton>
-                  <Select className="w-auto min-w-[150px]" value={storyboardStatusFilter} onChange={(event) => setStoryboardStatusFilter(event.target.value as typeof storyboardStatusFilter)}>
-                    <option value="all">Todos los estados</option>
-                    <option value="empty">Pendientes</option>
-                    <option value="draft">Prompt preparado</option>
-                    <option value="generating">Generando</option>
-                    <option value="generated">Generado</option>
-                    <option value="edited">Editado</option>
-                    <option value="approved">Aprobado</option>
-                    <option value="error">Error</option>
-                  </Select>
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-white/10 bg-white/[0.04] px-2 py-2">
+                <div className="flex flex-wrap items-center divide-x divide-white/10">
+                  <PillButton onClick={() => setStoryboardView("grid")} className={cx("border-0", storyboardView === "grid" ? "bg-white text-slate-950" : "")}>Vista grid</PillButton>
+                  <PillButton onClick={() => setStoryboardView("list")} className={cx("border-0", storyboardView === "list" ? "bg-white text-slate-950" : "")}>Vista lista</PillButton>
+                  <div className="px-2">
+                    <Select className="w-auto min-w-[150px]" value={storyboardStatusFilter} onChange={(event) => setStoryboardStatusFilter(event.target.value as typeof storyboardStatusFilter)}>
+                      <option value="all">Todos los estados</option>
+                      <option value="empty">Pendientes</option>
+                      <option value="draft">Prompt preparado</option>
+                      <option value="generating">Generando</option>
+                      <option value="generated">Generado</option>
+                      <option value="edited">Editado</option>
+                      <option value="approved">Aprobado</option>
+                      <option value="error">Error</option>
+                    </Select>
+                  </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-white/40">{selectedSceneCount} escenas seleccionadas</span>
+                  <CineStudioBadge tone="neutral">{selectedSceneCount} escenas seleccionadas</CineStudioBadge>
                   <PillButton onClick={() => setShowStoryboardDetails((value) => !value)}>{showStoryboardDetails ? "Ocultar detalles" : "Mostrar detalles"}</PillButton>
                 </div>
               </div>
 
-              <div className="mb-4 grid gap-2 md:grid-cols-2">
-                <div className={cx("rounded-2xl border px-4 py-3 text-xs leading-relaxed", characterSheetAsset && safeData.continuity?.useCharacterSheetForFrames ? "border-emerald-200/18 bg-emerald-300/10 text-emerald-50/72" : "border-amber-200/16 bg-amber-300/8 text-amber-50/68")}>
+              <div className="mb-4 divide-y divide-white/10 border-b border-white/10">
+                <div className={cx("px-4 py-3 text-xs leading-relaxed", characterSheetAsset && safeData.continuity?.useCharacterSheetForFrames ? "bg-emerald-500/10 text-emerald-50/72" : "bg-amber-500/10 text-amber-50/68")}>
                   {characterSheetAsset && safeData.continuity?.useCharacterSheetForFrames ? "Usando hoja de personajes como referencia en frames." : "Recomendado: crea una hoja de continuidad de personajes antes de generar frames para mantener identidad entre escenas."}
                 </div>
-                <div className={cx("rounded-2xl border px-4 py-3 text-xs leading-relaxed", locationSheetAsset && safeData.continuity?.useLocationSheetForFrames ? "border-emerald-200/18 bg-emerald-300/10 text-emerald-50/72" : "border-amber-200/16 bg-amber-300/8 text-amber-50/68")}>
+                <div className={cx("px-4 py-3 text-xs leading-relaxed", locationSheetAsset && safeData.continuity?.useLocationSheetForFrames ? "bg-emerald-500/10 text-emerald-50/72" : "bg-amber-500/10 text-amber-50/68")}>
                   {locationSheetAsset && safeData.continuity?.useLocationSheetForFrames ? "Usando hoja de localizaciones como referencia en frames." : "Recomendado: crea una hoja de continuidad de localizaciones para mantener coherencia entre fondos."}
                 </div>
               </div>
 
-              <div className={cx("grid", storyboardView === "grid" ? "gap-2 md:grid-cols-2 2xl:grid-cols-3" : "mx-auto max-w-5xl gap-3")}> 
+              <div className={cx("grid", storyboardView === "grid" ? "gap-0 md:grid-cols-2 2xl:grid-cols-3 md:divide-x md:divide-white/10" : "mx-auto max-w-5xl divide-y divide-white/10")}> 
                 {filteredStoryboardScenes.map((scene) => {
                   const roles = cineSceneFrameRoles(scene);
                   const sceneSelected = roles.every((role) => Boolean(selectedFrames[`frame:${scene.id}:${role}`]));
@@ -1907,7 +1966,7 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
                     });
                   };
                   return (
-                    <article key={scene.id} className={cx("group overflow-hidden rounded-[28px] border bg-[#0b111b] shadow-[0_18px_50px_rgba(0,0,0,0.22)] transition", anySelected ? "border-cyan-200/45 ring-1 ring-cyan-200/20" : "border-white/10 hover:border-white/18")}>
+                    <CineStudioAssetCard key={scene.id} className={cx(anySelected ? "border-[var(--foldder-studio-accent,#de323f)]/55" : undefined)}>
                       <div className="relative aspect-[16/10] min-h-[240px] overflow-hidden bg-slate-950">
                         <CineStoryboardHero scene={scene} />
                         <label className="absolute left-3 top-3 z-10 flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-black/45 shadow-lg backdrop-blur-md">
@@ -1935,9 +1994,9 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
                       </div>
 
                       <div className="p-3">
-                        <div className="flex flex-wrap gap-1.5">
-                          {characters.length ? characters.map((character) => <span key={character.id} className="rounded-full border border-cyan-200/15 bg-cyan-300/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.1em] text-cyan-50/72">{character.name}</span>) : <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.1em] text-white/35">Sin personajes</span>}
-                          {background ? <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.1em] text-white/58">{background.name}</span> : null}
+                        <div className="flex flex-wrap gap-2">
+                          {characters.length ? characters.map((character) => <CineStudioBadge key={character.id} tone="accent">{character.name}</CineStudioBadge>) : <CineStudioBadge tone="neutral">Sin personajes</CineStudioBadge>}
+                          {background ? <CineStudioBadge tone="neutral">{background.name}</CineStudioBadge> : null}
                         </div>
                         {scene.onScreenText?.length ? <p className="mt-2 line-clamp-2 text-xs text-amber-50/62">Overlay: {scene.onScreenText.join(" / ")}</p> : null}
 
@@ -1950,7 +2009,7 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
                             const isSelected = Boolean(selectedFrames[targetKey]);
                             const label = cineFrameLabel(role);
                             return (
-                              <div key={role} className={cx("rounded-2xl border p-2 transition", isSelected ? "border-cyan-200/35 bg-cyan-300/10" : "border-white/10 bg-white/[0.035]")}>
+                              <div key={role} className={cx("border-b border-white/10 py-2 transition last:border-b-0", isSelected ? "bg-[var(--foldder-studio-accent,#de323f)]/10" : undefined)}>
                                 <div className="mb-2 flex items-center justify-between gap-2">
                                   <label className="flex items-center gap-2 text-[11px] font-semibold text-white/68">
                                     <input type="checkbox" checked={isSelected} onChange={(event) => setSelectedFrames((current) => ({ ...current, [targetKey]: event.target.checked }))} />
@@ -1970,17 +2029,17 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
                           })}
                         </div>
 
-                        <details className="mt-3 rounded-2xl border border-white/10 bg-black/18 p-3" open={showStoryboardDetails}>
+                        <details className="mt-3 border-t border-white/10 pt-3" open={showStoryboardDetails}>
                           <summary className="cursor-pointer text-[11px] font-bold uppercase tracking-[0.14em] text-white/45">Ver detalles</summary>
                           <div className="mt-3 grid gap-3">
                             <div className="flex flex-wrap items-center gap-2"><TextInput value={scene.title} onChange={(event) => mutations.patchScene(scene.id, { title: event.target.value })} className="min-w-[220px] flex-1 text-base font-semibold" /><PillButton onClick={() => mutations.duplicateScene(scene.id)}><Copy size={13} />Duplicar</PillButton><PillButton onClick={() => mutations.removeScene(scene.id)} className="text-rose-100"><Trash2 size={13} />Eliminar</PillButton></div>
                             <div><FieldLabel>Texto original</FieldLabel><TextArea rows={3} value={scene.sourceText} onChange={(event) => mutations.patchScene(scene.id, { sourceText: event.target.value })} /></div>
                             <div><FieldLabel>Resumen visual</FieldLabel><TextArea rows={3} value={scene.visualSummary} onChange={(event) => mutations.patchScene(scene.id, { visualSummary: event.target.value })} /></div>
-                            {(scene.voiceOver || scene.onScreenText?.length || scene.visualNotes || scene.sceneKind) ? <div className="grid gap-2 rounded-2xl border border-white/10 bg-white/[0.035] p-3 text-xs leading-relaxed text-white/58">{scene.sceneKind ? <div><span className="font-semibold uppercase tracking-wide text-white/35">Tipo</span><p className="mt-1 text-white/70">{scene.sceneKind}</p></div> : null}{scene.voiceOver ? <div><span className="font-semibold uppercase tracking-wide text-white/35">Voz en off</span><p className="mt-1 whitespace-pre-wrap text-white/70">{scene.voiceOver}</p></div> : null}{scene.onScreenText?.length ? <div><span className="font-semibold uppercase tracking-wide text-white/35">Texto en pantalla</span><ul className="mt-1 list-disc space-y-1 pl-4 text-white/70">{scene.onScreenText.map((text, idx) => <li key={`${scene.id}_text_${idx}`}>{text}</li>)}</ul><p className="mt-2 rounded-xl border border-amber-200/15 bg-amber-300/10 px-3 py-2 text-[11px] leading-relaxed text-amber-50/70">El texto en pantalla se conservará como overlay. No se recomienda quemarlo dentro del frame generado.</p></div> : null}{scene.visualNotes ? <div><span className="font-semibold uppercase tracking-wide text-white/35">Notas visuales</span><p className="mt-1 whitespace-pre-wrap text-white/70">{scene.visualNotes}</p></div> : null}</div> : null}
+                            {(scene.voiceOver || scene.onScreenText?.length || scene.visualNotes || scene.sceneKind) ? <div className="divide-y divide-white/10 border-b border-white/10 py-3 text-xs leading-relaxed text-white/58">{scene.sceneKind ? <div className="pb-3"><span className="font-semibold uppercase tracking-wide text-white/35">Tipo</span><p className="mt-1 text-white/70">{scene.sceneKind}</p></div> : null}{scene.voiceOver ? <div className="py-3"><span className="font-semibold uppercase tracking-wide text-white/35">Voz en off</span><p className="mt-1 whitespace-pre-wrap text-white/70">{scene.voiceOver}</p></div> : null}{scene.onScreenText?.length ? <div className="py-3"><span className="font-semibold uppercase tracking-wide text-white/35">Texto en pantalla</span><ul className="mt-1 list-disc space-y-1 pl-4 text-white/70">{scene.onScreenText.map((text, idx) => <li key={`${scene.id}_text_${idx}`}>{text}</li>)}</ul><p className="mt-2 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-50/70">El texto en pantalla se conservará como overlay. No se recomienda quemarlo dentro del frame generado.</p></div> : null}{scene.visualNotes ? <div className="pt-3"><span className="font-semibold uppercase tracking-wide text-white/35">Notas visuales</span><p className="mt-1 whitespace-pre-wrap text-white/70">{scene.visualNotes}</p></div> : null}</div> : null}
                             <div><FieldLabel>Personajes</FieldLabel><div className="mt-2 flex flex-wrap gap-2">{safeData.characters.length ? safeData.characters.map((character) => { const active = scene.characters.includes(character.id); return <button key={character.id} type="button" onClick={() => mutations.patchScene(scene.id, { characters: active ? scene.characters.filter((id) => id !== character.id) : [...scene.characters, character.id] })} className={cx("rounded-full border px-3 py-1.5 text-[11px] font-semibold transition", active ? "border-cyan-200/35 bg-cyan-300/16 text-cyan-50" : "border-white/10 bg-white/[0.04] text-white/48 hover:text-white/80")}>{character.name}</button>; }) : <span className="text-xs text-white/35">Sin personajes detectados todavía.</span>}</div></div>
 	                            <div className="grid gap-3 md:grid-cols-2"><div><FieldLabel>Fondo</FieldLabel><Select value={scene.backgroundId ?? ""} onChange={(event) => mutations.patchScene(scene.id, { backgroundId: event.target.value || undefined })}><option value="">Sin fondo</option>{safeData.backgrounds.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</Select></div><div><FieldLabel>Tipo de plano</FieldLabel><Select value={scene.shot.shotType} onChange={(event) => mutations.patchScene(scene.id, { shot: { ...scene.shot, shotType: event.target.value as CineShot["shotType"] } })}>{shotTypes.map((shot) => <option key={shot} value={shot}>{CINE_SHOT_LABELS[shot]}</option>)}</Select></div></div>
 	                            <SceneCameraControls scene={scene} onPatch={(patch) => mutations.patchScene(scene.id, patch)} />
-	                            <div className="rounded-3xl border border-white/10 bg-white/[0.028] p-3">
+	                            <div className="border-b border-white/10 py-3">
 	                              <div className="mb-3 flex items-center justify-between gap-3">
 	                                <FieldLabel>Dirección de escena</FieldLabel>
 	                                <button
@@ -2010,96 +2069,95 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
 	                            <div className="grid gap-3 md:grid-cols-2"><div><FieldLabel>Luz</FieldLabel><TextInput value={scene.shot.lighting ?? ""} onChange={(event) => mutations.patchScene(scene.id, { shot: { ...scene.shot, lighting: event.target.value } })} /></div><div><FieldLabel>Duración</FieldLabel><TextInput type="number" value={scene.shot.durationSeconds ?? scene.durationSeconds ?? 5} onChange={(event) => mutations.patchScene(scene.id, { durationSeconds: Number(event.target.value) || 5, shot: { ...scene.shot, durationSeconds: Number(event.target.value) || 5 } })} /></div></div>
                             <div className="grid gap-3 md:grid-cols-2"><div><FieldLabel>Mood</FieldLabel><TextInput value={scene.shot.mood ?? ""} onChange={(event) => mutations.patchScene(scene.id, { shot: { ...scene.shot, mood: event.target.value } })} /></div><div><FieldLabel>Acción</FieldLabel><TextInput value={scene.shot.action ?? ""} onChange={(event) => mutations.patchScene(scene.id, { shot: { ...scene.shot, action: event.target.value } })} /></div></div>
                             <div className="grid grid-cols-2 gap-2"><PillButton onClick={() => mutations.patchScene(scene.id, { framesMode: "single" })} className={scene.framesMode === "single" ? "bg-cyan-300/18 text-cyan-50" : ""}>1 frame</PillButton><PillButton onClick={() => mutations.patchScene(scene.id, { framesMode: "start_end" })} className={scene.framesMode === "start_end" ? "bg-cyan-300/18 text-cyan-50" : ""}>Inicio + final</PillButton></div>
-                            <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-3"><FieldLabel>Referencias usadas</FieldLabel><div className="mt-2 flex flex-wrap gap-1.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-white/50">{characterSheetAsset && safeData.continuity?.useCharacterSheetForFrames ? <span className="rounded-full border border-emerald-200/15 bg-emerald-300/10 px-2 py-1 text-emerald-50/70">Hoja personajes</span> : null}{locationSheetAsset && safeData.continuity?.useLocationSheetForFrames ? <span className="rounded-full border border-emerald-200/15 bg-emerald-300/10 px-2 py-1 text-emerald-50/70">Hoja localizaciones</span> : null}{characters.map((character) => <span key={character.id} className={cx("rounded-full border px-2 py-1", getEffectiveCineCharacterAsset(character) ? "border-cyan-200/15 bg-cyan-300/10 text-cyan-50/70" : "border-amber-200/15 bg-amber-300/10 text-amber-50/70")}>{character.name}</span>)}{background ? <span className={cx("rounded-full border px-2 py-1", getEffectiveCineBackgroundAsset(background) ? "border-cyan-200/15 bg-cyan-300/10 text-cyan-50/70" : "border-amber-200/15 bg-amber-300/10 text-amber-50/70")}>{background.name}</span> : null}</div></div>
-                            <div className="grid gap-2">{roles.map((role) => { const frame = scene.frames[role]; return frame?.prompt ? <div key={role} className="rounded-2xl border border-white/10 bg-black/20 p-3"><div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-white/35">{cineFrameLabel(role)} · prompt</div><pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap text-xs leading-relaxed text-white/58">{frame.prompt}</pre>{frame.negativePrompt ? <pre className="mt-2 max-h-24 overflow-auto whitespace-pre-wrap text-[11px] leading-relaxed text-rose-50/45">Negative: {frame.negativePrompt}</pre> : null}</div> : null; })}</div>
+                            <div className="border-b border-white/10 py-3"><FieldLabel>Referencias usadas</FieldLabel><div className="mt-2 flex flex-wrap gap-2">{characterSheetAsset && safeData.continuity?.useCharacterSheetForFrames ? <CineStudioBadge tone="success">Hoja personajes</CineStudioBadge> : null}{locationSheetAsset && safeData.continuity?.useLocationSheetForFrames ? <CineStudioBadge tone="success">Hoja localizaciones</CineStudioBadge> : null}{characters.map((character) => <CineStudioBadge key={character.id} tone={getEffectiveCineCharacterAsset(character) ? "accent" : "warn"}>{character.name}</CineStudioBadge>)}{background ? <CineStudioBadge tone={getEffectiveCineBackgroundAsset(background) ? "accent" : "warn"}>{background.name}</CineStudioBadge> : null}</div></div>
+                            <div className="divide-y divide-white/10">{roles.map((role) => { const frame = scene.frames[role]; return frame?.prompt ? <div key={role} className="py-3"><div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-white/35">{cineFrameLabel(role)} · prompt</div><pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap text-xs leading-relaxed text-white/58">{frame.prompt}</pre>{frame.negativePrompt ? <pre className="mt-2 max-h-24 overflow-auto whitespace-pre-wrap text-[11px] leading-relaxed text-rose-50/45">Negative: {frame.negativePrompt}</pre> : null}</div> : null; })}</div>
                             <div className="flex flex-wrap gap-2"><PrimaryButton onClick={() => mutations.prepareAllSceneFrames(scene.id)}>Construir prompts de escena</PrimaryButton><PillButton onClick={() => mutations.prepareVideo(scene.id)}>Preparar para vídeo</PillButton></div>
                           </div>
                         </details>
                       </div>
-                    </article>
+                    </CineStudioAssetCard>
                   );
                 })}
               </div>
             </div>
+            )
           ) : null}
 
           {activeTab === "output" ? (
+            !isCineTabUnlocked("output", workflowSnapshot) ? (
+              renderLockedTab("output")
+            ) : (
             <div className="mx-auto max-w-[1500px]">
-              <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-	                <div>
-	                  <h2 className="text-xl font-semibold tracking-[-0.03em]">Salida</h2>
-	                  <p className="mt-1 text-sm text-white/45">Generación de vídeo por escena desde los frames aprobados del storyboard.</p>
-	                  {videoPrepareSummary ? <p className="mt-2 text-xs font-semibold uppercase tracking-[0.12em] text-emerald-50/65">{videoPrepareSummary}</p> : null}
-	                </div>
-                <div className="flex flex-wrap gap-2">
-                  <PillButton onClick={prepareAllVideoPlans}><Film size={13} />Preparar todas</PillButton>
-                  <PrimaryButton onClick={() => void navigator.clipboard?.writeText(JSON.stringify(exportPlan, null, 2))}><Layers size={14} />Copiar plan JSON</PrimaryButton>
-                </div>
-              </div>
-              <SectionCard className="mb-4">
-                <div className="flex flex-wrap items-start justify-between gap-4">
+              <CineStudioSection kicker="Producción" title="Salida">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-100/48">Conexión de salida</div>
-                    <h3 className="mt-1 text-lg font-semibold tracking-[-0.03em]">media_list · {mediaListOutput.items.length} items</h3>
-                    <p className="mt-1 max-w-2xl text-sm leading-relaxed text-white/45">
-                      Esta salida envía una lista ordenada de medios generados por Cine, con título, orden, escena y metadata rica.
-                    </p>
+                    <p className="text-sm text-white/45">Generación de vídeo por escena desde los frames aprobados del storyboard.</p>
+                    {videoPrepareSummary ? <p className="mt-2 text-xs font-semibold uppercase tracking-[0.12em] text-emerald-50/65">{videoPrepareSummary}</p> : null}
                   </div>
-                  <span className="rounded-full border border-cyan-200/18 bg-cyan-300/10 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-cyan-50/72">
-                    {mediaListOutput.status}
-                  </span>
+                  <div className="flex flex-wrap gap-2">
+                    <PillButton onClick={prepareAllVideoPlans}><Film size={13} />Preparar todas</PillButton>
+                    <PrimaryButton onClick={() => void navigator.clipboard?.writeText(JSON.stringify(exportPlan, null, 2))}><Layers size={14} />Copiar plan JSON</PrimaryButton>
+                  </div>
                 </div>
-                <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_360px]">
-                  <div className="grid grid-cols-3 gap-2 md:grid-cols-5">
+              </CineStudioSection>
+              <CineStudioSection kicker="Conexión de salida" title={`media_list · ${mediaListOutput.items.length} items`}>
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <p className="max-w-2xl text-sm leading-relaxed text-white/45">
+                    Lista ordenada de medios generados por Cine, con título, orden, escena y metadata rica.
+                  </p>
+                  <CineStudioBadge tone="accent">{mediaListOutput.status}</CineStudioBadge>
+                </div>
+                <div className="mt-4 grid gap-0 lg:grid-cols-[1fr_360px] lg:divide-x lg:divide-white/10">
+                  <div className="grid grid-cols-3 divide-x divide-white/10 border border-white/10 md:grid-cols-5 lg:pr-4">
                     {mediaListPreviewItems.length ? mediaListPreviewItems.map((item) => (
-                      <div key={item.id} className="overflow-hidden rounded-2xl border border-white/10 bg-black/20">
+                      <div key={item.id} className="overflow-hidden border-b border-white/10 bg-black/20">
                         <div className="aspect-video">
                           <CineMediaListPreviewThumb item={item} />
                         </div>
                         <div className="truncate px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-white/45">{item.role}</div>
                       </div>
                     )) : (
-                      <div className="col-span-full rounded-2xl border border-dashed border-white/12 bg-white/[0.035] px-4 py-6 text-center text-sm text-white/38">
+                      <div className="col-span-full border-b border-dashed border-white/12 bg-white/[0.035] px-4 py-6 text-center text-sm text-white/38">
                         La media_list existe, pero todavía no contiene assets visibles.
                       </div>
                     )}
                   </div>
-                  <div className="grid gap-2 text-xs text-white/62">
-                    <label className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-2">
+                  <div className="divide-y divide-white/10 text-xs text-white/62 lg:pl-4">
+                    <label className="flex h-10 items-center justify-between py-2">
                       <span>Incluir vídeos</span>
                       <input type="checkbox" checked={safeData.mediaListOutputConfig?.includeVideos ?? true} onChange={(event) => mutations.commit((draft) => ({ ...draft, mediaListOutputConfig: { ...draft.mediaListOutputConfig, includeVideos: event.target.checked } }))} />
                     </label>
-                    <label className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-2">
+                    <label className="flex h-10 items-center justify-between py-2">
                       <span>Solo vídeos aprobados</span>
                       <input type="checkbox" checked={Boolean(safeData.mediaListOutputConfig?.includeOnlyApprovedVideos)} onChange={(event) => mutations.commit((draft) => ({ ...draft, mediaListOutputConfig: { ...draft.mediaListOutputConfig, includeOnlyApprovedVideos: event.target.checked } }))} />
                     </label>
-                    <label className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-2">
+                    <label className="flex h-10 items-center justify-between py-2">
                       <span>Incluir frames</span>
                       <input type="checkbox" checked={safeData.mediaListOutputConfig?.includeFrames ?? true} onChange={(event) => mutations.commit((draft) => ({ ...draft, mediaListOutputConfig: { ...draft.mediaListOutputConfig, includeFrames: event.target.checked } }))} />
                     </label>
-                    <label className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-2">
+                    <label className="flex h-10 items-center justify-between py-2">
                       <span>Incluir sheets</span>
                       <input type="checkbox" checked={safeData.mediaListOutputConfig?.includeSheets ?? true} onChange={(event) => mutations.commit((draft) => ({ ...draft, mediaListOutputConfig: { ...draft.mediaListOutputConfig, includeSheets: event.target.checked } }))} />
                     </label>
-                    <label className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-2">
+                    <label className="flex h-10 items-center justify-between py-2">
                       <span>Incluir personajes/fondos</span>
                       <input type="checkbox" checked={Boolean(safeData.mediaListOutputConfig?.includeCharacters || safeData.mediaListOutputConfig?.includeBackgrounds)} onChange={(event) => mutations.commit((draft) => ({ ...draft, mediaListOutputConfig: { ...draft.mediaListOutputConfig, includeCharacters: event.target.checked, includeBackgrounds: event.target.checked } }))} />
                     </label>
-                    <label className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-2">
+                    <label className="flex h-10 items-center justify-between py-2">
                       <span>Incluir placeholders</span>
                       <input type="checkbox" checked={safeData.mediaListOutputConfig?.includePlaceholders ?? true} onChange={(event) => mutations.commit((draft) => ({ ...draft, mediaListOutputConfig: { ...draft.mediaListOutputConfig, includePlaceholders: event.target.checked } }))} />
                     </label>
                   </div>
                 </div>
-              </SectionCard>
-              <div className="grid gap-2 md:grid-cols-2 2xl:grid-cols-3">
+              </CineStudioSection>
+              <div className="grid gap-0 md:grid-cols-2 2xl:grid-cols-3 md:divide-x md:divide-white/10">
                 {safeData.scenes.map((scene) => {
 	                  const plan = scene.video ?? prepareSceneForVideo(safeData, scene.id, nodeId);
 	                  const missing = cineMissingFramesLabel(plan.missingFrames);
 	                  const isVideoGenerating = generatingTarget === `video:${scene.id}` || plan.status === "generating";
 	                  const hasGeneratedVideo = Boolean(plan.videoAssetId || plan.videoUrl);
 	                  return (
-	                    <article key={scene.id} className={cx("overflow-hidden rounded-[28px] border bg-[#0b111b] shadow-[0_18px_50px_rgba(0,0,0,0.20)]", plan.status === "generated" ? "border-cyan-200/24" : plan.status === "generating" ? "border-cyan-200/18" : plan.status === "prepared" ? "border-emerald-200/18" : plan.status === "missing_frames" ? "border-amber-200/18" : plan.status === "error" ? "border-rose-200/18" : "border-white/10")}>
+	                    <CineStudioAssetCard key={scene.id} className={cx(plan.status === "generated" ? "border-[var(--foldder-studio-accent,#de323f)]/45" : plan.status === "prepared" ? "border-emerald-400/35" : plan.status === "missing_frames" ? "border-amber-400/35" : plan.status === "error" ? "border-rose-400/35" : undefined)}>
 	                      <div className="relative aspect-[16/9] min-h-[220px] overflow-hidden bg-slate-950">
 	                        {hasGeneratedVideo ? <CineVideoPreview src={plan.videoAssetId || plan.videoUrl} s3Key={plan.videoS3Key} posterScene={scene} /> : <CineStoryboardHero scene={scene} />}
 	                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/88 via-black/42 to-transparent p-4 pt-14">
@@ -2113,14 +2171,14 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
                       </div>
                       <div className="p-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">
-	                          <span className={cx("rounded-full border px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.12em]", plan.status === "generated" ? "border-cyan-200/20 bg-cyan-300/12 text-cyan-50" : plan.status === "generating" ? "border-cyan-200/20 bg-cyan-300/10 text-cyan-50/80" : plan.status === "prepared" ? "border-emerald-200/20 bg-emerald-300/12 text-emerald-50" : plan.status === "missing_frames" ? "border-amber-200/20 bg-amber-300/12 text-amber-50" : plan.status === "error" ? "border-rose-200/20 bg-rose-300/12 text-rose-50" : "border-white/10 bg-white/[0.04] text-white/48")}>{isVideoGenerating ? "Generando vídeo" : cineVideoStatusLabel(plan.status)}</span>
-		                          <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-white/42">
+	                          <CineStudioBadge tone={plan.status === "generated" || plan.status === "generating" ? "accent" : plan.status === "prepared" ? "success" : plan.status === "missing_frames" ? "warn" : plan.status === "error" ? "error" : "neutral"}>{isVideoGenerating ? "Generando vídeo" : cineVideoStatusLabel(plan.status)}</CineStudioBadge>
+		                          <CineStudioBadge tone="neutral">
 		                            {plan.mode === "start_end_frames" ? "2 frames a Veo" : "1 frame a Veo"}
-		                          </span>
-	                          {plan.videoProvider ? <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-white/42">{cineVideoProviderLabel(plan.videoProvider)}</span> : null}
+		                          </CineStudioBadge>
+	                          {plan.videoProvider ? <CineStudioBadge tone="neutral">{cineVideoProviderLabel(plan.videoProvider)}</CineStudioBadge> : null}
 	                        </div>
-	                        {missing ? <p className="mt-3 rounded-2xl border border-amber-200/15 bg-amber-300/10 px-3 py-2 text-xs text-amber-50/72">Falta: {missing}</p> : null}
-	                        {plan.errorMessage ? <p className="mt-3 rounded-2xl border border-rose-200/15 bg-rose-300/10 px-3 py-2 text-xs text-rose-50/72">{plan.errorMessage}</p> : null}
+	                        {missing ? <p className="mt-3 border-b border-amber-400/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-50/72">Falta: {missing}</p> : null}
+	                        {plan.errorMessage ? <p className="mt-3 border-b border-rose-400/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-50/72">{plan.errorMessage}</p> : null}
 	                        {plan.overlayTextPlan?.texts?.length ? <p className="mt-3 line-clamp-2 text-xs text-amber-50/62">Overlay externo: {(plan.overlayTextPlan?.texts ?? []).join(" / ")}</p> : null}
 	                        {plan.voiceoverPlan?.text ? <p className="mt-2 line-clamp-2 text-xs text-white/42">Voz en off preparada para pista posterior.</p> : null}
 	                        <div className="mt-4 flex flex-wrap gap-2">
@@ -2147,22 +2205,40 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
 	                          })}>Ver plan</PillButton>
                         </div>
                       </div>
-                    </article>
+                    </CineStudioAssetCard>
                   );
                 })}
               </div>
             </div>
+            )
           ) : null}
-        </main>
-      </div>
+      </main>
+      {generationMessage ? (
+        <div
+          className={cx(
+            "flex h-10 shrink-0 items-center border-t border-white/10 px-4 text-[10px] font-black uppercase tracking-[0.08em]",
+            generatingTarget ? "bg-[var(--foldder-studio-accent,#de323f)]/18 text-white" : "bg-white/[0.04] text-white/55",
+          )}
+        >
+          {generationMessage}
+        </div>
+      ) : null}
       {promptPreview ? (
-        <div className="fixed inset-0 z-[100100] flex items-center justify-center bg-black/70 p-6">
-          <div className="max-h-[82vh] w-full max-w-3xl overflow-hidden rounded-[28px] border border-white/12 bg-[#0b1018] shadow-2xl">
-            <div className="flex items-center justify-between gap-3 border-b border-white/10 px-5 py-4"><div><div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35">Plan / prompt</div><h3 className="mt-1 text-lg font-semibold">{promptPreview.title}</h3></div><button type="button" onClick={() => setPromptPreview(null)} className="rounded-2xl border border-white/10 bg-white/[0.06] p-2 text-white/65 hover:bg-white/[0.12]"><X size={18} /></button></div>
-            <div className="max-h-[60vh] overflow-auto p-5">
+        <div className="fixed inset-0 z-[100100] flex items-start justify-center bg-black/55 p-4 pt-[4.5rem] sm:items-center sm:p-6">
+          <div className="max-h-[82vh] w-full max-w-3xl overflow-hidden border border-white/12 bg-[#0b0f14] shadow-[0_24px_70px_rgba(0,0,0,0.55)]">
+            <div className="flex h-10 items-stretch border-b border-white/10 bg-white/[0.08]">
+              <div className="flex min-w-0 flex-1 flex-col justify-center px-4">
+                <div className="text-[9px] font-black uppercase tracking-[0.12em] text-white/38">Plan / prompt</div>
+                <h3 className="truncate text-[11px] font-black uppercase tracking-[0.06em] text-white">{promptPreview.title}</h3>
+              </div>
+              <button type="button" onClick={() => setPromptPreview(null)} className="flex h-10 w-10 items-center justify-center border-l border-white/10 text-white/65 hover:bg-white/[0.08] hover:text-white">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="custom-scrollbar max-h-[60vh] overflow-auto p-4">
               {promptPreview.details?.length ? (
-                <div className="mb-4 grid gap-2 rounded-2xl border border-white/10 bg-white/[0.04] p-3 text-xs text-white/60">
-                  <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35">Datos usados</div>
+                <div className="mb-4 grid gap-2 border border-white/10 bg-white/[0.04] p-3 text-xs text-white/60">
+                  <div className="text-[9px] font-black uppercase tracking-[0.12em] text-white/35">Datos usados</div>
                   {promptPreview.details.map(([label, value]) => (
                     <div key={label} className="grid gap-1 sm:grid-cols-[140px_1fr]">
                       <span className="font-semibold text-white/45">{label}</span>
@@ -2171,12 +2247,12 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
                   ))}
                 </div>
               ) : null}
-	              <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35">Prompt final</div>
-              <pre className="whitespace-pre-wrap rounded-2xl border border-white/10 bg-black/24 p-4 text-sm leading-relaxed text-white/72">{promptPreview.prompt}</pre>
+              <div className="mb-2 text-[9px] font-black uppercase tracking-[0.12em] text-white/35">Prompt final</div>
+              <pre className="whitespace-pre-wrap border border-white/10 bg-black/24 p-4 text-sm leading-relaxed text-white/72">{promptPreview.prompt}</pre>
               {promptPreview.negativePrompt ? (
                 <>
-                  <div className="mb-2 mt-4 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35">Negative prompt</div>
-                  <pre className="whitespace-pre-wrap rounded-2xl border border-rose-200/10 bg-rose-950/10 p-4 text-xs leading-relaxed text-rose-50/68">{promptPreview.negativePrompt}</pre>
+                  <div className="mb-2 mt-4 text-[9px] font-black uppercase tracking-[0.12em] text-white/35">Negative prompt</div>
+                  <pre className="whitespace-pre-wrap border border-rose-400/15 bg-rose-400/8 p-4 text-xs leading-relaxed text-rose-50/68">{promptPreview.negativePrompt}</pre>
                 </>
               ) : null}
             </div>

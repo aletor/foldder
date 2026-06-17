@@ -46,7 +46,22 @@ vi.mock("@/lib/pricing-config", () => ({
   estimateGeminiImageGenerationUsd: vi.fn(() => 0.01),
 }));
 
-import { geminiImageGenerate } from "@/lib/gemini-image-generate";
+import { geminiImageGenerate, normalizeGeminiImageAspectRatio } from "@/lib/gemini-image-generate";
+
+describe("normalizeGeminiImageAspectRatio", () => {
+  it("keeps supported ratios", () => {
+    expect(normalizeGeminiImageAspectRatio("16:9")).toBe("16:9");
+    expect(normalizeGeminiImageAspectRatio("4:5")).toBe("4:5");
+  });
+
+  it("maps cinematic anamorphic to 21:9", () => {
+    expect(normalizeGeminiImageAspectRatio("2.39:1")).toBe("21:9");
+  });
+
+  it("falls back to 16:9 for unknown ratios", () => {
+    expect(normalizeGeminiImageAspectRatio("7:3")).toBe("16:9");
+  });
+});
 
 describe("geminiImageGenerate", () => {
   beforeEach(() => {

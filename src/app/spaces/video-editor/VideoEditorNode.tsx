@@ -1,6 +1,6 @@
 "use client";
 
-import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { NodeResizer, Position, useNodeId, useReactFlow, useStore, useUpdateNodeInternals, type Edge, type Node, type NodeProps, type ReactFlowState } from "@xyflow/react";
 import { shallow } from "zustand/shallow";
@@ -71,11 +71,14 @@ import {
 } from "./subtitle-utils";
 import { useFoldderRenderMetric } from "../use-performance-metrics";
 import { useNodeViewportVisibility } from "../use-node-viewport-visibility";
+import { nodeFrameFromSnapshot, selectNodeFrameSnapshot } from "../react-flow-selectors";
 import {
-  foldderGridFrame,
-  getStaticNodeGridAspectRatio,
-  snapAspectDimensionsToGrid,
-} from "../canvas-grid-layout";
+  loadImageDimensions,
+  nodeFrameNeedsSync,
+  resolveAspectLockedNodeFrame,
+  resolveNodeChromeHeight,
+} from "../studio-node-aspect";
+import { loadVideoDimensions } from "../presenter/presenter-video-frame-layout";
 
 const VIDEO_EDITOR_URL_TTL_MS = 50 * 60 * 1000;
 const videoEditorPresignedUrlCache = new globalThis.Map<string, { url: string; expiresAt: number }>();
@@ -83,9 +86,12 @@ const videoEditorPresignInFlight = new globalThis.Map<string, Promise<string | n
 
 const VIDEO_EDITOR_EMPTY_BACKGROUND_SRC = "/assets/nodes/video-editor-empty.jpg";
 const VIDEO_EDITOR_NODE_MAX_HEIGHT = 2200;
-const VIDEO_EDITOR_ASPECT_RATIO = getStaticNodeGridAspectRatio("video_editor") ?? 524 / 308;
+const VIDEO_EDITOR_DEFAULT_ASPECT = { width: 16, height: 9 };
 const VIDEO_EDITOR_MIN_WIDTH = 200;
-const VIDEO_EDITOR_MIN_HEIGHT = Math.max(120, Math.round(VIDEO_EDITOR_MIN_WIDTH / VIDEO_EDITOR_ASPECT_RATIO));
+const VIDEO_EDITOR_MIN_HEIGHT = Math.max(
+  120,
+  Math.round(VIDEO_EDITOR_MIN_WIDTH / (VIDEO_EDITOR_DEFAULT_ASPECT.width / VIDEO_EDITOR_DEFAULT_ASPECT.height)),
+);
 const NODE_RESIZE_END_FIT_PADDING = 0.8;
 
 function VideoEditorNodeResizer(props: React.ComponentProps<typeof NodeResizer>) {
@@ -2624,6 +2630,14 @@ export const VideoEditorNode = memo(function VideoEditorNode({ id, data, selecte
   } = useVideoEditorIncomingMedia(id);
   const updateNodeInternals = useUpdateNodeInternals();
   const { setNodes } = useReactFlow();
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const previewRef = useRef<HTMLDivElement | null>(null);
+  const frameSyncKeyRef = useRef<string | null>(null);
+  const currentFrameSnapshot = useStore(
+    useCallback((state: ReactFlowState<Node, Edge>) => selectNodeFrameSnapshot(state, id), [id]),
+    shallow,
+  );
+  const currentFrameNode = useMemo(() => nodeFrameFromSnapshot(currentFrameSnapshot), [currentFrameSnapshot]);
   const nodeData = normalizeVideoEditorData(data);
   const effectiveData = combinedSourceMediaList && !nodeData.tracks.video.length && !nodeData.tracks.audio.length && nodeData.status === "empty"
     ? ingestMediaListToVideoEditor(combinedSourceMediaList, nodeData)
@@ -2639,36 +2653,96 @@ export const VideoEditorNode = memo(function VideoEditorNode({ id, data, selecte
   const showPreview = Boolean(previewClip);
   const studioTouched = hasVideoEditorStudioTouched(data as Record<string, unknown>) || stats.clips.length > 0;
   const [studioOpen, setStudioOpen] = useState(false);
+  const [previewDimensions, setPreviewDimensions] = useState<{ width: number; height: number } | null>(null);
+
+  const projectAspect = useMemo(() => {
+    const width = effectiveData.render?.settings?.width ?? 1920;
+    const height = effectiveData.render?.settings?.height ?? 1080;
+    return {
+      width: Math.max(1, width),
+      height: Math.max(1, height),
+    };
+  }, [effectiveData.render?.settings?.height, effectiveData.render?.settings?.width]);
+
+  const contentAspect = previewDimensions ?? projectAspect;
 
   useEffect(() => {
     updateNodeInternals(id);
   }, [id, updateNodeInternals, visibleVideoSlotIds.join(",")]);
 
   useEffect(() => {
-    const record = data as Record<string, unknown>;
-    if (record._foldderAspectRatio === VIDEO_EDITOR_ASPECT_RATIO) return;
+    if (!nodeMediaVisible || !previewUrl || !previewClip) {
+      setPreviewDimensions(null);
+      return;
+    }
+    let cancelled = false;
+    const loadDimensions =
+      previewClip.mediaType === "video"
+        ? loadVideoDimensions(previewUrl)
+        : loadImageDimensions(previewUrl);
+    void loadDimensions
+      .then((dimensions) => {
+        if (!cancelled) setPreviewDimensions(dimensions);
+      })
+      .catch(() => {
+        if (!cancelled) setPreviewDimensions(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [nodeMediaVisible, previewClip, previewUrl]);
+
+  useLayoutEffect(() => {
+    const syncKey = `${contentAspect.width}x${contentAspect.height}:${previewUrl || "empty"}`;
+    if (frameSyncKeyRef.current === syncKey) return;
+    const chromeHeight = resolveNodeChromeHeight(frameRef.current, previewRef.current);
+    const nextFrame = resolveAspectLockedNodeFrame({
+      node: currentFrameNode,
+      contentWidth: contentAspect.width,
+      contentHeight: contentAspect.height,
+      minWidth: VIDEO_EDITOR_MIN_WIDTH,
+      maxWidth: 960,
+      minHeight: VIDEO_EDITOR_MIN_HEIGHT,
+      maxHeight: VIDEO_EDITOR_NODE_MAX_HEIGHT,
+      chromeHeight,
+    });
+    frameSyncKeyRef.current = syncKey;
+    const nextAspectRatio = contentAspect.width / contentAspect.height;
     setNodes((nodes) =>
       nodes.map((node) => {
         if (node.id !== id) return node;
-        const style = (node.style ?? {}) as React.CSSProperties;
-        const parsedWidth = typeof style.width === "number" ? style.width : Number.parseFloat(String(style.width ?? ""));
-        const parsedHeight = typeof style.height === "number" ? style.height : Number.parseFloat(String(style.height ?? ""));
-        const nextFrame =
-          Number.isFinite(parsedWidth) && parsedWidth > 0 && Number.isFinite(parsedHeight) && parsedHeight > 0
-            ? snapAspectDimensionsToGrid({ width: parsedWidth, height: parsedHeight }, VIDEO_EDITOR_ASPECT_RATIO)
-            : foldderGridFrame(5, 3);
+        const needsFrameSync = nodeFrameNeedsSync(node, nextFrame);
+        const currentAspectRatio =
+          typeof (node.data as { _foldderAspectRatio?: unknown } | undefined)?._foldderAspectRatio === "number"
+            ? ((node.data as { _foldderAspectRatio?: number })._foldderAspectRatio ?? null)
+            : null;
+        const needsAspectSync =
+          currentAspectRatio === null || Math.abs(currentAspectRatio - nextAspectRatio) > 0.0001;
+        if (!needsFrameSync && !needsAspectSync) return node;
         return {
           ...node,
-          data: { ...(node.data as Record<string, unknown>), _foldderAspectRatio: VIDEO_EDITOR_ASPECT_RATIO },
-          style: {
-            ...style,
-            width: nextFrame.width,
-            height: nextFrame.height,
-          },
+          ...(needsFrameSync ? { width: nextFrame.width, height: nextFrame.height } : {}),
+          data: { ...(node.data as Record<string, unknown>), _foldderAspectRatio: nextAspectRatio },
+          style: needsFrameSync ? { ...node.style, width: nextFrame.width, height: nextFrame.height } : node.style,
         };
       }),
     );
-  }, [data, id, setNodes]);
+    requestAnimationFrame(() => updateNodeInternals(id));
+  }, [
+    contentAspect.height,
+    contentAspect.width,
+    currentFrameNode,
+    currentFrameSnapshot.height,
+    currentFrameSnapshot.measuredHeight,
+    currentFrameSnapshot.measuredWidth,
+    currentFrameSnapshot.styleHeight,
+    currentFrameSnapshot.styleWidth,
+    currentFrameSnapshot.width,
+    id,
+    previewUrl,
+    setNodes,
+    updateNodeInternals,
+  ]);
 
   const commit = useCallback((next: VideoEditorNodeData) => {
     setNodes((nodes) =>
@@ -2686,6 +2760,7 @@ export const VideoEditorNode = memo(function VideoEditorNode({ id, data, selecte
   const label = String((data as { label?: unknown }).label || "Video Editor");
   return (
     <div
+      ref={frameRef}
       className={cx(
         "custom-node video-editor-node foldder-node--frameless node--media relative text-white group/node",
         showPreview ? "video-editor-node--has-preview foldder-frameless-label-dark" : "video-editor-node--empty",
@@ -2727,7 +2802,7 @@ export const VideoEditorNode = memo(function VideoEditorNode({ id, data, selecte
         <span className="handle-label">Media list</span>
       </div>
 
-      <div className="foldder-frameless-main relative flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div ref={previewRef} className="foldder-frameless-main relative flex min-h-0 flex-1 flex-col overflow-hidden">
         {showPreview && previewClip ? (
           <>
             <VideoEditorNodeExteriorPreview

@@ -67,6 +67,7 @@ const STATIC_NODE_GRID_PRESETS: Record<string, GridPreset> = {
 
 const ASPECT_RATIO_NODE_TYPES = new Set([
   "backgroundRemover",
+  "cine",
   "crop",
   "designer",
   "geminiVideo",
@@ -297,6 +298,27 @@ export function nodeAspectRatioFromData(type: string | undefined, data?: unknown
     parseRatio(record.aspect_ratio) ??
     parseRatio(record.videoFormat);
   if (explicit) return explicit;
+  if (type === "cine") {
+    const visual = record.visualDirection;
+    if (visual && typeof visual === "object") {
+      const fromDirector = parseRatio((visual as Record<string, unknown>).aspectRatio);
+      if (fromDirector) return fromDirector;
+    }
+  }
+  if (type === "videoEditor" || type === "video_editor") {
+    const render = record.render;
+    if (render && typeof render === "object") {
+      const settings = (render as Record<string, unknown>).settings;
+      if (settings && typeof settings === "object") {
+        const width = (settings as Record<string, unknown>).width;
+        const height = (settings as Record<string, unknown>).height;
+        if (typeof width === "number" && typeof height === "number" && width > 0 && height > 0) {
+          return width / height;
+        }
+      }
+    }
+    return 16 / 9;
+  }
   const width = typeof record.width === "number" ? record.width : undefined;
   const height = typeof record.height === "number" ? record.height : undefined;
   if (width && height && width > 0 && height > 0) return width / height;

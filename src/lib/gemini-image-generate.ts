@@ -66,6 +66,41 @@ export class GeminiGenerateError extends Error {
   }
 }
 
+/** Valores aceptados por `generation_config.image_config.aspect_ratio` en Gemini. */
+export const GEMINI_IMAGE_ASPECT_RATIOS = [
+  "1:1",
+  "1:4",
+  "1:8",
+  "2:3",
+  "3:2",
+  "3:4",
+  "4:1",
+  "4:3",
+  "4:5",
+  "5:4",
+  "8:1",
+  "9:16",
+  "16:9",
+  "21:9",
+] as const;
+
+export type GeminiImageAspectRatio = (typeof GEMINI_IMAGE_ASPECT_RATIOS)[number];
+
+const GEMINI_IMAGE_ASPECT_RATIO_ALIASES: Record<string, GeminiImageAspectRatio> = {
+  "2.39:1": "21:9",
+  "2.35:1": "21:9",
+  "2.40:1": "21:9",
+};
+
+/** Normaliza ratios creativos (p. ej. anamórfico 2.39:1) a valores soportados por Gemini. */
+export function normalizeGeminiImageAspectRatio(ratio?: string): GeminiImageAspectRatio {
+  const value = (ratio ?? "1:1").trim();
+  if ((GEMINI_IMAGE_ASPECT_RATIOS as readonly string[]).includes(value)) {
+    return value as GeminiImageAspectRatio;
+  }
+  return GEMINI_IMAGE_ASPECT_RATIO_ALIASES[value] ?? "16:9";
+}
+
 /** Texto de API o modelo que suele indicar bloqueo por copyright / recitación / contenido protegido. */
 const COPYRIGHT_OR_POLICY_HINT =
   /copyright|recit|recitation|protected content|intellectual property|third[- ]party|licensed material|watermark|dmca|content policy|blocked for policy|image_safety|trademark/i;
@@ -232,7 +267,7 @@ export async function geminiImageGenerate(
   const generationConfig: Record<string, unknown> = {
     responseModalities: ["IMAGE"],
     imageConfig: {
-      aspectRatio: aspect_ratio || "1:1",
+      aspectRatio: normalizeGeminiImageAspectRatio(aspect_ratio),
       ...(modelId !== GEMINI_IMAGE_MODELS.flash25 && { imageSize }),
     },
   };

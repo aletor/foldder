@@ -1687,6 +1687,15 @@
   box-shadow: none !important;
 }
 
+.custom-node.cine-node.cine-node--has-preview .cine-node-media-metrics span,
+.custom-node.cine-node.cine-node--has-preview .cine-node-media-metric {
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+
 .custom-node.cine-node .cine-summary-panel .flex.h-10.w-10 {
   border: none !important;
   border-radius: 999px !important;
@@ -1697,14 +1706,72 @@
 
 .custom-node.cine-node .cine-node-content--media {
   padding: 0 !important;
+  min-height: 196px;
+}
+
+.custom-node.cine-node.cine-node--has-preview {
+  background: #0c0c0c !important;
+  min-height: 220px !important;
+}
+
+.custom-node.cine-node .cine-node-media-scrim {
+  background: linear-gradient(
+    to top,
+    rgba(0, 0, 0, 0.9) 0%,
+    rgba(0, 0, 0, 0.42) 42%,
+    rgba(0, 0, 0, 0.1) 72%,
+    transparent 100%
+  );
+}
+
+.custom-node.cine-node .cine-node-media-tag {
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.55);
+}
+
+.custom-node.cine-node .cine-node-media-footer {
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.34), transparent);
+}
+
+.custom-node.cine-node .cine-node-media-metric {
+  color: rgba(255, 255, 255, 0.84);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.custom-node.cine-node .cine-node-media-metric__icon {
+  display: inline-flex;
+  opacity: 0.72;
+}
+
+.custom-node.cine-node .cine-node-media-mode {
+  color: rgba(255, 255, 255, 0.46);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.custom-node.cine-node.cine-node--has-preview .cine-node-open-btn {
+  position: static !important;
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  border-radius: 0 !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
 }
 
 .custom-node.cine-node .cine-node-content--media .cine-summary-panel {
-  position: absolute;
-  left: var(--foldder-frameless-overlay-side);
-  bottom: 48px;
-  z-index: 8;
-  max-width: calc(100% - 28px);
+  position: static;
+  left: auto;
+  bottom: auto;
+  max-width: none;
 }
 
 .custom-node.guionista-node {
@@ -4670,6 +4737,12 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
   background-image: none !important;
 }
 
+.custom-node.cine-node.cine-node--has-preview {
+  background: #0c0c0c !important;
+  background-image: none !important;
+  background-color: #0c0c0c !important;
+}
+
 .custom-node.presenter-node.presenter-node--empty {
   background: #f5b91b !important;
   background-image: none !important;
@@ -5380,6 +5453,52 @@ body.foldder-studio-flush .left-toolbar-flyout-panel {
 
 body.foldder-studio-flush .left-toolbar-flyout-panel :is(button, span, div):not([class*="rounded-full"]) {
   border-radius: 0 !important;
+}
+
+/* ============================================================================
+   Cine studio — Flush Chrome (data-foldder-cine-studio)
+   ============================================================================ */
+[data-foldder-cine-studio] {
+  --foldder-studio-accent: #de323f;
+}
+
+[data-foldder-cine-studio] .cine-studio-asset-card {
+  background: #0b0f14;
+}
+
+[data-foldder-cine-studio] .cine-studio-asset-card:hover {
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+[data-foldder-cine-studio] :is(button, span, div, input, label, select, textarea, pre, article):not([data-foldder-keep-round]) {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+[data-foldder-cine-studio] [class*="rounded-full"]:not([data-foldder-keep-round]) {
+  border-radius: 0 !important;
+}
+
+[data-foldder-cine-studio] details > summary {
+  list-style: none;
+}
+
+[data-foldder-cine-studio] details > summary::-webkit-details-marker {
+  display: none;
+}
+
+[data-foldder-cine-studio] [data-cine-direction-panel] .direction-choice-chip:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.38);
+  outline-offset: -2px;
+}
+
+[data-foldder-cine-studio] [data-cine-direction-panel] details[open] > summary {
+  color: rgba(255, 255, 255, 0.55);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+[data-foldder-cine-studio] [data-cine-direction-panel] .direction-choice-chip__icon svg {
+  display: block;
 }
 
 /* ── Touch / iPad performance: lighter compositing, fewer animations ── */
