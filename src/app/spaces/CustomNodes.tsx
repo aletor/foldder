@@ -58,6 +58,7 @@ import {
   CircleDot,
   Film,
   Cpu,
+  Copy,
 } from 'lucide-react';
 import { StandardStudioShellHeader, type StandardStudioShellConfig } from './StandardStudioShell';
 import {
@@ -3204,6 +3205,7 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
     typeof nodeData.value === 'string' && nodeData.value.trim() ? nodeData.value : null,
   );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [copiedPrompt, setCopiedPrompt] = useState(false);
   const outputRef = useRef<HTMLDivElement>(null);
   const userManuallyResizedRef = useRef(false);
   const persistedDescription = typeof nodeData.value === 'string' && nodeData.value.trim() ? nodeData.value : null;
@@ -3305,6 +3307,17 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
 
   useRegisterAssistantNodeRun(id, onRun);
 
+  const onCopyPrompt = useCallback(async () => {
+    if (!visibleDescription) return;
+    try {
+      await navigator.clipboard.writeText(visibleDescription);
+      setCopiedPrompt(true);
+      window.setTimeout(() => setCopiedPrompt(false), 1500);
+    } catch {
+      // clipboard may be unavailable
+    }
+  }, [visibleDescription]);
+
   return (
     <div className={`custom-node describer-node foldder-node--frameless node--glass describer-node--expanded ${status === 'error' ? 'foldder-node--error' : ''} ${status === 'running' ? 'node-glow-running' : ''}`} style={{ minWidth: 300, minHeight: 330 }}>
       <FoldderNodeResizer
@@ -3344,12 +3357,23 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
 
         <div className="describer-output-body min-h-0 flex-1">
           {visibleDescription ? (
-            <div
-              ref={outputRef}
-              className="describer-output-text describer-output-text--expanded nowheel"
-            >
-              {visibleDescription}
-            </div>
+            <>
+              <button
+                type="button"
+                className="describer-copy-prompt-btn nodrag"
+                onClick={() => void onCopyPrompt()}
+                title={copiedPrompt ? 'Copied' : 'Copy prompt'}
+                aria-label={copiedPrompt ? 'Copied' : 'Copy prompt'}
+              >
+                <Copy size={13} strokeWidth={2} aria-hidden />
+              </button>
+              <div
+                ref={outputRef}
+                className="describer-output-text describer-output-text--expanded nowheel"
+              >
+                {visibleDescription}
+              </div>
+            </>
           ) : null}
         </div>
       </div>

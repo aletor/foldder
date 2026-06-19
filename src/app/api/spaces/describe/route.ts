@@ -12,6 +12,7 @@ import {
 } from "@/lib/spaces-access-control";
 import { ForbiddenMediaReferenceError } from '@/lib/api-media-access';
 import OpenAI from 'openai';
+import { MEDIA_DESCRIBER_VISION_PROMPT } from '@/lib/media-describer-prompt';
 import {
   isVisionRefusalText,
   prepareOpenAiVisionImageUrl,
@@ -32,18 +33,6 @@ type OpenAiDescribeContentPart =
   | { type: "text"; text: string }
   | { type: "image_url"; image_url: { url: string; detail: "auto" | "high" | "low" } };
 
-const MEDIA_DESCRIBER_VISION_PROMPT = `Analyze this media frame and write one dense paragraph suitable as a generative-AI prompt to recreate the scene. Output ONLY the description — no bullets, labels, or preamble.
-
-Include rich, technical detail on:
-
-Camera & lens: camera height vs subject (ground-level, eye-level, high angle, bird's-eye, worm's-eye), horizontal angle (frontal, three-quarter, profile, over-shoulder), shot size (ECU/CU/MCU/MS/WS), approximate focal-length feel (e.g. wide ~24mm, normal ~50mm, telephoto ~85mm+), depth of field and focus plane, perspective distortion, dutch tilt if any, implied camera motion or stability.
-
-Color correction & grade: color temperature (warm/cool/neutral; estimate Kelvin if inferable), white-balance bias, exposure (high-key/low-key/natural), contrast curve, saturation level, shadow tint, highlight tint, midtone character, split-toning, black point and highlight rolloff, overall LUT/look (e.g. teal-orange blockbuster, bleach bypass, muted documentary, clean commercial, vintage fade, cross-process).
-
-Also cover subjects, environment, composition, lighting direction and quality, textures, mood, and atmosphere. Be specific and visual; avoid vague praise.
-
-Write in present tense as a pure scene description. Do NOT start with Create, Generate, Make, or other imperatives — downstream image models expect descriptive prompts, not instructions.`;
-
 export async function POST(req: Request) {
   let walletCharge: ApiWalletCharge | null = null;
   let releaseWalletOnError = true;
@@ -52,7 +41,7 @@ export async function POST(req: Request) {
     const authState = await requireSpacesAuthUser(req);
     if (!authState.ok) return authState.response;
     const usageUserEmail = await resolveUsageUserEmailFromRequest(req);
-    const { url, type, metadata } = await req.json();
+    const { url, type, metadata, promptOverride } = await req.json();
 
     if (!url) {
       return NextResponse.json({ error: "No media URL provided" }, { status: 400 });
@@ -67,13 +56,16 @@ export async function POST(req: Request) {
         ? await prepareOpenAiVisionImageUrl(url, req.url, authState.user.email)
         : url.trim();
 
-    console.log(`[Media Describer] Analyzing ${type} (prepared vision URL)`);
+    console.log(`[Media Describer] Analyzing ${type} (inline vision image)`);
 
     let prompt = "";
     let contentPayload: OpenAiDescribeContentPart[] = [];
 
     if (type === 'image' || type === 'video') {
-      prompt = MEDIA_DESCRIBER_VISION_PROMPT;
+      prompt =
+        typeof promptOverride === 'string' && promptOverride.trim()
+          ? promptOverride.trim()
+          : MEDIA_DESCRIBER_VISION_PROMPT;
 
       contentPayload = [
         { type: "text", text: prompt },
@@ -109,7 +101,8 @@ export async function POST(req: Request) {
     const completion = await openai.chat.completions.create({
       model: "gpt-4o", // Using GPT-4o for its vision capabilities
       messages: [{ role: "user", content: contentPayload }],
-      max_tokens: 900,
+      max_tokens: 2600,
+      temperature: 0.35,
     });
 
     const description = completion.choices[0].message.content || "No description available.";

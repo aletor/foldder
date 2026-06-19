@@ -343,7 +343,9 @@ export async function geminiImageGenerate(
 
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   if (!apiKey) throw new GeminiGenerateError("API Key not configured", 500);
-  const normalizedPrompt = normalizeGenerativeImagePrompt(String(prompt || "").trim());
+  const normalizedPrompt = normalizeGenerativeImagePrompt(String(prompt || "").trim(), {
+    targetAspectRatio: aspect_ratio,
+  });
   if (!normalizedPrompt) throw new GeminiGenerateError("Prompt is required", 400);
 
   const modelId =

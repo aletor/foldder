@@ -1368,7 +1368,9 @@ const NanoBananaStudio = memo(({
       return;
     }
 
-    const graphPrompt = externalPromptIgnored ? '' : normalizeGenerativeImagePrompt(String(prompt ?? ''));
+    const graphPrompt = externalPromptIgnored
+      ? ''
+      : normalizeGenerativeImagePrompt(String(prompt ?? ''), { targetAspectRatio: aspectRatio });
     if (!externalPromptIgnored && !graphPrompt.trim()) {
       return alert('No hay prompt conectado.');
     }
@@ -2662,7 +2664,9 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   const onRun = async () => {
     if (!promptValue) return alert("Connect a prompt node!");
 
-    const userPromptRaw = normalizeGenerativeImagePrompt(String(promptValue ?? ""));
+    const userPromptRaw = normalizeGenerativeImagePrompt(String(promptValue ?? ""), {
+      targetAspectRatio: nodeData.aspect_ratio || "16:9",
+    });
     let promptToSend = userPromptRaw;
     let diagForRun: BrainImageGeneratorPromptDiagnostics | null = null;
     if (brainConnected && brainCanvasCtx?.assetsMetadata) {

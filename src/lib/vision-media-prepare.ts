@@ -4,8 +4,7 @@ import {
   inferMimeTypeFromPath,
 } from "@/lib/api-media-access";
 import { resolveKnowledgeFilesS3Key } from "@/lib/s3-media-hydrate";
-import { buildUserAssetObjectKey } from "@/lib/spaces-access-control";
-import { getFromS3, getPresignedUrl, uploadBufferToS3Key } from "@/lib/s3-utils";
+import { getFromS3 } from "@/lib/s3-utils";
 
 export class VisionMediaPrepareError extends Error {
   constructor(
@@ -101,19 +100,18 @@ export async function loadImageBufferFromMediaReference(
   return { buffer, mime: contentType || inferMimeTypeFromPath(fetchUrl, "image/png") };
 }
 
-/** Normaliza la imagen (fondo blanco, tamaño razonable) y devuelve URL https prefirmada para visión. */
+function bufferToDataUrl(buffer: Buffer, mime: string): string {
+  const contentType = mime.startsWith("image/") ? mime : "image/jpeg";
+  return `data:${contentType};base64,${buffer.toString("base64")}`;
+}
+
+/** Normaliza la imagen (fondo blanco, tamaño razonable) y devuelve data URL inline para visión. */
 export async function prepareOpenAiVisionImageUrl(
   rawUrl: string,
   baseUrl: string,
   userEmail: string,
 ): Promise<string> {
   const { buffer, mime } = await loadImageBufferFromMediaReference(rawUrl, baseUrl, userEmail);
-
-  const key = buildUserAssetObjectKey({
-    userEmail,
-    folder: "describe/temp",
-    filename: `vision-${Date.now()}.png`,
-  });
 
   try {
     const sharpMod = await import("sharp");
@@ -133,12 +131,11 @@ export async function prepareOpenAiVisionImageUrl(
       );
     }
 
-    await uploadBufferToS3Key(key, png, "image/png");
-    return getPresignedUrl(key);
+    return bufferToDataUrl(png, "image/png");
   } catch (error) {
     if (error instanceof VisionMediaPrepareError) throw error;
     console.warn(
-      "[vision-media-prepare] sharp unavailable; uploading source image for OpenAI vision",
+      "[vision-media-prepare] sharp unavailable; sending source image inline for OpenAI vision",
       error instanceof Error ? error.message : error,
     );
     if (buffer.length < 64) {
@@ -147,10 +144,7 @@ export async function prepareOpenAiVisionImageUrl(
         "image_too_small",
       );
     }
-    const contentType = mime.startsWith("image/") ? mime : "image/jpeg";
-    const fallbackKey = key.replace(/\.png$/, contentType.includes("png") ? ".png" : ".jpg");
-    await uploadBufferToS3Key(fallbackKey, buffer, contentType);
-    return getPresignedUrl(fallbackKey);
+    return bufferToDataUrl(buffer, mime);
   }
 }
 
