@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { BUCKET_NAME, s3Client } from "@/lib/s3-utils";
+import { inferMimeTypeFromPath } from "@/lib/api-media-access";
 import {
   canUserAccessKnowledgeFileKey,
   isSafeKnowledgeFilesKey,
@@ -47,11 +48,16 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Empty S3 object." }, { status: 404 });
     }
 
+    const contentType =
+      object.ContentType && object.ContentType !== "application/octet-stream"
+        ? object.ContentType
+        : inferMimeTypeFromPath(key);
+
     const headers = new Headers({
       "Accept-Ranges": object.AcceptRanges || "bytes",
       "Access-Control-Allow-Origin": "*",
       "Cache-Control": `private, max-age=${ONE_HOUR}`,
-      "Content-Type": object.ContentType || "application/octet-stream",
+      "Content-Type": contentType,
     });
     if (object.ContentLength != null) headers.set("Content-Length", String(object.ContentLength));
     if (object.ContentRange) headers.set("Content-Range", object.ContentRange);

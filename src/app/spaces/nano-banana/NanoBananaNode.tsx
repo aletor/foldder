@@ -37,6 +37,9 @@ import {
 import { StandardStudioShellHeader, type StandardStudioShellConfig } from "../StandardStudioShell";
 import { FOLDDER_STANDARD_STUDIO_CLOSE_REQUEST_EVENT, type FoldderStudioEventDetail } from "../desktop-studio-events";
 import { applyCanvasGroupCollapse, resolvePromptValueFromEdgeSourceMap } from "../canvas-group-logic";
+import { resolveMediaUrlFromEdgeSource } from "../resolve-connected-media-url";
+import { useAuthedMediaPreviewUrl } from "../hooks/use-authed-media-preview-url";
+import { normalizeGenerativeImagePrompt } from "@/lib/normalize-generative-image-prompt";
 import { nodeFrameNeedsSync, parseAspectRatioValue, resolveAspectLockedNodeFrame, resolveNodeChromeHeight } from "../studio-node-aspect";
 import { useProjectBrainCanvas } from "../project-brain-canvas-context";
 import { normalizeProjectAssets } from "../project-assets-metadata";
@@ -149,6 +152,7 @@ function selectNanoBananaFlowSnapshot(state: ReactFlowState<Node, Edge>, nodeId:
   }
 
   const nodesById = state.nodeLookup as unknown as ReadonlyMap<string, Node>;
+  const nodesList = Array.from(nodesById.values());
   result[NANO_FLOW_SNAPSHOT_BRAIN] = brainConnected ? "1" : "0";
   result[NANO_FLOW_SNAPSHOT_PROMPT_CONNECTED] = promptEdge ? "1" : "0";
   result[NANO_FLOW_SNAPSHOT_PROMPT_VALUE] = promptEdge ? resolvePromptValueFromEdgeSourceMap(promptEdge, nodesById) : "";
@@ -156,7 +160,7 @@ function selectNanoBananaFlowSnapshot(state: ReactFlowState<Node, Edge>, nodeId:
     const edge = refEdges.get(slot.id);
     const base = NANO_FLOW_SNAPSHOT_REFS_START + index * 2;
     result[base] = edge ? "1" : "0";
-    result[base + 1] = edge ? resolvePromptValueFromEdgeSourceMap(edge, nodesById) : "";
+    result[base + 1] = edge ? resolveMediaUrlFromEdgeSource(edge, nodesList, state.edges) : "";
   });
 
   return result;
@@ -479,10 +483,10 @@ interface NBChange {
   isGlobal?: boolean;         // if true: no paintData needed — applies to whole image
 }
 
-/** Output resolution for Nano Banana (Studio + nodo). Default 2k; invalid/missing → 2k */
+/** Output resolution for Nano Banana (Studio + nodo). Default 1k; invalid/missing → 1k */
 function normalizeNanoBananaResolution(r: string | undefined): '1k' | '2k' | '4k' {
   if (r === '1k' || r === '2k' || r === '4k') return r;
-  return '2k';
+  return '1k';
 }
 
 interface NanoBananaStudioProps {
@@ -1364,7 +1368,7 @@ const NanoBananaStudio = memo(({
       return;
     }
 
-    const graphPrompt = externalPromptIgnored ? '' : String(prompt ?? '');
+    const graphPrompt = externalPromptIgnored ? '' : normalizeGenerativeImagePrompt(String(prompt ?? ''));
     if (!externalPromptIgnored && !graphPrompt.trim()) {
       return alert('No hay prompt conectado.');
     }
@@ -2658,7 +2662,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   const onRun = async () => {
     if (!promptValue) return alert("Connect a prompt node!");
 
-    const userPromptRaw = String(promptValue ?? "");
+    const userPromptRaw = normalizeGenerativeImagePrompt(String(promptValue ?? ""));
     let promptToSend = userPromptRaw;
     let diagForRun: BrainImageGeneratorPromptDiagnostics | null = null;
     if (brainConnected && brainCanvasCtx?.assetsMetadata) {
@@ -2676,7 +2680,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
         diagForRun = null;
       }
     }
-    const connectedRefImages = refImages.filter(Boolean) as string[];
+    const connectedRefImages = refImages.filter((img, index) => connectedSlots[index] && img) as string[];
 
     const epoch = ++graphGenEpochRef.current;
     setStatus('running');
@@ -2764,12 +2768,19 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   useRegisterAssistantNodeRun(id, onRun);
 
   // Preview of connected ref slot 0 (the base image)
-  const refImgPreview = refImages[0] ?? null;
+  const refImgPreview = connectedSlots[0] ? (refImages[0] ?? null) : null;
 
   /** Persisted URL/base64 from node data (S3 presigned after save + hydrate). `result` is only in-memory after generate. */
   const persistedOutput =
     typeof nodeData.value === 'string' && nodeData.value.length > 0 ? nodeData.value : null;
   const outputImage = result ?? persistedOutput;
+  const outputS3Key = typeof (nodeData as { s3Key?: unknown }).s3Key === "string"
+    ? (nodeData as { s3Key: string }).s3Key
+    : undefined;
+  const { displayUrl: outputPreviewUrl, retryWithBlob: retryOutputPreview } = useAuthedMediaPreviewUrl(
+    outputImage,
+    outputS3Key,
+  );
 
   /** Barra y glow solo con avance <100%; a 100% se oculta aunque `status` tarde un tick en pasar a success. */
   const isActivelyGenerating = status === 'running' && progress < 100;
@@ -2919,9 +2930,12 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
         {outputImage && nodeMediaVisible ? (
           <>
             <img
-              src={outputImage}
+              src={outputPreviewUrl}
               alt="Generated"
-              className="max-h-full max-w-full w-auto h-auto object-contain"
+              className="nano-banana-output-preview max-h-full max-w-full w-auto h-auto object-contain"
+              onError={() => {
+                void retryOutputPreview();
+              }}
             />
             {/* Hover gradient + actions */}
             <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent
@@ -3160,7 +3174,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
             <X size={36} strokeWidth={2} />
           </div>
           <img
-            src={outputImage}
+            src={outputPreviewUrl ?? outputImage}
             className="max-h-full max-w-full w-auto h-auto rounded-none object-contain shadow-2xl"
             alt="Full size"
           />

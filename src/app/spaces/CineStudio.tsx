@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
   BookOpen,
@@ -91,6 +91,8 @@ import {
   getEffectiveCineCharacterS3Key,
   getEffectiveCineFrameAsset,
   getEffectiveCineFrameS3Key,
+  getEffectiveCineVideoAsset,
+  getEffectiveCineVideoS3Key,
   getEffectiveLocationSheetAsset,
   getEffectiveLocationSheetS3Key,
   getEffectiveSceneVisualDirection,
@@ -99,7 +101,7 @@ import {
 import type { MediaListItem } from "./media-list-output";
 import { StudioNodePortal } from "./studio-node/studio-node-architecture";
 import { geminiGenerateWithServerProgress } from "@/lib/gemini-generate-stream-client";
-import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
+import { stableKnowledgeFileUrlFromKey, tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
 import {
   CineStudioAssetCard,
   CineStudioBadge,
@@ -345,6 +347,117 @@ function isDirectGeminiReference(src?: string): src is string {
   return /^https?:\/\//i.test(src) && !resolveCineS3Key(src);
 }
 
+function resolveCineVideoPlaybackUrl(src?: string, s3Key?: string): string | undefined {
+  const key = resolveCineS3Key(src, s3Key);
+  if (key) return stableKnowledgeFileUrlFromKey(key) ?? undefined;
+  const trimmed = src?.trim();
+  return trimmed || undefined;
+}
+
+function useCineVideoPlaybackSource(src?: string, s3Key?: string) {
+  const stableUrl = useMemo(() => resolveCineVideoPlaybackUrl(src, s3Key), [s3Key, src]);
+  const [playbackUrl, setPlaybackUrl] = useState<string | undefined>(stableUrl);
+  const blobUrlRef = useRef<string | null>(null);
+  const blobAttemptRef = useRef(false);
+
+  useEffect(() => {
+    blobAttemptRef.current = false;
+    setPlaybackUrl(stableUrl);
+    if (blobUrlRef.current) {
+      URL.revokeObjectURL(blobUrlRef.current);
+      blobUrlRef.current = null;
+    }
+  }, [stableUrl]);
+
+  useEffect(
+    () => () => {
+      if (blobUrlRef.current) {
+        URL.revokeObjectURL(blobUrlRef.current);
+        blobUrlRef.current = null;
+      }
+    },
+    [],
+  );
+
+  const retryWithBlob = useCallback(async () => {
+    if (!stableUrl || blobAttemptRef.current) return;
+    blobAttemptRef.current = true;
+    try {
+      const response = await fetch(stableUrl, { credentials: "include" });
+      if (!response.ok) return;
+      const blob = await response.blob();
+      if (!blob.size) return;
+      const objectUrl = URL.createObjectURL(blob);
+      if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
+      blobUrlRef.current = objectUrl;
+      setPlaybackUrl(objectUrl);
+    } catch {
+      // Keep streaming URL if blob fallback fails.
+    }
+  }, [stableUrl]);
+
+  return { playbackUrl, stableUrl, retryWithBlob };
+}
+
+function cineScenePosterFrame(scene: CineScene): CineFrame | undefined {
+  if (scene.framesMode === "start_end") return scene.frames.start ?? scene.frames.end ?? scene.frames.single;
+  return scene.frames.single ?? scene.frames.start ?? scene.frames.end;
+}
+
+function CineVideoPreview({
+  src,
+  s3Key,
+  posterScene,
+}: {
+  src?: string;
+  s3Key?: string;
+  posterScene: CineScene;
+}) {
+  const { playbackUrl, retryWithBlob } = useCineVideoPlaybackSource(src, s3Key);
+  const posterFrame = cineScenePosterFrame(posterScene);
+  const { url: posterUrl } = useCineResolvedImageUrl(
+    getEffectiveCineFrameAsset(posterFrame),
+    getEffectiveCineFrameS3Key(posterFrame),
+  );
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !playbackUrl) return;
+    video.load();
+  }, [playbackUrl]);
+
+  if (!playbackUrl) return <CineStoryboardHero scene={posterScene} />;
+
+  return (
+    <div className="cine-video-preview absolute inset-0 z-[1] flex items-center justify-center bg-black" data-cine-video-preview>
+      <video
+        ref={videoRef}
+        src={playbackUrl}
+        poster={posterUrl}
+        className="cine-video-preview__media block h-full w-full object-contain"
+        controls
+        playsInline
+        preload="auto"
+        onLoadedMetadata={(event) => {
+          const video = event.currentTarget;
+          if (video.videoWidth === 0) void retryWithBlob();
+          else if (video.currentTime === 0) {
+            try {
+              video.currentTime = 0.001;
+            } catch {
+              // Some browsers reject tiny seeks before enough data is buffered.
+            }
+          }
+        }}
+        onError={() => {
+          void retryWithBlob();
+        }}
+      />
+    </div>
+  );
+}
+
 function useCineResolvedImageUrl(src?: string, s3Key?: string): { url?: string; refresh: () => void } {
   const [resolved, setResolved] = useState<{ cacheKey: string; url: string } | null>(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
@@ -531,44 +644,51 @@ function cineVideoProviderLabel(provider?: CineVideoPlan["videoProvider"]): stri
   return provider === "seedance" ? "Seedance (legacy)" : "Gemini Veo";
 }
 
-function CineVideoPreview({
-  src,
-  s3Key,
-  posterScene,
-}: {
-  src?: string;
-  s3Key?: string;
-  posterScene: CineScene;
-}) {
-  const { url, refresh } = useCineResolvedImageUrl(src, s3Key);
-  const retryKey = `${src || ""}\u0001${s3Key || ""}`;
-  const [retriedFor, setRetriedFor] = useState<string | null>(null);
-  if (!url) return <CineStoryboardHero scene={posterScene} />;
+function CineMediaListVideoThumb({ src, s3Key }: { src?: string; s3Key?: string }) {
+  const { playbackUrl, retryWithBlob } = useCineVideoPlaybackSource(src, s3Key);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !playbackUrl) return;
+    video.load();
+  }, [playbackUrl]);
+
+  if (!playbackUrl) {
+    return (
+      <div className="flex h-full w-full items-center justify-center bg-white/[0.06] text-white/24">
+        <Layers size={18} />
+      </div>
+    );
+  }
+
   return (
     <video
-      src={url}
-      className="h-full w-full object-cover"
+      ref={videoRef}
+      src={playbackUrl}
       controls
-      muted
       playsInline
+      preload="metadata"
+      className="h-full w-full object-cover"
+      onLoadedMetadata={(event) => {
+        if (event.currentTarget.videoWidth === 0) void retryWithBlob();
+      }}
       onError={() => {
-        if (retriedFor === retryKey) return;
-        setRetriedFor(retryKey);
-        refresh();
+        void retryWithBlob();
       }}
     />
   );
 }
 
 function CineMediaListPreviewThumb({ item }: { item: MediaListItem }) {
-  const { url } = useCineResolvedImageUrl(item.url || item.assetId, item.s3Key);
-  if (item.mediaType === "video" && url) {
-    return <video src={url} muted playsInline preload="metadata" className="h-full w-full object-cover" />;
+  const { url: imageUrl } = useCineResolvedImageUrl(item.url || item.assetId, item.s3Key);
+  if (item.mediaType === "video") {
+    return <CineMediaListVideoThumb src={item.url || item.assetId} s3Key={item.s3Key} />;
   }
-  if (item.mediaType === "image" && url) {
+  if (item.mediaType === "image" && imageUrl) {
     // Media list previews are already generated assets; raw img keeps S3 URLs simple and cover-cropped.
     // eslint-disable-next-line @next/next/no-img-element
-    return <img src={url} alt={item.title} className="h-full w-full object-cover" />;
+    return <img src={imageUrl} alt={item.title} className="h-full w-full object-cover" />;
   }
   return (
     <div className="flex h-full w-full items-center justify-center bg-white/[0.06] text-white/24">
@@ -787,7 +907,37 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
   const [showStoryboardDetails, setShowStoryboardDetails] = useState(false);
   const [videoPrepareSummary, setVideoPrepareSummary] = useState<string>("");
   const [generationMessage, setGenerationMessage] = useState("");
+  const staleVideoRecoveryRef = useRef("");
   const safeData = data || createEmptyCineNodeData();
+
+  useEffect(() => {
+    if (generatingTarget) return;
+    const staleSceneIds = safeData.scenes
+      .filter((scene) => scene.video?.status === "generating")
+      .map((scene) => scene.id)
+      .sort();
+    if (!staleSceneIds.length) return;
+    const signature = staleSceneIds.join(",");
+    if (staleVideoRecoveryRef.current === signature) return;
+    staleVideoRecoveryRef.current = signature;
+    const next = {
+      ...safeData,
+      scenes: safeData.scenes.map((scene) =>
+        scene.video?.status === "generating"
+          ? {
+              ...scene,
+              video: {
+                ...scene.video,
+                status: "prepared" as const,
+                errorMessage: "La generación se interrumpió (recarga, cierre de pestaña o timeout del servidor). Vuelve a pulsar Generar vídeo.",
+              },
+            }
+          : scene,
+      ),
+    };
+    onChange(updated({ ...next, status: nextStatus(next) }));
+    setVideoPrepareSummary("Generación de vídeo interrumpida — puedes reintentar.");
+  }, [generatingTarget, onChange, safeData]);
   const mutations = useCineMutations(safeData, onChange, nodeId, brainConnected);
   const script = safeData.manualScript || safeData.sourceScript?.text || sourceScriptText || "";
   const framesPrepared = safeData.scenes.reduce((count, scene) => count + [scene.frames.single, scene.frames.start, scene.frames.end].filter(Boolean).length, 0);
@@ -2153,14 +2303,17 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
               <div className="grid gap-0 md:grid-cols-2 2xl:grid-cols-3 md:divide-x md:divide-white/10">
                 {safeData.scenes.map((scene) => {
 	                  const plan = scene.video ?? prepareSceneForVideo(safeData, scene.id, nodeId);
+	                  const videoSrc = getEffectiveCineVideoAsset(plan);
+	                  const videoKey = getEffectiveCineVideoS3Key(plan);
 	                  const missing = cineMissingFramesLabel(plan.missingFrames);
-	                  const isVideoGenerating = generatingTarget === `video:${scene.id}` || plan.status === "generating";
-	                  const hasGeneratedVideo = Boolean(plan.videoAssetId || plan.videoUrl);
+	                  const isVideoGenerating = generatingTarget === `video:${scene.id}`;
+	                  const isVideoStaleGenerating = !isVideoGenerating && plan.status === "generating";
+	                  const hasGeneratedVideo = Boolean(videoSrc);
 	                  return (
 	                    <CineStudioAssetCard key={scene.id} className={cx(plan.status === "generated" ? "border-[var(--foldder-studio-accent,#de323f)]/45" : plan.status === "prepared" ? "border-emerald-400/35" : plan.status === "missing_frames" ? "border-amber-400/35" : plan.status === "error" ? "border-rose-400/35" : undefined)}>
 	                      <div className="relative aspect-[16/9] min-h-[220px] overflow-hidden bg-slate-950">
-	                        {hasGeneratedVideo ? <CineVideoPreview src={plan.videoAssetId || plan.videoUrl} s3Key={plan.videoS3Key} posterScene={scene} /> : <CineStoryboardHero scene={scene} />}
-	                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/88 via-black/42 to-transparent p-4 pt-14">
+	                        {hasGeneratedVideo ? <CineVideoPreview src={videoSrc} s3Key={videoKey} posterScene={scene} /> : <CineStoryboardHero scene={scene} />}
+	                        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[2] bg-gradient-to-t from-black/88 via-black/42 to-transparent p-4 pt-14">
 	                          <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-cyan-100/70">Escena {String(scene.order).padStart(2, "0")} · {plan.durationSeconds}s · {cineVideoModeLabel(plan.mode)}</div>
 	                          <h3 className="mt-1 truncate text-lg font-semibold tracking-[-0.03em] text-white">{scene.title}</h3>
                           <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-white/58">
@@ -2171,7 +2324,7 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
                       </div>
                       <div className="p-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">
-	                          <CineStudioBadge tone={plan.status === "generated" || plan.status === "generating" ? "accent" : plan.status === "prepared" ? "success" : plan.status === "missing_frames" ? "warn" : plan.status === "error" ? "error" : "neutral"}>{isVideoGenerating ? "Generando vídeo" : cineVideoStatusLabel(plan.status)}</CineStudioBadge>
+	                          <CineStudioBadge tone={plan.status === "generated" || isVideoGenerating ? "accent" : isVideoStaleGenerating ? "warn" : plan.status === "prepared" ? "success" : plan.status === "missing_frames" ? "warn" : plan.status === "error" ? "error" : "neutral"}>{isVideoGenerating ? "Generando vídeo" : isVideoStaleGenerating ? "Generación interrumpida" : cineVideoStatusLabel(plan.status)}</CineStudioBadge>
 		                          <CineStudioBadge tone="neutral">
 		                            {plan.mode === "start_end_frames" ? "2 frames a Veo" : "1 frame a Veo"}
 		                          </CineStudioBadge>
@@ -2200,7 +2353,7 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
 	                              ["Frames", [plan.singleFrameAssetId, plan.startFrameAssetId, plan.endFrameAssetId].filter(Boolean).join(", ") || "-"],
 	                              ["Referencias", (plan.referenceAssetIds ?? []).join(", ") || "-"],
 	                              ["Proveedor", plan.videoProvider ? cineVideoProviderLabel(plan.videoProvider) : cineVideoProviderLabel("gemini")],
-	                              ["Vídeo", plan.videoAssetId || plan.videoUrl || "-"],
+	                              ["Vídeo", videoSrc || "-"],
 	                            ],
 	                          })}>Ver plan</PillButton>
                         </div>

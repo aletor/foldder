@@ -7,21 +7,60 @@
  */
 
 import { uploadBufferToS3Key, uploadToS3, getPresignedUrl } from "@/lib/s3-utils";
+import { stableKnowledgeFileUrlFromKey } from "@/lib/s3-media-hydrate";
 import { parseGeminiUsageMetadata, recordApiUsage } from "@/lib/api-usage";
 import { estimateGeminiImageGenerationUsd } from "@/lib/pricing-config";
 import { parseReferenceImageForGemini } from "@/lib/parse-reference-image";
 import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
 import {
   canUserAccessKnowledgeFileKey,
-  stableKnowledgeFileUrlFromKey,
 } from "@/lib/spaces-access-control";
 import crypto from "crypto";
+import { normalizeGenerativeImagePrompt } from "@/lib/normalize-generative-image-prompt";
 
 export const GEMINI_IMAGE_MODELS = {
   flash31: "gemini-3.1-flash-image-preview",
   pro3: "gemini-3-pro-image-preview",
   flash25: "gemini-2.5-flash-image",
 } as const;
+
+const GEMINI3_NATIVE_HIRES_MODELS = new Set<string>([
+  GEMINI_IMAGE_MODELS.flash31,
+  GEMINI_IMAGE_MODELS.pro3,
+]);
+
+/**
+ * Gemini 3 image models often return hazy low-detail frames at native 2K/4K
+ * (especially with short prompts). Request 1K from the API and upscale locally.
+ */
+export function resolveGeminiApiImageSize(
+  modelId: string,
+  resolutionInput?: string,
+): { apiImageSize: string; upscaleFactor: number; requestedResolution: string } {
+  const resInput = (resolutionInput && String(resolutionInput).trim()
+    ? String(resolutionInput).toLowerCase()
+    : "2k");
+
+  let apiImageSize = "1K";
+  if (resInput === "0.5k" || resInput === "512") apiImageSize = "512";
+  else if (resInput === "1k") apiImageSize = "1K";
+  else if (resInput === "2k") apiImageSize = "2K";
+  else if (resInput === "4k") apiImageSize = "4K";
+  else apiImageSize = resInput.toUpperCase();
+
+  if (!GEMINI3_NATIVE_HIRES_MODELS.has(modelId)) {
+    return { apiImageSize, upscaleFactor: 1, requestedResolution: resInput };
+  }
+
+  if (resInput === "2k") {
+    return { apiImageSize: "1K", upscaleFactor: 2, requestedResolution: resInput };
+  }
+  if (resInput === "4k") {
+    return { apiImageSize: "1K", upscaleFactor: 4, requestedResolution: resInput };
+  }
+
+  return { apiImageSize, upscaleFactor: 1, requestedResolution: resInput };
+}
 
 /** Solo el tablero Nano Banana de Referencias visuales (Brain): mensajes ES y detección explícita de copyright. */
 export type GeminiImageClientContext = "brain_visual_dna_collage";
@@ -166,6 +205,41 @@ function isGeminiDeadlineError(status: number, detail: string): boolean {
   return status === 503 && /deadline|timeout|timed?\s*out|expired/i.test(detail);
 }
 
+type GeminiResponsePart = {
+  text?: string;
+  thought?: boolean;
+  inline_data?: { mime_type?: string; data?: string };
+  inlineData?: { mimeType?: string; data?: string };
+};
+
+type GeminiImageCandidate = { buf: Buffer; index: number; thought: boolean };
+
+function collectGeminiImageCandidates(parts: GeminiResponsePart[]): GeminiImageCandidate[] {
+  const candidates: GeminiImageCandidate[] = [];
+  for (let index = 0; index < parts.length; index++) {
+    const part = parts[index];
+    const inlineData = part.inline_data || part.inlineData;
+    if (!inlineData?.data) continue;
+    const buf = Buffer.from(String(inlineData.data), "base64");
+    if (!buf.length) continue;
+    candidates.push({ buf, index, thought: part.thought === true });
+  }
+  return candidates;
+}
+
+/**
+ * Gemini 3 image models run an internal "thinking" pass and may return interim
+ * preview frames (`thought: true`, or unmarked but before the final frame).
+ * The final render is the last non-thought inline image — not the largest.
+ */
+export function extractGeminiGeneratedImageBuffer(parts: GeminiResponsePart[]): Buffer | null {
+  const candidates = collectGeminiImageCandidates(parts);
+  if (!candidates.length) return null;
+  const finals = candidates.filter((candidate) => !candidate.thought);
+  if (finals.length) return finals[finals.length - 1]!.buf;
+  return candidates[candidates.length - 1]!.buf;
+}
+
 function geminiApiErrorMessage(status: number, detail: string): string {
   if (status === 429) {
     return "Google API Quota Reached (429). No automatic retry was made.";
@@ -205,7 +279,8 @@ export async function geminiImageGenerate(
 
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   if (!apiKey) throw new GeminiGenerateError("API Key not configured", 500);
-  if (!prompt) throw new GeminiGenerateError("Prompt is required", 400);
+  const normalizedPrompt = normalizeGenerativeImagePrompt(String(prompt || "").trim());
+  if (!normalizedPrompt) throw new GeminiGenerateError("Prompt is required", 400);
 
   const modelId =
     GEMINI_IMAGE_MODELS[modelKey as keyof typeof GEMINI_IMAGE_MODELS] || GEMINI_IMAGE_MODELS.flash31;
@@ -253,22 +328,25 @@ export async function geminiImageGenerate(
     );
   }
 
-  parts.push({ text: prompt });
+  parts.push({ text: normalizedPrompt });
   report(18, "payload");
 
-  // Debe coincidir con normalizeNanoBananaResolution en el cliente (por defecto 2k si el nodo no trae dato).
-  let imageSize = "1K";
-  const resInput = (resolution && String(resolution).trim()
-    ? String(resolution).toLowerCase()
-    : "2k");
-  if (resInput === "0.5k" || resInput === "512") imageSize = "512";
-  else imageSize = resInput.toUpperCase();
+  // Debe coincidir con normalizeNanoBananaResolution en el cliente (por defecto 1k si el nodo no trae dato).
+  const { apiImageSize, upscaleFactor, requestedResolution } = resolveGeminiApiImageSize(
+    modelId,
+    resolution,
+  );
+  if (upscaleFactor > 1) {
+    console.info(
+      `[gemini-image] ${modelId} requested ${requestedResolution.toUpperCase()} → API 1K + ${upscaleFactor}x upscale`,
+    );
+  }
 
   const generationConfig: Record<string, unknown> = {
-    responseModalities: ["IMAGE"],
+    responseModalities: ["TEXT", "IMAGE"],
     imageConfig: {
       aspectRatio: normalizeGeminiImageAspectRatio(aspect_ratio),
-      ...(modelId !== GEMINI_IMAGE_MODELS.flash25 && { imageSize }),
+      ...(modelId !== GEMINI_IMAGE_MODELS.flash25 && { imageSize: apiImageSize }),
     },
   };
 
@@ -333,14 +411,14 @@ export async function geminiImageGenerate(
     typeof data.promptFeedback?.blockReason === "string" ? data.promptFeedback.blockReason : undefined;
   const finishReason = candidate?.finishReason || promptBlockReason || "UNKNOWN";
 
-  let imageBuffer: Buffer | null = null;
-  for (const part of candidate?.content?.parts || []) {
-    const inlineData = part.inline_data || part.inlineData;
-    if (inlineData?.data) {
-      imageBuffer = Buffer.from(inlineData.data, "base64");
-      break;
-    }
+  const responseParts = candidate?.content?.parts || [];
+  const imageCandidates = collectGeminiImageCandidates(responseParts);
+  if (imageCandidates.length > 1) {
+    console.info(
+      `[gemini-image] ${imageCandidates.length} inline image part(s); using last non-thought frame`,
+    );
   }
+  let imageBuffer = extractGeminiGeneratedImageBuffer(responseParts);
 
   if (!imageBuffer) {
     const textResponse = (candidate?.content?.parts || []).find((p: { text?: string }) => p.text)?.text || "";
@@ -369,13 +447,44 @@ export async function geminiImageGenerate(
     throw new GeminiGenerateError(userMessage, status, detail || undefined);
   }
 
+  if (imageBuffer.length < 2048) {
+    throw new GeminiGenerateError(
+      "Generated image appears corrupt or empty. Try a shorter, more descriptive prompt.",
+      500,
+    );
+  }
+
+  try {
+    const { default: sharp } = await import("sharp");
+    const meta = await sharp(imageBuffer).metadata();
+    if (!meta.width || !meta.height || meta.width < 32 || meta.height < 32) {
+      throw new GeminiGenerateError(
+        "Generated image has invalid dimensions. Try a different prompt or model.",
+        500,
+      );
+    }
+    let pipeline = sharp(imageBuffer);
+    if (upscaleFactor > 1) {
+      pipeline = pipeline.resize(meta.width * upscaleFactor, meta.height * upscaleFactor, {
+        kernel: sharp.kernel.lanczos3,
+      });
+    }
+    imageBuffer = await pipeline.png().toBuffer();
+  } catch (error) {
+    if (error instanceof GeminiGenerateError) throw error;
+    throw new GeminiGenerateError(
+      "Generated image could not be decoded. Try again or use another model.",
+      500,
+    );
+  }
+
   report(90, "s3");
   const filename = `gemini_${modelKey}_${crypto.randomUUID()}.png`;
   const userScopedKey = userScopedGeneratedImageKey(filename, usageUserEmail);
   const key = userScopedKey
     ? await uploadBufferToS3Key(userScopedKey, imageBuffer, "image/png")
     : await uploadToS3(filename, imageBuffer, "image/png");
-  const url = userScopedKey ? stableKnowledgeFileUrlFromKey(key) : await getPresignedUrl(key);
+  const output = stableKnowledgeFileUrlFromKey(key) ?? (await getPresignedUrl(key));
 
   const usage = parseGeminiUsageMetadata(data);
   if (usage) {
@@ -399,14 +508,14 @@ export async function geminiImageGenerate(
       inputTokens: 0,
       outputTokens: 0,
       totalTokens: 0,
-      costUsd: estimateGeminiImageGenerationUsd(String(modelKey), resInput),
-      note: `Imagen sin usageMetadata en respuesta (coste estimado por generación, resolución ${resInput})`,
+      costUsd: estimateGeminiImageGenerationUsd(String(modelKey), requestedResolution),
+      note: `Imagen sin usageMetadata en respuesta (coste estimado por generación, resolución ${requestedResolution})`,
     });
   }
 
   report(100, "done");
   return {
-    output: url,
+    output,
     key,
     model: modelId,
     time: Date.now() - startTime,

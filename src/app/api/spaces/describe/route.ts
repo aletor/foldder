@@ -30,6 +30,18 @@ type OpenAiDescribeContentPart =
   | { type: "text"; text: string }
   | { type: "image_url"; image_url: { url: string; detail: "auto" | "high" | "low" } };
 
+const MEDIA_DESCRIBER_VISION_PROMPT = `Analyze this media frame and write one dense paragraph suitable as a generative-AI prompt to recreate the scene. Output ONLY the description — no bullets, labels, or preamble.
+
+Include rich, technical detail on:
+
+Camera & lens: camera height vs subject (ground-level, eye-level, high angle, bird's-eye, worm's-eye), horizontal angle (frontal, three-quarter, profile, over-shoulder), shot size (ECU/CU/MCU/MS/WS), approximate focal-length feel (e.g. wide ~24mm, normal ~50mm, telephoto ~85mm+), depth of field and focus plane, perspective distortion, dutch tilt if any, implied camera motion or stability.
+
+Color correction & grade: color temperature (warm/cool/neutral; estimate Kelvin if inferable), white-balance bias, exposure (high-key/low-key/natural), contrast curve, saturation level, shadow tint, highlight tint, midtone character, split-toning, black point and highlight rolloff, overall LUT/look (e.g. teal-orange blockbuster, bleach bypass, muted documentary, clean commercial, vintage fade, cross-process).
+
+Also cover subjects, environment, composition, lighting direction and quality, textures, mood, and atmosphere. Be specific and visual; avoid vague praise.
+
+Write in present tense as a pure scene description. Do NOT start with Create, Generate, Make, or other imperatives — downstream image models expect descriptive prompts, not instructions.`;
+
 export async function POST(req: Request) {
   let walletCharge: ApiWalletCharge | null = null;
   let releaseWalletOnError = true;
@@ -59,13 +71,13 @@ export async function POST(req: Request) {
     let contentPayload: OpenAiDescribeContentPart[] = [];
 
     if (type === 'image' || type === 'video') {
-      prompt = "Describe this media asset in great detail. Focus on the visual elements, composition, mood, and any specific subjects. Provide a precise, descriptive prompt that could be used to recreate or enhance this scene. Be concise but highly descriptive. Output only the description.";
-      
+      prompt = MEDIA_DESCRIBER_VISION_PROMPT;
+
       contentPayload = [
         { type: "text", text: prompt },
         {
           type: "image_url",
-          image_url: { url: mediaUrlForModel, detail: "auto" }
+          image_url: { url: mediaUrlForModel, detail: "high" }
         }
       ];
     } else if (type === 'pdf' || type === 'txt') {
@@ -95,7 +107,7 @@ export async function POST(req: Request) {
     const completion = await openai.chat.completions.create({
       model: "gpt-4o", // Using GPT-4o for its vision capabilities
       messages: [{ role: "user", content: contentPayload }],
-      max_tokens: 500,
+      max_tokens: 900,
     });
 
     const description = completion.choices[0].message.content || "No description available.";

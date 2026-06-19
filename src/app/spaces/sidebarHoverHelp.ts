@@ -82,7 +82,7 @@ export const SIDEBAR_HOVER_HELP: Record<string, { title: string; line: string }>
   },
   mediaDescriber: {
     title: 'Image Describer',
-    line: 'Describe imagen como prompt',
+    line: 'Prompt con cámara, lente y color grade',
   },
   imageExport: {
     title: 'Image Export',

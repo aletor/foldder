@@ -3333,7 +3333,7 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
 
       <div className="node-content foldder-frameless-main describer-node-content">
         {!visibleDescription ? (
-          <p className="describer-node-hint shrink-0">Analyze any media and generate a detailed prompt description.</p>
+          <p className="describer-node-hint shrink-0">Analyze media and generate a detailed prompt with camera angle, lens, and color grading.</p>
         ) : null}
 
         {errorMessage ? (
