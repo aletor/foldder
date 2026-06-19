@@ -8,7 +8,7 @@ vi.mock("@/lib/s3-utils", () => ({
   getFromS3: vi.fn(async () => Buffer.from("mock")),
 }));
 
-import { describeVisionResponseFailure, isVisionRefusalText, prepareOpenAiVisionImageUrl } from "./vision-media-prepare";
+import { isVisionRefusalText, prepareOpenAiVisionImageUrl } from "./vision-media-prepare";
 
 const TINY_PNG =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAEklEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
@@ -34,34 +34,23 @@ describe("isVisionRefusalText", () => {
 
   it("detects explicit vision refusal", () => {
     expect(isVisionRefusalText("I'm sorry, I can't help with that image.")).toBe(true);
-  });
-
-  it("does not treat feet-NOT-in-frame language as refusal", () => {
-    const structured =
-      "SUBJECT & POSE: Woman standing.\nCOMPOSITION & FRAMING: feet NOT in frame — bottom edge cuts at ankles.";
-    expect(isVisionRefusalText(structured)).toBe(false);
-  });
-
-  it("accepts substantive descriptions without section headers", () => {
-    const prose =
-      "A young woman with long black hair stands in a concrete skatepark bowl wearing a pink t-shirt and tan shorts, holding a skateboard vertically. The camera is low looking up with curved bowl lines and warm daylight.";
-    expect(isVisionRefusalText(prose)).toBe(false);
-  });
-});
-
-describe("describeVisionResponseFailure", () => {
-  it("returns content-filter message", () => {
     expect(
-      describeVisionResponseFailure({ content: "", finishReason: "content_filter" }),
-    ).toMatch(/content filter/i);
+      isVisionRefusalText(
+        "I'm unable to provide a detailed analysis of the image, but I can help with general descriptions or questions about similar topics. Let me know how else I can assist!",
+      ),
+    ).toBe(true);
   });
 
-  it("returns refusal text when provided", () => {
+  it("does not treat crop notes as refusal", () => {
     expect(
-      describeVisionResponseFailure({
-        content: "",
-        refusal: "I can't assist with that.",
-      }),
-    ).toMatch(/declined to describe/i);
+      isVisionRefusalText(
+        "The feet are not visible in frame. Unable to see shoes in this crop.",
+      ),
+    ).toBe(false);
+    expect(
+      isVisionRefusalText(
+        "SUBJECT & POSE: Skater mid-trick.\nBOTTOM EDGE: feet NOT in frame — unable to see shoes.",
+      ),
+    ).toBe(false);
   });
 });

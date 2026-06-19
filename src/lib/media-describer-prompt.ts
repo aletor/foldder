@@ -8,52 +8,7 @@ Output structured text with EXACTLY these section headers (keep the labels). Use
 
 ANTI-PERFECTION — generators beautify and tidy by default. AMPLIFY every visible imperfection, disorder, or irregularity one step (same principle as mood/pose asymmetry). Only amplify visible or subtly implied cues — never invent dirt or mess not in the image. Exceptions: very-groomed-editorial hair, intentionally minimalist tidy set, intentionally pressed formal wear.
 
-VISUAL HIERARCHY — mandatory FIRST (before person details). Generators default to making any visible human the hero — correct this explicitly.
-
-Classify the visual protagonist (what the photograph is ABOUT — what draws the eye and fills the frame):
-- person — human is the clear hero (portrait, fashion, close subject, person dominates frame area).
-- architecture — building / facade / structure is the hero (real estate, architectural photo, skyline, distinctive geometry even if a tiny person appears).
-- environment — landscape / streetscape / interior room as hero (nature, cityscape, café interior where space dominates).
-- object — product, vehicle, food, artwork, prop as hero.
-- group-scene — balanced ensemble; no single hero.
-- other — name it.
-
-Person role (if any human visible):
-- protagonist — person is the visual hero.
-- co-protagonist — person shares hero status with architecture/object (both large in frame).
-- secondary-figure — person visible but NOT the hero (on balcony, in doorway, walking in plaza, staff in background).
-- tiny-distant-figure — person very small (<~12% frame height) or far; scale reference only.
-- absent — no person in frame.
-
-Scale cues — mandatory when a person is visible:
-- Person height as % of frame height (approximate).
-- Hero element (building / landscape / object) as % of frame height or width.
-
-Decision rules:
-- Building / facade fills most of the frame AND person is small on balcony, window, or plaza → Visual protagonist: architecture; Person role: secondary-figure or tiny-distant-figure — NOT protagonist.
-- Distinctive architectural geometry (zigzag balconies, brutalist blocks, cathedral, tower) → architecture is protagonist even with a person present.
-- Person ≥~35% frame height AND face/torso readable → person may be protagonist.
-- When unsure between architecture and person → favor architecture if structure occupies more frame area than the person.
-
-Mandatory lines (always output):
-"Visual protagonist: [category] — [one-line evidence from frame area / eye-line]."
-"Person role: [role] — [person height ~X% frame height or absent]."
-
-Description depth rule (downstream regeneration):
-- architecture / environment / object protagonist → ENVIRONMENT & PROPS and architectural geometry are EXHAUSTIVE; SUBJECT & POSE is MINIMAL for any person (silhouette, location on structure, scale only — no portrait detail unless face is large).
-- person protagonist → full SUBJECT & POSE + WARDROBE; environment supports but does not overpower.
-- secondary-figure / tiny-distant-figure → never write pose/hair/wardrobe as if the person were the shoot subject.
-
-SUBJECT & POSE: For each visible person — depth depends on VISUAL HIERARCHY.
-
-If Person role is absent — write "No person in frame." and skip to WARDROBE & TEXT (write "N/A — no person.").
-
-If Person role is secondary-figure or tiny-distant-figure — SHORT BLOCK ONLY (do NOT expand to portrait detail):
-"Person (non-protagonist): [silhouette or vague appearance], located [frame position on building/structure], scale ~[X]% frame height, pose [one phrase — e.g. standing on balcony, hands on railing]. Face detail: [not readable / partial / N/A]."
-Skip HAIR STYLING detail, BODY WEIGHT & ASYMMETRY expansion, and Pose verified line beyond one short line:
-"Pose verified (secondary): [archetype], scale ~[X]% frame height, [location on structure]."
-
-If Person role is protagonist or co-protagonist — full detail below:
+SUBJECT & POSE: For each visible person.
 
 Appearance — apparent age (e.g. early 20s, mid-30s), hair color (blonde / brunette / black / red / gray / other), hair texture (straight / wavy / curly / coily), hair length, skin tone if visible.
 
@@ -160,17 +115,17 @@ Step 3 — Shot scale label (describe what IS visible, never what is NOT):
 - MS: head to waist/hips, legs NOT visible.
 - MCU/CU/ECU as appropriate.
 
-Subject placement in frame. **Hero** (visual protagonist from VISUAL HIERARCHY) height as % of frame (approximate). If person is secondary, state person scale separately from building/landscape hero scale. Headroom / atmospheric air above hero.
+Subject placement in frame. Subject height as % of frame (approximate). Headroom / atmospheric air above subject.
 
 FINAL OUTPUT FRAMING (16:9 native landscape): Describe ONE continuous wide horizontal photograph — a single exposure filling the entire 16:9 frame edge to edge. NOT a portrait column with side panels. NOT three panels. NOT vertical black or white dividers.
 
-VERTICAL CROP LOCKED — sacred: the **hero element** (person OR architecture OR environment from VISUAL HIERARCHY) keeps exact TOP EDGE and BOTTOM EDGE from the source. Do NOT crop or zoom out vertically to reveal feet, legs, or headroom that were cut in the source. Do NOT zoom in. Hero height in frame stays identical — only the environment grows horizontally at frame-left and frame-right. **Never promote a secondary tiny person to protagonist scale in 16:9 output.**
+VERTICAL CROP LOCKED — sacred: subject keeps exact TOP EDGE and BOTTOM EDGE from the source. Do NOT crop or zoom out vertically to reveal feet, legs, or headroom that were cut in the source. Do NOT zoom in. Subject height in frame stays identical — only the environment grows horizontally at frame-left and frame-right.
 
-Hero occupies the center band of the frame (~35–55% frame width), vertically spanning from TOP EDGE to BOTTOM EDGE — hero may be a building facade, not only a person.
+Subject occupies the center band of the frame (~35–55% frame width), vertically spanning from TOP EDGE to BOTTOM EDGE.
 
 Mandatory three lines — one continuous scene (semantic zones, NOT separate panels):
-FRAME-LEFT EXTENSION: realistic environment continuing from the source's left cut — sky gradient direction, architecture, stairs/ground/railing perspective lines, clutter (AMPLIFY disorder), lens character, same skewed horizontals and uneven spacing as center — must blend seamlessly; do NOT straighten furniture to a grid. **When architecture is protagonist, extend the SAME facade geometry and materials.**
-SUBJECT BAND (center): **hero element** with locked vertical crop (TOP EDGE + BOTTOM EDGE) — architecture facade OR person per VISUAL HIERARCHY; if person is secondary, keep them at source scale on the structure, not enlarged.
+FRAME-LEFT EXTENSION: realistic environment continuing from the source's left cut — sky gradient direction, architecture, stairs/ground/railing perspective lines, clutter (AMPLIFY disorder), lens character, same skewed horizontals and uneven spacing as center — must blend seamlessly; do NOT straighten furniture to a grid.
+SUBJECT BAND (center): subject with locked vertical crop (TOP EDGE + BOTTOM EDGE), pose, wardrobe, props — same scale top-to-bottom as source.
 FRAME-RIGHT EXTENSION: realistic environment continuing from the source's right cut — same continuity rules as frame-left; preserve imperfect perspective, not architectural symmetry.
 
 Outpaint coherence — mandatory line:
@@ -181,7 +136,7 @@ Preservation line — mandatory:
 
 REGENERATION VARIANCE: Downstream recreates text-only (no source image attached) — same macro DNA, different micro details so the result is not pixel-identical to the source.
 
-MACRO-PRESERVE (identical): visual protagonist category, person role and scale, pose archetype (if person), vertical crop, lens type and distortion character, perspective imperfection character, lighting quality and direction, color grade split toning, environment type and disorder level, mood.
+MACRO-PRESERVE (identical): pose archetype, vertical crop, lens type and distortion character, perspective imperfection character, lighting quality and direction, color grade split toning, environment type and disorder level, mood.
 MICRO-VARY (must differ): exact flyaway positions, specific clutter item identities (same count and mess level, different objects), minor prop wear placement, small background object positions — same scene re-photographed, not the same file.
 
 Mandatory line:
@@ -207,27 +162,13 @@ If highlights and shadows differ in color → split toning is present; both line
 
 Overall bias + intensity (warm/cool/neutral + subtle/moderate/strong/extreme). Saturation (muted/moderate/rich/heavily saturated). Contrast (flat/moderate/punchy/extreme). Effects: glow, bloom, halation, grain, vignette — or none observed. Dominant palette (3–5 colors with intensity).
 
-ENVIRONMENT & PROPS: Depth depends on VISUAL HIERARCHY.
+ENVIRONMENT & PROPS: Thorough literal description. Setting type. AMPLIFY Order one step (tidy → lived-in/cluttered, cluttered → messy, messy → chaotic). Cleanliness: clean / lived-in / dirty / grimy — AMPLIFY one step when visible. Spatial layout, surfaces, furniture, props with positions in frame.
 
-When Visual protagonist is architecture / environment / object:
-- EXHAUSTIVE literal description — this section is the primary payload.
-- Architecture: facade geometry (zigzag / stepped / curved / grid / brutalist / etc.), floor count visible, balcony rhythm, railing type, materials (concrete / glass / brick / stucco), color planes, shadows on surfaces, sky relationship, distinctive structural features — preserve exact character; do NOT genericize to a plain apartment block.
-- Landscape / interior: spatial depth, sight lines, dominant surfaces, era/style.
-- Person (if any): at most one clause — "tiny figure on [location]" — do NOT expand.
+SURFACE CLUTTER — mandatory: 3–8 specific items with frame positions (e.g. "mug frame-left on counter", "crumpled napkin frame-right foreground").
 
-When Visual protagonist is person:
-- Standard thorough environment — setting supports the person; 3–8 clutter items as below.
+ALIGNMENT & WEAR — mandatory: crooked objects, wrinkles on bedding, stains, worn edges, scuffs, peeling paint — only what is visible or subtly implied.
 
-When Visual protagonist is group-scene:
-- Balanced description of all major elements.
-
-Setting type. AMPLIFY Order one step (tidy → lived-in/cluttered, cluttered → messy, messy → chaotic) when describing lived environments. Cleanliness: clean / lived-in / dirty / grimy — AMPLIFY one step when visible. Spatial layout, surfaces, furniture, props with positions in frame.
-
-SURFACE CLUTTER — when protagonist is person or group-scene (or lived-in interior as hero): 3–8 specific items with frame positions. When architecture is protagonist outdoors: clutter optional — prioritize facade detail over invented mess.
-
-ALIGNMENT & WEAR — mandatory for visible wear on architecture and props: crooked objects, stains, worn edges, scuffs, peeling paint — only what is visible or subtly implied.
-
-Mandatory line: "Environment disorder: [amplified level or N/A for clean architectural hero] — [3+ specific details OR facade/architecture features when architecture is protagonist]."
+Mandatory line: "Environment disorder: [amplified level] — [3+ specific details]".
 
 Readable text/logos. Era/style cues.
 
@@ -240,16 +181,14 @@ Wind & air movement — scan hair, clothing, environment BEFORE writing still ai
 Sensory feel if supported. Visual style. Primary mood + intensity. Scene energy.
 
 MUST-PRESERVE FOR REGENERATION: Exactly 5 bullets — copy concrete values, not vague words:
-1. Visual hierarchy preserve: copy verbatim Visual protagonist line AND Person role line AND hero scale cues. Vertical crop locked + orientation AND copy Lens & camera line AND Perspective imperfection line AND summarize FRAME-LEFT EXTENSION / SUBJECT BAND / FRAME-RIGHT EXTENSION from FINAL OUTPUT FRAMING.
-2. Pose preserve: if person is protagonist/co-protagonist — copy from Pose verified line — support surface, archetype, torso/head/gaze directions, prop interaction, Hair styling line, key asymmetry fields. If secondary/tiny — copy short Pose verified (secondary) only; do NOT imply portrait shoot. Always include Regeneration variance mandatory line.
+1. Vertical crop locked + orientation AND copy Lens & camera line AND Perspective imperfection line AND summarize FRAME-LEFT EXTENSION / SUBJECT BAND / FRAME-RIGHT EXTENSION from FINAL OUTPUT FRAMING.
+2. Pose preserve: copy from Pose verified line — support surface, archetype, torso/head/gaze directions, prop interaction, Hair styling line, key asymmetry fields, and Regeneration variance mandatory line.
 3. Lighting preserve: copy from LIGHTING — "[light type], Quality [hard/soft/mixed], contrast [very high/high/medium/low], key from [direction]".
 4. Color preserve: copy verbatim from COLOR GRADE — "Highlight tone: [exact text]" AND "Shadow tone: [exact text]" plus saturation and contrast level.
-5. One unique visual anchor — when architecture/environment is protagonist, prefer a **structural** anchor (zigzag balcony rhythm, material contrast, shadow pattern on facade, distinctive geometry) over a person detail; if person is protagonist, prefer imperfection anchor on person/props as before.
+5. One unique visual anchor — prefer an imperfection anchor (perspective skew / off-center composition, lens distortion, messy hair, clutter item, worn prop, garment wrinkle) over generic beauty; fallback to readable text, specific prop color, or distinctive environment detail.
 
 Rules:
 - Write in English, present tense. Do NOT start with Create, Generate, Make.
-- VISUAL HIERARCHY is mandatory and drives description depth — never treat a tiny balcony figure as the shoot subject when a building dominates the frame.
-- Generators must NOT enlarge, center, or hero-light a secondary person at the expense of architecture/environment protagonist.
 - Use FRAME coordinates only for direction.
 - SUPPORT CHECK decides seated vs standing — never call standing if thighs/buttocks rest on a seat surface.
 - Torso and head direction are often different — always describe both.
@@ -269,3 +208,20 @@ Rules:
 - Describe each hand separately when both visible.
 - AMPLIFY lighting, color, mood — never soften for regeneration.
 - Prioritize factual accuracy over literary style.`;
+
+/** Shorter fallback when the full prompt triggers a model refusal. Still requires section headers. */
+export const MEDIA_DESCRIBER_VISION_PROMPT_COMPACT = `You are a precise visual analyst for image-to-image recreation. Study the attached image and describe ONLY what is literally visible.
+
+You MUST output structured text with EXACTLY these section headers (keep the labels). Use short, literal sentences. If unclear, write "unclear" — never guess. Never refuse or deflect — always fill every section.
+
+SUBJECT & POSE:
+WARDROBE & TEXT:
+CAMERA:
+COMPOSITION & FRAMING:
+LIGHTING:
+COLOR GRADE:
+ENVIRONMENT & PROPS:
+MOOD, ATMOSPHERE & STYLE:
+MUST-PRESERVE FOR REGENERATION:
+
+Downstream output is always a single native 16:9 landscape photograph. Lock the source vertical crop in the center third. Include Lens & camera:, Pose verified:, Highlight tone:, Shadow tone:, and Environment disorder: lines where applicable.`;

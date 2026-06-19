@@ -44,7 +44,6 @@ export function normalizeGenerativeImagePrompt(
     buildImperfectionPreservationSuffix(normalized),
     buildLensCameraPreservationSuffix(normalized),
     buildPerspectiveImperfectionSuffix(normalized),
-    buildVisualHierarchyPreservationSuffix(normalized),
   ]
     .filter(Boolean)
     .join("");
@@ -358,45 +357,4 @@ function buildPerspectiveImperfectionSuffix(prompt: string): string {
   }
 
   return ` ${parts.join(" ")}`;
-}
-
-/** Evita que Gemini convierta figuras secundarias en retrato o simplifique arquitectura protagonista. */
-function buildVisualHierarchyPreservationSuffix(prompt: string): string {
-  const architectureHero =
-    /Visual protagonist:\s*architecture/i.test(prompt) ||
-    (/Visual protagonist:\s*environment/i.test(prompt) && /facade|building|balcony|architecture/i.test(prompt));
-  const environmentHero = /Visual protagonist:\s*environment/i.test(prompt);
-  const objectHero = /Visual protagonist:\s*object/i.test(prompt);
-  const secondaryPerson =
-    /Person role:\s*(?:secondary-figure|tiny-distant-figure)/i.test(prompt) ||
-    /Person \(non-protagonist\)/i.test(prompt) ||
-    /Pose verified \(secondary\)/i.test(prompt);
-
-  if (!architectureHero && !environmentHero && !objectHero && !secondaryPerson) return "";
-
-  const parts: string[] = [];
-
-  if (architectureHero) {
-    parts.push(
-      "Preserve the building / architecture as the visual protagonist — keep exact facade geometry, balcony rhythm, materials, and scale; do not replace with a generic apartment block.",
-    );
-  } else if (environmentHero) {
-    parts.push(
-      "Preserve the environment / landscape as the visual protagonist — keep spatial dominance and setting character.",
-    );
-  } else if (objectHero) {
-    parts.push("Preserve the object as the visual protagonist — do not shift focus to a person.");
-  }
-
-  if (secondaryPerson) {
-    parts.push(
-      "Any person remains a secondary tiny/distant figure at the same scale on the structure — do not enlarge, center, or portrait-light them; no face-forward hero framing.",
-    );
-  }
-
-  if (/zigzag|stepped balcony|brutalist|distinctive geometry/i.test(prompt)) {
-    parts.push("Keep distinctive architectural geometry exactly as described — do not simplify facade patterns.");
-  }
-
-  return parts.length ? ` ${parts.join(" ")}` : "";
 }

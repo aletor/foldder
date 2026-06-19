@@ -195,16 +195,6 @@ describe("normalizeGenerativeImagePrompt", () => {
     expect(out).toMatch(/slight-low camera angle/i);
   });
 
-  it("appends architecture protagonist preservation for zigzag building with tiny figure", () => {
-    const input =
-      'Visual protagonist: architecture — zigzag white facade fills frame. Person role: tiny-distant-figure — person height ~4% frame height. ENVIRONMENT & PROPS: stepped zigzag balconies with glass railings, white concrete facade. Person (non-protagonist): small figure on mid balcony.';
-    const out = normalizeGenerativeImagePrompt(input, { textOnlyRecreation: true });
-    expect(out).toMatch(/architecture as the visual protagonist/i);
-    expect(out).toMatch(/secondary tiny\/distant figure/i);
-    expect(out).toMatch(/do not enlarge, center, or portrait-light/i);
-    expect(out).toMatch(/distinctive architectural geometry/i);
-  });
-
   it("appends perspective imperfection preservation for cafe interior", () => {
     const input =
       'ENVIRONMENT & PROPS: cozy cafe interior. Perspective imperfection: camera offset frame-left ~12%, verticals slight converge frame-right ~4°, horizontals tilt ~3° frame-right-down, composition asymmetric — more space frame-right, foreground chair arm clipped frame-left.';

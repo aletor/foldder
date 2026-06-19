@@ -60,8 +60,6 @@ vi.mock("@/lib/wallet-api-gate", () => ({
 vi.mock("@/lib/vision-media-prepare", () => ({
   prepareOpenAiVisionImageUrl: vi.fn(async (url: string) => url),
   isVisionRefusalText: () => false,
-  isStructuredDescriberOutput: (text: string) => /SUBJECT & POSE:/i.test(text),
-  describeVisionResponseFailure: () => "vision failed",
   VisionMediaPrepareError: class VisionMediaPrepareError extends Error {},
 }));
 

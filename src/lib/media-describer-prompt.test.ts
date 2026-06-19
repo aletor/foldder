@@ -4,7 +4,6 @@ import { MEDIA_DESCRIBER_VISION_PROMPT } from "./media-describer-prompt";
 describe("MEDIA_DESCRIBER_VISION_PROMPT", () => {
   it("requires structured sections for image regeneration", () => {
     for (const header of [
-      "VISUAL HIERARCHY",
       "SUBJECT & POSE:",
       "WARDROBE & TEXT:",
       "CAMERA:",
@@ -100,15 +99,15 @@ describe("MEDIA_DESCRIBER_VISION_PROMPT", () => {
     expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/very-groomed-editorial/i);
     expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/AMPLIFY hair disorder unless very-groomed-editorial/i);
     expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/SURFACE CLUTTER/i);
-    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Environment disorder: \[amplified level or N\/A/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Environment disorder: \[amplified level\]/i);
     expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/AMPLIFY environment disorder — never tidy backgrounds/i);
     expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Garment wear:/i);
   });
 
-  it("must-preserve includes hair styling and structural anchor for architecture hero", () => {
+  it("must-preserve includes hair styling and imperfection anchor", () => {
     expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Hair styling line/i);
-    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/structural.*anchor|zigzag balcony rhythm/i);
-    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Visual hierarchy preserve/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/prefer an imperfection anchor/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/perspective skew \/ off-center composition/i);
   });
 
   it("requires regeneration variance for text-only downstream", () => {
@@ -134,19 +133,6 @@ describe("MEDIA_DESCRIBER_VISION_PROMPT", () => {
     expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/copy Lens & camera line/i);
     expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Perspective imperfection line/i);
     expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/FRAME-LEFT EXTENSION \/ SUBJECT BAND \/ FRAME-RIGHT EXTENSION/i);
-  });
-
-  it("requires visual hierarchy with architecture protagonist and secondary person scale", () => {
-    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Visual protagonist:/i);
-    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Person role:/i);
-    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/tiny-distant-figure/i);
-    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/zigzag balconies/i);
-    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Person \(non-protagonist\)/i);
-    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/do NOT genericize to a plain apartment block/i);
-    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Visual hierarchy preserve/i);
-    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(
-      /never promote a secondary tiny person to protagonist scale/i,
-    );
   });
 
   it("requires perspective imperfection with anti real-estate AMPLIFY", () => {

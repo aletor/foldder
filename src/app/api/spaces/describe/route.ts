@@ -12,14 +12,13 @@ import {
 } from "@/lib/spaces-access-control";
 import { ForbiddenMediaReferenceError } from '@/lib/api-media-access';
 import OpenAI from 'openai';
-import { MEDIA_DESCRIBER_VISION_PROMPT } from '@/lib/media-describer-prompt';
+import { MEDIA_DESCRIBER_VISION_PROMPT, MEDIA_DESCRIBER_VISION_PROMPT_COMPACT } from '@/lib/media-describer-prompt';
+import { isValidDescriberStructuredOutput } from '@/lib/parse-describer-sections';
 import {
-  describeVisionResponseFailure,
-  isStructuredDescriberOutput,
-  isVisionRefusalText,
   prepareOpenAiVisionImageUrl,
   VisionMediaPrepareError,
 } from '@/lib/vision-media-prepare';
+import { runDescribeVisionCompletion } from '@/app/api/spaces/describe/describe-completion';
 import { estimateOpenAIUsd } from "@/lib/pricing-config";
 import {
   reserveApiWalletCharge,
@@ -43,7 +42,7 @@ export async function POST(req: Request) {
     const authState = await requireSpacesAuthUser(req);
     if (!authState.ok) return authState.response;
     const usageUserEmail = await resolveUsageUserEmailFromRequest(req);
-    const { url, type, metadata, promptOverride } = await req.json();
+    const { url, type, metadata, promptOverride, s3Key: bodyS3Key } = await req.json();
 
     if (!url) {
       return NextResponse.json({ error: "No media URL provided" }, { status: 400 });
@@ -55,7 +54,11 @@ export async function POST(req: Request) {
 
     const mediaUrlForModel =
       type === "image"
-        ? await prepareOpenAiVisionImageUrl(url, req.url, authState.user.email)
+        ? await prepareOpenAiVisionImageUrl(
+            typeof bodyS3Key === "string" && bodyS3Key.trim() ? bodyS3Key.trim() : url,
+            req.url,
+            authState.user.email,
+          )
         : url.trim();
 
     console.log(`[Media Describer] Analyzing ${type} (inline vision image)`);
@@ -96,46 +99,57 @@ export async function POST(req: Request) {
       serviceId: "openai-describe",
       provider: "openai",
       route: "/api/spaces/describe",
-      maxCostMicros: reserveUsdToMicros(0.03),
+      maxCostMicros: reserveUsdToMicros(0.06),
       metadata: { model: "gpt-4o", mediaType: type },
     });
 
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o", // Using GPT-4o for its vision capabilities
-      messages: [{ role: "user", content: contentPayload }],
-      max_tokens: 4096,
-      temperature: 0.35,
-    });
+    const promptCandidates = [
+      { label: "full", text: prompt },
+      ...(prompt === MEDIA_DESCRIBER_VISION_PROMPT
+        ? [{ label: "compact", text: MEDIA_DESCRIBER_VISION_PROMPT_COMPACT }]
+        : []),
+    ];
 
-    const choice = completion.choices[0];
-    const description = choice?.message?.content || "";
-    const refusal =
-      typeof (choice?.message as { refusal?: unknown } | undefined)?.refusal === "string"
-        ? (choice?.message as { refusal: string }).refusal
-        : null;
-    const finishReason = choice?.finish_reason ?? null;
-    const trimmedDescription = description.trim();
-    const structured = isStructuredDescriberOutput(trimmedDescription);
-    const refusalLike = isVisionRefusalText(trimmedDescription);
+    let completionResult: Awaited<ReturnType<typeof runDescribeVisionCompletion>> | null = null;
+    for (const candidate of promptCandidates) {
+      completionResult = await runDescribeVisionCompletion({
+        openai,
+        mediaUrlForModel,
+        prompt: candidate.text,
+        promptLabel: candidate.label,
+      });
+      if (completionResult.ok) break;
+      console.warn(
+        "[Media Describer] Attempt rejected:",
+        candidate.label,
+        completionResult.description.trim().slice(0, 200) || "(empty)",
+        "finish_reason=",
+        completionResult.finishReason,
+      );
+    }
 
-    if (!trimmedDescription || refusalLike || (finishReason === "length" && !structured)) {
-      const errorMessage = describeVisionResponseFailure({
-        content: description,
-        refusal,
+    const description = completionResult?.ok ? completionResult.description : completionResult?.description ?? "";
+    const finishReason = completionResult?.finishReason ?? "unknown";
+    if (!completionResult?.ok) {
+      const refusalSnippet = description.trim().slice(0, 200);
+      console.warn(
+        "[Media Describer] Vision refusal or invalid structured output:",
+        refusalSnippet || "(empty)",
+        "finish_reason=",
         finishReason,
-      });
-      console.warn("[Media Describer] Vision failure:", {
-        finishReason,
-        refusal: refusal?.slice(0, 120) ?? null,
-        snippet: trimmedDescription.slice(0, 200) || "(empty)",
-        structured,
-      });
+      );
       await releaseApiWalletChargeOnError(walletCharge, new Error("vision_refusal"));
       releaseWalletOnError = false;
+      const errorMessage =
+        finishReason === "length"
+          ? "The description was cut off before completing. Try again — if it keeps failing, use a smaller or simpler image."
+          : description.trim()
+            ? "OpenAI declined to describe this image. Try a different photo or re-upload."
+            : "OpenAI returned an empty response. Wait a moment and try again, or re-upload the image.";
       return NextResponse.json({ error: errorMessage }, { status: 422 });
     }
 
-    const u = completion.usage;
+    const u = completionResult?.usage;
     const actualCostUsd = u
       ? estimateOpenAIUsd("gpt-4o", u.prompt_tokens, u.completion_tokens)
       : 0.005;

@@ -98,6 +98,11 @@ import { FOLDDER_FIT_VIEW_EASE } from '@/lib/fit-view-ease';
 import { estimateVideoGeneratorPreviewUsd } from '@/lib/pricing-config';
 import { runAiJobWithNotification } from '@/lib/ai-job-notifications';
 import { readJsonWithHttpError, sanitizeUserFacingErrorMessage } from '@/lib/read-response-json';
+import {
+  FOLDDER_WALLET_PREFLIGHT_SKIP_HEADER,
+  getOrigWindowFetch,
+  runWalletFetchPreflight,
+} from '@/lib/wallet-fetch-preflight';
 import { isFoldderMediaPreviewAutoFitSuppressed } from '@/lib/media-preview-fit-suppress';
 import { fetchBlobViaSpacesProxy } from '@/lib/spaces-proxy-fetch';
 import { NODE_REGISTRY } from './nodeRegistry';
@@ -116,6 +121,8 @@ import {
 import { NodeLabel, FoldderNodeHeaderTitle, FoldderStudioModeCenterButton } from "./foldder-node-ui";
 import { hasFoldderStudioTouched, hasGeminiVideoStudioTouched, touchStudioNodeData } from "./studio-node/foldder-studio-touched";
 import { FoldderStudioTouchedMark } from "./studio-node/foldder-studio-touched-mark";
+import { DescriberNodeAnalysisOverlay, DESCRIBER_ICON_REVEAL_MS } from "./describer-node-analysis-grid";
+import { DESCRIBER_ANALYSIS_CATEGORY_ORDER } from "@/lib/parse-describer-sections";
 import {
   loadImageDimensions,
   nodeFrameNeedsSync,
@@ -134,6 +141,7 @@ import {
   resolvePhotoRoomDocumentSize,
 } from './resolve-connected-media-url';
 import { mergeLiveStudioNodeDataIntoNodes } from './studio-live-documents';
+import { useAuthedMediaPreviewUrl } from './hooks/use-authed-media-preview-url';
 import {
   buildVideoPromptAssembly,
   buildPhysicsFlagsFromNodeData,
@@ -3194,52 +3202,249 @@ export const SpaceOutputNode = memo(function SpaceOutputNode({ id, data, selecte
 
 
 
+const DESCRIBER_TOUCHED_MARK_SRC = "/nodes/describer-bg.png";
+
+function describerPhotoAspectRatio(width?: number, height?: number): number | null {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || !width || !height) return null;
+  return Math.min(2.4, Math.max(0.56, width / height));
+}
+
 export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, selected }: NodeProps) {
   const nodeData = data as BaseNodeData;
   const nodes = useNodes();
   const edges = useEdges();
   const { setNodes } = useReactFlow();
   const updateNodeInternals = useUpdateNodeInternals();
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const previewFrameRef = useRef<HTMLDivElement | null>(null);
+  const frameSyncKeyRef = useRef<string | null>(null);
+  const [inputImageSize, setInputImageSize] = useState<{ url: string; width: number; height: number } | null>(null);
+  const currentNode = nodes.find((node) => node.id === id);
   const [status, setStatus] = useState('idle');
   const [description, setDescription] = useState<string | null>(
     typeof nodeData.value === 'string' && nodeData.value.trim() ? nodeData.value : null,
   );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [copiedPrompt, setCopiedPrompt] = useState(false);
-  const outputRef = useRef<HTMLDivElement>(null);
+  const [revealedIconCount, setRevealedIconCount] = useState(0);
+  const [iconRevealActive, setIconRevealActive] = useState(false);
+  const revealTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const revealIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const userManuallyResizedRef = useRef(false);
   const persistedDescription = typeof nodeData.value === 'string' && nodeData.value.trim() ? nodeData.value : null;
   const visibleDescription = description || persistedDescription;
+  const inputEdge = useMemo(
+    () => edges.find((e) => e.target === id && e.targetHandle === 'media'),
+    [edges, id],
+  );
+  const mediaConnected = Boolean(inputEdge);
 
-  /**
-   * Ajusta la altura del nodo midiendo el texto YA renderizado en el DOM
-   * (scrollHeight real, no estimaciones). El "chrome" (header + footer +
-   * paddings) se obtiene restando la zona visible del texto a la altura
-   * total del nodo, así cualquier cambio de estilos queda contemplado.
-   */
-  // El nodo se mantiene a su altura base; el texto siempre hace scroll interno.
-  const fitDescriberNodeHeight = useCallback(() => {
-    if (userManuallyResizedRef.current) return;
-    const baseFrame = getNodeGridFrameForType('mediaDescriber');
-    const baseHeight = baseFrame?.height ?? 416;
+  const connectedInputMedia = useMemo(() => {
+    if (!inputEdge) return null;
+    const mergedNodes = mergeLiveStudioNodeDataIntoNodes(nodes);
+    const sourceNode = mergedNodes.find((n) => n.id === inputEdge.source);
+    if (!sourceNode) return null;
+    const url = resolveMediaUrlFromEdgeSource(inputEdge, nodes, edges).trim();
+    if (!url) return null;
+    let mediaType = 'image';
+    if (sourceNode.type === 'space') {
+      const sd = sourceNode.data as { outputType?: string; type?: string };
+      mediaType = (sd.outputType || sd.type || 'image') as string;
+    } else {
+      mediaType = ((sourceNode.data as { type?: string })?.type || 'image') as string;
+    }
+    const s3Key =
+      typeof (sourceNode.data as { s3Key?: unknown }).s3Key === 'string'
+        ? (sourceNode.data as { s3Key: string }).s3Key
+        : undefined;
+    return { url, s3Key, mediaType, sourceId: inputEdge.source };
+  }, [inputEdge, nodes, edges]);
+
+  const inputMediaKey = connectedInputMedia
+    ? `${connectedInputMedia.sourceId}:${connectedInputMedia.s3Key ?? connectedInputMedia.url}`
+    : null;
+  const inputMediaKeyRef = useRef<string | null>(inputMediaKey);
+
+  const clearDescriberOutput = useCallback(() => {
+    setDescription(null);
     setNodes((nds) =>
-      nds.map((n) => {
-        if (n.id !== id) return n;
-        const style = (n.style ?? {}) as React.CSSProperties;
-        if (style.height === baseHeight) return n;
-        return { ...n, style: { ...style, height: baseHeight } };
-      }),
+      nds.map((n) =>
+        n.id === id ? { ...n, data: { ...n.data, value: '' } } : n,
+      ),
     );
-    updateNodeInternals(id);
-  }, [id, setNodes, updateNodeInternals]);
+  }, [id, setNodes]);
+
+  const { displayUrl: inputPreviewUrl, retryWithBlob: retryInputPreview } = useAuthedMediaPreviewUrl(
+    connectedInputMedia?.mediaType === 'image' ? connectedInputMedia.url : null,
+    connectedInputMedia?.s3Key,
+  );
+
+  const hasImagePreview = Boolean(
+    mediaConnected && connectedInputMedia?.mediaType === 'image' && inputPreviewUrl,
+  );
+  const isAnalyzing = status === 'running';
+  const isAnalysisBusy = isAnalyzing || iconRevealActive;
+  const showIconReveal = Boolean(
+    hasImagePreview
+    && mediaConnected
+    && !errorMessage
+    && (iconRevealActive || (isAnalyzing && revealedIconCount > 0)),
+  );
+  const showInputPreview = Boolean(hasImagePreview && !visibleDescription && !isAnalysisBusy && !errorMessage);
+  const showAnalyzedView = Boolean(visibleDescription && mediaConnected && !isAnalysisBusy && !errorMessage);
+  const showMediaError = Boolean(errorMessage && hasImagePreview && mediaConnected);
+  const showAnalyzingShell = Boolean(isAnalysisBusy && hasImagePreview && mediaConnected && !showAnalyzedView && !errorMessage);
+  const showMediaBackground = Boolean(hasImagePreview && (showInputPreview || showAnalyzingShell || showAnalyzedView || showIconReveal || showMediaError));
+  const hasSizedInputImage = Boolean(
+    hasImagePreview && inputPreviewUrl && inputImageSize?.url === inputPreviewUrl,
+  );
+  const inputImageWidth = hasSizedInputImage ? inputImageSize?.width ?? null : null;
+  const inputImageHeight = hasSizedInputImage ? inputImageSize?.height ?? null : null;
+
+  const clearIconRevealTimer = useCallback(() => {
+    if (revealTimeoutRef.current) {
+      clearTimeout(revealTimeoutRef.current);
+      revealTimeoutRef.current = null;
+    }
+    if (revealIntervalRef.current) {
+      clearInterval(revealIntervalRef.current);
+      revealIntervalRef.current = null;
+    }
+  }, []);
+
+  const startIconRevealProgress = useCallback(() => {
+    clearIconRevealTimer();
+    setIconRevealActive(true);
+    setRevealedIconCount(0);
+    revealTimeoutRef.current = setTimeout(() => {
+      revealTimeoutRef.current = null;
+      setRevealedIconCount(1);
+      revealIntervalRef.current = setInterval(() => {
+        setRevealedIconCount((prev) => {
+          const next = Math.min(prev + 1, DESCRIBER_ANALYSIS_CATEGORY_ORDER.length);
+          if (next >= DESCRIBER_ANALYSIS_CATEGORY_ORDER.length) {
+            clearIconRevealTimer();
+            setIconRevealActive(false);
+          }
+          return next;
+        });
+      }, DESCRIBER_ICON_REVEAL_MS);
+    }, DESCRIBER_ICON_REVEAL_MS);
+  }, [clearIconRevealTimer]);
+
+  const resetAnalysisProgress = useCallback(() => {
+    clearIconRevealTimer();
+    setRevealedIconCount(0);
+    setIconRevealActive(false);
+  }, [clearIconRevealTimer]);
+
+  useEffect(() => {
+    if (inputMediaKey === inputMediaKeyRef.current) return;
+    inputMediaKeyRef.current = inputMediaKey;
+    userManuallyResizedRef.current = false;
+    frameSyncKeyRef.current = null;
+    if (inputMediaKey === null) return;
+    clearDescriberOutput();
+    setErrorMessage(null);
+    resetAnalysisProgress();
+  }, [inputMediaKey, clearDescriberOutput, resetAnalysisProgress]);
+
+  useEffect(() => {
+    if (!inputPreviewUrl || connectedInputMedia?.mediaType !== 'image') {
+      frameSyncKeyRef.current = null;
+      setInputImageSize(null);
+      return;
+    }
+
+    let cancelled = false;
+    void loadImageDimensions(inputPreviewUrl)
+      .then(({ width, height }) => {
+        if (cancelled) return;
+        setInputImageSize((prev) => {
+          if (prev?.url === inputPreviewUrl && prev.width === width && prev.height === height) return prev;
+          return { url: inputPreviewUrl, width, height };
+        });
+      })
+      .catch(() => {
+        /* keep default frame if the connected image cannot be measured */
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [connectedInputMedia?.mediaType, inputPreviewUrl]);
+
+  useEffect(() => () => {
+    clearIconRevealTimer();
+  }, [clearIconRevealTimer]);
+
+  const syncDescriberNodeFrame = useCallback(() => {
+    if (userManuallyResizedRef.current) return;
+
+    if (!hasSizedInputImage || inputImageWidth == null || inputImageHeight == null) {
+      if (mediaConnected) return;
+      const baseFrame = getNodeGridFrameForType('mediaDescriber');
+      if (!baseFrame) return;
+      const syncKey = 'empty';
+      if (frameSyncKeyRef.current === syncKey) return;
+      frameSyncKeyRef.current = syncKey;
+      setNodes((nds) =>
+        nds.map((n) => {
+          if (n.id !== id) return n;
+          const needsFrameSync = nodeFrameNeedsSync(n, baseFrame);
+          const hasAspectRatio =
+            typeof (n.data as { _foldderAspectRatio?: unknown })._foldderAspectRatio === 'number';
+          if (!needsFrameSync && !hasAspectRatio) return n;
+          const nextData = { ...(n.data as Record<string, unknown>) };
+          delete nextData._foldderAspectRatio;
+          return {
+            ...n,
+            width: baseFrame.width,
+            height: baseFrame.height,
+            measured: { width: baseFrame.width, height: baseFrame.height },
+            data: nextData,
+            style: { ...(n.style as React.CSSProperties), width: baseFrame.width, height: baseFrame.height },
+          };
+        }),
+      );
+      requestAnimationFrame(() => updateNodeInternals(id));
+      return;
+    }
+
+    const syncKey = `${inputPreviewUrl}:${inputImageWidth}x${inputImageHeight}`;
+    if (frameSyncKeyRef.current === syncKey) return;
+    const aspectRatio =
+      describerPhotoAspectRatio(inputImageWidth, inputImageHeight) ?? inputImageWidth / inputImageHeight;
+    const nextFrame = resolveAspectLockedNodeFrame({
+      node: currentNode,
+      contentWidth: inputImageWidth,
+      contentHeight: inputImageHeight,
+      minWidth: 200,
+      maxWidth: 960,
+      minHeight: 120,
+      maxHeight: STUDIO_NODE_MAX_HEIGHT,
+      chromeHeight: 0,
+    });
+    frameSyncKeyRef.current = syncKey;
+    setNodes((nds) => syncAspectLockedFrameForNode(nds as Node[], id, nextFrame, aspectRatio));
+    requestAnimationFrame(() => updateNodeInternals(id));
+  }, [
+    currentNode,
+    hasSizedInputImage,
+    id,
+    inputImageHeight,
+    inputImageWidth,
+    inputPreviewUrl,
+    mediaConnected,
+    setNodes,
+    updateNodeInternals,
+  ]);
 
   useLayoutEffect(() => {
-    fitDescriberNodeHeight();
-  }, [fitDescriberNodeHeight, visibleDescription]);
+    syncDescriberNodeFrame();
+  }, [syncDescriberNodeFrame]);
 
   const onRun = async () => {
-    const inputEdge = edges.find(e => e.target === id && e.targetHandle === 'media');
-
     if (!inputEdge) {
       setStatus('error');
       setErrorMessage("Connect an image before generating a description.");
@@ -3248,6 +3453,7 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
 
     setStatus('running');
     setErrorMessage(null);
+    resetAnalysisProgress();
 
     let capturedError = "";
     const ok = await runAiJobWithNotification({ nodeId: id, label: 'Image Describer' }, async () => {
@@ -3266,14 +3472,36 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
           finalMediaType = ((inputNode.data as { type?: string })?.type || 'image') as string;
         }
 
-        const res = await fetch('/api/spaces/describe', {
+        const describeInit: RequestInit = {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             url: resolvedMediaUrl,
             type: finalMediaType,
-            metadata: inputNode.data.metadata
-          })
+            metadata: inputNode.data.metadata,
+            s3Key: (inputNode.data as { s3Key?: string }).s3Key,
+          }),
+        };
+
+        const preflightBlocked = await runWalletFetchPreflight({
+          route: '/api/spaces/describe',
+          requestInput: '/api/spaces/describe',
+          requestInit: describeInit,
+          fetcher: getOrigWindowFetch(),
+        });
+        if (preflightBlocked) {
+          const preflightJson = await preflightBlocked.json().catch(() => ({})) as { error?: string };
+          throw new Error(preflightJson.error || 'Operation cancelled before reserving balance.');
+        }
+
+        startIconRevealProgress();
+
+        const res = await fetch('/api/spaces/describe', {
+          ...describeInit,
+          headers: {
+            ...(describeInit.headers as Record<string, string>),
+            [FOLDDER_WALLET_PREFLIGHT_SKIP_HEADER]: '1',
+          },
         });
         const json = await readJsonWithHttpError<{ description?: string; error?: string }>(
           res,
@@ -3292,12 +3520,16 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
         throw e;
       }
     });
-    setStatus(ok ? 'success' : 'error');
-    if (!ok) {
+    if (ok) {
+      setStatus('success');
+    } else {
+      resetAnalysisProgress();
+      clearDescriberOutput();
       setErrorMessage(
         capturedError ||
           "The visual description could not be generated. Check the connected image or API access.",
       );
+      setStatus('idle');
       console.error("Describe error", capturedError);
     }
   };
@@ -3316,17 +3548,25 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
   }, [visibleDescription]);
 
   return (
-    <div className={`custom-node describer-node foldder-node--frameless node--glass describer-node--expanded ${status === 'error' ? 'foldder-node--error' : ''} ${status === 'running' ? 'node-glow-running' : ''}`} style={{ minWidth: 300, minHeight: 330 }}>
+    <div
+      ref={frameRef}
+      className={`custom-node describer-node foldder-node--frameless describer-node--expanded ${showMediaBackground ? 'node--media' : 'node--glass'} ${showAnalyzedView ? 'describer-node--analyzed' : showMediaError ? 'describer-node--error-media' : showAnalyzingShell || showIconReveal ? 'describer-node--analyzing' : showInputPreview ? 'describer-node--preview' : ''} ${mediaConnected ? 'describer-node--has-media' : 'describer-node--no-media'} ${errorMessage && !showMediaError ? 'foldder-node--error' : ''} ${isAnalysisBusy ? 'node-glow-running' : ''}`}
+      style={{ minWidth: hasSizedInputImage ? 200 : 300, minHeight: hasSizedInputImage ? 0 : 330 }}
+    >
       <FoldderNodeResizer
-        minWidth={300}
-        minHeight={300}
-        maxWidth={700}
+        minWidth={hasSizedInputImage ? 200 : 300}
+        minHeight={hasSizedInputImage ? 120 : 300}
+        maxWidth={hasSizedInputImage ? 960 : 700}
         maxHeight={STUDIO_NODE_MAX_HEIGHT}
+        keepAspectRatio={hasSizedInputImage}
         isVisible={selected}
         onResizeEnd={() => {
           userManuallyResizedRef.current = true;
         }}
       />
+      {showMediaBackground ? (
+        <FoldderStudioTouchedMark nodeType="mediaDescriber" backgroundSrc={DESCRIBER_TOUCHED_MARK_SRC} />
+      ) : null}
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Image Describer" />
       <div className="handle-wrapper handle-left">
         <FoldderDataHandle type="target" position={Position.Left} id="media" dataType="image" />
@@ -3334,57 +3574,82 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
       </div>
 
       <div className="node-header">
-        <NodeIcon type="mediaDescriber" selected={selected} state={resolveFoldderNodeState({ loading: status === 'running', done: status === 'success', error: status === 'error' })} size={16} />
+        <NodeIcon type="mediaDescriber" selected={selected} state={resolveFoldderNodeState({ loading: status === 'running', done: Boolean(visibleDescription) && !errorMessage, error: Boolean(errorMessage) })} size={16} />
         <FoldderNodeHeaderTitle introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}>
           Image Describer
         </FoldderNodeHeaderTitle>
         <div className="node-badge">VISION</div>
       </div>
 
-      <div className="node-content foldder-frameless-main describer-node-content">
-        {!visibleDescription ? (
-          <p className="describer-node-hint shrink-0">Analyze media and generate a detailed prompt with camera angle, lens, and color grading.</p>
-        ) : null}
-
-        {errorMessage ? (
+      <div
+        ref={previewFrameRef}
+        className={`node-content foldder-frameless-main describer-node-content ${showMediaBackground ? 'describer-node-content--media-preview' : ''}`}
+      >
+        {errorMessage && !showMediaError ? (
           <div className="foldder-frameless-error describer-node-error shrink-0 rounded-none border border-rose-500/30 bg-rose-500/10 p-2 text-[9px] leading-snug text-rose-200">
             {errorMessage}
           </div>
         ) : null}
 
+        {showMediaBackground ? (
+          <img
+            src={inputPreviewUrl}
+            alt=""
+            className="pointer-events-none absolute inset-0 h-full w-full object-cover"
+            draggable={false}
+            onError={() => {
+              void retryInputPreview();
+            }}
+          />
+        ) : null}
+
+        {showMediaError ? (
+          <div className="describer-node-error-banner absolute inset-0 z-[9] flex items-center justify-center px-6 nodrag nopan">
+            <p className="describer-node-error-text">{errorMessage}</p>
+          </div>
+        ) : null}
+
+        {showIconReveal ? (
+          <DescriberNodeAnalysisOverlay mode="progress" revealedCount={revealedIconCount} />
+        ) : null}
+
+        {showAnalyzedView && visibleDescription ? (
+          <>
+            <DescriberNodeAnalysisOverlay
+              mode="complete"
+              description={visibleDescription}
+              onCopy={() => void onCopyPrompt()}
+              copied={copiedPrompt}
+            />
+            <span className="sr-only">{visibleDescription}</span>
+          </>
+        ) : null}
+
+        {!showAnalyzedView && !showIconReveal ? (
         <div className="describer-output-body min-h-0 flex-1">
-          {visibleDescription ? (
-            <>
-              <button
-                type="button"
-                className="describer-copy-prompt-btn nodrag"
-                onClick={() => void onCopyPrompt()}
-                title={copiedPrompt ? 'Copied' : 'Copy prompt'}
-                aria-label={copiedPrompt ? 'Copied' : 'Copy prompt'}
-              >
-                <Copy size={13} strokeWidth={2} aria-hidden />
-              </button>
-              <div
-                ref={outputRef}
-                className="describer-output-text describer-output-text--expanded nowheel"
-              >
-                {visibleDescription}
+          {!mediaConnected ? (
+            <div className="describer-node-empty" aria-label="No image connected">
+              <div className="describer-node-empty-icon">
+                <ImageIcon className="describer-node-empty-icon-glyph" size={26} strokeWidth={1.5} aria-hidden />
               </div>
-            </>
+            </div>
           ) : null}
         </div>
+        ) : null}
       </div>
 
+      {mediaConnected ? (
       <div className="foldder-frameless-footer-action nodrag describer-node-footer">
         <button
           type="button"
           className="execute-btn describer-generate-button nodrag"
           onClick={onRun}
-          disabled={status === 'running'}
+          disabled={isAnalysisBusy}
         >
-          {status === 'running' ? 'Analyzing...' : 'Generate description'}
+          {isAnalysisBusy ? 'Analyzing...' : visibleDescription ? 'Re-analyze' : 'Generate description'}
         </button>
       </div>
+      ) : null}
 
       <div className="handle-wrapper handle-right">
         <span className="handle-label">Description (Prompt)</span>

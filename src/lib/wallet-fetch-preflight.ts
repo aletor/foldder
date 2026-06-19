@@ -10,6 +10,31 @@ import {
 
 const WALLET_STATUS_TTL_MS = 12_000;
 
+export const FOLDDER_WALLET_PREFLIGHT_SKIP_HEADER = "x-foldder-wallet-preflight-skip";
+
+function shouldSkipWalletPreflight(init?: RequestInit): boolean {
+  if (!init?.headers) return false;
+  const headers = init.headers;
+  if (headers instanceof Headers) {
+    return headers.get(FOLDDER_WALLET_PREFLIGHT_SKIP_HEADER) === "1";
+  }
+  if (Array.isArray(headers)) {
+    return headers.some(
+      ([key, value]) =>
+        key.toLowerCase() === FOLDDER_WALLET_PREFLIGHT_SKIP_HEADER && value === "1",
+    );
+  }
+  const record = headers as Record<string, string>;
+  return record[FOLDDER_WALLET_PREFLIGHT_SKIP_HEADER] === "1"
+    || record[FOLDDER_WALLET_PREFLIGHT_SKIP_HEADER.toLowerCase()] === "1";
+}
+
+export function getOrigWindowFetch(): typeof fetch {
+  if (typeof window === "undefined") return fetch;
+  const w = window as Window & { __foldderOrigFetch?: typeof fetch };
+  return w.__foldderOrigFetch ?? fetch;
+}
+
 let cachedWallet:
   | {
       loadedAt: number;
@@ -81,6 +106,7 @@ export async function runWalletFetchPreflight(input: {
   fetcher: typeof fetch;
 }): Promise<Response | null> {
   if (typeof window === "undefined") return null;
+  if (shouldSkipWalletPreflight(input.requestInit)) return null;
   if (requestMethod(input.requestInput, input.requestInit) !== "POST") return null;
 
   const body = await parseRequestBody(input.requestInput, input.requestInit);

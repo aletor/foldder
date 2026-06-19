@@ -55,7 +55,7 @@ export async function loadImageBufferFromMediaReference(
 
   if (trimmed.startsWith("blob:")) {
     throw new VisionMediaPrepareError(
-      "Local preview images cannot be analyzed. Re-upload the image or use a saved project export.",
+      "Local preview images cannot be analyzed. Close PhotoRoom to export the image first.",
       "blob_url",
     );
   }
@@ -118,9 +118,8 @@ export async function prepareOpenAiVisionImageUrl(
     const sharp = sharpMod.default;
     const png = await sharp(buffer, { failOn: "none" })
       .rotate()
-      .flatten({ background: "#ffffff" })
       .resize({ width: 1536, height: 1536, fit: "inside", withoutEnlargement: true })
-      .png()
+      .jpeg({ quality: 88, mozjpeg: true })
       .toBuffer();
 
     const meta = await sharp(png).metadata();
@@ -131,7 +130,11 @@ export async function prepareOpenAiVisionImageUrl(
       );
     }
 
-    return bufferToDataUrl(png, "image/png");
+    console.log(
+      `[vision-media-prepare] prepared ${meta.width}x${meta.height} jpeg, ${png.length} bytes (source ${buffer.length} bytes)`,
+    );
+
+    return bufferToDataUrl(png, "image/jpeg");
   } catch (error) {
     if (error instanceof VisionMediaPrepareError) throw error;
     console.warn(
@@ -148,66 +151,35 @@ export async function prepareOpenAiVisionImageUrl(
   }
 }
 
-export function isStructuredDescriberOutput(text: string): boolean {
-  return /SUBJECT & POSE:|VISUAL HIERARCHY:|Visual protagonist:|WARDROBE & TEXT:|Lens & camera:|Camera angle label:|COMPOSITION & FRAMING:|FINAL OUTPUT FRAMING:|MUST-PRESERVE FOR REGENERATION:|Pose verified:|Highlight tone:|Perspective imperfection:/i.test(
-    text,
-  );
-}
-
-const VISION_REFUSAL_PATTERNS = [
-  /can'?t help with that image/i,
-  /cannot help with (that|this) image/i,
-  /unable to (analyze|view|process|assist)(?:\s+this|\s+the|\s+with|$)/i,
-  /i'?m (?:sorry|unable).{0,120}(can'?t|cannot|unable|won'?t)/i,
-  /no puedo ayudar/i,
-  /no puedo analizar/i,
-  /no puedo ver (la|esta|esa) imagen/i,
-  /lo siento.{0,80}no puedo/i,
-] as const;
-
 export function isVisionRefusalText(text: string): boolean {
   const t = text.trim();
   if (!t) return true;
-  if (isStructuredDescriberOutput(t)) return false;
-
-  const head = t.slice(0, 500);
-  if (VISION_REFUSAL_PATTERNS.some((p) => p.test(head))) return true;
-
-  // Model skipped section headers but produced a substantive description.
   if (
-    t.length >= 180 &&
-    /(?:subject|pose|standing|seated|hair|wearing|wardrobe|lighting|camera|lens|background|environment)/i.test(
+    /SUBJECT\s*&\s*POSE:|COMPOSITION\s*&\s*FRAMING:|FINAL OUTPUT FRAMING:|MUST-PRESERVE FOR REGENERATION:/i.test(
       t,
     )
   ) {
     return false;
   }
-
-  return VISION_REFUSAL_PATTERNS.some((p) => p.test(t));
-}
-
-export function describeVisionResponseFailure(args: {
-  content: string;
-  refusal?: string | null;
-  finishReason?: string | null;
-}): string {
-  const trimmed = args.content.trim();
-  if (args.refusal?.trim()) {
-    return `OpenAI declined to describe this image: ${args.refusal.trim().slice(0, 240)}`;
-  }
-  if (args.finishReason === "content_filter") {
-    return "OpenAI blocked this image (content filter). Try another crop or a different photo.";
-  }
-  if (!trimmed) {
-    return "OpenAI returned an empty description. Try again in a few seconds, or re-upload the image.";
-  }
-  if (isVisionRefusalText(trimmed)) {
-    return `OpenAI could not analyze this image: ${trimmed.slice(0, 240)}`;
-  }
-  if (args.finishReason === "length") {
-    return "The description was cut off before completion. Try again — if it keeps happening, use a simpler image.";
-  }
-  return "OpenAI could not produce a valid description. Try again or use a different image.";
+  const patterns = [
+    /^i'?m sorry[,.\s]+i can'?t help with (that|this) image/i,
+    /^i'?m unable to (analyze|view|process) (that|this|the) image/i,
+    /^i'?m unable to provide a detailed analysis/i,
+    /unable to provide a detailed analysis of the image/i,
+    /let me know how else i can assist/i,
+    /i can help with general descriptions/i,
+    /^sorry[,.\s]+i can'?t (help|assist) with (that|this) image/i,
+    /can'?t help with that image/i,
+    /cannot help with (that|this) image/i,
+    /^i'?m sorry.*(can'?t|cannot) (help|assist|analyze)/i,
+    /^no puedo ayudar con (esa|esta) imagen/i,
+    /^no puedo analizar (esa|esta) imagen/i,
+    /^no puedo ver (la|esta|esa) imagen/i,
+    /^no puedo proporcionar un an[aá]lisis detallado/i,
+    /^lo siento[,.\s]+no puedo/i,
+  ];
+  const head = t.slice(0, 400);
+  return patterns.some((p) => p.test(head));
 }
 
 export { ForbiddenMediaReferenceError };

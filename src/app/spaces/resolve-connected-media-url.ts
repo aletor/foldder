@@ -115,7 +115,7 @@ export async function ensureServerReadableMediaUrl(url: string): Promise<string>
     });
   } catch {
     throw new Error(
-      "Could not read the local preview image. Re-upload the image or wait a moment and try again.",
+      "Could not read the local preview image. Close PhotoRoom to export, or wait a moment and try again.",
     );
   }
 }
@@ -140,7 +140,7 @@ export async function resolveMediaUrlForDescriber(
 
   if (!url.trim()) {
     throw new Error(
-      "No image to describe. Connect an image input with a valid upload, or export from PhotoRoom.",
+      "No image to describe. Close PhotoRoom to export the canvas, or connect an image input.",
     );
   }
 

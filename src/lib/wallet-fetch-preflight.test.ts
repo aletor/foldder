@@ -113,4 +113,21 @@ describe("wallet-fetch-preflight", () => {
       amountMicros: 552_000,
     });
   });
+
+  it("skips preflight when the skip header is set", async () => {
+    const fetcher = vi.fn();
+    const response = await runWalletFetchPreflight({
+      route: "/api/spaces/describe",
+      requestInput: "/api/spaces/describe",
+      requestInit: {
+        method: "POST",
+        headers: { "x-foldder-wallet-preflight-skip": "1" },
+        body: JSON.stringify({ url: "https://example.com/a.jpg", type: "image" }),
+      },
+      fetcher,
+    });
+
+    expect(response).toBeNull();
+    expect(fetcher).not.toHaveBeenCalled();
+  });
 });
