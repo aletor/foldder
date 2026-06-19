@@ -1368,12 +1368,30 @@ export function SpacesContent() {
         const selMeta = NODE_REGISTRY[sel.type];
         if (!selMeta) continue;
 
+        const phantomNewNode: Node = {
+          id: newId,
+          type,
+          position: { x: 0, y: 0 },
+          data: {},
+        };
+
         let connected = false;
 
         // ── Direction A: selected → new (selected as source) ──────────────
         for (const out of selMeta.outputs) {
+          if (edges.some((e) => e.source === sel.id && e.sourceHandle === out.id)) continue;
+
           for (const inp of newMeta.inputs) {
-            if (out.type !== inp.type) continue;
+            if (
+              !areNodesConnectable(
+                sel,
+                phantomNewNode,
+                { sourceHandle: out.id, targetHandle: inp.id },
+                nodes,
+              )
+            ) {
+              continue;
+            }
             const targetHandle = getSlot(type, inp.type, inp.id);
             const slotExhausted = MULTI_SLOT_NODES[type]?.[inp.type]
               ? (slotCounters[`${type}:${inp.type}`] ?? 1) > (MULTI_SLOT_NODES[type][inp.type].length)
@@ -1435,7 +1453,16 @@ export function SpacesContent() {
           // ── Direction B: new → selected (new as source) ─────────────────
           for (const out of newMeta.outputs) {
             for (const inp of selMeta.inputs) {
-              if (out.type !== inp.type) continue;
+              if (
+                !areNodesConnectable(
+                  phantomNewNode,
+                  sel,
+                  { sourceHandle: out.id, targetHandle: inp.id },
+                  nodes,
+                )
+              ) {
+                continue;
+              }
               autoEdges.push({
                 id: `ae-${newId}-${sel.id}-${out.id}-${inp.id}`,
                 source: newId,

@@ -1,6 +1,7 @@
 "use client";
 
 import type { Node } from "@xyflow/react";
+import type { VectorPdfExportOptions } from "./freehand/text-outline";
 
 type LiveStudioNodeData = Record<string, unknown>;
 
@@ -61,5 +62,31 @@ export async function tryLiveStudioExportPng(
     return await fn(opts);
   } catch {
     return null;
+  }
+}
+
+type LiveDesignerMultipagePdfExportFn = (opts?: VectorPdfExportOptions) => Promise<boolean>;
+
+const liveDesignerMultipagePdfExportByNodeId = new Map<string, LiveDesignerMultipagePdfExportFn>();
+
+/** Registra export PDF multipágina del Designer studio abierto (o headless) para Image Export. */
+export function registerLiveDesignerMultipagePdfExport(nodeId: string, fn: LiveDesignerMultipagePdfExportFn) {
+  liveDesignerMultipagePdfExportByNodeId.set(nodeId, fn);
+}
+
+export function unregisterLiveDesignerMultipagePdfExport(nodeId: string) {
+  liveDesignerMultipagePdfExportByNodeId.delete(nodeId);
+}
+
+export async function tryLiveDesignerMultipagePdfExport(
+  nodeId: string,
+  opts?: VectorPdfExportOptions,
+): Promise<boolean> {
+  const fn = liveDesignerMultipagePdfExportByNodeId.get(nodeId);
+  if (!fn) return false;
+  try {
+    return await fn(opts);
+  } catch {
+    return false;
   }
 }

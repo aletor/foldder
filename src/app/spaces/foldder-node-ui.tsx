@@ -159,17 +159,22 @@ export const FoldderStudioModeCenterButton = memo(function FoldderStudioModeCent
   onClick,
   disabled,
   className,
+  label = "Open Studio",
+  title,
 }: {
   onClick: () => void;
   disabled?: boolean;
   className?: string;
+  label?: string;
+  title?: string;
 }) {
+  const resolvedTitle = title ?? label;
   return (
     <div className={`pointer-events-none absolute bottom-3 right-3 z-[15] ${className ?? ""}`}>
       <button
         type="button"
         disabled={disabled}
-        title="Open Studio"
+        title={resolvedTitle}
         onClick={(e) => {
           e.stopPropagation();
           if (!disabled) onClick();
@@ -177,7 +182,7 @@ export const FoldderStudioModeCenterButton = memo(function FoldderStudioModeCent
         className="foldder-node-footer-button pointer-events-auto nodrag inline-flex items-center gap-1.5 rounded-none border-0 bg-white px-3 py-1.5 text-[11px] font-semibold text-black shadow-none transition hover:scale-[1.02] hover:bg-[#f7f7f4] disabled:pointer-events-none disabled:opacity-35"
       >
         <Maximize2 size={13} strokeWidth={2.4} className="shrink-0" />
-        Open Studio
+        {label}
       </button>
     </div>
   );

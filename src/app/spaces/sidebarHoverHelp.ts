@@ -53,8 +53,8 @@ export const SIDEBAR_HOVER_HELP: Record<string, { title: string; line: string }>
     line: 'Genera imagen con motor Grok',
   },
   concatenator: {
-    title: 'Concatenator',
-    line: 'Une varios textos en uno',
+    title: 'Nodo Prompt Concatenator',
+    line: 'Junta varios prompts en uno',
   },
   listado: {
     title: 'Listado',

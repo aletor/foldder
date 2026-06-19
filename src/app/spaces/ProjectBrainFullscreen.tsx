@@ -3,8 +3,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
-  BookOpen,
-  Brain,
   ChevronDown,
   ChevronUp,
   CircleHelp,
@@ -13,16 +11,13 @@ import {
   FileText,
   Globe,
   ImageIcon,
-  LayoutDashboard,
   Loader2,
   Lock,
   MessageSquareText,
-  Network,
   Plus,
   RefreshCw,
   Save,
   Send,
-  Sparkles,
   Trash2,
   Unlock,
   X,
@@ -114,6 +109,15 @@ import { fetchBrainTelemetrySummaryByNodeId } from "@/lib/brain/fetch-brain-tele
 import { applyLearningCandidateToProjectAssets } from "@/lib/brain/brain-apply-learning-candidate";
 import { BrandSummarySourcesPanel, type BrandSummaryNavTab } from "./brand-summary-sources-panel";
 import { BrandVisualDnaPanel } from "./BrandVisualDnaPanel";
+import {
+  FoldderStudioHeader,
+  foldderStudioHeaderActionClassName,
+} from "./FoldderStudioHeader";
+import {
+  BrainStudioMetricsBar,
+  BrainStudioSubTabBar,
+  BrainStudioTabBar,
+} from "./brain/BrainStudioChrome";
 import type { BrandVisualDnaStoredBundle } from "@/lib/brain/brand-visual-dna/types";
 import {
   BRAIN_BRAND_LOCKED_MESSAGE,
@@ -883,6 +887,7 @@ export type BrainMainSection =
   | "brand_visual_dna"
   | "knowledge"
   | "connected_nodes"
+  | "decision_traces"
   | "review"
   | "diagnostics"
   | "voice"
@@ -904,10 +909,29 @@ function resolveBrainPrimarySection(section: BrainMainSection): BrainPrimarySect
     case "facts":
       return "dna";
     case "connected_nodes":
+    case "decision_traces":
       return "diagnostics";
     default:
       return section;
   }
+}
+
+type OverviewSubView = "atmosphere" | "resumen";
+type DnaSubTab = "dna" | "voice" | "messages" | "personas" | "facts" | "visual";
+type DiagnosticsSubTab = "diagnostics" | "connected_nodes" | "decision_traces";
+type VisualSubTab = "visual_refs" | "brand_visual_dna";
+
+function resolveDnaSubTab(section: BrainMainSection): DnaSubTab {
+  if (section === "voice" || section === "messages" || section === "personas" || section === "facts") {
+    return section;
+  }
+  if (section === "visual_refs" || section === "brand_visual_dna") return "visual";
+  return "dna";
+}
+
+function resolveDiagnosticsSubTab(section: BrainMainSection): DiagnosticsSubTab {
+  if (section === "connected_nodes" || section === "decision_traces") return section;
+  return "diagnostics";
 }
 
 type Props = {
@@ -1585,6 +1609,7 @@ export function ProjectBrainFullscreen({
   }, [open, projectId, loadPendingLearningsStable]);
 
   const [activeTab, setActiveTab] = useState<BrainMainSection>("overview");
+  const [overviewSubView, setOverviewSubView] = useState<OverviewSubView>("atmosphere");
   const [atmosphereCanvasMode, setAtmosphereCanvasMode] = useState<"fusion" | "project">("fusion");
   const [brainIdentityEditorOpen, setBrainIdentityEditorOpen] = useState(false);
   /** Tarjeta «Contexto de marca» en ADN: vista corta + Ver más. */
@@ -1597,6 +1622,7 @@ export function ProjectBrainFullscreen({
   useEffect(() => {
     if (open && !prevOpenRef.current) {
       setActiveTab(initialSection ?? "overview");
+      setOverviewSubView(initialSection === "overview" || !initialSection ? "atmosphere" : "resumen");
     }
     prevOpenRef.current = open;
   }, [open, initialSection]);
@@ -4773,7 +4799,9 @@ export function ProjectBrainFullscreen({
 
   if (!open) return null;
 
-  const isAtmosphereMode = activeTab === "overview";
+  const isOverviewResumen = activeTab === "overview" && overviewSubView === "resumen";
+  const isAtmosphereMode = activeTab === "overview" && overviewSubView === "atmosphere";
+  const primarySection = resolveBrainPrimarySection(activeTab);
   const brandRecord = assets.brand as Record<string, unknown>;
   const stringFromBrand = (key: string): string | null => {
     const value = brandRecord[key];
@@ -4855,25 +4883,12 @@ export function ProjectBrainFullscreen({
           .map((c) => c.label)
           .join(", ")}${brainClients.length > 3 ? ` +${brainClients.length - 3}` : ""}`
       : "Listo para aprender de Designer y Photoroom";
-  const sectionTitleByTab: Record<BrainMainSection, string> = {
-    overview: "Atmósfera",
-    sources: "Fuentes",
-    dna: "ADN activo",
-    looks: "Looks visuales",
-    visual_refs: "Visual",
-    brand_visual_dna: "Síntesis visual",
-    knowledge: "Fuentes analizadas",
-    connected_nodes: "Nodos conectados",
-    review: "Aprendizajes",
-    diagnostics: "Diagnóstico",
-    voice: "Voz",
-    personas: "Audiencias",
-    messages: "Mensajes",
-    facts: "Hechos",
-  };
 
   const renderBrainAtmosphereCanvas = (compact = false) => (
-    <aside className={`relative min-h-0 shrink-0 ${compact ? "w-[23%] min-w-[250px]" : "w-[min(62%,960px)]"}`}>
+    <aside
+      data-foldder-keep-round
+      className={`relative min-h-0 shrink-0 ${compact ? "w-[23%] min-w-[250px]" : "w-full max-w-none flex-1"}`}
+    >
       <div className={`${compact ? "p-3" : "p-5 lg:p-7"} flex h-full min-h-0 flex-col gap-4`}>
         <div className="flex shrink-0 items-start justify-between gap-3">
           <div className="inline-flex rounded-full border border-white/20 bg-white/10 p-1 text-[10px] font-black uppercase tracking-wide text-white/70 shadow-[0_18px_55px_rgba(0,0,0,0.18)] backdrop-blur-xl">
@@ -5042,273 +5057,228 @@ export function ProjectBrainFullscreen({
     </aside>
   );
 
-  const brainControlModules: Array<{
-    id: string;
-    title: string;
-    summary: string;
-    subtext: string;
-    action: string;
-    tab: BrainMainSection;
-    icon: typeof Brain;
-    active: boolean;
-    complete?: boolean;
-  }> = [
-    {
-      id: "activeDna",
-      title: "ADN ACTIVO",
-      summary: `Marca · Proyecto · ${readyVisualCapsules.length} Looks`,
-      subtext: "Snapshot de lo que reciben los nodos creativos.",
-      action: "Ver snapshot",
-      tab: "dna",
-      icon: Sparkles,
-      active: resolveBrainPrimarySection(activeTab) === "dna" && !["voice", "messages", "personas", "facts"].includes(activeTab),
-      complete: adn.total >= 70,
-    },
-    {
-      id: "looks",
-      title: "LOOKS VISUALES",
-      summary: `${readyVisualCapsules.length} ready · ${partialVisualCapsules.length} parcial · ${archivedVisualCapsules} archivados`,
-      subtext: "Cápsulas visuales activas.",
-      action: "Ver biblioteca",
-      tab: "looks",
-      icon: ImageIcon,
-      active: activeTab === "looks",
-      complete: readyVisualCapsules.length > 0,
-    },
-    {
-      id: "voice",
-      title: "VOZ",
-      summary: canvasToneChips.slice(0, 3).join(" · "),
-      subtext: "Tono, reglas y palabras clave.",
-      action: "Ver detalles",
-      tab: "voice",
-      icon: MessageSquareText,
-      active: activeTab === "voice",
-      complete: assets.strategy.languageTraits.length > 0 || assets.strategy.voiceExamples.length > 0,
-    },
-    {
-      id: "messages",
-      title: "MENSAJES",
-      summary: `${assets.strategy.approvedPhrases.length} aceptados · ${assets.strategy.funnelMessages.length} mensajes`,
-      subtext: "Claims, mensajes clave y CTA.",
-      action: "Revisar",
-      tab: "messages",
-      icon: Send,
-      active: activeTab === "messages",
-      complete: assets.strategy.approvedPhrases.length > 0 || assets.strategy.funnelMessages.length > 0,
-    },
-    {
-      id: "sources",
-      title: "FUENTES",
-      summary: `${assets.knowledge.documents.length} documentos · ${imageDocCount} imágenes · ${assets.knowledge.urls.length} enlaces`,
-      subtext: "Todo el conocimiento del proyecto.",
-      action: "Ver listado",
-      tab: "knowledge",
-      icon: BookOpen,
-      active: activeTab === "sources" || activeTab === "knowledge",
-      complete: assets.knowledge.documents.length > 0 || assets.knowledge.urls.length > 0,
-    },
-    {
-      id: "learnings",
-      title: "APRENDIZAJES",
-      summary: `${assets.strategy.generatedPieces.length} guardados · ${pendingLearnings.length} por revisar`,
-      subtext: visualPendingProposals > 0 ? `${visualPendingProposals} propuesta(s) visuales pendientes.` : "Lo que Brain ha aprendido.",
-      action: "Revisar",
-      tab: "review",
-      icon: Network,
-      active: activeTab === "review",
-      complete: pendingLearnings.length === 0 && assets.strategy.generatedPieces.length > 0,
-    },
-    {
-      id: "diagnostic",
-      title: "DIAGNÓSTICO",
-      summary: `ADN ${adn.total}/100 · Visual ${skinVisualRefScore}%`,
-      subtext:
-        visualImageRefCount > 0
-          ? `Identidad ${skinIdentityScore}% · Hechos ${skinFactsScore}% · Nodos ${skinNodeLearningScore}%.`
-          : getBrainFreshnessSummary(assets.brainMeta),
-      action: "Ver desglose",
-      tab: "diagnostics",
-      icon: CircleHelp,
-      active: resolveBrainPrimarySection(activeTab) === "diagnostics",
-      complete: adn.total >= 70,
-    },
-  ];
-
-  const renderBrainControlPanel = (compact = false) => (
-    <aside
-      className={`min-h-0 shrink-0 overflow-y-auto overscroll-y-contain p-3 ${
-        compact ? "w-[25%] min-w-[270px]" : "w-[35%] min-w-[330px]"
-      }`}
-    >
-      <div className="mb-3 flex items-center justify-between gap-3 px-1">
-        <div>
-          <p className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">Brain Control Panel</p>
-          <p className="mt-0.5 text-[12px] font-semibold text-zinc-800">
-            {isAtmosphereMode ? "Módulos del ADN vivo" : sectionTitleByTab[activeTab]}
-          </p>
-        </div>
-        {!isAtmosphereMode ? (
-          <button
-            type="button"
-            onClick={() => setActiveTab("overview")}
-            className="rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-[10px] font-black uppercase tracking-wide text-zinc-700 hover:bg-zinc-100"
-          >
-            Atmósfera
-          </button>
-        ) : null}
+  const renderDecisionTracesPanel = () => (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-sm font-black uppercase tracking-[0.12em] text-zinc-900">Decision Trace</h2>
+        <p className="mt-1 max-w-2xl text-[12px] leading-relaxed text-zinc-600">
+          Por qué Brain decidió esto (diagnóstico avanzado). Se guardan las trazas más recientes con resumen ligero.
+        </p>
       </div>
-      <div className="space-y-2">
-        {brainControlModules.map((module) => {
-          const Icon = module.icon;
-          return (
-            <button
-              key={module.id}
-              type="button"
-              onClick={() => setActiveTab(module.tab)}
-              className={`group w-full rounded-[18px] border px-3 py-2.5 text-left transition hover:-translate-y-0.5 hover:shadow-md ${
-                module.active ? "border-violet-200 bg-violet-50/80 shadow-sm" : "border-zinc-200 bg-white hover:border-violet-100"
-              }`}
-            >
-              <div className="flex items-start gap-2.5">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[13px] bg-violet-100 text-violet-700">
-                  <Icon className="h-4 w-4" strokeWidth={2} aria-hidden />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="flex items-center gap-2">
-                    <span className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-900">{module.title}</span>
-                    {module.complete ? <span className="h-2 w-2 rounded-full bg-emerald-500" /> : null}
+      {decisionTraces.length > 0 ? (
+        <div className="space-y-2">
+          {decisionTraces.slice(0, 12).map((trace) => (
+            <details key={trace.id} className="rounded-[5px] border border-zinc-200 bg-zinc-50/60 p-2.5">
+              <summary className="cursor-pointer list-none">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-black text-zinc-900">
+                      {traceKindLabel(trace.kind)}
+                      {trace.targetNodeType ? ` · ${trace.targetNodeType}` : ""}
+                      {trace.targetNodeId ? ` · ${trace.targetNodeId}` : ""}
+                    </p>
+                    <p className="text-[10px] text-zinc-500">{formatTraceDate(trace.createdAt)}</p>
+                    {trace.persistenceIntent ? (
+                      <p className="text-[9px] text-zinc-400">{tracePersistenceIntentLabel(trace.persistenceIntent)}</p>
+                    ) : null}
+                  </div>
+                  <span className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[9px] font-black text-zinc-700">
+                    conf {Math.round((trace.confidence ?? 0) * 100)}%
                   </span>
-                  <span className="mt-0.5 block line-clamp-1 text-[12px] font-bold text-zinc-800">{module.summary}</span>
-                  <span className="mt-0.5 block line-clamp-1 text-[10px] leading-snug text-zinc-500">{module.subtext}</span>
-                  <span className="mt-1.5 inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-wide text-violet-700">
-                    {module.action}
-                    <ChevronDown className="-rotate-90 h-3 w-3 transition group-hover:translate-x-0.5" aria-hidden />
-                  </span>
-                </span>
-              </div>
-            </button>
-          );
-        })}
-      </div>
-      {activeTab === "review" ? (
-        <div className="mt-3 rounded-[20px] border border-zinc-200 bg-zinc-50/80 p-3">
-          <p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">Filtrar aprendizajes</p>
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {(
-              [
-                ["all", "Todos"],
-                ["visual", "Visual"],
-                ["designer", "Designer"],
-                ["photoroom", "Photoroom"],
-                ["article", "Artículos"],
-              ] as const
-            ).map(([id, label]) => (
-              <button
-                key={id}
-                type="button"
-                onClick={() => setReviewSourceFilter(id)}
-                className={`rounded-full border px-2.5 py-1 text-[9px] font-black uppercase tracking-wide ${
-                  reviewSourceFilter === id
-                    ? "border-violet-700 bg-violet-700 text-white"
-                    : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-100"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <p className="mt-2 text-[10px] leading-snug text-zinc-500">
-            {pendingFiltered.length} de {pendingLearnings.length} visibles.
-          </p>
+                </div>
+                <p className="mt-1 text-[11px] leading-relaxed text-zinc-700">{trace.outputSummary.summary}</p>
+              </summary>
+              {trace.outputSummary.warnings?.length ? (
+                <div className="mt-2 rounded-[5px] border border-amber-200 bg-amber-50 px-2 py-1.5 text-[10px] text-amber-900">
+                  Warnings: {trace.outputSummary.warnings.join(" · ")}
+                </div>
+              ) : null}
+              {trace.inputs.length > 0 ? (
+                <div className="mt-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Inputs principales</p>
+                  <p className="mt-1 text-[11px] text-zinc-700">
+                    {trace.inputs
+                      .slice(0, 6)
+                      .map((x) => x.label)
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </p>
+                </div>
+              ) : null}
+              {trace.conflicts?.length ? (
+                <div className="mt-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Conflictos</p>
+                  <p className="mt-1 text-[11px] text-zinc-700">
+                    {trace.conflicts
+                      .slice(0, 4)
+                      .map((c) => `${c.left} vs ${c.right} -> ${c.resolution}`)
+                      .join(" · ")}
+                  </p>
+                </div>
+              ) : null}
+              {trace.discardedSignals?.length ? (
+                <div className="mt-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Señales descartadas</p>
+                  <p className="mt-1 text-[11px] text-zinc-700">
+                    {trace.discardedSignals
+                      .slice(0, 4)
+                      .map((d) => `${d.summary} (${d.reason})`)
+                      .join(" · ")}
+                  </p>
+                </div>
+              ) : null}
+            </details>
+          ))}
         </div>
-      ) : null}
-    </aside>
+      ) : (
+        <p className="rounded-[5px] border border-dashed border-zinc-200 bg-zinc-50 px-3 py-4 text-[11px] text-zinc-500">
+          Aún no hay trazas persistidas.
+        </p>
+      )}
+    </div>
   );
 
   const shell = (
     <div
-      className="fixed inset-0 z-[100080] flex flex-col bg-zinc-100"
+      className="fixed inset-0 z-[100090] flex flex-col bg-[#0b0f14] text-white"
+      data-foldder-studio-panel
+      data-foldder-studio-flush
+      data-foldder-brain-studio
       role="dialog"
       aria-modal="true"
-      aria-labelledby="project-brain-title"
+      aria-label="Brain studio"
+      style={{ ["--foldder-studio-accent" as string]: "#5E8E70" }}
     >
-      <header className="flex h-[68px] shrink-0 items-center justify-between gap-3 border-b border-zinc-200/80 bg-white/95 px-5 backdrop-blur-sm supports-[backdrop-filter]:bg-white/82">
-        <div className="flex min-w-0 items-center gap-3">
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-violet-200/80 bg-violet-50 shadow-sm">
-            <Brain className="h-5 w-5 text-violet-700" strokeWidth={1.75} aria-hidden />
-          </span>
-          <div className="min-w-0 leading-tight">
-            <h1 id="project-brain-title" className="text-[16px] font-black tracking-tight text-zinc-950">
-              Brain
-            </h1>
-            <p className="truncate text-[11px] font-medium text-zinc-500">Atmósfera · {projectDisplayName}</p>
-          </div>
-        </div>
-        <div className="hidden min-w-0 flex-1 items-center justify-center gap-2 text-[11px] font-bold text-zinc-600 md:flex">
-          <span
-            className="inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-zinc-800 shadow-sm"
-          >
-            <span className="h-2 w-2 rounded-full bg-emerald-500" />
-            Conectado
-          </span>
-          <span className="rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-zinc-700 shadow-sm">
-            {connectedLearningLabel}
-          </span>
-        </div>
-        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-          <button
-            type="button"
-            onClick={() => setActiveTab("sources")}
-            className="inline-flex items-center gap-2 rounded-full border border-violet-700 bg-violet-700 px-4 py-2 text-[11px] font-black uppercase tracking-wide text-white shadow-sm transition hover:bg-violet-800"
-          >
-            <Plus className="h-3.5 w-3.5" strokeWidth={2.25} aria-hidden />
-            Añadir conocimiento
-          </button>
-          <button
-            type="button"
-            disabled={knowledgeIngestLocked || brandLocked}
-            onClick={() => handleResetBrainCompletely()}
-            title={
-              knowledgeIngestLocked
-                ? "Espera a que termine la ingesta"
-                : brandLocked
-                  ? "Marca bloqueada: desbloquéala antes de reiniciar Brain"
-                : "Borra marca, pozo, estrategia y todo análisis (memoria local hasta guardar)"
+      <FoldderStudioHeader
+        nodeType="projectBrain"
+        nodeLabel="Brain"
+        subtitle={projectDisplayName}
+        onClose={onClose}
+        actions={
+          <>
+            {visualReferenceAnalysisDirty && onSaveProjectFromBrain ? (
+              <button
+                type="button"
+                disabled={isSavingProject}
+                onClick={() => void handleSaveVisualAnalysis()}
+                className={foldderStudioHeaderActionClassName("text-sky-200 hover:text-white")}
+              >
+                {isSavingProject ? (
+                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+                ) : (
+                  <Save className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                )}
+                Guardar
+              </button>
+            ) : null}
+            <button
+              type="button"
+              disabled={knowledgeIngestLocked || brandLocked}
+              onClick={() => handleResetBrainCompletely()}
+              title={
+                knowledgeIngestLocked
+                  ? "Espera a que termine la ingesta"
+                  : brandLocked
+                    ? "Marca bloqueada: desbloquéala antes de reiniciar Brain"
+                    : "Borra marca, pozo, estrategia y todo análisis (memoria local hasta guardar)"
+              }
+              className={`${foldderStudioHeaderActionClassName()} text-rose-300 hover:text-rose-100`}
+            >
+              <Trash2 className="h-3.5 w-3.5 shrink-0" strokeWidth={2.25} aria-hidden />
+              <span className="hidden sm:inline">Reiniciar</span>
+            </button>
+          </>
+        }
+      />
+      <BrainStudioTabBar
+        activeTab={primarySection}
+        onTabChange={(tab) => {
+          if (tab === "overview") {
+            setActiveTab("overview");
+            setOverviewSubView("atmosphere");
+            return;
+          }
+          if (tab === "dna") {
+            setActiveTab("dna");
+            return;
+          }
+          if (tab === "diagnostics") {
+            setActiveTab("diagnostics");
+            return;
+          }
+          setActiveTab(tab);
+        }}
+      />
+      <BrainStudioMetricsBar
+        adnScore={adn.total}
+        connectedNodesCount={brainClients.length}
+        pendingLearningsCount={pendingLearnings.length}
+      />
+      {primarySection === "overview" ? (
+        <BrainStudioSubTabBar
+          ariaLabel="Vistas de atmósfera"
+          tabs={[
+            { id: "atmosphere", label: "Atmósfera", testId: "brain-subtab-atmosphere" },
+            { id: "resumen", label: "Resumen", testId: "brain-subtab-resumen" },
+          ]}
+          activeTab={overviewSubView}
+          onTabChange={setOverviewSubView}
+        />
+      ) : null}
+      {primarySection === "sources" ? (
+        <BrainStudioSubTabBar
+          ariaLabel="Fuentes"
+          tabs={[
+            { id: "sources", label: "Añadir fuentes", testId: "brain-subtab-sources" },
+            { id: "knowledge", label: "Fuentes analizadas", testId: "brain-subtab-knowledge" },
+          ]}
+          activeTab={activeTab === "knowledge" ? "knowledge" : "sources"}
+          onTabChange={(tab) => setActiveTab(tab as BrainMainSection)}
+        />
+      ) : null}
+      {primarySection === "dna" ? (
+        <BrainStudioSubTabBar
+          ariaLabel="Secciones de ADN"
+          tabs={[
+            { id: "dna", label: "Resumen", testId: "brain-subtab-dna" },
+            { id: "voice", label: "Voz" },
+            { id: "messages", label: "Mensajes" },
+            { id: "personas", label: "Audiencias" },
+            { id: "facts", label: "Hechos" },
+            { id: "visual", label: "Visual" },
+          ]}
+          activeTab={resolveDnaSubTab(activeTab)}
+          onTabChange={(tab) => {
+            if (tab === "visual") {
+              setActiveTab(activeTab === "brand_visual_dna" ? "brand_visual_dna" : "visual_refs");
+              return;
             }
-            className="hidden items-center gap-1.5 rounded-full border border-rose-200 bg-rose-50 px-3 py-2 text-[10px] font-black uppercase tracking-wide text-rose-700 shadow-sm transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50 lg:inline-flex"
-          >
-            <Trash2 className="h-3.5 w-3.5 shrink-0" strokeWidth={2.25} aria-hidden />
-            Reiniciar
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab("diagnostics")}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-zinc-200 bg-white text-[18px] font-black leading-none text-zinc-700 shadow-sm transition hover:bg-zinc-50"
-            aria-label="Más opciones"
-          >
-            …
-          </button>
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex shrink-0 items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-2 text-[11px] font-bold text-zinc-800 shadow-sm transition hover:bg-zinc-50"
-          >
-            <X className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
-            Cerrar
-          </button>
-        </div>
-      </header>
+            setActiveTab(tab as BrainMainSection);
+          }}
+        />
+      ) : null}
+      {primarySection === "diagnostics" ? (
+        <BrainStudioSubTabBar
+          ariaLabel="Diagnóstico"
+          tabs={[
+            { id: "diagnostics", label: "Salud", testId: "brain-subtab-diagnostics-salud" },
+            { id: "connected_nodes", label: "Nodos", testId: "brain-subtab-diagnostics-nodos" },
+            { id: "decision_traces", label: "Trazas", testId: "brain-subtab-diagnostics-trazas" },
+          ]}
+          activeTab={resolveDiagnosticsSubTab(activeTab)}
+          onTabChange={(tab) => setActiveTab(tab as BrainMainSection)}
+        />
+      ) : null}
 
       {message.text && (
         <div
           role="status"
-          className={`fixed left-1/2 top-14 z-[100090] max-w-[min(460px,92vw)] -translate-x-1/2 rounded-[5px] border px-3 py-2 text-center text-[11px] font-medium shadow-lg ${
+          className={`fixed left-1/2 top-11 z-[100100] max-w-[min(460px,92vw)] -translate-x-1/2 border px-3 py-2 text-center text-[11px] font-medium ${
             message.type === "error"
-              ? "border-rose-200 bg-rose-50 text-rose-700"
+              ? "border-rose-400/40 bg-rose-950/90 text-rose-200"
               : message.type === "success"
-              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-              : "border-amber-200 bg-amber-50 text-amber-700"
+                ? "border-emerald-400/40 bg-emerald-950/90 text-emerald-200"
+                : "border-amber-400/40 bg-amber-950/90 text-amber-200"
           }`}
         >
           {message.text}
@@ -5316,11 +5286,9 @@ export function ProjectBrainFullscreen({
       )}
 
       <div
-        className="relative min-h-0 flex-1 overflow-hidden px-3 pb-3 pt-2.5 sm:px-4"
+        className={`relative min-h-0 flex-1 overflow-hidden ${isAtmosphereMode ? "" : "bg-[#0b0f14]"}`}
         onMouseMove={handleBrainAtmosphereMouseMove}
-        style={{
-          backgroundColor: brandBackgroundForCanvas,
-        }}
+        style={isAtmosphereMode ? { backgroundColor: brandBackgroundForCanvas } : undefined}
       >
         <div ref={brainAtmosphereBackdropRef} className="pointer-events-none absolute inset-0 overflow-hidden">
           <div
@@ -5357,154 +5325,19 @@ export function ProjectBrainFullscreen({
             </g>
           </svg>
         </div>
-        <div className="relative z-10 flex h-full min-h-0 gap-3 overflow-hidden sm:gap-4">
-        {renderBrainAtmosphereCanvas(!isAtmosphereMode)}
+        <div className="relative z-10 flex h-full min-h-0 overflow-hidden">
+        {isAtmosphereMode ? renderBrainAtmosphereCanvas(false) : null}
 
-        <main className={`${isAtmosphereMode ? "hidden" : "flex"} min-h-0 min-w-0 flex-1 flex-col overflow-y-auto overscroll-y-contain rounded-[28px] border border-white/20 bg-white/94 p-3 shadow-sm backdrop-blur-xl sm:p-4`}>
-          <div className="hidden">
-            <div className="flex min-w-0 flex-wrap items-center gap-1">
-              {(
-                [
-                  ["overview", "Inicio", LayoutDashboard],
-                  ["sources", "Fuentes", BookOpen],
-                  ["dna", "ADN", Sparkles],
-                  ["looks", "Looks visuales", ImageIcon],
-                  ["review", "Aprendizajes", MessageSquareText],
-                  ["diagnostics", "Diagnóstico", Network],
-                ] as const
-              ).map(([id, label, Icon]) => (
-                <button
-                  key={id}
-                  type="button"
-                  data-testid={
-                    id === "review"
-                      ? "brain-tab-review"
-                      : id === "overview"
-                        ? "brain-tab-overview"
-                        : id === "sources"
-                          ? "brain-tab-sources"
-                          : undefined
-                  }
-                  onClick={() => setActiveTab(id)}
-                  className={`inline-flex items-center gap-1 rounded-[5px] border px-2 py-1 text-[9px] font-semibold uppercase tracking-wide ${
-                    resolveBrainPrimarySection(activeTab) === id
-                      ? "border-violet-600 bg-violet-600 text-white"
-                      : "border-transparent bg-zinc-50 text-zinc-600 hover:bg-zinc-100"
-                  }`}
-                >
-                  <Icon className="h-3 w-3 opacity-80" aria-hidden />
-                  {label}
-                </button>
-              ))}
-            </div>
-            {resolveBrainPrimarySection(activeTab) === "sources" ? (
-              <div className="flex flex-wrap items-center gap-1">
-                {(
-                  [
-                    ["sources", "Bandejas"],
-                    ["knowledge", "Fuentes analizadas"],
-                  ] as const
-                ).map(([id, label]) => (
-                  <button
-                    key={id}
-                    type="button"
-                    data-testid={id === "knowledge" ? "brain-subtab-knowledge" : undefined}
-                    onClick={() => setActiveTab(id)}
-                    className={`rounded-[5px] border px-2 py-1 text-[9px] font-semibold uppercase tracking-wide ${
-                      activeTab === id
-                        ? "border-zinc-800 bg-zinc-800 text-white"
-                        : "border-transparent bg-zinc-50 text-zinc-600 hover:bg-zinc-100"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-            {resolveBrainPrimarySection(activeTab) === "dna" ? (
-              <div className="flex flex-wrap items-center gap-1">
-                {(
-                  [
-                    ["dna", "Resumen"],
-                    ["visual_refs", "Visual"],
-                    ["brand_visual_dna", "Síntesis visual"],
-                    ["voice", "Voz"],
-                    ["messages", "Mensajes"],
-                    ["personas", "Audiencias"],
-                    ["facts", "Hechos"],
-                  ] as const
-                ).map(([id, label]) => (
-                  <button
-                    key={id}
-                    type="button"
-                    onClick={() => setActiveTab(id)}
-                    className={`rounded-[5px] border px-2 py-1 text-[9px] font-semibold uppercase tracking-wide ${
-                      activeTab === id
-                        ? "border-zinc-800 bg-zinc-800 text-white"
-                        : "border-transparent bg-zinc-50 text-zinc-600 hover:bg-zinc-100"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-            {resolveBrainPrimarySection(activeTab) === "diagnostics" ? (
-              <div className="flex flex-wrap items-center gap-1">
-                {(
-                  [
-                    ["diagnostics", "Trazas"],
-                    ["connected_nodes", "Nodos conectados"],
-                  ] as const
-                ).map(([id, label]) => (
-                  <button
-                    key={id}
-                    type="button"
-                    onClick={() => setActiveTab(id)}
-                    className={`rounded-[5px] border px-2 py-1 text-[9px] font-semibold uppercase tracking-wide ${
-                      activeTab === id
-                        ? "border-zinc-800 bg-zinc-800 text-white"
-                        : "border-transparent bg-zinc-50 text-zinc-600 hover:bg-zinc-100"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
+        {!isAtmosphereMode ? (
+        <main
+          className="custom-scrollbar flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto overscroll-y-contain bg-[#0b0f14] px-3 py-3 sm:px-4 sm:py-4"
+          data-brain-studio-main
+        >
 
-          {resolveBrainPrimarySection(activeTab) === "sources" ? (
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-[5px] border border-zinc-200 bg-zinc-50/80 px-3 py-2.5">
-              <div className="min-w-0">
-                <p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">Fuentes</p>
-                <p className="mt-0.5 text-[12px] font-semibold text-zinc-800">
-                  {assets.knowledge.documents.length} documentos · {assets.knowledge.urls.length} urls · {imageDocCount} imágenes
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {(
-                  [
-                    ["sources", "Añadir fuentes"],
-                    ["knowledge", "Fuentes analizadas"],
-                  ] as const
-                ).map(([id, label]) => (
-                  <button
-                    key={id}
-                    type="button"
-                    data-testid={id === "knowledge" ? "brain-subtab-knowledge-visible" : undefined}
-                    onClick={() => setActiveTab(id)}
-                    className={`rounded-full border px-3 py-1.5 text-[10px] font-black uppercase tracking-wide ${
-                      activeTab === id
-                        ? "border-violet-700 bg-violet-700 text-white shadow-sm"
-                        : "border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-100"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
+          {primarySection === "sources" ? (
+            <p className="mb-4 text-[11px] text-white/42">
+              {assets.knowledge.documents.length} documentos · {assets.knowledge.urls.length} urls · {imageDocCount} imágenes
+            </p>
           ) : null}
 
             {activeTab === "sources" && (
@@ -6027,49 +5860,32 @@ export function ProjectBrainFullscreen({
                 <div>
                   <h2 className="text-sm font-black uppercase tracking-[0.12em] text-zinc-900">Diagnóstico</h2>
                   <p className="mt-1 max-w-2xl text-[12px] leading-relaxed text-zinc-600">
-                    Trazabilidad, telemetría y detalles técnicos. Esta sección no cambia el ADN ni las fuentes.
+                    Salud del ADN, telemetría y detalles técnicos. Esta sección no cambia el ADN ni las fuentes.
                   </p>
                 </div>
-                <section className="rounded-[5px] border border-zinc-200 bg-white p-4 shadow-sm">
-                  <p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">Decision Trace</p>
-                  {decisionTraces.length > 0 ? (
-                    <div className="mt-3 space-y-2">
-                      {decisionTraces.slice(0, 12).map((trace) => (
-                        <details key={trace.id} className="rounded-[5px] border border-zinc-200 bg-zinc-50/70 p-2.5">
-                          <summary className="cursor-pointer list-none">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <div className="min-w-0">
-                                <p className="text-[11px] font-black text-zinc-900">
-                                  {traceKindLabel(trace.kind)}
-                                  {trace.targetNodeType ? ` · ${trace.targetNodeType}` : ""}
-                                </p>
-                                <p className="text-[10px] text-zinc-500">{formatTraceDate(trace.createdAt)}</p>
-                              </div>
-                              <span className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[9px] font-black text-zinc-700">
-                                conf {Math.round((trace.confidence ?? 0) * 100)}%
-                              </span>
-                            </div>
-                            <p className="mt-1 text-[11px] leading-relaxed text-zinc-700">{trace.outputSummary.summary}</p>
-                          </summary>
-                          {trace.inputs.length > 0 ? (
-                            <p className="mt-2 text-[11px] text-zinc-700">
-                              <span className="font-semibold text-zinc-900">Inputs:</span>{" "}
-                              {trace.inputs.slice(0, 8).map((x) => x.label).filter(Boolean).join(" · ")}
-                            </p>
-                          ) : null}
-                        </details>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="mt-3 rounded-[5px] border border-dashed border-zinc-200 bg-zinc-50 px-3 py-4 text-[11px] text-zinc-500">
-                      Aún no hay trazas persistidas.
-                    </p>
-                  )}
-                </section>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <div className="rounded-[5px] border border-zinc-200 bg-white p-3 shadow-sm">
+                    <p className="text-[9px] font-black uppercase tracking-[0.12em] text-zinc-500">ADN</p>
+                    <p className="mt-1 text-xl font-black text-zinc-900">{adn.total}/100</p>
+                  </div>
+                  <div className="rounded-[5px] border border-zinc-200 bg-white p-3 shadow-sm">
+                    <p className="text-[9px] font-black uppercase tracking-[0.12em] text-zinc-500">Visual</p>
+                    <p className="mt-1 text-xl font-black text-zinc-900">{skinVisualRefScore}%</p>
+                  </div>
+                  <div className="rounded-[5px] border border-zinc-200 bg-white p-3 shadow-sm">
+                    <p className="text-[9px] font-black uppercase tracking-[0.12em] text-zinc-500">Identidad</p>
+                    <p className="mt-1 text-xl font-black text-zinc-900">{skinIdentityScore}%</p>
+                  </div>
+                  <div className="rounded-[5px] border border-zinc-200 bg-white p-3 shadow-sm">
+                    <p className="text-[9px] font-black uppercase tracking-[0.12em] text-zinc-500">Nodos</p>
+                    <p className="mt-1 text-xl font-black text-zinc-900">{skinNodeLearningScore}%</p>
+                  </div>
+                </div>
                 <section className="rounded-[5px] border border-zinc-200 bg-zinc-50/80 p-4">
                   <p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">Estado técnico</p>
                   <ul className="mt-2 space-y-1 text-[11px] text-zinc-700">
                     <li>Brain version: {getBrainVersion(assets.brainMeta)}</li>
+                    <li>{getBrainFreshnessSummary(assets.brainMeta)}</li>
                     <li>Fuentes: {assets.knowledge.documents.length} documentos · {assets.knowledge.urls.length} URLs</li>
                     <li>Cápsulas visuales: {visualCapsules.length}</li>
                     <li>Visual slots: {visualDnaSlotsDisplay.length}</li>
@@ -6079,7 +5895,9 @@ export function ProjectBrainFullscreen({
               </div>
             )}
 
-            {activeTab === "overview" && (
+            {activeTab === "decision_traces" && renderDecisionTracesPanel()}
+
+            {isOverviewResumen && (
               <div className="space-y-6">
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
                   <div className="flex min-h-[120px] flex-col justify-between rounded-[5px] border border-violet-200 bg-white p-4 shadow-sm">
@@ -6305,94 +6123,6 @@ export function ProjectBrainFullscreen({
                     <p className="mt-3 text-[10px] leading-snug text-zinc-400">{BRAIN_TELEMETRY_EPHEMERAL_DEV_NOTE_ES}</p>
                   ) : null}
                 </div>
-
-                {decisionTraces.length > 0 ? (
-                  <div className="rounded-[5px] border border-zinc-200 bg-white p-5 shadow-sm">
-                    <p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">
-                      Decision Trace
-                    </p>
-                    <p className="mt-1 text-[11px] leading-relaxed text-zinc-600">
-                      Por qué Brain decidió esto (diagnóstico avanzado). Se guardan las trazas más recientes con resumen ligero.
-                    </p>
-                    <div className="mt-3 space-y-2">
-                      {decisionTraces.slice(0, 8).map((trace) => (
-                        <details
-                          key={trace.id}
-                          className="rounded-[5px] border border-zinc-200 bg-zinc-50/60 p-2.5"
-                        >
-                          <summary className="cursor-pointer list-none">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <div className="min-w-0">
-                                <p className="text-[11px] font-black text-zinc-900">
-                                  {traceKindLabel(trace.kind)}
-                                  {trace.targetNodeType ? ` · ${trace.targetNodeType}` : ""}
-                                  {trace.targetNodeId ? ` · ${trace.targetNodeId}` : ""}
-                                </p>
-                                <p className="text-[10px] text-zinc-500">{formatTraceDate(trace.createdAt)}</p>
-                                {trace.persistenceIntent ? (
-                                  <p className="text-[9px] text-zinc-400">
-                                    {tracePersistenceIntentLabel(trace.persistenceIntent)}
-                                  </p>
-                                ) : null}
-                              </div>
-                              <span className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[9px] font-black text-zinc-700">
-                                conf {Math.round((trace.confidence ?? 0) * 100)}%
-                              </span>
-                            </div>
-                            <p className="mt-1 text-[11px] leading-relaxed text-zinc-700">
-                              {trace.outputSummary.summary}
-                            </p>
-                          </summary>
-                          {trace.outputSummary.warnings?.length ? (
-                            <div className="mt-2 rounded-[5px] border border-amber-200 bg-amber-50 px-2 py-1.5 text-[10px] text-amber-900">
-                              Warnings: {trace.outputSummary.warnings.join(" · ")}
-                            </div>
-                          ) : null}
-                          {trace.inputs.length > 0 ? (
-                            <div className="mt-2">
-                              <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
-                                Inputs principales
-                              </p>
-                              <p className="mt-1 text-[11px] text-zinc-700">
-                                {trace.inputs
-                                  .slice(0, 6)
-                                  .map((x) => x.label)
-                                  .filter(Boolean)
-                                  .join(" · ")}
-                              </p>
-                            </div>
-                          ) : null}
-                          {trace.conflicts?.length ? (
-                            <div className="mt-2">
-                              <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
-                                Conflictos
-                              </p>
-                              <p className="mt-1 text-[11px] text-zinc-700">
-                                {trace.conflicts
-                                  .slice(0, 4)
-                                  .map((c) => `${c.left} vs ${c.right} -> ${c.resolution}`)
-                                  .join(" · ")}
-                              </p>
-                            </div>
-                          ) : null}
-                          {trace.discardedSignals?.length ? (
-                            <div className="mt-2">
-                              <p className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
-                                Señales descartadas
-                              </p>
-                              <p className="mt-1 text-[11px] text-zinc-700">
-                                {trace.discardedSignals
-                                  .slice(0, 4)
-                                  .map((d) => `${d.summary} (${d.reason})`)
-                                  .join(" · ")}
-                              </p>
-                            </div>
-                          ) : null}
-                        </details>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
               </div>
             )}
 
@@ -6667,6 +6397,36 @@ export function ProjectBrainFullscreen({
 
             {activeTab === "review" && (
               <div className="space-y-4">
+                <div className="border-b border-white/10 pb-3">
+                  <p className="text-[10px] font-black uppercase tracking-[0.14em] text-white/38">Filtrar aprendizajes</p>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {(
+                      [
+                        ["all", "Todos"],
+                        ["visual", "Visual"],
+                        ["designer", "Designer"],
+                        ["photoroom", "Photoroom"],
+                        ["article", "Artículos"],
+                      ] as const
+                    ).map(([id, label]) => (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => setReviewSourceFilter(id)}
+                        className={`border px-2.5 py-1 text-[9px] font-black uppercase tracking-wide transition ${
+                          reviewSourceFilter === id
+                            ? "border-[var(--foldder-studio-accent,#5E8E70)] bg-[var(--foldder-studio-accent,#5E8E70)] text-white"
+                            : "border-white/10 bg-white/[0.04] text-white/55 hover:bg-white/[0.08] hover:text-white/78"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-[10px] leading-snug text-white/42">
+                    {pendingFiltered.length} de {pendingLearnings.length} visibles.
+                  </p>
+                </div>
                 <div className="rounded-[5px] border border-violet-200 bg-violet-50/60 p-4">
                   <h2 className="text-sm font-black uppercase tracking-[0.12em] text-violet-900">Aprendizajes</h2>
                   <p className="mt-1 text-[12px] leading-relaxed text-violet-950/80">
@@ -6686,7 +6446,7 @@ export function ProjectBrainFullscreen({
                   </p>
                 ) : pendingFiltered.length === 0 ? (
                   <p className="rounded-[5px] border border-dashed border-amber-200 bg-amber-50/60 px-4 py-6 text-center text-[12px] text-amber-950">
-                    No hay elementos con este filtro. Cambia el filtro en el panel derecho o vuelve a «Todos».
+                    No hay elementos con este filtro. Cambia el filtro superior o vuelve a «Todos».
                   </p>
                 ) : (
                   <div className="space-y-4">
@@ -6713,6 +6473,18 @@ export function ProjectBrainFullscreen({
                   </div>
                 )}
               </div>
+            )}
+
+            {(activeTab === "visual_refs" || activeTab === "brand_visual_dna") && (
+              <BrainStudioSubTabBar
+                ariaLabel="Visual"
+                tabs={[
+                  { id: "visual_refs", label: "Referencias" },
+                  { id: "brand_visual_dna", label: "Síntesis ADN" },
+                ]}
+                activeTab={activeTab as VisualSubTab}
+                onTabChange={(tab) => setActiveTab(tab as BrainMainSection)}
+              />
             )}
 
             {activeTab === "visual_refs" && (
@@ -7921,8 +7693,7 @@ export function ProjectBrainFullscreen({
               </div>
             )}
         </main>
-
-        {renderBrainControlPanel(!isAtmosphereMode)}
+        ) : null}
 
         {signalModalClient && (
           <div
@@ -8020,11 +7791,11 @@ export function ProjectBrainFullscreen({
       </div>
       </div>
 
-      <footer className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-zinc-200/80 bg-white px-3 py-2 text-[10px] text-zinc-500 sm:px-4">
+      <footer className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-white/10 bg-black/30 px-3 py-2 text-[10px] text-white/45 sm:px-4">
         <p className="flex items-center gap-1.5">
-          <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" aria-hidden />
+          <span className="inline-block h-1.5 w-1.5 shrink-0 bg-emerald-400" aria-hidden data-foldder-keep-round />
           <span>
-            {analyzedCount} analizados · guardar proyecto persiste Brain
+            {analyzedCount} analizados · {connectedLearningLabel}
           </span>
         </p>
       </footer>

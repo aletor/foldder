@@ -91,9 +91,12 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
   imageExport: {
     type: 'imageExport',
     label: 'Image Export',
-    description: 'Exports the final composition as a PNG or JPG file.',
+    description:
+      'Exports connected media: PNG or JPG for images, multi-page PDF for Designer documents, MP4 for video.',
     inputs: [
-      { id: 'image', label: 'Image Input', type: 'image', required: true }
+      { id: 'image', label: 'Image Input', type: 'image' },
+      { id: 'video', label: 'Video Input', type: 'video' },
+      { id: 'document', label: 'Document Input', type: 'json' },
     ],
     outputs: [],
     dataSchema: {
@@ -439,10 +442,8 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
   painter: {
     type: 'painter',
     label: 'Painter',
-    description: 'An interactive drawing canvas. Use this when the user asks to draw, paint, sketch, or mask freely. Allows freehand drawing, erasing, and outputs a base64 image immediately. Input is optional (used as a base background).',
-    inputs: [
-      { id: 'image', label: 'Base Image', type: 'image', required: false }
-    ],
+    description: 'An interactive drawing canvas. Use this when the user asks to draw, paint, sketch, or mask freely. Allows freehand drawing, erasing, and outputs a base64 image immediately.',
+    inputs: [],
     outputs: [
       { id: 'image', label: 'Output Image', type: 'image' }
     ],
@@ -474,7 +475,6 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
       'Project identity and knowledge (brand kit + PDFs/links). Canvas card shows counts; full editing is in Brain studio mode (same as the Brain bottom-bar panel).',
     inputs: [],
     outputs: [
-      { id: 'prompt', label: 'Prompt out', type: 'prompt' as HandleType },
       { id: 'brain', label: 'Brain out', type: 'brain' as HandleType },
     ],
     dataSchema: {
@@ -569,7 +569,7 @@ export const ASSISTANT_NODE_DATA_HINTS: Record<string, string> = {
   crop: "aspectRatio, cropConfig, value",
   backgroundRemover: "threshold, expansion, feather",
   projectBrain:
-    "label (título opcional); salida prompt reservada (sin texto aún); marca y conocimiento en metadata.assets — resume y abre studio",
+    "label (título opcional); marca y conocimiento en metadata.assets — resume y abre studio; salida brain",
   projectAssets:
     "label (título opcional); salida prompt reservada; inventario de medios desde el grafo — abre Foldder",
   designer:

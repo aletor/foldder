@@ -4,7 +4,7 @@
 
 import React, { memo, useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef, type ComponentProps } from 'react';
 import { createPortal } from 'react-dom';
-import { Position, NodeProps, BaseEdge, getSmoothStepPath, EdgeProps, useReactFlow, useStore, useUpdateNodeInternals, useNodes, useEdges, NodeResizer, useNodeId, type Node, type ReactFlowState, type ConnectionLineComponentProps } from '@xyflow/react';
+import { Position, NodeProps, BaseEdge, getSmoothStepPath, EdgeProps, useReactFlow, useStore, useUpdateNodeInternals, useNodes, useEdges, NodeResizer, useNodeId, type Node, type Edge, type ReactFlowState, type ConnectionLineComponentProps } from '@xyflow/react';
 import { getSmartOrthogonalPath, type SmartEdgeRect } from './smart-edge-routing';
 import {
   Video, 
@@ -140,7 +140,10 @@ import {
   resolveMediaUrlFromEdgeSource,
   resolvePhotoRoomDocumentSize,
 } from './resolve-connected-media-url';
-import { mergeLiveStudioNodeDataIntoNodes } from './studio-live-documents';
+import { mergeLiveStudioNodeDataIntoNodes, tryLiveDesignerMultipagePdfExport } from './studio-live-documents';
+import type { DesignerPageState } from './designer/DesignerNode';
+import { getPageDimensions } from './indesign/page-formats';
+import { downloadS3Object, forceDownloadUrl, sanitizeDownloadFilename } from '@/lib/browser-download';
 import { useAuthedMediaPreviewUrl } from './hooks/use-authed-media-preview-url';
 import {
   buildVideoPromptAssembly,
@@ -883,7 +886,8 @@ export const UrlImageNode = memo(function UrlImageNode({ id, data, selected }: N
       style={{
         minWidth: 200,
         minHeight: hasPreview ? 120 : 300,
-        "--foldder-frameless-accent": "#aaaaaa",
+        "--foldder-frameless-accent": "#383522",
+        "--foldder-node-card-bg": "#383522",
       } as React.CSSProperties}
     >
       <FoldderNodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={STUDIO_NODE_MAX_HEIGHT} keepAspectRatio={Boolean(currentUrl)} isVisible={selected} />
@@ -898,6 +902,14 @@ export const UrlImageNode = memo(function UrlImageNode({ id, data, selected }: N
       </div>
 
       <div ref={previewFrameRef} className="node-content foldder-frameless-main url-image-node-main">
+        {!hasPreview ? (
+          <img
+            src="/nodes/url-image-bg.png"
+            alt=""
+            className="url-image-node-bg"
+            draggable={false}
+          />
+        ) : null}
         {currentUrl ? (
           <img
             src={currentUrl}
@@ -1002,6 +1014,210 @@ export const UrlImageNode = memo(function UrlImageNode({ id, data, selected }: N
   );
 });
 
+function formatExportByteSize(bytes: number | null | undefined): string {
+  if (bytes == null || !Number.isFinite(bytes) || bytes <= 0) return "—";
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  return `${(bytes / 1024).toFixed(1)} KB`;
+}
+
+function inferExportImageFormatLabel(url: string, mimeType?: string | null): string {
+  const mime = (mimeType ?? "").toLowerCase();
+  if (mime.includes("jpeg") || mime.includes("jpg")) return "JPEG";
+  if (mime.includes("png")) return "PNG";
+  if (mime.includes("webp")) return "WEBP";
+  if (mime.includes("gif")) return "GIF";
+  if (mime.includes("svg")) return "SVG";
+  const lower = url.split("?")[0]?.toLowerCase() ?? "";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "JPEG";
+  if (lower.endsWith(".png")) return "PNG";
+  if (lower.endsWith(".webp")) return "WEBP";
+  if (lower.endsWith(".gif")) return "GIF";
+  if (lower.endsWith(".svg")) return "SVG";
+  return "IMG";
+}
+
+function formatExportAspectRatio(w: number, h: number): string {
+  if (w <= 0 || h <= 0) return "—";
+  const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
+  const d = gcd(Math.round(w), Math.round(h));
+  return `${Math.round(w / d)}:${Math.round(h / d)}`;
+}
+
+function formatExportMegapixels(w: number, h: number): string {
+  if (w <= 0 || h <= 0) return "—";
+  return `${((w * h) / 1_000_000).toFixed(2)} MP`;
+}
+
+function formatExportDuration(seconds: number | null | undefined): string {
+  if (seconds == null || !Number.isFinite(seconds) || seconds <= 0) return "—";
+  if (seconds < 60) return `${seconds.toFixed(1)} s`;
+  const minutes = Math.floor(seconds / 60);
+  const secs = Math.round(seconds % 60);
+  return `${minutes}:${String(secs).padStart(2, "0")}`;
+}
+
+function inferExportVideoFormatLabel(url: string, mimeType?: string | null): string {
+  const mime = (mimeType ?? "").toLowerCase();
+  if (mime.includes("mp4")) return "MP4";
+  if (mime.includes("webm")) return "WEBM";
+  if (mime.includes("quicktime") || mime.includes("mov")) return "MOV";
+  const lower = url.split("?")[0]?.toLowerCase() ?? "";
+  if (lower.endsWith(".mp4")) return "MP4";
+  if (lower.endsWith(".webm")) return "WEBM";
+  if (lower.endsWith(".mov")) return "MOV";
+  if (lower.endsWith(".m4v")) return "M4V";
+  return "MP4";
+}
+
+function loadVideoProbe(videoUrl: string): Promise<{ width: number; height: number; durationSec: number | null }> {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    video.muted = true;
+    video.playsInline = true;
+    const done = () => {
+      video.removeEventListener("loadedmetadata", onOk);
+      video.removeEventListener("error", onErr);
+    };
+    const onOk = () => {
+      const width = video.videoWidth;
+      const height = video.videoHeight;
+      const durationSec = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : null;
+      done();
+      if (width > 0 && height > 0) resolve({ width, height, durationSec });
+      else reject(new Error("sin dimensiones de vídeo"));
+    };
+    const onErr = () => {
+      done();
+      reject(new Error("no se pudo cargar el vídeo"));
+    };
+    video.addEventListener("loadedmetadata", onOk);
+    video.addEventListener("error", onErr);
+    video.src = videoUrl;
+  });
+}
+
+function resolveVideoSourceHints(sourceNode: Node | null | undefined): {
+  durationSec: number | null;
+  resolutionLabel: string | null;
+  fps: number | null;
+  sizeLabel: string | null;
+  codec: string | null;
+} {
+  if (!sourceNode) {
+    return { durationSec: null, resolutionLabel: null, fps: null, sizeLabel: null, codec: null };
+  }
+  const nodeData = sourceNode.data as {
+    duration?: string | number;
+    resolution?: string;
+    fps?: number;
+    metadata?: { duration?: string; resolution?: string; fps?: number; size?: string; codec?: string };
+  };
+  const meta = nodeData.metadata;
+  let durationSec: number | null = null;
+  const rawDuration = meta?.duration ?? nodeData.duration;
+  if (typeof rawDuration === "number" && Number.isFinite(rawDuration) && rawDuration > 0) {
+    durationSec = rawDuration;
+  } else if (typeof rawDuration === "string") {
+    const trimmed = rawDuration.trim().replace(/s$/i, "");
+    const parsed = Number.parseFloat(trimmed);
+    if (Number.isFinite(parsed) && parsed > 0) durationSec = parsed;
+  }
+  return {
+    durationSec,
+    resolutionLabel: meta?.resolution ?? nodeData.resolution ?? null,
+    fps: meta?.fps ?? nodeData.fps ?? null,
+    sizeLabel: meta?.size ?? null,
+    codec: meta?.codec ?? null,
+  };
+}
+
+const VIDEO_SOURCE_NODE_TYPES = new Set([
+  "geminiVideo",
+  "grokProcessor",
+  "vfxGenerator",
+  "videoEditor",
+]);
+
+type ImageExportMode = "image" | "designer-pdf" | "video";
+
+function isVideoSourceNode(node: Node | null | undefined): boolean {
+  if (!node) return false;
+  if (VIDEO_SOURCE_NODE_TYPES.has(node.type ?? "")) return true;
+  const nodeData = node.data as { type?: string };
+  if (node.type === "mediaInput") return nodeData.type === "video";
+  return nodeData.type === "video";
+}
+
+function resolveImageExportEdges(edges: Edge[], targetId: string) {
+  const inputEdges = edges.filter((e) => e.target === targetId);
+  const documentEdge = inputEdges.find((e) => e.targetHandle === "document") ?? null;
+  const videoEdge = inputEdges.find((e) => e.targetHandle === "video") ?? null;
+  const imageEdge = inputEdges.find((e) => e.targetHandle === "image" || !e.targetHandle) ?? null;
+  const activeEdge = documentEdge ?? videoEdge ?? imageEdge ?? null;
+  return { documentEdge, videoEdge, imageEdge, activeEdge, inputEdges };
+}
+
+function resolveImageExportMode(
+  nodes: Node[],
+  documentEdge: { source: string } | null,
+  videoEdge: { source: string } | null,
+  activeEdge: { source: string; targetHandle?: string | null } | null,
+): ImageExportMode {
+  const documentSource = documentEdge ? nodes.find((n) => n.id === documentEdge.source) : null;
+  if (documentSource?.type === "designer") return "designer-pdf";
+  const activeSource = activeEdge ? nodes.find((n) => n.id === activeEdge.source) : null;
+  if (activeSource?.type === "designer" && activeEdge?.targetHandle !== "video") return "designer-pdf";
+  if (videoEdge || activeEdge?.targetHandle === "video" || isVideoSourceNode(activeSource)) return "video";
+  return "image";
+}
+
+type HeadlessDesignerPdfExportState = {
+  designerNodeId: string;
+  pages: DesignerPageState[];
+  activePageIndex: number;
+  filenameBase: string;
+  requestId: number;
+};
+
+function HeadlessDesignerPdfExportPortal({
+  state,
+  onDone,
+  onError,
+  onFinalExport,
+}: {
+  state: HeadlessDesignerPdfExportState;
+  onDone: () => void;
+  onError: (err: Error) => void;
+  onFinalExport: (detail: Parameters<typeof dispatchFoldderExportCreated>[0]) => void;
+}) {
+  const [Studio, setStudio] = useState<React.ComponentType<any> | null>(null);
+  useEffect(() => {
+    void import("./designer/DesignerStudio").then((m) => setStudio(() => m.default));
+  }, []);
+  if (!Studio) return null;
+  return createPortal(
+    <Studio
+      initialPages={state.pages}
+      activePageIndex={state.activePageIndex}
+      designerCanvasInstanceKey={state.designerNodeId}
+      onClose={onDone}
+      onExport={() => {}}
+      onUpdatePages={() => {}}
+      onFinalExport={(detail: Omit<Parameters<typeof dispatchFoldderExportCreated>[0], "sourceNodeId">) => {
+        onFinalExport({ ...detail, sourceNodeId: state.designerNodeId });
+      }}
+      headlessPdfExport={{
+        requestId: state.requestId,
+        filenameBase: state.filenameBase,
+        onDone,
+        onError,
+      }}
+    />,
+    document.body,
+  );
+}
+
 export const ImageExportNode = memo(function ImageExportNode({ id, data, selected }: NodeProps) {
   const nodes = useNodes();
   const edges = useEdges();
@@ -1010,31 +1226,102 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
   const [format, setFormat] = useState<'png' | 'jpeg'>('png');
   const [isExporting, setIsExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [headlessDesignerExport, setHeadlessDesignerExport] = useState<HeadlessDesignerPdfExportState | null>(null);
   const [detectedSize, setDetectedSize] = useState<{
     url: string;
     w: number;
     h: number;
     measured: boolean;
   } | null>(null);
+  const [sourceFileMeta, setSourceFileMeta] = useState<{
+    url: string;
+    byteSize: number | null;
+    mimeType: string | null;
+    loading: boolean;
+  } | null>(null);
+  const [detectedVideoMeta, setDetectedVideoMeta] = useState<{
+    url: string;
+    w: number;
+    h: number;
+    durationSec: number | null;
+    measured: boolean;
+  } | null>(null);
+  const [videoFileMeta, setVideoFileMeta] = useState<{
+    url: string;
+    byteSize: number | null;
+    mimeType: string | null;
+    loading: boolean;
+  } | null>(null);
   const frameRef = useRef<HTMLDivElement | null>(null);
   const previewRef = useRef<HTMLDivElement | null>(null);
+  const exportVideoRef = useRef<HTMLVideoElement | null>(null);
+  const [isExportVideoPlaying, setIsExportVideoPlaying] = useState(false);
   const frameSyncKeyRef = useRef<string | null>(null);
   const exportNode = nodes.find(n => n.id === id);
   const exportNodeStyle = exportNode?.style as React.CSSProperties | undefined;
   const hasManualExportFrame = typeof exportNodeStyle?.height === 'number' || typeof exportNodeStyle?.height === 'string';
 
-  // Find the single source connected to this node
-  const sourceEdge = edges.find(e => e.target === id);
-  const sourceNode = sourceEdge ? nodes.find(n => n.id === sourceEdge.source) : null;
-  const documentSize = resolvePhotoRoomDocumentSize(sourceNode);
+  const mergedNodes = useMemo(() => mergeLiveStudioNodeDataIntoNodes(nodes), [nodes]);
+  const { documentEdge, videoEdge, imageEdge, activeEdge } = useMemo(
+    () => resolveImageExportEdges(edges, id),
+    [edges, id],
+  );
+  const exportMode = useMemo(
+    () => resolveImageExportMode(mergedNodes, documentEdge, videoEdge, activeEdge),
+    [mergedNodes, documentEdge, videoEdge, activeEdge],
+  );
+  const sourceEdge = exportMode === "video"
+    ? (videoEdge ?? activeEdge)
+    : exportMode === "designer-pdf"
+      ? (documentEdge ?? imageEdge ?? activeEdge)
+      : (imageEdge ?? activeEdge);
+  const sourceNode = sourceEdge ? mergedNodes.find(n => n.id === sourceEdge.source) : null;
+  const designerNode = useMemo(() => {
+    if (documentEdge) {
+      const node = mergedNodes.find((n) => n.id === documentEdge.source);
+      if (node?.type === "designer") return node;
+    }
+    if (imageEdge) {
+      const node = mergedNodes.find((n) => n.id === imageEdge.source);
+      if (node?.type === "designer") return node;
+    }
+    return null;
+  }, [mergedNodes, documentEdge, imageEdge]);
+  const designerPages = useMemo(() => {
+    if (!designerNode) return [] as DesignerPageState[];
+    const nodeData = designerNode.data as { pages?: DesignerPageState[]; activePageIndex?: number };
+    return Array.isArray(nodeData.pages) && nodeData.pages.length > 0 ? nodeData.pages : [];
+  }, [designerNode]);
+  const designerActivePageIndex = useMemo(() => {
+    if (!designerNode) return 0;
+    const nodeData = designerNode.data as { activePageIndex?: number };
+    return Math.min(Math.max(0, nodeData.activePageIndex ?? 0), Math.max(0, designerPages.length - 1));
+  }, [designerNode, designerPages.length]);
+  const designerPageDims = useMemo(() => {
+    const page = designerPages[designerActivePageIndex] ?? designerPages[0];
+    if (!page) return null;
+    return getPageDimensions(page);
+  }, [designerPages, designerActivePageIndex]);
+  const documentSize = exportMode === "image" ? resolvePhotoRoomDocumentSize(sourceNode) : null;
 
   const resolvedImageUrl = useMemo(() => {
+    if (exportMode === "video") {
+      const edge = videoEdge ?? (isVideoSourceNode(sourceNode) ? sourceEdge : null);
+      if (!edge) return "";
+      return resolveMediaUrlFromEdgeSource(edge, mergedNodes, edges).trim();
+    }
+    if (exportMode === "designer-pdf") {
+      const thumb = typeof designerNode?.data?.value === "string" ? designerNode.data.value.trim() : "";
+      if (thumb) return thumb;
+      if (!imageEdge) return "";
+      return resolveMediaUrlFromEdgeSource(imageEdge, mergedNodes, edges).trim();
+    }
     if (!sourceEdge) return "";
-    return resolveMediaUrlFromEdgeSource(sourceEdge, nodes, edges).trim();
-  }, [sourceEdge, nodes, edges]);
+    return resolveMediaUrlFromEdgeSource(sourceEdge, mergedNodes, edges).trim();
+  }, [exportMode, videoEdge, sourceNode, sourceEdge, mergedNodes, edges, designerNode, imageEdge]);
 
   const layers = useMemo(() => {
-    if (!sourceNode || !resolvedImageUrl) return [];
+    if (exportMode !== "image" || !sourceNode || !resolvedImageUrl) return [];
     const sourceData = sourceNode.data as Record<string, unknown>;
     const s3Key = typeof sourceData.s3Key === "string" ? sourceData.s3Key : undefined;
     return [{
@@ -1042,9 +1329,11 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
       value: s3Key ? undefined : resolvedImageUrl,
       s3Key,
     }].filter(l => l.value || l.s3Key);
-  }, [resolvedImageUrl, sourceNode]);
+  }, [exportMode, resolvedImageUrl, sourceNode]);
 
-  const imageUrl = resolvedImageUrl || undefined;
+  const imageUrl = exportMode === "image" ? (resolvedImageUrl || undefined) : undefined;
+  const videoUrl = exportMode === "video" ? (resolvedImageUrl || undefined) : undefined;
+  const designerPreviewUrl = exportMode === "designer-pdf" ? (resolvedImageUrl || undefined) : undefined;
   const activeDetectedSize =
     imageUrl && detectedSize?.url === imageUrl ? detectedSize : null;
   useEffect(() => {
@@ -1076,6 +1365,181 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
     img.src = imageUrl;
   }, [documentSize, imageUrl]);
 
+  useEffect(() => {
+    if (!imageUrl || exportMode !== "image") {
+      setSourceFileMeta(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    const finish = (byteSize: number | null, mimeType: string | null) => {
+      if (!cancelled) {
+        setSourceFileMeta({ url: imageUrl, byteSize, mimeType, loading: false });
+      }
+    };
+
+    setSourceFileMeta({ url: imageUrl, byteSize: null, mimeType: null, loading: true });
+
+    if (imageUrl.startsWith("data:")) {
+      const commaIndex = imageUrl.indexOf(",");
+      const header = commaIndex >= 0 ? imageUrl.slice(0, commaIndex) : imageUrl;
+      const payload = commaIndex >= 0 ? imageUrl.slice(commaIndex + 1) : "";
+      const mimeType = header.match(/^data:([^;,]+)/i)?.[1] ?? null;
+      if (header.includes(";base64") && payload) {
+        const padding = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0;
+        finish(Math.max(0, Math.floor((payload.length * 3) / 4) - padding), mimeType);
+      } else {
+        finish(payload.length, mimeType);
+      }
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void (async () => {
+      try {
+        const headRes = await fetch(imageUrl, { method: "HEAD", credentials: "same-origin" });
+        const contentLength = headRes.headers.get("content-length");
+        const mimeType = headRes.headers.get("content-type");
+        if (contentLength) {
+          const byteSize = Number.parseInt(contentLength, 10);
+          if (Number.isFinite(byteSize) && byteSize > 0) {
+            finish(byteSize, mimeType);
+            return;
+          }
+        }
+      } catch {
+        /* fall through to GET */
+      }
+
+      try {
+        const res = await fetch(imageUrl, { credentials: "same-origin" });
+        const blob = await res.blob();
+        finish(blob.size, blob.type || res.headers.get("content-type"));
+      } catch {
+        finish(null, null);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [exportMode, imageUrl]);
+
+  useEffect(() => {
+    if (exportMode !== "video" || !videoUrl) {
+      setDetectedVideoMeta(null);
+      return;
+    }
+    let cancelled = false;
+    void loadVideoProbe(videoUrl)
+      .then(({ width, height, durationSec }) => {
+        if (!cancelled) {
+          setDetectedVideoMeta({
+            url: videoUrl,
+            w: width,
+            h: height,
+            durationSec,
+            measured: true,
+          });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDetectedVideoMeta({
+            url: videoUrl,
+            w: 1920,
+            h: 1080,
+            durationSec: null,
+            measured: false,
+          });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [exportMode, videoUrl]);
+
+  useEffect(() => {
+    if (exportMode !== "video" || !videoUrl) {
+      setVideoFileMeta(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    const finish = (byteSize: number | null, mimeType: string | null) => {
+      if (!cancelled) {
+        setVideoFileMeta({ url: videoUrl, byteSize, mimeType, loading: false });
+      }
+    };
+
+    setVideoFileMeta({ url: videoUrl, byteSize: null, mimeType: null, loading: true });
+
+    if (videoUrl.startsWith("data:")) {
+      const commaIndex = videoUrl.indexOf(",");
+      const header = commaIndex >= 0 ? videoUrl.slice(0, commaIndex) : videoUrl;
+      const payload = commaIndex >= 0 ? videoUrl.slice(commaIndex + 1) : "";
+      const mimeType = header.match(/^data:([^;,]+)/i)?.[1] ?? null;
+      if (header.includes(";base64") && payload) {
+        const padding = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0;
+        finish(Math.max(0, Math.floor((payload.length * 3) / 4) - padding), mimeType);
+      } else {
+        finish(payload.length, mimeType);
+      }
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void (async () => {
+      try {
+        const headRes = await fetch(videoUrl, { method: "HEAD", credentials: "same-origin" });
+        const contentLength = headRes.headers.get("content-length");
+        const mimeType = headRes.headers.get("content-type");
+        if (contentLength) {
+          const byteSize = Number.parseInt(contentLength, 10);
+          if (Number.isFinite(byteSize) && byteSize > 0) {
+            finish(byteSize, mimeType);
+            return;
+          }
+        }
+      } catch {
+        /* fall through to GET */
+      }
+
+      try {
+        const res = await fetch(videoUrl, { credentials: "same-origin" });
+        const blob = await res.blob();
+        finish(blob.size, blob.type || res.headers.get("content-type"));
+      } catch {
+        finish(null, null);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [exportMode, videoUrl]);
+
+  useEffect(() => {
+    setIsExportVideoPlaying(false);
+    const video = exportVideoRef.current;
+    if (video) {
+      video.pause();
+      video.currentTime = 0;
+    }
+  }, [videoUrl]);
+
+  const activeSourceFileMeta =
+    imageUrl && sourceFileMeta?.url === imageUrl ? sourceFileMeta : null;
+  const activeVideoFileMeta =
+    videoUrl && videoFileMeta?.url === videoUrl ? videoFileMeta : null;
+  const activeDetectedVideoMeta =
+    videoUrl && detectedVideoMeta?.url === videoUrl ? detectedVideoMeta : null;
+  const videoSourceHints = useMemo(() => resolveVideoSourceHints(sourceNode), [sourceNode]);
+
   const actualExportW = activeDetectedSize?.w ?? null;
   const actualExportH = activeDetectedSize?.h ?? null;
   const exportW = actualExportW || documentSize?.w || 1920;
@@ -1086,32 +1550,102 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
     Boolean(documentSize && actualExportW && actualExportH) &&
     (actualExportW! < documentSize!.w * 0.9 || actualExportH! < documentSize!.h * 0.9);
 
-  const directImageSrc = imageUrl || null;
-  const hasExportPreview = Boolean(directImageSrc);
+  const directImageSrc = exportMode === "image" ? (imageUrl || null) : exportMode === "designer-pdf" ? (designerPreviewUrl || null) : null;
+  const designerPreviewW = designerPageDims?.width ?? 1920;
+  const designerPreviewH = designerPageDims?.height ?? 1080;
+  const previewFrameW = exportMode === "designer-pdf"
+    ? designerPreviewW
+    : exportMode === "video"
+      ? (activeDetectedVideoMeta?.w ?? 1920)
+      : exportW;
+  const previewFrameH = exportMode === "designer-pdf"
+    ? designerPreviewH
+    : exportMode === "video"
+      ? (activeDetectedVideoMeta?.h ?? 1080)
+      : exportH;
+  const hasExportPreview = Boolean(
+    directImageSrc
+    || (exportMode === "video" && videoUrl)
+    || (exportMode === "designer-pdf" && designerPages.length > 0),
+  );
+  const lockExportAspectRatio = exportMode === "designer-pdf"
+    ? designerPages.length > 0
+    : hasExportPreview;
+
+  const exportFrameSyncKey = useMemo(() => {
+    if (exportMode === "designer-pdf") {
+      if (!designerPageDims || designerPages.length === 0) return "";
+      return `designer:${designerNode?.id ?? id}:${designerActivePageIndex}:${designerPageDims.width}x${designerPageDims.height}`;
+    }
+    const previewSrc = exportMode === "video" ? videoUrl : directImageSrc;
+    if (!previewSrc) return "";
+    const srcTail = previewSrc.length > 48 ? previewSrc.slice(-48) : previewSrc;
+    return `${exportMode}:${previewFrameW}x${previewFrameH}:${previewSrc.length}:${srcTail}`;
+  }, [
+    designerActivePageIndex,
+    designerNode?.id,
+    designerPageDims,
+    designerPages.length,
+    directImageSrc,
+    exportMode,
+    id,
+    previewFrameH,
+    previewFrameW,
+    videoUrl,
+  ]);
 
   useLayoutEffect(() => {
-    if (!directImageSrc) {
+    if (!exportFrameSyncKey) {
       frameSyncKeyRef.current = null;
       return;
     }
-    const syncKey = `${directImageSrc}:${exportW}x${exportH}`;
-    if (frameSyncKeyRef.current === syncKey) return;
+    if (frameSyncKeyRef.current === exportFrameSyncKey) return;
+
+    if (exportMode === "designer-pdf") {
+      if (!designerPageDims || designerPages.length === 0) return;
+      const nextFrame = resolveAspectLockedNodeFrame({
+        node: exportNode,
+        contentWidth: designerPageDims.width,
+        contentHeight: designerPageDims.height,
+        minWidth: 200,
+        maxWidth: 960,
+        minHeight: 120,
+        maxHeight: STUDIO_NODE_MAX_HEIGHT,
+        chromeHeight: resolveNodeChromeHeight(frameRef.current, previewRef.current),
+      });
+      frameSyncKeyRef.current = exportFrameSyncKey;
+      setNodes((nds) =>
+        syncAspectLockedFrameForNode(
+          nds as Node[],
+          id,
+          nextFrame,
+          designerPageDims.width / designerPageDims.height,
+        ),
+      );
+      requestAnimationFrame(() => updateNodeInternals(id));
+      return;
+    }
+
     const nextFrame = resolveAspectLockedNodeFrame({
       node: exportNode,
-      contentWidth: exportW,
-      contentHeight: exportH,
+      contentWidth: previewFrameW,
+      contentHeight: previewFrameH,
       minWidth: 200,
       maxWidth: 960,
       minHeight: 120,
       maxHeight: STUDIO_NODE_MAX_HEIGHT,
       chromeHeight: resolveNodeChromeHeight(frameRef.current, previewRef.current),
     });
-    frameSyncKeyRef.current = syncKey;
-    setNodes((nds) => syncAspectLockedFrameForNode(nds as Node[], id, nextFrame, exportW / exportH));
+    frameSyncKeyRef.current = exportFrameSyncKey;
+    setNodes((nds) => syncAspectLockedFrameForNode(nds as Node[], id, nextFrame, previewFrameW / previewFrameH));
     requestAnimationFrame(() => updateNodeInternals(id));
-  }, [directImageSrc, exportH, exportNode, exportW, id, setNodes, updateNodeInternals]);
+  }, [exportFrameSyncKey, exportMode, designerPageDims, designerPages.length, exportNode, id, previewFrameH, previewFrameW, setNodes, updateNodeInternals]);
 
-  const handleExport = async () => {
+  useEffect(() => {
+    requestAnimationFrame(() => updateNodeInternals(id));
+  }, [documentEdge, exportMode, id, imageEdge, updateNodeInternals, videoEdge]);
+
+  const handleExport = async (formatOverride?: 'png' | 'jpeg') => {
     if (!sourceNode) return alert("Connect an image first!");
     if (!layers.length) return alert("The connected node has no image to export.");
     if (!activeDetectedSize?.measured) {
@@ -1123,12 +1657,15 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
       );
     }
 
-    const extension = format === 'jpeg' ? 'jpg' : 'png';
+    const exportFormat = formatOverride ?? format;
+    if (formatOverride) setFormat(formatOverride);
+
+    const extension = exportFormat === 'jpeg' ? 'jpg' : 'png';
     const filename = `AI_Space_Output_${Date.now()}.${extension}`;
     const body = new FormData();
     body.set("layers", JSON.stringify(layers));
     body.set("filename", filename);
-    body.set("format", format);
+    body.set("format", exportFormat);
     body.set("width", String(composeW));
     body.set("height", String(composeH));
     body.set("previewWidth", String(composeW));
@@ -1171,7 +1708,7 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
         extension: `.${extension}`,
         sourceNodeId: sourceNode.id,
         thumbnailUrl: directImageSrc ?? undefined,
-        mimeType: format === "jpeg" ? "image/jpeg" : "image/png",
+        mimeType: exportFormat === "jpeg" ? "image/jpeg" : "image/png",
         exportedFrom: "imageExport",
         exportFormat: extension,
         metadata: {
@@ -1189,22 +1726,179 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
     }
   };
 
-  useRegisterAssistantNodeRun(id, handleExport);
+  const handleDesignerPdfExport = async () => {
+    if (!designerNode) return alert("Conecta un Designer primero.");
+    if (designerPages.length === 0) return alert("El Designer no tiene páginas para exportar.");
+    setExportError(null);
+    setIsExporting(true);
+    try {
+      const ok = await tryLiveDesignerMultipagePdfExport(designerNode.id, {});
+      if (ok) {
+        setIsExporting(false);
+        return;
+      }
+      const label = typeof designerNode.data?.label === "string" ? designerNode.data.label : undefined;
+      const filenameBase = (await import("./designer/DesignerStudio")).safeDesignerExportFilenameBase(label);
+      setHeadlessDesignerExport({
+        designerNodeId: designerNode.id,
+        pages: designerPages,
+        activePageIndex: designerActivePageIndex,
+        filenameBase,
+        requestId: Date.now(),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "No se pudo exportar el PDF.";
+      setExportError(message);
+      setIsExporting(false);
+    }
+  };
 
+  const handleVideoDownload = async () => {
+    const edge = videoEdge ?? (isVideoSourceNode(sourceNode) ? sourceEdge : null);
+    if (!edge || !sourceNode) return alert("Conecta un vídeo primero.");
+    const url = resolveMediaUrlFromEdgeSource(edge, mergedNodes, edges).trim();
+    const sourceData = sourceNode.data as { s3Key?: string; label?: string };
+    const s3Key = typeof sourceData.s3Key === "string" ? sourceData.s3Key : undefined;
+    if (!url && !s3Key) return alert("El nodo conectado no tiene vídeo para descargar.");
 
+    const rawName = typeof sourceData.label === "string" && sourceData.label.trim()
+      ? `${sourceData.label.trim()}.mp4`
+      : `foldder-video-${Date.now()}.mp4`;
+    const filename = sanitizeDownloadFilename(rawName, "foldder-video.mp4");
+
+    setExportError(null);
+    setIsExporting(true);
+    try {
+      if (s3Key) {
+        downloadS3Object(s3Key, filename);
+      } else {
+        await forceDownloadUrl(url, filename);
+      }
+      dispatchFoldderExportCreated({
+        name: filename,
+        extension: ".mp4",
+        sourceNodeId: sourceNode.id,
+        fileUrl: url || undefined,
+        mimeType: "video/mp4",
+        exportedFrom: "imageExport",
+        exportFormat: "mp4",
+        metadata: {
+          exportNodeId: id,
+          sourceNodeType: sourceNode.type,
+        },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "No se pudo descargar el vídeo.";
+      setExportError(message);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const runExportForMode = useCallback(async () => {
+    if (exportMode === "designer-pdf") {
+      await handleDesignerPdfExport();
+      return;
+    }
+    if (exportMode === "video") {
+      await handleVideoDownload();
+      return;
+    }
+    await handleExport();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- mode-specific handlers are stable enough for assistant runs
+  }, [exportMode]);
+
+  useRegisterAssistantNodeRun(id, runExportForMode);
+
+  const hasSource = exportMode === "designer-pdf"
+    ? Boolean(designerNode && designerPages.length > 0)
+    : exportMode === "video"
+      ? Boolean(sourceNode && (videoUrl || (sourceNode.data as { s3Key?: string }).s3Key))
+      : Boolean(sourceNode && layers.length);
+
+  const IMAGE_EXPORT_TOUCHED_MARK_SRC = "/nodes/image-export-mark.png";
+  const displayW = actualExportW ?? exportW;
+  const displayH = actualExportH ?? exportH;
+  const sourceFormatLabel = imageUrl
+    ? inferExportImageFormatLabel(imageUrl, activeSourceFileMeta?.mimeType)
+    : "—";
+  const sourceWeightLabel = activeSourceFileMeta?.loading
+    ? "Midiendo…"
+    : formatExportByteSize(activeSourceFileMeta?.byteSize);
+  const resolutionLabel = activeDetectedSize?.measured
+    ? `${displayW}×${displayH} px`
+    : `${displayW}×${displayH} px · midiendo…`;
+  const aspectRatioLabel = formatExportAspectRatio(displayW, displayH);
+  const megapixelsLabel = formatExportMegapixels(displayW, displayH);
+  const exportStatusLabel = resolutionMismatch
+    ? "Baja resolución"
+    : activeDetectedSize?.measured
+      ? "Listo para exportar"
+      : "Midiendo imagen…";
+  const sourceNodeLabel = sourceNode?.type
+    ? sourceNode.type.replace(/([A-Z])/g, " $1").replace(/^./, (s) => s.toUpperCase()).trim()
+    : "—";
+  const designerPageCountLabel = designerPages.length > 0 ? `${designerPages.length} página${designerPages.length === 1 ? "" : "s"}` : "—";
+  const videoDisplayW = activeDetectedVideoMeta?.w ?? 1920;
+  const videoDisplayH = activeDetectedVideoMeta?.h ?? 1080;
+  const videoFormatLabel = videoUrl
+    ? inferExportVideoFormatLabel(videoUrl, activeVideoFileMeta?.mimeType)
+    : "MP4";
+  const videoWeightLabel = activeVideoFileMeta?.loading
+    ? "Midiendo…"
+    : (activeVideoFileMeta?.byteSize != null
+      ? formatExportByteSize(activeVideoFileMeta.byteSize)
+      : (videoSourceHints.sizeLabel ?? "—"));
+  const videoResolutionLabel = activeDetectedVideoMeta?.measured
+    ? `${videoDisplayW}×${videoDisplayH} px`
+    : videoSourceHints.resolutionLabel
+      ? videoSourceHints.resolutionLabel
+      : `${videoDisplayW}×${videoDisplayH} px · midiendo…`;
+  const videoAspectRatioLabel = formatExportAspectRatio(videoDisplayW, videoDisplayH);
+  const videoDurationLabel = formatExportDuration(
+    activeDetectedVideoMeta?.durationSec ?? videoSourceHints.durationSec,
+  );
+  const videoFpsLabel = videoSourceHints.fps != null && Number.isFinite(videoSourceHints.fps)
+    ? `${videoSourceHints.fps} fps`
+    : null;
+  const videoCodecLabel = videoSourceHints.codec?.trim() || null;
+  const videoStatusLabel = videoUrl || (sourceNode?.data as { s3Key?: string } | undefined)?.s3Key
+    ? activeDetectedVideoMeta?.measured
+      ? "Listo para descargar"
+      : "Midiendo vídeo…"
+    : "Sin vídeo";
+  const isPortraitPreview = hasExportPreview && exportMode !== "video" && previewFrameH > previewFrameW * 1.02;
+  const isPortraitVideoPreview = hasExportPreview && exportMode === "video" && previewFrameH > previewFrameW * 1.02;
 
   return (
     <div
       ref={frameRef}
-      className={`custom-node processor-node export-node image-export-node foldder-node--frameless ${hasExportPreview ? 'node--media' : 'node--glass foldder-frameless-label-dark'} ${hasManualExportFrame ? 'foldder-node-frame-manual' : ''} ${isExporting ? 'node-glow-running' : ''} ${exportError ? 'foldder-node--error' : ''}`}
-      style={{ minWidth: 200, minHeight: 120 }}
+      className={`custom-node processor-node export-node image-export-node foldder-node--frameless ${hasExportPreview ? 'node--media image-export-node--has-preview' : 'node--glass image-export-node--empty foldder-frameless-label-dark'} ${hasExportPreview ? ((isPortraitPreview || isPortraitVideoPreview) ? 'image-export-node--portrait' : 'image-export-node--landscape') : ''} ${hasSource ? 'image-export-node--show-controls' : ''} ${hasManualExportFrame ? 'foldder-node-frame-manual' : ''} ${isExporting ? 'node-glow-running' : ''} ${exportError ? 'foldder-node--error' : ''}`}
+      style={{
+        minWidth: 200,
+        minHeight: hasExportPreview ? 120 : 300,
+        '--foldder-node-card-bg': '#DDDE55',
+        '--foldder-frameless-glass-bg': '#DDDE55',
+        '--foldder-frameless-accent': '#1f2328',
+      } as React.CSSProperties}
     >
-      <FoldderNodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={STUDIO_NODE_MAX_HEIGHT} keepAspectRatio={hasExportPreview} isVisible={selected} />
+      <FoldderNodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={STUDIO_NODE_MAX_HEIGHT} keepAspectRatio={lockExportAspectRatio} isVisible={selected} />
+      {hasExportPreview ? (
+        <FoldderStudioTouchedMark nodeType="imageExport" backgroundSrc={IMAGE_EXPORT_TOUCHED_MARK_SRC} />
+      ) : null}
       <NodeLabel id={id} label={typeof data.label === "string" ? data.label : undefined} defaultLabel="Export" />
 
-      <div className="handle-wrapper handle-left">
+      <div className="handle-wrapper handle-left" style={{ top: "38%" }}>
         <FoldderDataHandle type="target" position={Position.Left} id="image" dataType="image" />
         <span className="handle-label">Image Input</span>
+      </div>
+      <div className="handle-wrapper handle-left" style={{ top: "50%" }}>
+        <FoldderDataHandle type="target" position={Position.Left} id="video" dataType="video" />
+        <span className="handle-label">Video Input</span>
+      </div>
+      <div className="handle-wrapper handle-left" style={{ top: "62%" }}>
+        <FoldderDataHandle type="target" position={Position.Left} id="document" dataType="generic" />
+        <span className="handle-label">Document Input</span>
       </div>
       <div className="node-header">
         <NodeIcon type="imageExport" selected={selected} loading={isExporting} size={16} />
@@ -1212,52 +1906,264 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
           IMAGE EXPORT
         </FoldderNodeHeaderTitle>
       </div>
-      <div className="node-content image-export-node-content flex flex-col gap-3">
+      <div className={`node-content foldder-frameless-main image-export-node-content flex flex-col ${hasExportPreview ? 'image-export-node-content--preview' : ''}`}>
+        {!hasExportPreview ? (
+          <img
+            src="/nodes/image-export-bg.png"
+            alt=""
+            className="image-export-node-bg"
+            draggable={false}
+          />
+        ) : null}
+
+        <div
+          ref={previewRef}
+          className={`image-export-preview relative flex min-h-0 flex-1 items-center justify-center overflow-hidden ${hasExportPreview ? 'image-export-preview--visible' : 'image-export-preview--hidden'}`}
+          style={{ minHeight: hasExportPreview ? 120 : 0 }}
+        >
+          {directImageSrc || (exportMode === "designer-pdf" && designerPages.length > 0) ? (
+            <div
+              className="image-export-preview-frame max-h-full max-w-full min-h-0 min-w-0"
+              style={{
+                aspectRatio: `${Math.max(1, previewFrameW)} / ${Math.max(1, previewFrameH)}`,
+              }}
+            >
+              {directImageSrc ? (
+                <img
+                  src={directImageSrc}
+                  className="block h-full w-full object-contain"
+                  alt="Export preview"
+                />
+              ) : null}
+            </div>
+          ) : exportMode === "video" && videoUrl ? (
+            <div
+              className="image-export-preview-frame max-h-full max-w-full min-h-0 min-w-0"
+              style={{
+                aspectRatio: `${Math.max(1, previewFrameW)} / ${Math.max(1, previewFrameH)}`,
+              }}
+            >
+              <div className="image-export-video-preview relative h-full w-full">
+                <video
+                  ref={exportVideoRef}
+                  src={videoUrl}
+                  className="block h-full w-full object-contain"
+                  muted
+                  playsInline
+                  preload="metadata"
+                  onPlay={() => setIsExportVideoPlaying(true)}
+                  onPause={() => setIsExportVideoPlaying(false)}
+                  onEnded={() => setIsExportVideoPlaying(false)}
+                />
+                <button
+                  type="button"
+                  className="image-export-video-play-toggle absolute inset-0 flex items-center justify-center nodrag nopan group"
+                  aria-label={isExportVideoPlaying ? "Pausar vídeo" : "Reproducir vídeo"}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const video = exportVideoRef.current;
+                    if (!video) return;
+                    if (video.paused) {
+                      void video.play();
+                    } else {
+                      video.pause();
+                    }
+                  }}
+                >
+                  {!isExportVideoPlaying ? (
+                    <div className="image-export-video-play-icon flex h-10 w-10 items-center justify-center transition-transform group-hover:scale-110">
+                      <svg width="14" height="16" viewBox="0 0 14 16" fill="white" aria-hidden>
+                        <path d="M0 0L14 8L0 16V0Z" />
+                      </svg>
+                    </div>
+                  ) : (
+                    <div className="image-export-video-play-icon flex h-10 w-10 items-center justify-center opacity-0 transition-opacity group-hover:opacity-100">
+                      <svg width="12" height="14" viewBox="0 0 12 14" fill="white" aria-hidden>
+                        <rect x="0" y="0" width="4" height="14" />
+                        <rect x="8" y="0" width="4" height="14" />
+                      </svg>
+                    </div>
+                  )}
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        {hasSource ? (
+          <div className="image-export-dock nodrag">
+            <div className="image-export-meta">
+              {exportMode === "designer-pdf" ? (
+                <>
+                  <div className="image-export-meta-row">
+                    <span className="image-export-meta-label">Páginas</span>
+                    <span className="image-export-meta-value">{designerPageCountLabel}</span>
+                  </div>
+                  <div className="image-export-meta-row">
+                    <span className="image-export-meta-label">Formato</span>
+                    <span className="image-export-meta-value">PDF</span>
+                  </div>
+                  <div className="image-export-meta-row image-export-meta-row--optional">
+                    <span className="image-export-meta-label">Origen</span>
+                    <span className="image-export-meta-value">{sourceNodeLabel}</span>
+                  </div>
+                  <div className="image-export-meta-row image-export-meta-row--status">
+                    <span className="image-export-meta-label">Estado</span>
+                    <span className="image-export-meta-value">
+                      {designerPages.length > 0 ? "Listo para exportar" : "Sin páginas"}
+                    </span>
+                  </div>
+                </>
+              ) : exportMode === "video" ? (
+                <>
+                  <div className="image-export-meta-row">
+                    <span className="image-export-meta-label">Resolución</span>
+                    <span className="image-export-meta-value">{videoResolutionLabel}</span>
+                  </div>
+                  <div className="image-export-meta-row">
+                    <span className="image-export-meta-label">Peso</span>
+                    <span className="image-export-meta-value">{videoWeightLabel}</span>
+                  </div>
+                  <div className="image-export-meta-row">
+                    <span className="image-export-meta-label">Formato</span>
+                    <span className="image-export-meta-value">{videoFormatLabel}</span>
+                  </div>
+                  <div className="image-export-meta-row">
+                    <span className="image-export-meta-label">Ratio</span>
+                    <span className="image-export-meta-value">{videoAspectRatioLabel}</span>
+                  </div>
+                  <div className="image-export-meta-row">
+                    <span className="image-export-meta-label">Duración</span>
+                    <span className="image-export-meta-value">{videoDurationLabel}</span>
+                  </div>
+                  {videoFpsLabel ? (
+                    <div className="image-export-meta-row image-export-meta-row--optional">
+                      <span className="image-export-meta-label">FPS</span>
+                      <span className="image-export-meta-value">{videoFpsLabel}</span>
+                    </div>
+                  ) : null}
+                  {videoCodecLabel ? (
+                    <div className="image-export-meta-row image-export-meta-row--optional">
+                      <span className="image-export-meta-label">Codec</span>
+                      <span className="image-export-meta-value">{videoCodecLabel}</span>
+                    </div>
+                  ) : null}
+                  <div className="image-export-meta-row image-export-meta-row--optional">
+                    <span className="image-export-meta-label">Origen</span>
+                    <span className="image-export-meta-value">{sourceNodeLabel}</span>
+                  </div>
+                  <div className="image-export-meta-row image-export-meta-row--status">
+                    <span className="image-export-meta-label">Estado</span>
+                    <span className="image-export-meta-value">{videoStatusLabel}</span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="image-export-meta-row">
+                    <span className="image-export-meta-label">Resolución</span>
+                    <span className="image-export-meta-value">{resolutionLabel}</span>
+                  </div>
+                  <div className="image-export-meta-row">
+                    <span className="image-export-meta-label">Peso</span>
+                    <span className="image-export-meta-value">{sourceWeightLabel}</span>
+                  </div>
+                  <div className="image-export-meta-row">
+                    <span className="image-export-meta-label">Formato</span>
+                    <span className="image-export-meta-value">{sourceFormatLabel}</span>
+                  </div>
+                  <div className="image-export-meta-row">
+                    <span className="image-export-meta-label">Ratio</span>
+                    <span className="image-export-meta-value">{aspectRatioLabel}</span>
+                  </div>
+                  <div className="image-export-meta-row">
+                    <span className="image-export-meta-label">Megapíxeles</span>
+                    <span className="image-export-meta-value">{megapixelsLabel}</span>
+                  </div>
+                  <div className="image-export-meta-row image-export-meta-row--optional">
+                    <span className="image-export-meta-label">Origen</span>
+                    <span className="image-export-meta-value">{sourceNodeLabel}</span>
+                  </div>
+                  <div className="image-export-meta-row image-export-meta-row--status">
+                    <span className="image-export-meta-label">Estado</span>
+                    <span className={`image-export-meta-value ${resolutionMismatch ? "is-warning" : ""}`}>
+                      {exportStatusLabel}
+                    </span>
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="image-export-format-row nodrag flex gap-2">
+              {exportMode === "designer-pdf" ? (
+                <button
+                  type="button"
+                  onClick={() => void handleDesignerPdfExport()}
+                  disabled={isExporting}
+                  className={`image-export-format-option image-export-download-btn nodrag is-active ${isExporting ? 'opacity-50' : ''}`}
+                  aria-label="Descargar PDF"
+                >
+                  {isExporting ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <Download size={14} />
+                  )}
+                  <span>Descargar PDF</span>
+                </button>
+              ) : exportMode === "video" ? (
+                <button
+                  type="button"
+                  onClick={() => void handleVideoDownload()}
+                  disabled={isExporting}
+                  className={`image-export-format-option image-export-download-btn nodrag is-active ${isExporting ? 'opacity-50' : ''}`}
+                  aria-label="Descargar mp4"
+                >
+                  {isExporting ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <Download size={14} />
+                  )}
+                  <span>Descargar mp4</span>
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void handleExport('png')}
+                    disabled={isExporting}
+                    className={`image-export-format-option image-export-download-btn nodrag ${format === 'png' ? 'is-active' : ''} ${isExporting ? 'opacity-50' : ''}`}
+                    aria-label="Download PNG"
+                  >
+                    {isExporting && format === 'png' ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : (
+                      <Download size={14} />
+                    )}
+                    <span>PNG</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleExport('jpeg')}
+                    disabled={isExporting}
+                    className={`image-export-format-option image-export-download-btn nodrag ${format === 'jpeg' ? 'is-active' : ''} ${isExporting ? 'opacity-50' : ''}`}
+                    aria-label="Download JPG"
+                  >
+                    {isExporting && format === 'jpeg' ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : (
+                      <Download size={14} />
+                    )}
+                    <span>JPG</span>
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        ) : null}
+
         <div className="image-export-controls flex shrink-0 flex-col gap-3">
-          <div className="image-export-format-row flex gap-2">
-            <button
-              onClick={() => setFormat('png')}
-              className={`image-export-format-option flex-1 py-1 rounded-none text-[10px] font-bold transition-all ${format === 'png' ? 'is-active bg-[#1d2433] text-white' : 'bg-white/5 text-gray-400 border border-white/10'}`}
-            >
-              PNG
-            </button>
-            <button
-              onClick={() => setFormat('jpeg')}
-              className={`image-export-format-option flex-1 py-1 rounded-none text-[10px] font-bold transition-all ${format === 'jpeg' ? 'is-active bg-[#1d2433] text-white' : 'bg-white/5 text-gray-400 border border-white/10'}`}
-            >
-              JPG
-            </button>
-          </div>
-
-          <button
-            className={`execute-btn image-export-action w-full justify-center ${isExporting ? 'opacity-50' : ''}`}
-            onClick={handleExport}
-            disabled={isExporting}
-          >
-            {isExporting ? (
-              <>
-                <Loader2 size={14} className="animate-spin" /> BUILDING...
-              </>
-            ) : (
-              <>
-                <Download size={14} /> EXPORT {format.toUpperCase()}
-              </>
-            )}
-          </button>
-
-          <div className="image-export-meta flex justify-between items-center text-[8px] font-mono text-gray-500 uppercase">
-            <span>
-              {(actualExportW ?? exportW)}×{(actualExportH ?? exportH)} PX
-              {activeDetectedSize?.measured
-                ? resolutionMismatch && documentSize
-                  ? ` · doc ${documentSize.w}×${documentSize.h} (cierra PhotoRoom)`
-                  : " · píxeles reales"
-                : " · midiendo…"}
-            </span>
-            <span>{resolutionMismatch ? "BAJA RES" : "EXPORT READY"}</span>
-          </div>
-          {resolutionMismatch && documentSize ? (
-            <div className="rounded-none border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-[9px] font-semibold leading-snug text-amber-100">
+          {exportMode === "image" && resolutionMismatch && documentSize ? (
+            <div className="image-export-warning rounded-none border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-[9px] font-semibold leading-snug text-amber-100">
               PhotoRoom guardó una miniatura de {actualExportW}×{actualExportH} px. Cierra el studio para exportar a{" "}
               {documentSize.w}×{documentSize.h} px.
             </div>
@@ -1268,34 +2174,30 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
             </div>
           ) : null}
         </div>
-
-        {/* Preview: marco con la misma proporción que la imagen (exportW/H); encaja en el nodo sin deformar */}
-        <div
-          ref={previewRef}
-          className="image-export-preview relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-none border border-white/10 bg-[#0a0a0a] group/out"
-          style={{ minHeight: 120 }}
-        >
-          {directImageSrc ? (
-            <div
-              className="image-export-preview-frame max-h-full max-w-full min-h-0 min-w-0"
-              style={{
-                aspectRatio: `${Math.max(1, exportW)} / ${Math.max(1, exportH)}`,
-              }}
-            >
-              <img
-                src={directImageSrc}
-                className="block h-full w-full object-contain"
-                alt="Export preview"
-              />
-            </div>
-          ) : (
-            <div className="flex flex-col items-center gap-2 text-gray-500">
-              <ImageIcon size={32} />
-              <span className="text-[9px] font-black uppercase">No source connected</span>
-            </div>
-          )}
-        </div>
       </div>
+      {headlessDesignerExport ? (
+        <HeadlessDesignerPdfExportPortal
+          state={headlessDesignerExport}
+          onDone={() => {
+            setHeadlessDesignerExport(null);
+            setIsExporting(false);
+          }}
+          onError={(err) => {
+            setHeadlessDesignerExport(null);
+            setExportError(err.message);
+            setIsExporting(false);
+          }}
+          onFinalExport={(detail) => {
+            dispatchFoldderExportCreated({
+              ...detail,
+              metadata: {
+                ...(detail.metadata ?? {}),
+                exportNodeId: id,
+              },
+            });
+          }}
+        />
+      ) : null}
     </div>
   );
 });
@@ -2034,6 +2936,7 @@ export const NotesNode = memo(function NotesNode({ id, data, selected }: NodePro
 
 // --- LOGIC NODES ---
 
+
 export const ConcatenatorNode = memo(function ConcatenatorNode({ id, data, selected }: NodeProps) {
   const nodeData = data as BaseNodeData;
   const nodes = useNodes();
@@ -2053,7 +2956,9 @@ export const ConcatenatorNode = memo(function ConcatenatorNode({ id, data, selec
 
   const nodesById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
   const connectedHandleIds = useMemo(() => new Set(connectedEdges.map((e) => e.targetHandle)), [connectedEdges]);
+  /** Una ranura visible: la última conectada + la siguiente libre (máx. 8). */
   const visibleCount = Math.min(Math.max(connectedEdges.length + 1, 1), ALL_HANDLES.length);
+  const visibleHandles = useMemo(() => ALL_HANDLES.slice(0, visibleCount), [visibleCount]);
 
   useEffect(() => {
     updateNodeInternals(id);
@@ -2073,20 +2978,28 @@ export const ConcatenatorNode = memo(function ConcatenatorNode({ id, data, selec
     }
   }, [connectedEdges, nodesById, id, nodeData.value, setNodes]);
 
+  const hasOutput = Boolean(nodeData.value?.trim());
+  const isActive = connectedEdges.length > 0 || hasOutput;
+
   return (
-    <div className="custom-node tool-node concatenator-node" style={{ minWidth: 240 }}>
-      <FoldderNodeResizer minWidth={240} minHeight={180} maxWidth={600} maxHeight={520} isVisible={selected} />
+    <div
+      className={`custom-node tool-node concatenator-node foldder-node--frameless node--glass foldder-frameless-label-dark ${isActive ? "concatenator-node--active" : "concatenator-node--empty"}`}
+      style={{
+        minWidth: 280,
+        minHeight: 300,
+        "--foldder-node-card-bg": "#FADC93",
+        "--foldder-frameless-glass-bg": "#FADC93",
+        "--foldder-frameless-accent": "#1f2328",
+      } as React.CSSProperties}
+    >
+      <FoldderNodeResizer minWidth={280} minHeight={300} maxWidth={640} maxHeight={520} isVisible={selected} />
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Concatenator" />
-      {ALL_HANDLES.map((hId, index) => {
-        const visible = index < visibleCount;
-        return (
+      {visibleHandles.map((hId, index) => (
           <div
             key={hId}
             className="handle-wrapper handle-left"
             style={{
-              top: `${((index + 1) / (ALL_HANDLES.length + 1)) * 100}%`,
-              opacity: visible ? 1 : 0,
-              pointerEvents: visible ? 'auto' : 'none',
+              top: `${((index + 1) / (visibleHandles.length + 1)) * 100}%`,
             }}
           >
             <FoldderDataHandle
@@ -2094,38 +3007,41 @@ export const ConcatenatorNode = memo(function ConcatenatorNode({ id, data, selec
               position={Position.Left}
               id={hId}
               dataType="prompt"
-              className={connectedHandleIds.has(hId) ? '' : 'opacity-40'}
+              className={connectedHandleIds.has(hId) ? 'foldder-data-handle--connected' : ''}
             />
-            <span className="handle-label" style={{ fontSize: 4 }}>
-              {connectedHandleIds.has(hId) ? `In ${index + 1} ✓` : `In ${index + 1}`}
-            </span>
           </div>
-        );
-      })}
-      
+        ))}
+
       <div className="node-header">
         <NodeIcon type="concatenator" selected={selected} size={16} />
         <FoldderNodeHeaderTitle introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}>
           Concatenator
         </FoldderNodeHeaderTitle>
-        <div className="node-badge">UTILITY</div>
       </div>
-      <div className="node-content flex min-w-0 flex-col gap-3 px-3 pb-3 pt-2">
-        <div className="min-w-0">
-          <span className="node-label">Salida concatenada</span>
-          <div className="max-h-[180px] min-h-[50px] min-w-0 w-full max-w-full overflow-y-auto break-words whitespace-pre-wrap rounded-none border border-slate-200/60 bg-slate-50/50 p-3 shadow-inner">
-            {nodeData.value?.trim() ? (
-              <span className="font-mono text-[10px] leading-relaxed text-slate-900">{nodeData.value}</span>
+
+      <div className="node-content foldder-frameless-main concatenator-node-main nodrag nopan">
+        <img
+          src="/nodes/concatenator-bg.png"
+          alt=""
+          className="concatenator-node-bg"
+          draggable={false}
+        />
+        {isActive ? (
+          <div className="concatenator-node-output-dock">
+            {hasOutput ? (
+              <p className="concatenator-node-output-text">{nodeData.value}</p>
             ) : (
-              <span className="text-[10px] italic text-slate-500">
-                Conecta prompts a la izquierda para combinarlos…
-              </span>
+              <p className="concatenator-node-output-placeholder">Esperando prompts conectados…</p>
             )}
+            <span className="concatenator-node-meta">
+              {connectedEdges.length} {connectedEdges.length === 1 ? "input" : "inputs"}
+            </span>
           </div>
-        </div>
-        <div className="text-[8px] font-bold uppercase tracking-tighter text-slate-500">
-          {connectedEdges.length} inputs activos
-        </div>
+        ) : (
+          <div className="concatenator-node-empty-hint" aria-hidden>
+            Connect prompts on the left
+          </div>
+        )}
       </div>
 
       <div className="handle-wrapper handle-right">
@@ -2319,12 +3235,13 @@ export const EnhancerNode = memo(function EnhancerNode({ id, data, selected }: N
 
   const nodesById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
   const connectedHandleIds = useMemo(() => new Set(connectedEdges.map((e) => e.targetHandle)), [connectedEdges]);
-  /** Misma lógica que Concatenator: al menos 1 ranura visible. */
+  /** Una ranura visible: conectadas + la siguiente libre (máx. 8). */
   const visibleCount = Math.min(Math.max(connectedEdges.length + 1, 1), ALL_HANDLES.length);
+  const visibleHandles = useMemo(() => ALL_HANDLES.slice(0, visibleCount), [visibleCount]);
 
   useEffect(() => {
     updateNodeInternals(id);
-  }, [id, connectedEdges.length, visibleCount, updateNodeInternals]);
+  }, [id, visibleCount, updateNodeInternals]);
 
   // Live concatenation
   const concatenated = useMemo(
@@ -2365,21 +3282,45 @@ export const EnhancerNode = memo(function EnhancerNode({ id, data, selected }: N
 
   useRegisterAssistantNodeRun(id, handleEnhance);
 
+  const [copiedPrompt, setCopiedPrompt] = useState(false);
+  const enhancedText = String(nodeData.value ?? '').trim();
+
+  const onCopyEnhancedPrompt = useCallback(async () => {
+    if (!enhancedText) return;
+    try {
+      await navigator.clipboard.writeText(enhancedText);
+      setCopiedPrompt(true);
+      window.setTimeout(() => setCopiedPrompt(false), 1500);
+    } catch {
+      // clipboard may be unavailable
+    }
+  }, [enhancedText]);
+
+  const hasInput = Boolean(concatenated.trim());
+  const hasOutput = Boolean(enhancedText);
+  const showEnhanceButton = connectedEdges.length > 0 || loading;
+  const isActive = connectedEdges.length > 0 || hasInput || hasOutput || loading;
+
   return (
-    <div className="custom-node tool-node enhancer-node" style={{ minWidth: 240 }}>
-      <FoldderNodeResizer minWidth={240} minHeight={180} maxWidth={600} maxHeight={520} isVisible={selected} />
+    <div
+      className={`custom-node tool-node enhancer-node foldder-node--frameless node--glass foldder-frameless-label-dark ${isActive ? 'enhancer-node--active' : 'enhancer-node--empty'} ${showEnhanceButton ? 'enhancer-node--show-run' : ''} ${loading ? 'node-glow-running' : ''}`}
+      style={{
+        minWidth: 280,
+        minHeight: 300,
+        '--foldder-node-card-bg': '#21817f',
+        '--foldder-frameless-glass-bg': '#21817f',
+        '--foldder-frameless-accent': '#1f2328',
+      } as React.CSSProperties}
+    >
+      <FoldderNodeResizer minWidth={280} minHeight={300} maxWidth={640} maxHeight={560} isVisible={selected} />
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Enhancer" />
 
-      {ALL_HANDLES.map((hId, index) => {
-        const visible = index < visibleCount;
-        return (
+      {visibleHandles.map((hId, index) => (
           <div
             key={hId}
             className="handle-wrapper handle-left"
             style={{
-              top: `${((index + 1) / (ALL_HANDLES.length + 1)) * 100}%`,
-              opacity: visible ? 1 : 0,
-              pointerEvents: visible ? 'auto' : 'none',
+              top: `${((index + 1) / (visibleHandles.length + 1)) * 100}%`,
             }}
           >
             <FoldderDataHandle
@@ -2387,59 +3328,73 @@ export const EnhancerNode = memo(function EnhancerNode({ id, data, selected }: N
               position={Position.Left}
               id={hId}
               dataType="prompt"
-              className={connectedHandleIds.has(hId) ? '' : 'opacity-40'}
+              className={connectedHandleIds.has(hId) ? 'foldder-data-handle--connected' : ''}
             />
-            <span className="handle-label" style={{ fontSize: 4 }}>
-              {connectedHandleIds.has(hId) ? `In ${index + 1} ✓` : `In ${index + 1}`}
-            </span>
           </div>
-        );
-      })}
+        ))}
 
       <div className="node-header">
         <NodeIcon type="enhancer" selected={selected} loading={loading} size={16} />
         <FoldderNodeHeaderTitle introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}>
           Prompt Enhancer
         </FoldderNodeHeaderTitle>
-        <div className="node-badge">UTILITY</div>
       </div>
 
-      <div className="node-content flex min-w-0 flex-col gap-3 px-3 pb-3 pt-2">
-        <div className="min-w-0">
-          <span className="node-label">Entrada combinada</span>
-          <div className="max-h-[150px] min-h-[50px] min-w-0 w-full max-w-full overflow-y-auto break-words whitespace-pre-wrap rounded-none border border-slate-200/60 bg-slate-50/50 p-3 shadow-inner">
-            {concatenated ? (
-              <span className="font-mono text-[10px] leading-relaxed text-slate-800">{concatenated}</span>
-            ) : (
-              <span className="text-[10px] italic text-slate-500">Conecta prompts a la izquierda para combinarlos…</span>
-            )}
-          </div>
-        </div>
-        <div className="text-[8px] font-bold uppercase tracking-tighter text-slate-500">
-          {connectedEdges.length} inputs activos
-        </div>
+      <div className="node-content foldder-frameless-main enhancer-node-main nodrag nopan">
+        <img
+          src="/nodes/enhancer-bg.png"
+          alt=""
+          className="enhancer-node-bg"
+          draggable={false}
+        />
 
-        <button type="button" className="execute-btn w-full shrink-0" onClick={handleEnhance} disabled={loading}>
-          {loading ? (
-            <>
-              <Loader2 size={12} className="animate-spin" /> ENHANCING…
-            </>
-          ) : (
-            'ENHANCE WITH OPENAI'
-          )}
-        </button>
-
-        <div className="min-w-0">
-          <span className="node-label">Salida mejorada</span>
-          <div className="max-h-[180px] min-h-[50px] min-w-0 w-full max-w-full overflow-y-auto break-words whitespace-pre-wrap rounded-none border border-slate-200/60 bg-slate-50/50 p-3 shadow-inner">
-            {nodeData.value ? (
-              <span className="font-mono text-[10px] leading-relaxed text-slate-800">{String(nodeData.value)}</span>
-            ) : (
-              <span className="text-[10px] italic text-slate-500">El prompt mejorado aparecerá aquí…</span>
-            )}
+        {loading ? (
+          <div className="enhancer-node-loading absolute inset-0 z-[8] flex flex-col items-center justify-center gap-2 bg-black/45 backdrop-blur-[2px]">
+            <Loader2 size={22} className="animate-spin text-white/90" />
+            <span className="text-[8px] font-black uppercase tracking-[0.25em] text-white/80">Enhancing</span>
           </div>
-        </div>
+        ) : null}
+
+        {(hasInput || hasOutput) ? (
+          <div className="enhancer-node-dock nodrag">
+            {hasOutput ? (
+              <div className="enhancer-node-output-row">
+                <p className="enhancer-node-output-text">{enhancedText}</p>
+                <button
+                  type="button"
+                  className="enhancer-copy-prompt-btn nodrag shrink-0"
+                  onClick={() => void onCopyEnhancedPrompt()}
+                  title={copiedPrompt ? 'Copied' : 'Copy prompt'}
+                  aria-label={copiedPrompt ? 'Copied' : 'Copy prompt'}
+                >
+                  <Copy size={15} strokeWidth={2} aria-hidden />
+                </button>
+              </div>
+            ) : hasInput ? (
+              <p className="enhancer-node-input-preview">{concatenated}</p>
+            ) : null}
+          </div>
+        ) : null}
       </div>
+
+      {showEnhanceButton ? (
+        <div className="foldder-frameless-footer-action nodrag enhancer-node-footer">
+          <button
+            type="button"
+            className="execute-btn enhancer-run-button nodrag w-full"
+            onClick={handleEnhance}
+            disabled={loading || !hasInput}
+          >
+            {loading ? (
+              <>
+                <Loader2 size={12} className="animate-spin" /> Enhancing…
+              </>
+            ) : (
+              'Enhance with OpenAI'
+            )}
+          </button>
+        </div>
+      ) : null}
 
       <div className="handle-wrapper handle-right">
         <span className="handle-label">Result</span>
@@ -5083,39 +6038,27 @@ const PAINT_COLORS = [
   { id: 'yellow', hex: '#eab308', label: 'Yellow' },
   { id: 'green',  hex: '#22c55e', label: 'Green' },
 ];
-const PAINT_RATIOS = [
-  { label: '1:1',  value: '1:1',  w: 1024, h: 1024 },
-  { label: '16:9', value: '16:9', w: 1920, h: 1080 },
-  { label: '9:16', value: '9:16', w: 1080, h: 1920 },
-];
+const PAINT_CANVAS_SIZE = 1024;
+const PAINT_BRUSH_MIN = 1;
+const PAINT_BRUSH_MAX = 80;
 
 export const PainterNode = memo(function PainterNode({ id, data, selected }: NodeProps) {
   const { setNodes } = useReactFlow();
   const nodes = useNodes();
-  const edges = useEdges();
+  const updateNodeInternals = useUpdateNodeInternals();
+  const currentNode = nodes.find((node) => node.id === id);
+  const currentFrameNode = useCurrentNodeFrameSnapshot(currentNode);
   const nodeData = data as BaseNodeData & {
     bgColor?: string; strokeColor?: string; brushSize?: number;
-    aspectRatio?: string;
   };
 
-  const baseImageUrl = useMemo(() => {
-    const edge = edges.find((e) => e.target === id && e.targetHandle === 'image');
-    if (!edge) return null;
-    const src = nodes.find((n) => n.id === edge.source);
-    const v = src?.data && typeof (src.data as { value?: unknown }).value === 'string'
-      ? (src.data as { value: string }).value
-      : null;
-    if (!v) return null;
-    if (v.startsWith('http') || v.startsWith('data:') || v.startsWith('blob:')) return v;
-    return null;
-  }, [edges, nodes, id]);
-
-  const ratio    = PAINT_RATIOS.find(r => r.value === (nodeData.aspectRatio || '16:9')) || PAINT_RATIOS[1];
-  const canvasW  = ratio.w;
-  const canvasH  = ratio.h;
+  const canvasW = PAINT_CANVAS_SIZE;
+  const canvasH = PAINT_CANVAS_SIZE;
 
   const canvasRef    = useRef<HTMLCanvasElement>(null);
   const cursorDotRef = useRef<HTMLDivElement>(null);   // ref-based cursor, no setState
+  const painterStudioRootRef = useRef<HTMLDivElement>(null);
+  const painterFrameSyncKeyRef = useRef<string | null>(null);
   const isDrawingRef = useRef(false);
   const modeRef      = useRef<'brush'|'eraser'>('brush');
   const colorRef     = useRef('#111111');
@@ -5172,10 +6115,89 @@ export const PainterNode = memo(function PainterNode({ id, data, selected }: Nod
 
   const bgHex = bgColor === 'white' ? '#ffffff' : '#111111';
   const color = PAINT_COLORS.find(c => c.id === colorId)?.hex || '#111111';
+  const hasDrawingPreview = typeof data.value === 'string' && Boolean(data.value);
+  const PAINTER_TOUCHED_MARK_SRC = "/nodes/painter-mark.png";
+
+  useLayoutEffect(() => {
+    if (!hasDrawingPreview) {
+      painterFrameSyncKeyRef.current = null;
+      return;
+    }
+    const syncKey = "1:1:drawing";
+    if (painterFrameSyncKeyRef.current === syncKey) return;
+    const nextFrame = resolveAspectLockedNodeFrame({
+      node: currentFrameNode,
+      contentWidth: PAINT_CANVAS_SIZE,
+      contentHeight: PAINT_CANVAS_SIZE,
+      minWidth: 200,
+      maxWidth: 960,
+      minHeight: 200,
+      maxHeight: STUDIO_NODE_MAX_HEIGHT,
+      chromeHeight: 0,
+    });
+    painterFrameSyncKeyRef.current = syncKey;
+    setNodes((nds) => syncAspectLockedFrameForNode(nds as Node[], id, nextFrame, 1));
+    requestAnimationFrame(() => updateNodeInternals(id));
+  }, [currentFrameNode, hasDrawingPreview, id, setNodes, updateNodeInternals]);
+
+  const openPainterStudio = useCallback(() => {
+    setStandardShell(null);
+    setFullscreen(true);
+  }, []);
+
+  const closePainterStudio = useCallback(() => {
+    const shell = standardShell;
+    setStandardShell(null);
+    setFullscreen(false);
+    if (shell && typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent(FOLDDER_STANDARD_STUDIO_CLOSE_REQUEST_EVENT, {
+          detail: { nodeId: id, nodeType: 'painter', fileId: shell.fileId, appId: shell.appId },
+        }),
+      );
+    }
+  }, [id, standardShell]);
+
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closePainterStudio();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [fullscreen, closePainterStudio]);
 
   const updateData = useCallback((key: string, val: unknown) =>
     setNodes((nds) => nds.map((n) => n.id === id ? { ...n, data: { ...n.data, [key]: val } } : n))
   , [id, setNodes]);
+
+  useEffect(() => {
+    if (!fullscreen) return;
+    const root = painterStudioRootRef.current;
+    if (!root) return;
+
+    const onWheel = (e: WheelEvent) => {
+      if (!(e.target instanceof Node) || !root.contains(e.target)) return;
+      if ((e.target as Element).closest?.('[data-painter-studio-controls]')) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      const sign = e.deltaY > 0 ? -1 : 1;
+      const step = Math.max(1, Math.min(10, Math.round(Math.abs(e.deltaY) / 20)));
+      const next = Math.min(
+        PAINT_BRUSH_MAX,
+        Math.max(PAINT_BRUSH_MIN, brushSizeRef.current + sign * step),
+      );
+      if (next === brushSizeRef.current) return;
+      brushSizeRef.current = next;
+      setBrushSize(next);
+      updateData('brushSize', next);
+    };
+
+    root.addEventListener('wheel', onWheel, { passive: false, capture: true });
+    return () => root.removeEventListener('wheel', onWheel, { capture: true });
+  }, [fullscreen, updateData]);
 
   const saveToNode = useCallback(() => {
     if (!canvasRef.current) return;
@@ -5206,15 +6228,13 @@ export const PainterNode = memo(function PainterNode({ id, data, selected }: Nod
     };
     if (typeof data.value === 'string' && data.value) {
       paintFromUrl(data.value);
-    } else if (baseImageUrl) {
-      paintFromUrl(baseImageUrl);
     } else {
       ctx.fillStyle = bgHexRef.current;
       ctx.fillRect(0, 0, canvasW, canvasH);
       saveToNode();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canvasW, canvasH, fullscreen, baseImageUrl]);
+  }, [canvasW, canvasH, fullscreen]);
 
   // Repaint background when bgColor changes (preserving drawing content)
   useEffect(() => {
@@ -5343,10 +6363,8 @@ export const PainterNode = memo(function PainterNode({ id, data, selected }: Nod
     </div>
   );
 
-  // ── Controls JSX ──────────────────────────────────────────────────────────
-  const controlsJSX = (showFSButton: boolean) => (
-    <div className="bg-[#1a1a1a] border-t border-white/10 p-3 space-y-2.5">
-      {/* Colors + eraser + clear */}
+  const controlsJSX = () => (
+    <div className="bg-[#1a1a1a] border-t border-white/10 p-3" data-painter-studio-controls="">
       <div className="flex items-center gap-2">
         <div className="flex gap-1.5">
           {PAINT_COLORS.map(c => (
@@ -5362,129 +6380,80 @@ export const PainterNode = memo(function PainterNode({ id, data, selected }: Nod
         </button>
         <button onClick={clearCanvas} className="ml-auto text-[9px] text-zinc-600 hover:text-red-400 transition-colors font-bold uppercase tracking-widest">Clear</button>
       </div>
-      {/* Brush size */}
-      <div className="flex items-center gap-2">
-        <Paintbrush size={11} className="text-zinc-500 shrink-0" />
-        <input type="range" min="1" max="80" value={brushSize}
-          onChange={e => { const v = parseInt(e.target.value); setBrushSize(v); updateData('brushSize', v); }}
-          className="flex-1 accent-white nodrag" />
-        <div style={{
-          width: Math.min(Math.max(brushSize / 2, 6), 28),
-          height: Math.min(Math.max(brushSize / 2, 6), 28),
-          borderRadius: '50%',
-          background: mode === 'eraser' ? 'rgba(255,255,255,0.2)' : color,
-          border: '1.5px solid rgba(255,255,255,0.3)',
-          flexShrink: 0,
-        }} />
-      </div>
-      {/* Ratio + bg + fullscreen toggle */}
-      <div className="flex items-center gap-1.5">
-        {PAINT_RATIOS.map(r => (
-          <button key={r.value} onClick={() => updateData('aspectRatio', r.value)}
-            className={`px-2 py-0.5 rounded-none text-[7px] font-black border transition-all ${ratio.value === r.value ? 'bg-amber-500/20 text-amber-400 border-amber-500/40' : 'bg-white/[0.02] text-zinc-600 border-white/5 hover:text-zinc-400'}`}>
-            {r.label}
-          </button>
-        ))}
-        <div className="ml-auto flex gap-1.5 items-center">
+      <div className="mt-2.5 flex items-center justify-between gap-2">
+        <span className="text-[9px] font-semibold uppercase tracking-[0.08em] text-zinc-500">
+          Scroll · grosor {brushSize}px
+        </span>
+        <div className="flex items-center gap-1.5">
           <button onClick={() => switchBg('white')} title="White bg"
             className={`w-5 h-5 rounded-none border-2 transition-all ${bgColor === 'white' ? 'border-white' : 'border-zinc-600 opacity-50'}`}
             style={{ background: '#ffffff' }} />
           <button onClick={() => switchBg('black')} title="Black bg"
             className={`w-5 h-5 rounded-none border-2 transition-all ${bgColor === 'black' ? 'border-white' : 'border-zinc-600 opacity-50'}`}
             style={{ background: '#111111' }} />
-          {showFSButton && (
-            <button onClick={() => {
-              setStandardShell(null);
-              setFullscreen(true);
-            }} className="p-1.5 rounded-none border border-white/10 bg-white/[0.03] text-zinc-500 hover:text-white transition-colors">
-              <Maximize2 size={11} />
-            </button>
-          )}
-          {!showFSButton && (
-            <button onClick={() => {
-              const shell = standardShell;
-              setStandardShell(null);
-              setFullscreen(false);
-              if (shell && typeof window !== 'undefined') {
-                window.dispatchEvent(
-                  new CustomEvent(FOLDDER_STANDARD_STUDIO_CLOSE_REQUEST_EVENT, {
-                    detail: { nodeId: id, nodeType: 'painter', fileId: shell.fileId, appId: shell.appId },
-                  }),
-                );
-              }
-            }} className="p-1.5 rounded-none border border-white/10 bg-white/[0.03] text-zinc-400 hover:text-white transition-colors" title="Close fullscreen">
-              <X size={11} />
-            </button>
-          )}
         </div>
       </div>
     </div>
   );
 
   return (
-    <div className="custom-node painter-node" style={{ padding: 0, overflow: 'visible', minWidth: 280, minHeight: 280 }}>
-      <FoldderNodeResizer minWidth={280} minHeight={280} isVisible={selected} />
+    <div
+      className={`custom-node tool-node painter-node foldder-node--frameless ${hasDrawingPreview ? 'node--media painter-node--has-preview' : 'node--glass painter-node--empty foldder-frameless-label-dark'}`}
+      style={{
+        padding: 0,
+        overflow: 'visible',
+        minWidth: 200,
+        minHeight: hasDrawingPreview ? 200 : 300,
+        '--foldder-node-card-bg': '#890AF3',
+        '--foldder-frameless-glass-bg': '#890AF3',
+        '--foldder-frameless-accent': '#1f2328',
+      } as React.CSSProperties}
+    >
+      <FoldderNodeResizer minWidth={200} minHeight={hasDrawingPreview ? 200 : 120} maxWidth={960} maxHeight={STUDIO_NODE_MAX_HEIGHT} keepAspectRatio={hasDrawingPreview} isVisible={selected} />
+      {hasDrawingPreview ? <FoldderStudioTouchedMark nodeType="painter" backgroundSrc={PAINTER_TOUCHED_MARK_SRC} /> : null}
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Painter" />
 
-      <div className="handle-wrapper handle-left" style={{ top: '50%' }}>
-        <FoldderDataHandle type="target" position={Position.Left} id="image" dataType="image" />
-        <span className="handle-label">Base</span>
-      </div>
 
       <div className="node-header">
         <NodeIcon type="painter" selected={selected} size={16} />
         <FoldderNodeHeaderTitle introActive={!!(data as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}>
           Painter
         </FoldderNodeHeaderTitle>
-        <span className="text-[10px] font-light uppercase tracking-widest text-white/65 ml-auto">{ratio.label}</span>
       </div>
 
-      {/* Small node: preview image only — no painting here */}
       {!fullscreen && (
         <>
-          {/* Hidden canvas (still mounts so init effect can run on fullscreen-close restore) */}
           <div style={{ width: 0, height: 0, overflow: 'hidden', position: 'absolute' }}>
             {canvasJSX}
           </div>
 
-          {/* Preview area */}
-          <div className="relative w-full bg-[#0a0a0a]" style={{ height: 180 }}>
-            {typeof data.value === 'string' && data.value ? (
-              <img src={data.value} className="w-full h-full object-contain" alt="Drawing preview" />
-            ) : (
-              <div className="flex flex-col items-center justify-center h-full gap-2 opacity-30">
-                <Pencil size={28} className="text-amber-400" />
-                <span className="text-[8px] font-black uppercase tracking-widest text-amber-500">Open to paint</span>
-              </div>
-            )}
+          <div className="node-content foldder-frameless-main painter-node-main">
+            {!hasDrawingPreview ? (
+              <img
+                src="/nodes/painter-bg.png"
+                alt=""
+                className="painter-node-bg"
+                draggable={false}
+              />
+            ) : null}
 
-            {/* Fullscreen button — center on hover, always accessible */}
-            <button
-              onClick={() => {
-                setStandardShell(null);
-                setFullscreen(true);
-              }}
-              className="absolute inset-0 flex items-center justify-center bg-black/0 hover:bg-black/40 transition-all group"
-            >
-              <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-2 bg-amber-500 text-black px-4 py-2 rounded-none font-black text-[9px] uppercase tracking-widest shadow-lg">
-                <Maximize2 size={12} />
-                Paint
+            {hasDrawingPreview ? (
+              <div className="painter-node-preview">
+                <div
+                  className="painter-node-preview-frame max-h-full max-w-full min-h-0 min-w-0"
+                  style={{ aspectRatio: "1 / 1" }}
+                >
+                  <img
+                    src={data.value as string}
+                    className="painter-node-preview-img block h-full w-full object-contain"
+                    alt="Drawing preview"
+                    draggable={false}
+                  />
+                </div>
               </div>
-            </button>
-          </div>
+            ) : null}
 
-          {/* Mini footer: ratio badge (read-only) + fullscreen button */}
-          <div className="flex items-center justify-between px-3 py-2 border-t border-white/5">
-            <span className={`px-1.5 py-0.5 rounded-none text-[6px] font-black border bg-amber-500/20 text-amber-400 border-amber-500/30`}>
-              {ratio.label}
-            </span>
-            <button onClick={() => {
-              setStandardShell(null);
-              setFullscreen(true);
-            }}
-              className="p-1.5 rounded-none border border-amber-500/20 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition-colors">
-              <Maximize2 size={11} />
-            </button>
+            <FoldderStudioModeCenterButton label="Paint" title="Paint" onClick={openPainterStudio} />
           </div>
         </>
       )}
@@ -5497,35 +6466,25 @@ export const PainterNode = memo(function PainterNode({ id, data, selected }: Nod
       {/* Fullscreen — portal to body so it covers everything */}
       {typeof document !== 'undefined' && fullscreen && createPortal(
         <div
-          className="fixed inset-0 flex flex-col bg-[#0a0a0a]"
-          style={{ zIndex: 99999 }}
+          ref={painterStudioRootRef}
+          className="fixed inset-0 z-[100050] flex h-[100dvh] max-h-[100dvh] flex-col overflow-hidden overscroll-none bg-[#0b0f14] text-white"
           data-foldder-studio-canvas=""
         >
-          {standardShell ? <StandardStudioShellHeader shell={standardShell} /> : null}
-          <div className="flex items-center gap-3 px-4 py-2.5 bg-[#1a1a1a] border-b border-white/10">
-            <Paintbrush size={14} className="text-amber-400" />
-            <span className="text-[10px] font-black text-amber-300 uppercase tracking-widest">Painter — Fullscreen · {ratio.label}</span>
-            <button onClick={() => {
-              const shell = standardShell;
-              setStandardShell(null);
-              setFullscreen(false);
-              if (shell && typeof window !== 'undefined') {
-                window.dispatchEvent(
-                  new CustomEvent(FOLDDER_STANDARD_STUDIO_CLOSE_REQUEST_EVENT, {
-                    detail: { nodeId: id, nodeType: 'painter', fileId: shell.fileId, appId: shell.appId },
-                  }),
-                );
-              }
-            }} className="ml-auto text-zinc-400 hover:text-white transition-colors">
-              <X size={20} />
-            </button>
-          </div>
-          <div className="flex-1 flex items-center justify-center overflow-hidden p-4">
-            <div style={{ maxWidth: '100%', maxHeight: '100%', aspectRatio: `${canvasW}/${canvasH}`, width: '100%' }}>
+          {standardShell ? (
+            <StandardStudioShellHeader shell={standardShell} />
+          ) : (
+            <FoldderStudioHeader
+              nodeType="painter"
+              nodeLabel={nodeData.label?.trim() || "Painter"}
+              onClose={closePainterStudio}
+            />
+          )}
+          <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden p-4">
+            <div className="h-full w-full max-h-full max-w-full" style={{ aspectRatio: '1 / 1' }}>
               {canvasJSX}
             </div>
           </div>
-          {controlsJSX(false)}
+          {controlsJSX()}
         </div>,
         document.body
       )}
@@ -5592,6 +6551,8 @@ async function resolveImageUrlForCanvasCrop(src: string): Promise<string> {
 }
 
 // --- CROP NODE ---
+const CROP_TOUCHED_MARK_SRC = "/nodes/crop-mark.png";
+
 export const CropNode = memo(function CropNode({ id, data, selected }: NodeProps) {
   const { setNodes } = useReactFlow();
   const updateNodeInternals = useUpdateNodeInternals();
@@ -5653,6 +6614,7 @@ export const CropNode = memo(function CropNode({ id, data, selected }: NodeProps
     : inputNode?.data?.value;
     
   const sourceImage = typeof rawValue === 'string' ? rawValue : undefined;
+  const hasSource = Boolean(sourceImage);
 
   useEffect(() => {
     if (!sourceImage) {
@@ -5900,19 +6862,26 @@ export const CropNode = memo(function CropNode({ id, data, selected }: NodeProps
   return (
     <div
       ref={frameRef}
-      className="custom-node crop-node foldder-node--frameless node--media"
+      className={`custom-node crop-node foldder-node--frameless ${hasSource ? 'node--media crop-node--has-source' : 'node--glass crop-node--empty foldder-frameless-label-dark'}`}
       style={{
+        padding: 0,
+        overflow: 'visible',
         minWidth: 200,
-        minHeight: 120,
-        "--foldder-frameless-accent": "#f59e0b",
+        minHeight: hasSource ? 120 : 300,
+        '--foldder-node-card-bg': '#F0804D',
+        '--foldder-frameless-glass-bg': '#F0804D',
+        '--foldder-frameless-accent': '#1f2328',
       } as React.CSSProperties}
     >
-      <FoldderNodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={STUDIO_NODE_MAX_HEIGHT} keepAspectRatio={Boolean(sourceImage)} isVisible={selected} />
+      <FoldderNodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={STUDIO_NODE_MAX_HEIGHT} keepAspectRatio={hasSource} isVisible={selected} />
+      {hasSource ? <FoldderStudioTouchedMark nodeType="crop" backgroundSrc={CROP_TOUCHED_MARK_SRC} /> : null}
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Crop Asset" />
 
       <div className="node-header">
         <NodeIcon type="crop" selected={selected} state={resolveFoldderNodeState({ selected, done: Boolean(nodeData.value) })} size={16} />
-        <FoldderNodeHeaderTitle>Crop</FoldderNodeHeaderTitle>
+        <FoldderNodeHeaderTitle introActive={!!(data as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}>
+          Crop
+        </FoldderNodeHeaderTitle>
       </div>
       
       <div className="handle-wrapper handle-left">
@@ -5920,87 +6889,89 @@ export const CropNode = memo(function CropNode({ id, data, selected }: NodeProps
         <span className="handle-label text-emerald-500">Source Image</span>
       </div>
 
-      <div className="node-content foldder-frameless-main p-3 space-y-3 flex flex-col items-center">
-        <div 
-          ref={containerRef}
-          className="relative bg-black rounded-none border border-white/10 overflow-hidden flex items-center justify-center min-h-[150px] w-full touch-none select-none nodrag nopan flex-1 shadow-inner"
-          onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerUp}
-          onPointerLeave={handlePointerUp}
-        >
-          {!sourceImage ? (
-            <div className="flex flex-col items-center gap-2 opacity-30 p-8">
-              <Crop size={24} />
-              <span className="text-[9px] uppercase tracking-widest font-black text-center">Connect an image<br/>to crop</span>
-            </div>
-          ) : (
-            <>
+      <div className="node-content foldder-frameless-main crop-node-main">
+        {!hasSource ? (
+          <img
+            src="/nodes/crop-bg.png"
+            alt=""
+            className="crop-node-bg"
+            draggable={false}
+          />
+        ) : (
+          <>
+            <div
+              ref={containerRef}
+              className="crop-node-crop-area relative flex min-h-0 flex-1 items-center justify-center overflow-hidden touch-none select-none nodrag nopan"
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
+              onPointerLeave={handlePointerUp}
+            >
               <img
                 ref={previewRef}
                 src={sourceImage}
                 alt="Source"
-                className="w-full h-full min-h-0 object-contain pointer-events-none block"
+                className="crop-node-source-img pointer-events-none block h-full w-full min-h-0 object-contain"
               />
-              
-              <div className="absolute inset-0 bg-black/40 pointer-events-none"></div>
-              
-              <div 
-                className="absolute border border-amber-400 shadow-[0_0_0_9999px_rgba(0,0,0,0.6)] group/crop cursor-move"
+
+              <div className="pointer-events-none absolute inset-0 bg-black/40" />
+
+              <div
+                className="group/crop absolute cursor-move border border-amber-400 shadow-[0_0_0_9999px_rgba(0,0,0,0.6)]"
                 style={{
                   left: `${crop.x}%`,
                   top: `${crop.y}%`,
                   width: `${crop.w}%`,
                   height: `${crop.h}%`,
-                  pointerEvents: draggingAction !== null ? 'none' : 'auto' 
+                  pointerEvents: draggingAction !== null ? 'none' : 'auto',
                 }}
                 onPointerDown={(e) => handlePointerDown(e, 'move')}
               >
-                <div className="absolute inset-0 grid grid-cols-3 grid-rows-3 pointer-events-none opacity-0 group-hover/crop:opacity-50 transition-opacity">
-                   <div className="border-b border-r border-amber-400/40"></div>
-                   <div className="border-b border-r border-amber-400/40"></div>
-                   <div className="border-b border-amber-400/40"></div>
-                   <div className="border-b border-r border-amber-400/40"></div>
-                   <div className="border-b border-r border-amber-400/40"></div>
-                   <div className="border-b border-amber-400/40"></div>
-                   <div className="border-r border-amber-400/40"></div>
-                   <div className="border-r border-amber-400/40"></div>
-                   <div></div>
+                <div className="pointer-events-none absolute inset-0 grid grid-cols-3 grid-rows-3 opacity-0 transition-opacity group-hover/crop:opacity-50">
+                  <div className="border-b border-r border-amber-400/40" />
+                  <div className="border-b border-r border-amber-400/40" />
+                  <div className="border-b border-amber-400/40" />
+                  <div className="border-b border-r border-amber-400/40" />
+                  <div className="border-b border-r border-amber-400/40" />
+                  <div className="border-b border-amber-400/40" />
+                  <div className="border-r border-amber-400/40" />
+                  <div className="border-r border-amber-400/40" />
+                  <div />
                 </div>
 
-                <div className="absolute -top-1.5 -left-1.5 w-3 h-3 bg-white border border-amber-500 cursor-nwse-resize pointer-events-auto shadow-sm" onPointerDown={(e) => handlePointerDown(e, 'nw')}></div>
-                <div className="absolute -top-1.5 -right-1.5 w-3 h-3 bg-white border border-amber-500 cursor-nesw-resize pointer-events-auto shadow-sm" onPointerDown={(e) => handlePointerDown(e, 'ne')}></div>
-                <div className="absolute -bottom-1.5 -left-1.5 w-3 h-3 bg-white border border-amber-500 cursor-nesw-resize pointer-events-auto shadow-sm" onPointerDown={(e) => handlePointerDown(e, 'sw')}></div>
-                <div className="absolute -bottom-1.5 -right-1.5 w-3 h-3 bg-white border border-amber-500 cursor-nwse-resize pointer-events-auto shadow-sm" onPointerDown={(e) => handlePointerDown(e, 'se')}></div>
+                <div className="pointer-events-auto absolute -left-1.5 -top-1.5 h-3 w-3 cursor-nwse-resize border border-amber-500 bg-white shadow-sm" onPointerDown={(e) => handlePointerDown(e, 'nw')} />
+                <div className="pointer-events-auto absolute -right-1.5 -top-1.5 h-3 w-3 cursor-nesw-resize border border-amber-500 bg-white shadow-sm" onPointerDown={(e) => handlePointerDown(e, 'ne')} />
+                <div className="pointer-events-auto absolute -bottom-1.5 -left-1.5 h-3 w-3 cursor-nesw-resize border border-amber-500 bg-white shadow-sm" onPointerDown={(e) => handlePointerDown(e, 'sw')} />
+                <div className="pointer-events-auto absolute -bottom-1.5 -right-1.5 h-3 w-3 cursor-nwse-resize border border-amber-500 bg-white shadow-sm" onPointerDown={(e) => handlePointerDown(e, 'se')} />
               </div>
-            </>
-          )}
-        </div>
+            </div>
 
-        <div className="flex items-center gap-2 w-full pt-2">
-           <span className="hidden text-[9px] font-black text-gray-500 uppercase tracking-widest">Aspect</span>
-           <select
-             value={aspectRatio}
-             onChange={(e) => {
-               const v = e.target.value;
-               setCropAspectMode(v);
-               const targetRatio = cropAspectRatioValue(v);
-               const bounds = containerRef.current?.getBoundingClientRect();
-               let next = clampCropRect({ ...latestCropRef.current });
-               if (targetRatio && bounds) {
-                 next = fitCropRectToVisualAspect(next, targetRatio, bounds);
-               }
-               latestCropRef.current = next;
-               setCrop(next);
-               window.setTimeout(() => commitCropRect(next, v), 0);
-             }}
-             className="node-input foldder-frameless-chip text-[10px] w-full max-w-[140px] nodrag"
-           >
-             <option value="free">Freeform</option>
-             <option value="1:1">1:1 Square</option>
-             <option value="16:9">16:9 Wide</option>
-             <option value="9:16">9:16 Story</option>
-           </select>
-        </div>
+            <div className="crop-node-aspect-dock nodrag">
+              <select
+                value={aspectRatio}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setCropAspectMode(v);
+                  const targetRatio = cropAspectRatioValue(v);
+                  const bounds = containerRef.current?.getBoundingClientRect();
+                  let next = clampCropRect({ ...latestCropRef.current });
+                  if (targetRatio && bounds) {
+                    next = fitCropRectToVisualAspect(next, targetRatio, bounds);
+                  }
+                  latestCropRef.current = next;
+                  setCrop(next);
+                  window.setTimeout(() => commitCropRect(next, v), 0);
+                }}
+                className="crop-node-aspect-select nodrag"
+                aria-label="Aspect ratio"
+              >
+                <option value="free">Freeform</option>
+                <option value="1:1">1:1 Square</option>
+                <option value="16:9">16:9 Wide</option>
+                <option value="9:16">9:16 Story</option>
+              </select>
+            </div>
+          </>
+        )}
       </div>
 
       <div className="handle-wrapper handle-right">

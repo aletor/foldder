@@ -37,6 +37,10 @@ import {
   updateStoryTypography,
 } from "../indesign/text-threading";
 import { readResponseJson } from "@/lib/read-response-json";
+import {
+  registerLiveDesignerMultipagePdfExport,
+  unregisterLiveDesignerMultipagePdfExport,
+} from "../studio-live-documents";
 import { useDesignerSpaceId } from "@/contexts/DesignerSpaceIdContext";
 import { newDesignerAssetId, optimizeImageBlobToOptFormat } from "./designer-image-pipeline";
 import { exportDesignerDeFile, importDesignerDeFile } from "./designer-document-file";
@@ -64,6 +68,13 @@ import {
   trackDesignerImageUsed,
 } from "./designer-image-telemetry";
 
+export type HeadlessPdfExportRequest = {
+  requestId: number;
+  filenameBase?: string;
+  onDone: () => void;
+  onError: (err: Error) => void;
+};
+
 interface DesignerStudioProps {
   initialPages: DesignerPageState[];
   activePageIndex: number;
@@ -78,9 +89,10 @@ interface DesignerStudioProps {
   autoImageOptimization?: boolean;
   onAutoImageOptimizationChange?: (enabled: boolean) => void;
   brainConnected?: boolean;
+  headlessPdfExport?: HeadlessPdfExportRequest | null;
 }
 
-function safeDesignerExportFilenameBase(raw: string | undefined): string {
+export function safeDesignerExportFilenameBase(raw: string | undefined): string {
   const base = (raw || "diseno")
     .trim()
     .replace(/\.(design|pdf|png|jpg|jpeg|svg)$/i, "")
@@ -106,6 +118,7 @@ export default function DesignerStudio({
   autoImageOptimization = true,
   onAutoImageOptimizationChange,
   brainConnected = false,
+  headlessPdfExport = null,
 }: DesignerStudioProps) {
   /**
    * El editor inline puede inyectar estilos métricos (font-size/family/letter-spacing) en spans.
@@ -1311,14 +1324,15 @@ export default function DesignerStudio({
     }
   }, [multiPdfBusy]);
 
-  const handleExportMultiPageVectorPdf = useCallback(async (pdfOpts: VectorPdfExportOptions) => {
-    if (multiPdfExportingRef.current) return;
+  const handleExportMultiPageVectorPdf = useCallback(async (pdfOpts: VectorPdfExportOptions = {}): Promise<boolean> => {
+    if (multiPdfExportingRef.current) return false;
     const pageCount = pagesRef.current.length;
-    if (pageCount === 0) return;
+    if (pageCount === 0) return false;
     multiPdfExportingRef.current = true;
     setMultiPdfBusy(true);
     const savedIdx = activeIdxRef.current;
     const markups: string[] = [];
+    const isHeadless = Boolean(headlessPdfExport);
     try {
       const { downloadMultiPageVectorPdf } = await import("../freehand/download-vector-pdf");
       for (let i = 0; i < pageCount; i++) {
@@ -1373,10 +1387,14 @@ export default function DesignerStudio({
         );
       }
       if (markups.length === 0) {
-        alert("No se pudo preparar ninguna página para el PDF (el lienzo no estaba listo). Cierra el diálogo de exportación e inténtalo de nuevo.");
-        return;
+        const msg = "No se pudo preparar ninguna página para el PDF (el lienzo no estaba listo).";
+        if (!isHeadless) {
+          alert(`${msg} Cierra el diálogo de exportación e inténtalo de nuevo.`);
+        }
+        return false;
       }
-      const pdfName = `${safeDesignerExportFilenameBase(standardShell?.fileName)}.pdf`;
+      const filenameBase = headlessPdfExport?.filenameBase ?? safeDesignerExportFilenameBase(standardShell?.fileName);
+      const pdfName = `${filenameBase}.pdf`;
       await downloadMultiPageVectorPdf(markups, pdfName, {
         optimizeImages: pdfOpts.optimizeImages === true,
       });
@@ -1406,10 +1424,16 @@ export default function DesignerStudio({
         },
       });
       void brainTelemetryRef.current.flushTelemetry("export");
+      return true;
     } catch (e) {
       console.error("[Designer] PDF multipágina:", e);
       const msg = e instanceof Error ? e.message : String(e);
-      alert(`No se pudo generar el PDF: ${msg}`);
+      if (!isHeadless) {
+        alert(`No se pudo generar el PDF: ${msg}`);
+      } else {
+        throw e instanceof Error ? e : new Error(msg);
+      }
+      return false;
     } finally {
       flushSync(() => {
         setDesignerPageEnterDirection(null);
@@ -1418,7 +1442,33 @@ export default function DesignerStudio({
       multiPdfExportingRef.current = false;
       setMultiPdfBusy(false);
     }
-  }, [onFinalExport, standardShell?.fileName]);
+  }, [headlessPdfExport, onFinalExport, standardShell?.fileName]);
+
+  useEffect(() => {
+    registerLiveDesignerMultipagePdfExport(designerCanvasInstanceKey, handleExportMultiPageVectorPdf);
+    return () => unregisterLiveDesignerMultipagePdfExport(designerCanvasInstanceKey);
+  }, [designerCanvasInstanceKey, handleExportMultiPageVectorPdf]);
+
+  useEffect(() => {
+    if (!headlessPdfExport) return;
+    let cancelled = false;
+    const { onDone, onError } = headlessPdfExport;
+    void (async () => {
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 500));
+      if (cancelled) return;
+      try {
+        const ok = await handleExportMultiPageVectorPdf({});
+        if (cancelled) return;
+        if (ok) onDone();
+        else onError(new Error("No se pudo generar el PDF multipágina."));
+      } catch (e) {
+        if (!cancelled) onError(e instanceof Error ? e : new Error(String(e)));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [headlessPdfExport?.requestId, handleExportMultiPageVectorPdf]);
 
   /** Miniatura del nodo en el grafo: siempre la 1.ª página (con imágenes vía raster SVG). */
   const captureFirstPageThumbnail = useCallback(async () => {
@@ -1567,7 +1617,9 @@ export default function DesignerStudio({
     designerMultipageVectorPdfExport: {
       pageCount: pages.length,
       busy: multiPdfBusy,
-      onExport: handleExportMultiPageVectorPdf,
+      onExport: (opts) => {
+        void handleExportMultiPageVectorPdf(opts);
+      },
     },
     designerDeDocument: {
       onExport: handleExportDe,
@@ -1607,7 +1659,13 @@ export default function DesignerStudio({
   };
 
   return (
-    <div className="fixed inset-0 z-[9999] flex flex-col bg-[#0b0d10]">
+    <div
+      className={
+        headlessPdfExport
+          ? "pointer-events-none fixed left-[-10000px] top-0 h-[900px] w-[1400px] overflow-hidden opacity-0"
+          : "fixed inset-0 z-[9999] flex flex-col bg-[#0b0d10]"
+      }
+    >
       <FreehandStudio
         key={freehandStudioInstanceKey}
         nodeId={freehandStudioInstanceKey}

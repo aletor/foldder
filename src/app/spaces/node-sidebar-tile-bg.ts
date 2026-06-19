@@ -14,6 +14,11 @@ export const NODE_SIDEBAR_TILE_BACKGROUND_SRC: Record<string, string> = {
   imageCreationAdvanced: "/assets/nodes/nano-banana-sidebar-bg.png",
   vfxGenerator: "/assets/nodes/gemini-video-sidebar-bg.png",
   backgroundRemover: "/nodes/bg-remover-mark.png",
+  concatenator: "/nodes/concatenator-mark.png",
+  enhancer: "/nodes/enhancer-mark.png",
+  imageExport: "/nodes/image-export-mark.png",
+  painter: "/nodes/painter-mark.png",
+  crop: "/nodes/crop-mark.png",
 };
 
 /** ~180px JPEG para pintar mosaicos en sidebar (evita decodificar ~900px en iPad). */
