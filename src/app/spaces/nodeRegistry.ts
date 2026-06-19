@@ -290,7 +290,7 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
   },
   nanoBanana: {
     type: 'nanoBanana',
-    label: 'Nano Banana 2',
+    label: 'Image Creation',
     description: 'Generates images and supports image-to-image transformations.',
     inputs: [
       { id: 'brain',   label: 'Brain',         type: 'brain' },

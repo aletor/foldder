@@ -561,7 +561,7 @@ export const FOLDDER_TRANSLATIONS_EN = {
   "Usa": "Use",
   "para pintar qué editar, o": "to paint what to edit, or",
   "para el resto.": "for the rest.",
-  "Revisa refs y el texto que se enviará a Nano Banana": "Review refs and the text that will be sent to Nano Banana",
+  "Revisa refs y el texto que se enviará a Image Creation": "Review refs and the text that will be sent to Image Creation",
   "Sin imágenes de referencia.": "No reference images.",
   "Súbelas en cada cambio con el ícono 📎.": "Upload them in each change with the 📎 icon.",
   "Última composición": "Last Composition",
@@ -780,8 +780,8 @@ export const FOLDDER_TRANSLATIONS_EN = {
   "Modo presentación (tecla P); pantalla completa desde la barra inferior":
     "Presentation mode (P key); full screen from the bottom bar",
   "Propiedades (vídeo)": "Properties (Video)",
-  "Describe cambios… Con nodos seleccionados: «cambia el prompt», «pon resolución 4K», «conecta al Nano Banana»…":
-    "Describe changes... With selected nodes: “change the prompt”, “set 4K resolution”, “connect to Nano Banana”...",
+  "Describe cambios… Con nodos seleccionados: «cambia el prompt», «pon resolución 4K», «conecta a Image Creation»…":
+    "Describe changes... With selected nodes: “change the prompt”, “set 4K resolution”, “connect to Image Creation”...",
   "Ej.: borra todo · con selección: cambia el texto del prompt, sube resolución a 4K…":
     "E.g.: delete everything · with a selection: change the prompt text, raise resolution to 4K...",
 

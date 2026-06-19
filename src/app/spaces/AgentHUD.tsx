@@ -73,7 +73,7 @@ export const AgentHUD = ({
             handleGenerate();
           }
         }}
-        placeholder="Describe cambios… Con nodos seleccionados: «cambia el prompt», «pon resolución 4K», «conecta al Nano Banana»…"
+        placeholder="Describe cambios… Con nodos seleccionados: «cambia el prompt», «pon resolución 4K», «conecta a Image Creation»…"
         className="w-full bg-white/5 border border-white/10 rounded-none p-2.5 text-[14px] text-white placeholder:text-white/40 focus:outline-none focus:border-cyan-500/40 transition-all min-h-[124px] resize-none shadow-inner"
       />
 

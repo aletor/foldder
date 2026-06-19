@@ -14,6 +14,7 @@ export {
   estimateGeminiUsd,
   estimateOpenAIUsd,
   estimateOpenAIEmbeddingUsd,
+  estimateOpenAiImageGenerationUsd,
 } from "@/lib/pricing-config";
 
 export const DEFAULT_USAGE_SINCE_ISO = USAGE_PERIOD_START_ISO;
@@ -55,7 +56,8 @@ const AI_COST_CATEGORIES = new Set<UsageServiceCategory>([
 
 /** Filas del panel: consumo externo relevante (IA, Brain, embeddings, APIs, infra, legado). */
 export const USAGE_SERVICES = [
-  { id: "gemini-nano", label: "Gemini · Nano Banana (imagen 3 Flash / Pro)", category: "ia-image" as const },
+  { id: "gemini-nano", label: "Gemini · Image Creation (imagen 3 Flash / Pro)", category: "ia-image" as const },
+  { id: "openai-images", label: "OpenAI · ChatGPT Images (gpt-image-2)", category: "ia-image" as const },
   { id: "gemini-veo", label: "Gemini · Veo 3.1 (vídeo)", category: "ia-video" as const },
   { id: "seedance-video", label: "Volcengine Ark · Seedance (vídeo)", category: "ia-video" as const },
   { id: "gemini-analyze", label: "Gemini · Análisis de áreas (2.5 Flash)", category: "visual-analysis" as const },
@@ -182,6 +184,7 @@ export function inferServiceIdFromRecord(r: UsageRecordLine): UsageServiceId {
 
   if (routePath.includes("/gemini/generate")) return "gemini-nano";
   if (routePath.includes("/gemini/generate-stream")) return "gemini-nano";
+  if (routePath.includes("/openai/generate-stream")) return "openai-images";
   if (routePath.includes("/gemini/video")) return "gemini-veo";
   if (routePath.includes("/seedance/video")) return "seedance-video";
   if (routePath.includes("/analyze-areas")) return "gemini-analyze";

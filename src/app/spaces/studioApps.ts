@@ -75,7 +75,7 @@ export const STUDIO_APPS: StudioAppConfig[] = [
   },
   {
     appId: "nanoBanana",
-    label: "Imagen IA",
+    label: "Image Creation",
     nodeType: "nanoBanana",
     fileKind: "image",
     extension: ".image",

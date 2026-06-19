@@ -86,6 +86,7 @@ export function walletServiceLabel(entry: WalletLedgerDisplayEntry): string {
   if (service === "grok-video") return "Vídeo Grok";
   if (service === "replicate-vmatte") return "Video matte";
   if (service === "gemini-nano") return "Imagen generada";
+  if (service === "openai-images") return "Imagen ChatGPT";
   if (service === "replicate-bg") return "Fondo eliminado";
   if (service === "gemini-analyze") return "Imagen analizada";
   if (service === "openai-enhance") return "Prompt mejorado";

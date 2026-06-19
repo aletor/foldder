@@ -37,7 +37,7 @@ export const SIDEBAR_HOVER_HELP: Record<string, { title: string; line: string }>
     line: 'Busca referencias visuales desde prompt o imagen y devuelve una imagen seleccionada',
   },
   nanoBanana: {
-    title: 'Nano Banana',
+    title: 'Image Creation',
     line: 'Genera imagen desde prompt y referencias',
   },
   geminiVideo: {

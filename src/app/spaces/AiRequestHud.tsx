@@ -30,7 +30,7 @@ export function AiRequestHud() {
 
   const pctRounded = genPct != null ? Math.min(100, Math.max(0, Math.round(genPct))) : null;
   const determinate = pctRounded != null;
-  const titleLabel = label ?? "Nano Banana";
+  const titleLabel = label ?? "Image Creation";
 
   return (
     <div

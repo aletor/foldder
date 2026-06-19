@@ -1,51 +1,36 @@
 /**
- * Cliente para POST /api/gemini/generate-stream (NDJSON con fases y progreso real de servidor).
+ * Cliente para POST /api/openai/generate-stream (NDJSON con fases y progreso real de servidor).
  */
 
 import { compactImageStreamReferences } from "@/lib/image-generate-stream-client";
 import { sanitizeUserFacingErrorMessage } from "@/lib/read-response-json";
 
-export type GeminiStreamResult = {
+export type OpenAiStreamResult = {
   output: string;
   key?: string;
   model?: string;
   time?: number;
 };
 
-function isProviderDeadlineMessage(status: unknown, message: string): boolean {
-  return status === 503 && /deadline|timeout|timed?\s*out|expired/i.test(message);
-}
-
-function normalizeStreamErrorMessage(status: unknown, message: string): string {
-  if (isProviderDeadlineMessage(status, message)) {
-    return "Gemini could not complete the image generation in time (503). No automatic retry was made to avoid extra cost.";
-  }
-  return message;
-}
-
-const GEMINI_STREAM_HARD_PAYLOAD_LIMIT = 4_000_000;
+const OPENAI_STREAM_HARD_PAYLOAD_LIMIT = 4_000_000;
 
 function jsonSize(body: Record<string, unknown>): number {
   return new TextEncoder().encode(JSON.stringify(body)).length;
 }
 
-function isTechnicalGeminiDetail(detail: string): boolean {
-  return /^(finishReason|promptFeedback):/i.test(detail.trim());
-}
-
-export async function geminiGenerateWithServerProgress(
+export async function openaiGenerateWithServerProgress(
   body: Record<string, unknown>,
-  onProgress: (pct: number, stage: string) => void
-): Promise<GeminiStreamResult> {
+  onProgress: (pct: number, stage: string) => void,
+): Promise<OpenAiStreamResult> {
   const preparedBody = await compactImageStreamReferences(body);
   const preparedSize = jsonSize(preparedBody);
-  if (preparedSize > GEMINI_STREAM_HARD_PAYLOAD_LIMIT) {
+  if (preparedSize > OPENAI_STREAM_HARD_PAYLOAD_LIMIT) {
     throw new Error(
-      "Las referencias visuales son demasiado pesadas para Gemini Stream. Reduce el número de imágenes o usa referencias ya subidas a S3.",
+      "Las referencias visuales son demasiado pesadas para OpenAI Stream. Reduce el número de imágenes o usa referencias ya subidas a S3.",
     );
   }
 
-  const res = await fetch("/api/gemini/generate-stream", {
+  const res = await fetch("/api/openai/generate-stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(preparedBody),
@@ -71,7 +56,7 @@ export async function geminiGenerateWithServerProgress(
 
   const dec = new TextDecoder();
   let buf = "";
-  let result: GeminiStreamResult | null = null;
+  let result: OpenAiStreamResult | null = null;
   let lastProgress = 0;
 
   const handleMessage = (msg: {
@@ -108,12 +93,8 @@ export async function geminiGenerateWithServerProgress(
       const main = typeof msg.error === "string" && msg.error.trim() ? msg.error.trim() : "Error en generación";
       const det =
         typeof msg.details === "string" && msg.details.trim() ? msg.details.trim().slice(0, 600) : "";
-      const combined = det && !isTechnicalGeminiDetail(det) ? `${main} — ${det}` : main;
-      const normalized = normalizeStreamErrorMessage(
-        msg.status,
-        sanitizeUserFacingErrorMessage(combined, { status: msg.status }),
-      );
-      throw new Error(normalized);
+      const combined = det ? `${main} — ${det}` : main;
+      throw new Error(sanitizeUserFacingErrorMessage(combined, { status: msg.status }));
     }
   };
 
@@ -143,7 +124,6 @@ export async function geminiGenerateWithServerProgress(
     }
     if (done) break;
   }
-  // Última línea sin \n final (algunos runtimes no la entregan en el buffer)
   if (buf.trim()) {
     consumeLine(buf);
   }

@@ -21,6 +21,7 @@ import { FOLDDER_FIT_VIEW_EASE } from "@/lib/fit-view-ease";
 import { runAiJobWithNotification } from "@/lib/ai-job-notifications";
 import { aiHudNanoBananaJobEnd, aiHudNanoBananaJobProgress, aiHudNanoBananaJobStart, getAiHudNanoBananaJobProgressForNode } from "@/lib/ai-hud-generation-progress";
 import { geminiGenerateWithServerProgress } from "@/lib/gemini-generate-stream-client";
+import { openaiGenerateWithServerProgress } from "@/lib/openai-generate-stream-client";
 import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
 import { usePreventBrowserPinchZoom } from "@/lib/use-prevent-browser-pinch-zoom";
 import { useInputMode } from "../input-mode-context";
@@ -86,6 +87,79 @@ function captureCurrentOutput(
 const NODE_RESIZE_END_FIT_PADDING = 0.8;
 const STUDIO_NODE_MAX_HEIGHT = 2200;
 const NANO_BANANA_EMPTY_BACKGROUND_SRC = "/assets/nodes/nano-banana-empty-pink.png";
+
+export type NanoBananaImageProvider = "gemini" | "openai";
+
+function resolveNanoBananaImageProvider(value: unknown): NanoBananaImageProvider {
+  return value === "openai" ? "openai" : "gemini";
+}
+
+function NanoBananaProviderSwitch({
+  imageProvider,
+  onSelect,
+}: {
+  imageProvider: NanoBananaImageProvider;
+  onSelect: (provider: NanoBananaImageProvider) => void;
+}) {
+  const isOpenAi = imageProvider === "openai";
+  return (
+    <div
+      className="nano-banana-provider-toggle nodrag nopan"
+      onPointerDown={(e) => e.stopPropagation()}
+    >
+      <span
+        className={`nano-banana-provider-toggle__label ${!isOpenAi ? "is-active" : ""}`}
+        role="button"
+        tabIndex={0}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (isOpenAi) onSelect("gemini");
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            e.stopPropagation();
+            if (isOpenAi) onSelect("gemini");
+          }
+        }}
+      >
+        Gemini
+      </span>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={isOpenAi}
+        aria-label={isOpenAi ? "ChatGPT Images activo" : "Gemini activo"}
+        title={isOpenAi ? "Cambiar a Gemini" : "Cambiar a ChatGPT Images"}
+        className={`nano-banana-provider-toggle__track ${isOpenAi ? "is-on" : ""}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          onSelect(isOpenAi ? "gemini" : "openai");
+        }}
+      >
+        <span className="nano-banana-provider-toggle__thumb" aria-hidden />
+      </button>
+      <span
+        className={`nano-banana-provider-toggle__label ${isOpenAi ? "is-active" : ""}`}
+        role="button"
+        tabIndex={0}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (!isOpenAi) onSelect("openai");
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            e.stopPropagation();
+            if (!isOpenAi) onSelect("openai");
+          }
+        }}
+      >
+        ChatGPT
+      </span>
+    </div>
+  );
+}
 
 function FoldderNodeResizer(props: ComponentProps<typeof NodeResizer>) {
   const nodeId = useNodeId();
@@ -642,7 +716,7 @@ function mergeNanoBananaStudioPromptWithBrain(
   sectionTitle: string,
 ): string {
   if (!compose) return body;
-  const pack = compose(userTheme.trim() || "Generación en Nano Banana Studio.");
+  const pack = compose(userTheme.trim() || "Generación en Image Creation Studio.");
   if (!pack) {
     onDiag?.(null);
     return body;
@@ -652,7 +726,7 @@ function mergeNanoBananaStudioPromptWithBrain(
 }
 
 const NanoBananaStudio = memo(({
-  nodeId, nodeLabel = "Nano Banana", initialImage, lastGenerated, modelKey, aspectRatio, resolution,
+  nodeId, nodeLabel = "Image Creation", initialImage, lastGenerated, modelKey, aspectRatio, resolution,
   thinking, prompt, externalPromptIgnored,
   composeBrainImageGeneratorPrompt: composeBrainImageGeneratorPromptProp,
   onBrainImageGeneratorDiagnostics,
@@ -1267,7 +1341,7 @@ const NanoBananaStudio = memo(({
       };
 
       if (opts.notifyAreasJob) {
-        const ok = await runAiJobWithNotification({ nodeId, label: 'Nano Banana · Áreas' }, wrapAnalyze);
+        const ok = await runAiJobWithNotification({ nodeId, label: 'Image Creation · Áreas' }, wrapAnalyze);
         if (!ok) return null;
       } else {
         await wrapAnalyze();
@@ -1300,7 +1374,7 @@ const NanoBananaStudio = memo(({
 
       let genFinishedOk = false;
       try {
-        const ok = await runAiJobWithNotification({ nodeId, label: 'Nano Banana Studio' }, async () => {
+        const ok = await runAiJobWithNotification({ nodeId, label: 'Image Creation Studio' }, async () => {
           const payload = await buildStudioCallPreviewPayload({ notifyAreasJob: false });
           if (!payload) {
             throw new Error('No se pudo preparar la llamada de imagen.');
@@ -1416,7 +1490,7 @@ const NanoBananaStudio = memo(({
 
     let genFinishedOkLegacy = false;
     try {
-      const ok = await runAiJobWithNotification({ nodeId, label: 'Nano Banana Studio' }, async () => {
+      const ok = await runAiJobWithNotification({ nodeId, label: 'Image Creation Studio' }, async () => {
         const json = await geminiGenerateWithServerProgress(
           {
             prompt:
@@ -1471,7 +1545,7 @@ const NanoBananaStudio = memo(({
   const onGenerateCall = async () => {
     if (!hasPaintedZoneWithDescription) {
       alert(
-        'Añade al menos una zona dibujada con descripción para ver la llamada con mapa de zonas. Si solo usas instrucciones globales o el prompt del grafo, pulsa Generar: se envía la imagen y el texto directamente a Nano Banana.',
+        'Añade al menos una zona dibujada con descripción para ver la llamada con mapa de zonas. Si solo usas instrucciones globales o el prompt del grafo, pulsa Generar: se envía la imagen y el texto directamente a Image Creation.',
       );
       return;
     }
@@ -1514,7 +1588,7 @@ const NanoBananaStudio = memo(({
 
     let genFinishedOk = false;
     try {
-      const ok = await runAiJobWithNotification({ nodeId, label: 'Nano Banana Studio' }, async () => {
+      const ok = await runAiJobWithNotification({ nodeId, label: 'Image Creation Studio' }, async () => {
         const json = await geminiGenerateWithServerProgress(
           {
             prompt: nanoBananaPromptExcludeZoneGuideArtifacts(mergedCall),
@@ -2188,7 +2262,7 @@ const NanoBananaStudio = memo(({
             <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.1] bg-white/[0.04] backdrop-blur-md">
               <div className="flex flex-col gap-0.5">
                 <span className="text-[12px] font-black uppercase tracking-[0.1em] text-violet-200">Vista previa de la llamada</span>
-                <span className="text-[10px] text-zinc-500 font-medium normal-case tracking-normal">Revisa refs y el texto que se enviará a Nano Banana</span>
+                <span className="text-[10px] text-zinc-500 font-medium normal-case tracking-normal">Revisa refs y el texto que se enviará a Image Creation</span>
               </div>
               <button type="button" onClick={() => setCallPreview(null)} className="text-zinc-400 hover:text-white transition-colors p-1 rounded-none hover:bg-white/10" title="Cerrar">
                 <X size={20} />
@@ -2291,6 +2365,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
     resolution?: string;
     modelKey?: string;
     thinking?: boolean;
+    imageProvider?: NanoBananaImageProvider;
     /** Persisted with the project (Studio + main-run versions). */
     generationHistory?: string[];
   };
@@ -2660,6 +2735,8 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   const modelInfo = NB_MODELS.find(m => m.id === selectedModel) || NB_MODELS[0];
   const isPro = selectedModel === 'pro3';
   const isFlash25 = selectedModel === 'flash25';
+  const imageProvider = resolveNanoBananaImageProvider(nodeData.imageProvider);
+  const isOpenAiProvider = imageProvider === 'openai';
 
   const updateData = (key: string, val: unknown) =>
     setNodes((nds) => nds.map((n) => n.id === id ? { ...n, data: { ...n.data, [key]: val } } : n));
@@ -2699,23 +2776,25 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
 
     let genFinishedOk = false;
     try {
-      const ok = await runAiJobWithNotification({ nodeId: id, label: 'Nano Banana' }, async () => {
-        const json = await geminiGenerateWithServerProgress(
-          {
-            prompt: promptToSend,
-            images: connectedRefImages,
-            aspect_ratio: nodeData.aspect_ratio || '16:9',
-            resolution: isFlash25 ? '1k' : normalizeNanoBananaResolution(nodeData.resolution),
-            model: selectedModel,
-            thinking: nodeData.thinking && isPro,
-          },
-          (pct) => {
-            if (graphGenEpochRef.current !== epoch) return;
-            setProgress(pct);
-            aiHudNanoBananaJobProgress(id, pct);
-          }
-        );
+      const ok = await runAiJobWithNotification({ nodeId: id, label: 'Image Creation' }, async () => {
+        const generateBody = {
+          prompt: promptToSend,
+          images: connectedRefImages,
+          aspect_ratio: nodeData.aspect_ratio || '16:9',
+          resolution: isFlash25 ? '1k' : normalizeNanoBananaResolution(nodeData.resolution),
+          model: selectedModel,
+          thinking: nodeData.thinking && isPro,
+        };
+        const onGenProgress = (pct: number) => {
+          if (graphGenEpochRef.current !== epoch) return;
+          setProgress(pct);
+          aiHudNanoBananaJobProgress(id, pct);
+        };
+        const json = isOpenAiProvider
+          ? await openaiGenerateWithServerProgress(generateBody, onGenProgress)
+          : await geminiGenerateWithServerProgress(generateBody, onGenProgress);
         const out = json.output;
+        const aiSource = isOpenAiProvider ? "openai-image-generator" : "gemini-image-generator";
         setResult(out);
         setNodes(nds => nds.map(n => {
           if (n.id !== id) return n;
@@ -2731,7 +2810,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
               type: 'image',
               ...(typeof json.key === 'string' ? { s3Key: json.key } : {}),
               generatedByAi: true,
-              generatedByAiSource: "gemini-image-generator",
+              generatedByAiSource: aiSource,
               generationHistory: h,
               _assetVersions: versions,
             }),
@@ -2931,10 +3010,10 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
         </FoldderNodeHeaderTitle>
         <div className="flex shrink-0 flex-col items-end gap-0.5 text-[8px] font-mono font-light uppercase leading-none">
           <span
-            className={`rounded-none border px-1.5 py-0.5 ${modelInfo.borderColor} ${modelInfo.bg} ${modelInfo.color}`}
-            title="Calidad del modelo"
+            className={`rounded-none border px-1.5 py-0.5 ${isOpenAiProvider ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-400" : `${modelInfo.borderColor} ${modelInfo.bg} ${modelInfo.color}`}`}
+            title={isOpenAiProvider ? "ChatGPT Images en canvas" : "Calidad del modelo Gemini"}
           >
-            {modelInfo.label}
+            {isOpenAiProvider ? "GPT Image 2" : modelInfo.label}
           </span>
           <span
             className="rounded-none border border-white/20 bg-black/[0.06] px-1.5 py-0.5 text-zinc-600"
@@ -2951,6 +3030,12 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
         className={`foldder-frameless-main relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-none group/out ${showNanoEmptyBackground ? "" : "items-center justify-center bg-[#0a0a0a]"}`}
         style={showNanoEmptyBackground ? undefined : { minHeight: 120 }}
       >
+        <div className="absolute top-2 right-2 z-[30]">
+          <NanoBananaProviderSwitch
+            imageProvider={imageProvider}
+            onSelect={(provider) => updateData("imageProvider", provider)}
+          />
+        </div>
 
         {/* OUTPUT image — preview ajustado al marco del nodo */}
         {outputImage && nodeMediaVisible ? (
@@ -2970,7 +3055,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
                             opacity-0 group-hover/out:opacity-100 transition-opacity" />
             <button
               onClick={() => setShowFullSize(true)}
-              className="absolute top-2 right-2 z-20 bg-black/60 hover:bg-black/90 text-white
+              className="absolute top-9 right-2 z-20 bg-black/60 hover:bg-black/90 text-white
                          text-[7px] font-black px-2 py-1 rounded-none flex items-center gap-1
                          opacity-0 group-hover/out:opacity-100 transition-opacity"
             >
@@ -2980,7 +3065,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
             <span className="absolute top-2 left-2 z-20 text-[6px] font-black uppercase text-white/70
                              bg-black/50 px-1.5 py-0.5 rounded-none
                              opacity-0 group-hover/out:opacity-100 transition-opacity">
-              {modelInfo.label} · {nbResLabel} · {nodeData.aspect_ratio || '16:9'}
+              {isOpenAiProvider ? "ChatGPT Images" : modelInfo.label} · {nbResLabel} · {nodeData.aspect_ratio || '16:9'}
             </span>
           </>
         ) : outputImage ? (
@@ -3125,7 +3210,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
         return (
           <NanoBananaStudio
             nodeId={id}
-            nodeLabel={nodeData.label?.trim() || "Nano Banana"}
+            nodeLabel={nodeData.label?.trim() || "Image Creation"}
             initialImage={connected0}
             lastGenerated={studioLastGenerated}
             modelKey={nodeData.modelKey || 'flash31'}

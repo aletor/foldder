@@ -106,8 +106,8 @@ function operationDescription(request: WalletCostDecisionRequest, language: Dial
     case "/api/gemini/generate":
     case "/api/gemini/generate-stream":
       return es
-        ? "Esta generación de imagen usa Gemini/Nano Banana. La reserva depende del modelo y la resolución; al terminar se captura el coste real y se libera el sobrante."
-        : "This image generation uses Gemini/Nano Banana. The reserve depends on model and resolution; after completion Foldder captures the real cost and releases the remainder.";
+        ? "Esta generación de imagen usa Image Creation (Gemini o ChatGPT). La reserva depende del modelo y la resolución; al terminar se captura el coste real y se libera el sobrante."
+        : "This image generation uses Image Creation (Gemini or ChatGPT). The reserve depends on model and resolution; after completion Foldder captures the real cost and releases the remainder.";
     case "/api/gemini/video":
     case "/api/runway/generate":
     case "/api/grok/generate":

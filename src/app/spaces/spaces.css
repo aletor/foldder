@@ -328,22 +328,6 @@
   background: transparent !important;
 }
 
-/*
- * Nodo recién añadido: fade-in. El zoom lo hace fitViewToNodeIds al soltar (evitar doble zoom con scale CSS).
- */
-@keyframes foldder-node-canvas-enter {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-.react-flow__node.foldder-node-canvas-intro .custom-node {
-  animation: foldder-node-canvas-enter 520ms cubic-bezier(0.12, 0.9, 0.23, 1) both;
-}
-
 /* Todos los hijos de la tarjeta ignoran puntero → el hit cae en .custom-node (sigue funcionando el highlight por coordenadas) */
 .foldder-overview-mode-active .react-flow__node .custom-node * {
   pointer-events: none !important;
@@ -429,7 +413,6 @@
   border-top-right-radius: 12px;
   overflow: hidden;
   min-height: 30px;
-  animation: node-header-appear 220ms ease-out both;
 }
 
 .node-header__title {
@@ -2942,17 +2925,6 @@
   font-weight: 300;
   color: rgba(255, 255, 255, 0.88);
   letter-spacing: 0.15em;
-}
-
-@keyframes node-header-appear {
-  from {
-    opacity: 0;
-    transform: translateY(-3px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
 }
 
 .node-content {
@@ -5668,6 +5640,97 @@ body.nb-studio-open [data-foldder-reactflow-zoom-badge] {
 .custom-node.inspiration-node { --foldder-studio-touched-color: #0ac38a; }
 .custom-node.describer-node { --foldder-studio-touched-color: #fc329f; }
 .custom-node.nano-banana-node { --foldder-studio-touched-color: #f16389; }
+
+.custom-node.nano-banana-node .nano-banana-provider-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: none !important;
+  border-radius: 0 !important;
+  background: var(--foldder-frameless-light-chip-bg, #ffffff) !important;
+  color: #000000 !important;
+  padding: 6px 14px !important;
+  font-size: 9px !important;
+  font-weight: 600 !important;
+  line-height: 1.2;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  text-shadow: none !important;
+  overflow: visible !important;
+}
+
+.custom-node.nano-banana-node .nano-banana-provider-toggle :is(span, button) {
+  color: #000000 !important;
+  text-shadow: none !important;
+}
+
+.custom-node.nano-banana-node .nano-banana-provider-toggle__label {
+  font-size: 9px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  line-height: 1.2;
+  color: #000000 !important;
+  user-select: none;
+}
+
+.custom-node.nano-banana-node .nano-banana-provider-toggle__label.is-active {
+  color: #000000 !important;
+}
+
+.custom-node.nano-banana-node .nano-banana-provider-toggle__label[role="button"] {
+  cursor: pointer;
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+}
+
+.custom-node.nano-banana-node .nano-banana-provider-toggle__track {
+  position: relative;
+  flex-shrink: 0;
+  width: 34px;
+  height: 14px;
+  border: 1px solid #000000 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  cursor: pointer;
+  padding: 0 !important;
+  box-shadow: none !important;
+  min-width: 0;
+}
+
+.custom-node.nano-banana-node .nano-banana-provider-toggle__track:hover,
+.custom-node.nano-banana-node .nano-banana-provider-toggle__track:focus-visible {
+  background: transparent !important;
+  border-color: #000000 !important;
+}
+
+.custom-node.nano-banana-node .nano-banana-provider-toggle__thumb {
+  position: absolute;
+  top: 50%;
+  left: 2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #000000 !important;
+  border: none !important;
+  box-shadow: none !important;
+  transform: translateY(-50%);
+  transition: left 120ms ease;
+}
+
+.custom-node.nano-banana-node .nano-banana-provider-toggle__track.is-on .nano-banana-provider-toggle__thumb {
+  left: 22px;
+}
+
+.custom-node.foldder-node--frameless .foldder-frameless-main > div:has(> .nano-banana-provider-toggle) {
+  overflow: visible !important;
+  box-shadow: none !important;
+}
+
 .custom-node.image-creation-advanced-node { --foldder-studio-touched-color: #f16389; }
 .custom-node.designer-node,
 .custom-node.foldder-studio-node--designer { --foldder-studio-touched-color: #abbc14; }
@@ -5866,13 +5929,6 @@ body.foldder-studio-flush .left-toolbar-flyout-panel :is(button, span, div):not(
 .spaces-canvas--touch .node-header__title {
   animation: none !important;
   transition: none !important;
-}
-
-[data-foldder-touch-ui] .react-flow__node.foldder-node-canvas-intro .custom-node,
-.spaces-canvas--touch .react-flow__node.foldder-node-canvas-intro .custom-node {
-  animation: none !important;
-  opacity: 1 !important;
-  transform: none !important;
 }
 
 [data-foldder-touch-ui] .react-flow__node.library-drop-compatible .custom-node,

@@ -87,7 +87,7 @@ const TOPBAR_PIN_UI: Record<
 > = {
   brain: { title: "Brain — marca y conocimiento", shortLabel: "Brain" },
   designer: { title: "Designer Studio", shortLabel: "Designer" },
-  nanoBanana: { title: "Image Generator", shortLabel: "Image" },
+  nanoBanana: { title: "Image Creation", shortLabel: "Image" },
   photoRoom: { title: "PhotoRoom — retoque de imagen", shortLabel: "Photo" },
   geminiVideo: { title: "Video Generator", shortLabel: "Video" },
   files: { title: "Abrir Foldder", shortLabel: "Foldder" },

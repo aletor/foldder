@@ -5,8 +5,9 @@ export function getAiRequestLabelForPathname(pathname: string): string | null {
   if (pathname === "/api/spaces") return null;
 
   const rules: { test: RegExp; label: string }[] = [
-    { test: /^\/api\/gemini\/generate$/, label: "Nano Banana" },
-    { test: /^\/api\/gemini\/generate-stream$/, label: "Nano Banana" },
+    { test: /^\/api\/gemini\/generate$/, label: "Image Creation" },
+    { test: /^\/api\/gemini\/generate-stream$/, label: "Image Creation" },
+    { test: /^\/api\/openai\/generate-stream$/, label: "ChatGPT Images" },
     { test: /^\/api\/gemini\/video$/, label: "Veo" },
     { test: /^\/api\/gemini\/analyze-correction$/, label: "Gemini" },
     { test: /^\/api\/gemini\/describe-region$/, label: "Gemini" },

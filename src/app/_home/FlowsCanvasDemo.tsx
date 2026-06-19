@@ -149,7 +149,7 @@ export function FlowsCanvasDemo() {
                 style={{ backgroundImage: `url(${NANO_TILE_BG})` }}
                 aria-hidden
               />
-              <DemoNodeLabel variant="media-studio">NANO BANANA 1</DemoNodeLabel>
+              <DemoNodeLabel variant="media-studio">IMAGE CREATION 1</DemoNodeLabel>
 
               <DemoHandle dataType="brain" side="left" stackIndex={0} />
             <DemoHandle dataType="image" side="left" stackIndex={1} />

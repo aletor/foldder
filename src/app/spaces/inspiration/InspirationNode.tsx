@@ -479,7 +479,7 @@ function InspirationStudio({
                     Start with an idea or image
                   </p>
                   <p className="mt-2 max-w-[300px] text-[10px] leading-relaxed text-white/38">
-                    Pick a facet, choose a provider, and send the result to Eye, Brain or Nano Banana.
+                    Pick a facet, choose a provider, and send the result to Eye, Brain or Image Creation.
                   </p>
                 </div>
               ) : (

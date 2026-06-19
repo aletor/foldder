@@ -17,7 +17,7 @@ const PAID_NODE_TYPES: Record<
 > = {
   nanoBanana: {
     id: "gemini-nano",
-    name: "Gemini · Imagen (Nano Banana)",
+    name: "Gemini · Image Creation",
     eurMin: 0.02,
     eurMax: 0.12,
   },

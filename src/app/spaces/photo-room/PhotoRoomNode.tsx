@@ -518,7 +518,7 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
       }
       if (!nanoFlowId) {
         window.alert(
-          "Esta entrada no viene de un Nano Banana (p. ej. grupo plegado o otro tipo de nodo). Expande el marco del grupo o conecta la salida de imagen de un Nano a esta ranura.",
+          "Esta entrada no viene de un nodo Image Creation (p. ej. grupo plegado u otro tipo de nodo). Expande el marco del grupo o conecta la salida de imagen de Image Creation a esta ranura.",
         );
         return;
       }

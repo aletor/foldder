@@ -6721,7 +6721,7 @@ export function ProjectBrainFullscreen({
                   <div className="min-w-0">
                     <h2 className="text-sm font-black uppercase tracking-[0.12em] text-zinc-900">Referencias visuales</h2>
                     <p className="mt-0.5 max-w-2xl text-[11px] leading-snug text-zinc-600">
-                      Mood board 1024×1024 (Nano Banana), inventario de visión y señales agregadas por referencia. La
+                      Mood board 1024×1024 (Image Creation), inventario de visión y señales agregadas por referencia. La
                       ingesta de PDF/imágenes de Marca o Proyecto está en Fuentes.
                     </p>
                   </div>

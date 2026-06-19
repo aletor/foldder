@@ -1,10 +1,12 @@
 import {
   estimateGeminiImageGenerationUsd,
   estimateGeminiVeoVideoUsd,
+  estimateOpenAiImageGenerationUsd,
   estimateOpenAITranscriptionUsd,
   estimateOpenAIUsd,
   estimateVideoEditorRenderReserveUsd,
   estimateSeedanceVideoUsd,
+  resolveOpenAiImageQuality,
   veoResolutionMultiplier,
 } from "@/lib/pricing-config";
 
@@ -98,6 +100,20 @@ export function estimateWalletCostForRoute(
     const estimated = estimateGeminiImageGenerationUsd(model, resolution);
     return {
       label: "Generar imagen",
+      route,
+      category: "image",
+      estimatedCostMicros: usdToMicros(estimated),
+      reserveMicros: reserveUsdToMicros(estimated, 1.15),
+      tone: "confirm",
+    };
+  }
+
+  if (route === "/api/openai/generate-stream") {
+    const resolution = stringValue(body.resolution);
+    const quality = resolveOpenAiImageQuality(resolution);
+    const estimated = estimateOpenAiImageGenerationUsd(resolution, quality);
+    return {
+      label: "Generar imagen ChatGPT",
       route,
       category: "image",
       estimatedCostMicros: usdToMicros(estimated),

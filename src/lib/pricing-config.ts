@@ -90,6 +90,28 @@ export function estimateGeminiImageGenerationUsd(modelKey: string, resolution?: 
   return 0.101;
 }
 
+function normalizeOpenAiImageResolution(resolution: string | undefined): "1k" | "2k" | "4k" {
+  const r = (resolution || "").trim().toLowerCase();
+  if (r === "1k" || r === "1024" || r === "1024px") return "1k";
+  if (r === "4k" || r === "4096" || r === "4096px") return "4k";
+  return "2k";
+}
+
+/** Coste orientativo por imagen OpenAI ChatGPT Images (gpt-image-2). */
+export function resolveOpenAiImageQuality(resolutionInput?: string): "low" | "medium" | "high" {
+  const res = (resolutionInput || "").trim().toLowerCase();
+  if (res === "4k" || res === "4096" || res === "4096px") return "high";
+  if (res === "1k" || res === "1024" || res === "1024px") return "medium";
+  return "medium";
+}
+
+export function estimateOpenAiImageGenerationUsd(resolution?: string, quality: "low" | "medium" | "high" = "medium"): number {
+  const tier = normalizeOpenAiImageResolution(resolution);
+  const qualityFactor = quality === "high" ? 1.45 : quality === "low" ? 0.55 : 1;
+  const base = tier === "4k" ? 0.18 : tier === "2k" ? 0.09 : 0.05;
+  return Math.round(base * qualityFactor * 1_000_000) / 1_000_000;
+}
+
 /** Veo: coste orientativo por segundo de salida (sin breakdown de tokens en la API). */
 export const GEMINI_VEO_USD_PER_SECOND = 0.05;
 

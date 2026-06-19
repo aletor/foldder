@@ -2,7 +2,7 @@
   "services": {
     "gemini-nano": {
       "id": "gemini-nano",
-      "label": "Gemini · Nano Banana (imagen 3 Flash / Pro)",
+      "label": "Gemini · Image Creation (imagen 3 Flash / Pro)",
       "enabled": true,
       "updatedAt": "2026-04-23T07:19:10.192Z",
       "updatedBy": "system-default"
@@ -55,6 +55,13 @@
       "enabled": true,
       "updatedAt": "2026-04-23T07:20:24.040Z",
       "updatedBy": "dev-bypass@local.foldder"
+    },
+    "openai-images": {
+      "id": "openai-images",
+      "label": "OpenAI · ChatGPT Images (gpt-image-2)",
+      "enabled": true,
+      "updatedAt": "2026-06-19T00:00:00.000Z",
+      "updatedBy": "system-default"
     },
     "grok-video": {
       "id": "grok-video",

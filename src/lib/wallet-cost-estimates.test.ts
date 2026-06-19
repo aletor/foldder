@@ -8,6 +8,7 @@ const WALLET_GATED_CLIENT_START_ROUTES = [
   "/api/gemini/describe-region",
   "/api/gemini/generate",
   "/api/gemini/generate-stream",
+  "/api/openai/generate-stream",
   "/api/gemini/video",
   "/api/grok/generate",
   "/api/openai/enhance",
@@ -28,6 +29,9 @@ const WALLET_GATED_CLIENT_START_ROUTES = [
 function sampleBodyForRoute(route: string): Record<string, unknown> {
   if (route === "/api/gemini/generate" || route === "/api/gemini/generate-stream") {
     return { model: "flash31", prompt: "test", resolution: "2k" };
+  }
+  if (route === "/api/openai/generate-stream") {
+    return { prompt: "test", resolution: "2k" };
   }
   if (route === "/api/gemini/video") return { durationSeconds: 8, resolution: "1080p" };
   if (route === "/api/runway/generate" || route === "/api/grok/generate") return { durationSeconds: 5 };
