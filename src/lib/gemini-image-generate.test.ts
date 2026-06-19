@@ -67,6 +67,7 @@ vi.mock("sharp", () => {
 
 import {
   extractGeminiGeneratedImageBuffer,
+  finalizeGeminiImageBuffer,
   geminiImageGenerate,
   normalizeGeminiImageAspectRatio,
   resolveGeminiApiImageSize,
@@ -110,6 +111,19 @@ describe("resolveGeminiApiImageSize", () => {
       upscaleFactor: 1,
       requestedResolution: "2k",
     });
+  });
+});
+
+describe("finalizeGeminiImageBuffer", () => {
+  it("falls back to source JPEG bytes when sharp fails", async () => {
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, ...Buffer.alloc(3000, 0xab)]);
+    vi.mocked((await import("sharp")).default).mockImplementationOnce(() => {
+      throw new Error("sharp unavailable on platform");
+    });
+    const result = await finalizeGeminiImageBuffer(jpeg, 2);
+    expect(result.extension).toBe("jpg");
+    expect(result.contentType).toBe("image/jpeg");
+    expect(result.buffer.equals(jpeg)).toBe(true);
   });
 });
 

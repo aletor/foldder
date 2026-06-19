@@ -240,6 +240,70 @@ export function extractGeminiGeneratedImageBuffer(parts: GeminiResponsePart[]): 
   return candidates[candidates.length - 1]!.buf;
 }
 
+type FinalizedGeminiImage = { buffer: Buffer; contentType: string; extension: string };
+
+function detectGeminiImageFormat(buffer: Buffer): { contentType: string; extension: string } {
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return { contentType: "image/jpeg", extension: "jpg" };
+  }
+  if (
+    buffer.length >= 8 &&
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47
+  ) {
+    return { contentType: "image/png", extension: "png" };
+  }
+  if (
+    buffer.length >= 12 &&
+    buffer.subarray(0, 4).toString("ascii") === "RIFF" &&
+    buffer.subarray(8, 12).toString("ascii") === "WEBP"
+  ) {
+    return { contentType: "image/webp", extension: "webp" };
+  }
+  return { contentType: "image/jpeg", extension: "jpg" };
+}
+
+/** Validate, optionally upscale, and normalize Gemini output bytes for S3 upload. */
+export async function finalizeGeminiImageBuffer(
+  imageBuffer: Buffer,
+  upscaleFactor: number,
+): Promise<FinalizedGeminiImage> {
+  const detected = detectGeminiImageFormat(imageBuffer);
+  try {
+    const sharpMod = await import("sharp");
+    const sharp = sharpMod.default;
+    const meta = await sharp(imageBuffer, { failOn: "none" }).metadata();
+    if (!meta.width || !meta.height || meta.width < 32 || meta.height < 32) {
+      throw new GeminiGenerateError(
+        "Generated image has invalid dimensions. Try a different prompt or model.",
+        500,
+      );
+    }
+    let pipeline = sharp(imageBuffer, { failOn: "none" });
+    if (upscaleFactor > 1) {
+      pipeline = pipeline.resize(meta.width * upscaleFactor, meta.height * upscaleFactor, {
+        kernel: sharp.kernel.lanczos3,
+      });
+    }
+    const buffer = await pipeline.png().toBuffer();
+    return { buffer, contentType: "image/png", extension: "png" };
+  } catch (error) {
+    if (error instanceof GeminiGenerateError) throw error;
+    console.warn(
+      "[gemini-image] sharp finalize failed; uploading Gemini source bytes",
+      error instanceof Error ? error.message : error,
+      upscaleFactor > 1 ? `(requested ${upscaleFactor}x upscale skipped)` : "",
+    );
+    return {
+      buffer: imageBuffer,
+      contentType: detected.contentType,
+      extension: detected.extension,
+    };
+  }
+}
+
 function geminiApiErrorMessage(status: number, detail: string): string {
   if (status === 429) {
     return "Google API Quota Reached (429). No automatic retry was made.";
@@ -454,36 +518,15 @@ export async function geminiImageGenerate(
     );
   }
 
-  try {
-    const { default: sharp } = await import("sharp");
-    const meta = await sharp(imageBuffer).metadata();
-    if (!meta.width || !meta.height || meta.width < 32 || meta.height < 32) {
-      throw new GeminiGenerateError(
-        "Generated image has invalid dimensions. Try a different prompt or model.",
-        500,
-      );
-    }
-    let pipeline = sharp(imageBuffer);
-    if (upscaleFactor > 1) {
-      pipeline = pipeline.resize(meta.width * upscaleFactor, meta.height * upscaleFactor, {
-        kernel: sharp.kernel.lanczos3,
-      });
-    }
-    imageBuffer = await pipeline.png().toBuffer();
-  } catch (error) {
-    if (error instanceof GeminiGenerateError) throw error;
-    throw new GeminiGenerateError(
-      "Generated image could not be decoded. Try again or use another model.",
-      500,
-    );
-  }
+  const finalized = await finalizeGeminiImageBuffer(imageBuffer, upscaleFactor);
+  imageBuffer = finalized.buffer;
 
   report(90, "s3");
-  const filename = `gemini_${modelKey}_${crypto.randomUUID()}.png`;
+  const filename = `gemini_${modelKey}_${crypto.randomUUID()}.${finalized.extension}`;
   const userScopedKey = userScopedGeneratedImageKey(filename, usageUserEmail);
   const key = userScopedKey
-    ? await uploadBufferToS3Key(userScopedKey, imageBuffer, "image/png")
-    : await uploadToS3(filename, imageBuffer, "image/png");
+    ? await uploadBufferToS3Key(userScopedKey, imageBuffer, finalized.contentType)
+    : await uploadToS3(filename, imageBuffer, finalized.contentType);
   const output = stableKnowledgeFileUrlFromKey(key) ?? (await getPresignedUrl(key));
 
   const usage = parseGeminiUsageMetadata(data);
