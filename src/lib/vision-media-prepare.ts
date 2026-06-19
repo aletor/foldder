@@ -55,7 +55,7 @@ export async function loadImageBufferFromMediaReference(
 
   if (trimmed.startsWith("blob:")) {
     throw new VisionMediaPrepareError(
-      "Local preview images cannot be analyzed. Close PhotoRoom to export the image first.",
+      "Local preview images cannot be analyzed. Re-upload the image or use a saved project export.",
       "blob_url",
     );
   }
@@ -148,20 +148,66 @@ export async function prepareOpenAiVisionImageUrl(
   }
 }
 
+export function isStructuredDescriberOutput(text: string): boolean {
+  return /SUBJECT & POSE:|VISUAL HIERARCHY:|Visual protagonist:|WARDROBE & TEXT:|Lens & camera:|Camera angle label:|COMPOSITION & FRAMING:|FINAL OUTPUT FRAMING:|MUST-PRESERVE FOR REGENERATION:|Pose verified:|Highlight tone:|Perspective imperfection:/i.test(
+    text,
+  );
+}
+
+const VISION_REFUSAL_PATTERNS = [
+  /can'?t help with that image/i,
+  /cannot help with (that|this) image/i,
+  /unable to (analyze|view|process|assist)(?:\s+this|\s+the|\s+with|$)/i,
+  /i'?m (?:sorry|unable).{0,120}(can'?t|cannot|unable|won'?t)/i,
+  /no puedo ayudar/i,
+  /no puedo analizar/i,
+  /no puedo ver (la|esta|esa) imagen/i,
+  /lo siento.{0,80}no puedo/i,
+] as const;
+
 export function isVisionRefusalText(text: string): boolean {
-  const t = text.trim().toLowerCase();
+  const t = text.trim();
   if (!t) return true;
-  const patterns = [
-    /can'?t help with that image/,
-    /cannot help with (that|this) image/,
-    /unable to (analyze|view|see|process|assist)/,
-    /i'?m sorry.*(can'?t|cannot|unable)/,
-    /no puedo ayudar/,
-    /no puedo analizar/,
-    /no puedo ver (la|esta|esa) imagen/,
-    /lo siento.*no puedo/,
-  ];
-  return patterns.some((p) => p.test(t));
+  if (isStructuredDescriberOutput(t)) return false;
+
+  const head = t.slice(0, 500);
+  if (VISION_REFUSAL_PATTERNS.some((p) => p.test(head))) return true;
+
+  // Model skipped section headers but produced a substantive description.
+  if (
+    t.length >= 180 &&
+    /(?:subject|pose|standing|seated|hair|wearing|wardrobe|lighting|camera|lens|background|environment)/i.test(
+      t,
+    )
+  ) {
+    return false;
+  }
+
+  return VISION_REFUSAL_PATTERNS.some((p) => p.test(t));
+}
+
+export function describeVisionResponseFailure(args: {
+  content: string;
+  refusal?: string | null;
+  finishReason?: string | null;
+}): string {
+  const trimmed = args.content.trim();
+  if (args.refusal?.trim()) {
+    return `OpenAI declined to describe this image: ${args.refusal.trim().slice(0, 240)}`;
+  }
+  if (args.finishReason === "content_filter") {
+    return "OpenAI blocked this image (content filter). Try another crop or a different photo.";
+  }
+  if (!trimmed) {
+    return "OpenAI returned an empty description. Try again in a few seconds, or re-upload the image.";
+  }
+  if (isVisionRefusalText(trimmed)) {
+    return `OpenAI could not analyze this image: ${trimmed.slice(0, 240)}`;
+  }
+  if (args.finishReason === "length") {
+    return "The description was cut off before completion. Try again — if it keeps happening, use a simpler image.";
+  }
+  return "OpenAI could not produce a valid description. Try again or use a different image.";
 }
 
 export { ForbiddenMediaReferenceError };

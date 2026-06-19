@@ -4,6 +4,7 @@ import { MEDIA_DESCRIBER_VISION_PROMPT } from "./media-describer-prompt";
 describe("MEDIA_DESCRIBER_VISION_PROMPT", () => {
   it("requires structured sections for image regeneration", () => {
     for (const header of [
+      "VISUAL HIERARCHY",
       "SUBJECT & POSE:",
       "WARDROBE & TEXT:",
       "CAMERA:",
@@ -18,50 +19,143 @@ describe("MEDIA_DESCRIBER_VISION_PROMPT", () => {
     }
   });
 
-  it("targets 16:9 landscape expansion for portrait sources", () => {
-    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/16:9 landscape/i);
-    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/SOURCE ORIENTATION/i);
-    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/expand environment left and right/i);
-    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/do NOT zoom in/i);
+  it("locks vertical crop and native 16:9 framing with thirds", () => {
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/vertical crop of the source must stay locked/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/VERTICAL CROP \(locked\)/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/BOTTOM EDGE:/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/feet NOT in frame/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/FINAL OUTPUT FRAMING/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/FRAME-LEFT EXTENSION/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/SUBJECT BAND/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/FRAME-RIGHT EXTENSION/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Outpaint coherence:/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/no black bars, no collage, no triptych/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/do NOT crop or zoom out vertically to reveal feet/i);
+  });
+
+  it("does not force full body when feet are cropped", () => {
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).not.toMatch(/If feet\/shoes visible → FS always/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/never imply feet\/legs if cropped out/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/MFS: head to knees or mid-thigh, feet NOT visible/i);
   });
 
   it("separates torso and head direction in frame coordinates", () => {
     expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/TORSO\/PELVIS faces/i);
     expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/HEAD faces \(separate from torso/i);
-    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/POSE ARCHETYPE/i);
-    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/never mirror left\/right/i);
-    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/NEVER use subject's anatomical left\/right/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Pose verified:/i);
   });
 
-  it("requires bottom-edge check and FS when feet visible", () => {
-    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Bottom-edge check/i);
-    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/FULL BODY head to toe/i);
-    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/NEVER MFS or MS/i);
+  it("requires support check and prop interaction for pose accuracy", () => {
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/SUPPORT CHECK/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/seated-on-counter/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/PROP INTERACTION/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/never call standing if thighs\/buttocks rest on a seat/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/seen from behind/i);
   });
 
   it("requires split toning and wardrobe text", () => {
-    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Split toning/i);
     expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Highlight tone:/i);
     expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Shadow tone:/i);
     expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/WARDROBE & TEXT/i);
-    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/quote literally with text color/i);
   });
 
-  it("requires must-preserve bullets", () => {
-    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Exactly 5 bullets/i);
-    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/expand to 16:9 without cropping feet/i);
+  it("must-preserve copies lighting and color verbatim", () => {
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Lighting preserve:/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Color preserve:/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/copy verbatim from COLOR GRADE/i);
   });
 
-  it("detects subtle wind and atmospheric air before defaulting to still", () => {
-    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Atmospheric air & openness/i);
-    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/BEFORE writing still air/i);
-    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/subtle displacement = at least gentle breeze/i);
-    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Do NOT default to still air/i);
+  it("requires body weight and asymmetry with AMPLIFY rule", () => {
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/BODY WEIGHT & ASYMMETRY/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/AMPLIFY: if subtle asymmetry exists, exaggerate one step/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Shoulder line:/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/contrapposto/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/never generic "neutral hands"/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/symmetrical upright catalog pose/i);
   });
 
-  it("amplifies lighting and avoids default soft/warm", () => {
-    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/on-camera flash/i);
-    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/AMPLIFY/i);
-    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Do NOT default warm/i);
+  it("expands pose verified with weight, shoulders, head tilt, and hands", () => {
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/weight on \[frame-left foot/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/shoulders \[frame-left higher ~15°/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/head tilt \[direction \+ degrees \+ chin\]/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/hands \[specific per-hand description\]/i);
+  });
+
+  it("forbids catalog language and requires per-hand descriptions", () => {
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(
+      /AMPLIFY subtle body asymmetry — do not straighten to symmetrical catalog pose/i,
+    );
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(
+      /Never use catalog language \("neutral stance", "balanced posture"\)/i,
+    );
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Describe each hand separately when both visible/i);
+  });
+
+  it("requires anti-perfection amplification for hair and environment", () => {
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/ANTI-PERFECTION/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/generators beautify and tidy by default/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/never invent dirt or mess not in the image/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/HAIR STYLING/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Hair styling: \[label\]/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/very-groomed-editorial/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/AMPLIFY hair disorder unless very-groomed-editorial/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/SURFACE CLUTTER/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Environment disorder: \[amplified level or N\/A/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/AMPLIFY environment disorder — never tidy backgrounds/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Garment wear:/i);
+  });
+
+  it("must-preserve includes hair styling and structural anchor for architecture hero", () => {
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Hair styling line/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/structural.*anchor|zigzag balcony rhythm/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Visual hierarchy preserve/i);
+  });
+
+  it("requires regeneration variance for text-only downstream", () => {
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/REGENERATION VARIANCE/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/MACRO-PRESERVE/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/MICRO-VARY/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Regeneration variance: macro-preserve/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/never triptych, black vertical bars/i);
+  });
+
+  it("requires lens type with normal default and ultra-wide only with evidence", () => {
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Default to normal/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/ultra-wide/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/ONLY if strong barrel distortion/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/never upgrade lens category/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Close camera distance alone is NOT ultra-wide/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Lens & camera: \[lens type/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Never write plain "eye-level"/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/intentionally level neutral-lens/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(
+      /never upgrade to ultra-wide without strong edge-distortion evidence/i,
+    );
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/copy Lens & camera line/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Perspective imperfection line/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/FRAME-LEFT EXTENSION \/ SUBJECT BAND \/ FRAME-RIGHT EXTENSION/i);
+  });
+
+  it("requires visual hierarchy with architecture protagonist and secondary person scale", () => {
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Visual protagonist:/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Person role:/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/tiny-distant-figure/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/zigzag balconies/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Person \(non-protagonist\)/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/do NOT genericize to a plain apartment block/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Visual hierarchy preserve/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(
+      /never promote a secondary tiny person to protagonist scale/i,
+    );
+  });
+
+  it("requires perspective imperfection with anti real-estate AMPLIFY", () => {
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/PERSPECTIVE IMPERFECTION/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/Perspective imperfection: camera offset/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/real-estate \/ architectural straight-on symmetry/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(/do NOT straighten to a perfect grid/i);
+    expect(MEDIA_DESCRIBER_VISION_PROMPT).toMatch(
+      /AMPLIFY perspective imperfection — off-center camera/i,
+    );
   });
 });

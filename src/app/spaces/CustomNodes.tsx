@@ -129,7 +129,7 @@ import {
   resolvePromptValueFromEdgeSourceMap,
 } from './canvas-group-logic';
 import {
-  ensureServerReadableMediaUrl,
+  resolveMediaUrlForDescriber,
   resolveMediaUrlFromEdgeSource,
   resolvePhotoRoomDocumentSize,
 } from './resolve-connected-media-url';
@@ -3256,10 +3256,7 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
         const inputNode = mergedNodes.find((n) => n.id === inputEdge.source);
         if (!inputNode) throw new Error("Connect an image before generating a description.");
 
-        const resolvedMediaUrl = resolveMediaUrlFromEdgeSource(inputEdge, nodes, edges);
-        if (!resolvedMediaUrl) throw new Error("No media URL available to describe.");
-
-        const finalMediaUrl = await ensureServerReadableMediaUrl(resolvedMediaUrl);
+        const resolvedMediaUrl = await resolveMediaUrlForDescriber(inputEdge, nodes, edges);
         let finalMediaType: string;
 
         if (inputNode.type === 'space') {
@@ -3273,7 +3270,7 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            url: finalMediaUrl,
+            url: resolvedMediaUrl,
             type: finalMediaType,
             metadata: inputNode.data.metadata
           })

@@ -37,7 +37,9 @@ import { hasFoldderStudioTouched, touchStudioNodeData } from "../studio-node/fol
 import { useStudioNodeController } from "../studio-node/studio-node-architecture";
 import {
   clearLiveStudioNodeData,
+  registerLiveStudioExport,
   setLiveStudioNodeData,
+  unregisterLiveStudioExport,
 } from "../studio-live-documents";
 import { nodeFrameFromSnapshot, selectNodeFrameSnapshot } from "../react-flow-selectors";
 import { useCanvasPerformanceModeRef } from "../use-canvas-performance-mode";
@@ -733,6 +735,36 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
       window.clearTimeout(timer);
     };
   }, [isLibraryPreview, photoRoomInputsSig, showStudio, handleStudioExportPreview, id]);
+
+  /** Permite a Image Describer exportar el lienzo abierto sin cerrar PhotoRoom. */
+  useEffect(() => {
+    if (isLibraryPreview || !showStudio) {
+      unregisterLiveStudioExport(id);
+      return;
+    }
+    let cancelled = false;
+    const tryRegister = () => {
+      if (cancelled) return true;
+      const api = studioApiRef.current;
+      if (!api?.getNodePreviewPngDataUrl) return false;
+      registerLiveStudioExport(id, (opts) => api.getNodePreviewPngDataUrl!(opts));
+      return true;
+    };
+    if (tryRegister()) {
+      return () => {
+        cancelled = true;
+        unregisterLiveStudioExport(id);
+      };
+    }
+    const interval = window.setInterval(() => {
+      if (tryRegister()) window.clearInterval(interval);
+    }, 120);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      unregisterLiveStudioExport(id);
+    };
+  }, [id, isLibraryPreview, showStudio]);
 
   useLayoutEffect(() => {
     if (isLibraryPreview) return;

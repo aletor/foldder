@@ -1370,7 +1370,10 @@ const NanoBananaStudio = memo(({
 
     const graphPrompt = externalPromptIgnored
       ? ''
-      : normalizeGenerativeImagePrompt(String(prompt ?? ''), { targetAspectRatio: aspectRatio });
+      : normalizeGenerativeImagePrompt(String(prompt ?? ''), {
+          targetAspectRatio: aspectRatio,
+          textOnlyRecreation: !initialImage,
+        });
     if (!externalPromptIgnored && !graphPrompt.trim()) {
       return alert('No hay prompt conectado.');
     }
@@ -2664,8 +2667,12 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   const onRun = async () => {
     if (!promptValue) return alert("Connect a prompt node!");
 
+    const connectedRefImages = refImages.filter((img, index) => connectedSlots[index] && img) as string[];
+    const textOnlyRecreation = connectedRefImages.length === 0;
+
     const userPromptRaw = normalizeGenerativeImagePrompt(String(promptValue ?? ""), {
       targetAspectRatio: nodeData.aspect_ratio || "16:9",
+      textOnlyRecreation,
     });
     let promptToSend = userPromptRaw;
     let diagForRun: BrainImageGeneratorPromptDiagnostics | null = null;
@@ -2684,7 +2691,6 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
         diagForRun = null;
       }
     }
-    const connectedRefImages = refImages.filter((img, index) => connectedSlots[index] && img) as string[];
 
     const epoch = ++graphGenEpochRef.current;
     setStatus('running');
@@ -2793,8 +2799,10 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   const nanoAspect = parseAspectRatioValue(nodeData.aspect_ratio || '16:9') ?? { width: 16, height: 9 };
 
   useLayoutEffect(() => {
-    const syncKey = `${nodeData.aspect_ratio || '16:9'}:${nanoAspect.width}x${nanoAspect.height}`;
+    const hasFooterChrome = (promptConnected || brainConnected) && !showStudio;
+    const syncKey = `${nodeData.aspect_ratio || '16:9'}:${nanoAspect.width}x${nanoAspect.height}:${outputImage ? 'out' : 'empty'}:${hasFooterChrome ? 'foot' : 'nofoot'}`;
     if (frameSyncKeyRef.current === syncKey) return;
+
     const chromeHeight = resolveNodeChromeHeight(frameRef.current, previewRef.current);
     const nextFrame = resolveAspectLockedNodeFrame({
       node: currentFrameNode,
@@ -2806,35 +2814,49 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
       maxHeight: STUDIO_NODE_MAX_HEIGHT,
       chromeHeight,
     });
-    frameSyncKeyRef.current = syncKey;
     const nextAspectRatio = nanoAspect.width / nanoAspect.height;
+    const needsFrameSync = nodeFrameNeedsSync(currentFrameNode, nextFrame);
+    const currentAspectRatio =
+      typeof (nodeData as { _foldderAspectRatio?: unknown } | undefined)?._foldderAspectRatio === "number"
+        ? ((nodeData as { _foldderAspectRatio?: number })._foldderAspectRatio ?? null)
+        : null;
+    const needsAspectSync =
+      currentAspectRatio === null || Math.abs(currentAspectRatio - nextAspectRatio) > 0.0001;
+
+    frameSyncKeyRef.current = syncKey;
+    if (!needsFrameSync && !needsAspectSync) return;
+
     setNodes((nds) =>
       nds.map((node) => {
         if (node.id !== id) return node;
-        const needsFrameSync = nodeFrameNeedsSync(node, nextFrame);
-        const currentAspectRatio =
+        const nodeNeedsFrameSync = nodeFrameNeedsSync(node, nextFrame);
+        const nodeCurrentAspectRatio =
           typeof (node.data as { _foldderAspectRatio?: unknown } | undefined)?._foldderAspectRatio === "number"
             ? ((node.data as { _foldderAspectRatio?: number })._foldderAspectRatio ?? null)
             : null;
-        const needsAspectSync =
-          currentAspectRatio === null || Math.abs(currentAspectRatio - nextAspectRatio) > 0.0001;
-        if (!needsFrameSync && !needsAspectSync) return node;
+        const nodeNeedsAspectSync =
+          nodeCurrentAspectRatio === null || Math.abs(nodeCurrentAspectRatio - nextAspectRatio) > 0.0001;
+        if (!nodeNeedsFrameSync && !nodeNeedsAspectSync) return node;
         return {
           ...node,
-          ...(needsFrameSync ? { width: nextFrame.width, height: nextFrame.height } : {}),
+          ...(nodeNeedsFrameSync ? { width: nextFrame.width, height: nextFrame.height } : {}),
           data: { ...node.data, _foldderAspectRatio: nextAspectRatio },
-          style: needsFrameSync ? { ...node.style, width: nextFrame.width, height: nextFrame.height } : node.style,
+          style: nodeNeedsFrameSync ? { ...node.style, width: nextFrame.width, height: nextFrame.height } : node.style,
         };
       }),
     );
     requestAnimationFrame(() => updateNodeInternals(id));
   }, [
-    currentFrameNode,
+    brainConnected,
     id,
     nanoAspect.height,
     nanoAspect.width,
+    nodeData._foldderAspectRatio,
     nodeData.aspect_ratio,
+    outputImage,
+    promptConnected,
     setNodes,
+    showStudio,
     updateNodeInternals,
   ]);
 
@@ -2933,14 +2955,16 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
         {/* OUTPUT image — preview ajustado al marco del nodo */}
         {outputImage && nodeMediaVisible ? (
           <>
-            <img
-              src={outputPreviewUrl}
-              alt="Generated"
-              className="nano-banana-output-preview max-h-full max-w-full w-auto h-auto object-contain"
-              onError={() => {
-                void retryOutputPreview();
-              }}
-            />
+            <div className="absolute inset-0 overflow-hidden" aria-hidden>
+              <img
+                src={outputPreviewUrl}
+                alt="Generated"
+                className="nano-banana-output-preview h-full w-full object-cover"
+                onError={() => {
+                  void retryOutputPreview();
+                }}
+              />
+            </div>
             {/* Hover gradient + actions */}
             <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent
                             opacity-0 group-hover/out:opacity-100 transition-opacity" />

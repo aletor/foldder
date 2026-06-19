@@ -145,8 +145,11 @@ function resolvePromptValueFromEdgeSourceLookup(
     const v = (inner.data as { value?: unknown }).value;
     return typeof v === "string" ? v : "";
   }
-  const v = (src.data as { value?: unknown })?.value;
-  return typeof v === "string" ? v : "";
+  const v = (src.data as { value?: unknown; s3Key?: unknown })?.value;
+  const value = typeof v === "string" ? v.trim() : "";
+  if (value) return value;
+  const s3Key = (src.data as { s3Key?: unknown })?.s3Key;
+  return typeof s3Key === "string" ? s3Key.trim() : "";
 }
 
 /**

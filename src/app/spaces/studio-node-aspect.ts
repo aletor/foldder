@@ -50,6 +50,7 @@ export function resolveAspectLockedNodeFrame(args: {
   const safeContentWidth = Math.max(1, args.contentWidth);
   const safeContentHeight = Math.max(1, args.contentHeight);
   const contentRatio = safeContentWidth / safeContentHeight;
+  const chromeHeight = Math.max(0, Math.round(args.chromeHeight ?? DEFAULT_HEADER_HEIGHT));
   const frame = resolveGridFrameFromAspectRatio(contentRatio, {
     minCols: args.minGridCols ?? 1,
     minRows: args.minGridRows ?? 1,
@@ -57,10 +58,32 @@ export function resolveAspectLockedNodeFrame(args: {
     maxRows: args.maxGridRows ?? 5,
   });
 
-  return {
-    width: Math.round(frame.width),
-    height: Math.round(frame.height),
-  };
+  let width = Math.round(frame.width);
+  let contentAreaHeight = Math.round(width / contentRatio);
+  let height = contentAreaHeight + chromeHeight;
+
+  width = Math.max(args.minWidth, Math.min(args.maxWidth, width));
+  contentAreaHeight = Math.round(width / contentRatio);
+  height = contentAreaHeight + chromeHeight;
+
+  if (height > args.maxHeight) {
+    height = args.maxHeight;
+    contentAreaHeight = Math.max(1, height - chromeHeight);
+    width = Math.round(contentAreaHeight * contentRatio);
+    width = Math.max(args.minWidth, Math.min(args.maxWidth, width));
+    contentAreaHeight = Math.round(width / contentRatio);
+    height = contentAreaHeight + chromeHeight;
+  }
+  if (height < args.minHeight) {
+    height = args.minHeight;
+    contentAreaHeight = Math.max(1, height - chromeHeight);
+    width = Math.round(contentAreaHeight * contentRatio);
+    width = Math.max(args.minWidth, Math.min(args.maxWidth, width));
+    contentAreaHeight = Math.round(width / contentRatio);
+    height = contentAreaHeight + chromeHeight;
+  }
+
+  return { width, height };
 }
 
 export function nodeFrameNeedsSync(

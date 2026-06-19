@@ -8,7 +8,7 @@ import {
   resolvePromptValueFromEdgeSourceMap,
 } from "./canvas-group-logic";
 import type { PhotoRoomNodeStudioData } from "./photo-room/photo-room-types";
-import { mergeLiveStudioNodeDataIntoNodes } from "./studio-live-documents";
+import { mergeLiveStudioNodeDataIntoNodes, tryLiveStudioExportPng } from "./studio-live-documents";
 
 const PHOTO_ROOM_SLOT_IDS = [
   "in_0",
@@ -35,15 +35,21 @@ function resolvePhotoRoomPreviewUrl(
   return "";
 }
 
-/** Misma prioridad que `displayUrl` en PhotoRoomNode (export → preview conectado). */
+/** Misma prioridad que `displayUrl` en PhotoRoomNode (export → previewThumb en vivo → preview conectado). */
 function resolvePhotoRoomDisplayUrl(node: Node, edges: Edge[], nodes: Node[]): string {
-  const data = node.data as PhotoRoomNodeStudioData & { value?: string };
+  const data = node.data as PhotoRoomNodeStudioData & { value?: string; previewThumb?: string };
   const studioObjects = data.studioObjects;
   const hasPersistedStudio = Array.isArray(studioObjects) && studioObjects.length > 0;
   const exportedThumb =
     typeof data.value === "string" && data.value.trim().length > 0 ? data.value.trim() : "";
+  const livePreviewThumb =
+    typeof data.previewThumb === "string" && data.previewThumb.trim().length > 0
+      ? data.previewThumb.trim()
+      : "";
   const nodesById = new Map(nodes.map((n) => [n.id, n]));
   const previewUrl = resolvePhotoRoomPreviewUrl(node.id, edges, nodesById);
+
+  if (livePreviewThumb) return livePreviewThumb;
   if (hasPersistedStudio) return exportedThumb || previewUrl;
   return previewUrl || exportedThumb;
 }
@@ -109,7 +115,34 @@ export async function ensureServerReadableMediaUrl(url: string): Promise<string>
     });
   } catch {
     throw new Error(
-      "Local preview images cannot be sent to the server. Re-open PhotoRoom and close the studio to export the image first.",
+      "Could not read the local preview image. Re-upload the image or wait a moment and try again.",
     );
   }
+}
+
+/**
+ * URL lista para Image Describer: prioriza export PNG del PhotoRoom abierto,
+ * convierte blob: a data URL, y valida que haya contenido.
+ */
+export async function resolveMediaUrlForDescriber(
+  edge: Pick<Edge, "source" | "sourceHandle">,
+  nodes: Node[],
+  edges: Edge[],
+): Promise<string> {
+  const mergedNodes = mergeLiveStudioNodeDataIntoNodes(nodes);
+  const sourceNode = mergedNodes.find((n) => n.id === edge.source);
+  let url = resolveMediaUrlFromEdgeSource(edge, nodes, edges);
+
+  if (sourceNode?.type === "photoRoom") {
+    const livePng = await tryLiveStudioExportPng(sourceNode.id, { maxSide: 1536 });
+    if (livePng?.trim()) url = livePng.trim();
+  }
+
+  if (!url.trim()) {
+    throw new Error(
+      "No image to describe. Connect an image input with a valid upload, or export from PhotoRoom.",
+    );
+  }
+
+  return ensureServerReadableMediaUrl(url);
 }

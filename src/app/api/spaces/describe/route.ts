@@ -14,6 +14,8 @@ import { ForbiddenMediaReferenceError } from '@/lib/api-media-access';
 import OpenAI from 'openai';
 import { MEDIA_DESCRIBER_VISION_PROMPT } from '@/lib/media-describer-prompt';
 import {
+  describeVisionResponseFailure,
+  isStructuredDescriberOutput,
   isVisionRefusalText,
   prepareOpenAiVisionImageUrl,
   VisionMediaPrepareError,
@@ -101,21 +103,36 @@ export async function POST(req: Request) {
     const completion = await openai.chat.completions.create({
       model: "gpt-4o", // Using GPT-4o for its vision capabilities
       messages: [{ role: "user", content: contentPayload }],
-      max_tokens: 2600,
+      max_tokens: 4096,
       temperature: 0.35,
     });
 
-    const description = completion.choices[0].message.content || "No description available.";
-    if (isVisionRefusalText(description)) {
+    const choice = completion.choices[0];
+    const description = choice?.message?.content || "";
+    const refusal =
+      typeof (choice?.message as { refusal?: unknown } | undefined)?.refusal === "string"
+        ? (choice?.message as { refusal: string }).refusal
+        : null;
+    const finishReason = choice?.finish_reason ?? null;
+    const trimmedDescription = description.trim();
+    const structured = isStructuredDescriberOutput(trimmedDescription);
+    const refusalLike = isVisionRefusalText(trimmedDescription);
+
+    if (!trimmedDescription || refusalLike || (finishReason === "length" && !structured)) {
+      const errorMessage = describeVisionResponseFailure({
+        content: description,
+        refusal,
+        finishReason,
+      });
+      console.warn("[Media Describer] Vision failure:", {
+        finishReason,
+        refusal: refusal?.slice(0, 120) ?? null,
+        snippet: trimmedDescription.slice(0, 200) || "(empty)",
+        structured,
+      });
       await releaseApiWalletChargeOnError(walletCharge, new Error("vision_refusal"));
       releaseWalletOnError = false;
-      return NextResponse.json(
-        {
-          error:
-            "The vision model could not read this image. Close PhotoRoom to export the result, then run Image Describer again.",
-        },
-        { status: 422 },
-      );
+      return NextResponse.json({ error: errorMessage }, { status: 422 });
     }
 
     const u = completion.usage;

@@ -60,6 +60,8 @@ vi.mock("@/lib/wallet-api-gate", () => ({
 vi.mock("@/lib/vision-media-prepare", () => ({
   prepareOpenAiVisionImageUrl: vi.fn(async (url: string) => url),
   isVisionRefusalText: () => false,
+  isStructuredDescriberOutput: (text: string) => /SUBJECT & POSE:/i.test(text),
+  describeVisionResponseFailure: () => "vision failed",
   VisionMediaPrepareError: class VisionMediaPrepareError extends Error {},
 }));
 
@@ -85,7 +87,7 @@ describe("/api/spaces/describe", () => {
     expect(response.status).toBe(200);
     expect(json.description).toContain("SUBJECT & POSE:");
     expect(lastCompletionParams?.temperature).toBe(0.35);
-    expect(lastCompletionParams?.max_tokens).toBe(2600);
+    expect(lastCompletionParams?.max_tokens).toBe(4096);
 
     const messages = lastCompletionParams?.messages as Array<{ role: string; content: unknown }>;
     const userContent = messages[0].content as Array<{ type: string; text?: string }>;

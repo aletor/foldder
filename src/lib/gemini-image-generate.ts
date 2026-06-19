@@ -343,8 +343,18 @@ export async function geminiImageGenerate(
 
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   if (!apiKey) throw new GeminiGenerateError("API Key not configured", 500);
+
+  const allImages: string[] = [];
+  if (images && Array.isArray(images)) allImages.push(...images.filter(Boolean));
+  else if (image) allImages.push(image);
+
+  const MAX_REFS = modelKey === "pro3" ? 5 : 4;
+  const slice = allImages.slice(0, MAX_REFS);
+  const textOnlyRecreation = slice.length === 0;
+
   const normalizedPrompt = normalizeGenerativeImagePrompt(String(prompt || "").trim(), {
     targetAspectRatio: aspect_ratio,
+    textOnlyRecreation,
   });
   if (!normalizedPrompt) throw new GeminiGenerateError("Prompt is required", 400);
 
@@ -356,12 +366,6 @@ export async function geminiImageGenerate(
   report(4, "prepare");
 
   const parts: unknown[] = [];
-  const allImages: string[] = [];
-  if (images && Array.isArray(images)) allImages.push(...images.filter(Boolean));
-  else if (image) allImages.push(image);
-
-  const MAX_REFS = modelKey === "pro3" ? 5 : 4;
-  const slice = allImages.slice(0, MAX_REFS);
   const n = slice.length || 1;
   let inlineImageCount = 0;
   for (let i = 0; i < slice.length; i++) {
