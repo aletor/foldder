@@ -26,6 +26,8 @@ import {
   type ApiWalletCharge,
 } from "@/lib/wallet-api-gate";
 
+export const runtime = "nodejs";
+
 type OpenAiDescribeContentPart =
   | { type: "text"; text: string }
   | { type: "image_url"; image_url: { url: string; detail: "auto" | "high" | "low" } };

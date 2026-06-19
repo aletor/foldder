@@ -1,4 +1,3 @@
-import sharp from "sharp";
 import {
   assertUserCanAccessMediaReference,
   ForbiddenMediaReferenceError,
@@ -108,30 +107,51 @@ export async function prepareOpenAiVisionImageUrl(
   baseUrl: string,
   userEmail: string,
 ): Promise<string> {
-  const { buffer } = await loadImageBufferFromMediaReference(rawUrl, baseUrl, userEmail);
-
-  const png = await sharp(buffer, { failOn: "none" })
-    .rotate()
-    .flatten({ background: "#ffffff" })
-    .resize({ width: 1536, height: 1536, fit: "inside", withoutEnlargement: true })
-    .png()
-    .toBuffer();
-
-  const meta = await sharp(png).metadata();
-  if (!meta.width || !meta.height || meta.width < 4 || meta.height < 4) {
-    throw new VisionMediaPrepareError(
-      "Image is too small or invalid to describe",
-      "image_too_small",
-    );
-  }
+  const { buffer, mime } = await loadImageBufferFromMediaReference(rawUrl, baseUrl, userEmail);
 
   const key = buildUserAssetObjectKey({
     userEmail,
     folder: "describe/temp",
     filename: `vision-${Date.now()}.png`,
   });
-  await uploadBufferToS3Key(key, png, "image/png");
-  return getPresignedUrl(key);
+
+  try {
+    const sharpMod = await import("sharp");
+    const sharp = sharpMod.default;
+    const png = await sharp(buffer, { failOn: "none" })
+      .rotate()
+      .flatten({ background: "#ffffff" })
+      .resize({ width: 1536, height: 1536, fit: "inside", withoutEnlargement: true })
+      .png()
+      .toBuffer();
+
+    const meta = await sharp(png).metadata();
+    if (!meta.width || !meta.height || meta.width < 4 || meta.height < 4) {
+      throw new VisionMediaPrepareError(
+        "Image is too small or invalid to describe",
+        "image_too_small",
+      );
+    }
+
+    await uploadBufferToS3Key(key, png, "image/png");
+    return getPresignedUrl(key);
+  } catch (error) {
+    if (error instanceof VisionMediaPrepareError) throw error;
+    console.warn(
+      "[vision-media-prepare] sharp unavailable; uploading source image for OpenAI vision",
+      error instanceof Error ? error.message : error,
+    );
+    if (buffer.length < 64) {
+      throw new VisionMediaPrepareError(
+        "Image is too small or invalid to describe",
+        "image_too_small",
+      );
+    }
+    const contentType = mime.startsWith("image/") ? mime : "image/jpeg";
+    const fallbackKey = key.replace(/\.png$/, contentType.includes("png") ? ".png" : ".jpg");
+    await uploadBufferToS3Key(fallbackKey, buffer, contentType);
+    return getPresignedUrl(fallbackKey);
+  }
 }
 
 export function isVisionRefusalText(text: string): boolean {
