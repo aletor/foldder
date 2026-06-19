@@ -38,7 +38,7 @@ function DescriberAnalyzedTitle({
   useEffect(() => {
     setVisibleLetters(0);
     setShowCopyButton(false);
-    const timers: ReturnType<typeof setTimeout>[] = [];
+    const timers: number[] = [];
 
     for (let index = 0; index < ANALYZED_LABEL.length; index += 1) {
       timers.push(

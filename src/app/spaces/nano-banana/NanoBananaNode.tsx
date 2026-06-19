@@ -61,6 +61,7 @@ interface BaseNodeData {
   duration?: number;
   resolution?: string;
   aspect_ratio?: string;
+  _foldderAspectRatio?: number;
   label?: string;
   loading?: boolean;
   error?: boolean;
