@@ -31,6 +31,9 @@ import {
   type ApiWalletCharge,
 } from "@/lib/wallet-api-gate";
 import crypto from "crypto";
+import { mkdtemp, readFile, rm } from "fs/promises";
+import { tmpdir } from "os";
+import path from "path";
 
 /** Vercel / hosting: permite polling largo (Veo suele tardar minutos). Ajusta según tu plan. */
 export const maxDuration = 300;
@@ -39,6 +42,24 @@ type ExtractedVeoVideo = {
   uri?: string;
   base64?: string;
   mimeType?: string;
+};
+
+type VeoGeneratedVideoEntry = {
+  video?: {
+    uri?: string;
+    videoBytes?: string;
+    mimeType?: string;
+  };
+};
+
+type VeoOperationSnapshot = {
+  done?: boolean;
+  error?: { message?: string };
+  response?: {
+    generatedVideos?: VeoGeneratedVideoEntry[];
+    raiMediaFilteredCount?: number;
+    raiMediaFilteredReasons?: string[];
+  };
 };
 
 type GeminiVeoImage = {
@@ -61,7 +82,106 @@ function looksLikeVideoUri(value: unknown): value is string {
   if (typeof value !== "string") return false;
   const trimmed = value.trim();
   if (!trimmed) return false;
-  return /^https?:\/\//i.test(trimmed) || trimmed.startsWith("files/");
+  return (
+    /^https?:\/\//i.test(trimmed) ||
+    trimmed.startsWith("files/") ||
+    trimmed.startsWith("gs://")
+  );
+}
+
+function pickVideoUriFromRecord(root: Record<string, unknown>): string | null {
+  const candidates = [root.uri, root.fileUri, root.downloadUri, root.url, root.gcsUri, root.name];
+  for (const candidate of candidates) {
+    if (looksLikeVideoUri(candidate)) return candidate.trim();
+    if (typeof candidate === "string" && candidate.trim().startsWith("files/")) {
+      return candidate.trim();
+    }
+  }
+  return null;
+}
+
+function assertVeoResponseNotRaiBlocked(response: VeoOperationSnapshot["response"]): void {
+  if (!response) return;
+  const filteredCount = response.raiMediaFilteredCount ?? 0;
+  const reasons = (response.raiMediaFilteredReasons ?? []).filter(
+    (reason): reason is string => typeof reason === "string" && reason.trim().length > 0,
+  );
+  const hasVideo = (response.generatedVideos ?? []).some((entry) => {
+    const video = entry.video;
+    return Boolean(
+      (typeof video?.uri === "string" && video.uri.trim()) ||
+        (typeof video?.videoBytes === "string" && video.videoBytes.length > 0),
+    );
+  });
+  if (!hasVideo && (filteredCount > 0 || reasons.length > 0)) {
+    throw new Error(
+      `Veo bloqueó el vídeo por políticas de contenido${reasons.length ? `: ${reasons.slice(0, 2).join("; ")}` : "."}`,
+    );
+  }
+}
+
+/** Prefer SDK-normalized response; fall back to raw REST shapes. */
+function pickVeoVideoFromOperation(operation: VeoOperationSnapshot): ExtractedVeoVideo | null {
+  assertVeoResponseNotRaiBlocked(operation.response);
+  const entry = operation.response?.generatedVideos?.[0];
+  const video = entry?.video;
+  if (video?.videoBytes?.trim()) {
+    return { base64: video.videoBytes, mimeType: video.mimeType ?? "video/mp4" };
+  }
+  if (video?.uri?.trim()) {
+    return { uri: video.uri.trim(), mimeType: video.mimeType };
+  }
+  return extractVeoVideo(operation as unknown as Record<string, unknown>);
+}
+
+async function downloadVeoVideoBuffer(
+  ai: GoogleGenAI,
+  operation: VeoOperationSnapshot,
+  extracted: ExtractedVeoVideo,
+  apiKey: string,
+): Promise<Buffer> {
+  if (extracted.base64) {
+    return Buffer.from(extracted.base64, "base64");
+  }
+
+  const generatedEntry = operation.response?.generatedVideos?.[0];
+  if (generatedEntry?.video?.uri || generatedEntry?.video?.videoBytes) {
+    const dir = await mkdtemp(path.join(tmpdir(), "foldder-veo-"));
+    const downloadPath = path.join(dir, "video.mp4");
+    try {
+      await ai.files.download({ file: generatedEntry, downloadPath });
+      return await readFile(downloadPath);
+    } catch (sdkError) {
+      console.warn("[Gemini Video] SDK files.download failed, falling back to URI fetch:", sdkError);
+    } finally {
+      await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
+  const videoUri = extracted.uri?.trim() ?? "";
+  if (!videoUri) {
+    throw new Error("Veo no devolvió URI ni bytes de vídeo.");
+  }
+  if (videoUri.startsWith("gs://")) {
+    throw new Error(
+      "Veo devolvió un URI de Google Cloud Storage no descargable desde Gemini API. Revisa la configuración del modelo.",
+    );
+  }
+
+  const downloadUrl = videoUri.startsWith("files/")
+    ? `https://generativelanguage.googleapis.com/v1beta/${videoUri}:download?alt=media`
+    : videoUri.includes(":download")
+      ? videoUri
+      : videoUri;
+
+  console.log("[Gemini Video] Downloading generated video...");
+  const videoRes = await fetch(downloadUrl, {
+    headers: { "x-goog-api-key": apiKey },
+  });
+  if (!videoRes.ok) {
+    throw new Error(`Failed to download video from Google: ${videoRes.status}`);
+  }
+  return Buffer.from(await videoRes.arrayBuffer());
 }
 
 function findNestedVideo(root: unknown, seen = new Set<unknown>()): ExtractedVeoVideo | null {
@@ -70,14 +190,15 @@ function findNestedVideo(root: unknown, seen = new Set<unknown>()): ExtractedVeo
   seen.add(root);
 
   if (isRecord(root)) {
-    const uri = root.uri || root.fileUri || root.downloadUri || root.url;
-    if (looksLikeVideoUri(uri)) {
+    const uri = pickVideoUriFromRecord(root);
+    if (uri) {
       return {
-        uri: uri.trim(),
+        uri,
         mimeType: typeof root.mimeType === "string" ? root.mimeType : undefined,
       };
     }
-    const directVideoBase64 = root.videoBytes || root.bytesBase64Encoded || root.bytesBase64;
+    const directVideoBase64 =
+      root.videoBytes || root.encodedVideo || root.bytesBase64Encoded || root.bytesBase64;
     const looseDataBase64 = typeof root.data === "string" && root.data.length > 1000 ? root.data : undefined;
     const base64 = directVideoBase64 || looseDataBase64;
     if (typeof base64 === "string" && base64.length > 0) {
@@ -108,9 +229,12 @@ function extractVeoVideo(pollData: Record<string, unknown>): ExtractedVeoVideo |
     ["response", "generateVideoResponse", "generatedSamples", 0, "video"],
     ["response", "generateVideoResponse", "generatedSamples", 0, "video", "uri"],
     ["response", "generateVideoResponse", "generatedSamples", 0, "video", "videoBytes"],
+    ["response", "generateVideoResponse", "generatedSamples", 0, "video", "encodedVideo"],
     ["response", "generatedVideos", 0, "video"],
     ["response", "generated_videos", 0, "video"],
     ["response", "generatedSamples", 0, "video"],
+    ["response", "videos", 0, "gcsUri"],
+    ["response", "videos", 0],
     ["response", "video"],
   ];
 
@@ -302,12 +426,12 @@ export async function POST(req: NextRequest) {
           await walletCharge?.release({ reason: "provider_operation_error", metadata: { message: msg.slice(0, 240) } });
           throw new Error(`Veo: ${msg}`);
         }
-        generatedVideo = extractVeoVideo(operation as unknown as Record<string, unknown>);
+        generatedVideo = pickVeoVideoFromOperation(operation);
         console.log(`[Gemini Video] Operation complete. Video: ${generatedVideo?.uri ? "uri" : generatedVideo?.base64 ? "base64" : "(empty)"}`);
         if (generatedVideo?.uri || generatedVideo?.base64) break;
         console.error("[Gemini Video] done=true but no URI. Snapshot:", JSON.stringify(operation).slice(0, 1200));
         throw new Error(
-          "Veo terminó pero no devolvió un vídeo descargable. Revisa modelo/cuota o la respuesta en logs."
+          "Veo terminó pero no devolvió un vídeo descargable. Revisa prompt, cuota o políticas de contenido (RAI)."
         );
       }
     }
@@ -318,23 +442,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Download and upload to S3
-    let videoBuffer: Buffer;
-    if (generatedVideo.base64) {
-      console.log("[Gemini Video] Using generated base64 video payload...");
-      videoBuffer = Buffer.from(generatedVideo.base64, "base64");
-    } else {
-      const videoUri = generatedVideo.uri || "";
-      const downloadUrl = videoUri.startsWith("files/")
-        ? `https://generativelanguage.googleapis.com/v1beta/${videoUri}:download`
-        : videoUri;
-      console.log("[Gemini Video] Downloading generated video...");
-      const videoRes = await fetch(downloadUrl, {
-        headers: { "x-goog-api-key": apiKey }
-      });
-      if (!videoRes.ok) throw new Error(`Failed to download video from Google: ${videoRes.status}`);
-      videoBuffer = Buffer.from(await videoRes.arrayBuffer());
-    }
+    const videoBuffer = await downloadVeoVideoBuffer(ai, operation, generatedVideo, apiKey);
     const filename = `veo_${crypto.randomUUID()}.mp4`;
     const key = buildUserAssetObjectKey({
       userEmail: authState.user.email,

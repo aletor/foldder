@@ -26,6 +26,9 @@ vi.mock("@google/genai", () => ({
         },
       })),
     };
+    files = {
+      download: vi.fn(async () => undefined),
+    };
   },
 }));
 
