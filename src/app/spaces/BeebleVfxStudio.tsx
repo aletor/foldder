@@ -19,7 +19,6 @@ import {
 } from "lucide-react";
 import type { BeebleJob } from "@/lib/beeble-api";
 import { BeebleClient, estimateBeebleCredits, type BeebleAccountInfo } from "@/lib/beeble-api";
-import type { StandardStudioShellConfig } from "./StandardStudioShell";
 import {
   FoldderStudioHeader,
   foldderStudioHeaderActionClassName,
@@ -56,7 +55,6 @@ export type BeebleVfxStudioProps = {
   onRefreshJob?: (jobId: string) => void;
   historyJobs?: BeebleJob[];
   onLoadHistory?: () => void;
-  standardShell?: StandardStudioShellConfig;
 };
 
 function truncateUrl(s: string, max = 48) {
@@ -92,7 +90,6 @@ export const BeebleVfxStudio = memo(function BeebleVfxStudio(props: BeebleVfxStu
     onRefreshJob,
     historyJobs,
     onLoadHistory,
-    standardShell,
   } = props;
 
   const [labelDraft, setLabelDraft] = useState(nodeLabel);
@@ -171,7 +168,7 @@ export const BeebleVfxStudio = memo(function BeebleVfxStudio(props: BeebleVfxStu
     >
       <FoldderStudioHeader
         nodeType="vfxGenerator"
-        nodeLabel={labelDraft.trim() || standardShell?.appLabel || "VFX"}
+        nodeLabel={labelDraft.trim() || "VFX"}
         subtitle="Beeble SwitchX · VFX sobre vídeo"
         onClose={onClose}
         titleSlot={

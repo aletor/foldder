@@ -8,7 +8,7 @@ import {
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { ddbClient } from "@/lib/dynamo-utils";
-import { withDynamoRetry } from "@/lib/dynamo-retry";
+import { withDynamoRetry, isDynamoTransactionConflict, sleepMs } from "@/lib/dynamo-retry";
 import type { UsageServiceId } from "@/lib/api-usage";
 
 export const WALLET_DDB_TABLE_ENV = "FOLDDER_WALLET_DDB_TABLE";
@@ -435,32 +435,42 @@ async function sendIdempotentTransaction<T extends WalletMutationResult>(params:
   insufficientFundsIndex?: number;
 }): Promise<T> {
   const idemSk = idempotencySk(params.operationKind, params.operationId);
-  const existing = await getIdempotencyResult<T>(params.tableName, params.pk, idemSk);
-  if (existing) return { ...existing, duplicate: true };
+  const maxAttempts = 6;
 
-  try {
-    await withDynamoRetry(() =>
-      ddbClient.send(
-        new TransactWriteCommand({
-          ClientRequestToken: stableClientRequestToken(params.operationId),
-          TransactItems: params.transactItems,
-        }),
-      ),
-    );
-    return params.result;
-  } catch (error) {
-    const duplicate = await getIdempotencyResult<T>(params.tableName, params.pk, idemSk);
-    if (duplicate) return { ...duplicate, duplicate: true };
-    if (
-      params.insufficientFundsIndex != null &&
-      isConditionalTransactionCancel(error, params.insufficientFundsIndex)
-    ) {
-      throw new WalletInsufficientFundsError(
-        "amountMicros" in params.result ? Number(params.result.amountMicros) : 0,
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const existing = await getIdempotencyResult<T>(params.tableName, params.pk, idemSk);
+    if (existing) return { ...existing, duplicate: true };
+
+    try {
+      await withDynamoRetry(() =>
+        ddbClient.send(
+          new TransactWriteCommand({
+            ClientRequestToken: stableClientRequestToken(params.operationId),
+            TransactItems: params.transactItems,
+          }),
+        ),
       );
+      return params.result;
+    } catch (error) {
+      const duplicate = await getIdempotencyResult<T>(params.tableName, params.pk, idemSk);
+      if (duplicate) return { ...duplicate, duplicate: true };
+      if (
+        params.insufficientFundsIndex != null &&
+        isConditionalTransactionCancel(error, params.insufficientFundsIndex)
+      ) {
+        throw new WalletInsufficientFundsError(
+          "amountMicros" in params.result ? Number(params.result.amountMicros) : 0,
+        );
+      }
+      if (isDynamoTransactionConflict(error) && attempt < maxAttempts) {
+        await sleepMs(20 * 2 ** (attempt - 1) + Math.floor(Math.random() * 15));
+        continue;
+      }
+      throw error;
     }
-    throw error;
   }
+
+  throw new Error("wallet transaction conflict retries exhausted");
 }
 
 function idempotencyPut<T extends WalletMutationResult>(params: {

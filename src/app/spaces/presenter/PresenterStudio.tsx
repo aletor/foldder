@@ -53,7 +53,6 @@ import type { PresenterImageVideoCanvasBinding, PresenterImageVideoPlacement } f
 import { collectPresenterImageTargets } from "./presenter-image-video-collect";
 import { PresenterVideoPropertiesPanel } from "./PresenterVideoPropertiesPanel";
 import { findVideoPlacementForCanvasSelection } from "./presenter-video-selection";
-import type { StandardStudioShellConfig } from "../StandardStudioShell";
 import {
   FoldderStudioHeader,
   foldderStudioHeaderActionClassName,
@@ -61,6 +60,7 @@ import {
 
 /** Pausa entre pasos encadenados en la vista previa del panel (tras `PRESENTER_GROUP_ENTER_ANIM_MS`). */
 const PRESENTER_EDITOR_PREVIEW_GAP_MS = 72;
+const PRESENTER_ONBOARDING_KEY = "foldder-presenter-studio-onboarding-dismissed";
 
 type ShareContext = {
   deckKey: string;
@@ -76,7 +76,9 @@ type Props = {
   /** Vídeos en imágenes (solo nodo Presenter). */
   imageVideoPlacements?: PresenterImageVideoPlacement[];
   onImageVideoPlacementsChange?: (next: PresenterImageVideoPlacement[]) => void;
-  standardShell?: StandardStudioShellConfig;
+  /** Transiciones entre slides (persistidas en el nodo Presenter). */
+  initialTransitionsByPageId?: Record<string, SlideTransitionId>;
+  onTransitionsByPageIdChange?: (next: Record<string, SlideTransitionId>) => void;
 };
 
 type PendingAnim = {
@@ -99,7 +101,8 @@ export function PresenterStudio({
   onPresenterPagePatch,
   imageVideoPlacements = [],
   onImageVideoPlacementsChange,
-  standardShell,
+  initialTransitionsByPageId,
+  onTransitionsByPageIdChange,
 }: Props) {
   const [shareOpen, setShareOpen] = useState(false);
   /** Panel lateral derecho: propiedades de vídeo · animaciones (iconos siempre visibles). */
@@ -118,9 +121,16 @@ export function PresenterStudio({
   const [playShellIsFullscreen, setPlayShellIsFullscreen] = useState(false);
   const [activeIdx, setActiveIdx] = useState(0);
   const [pendingAnim, setPendingAnim] = useState<PendingAnim | null>(null);
-  const [transitionsByPageId, setTransitionsByPageId] = useState<Record<string, SlideTransitionId>>(() =>
-    initTransitions(pages),
-  );
+  const [transitionsByPageId, setTransitionsByPageId] = useState<Record<string, SlideTransitionId>>(() => {
+    const base = initialTransitionsByPageId ?? initTransitions(pages);
+    const next = { ...base };
+    for (const p of pages) {
+      if (next[p.id] === undefined) next[p.id] = DEFAULT_SLIDE_TRANSITION;
+    }
+    return next;
+  });
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [pickerPreviewTransition, setPickerPreviewTransition] = useState<SlideTransitionId | null>(null);
 
   /** Picker anclado al botón de transición (portal fijo). */
   const [picker, setPicker] = useState<{ pageId: string; rect: DOMRect } | null>(null);
@@ -138,8 +148,16 @@ export function PresenterStudio({
   }, [pages]);
 
   useEffect(() => {
-    document.body.classList.add("nb-studio-open");
-    return () => document.body.classList.remove("nb-studio-open");
+    try {
+      if (localStorage.getItem(PRESENTER_ONBOARDING_KEY) !== "1") setShowOnboarding(true);
+    } catch {
+      setShowOnboarding(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    document.body.classList.add("nb-studio-open", "foldder-studio-flush");
+    return () => document.body.classList.remove("nb-studio-open", "foldder-studio-flush");
   }, []);
 
   useEffect(() => {
@@ -180,9 +198,16 @@ export function PresenterStudio({
     [activeIdx, maxIdx, pages, pendingAnim, transitionsByPageId],
   );
 
-  const setTransitionForPage = useCallback((pageId: string, id: SlideTransitionId) => {
-    setTransitionsByPageId((prev) => ({ ...prev, [pageId]: id }));
-  }, []);
+  const setTransitionForPage = useCallback(
+    (pageId: string, id: SlideTransitionId) => {
+      setTransitionsByPageId((prev) => {
+        const next = { ...prev, [pageId]: id };
+        onTransitionsByPageIdChange?.(next);
+        return next;
+      });
+    },
+    [onTransitionsByPageIdChange],
+  );
 
   const openPicker = useCallback((pageId: string, el: HTMLButtonElement | null) => {
     if (!el) return;
@@ -334,8 +359,9 @@ export function PresenterStudio({
     return {
       ...presenterImageVideoBinding,
       videoTransformHandlesObjectId: selectedVideoPlacement?.imageObjectId ?? null,
+      highlightPickKeys: animationSelectedKeys,
     };
-  }, [pendingAnim, presenterImageVideoBinding, selectedVideoPlacement?.imageObjectId]);
+  }, [pendingAnim, presenterImageVideoBinding, selectedVideoPlacement?.imageObjectId, animationSelectedKeys]);
 
   const videoFrameImageTarget = useMemo(() => {
     if (!selectedVideoPlacement || !canvasPageState?.objects?.length) return null;
@@ -412,25 +438,25 @@ export function PresenterStudio({
     [clearEditorEnterPreview],
   );
 
-  /** Vista previa al pasar el ratón por un preset (solo 1 elemento/grupo en selección del lienzo). */
+  /** Vista previa al pasar el ratón por un preset (solo 1 elemento/grupo; no oculta el resto del slide). */
   const handlePreviewPresetHover = useCallback(
     (enter: PresenterGroupEnterId | null) => {
       if (enter === null) {
         clearEditorEnterPreview();
         return;
       }
-      if (!currentPage || animationSelectedKeys.length === 0) return;
+      if (!currentPage || animationSelectedKeys.length !== 1) {
+        clearEditorEnterPreview();
+        return;
+      }
       if (enter === "none" || enter === "instant") {
         clearEditorEnterPreview();
         return;
       }
-      if (animationSelectedKeys.length >= 2) {
-        clearEditorEnterPreview();
-        return;
-      }
+      clearEditorEnterPreview();
+      const sel = animationSelectedKeys[0]!;
       const steps = mergeStepsWithPage(currentPage);
       const next = [...steps];
-      const sel = animationSelectedKeys[0]!;
       const idx = next.findIndex((s) => presenterStepKey(s) === sel);
       if (idx >= 0) {
         next[idx] = { ...next[idx], enter };
@@ -443,9 +469,14 @@ export function PresenterStudio({
           next.push({ kind: "object", objectId: p.objectId, enter, exit: "none" });
         }
       }
-      runPreviewAfterAssignEnter(next, animationSelectedKeys, enter);
+      setPreviewPlayReveal({ revealCount: next.length, steps: next });
+      setPreviewAnimateKey(sel);
+      const t = window.setTimeout(() => {
+        clearEditorEnterPreview();
+      }, PRESENTER_GROUP_ENTER_ANIM_MS);
+      editorPreviewTimersRef.current.push(t);
     },
-    [animationSelectedKeys, currentPage, clearEditorEnterPreview, runPreviewAfterAssignEnter],
+    [animationSelectedKeys, currentPage, clearEditorEnterPreview],
   );
 
   const applyEnterToMultiSelection = useCallback(
@@ -680,15 +711,19 @@ export function PresenterStudio({
 
   return (
     <div
-      className="fixed inset-0 z-[100010] flex flex-col bg-[#0b0d10]"
+      className="fixed inset-0 z-[100010] flex flex-col bg-[#0b0d10] text-white"
       role="dialog"
       aria-modal="true"
       aria-labelledby="presenter-studio-title"
+      data-foldder-studio-canvas=""
+      data-foldder-studio-flush=""
+      data-foldder-presenter-studio=""
+      style={{ ["--foldder-studio-accent" as string]: "#f5b91b" }}
     >
       <FoldderStudioHeader
         nodeType="presenter"
-        nodeLabel={standardShell?.appLabel ?? "Presenter"}
-        subtitle={`${pages.length} ${pages.length === 1 ? "slide" : "slides"}`}
+        nodeLabel="Presenter"
+        subtitle={`${pages.length} ${pages.length === 1 ? "diapositiva" : "diapositivas"}`}
         onClose={onClose}
         actions={
           <>
@@ -699,21 +734,21 @@ export function PresenterStudio({
               title="Modo presentación (P)"
             >
               <Play className="h-3.5 w-3.5 shrink-0 fill-current" strokeWidth={0} aria-hidden />
-              Play
+              Reproducir
             </button>
             <button
               type="button"
               onClick={() => setShareOpen(true)}
-              className={foldderStudioHeaderActionClassName("bg-sky-600/90 hover:bg-sky-500")}
+              className={foldderStudioHeaderActionClassName("bg-[#f5b91b]/95 text-black hover:bg-[#f5b91b]")}
             >
-              Share
+              Compartir
             </button>
           </>
         }
       />
 
-      <div className="flex min-h-0 flex-1 flex-col gap-2 p-2 lg:flex-row lg:gap-3 lg:p-3">
-        <aside className="flex shrink-0 flex-row gap-2 overflow-x-auto pb-1 md:w-[7.25rem] md:flex-col md:overflow-y-auto md:pb-0 md:pr-0">
+      <div className="flex min-h-0 flex-1 flex-row border-t border-white/[0.08]">
+        <aside className="flex w-[7.25rem] shrink-0 flex-col gap-0 overflow-y-auto border-r border-white/[0.08] bg-[#0a0c0f]">
           {pages.map((p, i) => {
             const d = getPageDimensions(p);
             const selected = i === safeRailIdx;
@@ -727,17 +762,17 @@ export function PresenterStudio({
             return (
               <div
                 key={p.id}
-                className={`relative flex w-full min-w-0 shrink-0 flex-col overflow-hidden rounded-[4px] border transition-colors ${
-                  nextPage ? "p-1 pb-0" : "p-1"
+                className={`relative flex w-full min-w-0 shrink-0 flex-col overflow-hidden border-b border-white/[0.06] transition-colors ${
+                  nextPage ? "pb-0" : ""
                 } ${
                   selected
-                    ? "border-sky-500/45 bg-sky-500/[0.08]"
-                    : "border-white/[0.07] bg-white/[0.03] hover:bg-white/[0.05]"
+                    ? "bg-[#f5b91b]/[0.12]"
+                    : "bg-transparent hover:bg-white/[0.03]"
                 }`}
               >
-                <div className="relative z-10 mb-0.5 flex items-center justify-center gap-0.5">
+                <div className="relative z-10 flex items-center justify-center gap-0.5 px-1 py-1">
                   <span className="min-w-0 flex-1 text-center text-[9px] font-semibold tabular-nums leading-none text-zinc-500">
-                    {i + 1}. Slide
+                    {i + 1}
                   </span>
                   <button
                     type="button"
@@ -766,13 +801,13 @@ export function PresenterStudio({
                 <button
                   type="button"
                   onClick={() => goToIdx(i)}
-                  className="w-full min-w-0 text-left"
+                  className="w-full min-w-0 px-1 pb-1 text-left"
                   aria-current={selected ? "true" : undefined}
-                  aria-label={`Slide ${i + 1}`}
+                  aria-label={`Diapositiva ${i + 1}`}
                 >
                   <div
                     className={`w-full overflow-hidden border border-black/[0.08] bg-[#fafafa] ${
-                      nextPage ? "rounded-none rounded-none" : "rounded-[3px]"
+                      selected ? "ring-1 ring-[#f5b91b]/70" : ""
                     }`}
                     style={{
                       aspectRatio: `${Math.max(1, d.width)} / ${Math.max(1, d.height)}`,
@@ -787,10 +822,10 @@ export function PresenterStudio({
                   <button
                     type="button"
                     title={`Transición al entrar en slide ${i + 2}: ${SLIDE_TRANSITION_OPTIONS.find((o) => o.id === nextTid)?.label ?? nextTid}. Clic para cambiar.`}
-                    className={`-mx-1 mt-0 flex h-5 w-[calc(100%+0.5rem)] shrink-0 items-center justify-center border-t transition-colors ${
+                    className={`-mx-0 flex h-5 w-full shrink-0 items-center justify-center border-t transition-colors ${
                       picker?.pageId === nextPage.id
-                        ? "border-t-sky-500/40 bg-sky-500/10 text-sky-200 hover:bg-sky-500/15"
-                        : "border-white/[0.09] bg-white/[0.04] text-zinc-500 hover:bg-white/[0.07] hover:text-zinc-300"
+                        ? "border-t-[#f5b91b]/40 bg-[#f5b91b]/10 text-[#f5b91b]"
+                        : "border-white/[0.08] bg-white/[0.03] text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-300"
                     }`}
                     onClick={(e) => {
                       e.stopPropagation();
@@ -806,13 +841,13 @@ export function PresenterStudio({
           })}
         </aside>
 
-        <main className="flex min-h-0 min-w-0 flex-1 flex-col rounded-md border border-white/[0.08] bg-[#0e1014] p-2 shadow-inner">
-          <div className="mb-1.5 flex items-center justify-between gap-2">
-            <p className="text-[10px] font-medium text-zinc-500">
-              Slide {safeRailIdx + 1} / {pages.length}
+        <main className="flex min-h-0 min-w-0 flex-1 flex-col bg-[#0b0d10]">
+          <div className="flex shrink-0 items-center border-b border-white/[0.08] px-3 py-1.5">
+            <p className="text-[10px] font-medium uppercase tracking-[0.08em] text-zinc-500">
+              Diapositiva {safeRailIdx + 1} / {pages.length}
             </p>
           </div>
-          <div className="relative min-h-0 flex-1 overflow-hidden rounded-[6px] border border-white/[0.06] bg-[#fafafa]">
+          <div className="relative min-h-0 flex-1 overflow-hidden bg-[#fafafa]">
             <PresenterSlideStage
               pages={pages}
               activeIdx={activeIdx}
@@ -858,7 +893,7 @@ export function PresenterStudio({
             />
           )}
           <nav
-            className="flex w-11 shrink-0 flex-col gap-1 border-l border-white/[0.08] bg-[#12151a]/90 py-2 pr-1"
+            className="flex w-11 shrink-0 flex-col gap-0 border-l border-white/[0.08] bg-[#0a0c0f] py-0"
             aria-label="Paneles del presenter"
           >
             <button
@@ -866,10 +901,10 @@ export function PresenterStudio({
               title="Propiedades (vídeo)"
               aria-pressed={rightPanelTab === "properties"}
               onClick={() => setRightPanelTab((t) => (t === "properties" ? null : "properties"))}
-              className={`flex h-9 w-9 items-center justify-center rounded-md border transition-colors ${
+              className={`flex h-11 w-full items-center justify-center border-b border-white/[0.08] transition-colors ${
                 rightPanelTab === "properties"
-                  ? "border-violet-500/45 bg-violet-500/15 text-violet-100"
-                  : "border-transparent text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-200"
+                  ? "bg-[#f5b91b]/15 text-[#f5b91b]"
+                  : "text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
               }`}
             >
               <SlidersHorizontal className="h-4 w-4 shrink-0" strokeWidth={2} aria-hidden />
@@ -879,10 +914,10 @@ export function PresenterStudio({
               title="Animaciones"
               aria-pressed={rightPanelTab === "animations"}
               onClick={() => setRightPanelTab((t) => (t === "animations" ? null : "animations"))}
-              className={`flex h-9 w-9 items-center justify-center rounded-md border transition-colors ${
+              className={`flex h-11 w-full items-center justify-center transition-colors ${
                 rightPanelTab === "animations"
-                  ? "border-sky-500/45 bg-sky-500/15 text-sky-100"
-                  : "border-transparent text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-200"
+                  ? "bg-[#f5b91b]/15 text-[#f5b91b]"
+                  : "text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
               }`}
             >
               <Sparkles className="h-4 w-4 shrink-0" aria-hidden />
@@ -907,7 +942,15 @@ export function PresenterStudio({
               ),
             }}
           >
-            <p className="mb-2 text-center text-[11px] font-bold tracking-tight text-white">Slide transition</p>
+            <p className="mb-2 text-center text-[11px] font-bold tracking-tight text-white">Transición de slide</p>
+            <div className="mb-2 flex h-14 items-center justify-center overflow-hidden rounded-md border border-white/10 bg-[#0e1014]">
+              <div
+                key={pickerPreviewTransition ?? transitionsByPageId[picker.pageId] ?? DEFAULT_SLIDE_TRANSITION}
+                className={`presenter-transition-preview presenter-transition-preview--${
+                  pickerPreviewTransition ?? transitionsByPageId[picker.pageId] ?? DEFAULT_SLIDE_TRANSITION
+                } h-8 w-12 rounded-sm bg-sky-500/80`}
+              />
+            </div>
             <div className="grid grid-cols-2 gap-2">
               {SLIDE_TRANSITION_OPTIONS.map((opt) => {
                 const G = TRANSITION_THUMB_BY_ID[opt.id];
@@ -917,13 +960,17 @@ export function PresenterStudio({
                   <button
                     key={opt.id}
                     type="button"
+                    onMouseEnter={() => setPickerPreviewTransition(opt.id)}
+                    onMouseLeave={() => setPickerPreviewTransition(null)}
+                    onFocus={() => setPickerPreviewTransition(opt.id)}
+                    onBlur={() => setPickerPreviewTransition(null)}
                     onClick={() => {
                       setTransitionForPage(picker.pageId, opt.id);
                       setPicker(null);
                     }}
-                    className={`flex flex-col items-center gap-1 rounded-xl border px-2 py-2 transition-colors ${
+                    className={`flex flex-col items-center gap-1 rounded-[6px] border px-2 py-2 transition-colors ${
                       isSel
-                        ? "border-sky-500/60 bg-sky-500/12"
+                        ? "border-[#f5b91b]/60 bg-[#f5b91b]/12"
                         : "border-white/10 bg-white/[0.04] hover:border-white/20 hover:bg-white/[0.07]"
                     }`}
                   >
@@ -1066,7 +1113,36 @@ export function PresenterStudio({
         deckTitle={shareContext.deckTitle}
         pages={pages}
         transitionsByPageId={transitionsByPageId}
+        imageVideoPlacements={imageVideoPlacements}
       />
+
+      {showOnboarding ? (
+        <div className="pointer-events-none absolute inset-0 z-[100015] flex items-center justify-center p-4">
+          <div className="pointer-events-auto max-w-md rounded-md border border-white/15 bg-[#12151a]/95 px-4 py-3 shadow-2xl backdrop-blur-md">
+            <p className="text-[12px] font-bold text-white">Primeros pasos en Presenter</p>
+            <ol className="mt-2 list-decimal space-y-1 pl-4 text-[10px] leading-snug text-zinc-300">
+              <li>Elige slides en la columna izquierda.</li>
+              <li>Haz clic en objetos del lienzo para definir pasos de animación.</li>
+              <li>Asigna un preset en el panel Animaciones.</li>
+              <li>Pulsa <span className="font-semibold text-white">Reproducir</span> (tecla P) para previsualizar.</li>
+            </ol>
+            <button
+              type="button"
+              className="mt-3 w-full rounded-md bg-sky-600 py-1.5 text-[10px] font-semibold text-white hover:bg-sky-500"
+              onClick={() => {
+                setShowOnboarding(false);
+                try {
+                  localStorage.setItem(PRESENTER_ONBOARDING_KEY, "1");
+                } catch {
+                  /* ignore */
+                }
+              }}
+            >
+              Entendido
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

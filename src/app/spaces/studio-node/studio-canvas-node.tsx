@@ -130,12 +130,16 @@ export function StudioCanvasOpenButton({
   onClick,
   accent = "cyan",
   className,
+  disabled,
+  title,
 }: {
   icon?: React.ReactNode;
   children: React.ReactNode;
   onClick: () => void;
   accent?: "amber" | "cyan" | "slate";
   className?: string;
+  disabled?: boolean;
+  title?: string;
 }) {
   const focusClass =
     accent === "amber"
@@ -146,11 +150,13 @@ export function StudioCanvasOpenButton({
   return (
     <button
       type="button"
+      disabled={disabled}
+      title={title}
       onClick={(event) => {
         event.stopPropagation();
-        onClick();
+        if (!disabled) onClick();
       }}
-      className={`studio-canvas-open-button nodrag flex w-full items-center justify-center gap-2 rounded-none border border-slate-300/80 bg-white/90 px-3 py-2.5 text-[11px] font-bold uppercase tracking-wide text-slate-800 shadow-sm transition hover:bg-white focus:outline-none focus-visible:ring-2 ${focusClass} ${className || ""}`}
+      className={`studio-canvas-open-button nodrag flex w-full items-center justify-center gap-2 rounded-none border border-slate-300/80 bg-white/90 px-3 py-2.5 text-[11px] font-bold uppercase tracking-wide text-slate-800 shadow-sm transition hover:bg-white focus:outline-none focus-visible:ring-2 ${focusClass} ${className || ""} disabled:cursor-not-allowed disabled:opacity-45`}
     >
       {icon}
       {children}

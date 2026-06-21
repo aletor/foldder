@@ -353,6 +353,40 @@ describe("wallet-ledger", () => {
     ).rejects.toBeInstanceOf(WalletInsufficientFundsError);
   });
 
+  it("retries wallet reserve when DynamoDB reports TransactionConflict", async () => {
+    vi.useFakeTimers();
+    const accountId = walletAccountIdForEmail(USER_EMAIL);
+    dynamoMock.send
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(
+        Object.assign(new Error("cancelled"), {
+          name: "TransactionCanceledException",
+          CancellationReasons: [{ Code: "None" }, { Code: "TransactionConflict" }, { Code: "None" }],
+        }),
+      )
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+
+    const pending = reserveWalletAmount({
+      tableName: TABLE,
+      userEmail: USER_EMAIL,
+      amountMicros: 750_000,
+      operationId: "req_parallel",
+    });
+    await vi.runAllTimersAsync();
+    const result = await pending;
+
+    expect(result).toMatchObject({
+      accountId,
+      duplicate: false,
+      type: "reserve",
+      amountMicros: 750_000,
+    });
+    expect(dynamoMock.send).toHaveBeenCalledTimes(5);
+    vi.useRealTimers();
+  });
+
   it("captures actual cost and releases the unused reservation remainder", async () => {
     const accountId = walletAccountIdForEmail(USER_EMAIL);
     dynamoMock.send

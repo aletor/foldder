@@ -4,6 +4,7 @@ export const FOLDDER_CANVAS_INTRO_DATA_KEY = "_foldderCanvasIntro";
 /** Clases derivadas en `flowNodes`; nunca deben persistir en el estado del nodo. */
 const EPHEMERAL_NODE_CLASS_NAMES = new Set([
   "foldder-node-canvas-intro",
+  "foldder-node-ai-executing",
   "library-drop-compatible",
   "library-drop-highlight",
   "foldder-ctrl-overview-hover",

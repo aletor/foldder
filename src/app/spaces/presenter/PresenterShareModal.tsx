@@ -4,22 +4,28 @@ import React, { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   ArrowRight,
-  BarChart2,
   ChevronLeft,
   Clock,
-  Download,
-  HelpCircle,
   Link2,
   Lock,
-  MoreVertical,
   Sparkles,
   User,
   X,
 } from "lucide-react";
 import type { DesignerPageState } from "../designer/DesignerNode";
+import type { PresenterImageVideoPlacement } from "./presenter-image-video-types";
 import type { SlideTransitionId } from "./slide-transition-types";
 import type { PresenterShareOptions } from "@/lib/presenter-share-types";
 import { DEFAULT_PRESENTER_SHARE_OPTIONS } from "@/lib/presenter-share-types";
+import {
+  PRESENTER_MODAL_BTN_PRIMARY,
+  PRESENTER_MODAL_BTN_SECONDARY,
+  presenterModalBackdropClass,
+  presenterModalFooterClass,
+  presenterModalHeaderClass,
+  presenterModalOverlayClass,
+  presenterModalPanelProps,
+} from "./presenter-modal-chrome";
 
 type ShareLinkRow = {
   id: string;
@@ -37,6 +43,7 @@ type Props = {
   deckTitle: string;
   pages: DesignerPageState[];
   transitionsByPageId: Record<string, SlideTransitionId>;
+  imageVideoPlacements?: PresenterImageVideoPlacement[];
 };
 
 function Toggle({
@@ -55,8 +62,8 @@ function Toggle({
       aria-checked={on}
       disabled={disabled}
       onClick={() => onChange(!on)}
-      className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
-        on ? "bg-sky-600" : "bg-zinc-600"
+      className={`relative h-5 w-9 shrink-0 rounded-none transition-colors ${
+        on ? "bg-[#f5b91b]" : "bg-zinc-600"
       } ${disabled ? "opacity-40" : ""}`}
     >
       <span
@@ -75,15 +82,16 @@ export function PresenterShareModal({
   deckTitle,
   pages,
   transitionsByPageId,
+  imageVideoPlacements = [],
 }: Props) {
   const [view, setView] = useState<"list" | "new">("list");
   const [links, setLinks] = useState<ShareLinkRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
 
   const [linkName, setLinkName] = useState(deckTitle);
-  const [urlPreview, setUrlPreview] = useState(deckTitle);
   const [opts, setOpts] = useState<PresenterShareOptions>({ ...DEFAULT_PRESENTER_SHARE_OPTIONS });
 
   const origin = typeof window !== "undefined" ? window.location.origin : "";
@@ -119,14 +127,30 @@ export function PresenterShareModal({
     void refresh();
     setView("list");
     setLinkName(deckTitle);
-    setUrlPreview(deckTitle);
     setOpts({ ...DEFAULT_PRESENTER_SHARE_OPTIONS });
   }, [open, deckKey, deckTitle, refresh]);
 
-  const copyUrl = (token: string) => {
-    const u = `${origin}/p/${token}`;
-    void navigator.clipboard.writeText(u);
-  };
+  const showToast = useCallback((message: string) => {
+    setToast(message);
+    window.setTimeout(() => setToast(null), 2600);
+  }, []);
+
+  const copyUrl = useCallback(
+    (token: string, options?: { toast?: boolean }) => {
+      const u = `${origin}/p/${token}`;
+      const showCopyToast = options?.toast !== false;
+      void navigator.clipboard.writeText(u).then(
+        () => {
+          if (showCopyToast) showToast("Enlace copiado al portapapeles");
+        },
+        () => {
+          if (showCopyToast) showToast("No se pudo copiar el enlace");
+        },
+      );
+      return u;
+    },
+    [origin, showToast],
+  );
 
   const createLink = async () => {
     setCreating(true);
@@ -153,7 +177,7 @@ export function PresenterShareModal({
                 ? new Date(opts.autoDisableAt).toISOString()
                 : null,
           },
-          payload: { pages, transitionsByPageId },
+          payload: { pages, transitionsByPageId, imageVideoPlacements },
         }),
       });
       const j = (await r.json()) as { link?: { token?: string }; error?: string };
@@ -161,7 +185,10 @@ export function PresenterShareModal({
         setFetchError(j.error?.trim() || `No se pudo crear el enlace (${r.status})`);
         return;
       }
-      if (j.link?.token) copyUrl(j.link.token);
+      if (j.link?.token) {
+        copyUrl(j.link.token, { toast: false });
+        showToast("Enlace creado y copiado al portapapeles");
+      }
       setView("list");
       await refresh();
     } catch (e) {
@@ -181,65 +208,62 @@ export function PresenterShareModal({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[100030] flex items-center justify-center p-4"
+      className={presenterModalOverlayClass}
       role="dialog"
       aria-modal="true"
       aria-labelledby="presenter-share-title"
     >
       <button
         type="button"
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+        className={presenterModalBackdropClass}
         aria-label="Cerrar"
         onClick={onClose}
       />
-      <div className="relative z-[1] flex max-h-[min(92vh,880px)] w-full max-w-md flex-col overflow-hidden rounded-md border border-white/[0.08] bg-[#12151a] shadow-2xl shadow-black/40">
-        <div className="flex shrink-0 items-start justify-between gap-2 border-b border-white/[0.08] bg-[#12151a]/95 px-3 py-2.5 backdrop-blur-md">
+      <div {...presenterModalPanelProps()}>
+        <div className={presenterModalHeaderClass}>
           {view === "new" ? (
             <button
               type="button"
               onClick={() => setView("list")}
-              className="mt-0.5 rounded-md border border-white/10 bg-white/[0.06] p-1 text-zinc-400 transition-colors hover:bg-white/10 hover:text-white"
+              className="flex h-10 w-10 shrink-0 items-center justify-center border-r border-white/10 text-zinc-400 transition hover:bg-white/[0.06] hover:text-white"
               aria-label="Volver"
             >
-              <ChevronLeft size={18} strokeWidth={1.5} />
+              <ChevronLeft size={16} strokeWidth={2} />
             </button>
           ) : (
-            <span className="w-8 shrink-0" aria-hidden />
+            <span className="w-10 shrink-0 border-r border-white/10" aria-hidden />
           )}
-          <div className="min-w-0 flex-1 text-center">
+          <div className="flex min-w-0 flex-1 items-center justify-center px-2">
             {view === "list" ? (
               <>
-                <h2 id="presenter-share-title" className="text-sm font-bold tracking-tight text-white">
-                  Share links
+                <h2
+                  id="presenter-share-title"
+                  className="text-[10px] font-black uppercase tracking-[0.12em] text-white/90"
+                >
+                  Enlaces compartidos
                 </h2>
-                <p className="mt-0.5 truncate px-1 text-[10px] text-zinc-500">
-                  {deckTitle}
-                </p>
               </>
             ) : (
-              <div className="flex flex-wrap items-center justify-center gap-1.5">
-                <h2 className="text-sm font-bold text-white">New link</h2>
-                <span className="rounded-[3px] border border-sky-500/35 bg-sky-500/15 px-1.5 py-px text-[9px] font-bold uppercase tracking-wide text-sky-200/90">
-                  Advanced
-                </span>
-              </div>
+              <h2 className="text-[10px] font-black uppercase tracking-[0.12em] text-white/90">
+                Nuevo enlace
+              </h2>
             )}
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="shrink-0 rounded-md border border-white/10 bg-white/[0.06] p-1.5 text-zinc-400 transition-colors hover:bg-white/10 hover:text-white"
+            className="flex h-10 w-10 shrink-0 items-center justify-center border-l border-white/10 text-zinc-400 transition hover:bg-white/[0.06] hover:text-white"
             aria-label="Cerrar"
           >
-            <X size={18} strokeWidth={1.5} />
+            <X size={16} strokeWidth={2} />
           </button>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2.5">
           {view === "list" && (
             <>
-              <p className="mb-2 text-center text-[10px] leading-snug text-zinc-500">
-                Public links for this deck
+              <p className="mb-2 text-[10px] leading-snug text-zinc-500">
+                {deckTitle} · enlaces públicos de esta presentación
               </p>
               {fetchError && (
                 <p
@@ -252,38 +276,40 @@ export function PresenterShareModal({
               {loading ? (
                 <p className="py-8 text-center text-[10px] text-zinc-500">Cargando…</p>
               ) : links.length === 0 ? (
-                <p className="rounded-[4px] border border-white/[0.06] bg-white/[0.02] px-2.5 py-5 text-center text-[10px] text-zinc-500">
-                  No links yet. Use <span className="font-semibold text-zinc-400">New link</span> below.
+                <p className="border border-white/[0.06] bg-white/[0.02] px-2.5 py-5 text-center text-[10px] text-zinc-500">
+                  Aún no hay enlaces. Usa <span className="font-semibold text-zinc-400">Nuevo enlace</span> abajo.
                 </p>
               ) : (
                 <ul className="flex flex-col gap-1.5">
                   {links.map((l) => (
                     <li
                       key={l.id}
-                      className="flex items-center gap-2 rounded-[4px] border border-white/[0.07] bg-white/[0.03] px-2 py-1.5"
+                      className="flex items-center gap-2 border border-white/[0.07] bg-white/[0.03] px-2 py-1.5"
                     >
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-[11px] font-semibold text-zinc-100">{l.name}</p>
                         <p className="mt-0.5 flex items-center gap-1 text-[9px] font-medium text-sky-400/90">
                           <Sparkles size={10} className="shrink-0" aria-hidden />
-                          {l.visits} visits
+                          {l.visits} visitas
                         </p>
                       </div>
                       <button
                         type="button"
                         onClick={() => copyUrl(l.token)}
-                        className="flex shrink-0 items-center gap-1 rounded-[4px] border border-white/12 bg-white/[0.04] px-2 py-1 text-[9px] font-semibold text-zinc-200 transition-colors hover:bg-white/10"
+                        className="flex shrink-0 items-center gap-1 border border-white/12 bg-white/[0.04] px-2 py-1 text-[9px] font-semibold text-zinc-200 transition-colors hover:bg-white/10"
                       >
                         <Link2 size={11} strokeWidth={1.75} />
-                        Copy
+                        Copiar
                       </button>
-                      <button
-                        type="button"
-                        className="rounded-[4px] p-1 text-zinc-500 transition-colors hover:bg-white/10 hover:text-zinc-300"
-                        aria-label="Más"
+                      <a
+                        href={`${origin}/p/${l.token}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="shrink-0 border border-white/12 bg-white/[0.04] px-2 py-1 text-[9px] font-semibold text-[#f5b91b] transition-colors hover:bg-white/10"
+                        onClick={(e) => e.stopPropagation()}
                       >
-                        <MoreVertical size={15} strokeWidth={1.5} />
-                      </button>
+                        Abrir
+                      </a>
                     </li>
                   ))}
                 </ul>
@@ -303,75 +329,33 @@ export function PresenterShareModal({
               )}
               <div>
                 <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
-                  Link name
+                  Nombre del enlace
                 </label>
                 <input
                   value={linkName}
-                  onChange={(e) => {
-                    setLinkName(e.target.value);
-                    setUrlPreview(e.target.value);
-                  }}
-                  className="w-full rounded-[4px] border border-sky-500/35 bg-[#0e1014] px-2.5 py-1.5 text-[12px] text-zinc-100 outline-none ring-0 placeholder:text-zinc-600 focus:border-sky-500/55"
+                  onChange={(e) => setLinkName(e.target.value)}
+                  className="w-full rounded-none border border-white/10 bg-[#0e1014] px-2.5 py-1.5 text-[12px] text-zinc-100 outline-none ring-0 placeholder:text-zinc-600 focus:border-[#f5b91b]/55"
                 />
               </div>
               <div>
                 <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
-                  URL
+                  URL pública
                 </label>
-                <input
-                  value={urlPreview}
-                  onChange={(e) => setUrlPreview(e.target.value)}
-                  className="w-full rounded-[4px] border border-white/[0.1] bg-[#0e1014] px-2.5 py-1.5 text-[12px] text-zinc-100 outline-none focus:border-white/20"
-                />
-                <p className="mt-1 break-all text-[9px] text-zinc-600">
-                  {origin}/p/[token — copied when created]
+                <p className="border border-white/[0.1] bg-[#0e1014] px-2.5 py-1.5 text-[11px] text-zinc-400">
+                  {origin}/p/[token opaco]
+                </p>
+                <p className="mt-1 text-[9px] leading-snug text-zinc-600">
+                  El enlace real se genera al crear y se copia automáticamente al portapapeles.
                 </p>
               </div>
 
-              <div className="flex items-start justify-between gap-3 rounded-[4px] border border-white/[0.07] bg-white/[0.02] px-2.5 py-2">
-                <div>
-                  <p className="text-[11px] font-semibold text-zinc-100">Allow duplication</p>
-                  <p className="text-[9px] text-zinc-500">Visitors can copy and reuse the presentation.</p>
-                </div>
-                <Toggle on={opts.allowDuplication} onChange={(v) => setOpts((o) => ({ ...o, allowDuplication: v }))} />
-              </div>
-
-              <p className="text-[9px] font-bold uppercase tracking-wide text-zinc-600">Advanced options</p>
-
-              <div className="flex items-start justify-between gap-3 rounded-[4px] border border-white/[0.07] bg-white/[0.02] px-2.5 py-2">
-                <div className="flex gap-2">
-                  <BarChart2 size={15} className="mt-0.5 shrink-0 text-zinc-500" aria-hidden />
-                  <div>
-                    <p className="text-[11px] font-semibold text-zinc-100">Collect engagement analytics</p>
-                    <p className="text-[9px] text-zinc-500">Track slide views, visit duration, and engagement.</p>
-                  </div>
-                </div>
-                <Toggle
-                  on={opts.collectEngagementAnalytics}
-                  onChange={(v) => setOpts((o) => ({ ...o, collectEngagementAnalytics: v }))}
-                />
-              </div>
-
-              <div className="flex items-start justify-between gap-3 rounded-[4px] border border-white/[0.07] bg-white/[0.02] px-2.5 py-2">
-                <div className="flex gap-2">
-                  <HelpCircle size={15} className="mt-0.5 shrink-0 text-zinc-500" aria-hidden />
-                  <div>
-                    <p className="text-[11px] font-semibold text-zinc-100">
-                      Get visitor consent for engagement analytics
-                    </p>
-                  </div>
-                </div>
-                <Toggle
-                  on={opts.visitorConsentAnalytics}
-                  onChange={(v) => setOpts((o) => ({ ...o, visitorConsentAnalytics: v }))}
-                />
-              </div>
+              <p className="text-[9px] font-bold uppercase tracking-wide text-zinc-600">Acceso</p>
 
               <div className="flex items-start justify-between gap-3 rounded-[4px] border border-white/[0.07] bg-white/[0.02] px-2.5 py-2">
                 <div className="flex gap-2">
                   <Lock size={15} className="mt-0.5 shrink-0 text-zinc-500" aria-hidden />
                   <div>
-                    <p className="text-[11px] font-semibold text-zinc-100">Require passcode</p>
+                    <p className="text-[11px] font-semibold text-zinc-100">Requerir código de acceso</p>
                   </div>
                 </div>
                 <Toggle
@@ -384,7 +368,7 @@ export function PresenterShareModal({
                   type="password"
                   value={opts.passcodePlain}
                   onChange={(e) => setOpts((o) => ({ ...o, passcodePlain: e.target.value }))}
-                  placeholder="Passcode"
+                  placeholder="Código"
                   className="w-full rounded-[4px] border border-white/[0.1] bg-[#0e1014] px-2.5 py-1.5 text-[12px] text-zinc-100 outline-none focus:border-white/20"
                 />
               )}
@@ -393,7 +377,7 @@ export function PresenterShareModal({
                 <div className="flex gap-2">
                   <User size={15} className="mt-0.5 shrink-0 text-zinc-500" aria-hidden />
                   <div>
-                    <p className="text-[11px] font-semibold text-zinc-100">Require visitor email</p>
+                    <p className="text-[11px] font-semibold text-zinc-100">Requerir email del visitante</p>
                   </div>
                 </div>
                 <Toggle
@@ -404,22 +388,9 @@ export function PresenterShareModal({
 
               <div className="flex items-start justify-between gap-3 rounded-[4px] border border-white/[0.07] bg-white/[0.02] px-2.5 py-2">
                 <div className="flex gap-2">
-                  <Download size={15} className="mt-0.5 shrink-0 text-zinc-500" aria-hidden />
-                  <div>
-                    <p className="text-[11px] font-semibold text-zinc-100">Allow visitors to download a PDF</p>
-                  </div>
-                </div>
-                <Toggle
-                  on={opts.allowPdfDownload}
-                  onChange={(v) => setOpts((o) => ({ ...o, allowPdfDownload: v }))}
-                />
-              </div>
-
-              <div className="flex items-start justify-between gap-3 rounded-[4px] border border-white/[0.07] bg-white/[0.02] px-2.5 py-2">
-                <div className="flex gap-2">
                   <Clock size={15} className="mt-0.5 shrink-0 text-zinc-500" aria-hidden />
                   <div>
-                    <p className="text-[11px] font-semibold text-zinc-100">Automatically disable link</p>
+                    <p className="text-[11px] font-semibold text-zinc-100">Desactivar enlace automáticamente</p>
                   </div>
                 </div>
                 <Toggle
@@ -437,41 +408,50 @@ export function PresenterShareModal({
                   className="w-full rounded-[4px] border border-white/[0.1] bg-[#0e1014] px-2.5 py-1.5 text-[12px] text-zinc-100 outline-none focus:border-white/20"
                 />
               )}
+
+              <p className="text-[9px] font-bold uppercase tracking-wide text-zinc-600">Próximamente</p>
+              <ul className="space-y-1.5 rounded-[4px] border border-white/[0.07] bg-white/[0.02] px-2.5 py-2 text-[10px] leading-snug text-zinc-500">
+                <li>Permitir duplicar la presentación</li>
+                <li>Analíticas de engagement por slide</li>
+                <li>Descarga PDF para visitantes</li>
+              </ul>
             </div>
           )}
         </div>
 
+        {toast ? (
+          <div className="pointer-events-none absolute bottom-14 left-1/2 z-[2] -translate-x-1/2 border border-[#f5b91b]/35 bg-[#f5b91b]/15 px-3 py-1.5 text-[10px] font-semibold text-[#f5b91b]">
+            {toast}
+          </div>
+        ) : null}
+
         {view === "list" && (
-          <div className="flex shrink-0 items-center justify-between gap-2 border-t border-white/[0.08] bg-[#0f1218] px-3 py-2">
+          <div className={`${presenterModalFooterClass} justify-between gap-0 px-0`}>
             <button
               type="button"
-              className="flex items-center gap-1 rounded-md border border-white/12 bg-white/[0.04] px-2.5 py-1.5 text-[10px] font-semibold text-zinc-300 transition-colors hover:bg-white/10"
+              className={`${PRESENTER_MODAL_BTN_SECONDARY} flex-1 border-0 border-r border-white/10`}
               onClick={() => {
                 void refresh();
               }}
             >
-              Go to links overview
+              Actualizar lista
               <ArrowRight size={12} strokeWidth={2} className="opacity-80" />
             </button>
-            <button
-              type="button"
-              onClick={() => setView("new")}
-              className="rounded-md bg-sky-600 px-3 py-1.5 text-[10px] font-semibold text-white transition-colors hover:bg-sky-500"
-            >
-              + New link
+            <button type="button" onClick={() => setView("new")} className={`${PRESENTER_MODAL_BTN_PRIMARY} flex-1`}>
+              + Nuevo enlace
             </button>
           </div>
         )}
 
         {view === "new" && (
-          <div className="flex shrink-0 justify-end border-t border-white/[0.08] bg-[#0f1218] px-3 py-2">
+          <div className={`${presenterModalFooterClass} justify-end px-0`}>
             <button
               type="button"
               disabled={creating}
               onClick={() => void createLink()}
-              className="rounded-md bg-sky-600 px-4 py-1.5 text-[11px] font-semibold text-white transition-colors hover:bg-sky-500 disabled:opacity-50"
+              className={PRESENTER_MODAL_BTN_PRIMARY}
             >
-              {creating ? "Creating…" : "Create link"}
+              {creating ? "Creando…" : "Crear enlace"}
             </button>
           </div>
         )}

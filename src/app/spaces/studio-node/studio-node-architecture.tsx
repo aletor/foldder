@@ -7,10 +7,8 @@ import {
   FOLDDER_LEGACY_CLOSE_NODE_STUDIO_EVENT,
   FOLDDER_LEGACY_OPEN_NODE_STUDIO_EVENT,
   FOLDDER_OPEN_STUDIO_EVENT,
-  FOLDDER_STANDARD_STUDIO_CLOSE_REQUEST_EVENT,
   type FoldderStudioEventDetail,
 } from "../desktop-studio-events";
-import type { StandardStudioShellConfig } from "../StandardStudioShell";
 
 export const FOLDDER_STUDIO_BODY_CLASS = "nb-studio-open";
 export const FOLDDER_STUDIO_PORTAL_Z = 100090;
@@ -55,7 +53,6 @@ export type FoldderStudioNodeManifest = {
   chrome: FoldderStudioChrome;
   modulePath: string;
   ownsPortal: boolean;
-  supportsStandardShell: boolean;
   description: string;
 };
 
@@ -67,7 +64,6 @@ export const STUDIO_NODE_MANIFESTS = {
     chrome: "freehand",
     modulePath: "src/app/spaces/designer",
     ownsPortal: false,
-    supportsStandardShell: true,
     description: "Documento visual multipágina sobre FreehandStudio.",
   },
   photoRoom: {
@@ -77,7 +73,6 @@ export const STUDIO_NODE_MANIFESTS = {
     chrome: "freehand",
     modulePath: "src/app/spaces/photo-room",
     ownsPortal: true,
-    supportsStandardShell: true,
     description: "Retoque y composición de imagen sobre FreehandStudio.",
   },
   guionista: {
@@ -86,7 +81,6 @@ export const STUDIO_NODE_MANIFESTS = {
     chrome: "editorial",
     modulePath: "src/app/spaces/GuionistaStudio.tsx",
     ownsPortal: false,
-    supportsStandardShell: false,
     description: "Editor editorial inteligente con versiones y Generated Media.",
   },
   cine: {
@@ -95,7 +89,6 @@ export const STUDIO_NODE_MANIFESTS = {
     chrome: "cinematic",
     modulePath: "src/app/spaces/CineStudio.tsx",
     ownsPortal: false,
-    supportsStandardShell: false,
     description: "Preproducción audiovisual, reparto, fondos, storyboard y prompts de frames.",
   },
   projectBrain: {
@@ -105,7 +98,6 @@ export const STUDIO_NODE_MANIFESTS = {
     chrome: "brain",
     modulePath: "src/app/spaces/ProjectBrainFullscreen.tsx",
     ownsPortal: true,
-    supportsStandardShell: false,
     description: "Gestor de memoria creativa, fuentes, ADN, looks visuales y aprendizajes.",
   },
   nanoBanana: {
@@ -115,7 +107,6 @@ export const STUDIO_NODE_MANIFESTS = {
     chrome: "generator",
     modulePath: "src/app/spaces/nano-banana/NanoBananaNode.tsx",
     ownsPortal: true,
-    supportsStandardShell: true,
     description: "Generación y edición de imágenes con referencias.",
   },
   imageCreationAdvanced: {
@@ -125,7 +116,6 @@ export const STUDIO_NODE_MANIFESTS = {
     chrome: "generator",
     modulePath: "src/app/spaces/image-creation-advanced/ImageCreationAdvancedNode.tsx",
     ownsPortal: true,
-    supportsStandardShell: true,
     description: "Edición no destructiva de imagen desde master inmutable.",
   },
   geminiVideo: {
@@ -135,7 +125,6 @@ export const STUDIO_NODE_MANIFESTS = {
     chrome: "generator",
     modulePath: "src/app/spaces/CustomNodes.tsx#GeminiVideoNode",
     ownsPortal: true,
-    supportsStandardShell: true,
     description: "Generación de vídeo existente; separado del futuro editor de vídeo.",
   },
   vfxGenerator: {
@@ -145,7 +134,6 @@ export const STUDIO_NODE_MANIFESTS = {
     chrome: "generator",
     modulePath: "src/app/spaces/VfxGeneratorNode.tsx",
     ownsPortal: true,
-    supportsStandardShell: true,
     description: "Generación VFX existente.",
   },
   painter: {
@@ -155,7 +143,6 @@ export const STUDIO_NODE_MANIFESTS = {
     chrome: "freehand",
     modulePath: "src/app/spaces/CustomNodes.tsx#PainterNode",
     ownsPortal: true,
-    supportsStandardShell: true,
     description: "Lienzo libre legacy sobre FreehandStudio.",
   },
 } as const satisfies Record<string, FoldderStudioNodeManifest>;
@@ -208,17 +195,6 @@ function defaultMatchesNode(nodeId: string, detail: StudioEventDetail): boolean 
   return detail?.nodeId === nodeId;
 }
 
-function shellFromDetail(detail: StudioEventDetail, nodeId: string, nodeType: string): StandardStudioShellConfig | null {
-  if (!detail.standardShell) return null;
-  return {
-    ...detail.standardShell,
-    nodeId,
-    nodeType,
-    fileId: detail.fileId,
-    appId: detail.appId,
-  };
-}
-
 export function useStudioNodeController({
   nodeId,
   nodeType,
@@ -231,16 +207,11 @@ export function useStudioNodeController({
   onClose,
 }: UseStudioNodeControllerOptions) {
   const [isStudioOpen, setIsStudioOpen] = useState(false);
-  const [standardShell, setStandardShell] = useState<StandardStudioShellConfig | null>(null);
-  const standardShellRef = useRef<StandardStudioShellConfig | null>(null);
   const matchOpenRef = useRef(matchOpen);
   const matchCloseRef = useRef(matchClose);
   const onOpenRef = useRef(onOpen);
   const onCloseRef = useRef(onClose);
 
-  useEffect(() => {
-    standardShellRef.current = standardShell;
-  }, [standardShell]);
   useEffect(() => {
     matchOpenRef.current = matchOpen;
     matchCloseRef.current = matchClose;
@@ -259,28 +230,18 @@ export function useStudioNodeController({
 
   const openStudio = useCallback(
     (detail: StudioEventDetail = {}) => {
-      setStandardShell(shellFromDetail(detail, nodeId, nodeType));
       setIsStudioOpen(true);
       onOpenRef.current?.(detail);
     },
-    [nodeId, nodeType],
+    [],
   );
 
   const closeStudio = useCallback(
-    (options?: { notifyStandardShell?: boolean; detail?: StudioEventDetail }) => {
-      const shell = standardShellRef.current;
+    (options?: { detail?: StudioEventDetail }) => {
       setIsStudioOpen(false);
-      setStandardShell(null);
-      if (options?.notifyStandardShell && shell && typeof window !== "undefined") {
-        window.dispatchEvent(
-          new CustomEvent(FOLDDER_STANDARD_STUDIO_CLOSE_REQUEST_EVENT, {
-            detail: { nodeId, nodeType, fileId: shell.fileId, appId: shell.appId },
-          }),
-        );
-      }
       onCloseRef.current?.(options?.detail ?? {});
     },
-    [nodeId, nodeType],
+    [],
   );
 
   const openEventsKey = openEvents.join("\u0000");
@@ -320,11 +281,9 @@ export function useStudioNodeController({
     () => ({
       isStudioOpen,
       setIsStudioOpen,
-      standardShell,
-      setStandardShell,
       openStudio,
       closeStudio,
     }),
-    [closeStudio, isStudioOpen, openStudio, standardShell],
+    [closeStudio, isStudioOpen, openStudio],
   );
 }

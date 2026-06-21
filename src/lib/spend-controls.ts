@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { GetCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
 import type { UsageProvider, UsageServiceId } from "@/lib/api-usage";
 import { ddbClient } from "@/lib/dynamo-utils";
-import { withDynamoRetry } from "@/lib/dynamo-retry";
+import { withDynamoRetry, isDynamoTransactionConflict, sleepMs } from "@/lib/dynamo-retry";
 import {
   WALLET_DDB_TABLE_ENV,
   WalletConfigurationError,
@@ -561,8 +561,6 @@ export async function checkAndRecordSpendControl(input: {
 
   const tableName = spendControlsTableName();
   const idempotency = idempotencyKey(accountId, operationId);
-  const existing = await getIdempotencyResult(tableName, idempotency);
-  if (existing) return { ...existing, duplicate: true };
 
   const now = input.now ?? new Date();
   const createdAt = nowIso(now);
@@ -577,63 +575,77 @@ export async function checkAndRecordSpendControl(input: {
     wouldBlock: false,
   };
 
-  try {
-    await withDynamoRetry(() =>
-      ddbClient.send(
-        new TransactWriteCommand({
-          ClientRequestToken: sha256(operationId).slice(0, 32),
-          TransactItems: [
-            {
-              Put: {
-                TableName: tableName,
-                Item: {
-                  ...idempotency,
-                  entityType: "spend-control-idempotency",
-                  operationId,
-                  accountId,
-                  provider: input.provider,
-                  result,
-                  counters,
-                  createdAt,
-                } satisfies SpendControlIdempotencyItem,
-                ConditionExpression: "attribute_not_exists(pk) AND attribute_not_exists(sk)",
-              },
-            },
-            ...counters.map((counter) =>
-              counterUpdate({
-                tableName,
-                counter,
-                amountMicros,
-                accountId,
-                userEmail,
-                provider: input.provider,
-                serviceId: input.serviceId,
-                route: input.route,
-                operationId,
-                requestId: input.requestId,
-                createdAt,
-              }),
-            ),
-          ],
-        }),
-      ),
-    );
-    return result;
-  } catch (error) {
-    const duplicate = await getIdempotencyResult(tableName, idempotency);
-    if (duplicate) return { ...duplicate, duplicate: true };
-    const windowKind = cancellationWindowKind(error);
-    if (windowKind) {
-      const counter = counters.find((item) => item.kind === windowKind);
-      throw new SpendControlLimitExceededError(
-        windowKind,
-        counter?.limitMicros ?? 0,
+  const transactItems = [
+    {
+      Put: {
+        TableName: tableName,
+        Item: {
+          ...idempotency,
+          entityType: "spend-control-idempotency",
+          operationId,
+          accountId,
+          provider: input.provider,
+          result,
+          counters,
+          createdAt,
+        } satisfies SpendControlIdempotencyItem,
+        ConditionExpression: "attribute_not_exists(pk) AND attribute_not_exists(sk)",
+      },
+    },
+    ...counters.map((counter) =>
+      counterUpdate({
+        tableName,
+        counter,
         amountMicros,
-        input.provider,
+        accountId,
+        userEmail,
+        provider: input.provider,
+        serviceId: input.serviceId,
+        route: input.route,
+        operationId,
+        requestId: input.requestId,
+        createdAt,
+      }),
+    ),
+  ];
+
+  const maxAttempts = 6;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const replay = await getIdempotencyResult(tableName, idempotency);
+    if (replay) return { ...replay, duplicate: true };
+
+    try {
+      await withDynamoRetry(() =>
+        ddbClient.send(
+          new TransactWriteCommand({
+            ClientRequestToken: sha256(operationId).slice(0, 32),
+            TransactItems: transactItems,
+          }),
+        ),
       );
+      return result;
+    } catch (error) {
+      const duplicate = await getIdempotencyResult(tableName, idempotency);
+      if (duplicate) return { ...duplicate, duplicate: true };
+      const windowKind = cancellationWindowKind(error);
+      if (windowKind) {
+        const counter = counters.find((item) => item.kind === windowKind);
+        throw new SpendControlLimitExceededError(
+          windowKind,
+          counter?.limitMicros ?? 0,
+          amountMicros,
+          input.provider,
+        );
+      }
+      if (isDynamoTransactionConflict(error) && attempt < maxAttempts) {
+        await sleepMs(20 * 2 ** (attempt - 1) + Math.floor(Math.random() * 15));
+        continue;
+      }
+      throw error;
     }
-    throw error;
   }
+
+  throw new Error("spend control transaction conflict retries exhausted");
 }
 
 export async function releaseSpendControl(input: {

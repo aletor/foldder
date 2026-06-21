@@ -25,6 +25,7 @@ import {
   Wallpaper,
 } from "lucide-react";
 import { runAiJobWithNotification } from "@/lib/ai-job-notifications";
+import { useCanvasNodeMediaPreviewUrl } from "../hooks/use-authed-media-preview-url";
 import { readJsonWithHttpError } from "@/lib/read-response-json";
 import { resolvePromptValueFromEdgeSource } from "../canvas-group-logic";
 import { FoldderDataHandle } from "../FoldderDataHandle";
@@ -567,6 +568,7 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
   const hasInput = Boolean(promptInput || imageInput || nodeData.manualPrompt);
   const outputUrl = typeof nodeData.value === "string" ? nodeData.value : "";
   const selectedRef = nodeData.selected ?? null;
+  const { displayUrl: inspirationCanvasUrl } = useCanvasNodeMediaPreviewUrl(outputUrl || null);
   const resultsCount = Array.isArray(nodeData.results) ? nodeData.results.length : 0;
   const previewUrl = outputUrl || selectedRef?.thumbUrl || selectedRef?.imageUrl || "";
   const previewImageSize = useMemo(() => {
@@ -747,7 +749,7 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
         <div className="node-content foldder-frameless-main relative flex min-h-0 flex-1 flex-col overflow-hidden">
           <div ref={previewFrameRef} className="relative h-full w-full overflow-hidden bg-slate-950/70">
             {outputUrl ? (
-              <img src={outputUrl} alt="" className="h-full w-full object-contain" draggable={false} />
+              <img src={inspirationCanvasUrl ?? outputUrl} alt="" className="h-full w-full object-contain" draggable={false} decoding="async" />
             ) : selectedRef ? (
               <img
                 src={selectedRef.thumbUrl || selectedRef.imageUrl}

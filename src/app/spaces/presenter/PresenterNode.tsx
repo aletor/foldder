@@ -6,16 +6,17 @@ import React, { memo, useCallback, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { NodeResizer, useReactFlow, useStore, useNodes, type Edge, type Node, type NodeProps, type ReactFlowState } from "@xyflow/react";
 import { shallow } from "zustand/shallow";
-import { Presentation } from "lucide-react";
+import { Presentation, Plus } from "lucide-react";
 import { FOLDDER_FIT_VIEW_EASE } from "@/lib/fit-view-ease";
 import type { DesignerNodeData, DesignerPageState } from "../designer/DesignerNode";
 import { DesignerPagePreview } from "../designer/DesignerPagePreview";
-import { getPageDimensions } from "../indesign/page-formats";
+import { getPageDimensions, DEFAULT_DESIGNER_PAGE_FORMAT } from "../indesign/page-formats";
 import type { PresenterImageVideoPlacement } from "./presenter-image-video-types";
 import { firstPlayableIndex } from "./presenter-skip-slide";
+import type { SlideTransitionId } from "./slide-transition-types";
+import { DEFAULT_SLIDE_TRANSITION } from "./slide-transition-types";
 import { PresenterStudio } from "./PresenterStudio";
-import { FOLDDER_STANDARD_STUDIO_CLOSE_REQUEST_EVENT, type FoldderStudioEventDetail } from "../desktop-studio-events";
-import type { StandardStudioShellConfig } from "../StandardStudioShell";
+import { type FoldderStudioEventDetail } from "../desktop-studio-events";
 import { useFoldderRenderMetric } from "../use-performance-metrics";
 import { useNodeViewportVisibility } from "../use-node-viewport-visibility";
 import {
@@ -23,6 +24,7 @@ import {
   StudioCanvasOpenButton,
   type StudioCanvasNodeHandleSpec,
 } from "../studio-node/studio-canvas-node";
+import { FoldderStudioModeCenterButton } from "../foldder-node-ui";
 import { hasFoldderStudioTouched, touchStudioNodeData } from "../studio-node/foldder-studio-touched";
 
 const PRESENTER_NODE_MAX_WIDTH = 960;
@@ -44,6 +46,8 @@ export type PresenterNodeData = {
   label?: string;
   /** Vídeos superpuestos a imágenes en el lienzo del Presenter (no forma parte del Designer). */
   imageVideoPlacements?: PresenterImageVideoPlacement[];
+  /** Transiciones entre slides (persistidas en el nodo Presenter). */
+  transitionsByPageId?: Record<string, SlideTransitionId>;
 };
 
 function useDesignerDocumentPages(presenterId: string): {
@@ -103,14 +107,21 @@ export const PresenterNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const liveNode = nodes.find((node) => node.id === id);
   const nodeData = (liveNode?.data ?? data) as PresenterNodeData;
   const studioTouched = hasFoldderStudioTouched(nodeData as Record<string, unknown>);
-  const { setNodes } = useReactFlow();
+  const { setNodes, setEdges, getNode, fitView } = useReactFlow();
   const [studioOpen, setStudioOpen] = useState(false);
-  const [standardShell, setStandardShell] = useState<StandardStudioShellConfig | null>(null);
   const { pages, connected, designerMissing, designerNodeId, designerPreviewUrl } = useDesignerDocumentPages(id);
   const nodeMediaVisible = useNodeViewportVisibility(id, 900, selected);
 
   const slideCount = pages?.length ?? 0;
   const showPresenterEmpty = slideCount === 0;
+  const canOpenStudio = slideCount > 0;
+  const openStudioDisabledReason = !connected
+    ? "Conecta la salida Document del nodo Designer"
+    : designerMissing
+      ? "La conexión debe venir de un nodo Designer"
+      : slideCount === 0
+        ? "Añade páginas en Designer primero"
+        : undefined;
   const previewPageIndex = pages ? firstPlayableIndex(pages) : null;
   const previewPage =
     pages && pages.length > 0 ? pages[previewPageIndex ?? 0] : null;
@@ -118,21 +129,109 @@ export const PresenterNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const showSlidePreview = Boolean(!showPresenterEmpty && previewPage && previewPageDims);
 
   const openStudio = useCallback(() => {
-    setStandardShell(null);
+    if (!canOpenStudio) return;
     setStudioOpen(true);
-  }, []);
+  }, [canOpenStudio]);
+
+  const spawnDesignerAndConnect = useCallback(() => {
+    const self = getNode(id);
+    if (!self) return;
+    const designerId = `designer_${Date.now()}`;
+    const position = {
+      x: self.position.x - 440,
+      y: self.position.y,
+    };
+    const initialPageId = `dpg_${designerId}_0`;
+    setNodes((nds) => [
+      ...nds.map((n) => (n.id === id ? { ...n, selected: false } : n)),
+      {
+        id: designerId,
+        type: "designer",
+        position,
+        selected: true,
+        data: {
+          label: "Designer",
+          pages: [
+            {
+              id: initialPageId,
+              format: DEFAULT_DESIGNER_PAGE_FORMAT,
+              objects: [],
+            },
+          ],
+          activePageIndex: 0,
+        },
+      },
+    ]);
+    setEdges((eds) => [
+      ...eds,
+      {
+        id: `e_${designerId}_${id}_document`,
+        source: designerId,
+        target: id,
+        sourceHandle: "document",
+        targetHandle: "document",
+      },
+    ]);
+    requestAnimationFrame(() => {
+      void fitView({ nodes: [{ id: designerId }], duration: 400, padding: 0.75, ...FOLDDER_FIT_VIEW_EASE });
+    });
+  }, [fitView, getNode, id, setEdges, setNodes]);
+
+  const openConnectedDesigner = useCallback(() => {
+    if (!designerNodeId) return;
+    requestAnimationFrame(() => {
+      void fitView({ nodes: [{ id: designerNodeId }], duration: 400, padding: 0.75, ...FOLDDER_FIT_VIEW_EASE });
+    });
+    window.dispatchEvent(
+      new CustomEvent("foldder:open-studio", { detail: { nodeId: designerNodeId } }),
+    );
+  }, [designerNodeId, fitView]);
+
+  const setImageVideoPlacements = useCallback(
+    (next: PresenterImageVideoPlacement[]) => {
+      setNodes((nds) =>
+        nds.map((n) =>
+          n.id === id && n.type === "presenter"
+            ? { ...n, data: touchStudioNodeData(n.data as Record<string, unknown>, { imageVideoPlacements: next }) }
+            : n,
+        ),
+      );
+    },
+    [id, setNodes],
+  );
+
+  const setTransitionsByPageId = useCallback(
+    (next: Record<string, SlideTransitionId>) => {
+      setNodes((nds) =>
+        nds.map((n) =>
+          n.id === id && n.type === "presenter"
+            ? { ...n, data: touchStudioNodeData(n.data as Record<string, unknown>, { transitionsByPageId: next }) }
+            : n,
+        ),
+      );
+    },
+    [id, setNodes],
+  );
+
+  const initialTransitions = useMemo(() => {
+    const stored = nodeData.transitionsByPageId ?? {};
+    const merged: Record<string, SlideTransitionId> = { ...stored };
+    for (const p of pages ?? []) {
+      if (merged[p.id] === undefined) merged[p.id] = DEFAULT_SLIDE_TRANSITION;
+    }
+    return merged;
+  }, [nodeData.transitionsByPageId, pages]);
 
   React.useEffect(() => {
     const onOpenStudio = (ev: Event) => {
       const detail = (ev as CustomEvent<FoldderStudioEventDetail>).detail;
       if (detail?.nodeId !== id) return;
-      setStandardShell(detail.standardShell ? { ...detail.standardShell, nodeId: id, nodeType: "presenter", fileId: detail.fileId, appId: detail.appId } : null);
+      if ((pages?.length ?? 0) === 0) return;
       setStudioOpen(true);
     };
     const onCloseStudio = (ev: Event) => {
       const detail = (ev as CustomEvent<{ nodeId?: string }>).detail;
-      if (detail?.nodeId !== id) return;
-      setStandardShell(null);
+      if (detail?.nodeId != null && detail.nodeId !== id) return;
       setStudioOpen(false);
     };
     window.addEventListener("foldder:open-studio", onOpenStudio as EventListener);
@@ -145,7 +244,7 @@ export const PresenterNode = memo(({ id, data, selected }: NodeProps<any>) => {
       window.removeEventListener("foldder:close-studio", onCloseStudio as EventListener);
       window.removeEventListener("foldder-close-node-studio", onCloseStudio as EventListener);
     };
-  }, [id]);
+  }, [id, pages?.length]);
 
   const patchDesignerPage = useCallback(
     (pageId: string, patch: Partial<DesignerPageState>) => {
@@ -165,19 +264,6 @@ export const PresenterNode = memo(({ id, data, selected }: NodeProps<any>) => {
       );
     },
     [designerNodeId, id, setNodes],
-  );
-
-  const setImageVideoPlacements = useCallback(
-    (next: PresenterImageVideoPlacement[]) => {
-      setNodes((nds) =>
-        nds.map((n) =>
-          n.id === id && n.type === "presenter"
-            ? { ...n, data: touchStudioNodeData(n.data as Record<string, unknown>, { imageVideoPlacements: next }) }
-            : n,
-        ),
-      );
-    },
-    [id, setNodes],
   );
 
   const statusPanel = useMemo(() => {
@@ -256,13 +342,45 @@ export const PresenterNode = memo(({ id, data, selected }: NodeProps<any>) => {
           </div>
           <div className="node-content presenter-node-content relative z-10 mt-auto flex flex-col gap-3 px-3 pb-3 pt-2">
             {statusPanel}
+            {!connected ? (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  spawnDesignerAndConnect();
+                }}
+                className="execute-btn nodrag flex items-center justify-center gap-1.5 py-2.5 text-[10px]"
+              >
+                <Plus className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+                Añadir Designer
+              </button>
+            ) : null}
+            {connected && !designerMissing && slideCount === 0 && designerNodeId ? (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openConnectedDesigner();
+                }}
+                className="execute-btn nodrag py-2.5 text-[10px]"
+              >
+                Abrir Designer
+              </button>
+            ) : null}
+            <StudioCanvasOpenButton
+              onClick={openStudio}
+              disabled={!canOpenStudio}
+              title={openStudioDisabledReason}
+              accent="slate"
+              icon={<Presentation className="h-[26px] w-[26px]" strokeWidth={1.5} aria-hidden />}
+              className="flex-col gap-2 py-4 disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              <span>Abrir presentación</span>
+            </StudioCanvasOpenButton>
           </div>
         </div>
       ) : (
-        <div
-          className={`node-content presenter-node-content relative flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden px-3 pb-3 pt-2${showSlidePreview ? " presenter-node-content--media" : ""}`}
-          style={{ minHeight: 120 }}
-        >
+        <div className="foldder-frameless-main relative flex min-h-0 flex-1 flex-col overflow-hidden">
           {showSlidePreview ? (
             <div className="absolute inset-0 overflow-hidden" aria-hidden>
               {designerPreviewUrl && nodeMediaVisible ? (
@@ -285,32 +403,24 @@ export const PresenterNode = memo(({ id, data, selected }: NodeProps<any>) => {
             </div>
           ) : null}
 
-          <div className={`min-w-0${showSlidePreview ? " relative z-10 mt-auto" : ""}`}>
+          <div className="relative z-10 flex min-h-0 flex-1 flex-col pointer-events-none">
+            <div className="flex-1" />
             {showSlidePreview ? (
-              <div className="presenter-summary-panel mb-3 min-w-0">
-                <span className="node-label">Presentación</span>
-                <p className="mt-1 text-[11px] font-semibold leading-snug text-slate-900">
-                  {slideCount} {slideCount === 1 ? "slide" : "slides"}
+              <div
+                className="pointer-events-none absolute inset-x-0 bottom-0 z-[11] bg-gradient-to-t from-black/80 via-black/30 to-transparent px-3 pb-11 pt-10"
+                aria-hidden
+              >
+                <p className="text-[10px] font-black uppercase tracking-[0.12em] text-white/70">
+                  {slideCount} {slideCount === 1 ? "diapositiva" : "diapositivas"}
                 </p>
               </div>
-            ) : (
-              <>
-                <span className="node-label">Presentación</span>
-              </>
-            )}
-            <StudioCanvasOpenButton
+            ) : null}
+            <FoldderStudioModeCenterButton
               onClick={openStudio}
-              accent="slate"
-              icon={<Presentation className="h-[26px] w-[26px]" strokeWidth={1.5} aria-hidden />}
-              className={`mt-1 flex-col gap-2 py-4${showSlidePreview ? " border-white/20 bg-white/88 shadow-[0_16px_40px_rgba(0,0,0,0.28)] backdrop-blur-md" : ""}`}
-            >
-              <span>Abrir presentación</span>
-              {!showSlidePreview ? (
-                <span className="text-[10px] font-medium normal-case tracking-normal text-slate-500">
-                  {slideCount} slides
-                </span>
-              ) : null}
-            </StudioCanvasOpenButton>
+              disabled={!canOpenStudio}
+              label="Abrir presentación"
+              title={openStudioDisabledReason ?? "Abrir presentación"}
+            />
           </div>
         </div>
       )}
@@ -322,21 +432,16 @@ export const PresenterNode = memo(({ id, data, selected }: NodeProps<any>) => {
             pages={pages}
             onClose={() => {
               setStudioOpen(false);
-              setStandardShell(null);
-              if (standardShell && typeof window !== "undefined") {
-                window.dispatchEvent(new CustomEvent(FOLDDER_STANDARD_STUDIO_CLOSE_REQUEST_EVENT, {
-                  detail: { nodeId: id, nodeType: "presenter", fileId: standardShell.fileId, appId: standardShell.appId },
-                }));
-              }
             }}
             onPresenterPagePatch={patchDesignerPage}
             imageVideoPlacements={nodeData.imageVideoPlacements ?? []}
             onImageVideoPlacementsChange={setImageVideoPlacements}
+            initialTransitionsByPageId={initialTransitions}
+            onTransitionsByPageIdChange={setTransitionsByPageId}
             shareContext={{
               deckKey: designerNodeId ? `${designerNodeId}::${id}` : `presenter::${id}`,
               deckTitle: nodeData.label?.trim() || "Presentation",
             }}
-            standardShell={standardShell ?? undefined}
           />,
           document.body,
         )}

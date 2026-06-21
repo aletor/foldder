@@ -7,6 +7,7 @@ import {
   notifyWalletOperationBlocked,
   walletLowBalanceThresholdMicros,
 } from "@/lib/billing-notifications";
+import { isDynamoTransactionConflict } from "@/lib/dynamo-retry";
 import {
   SpendControlConfigurationError,
   SpendControlLimitExceededError,
@@ -632,6 +633,15 @@ export function walletGateErrorResponse(error: unknown): NextResponse | null {
         code: "wallet_configuration_error",
       },
       { status: 503 },
+    );
+  }
+  if (isDynamoTransactionConflict(error)) {
+    return NextResponse.json(
+      {
+        error: "Otra operación del wallet está en curso. Vuelve a intentarlo en un instante.",
+        code: "wallet_transaction_conflict",
+      },
+      { status: 409 },
     );
   }
   return null;

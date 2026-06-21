@@ -44,6 +44,7 @@ import {
 import { nodeFrameFromSnapshot, selectNodeFrameSnapshot } from "../react-flow-selectors";
 import { useCanvasPerformanceModeRef } from "../use-canvas-performance-mode";
 import { useFoldderRenderMetric } from "../use-performance-metrics";
+import { useCanvasNodeMediaPreviewUrl } from "../hooks/use-authed-media-preview-url";
 import { useNodeViewportVisibility } from "../use-node-viewport-visibility";
 import type { PhotoRoomNodeStudioData } from "./photo-room-types";
 import { registerPendingNanoStudioOpenFromPhotoRoom } from "./photo-room-nano-open-pending";
@@ -189,7 +190,6 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const {
     isStudioOpen: showStudio,
     setIsStudioOpen: setShowStudio,
-    standardShell,
     openStudio,
     closeStudio,
   } = useStudioNodeController({
@@ -703,6 +703,7 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
       : hasPersistedStudio
         ? exportedThumb ?? previewUrl ?? null
         : previewUrl ?? exportedThumb ?? null;
+  const { displayUrl: photoRoomCanvasUrl } = useCanvasNodeMediaPreviewUrl(displayUrl);
   const showPersistedPhotoRoomPreview = hasPersistedStudio && Boolean(displayUrl) && nodeMediaVisible;
 
   /** Studio abierto: miniatura ligera en el nodo (no pisa `value`, salida del grafo = export completo al cerrar). */
@@ -855,9 +856,10 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
         {showPersistedPhotoRoomPreview ? (
           <div className="absolute inset-0 overflow-hidden" aria-hidden>
             <img
-              src={displayUrl ?? ""}
+              src={photoRoomCanvasUrl ?? displayUrl ?? ""}
               alt=""
               className="h-full w-full object-cover"
+              decoding="async"
               onLoad={refreshHandleGeometry}
               onError={refreshHandleGeometry}
             />
@@ -923,11 +925,10 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
             onFinalExport={(detail) => {
               dispatchFoldderExportCreated({ ...detail, sourceNodeId: id });
             }}
-            standardShell={standardShell ?? undefined}
             onClose={() => {
               showStudioRef.current = false;
               commitLivePhotoRoomData();
-              closeStudio({ notifyStandardShell: true });
+              closeStudio();
             }}
           />
         </Suspense>

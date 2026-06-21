@@ -3,6 +3,7 @@
  * Los nodos llaman a `runAiJobWithNotification`; la UI escucha `foldder-ai-job-complete`.
  */
 
+import { aiActiveJobEndNode, aiActiveJobStartNode } from "@/lib/ai-active-jobs";
 import { sanitizeUserFacingErrorMessage } from "@/lib/read-response-json";
 
 export const AI_JOB_COMPLETE_EVENT = "foldder-ai-job-complete";
@@ -32,6 +33,8 @@ export async function runAiJobWithNotification(
   meta: { nodeId?: string; label: string },
   fn: () => Promise<void>
 ): Promise<boolean> {
+  const nodeId = meta.nodeId?.trim();
+  if (nodeId) aiActiveJobStartNode(nodeId, meta.label);
   try {
     await fn();
     emitAiJobComplete({ nodeId: meta.nodeId, label: meta.label, ok: true });
@@ -40,5 +43,7 @@ export async function runAiJobWithNotification(
     const message = sanitizeUserFacingErrorMessage(e instanceof Error ? e.message : String(e));
     emitAiJobComplete({ nodeId: meta.nodeId, label: meta.label, ok: false, message });
     return false;
+  } finally {
+    if (nodeId) aiActiveJobEndNode(nodeId);
   }
 }

@@ -1,356 +1,642 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { Node } from "@xyflow/react";
-import { BookOpen, FileQuestion, FolderOpen, X } from "lucide-react";
-import { collectFoldderLibrarySections } from "./foldder-library";
-import type { ProjectMediaItem } from "./project-media-inventory";
-import type { ProjectFilesMetadata, ProjectFile } from "./project-files";
-import { normalizeProjectAssets } from "./project-assets-metadata";
+import {
+  BookOpen,
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  FileQuestion,
+  Focus,
+  Maximize2,
+  MoreHorizontal,
+  Pencil,
+  X,
+} from "lucide-react";
+import type { LibraryAsset } from "./foldder-library-registry";
+import type { FoldderLibraryView } from "./foldder-library-registry";
 import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
-import { GUI_FORMAT_FOLDERS, GUI_FORMAT_LABELS, type GuionistaFormat, type GuionistaGeneratedTextAssetsMetadata, type GuionistaTextAsset } from "./guionista-types";
+import type { GuionistaTextAsset } from "./guionista-types";
+import { FoldderStudioHeader } from "./FoldderStudioHeader";
+import {
+  FoldderLibraryAssetCell,
+  FoldderLibraryAssetGrid,
+  FoldderLibraryEmptyState,
+  FoldderLibraryOrphanedCollapsible,
+  FoldderLibrarySectionKicker,
+  FoldderLibraryStudioSection,
+  FoldderLibraryStudioTabBar,
+  FoldderLibraryTextList,
+  FoldderLibraryTextListItem,
+  type FoldderLibraryTab,
+} from "./foldder/FoldderLibraryStudioChrome";
 
 type Props = {
   open: boolean;
   onClose: () => void;
-  nodes: Node[];
-  /** Solo lectura: logos y colores definidos en Brain (`metadata.assets`). */
-  assetsMetadata: unknown;
-  projectFiles?: ProjectFilesMetadata;
-  generatedTextAssets?: GuionistaGeneratedTextAssetsMetadata;
+  libraryView: FoldderLibraryView;
+  liveNodeIds: Set<string>;
+  onRenameAsset: (assetId: string, name: string) => void;
+  onFocusNode: (nodeId: string) => void;
+  onExportAsset: (asset: LibraryAsset, downloadUrl?: string) => void;
   onOpenGuionistaTextAsset?: (assetId: string) => void;
-  /** Scope del proyecto activo para aislar caché y listados. */
-  projectScopeId: string;
 };
 
-function MediaTile({ item }: { item: ProjectMediaItem }) {
-  const isVideo = item.kind === "video";
+type PreviewState = {
+  asset: LibraryAsset;
+  url: string;
+  list: LibraryAsset[];
+};
 
+function resolveUrl(url: string | undefined, refreshedUrls: Record<string, string>): string | undefined {
+  const trimmed = url?.trim();
+  if (!trimmed) return undefined;
+  const key = tryExtractKnowledgeFilesKeyFromUrl(trimmed);
+  if (key && refreshedUrls[key]) return refreshedUrls[key];
+  return trimmed;
+}
+
+function assetPreviewUrl(asset: LibraryAsset, refreshedUrls: Record<string, string>): string | undefined {
+  return resolveUrl(asset.url, refreshedUrls) ?? resolveUrl(asset.thumbnailUrl, refreshedUrls);
+}
+
+function isPreviewableAsset(asset: LibraryAsset, refreshedUrls: Record<string, string>): boolean {
+  const url = assetPreviewUrl(asset, refreshedUrls);
+  return Boolean(url && (asset.kind === "image" || asset.kind === "video"));
+}
+
+function formatAssetDate(iso?: string): string {
+  if (!iso) return "";
+  try {
+    return new Intl.DateTimeFormat("es", { day: "numeric", month: "short" }).format(new Date(iso));
+  } catch {
+    return "";
+  }
+}
+
+function AssetTileMenu({
+  open,
+  onClose,
+  anchorRef,
+  children,
+}: {
+  open: boolean;
+  onClose: () => void;
+  anchorRef: React.RefObject<HTMLButtonElement | null>;
+  children: React.ReactNode;
+}) {
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (anchorRef.current?.contains(target)) return;
+      if (menuRef.current?.contains(target)) return;
+      onClose();
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open, onClose, anchorRef]);
+
+  if (!open) return null;
   return (
-    <a
-      href={item.url}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="group flex flex-col overflow-hidden rounded-xl border border-white/10 bg-zinc-900/80 shadow-lg transition hover:border-amber-400/35 hover:bg-zinc-900"
+    <div
+      ref={menuRef}
+      className="absolute bottom-full right-0 z-20 mb-1 min-w-[9.5rem] border border-white/12 bg-[#0b0f14] py-1"
+      role="menu"
     >
-      <div className="relative aspect-video w-full bg-black/50">
-        {isVideo ? (
-          <video
-            src={item.url}
-            className="h-full w-full object-cover"
-            muted
-            playsInline
-            preload="metadata"
-          />
-        ) : item.kind === "image" ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={item.url}
-            alt=""
-            className="h-full w-full object-cover"
-            loading="lazy"
-            onError={(e) => {
-              (e.target as HTMLImageElement).style.opacity = "0.2";
-            }}
-          />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center text-zinc-500">
-            <FileQuestion className="h-8 w-8" strokeWidth={1.6} />
-          </div>
-        )}
-        <span className="pointer-events-none absolute bottom-1 right-1 rounded bg-black/65 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-white/90">
-          {isVideo ? "Vídeo" : item.kind === "audio" ? "Audio" : item.kind === "image" ? "Imagen" : "Archivo"}
-        </span>
-      </div>
-      <div className="min-w-0 px-2 py-1.5">
-        <p className="truncate text-[10px] font-semibold text-zinc-200" title={item.sourceLabel}>
-          {item.sourceLabel}
-        </p>
-        <p className="truncate font-mono text-[8px] text-zinc-500" title={item.url}>
-          {item.url.replace(/^https?:\/\//, "").slice(0, 56)}
-          {item.url.length > 56 ? "…" : ""}
-        </p>
-      </div>
-    </a>
+      {children}
+    </div>
   );
 }
 
-function MediaSection({
-  title,
-  subtitle,
-  items,
-  emptyHint,
+function AssetTileMenuButton({
+  onClick,
+  children,
 }: {
-  title: string;
-  subtitle: string;
-  items: ProjectMediaItem[];
-  emptyHint: string;
+  onClick: () => void;
+  children: React.ReactNode;
 }) {
   return (
-    <section className="min-w-0 flex-1">
-      <div className="mb-3 border-b border-white/10 pb-2">
-        <h3 className="text-sm font-black uppercase tracking-[0.12em] text-amber-200/95">{title}</h3>
-        <p className="mt-0.5 text-[11px] text-zinc-500">{subtitle}</p>
-      </div>
-      {items.length === 0 ? (
-        <p className="rounded-lg border border-dashed border-white/10 bg-white/[0.03] px-3 py-8 text-center text-[12px] text-zinc-500">
-          {emptyHint}
-        </p>
-      ) : (
-        <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-          {items.map((item) => (
-            <li key={item.id}>
-              <MediaTile item={item} />
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
+    <button
+      type="button"
+      role="menuitem"
+      className="flex w-full items-center gap-2 px-3 py-2 text-left text-[11px] font-medium text-white/75 transition hover:bg-white/[0.06] hover:text-white"
+      onClick={onClick}
+    >
+      {children}
+    </button>
   );
 }
 
-function MediaFileTile({ file }: { file: ProjectFile }) {
-  const extension = (file.extension || file.name.match(/\.[^.]+$/)?.[0] || file.kind).replace(/^\./, "").toUpperCase();
+function FoldderLibraryMediaLightbox({
+  preview,
+  refreshedUrls,
+  liveNodeIds,
+  onClose,
+  onNavigate,
+  onFocusNode,
+  onExportAsset,
+  showExportAction,
+}: {
+  preview: PreviewState;
+  refreshedUrls: Record<string, string>;
+  liveNodeIds: Set<string>;
+  onClose: () => void;
+  onNavigate: (delta: number) => void;
+  onFocusNode: (nodeId: string) => void;
+  onExportAsset: (asset: LibraryAsset, downloadUrl?: string) => void;
+  showExportAction: boolean;
+}) {
+  const { asset, url } = preview;
+  const isVideo = asset.kind === "video";
+  const isImage = asset.kind === "image";
+  const nodeLive = Boolean(asset.sourceNodeId && liveNodeIds.has(asset.sourceNodeId));
+  const canExport = showExportAction && Boolean(url || asset.url || asset.thumbnailUrl);
+  const hasNav = preview.list.length > 1;
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "ArrowLeft") onNavigate(-1);
+      if (e.key === "ArrowRight") onNavigate(1);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onNavigate]);
+
   return (
-    <div className="group flex flex-col overflow-hidden rounded-xl border border-white/10 bg-zinc-900/80 p-3 shadow-lg">
-      <div className="flex h-24 items-center justify-center rounded-lg border border-white/10 bg-black/45">
-        <FolderOpen className="h-8 w-8 text-amber-200/80" strokeWidth={1.5} />
+    <div
+      className="fixed inset-0 z-[100095] flex flex-col bg-[#0b0f14]"
+      data-foldder-library-lightbox
+      role="dialog"
+      aria-modal="true"
+      aria-label={asset.displayName}
+    >
+      <div className="flex h-10 shrink-0 items-stretch border-b border-white/10 bg-black/40">
+        <div className="flex min-w-0 flex-1 items-center px-4">
+          <p className="truncate text-[12px] font-semibold text-white">{asset.displayName}</p>
+          <span className="ml-3 hidden truncate text-[10px] text-white/40 sm:inline">
+            {asset.sourceLabel}
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="flex h-10 w-10 shrink-0 items-center justify-center border-l border-white/15 text-white/70 transition hover:bg-white/[0.08] hover:text-white"
+          aria-label="Cerrar vista"
+        >
+          <X size={16} aria-hidden />
+        </button>
       </div>
-      <div className="min-w-0 pt-2">
-        <p className="truncate text-[10px] font-semibold text-zinc-200" title={file.name}>
-          {file.name}
-        </p>
-        <p className="mt-1 text-[8px] font-black uppercase tracking-wide text-zinc-500">
-          {extension} · {file.nodeType || file.kind}
-        </p>
+
+      <div className="relative flex min-h-0 flex-1 items-center justify-center p-4">
+        {hasNav ? (
+          <button
+            type="button"
+            className="absolute left-2 top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center border border-white/15 bg-black/50 text-white/80 transition hover:bg-black/70 hover:text-white sm:left-4"
+            onClick={() => onNavigate(-1)}
+            aria-label="Anterior"
+          >
+            <ChevronLeft size={20} aria-hidden />
+          </button>
+        ) : null}
+        {isVideo ? (
+          <video src={url} className="max-h-full max-w-full object-contain" controls playsInline autoPlay />
+        ) : isImage ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={url} alt={asset.displayName} className="max-h-full max-w-full object-contain" />
+        ) : (
+          <p className="text-[12px] text-white/45">Vista previa no disponible.</p>
+        )}
+        {hasNav ? (
+          <button
+            type="button"
+            className="absolute right-2 top-1/2 z-10 flex h-10 w-10 -translate-y-1/2 items-center justify-center border border-white/15 bg-black/50 text-white/80 transition hover:bg-black/70 hover:text-white sm:right-4"
+            onClick={() => onNavigate(1)}
+            aria-label="Siguiente"
+          >
+            <ChevronRight size={20} aria-hidden />
+          </button>
+        ) : null}
+      </div>
+
+      <div className="flex h-10 shrink-0 divide-x divide-white/10 border-t border-white/10 bg-black/40 text-[10px] font-semibold">
+        {nodeLive ? (
+          <button
+            type="button"
+            className="flex flex-1 items-center justify-center gap-1.5 text-white/75 transition hover:bg-white/[0.06] hover:text-white"
+            onClick={() => {
+              onClose();
+              onFocusNode(asset.sourceNodeId!);
+            }}
+          >
+            <Focus size={13} aria-hidden />
+            Ir al nodo
+          </button>
+        ) : null}
+        {canExport ? (
+          <button
+            type="button"
+            className="flex flex-1 items-center justify-center gap-1.5 text-[var(--foldder-studio-accent,#965b92)] transition hover:bg-white/[0.06]"
+            onClick={() => onExportAsset(asset, url)}
+          >
+            <Download size={13} aria-hidden />
+            Descargar
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="flex flex-1 items-center justify-center gap-1.5 text-white/75 transition hover:bg-white/[0.06] hover:text-white"
+          onClick={onClose}
+        >
+          Cerrar
+        </button>
       </div>
     </div>
   );
 }
 
-function ProjectFilesSection({
-  title,
-  subtitle,
-  emptyHint,
-  items,
+function LibraryAssetTile({
+  asset,
+  refreshedUrls,
+  archived = false,
+  delivery = false,
+  liveNodeIds,
+  onRenameAsset,
+  onFocusNode,
+  onExportAsset,
+  onOpenPreview,
+  previewList,
+  showExportAction = true,
 }: {
-  title: string;
-  subtitle: string;
-  emptyHint: string;
-  items: ProjectFile[];
+  asset: LibraryAsset;
+  refreshedUrls: Record<string, string>;
+  archived?: boolean;
+  delivery?: boolean;
+  liveNodeIds: Set<string>;
+  onRenameAsset: (assetId: string, name: string) => void;
+  onFocusNode: (nodeId: string) => void;
+  onExportAsset: (asset: LibraryAsset, downloadUrl?: string) => void;
+  onOpenPreview: (asset: LibraryAsset, previewUrl: string, list: LibraryAsset[]) => void;
+  previewList: LibraryAsset[];
+  showExportAction?: boolean;
 }) {
+  const menuRef = useRef<HTMLButtonElement>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const previewUrl = assetPreviewUrl(asset, refreshedUrls);
+  const nodeLive = Boolean(asset.sourceNodeId && liveNodeIds.has(asset.sourceNodeId));
+  const canPreview = isPreviewableAsset(asset, refreshedUrls);
+  const canExport = showExportAction && Boolean(previewUrl || asset.url || asset.thumbnailUrl);
+  const exportDate = formatAssetDate(asset.updatedAt);
+
+  const openPreview = () => {
+    if (canPreview && previewUrl) onOpenPreview(asset, previewUrl, previewList);
+  };
+
   return (
-    <section className="min-w-0 flex-1">
-      <div className="mb-3 border-b border-white/10 pb-2">
-        <h3 className="text-sm font-black uppercase tracking-[0.12em] text-amber-200/95">{title}</h3>
-        <p className="mt-0.5 text-[11px] text-zinc-500">{subtitle}</p>
+    <article
+      className={`foldder-library-tile group relative flex flex-col ${archived ? "" : "foldder-library-tile--active"}`}
+    >
+      <div className="relative aspect-[4/5] w-full overflow-hidden bg-black/35">
+        <div className={archived ? "foldder-library-tile-preview foldder-library-tile-preview--archived" : "foldder-library-tile-preview"}>
+          {previewUrl && asset.kind === "video" ? (
+            <video src={previewUrl} className="h-full w-full object-cover" muted playsInline preload="metadata" />
+          ) : previewUrl && asset.kind === "image" ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={previewUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center text-white/25">
+              <FileQuestion className="h-8 w-8" strokeWidth={1.5} />
+            </div>
+          )}
+        </div>
+
+        <span
+          className={
+            delivery
+              ? "foldder-library-tile-badge foldder-library-tile-badge--delivery"
+              : archived
+                ? "foldder-library-tile-badge foldder-library-tile-badge--archived"
+                : "foldder-library-tile-badge foldder-library-tile-badge--active"
+          }
+        >
+          {delivery ? "Entrega" : archived ? "Archivado" : "Activo"}
+        </span>
+
+        {canPreview ? (
+          <div className="foldder-library-tile-overlay">
+            <button
+              type="button"
+              className="foldder-library-tile-overlay-btn"
+              title="Pantalla completa"
+              onClick={openPreview}
+            >
+              <Maximize2 size={16} aria-hidden />
+            </button>
+            <div className="relative">
+              <button
+                ref={menuRef}
+                type="button"
+                className="foldder-library-tile-overlay-btn"
+                title="Más acciones"
+                onClick={() => setMenuOpen((v) => !v)}
+              >
+                <MoreHorizontal size={16} aria-hidden />
+              </button>
+              <AssetTileMenu open={menuOpen} onClose={() => setMenuOpen(false)} anchorRef={menuRef}>
+                <AssetTileMenuButton
+                  onClick={() => {
+                    setMenuOpen(false);
+                    openPreview();
+                  }}
+                >
+                  <Maximize2 size={12} aria-hidden />
+                  Pantalla completa
+                </AssetTileMenuButton>
+                <AssetTileMenuButton
+                  onClick={() => {
+                    setMenuOpen(false);
+                    const next = window.prompt("Renombrar", asset.displayName);
+                    if (next?.trim()) onRenameAsset(asset.id, next.trim());
+                  }}
+                >
+                  <Pencil size={12} aria-hidden />
+                  Renombrar
+                </AssetTileMenuButton>
+                {nodeLive ? (
+                  <AssetTileMenuButton
+                    onClick={() => {
+                      setMenuOpen(false);
+                      onFocusNode(asset.sourceNodeId!);
+                    }}
+                  >
+                    <Focus size={12} aria-hidden />
+                    Ir al nodo
+                  </AssetTileMenuButton>
+                ) : null}
+                {canExport ? (
+                  <AssetTileMenuButton
+                    onClick={() => {
+                      setMenuOpen(false);
+                      onExportAsset(asset, previewUrl);
+                    }}
+                  >
+                    <Download size={12} aria-hidden />
+                    Exportar
+                  </AssetTileMenuButton>
+                ) : null}
+              </AssetTileMenu>
+            </div>
+          </div>
+        ) : (
+          <div className="foldder-library-tile-overlay foldder-library-tile-overlay--always">
+            <div className="relative">
+              <button
+                ref={menuRef}
+                type="button"
+                className="foldder-library-tile-overlay-btn"
+                onClick={() => setMenuOpen((v) => !v)}
+              >
+                <MoreHorizontal size={16} aria-hidden />
+              </button>
+              <AssetTileMenu open={menuOpen} onClose={() => setMenuOpen(false)} anchorRef={menuRef}>
+                <AssetTileMenuButton
+                  onClick={() => {
+                    setMenuOpen(false);
+                    const next = window.prompt("Renombrar", asset.displayName);
+                    if (next?.trim()) onRenameAsset(asset.id, next.trim());
+                  }}
+                >
+                  <Pencil size={12} aria-hidden />
+                  Renombrar
+                </AssetTileMenuButton>
+                {canExport ? (
+                  <AssetTileMenuButton
+                    onClick={() => {
+                      setMenuOpen(false);
+                      onExportAsset(asset, previewUrl);
+                    }}
+                  >
+                    <Download size={12} aria-hidden />
+                    Exportar
+                  </AssetTileMenuButton>
+                ) : null}
+              </AssetTileMenu>
+            </div>
+          </div>
+        )}
       </div>
-      {items.length === 0 ? (
-        <p className="rounded-lg border border-dashed border-white/10 bg-white/[0.03] px-3 py-8 text-center text-[12px] text-zinc-500">
-          {emptyHint}
+
+      <div className="border-t border-white/8 px-2.5 py-2">
+        <p className="truncate text-[11px] font-semibold text-white/88" title={asset.displayName}>
+          {asset.displayName}
         </p>
-      ) : (
-        <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-          {items.map((item) => (
-            <li key={item.id}>
-              <MediaFileTile file={item} />
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
+        <p className="mt-0.5 truncate text-[9px] text-white/38" title={asset.sourceLabel}>
+          {asset.sourceLabel ?? asset.sourceNodeType ?? "Foldder"}
+          {delivery && exportDate ? ` · ${exportDate}` : ""}
+        </p>
+      </div>
+    </article>
   );
 }
 
-function GuionistaTextTile({
+function GuionistaTextRow({
   item,
   onOpen,
 }: {
   item: GuionistaTextAsset;
   onOpen?: (assetId: string) => void;
 }) {
-  const activeIndex = Math.max(0, item.versions.findIndex((version) => version.id === item.activeVersionId));
-  const platform = item.platform === "Short" ? "SHORT" : item.platform?.toUpperCase();
   return (
     <button
       type="button"
       onDoubleClick={() => onOpen?.(item.id)}
-      onClick={() => undefined}
-      className="group flex min-h-36 flex-col rounded-xl border border-amber-200/10 bg-zinc-900/80 p-3 text-left shadow-lg transition hover:border-amber-300/35 hover:bg-zinc-900"
+      className="flex w-full items-center gap-3 px-3 py-3 text-left"
       title="Doble clic para abrir en Guionista"
     >
-      <div className="flex items-center gap-2">
-        <span className="flex h-9 w-9 items-center justify-center rounded-lg border border-amber-200/15 bg-amber-200/8 text-amber-200">
-          <BookOpen className="h-4 w-4" strokeWidth={1.6} />
-        </span>
-        <div className="min-w-0">
-          <p className="truncate text-[10px] font-semibold text-zinc-200">{item.title}</p>
-          <div className="mt-1 flex flex-wrap items-center gap-1">
-            <span className="rounded-full border border-amber-200/12 bg-amber-200/8 px-1.5 py-0.5 text-[7px] font-black uppercase tracking-wide text-amber-100/65">
-              {GUI_FORMAT_LABELS[item.type]}
-            </span>
-            {platform && (
-              <span className="rounded-full border border-zinc-100/10 bg-zinc-100/5 px-1.5 py-0.5 text-[7px] font-black uppercase tracking-wide text-zinc-400">
-                {platform}
-              </span>
-            )}
-            <span className="text-[7px] font-black uppercase tracking-wide text-zinc-500">V{activeIndex + 1} · {item.status}</span>
-          </div>
-        </div>
-      </div>
-      <p className="mt-3 line-clamp-3 text-[10px] leading-relaxed text-zinc-500">{item.preview}</p>
-      <span className="mt-auto text-[9px] font-semibold uppercase tracking-wide text-amber-200/50 group-hover:text-amber-200/80">
-        Abrir en Guionista
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center border border-white/10 bg-white/[0.04] text-[var(--foldder-studio-accent,#965b92)]">
+        <BookOpen className="h-4 w-4" strokeWidth={1.6} />
       </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[11px] font-semibold text-white/85">{item.title}</span>
+        <span className="mt-0.5 block truncate text-[10px] text-white/38">{item.preview}</span>
+      </span>
+      <span className="hidden shrink-0 text-[9px] text-white/28 sm:inline">Guionista</span>
     </button>
   );
 }
 
-function groupGuionistaAssetsByFolder(assets: GuionistaTextAsset[]): Array<{ type: GuionistaFormat; folder: string; items: GuionistaTextAsset[] }> {
-  const order = Object.keys(GUI_FORMAT_FOLDERS) as GuionistaFormat[];
-  return order
-    .map((type) => ({
-      type,
-      folder: GUI_FORMAT_FOLDERS[type],
-      items: assets.filter((asset) => asset.type === type),
-    }))
-    .filter((group) => group.items.length > 0);
-}
-
-function GeneratedTextsSection({
-  items,
-  onOpen,
+function MediaBucketPanel({
+  emptyHint,
+  active,
+  orphaned,
+  refreshedUrls,
+  liveNodeIds,
+  onRenameAsset,
+  onFocusNode,
+  onExportAsset,
+  onOpenPreview,
+  previewList,
 }: {
-  items: GuionistaTextAsset[];
-  onOpen?: (assetId: string) => void;
+  emptyHint: string;
+  active: LibraryAsset[];
+  orphaned: LibraryAsset[];
+  refreshedUrls: Record<string, string>;
+  liveNodeIds: Set<string>;
+  onRenameAsset: (assetId: string, name: string) => void;
+  onFocusNode: (nodeId: string) => void;
+  onExportAsset: (asset: LibraryAsset, downloadUrl?: string) => void;
+  onOpenPreview: (asset: LibraryAsset, previewUrl: string, list: LibraryAsset[]) => void;
+  previewList: LibraryAsset[];
 }) {
-  return (
-    <section className="min-w-0 flex-1">
-      <div className="mb-3 border-b border-white/10 pb-2">
-        <h4 className="text-[11px] font-black uppercase tracking-[0.12em] text-amber-100/70">Texts / Guionista</h4>
-        <p className="mt-0.5 text-[11px] text-zinc-500">Posts, artículos, guiones, escenas, slides, campañas y reescrituras.</p>
-      </div>
-      {items.length === 0 ? null : (
-        <div className="space-y-5">
-          {groupGuionistaAssetsByFolder(items).map((group) => (
-            <div key={group.type}>
-              <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">{group.folder}</p>
-              <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-                {group.items.map((item) => (
-                  <li key={item.id}>
-                    <GuionistaTextTile item={item} onOpen={onOpen} />
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function BrandReadonlyStrip({ assetsMetadata }: { assetsMetadata: unknown }) {
-  const brand = useMemo(() => normalizeProjectAssets(assetsMetadata).brand, [assetsMetadata]);
+  const total = active.length + orphaned.length;
+  if (total === 0) {
+    return <FoldderLibraryEmptyState hint="Los assets aparecerán aquí cuando entren al proyecto.">{emptyHint}</FoldderLibraryEmptyState>;
+  }
 
   return (
-    <section
-      className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 sm:px-5"
-      aria-label="Identidad de marca desde Brain, solo consulta"
-    >
-      <p className="mb-3 text-[10px] font-black uppercase tracking-[0.12em] text-zinc-500">
-        Marca <span className="font-medium normal-case text-zinc-600">(desde Brain · no editable aquí)</span>
-      </p>
-      <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between sm:gap-6">
-        <div className="flex flex-wrap gap-4">
-          <div className="min-w-0">
-            <p className="mb-1 text-[9px] font-semibold uppercase tracking-wide text-zinc-500">Logo +</p>
-            <div className="flex h-14 w-[4.5rem] items-center justify-center overflow-hidden rounded-lg border border-white/10 bg-zinc-950/80">
-              {brand.logoPositive ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={brand.logoPositive} alt="" className="max-h-full max-w-full object-contain p-1" />
-              ) : (
-                <span className="text-[9px] text-zinc-600">—</span>
-              )}
-            </div>
-          </div>
-          <div className="min-w-0">
-            <p className="mb-1 text-[9px] font-semibold uppercase tracking-wide text-zinc-500">Logo −</p>
-            <div className="flex h-14 w-[4.5rem] items-center justify-center overflow-hidden rounded-lg border border-white/10 bg-zinc-900/90">
-              {brand.logoNegative ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={brand.logoNegative} alt="" className="max-h-full max-w-full object-contain p-1" />
-              ) : (
-                <span className="text-[9px] text-zinc-600">—</span>
-              )}
-            </div>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-end gap-3 sm:gap-4">
-          {(
-            [
-              { key: "pri", label: "Pri.", hex: brand.colorPrimary },
-              { key: "sec", label: "Sec.", hex: brand.colorSecondary },
-              { key: "acc", label: "Acento", hex: brand.colorAccent },
-            ] as const
-          ).map(({ key, label, hex }) => {
-            const ok = typeof hex === "string" && /^#[0-9A-Fa-f]{6}$/i.test(hex.trim());
-            return (
-              <div key={key} className="flex flex-col items-center gap-1">
-                <span className="text-[8px] font-medium uppercase tracking-wide text-zinc-500">{label}</span>
-                <span
-                  className="h-7 w-7 shrink-0 rounded-md border border-white/15 shadow-inner ring-1 ring-black/20"
-                  style={{ backgroundColor: ok ? hex : "transparent" }}
-                  title={ok ? hex : "Sin color"}
+    <>
+      {active.length > 0 ? (
+        <FoldderLibraryAssetGrid>
+          {active.map((asset) => (
+              <FoldderLibraryAssetCell key={asset.id}>
+                <LibraryAssetTile
+                  asset={asset}
+                  refreshedUrls={refreshedUrls}
+                  liveNodeIds={liveNodeIds}
+                  onRenameAsset={onRenameAsset}
+                  onFocusNode={onFocusNode}
+                  onExportAsset={onExportAsset}
+                  onOpenPreview={onOpenPreview}
+                  previewList={previewList}
                 />
-                <span className="font-mono text-[8px] leading-none text-zinc-500">{ok ? hex : "—"}</span>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    </section>
+              </FoldderLibraryAssetCell>
+            ))}
+        </FoldderLibraryAssetGrid>
+      ) : null}
+      <FoldderLibraryOrphanedCollapsible count={orphaned.length}>
+        <FoldderLibraryAssetGrid>
+          {orphaned.map((asset) => (
+            <FoldderLibraryAssetCell key={asset.id}>
+              <LibraryAssetTile
+                asset={asset}
+                refreshedUrls={refreshedUrls}
+                archived
+                liveNodeIds={liveNodeIds}
+                onRenameAsset={onRenameAsset}
+                onFocusNode={onFocusNode}
+                onExportAsset={onExportAsset}
+                onOpenPreview={onOpenPreview}
+                previewList={previewList}
+              />
+            </FoldderLibraryAssetCell>
+          ))}
+        </FoldderLibraryAssetGrid>
+      </FoldderLibraryOrphanedCollapsible>
+    </>
   );
 }
 
-export function ProjectAssetsFullscreen({ open, onClose, nodes, assetsMetadata, projectFiles, generatedTextAssets, onOpenGuionistaTextAsset, projectScopeId }: Props) {
-  const { importedMedia: imported, generatedMedia: generated, generatedTexts, mediaFiles, exports } = useMemo(
-    () => collectFoldderLibrarySections({ nodes, assetsMetadata, projectScopeId, projectFiles, generatedTextAssets }),
-    [nodes, assetsMetadata, projectScopeId, projectFiles, generatedTextAssets],
-  );
+const LIBRARY_TABS: Array<{ id: FoldderLibraryTab; label: string }> = [
+  { id: "imported", label: "Importados" },
+  { id: "generated", label: "Generados" },
+  { id: "exported", label: "Exportados" },
+];
+
+export function ProjectAssetsFullscreen({
+  open,
+  onClose,
+  libraryView,
+  liveNodeIds,
+  onRenameAsset,
+  onFocusNode,
+  onExportAsset,
+  onOpenGuionistaTextAsset,
+}: Props) {
+  const [activeTab, setActiveTab] = useState<FoldderLibraryTab>("imported");
   const [refreshedUrls, setRefreshedUrls] = useState<Record<string, string>>({});
-  const viewImported = useMemo(
+  const [preview, setPreview] = useState<PreviewState | null>(null);
+
+  const importedCount = libraryView.imported.active.length + libraryView.imported.orphaned.length;
+  const generatedMediaCount = libraryView.generated.active.length + libraryView.generated.orphaned.length;
+  const generatedCount = generatedMediaCount + libraryView.generated.texts.length;
+  const exportedCount = libraryView.exported.length;
+  const onCanvasCount =
+    libraryView.imported.active.length +
+    libraryView.generated.active.length;
+
+  const tabsWithCounts = useMemo(
     () =>
-      imported.map((it) => {
-        const key = tryExtractKnowledgeFilesKeyFromUrl(it.url.trim());
-        if (!key || !refreshedUrls[key]) return it;
-        return { ...it, url: refreshedUrls[key] };
-      }),
-    [imported, refreshedUrls],
+      LIBRARY_TABS.map((tab) => ({
+        ...tab,
+        count:
+          tab.id === "imported"
+            ? importedCount
+            : tab.id === "generated"
+              ? generatedCount
+              : tab.id === "exported"
+                ? exportedCount
+                : undefined,
+      })),
+    [importedCount, generatedCount, exportedCount],
   );
-  const viewGenerated = useMemo(
-    () =>
-      generated.map((it) => {
-        const key = tryExtractKnowledgeFilesKeyFromUrl(it.url.trim());
-        if (!key || !refreshedUrls[key]) return it;
-        return { ...it, url: refreshedUrls[key] };
-      }),
-    [generated, refreshedUrls],
+
+  const tabPreviewLists = useMemo(() => {
+    const imported = [...libraryView.imported.active, ...libraryView.imported.orphaned];
+    const generated = [...libraryView.generated.active, ...libraryView.generated.orphaned];
+    return {
+      imported,
+      generated,
+      exported: libraryView.exported,
+    };
+  }, [libraryView]);
+
+  const currentPreviewList = useMemo(() => {
+    const list = tabPreviewLists[activeTab === "exported" ? "exported" : activeTab];
+    return list.filter((asset) => isPreviewableAsset(asset, refreshedUrls));
+  }, [activeTab, tabPreviewLists, refreshedUrls]);
+
+  const handleOpenPreview = (asset: LibraryAsset, previewUrl: string, list: LibraryAsset[]) => {
+    const navigable = list.filter((item) => isPreviewableAsset(item, refreshedUrls));
+    setPreview({ asset, url: previewUrl, list: navigable.length > 0 ? navigable : [asset] });
+  };
+
+  const handleNavigatePreview = (delta: number) => {
+    setPreview((current) => {
+      if (!current || current.list.length <= 1) return current;
+      const idx = current.list.findIndex((item) => item.id === current.asset.id);
+      const nextIdx = (idx + delta + current.list.length) % current.list.length;
+      const nextAsset = current.list[nextIdx]!;
+      const url = assetPreviewUrl(nextAsset, refreshedUrls);
+      if (!url) return current;
+      return { asset: nextAsset, url, list: current.list };
+    });
+  };
+
+  const headerSubtitle = `${onCanvasCount} en lienzo · ${exportedCount} exportado${exportedCount === 1 ? "" : "s"}`;
+
+  const allAssets = useMemo(
+    () => [
+      ...libraryView.imported.active,
+      ...libraryView.imported.orphaned,
+      ...libraryView.generated.active,
+      ...libraryView.generated.orphaned,
+      ...libraryView.exported,
+    ],
+    [libraryView],
   );
 
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    const all = [...imported, ...generated];
-    const keyByUrl = new Map<string, string>();
     const keys = new Set<string>();
-    for (const item of all) {
-      const url = item.url.trim();
-      const key = tryExtractKnowledgeFilesKeyFromUrl(url);
-      if (!key) continue;
-      keyByUrl.set(url, key);
-      keys.add(key);
+    for (const asset of allAssets) {
+      for (const url of [asset.url, asset.thumbnailUrl]) {
+        const key = tryExtractKnowledgeFilesKeyFromUrl(url?.trim() ?? "");
+        if (key) keys.add(key);
+      }
     }
     if (keys.size === 0) return;
 
@@ -363,18 +649,17 @@ export function ProjectAssetsFullscreen({ open, onClose, nodes, assetsMetadata, 
         });
         if (!res.ok) return;
         const payload = (await res.json()) as { urls?: Record<string, string> };
-        const urls = payload.urls;
-        if (!urls || cancelled) return;
-        setRefreshedUrls((prev) => ({ ...prev, ...urls }));
+        if (!payload.urls || cancelled) return;
+        setRefreshedUrls((prev) => ({ ...prev, ...payload.urls! }));
       } catch {
-        // Keep stale URLs silently; caller can close/reopen to retry.
+        /* keep stale urls */
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [open, imported, generated]);
+  }, [open, allAssets]);
 
   useEffect(() => {
     if (!open) return;
@@ -383,84 +668,140 @@ export function ProjectAssetsFullscreen({ open, onClose, nodes, assetsMetadata, 
   }, [open]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setPreview(null);
+      return;
+    }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key !== "Escape") return;
+      if (preview) {
+        setPreview(null);
+        return;
+      }
+      onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, [open, onClose, preview]);
 
   if (!open) return null;
 
   const shell = (
     <div
-      className="fixed inset-0 z-[100080] flex flex-col bg-[#0c0e12]"
+      className="fixed inset-0 z-[100090] flex flex-col bg-[#0b0f14] text-white"
+      data-foldder-studio-panel
+      data-foldder-studio-flush
+      data-foldder-library-studio
       role="dialog"
       aria-modal="true"
-      aria-labelledby="project-assets-media-title"
+      aria-label="Foldder studio"
+      style={{ ["--foldder-studio-accent" as string]: "#965b92" }}
     >
-      <header className="flex shrink-0 items-center justify-between gap-3 border-b border-white/10 bg-zinc-950/90 px-4 py-3 backdrop-blur-md sm:px-6">
-        <div className="flex min-w-0 items-center gap-3">
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-amber-500/25 bg-amber-500/10">
-            <FolderOpen className="h-5 w-5 text-amber-300" strokeWidth={1.75} aria-hidden />
-          </span>
-          <div className="min-w-0">
-            <h1 id="project-assets-media-title" className="text-base font-black uppercase tracking-wide text-zinc-100">
-              Foldder
-            </h1>
-            <p className="text-[11px] text-zinc-500">
-              Vista ampliada del contenedor vivo del proyecto
-            </p>
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="flex shrink-0 items-center gap-2 rounded-xl border border-white/15 bg-white/[0.06] px-3 py-2 text-[12px] font-bold uppercase tracking-wide text-zinc-200 transition hover:bg-white/12"
-        >
-          <X className="h-4 w-4" strokeWidth={2} aria-hidden />
-          Cerrar
-        </button>
-      </header>
+      <FoldderStudioHeader
+        nodeType="projectAssets"
+        nodeLabel="Foldder"
+        subtitle={headerSubtitle}
+        iconSrc="/logo_bl.svg"
+        iconBackground="#965b92"
+        onClose={onClose}
+      />
+      <FoldderLibraryStudioTabBar activeTab={activeTab} onTabChange={setActiveTab} tabs={tabsWithCounts} />
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-6">
-        <div className="mx-auto flex max-w-[1600px] flex-col gap-8">
-          <BrandReadonlyStrip assetsMetadata={assetsMetadata} />
-          <MediaSection
-            title="Imported Media"
-            subtitle="Archivos que entran desde fuera: uploads, URLs, logos, PDFs, documentos de marca y referencias."
-            items={viewImported}
-            emptyHint="Aún no hay elementos importados visibles en este proyecto."
-          />
-          <MediaSection
-            title="Generated Media"
-            subtitle="Resultados generados por nodos: imágenes IA, vídeos IA, renders, variaciones, Background Remover, VFX, etc."
-            items={viewGenerated}
-            emptyHint="Aún no hay elementos generados en este proyecto."
-          />
-          {generatedTexts.length > 0 && (
-            <GeneratedTextsSection items={generatedTexts} onOpen={onOpenGuionistaTextAsset} />
-          )}
-          <ProjectFilesSection
-            title="Media Files"
-            subtitle="Trabajos editables creados dentro de apps: .design, .photoroom, .painter, .presenter, etc."
-            emptyHint="Aún no hay archivos editables guardados en Foldder."
-            items={mediaFiles}
-          />
-          <ProjectFilesSection
-            title="Exports"
-            subtitle="Archivos finales exportados desde Foldder: PNG, JPG, PDF, vídeo o entregables listos para usar."
-            emptyHint="Aún no hay exports persistidos en Foldder."
-            items={exports}
-          />
-          <p className="mt-10 pb-4 text-center text-[11px] text-zinc-600">
-            Esta es la misma entidad que el nodo <span className="font-semibold text-zinc-500">Foldder</span> de Vista Pro.
-            La fuente de verdad sigue en <code className="rounded bg-black/30 px-1">metadata.assets</code>, el grafo y
-            <code className="rounded bg-black/30 px-1">metadata.projectFiles</code>.
-          </p>
+      <main
+        className="custom-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-3 py-4 sm:px-5"
+        data-foldder-library-studio-main
+      >
+        <div className="mx-auto max-w-[1400px]">
+          {activeTab === "imported" ? (
+            <MediaBucketPanel
+              emptyHint="Aún no hay importados en este proyecto."
+              active={libraryView.imported.active}
+              orphaned={libraryView.imported.orphaned}
+              refreshedUrls={refreshedUrls}
+              liveNodeIds={liveNodeIds}
+              onRenameAsset={onRenameAsset}
+              onFocusNode={onFocusNode}
+              onExportAsset={onExportAsset}
+              onOpenPreview={handleOpenPreview}
+              previewList={tabPreviewLists.imported}
+            />
+          ) : null}
+
+          {activeTab === "generated" ? (
+            <>
+              {generatedMediaCount > 0 && libraryView.generated.texts.length > 0 ? (
+                <FoldderLibrarySectionKicker label="Media" count={generatedMediaCount} />
+              ) : null}
+              <MediaBucketPanel
+                emptyHint="Aún no hay media generada."
+                active={libraryView.generated.active}
+                orphaned={libraryView.generated.orphaned}
+                refreshedUrls={refreshedUrls}
+                liveNodeIds={liveNodeIds}
+                onRenameAsset={onRenameAsset}
+                onFocusNode={onFocusNode}
+                onExportAsset={onExportAsset}
+                onOpenPreview={handleOpenPreview}
+                previewList={tabPreviewLists.generated}
+              />
+              {libraryView.generated.texts.length > 0 ? (
+                <>
+                  <FoldderLibrarySectionKicker label="Textos" count={libraryView.generated.texts.length} />
+                  <FoldderLibraryTextList>
+                    {libraryView.generated.texts.map((item) => (
+                      <FoldderLibraryTextListItem key={item.id}>
+                        <GuionistaTextRow item={item} onOpen={onOpenGuionistaTextAsset} />
+                      </FoldderLibraryTextListItem>
+                    ))}
+                  </FoldderLibraryTextList>
+                </>
+              ) : null}
+            </>
+          ) : null}
+
+          {activeTab === "exported" ? (
+            <FoldderLibraryStudioSection>
+              {libraryView.exported.length === 0 ? (
+                <FoldderLibraryEmptyState hint="Usa Exportar en Importados o Generados para descargar y guardar entregas aquí.">
+                  No hay exportados todavía
+                </FoldderLibraryEmptyState>
+              ) : (
+                <FoldderLibraryAssetGrid>
+                  {libraryView.exported.map((asset) => (
+                    <FoldderLibraryAssetCell key={asset.id}>
+                      <LibraryAssetTile
+                        asset={asset}
+                        refreshedUrls={refreshedUrls}
+                        delivery
+                        liveNodeIds={liveNodeIds}
+                        onRenameAsset={onRenameAsset}
+                        onFocusNode={onFocusNode}
+                        onExportAsset={onExportAsset}
+                        onOpenPreview={handleOpenPreview}
+                        previewList={tabPreviewLists.exported}
+                        showExportAction={false}
+                      />
+                    </FoldderLibraryAssetCell>
+                  ))}
+                </FoldderLibraryAssetGrid>
+              )}
+            </FoldderLibraryStudioSection>
+          ) : null}
         </div>
-      </div>
+      </main>
+
+      {preview ? (
+        <FoldderLibraryMediaLightbox
+          preview={preview}
+          refreshedUrls={refreshedUrls}
+          liveNodeIds={liveNodeIds}
+          onClose={() => setPreview(null)}
+          onNavigate={handleNavigatePreview}
+          onFocusNode={onFocusNode}
+          onExportAsset={onExportAsset}
+          showExportAction={activeTab !== "exported"}
+        />
+      ) : null}
     </div>
   );
 

@@ -1,35 +1,79 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { stableKnowledgeFileUrlFromKey, tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
+import {
+  createClientCanvasThumbnailUrl,
+  FOLDDER_CANVAS_THUMB_MAX_SIDE,
+  needsClientCanvasThumbnail,
+  resolveCanvasThumbnailMediaUrl,
+  resolveFullQualityMediaUrl,
+} from "@/lib/canvas-media-thumbnail";
 
-function resolveStableMediaUrl(src?: string | null, s3Key?: string | null): string | undefined {
-  const key = (s3Key?.trim() || tryExtractKnowledgeFilesKeyFromUrl(src || "") || "").trim();
-  if (key) return stableKnowledgeFileUrlFromKey(key) ?? undefined;
-  const trimmed = src?.trim();
-  return trimmed || undefined;
-}
+export type AuthedMediaPreviewOptions = {
+  /** Preview ligero en nodos del lienzo; studio/export/descarga usan `fullUrl`. */
+  canvasThumbnail?: boolean;
+  maxSide?: number;
+};
 
 /** Preview de medios autenticados (`/api/spaces/s3-file`) con fallback blob si el decode falla. */
-export function useAuthedMediaPreviewUrl(src?: string | null, s3Key?: string | null) {
-  const stableUrl = useMemo(() => resolveStableMediaUrl(src, s3Key), [s3Key, src]);
-  const [displayUrl, setDisplayUrl] = useState<string | undefined>(stableUrl);
+export function useAuthedMediaPreviewUrl(
+  src?: string | null,
+  s3Key?: string | null,
+  options?: AuthedMediaPreviewOptions,
+) {
+  const canvasThumbnail = Boolean(options?.canvasThumbnail);
+  const maxSide = options?.maxSide ?? FOLDDER_CANVAS_THUMB_MAX_SIDE;
+
+  const fullUrl = useMemo(() => resolveFullQualityMediaUrl(src, s3Key), [s3Key, src]);
+  const serverCanvasUrl = useMemo(
+    () => (canvasThumbnail ? resolveCanvasThumbnailMediaUrl(src, s3Key, maxSide) : fullUrl),
+    [canvasThumbnail, fullUrl, maxSide, s3Key, src],
+  );
+
+  const [displayUrl, setDisplayUrl] = useState<string | undefined>(serverCanvasUrl);
   const blobUrlRef = useRef<string | null>(null);
+  const clientThumbUrlRef = useRef<string | null>(null);
   const blobAttemptRef = useRef(false);
 
   useEffect(() => {
     blobAttemptRef.current = false;
-    setDisplayUrl(stableUrl);
+    setDisplayUrl(serverCanvasUrl);
+
     if (blobUrlRef.current) {
       URL.revokeObjectURL(blobUrlRef.current);
       blobUrlRef.current = null;
     }
-    if (!stableUrl || stableUrl.startsWith("data:") || stableUrl.startsWith("blob:")) return;
-    if (!stableUrl.includes("/api/spaces/s3-file")) return;
+    if (clientThumbUrlRef.current) {
+      URL.revokeObjectURL(clientThumbUrlRef.current);
+      clientThumbUrlRef.current = null;
+    }
+
+    if (!fullUrl) return;
+
+    if (canvasThumbnail) {
+      const clientSrc = fullUrl;
+      if (needsClientCanvasThumbnail(clientSrc, maxSide)) {
+        let cancelled = false;
+        void (async () => {
+          const thumbUrl = await createClientCanvasThumbnailUrl(clientSrc, maxSide);
+          if (cancelled || !thumbUrl || thumbUrl === clientSrc) return;
+          if (clientThumbUrlRef.current) URL.revokeObjectURL(clientThumbUrlRef.current);
+          clientThumbUrlRef.current = thumbUrl.startsWith("blob:") ? thumbUrl : null;
+          setDisplayUrl(thumbUrl);
+        })();
+        return () => {
+          cancelled = true;
+        };
+      }
+      return;
+    }
+
+    if (fullUrl.startsWith("data:") || fullUrl.startsWith("blob:")) return;
+    if (!fullUrl.includes("/api/spaces/s3-file")) return;
     void (async () => {
       blobAttemptRef.current = true;
       try {
-        const response = await fetch(stableUrl, { credentials: "include" });
+        const response = await fetch(fullUrl, { credentials: "include" });
         if (!response.ok) return;
         const blob = await response.blob();
         if (!blob.size || !blob.type.startsWith("image/")) return;
@@ -41,7 +85,7 @@ export function useAuthedMediaPreviewUrl(src?: string | null, s3Key?: string | n
         // Keep stable URL if blob fallback fails.
       }
     })();
-  }, [stableUrl]);
+  }, [canvasThumbnail, fullUrl, maxSide, serverCanvasUrl]);
 
   useEffect(
     () => () => {
@@ -49,16 +93,20 @@ export function useAuthedMediaPreviewUrl(src?: string | null, s3Key?: string | n
         URL.revokeObjectURL(blobUrlRef.current);
         blobUrlRef.current = null;
       }
+      if (clientThumbUrlRef.current) {
+        URL.revokeObjectURL(clientThumbUrlRef.current);
+        clientThumbUrlRef.current = null;
+      }
     },
     [],
   );
 
   const retryWithBlob = useCallback(async () => {
-    if (!stableUrl || blobAttemptRef.current) return;
-    if (stableUrl.startsWith("data:") || stableUrl.startsWith("blob:")) return;
+    if (!fullUrl || blobAttemptRef.current || canvasThumbnail) return;
+    if (fullUrl.startsWith("data:") || fullUrl.startsWith("blob:")) return;
     blobAttemptRef.current = true;
     try {
-      const response = await fetch(stableUrl, { credentials: "include" });
+      const response = await fetch(fullUrl, { credentials: "include" });
       if (!response.ok) return;
       const blob = await response.blob();
       if (!blob.size) return;
@@ -69,7 +117,17 @@ export function useAuthedMediaPreviewUrl(src?: string | null, s3Key?: string | n
     } catch {
       // Keep streaming URL if blob fallback fails.
     }
-  }, [stableUrl]);
+  }, [canvasThumbnail, fullUrl]);
 
-  return { displayUrl: displayUrl ?? stableUrl, stableUrl, retryWithBlob };
+  return {
+    displayUrl: displayUrl ?? serverCanvasUrl ?? fullUrl,
+    fullUrl,
+    stableUrl: fullUrl,
+    retryWithBlob,
+  };
+}
+
+/** Atajo: preview de lienzo + URL full para studio/export. */
+export function useCanvasNodeMediaPreviewUrl(src?: string | null, s3Key?: string | null) {
+  return useAuthedMediaPreviewUrl(src, s3Key, { canvasThumbnail: true });
 }

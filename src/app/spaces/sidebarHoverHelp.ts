@@ -106,7 +106,7 @@ export const SIDEBAR_HOVER_HELP: Record<string, { title: string; line: string }>
   },
   presenter: {
     title: 'Presenter',
-    line: 'Conecta la salida Document del Designer: cada página es un slide (vista previa; animaciones después)',
+    line: 'Conecta Document del Designer: cada página es un slide con animaciones, transiciones y vídeos en imágenes',
   },
   video_editor: {
     title: 'Video Editor',

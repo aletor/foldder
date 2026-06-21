@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   AlertCircle,
   CheckCircle2,
@@ -23,6 +23,11 @@ import {
   type WalletStatusResponse,
 } from "@/lib/wallet-client-events";
 import { useLanguage } from "@/components/LanguageProvider";
+import {
+  getPaymentWarningsEnabledSnapshot,
+  subscribePaymentWarningsPreference,
+  writePaymentWarningsEnabled,
+} from "@/lib/wallet-payment-warnings-preference";
 import {
   describeWalletLedgerEntry,
   groupWalletActivityRows,
@@ -178,6 +183,11 @@ export function WalletBalanceButton({
   user = null,
 }: WalletBalanceButtonProps) {
   const { language } = useLanguage();
+  const paymentWarningsEnabled = useSyncExternalStore(
+    subscribePaymentWarningsPreference,
+    getPaymentWarningsEnabledSnapshot,
+    () => true,
+  );
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<BillingView>("overview");
   const [state, setState] = useState<LoadState>({ status: "idle", data: null, error: null });
@@ -385,6 +395,45 @@ export function WalletBalanceButton({
             <p className="text-[10px] font-black uppercase tracking-[0.08em]">Vídeo</p>
           </div>
           <p className="mt-0.5 text-[9px] font-medium leading-snug text-amber-50/55">Confirmación</p>
+        </div>
+      </div>
+
+      <div className="flex h-10 items-stretch divide-x divide-white/10 bg-white/[0.06]">
+        <div className="flex min-w-0 flex-1 flex-col justify-center px-2.5">
+          <p className="text-[9px] font-black uppercase tracking-[0.12em] text-white/55">
+            {language === "es" ? "Aviso de pago" : "Payment notice"}
+          </p>
+          <p className="text-[9px] font-medium leading-snug text-white/38">
+            {language === "es"
+              ? "Modal antes de operaciones de coste"
+              : "Modal before paid operations"}
+          </p>
+        </div>
+        <div className="flex shrink-0 items-stretch">
+          <button
+            type="button"
+            aria-pressed={paymentWarningsEnabled}
+            onClick={() => writePaymentWarningsEnabled(true)}
+            className={`min-w-[3rem] px-2.5 text-[10px] font-black uppercase tracking-[0.1em] transition ${
+              paymentWarningsEnabled
+                ? "bg-white text-slate-950"
+                : "bg-transparent text-white/45 hover:bg-white/[0.08] hover:text-white"
+            }`}
+          >
+            {language === "es" ? "Sí" : "Yes"}
+          </button>
+          <button
+            type="button"
+            aria-pressed={!paymentWarningsEnabled}
+            onClick={() => writePaymentWarningsEnabled(false)}
+            className={`min-w-[3rem] border-l border-white/10 px-2.5 text-[10px] font-black uppercase tracking-[0.1em] transition ${
+              !paymentWarningsEnabled
+                ? "bg-white text-slate-950"
+                : "bg-transparent text-white/45 hover:bg-white/[0.08] hover:text-white"
+            }`}
+          >
+            {language === "es" ? "No" : "No"}
+          </button>
         </div>
       </div>
 

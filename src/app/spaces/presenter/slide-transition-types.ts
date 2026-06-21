@@ -24,12 +24,12 @@ export const SLIDE_TRANSITION_OPTIONS: {
   id: SlideTransitionId;
   label: string;
 }[] = [
-  { id: "none", label: "None" },
-  { id: "fade", label: "Fade" },
-  { id: "slideLeft", label: "Slide left" },
-  { id: "slideRight", label: "Slide right" },
-  { id: "slideUp", label: "Slide up" },
-  { id: "slideDown", label: "Slide down" },
+  { id: "none", label: "Ninguna" },
+  { id: "fade", label: "Fundido" },
+  { id: "slideLeft", label: "Deslizar izq." },
+  { id: "slideRight", label: "Deslizar der." },
+  { id: "slideUp", label: "Deslizar arriba" },
+  { id: "slideDown", label: "Deslizar abajo" },
 ];
 
 export const DEFAULT_SLIDE_TRANSITION: SlideTransitionId = "fade";

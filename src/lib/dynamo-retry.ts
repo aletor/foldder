@@ -6,10 +6,20 @@ const RETRYABLE_ERROR_NAMES = new Set([
   "ThrottlingException",
 ]);
 
+export function isDynamoTransactionConflict(error: unknown): boolean {
+  if ((error as { name?: string })?.name !== "TransactionCanceledException") return false;
+  const reasons = (error as { CancellationReasons?: Array<{ Code?: string }> }).CancellationReasons;
+  return reasons?.some((reason) => reason.Code === "TransactionConflict") ?? false;
+}
+
 function isRetryable(error: unknown): boolean {
   const name = (error as { name?: string })?.name;
   if (!name) return false;
   return RETRYABLE_ERROR_NAMES.has(name);
+}
+
+export function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export async function withDynamoRetry<T>(

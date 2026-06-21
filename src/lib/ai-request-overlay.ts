@@ -1,15 +1,21 @@
 import { createGuardedFetch } from "@/lib/external-api-guard";
 import { getAiRequestLabelForPathname } from "@/lib/ai-api-labels";
 import {
+  aiActiveJobEndFetch,
+  aiActiveJobStartFetch,
+  isNodeManagedAiPath,
+} from "@/lib/ai-active-jobs";
+import {
   notifyWalletFromApiResponse,
   runWalletFetchPreflight,
+  shouldSkipWalletPreflightForFetch,
 } from "@/lib/wallet-fetch-preflight";
 
 export { getAiRequestLabelForPathname } from "@/lib/ai-api-labels";
 
 type Listener = () => void;
 const listeners = new Set<Listener>();
-/** Pila: peticiones concurrentes (la visible es la última iniciada). */
+/** Pila de ids de trabajo (o marcadores skip) por petición concurrente. */
 const stack: string[] = [];
 
 function notify() {
@@ -21,24 +27,46 @@ export function subscribeAiRequestOverlay(listener: Listener) {
   return () => listeners.delete(listener);
 }
 
+/** @deprecated Usar getActiveAiJobsSnapshot */
 export function getAiRequestOverlaySnapshot(): string | null {
-  if (stack.length === 0) return null;
-  return stack[stack.length - 1] ?? null;
+  return null;
 }
 
-function beginDisplay(apiLabel: string) {
-  stack.push(apiLabel);
+function shouldSkipFetchHudTracking(
+  pathname: string,
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): boolean {
+  return isNodeManagedAiPath(pathname) || shouldSkipWalletPreflightForFetch(input, init);
+}
+
+function beginDisplay(
+  pathname: string,
+  apiLabel: string,
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): string {
+  if (shouldSkipFetchHudTracking(pathname, input, init)) {
+    const skipId = "skip:node-managed";
+    stack.push(skipId);
+    return skipId;
+  }
+  const id = aiActiveJobStartFetch(apiLabel);
+  stack.push(id);
   notify();
+  return id;
 }
 
 function endDisplay() {
-  stack.pop();
+  const id = stack.pop();
+  if (!id) return;
+  aiActiveJobEndFetch(id);
   notify();
 }
 
 /**
  * Intercepta fetch solo en el cliente hacia rutas /api/* de IA.
- * Aplica guardián (5 concurrentes, 4 s entre repeticiones de la misma petición, bloqueo hasta «Verificar»).
+ * Aplica guardián (8 concurrentes, 4 s entre repeticiones idénticas, bloqueo tras ráfagas).
  * Devuelve cleanup para desinstalar (Strict Mode / desmontaje).
  */
 export function installAiFetchOverlay(): () => void {
@@ -82,7 +110,7 @@ export function installAiFetchOverlay(): () => void {
       });
       if (preflightResponse) return preflightResponse;
     }
-    if (label) beginDisplay(label);
+    if (label) beginDisplay(pathname, label, input, init);
     try {
       const response = await orig(input, init);
       if (label) void notifyWalletFromApiResponse(response.clone());

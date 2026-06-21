@@ -41,4 +41,109 @@ describe("collectProjectMedia", () => {
     expect(generated).toHaveLength(1);
     expect(generated[0]?.url).toBe(url1);
   });
+
+  it("recoge media solo en s3Key (sin value URL)", () => {
+    const key = "knowledge-files/proj/nano-out.png";
+    const nodes: Node[] = [
+      {
+        id: "nb1",
+        type: "nanoBanana",
+        position: { x: 0, y: 0 },
+        data: { s3Key: key, type: "image", generatedByAi: true },
+      },
+    ];
+    const { generated } = collectProjectMedia(nodes);
+    expect(generated).toHaveLength(1);
+    expect(generated[0]?.nodeId).toBe("nb1");
+    expect(generated[0]?.url).toContain(encodeURIComponent(key));
+  });
+
+  it("recoge frames de Cine almacenados como imageS3Key", () => {
+    const key = "knowledge-files/proj/cine-frame.png";
+    const nodes: Node[] = [
+      {
+        id: "cine1",
+        type: "cine",
+        position: { x: 0, y: 0 },
+        data: {
+          characters: [],
+          backgrounds: [],
+          scenes: [
+            {
+              id: "s1",
+              frames: {
+                single: { id: "f1", imageS3Key: key, status: "generated" },
+              },
+            },
+          ],
+        },
+      },
+    ];
+    const { generated } = collectProjectMedia(nodes);
+    expect(generated.length).toBeGreaterThanOrEqual(1);
+    expect(generated.some((item) => item.nodeId === "cine1")).toBe(true);
+  });
+
+  it("recoge export de PhotoRoom en value o studioObjects", () => {
+    const key = "knowledge-files/proj/photoroom.png";
+    const stable = `/api/spaces/s3-file?key=${encodeURIComponent(key)}`;
+    const nodes: Node[] = [
+      {
+        id: "pr1",
+        type: "photoRoom",
+        position: { x: 0, y: 0 },
+        data: {
+          value: stable,
+          type: "image",
+          studioObjects: [{ type: "image", src: stable }],
+        },
+      },
+    ];
+    const { generated } = collectProjectMedia(nodes);
+    expect(generated).toHaveLength(1);
+    expect(generated[0]?.sourceLabel).toBe("PhotoRoom");
+  });
+
+  it("Inspiration: solo la referencia seleccionada, no todo el grid de búsqueda", () => {
+    const selectedUrl = "https://images.pexels.com/photos/selected.jpg";
+    const nodes: Node[] = [
+      {
+        id: "insp1",
+        type: "inspiration",
+        position: { x: 0, y: 0 },
+        data: {
+          status: "output",
+          value: selectedUrl,
+          selected: { id: "r1", imageUrl: selectedUrl, thumbUrl: "https://images.pexels.com/photos/selected-thumb.jpg" },
+          results: [
+            { id: "r1", imageUrl: selectedUrl, thumbUrl: "https://images.pexels.com/photos/selected-thumb.jpg" },
+            { id: "r2", imageUrl: "https://images.pexels.com/photos/other-a.jpg", thumbUrl: "https://images.pexels.com/photos/other-a-thumb.jpg" },
+            { id: "r3", imageUrl: "https://images.pexels.com/photos/other-b.jpg", thumbUrl: "https://images.pexels.com/photos/other-b-thumb.jpg" },
+          ],
+        },
+      },
+    ];
+    const { imported } = collectProjectMedia(nodes);
+    expect(imported).toHaveLength(1);
+    expect(imported[0]?.url).toBe(selectedUrl);
+    expect(imported[0]?.sourceLabel).toBe("Inspiration");
+  });
+
+  it("Inspiration sin selección no aporta importados", () => {
+    const nodes: Node[] = [
+      {
+        id: "insp1",
+        type: "inspiration",
+        position: { x: 0, y: 0 },
+        data: {
+          status: "results",
+          results: [
+            { id: "r1", imageUrl: "https://images.pexels.com/photos/a.jpg", thumbUrl: "https://images.pexels.com/photos/a-thumb.jpg" },
+          ],
+        },
+      },
+    ];
+    const { imported } = collectProjectMedia(nodes);
+    expect(imported).toHaveLength(0);
+  });
 });

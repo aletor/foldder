@@ -41,7 +41,8 @@ export function ExternalApiBlockedModal() {
           confirmar que eres tú quien continúa. El asistente automático no puede desbloquear esto.
         </p>
         <p className="mb-6 text-xs text-slate-500">
-          Máximo 5 llamadas concurrentes; la misma petición no puede repetirse antes de 4 segundos.
+          Máximo 8 llamadas concurrentes; la misma petición idéntica no puede repetirse antes de 4 segundos.
+          Varias APIs o nodos distintos pueden ejecutarse en paralelo.
         </p>
         <button
           type="button"

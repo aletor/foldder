@@ -134,13 +134,17 @@ function normalizeMarquee(
   return { x: minX, y: minY, width: Math.abs(x1 - x0), height: Math.abs(y1 - y0) };
 }
 
+/** Acento Presenter studio — alineado con `--foldder-studio-accent`. */
+const PRESENTER_SELECTION_STROKE = "#f5b91b";
+const PRESENTER_SELECTION_FILL = "rgba(245, 185, 27, 0.12)";
+
 /** Marco solo en esquinas (misma apariencia para objeto suelto o grupo). */
 function SelectionCornerFrame({
   x,
   y,
   width: w,
   height: h,
-  pad = 3,
+  pad = 4,
 }: {
   x: number;
   y: number;
@@ -152,13 +156,24 @@ function SelectionCornerFrame({
   const py = y - pad;
   const pw = w + pad * 2;
   const ph = h + pad * 2;
-  const len = Math.min(14, Math.max(6, Math.min(pw, ph) * 0.14));
+  const len = Math.min(22, Math.max(10, Math.min(pw, ph) * 0.18));
   const L = len;
-  const stroke = "rgb(59 130 246)";
-  /** Grosor en pantalla (nonScalingStroke); más visible que el trazo fino anterior. */
-  const sw = 3;
+  const stroke = PRESENTER_SELECTION_STROKE;
+  /** Grosor en pantalla (nonScalingStroke). */
+  const sw = 3.5;
   return (
     <g pointerEvents="none" className="presenter-selection-corners">
+      <rect
+        x={px}
+        y={py}
+        width={pw}
+        height={ph}
+        fill={PRESENTER_SELECTION_FILL}
+        stroke={stroke}
+        strokeWidth={1.5}
+        vectorEffect="nonScalingStroke"
+        opacity={1}
+      />
       <path
         d={`M ${px + L} ${py} L ${px} ${py} L ${px} ${py + L}`}
         fill="none"
@@ -254,6 +269,7 @@ function PresenterVideoOverlaySlice({
         pageId={binding.pageId}
         canvasObjects={canvasObjects}
         videoTransformHandlesObjectId={binding.videoTransformHandlesObjectId}
+        highlightPickKeys={binding.highlightPickKeys}
         targets={[target]}
         placements={binding.placements}
         uiMode={binding.uiMode}
@@ -637,8 +653,8 @@ export function DesignerPageCanvasView({
           y={normalizedMarqueeRect.y}
           width={normalizedMarqueeRect.width}
           height={normalizedMarqueeRect.height}
-          fill="rgba(59, 130, 246, 0.06)"
-          stroke="rgba(59, 130, 246, 0.55)"
+          fill="rgba(245, 185, 27, 0.08)"
+          stroke="rgba(245, 185, 27, 0.65)"
           strokeWidth={2.75}
           strokeDasharray="3 2"
           vectorEffect="nonScalingStroke"

@@ -19,6 +19,13 @@ import {
 } from "./presenter-video-frame-layout";
 import type { FreehandObject } from "../FreehandStudio";
 import { renderPresenterVideoClipShapeWorld } from "../FreehandStudio";
+import {
+  PRESENTER_MODAL_BTN_PRIMARY,
+  PRESENTER_MODAL_BTN_SECONDARY,
+  presenterModalBackdropClass,
+  presenterModalOverlayClass,
+  presenterModalPanelProps,
+} from "./presenter-modal-chrome";
 
 type DragKind = "move" | "resize-se" | "resize-sw" | "resize-ne" | "resize-nw";
 
@@ -427,6 +434,8 @@ type Props = {
   onRemove: (id: string) => void;
   /** Clic sobre el vídeo (sin arrastrar) delega la misma selección que el objeto imagen bajo el overlay. */
   onPickPresenterTarget?: (pickKey: string, mods: PickMods) => void;
+  /** Solo el destino seleccionado muestra la barra «Colocar / Generar». */
+  highlightPickKeys?: string[];
 };
 
 /** Por debajo de esto se considera «clic» para seleccionar animación; por encima, arrastre del vídeo. */
@@ -445,6 +454,7 @@ export function PresenterImageVideoOverlays({
   onPatch,
   onRemove,
   onPickPresenterTarget,
+  highlightPickKeys,
 }: Props) {
   const fileRef = useRef<HTMLInputElement | null>(null);
   const pendingTargetId = useRef<string | null>(null);
@@ -457,6 +467,7 @@ export function PresenterImageVideoOverlays({
   const [geminiModal, setGeminiModal] = useState<{ imageUrl: string } | null>(null);
   const [intentText, setIntentText] = useState("");
   const [intentLoading, setIntentLoading] = useState(false);
+  const [intentError, setIntentError] = useState<string | null>(null);
 
   const placementFor = useCallback(
     (imageObjectId: string) => placements.find((p) => p.pageId === pageId && p.imageObjectId === imageObjectId),
@@ -523,6 +534,7 @@ export function PresenterImageVideoOverlays({
   const openGeminiIntentModal = useCallback((imageUrl: string) => {
     if (!imageUrl.trim()) return;
     setIntentText("");
+    setIntentError(null);
     setGeminiModal({ imageUrl: imageUrl.trim() });
   }, []);
 
@@ -530,9 +542,10 @@ export function PresenterImageVideoOverlays({
     if (!geminiModal?.imageUrl) return;
     const raw = intentText.trim();
     if (!raw) {
-      window.alert("Describe qué quieres que ocurra en el vídeo.");
+      setIntentError("Describe qué quieres que ocurra en el vídeo.");
       return;
     }
+    setIntentError(null);
     setIntentLoading(true);
     let videoPrompt = raw;
     try {
@@ -548,16 +561,18 @@ export function PresenterImageVideoOverlays({
       }
     } catch {
       /* usar texto del usuario */
-    } finally {
+    }
+    if (typeof window === "undefined") {
       setIntentLoading(false);
+      setIntentError("No se pudo abrir el lienzo desde este contexto.");
+      return;
     }
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(
-        new CustomEvent(FOLDDER_OPEN_GEMINI_VIDEO_WITH_IMAGE_EVENT, {
-          detail: { imageUrl: geminiModal.imageUrl, videoPrompt } satisfies FoldderOpenGeminiVideoDetail,
-        }),
-      );
-    }
+    window.dispatchEvent(
+      new CustomEvent(FOLDDER_OPEN_GEMINI_VIDEO_WITH_IMAGE_EVENT, {
+        detail: { imageUrl: geminiModal.imageUrl, videoPrompt } satisfies FoldderOpenGeminiVideoDetail,
+      }),
+    );
+    setIntentLoading(false);
     setGeminiModal(null);
     setIntentText("");
   }, [geminiModal, intentText]);
@@ -768,7 +783,7 @@ export function PresenterImageVideoOverlays({
     fileInputMounted && typeof document !== "undefined" && geminiModal
       ? createPortal(
           <div
-            className="fixed inset-0 z-[100030] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm"
+            className={presenterModalOverlayClass}
             role="dialog"
             aria-modal="true"
             aria-labelledby="presenter-gemini-intent-title"
@@ -776,33 +791,63 @@ export function PresenterImageVideoOverlays({
               if (e.target === e.currentTarget && !intentLoading) setGeminiModal(null);
             }}
           >
-            <div
-              className="w-full max-w-md rounded-xl border border-white/15 bg-[#141820] p-4 shadow-2xl shadow-black/50"
-              onMouseDown={(e) => e.stopPropagation()}
-            >
-              <h2 id="presenter-gemini-intent-title" className="mb-1 text-sm font-semibold text-white">
-                Generar video con esta imagen
-              </h2>
-              <p className="mb-3 text-[11px] leading-snug text-zinc-400">
-                ¿Qué quieres que ocurra en el vídeo? (Se generará un prompt y se abrirá el Video Generator en modo
-                studio con la imagen y el prompt conectados.)
-              </p>
-              <textarea
-                value={intentText}
-                onChange={(e) => setIntentText(e.target.value)}
-                disabled={intentLoading}
-                rows={4}
-                placeholder="Ej.: cámara lenta acercándose, gente moviéndose al fondo, luz dorada de atardecer…"
-                className="mb-3 w-full resize-y rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-[12px] text-zinc-100 placeholder:text-zinc-600 focus:border-sky-500/50 focus:outline-none disabled:opacity-50"
-              />
-              <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              className={presenterModalBackdropClass}
+              aria-label="Cerrar"
+              disabled={intentLoading}
+              onClick={() => {
+                if (!intentLoading) setGeminiModal(null);
+              }}
+            />
+            <div {...presenterModalPanelProps()} onMouseDown={(e) => e.stopPropagation()}>
+              <div className="flex h-10 shrink-0 items-center justify-between border-b border-white/[0.08] bg-white/[0.04] px-3">
+                <h2
+                  id="presenter-gemini-intent-title"
+                  className="text-[10px] font-black uppercase tracking-[0.12em] text-white/90"
+                >
+                  Generar video
+                </h2>
+                <button
+                  type="button"
+                  disabled={intentLoading}
+                  onClick={() => setGeminiModal(null)}
+                  className="flex h-8 w-8 items-center justify-center text-zinc-400 transition hover:bg-white/[0.06] hover:text-white disabled:opacity-40"
+                  aria-label="Cerrar"
+                >
+                  ×
+                </button>
+              </div>
+              <div className="px-3 py-3">
+                <p className="mb-3 text-[11px] leading-snug text-zinc-400">
+                  ¿Qué quieres que ocurra en el vídeo? Se crearán en el lienzo un prompt, la imagen y el Video
+                  Generator conectados y se abrirá su studio.
+                </p>
+                <textarea
+                  value={intentText}
+                  onChange={(e) => {
+                    setIntentText(e.target.value);
+                    if (intentError) setIntentError(null);
+                  }}
+                  disabled={intentLoading}
+                  rows={4}
+                  placeholder="Ej.: cámara lenta acercándose, gente moviéndose al fondo, luz dorada de atardecer…"
+                  className="mb-2 w-full resize-y rounded-none border border-white/10 bg-black/30 px-3 py-2 text-[12px] text-zinc-100 placeholder:text-zinc-600 focus:border-[#f5b91b]/55 focus:outline-none disabled:opacity-50"
+                />
+                {intentError ? (
+                  <p className="mb-2 text-[10px] text-rose-300" role="alert">
+                    {intentError}
+                  </p>
+                ) : null}
+              </div>
+              <div className="flex shrink-0 items-stretch border-t border-white/[0.08] bg-[#0a0c0f]">
                 <button
                   type="button"
                   disabled={intentLoading}
                   onClick={() => {
                     if (!intentLoading) setGeminiModal(null);
                   }}
-                  className="rounded-lg border border-white/15 px-3 py-1.5 text-[11px] font-medium text-zinc-300 hover:bg-white/5 disabled:opacity-50"
+                  className={`${PRESENTER_MODAL_BTN_SECONDARY} flex-1 border-0 border-r border-white/10`}
                 >
                   Cancelar
                 </button>
@@ -810,7 +855,7 @@ export function PresenterImageVideoOverlays({
                   type="button"
                   disabled={intentLoading}
                   onClick={() => void submitGeminiIntent()}
-                  className="rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+                  className={`${PRESENTER_MODAL_BTN_PRIMARY} flex-[1.4]`}
                 >
                   {intentLoading ? "Generando prompt…" : "Crear en el lienzo"}
                 </button>
@@ -831,10 +876,12 @@ export function PresenterImageVideoOverlays({
         const o = canvasObjects.find((x) => x.id === t.id);
         const clipShape = o ? renderPresenterVideoClipShapeWorld(o) : null;
         const clipId = `pvclip-${pageId}-${t.id}`.replace(/[^a-zA-Z0-9_-]/g, "_");
-        /** Handles / arrastre / quitar: solo con el ancla seleccionado. Los botones «Colocar» / «Generar» van en todo destino sin vídeo (no exigen selección). */
+        /** Handles / arrastre / quitar: solo con el ancla seleccionado. */
         const canEditVideoTransform =
           showEditor &&
           (videoTransformHandlesObjectId === undefined || videoTransformHandlesObjectId === t.id);
+        const isTargetSelected = highlightPickKeys?.includes(t.pickKey) ?? false;
+        const showVideoActions = showEditor && !pl?.videoUrl && isTargetSelected;
 
         const inner = (
           <g transform={t.transform}>
@@ -851,14 +898,14 @@ export function PresenterImageVideoOverlays({
                 className="relative h-full w-full overflow-visible"
                 style={{ margin: 0, pointerEvents: "none" }}
               >
-                {!pl?.videoUrl && showEditor && (
+                {showVideoActions && (
                   <>
                     {/*
                       El lienzo SVG recibe la selección para animaciones: todo el foreignObject es pointer-events:none
-                      salvo la caja de botones (pointer-events:auto). Clic fuera de los botones atraviesa al objeto imagen.
+                      salvo la barra de acciones (pointer-events:auto). Clic fuera atraviesa al objeto imagen.
                     */}
-                    <div className="pointer-events-none absolute inset-0 flex items-end justify-center pb-1">
-                      <div className="pointer-events-auto flex max-w-[min(100%,15rem)] flex-col gap-1 rounded-lg border border-white/10 bg-black/35 p-1 shadow-lg backdrop-blur-md">
+                    <div className="pointer-events-none absolute inset-x-0 top-0 z-10">
+                      <div className="pointer-events-auto flex overflow-hidden border-b border-black/40 bg-[#12141a]/95 shadow-[0_6px_20px_rgba(0,0,0,0.45)] backdrop-blur-sm">
                         <button
                           type="button"
                           disabled={busy}
@@ -867,7 +914,7 @@ export function PresenterImageVideoOverlays({
                             startUpload(t.id);
                           }}
                           onPointerDownCapture={(e) => e.stopPropagation()}
-                          className="rounded-md border border-white/25 bg-white/15 px-2 py-1 text-[9px] font-semibold text-white transition-colors hover:bg-white/25 disabled:opacity-50"
+                          className="flex min-h-[28px] flex-1 items-center justify-center px-2 py-1 text-[10px] font-semibold leading-tight text-white transition-colors hover:bg-[#f5b91b]/25 disabled:opacity-50"
                         >
                           {busy ? "Procesando…" : "Colocar video"}
                         </button>
@@ -884,9 +931,9 @@ export function PresenterImageVideoOverlays({
                             if (t.imageUrl) openGeminiIntentModal(t.imageUrl);
                           }}
                           onPointerDownCapture={(e) => e.stopPropagation()}
-                          className="rounded-md border border-emerald-400/35 bg-emerald-500/20 px-2 py-1 text-[9px] font-semibold text-emerald-50 transition-colors hover:bg-emerald-500/30 disabled:cursor-not-allowed disabled:opacity-40"
+                          className="flex min-h-[28px] flex-1 items-center justify-center border-l border-white/12 px-2 py-1 text-[10px] font-semibold leading-tight text-[#f5b91b] transition-colors hover:bg-[#f5b91b]/15 disabled:cursor-not-allowed disabled:opacity-40"
                         >
-                          Generar video con esta imagen
+                          Generar video
                         </button>
                       </div>
                     </div>

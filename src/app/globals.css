@@ -252,28 +252,10 @@ input *, textarea *, [contenteditable="true"] * {
   }
 }
 
-/* Presenter lienzo: marco de selección (esquinas) + marquesina — grueso y parpadeo rápido */
-@keyframes presenter-selection-blink {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.22;
-  }
-}
-.presenter-selection-corners {
-  animation: presenter-selection-blink 0.22s ease-in-out infinite;
-}
+/* Presenter lienzo: marco de selección estable (sin parpadeo) */
+.presenter-selection-corners,
 .presenter-marquee-rect {
-  animation: presenter-selection-blink 0.22s ease-in-out infinite;
-}
-@media (prefers-reduced-motion: reduce) {
-  .presenter-selection-corners,
-  .presenter-marquee-rect {
-    animation: none !important;
-    opacity: 1 !important;
-  }
+  opacity: 1;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────

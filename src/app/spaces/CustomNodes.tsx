@@ -60,15 +60,11 @@ import {
   Cpu,
   Copy,
 } from 'lucide-react';
-import { StandardStudioShellHeader, type StandardStudioShellConfig } from './StandardStudioShell';
 import {
   FoldderStudioHeader,
   foldderStudioHeaderActionClassName,
 } from './FoldderStudioHeader';
-import {
-  FOLDDER_STANDARD_STUDIO_CLOSE_REQUEST_EVENT,
-  type FoldderStudioEventDetail,
-} from './desktop-studio-events';
+import { type FoldderStudioEventDetail } from './desktop-studio-events';
 import { getNodeGridFrameForType } from './canvas-grid-layout';
 import {
   getNodeCardBackgroundColor,
@@ -144,7 +140,7 @@ import { mergeLiveStudioNodeDataIntoNodes, tryLiveDesignerMultipagePdfExport } f
 import type { DesignerPageState } from './designer/DesignerNode';
 import { getPageDimensions } from './indesign/page-formats';
 import { downloadS3Object, forceDownloadUrl, sanitizeDownloadFilename } from '@/lib/browser-download';
-import { useAuthedMediaPreviewUrl } from './hooks/use-authed-media-preview-url';
+import { useAuthedMediaPreviewUrl, useCanvasNodeMediaPreviewUrl } from './hooks/use-authed-media-preview-url';
 import {
   buildVideoPromptAssembly,
   buildPhysicsFlagsFromNodeData,
@@ -1551,6 +1547,9 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
     (actualExportW! < documentSize!.w * 0.9 || actualExportH! < documentSize!.h * 0.9);
 
   const directImageSrc = exportMode === "image" ? (imageUrl || null) : exportMode === "designer-pdf" ? (designerPreviewUrl || null) : null;
+  const exportPreviewS3Key =
+    typeof sourceNode?.data?.s3Key === "string" ? sourceNode.data.s3Key : undefined;
+  const { displayUrl: exportCanvasPreviewUrl } = useCanvasNodeMediaPreviewUrl(directImageSrc, exportPreviewS3Key);
   const designerPreviewW = designerPageDims?.width ?? 1920;
   const designerPreviewH = designerPageDims?.height ?? 1080;
   const previewFrameW = exportMode === "designer-pdf"
@@ -1930,9 +1929,10 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
             >
               {directImageSrc ? (
                 <img
-                  src={directImageSrc}
+                  src={exportCanvasPreviewUrl ?? directImageSrc}
                   className="block h-full w-full object-contain"
                   alt="Export preview"
+                  decoding="async"
                 />
               ) : null}
             </div>
@@ -4232,24 +4232,34 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
   const { displayUrl: inputPreviewUrl, retryWithBlob: retryInputPreview } = useAuthedMediaPreviewUrl(
     connectedInputMedia?.mediaType === 'image' ? connectedInputMedia.url : null,
     connectedInputMedia?.s3Key,
+    { canvasThumbnail: true },
   );
 
   const hasImagePreview = Boolean(
     mediaConnected && connectedInputMedia?.mediaType === 'image' && inputPreviewUrl,
   );
   const isAnalyzing = status === 'running';
-  const isAnalysisBusy = isAnalyzing || iconRevealActive;
+  /** Solo bloquea botón / glow mientras la API está en curso; la animación de iconos es aparte. */
+  const isAnalysisBusy = isAnalyzing;
   const showIconReveal = Boolean(
     hasImagePreview
     && mediaConnected
     && !errorMessage
     && (iconRevealActive || (isAnalyzing && revealedIconCount > 0)),
   );
-  const showInputPreview = Boolean(hasImagePreview && !visibleDescription && !isAnalysisBusy && !errorMessage);
-  const showAnalyzedView = Boolean(visibleDescription && mediaConnected && !isAnalysisBusy && !errorMessage);
+  const showInputPreview = Boolean(hasImagePreview && !visibleDescription && !isAnalyzing && !iconRevealActive && !errorMessage);
+  const showAnalyzedView = Boolean(visibleDescription && mediaConnected && !isAnalyzing && !iconRevealActive && !errorMessage);
   const showMediaError = Boolean(errorMessage && hasImagePreview && mediaConnected);
-  const showAnalyzingShell = Boolean(isAnalysisBusy && hasImagePreview && mediaConnected && !showAnalyzedView && !errorMessage);
-  const showMediaBackground = Boolean(hasImagePreview && (showInputPreview || showAnalyzingShell || showAnalyzedView || showIconReveal || showMediaError));
+  const showAnalyzingShell = Boolean(
+    (isAnalyzing || iconRevealActive)
+    && hasImagePreview
+    && mediaConnected
+    && !showAnalyzedView
+    && !errorMessage,
+  );
+  const showMediaBackground = Boolean(
+    hasImagePreview && (showInputPreview || showAnalyzingShell || showAnalyzedView || showIconReveal || showMediaError),
+  );
   const hasSizedInputImage = Boolean(
     hasImagePreview && inputPreviewUrl && inputImageSize?.url === inputPreviewUrl,
   );
@@ -4266,6 +4276,12 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
       revealIntervalRef.current = null;
     }
   }, []);
+
+  const resetAnalysisProgress = useCallback(() => {
+    clearIconRevealTimer();
+    setRevealedIconCount(0);
+    setIconRevealActive(false);
+  }, [clearIconRevealTimer]);
 
   const startIconRevealProgress = useCallback(() => {
     clearIconRevealTimer();
@@ -4285,12 +4301,6 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
         });
       }, DESCRIBER_ICON_REVEAL_MS);
     }, DESCRIBER_ICON_REVEAL_MS);
-  }, [clearIconRevealTimer]);
-
-  const resetAnalysisProgress = useCallback(() => {
-    clearIconRevealTimer();
-    setRevealedIconCount(0);
-    setIconRevealActive(false);
   }, [clearIconRevealTimer]);
 
   useEffect(() => {
@@ -4476,7 +4486,7 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
       }
     });
     if (ok) {
-      setStatus('success');
+      setStatus('idle');
     } else {
       resetAnalysisProgress();
       clearDescriberOutput();
@@ -4552,6 +4562,7 @@ export const MediaDescriberNode = memo(function MediaDescriberNode({ id, data, s
             alt=""
             className="pointer-events-none absolute inset-0 h-full w-full object-cover"
             draggable={false}
+            decoding="async"
             onError={() => {
               void retryInputPreview();
             }}
@@ -4763,7 +4774,6 @@ interface GeminiVideoStudioProps {
   /** Imágenes resueltas desde los handles del grafo (firstFrame / lastFrame). */
   connectedFirstFrame: string | null;
   connectedLastFrame: string | null;
-  standardShell?: StandardStudioShellConfig;
 }
 
 function VideoStudioFrameSlot({
@@ -4818,7 +4828,6 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
   historyUrls,
   connectedFirstFrame,
   connectedLastFrame,
-  standardShell,
 }: GeminiVideoStudioProps) {
   useEffect(() => {
     document.body.classList.add('nb-studio-open');
@@ -4992,8 +5001,6 @@ const GeminiVideoStudio = memo(function GeminiVideoStudio({
       data-foldder-studio-canvas=""
       data-foldder-gemini-video-studio=""
     >
-      {standardShell ? <StandardStudioShellHeader shell={standardShell} /> : null}
-
       <FoldderStudioHeader
         nodeType="geminiVideo"
         nodeLabel="Video Generator"
@@ -5469,10 +5476,7 @@ export const GeminiVideoNode = memo(function GeminiVideoNode({ id, data, selecte
     }
   }, [id, nodeData]);
 
-  const [standardShell, setStandardShell] = useState<StandardStudioShellConfig | null>(null);
-
   const openVideoStudio = useCallback(() => {
-    setStandardShell(null);
     setShowStudio(true);
     markVideoStudioTouchedRef.current();
   }, []);
@@ -5502,14 +5506,12 @@ export const GeminiVideoNode = memo(function GeminiVideoNode({ id, data, selecte
     const onOpenStudio = (ev: Event) => {
       const detail = (ev as CustomEvent<FoldderStudioEventDetail>).detail;
       if (detail?.nodeId !== id) return;
-      setStandardShell(detail.standardShell ? { ...detail.standardShell, nodeId: id, nodeType: 'geminiVideo', fileId: detail.fileId, appId: detail.appId } : null);
       setShowStudio(true);
       markVideoStudioTouchedRef.current();
     };
     const onCloseStudio = (ev: Event) => {
       const detail = (ev as CustomEvent<FoldderStudioEventDetail>).detail;
       if (detail?.nodeId !== id) return;
-      setStandardShell(null);
       setShowStudio(false);
     };
     window.addEventListener('foldder:open-studio', onOpenStudio as EventListener);
@@ -5984,18 +5986,8 @@ export const GeminiVideoNode = memo(function GeminiVideoNode({ id, data, selecte
 
       {showStudio && (
         <GeminiVideoStudio
-          standardShell={standardShell ?? undefined}
           onClose={() => {
-            const shell = standardShell;
-            setStandardShell(null);
             setShowStudio(false);
-            if (shell && typeof window !== 'undefined') {
-              window.dispatchEvent(
-                new CustomEvent(FOLDDER_STANDARD_STUDIO_CLOSE_REQUEST_EVENT, {
-                  detail: { nodeId: id, nodeType: 'geminiVideo', fileId: shell.fileId, appId: shell.appId },
-                }),
-              );
-            }
           }}
           updateData={updateData}
           onGenerate={onRun}
@@ -6071,7 +6063,6 @@ export const PainterNode = memo(function PainterNode({ id, data, selected }: Nod
   const [brushSize,  setBrushSize]  = useState(nodeData.brushSize || 10);
   const [mode,       setMode]       = useState<'brush'|'eraser'>('brush');
   const [fullscreen, setFullscreen] = useState(false);
-  const [standardShell, setStandardShell] = useState<StandardStudioShellConfig | null>(null);
 
   useEffect(() => {
     if (fullscreen) document.body.classList.add('nb-studio-open');
@@ -6083,13 +6074,11 @@ export const PainterNode = memo(function PainterNode({ id, data, selected }: Nod
     const onOpenStudio = (ev: Event) => {
       const detail = (ev as CustomEvent<FoldderStudioEventDetail>).detail;
       if (detail?.nodeId !== id) return;
-      setStandardShell(detail.standardShell ? { ...detail.standardShell, nodeId: id, nodeType: 'painter', fileId: detail.fileId, appId: detail.appId } : null);
       setFullscreen(true);
     };
     const onCloseStudio = (ev: Event) => {
       const detail = (ev as CustomEvent<FoldderStudioEventDetail>).detail;
       if (detail?.nodeId !== id) return;
-      setStandardShell(null);
       setFullscreen(false);
     };
     window.addEventListener('foldder:open-studio', onOpenStudio as EventListener);
@@ -6141,22 +6130,12 @@ export const PainterNode = memo(function PainterNode({ id, data, selected }: Nod
   }, [currentFrameNode, hasDrawingPreview, id, setNodes, updateNodeInternals]);
 
   const openPainterStudio = useCallback(() => {
-    setStandardShell(null);
     setFullscreen(true);
   }, []);
 
   const closePainterStudio = useCallback(() => {
-    const shell = standardShell;
-    setStandardShell(null);
     setFullscreen(false);
-    if (shell && typeof window !== 'undefined') {
-      window.dispatchEvent(
-        new CustomEvent(FOLDDER_STANDARD_STUDIO_CLOSE_REQUEST_EVENT, {
-          detail: { nodeId: id, nodeType: 'painter', fileId: shell.fileId, appId: shell.appId },
-        }),
-      );
-    }
-  }, [id, standardShell]);
+  }, []);
 
   useEffect(() => {
     if (!fullscreen) return;
@@ -6470,9 +6449,7 @@ export const PainterNode = memo(function PainterNode({ id, data, selected }: Nod
           className="fixed inset-0 z-[100050] flex h-[100dvh] max-h-[100dvh] flex-col overflow-hidden overscroll-none bg-[#0b0f14] text-white"
           data-foldder-studio-canvas=""
         >
-          {standardShell ? (
-            <StandardStudioShellHeader shell={standardShell} />
-          ) : (
+          {(
             <FoldderStudioHeader
               nodeType="painter"
               nodeLabel={nodeData.label?.trim() || "Painter"}

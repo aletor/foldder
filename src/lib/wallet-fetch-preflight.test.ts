@@ -6,6 +6,10 @@ import {
   type WalletCostDecisionEventDetail,
   type WalletStatusResponse,
 } from "./wallet-client-events";
+import {
+  resetPaymentWarningsPreferenceForTests,
+  writePaymentWarningsEnabled,
+} from "./wallet-payment-warnings-preference";
 
 function walletStatus(availableMicros: number): WalletStatusResponse {
   return {
@@ -39,6 +43,7 @@ function configuredFetch(status: WalletStatusResponse): typeof fetch {
 describe("wallet-fetch-preflight", () => {
   afterEach(() => {
     clearWalletPreflightCache();
+    resetPaymentWarningsPreferenceForTests();
     vi.restoreAllMocks();
   });
 
@@ -129,5 +134,29 @@ describe("wallet-fetch-preflight", () => {
 
     expect(response).toBeNull();
     expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("auto-approves paid operations when payment warnings are disabled", async () => {
+    writePaymentWarningsEnabled(false);
+    let eventFired = false;
+    const onDecision = () => {
+      eventFired = true;
+    };
+    window.addEventListener(FOLDDER_WALLET_COST_DECISION_EVENT, onDecision);
+
+    const response = await runWalletFetchPreflight({
+      route: "/api/spaces/text-content",
+      requestInput: "/api/spaces/text-content",
+      requestInit: {
+        method: "POST",
+        body: JSON.stringify({ text: "Corrige esta frase." }),
+      },
+      fetcher: configuredFetch(walletStatus(1_000_000)),
+    });
+
+    window.removeEventListener(FOLDDER_WALLET_COST_DECISION_EVENT, onDecision);
+
+    expect(response).toBeNull();
+    expect(eventFired).toBe(false);
   });
 });

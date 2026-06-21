@@ -11,7 +11,6 @@ const eslintConfig = defineConfig([
       "src/app/spaces/CanvasWallpaperTransition.tsx",
       "src/app/spaces/FreehandStudio.tsx",
       "src/app/spaces/SpacesContent.tsx",
-      "src/app/spaces/StandardDesktopView.tsx",
       "src/app/spaces/VfxGeneratorNode.tsx",
       "src/app/spaces/foldder-node-ui.tsx",
       "src/app/spaces/designer/DesignerNode.tsx",

@@ -129,12 +129,13 @@ export function PresenterVideoPropertiesPanel({ placement, imageTarget, onPatch 
 
   if (!placement?.videoUrl) {
     return (
-      <aside className="flex w-[min(100%,280px)] shrink-0 flex-col rounded-md border border-white/[0.1] bg-[#12151a] shadow-inner md:w-[280px]">
+      <aside className="flex w-[min(100%,280px)] shrink-0 flex-col border-l border-white/[0.08] bg-[#0a0c0f] shadow-none md:w-[280px]">
         <div className="border-b border-white/[0.08] px-2 py-1.5">
           <h2 className="text-[11px] font-bold tracking-tight text-white">Propiedades</h2>
         </div>
         <p className="px-2.5 py-4 text-center text-[10px] leading-snug text-zinc-500">
-          Selecciona en el lienzo una imagen con vídeo colocado para editar reproducción y miniatura.
+          Selecciona una imagen en el lienzo y usa <span className="font-semibold text-zinc-400">Colocar video</span>{" "}
+          en el overlay del canvas. Luego podrás ajustar reproducción y miniatura aquí.
         </p>
       </aside>
     );
@@ -151,7 +152,7 @@ export function PresenterVideoPropertiesPanel({ placement, imageTarget, onPatch 
   const alignment = placement.videoContentAlignment ?? "center";
 
   return (
-    <aside className="flex w-[min(100%,280px)] shrink-0 flex-col rounded-md border border-white/[0.1] bg-[#12151a] shadow-inner md:w-[280px]">
+    <aside className="flex w-[min(100%,280px)] shrink-0 flex-col border-l border-white/[0.08] bg-[#0a0c0f] shadow-none md:w-[280px]">
       <div className="border-b border-white/[0.08] px-2 py-1.5">
         <h2 className="text-[11px] font-bold tracking-tight text-white">Propiedades</h2>
         <p className="mt-0.5 truncate text-[9px] text-zinc-500">Vídeo en imagen</p>

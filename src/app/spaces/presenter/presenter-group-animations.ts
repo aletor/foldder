@@ -48,15 +48,15 @@ export type PresenterRevealStep =
 export type PresenterGroupStep = PresenterRevealStep;
 
 export const PRESENTER_GROUP_ENTER_OPTIONS: { id: PresenterGroupEnterId; label: string }[] = [
-  { id: "none", label: "None" },
-  { id: "instant", label: "Instant" },
-  { id: "fadeIn", label: "Fade in" },
-  { id: "slideUp", label: "Slide up" },
-  { id: "slideDown", label: "Slide down" },
-  { id: "slideRight", label: "Slide right" },
-  { id: "slideLeft", label: "Slide left" },
-  { id: "grow", label: "Grow" },
-  { id: "shrink", label: "Shrink" },
+  { id: "none", label: "Ninguna" },
+  { id: "instant", label: "Instantánea" },
+  { id: "fadeIn", label: "Fundido" },
+  { id: "slideUp", label: "Subir" },
+  { id: "slideDown", label: "Bajar" },
+  { id: "slideRight", label: "Desde der." },
+  { id: "slideLeft", label: "Desde izq." },
+  { id: "grow", label: "Crecer" },
+  { id: "shrink", label: "Encoger" },
 ];
 
 /** Clave estable para un paso (panel, selección, animación al revelar). */

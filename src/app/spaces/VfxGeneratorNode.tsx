@@ -21,13 +21,14 @@ import { NodeIcon } from "./foldder-icons";
 import { resolveFoldderNodeState } from "./foldder-icons";
 import { resolvePromptValueFromEdgeSourceMap } from "./canvas-group-logic";
 import { BeebleVfxStudio, type BeebleAlphaMode } from "./BeebleVfxStudio";
-import type { StandardStudioShellConfig } from "./StandardStudioShell";
-import {
-  FOLDDER_STANDARD_STUDIO_CLOSE_REQUEST_EVENT,
-  type FoldderStudioEventDetail,
-} from "./desktop-studio-events";
+import { type FoldderStudioEventDetail } from "./desktop-studio-events";
 import { BeebleClient, type BeebleJob } from "@/lib/beeble-api";
 import { useBeebleJobPoller } from "@/hooks/useBeebleJobPoller";
+import {
+  aiActiveJobEnsureNode,
+  aiActiveJobProgressNode,
+  aiActiveJobReleaseNode,
+} from "@/lib/ai-active-jobs";
 import { runAiJobWithNotification } from "@/lib/ai-job-notifications";
 import { FoldderNodeHeaderTitle, FoldderStudioModeCenterButton, NodeLabel } from "./foldder-node-ui";
 import { hasFoldderStudioTouched, touchStudioNodeData } from "./studio-node/foldder-studio-touched";
@@ -155,7 +156,6 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<VfxGener
   useEffect(() => {
     showStudioRef.current = showStudio;
   }, [showStudio]);
-  const [standardShell, setStandardShell] = useState<StandardStudioShellConfig | null>(null);
   const [isLaunching, setIsLaunching] = useState(false);
   const [historyJobs, setHistoryJobs] = useState<BeebleJob[]>([]);
   const currentFrameSnapshot = useStore(
@@ -195,13 +195,11 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<VfxGener
     const onOpenStudio = (ev: Event) => {
       const detail = (ev as CustomEvent<FoldderStudioEventDetail>).detail;
       if (detail?.nodeId !== id) return;
-      setStandardShell(detail.standardShell ? { ...detail.standardShell, nodeId: id, nodeType: "vfxGenerator", fileId: detail.fileId, appId: detail.appId } : null);
       setShowStudio(true);
     };
     const onCloseStudio = (ev: Event) => {
       const detail = (ev as CustomEvent<FoldderStudioEventDetail>).detail;
       if (detail?.nodeId !== id) return;
-      setStandardShell(null);
       setShowStudio(false);
     };
     window.addEventListener("foldder:open-studio", onOpenStudio as EventListener);
@@ -242,6 +240,12 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<VfxGener
 
   const onJobPoll = useCallback(
     (job: BeebleJob) => {
+      if (job.status === "completed" || job.status === "failed") {
+        aiActiveJobReleaseNode(id);
+      } else if (job.status === "in_queue" || job.status === "processing") {
+        aiActiveJobEnsureNode(id, "VFX Generator");
+        aiActiveJobProgressNode(id, job.progress ?? 0);
+      }
       if (job.status === "completed" && job.output) {
         setNodes((nds) =>
           nds.map((n) => {
@@ -510,7 +514,6 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<VfxGener
         )}
 
         <FoldderStudioModeCenterButton onClick={() => {
-          setStandardShell(null);
           setShowStudio(true);
         }} />
 
@@ -531,18 +534,8 @@ export const VfxGeneratorNode = memo(({ id, data, selected }: NodeProps<VfxGener
 
       {showStudio && (
         <BeebleVfxStudio
-          standardShell={standardShell ?? undefined}
           onClose={() => {
-            const shell = standardShell;
-            setStandardShell(null);
             setShowStudio(false);
-            if (shell && typeof window !== "undefined") {
-              window.dispatchEvent(
-                new CustomEvent(FOLDDER_STANDARD_STUDIO_CLOSE_REQUEST_EVENT, {
-                  detail: { nodeId: id, nodeType: "vfxGenerator", fileId: shell.fileId, appId: shell.appId },
-                }),
-              );
-            }
           }}
           updatePatch={updatePatch}
           nodeLabel={typeof nodeData.label === "string" ? nodeData.label : ""}

@@ -278,7 +278,7 @@ Registrar **un hook por superficie** en `spaces.css` (o futuro `foldder-chrome.c
 | `data-foldder-canvas-modals` | Contenedor overlay modales | ✅ (legacy wrapper) |
 | `data-foldder-sidebar` | Sidebar librería | ✅ parcial |
 | **`data-foldder-studio-panel`** | **Paneles dentro de studios** | ⬜ pendiente |
-| **`data-foldder-studio-header`** | **Cabecera StandardStudioShell** | ⬜ pendiente |
+| **`data-foldder-studio-header`** | **Cabecera `FoldderStudioHeader`** | ⬜ pendiente |
 
 ### Bloque CSS mínimo para un panel nuevo
 
@@ -327,7 +327,7 @@ Copiar y adaptar en `spaces.css`:
 
 | Archivo | Problema actual | Acción |
 |---------|-----------------|--------|
-| `StandardStudioShell.tsx` | `rounded-xl`, `h-12`, bordes suaves, botones pill | Rehacer header como fila `h-10` flush; `data-foldder-studio-header` |
+| `FoldderStudioHeader.tsx` | Revisar alturas y bordes en cabeceras fullscreen | Aplicar fila `h-10` flush; `data-foldder-studio-header` |
 | `DesignerStudioPageBar.tsx` | `rounded-md`, anillos violeta | Grid flush bottom bar, tab activo `bg-white text-slate-950` |
 | `DesignerFormatModal.tsx` | Probable modal legacy | Aplicar plantilla panel §4 |
 | `GuionistaStudio.tsx`, `CineStudio.tsx`, `PhotoRoomStudio.tsx`, etc. | Revisar modales internos | Buscar `rounded-`, `bg-white/9`, `border border-` |
@@ -353,7 +353,7 @@ Implementación: `FoldderStudioHeader.tsx` + `studio-node/foldder-studio-node-ba
 - Izquierda: miniatura cuadrada `40×40` de esa imagen + nombre del nodo (`nodeLabel`).
 - Derecha: acciones flush (`actions`) + cerrar.
 - `titleSlot` opcional para inputs de título (Guionista, VFX).
-- `StandardStudioShellHeader` es un wrapper que usa este componente (Nano Banana, Designer/Freehand, etc.).
+- Consumido directamente por studios fullscreen (Nano Banana, Designer/Freehand, etc.).
 
 ```tsx
 <FoldderStudioHeader
@@ -441,7 +441,7 @@ Para no duplicar documentación y CSS:
    - `FoldderPanelTabs`
    - `FoldderPanelRow` (lista)
    - `FoldderChromeButton` (icon / text / primary)
-3. **Refactor** `StandardStudioShell` como primer consumidor.
+3. **Refactor** studios fullscreen como primeros consumidores de `FoldderPanel*`.
 4. **Regla Cursor** (`.cursor/rules/foldder-flush-chrome.mdc`) que apunte a este documento.
 
 ---
@@ -450,7 +450,7 @@ Para no duplicar documentación y CSS:
 
 ```
 ┌────────────────────────────────────────────────────────────── TOP HUD (h=40, offset 8px)
-│ [logo][💬][──── proyecto ────][Std|Pro][▦][⛶][📁][+ NUEVO][avatar|$117] │
+│ [logo][💬][──── proyecto ────][▦][⛶][📁][+ NUEVO][avatar|$117] │
 └────────────────────────────────────────────────────────────── gap:0 entre celdas
 
 Dropdown / modal (max-w 400):

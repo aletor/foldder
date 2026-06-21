@@ -514,11 +514,13 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
     type: 'presenter',
     label: 'Presenter',
     description:
-      'Presentation deck: connect Designer Document output to turn each page into a slide. Preview all slides; later: animation steps and image→video swaps (Pitch-style).',
+      'Presentation deck: connect Designer Document output to turn each page into a slide. Step animations, slide transitions, image→video overlays, and public share links.',
     inputs: [{ id: 'document', label: 'Designer document', type: 'json' as HandleType, required: true }],
     outputs: [],
     dataSchema: {
       label: 'string',
+      imageVideoPlacements: 'PresenterImageVideoPlacement[]',
+      transitionsByPageId: 'Record<pageId, SlideTransitionId>',
     },
   },
   canvasGroup: {
@@ -575,7 +577,7 @@ export const ASSISTANT_NODE_DATA_HINTS: Record<string, string> = {
   designer:
     "pages (DesignerPageState[]), activePageIndex, label, value (export raster), autoImageOptimization; salida document (json) conecta a presenter",
   presenter:
-    "label; conectar entrada document desde designer; el UI lee pages del Designer vía grafo (slides / Presenter)",
+    "label; conectar entrada document desde designer; transitionsByPageId; imageVideoPlacements; el UI lee pages del Designer vía grafo (slides / Presenter / share)",
   canvasGroup:
     "label (título del marco), collapsed (plegado), memberIds (ids hijos — sincronizado con parentId). Creación habitual: usuario selecciona 2+ nodos y agrupa en el lienzo (G / menú); el asistente solo debe emitir type canvasGroup si el usuario pide explícitamente un grafo agrupado en JSON: entonces cada hijo lleva parentId=id del grupo y position relativa; data.memberIds debe listar esos ids; style width/height del marco; NO incluir canvasGroup en executeNodeIds (no ejecuta). Si solo piden “organizar en grupo”, mejor devolver nodos/aristas sueltos y decir que agrupen con la UI.",
 };

@@ -8,6 +8,7 @@ import { AlertTriangle, Captions, CheckCircle2, Clock, Copy, Download, Eye, EyeO
 
 import { downloadS3Object, forceDownloadUrl } from "@/lib/browser-download";
 import { FOLDDER_FIT_VIEW_EASE } from "@/lib/fit-view-ease";
+import { readPaymentWarningsEnabled } from "@/lib/wallet-payment-warnings-preference";
 import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
 import { ScrubNumberInput } from "../ScrubNumberInput";
 import { FoldderDataHandle } from "../FoldderDataHandle";
@@ -61,7 +62,7 @@ import {
   type VideoEditorNodeData,
   type VideoEditorRenderState,
 } from "./video-editor-types";
-import type { VideoEditorRenderManifestResult } from "./video-editor-render-types";
+import type { VideoEditorRenderManifest, VideoEditorRenderManifestResult } from "./video-editor-render-types";
 import { createDefaultSubtitleStyle, type FoldderSubtitleDocument, type RenderSubtitleMode, type SubtitleStyle, type VideoEditorSubtitleTrack } from "./subtitles-types";
 import {
   createSubtitleDocumentFromText,
@@ -1532,13 +1533,7 @@ function VideoEditorStudio({
     }
   }, [commit, data]);
 
-  const openRenderConfirmation = useCallback(() => {
-    setRenderConfirmation(buildVideoEditorRenderManifest(data, nodeId));
-  }, [data, nodeId]);
-
-  const runRender = useCallback(async () => {
-    const manifest = renderConfirmation?.manifest;
-    if (!manifest) return;
+  const executeRender = useCallback(async (manifest: VideoEditorRenderManifest) => {
     setRenderConfirmation(null);
     const startedAt = new Date().toISOString();
     commit({
@@ -1607,7 +1602,23 @@ function VideoEditorStudio({
         },
       });
     }
-  }, [commit, data, renderConfirmation?.manifest, renderState]);
+  }, [commit, data, renderState]);
+
+  const openRenderConfirmation = useCallback(() => {
+    const result = buildVideoEditorRenderManifest(data, nodeId);
+    if (!result.manifest) return;
+    if (readPaymentWarningsEnabled()) {
+      setRenderConfirmation(result);
+      return;
+    }
+    void executeRender(result.manifest);
+  }, [data, nodeId, executeRender]);
+
+  const runRender = useCallback(async () => {
+    const manifest = renderConfirmation?.manifest;
+    if (!manifest) return;
+    await executeRender(manifest);
+  }, [renderConfirmation?.manifest, executeRender]);
 
   useEffect(() => {
     const renderId = renderState.renderId;

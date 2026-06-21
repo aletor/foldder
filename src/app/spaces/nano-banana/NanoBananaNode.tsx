@@ -35,8 +35,7 @@ import {
   FoldderStudioHeader,
   foldderStudioHeaderActionClassName,
 } from "../FoldderStudioHeader";
-import { StandardStudioShellHeader, type StandardStudioShellConfig } from "../StandardStudioShell";
-import { FOLDDER_STANDARD_STUDIO_CLOSE_REQUEST_EVENT, type FoldderStudioEventDetail } from "../desktop-studio-events";
+import { type FoldderStudioEventDetail } from "../desktop-studio-events";
 import { applyCanvasGroupCollapse, resolvePromptValueFromEdgeSourceMap } from "../canvas-group-logic";
 import { resolveMediaUrlFromEdgeSource } from "../resolve-connected-media-url";
 import { useAuthedMediaPreviewUrl } from "../hooks/use-authed-media-preview-url";
@@ -596,7 +595,6 @@ interface NanoBananaStudioProps {
   /** Historial de generaciones previas (estado en el nodo para no perderlo al cerrar Studio). */
   generationHistory: string[];
   onGenerationHistoryChange: React.Dispatch<React.SetStateAction<string[]>>;
-  standardShell?: StandardStudioShellConfig;
 }
 
 // NanaBananaPaintCanvas: draws ONLY over the actual image pixels.
@@ -733,7 +731,6 @@ const NanoBananaStudio = memo(({
   onBrainImageGeneratorDiagnostics,
   topBarCloseMode = 'default', onClose, onGenerated, onResolutionChange,
   generationHistory, onGenerationHistoryChange,
-  standardShell,
 }: NanoBananaStudioProps) => {
   const { isTouchUI } = useInputMode();
   // ── Generation state ────────────────────────────────────────────────────
@@ -1645,31 +1642,27 @@ const NanoBananaStudio = memo(({
       data-foldder-nano-banana-studio
       data-foldder-i18n-ignore
     >
-      {standardShell ? <StandardStudioShellHeader shell={standardShell} /> : null}
-
-      {!standardShell ? (
-        <FoldderStudioHeader
-          nodeType="nanoBanana"
-          nodeLabel={nodeLabel}
-          subtitle="Iterative image edits"
-          onClose={topBarCloseMode === "default" ? onClose : undefined}
-          actions={
-            topBarCloseMode !== "default" ? (
-              <button
-                type="button"
-                onClick={onClose}
-                className={foldderStudioHeaderActionClassName()}
-                title={topBarCloseMode === "returnCine" ? "Volver a Cine" : "Volver a PhotoRoom"}
-              >
-                <ChevronLeft size={14} strokeWidth={2.5} aria-hidden />
-                <span className="hidden sm:inline">
-                  {topBarCloseMode === "returnCine" ? "Cine" : "PhotoRoom"}
-                </span>
-              </button>
-            ) : undefined
-          }
-        />
-      ) : null}
+      <FoldderStudioHeader
+        nodeType="nanoBanana"
+        nodeLabel={nodeLabel}
+        subtitle="Iterative image edits"
+        onClose={topBarCloseMode === "default" ? onClose : undefined}
+        actions={
+          topBarCloseMode !== "default" ? (
+            <button
+              type="button"
+              onClick={onClose}
+              className={foldderStudioHeaderActionClassName()}
+              title={topBarCloseMode === "returnCine" ? "Volver a Cine" : "Volver a PhotoRoom"}
+            >
+              <ChevronLeft size={14} strokeWidth={2.5} aria-hidden />
+              <span className="hidden sm:inline">
+                {topBarCloseMode === "returnCine" ? "Cine" : "PhotoRoom"}
+              </span>
+            </button>
+          ) : undefined
+        }
+      />
 
       <div className="nb-studio-controls flex h-9 shrink-0 items-stretch divide-x divide-white/10 border-b border-white/10 bg-white/[0.04]">
         <div className="flex items-stretch" role="group" aria-label="Modelo de imagen">
@@ -2379,7 +2372,6 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   const [studioTouched, setStudioTouched] = useState(
     () => hasNanoBananaStudioTouched(data as Record<string, unknown>),
   );
-  const [standardShell, setStandardShell] = useState<StandardStudioShellConfig | null>(null);
   const currentFrameSnapshot = useStore(
     useCallback((state: ReactFlowState<Node, Edge>) => selectNodeFrameSnapshot(state, id), [id]),
     shallow,
@@ -2516,7 +2508,6 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
     setCineStudioSourceImage(null);
     setCineStudioHistory([]);
     setNanoStudioTopBarCloseMode('default');
-    setStandardShell(null);
     setShowStudio(true);
   }, []);
 
@@ -2540,7 +2531,6 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
     setCineStudioSourceImage(null);
     setCineStudioHistory([]);
     setNanoStudioTopBarCloseMode('default');
-    setStandardShell(null);
     setShowStudio(false);
 
     const graphNodes = getNodes() as Node[];
@@ -2607,7 +2597,6 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
       setCineStudioSourceImage(null);
       setCineStudioHistory([]);
       setNanoStudioTopBarCloseMode('returnPhotoRoom');
-      setStandardShell(null);
       setShowStudio(true);
     };
     window.addEventListener('foldder-open-nano-studio-from-photo-room', onOpenFromPhotoRoom as EventListener);
@@ -2625,7 +2614,6 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
       setCineStudioSourceImage(session.sourceAssetId || null);
       setCineStudioHistory(session.sourceAssetId ? [session.sourceAssetId] : []);
       setNanoStudioTopBarCloseMode('returnCine');
-      setStandardShell(null);
       setShowStudio(true);
     };
     const onOpenFromCine = (ev: Event) => {
@@ -2649,7 +2637,6 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
       setCineStudioSourceImage(null);
       setCineStudioHistory([]);
       setNanoStudioTopBarCloseMode('default');
-      setStandardShell(detail.standardShell ? { ...detail.standardShell, nodeId: id, nodeType: 'nanoBanana', fileId: detail.fileId, appId: detail.appId } : null);
       setShowStudio(true);
     };
     const onCloseStudio = (ev: Event) => {
@@ -2679,7 +2666,6 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
     setCineStudioSourceImage(null);
     setCineStudioHistory([]);
     setNanoStudioTopBarCloseMode('returnPhotoRoom');
-    setStandardShell(null);
     setShowStudio(true);
   }, [id]);
 
@@ -2694,7 +2680,6 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
     setCineStudioSourceImage(pending.sourceAssetId || null);
     setCineStudioHistory(pending.sourceAssetId ? [pending.sourceAssetId] : []);
     setNanoStudioTopBarCloseMode('returnCine');
-    setStandardShell(null);
     setShowStudio(true);
   }, [id]);
 
@@ -2867,9 +2852,15 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   const outputS3Key = typeof (nodeData as { s3Key?: unknown }).s3Key === "string"
     ? (nodeData as { s3Key: string }).s3Key
     : undefined;
-  const { displayUrl: outputPreviewUrl, retryWithBlob: retryOutputPreview } = useAuthedMediaPreviewUrl(
+  const { displayUrl: outputPreviewUrl, fullUrl: outputFullUrl, retryWithBlob: retryOutputPreview } = useAuthedMediaPreviewUrl(
     outputImage,
     outputS3Key,
+    { canvasThumbnail: true },
+  );
+  const { displayUrl: refCanvasPreviewUrl } = useAuthedMediaPreviewUrl(
+    refImgPreview,
+    null,
+    { canvasThumbnail: true },
   );
 
   /** Barra y glow solo con avance <100%; a 100% se oculta aunque `status` tarde un tick en pasar a success. */
@@ -3046,6 +3037,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
                 src={outputPreviewUrl}
                 alt="Generated"
                 className="nano-banana-output-preview h-full w-full object-cover"
+                decoding="async"
                 onError={() => {
                   void retryOutputPreview();
                 }}
@@ -3081,7 +3073,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
           /* No output yet — show input image at full opacity as reference preview */
           refImgPreview && nodeMediaVisible ? (
             <>
-              <img src={refImgPreview} alt="Input" className="max-h-full max-w-full object-contain" />
+              <img src={refCanvasPreviewUrl ?? refImgPreview} alt="Input" className="max-h-full max-w-full object-contain" decoding="async" />
               <div className="absolute bottom-0 left-0 right-0 flex items-center px-2 py-1 z-[12]"
                    style={{ background: 'rgba(0,0,0,0.35)', backdropFilter: 'blur(4px)' }}>
                 <span className="text-[7px] font-black uppercase tracking-wider text-white/70">REF · sin generar</span>
@@ -3106,7 +3098,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
         {refImgPreview && outputImage && nodeMediaVisible && (
           <div className="absolute bottom-2 left-2 rounded-none overflow-hidden border-2 border-white/60 shadow-lg"
                style={{ width: 56, height: 40 }}>
-            <img src={refImgPreview} alt="ref" className="w-full h-full object-cover" />
+            <img src={refCanvasPreviewUrl ?? refImgPreview} alt="ref" className="w-full h-full object-cover" decoding="async" />
             <span className="absolute bottom-0 left-0 right-0 text-[5px] font-black uppercase text-white bg-black/60 text-center py-px">BASE</span>
           </div>
         )}
@@ -3225,18 +3217,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
             topBarCloseMode={nanoStudioTopBarCloseMode}
             generationHistory={isCineStudioSession ? cineStudioHistory : persistedGenerationHistory}
             onGenerationHistoryChange={isCineStudioSession ? setCineStudioHistory : onGenerationHistoryChange}
-            standardShell={standardShell ?? undefined}
-            onClose={() => {
-              const shell = standardShell;
-              closeNanoStudio();
-              if (shell && typeof window !== 'undefined') {
-                window.dispatchEvent(
-                  new CustomEvent(FOLDDER_STANDARD_STUDIO_CLOSE_REQUEST_EVENT, {
-                    detail: { nodeId: id, nodeType: 'nanoBanana', fileId: shell.fileId, appId: shell.appId },
-                  }),
-                );
-              }
-            }}
+            onClose={closeNanoStudio}
             onGenerated={(url, s3Key) => {
               latestStudioAssetRef.current = url;
               latestStudioS3KeyRef.current = s3Key || null;
@@ -3288,7 +3269,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
             <X size={36} strokeWidth={2} />
           </div>
           <img
-            src={outputPreviewUrl ?? outputImage}
+            src={outputFullUrl ?? outputImage}
             className="max-h-full max-w-full w-auto h-auto rounded-none object-contain shadow-2xl"
             alt="Full size"
           />

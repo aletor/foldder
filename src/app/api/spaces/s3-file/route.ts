@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { BUCKET_NAME, s3Client } from "@/lib/s3-utils";
 import { inferMimeTypeFromPath } from "@/lib/api-media-access";
+import { parseCanvasThumbMaxSideParam } from "@/lib/canvas-media-thumbnail";
+import { buildS3ImageThumbnailBuffer } from "@/lib/s3-image-thumbnail";
 import {
   canUserAccessKnowledgeFileKey,
   isSafeKnowledgeFilesKey,
@@ -35,7 +37,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Forbidden S3 key." }, { status: 403 });
     }
 
-    const range = sanitizeRangeHeader(req.headers.get("range"));
+    const thumbMaxSide = parseCanvasThumbMaxSideParam(searchParams.get("thumb"));
+    const range = thumbMaxSide ? undefined : sanitizeRangeHeader(req.headers.get("range"));
     const object = await s3Client.send(
       new GetObjectCommand({
         Bucket: BUCKET_NAME,
@@ -52,6 +55,22 @@ export async function GET(req: NextRequest) {
       object.ContentType && object.ContentType !== "application/octet-stream"
         ? object.ContentType
         : inferMimeTypeFromPath(key);
+
+    if (thumbMaxSide) {
+      const raw = Buffer.from(await object.Body.transformToByteArray());
+      const thumbnail = await buildS3ImageThumbnailBuffer(raw, thumbMaxSide, contentType, key);
+      const body = thumbnail?.buffer ?? raw;
+      const responseType = thumbnail?.contentType ?? contentType;
+      const headers = new Headers({
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": `private, max-age=${ONE_HOUR}`,
+        "Content-Length": String(body.length),
+        "Content-Type": responseType,
+      });
+      if (object.ETag) headers.set("ETag", object.ETag);
+      if (object.LastModified) headers.set("Last-Modified", object.LastModified.toUTCString());
+      return new Response(new Uint8Array(body), { headers, status: 200 });
+    }
 
     const headers = new Headers({
       "Accept-Ranges": object.AcceptRanges || "bytes",

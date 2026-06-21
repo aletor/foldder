@@ -40,9 +40,6 @@ function sanitizeUiSnapshot(value: unknown): Record<string, unknown> | null {
   if (source.canvasViewMode === "free" || source.canvasViewMode === "cards") {
     out.canvasViewMode = source.canvasViewMode;
   }
-  if (source.workspaceViewMode === "standard" || source.workspaceViewMode === "pro") {
-    out.workspaceViewMode = source.workspaceViewMode;
-  }
 
   const cardsFocusIndex = numberOrUndefined(source.cardsFocusIndex, 0, 10_000);
   if (cardsFocusIndex != null) out.cardsFocusIndex = Math.floor(cardsFocusIndex);

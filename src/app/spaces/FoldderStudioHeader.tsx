@@ -11,6 +11,9 @@ export type FoldderStudioHeaderProps = {
   subtitle?: string;
   onClose?: () => void;
   closeLabel?: string;
+  /** Icono custom en la celda izquierda (p. ej. logo blanco Foldder). */
+  iconSrc?: string;
+  iconBackground?: string;
   /** Sustituye el bloque título/subtítulo por contenido custom (p. ej. input de título). */
   titleSlot?: React.ReactNode;
   /** Acciones entre título y cerrar (Guardar, Play, Minimizar…). */
@@ -47,11 +50,13 @@ export function FoldderStudioHeader({
   subtitle,
   onClose,
   closeLabel = "Cerrar",
+  iconSrc,
+  iconBackground,
   titleSlot,
   actions,
   className = "",
 }: FoldderStudioHeaderProps) {
-  const backgroundSrc = resolveFoldderNodeStudioBackground(nodeType);
+  const backgroundSrc = iconSrc ?? resolveFoldderNodeStudioBackground(nodeType);
 
   return (
     <header
@@ -59,9 +64,17 @@ export function FoldderStudioHeader({
       className={`relative z-[100020] flex h-10 shrink-0 items-stretch overflow-hidden border-b border-white/10 bg-white/[0.08] ${className}`.trim()}
     >
       <div className="relative z-10 flex min-w-0 flex-1 items-stretch">
-        <div className="flex h-10 w-10 shrink-0 overflow-hidden border-r border-white/20">
+        <div
+          className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden border-r border-white/20"
+          style={iconBackground ? { backgroundColor: iconBackground } : undefined}
+        >
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={backgroundSrc} alt="" className="h-full w-full object-cover object-center" draggable={false} />
+          <img
+            src={backgroundSrc}
+            alt=""
+            className={iconBackground ? "h-6 w-6 object-contain" : "h-full w-full object-cover object-center"}
+            draggable={false}
+          />
         </div>
 
         <div className="flex min-w-0 flex-1 items-stretch border-r border-white/15">
@@ -73,7 +86,7 @@ export function FoldderStudioHeader({
                 {nodeLabel}
               </h1>
               {subtitle ? (
-                <p className="truncate text-[9px] font-semibold text-white/72">{subtitle}</p>
+                <p className="truncate text-[10px] font-medium text-white/55">{subtitle}</p>
               ) : null}
             </div>
           )}

@@ -12,7 +12,7 @@ const WALLET_STATUS_TTL_MS = 12_000;
 
 export const FOLDDER_WALLET_PREFLIGHT_SKIP_HEADER = "x-foldder-wallet-preflight-skip";
 
-function shouldSkipWalletPreflight(init?: RequestInit): boolean {
+export function shouldSkipWalletPreflight(init?: RequestInit): boolean {
   if (!init?.headers) return false;
   const headers = init.headers;
   if (headers instanceof Headers) {
@@ -27,6 +27,17 @@ function shouldSkipWalletPreflight(init?: RequestInit): boolean {
   const record = headers as Record<string, string>;
   return record[FOLDDER_WALLET_PREFLIGHT_SKIP_HEADER] === "1"
     || record[FOLDDER_WALLET_PREFLIGHT_SKIP_HEADER.toLowerCase()] === "1";
+}
+
+export function shouldSkipWalletPreflightForFetch(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): boolean {
+  if (shouldSkipWalletPreflight(init)) return true;
+  if (input instanceof Request) {
+    return input.headers.get(FOLDDER_WALLET_PREFLIGHT_SKIP_HEADER) === "1";
+  }
+  return false;
 }
 
 export function getOrigWindowFetch(): typeof fetch {

@@ -1,5 +1,6 @@
 /** Imagen de fondo del mosaico de la librería (misma que al instanciar el nodo / drag preview). */
 export const NODE_SIDEBAR_TILE_BACKGROUND_SRC: Record<string, string> = {
+  projectAssets: "/logo-folder.png",
   projectBrain: "/assets/nodes/brain-sidebar-bg.png",
   cine: "/assets/nodes/cine-sidebar-bg.png",
   designer: "/assets/nodes/designer-sidebar-bg.png",

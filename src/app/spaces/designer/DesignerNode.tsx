@@ -25,7 +25,6 @@ import {
   dispatchFoldderExportCreated,
   type FoldderExportCreatedDetail,
 } from "../foldder-export-events";
-import type { StandardStudioShellConfig } from "../StandardStudioShell";
 import { StudioCanvasNodeShell, type StudioCanvasNodeHandleSpec } from "../studio-node/studio-canvas-node";
 import { hasFoldderStudioTouched, touchStudioNodeData } from "../studio-node/foldder-studio-touched";
 import { StudioNodePortal, useStudioNodeController } from "../studio-node/studio-node-architecture";
@@ -37,6 +36,7 @@ import {
 import { nodeFrameFromSnapshot, selectNodeFrameSnapshot } from "../react-flow-selectors";
 import { useCanvasPerformanceModeRef } from "../use-canvas-performance-mode";
 import { useFoldderRenderMetric } from "../use-performance-metrics";
+import { useCanvasNodeMediaPreviewUrl } from "../hooks/use-authed-media-preview-url";
 import { useNodeViewportVisibility } from "../use-node-viewport-visibility";
 
 const DESIGNER_NODE_MAX_WIDTH = 960;
@@ -96,7 +96,7 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const { setNodes } = useReactFlow();
   const updateNodeInternals = useUpdateNodeInternals();
   const liveDesignerPatchRef = useRef<Partial<DesignerNodeData> | null>(null);
-  const { isStudioOpen, openStudio, closeStudio, standardShell } = useStudioNodeController({
+  const { isStudioOpen, openStudio, closeStudio } = useStudioNodeController({
     nodeId: id,
     nodeType: "designer",
   });
@@ -137,6 +137,8 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const previewRef = useRef<HTMLDivElement | null>(null);
   const frameSyncKeyRef = useRef<string | null>(null);
   const nodeMediaVisible = useNodeViewportVisibility(id, 900, selected);
+  const designerPreviewValue = typeof nodeData.value === "string" && nodeData.value.length > 0 ? nodeData.value : null;
+  const { displayUrl: designerCanvasUrl } = useCanvasNodeMediaPreviewUrl(designerPreviewValue);
   const canvasPerformanceModeRef = useCanvasPerformanceModeRef(
     useCallback((active: boolean) => {
       if (!active) requestAnimationFrame(() => updateNodeInternals(id));
@@ -317,9 +319,10 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
         {nodeData.value && nodeMediaVisible ? (
           <div className="absolute inset-0 overflow-hidden" aria-hidden>
             <img
-              src={nodeData.value}
+              src={designerCanvasUrl ?? nodeData.value}
               alt="Designer preview — página 1"
               className="h-full w-full object-cover bg-zinc-950/80"
+              decoding="async"
               onLoad={refreshHandleGeometry}
               onError={refreshHandleGeometry}
             />
@@ -367,13 +370,12 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
             brainConnected={brainConnected}
             onClose={() => {
               commitLiveDesignerPatch();
-              closeStudio({ notifyStandardShell: true });
+              closeStudio();
             }}
             onExport={onExport}
             onFinalExport={(detail) => {
               dispatchFoldderExportCreated({ ...detail, sourceNodeId: id });
             }}
-            standardShell={standardShell ?? undefined}
             onUpdatePages={onUpdatePages}
             autoImageOptimization={nodeData.autoImageOptimization !== false}
             onAutoImageOptimizationChange={onAutoImageOptimizationChange}
@@ -394,7 +396,6 @@ function DesignerStudioLazy(props: {
   onClose: () => void;
   onExport: (dataUrl: string) => void;
   onFinalExport?: (detail: Omit<FoldderExportCreatedDetail, "sourceNodeId">) => void;
-  standardShell?: StandardStudioShellConfig;
   onUpdatePages: (pages: DesignerPageState[], activeIdx?: number) => void;
   autoImageOptimization?: boolean;
   onAutoImageOptimizationChange?: (enabled: boolean) => void;

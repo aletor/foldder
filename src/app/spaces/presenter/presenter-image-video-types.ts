@@ -77,4 +77,6 @@ export type PresenterImageVideoCanvasBinding = {
    * `null` = ninguno (p. ej. otro objeto seleccionado). Omitir = compat: todos los destinos editables.
    */
   videoTransformHandlesObjectId?: string | null;
+  /** Claves de selección del lienzo (`revealTargetKey`); controlan la barra de acciones de vídeo. */
+  highlightPickKeys?: string[];
 };

@@ -35,7 +35,6 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import type { StandardStudioShellConfig } from "./StandardStudioShell";
 import { FoldderStudioHeader } from "./FoldderStudioHeader";
 import {
   CINE_CAMERA_MOVEMENT_LABELS,
@@ -150,7 +149,6 @@ export type CineStudioProps = {
   brainConnected?: boolean;
   sourceScriptText?: string;
   sourceScriptNodeId?: string;
-  standardShell?: StandardStudioShellConfig | null;
   initialTab?: CineStudioTab;
   initialSceneId?: string;
   onOpenImageStudio?: (session: Omit<CineImageStudioSession, "nanoNodeId">) => void;
@@ -892,7 +890,7 @@ function useCineMutations(data: CineNodeData, onChange: (next: CineNodeData) => 
   };
 }
 
-export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = false, sourceScriptText = "", sourceScriptNodeId, standardShell, initialTab, initialSceneId, onOpenImageStudio }: CineStudioProps) {
+export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = false, sourceScriptText = "", sourceScriptNodeId, initialTab, initialSceneId, onOpenImageStudio }: CineStudioProps) {
   const [activeTab, setActiveTab] = useState<CineStudioTab>(initialTab ?? "direction");
   const [promptPreview, setPromptPreview] = useState<{ title: string; prompt: string; negativePrompt?: string; details?: Array<[string, string]> } | null>(null);
   const [analyzerMode, setAnalyzerMode] = useState<CineAnalyzerMode>("ai");
@@ -1620,7 +1618,7 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
     >
       <FoldderStudioHeader
         nodeType="cine"
-        nodeLabel={standardShell?.appLabel ?? "Cine"}
+        nodeLabel="Cine"
         subtitle="Mesa de dirección audiovisual"
         onClose={onClose}
       />

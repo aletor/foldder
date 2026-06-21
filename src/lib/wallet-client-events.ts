@@ -1,5 +1,7 @@
 "use client";
 
+import { readPaymentWarningsEnabled } from "@/lib/wallet-payment-warnings-preference";
+
 export const FOLDDER_WALLET_OPEN_EVENT = "foldder:wallet-open";
 export const FOLDDER_WALLET_REFRESH_EVENT = "foldder:wallet-refresh";
 export const FOLDDER_WALLET_COST_DECISION_EVENT = "foldder:wallet-cost-decision";
@@ -82,6 +84,23 @@ export async function requestWalletCostDecision(
   request: WalletCostDecisionRequest,
 ): Promise<WalletCostDecisionResult> {
   if (typeof window === "undefined") return { allowed: true, reason: "approved" };
+
+  const available = request.wallet.account?.availableMicros ?? 0;
+  const blocked =
+    request.wallet.account?.status === "blocked" ||
+    request.wallet.account?.billingReviewRequired === true;
+  const insufficient = request.wallet.configured && available < request.reserveMicros;
+
+  if (!readPaymentWarningsEnabled()) {
+    if (blocked || insufficient) {
+      if (insufficient) dispatchWalletOpen("insufficient_balance");
+      return {
+        allowed: false,
+        reason: insufficient ? "insufficient_balance" : "cancelled",
+      };
+    }
+    return { allowed: true, reason: "approved" };
+  }
 
   return new Promise<WalletCostDecisionResult>((resolve) => {
     const detail: WalletCostDecisionEventDetail = {

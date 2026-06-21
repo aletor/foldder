@@ -89,6 +89,7 @@ import {
 import { hasFoldderStudioTouched, touchStudioNodeData } from "../studio-node/foldder-studio-touched";
 import { FoldderStudioTouchedMark } from "../studio-node/foldder-studio-touched-mark";
 import { StudioNodePortal } from "../studio-node/studio-node-architecture";
+import { useCanvasNodeMediaPreviewUrl } from "../hooks/use-authed-media-preview-url";
 
 type ImageCreationAdvancedNodeData = {
   advancedSession?: AdvancedImageSession;
@@ -2584,6 +2585,7 @@ export const ImageCreationAdvancedNode = memo(function ImageCreationAdvancedNode
   const session = nodeData.advancedSession;
   const outputUrl = nodeData.value || session?.workingImage?.imageUrl || "";
   const previewUrl = outputUrl || session?.master.imageUrl || imageInput;
+  const { displayUrl: canvasPreviewUrl } = useCanvasNodeMediaPreviewUrl(previewUrl || null);
   const status = nodeData.status ?? (outputUrl ? "output" : imageInput ? "ready" : "empty");
   const currentNode = nodes.find((node) => node.id === id);
 
@@ -2707,7 +2709,7 @@ export const ImageCreationAdvancedNode = memo(function ImageCreationAdvancedNode
       <div className="node-content foldder-frameless-main space-y-3">
         <div ref={previewFrameRef} className="relative aspect-video overflow-hidden rounded-none bg-slate-950/70">
           {previewUrl ? (
-            <img src={previewUrl} alt="" className="h-full w-full object-cover" />
+            <img src={canvasPreviewUrl ?? previewUrl} alt="" className="h-full w-full object-cover" decoding="async" />
           ) : (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-zinc-500">
               <Sparkles size={28} strokeWidth={1.5} />

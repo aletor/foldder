@@ -3,6 +3,7 @@
 import React, { useMemo, useState } from "react";
 import { GripVertical, Layers, Sparkles, Trash2, Users, X } from "lucide-react";
 import type { FreehandObject } from "../FreehandStudio";
+import type { DesignerPageState } from "../designer/DesignerNode";
 import type { PresenterGroupEnterId, PresenterRevealStep } from "./presenter-group-animations";
 import {
   mergeStepsWithPage,
@@ -10,38 +11,37 @@ import {
   PRESENTER_GROUP_ENTER_OPTIONS,
   presenterStepKey,
 } from "./presenter-group-animations";
-import type { DesignerPageState } from "../designer/DesignerNode";
 import type { PickPointerModifiers } from "./DesignerPageCanvasView";
 import { countObjectsInGroup } from "./presenter-group-bounds";
 import { PresenterEnterAnimationIcon } from "./PresenterEnterAnimationIcons";
 
+function truncateLabel(value: string, max = 28): string {
+  const t = value.trim();
+  if (t.length <= max) return t;
+  return `${t.slice(0, max - 1)}…`;
+}
+
+function objectDisplayName(o: FreehandObject | undefined): string {
+  if (!o) return "Elemento";
+  if (o.type === "text") {
+    const text = typeof (o as { text?: unknown }).text === "string" ? (o as { text: string }).text : "";
+    return text.trim() ? truncateLabel(text) : "Texto";
+  }
+  if (o.type === "image") return "Imagen";
+  if (o.type === "path") return "Trazo";
+  if (o.type === "rect") return "Rectángulo";
+  if (o.type === "ellipse") return "Elipse";
+  if (o.type === "booleanGroup") return "Compuesto";
+  if (o.type === "clippingContainer") return "Recorte";
+  return "Elemento";
+}
+
 function rowLabel(s: PresenterRevealStep, objects: FreehandObject[]): string {
   if (s.kind === "group") {
     const n = countObjectsInGroup(objects, s.groupId);
-    const t = s.groupId.trim();
-    const idPart = t.length <= 10 ? t : `…${t.slice(-8)}`;
-    return `${n} objetos · ${idPart}`;
+    return `Grupo · ${n} elementos`;
   }
-  const o = objects.find((x) => x.id === s.objectId);
-  const typ = o?.type ?? "obj";
-  const typeLabel =
-    typ === "text"
-      ? "Texto"
-      : typ === "image"
-        ? "Imagen"
-        : typ === "path"
-          ? "Trazo"
-          : typ === "rect"
-            ? "Rect"
-            : typ === "ellipse"
-              ? "Elipse"
-              : typ === "booleanGroup"
-                ? "Compuesto"
-                : typ === "clippingContainer"
-                  ? "Recorte"
-                  : typ;
-  const id = s.objectId;
-  return id.length <= 14 ? `${typeLabel} · ${id}` : `${typeLabel} · …${id.slice(-8)}`;
+  return objectDisplayName(objects.find((x) => x.id === s.objectId));
 }
 
 function reorderSteps(steps: PresenterRevealStep[], fromIdx: number, toIdx: number): PresenterRevealStep[] {
@@ -118,10 +118,30 @@ export function PresenterAnimationsPanel({
     onChangeSteps(next);
   };
 
-  const validateStepsAgainstCanvas = () => {
-    const next = mergeStepsWithPage(page);
+  const syncStepsWithCanvas = () => {
+    const pruned = mergeStepsWithPage(page);
+    const existing = new Set(pruned.map(presenterStepKey));
+    const added: PresenterRevealStep[] = [];
+    for (const k of selectedStepKeys) {
+      if (existing.has(k)) continue;
+      const parsed = parsePresenterStepKey(k);
+      if (!parsed) continue;
+      if (parsed.kind === "group") {
+        added.push({ kind: "group", groupId: parsed.groupId, enter: "fadeIn", exit: "none" });
+      } else {
+        added.push({ kind: "object", objectId: parsed.objectId, enter: "fadeIn", exit: "none" });
+      }
+      existing.add(k);
+    }
+    const next = [...pruned, ...added];
     onChangeSteps(next);
-    onReplaceStepSelection(next[0] ? [presenterStepKey(next[0])] : []);
+    const focusKey =
+      added.length > 0
+        ? presenterStepKey(added[added.length - 1])
+        : next[0]
+          ? presenterStepKey(next[0])
+          : null;
+    onReplaceStepSelection(focusKey ? [focusKey] : []);
   };
 
   const clearAllSteps = () => {
@@ -170,11 +190,11 @@ export function PresenterAnimationsPanel({
 
   return (
     <aside
-      className="flex w-[min(100%,260px)] shrink-0 flex-col rounded-md border border-white/[0.1] bg-[#12151a] shadow-inner md:w-[260px]"
+      className="flex w-[min(100%,260px)] shrink-0 flex-col border-l border-white/[0.08] bg-[#0a0c0f] shadow-none md:w-[260px]"
       onMouseLeave={() => onPreviewPresetHover?.(null)}
     >
       <div className="flex items-center justify-between border-b border-white/[0.08] px-2 py-1.5">
-        <h2 className="text-[11px] font-bold tracking-tight text-white">Animations</h2>
+        <h2 className="text-[11px] font-bold tracking-tight text-white">Animaciones</h2>
         <button
           type="button"
           onClick={onClose}
@@ -185,7 +205,10 @@ export function PresenterAnimationsPanel({
         </button>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-1.5 py-1.5">
+      <div
+        className="min-h-0 flex-1 overflow-y-auto px-1.5 py-1.5"
+        onMouseLeave={() => onPreviewPresetHover?.(null)}
+      >
         <div className="grid grid-cols-3 gap-1">
           {PRESENTER_GROUP_ENTER_OPTIONS.map((opt) => {
             const assignedToSelection =
@@ -200,18 +223,18 @@ export function PresenterAnimationsPanel({
                 disabled={selectedStepKeys.length === 0}
                 onClick={() => setEnter(opt.id)}
                 onMouseEnter={() => {
-                  if (selectedStepKeys.length > 0) onPreviewPresetHover?.(opt.id);
+                  if (selectedStepKeys.length === 1) onPreviewPresetHover?.(opt.id);
                 }}
                 className={`group flex flex-col items-center gap-1 rounded-[6px] border py-1.5 transition-all duration-150 disabled:opacity-35 ${
                   assignedToSelection
-                    ? "border-sky-500/55 bg-sky-500/15 shadow-[inset_0_0_0_1px_rgba(56,189,248,0.25)]"
+                    ? "border-[#f5b91b]/55 bg-[#f5b91b]/15 shadow-[inset_0_0_0_1px_rgba(245,185,27,0.25)]"
                     : "border-transparent hover:border-white/20 hover:bg-white/[0.07]"
                 }`}
               >
                 <PresenterEnterAnimationIcon id={opt.id} size={52} active={assignedToSelection} />
                 <span
                   className={`text-[10px] font-medium leading-tight transition-colors ${
-                    assignedToSelection ? "text-sky-200" : "text-zinc-400 group-hover:text-zinc-200"
+                    assignedToSelection ? "text-[#f5b91b]" : "text-zinc-400 group-hover:text-zinc-200"
                   }`}
                 >
                   {opt.label}
@@ -225,15 +248,19 @@ export function PresenterAnimationsPanel({
           className="mt-2 flex items-center justify-between gap-1 border-t border-white/[0.06] pt-1.5"
           onMouseEnter={() => onPreviewPresetHover?.(null)}
         >
-          <span className="text-[9px] font-bold uppercase tracking-wide text-zinc-500">Order</span>
+          <span className="text-[9px] font-bold uppercase tracking-wide text-zinc-500">Orden</span>
           <div className="flex gap-1">
             <button
               type="button"
-              onClick={validateStepsAgainstCanvas}
-              className="rounded-[4px] px-1 py-0.5 text-[8px] font-semibold text-sky-400/90 hover:bg-white/5 hover:text-sky-300"
-              title="Validar pasos"
+              onClick={syncStepsWithCanvas}
+              className="rounded-[4px] px-1 py-0.5 text-[8px] font-semibold text-[#f5b91b]/90 hover:bg-white/5 hover:text-[#f5b91b]"
+              title={
+                selectedStepKeys.length > 0
+                  ? "Añade la selección del lienzo al orden y elimina pasos inválidos"
+                  : "Elimina pasos cuyos objetos ya no existen en el slide"
+              }
             >
-              Validar
+              {selectedStepKeys.length > 0 ? "Añadir selección" : "Limpiar inválidos"}
             </button>
             {hasSteps && (
               <button
@@ -249,7 +276,15 @@ export function PresenterAnimationsPanel({
         </div>
 
         {!hasSteps && (
-          <p className="py-2 text-center text-[9px] text-zinc-600">Sin pasos</p>
+          <div className="py-3 text-center">
+            <p className="text-[10px] font-medium leading-snug text-zinc-400">
+              Haz clic en elementos del slide para añadir pasos de entrada.
+            </p>
+            <p className="mt-1.5 text-[9px] leading-snug text-zinc-600">
+              Selecciona objetos en el lienzo, elige un preset arriba o pulsa{" "}
+              <span className="font-semibold text-zinc-500">Añadir selección</span>.
+            </p>
+          </div>
         )}
 
         {hasSteps && (
@@ -270,9 +305,9 @@ export function PresenterAnimationsPanel({
                   onDragOver={(e) => onDragOverRow(e, sk)}
                   onDragLeave={onDragLeaveRow}
                   onDrop={(e) => onDropRow(e, sk)}
-                  className={`flex items-stretch gap-0 rounded-[6px] border transition-colors ${
-                    isDrop ? "border-sky-500/50 bg-sky-500/10" : "border-white/[0.07] bg-white/[0.02]"
-                  } ${sel ? "border-sky-500/40 bg-sky-500/[0.06]" : ""}`}
+                  className={`flex items-stretch gap-0 border transition-colors ${
+                    isDrop ? "border-[#f5b91b]/50 bg-[#f5b91b]/10" : "border-white/[0.07] bg-white/[0.02]"
+                  } ${sel ? "border-[#f5b91b]/40 bg-[#f5b91b]/[0.06]" : ""}`}
                 >
                   <div
                     draggable
@@ -292,19 +327,19 @@ export function PresenterAnimationsPanel({
                   >
                     <span className="w-3 shrink-0 text-[9px] font-bold text-zinc-600">{i + 1}</span>
                     {isGroupStep ? (
-                      <Users size={12} className="shrink-0 text-sky-400/90" aria-hidden />
+                      <Users size={12} className="shrink-0 text-[#f5b91b]/90" aria-hidden />
                     ) : (
                       <Layers size={12} className="shrink-0 text-zinc-500" aria-hidden />
                     )}
                     {isGroupStep && (
-                      <span className="shrink-0 rounded-[3px] border border-sky-500/35 bg-sky-500/15 px-0.5 py-px text-[6px] font-bold uppercase text-sky-200/90">
+                      <span className="shrink-0 rounded-[3px] border border-[#f5b91b]/35 bg-[#f5b91b]/15 px-0.5 py-px text-[6px] font-bold uppercase text-[#f5b91b]">
                         Grupo
                       </span>
                     )}
                     <span className="min-w-0 flex-1 truncate text-[9px] font-medium text-zinc-200" title={sk}>
                       {rowLabel(s, objects)}
                     </span>
-                    <Sparkles size={10} className="shrink-0 text-sky-400/70" aria-hidden />
+                    <Sparkles size={10} className="shrink-0 text-[#f5b91b]/70" aria-hidden />
                     <span className="max-w-[36px] shrink-0 truncate text-[7px] text-zinc-500">{s.enter}</span>
                   </button>
                   <button

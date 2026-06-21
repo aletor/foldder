@@ -1,5 +1,9 @@
 import type { Node } from "@xyflow/react";
-import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
+import {
+  collectS3KeysFromNodeData,
+  stableKnowledgeFileUrlFromKey,
+  tryExtractKnowledgeFilesKeyFromUrl,
+} from "@/lib/s3-media-hydrate";
 
 export type ProjectMediaKind = "image" | "video" | "audio" | "unknown";
 
@@ -33,16 +37,32 @@ const GENERATOR_NODE_TYPES = new Set([
   "enhancer",
   "backgroundRemover",
   "mediaDescriber",
+  "imageCreationAdvanced",
+  "painter",
+  "cine",
 ]);
 
-const IMPORT_NODE_TYPES = new Set(["mediaInput", "urlImage", "spaceInput"]);
+const IMPORT_NODE_TYPES = new Set(["mediaInput", "urlImage", "spaceInput", "inspiration"]);
 
 function isLikelyMediaRef(s: string): boolean {
   const t = s.trim();
   if (t.length < 8) return false;
   if (/^https?:\/\//i.test(t)) return true;
   if (/^data:(image|video|audio)\//i.test(t)) return true;
+  if (t.startsWith("/api/spaces/s3-file")) return true;
+  if (t.startsWith("knowledge-files/")) return true;
   return false;
+}
+
+/** Normaliza URL http(s), data:, ruta estable S3 o clave knowledge-files cruda. */
+export function normalizeMediaRef(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith("knowledge-files/")) {
+    return stableKnowledgeFileUrlFromKey(trimmed) ?? trimmed;
+  }
+  if (isLikelyMediaRef(trimmed)) return trimmed;
+  return null;
 }
 
 function guessKind(url: string, dataType?: string): ProjectMediaKind {
@@ -62,13 +82,13 @@ function guessKind(url: string, dataType?: string): ProjectMediaKind {
 function pushUnique(
   list: ProjectMediaItem[],
   seen: Set<string>,
-  url: string,
+  urlOrKey: string,
   kind: ProjectMediaKind,
   sourceLabel: string,
   nodeId: string,
 ) {
-  if (!isLikelyMediaRef(url)) return;
-  const normalized = url.trim();
+  const normalized = normalizeMediaRef(urlOrKey);
+  if (!normalized) return;
   const dedupe = projectMediaDedupeKey(normalized);
   if (!dedupe || seen.has(dedupe)) return;
   seen.add(dedupe);
@@ -81,24 +101,42 @@ function pushUnique(
   });
 }
 
-function extractFromNodeData(
-  data: Record<string, unknown>,
-  into: string[],
-) {
-  const v = data.value;
-  if (typeof v === "string" && isLikelyMediaRef(v)) into.push(v);
+function nodeLooksGenerated(nodeType: string, data: Record<string, unknown>): boolean {
+  if (GENERATOR_NODE_TYPES.has(nodeType)) return true;
+  if (data.generatedByAi === true) return true;
+  if (nodeType === "photoRoom" && typeof data.value === "string" && data.value.trim()) {
+    const objs = data.studioObjects;
+    return Array.isArray(objs) && objs.length > 0;
+  }
+  return false;
+}
+
+function extractFromNodeData(data: Record<string, unknown>, into: string[]) {
+  const fields = [data.value, data.lastGenerated, data.s3Key, data.previewUrl, data.outputUrl];
+  for (const raw of fields) {
+    if (typeof raw === "string") {
+      const normalized = normalizeMediaRef(raw);
+      if (normalized) into.push(normalized);
+    }
+  }
 
   const urls = data.urls;
   if (Array.isArray(urls)) {
     for (const u of urls) {
-      if (typeof u === "string" && isLikelyMediaRef(u)) into.push(u);
+      if (typeof u === "string") {
+        const normalized = normalizeMediaRef(u);
+        if (normalized) into.push(normalized);
+      }
     }
   }
 
   const gh = data.generationHistory;
   if (Array.isArray(gh)) {
     for (const u of gh) {
-      if (typeof u === "string" && isLikelyMediaRef(u)) into.push(u);
+      if (typeof u === "string") {
+        const normalized = normalizeMediaRef(u);
+        if (normalized) into.push(normalized);
+      }
     }
   }
 
@@ -106,13 +144,53 @@ function extractFromNodeData(
   if (Array.isArray(av)) {
     for (const ent of av) {
       if (!ent || typeof ent !== "object") continue;
-      const url = (ent as { url?: string }).url;
-      if (typeof url === "string" && isLikelyMediaRef(url)) into.push(url);
+      const row = ent as { url?: string; s3Key?: string };
+      if (typeof row.url === "string") {
+        const normalized = normalizeMediaRef(row.url);
+        if (normalized) into.push(normalized);
+      }
+      if (typeof row.s3Key === "string") {
+        const normalized = normalizeMediaRef(row.s3Key);
+        if (normalized) into.push(normalized);
+      }
     }
   }
 
-  const lastGen = data.lastGenerated;
-  if (typeof lastGen === "string" && isLikelyMediaRef(lastGen)) into.push(lastGen);
+  const studioObjects = data.studioObjects;
+  if (Array.isArray(studioObjects)) {
+    for (const obj of studioObjects) {
+      if (!obj || typeof obj !== "object") continue;
+      const row = obj as { type?: string; src?: string; cachedResult?: string };
+      if (row.type === "image" && typeof row.src === "string") {
+        const normalized = normalizeMediaRef(row.src);
+        if (normalized) into.push(normalized);
+      }
+      if (row.type === "booleanGroup" && typeof row.cachedResult === "string") {
+        const normalized = normalizeMediaRef(row.cachedResult);
+        if (normalized) into.push(normalized);
+      }
+    }
+  }
+}
+
+function extractInspirationOutput(data: Record<string, unknown>): string | null {
+  const value = typeof data.value === "string" ? normalizeMediaRef(data.value) : null;
+  if (value) return value;
+  const status = data.status;
+  if (status !== "selected" && status !== "output") return null;
+  const selected = data.selected;
+  if (!selected || typeof selected !== "object") return null;
+  const row = selected as { imageUrl?: string };
+  return typeof row.imageUrl === "string" ? normalizeMediaRef(row.imageUrl) : null;
+}
+
+function collectS3MediaRefs(data: Record<string, unknown>): string[] {
+  const refs: string[] = [];
+  for (const key of collectS3KeysFromNodeData(data)) {
+    const normalized = normalizeMediaRef(key);
+    if (normalized) refs.push(normalized);
+  }
+  return refs;
 }
 
 type DesignerPageMedia = {
@@ -132,42 +210,50 @@ function walkDesignerPagesForMedia(pages: unknown, into: DesignerPageMedia[]) {
       const ob = o as Record<string, unknown>;
       if (Array.isArray(ob.aiGeneratedMediaRefs)) {
         for (const raw of ob.aiGeneratedMediaRefs) {
-          if (typeof raw !== "string" || !isLikelyMediaRef(raw)) continue;
+          if (typeof raw !== "string") continue;
+          const normalized = normalizeMediaRef(raw);
+          if (!normalized) continue;
           into.push({
-            url: raw,
-            kind: guessKind(raw, "image"),
+            url: normalized,
+            kind: guessKind(normalized, "image"),
             generated: true,
             sourceLabel: "Designer · IA",
           });
         }
       }
       if (ob.type === "image" && typeof ob.src === "string") {
+        const normalized = normalizeMediaRef(ob.src);
+        if (!normalized) continue;
         const imgMeta = ob.imageAssetMeta as { generatedByAi?: boolean; generatedByAiSource?: string } | undefined;
         into.push({
-          url: ob.src,
-          kind: guessKind(ob.src, "image"),
+          url: normalized,
+          kind: guessKind(normalized, "image"),
           generated: !!imgMeta?.generatedByAi,
           sourceLabel: imgMeta?.generatedByAi ? (imgMeta.generatedByAiSource || "Designer · IA") : "Designer",
         });
       }
       if (ob.type === "rect") {
         const ifc = ob.imageFrameContent as
-          | { src?: string; generatedByAi?: boolean; generatedByAiSource?: string }
+          | { src?: string; s3Key?: string; generatedByAi?: boolean; generatedByAiSource?: string }
           | null
           | undefined;
-        if (ifc?.src && typeof ifc.src === "string") {
+        const rawSrc = typeof ifc?.src === "string" ? ifc.src : typeof ifc?.s3Key === "string" ? ifc.s3Key : "";
+        const normalized = normalizeMediaRef(rawSrc);
+        if (normalized) {
           into.push({
-            url: ifc.src,
-            kind: guessKind(ifc.src, "image"),
-            generated: !!ifc.generatedByAi,
-            sourceLabel: ifc.generatedByAi ? (ifc.generatedByAiSource || "Designer frame · IA") : "Designer frame",
+            url: normalized,
+            kind: guessKind(normalized, "image"),
+            generated: !!ifc?.generatedByAi,
+            sourceLabel: ifc?.generatedByAi ? (ifc.generatedByAiSource || "Designer frame · IA") : "Designer frame",
           });
         }
       }
       if (ob.type === "booleanGroup" && typeof ob.cachedResult === "string") {
+        const normalized = normalizeMediaRef(ob.cachedResult);
+        if (!normalized) continue;
         into.push({
-          url: ob.cachedResult,
-          kind: guessKind(ob.cachedResult, "image"),
+          url: normalized,
+          kind: guessKind(normalized, "image"),
           generated: false,
           sourceLabel: "Designer boolean",
         });
@@ -182,7 +268,33 @@ function presenterVideoUrls(data: Record<string, unknown>, into: string[]) {
   for (const p of pl) {
     if (!p || typeof p !== "object") continue;
     const u = (p as { videoUrl?: string }).videoUrl;
-    if (typeof u === "string" && isLikelyMediaRef(u)) into.push(u);
+    if (typeof u === "string") {
+      const normalized = normalizeMediaRef(u);
+      if (normalized) into.push(normalized);
+    }
+  }
+}
+
+function labelForNodeType(nodeType: string): string {
+  switch (nodeType) {
+    case "photoRoom":
+      return "PhotoRoom";
+    case "imageCreationAdvanced":
+      return "Image Creation";
+    case "nanoBanana":
+      return "Nano Banana";
+    case "cine":
+      return "Cine";
+    case "inspiration":
+      return "Inspiration";
+    case "imageExport":
+      return "Image Export";
+    case "crop":
+      return "Crop";
+    case "painter":
+      return "Painter";
+    default:
+      return nodeType || "nodo";
   }
 }
 
@@ -205,6 +317,7 @@ export function collectProjectMedia(nodes: Node[]): {
     const nodeType = n.type || "";
     const data = (n.data ?? {}) as Record<string, unknown>;
     const dataType = typeof data.type === "string" ? data.type : undefined;
+    const sourceLabel = labelForNodeType(nodeType);
 
     if (nodeType === "designer") {
       const media: DesignerPageMedia[] = [];
@@ -228,10 +341,21 @@ export function collectProjectMedia(nodes: Node[]): {
       continue;
     }
 
+    if (nodeType === "inspiration") {
+      const output = extractInspirationOutput(data);
+      if (output) {
+        pushUnique(imported, seenI, output, guessKind(output, dataType), "Inspiration", nodeId);
+      }
+      continue;
+    }
+
     const urls: string[] = [];
     extractFromNodeData(data, urls);
+    for (const ref of collectS3MediaRefs(data)) {
+      if (!urls.includes(ref)) urls.push(ref);
+    }
 
-    const isGenNode = GENERATOR_NODE_TYPES.has(nodeType);
+    const isGenNode = nodeLooksGenerated(nodeType, data);
     const isImportNode = IMPORT_NODE_TYPES.has(nodeType);
 
     const av = data._assetVersions;
@@ -239,28 +363,28 @@ export function collectProjectMedia(nodes: Node[]): {
     if (Array.isArray(av)) {
       for (const ent of av) {
         if (!ent || typeof ent !== "object") continue;
-        const urlEnt = (ent as { url?: string; source?: string }).url;
-        const source = (ent as { source?: string }).source;
-        if (typeof urlEnt === "string" && isLikelyMediaRef(urlEnt) && source === "graph-run") {
-          graphRunUrls.push(urlEnt);
-        }
+        const row = ent as { url?: string; s3Key?: string; source?: string };
+        const urlEnt = typeof row.url === "string" ? normalizeMediaRef(row.url) : null;
+        const keyEnt = typeof row.s3Key === "string" ? normalizeMediaRef(row.s3Key) : null;
+        const resolved = urlEnt ?? keyEnt;
+        if (resolved && row.source === "graph-run") graphRunUrls.push(resolved);
       }
     }
 
     for (const url of urls) {
       const kind = guessKind(url, dataType);
       if (graphRunUrls.includes(url) || isGenNode) {
-        pushUnique(generated, seenG, url, kind, nodeType || "nodo", nodeId);
+        pushUnique(generated, seenG, url, kind, sourceLabel, nodeId);
       } else if (isImportNode) {
-        pushUnique(imported, seenI, url, kind, nodeType || "nodo", nodeId);
+        pushUnique(imported, seenI, url, kind, sourceLabel, nodeId);
       } else {
-        pushUnique(imported, seenI, url, kind, nodeType || "nodo", nodeId);
+        pushUnique(imported, seenI, url, kind, sourceLabel, nodeId);
       }
     }
 
     for (const url of graphRunUrls) {
       if (!urls.includes(url)) {
-        pushUnique(generated, seenG, url, guessKind(url, dataType), `${nodeType} · historial`, nodeId);
+        pushUnique(generated, seenG, url, guessKind(url, dataType), `${sourceLabel} · historial`, nodeId);
       }
     }
   }

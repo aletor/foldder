@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { getPageDimensions } from "@/app/spaces/indesign/page-formats";
 import { PresenterSlideStage, resolveIncomingTransition } from "@/app/spaces/presenter/PresenterSlideStage";
 import type { PlayRevealState } from "@/app/spaces/presenter/DesignerPageCanvasView";
@@ -9,6 +10,7 @@ import {
   PRESENTER_GROUP_ENTER_ANIM_MS,
   presenterStepKey,
 } from "@/app/spaces/presenter/presenter-group-animations";
+import { buildPresenterPlaybackImageVideoBinding } from "@/app/spaces/presenter/presenter-playback-image-video";
 import type { SlideTransitionId } from "@/app/spaces/presenter/slide-transition-types";
 import type { PublicPresenterShareRecord } from "@/lib/presenter-share-types";
 import {
@@ -32,15 +34,20 @@ type Props = {
 
 export function PublicPresenterClient({ initial }: Props) {
   const pages = initial.payload.pages;
-  const transitionsByPageId = useMemo(() => initial.payload.transitionsByPageId ?? {}, [initial.payload.transitionsByPageId]);
+  const transitionsByPageId = useMemo(
+    () => initial.payload.transitionsByPageId ?? {},
+    [initial.payload.transitionsByPageId],
+  );
+  const imageVideoPlacements = useMemo(
+    () => initial.payload.imageVideoPlacements ?? [],
+    [initial.payload.imageVideoPlacements],
+  );
 
   const [gatePass, setGatePass] = useState(() => !initial.options.requirePasscode);
   const [passInput, setPassInput] = useState("");
   const [passError, setPassError] = useState("");
   const [isVerifyingPass, setIsVerifyingPass] = useState(false);
-  const [gateEmail, setGateEmail] = useState(
-    () => !initial.options.requireVisitorEmail,
-  );
+  const [gateEmail, setGateEmail] = useState(() => !initial.options.requireVisitorEmail);
   const [emailInput, setEmailInput] = useState("");
 
   const [activeIdx, setActiveIdx] = useState(() => firstPlayableIndex(pages) ?? 0);
@@ -48,6 +55,7 @@ export function PublicPresenterClient({ initial }: Props) {
   const [playRevealCount, setPlayRevealCount] = useState(0);
   const [animateEnterTargetKey, setAnimateEnterTargetKey] = useState<string | null>(null);
   const playAnimTimerRef = useRef<number | null>(null);
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     void fetch("/api/presenter-share/visit", {
@@ -100,12 +108,15 @@ export function PublicPresenterClient({ initial }: Props) {
     () => pages.map((_, i) => i).filter((i) => !isPresenterSlideSkipped(pages[i])),
     [pages],
   );
+
+  const stageFocusIdx = pendingAnim ? pendingAnim.to : activeIdx;
+
   const slideCountLabel = useMemo(() => {
     if (playableIndices.length === 0) return "—";
-    const pos = playableIndices.indexOf(activeIdx);
-    if (pos < 0) return `${activeIdx + 1} / ${pages.length}`;
+    const pos = playableIndices.indexOf(stageFocusIdx);
+    if (pos < 0) return `${stageFocusIdx + 1} / ${pages.length}`;
     return `${pos + 1} / ${playableIndices.length}`;
-  }, [playableIndices, activeIdx, pages.length]);
+  }, [playableIndices, stageFocusIdx, pages.length]);
 
   const playAdvanceRight = useCallback(() => {
     if (pendingAnim) return;
@@ -144,6 +155,31 @@ export function PublicPresenterClient({ initial }: Props) {
     if (prevI !== null) goToIdx(prevI);
   }, [playRevealCount, activeIdx, pages, goToIdx, pendingAnim]);
 
+  const jumpToPlaySlide = useCallback(
+    (idx: number) => {
+      if (pendingAnim) return;
+      goToIdx(idx);
+      setPlayRevealCount(0);
+      setAnimateEnterTargetKey(null);
+    },
+    [goToIdx, pendingAnim],
+  );
+
+  const canGoPlayPrev = useMemo(() => {
+    if (pendingAnim) return false;
+    if (playRevealCount > 0) return true;
+    return prevPlayableIndex(pages, activeIdx) !== null;
+  }, [pendingAnim, playRevealCount, pages, activeIdx]);
+
+  const canGoPlayNext = useMemo(() => {
+    if (pendingAnim) return false;
+    const page = pages[activeIdx];
+    if (!page) return false;
+    const steps = mergeStepsWithPage(page);
+    if (steps.length > 0 && playRevealCount < steps.length) return true;
+    return nextPlayableIndex(pages, activeIdx) !== null;
+  }, [pendingAnim, pages, activeIdx, playRevealCount]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!gatePass || !gateEmail) return;
@@ -158,17 +194,35 @@ export function PublicPresenterClient({ initial }: Props) {
       if (e.key === "Home") {
         e.preventDefault();
         const f = firstPlayableIndex(pages);
-        if (f !== null) goToIdx(f);
+        if (f !== null) jumpToPlaySlide(f);
       }
       if (e.key === "End") {
         e.preventDefault();
         const la = lastPlayableIndex(pages);
-        if (la !== null) goToIdx(la);
+        if (la !== null) jumpToPlaySlide(la);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [gateEmail, gatePass, playAdvanceRight, playAdvanceLeft, goToIdx, pages]);
+  }, [gateEmail, gatePass, playAdvanceRight, playAdvanceLeft, jumpToPlaySlide, pages]);
+
+  const onTouchStart = (e: React.TouchEvent) => {
+    const t = e.changedTouches[0];
+    if (!t) return;
+    touchStartRef.current = { x: t.clientX, y: t.clientY };
+  };
+
+  const onTouchEnd = (e: React.TouchEvent) => {
+    const start = touchStartRef.current;
+    touchStartRef.current = null;
+    const t = e.changedTouches[0];
+    if (!start || !t) return;
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    if (Math.abs(dx) < 48 || Math.abs(dx) < Math.abs(dy)) return;
+    if (dx < 0) playAdvanceRight();
+    else playAdvanceLeft();
+  };
 
   const tryPass = async () => {
     if (!initial.options.requirePasscode) {
@@ -214,6 +268,12 @@ export function PublicPresenterClient({ initial }: Props) {
     if (emailInput.includes("@")) setGateEmail(true);
   };
 
+  const canvasPageId = pages[activeIdx]?.id ?? "";
+  const presenterImageVideo = useMemo(
+    () => buildPresenterPlaybackImageVideoBinding(canvasPageId, imageVideoPlacements),
+    [canvasPageId, imageVideoPlacements],
+  );
+
   if (!gatePass) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-[#0b0d10] px-4 text-white">
@@ -228,9 +288,7 @@ export function PublicPresenterClient({ initial }: Props) {
           className="w-full max-w-xs rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-violet-500/50"
           placeholder="Código"
         />
-        {passError ? (
-          <p className="text-xs text-rose-400">{passError}</p>
-        ) : null}
+        {passError ? <p className="text-xs text-rose-400">{passError}</p> : null}
         <button
           type="button"
           onClick={() => void tryPass()}
@@ -271,11 +329,15 @@ export function PublicPresenterClient({ initial }: Props) {
 
   return (
     <div
-      className="relative min-h-screen w-full cursor-pointer bg-black"
-      onClick={() => playAdvanceRight()}
-      title="Clic para avanzar · flechas: grupos y slides"
+      className="relative flex min-h-screen w-full flex-col bg-black"
+      onTouchStart={onTouchStart}
+      onTouchEnd={onTouchEnd}
     >
-      <div className="flex min-h-screen items-center justify-center p-0">
+      <div
+        className="flex min-h-0 flex-1 cursor-pointer items-center justify-center p-0"
+        onClick={() => playAdvanceRight()}
+        title="Clic o desliza para avanzar · flechas: pasos y slides"
+      >
         <div
           className="relative w-full max-w-[min(96vw,calc(85vh*16/9))] overflow-hidden bg-black"
           style={{
@@ -290,29 +352,65 @@ export function PublicPresenterClient({ initial }: Props) {
             playReveal={playRevealComputed}
             animateEnterTargetKey={animateEnterTargetKey}
             showPresentationBounds={false}
+            presenterImageVideo={presenterImageVideo}
           />
         </div>
       </div>
 
-      <div className="pointer-events-none absolute bottom-6 left-0 right-0 flex justify-center">
-        <div className="rounded-full border border-white/10 bg-black/50 px-4 py-1.5 text-[11px] font-medium text-white/90 backdrop-blur-md">
-          Slide {slideCountLabel}
-          {stepsLen > 0 ? (
-            <span className="text-white/60"> · Paso {playRevealCount} / {stepsLen}</span>
-          ) : null}
-        </div>
-      </div>
-
-      {initial.options.allowPdfDownload && (
-        <div
-          className="pointer-events-auto absolute bottom-6 right-6"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <span className="rounded-lg border border-white/15 bg-black/40 px-3 py-1.5 text-[10px] text-zinc-400">
-            PDF (próximamente)
+      <footer
+        className="flex h-[52px] shrink-0 items-center gap-3 border-t border-white/[0.08] bg-[#0a0a0c] px-3"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex shrink-0 items-center gap-0.5">
+          <button
+            type="button"
+            onClick={playAdvanceLeft}
+            disabled={!canGoPlayPrev}
+            className="rounded-lg p-2 text-white transition-colors hover:bg-white/10 disabled:pointer-events-none disabled:opacity-35"
+            aria-label="Slide anterior"
+          >
+            <ChevronLeft size={22} strokeWidth={2} aria-hidden />
+          </button>
+          <span className="min-w-[3.5rem] text-center text-[13px] font-medium tabular-nums text-white/90">
+            {slideCountLabel}
           </span>
+          <button
+            type="button"
+            onClick={playAdvanceRight}
+            disabled={!canGoPlayNext}
+            className="rounded-lg p-2 text-white transition-colors hover:bg-white/10 disabled:pointer-events-none disabled:opacity-35"
+            aria-label="Slide siguiente"
+          >
+            <ChevronRight size={22} strokeWidth={2} aria-hidden />
+          </button>
         </div>
-      )}
+
+        <div className="flex min-h-[6px] min-w-0 flex-1 items-center gap-[3px] px-1">
+          {playableIndices.map((i) => {
+            const p = pages[i];
+            if (!p) return null;
+            const isCurrent = i === stageFocusIdx;
+            return (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => jumpToPlaySlide(i)}
+                disabled={pendingAnim !== null}
+                className={`h-[5px] min-w-0 flex-1 rounded-[1px] transition-colors ${
+                  isCurrent ? "bg-white" : "bg-white/22 hover:bg-white/35"
+                } disabled:pointer-events-none disabled:opacity-50`}
+                aria-label={`Ir al slide ${i + 1}`}
+              />
+            );
+          })}
+        </div>
+
+        {stepsLen > 0 ? (
+          <span className="shrink-0 text-[10px] font-medium tabular-nums text-white/60">
+            Paso {playRevealCount}/{stepsLen}
+          </span>
+        ) : null}
+      </footer>
     </div>
   );
 }

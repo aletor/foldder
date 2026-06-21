@@ -1,23 +1,29 @@
 /**
  * Limita llamadas del cliente a rutas /api de IA:
- * - Máximo 5 concurrentes.
- * - La misma petición (método + URL) no puede repetirse antes de 4 s (salvo polling de estado).
- * - Si se viola o el usuario está bloqueado, 429 hasta pulsar «Verificar» (solo gesto real isTrusted).
+ * - Máximo 8 concurrentes.
+ * - La misma petición (método + URL + cuerpo) no puede repetirse antes de 4 s (salvo polling).
+ * - Duplicados exactos reciben 429; bloqueo global solo tras ráfagas sospechosas.
  */
 
 import { getAiRequestLabelForPathname } from "@/lib/ai-api-labels";
 
-const MAX_CONCURRENT = 5;
+const MAX_CONCURRENT = 8;
 const REPEAT_WINDOW_MS = 4000;
+const REPEAT_STRIKE_WINDOW_MS = 15_000;
+const REPEAT_STRIKES_BEFORE_VERIFY = 5;
 
 type GuardState = {
   verifyBlocked: boolean;
   lastRepeatAt: Map<string, number>;
+  repeatStrikeCount: number;
+  repeatStrikeWindowStart: number;
 };
 
 const guardState: GuardState = {
   verifyBlocked: false,
   lastRepeatAt: new Map(),
+  repeatStrikeCount: 0,
+  repeatStrikeWindowStart: 0,
 };
 
 const verifyListeners = new Set<() => void>();
@@ -42,8 +48,19 @@ export function clearExternalApiVerifyBlock(ev: { isTrusted: boolean }): boolean
   if (!ev.isTrusted) return false;
   guardState.verifyBlocked = false;
   guardState.lastRepeatAt.clear();
+  guardState.repeatStrikeCount = 0;
+  guardState.repeatStrikeWindowStart = 0;
   notifyVerify();
   return true;
+}
+
+/** Tests / Strict Mode. */
+export function resetExternalApiGuardForTests(): void {
+  guardState.verifyBlocked = false;
+  guardState.lastRepeatAt.clear();
+  guardState.repeatStrikeCount = 0;
+  guardState.repeatStrikeWindowStart = 0;
+  notifyVerify();
 }
 
 class Semaphore {
@@ -69,42 +86,54 @@ class Semaphore {
 const semaphore = new Semaphore(MAX_CONCURRENT);
 
 function isExemptFromRepeat(pathname: string): boolean {
-  if (/^\/api\/grok\/status\//.test(pathname) || /^\/api\/runway\/status\//.test(pathname)) {
-    return true;
-  }
-  /**
-   * Polling de estado: ya exento arriba.
-   * Generación Gemini (imagen / vídeo / stream): cada POST puede ser un prompt distinto;
-   * la clave de repetición solo usa método + pathname, así que dos generaciones seguidas
-   * a `/api/gemini/video` en menos de 4s disparaban EXTERNAL_API_GUARD sin motivo real.
-   */
-  if (
-    pathname === "/api/gemini/video" ||
-    pathname === "/api/gemini/generate" ||
-    pathname === "/api/gemini/generate-stream" ||
-    pathname === "/api/openai/generate-stream" ||
-    pathname === "/api/gemini/analyze-areas" ||
-    pathname === "/api/gemini/analyze-correction" ||
-    pathname === "/api/gemini/describe-region" ||
-    pathname === "/api/spaces/cine/analyze" ||
-    pathname === "/api/spaces/describe" ||
-    pathname === "/api/spaces/text-content" ||
-    pathname === "/api/video-editor/subtitles/transcribe" ||
-    pathname === "/api/inspiration/search"
-  ) {
-    return true;
-  }
-  return false;
+  return /^\/api\/grok\/status\//.test(pathname) || /^\/api\/runway\/status\//.test(pathname);
 }
 
-function repeatKey(method: string, abs: URL): string {
-  return `${method} ${abs.pathname}${abs.search}`;
+function fingerprintString(raw: string): string {
+  let h = 2166136261;
+  for (let i = 0; i < raw.length; i++) {
+    h ^= raw.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return `${raw.length}:${h >>> 0}`;
+}
+
+function readBodyFingerprint(input: RequestInfo | URL, init: RequestInit | undefined, method: string): string {
+  if (method === "GET" || method === "HEAD" || method === "OPTIONS") return "";
+
+  const body = init?.body;
+  if (typeof body === "string") return fingerprintString(body);
+  if (body instanceof URLSearchParams) return fingerprintString(body.toString());
+
+  if (body == null && input instanceof Request) {
+    return `req:${fingerprintString(input.url)}`;
+  }
+
+  return "";
+}
+
+function repeatKey(method: string, abs: URL, bodyFingerprint: string): string {
+  const base = `${method} ${abs.pathname}${abs.search}`;
+  return bodyFingerprint ? `${base}#${bodyFingerprint}` : base;
+}
+
+function registerRepeatStrike(): void {
+  const now = Date.now();
+  if (now - guardState.repeatStrikeWindowStart > REPEAT_STRIKE_WINDOW_MS) {
+    guardState.repeatStrikeWindowStart = now;
+    guardState.repeatStrikeCount = 0;
+  }
+  guardState.repeatStrikeCount += 1;
+  if (guardState.repeatStrikeCount >= REPEAT_STRIKES_BEFORE_VERIFY) {
+    guardState.verifyBlocked = true;
+    notifyVerify();
+  }
 }
 
 function json429(kind: "blocked" | "repeat"): Response {
   const message =
     kind === "repeat"
-      ? "La misma petición a la API no puede repetirse antes de 4 segundos. Pulsa «Verificar» para continuar."
+      ? "La misma petición a la API no puede repetirse antes de 4 segundos. Pulsa «Verificar» si necesitas continuar."
       : "Las llamadas a APIs externas están bloqueadas hasta verificación. Pulsa «Verificar» para continuar.";
   return new Response(
     JSON.stringify({
@@ -112,7 +141,7 @@ function json429(kind: "blocked" | "repeat"): Response {
       reason: kind,
       message,
     }),
-    { status: 429, headers: { "Content-Type": "application/json" } }
+    { status: 429, headers: { "Content-Type": "application/json" } },
   );
 }
 
@@ -164,11 +193,11 @@ export function createGuardedFetch(innerFetch: typeof fetch): typeof fetch {
       ).toUpperCase();
 
       if (!isExemptFromRepeat(pathname)) {
-        const key = repeatKey(method, abs);
+        const bodyFingerprint = readBodyFingerprint(input, init, method);
+        const key = repeatKey(method, abs, bodyFingerprint);
         const prev = guardState.lastRepeatAt.get(key) ?? 0;
         if (prev > 0 && Date.now() - prev < REPEAT_WINDOW_MS) {
-          guardState.verifyBlocked = true;
-          notifyVerify();
+          registerRepeatStrike();
           return json429("repeat");
         }
         guardState.lastRepeatAt.set(key, Date.now());
@@ -180,3 +209,8 @@ export function createGuardedFetch(innerFetch: typeof fetch): typeof fetch {
     }
   };
 }
+
+export const externalApiGuardLimits = {
+  maxConcurrent: MAX_CONCURRENT,
+  repeatWindowMs: REPEAT_WINDOW_MS,
+} as const;

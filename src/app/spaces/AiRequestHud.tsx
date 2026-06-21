@@ -1,72 +1,107 @@
 "use client";
 
 import {
-  getAiRequestOverlaySnapshot,
-  subscribeAiRequestOverlay,
-} from "@/lib/ai-request-overlay";
-import {
-  getAiHudGenerationProgressSnapshot,
-  subscribeAiHudGenerationProgress,
-} from "@/lib/ai-hud-generation-progress";
+  getActiveAiJobsForHudSnapshot,
+  subscribeActiveAiJobs,
+  type AiActiveJob,
+} from "@/lib/ai-active-jobs";
 import { useSyncExternalStore } from "react";
 
-export function AiRequestHud() {
-  const label = useSyncExternalStore(
-    subscribeAiRequestOverlay,
-    getAiRequestOverlaySnapshot,
-    () => null
+type AiRequestHudProps = {
+  onFocusNode?: (nodeId: string) => void;
+};
+
+const MAX_VISIBLE_TICKS = 5;
+
+function jobProgress(job: AiActiveJob): number | null {
+  if (job.pct == null) return null;
+  return Math.min(100, Math.max(0, Math.round(job.pct)));
+}
+
+function jobAriaLabel(job: AiActiveJob): string {
+  const pct = jobProgress(job);
+  if (pct != null) return `${job.label}, ${pct}%`;
+  return `${job.label}, procesando`;
+}
+
+function JobTick({
+  job,
+  onFocusNode,
+}: {
+  job: AiActiveJob;
+  onFocusNode?: (nodeId: string) => void;
+}) {
+  const pct = jobProgress(job);
+  const indeterminate = pct == null;
+  const canFocus = Boolean(job.nodeId && onFocusNode);
+
+  return (
+    <button
+      type="button"
+      className="foldder-ai-active-jobs__tick pointer-events-auto"
+      title={jobAriaLabel(job)}
+      aria-label={canFocus ? `${jobAriaLabel(job)}. Ir al nodo` : jobAriaLabel(job)}
+      disabled={!canFocus}
+      onClick={() => {
+        if (canFocus) onFocusNode?.(job.nodeId!);
+      }}
+    >
+      <span
+        className="foldder-ai-active-jobs__tick-track"
+        role="progressbar"
+        aria-valuenow={indeterminate ? undefined : pct}
+        aria-valuemin={indeterminate ? undefined : 0}
+        aria-valuemax={indeterminate ? undefined : 100}
+        aria-valuetext={indeterminate ? "Procesando" : `${pct}%`}
+      >
+        <span
+          className={`foldder-ai-active-jobs__tick-fill${indeterminate ? " foldder-ai-active-jobs__tick-fill--pulse" : ""}`}
+          style={indeterminate ? undefined : { width: `${pct}%` }}
+          aria-hidden
+        />
+      </span>
+    </button>
   );
-  const genPct = useSyncExternalStore(
-    subscribeAiHudGenerationProgress,
-    getAiHudGenerationProgressSnapshot,
-    () => null
+}
+
+export function AiRequestHud({ onFocusNode }: AiRequestHudProps) {
+  const jobs = useSyncExternalStore(
+    subscribeActiveAiJobs,
+    getActiveAiJobsForHudSnapshot,
+    () => [] as readonly AiActiveJob[],
   );
 
-  /**
-   * `genPct` viene del store global (`aiHudNanoBananaJob*`), no solo del nodo montado.
-   * La etiqueta del fetch puede faltar un instante; mostramos el HUD si hay % o etiqueta.
-   */
-  if (!label && genPct == null) return null;
+  if (jobs.length === 0) return null;
 
-  const pctRounded = genPct != null ? Math.min(100, Math.max(0, Math.round(genPct))) : null;
-  const determinate = pctRounded != null;
-  const titleLabel = label ?? "Image Creation";
+  const visibleJobs = jobs.slice(0, MAX_VISIBLE_TICKS);
+  const overflow = jobs.length - visibleJobs.length;
+  const primary = jobs[0]!;
+  const caption =
+    jobs.length === 1
+      ? primary.label
+      : `${jobs.length}`;
 
   return (
     <div
-      className="pointer-events-none w-[min(92vw,320px)] text-right font-sans text-[11px] font-semibold leading-tight text-white [text-shadow:0_1px_2px_rgba(0,0,0,0.95),0_0_12px_rgba(0,0,0,0.65)]"
+      className="foldder-ai-active-jobs pointer-events-none font-sans"
       aria-live="polite"
       aria-busy="true"
+      aria-label={`${jobs.length} petición${jobs.length === 1 ? "" : "es"} IA en curso`}
     >
-      <div className="mb-0.5">Petición IA [{titleLabel}]</div>
-      <div className="flex items-center justify-end gap-2">
-        <div
-          className="foldder-ai-request-hud__track mt-0 min-w-0 flex-1"
-          role="progressbar"
-          aria-label="Petición en curso"
-          aria-valuenow={determinate ? pctRounded : undefined}
-          aria-valuemin={determinate ? 0 : undefined}
-          aria-valuemax={determinate ? 100 : undefined}
-          aria-valuetext={determinate ? `${pctRounded}%` : "Procesando"}
-        >
-          {determinate ? (
-            <div
-              className="foldder-ai-request-hud__fill foldder-ai-request-hud__fill--determinate"
-              style={{ width: `${pctRounded}%` }}
-              aria-hidden
-            />
-          ) : (
-            <div className="foldder-ai-request-hud__fill" aria-hidden />
-          )}
+      <div className="foldder-ai-active-jobs__chip">
+        <span className="foldder-ai-active-jobs__beacon" aria-hidden />
+        <div className="foldder-ai-active-jobs__ticks" role="group" aria-label="Progreso de ejecuciones">
+          {visibleJobs.map((job) => (
+            <JobTick key={job.id} job={job} onFocusNode={onFocusNode} />
+          ))}
         </div>
-        {determinate ? (
-          <span
-            className="pointer-events-none shrink-0 rounded-md border border-white/25 bg-black/70 px-2 py-1 font-mono text-[11px] font-medium tabular-nums text-violet-100 shadow-md backdrop-blur-md [text-shadow:none]"
-            aria-hidden
-          >
-            {pctRounded}%
-          </span>
-        ) : null}
+        <span
+          className={`foldder-ai-active-jobs__caption${jobs.length > 1 ? " foldder-ai-active-jobs__caption--count" : ""}`}
+          title={jobs.map((j) => jobAriaLabel(j)).join(" · ")}
+        >
+          {caption}
+          {overflow > 0 ? <span className="foldder-ai-active-jobs__overflow">+{overflow}</span> : null}
+        </span>
       </div>
     </div>
   );

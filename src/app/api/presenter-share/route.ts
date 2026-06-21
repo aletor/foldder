@@ -119,6 +119,9 @@ export async function POST(req: Request) {
       payload: {
         pages: body.payload.pages,
         transitionsByPageId: body.payload.transitionsByPageId ?? {},
+        imageVideoPlacements: Array.isArray(body.payload.imageVideoPlacements)
+          ? body.payload.imageVideoPlacements
+          : [],
       },
       createdAt: new Date().toISOString(),
       visits: 0,

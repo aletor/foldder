@@ -195,7 +195,6 @@ describe("spaces-v2-store integration over mocked Dynamo", () => {
       ui: {
         activeSpaceId: "root",
         viewport: { x: 10, y: -20, zoom: 0.5 },
-        workspaceViewMode: "pro",
       },
     });
 
@@ -208,7 +207,6 @@ describe("spaces-v2-store integration over mocked Dynamo", () => {
     expect(loaded?.metadata.ui).toEqual({
       activeSpaceId: "root",
       viewport: { x: 10, y: -20, zoom: 0.5 },
-      workspaceViewMode: "pro",
     });
   });
 

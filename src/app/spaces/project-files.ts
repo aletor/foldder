@@ -1,7 +1,5 @@
 import type { Node } from "@xyflow/react";
 
-export type WorkspaceViewMode = "standard" | "pro";
-
 export type ProjectFileKind =
   | "designer"
   | "photoroom"

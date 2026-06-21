@@ -117,8 +117,6 @@ export const STUDIO_APPS: StudioAppConfig[] = [
   },
 ];
 
-export const DOCK_STUDIO_APPS = STUDIO_APPS.filter((app) => app.showInDock);
-
 export function studioAppForId(appId: string): StudioAppConfig | undefined {
   return STUDIO_APPS.find((app) => app.appId === appId);
 }

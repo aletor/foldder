@@ -60,7 +60,6 @@ import { useDesignerTextFrameLayoutSync } from "./useDesignerTextFrameLayoutSync
 import { useBrainNodeTelemetry } from "@/lib/brain/use-brain-node-telemetry";
 import type { DesignerEmbedProps } from "../freehand/designer-embed-props";
 import type { FoldderExportCreatedDetail } from "../foldder-export-events";
-import type { StandardStudioShellConfig } from "../StandardStudioShell";
 import { countDesignerImagesInPages } from "./designer-export-image-summary";
 import {
   logDesignerExportImagesSummary,
@@ -81,7 +80,6 @@ interface DesignerStudioProps {
   onClose: () => void;
   onExport: (dataUrl: string) => void;
   onFinalExport?: (detail: Omit<FoldderExportCreatedDetail, "sourceNodeId">) => void;
-  standardShell?: StandardStudioShellConfig;
   onUpdatePages: (pages: DesignerPageState[], activeIdx?: number) => void;
   /** Id estable del nodo en el canvas (React Flow); el lienzo no se remonta al cambiar de página. */
   designerCanvasInstanceKey: string;
@@ -112,7 +110,6 @@ export default function DesignerStudio({
   onClose,
   onExport,
   onFinalExport,
-  standardShell,
   onUpdatePages,
   designerCanvasInstanceKey,
   autoImageOptimization = true,
@@ -1393,7 +1390,7 @@ export default function DesignerStudio({
         }
         return false;
       }
-      const filenameBase = headlessPdfExport?.filenameBase ?? safeDesignerExportFilenameBase(standardShell?.fileName);
+      const filenameBase = headlessPdfExport?.filenameBase ?? safeDesignerExportFilenameBase(undefined);
       const pdfName = `${filenameBase}.pdf`;
       await downloadMultiPageVectorPdf(markups, pdfName, {
         optimizeImages: pdfOpts.optimizeImages === true,
@@ -1442,7 +1439,7 @@ export default function DesignerStudio({
       multiPdfExportingRef.current = false;
       setMultiPdfBusy(false);
     }
-  }, [headlessPdfExport, onFinalExport, standardShell?.fileName]);
+  }, [headlessPdfExport, onFinalExport]);
 
   useEffect(() => {
     registerLiveDesignerMultipagePdfExport(designerCanvasInstanceKey, handleExportMultiPageVectorPdf);
@@ -1675,7 +1672,6 @@ export default function DesignerStudio({
         onClose={handleCloseWithFirstPagePreview}
         onExport={onExport}
         onFinalExport={onFinalExport}
-        standardShell={standardShell}
         onUpdateObjects={handleUpdateObjects}
         onUpdateLayoutGuides={handleUpdateLayoutGuides}
         brainConnected={brainConnected}

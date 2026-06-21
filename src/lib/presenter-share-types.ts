@@ -1,4 +1,5 @@
 import type { DesignerPageState } from "@/app/spaces/designer/DesignerNode";
+import type { PresenterImageVideoPlacement } from "@/app/spaces/presenter/presenter-image-video-types";
 import type { SlideTransitionId } from "@/app/spaces/presenter/slide-transition-types";
 
 /** Opciones al crear un enlace (referencia estilo Pitch). */
@@ -30,6 +31,8 @@ export const DEFAULT_PRESENTER_SHARE_OPTIONS: PresenterShareOptions = {
 export type PresenterSharePayload = {
   pages: DesignerPageState[];
   transitionsByPageId: Record<string, SlideTransitionId>;
+  /** Vídeos superpuestos en imágenes (persistidos en el nodo Presenter). */
+  imageVideoPlacements?: PresenterImageVideoPlacement[];
 };
 
 export type PresenterShareRecord = {

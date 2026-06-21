@@ -94,7 +94,6 @@ import {
 import { ScrubNumberInput } from "./ScrubNumberInput";
 import { FreehandExportModal, type ProfessionalExportOptions } from "./freehand/FreehandExportModal";
 import type { FoldderExportCreatedDetail } from "./foldder-export-events";
-import { StandardStudioShellHeader, type StandardStudioShellConfig } from "./StandardStudioShell";
 
 /** Campos numéricos arrastrables del panel Propiedades: un solo estilo y comportamiento (ver `ScrubNumberInput`). */
 const PROP_PANEL_SCRUB_CLASS =
@@ -1306,8 +1305,6 @@ export interface FreehandStudioProps extends DesignerEmbedProps {
   onExport: (dataUrl: string) => void;
   /** Export final descargado por el usuario; Foldder lo registra en Exports. */
   onFinalExport?: (detail: Omit<FoldderExportCreatedDetail, "sourceNodeId">) => void;
-  /** Cabecera de app de Vista estándar. En Vista Pro queda ausente. */
-  standardShell?: StandardStudioShellConfig;
   onUpdateObjects: (objects: FreehandObject[]) => void;
   onUpdateLayoutGuides?: (guides: LayoutGuide[]) => void;
   /** Título/subtítulo de la cabecera (por defecto Designer). PhotoRoom u otros embeds pueden personalizar. */
@@ -3783,7 +3780,7 @@ function rectWorldCorners(o: FreehandObject): Point[] {
 }
 
 /** Axis-aligned bounding box of the painted shape (accounts for rotation). */
-function getVisualAABB(o: FreehandObject, allObjects?: FreehandObject[]): Rect {
+export function getVisualAABB(o: FreehandObject, allObjects?: FreehandObject[]): Rect {
   switch (o.type) {
     case "path": {
       const po = o as PathObject;
@@ -9894,7 +9891,6 @@ export function FreehandStudioCanvas({
   onClose,
   onExport,
   onFinalExport,
-  standardShell,
   onUpdateObjects,
   onUpdateLayoutGuides,
   studioHeaderTitle = "Designer",
@@ -17252,10 +17248,10 @@ export function FreehandStudioCanvas({
   const exportFilenameBase = useMemo(
     () =>
       safeExportFilenameBase(
-        standardShell?.fileName,
+        undefined,
         photoRoomStudioEmbed ? "photoroom" : designerMode ? "designer" : "freehand",
       ),
-    [designerMode, photoRoomStudioEmbed, standardShell?.fileName],
+    [designerMode, photoRoomStudioEmbed],
   );
 
   const doExportSvg = useCallback(() => {
@@ -23566,8 +23562,6 @@ export function FreehandStudioCanvas({
       onDragOver={handleDragOver}
       onDragEnter={handleDragEnter}
     >
-      {standardShell ? <StandardStudioShellHeader shell={standardShell} /> : null}
-
       <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => {
         const f = e.target.files?.[0];
         const frameTarget = placeImageFrameTargetIdRef.current;

@@ -6,7 +6,6 @@ import { LayoutGrid, Monitor, Smartphone } from "lucide-react";
 import PhotoRoomFreehandStudio from "./studio/PhotoRoomFreehandStudio";
 import type { DesignerStudioApi, FreehandObject, LayoutGuide } from "../FreehandStudio";
 import type { FoldderExportCreatedDetail } from "../foldder-export-events";
-import type { StandardStudioShellConfig } from "../StandardStudioShell";
 import { createArtboard } from "../freehand/artboard";
 import type { PhotoRoomArtboardState, PhotoRoomDocumentMeta } from "./photo-room-types";
 import type { NewDocumentConfig } from "./new-document-model";
@@ -139,7 +138,6 @@ export type PhotoRoomStudioProps = {
   /** Miniatura / salida del nodo (misma pipeline que Designer al cerrar). */
   onExportPreview: (dataUrl: string) => void;
   onFinalExport?: (detail: Omit<FoldderExportCreatedDetail, "sourceNodeId">) => void;
-  standardShell?: StandardStudioShellConfig;
   /** Ref al API del lienzo (export PNG para miniatura del nodo en el grafo). */
   studioApiRef?: React.MutableRefObject<DesignerStudioApi | null>;
   /** Crear Media + Nano Banana en el grafo y enlazar la capa como entrada conectada. */
@@ -174,7 +172,6 @@ export default function PhotoRoomStudio({
   onPersist,
   onExportPreview,
   onFinalExport,
-  standardShell,
   studioApiRef,
   onPhotoRoomModificarImagenIA,
   onPhotoRoomRasterizeInputImage,
@@ -416,7 +413,6 @@ export default function PhotoRoomStudio({
           onClose={handleCloseInstant}
           onExport={onExportPreview}
           onFinalExport={onFinalExport}
-          standardShell={standardShell}
           onUpdateObjects={handleUpdateObjects}
           onUpdateLayoutGuides={handleUpdateLayoutGuides}
           brainConnected={brainConnected}
