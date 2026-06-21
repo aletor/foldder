@@ -1,7 +1,12 @@
 import { resolveKnowledgeFilesS3Key } from "@/lib/s3-media-hydrate";
 
 import type { MediaListItem, MediaListOutput } from "../media-list-output";
+import { ensureClipComposition } from "./video-editor-composition-engine";
 import type { VideoEditorRenderManifest, VideoEditorRenderManifestResult } from "./video-editor-render-types";
+import {
+  resolveTimelineHeightFromLayout,
+  type VideoEditorLayoutPreset,
+} from "./video-editor-edit-types";
 import {
   createEmptyVideoEditorData,
   createDefaultVideoEditorRenderState,
@@ -99,6 +104,15 @@ export function normalizeVideoEditorData(raw: unknown): VideoEditorNodeData {
       })),
     ];
   });
+  const layoutPreset = (
+    input.layout?.layoutPreset === "balanced"
+    || input.layout?.layoutPreset === "timeline_focus"
+    || input.layout?.layoutPreset === "viewer_focus"
+  ) ? input.layout.layoutPreset as VideoEditorLayoutPreset : undefined;
+  const resolvedTimelineHeight = resolveTimelineHeightFromLayout({
+    timelineHeight: Number.isFinite(Number(input.layout?.timelineHeight)) ? Number(input.layout?.timelineHeight) : undefined,
+    layoutPreset,
+  });
   const data: VideoEditorNodeData = {
     ...base,
     ...input,
@@ -106,8 +120,13 @@ export function normalizeVideoEditorData(raw: unknown): VideoEditorNodeData {
     tracks,
     layout: {
       ...(input.layout ?? {}),
-      timelineHeight: Number.isFinite(Number(input.layout?.timelineHeight)) ? Math.min(560, Math.max(180, Number(input.layout?.timelineHeight))) : input.layout?.timelineHeight,
+      layoutPreset: layoutPreset ?? input.layout?.layoutPreset,
+      timelineHeight: Math.min(560, Math.max(180, Math.round(resolvedTimelineHeight))),
     },
+    markers: Array.isArray(input.markers) ? input.markers : [],
+    inPoint: Number.isFinite(Number(input.inPoint)) ? Math.max(0, Number(input.inPoint)) : undefined,
+    outPoint: Number.isFinite(Number(input.outPoint)) ? Math.max(0, Number(input.outPoint)) : undefined,
+    selectedClipIds: Array.isArray(input.selectedClipIds) ? input.selectedClipIds.filter((id) => typeof id === "string") : undefined,
     selectedTrackId: typeof input.selectedTrackId === "string" && !LEGACY_SEMANTIC_AUDIO_TRACKS.has(input.selectedTrackId) ? input.selectedTrackId : base.selectedTrackId,
     playheadTime: Number.isFinite(Number(input.playheadTime)) ? Number(input.playheadTime) : 0,
     timelineZoom: Number.isFinite(Number(input.timelineZoom)) ? Math.min(80, Math.max(8, Number(input.timelineZoom))) : base.timelineZoom,
@@ -154,6 +173,7 @@ export function buildVideoEditorRenderManifest(
       })
       .map((clip) => {
         const s3Key = resolveKnowledgeFilesS3Key(clip.s3Key, clip.url, clip.assetId) ?? clip.s3Key;
+        const composition = clip.mediaType === "image" || clip.mediaType === "video" ? ensureClipComposition(clip) : undefined;
         return {
         id: clip.id,
         assetId: clip.assetId || clip.url || "",
@@ -173,6 +193,8 @@ export function buildVideoEditorRenderManifest(
         audioRole: clip.audioRole,
         fitMode: clip.framing ?? "fill",
         motion: clip.motion,
+        composition,
+        compositionCropPreset: clip.compositionCropPreset ?? (clip.framing === "fit" ? "fit" : "fill"),
         title: clip.title,
         metadata: clip.metadata,
       };
@@ -196,6 +218,18 @@ export function buildVideoEditorRenderManifest(
     return clip.durationSeconds > available + 0.05;
   });
   if (overExtendedClips.length) warnings.push(`${overExtendedClips.length} clip(s) superan la duración de su fuente.`);
+  const overlayClips = (normalized.overlayClips ?? []).map((overlay) => ({
+    id: overlay.id,
+    startTime: overlay.startTime,
+    durationSeconds: overlay.durationSeconds,
+    title: overlay.title,
+    object: overlay.object,
+    composition: overlay.composition,
+    layerOrder: overlay.layerOrder,
+  }));
+  if (overlayClips.length) {
+    warnings.push(`${overlayClips.length} capa(s) de diseño se quemarán en el render (tipografías custom pueden diferir del preview).`);
+  }
   const subtitleTracks = (normalized.subtitleTracks ?? [])
     .filter((track) => track.enabled && track.document?.segments?.length)
     .map((track) => ({
@@ -237,6 +271,7 @@ export function buildVideoEditorRenderManifest(
       muted: track.muted,
     })),
     subtitleTracks,
+    overlayClips: overlayClips.length ? overlayClips : undefined,
     metadata: {
       sourceMediaListId: normalized.sourceMediaList?.sourceNodeId,
       projectTitle: normalized.sourceMediaList?.title,
@@ -369,9 +404,12 @@ export function clampVideoEditorTime(value: number, min = 0, max = Number.POSITI
   return Math.min(max, Math.max(min, value));
 }
 
-export function getActiveVisualClipAtTime(data: VideoEditorNodeData, time: number): VideoEditorClip | undefined {
+export function getActiveVisualClipsAtTime(data: VideoEditorNodeData, time: number): VideoEditorClip[] {
   const currentTime = Math.max(0, time);
-  const visualTracks = getVideoEditorTimelineTracks(data).filter((track) => track.kind === "visual" && !track.hidden);
+  const visualTracks = getVideoEditorTimelineTracks(data).filter(
+    (track) => track.kind === "visual" && !track.hidden && track.id !== "design",
+  );
+  const layers: VideoEditorClip[] = [];
   for (const track of visualTracks) {
     const clip = [...(data.tracks[track.id] ?? [])]
       .sort((a, b) => a.startTime - b.startTime)
@@ -380,9 +418,14 @@ export function getActiveVisualClipAtTime(data: VideoEditorNodeData, time: numbe
         && item.startTime <= currentTime
         && currentTime < item.startTime + Math.max(0.01, item.durationSeconds)
       ));
-    if (clip) return clip;
+    if (clip) layers.push(clip);
   }
-  return undefined;
+  return layers;
+}
+
+/** Clip visual activo en la pista superior (para selección / inspector). */
+export function getActiveVisualClipAtTime(data: VideoEditorNodeData, time: number): VideoEditorClip | undefined {
+  return getActiveVisualClipsAtTime(data, time)[0];
 }
 
 export function getAdjacentVisualClipsAtTime(data: VideoEditorNodeData, time: number): VideoEditorClip[] {
@@ -638,7 +681,71 @@ export function removeVideoEditorClip(data: VideoEditorNodeData, clipId: string)
   trackIdsForData(data).forEach((track) => {
     tracks[track] = tracks[track].filter((clip) => clip.id !== clipId);
   });
-  return { ...data, tracks, selectedClipId: data.selectedClipId === clipId ? undefined : data.selectedClipId, totalDurationSeconds: calculateTimelineDuration(tracks), status: "editing" };
+  const nextSelectedClipIds = (data.selectedClipIds ?? []).filter((id) => id !== clipId);
+  return {
+    ...data,
+    tracks,
+    selectedClipId: data.selectedClipId === clipId ? nextSelectedClipIds[0] : data.selectedClipId,
+    selectedClipIds: nextSelectedClipIds.length ? nextSelectedClipIds : undefined,
+    totalDurationSeconds: calculateTimelineDuration(tracks),
+    status: "editing",
+  };
+}
+
+export function rippleDeleteVideoEditorClip(data: VideoEditorNodeData, clipId: string): VideoEditorNodeData {
+  const tracks = { ...data.tracks };
+  const sourceTrackId = trackIdsForData(data).find((track) => tracks[track]?.some((clip) => clip.id === clipId));
+  const clip = sourceTrackId ? tracks[sourceTrackId]?.find((item) => item.id === clipId) : undefined;
+  if (!sourceTrackId || !clip) return removeVideoEditorClip(data, clipId);
+  const removedDuration = clip.durationSeconds;
+  const removedEnd = clip.startTime + removedDuration;
+  tracks[sourceTrackId] = (tracks[sourceTrackId] ?? [])
+    .filter((item) => item.id !== clipId)
+    .map((item) => (
+      item.startTime >= removedEnd - 0.001
+        ? { ...item, startTime: Math.max(0, item.startTime - removedDuration) }
+        : item
+    ));
+  const nextSelectedClipIds = (data.selectedClipIds ?? []).filter((id) => id !== clipId);
+  return {
+    ...data,
+    tracks,
+    selectedClipId: data.selectedClipId === clipId ? nextSelectedClipIds[0] : data.selectedClipId,
+    selectedClipIds: nextSelectedClipIds.length ? nextSelectedClipIds : undefined,
+    totalDurationSeconds: calculateTimelineDuration(tracks),
+    status: "editing",
+  };
+}
+
+function findLinkedClips(data: VideoEditorNodeData, clip: VideoEditorClip): VideoEditorClip[] {
+  if (!clip.sourceItemId) return [];
+  return Object.values(data.tracks)
+    .flat()
+    .filter((item) => item.id !== clip.id && item.sourceItemId === clip.sourceItemId);
+}
+
+export function moveVideoEditorClipWithLinked(
+  data: VideoEditorNodeData,
+  clipId: string,
+  desiredStartTime: number,
+  desiredTrackId?: VideoEditorTrackKind,
+  options?: { linkedAv?: boolean },
+): VideoEditorNodeData {
+  const tracks = { ...data.tracks };
+  const timelineTracks = getVideoEditorTimelineTracks(data);
+  const sourceTrackId = trackIdsForData(data).find((track) => tracks[track]?.some((clip) => clip.id === clipId));
+  const clip = sourceTrackId ? tracks[sourceTrackId]?.find((item) => item.id === clipId) : undefined;
+  if (!sourceTrackId || !clip || clip.locked) return data;
+  const beforeStart = clip.startTime;
+  let next = moveVideoEditorClip(data, clipId, desiredStartTime, desiredTrackId);
+  const movedClip = Object.values(next.tracks).flat().find((item) => item.id === clipId);
+  if (!movedClip || !options?.linkedAv) return next;
+  const delta = movedClip.startTime - beforeStart;
+  if (Math.abs(delta) < 0.001) return next;
+  findLinkedClips(data, clip).forEach((linked) => {
+    next = moveVideoEditorClip(next, linked.id, Math.max(0, linked.startTime + delta), linked.track);
+  });
+  return next;
 }
 
 export function duplicateVideoEditorClip(data: VideoEditorNodeData, clipId: string): VideoEditorNodeData {

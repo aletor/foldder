@@ -9,6 +9,12 @@ import { getFromS3, getPresignedUrl, uploadBufferToS3Key } from "@/lib/s3-utils"
 import { resolveKnowledgeFilesS3Key } from "@/lib/s3-media-hydrate";
 import type { VideoEditorRenderClip, VideoEditorRenderManifest } from "@/app/spaces/video-editor/video-editor-render-types";
 import { exportSubtitleDocumentToAss } from "@/app/spaces/video-editor/subtitle-utils";
+import {
+  buildCompositionFfmpegFilter,
+  buildOverlayFiltersAtTime,
+  mergeCompositionCutPoints,
+  resolveClipCompositionTransform,
+} from "@/app/spaces/video-editor/video-editor-composition-render";
 
 const execFileAsync = promisify(execFile);
 
@@ -87,8 +93,16 @@ export async function resolveRenderAssets(manifest: VideoEditorRenderManifest, d
   return Object.fromEntries(entries) as Record<string, ResolvedRenderClip[]>;
 }
 
-function visualFilter(manifest: VideoEditorRenderManifest, clip: VideoEditorRenderClip): string {
+function visualFilter(
+  manifest: VideoEditorRenderManifest,
+  clip: VideoEditorRenderClip,
+  localTimeSeconds = 0,
+): string {
   const { width, height, fps } = manifest.settings;
+  if (clip.composition) {
+    const transform = resolveClipCompositionTransform(clip.composition, localTimeSeconds);
+    return `${buildCompositionFfmpegFilter(width, height, transform, clip.compositionCropPreset ?? "fill")},fps=${fps}`;
+  }
   if (clip.mediaType === "image" && clip.motion && clip.motion !== "none") {
     const frameCount = Math.max(1, Math.round(Math.max(0.1, clip.durationSeconds) * fps));
     const denominator = Math.max(1, frameCount - 1);
@@ -138,12 +152,17 @@ async function renderBlackSegment(manifest: VideoEditorRenderManifest, duration:
   ]);
 }
 
-async function renderVisualClipSegment(manifest: VideoEditorRenderManifest, clip: ResolvedRenderClip, outputPath: string): Promise<void> {
+async function renderVisualClipSegment(
+  manifest: VideoEditorRenderManifest,
+  clip: ResolvedRenderClip,
+  outputPath: string,
+  localCompositionTime = 0,
+): Promise<void> {
   const ffmpeg = resolveFfmpegPath();
   const duration = Math.max(0.1, clip.durationSeconds);
   const baseArgs = ["-y"];
   if (clip.mediaType === "video" && clip.trimStart) baseArgs.push("-ss", String(clip.trimStart));
-  const hasImageMotion = clip.mediaType === "image" && Boolean(clip.motion && clip.motion !== "none");
+  const hasImageMotion = !clip.composition && clip.mediaType === "image" && Boolean(clip.motion && clip.motion !== "none");
   const inputArgs = clip.mediaType === "image"
     ? hasImageMotion
       ? ["-loop", "1", "-i", clip.localPath]
@@ -154,7 +173,7 @@ async function renderVisualClipSegment(manifest: VideoEditorRenderManifest, clip
     ...inputArgs,
     ...(hasImageMotion ? ["-t", String(duration)] : []),
     "-vf",
-    visualFilter(manifest, clip),
+    visualFilter(manifest, clip, localCompositionTime),
     "-an",
     "-r",
     String(manifest.settings.fps),
@@ -165,6 +184,38 @@ async function renderVisualClipSegment(manifest: VideoEditorRenderManifest, clip
     "yuv420p",
     outputPath,
   ]);
+}
+
+async function applyOverlaysToSegment(
+  manifest: VideoEditorRenderManifest,
+  segmentPath: string,
+  globalStartTime: number,
+  dir: string,
+  segmentIndex: number,
+): Promise<string> {
+  const overlayFilter = buildOverlayFiltersAtTime(
+    manifest.overlayClips,
+    globalStartTime + 0.001,
+    manifest.settings.width,
+    manifest.settings.height,
+  );
+  if (!overlayFilter) return segmentPath;
+  const outputPath = join(dir, `segment_${String(segmentIndex).padStart(4, "0")}_overlays.mp4`);
+  await execFileAsync(resolveFfmpegPath(), [
+    "-y",
+    "-i",
+    segmentPath,
+    "-vf",
+    overlayFilter,
+    "-an",
+    "-c:v",
+    "libx264",
+    ...ffmpegQualityArgs(manifest),
+    "-pix_fmt",
+    "yuv420p",
+    outputPath,
+  ]);
+  return outputPath;
 }
 
 function escapeConcatPath(path: string): string {
@@ -197,9 +248,15 @@ async function renderVisualTrack(manifest: VideoEditorRenderManifest, resolved: 
   const cutPoints = Array.from(new Set([
     0,
     manifest.durationSeconds,
+    ...visualClips.flatMap((clip) => mergeCompositionCutPoints(clip.startTime, clip.durationSeconds, clip.composition)),
+    ...(manifest.overlayClips ?? []).flatMap((overlay) => mergeCompositionCutPoints(overlay.startTime, overlay.durationSeconds, overlay.composition)),
     ...visualClips.flatMap((clip) => [
       Math.max(0, clip.startTime),
       Math.min(manifest.durationSeconds, clip.startTime + Math.max(0.1, clip.durationSeconds)),
+    ]),
+    ...(manifest.overlayClips ?? []).flatMap((overlay) => [
+      Math.max(0, overlay.startTime),
+      Math.min(manifest.durationSeconds, overlay.startTime + Math.max(0.1, overlay.durationSeconds)),
     ]),
   ]))
     .filter((point) => point >= 0 && point <= manifest.durationSeconds)
@@ -214,17 +271,22 @@ async function renderVisualTrack(manifest: VideoEditorRenderManifest, resolved: 
     if (!clip) {
       const gapPath = join(dir, `segment_${String(segmentPaths.length).padStart(4, "0")}_black.mp4`);
       await renderBlackSegment(manifest, duration, gapPath);
-      segmentPaths.push(gapPath);
+      const sampleTime = cursor + duration / 2;
+      const withOverlays = await applyOverlaysToSegment(manifest, gapPath, sampleTime, dir, segmentPaths.length);
+      segmentPaths.push(withOverlays);
       continue;
     }
     const sourceOffset = Math.max(0, cursor - clip.startTime);
+    const localCompositionTime = sourceOffset + duration / 2;
+    const sampleTime = cursor + duration / 2;
     const segmentPath = join(dir, `segment_${String(segmentPaths.length).padStart(4, "0")}.mp4`);
     await renderVisualClipSegment(manifest, {
       ...clip,
       durationSeconds: duration,
       trimStart: clip.mediaType === "video" ? Math.max(0, (clip.trimStart ?? 0) + sourceOffset) : clip.trimStart,
-    }, segmentPath);
-    segmentPaths.push(segmentPath);
+    }, segmentPath, localCompositionTime);
+    const withOverlays = await applyOverlaysToSegment(manifest, segmentPath, sampleTime, dir, segmentPaths.length);
+    segmentPaths.push(withOverlays);
   }
   const listPath = join(dir, "segments.txt");
   await writeFile(listPath, segmentPaths.map((path) => `file '${escapeConcatPath(path)}'`).join("\n"));

@@ -9,10 +9,12 @@ import {
   createVideoEditorTimelineTrack,
   deleteVideoEditorTimelineTrack,
   getActiveVisualClipAtTime,
+  getActiveVisualClipsAtTime,
   ingestMediaListToVideoEditor,
   moveVideoEditorClip,
   normalizeVideoEditorData,
   resizeVideoEditorClip,
+  rippleDeleteVideoEditorClip,
   setVideoEditorClipEndTrim,
   setVideoEditorClipStartTrim,
   splitVideoEditorClipAtTime,
@@ -168,6 +170,7 @@ describe("video editor engine", () => {
     const result = buildVideoEditorRenderManifest(data, "editor_1");
 
     expect(getActiveVisualClipAtTime(data, 1.5)?.title).toBe("Overlay");
+    expect(getActiveVisualClipsAtTime(data, 1.5).map((clip) => clip.title)).toEqual(["Overlay", "Base"]);
     expect(result.ok).toBe(true);
     expect(result.manifest?.layers?.some((layer) => layer.id === customTrackId && layer.kind === "visual")).toBe(true);
     expect(result.manifest?.tracks[customTrackId]?.[0]?.title).toBe("Overlay");
@@ -198,7 +201,7 @@ describe("video editor engine", () => {
     const moved = moveVideoEditorClip(withLayer, clipId, 0, customTrackId);
 
     const deleted = deleteVideoEditorTimelineTrack(moved, customTrackId);
-    const blocked = deleteVideoEditorTimelineTrack(base, "video");
+    const blocked = deleteVideoEditorTimelineTrack(base, "audio");
 
     expect(deleted.timelineTracks?.some((track) => track.id === customTrackId)).toBe(false);
     expect(deleted.tracks[customTrackId]).toBeUndefined();
@@ -303,6 +306,20 @@ describe("video editor engine", () => {
     expect(result.manifest?.tracks.video[0]?.s3Key).toBe(
       "knowledge-files/user-assets/1d760e9bdac7a6cce988/g2a318d16-8868-448e-8505-e4950432aeb46b08c70ce9.mp4",
     );
+  });
+
+  it("ripple delete shifts subsequent clips on the same track", () => {
+    const data = ingestMediaListToVideoEditor(mediaList([
+      { id: "image_1", order: 1, title: "Still A", mediaType: "image", role: "storyboard_frame", assetId: "asset://a", status: "generated", durationSeconds: 3 },
+      { id: "image_2", order: 2, title: "Still B", mediaType: "image", role: "storyboard_frame", assetId: "asset://b", status: "generated", durationSeconds: 4 },
+    ]), createEmptyVideoEditorData());
+
+    const firstId = data.tracks.video[0]?.id ?? "";
+    const deleted = rippleDeleteVideoEditorClip(data, firstId);
+
+    expect(deleted.tracks.video).toHaveLength(1);
+    expect(deleted.tracks.video[0]?.startTime).toBe(0);
+    expect(deleted.tracks.video[0]?.title).toBe("Still B");
   });
 
   it("builds a render manifest and preserves trim and volume", () => {

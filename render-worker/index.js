@@ -5,6 +5,13 @@ import { extname, join } from "path";
 import { tmpdir } from "os";
 import { promisify } from "util";
 import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import {
+  activeVisualClipForInterval,
+  buildOverlayFiltersAtTime,
+  mergeCompositionCutPoints,
+  visualFilter,
+  visualLayerIds,
+} from "./composition-render.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -114,14 +121,6 @@ function qualityArgs(manifest) {
     : ["-preset", "medium", "-crf", "19"];
 }
 
-function visualFilter(manifest, clip) {
-  const { width, height, fps } = manifest.settings;
-  if (clip.fitMode === "fit") {
-    return `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=${fps},format=yuv420p`;
-  }
-  return `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},setsar=1,fps=${fps},format=yuv420p`;
-}
-
 async function renderBlack(manifest, duration, outputPath) {
   await execFileAsync("ffmpeg", [
     "-y",
@@ -136,17 +135,21 @@ async function renderBlack(manifest, duration, outputPath) {
   ]);
 }
 
-async function renderVisualClip(manifest, clip, outputPath) {
+async function renderVisualClip(manifest, clip, outputPath, localCompositionTime = 0) {
   const duration = Math.max(0.1, clip.durationSeconds);
   const base = ["-y"];
   if (clip.mediaType === "video" && clip.trimStart) base.push("-ss", String(clip.trimStart));
+  const hasImageMotion = !clip.composition && clip.mediaType === "image" && clip.motion && clip.motion !== "none";
   const input = clip.mediaType === "image"
-    ? ["-loop", "1", "-t", String(duration), "-i", clip.localPath]
+    ? hasImageMotion
+      ? ["-loop", "1", "-i", clip.localPath]
+      : ["-loop", "1", "-t", String(duration), "-i", clip.localPath]
     : ["-i", clip.localPath, "-t", String(duration)];
   await execFileAsync("ffmpeg", [
     ...base,
     ...input,
-    "-vf", visualFilter(manifest, clip),
+    ...(hasImageMotion ? ["-t", String(duration)] : []),
+    "-vf", visualFilter(manifest, clip, localCompositionTime),
     "-an",
     "-r", String(manifest.settings.fps),
     "-c:v", "libx264",
@@ -154,6 +157,28 @@ async function renderVisualClip(manifest, clip, outputPath) {
     "-pix_fmt", "yuv420p",
     outputPath,
   ]);
+}
+
+async function applyOverlaysToSegment(manifest, segmentPath, globalSampleTime, dir, segmentIndex) {
+  const overlayFilter = buildOverlayFiltersAtTime(
+    manifest.overlayClips,
+    globalSampleTime,
+    manifest.settings.width,
+    manifest.settings.height,
+  );
+  if (!overlayFilter) return segmentPath;
+  const outputPath = join(dir, `segment_${String(segmentIndex).padStart(4, "0")}_overlays.mp4`);
+  await execFileAsync("ffmpeg", [
+    "-y",
+    "-i", segmentPath,
+    "-vf", overlayFilter,
+    "-an",
+    "-c:v", "libx264",
+    ...qualityArgs(manifest),
+    "-pix_fmt", "yuv420p",
+    outputPath,
+  ]);
+  return outputPath;
 }
 
 function concatEscape(path) {
@@ -275,31 +300,56 @@ async function burnSubtitles(manifest, visualPath, assPath, dir) {
   return outputPath;
 }
 
-async function renderVisualTrack(manifest, clips, dir) {
-  const visual = clips
+async function renderVisualTrack(manifest, resolved, dir) {
+  const visualClips = visualLayerIds(manifest)
+    .flatMap((trackId) => resolved[trackId] ?? [])
     .filter((clip) => clip.mediaType === "image" || clip.mediaType === "video")
     .sort((a, b) => a.startTime - b.startTime);
-  if (!visual.length) throw new Error("no_visual_clips");
+  if (!visualClips.length) throw new Error("no_visual_clips");
+
+  const cutPoints = Array.from(new Set([
+    0,
+    manifest.durationSeconds,
+    ...visualClips.flatMap((clip) => mergeCompositionCutPoints(clip.startTime, clip.durationSeconds, clip.composition)),
+    ...(manifest.overlayClips ?? []).flatMap((overlay) => mergeCompositionCutPoints(overlay.startTime, overlay.durationSeconds, overlay.composition)),
+    ...visualClips.flatMap((clip) => [
+      Math.max(0, clip.startTime),
+      Math.min(manifest.durationSeconds, clip.startTime + Math.max(0.1, clip.durationSeconds)),
+    ]),
+    ...(manifest.overlayClips ?? []).flatMap((overlay) => [
+      Math.max(0, overlay.startTime),
+      Math.min(manifest.durationSeconds, overlay.startTime + Math.max(0.1, overlay.durationSeconds)),
+    ]),
+  ]))
+    .filter((point) => point >= 0 && point <= manifest.durationSeconds)
+    .sort((a, b) => a - b);
+
   const segments = [];
-  let cursor = 0;
-  for (const clip of visual) {
-    if (clip.startTime > cursor + 0.02) {
-      const gap = join(dir, `segment_${segments.length}_black.mp4`);
-      await renderBlack(manifest, clip.startTime - cursor, gap);
-      segments.push(gap);
-      cursor = clip.startTime;
+  for (let i = 0; i < cutPoints.length - 1; i++) {
+    const cursor = cutPoints[i] ?? 0;
+    const nextCursor = cutPoints[i + 1] ?? cursor;
+    const duration = Math.max(0, nextCursor - cursor);
+    if (duration <= 0.02) continue;
+    const clip = activeVisualClipForInterval(manifest, resolved, cursor);
+    const sampleTime = cursor + duration / 2;
+    let segmentPath;
+    if (!clip) {
+      segmentPath = join(dir, `segment_${String(segments.length).padStart(4, "0")}_black.mp4`);
+      await renderBlack(manifest, duration, segmentPath);
+    } else {
+      const sourceOffset = Math.max(0, cursor - clip.startTime);
+      const localCompositionTime = sourceOffset + duration / 2;
+      segmentPath = join(dir, `segment_${String(segments.length).padStart(4, "0")}.mp4`);
+      await renderVisualClip(manifest, {
+        ...clip,
+        durationSeconds: duration,
+        trimStart: clip.mediaType === "video" ? Math.max(0, (clip.trimStart ?? 0) + sourceOffset) : clip.trimStart,
+      }, segmentPath, localCompositionTime);
     }
-    const duration = Math.max(0.1, Math.min(clip.durationSeconds, Math.max(0.1, manifest.durationSeconds - cursor)));
-    const segment = join(dir, `segment_${segments.length}.mp4`);
-    await renderVisualClip(manifest, { ...clip, durationSeconds: duration }, segment);
-    segments.push(segment);
-    cursor += duration;
+    const withOverlays = await applyOverlaysToSegment(manifest, segmentPath, sampleTime, dir, segments.length);
+    segments.push(withOverlays);
   }
-  if (manifest.durationSeconds > cursor + 0.02) {
-    const tail = join(dir, `segment_${segments.length}_tail.mp4`);
-    await renderBlack(manifest, manifest.durationSeconds - cursor, tail);
-    segments.push(tail);
-  }
+
   const list = join(dir, "segments.txt");
   await writeFile(list, segments.map((path) => `file '${concatEscape(path)}'`).join("\n"));
   const visualPath = join(dir, "visual.mp4");
@@ -358,7 +408,7 @@ async function main() {
     ]));
     const resolved = Object.fromEntries(resolvedEntries);
     await putStatus("rendering", { progress: 35 });
-    const visualPathRaw = await renderVisualTrack(manifest, resolved.video || [], dir);
+    const visualPathRaw = await renderVisualTrack(manifest, resolved, dir);
     const subtitleOutput = await prepareSubtitleTrack(manifest, dir);
     const visualPath = await burnSubtitles(manifest, visualPathRaw, subtitleOutput.assPath, dir);
     const audioPath = await renderAudioTrack(manifest, resolved, dir);

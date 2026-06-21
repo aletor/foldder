@@ -1,4 +1,5 @@
 import type { MediaListOutput } from "../media-list-output";
+import type { VideoEditorTimelineMarker, VideoEditorLayoutPreset } from "./video-editor-edit-types";
 import type { VideoEditorSubtitleTrack } from "./subtitles-types";
 import type { VideoEditorComposition, VideoEditorOverlayClip } from "./video-editor-composition-types";
 
@@ -67,6 +68,8 @@ export type VideoEditorClip = {
   motion?: "none" | "slow_zoom_in" | "slow_zoom_out" | "pan_left" | "pan_right";
   /** Composición: posición, escala, crop y keyframes en el frame de export. */
   composition?: VideoEditorComposition;
+  /** Preset de recorte composición (Ajustar/Rellenar/Personalizado). */
+  compositionCropPreset?: "fit" | "fill" | "custom";
   sceneId?: string;
   sceneOrder?: number;
   metadata?: unknown;
@@ -103,11 +106,16 @@ export type VideoEditorNodeData = {
   sourceMediaListFingerprint?: string;
   layout?: {
     timelineHeight?: number;
+    layoutPreset?: VideoEditorLayoutPreset;
   };
+  markers?: VideoEditorTimelineMarker[];
+  inPoint?: number;
+  outPoint?: number;
   timelineTracks?: VideoEditorTimelineTrack[];
   tracks: Record<string, VideoEditorClip[]>;
   selectedTrackId?: VideoEditorTrackKind;
   selectedClipId?: string;
+  selectedClipIds?: string[];
   playheadTime: number;
   timelineZoom?: number;
   totalDurationSeconds: number;
@@ -144,6 +152,10 @@ export const DEFAULT_VIDEO_EDITOR_TIMELINE_TRACKS: VideoEditorTimelineTrack[] = 
 export function createEmptyVideoEditorData(): VideoEditorNodeData {
   return {
     label: "Video Editor",
+    layout: {
+      layoutPreset: "balanced",
+      timelineHeight: 420,
+    },
     timelineTracks: DEFAULT_VIDEO_EDITOR_TIMELINE_TRACKS,
     tracks: {
       video: [],
@@ -157,6 +169,7 @@ export function createEmptyVideoEditorData(): VideoEditorNodeData {
     audioRequests: [],
     subtitleTracks: [],
     overlayClips: [],
+    markers: [],
     status: "empty",
     render: createDefaultVideoEditorRenderState(),
   };

@@ -1,4 +1,5 @@
 import type { FoldderSubtitleDocument, RenderSubtitleMode, SubtitleStyle } from "./subtitles-types";
+import type { VideoEditorComposition, VideoEditorOverlayClip } from "./video-editor-composition-types";
 
 export type VideoEditorRenderSettings = {
   width: number;
@@ -30,8 +31,21 @@ export type VideoEditorRenderClip = {
   audioRole?: "original" | "music" | "sfx" | "ambience" | "voiceover";
   fitMode?: "fit" | "fill" | "crop_center";
   motion?: "none" | "slow_zoom_in" | "slow_zoom_out" | "pan_left" | "pan_right";
+  /** Composición WYSIWYG (transform + keyframes). */
+  composition?: VideoEditorComposition;
+  compositionCropPreset?: "fit" | "fill" | "custom";
   title?: string;
   metadata?: unknown;
+};
+
+export type VideoEditorRenderOverlayClip = {
+  id: string;
+  startTime: number;
+  durationSeconds: number;
+  title: string;
+  object: VideoEditorOverlayClip["object"];
+  composition: VideoEditorComposition;
+  layerOrder?: number;
 };
 
 export type VideoEditorRenderManifest = {
@@ -59,6 +73,7 @@ export type VideoEditorRenderManifest = {
     exportAss?: boolean;
     style: SubtitleStyle;
   }>;
+  overlayClips?: VideoEditorRenderOverlayClip[];
   metadata?: {
     sourceMediaListId?: string;
     projectTitle?: string;

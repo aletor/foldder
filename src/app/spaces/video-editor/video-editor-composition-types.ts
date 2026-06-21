@@ -1,4 +1,5 @@
 import type { FreehandObject } from "../FreehandStudio";
+import type { CompositionPropertyTrack } from "./video-editor-composition-properties";
 
 /** Easing hacia el siguiente keyframe. */
 export type CompositionEasing = "linear" | "easeIn" | "easeOut" | "easeInOut";
@@ -10,21 +11,32 @@ export type CompositionTransform = {
   width: number;
   height: number;
   opacity: number;
+  /** Grados, sentido horario. */
+  rotation: number;
+  /** Punto de ancla normalizado dentro del cuadro (0–1). */
+  anchorX: number;
+  anchorY: number;
+  flipX: boolean;
+  flipY: boolean;
   /** Recorte del media fuente (0–1 dentro del asset). */
   crop: { x: number; y: number; width: number; height: number };
 };
 
+/** @deprecated Formato legacy — se migra a base + tracks al leer. */
 export type CompositionKeyframe = {
   id: string;
-  /** Segundos relativos al inicio del clip (visual u overlay). */
   time: number;
   transform: CompositionTransform;
-  /** Interpolación hacia el keyframe siguiente. */
   easing: CompositionEasing;
 };
 
 export type VideoEditorComposition = {
-  keyframes: CompositionKeyframe[];
+  /** Valores por defecto cuando una propiedad no tiene pista animada. */
+  base: CompositionTransform;
+  /** Pistas de keyframes por propiedad (estilo Resolve). */
+  tracks: CompositionPropertyTrack[];
+  /** @deprecated Solo lectura/migración desde proyectos antiguos. */
+  keyframes?: CompositionKeyframe[];
 };
 
 export type VideoEditorOverlayClip = {
@@ -34,6 +46,7 @@ export type VideoEditorOverlayClip = {
   title: string;
   object: FreehandObject;
   composition: VideoEditorComposition;
+  layerOrder?: number;
 };
 
 export const DEFAULT_COMPOSITION_TRANSFORM: CompositionTransform = {
@@ -42,6 +55,11 @@ export const DEFAULT_COMPOSITION_TRANSFORM: CompositionTransform = {
   width: 1,
   height: 1,
   opacity: 1,
+  rotation: 0,
+  anchorX: 0.5,
+  anchorY: 0.5,
+  flipX: false,
+  flipY: false,
   crop: { x: 0, y: 0, width: 1, height: 1 },
 };
 
@@ -54,14 +72,8 @@ export function cloneCompositionTransform(t: CompositionTransform): CompositionT
 
 export function createDefaultComposition(): VideoEditorComposition {
   return {
-    keyframes: [
-      {
-        id: "kf-0",
-        time: 0,
-        transform: cloneCompositionTransform(DEFAULT_COMPOSITION_TRANSFORM),
-        easing: "easeInOut",
-      },
-    ],
+    base: cloneCompositionTransform(DEFAULT_COMPOSITION_TRANSFORM),
+    tracks: [],
   };
 }
 
@@ -71,3 +83,19 @@ export const COMPOSITION_EASING_OPTIONS: { id: CompositionEasing; label: string 
   { id: "easeOut", label: "Salida" },
   { id: "easeInOut", label: "Suave" },
 ];
+
+/** Rellena campos nuevos en transforms guardados antes de rotación/ancla. */
+export function ensureCompositionTransformFields(t: Partial<CompositionTransform> | undefined): CompositionTransform {
+  const base = cloneCompositionTransform(DEFAULT_COMPOSITION_TRANSFORM);
+  if (!t) return base;
+  return cloneCompositionTransform({
+    ...base,
+    ...t,
+    crop: { ...base.crop, ...(t.crop ?? {}) },
+    rotation: t.rotation ?? base.rotation,
+    anchorX: t.anchorX ?? base.anchorX,
+    anchorY: t.anchorY ?? base.anchorY,
+    flipX: t.flipX ?? base.flipX,
+    flipY: t.flipY ?? base.flipY,
+  });
+}

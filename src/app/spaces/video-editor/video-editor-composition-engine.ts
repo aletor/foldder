@@ -1,12 +1,16 @@
 import { v4 as uuidv4 } from "uuid";
 import type { FreehandObject } from "../FreehandStudio";
 import {
+  cloneCompositionTransform,
   createDefaultComposition,
+  DEFAULT_COMPOSITION_TRANSFORM,
   type CompositionTransform,
   type VideoEditorComposition,
   type VideoEditorOverlayClip,
 } from "./video-editor-composition-types";
-import { normalizeComposition, resolveCompositionTransform, upsertCompositionKeyframe } from "./video-editor-composition-math";
+import { normalizeComposition, resolveCompositionTransform, upsertCompositionKeyframe, upsertCompositionPropertiesAtPlayhead } from "./video-editor-composition-math";
+import type { CompositionScalarProperty } from "./video-editor-composition-properties";
+import { clampTransform } from "./video-editor-composition-units";
 import type { VideoEditorClip, VideoEditorNodeData } from "./video-editor-types";
 
 export function createTextOverlayObject(compWidth: number, compHeight: number): FreehandObject {
@@ -67,6 +71,7 @@ export function addVideoEditorOverlay(
   startTime: number,
   durationSeconds: number,
 ): VideoEditorNodeData {
+  const nextOrder = Math.max(-1, ...(data.overlayClips ?? []).map((o) => o.layerOrder ?? 0)) + 1;
   const overlay: VideoEditorOverlayClip = {
     id: uuidv4(),
     startTime: Math.max(0, startTime),
@@ -74,6 +79,7 @@ export function addVideoEditorOverlay(
     title: object.name || "Capa",
     object,
     composition: createDefaultComposition(),
+    layerOrder: nextOrder,
   };
   return {
     ...data,
@@ -86,7 +92,7 @@ export function addVideoEditorOverlay(
 export function patchVideoEditorOverlay(
   data: VideoEditorNodeData,
   overlayId: string,
-  patch: Partial<Pick<VideoEditorOverlayClip, "title" | "startTime" | "durationSeconds" | "object" | "composition">>,
+  patch: Partial<Pick<VideoEditorOverlayClip, "title" | "startTime" | "durationSeconds" | "object" | "composition" | "layerOrder">>,
 ): VideoEditorNodeData {
   return {
     ...data,
@@ -100,6 +106,150 @@ export function removeVideoEditorOverlay(data: VideoEditorNodeData, overlayId: s
     overlayClips: (data.overlayClips ?? []).filter((o) => o.id !== overlayId),
     selectedOverlayId: data.selectedOverlayId === overlayId ? undefined : data.selectedOverlayId,
   };
+}
+
+export function moveVideoEditorOverlay(
+  data: VideoEditorNodeData,
+  overlayId: string,
+  startTime: number,
+): VideoEditorNodeData {
+  return patchVideoEditorOverlay(data, overlayId, { startTime: Math.max(0, startTime) });
+}
+
+export function resizeVideoEditorOverlay(
+  data: VideoEditorNodeData,
+  overlayId: string,
+  patch: { startTime?: number; durationSeconds: number },
+): VideoEditorNodeData {
+  const overlay = (data.overlayClips ?? []).find((o) => o.id === overlayId);
+  if (!overlay) return data;
+  const startTime = patch.startTime ?? overlay.startTime;
+  return patchVideoEditorOverlay(data, overlayId, {
+    startTime: Math.max(0, startTime),
+    durationSeconds: Math.max(0.1, patch.durationSeconds),
+  });
+}
+
+export function reorderVideoEditorOverlay(
+  data: VideoEditorNodeData,
+  overlayId: string,
+  direction: "up" | "down",
+): VideoEditorNodeData {
+  const sorted = [...(data.overlayClips ?? [])].sort((a, b) => (a.layerOrder ?? 0) - (b.layerOrder ?? 0));
+  const index = sorted.findIndex((o) => o.id === overlayId);
+  if (index < 0) return data;
+  const swapIndex = direction === "up" ? index + 1 : index - 1;
+  if (swapIndex < 0 || swapIndex >= sorted.length) return data;
+  const current = sorted[index]!;
+  const target = sorted[swapIndex]!;
+  const currentOrder = current.layerOrder ?? index;
+  const targetOrder = target.layerOrder ?? swapIndex;
+  return {
+    ...data,
+    overlayClips: (data.overlayClips ?? []).map((overlay) => {
+      if (overlay.id === current.id) return { ...overlay, layerOrder: targetOrder };
+      if (overlay.id === target.id) return { ...overlay, layerOrder: currentOrder };
+      return overlay;
+    }),
+  };
+}
+
+export function patchClipCompositionCropPreset(
+  data: VideoEditorNodeData,
+  clipId: string,
+  preset: CompositionCropPreset,
+): VideoEditorNodeData {
+  return {
+    ...data,
+    tracks: Object.fromEntries(
+      Object.entries(data.tracks).map(([trackId, clips]) => [
+        trackId,
+        clips.map((clip) => (clip.id === clipId ? { ...clip, compositionCropPreset: preset } : clip)),
+      ]),
+    ) as VideoEditorNodeData["tracks"],
+  };
+}
+
+export type CompositionCropPreset = "fit" | "fill" | "custom";
+
+export function applyCompositionCropPreset(
+  transform: CompositionTransform,
+  preset: CompositionCropPreset,
+): CompositionTransform {
+  const base = cloneCompositionTransform(transform);
+  if (preset === "fit") {
+    return clampTransform({
+      ...base,
+      x: 0,
+      y: 0,
+      width: 1,
+      height: 1,
+      crop: { x: 0, y: 0, width: 1, height: 1 },
+    });
+  }
+  if (preset === "fill") {
+    return clampTransform({
+      ...base,
+      x: 0,
+      y: 0,
+      width: 1,
+      height: 1,
+      crop: { x: 0.05, y: 0.05, width: 0.9, height: 0.9 },
+    });
+  }
+  return base;
+}
+
+export type CompositionMotionPreset = "zoom_in" | "zoom_out" | "pan_left" | "pan_right";
+
+function buildMotionKeyframePair(
+  durationSeconds: number,
+  preset: CompositionMotionPreset,
+): VideoEditorComposition {
+  const start = clampTransform(cloneCompositionTransform(DEFAULT_COMPOSITION_TRANSFORM));
+  const end = clampTransform(cloneCompositionTransform(DEFAULT_COMPOSITION_TRANSFORM));
+  const span = Math.max(0.5, durationSeconds);
+  switch (preset) {
+    case "zoom_in":
+      end.width = 1.15;
+      end.height = 1.15;
+      end.x = -0.075;
+      end.y = -0.075;
+      break;
+    case "zoom_out":
+      start.width = 1.15;
+      start.height = 1.15;
+      start.x = -0.075;
+      start.y = -0.075;
+      break;
+    case "pan_left":
+      end.x = -0.12;
+      break;
+    case "pan_right":
+      end.x = 0.12;
+      break;
+  }
+  let comp = createDefaultComposition();
+  comp = upsertCompositionKeyframe(comp, 0, start);
+  comp = upsertCompositionKeyframe(comp, span, end);
+  return comp;
+}
+
+export function applyCompositionMotionPreset(
+  data: VideoEditorNodeData,
+  target: { kind: "clip"; clipId: string } | { kind: "overlay"; overlayId: string },
+  preset: CompositionMotionPreset,
+): VideoEditorNodeData {
+  if (target.kind === "clip") {
+    const clip = Object.values(data.tracks).flat().find((c) => c.id === target.clipId);
+    if (!clip) return data;
+    const comp = buildMotionKeyframePair(clip.durationSeconds, preset);
+    return patchClipComposition(data, clip.id, comp);
+  }
+  const overlay = (data.overlayClips ?? []).find((o) => o.id === target.overlayId);
+  if (!overlay) return data;
+  const comp = buildMotionKeyframePair(overlay.durationSeconds, preset);
+  return patchVideoEditorOverlay(data, overlay.id, { composition: comp });
 }
 
 export function patchClipComposition(
@@ -125,19 +275,42 @@ export function setCompositionKeyframeAtPlayhead(
   target: { kind: "clip"; clipId: string } | { kind: "overlay"; overlayId: string },
   playheadTime: number,
   transform: CompositionTransform,
+  properties?: Iterable<CompositionScalarProperty>,
 ): VideoEditorNodeData {
+  const write = (composition: VideoEditorComposition, localTime: number) => (
+    properties
+      ? upsertCompositionPropertiesAtPlayhead(composition, localTime, transform, properties)
+      : upsertCompositionKeyframe(composition, localTime, transform)
+  );
   if (target.kind === "clip") {
     const clip = Object.values(data.tracks).flat().find((c) => c.id === target.clipId);
     if (!clip) return data;
     const localTime = Math.max(0, playheadTime - clip.startTime);
-    const comp = upsertCompositionKeyframe(ensureClipComposition(clip), localTime, transform);
+    const comp = write(ensureClipComposition(clip), localTime);
     return patchClipComposition(data, clip.id, comp);
   }
   const overlay = (data.overlayClips ?? []).find((o) => o.id === target.overlayId);
   if (!overlay) return data;
   const localTime = Math.max(0, playheadTime - overlay.startTime);
-  const comp = upsertCompositionKeyframe(normalizeComposition(overlay.composition), localTime, transform);
+  const comp = write(normalizeComposition(overlay.composition), localTime);
   return patchVideoEditorOverlay(data, overlay.id, { composition: comp });
+}
+
+export function setCompositionBaseTransform(
+  data: VideoEditorNodeData,
+  target: { kind: "clip"; clipId: string } | { kind: "overlay"; overlayId: string },
+  transform: CompositionTransform,
+): VideoEditorNodeData {
+  if (target.kind === "clip") {
+    const clip = Object.values(data.tracks).flat().find((c) => c.id === target.clipId);
+    if (!clip) return data;
+    const comp = normalizeComposition(ensureClipComposition(clip));
+    return patchClipComposition(data, clip.id, { ...comp, base: clampTransform(transform) });
+  }
+  const overlay = (data.overlayClips ?? []).find((o) => o.id === target.overlayId);
+  if (!overlay) return data;
+  const comp = normalizeComposition(overlay.composition);
+  return patchVideoEditorOverlay(data, overlay.id, { composition: { ...comp, base: clampTransform(transform) } });
 }
 
 export function getCompositionTargetTransform(

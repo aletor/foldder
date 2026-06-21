@@ -4,7 +4,7 @@ import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, 
 import { createPortal } from "react-dom";
 import { NodeResizer, Position, useNodeId, useReactFlow, useStore, useUpdateNodeInternals, type Edge, type Node, type NodeProps, type ReactFlowState } from "@xyflow/react";
 import { shallow } from "zustand/shallow";
-import { AlertTriangle, Captions, CheckCircle2, Clock, Copy, Download, Eye, EyeOff, File, Film, ImageIcon, Layers, Lock, Music, Pause, Play, Plus, RefreshCw, Scissors, SkipBack, SkipForward, StepBack, StepForward, Trash2, Type, Unlock, Video, Volume2, VolumeX, X } from "lucide-react";
+import { AlertTriangle, Captions, CheckCircle2, Clock, Copy, Download, Eye, EyeOff, File, Film, ImageIcon, Layers, Lock, Music, Pause, Play, Plus, Redo2, RefreshCw, Scissors, SkipBack, SkipForward, StepBack, StepForward, Trash2, Type, Undo2, Unlock, Video, Volume2, VolumeX, X } from "lucide-react";
 
 import { downloadS3Object, forceDownloadUrl } from "@/lib/browser-download";
 import { FOLDDER_FIT_VIEW_EASE } from "@/lib/fit-view-ease";
@@ -32,15 +32,18 @@ import {
   getAdjacentVisualClipsAtTime,
   getActiveAudioClipsAtTime,
   getActiveVisualClipAtTime,
+  getActiveVisualClipsAtTime,
   getVideoEditorClipMaxDuration,
   getVideoEditorTimelineTracks,
   getVideoEditorNodePreviewClip,
   ingestMediaListToVideoEditor,
   moveVideoEditorClip,
+  moveVideoEditorClipWithLinked,
   normalizeVideoEditorData,
   patchVideoEditorClip,
   patchVideoEditorTimelineTrack,
   removeVideoEditorClip,
+  rippleDeleteVideoEditorClip,
   resizeVideoEditorClip,
   setVideoEditorClipEndTrim,
   setVideoEditorClipStartTrim,
@@ -80,24 +83,62 @@ import {
   resolveNodeChromeHeight,
 } from "../studio-node-aspect";
 import { loadVideoDimensions } from "../presenter/presenter-video-frame-layout";
-import { VideoEditorCompositionPreview } from "./VideoEditorCompositionPreview";
-import { COMPOSITION_EASING_OPTIONS, cloneCompositionTransform, type CompositionEasing, type CompositionTransform } from "./video-editor-composition-types";
+import { VideoEditorCompositionStage, type VideoEditorStageMode } from "./VideoEditorCompositionStage";
+import { cloneCompositionTransform, type CompositionTransform } from "./video-editor-composition-types";
 import {
   addVideoEditorOverlay,
+  applyCompositionCropPreset,
+  applyCompositionMotionPreset,
   createShapeOverlayObject,
   createTextOverlayObject,
   ensureClipComposition,
   getCompositionTargetTransform,
+  moveVideoEditorOverlay,
   patchClipComposition,
+  patchClipCompositionCropPreset,
   patchVideoEditorOverlay,
   removeVideoEditorOverlay,
+  reorderVideoEditorOverlay,
+  resizeVideoEditorOverlay,
+  setCompositionBaseTransform,
   setCompositionKeyframeAtPlayhead,
+  type CompositionCropPreset,
 } from "./video-editor-composition-engine";
-import { patchCompositionKeyframeEasing } from "./video-editor-composition-math";
+import {
+  COMPOSITION_TRANSFORM_PROPERTIES,
+  compositionHasAnimation,
+  getAllCompositionKeyframeTimes,
+  normalizeComposition,
+  patchCompositionPropertyEasing,
+  removeCompositionKeyframesAtTime,
+  type CompositionScalarProperty,
+} from "./video-editor-composition-math";
+import { CompositionTransformInspector } from "./CompositionTransformInspector";
+import {
+  patchTransformFromPx,
+  transformToPx,
+} from "./video-editor-composition-units";
+import {
+  DESIGNER_FONT_PRESET_VALUE_PREFIX,
+  DESIGNER_SYSTEM_FONT_PRESETS,
+  GOOGLE_FONTS_LIBRARY,
+  GOOGLE_FONTS_POPULAR,
+  designerFontSelectControlValue,
+} from "../freehand/google-fonts";
+import { useVideoEditorGoogleFonts } from "./useVideoEditorGoogleFonts";
+import { VideoEditorEditToolbar } from "./VideoEditorEditToolbar";
+import { VideoEditorViewerToolbar } from "./VideoEditorViewerToolbar";
+import { VideoEditorTimelineRuler } from "./VideoEditorTimelineRuler";
+import { TimelineClipWaveform } from "./TimelineClipWaveform";
+import { formatTimecode } from "./video-editor-timecode";
+import {
+  VIDEO_EDITOR_EDIT_TOOL_SHORTCUTS,
+  VIDEO_EDITOR_LAYOUT_PRESET_HEIGHTS,
+  type VideoEditorEditTool,
+  type VideoEditorLayoutPreset,
+} from "./video-editor-edit-types";
 
-const VIDEO_EDITOR_URL_TTL_MS = 50 * 60 * 1000;
-const videoEditorPresignedUrlCache = new globalThis.Map<string, { url: string; expiresAt: number }>();
-const videoEditorPresignInFlight = new globalThis.Map<string, Promise<string | null>>();
+import { useVideoEditorAssetUrl } from "./use-video-editor-asset-url";
 
 const VIDEO_EDITOR_EMPTY_BACKGROUND_SRC = "/assets/nodes/video-editor-empty.jpg";
 const VIDEO_EDITOR_NODE_MAX_HEIGHT = 2200;
@@ -146,7 +187,10 @@ function formatTime(seconds: number): string {
   return `${minutes}:${String(secs).padStart(2, "0")}.${tenths}`;
 }
 
-type VideoEditorInspectorTab = "clip" | "design" | "audio" | "subtitles" | "render";
+type VideoEditorInspectorTab = "edit" | "audio" | "subtitles" | "deliver";
+type VideoEditorEditSubMode = "edit" | "design";
+
+const UNDO_HISTORY_LIMIT = 30;
 
 const TIMELINE_LABEL_WIDTH = 128;
 const TIMELINE_SNAP_SECONDS = 0.18;
@@ -166,63 +210,6 @@ function isEditableKeyboardTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   const tagName = target.tagName;
   return tagName === "INPUT" || tagName === "TEXTAREA" || tagName === "SELECT" || target.isContentEditable;
-}
-
-function resolveS3Key(src?: string, s3Key?: string): string | undefined {
-  if (s3Key?.trim()) return s3Key.trim();
-  return src ? tryExtractKnowledgeFilesKeyFromUrl(src) || undefined : undefined;
-}
-
-async function presignVideoEditorS3Key(key: string): Promise<string | null> {
-  const cached = videoEditorPresignedUrlCache.get(key);
-  if (cached && cached.expiresAt > Date.now()) return cached.url;
-  const pending = videoEditorPresignInFlight.get(key);
-  if (pending) return pending;
-  const promise = (async () => {
-    try {
-      const res = await fetch("/api/spaces/s3-presign", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ keys: [key] }),
-      });
-      if (!res.ok) return null;
-      const payload = (await res.json()) as { urls?: Record<string, string> };
-      const url = payload.urls?.[key];
-      if (!url) return null;
-      videoEditorPresignedUrlCache.set(key, { url, expiresAt: Date.now() + VIDEO_EDITOR_URL_TTL_MS });
-      return url;
-    } catch {
-      return null;
-    } finally {
-      videoEditorPresignInFlight.delete(key);
-    }
-  })();
-  videoEditorPresignInFlight.set(key, promise);
-  return promise;
-}
-
-function useVideoEditorAssetUrl(src?: string, s3Key?: string, enabled = true): string | undefined {
-  const [resolved, setResolved] = useState<{ cacheKey: string; url: string } | null>(null);
-  const key = resolveS3Key(src, s3Key);
-  const cacheKey = `${src || ""}\u0001${key || ""}`;
-  useEffect(() => {
-    let cancelled = false;
-    if (!enabled) return () => {
-      cancelled = true;
-    };
-    if (!key) return () => {
-      cancelled = true;
-    };
-    void (async () => {
-      const fresh = await presignVideoEditorS3Key(key);
-      if (!cancelled && fresh) setResolved({ cacheKey, url: fresh });
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [cacheKey, enabled, key]);
-  if (!enabled) return undefined;
-  return key ? (resolved?.cacheKey === cacheKey ? resolved.url : undefined) : src;
 }
 
 type ConnectedMediaListSourceSnapshot = {
@@ -350,8 +337,8 @@ function ClipPreview({
     if (video.readyState > 0 && Math.abs(video.currentTime - targetTime) > 0.35) video.currentTime = targetTime;
     video.volume = clip.mute ? 0 : Math.max(0, Math.min(1, clip.volume ?? 1));
     if (isPlaying) {
-      void video.play().catch(() => undefined);
-    } else {
+      if (video.paused) void video.play().catch(() => undefined);
+    } else if (!video.paused) {
       video.pause();
     }
   }, [clip, isPlaying, mediaVisible, playheadTime]);
@@ -429,8 +416,8 @@ function TimelineAudioPlayer({ clip, playheadTime, isPlaying }: { clip: VideoEdi
     if (Math.abs(audio.currentTime - targetTime) > 0.35) audio.currentTime = targetTime;
     audio.volume = clip.mute ? 0 : Math.max(0, Math.min(1, clip.volume ?? 1));
     if (isPlaying && !clip.mute) {
-      void audio.play().catch(() => undefined);
-    } else {
+      if (audio.paused) void audio.play().catch(() => undefined);
+    } else if (!audio.paused) {
       audio.pause();
     }
   }, [clip, isPlaying, playheadTime, url]);
@@ -492,43 +479,27 @@ function TimelineAssetPreloader({
   );
 }
 
-function waveformBarHeight(seed: string, index: number): number {
-  let hash = 0;
-  for (let charIndex = 0; charIndex < seed.length; charIndex++) {
-    hash = (hash * 31 + seed.charCodeAt(charIndex) + index * 17) % 997;
-  }
-  return 22 + (hash % 66);
-}
-
 function TimelineClipFace({ clip, mediaVisible }: { clip: VideoEditorClip; mediaVisible: boolean }) {
   const url = useVideoEditorAssetUrl(clip.url || clip.assetId, clip.s3Key, mediaVisible);
   if (clip.mediaType === "audio") {
-    return (
-      <div className="pointer-events-none absolute inset-x-2 bottom-1 top-5 flex items-center gap-[2px] opacity-65">
-        {Array.from({ length: 18 }).map((_, index) => (
-          <span
-            key={index}
-            className="min-w-[2px] flex-1 rounded-full bg-emerald-100/45"
-            style={{ height: `${waveformBarHeight(clip.id + clip.title, index)}%` }}
-          />
-        ))}
-      </div>
-    );
+    return <TimelineClipWaveform clipId={clip.id} seed={clip.id + clip.title} url={url} />;
   }
   if (clip.mediaType === "image" && url) {
     return (
       <>
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-24 saturate-75" src={url} alt="" />
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-sky-950/70 via-transparent to-sky-950/60" />
+        <img className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-32 saturate-90" src={url} alt="" />
+        <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(90deg,rgba(255,255,255,.12)_0_1px,transparent_1px_10px)] opacity-70" />
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-sky-950/55 via-transparent to-sky-950/50" />
       </>
     );
   }
   if (clip.mediaType === "video" && url) {
     return (
       <>
-        <video className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-22 saturate-75" src={url} muted playsInline preload="metadata" />
-        <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(90deg,rgba(255,255,255,.08)_0_1px,transparent_1px_18px)]" />
+        <video className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-30 saturate-90" src={url} muted playsInline preload="metadata" />
+        <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(90deg,rgba(255,255,255,.14)_0_1px,transparent_1px_10px)] opacity-80" />
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-sky-950/50 via-transparent to-sky-950/45" />
       </>
     );
   }
@@ -994,7 +965,19 @@ function VideoEditorStudio({
   const [previewFullscreen, setPreviewFullscreen] = useState(false);
   const [livePlayhead, setLivePlayhead] = useState(data.playheadTime);
   const [mediaFilter, setMediaFilter] = useState<"all" | "video" | "image" | "audio" | "pending">("all");
-  const [inspectorTab, setInspectorTab] = useState<VideoEditorInspectorTab>("clip");
+  const [inspectorTab, setInspectorTab] = useState<VideoEditorInspectorTab>("edit");
+  const [editSubMode, setEditSubMode] = useState<VideoEditorEditSubMode>("edit");
+  const [editTool, setEditTool] = useState<VideoEditorEditTool>("select");
+  const [snapEnabled, setSnapEnabled] = useState(true);
+  const [linkedAvEnabled, setLinkedAvEnabled] = useState(true);
+  const [loopPlaybackEnabled, setLoopPlaybackEnabled] = useState(false);
+  const rippleDeleteEnabled = true;
+  const [selectedClipIds, setSelectedClipIds] = useState<string[]>([]);
+  const [snapGuideTime, setSnapGuideTime] = useState<number | null>(null);
+  const [trackHeightDrag, setTrackHeightDrag] = useState<{ trackId: string; startY: number; startHeight: number } | null>(null);
+  const undoStackRef = useRef<VideoEditorNodeData[]>([]);
+  const redoStackRef = useRef<VideoEditorNodeData[]>([]);
+  const [historyTick, setHistoryTick] = useState(0);
   const [subtitleDraft, setSubtitleDraft] = useState("");
   const [subtitleMode, setSubtitleMode] = useState<RenderSubtitleMode>("lines");
   const [subtitlePreset, setSubtitlePreset] = useState<SubtitleStyle["preset"]>("creator");
@@ -1009,6 +992,21 @@ function VideoEditorStudio({
     startTime: number;
     durationSeconds: number;
   } | null>(null);
+  const [overlayDragState, setOverlayDragState] = useState<{
+    overlayId: string;
+    mode: "move" | "resize-start" | "resize-end";
+    startX: number;
+    startTime: number;
+    durationSeconds: number;
+  } | null>(null);
+  const [stageMode, setStageMode] = useState<VideoEditorStageMode>("select");
+  const [animateMode, setAnimateMode] = useState(false);
+  const [keyframedProperties, setKeyframedProperties] = useState<Set<CompositionScalarProperty>>(
+    () => new Set(COMPOSITION_TRANSFORM_PROPERTIES),
+  );
+  const [aspectLock, setAspectLock] = useState(false);
+  const [cropPreset, setCropPreset] = useState<CompositionCropPreset>("fill");
+  const [showGuides, setShowGuides] = useState(false);
   const [subtitleDragState, setSubtitleDragState] = useState<{
     segmentId: string;
     mode: "move" | "resize-start" | "resize-end";
@@ -1031,10 +1029,25 @@ function VideoEditorStudio({
     .flatMap((track) => data.tracks[track.id] ?? [])
     .sort((a, b) => a.startTime - b.startTime || a.durationSeconds - b.durationSeconds), [data.tracks, timelineTracks]);
   const activeVisualClip = getActiveVisualClipAtTime(data, livePlayhead);
-  const activeVisualUrl = useVideoEditorAssetUrl(activeVisualClip?.url || activeVisualClip?.assetId, activeVisualClip?.s3Key, Boolean(activeVisualClip));
+  const activeVisualLayers = useMemo(() => getActiveVisualClipsAtTime(data, livePlayhead), [data, livePlayhead]);
   const renderState = data.render ?? createDefaultVideoEditorRenderState();
   const compSize = renderState.settings ?? createDefaultVideoEditorRenderState().settings;
   const selectedOverlay = (data.overlayClips ?? []).find((o) => o.id === data.selectedOverlayId);
+  const overlayFontFamilies = useMemo(
+    () => (data.overlayClips ?? [])
+      .filter((overlay) => overlay.object.type === "text")
+      .map((overlay) => (overlay.object as { fontFamily?: string }).fontFamily ?? "Inter, system-ui, sans-serif"),
+    [data.overlayClips],
+  );
+  useVideoEditorGoogleFonts(overlayFontFamilies);
+  useEffect(() => {
+    if (!selectedClip || (selectedClip.mediaType !== "video" && selectedClip.mediaType !== "image")) return;
+    if (selectedClip.compositionCropPreset) {
+      setCropPreset(selectedClip.compositionCropPreset);
+      return;
+    }
+    setCropPreset(selectedClip.framing === "fit" ? "fit" : "fill");
+  }, [selectedClip?.compositionCropPreset, selectedClip?.framing, selectedClip?.id, selectedClip?.mediaType]);
   const compositionTarget = selectedOverlay
     ? ({ kind: "overlay" as const, overlayId: selectedOverlay.id })
     : selectedClip && (selectedClip.mediaType === "video" || selectedClip.mediaType === "image")
@@ -1045,6 +1058,20 @@ function VideoEditorStudio({
   const compositionTransform = compositionTarget
     ? getCompositionTargetTransform(data, compositionTarget, livePlayhead)
     : null;
+  const targetComposition = useMemo(() => {
+    if (!compositionTarget) return null;
+    if (compositionTarget.kind === "clip") {
+      const clip = Object.values(data.tracks).flat().find((c) => c.id === compositionTarget.clipId);
+      return clip ? ensureClipComposition(clip) : null;
+    }
+    return selectedOverlay ? normalizeComposition(selectedOverlay.composition) : null;
+  }, [compositionTarget, data.tracks, selectedOverlay]);
+  const compositionTransformPx = compositionTransform
+    ? transformToPx(compositionTransform, compSize.width, compSize.height)
+    : null;
+  const compositionAspectRatio = compositionTransformPx && compositionTransformPx.height > 0
+    ? compositionTransformPx.width / compositionTransformPx.height
+    : compSize.width / compSize.height;
   const activeAudioClips = getActiveAudioClipsAtTime(data, livePlayhead);
   const preloadClips = useMemo(() => {
     const adjacentVisuals = getAdjacentVisualClipsAtTime(data, livePlayhead);
@@ -1063,7 +1090,7 @@ function VideoEditorStudio({
   const timelineScale = data.timelineZoom ?? 18;
   const timelineDuration = Math.max(1, data.totalDurationSeconds);
   const timelineWidth = Math.max(900, timelineDuration * timelineScale + 80);
-  const timelineHeight = clampTimelineHeight(data.layout?.timelineHeight ?? 300);
+  const timelineHeight = clampTimelineHeight(data.layout?.timelineHeight ?? VIDEO_EDITOR_LAYOUT_PRESET_HEIGHTS.balanced);
   const visibleTimelineStart = Math.max(0, (timelineViewport.scrollLeft - TIMELINE_LABEL_WIDTH) / Math.max(1, timelineScale) - 8);
   const visibleTimelineEnd = Math.min(
     timelineDuration + 8,
@@ -1113,9 +1140,36 @@ function VideoEditorStudio({
     && livePlayhead < selectedClip.startTime + selectedClip.durationSeconds - 0.1,
   );
 
-  const commit = useCallback((next: VideoEditorNodeData) => {
+  const pushUndoSnapshot = useCallback((snapshot: VideoEditorNodeData) => {
+    undoStackRef.current = [...undoStackRef.current.slice(-(UNDO_HISTORY_LIMIT - 1)), normalizeVideoEditorData(snapshot)];
+    redoStackRef.current = [];
+    setHistoryTick((tick) => tick + 1);
+  }, []);
+
+  const commit = useCallback((next: VideoEditorNodeData, options?: { skipHistory?: boolean }) => {
+    if (!options?.skipHistory) pushUndoSnapshot(data);
     onChange({ ...next, totalDurationSeconds: calculateTimelineDuration(next.tracks) });
-  }, [onChange]);
+  }, [data, onChange, pushUndoSnapshot]);
+
+  const undoEdit = useCallback(() => {
+    const previous = undoStackRef.current.pop();
+    if (!previous) return;
+    redoStackRef.current = [...redoStackRef.current, normalizeVideoEditorData(data)];
+    onChange({ ...previous, totalDurationSeconds: calculateTimelineDuration(previous.tracks) });
+    setHistoryTick((tick) => tick + 1);
+  }, [data, onChange]);
+
+  const redoEdit = useCallback(() => {
+    const next = redoStackRef.current.pop();
+    if (!next) return;
+    undoStackRef.current = [...undoStackRef.current, normalizeVideoEditorData(data)];
+    onChange({ ...next, totalDurationSeconds: calculateTimelineDuration(next.tracks) });
+    setHistoryTick((tick) => tick + 1);
+  }, [data, onChange]);
+
+  const canUndo = undoStackRef.current.length > 0;
+  const canRedo = redoStackRef.current.length > 0;
+  void historyTick;
 
   const patchClipSourceDuration = useCallback((clipId: string, durationSeconds: number) => {
     const clip = timelineClips.find((item) => item.id === clipId);
@@ -1124,6 +1178,43 @@ function VideoEditorStudio({
     commit(patchVideoEditorClip(data, clipId, { sourceDurationSeconds: durationSeconds }));
   }, [commit, data, timelineClips]);
 
+  const compositionLocalTime = useMemo(() => {
+    if (!compositionTarget) return 0;
+    if (compositionTarget.kind === "clip") {
+      const clip = Object.values(data.tracks).flat().find((c) => c.id === compositionTarget.clipId);
+      return clip ? Math.max(0, livePlayhead - clip.startTime) : 0;
+    }
+    const overlay = (data.overlayClips ?? []).find((o) => o.id === compositionTarget.overlayId);
+    return overlay ? Math.max(0, livePlayhead - overlay.startTime) : 0;
+  }, [compositionTarget, data.overlayClips, data.tracks, livePlayhead]);
+
+  const writeCompositionTransform = useCallback(
+    (next: import("./video-editor-composition-types").CompositionTransform, properties: Iterable<CompositionScalarProperty>) => {
+      if (!compositionTarget) return;
+      const propertyList = [...properties];
+      const comp = targetComposition ?? normalizeComposition(null);
+      const shouldKeyframe =
+        animateMode
+        || compositionHasAnimation(comp)
+        || compositionLocalTime > 0.05;
+      if (shouldKeyframe && propertyList.length > 0) {
+        commit(setCompositionKeyframeAtPlayhead(data, compositionTarget, livePlayhead, next, propertyList));
+        return;
+      }
+      commit(setCompositionBaseTransform(data, compositionTarget, next));
+    },
+    [animateMode, commit, compositionLocalTime, compositionTarget, data, livePlayhead, targetComposition],
+  );
+
+  const applyCompositionTransform = useCallback(
+    (next: import("./video-editor-composition-types").CompositionTransform, properties?: Iterable<CompositionScalarProperty>) => {
+      if (!compositionTarget) return;
+      const activeProperties = [...(properties ?? (animateMode ? COMPOSITION_TRANSFORM_PROPERTIES : keyframedProperties))];
+      writeCompositionTransform(next, activeProperties.length > 0 ? activeProperties : COMPOSITION_TRANSFORM_PROPERTIES);
+    },
+    [animateMode, compositionTarget, keyframedProperties, writeCompositionTransform],
+  );
+
   const patchCompositionTransform = useCallback(
     (patch: {
       x?: number;
@@ -1131,8 +1222,13 @@ function VideoEditorStudio({
       width?: number;
       height?: number;
       opacity?: number;
-      crop?: Partial<CompositionTransform["crop"]>;
-    }) => {
+      rotation?: number;
+      anchorX?: number;
+      anchorY?: number;
+      flipX?: boolean;
+      flipY?: boolean;
+      crop?: Partial<import("./video-editor-composition-types").CompositionTransform["crop"]>;
+    }, properties?: Iterable<CompositionScalarProperty>) => {
       if (!compositionTarget || !compositionTransform) return;
       const next = cloneCompositionTransform(compositionTransform);
       if (patch.x !== undefined) next.x = patch.x;
@@ -1140,10 +1236,117 @@ function VideoEditorStudio({
       if (patch.width !== undefined) next.width = patch.width;
       if (patch.height !== undefined) next.height = patch.height;
       if (patch.opacity !== undefined) next.opacity = patch.opacity;
+      if (patch.rotation !== undefined) next.rotation = patch.rotation;
+      if (patch.anchorX !== undefined) next.anchorX = patch.anchorX;
+      if (patch.anchorY !== undefined) next.anchorY = patch.anchorY;
+      if (patch.flipX !== undefined) next.flipX = patch.flipX;
+      if (patch.flipY !== undefined) next.flipY = patch.flipY;
       if (patch.crop) next.crop = { ...next.crop, ...patch.crop };
-      commit(setCompositionKeyframeAtPlayhead(data, compositionTarget, livePlayhead, next));
+      applyCompositionTransform(next, properties);
     },
-    [commit, compositionTarget, compositionTransform, data, livePlayhead],
+    [applyCompositionTransform, compositionTarget, compositionTransform],
+  );
+
+  const patchCompositionTransformPx = useCallback(
+    (patch: { x?: number; y?: number; width?: number; height?: number }) => {
+      if (!compositionTransform) return;
+      const next = patchTransformFromPx(
+        compositionTransform,
+        compSize.width,
+        compSize.height,
+        patch,
+        aspectLock,
+        compositionAspectRatio,
+      );
+      const properties: CompositionScalarProperty[] = [];
+      if (patch.x !== undefined) properties.push("x");
+      if (patch.y !== undefined) properties.push("y");
+      if (patch.width !== undefined) properties.push("width");
+      if (patch.height !== undefined) properties.push("height");
+      patchCompositionTransform({
+        x: next.x,
+        y: next.y,
+        width: next.width,
+        height: next.height,
+      }, properties.length ? properties : ["x", "y", "width", "height"]);
+    },
+    [aspectLock, compSize.height, compSize.width, compositionAspectRatio, compositionTransform, patchCompositionTransform],
+  );
+
+  const compositionStageProps = {
+    compWidth: compSize.width,
+    compHeight: compSize.height,
+    visualClip: activeVisualClip,
+    visualLayers: activeVisualLayers,
+    overlayClips: data.overlayClips ?? [],
+    playheadTime: livePlayhead,
+    isPlaying,
+    stageMode,
+    onStageModeChange: (mode: VideoEditorStageMode) => {
+      setStageMode(mode);
+      if (mode === "crop") setCropPreset("custom");
+    },
+    animateMode,
+    onAnimateModeChange: setAnimateMode,
+    selectedClipId: data.selectedClipId,
+    selectedOverlayId: data.selectedOverlayId,
+    compositionTarget,
+    compositionTransform,
+    targetComposition,
+    cropPreset,
+    onSelectClip: (clipId: string) => {
+      const clip = timelineClips.find((c) => c.id === clipId);
+      if (clip) selectClipForEditing(clip);
+      commit({ ...data, selectedClipId: clipId, selectedOverlayId: undefined, status: "editing" });
+    },
+    onSelectOverlay: (id: string) => {
+      commit({ ...data, selectedOverlayId: id, selectedClipId: undefined, status: "editing" });
+      setInspectorTab("edit");
+      setEditSubMode("design");
+    },
+    onDeselect: () => commit({ ...data, selectedOverlayId: undefined, status: "editing" }),
+    onTransformChange: applyCompositionTransform,
+    onOverlayTextChange: (overlayId: string, text: string) => {
+      const overlay = (data.overlayClips ?? []).find((o) => o.id === overlayId);
+      if (!overlay) return;
+      commit(
+        patchVideoEditorOverlay(data, overlayId, {
+          object: { ...overlay.object, text } as typeof overlay.object,
+          title: text.slice(0, 32) || overlay.title,
+        }),
+      );
+    },
+    onDurationKnown: patchClipSourceDuration,
+    onSeekLocalTime: (localTime: number) => {
+      if (!compositionTarget) return;
+      if (compositionTarget.kind === "clip") {
+        const clip = Object.values(data.tracks).flat().find((c) => c.id === compositionTarget.clipId);
+        if (clip) setPlayhead(clip.startTime + localTime);
+        return;
+      }
+      const overlay = (data.overlayClips ?? []).find((o) => o.id === compositionTarget.overlayId);
+      if (overlay) setPlayhead(overlay.startTime + localTime);
+    },
+    onAddOverlay: (kind: "text" | "rect" | "color") => addDesignOverlay(kind),
+    showGuides,
+    onShowGuidesChange: setShowGuides,
+    showCompositionToolbar: inspectorTab === "edit" && (Boolean(data.selectedOverlayId) || editSubMode === "design"),
+  };
+
+  const applyCropPreset = useCallback(
+    (preset: CompositionCropPreset) => {
+      setCropPreset(preset);
+      if (compositionTarget?.kind === "clip") {
+        commit(patchClipCompositionCropPreset(data, compositionTarget.clipId, preset));
+      }
+      if (preset === "custom") {
+        setStageMode("crop");
+        return;
+      }
+      if (!compositionTransform) return;
+      applyCompositionTransform(applyCompositionCropPreset(compositionTransform, preset));
+    },
+    [applyCompositionTransform, commit, compositionTarget, compositionTransform, data],
   );
 
   const addDesignOverlay = useCallback(
@@ -1156,15 +1359,22 @@ function VideoEditorStudio({
       commit(
         addVideoEditorOverlay(data, object, livePlayhead, duration),
       );
-      setInspectorTab("design");
+      setInspectorTab("edit");
+      setEditSubMode("design");
     },
     [activeVisualClip?.durationSeconds, commit, compSize.height, compSize.width, data, livePlayhead],
   );
 
   const deleteSelectedClip = useCallback(() => {
-    if (!data.selectedClipId) return;
-    commit(removeVideoEditorClip(data, data.selectedClipId));
-  }, [commit, data]);
+    const ids = selectedClipIds.length ? selectedClipIds : data.selectedClipId ? [data.selectedClipId] : [];
+    if (!ids.length) return;
+    let next = data;
+    ids.forEach((clipId) => {
+      next = rippleDeleteEnabled ? rippleDeleteVideoEditorClip(next, clipId) : removeVideoEditorClip(next, clipId);
+    });
+    setSelectedClipIds([]);
+    commit(next);
+  }, [commit, data, rippleDeleteEnabled, selectedClipIds]);
 
   const splitSelectedClip = useCallback(() => {
     if (!selectedClip || !canSplitSelectedClip) return;
@@ -1180,14 +1390,21 @@ function VideoEditorStudio({
   const focusClip = useCallback((clip: VideoEditorClip) => {
     const nextTime = clampVideoEditorTime(clip.startTime, 0, Math.max(0, data.totalDurationSeconds));
     setLivePlayhead(nextTime);
-    setInspectorTab("clip");
-    commit({ ...data, selectedClipId: clip.id, selectedTrackId: clip.track, playheadTime: nextTime, status: "editing" });
+    setInspectorTab("edit");
+    setEditSubMode("edit");
+    setSelectedClipIds([clip.id]);
+    commit({ ...data, selectedClipId: clip.id, selectedTrackId: clip.track, selectedClipIds: [clip.id], playheadTime: nextTime, status: "editing" });
   }, [commit, data]);
 
-  const selectClipForEditing = useCallback((clip: VideoEditorClip) => {
-    setInspectorTab("clip");
-    commit({ ...data, selectedClipId: clip.id, selectedTrackId: clip.track, status: "editing" });
-  }, [commit, data]);
+  const selectClipForEditing = useCallback((clip: VideoEditorClip, event?: React.MouseEvent) => {
+    setInspectorTab("edit");
+    setEditSubMode("edit");
+    const nextIds = event?.shiftKey
+      ? Array.from(new Set([...(selectedClipIds.length ? selectedClipIds : data.selectedClipId ? [data.selectedClipId] : []), clip.id]))
+      : [clip.id];
+    setSelectedClipIds(nextIds);
+    commit({ ...data, selectedClipId: clip.id, selectedTrackId: clip.track, selectedClipIds: nextIds, selectedOverlayId: undefined, status: "editing" });
+  }, [commit, data, selectedClipIds]);
 
   const moveToRelativeClip = useCallback((direction: -1 | 1) => {
     if (!timelineClips.length) return;
@@ -1205,16 +1422,20 @@ function VideoEditorStudio({
     commit({ ...data, timelineZoom: Math.round(nextZoom * 10) / 10 });
   }, [commit, data, timelineDuration]);
 
-  const snapTimelineTime = useCallback((time: number, clipId?: string) => {
+  const snapTimelineTime = useCallback((time: number, clipId?: string): { time: number; snapped: boolean } => {
+    if (!snapEnabled) return { time: roundTimelineTime(time), snapped: false };
     const snapPoints = [
       0,
       livePlayhead,
+      data.inPoint,
+      data.outPoint,
       data.totalDurationSeconds,
+      ...(data.markers ?? []).map((marker) => marker.time),
       ...timelineClips
         .filter((clip) => clip.id !== clipId)
         .flatMap((clip) => [clip.startTime, clip.startTime + clip.durationSeconds]),
       ...(primarySubtitleTrack?.document.segments ?? []).flatMap((segment) => [segment.start, segment.end]),
-    ];
+    ].filter((point): point is number => Number.isFinite(Number(point)));
     let best = time;
     let bestDistance = Number.POSITIVE_INFINITY;
     snapPoints.forEach((point) => {
@@ -1224,8 +1445,30 @@ function VideoEditorStudio({
         bestDistance = distance;
       }
     });
-    return roundTimelineTime(best);
-  }, [data.totalDurationSeconds, livePlayhead, primarySubtitleTrack?.document.segments, timelineClips]);
+    const snapped = bestDistance <= TIMELINE_SNAP_SECONDS;
+    return { time: roundTimelineTime(best), snapped };
+  }, [data.inPoint, data.markers, data.outPoint, data.totalDurationSeconds, livePlayhead, primarySubtitleTrack?.document.segments, snapEnabled, timelineClips]);
+
+  const applyLayoutPreset = useCallback((preset: VideoEditorLayoutPreset) => {
+    commit({
+      ...data,
+      layout: {
+        ...(data.layout ?? {}),
+        layoutPreset: preset,
+        timelineHeight: VIDEO_EDITOR_LAYOUT_PRESET_HEIGHTS[preset],
+      },
+      status: "editing",
+    });
+  }, [commit, data]);
+
+  const addTimelineMarker = useCallback(() => {
+    const marker = {
+      id: `marker_${Date.now()}`,
+      time: roundTimelineTime(livePlayhead),
+      label: formatTimecode(livePlayhead, renderState.settings?.fps ?? 25),
+    };
+    commit({ ...data, markers: [...(data.markers ?? []), marker], status: "editing" });
+  }, [commit, data, livePlayhead, renderState.settings?.fps]);
 
   const compatibleTrackAtPointer = useCallback((x: number, y: number, clipId: string): string | undefined => {
     const clip = timelineClips.find((item) => item.id === clipId);
@@ -1258,7 +1501,15 @@ function VideoEditorStudio({
       const deltaSeconds = (now - last) / 1000;
       last = now;
       setLivePlayhead((current) => {
-        const next = clampVideoEditorTime(current + deltaSeconds, 0, timelineDuration);
+        const loopStart = loopPlaybackEnabled && data.inPoint !== undefined ? data.inPoint : 0;
+        const loopEnd = loopPlaybackEnabled && data.outPoint !== undefined && data.outPoint > loopStart
+          ? data.outPoint
+          : timelineDuration;
+        let next = clampVideoEditorTime(current + deltaSeconds, 0, timelineDuration);
+        if (loopPlaybackEnabled && data.inPoint !== undefined && data.outPoint !== undefined && data.outPoint > loopStart) {
+          if (next >= loopEnd) next = loopStart;
+          return next;
+        }
         if (next >= timelineDuration) {
           setIsPlaying(false);
           return timelineDuration;
@@ -1269,7 +1520,7 @@ function VideoEditorStudio({
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [isPlaying, timelineDuration]);
+  }, [data.inPoint, data.outPoint, isPlaying, loopPlaybackEnabled, timelineDuration]);
 
   useEffect(() => {
     if (!dragState) return undefined;
@@ -1277,14 +1528,24 @@ function VideoEditorStudio({
       const delta = (event.clientX - dragState.startX) / timelineScale;
       const rawStartTime = dragState.startTime + delta;
       const rawDuration = dragState.durationSeconds + delta;
-      const snappedStartTime = event.altKey ? roundTimelineTime(rawStartTime) : snapTimelineTime(rawStartTime, dragState.clipId);
-      const snappedDuration = event.altKey ? roundTimelineTime(rawDuration) : snapTimelineTime(dragState.startTime + rawDuration, dragState.clipId) - dragState.startTime;
+      const startSnap = event.altKey ? { time: roundTimelineTime(rawStartTime), snapped: false } : snapTimelineTime(rawStartTime, dragState.clipId);
+      const endSnap = event.altKey
+        ? { time: roundTimelineTime(rawDuration), snapped: false }
+        : snapTimelineTime(dragState.startTime + rawDuration, dragState.clipId);
+      const snappedStartTime = startSnap.time;
+      const snappedDuration = endSnap.time - dragState.startTime;
+      setSnapGuideTime(startSnap.snapped ? snappedStartTime : endSnap.snapped ? endSnap.time : null);
       const targetTrackId = dragState.mode === "move" ? compatibleTrackAtPointer(event.clientX, event.clientY, dragState.clipId) : undefined;
-      const next = dragState.mode === "move"
-        ? moveVideoEditorClip(data, dragState.clipId, snappedStartTime, targetTrackId)
-        : dragState.mode === "resize-start"
+      const resizeMode = dragState.mode === "resize-start" || dragState.mode === "resize-end";
+      const next = dragState.mode === "move" && editTool === "select"
+        ? moveVideoEditorClipWithLinked(data, dragState.clipId, snappedStartTime, targetTrackId, { linkedAv: linkedAvEnabled })
+        : resizeMode && dragState.mode === "resize-start"
           ? trimVideoEditorClipStart(data, dragState.clipId, snappedStartTime)
-          : resizeVideoEditorClip(data, dragState.clipId, Math.max(0.1, snappedDuration));
+          : resizeMode && dragState.mode === "resize-end"
+            ? resizeVideoEditorClip(data, dragState.clipId, Math.max(0.1, snappedDuration))
+            : dragState.mode === "move"
+              ? moveVideoEditorClipWithLinked(data, dragState.clipId, snappedStartTime, targetTrackId, { linkedAv: linkedAvEnabled })
+              : resizeVideoEditorClip(data, dragState.clipId, Math.max(0.1, snappedDuration));
       const previewSeconds = dragState.mode === "resize-end" ? Math.max(0.1, snappedDuration) : snappedStartTime;
       const targetTrackLabel = targetTrackId ? timelineTracks.find((track) => track.id === targetTrackId)?.label : undefined;
       setDragTargetTrackId(targetTrackId ?? null);
@@ -1293,12 +1554,14 @@ function VideoEditorStudio({
         y: event.clientY,
         label: dragState.mode === "move" ? `${targetTrackLabel ? `${targetTrackLabel} · ` : ""}${formatTime(previewSeconds)}` : `${formatTime(previewSeconds)} ${dragState.mode === "resize-end" ? "dur" : "inicio"}`,
       });
-      commit(next);
+      commit(next, { skipHistory: true });
     };
     const onUp = () => {
       setDragState(null);
       setDragPreview(null);
       setDragTargetTrackId(null);
+      setSnapGuideTime(null);
+      pushUndoSnapshot(data);
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp, { once: true });
@@ -1306,7 +1569,50 @@ function VideoEditorStudio({
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
     };
-  }, [commit, compatibleTrackAtPointer, data, dragState, snapTimelineTime, timelineScale, timelineTracks]);
+  }, [commit, compatibleTrackAtPointer, data, dragState, editTool, linkedAvEnabled, pushUndoSnapshot, snapTimelineTime, timelineScale, timelineTracks]);
+
+  useEffect(() => {
+    if (!overlayDragState) return undefined;
+    const onMove = (event: PointerEvent) => {
+      const delta = (event.clientX - overlayDragState.startX) / timelineScale;
+      const rawStartTime = overlayDragState.startTime + delta;
+      const rawDuration = overlayDragState.durationSeconds + delta;
+      const snappedStartTime = event.altKey ? roundTimelineTime(rawStartTime) : snapTimelineTime(rawStartTime).time;
+      const snappedDuration = event.altKey
+        ? roundTimelineTime(rawDuration)
+        : snapTimelineTime(overlayDragState.startTime + rawDuration).time - overlayDragState.startTime;
+      const next =
+        overlayDragState.mode === "move"
+          ? moveVideoEditorOverlay(data, overlayDragState.overlayId, snappedStartTime)
+          : overlayDragState.mode === "resize-start"
+            ? resizeVideoEditorOverlay(data, overlayDragState.overlayId, {
+                startTime: snappedStartTime,
+                durationSeconds: overlayDragState.startTime + overlayDragState.durationSeconds - snappedStartTime,
+              })
+            : resizeVideoEditorOverlay(data, overlayDragState.overlayId, {
+                durationSeconds: Math.max(0.1, snappedDuration),
+              });
+      setDragPreview({
+        x: event.clientX,
+        y: event.clientY,
+        label:
+          overlayDragState.mode === "move"
+            ? formatTime(snappedStartTime)
+            : `${formatTime(overlayDragState.mode === "resize-end" ? snappedDuration : snappedStartTime)} ${overlayDragState.mode === "resize-end" ? "dur" : "inicio"}`,
+      });
+      commit(next);
+    };
+    const onUp = () => {
+      setOverlayDragState(null);
+      setDragPreview(null);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp, { once: true });
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, [commit, data, overlayDragState, snapTimelineTime, timelineScale]);
 
   useEffect(() => {
     if (!layoutDrag) return undefined;
@@ -1324,11 +1630,40 @@ function VideoEditorStudio({
   }, [commit, data, layoutDrag]);
 
   useEffect(() => {
+    if (!trackHeightDrag) return undefined;
+    const onMove = (event: PointerEvent) => {
+      const delta = event.clientY - trackHeightDrag.startY;
+      const nextHeight = Math.max(36, Math.min(120, Math.round(trackHeightDrag.startHeight + delta)));
+      commit(patchVideoEditorTimelineTrack(data, trackHeightDrag.trackId as VideoEditorClip["track"], { height: nextHeight }), { skipHistory: true });
+    };
+    const onUp = () => {
+      setTrackHeightDrag(null);
+      pushUndoSnapshot(data);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp, { once: true });
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, [commit, data, pushUndoSnapshot, trackHeightDrag]);
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (isEditableKeyboardTarget(event.target)) {
         return;
       }
       event.stopImmediatePropagation();
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z" && !event.shiftKey) {
+        event.preventDefault();
+        undoEdit();
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && (event.key.toLowerCase() === "z" && event.shiftKey || event.key.toLowerCase() === "y")) {
+        event.preventDefault();
+        redoEdit();
+        return;
+      }
       if (event.code === "Space") {
         event.preventDefault();
         if (isPlaying) commit({ ...data, playheadTime: livePlayhead });
@@ -1342,13 +1677,44 @@ function VideoEditorStudio({
         event.preventDefault();
         setPlayhead(livePlayhead + 0.5);
       }
+      if (event.key.toLowerCase() === "j") {
+        event.preventDefault();
+        setIsPlaying(false);
+        setPlayhead(livePlayhead - 0.5);
+      }
+      if (event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        if (isPlaying) commit({ ...data, playheadTime: livePlayhead });
+        setIsPlaying(false);
+      }
+      if (event.key.toLowerCase() === "l") {
+        event.preventDefault();
+        setPlayhead(livePlayhead + 0.5);
+      }
       if (event.key === "Delete" || event.key === "Backspace") {
         event.preventDefault();
         deleteSelectedClip();
       }
-      if (event.key.toLowerCase() === "x") {
+      if (event.key.toLowerCase() === "x" || (event.key.toLowerCase() === "b" && editTool === "blade")) {
         event.preventDefault();
         splitSelectedClip();
+      }
+      if (event.key.toLowerCase() === "m") {
+        event.preventDefault();
+        addTimelineMarker();
+      }
+      if (event.key.toLowerCase() === "i") {
+        event.preventDefault();
+        commit({ ...data, inPoint: roundTimelineTime(livePlayhead), status: "editing" });
+      }
+      if (event.key.toLowerCase() === "o") {
+        event.preventDefault();
+        commit({ ...data, outPoint: roundTimelineTime(livePlayhead), status: "editing" });
+      }
+      const toolShortcut = VIDEO_EDITOR_EDIT_TOOL_SHORTCUTS[event.key.toLowerCase()];
+      if (toolShortcut) {
+        event.preventDefault();
+        setEditTool(toolShortcut);
       }
       if (event.key.toLowerCase() === "p") {
         event.preventDefault();
@@ -1357,7 +1723,7 @@ function VideoEditorStudio({
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [commit, data, deleteSelectedClip, isPlaying, livePlayhead, setPlayhead, splitSelectedClip]);
+  }, [addTimelineMarker, commit, data, deleteSelectedClip, editTool, isPlaying, livePlayhead, redoEdit, setPlayhead, splitSelectedClip, undoEdit]);
 
   const refreshMedia = useCallback(() => {
     if (!sourceMediaList) return;
@@ -1792,6 +2158,24 @@ function VideoEditorStudio({
           <>
             <button
               type="button"
+              onClick={undoEdit}
+              disabled={!canUndo}
+              className={`${foldderStudioHeaderActionClassName()} disabled:opacity-35`}
+              title="Deshacer (Ctrl+Z)"
+            >
+              <Undo2 size={14} className="shrink-0" />
+            </button>
+            <button
+              type="button"
+              onClick={redoEdit}
+              disabled={!canRedo}
+              className={`${foldderStudioHeaderActionClassName()} disabled:opacity-35`}
+              title="Rehacer (Ctrl+Shift+Z)"
+            >
+              <Redo2 size={14} className="shrink-0" />
+            </button>
+            <button
+              type="button"
               onClick={openRenderConfirmation}
               disabled={renderState.status === "preparing" || renderState.status === "rendering" || renderState.status === "uploading"}
               className={`${foldderStudioHeaderActionClassName()} bg-[#3a8f96]/25 hover:bg-[#3a8f96]/35 disabled:bg-black/30`}
@@ -1815,19 +2199,8 @@ function VideoEditorStudio({
 
       {previewFullscreen ? (
         <div className="relative flex min-h-0 flex-1 flex-col bg-black">
-          <div className="relative min-h-0 flex-1 overflow-hidden">
-            <VideoEditorCompositionPreview
-              compWidth={compSize.width}
-              compHeight={compSize.height}
-              visualClip={activeVisualClip}
-              visualUrl={activeVisualUrl}
-              overlayClips={data.overlayClips ?? []}
-              playheadTime={livePlayhead}
-              isPlaying={isPlaying}
-              selectedOverlayId={data.selectedOverlayId}
-              onSelectOverlay={(id) => commit({ ...data, selectedOverlayId: id, selectedClipId: undefined, status: "editing" })}
-              onDurationKnown={patchClipSourceDuration}
-            />
+          <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+            <VideoEditorCompositionStage {...compositionStageProps} />
             <SubtitlePreviewOverlay track={activeSubtitleTrack} currentTime={livePlayhead} />
           </div>
           <div className="shrink-0 border-t border-white/10 px-4 py-2">
@@ -1916,6 +2289,13 @@ function VideoEditorStudio({
           </aside>
 
           <section className="flex min-h-0 flex-col border-r border-white/10 px-3 py-2">
+            <VideoEditorViewerToolbar
+              showGuides={showGuides}
+              onShowGuidesChange={setShowGuides}
+              onFitViewer={() => setStageMode("select")}
+              onToggleFullscreen={() => setPreviewFullscreen((current) => !current)}
+              isFullscreen={previewFullscreen}
+            />
             <div className="mb-2 flex shrink-0 items-center justify-between gap-3">
               <div className="min-w-0">
                 <div className="truncate text-xs font-semibold text-white/70">{activeVisualClip?.title ?? "Sin visual activo"}</div>
@@ -1925,19 +2305,8 @@ function VideoEditorStudio({
                 <input type="number" step={0.1} value={livePlayhead.toFixed(1)} onChange={(event) => setPlayhead(Number(event.target.value))} className="w-16 bg-transparent outline-none" />
               </label>
             </div>
-            <div className="relative min-h-[200px] flex-1 overflow-hidden bg-black">
-              <VideoEditorCompositionPreview
-                compWidth={compSize.width}
-                compHeight={compSize.height}
-                visualClip={activeVisualClip}
-                visualUrl={activeVisualUrl}
-                overlayClips={data.overlayClips ?? []}
-                playheadTime={livePlayhead}
-                isPlaying={isPlaying}
-                selectedOverlayId={data.selectedOverlayId}
-                onSelectOverlay={(id) => commit({ ...data, selectedOverlayId: id, selectedClipId: undefined, status: "editing" })}
-                onDurationKnown={patchClipSourceDuration}
-              />
+            <div className="relative flex min-h-[200px] flex-1 flex-col overflow-hidden bg-black">
+              <VideoEditorCompositionStage {...compositionStageProps} />
               <SubtitlePreviewOverlay track={activeSubtitleTrack} currentTime={livePlayhead} />
             </div>
             <div className="mt-2 flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-2">
@@ -1974,11 +2343,10 @@ function VideoEditorStudio({
           <aside data-foldder-video-editor-inspector="" className="flex min-h-0 flex-col overflow-hidden border-l border-white/[0.06]">
             <div className="flex shrink-0 items-center border-b border-white/10">
               {[
-                ["clip", "Clip", Film],
-                ["design", "Design", Type],
+                ["edit", "Edit", Layers],
                 ["audio", "Audio", Music],
                 ["subtitles", "Subs", Captions],
-                ["render", "Render", Download],
+                ["deliver", "Deliver", Download],
               ].map(([value, label, Icon]) => (
                 <button
                   key={String(value)}
@@ -1994,7 +2362,7 @@ function VideoEditorStudio({
             </div>
             <div className="min-h-0 flex-1 overflow-auto px-2 py-1.5">
             <div className="mb-1.5 flex items-center justify-between gap-1 border-b border-white/[0.06] pb-1">
-              <div className="min-w-0 truncate text-[10px] font-semibold text-white/55">{selectedClip?.title ?? (inspectorTab === "render" ? "Render" : inspectorTab === "audio" ? "Audio" : inspectorTab === "subtitles" ? "Subtítulos" : "Timeline")}</div>
+              <div className="min-w-0 truncate text-[10px] font-semibold text-white/55">{selectedClip?.title ?? selectedOverlay?.title ?? (inspectorTab === "deliver" ? "Deliver" : inspectorTab === "audio" ? "Audio" : inspectorTab === "subtitles" ? "Subtítulos" : "Edit")}</div>
               <div className="shrink-0 text-[9px] font-semibold tabular-nums text-white/30">{formatTime(livePlayhead)}</div>
             </div>
             {inspectorTab === "subtitles" ? (
@@ -2128,7 +2496,7 @@ function VideoEditorStudio({
                 )}
               </div>
             ) : null}
-            {inspectorTab === "design" ? (
+            {inspectorTab === "edit" ? (
               <div className="grid gap-2">
                 <InspectorSection title="Añadir" compact>
                   <div className="grid grid-cols-3 gap-0.5">
@@ -2146,100 +2514,128 @@ function VideoEditorStudio({
 
                 {(data.overlayClips ?? []).length > 0 ? (
                   <InspectorSection title="Capas" compact>
-                    <div className="max-h-28 space-y-0.5 overflow-auto">
-                      {(data.overlayClips ?? []).map((overlay) => (
-                        <button
+                    <div className="max-h-36 space-y-0.5 overflow-auto">
+                      {[...(data.overlayClips ?? [])]
+                        .sort((a, b) => (a.layerOrder ?? 0) - (b.layerOrder ?? 0))
+                        .map((overlay) => (
+                        <div
                           key={overlay.id}
-                          type="button"
-                          onClick={() => commit({ ...data, selectedOverlayId: overlay.id, selectedClipId: undefined, status: "editing" })}
                           className={cx(
-                            "flex w-full items-center justify-between gap-2 px-1.5 py-1 text-left text-[10px] transition",
-                            data.selectedOverlayId === overlay.id ? "bg-[#3a8f96]/15 text-white" : "text-white/55 hover:bg-white/[0.04]",
+                            "flex items-center gap-1 px-1 py-0.5",
+                            data.selectedOverlayId === overlay.id ? "bg-[#3a8f96]/15" : undefined,
                           )}
                         >
-                          <span className="truncate">{overlay.title}</span>
-                          <span className="shrink-0 tabular-nums text-white/35">{formatTime(overlay.startTime)}</span>
-                        </button>
+                          <button
+                            type="button"
+                            onClick={() => commit({ ...data, selectedOverlayId: overlay.id, selectedClipId: undefined, status: "editing" })}
+                            className="min-w-0 flex-1 truncate px-0.5 text-left text-[10px] text-white/55 hover:text-white/80"
+                          >
+                            {overlay.title}
+                          </button>
+                          <span className="shrink-0 tabular-nums text-[9px] text-white/30">{formatTime(overlay.startTime)}</span>
+                          <button type="button" title="Subir capa" onClick={() => commit(reorderVideoEditorOverlay(data, overlay.id, "up"))} className="px-1 text-[10px] text-white/35 hover:text-white/70">↑</button>
+                          <button type="button" title="Bajar capa" onClick={() => commit(reorderVideoEditorOverlay(data, overlay.id, "down"))} className="px-1 text-[10px] text-white/35 hover:text-white/70">↓</button>
+                        </div>
                       ))}
                     </div>
                   </InspectorSection>
                 ) : null}
 
-                {compositionTransform && compositionTarget ? (
+                {compositionTransform && compositionTarget && targetComposition ? (
                   <>
-                    <InspectorSection title="Transform" compact>
-                      <p className="text-[9px] text-white/35">
-                        {compositionTarget.kind === "clip" ? "Clip visual" : selectedOverlay?.title ?? "Capa"}
-                      </p>
-                      <div className="grid grid-cols-2 gap-1.5">
-                        <label className="grid gap-0.5"><span className="text-[10px] text-white/40">X</span><NumberInput value={compositionTransform.x} onChange={(v) => patchCompositionTransform({ x: v })} step={0.01} /></label>
-                        <label className="grid gap-0.5"><span className="text-[10px] text-white/40">Y</span><NumberInput value={compositionTransform.y} onChange={(v) => patchCompositionTransform({ y: v })} step={0.01} /></label>
-                        <label className="grid gap-0.5"><span className="text-[10px] text-white/40">Ancho</span><NumberInput value={compositionTransform.width} onChange={(v) => patchCompositionTransform({ width: v })} step={0.01} min={0.01} /></label>
-                        <label className="grid gap-0.5"><span className="text-[10px] text-white/40">Alto</span><NumberInput value={compositionTransform.height} onChange={(v) => patchCompositionTransform({ height: v })} step={0.01} min={0.01} /></label>
-                      </div>
-                      <label className="grid gap-0.5"><span className="text-[10px] text-white/40">Opacidad</span><NumberInput value={compositionTransform.opacity} onChange={(v) => patchCompositionTransform({ opacity: Math.max(0, Math.min(1, v)) })} step={0.05} min={0} /></label>
-                      {compositionTarget.kind === "clip" ? (
-                        <div className="grid grid-cols-2 gap-1.5 border-t border-white/[0.06] pt-1.5">
-                          <label className="grid gap-0.5"><span className="text-[10px] text-white/40">Crop X</span><NumberInput value={compositionTransform.crop.x} onChange={(v) => patchCompositionTransform({ crop: { x: v } })} step={0.01} /></label>
-                          <label className="grid gap-0.5"><span className="text-[10px] text-white/40">Crop Y</span><NumberInput value={compositionTransform.crop.y} onChange={(v) => patchCompositionTransform({ crop: { y: v } })} step={0.01} /></label>
-                          <label className="grid gap-0.5"><span className="text-[10px] text-white/40">Crop W</span><NumberInput value={compositionTransform.crop.width} onChange={(v) => patchCompositionTransform({ crop: { width: v } })} step={0.01} min={0.01} /></label>
-                          <label className="grid gap-0.5"><span className="text-[10px] text-white/40">Crop H</span><NumberInput value={compositionTransform.crop.height} onChange={(v) => patchCompositionTransform({ crop: { height: v } })} step={0.01} min={0.01} /></label>
-                        </div>
-                      ) : null}
+                    <InspectorSection title="Transform · Resolve" compact>
+                      <CompositionTransformInspector
+                        composition={targetComposition}
+                        localTime={compositionLocalTime}
+                        transform={compositionTransform}
+                        transformPx={compositionTransformPx ?? undefined}
+                        animateMode={animateMode}
+                        keyframedProperties={keyframedProperties}
+                        onTogglePropertyKeyframe={(property) => {
+                          setKeyframedProperties((current) => {
+                            const next = new Set(current);
+                            if (next.has(property)) next.delete(property);
+                            else next.add(property);
+                            return next;
+                          });
+                        }}
+                        onToggleAllTransformKeyframes={() => {
+                          setAnimateMode((value) => !value);
+                          setKeyframedProperties(new Set(COMPOSITION_TRANSFORM_PROPERTIES));
+                        }}
+                        onPatchTransform={(patch) => patchCompositionTransform(patch)}
+                        onPatchTransformPx={patchCompositionTransformPx}
+                        onSeekLocalTime={(localTime) => {
+                          if (compositionTarget.kind === "clip") {
+                            const clip = Object.values(data.tracks).flat().find((c) => c.id === compositionTarget.clipId);
+                            if (clip) setPlayhead(clip.startTime + localTime);
+                            return;
+                          }
+                          const overlay = (data.overlayClips ?? []).find((o) => o.id === compositionTarget.overlayId);
+                          if (overlay) setPlayhead(overlay.startTime + localTime);
+                        }}
+                        onDeleteKeyframesAtPlayhead={() => {
+                          const comp = removeCompositionKeyframesAtTime(targetComposition, compositionLocalTime);
+                          if (compositionTarget.kind === "clip") {
+                            const clip = Object.values(data.tracks).flat().find((c) => c.id === compositionTarget.clipId);
+                            if (clip) commit(patchClipComposition(data, clip.id, comp));
+                          } else if (selectedOverlay) {
+                            commit(patchVideoEditorOverlay(data, selectedOverlay.id, { composition: comp }));
+                          }
+                        }}
+                        onAddKeyframeAtPlayhead={() => {
+                          if (!compositionTransform) return;
+                          commit(setCompositionKeyframeAtPlayhead(data, compositionTarget, livePlayhead, compositionTransform, COMPOSITION_TRANSFORM_PROPERTIES));
+                        }}
+                        onPatchPropertyEasing={(property, keyframeId, easing) => {
+                          const comp = patchCompositionPropertyEasing(targetComposition, property, keyframeId, easing);
+                          if (compositionTarget.kind === "clip") {
+                            const clip = Object.values(data.tracks).flat().find((c) => c.id === compositionTarget.clipId);
+                            if (clip) commit(patchClipComposition(data, clip.id, comp));
+                          } else if (selectedOverlay) {
+                            commit(patchVideoEditorOverlay(data, selectedOverlay.id, { composition: comp }));
+                          }
+                        }}
+                        aspectLock={aspectLock}
+                        onToggleAspectLock={() => setAspectLock((value) => !value)}
+                        showCropPresets={compositionTarget.kind === "clip"}
+                        cropPreset={cropPreset}
+                        onApplyCropPreset={applyCropPreset}
+                        formatTime={formatTime}
+                      />
                     </InspectorSection>
 
-                    <InspectorSection title="Animación" compact>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (!compositionTransform) return;
-                          commit(setCompositionKeyframeAtPlayhead(data, compositionTarget, livePlayhead, compositionTransform));
-                        }}
-                        className="w-full px-2 py-1.5 text-[10px] font-black uppercase tracking-[0.06em] text-[#3a8f96]/90 hover:bg-white/[0.04]"
-                      >
-                        ◆ Keyframe en playhead
-                      </button>
-                      {(() => {
-                        const comp =
-                          compositionTarget.kind === "clip"
-                            ? ensureClipComposition(
-                                Object.values(data.tracks)
-                                  .flat()
-                                  .find((c) => c.id === compositionTarget.clipId)!,
-                              )
-                            : selectedOverlay?.composition;
-                        const keyframes = comp?.keyframes ?? [];
-                        if (!keyframes.length) return null;
-                        return (
-                          <div className="mt-1 space-y-1">
-                            {keyframes.map((kf, idx) => (
-                              <div key={kf.id} className="flex items-center gap-1 text-[10px] text-white/55">
-                                <button type="button" onClick={() => setPlayhead(compositionTarget.kind === "clip" ? (Object.values(data.tracks).flat().find((c) => c.id === compositionTarget.clipId)?.startTime ?? 0) + kf.time : (selectedOverlay?.startTime ?? 0) + kf.time)} className="tabular-nums hover:text-white">{formatTime(kf.time)}</button>
-                                {idx < keyframes.length - 1 ? (
-                                  <select
-                                    value={kf.easing}
-                                    onChange={(e) => {
-                                      const easing = e.target.value as CompositionEasing;
-                                      if (compositionTarget.kind === "clip") {
-                                        const clip = Object.values(data.tracks).flat().find((c) => c.id === compositionTarget.clipId);
-                                        if (!clip) return;
-                                        commit(patchClipComposition(data, clip.id, patchCompositionKeyframeEasing(ensureClipComposition(clip), kf.id, easing)));
-                                      } else if (selectedOverlay) {
-                                        commit(patchVideoEditorOverlay(data, selectedOverlay.id, { composition: patchCompositionKeyframeEasing(selectedOverlay.composition, kf.id, easing) }));
-                                      }
-                                    }}
-                                    className={`${VIDEO_EDITOR_INSPECTOR_INPUT} !py-0.5 text-[9px]`}
-                                  >
-                                    {COMPOSITION_EASING_OPTIONS.map((o) => (
-                                      <option key={o.id} value={o.id}>{o.label}</option>
-                                    ))}
-                                  </select>
-                                ) : null}
-                              </div>
-                            ))}
-                          </div>
-                        );
-                      })()}
+                    <InspectorSection title="Presets de movimiento" compact>
+                      <div className="mb-1 flex items-center justify-between gap-2">
+                        <span className="text-[10px] text-white/40">Auto-keyframe global</span>
+                        <button
+                          type="button"
+                          onClick={() => setAnimateMode((v) => !v)}
+                          className={cx("px-2 py-0.5 text-[9px] font-black uppercase", animateMode ? "bg-[#3a8f96]/25 text-white" : "text-white/40")}
+                        >
+                          {animateMode ? "ON" : "OFF"}
+                        </button>
+                      </div>
+                      <div className="flex flex-wrap gap-0.5">
+                        {([
+                          ["zoom_in", "Zoom in"],
+                          ["zoom_out", "Zoom out"],
+                          ["pan_left", "Pan ←"],
+                          ["pan_right", "Pan →"],
+                        ] as const).map(([preset, label]) => (
+                          <button
+                            key={preset}
+                            type="button"
+                            onClick={() => {
+                              commit(applyCompositionMotionPreset(data, compositionTarget, preset));
+                              setAnimateMode(true);
+                            }}
+                            className="px-1.5 py-1 text-[9px] font-black uppercase tracking-[0.06em] text-white/50 hover:bg-white/[0.04] hover:text-white/75"
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
                     </InspectorSection>
                   </>
                 ) : (
@@ -2249,21 +2645,240 @@ function VideoEditorStudio({
                 {selectedOverlay ? (
                   <InspectorSection title="Capa seleccionada" compact>
                     {selectedOverlay.object.type === "text" ? (
-                      <label className="grid gap-0.5">
-                        <span className="text-[10px] text-white/40">Texto</span>
-                        <textarea
-                          value={(selectedOverlay.object as { text?: string }).text ?? ""}
-                          rows={2}
-                          onChange={(e) =>
-                            commit(
-                              patchVideoEditorOverlay(data, selectedOverlay.id, {
-                                object: { ...selectedOverlay.object, text: e.target.value } as typeof selectedOverlay.object,
-                              }),
-                            )
-                          }
-                          className={`${VIDEO_EDITOR_INSPECTOR_INPUT} leading-relaxed`}
-                        />
-                      </label>
+                      <>
+                        <label className="grid gap-0.5">
+                          <span className="text-[10px] text-white/40">Texto</span>
+                          <textarea
+                            value={(selectedOverlay.object as { text?: string }).text ?? ""}
+                            rows={2}
+                            onChange={(e) =>
+                              commit(
+                                patchVideoEditorOverlay(data, selectedOverlay.id, {
+                                  object: { ...selectedOverlay.object, text: e.target.value } as typeof selectedOverlay.object,
+                                }),
+                              )
+                            }
+                            className={`${VIDEO_EDITOR_INSPECTOR_INPUT} leading-relaxed`}
+                          />
+                        </label>
+                        <div className="grid gap-1.5 border-t border-white/[0.06] pt-1.5">
+                          <div className="text-[9px] font-black uppercase tracking-[0.08em] text-white/32">Tipografía</div>
+                          <label className="grid gap-0.5">
+                            <span className="text-[10px] text-white/40">Fuente</span>
+                            <select
+                              value={designerFontSelectControlValue(
+                                (selectedOverlay.object as { fontFamily?: string }).fontFamily ?? "Inter, system-ui, sans-serif",
+                                (selectedOverlay.object as { fontWeight?: number }).fontWeight ?? 700,
+                              )}
+                              onChange={(e) => {
+                                const value = e.target.value;
+                                const textObj = selectedOverlay.object as { fontFamily?: string; fontWeight?: number };
+                                let fontFamily = textObj.fontFamily ?? "Inter, system-ui, sans-serif";
+                                let fontWeight = textObj.fontWeight ?? 700;
+                                if (value.startsWith(DESIGNER_FONT_PRESET_VALUE_PREFIX)) {
+                                  const preset = DESIGNER_SYSTEM_FONT_PRESETS.find((p) => `${DESIGNER_FONT_PRESET_VALUE_PREFIX}${p.id}` === value);
+                                  if (preset) {
+                                    fontFamily = preset.family;
+                                    fontWeight = preset.weight;
+                                  }
+                                } else if (value) {
+                                  fontFamily = `"${value}", system-ui, sans-serif`;
+                                }
+                                commit(
+                                  patchVideoEditorOverlay(data, selectedOverlay.id, {
+                                    object: { ...selectedOverlay.object, fontFamily, fontWeight } as typeof selectedOverlay.object,
+                                  }),
+                                );
+                              }}
+                              className={VIDEO_EDITOR_INSPECTOR_INPUT}
+                            >
+                              <optgroup label="Sistema">
+                                {DESIGNER_SYSTEM_FONT_PRESETS.map((preset) => (
+                                  <option key={preset.id} value={`${DESIGNER_FONT_PRESET_VALUE_PREFIX}${preset.id}`}>{preset.label}</option>
+                                ))}
+                              </optgroup>
+                              <optgroup label="Google · Populares">
+                                {GOOGLE_FONTS_POPULAR.map((font) => (
+                                  <option key={`pop-${font.family}`} value={font.family}>{font.family}</option>
+                                ))}
+                              </optgroup>
+                              {Array.from(new Set(GOOGLE_FONTS_LIBRARY.map((font) => font.category))).map((category) => (
+                                <optgroup key={category} label={`Google · ${category}`}>
+                                  {GOOGLE_FONTS_LIBRARY.filter((font) => font.category === category).map((font) => (
+                                    <option key={font.family} value={font.family}>{font.family}</option>
+                                  ))}
+                                </optgroup>
+                              ))}
+                            </select>
+                          </label>
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <label className="grid gap-0.5">
+                              <span className="text-[10px] text-white/40">Tamaño</span>
+                              <NumberInput
+                                value={(selectedOverlay.object as { fontSize?: number }).fontSize ?? 48}
+                                onChange={(v) =>
+                                  commit(
+                                    patchVideoEditorOverlay(data, selectedOverlay.id, {
+                                      object: { ...selectedOverlay.object, fontSize: Math.max(8, Math.round(v)) } as typeof selectedOverlay.object,
+                                    }),
+                                  )
+                                }
+                                step={1}
+                                min={8}
+                              />
+                            </label>
+                            <label className="grid gap-0.5">
+                              <span className="text-[10px] text-white/40">Peso</span>
+                              <NumberInput
+                                value={(selectedOverlay.object as { fontWeight?: number }).fontWeight ?? 700}
+                                onChange={(v) =>
+                                  commit(
+                                    patchVideoEditorOverlay(data, selectedOverlay.id, {
+                                      object: { ...selectedOverlay.object, fontWeight: Math.max(100, Math.min(900, Math.round(v))) } as typeof selectedOverlay.object,
+                                    }),
+                                  )
+                                }
+                                step={50}
+                                min={100}
+                              />
+                            </label>
+                            <label className="grid gap-0.5">
+                              <span className="text-[10px] text-white/40">Interlineado</span>
+                              <NumberInput
+                                value={(selectedOverlay.object as { lineHeight?: number }).lineHeight ?? 1.1}
+                                onChange={(v) =>
+                                  commit(
+                                    patchVideoEditorOverlay(data, selectedOverlay.id, {
+                                      object: { ...selectedOverlay.object, lineHeight: Math.max(0.8, v) } as typeof selectedOverlay.object,
+                                    }),
+                                  )
+                                }
+                                step={0.05}
+                                min={0.8}
+                              />
+                            </label>
+                            <label className="grid gap-0.5">
+                              <span className="text-[10px] text-white/40">Tracking</span>
+                              <NumberInput
+                                value={(selectedOverlay.object as { letterSpacing?: number }).letterSpacing ?? 0}
+                                onChange={(v) =>
+                                  commit(
+                                    patchVideoEditorOverlay(data, selectedOverlay.id, {
+                                      object: { ...selectedOverlay.object, letterSpacing: v } as typeof selectedOverlay.object,
+                                    }),
+                                  )
+                                }
+                                step={0.5}
+                              />
+                            </label>
+                          </div>
+                          <div className="flex gap-0.5">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                commit(
+                                  patchVideoEditorOverlay(data, selectedOverlay.id, {
+                                    object: {
+                                      ...selectedOverlay.object,
+                                      fontStyle: (selectedOverlay.object as { fontStyle?: string }).fontStyle === "italic" ? "normal" : "italic",
+                                    } as typeof selectedOverlay.object,
+                                  }),
+                                )
+                              }
+                              className={cx(
+                                "flex-1 px-1 py-1 text-[9px] font-black uppercase tracking-[0.06em]",
+                                (selectedOverlay.object as { fontStyle?: string }).fontStyle === "italic" ? "bg-[#3a8f96]/20 text-white" : "text-white/45 hover:bg-white/[0.04]",
+                              )}
+                            >
+                              Cursiva
+                            </button>
+                          </div>
+                          <div>
+                            <div className="mb-0.5 text-[10px] text-white/40">Alineación</div>
+                            <div className="flex gap-0.5">
+                              {(["left", "center", "right"] as const).map((align) => (
+                                <button
+                                  key={align}
+                                  type="button"
+                                  onClick={() =>
+                                    commit(
+                                      patchVideoEditorOverlay(data, selectedOverlay.id, {
+                                        object: { ...selectedOverlay.object, textAlign: align } as typeof selectedOverlay.object,
+                                      }),
+                                    )
+                                  }
+                                  className={cx(
+                                    "flex-1 px-1 py-1 text-[9px] font-black uppercase tracking-[0.06em]",
+                                    (selectedOverlay.object as { textAlign?: string }).textAlign === align
+                                      ? "bg-[#3a8f96]/20 text-white"
+                                      : "text-white/45 hover:bg-white/[0.04]",
+                                  )}
+                                >
+                                  {align === "left" ? "Izq" : align === "center" ? "Centro" : "Der"}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          <label className="grid gap-0.5">
+                            <span className="text-[10px] text-white/40">Color</span>
+                            <input
+                              type="color"
+                              value={(selectedOverlay.object as { fill?: { color?: string } }).fill?.color ?? "#ffffff"}
+                              onChange={(e) =>
+                                commit(
+                                  patchVideoEditorOverlay(data, selectedOverlay.id, {
+                                    object: {
+                                      ...selectedOverlay.object,
+                                      fill: { type: "solid", color: e.target.value },
+                                    } as typeof selectedOverlay.object,
+                                  }),
+                                )
+                              }
+                              className="h-8 w-full cursor-pointer border border-white/10 bg-transparent"
+                            />
+                          </label>
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <label className="grid gap-0.5">
+                              <span className="text-[10px] text-white/40">Trazo</span>
+                              <NumberInput
+                                value={(selectedOverlay.object as { strokeWidth?: number }).strokeWidth ?? 0}
+                                onChange={(v) =>
+                                  commit(
+                                    patchVideoEditorOverlay(data, selectedOverlay.id, {
+                                      object: {
+                                        ...selectedOverlay.object,
+                                        strokeWidth: Math.max(0, Math.round(v)),
+                                        stroke: v > 0 ? { type: "solid", color: (selectedOverlay.object as { stroke?: { color?: string } }).stroke?.color ?? "#000000" } : "none",
+                                      } as typeof selectedOverlay.object,
+                                    }),
+                                  )
+                                }
+                                step={1}
+                                min={0}
+                              />
+                            </label>
+                            <label className="grid gap-0.5">
+                              <span className="text-[10px] text-white/40">Color trazo</span>
+                              <input
+                                type="color"
+                                value={(selectedOverlay.object as { stroke?: { color?: string } }).stroke?.color ?? "#000000"}
+                                onChange={(e) =>
+                                  commit(
+                                    patchVideoEditorOverlay(data, selectedOverlay.id, {
+                                      object: {
+                                        ...selectedOverlay.object,
+                                        stroke: { type: "solid", color: e.target.value },
+                                        strokeWidth: Math.max(1, (selectedOverlay.object as { strokeWidth?: number }).strokeWidth ?? 1),
+                                      } as unknown as typeof selectedOverlay.object,
+                                    }),
+                                  )
+                                }
+                                className="h-8 w-full cursor-pointer border border-white/10 bg-transparent"
+                              />
+                            </label>
+                          </div>
+                        </div>
+                      </>
                     ) : null}
                     <button
                       type="button"
@@ -2276,7 +2891,7 @@ function VideoEditorStudio({
                 ) : null}
               </div>
             ) : null}
-            {inspectorTab === "clip" ? (selectedClip ? (
+            {inspectorTab === "edit" && selectedClip ? (
               <div className="grid gap-2">
                 <InspectorSection title="Clip" compact>
                   <label className="grid gap-0.5">
@@ -2326,31 +2941,6 @@ function VideoEditorStudio({
                   </InspectorSection>
                 ) : null}
 
-                {selectedClip.mediaType === "image" ? (
-                  <InspectorSection title="Imagen" compact>
-                    <div className="grid grid-cols-2 gap-1.5">
-                      <label className="grid gap-0.5">
-                        <span className="text-[10px] text-white/40">Encuadre</span>
-                        <select value={selectedClip.framing ?? "fill"} onChange={(event) => commit(patchVideoEditorClip(data, selectedClip.id, { framing: event.target.value as VideoEditorClip["framing"] }))} className={VIDEO_EDITOR_INSPECTOR_INPUT}>
-                          <option value="fit">Fit</option>
-                          <option value="fill">Fill</option>
-                          <option value="crop_center">Crop center</option>
-                        </select>
-                      </label>
-                      <label className="grid gap-0.5">
-                        <span className="text-[10px] text-white/40">Movimiento</span>
-                        <select value={selectedClip.motion ?? "none"} onChange={(event) => commit(patchVideoEditorClip(data, selectedClip.id, { motion: event.target.value as VideoEditorClip["motion"] }))} className={VIDEO_EDITOR_INSPECTOR_INPUT}>
-                          <option value="none">Ninguno</option>
-                          <option value="slow_zoom_in">Zoom in lento</option>
-                          <option value="slow_zoom_out">Zoom out lento</option>
-                          <option value="pan_left">Pan izquierda</option>
-                          <option value="pan_right">Pan derecha</option>
-                        </select>
-                      </label>
-                    </div>
-                  </InspectorSection>
-                ) : null}
-
                 {selectedClip.mediaType === "audio" ? (
                   <InspectorSection title="Audio" compact>
                     <label className="grid gap-0.5"><span className="text-[10px] text-white/40">Vol</span><NumberInput value={selectedClip.volume ?? 1} onChange={(value) => commit(patchVideoEditorClip(data, selectedClip.id, { volume: value }))} step={0.1} /></label>
@@ -2367,9 +2957,7 @@ function VideoEditorStudio({
                   <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap text-[10px] leading-relaxed text-white/45">{JSON.stringify(selectedClip.metadata ?? {}, null, 2)}</pre>
                 </details>
               </div>
-            ) : (
-              <p className="text-[11px] leading-relaxed text-white/35">Sin clip seleccionado.</p>
-            )) : null}
+            ) : null}
             {inspectorTab === "audio" ? (
               <div className="grid gap-2">
                 <div>
@@ -2405,7 +2993,7 @@ function VideoEditorStudio({
                 </div>
               </div>
             ) : null}
-            {inspectorTab === "render" ? (
+            {inspectorTab === "deliver" ? (
               <div className="grid gap-2">
                 <div className="grid grid-cols-2 gap-1.5">
                   <label className="grid gap-0.5">
@@ -2483,12 +3071,33 @@ function VideoEditorStudio({
               event.currentTarget.setPointerCapture(event.pointerId);
               setLayoutDrag({ startY: event.clientY, startHeight: timelineHeight });
             }}
-            onDoubleClick={() => commit({ ...data, layout: { ...(data.layout ?? {}), timelineHeight: 300 }, status: "editing" })}
+            onDoubleClick={() => applyLayoutPreset("balanced")}
           >
             <div className="h-1 w-20 rounded-full bg-white/12 hover:bg-cyan-200/35" />
           </div>
 
-          <section className="col-span-3 min-h-0 border-t border-white/10 px-2 py-1.5">
+          <section className="col-span-3 flex min-h-0 flex-col border-t border-white/10">
+            <VideoEditorEditToolbar
+              editTool={editTool}
+              onEditToolChange={setEditTool}
+              snapEnabled={snapEnabled}
+              onSnapEnabledChange={setSnapEnabled}
+              linkedAvEnabled={linkedAvEnabled}
+              onLinkedAvEnabledChange={setLinkedAvEnabled}
+              inPoint={data.inPoint}
+              outPoint={data.outPoint}
+              onSetInPoint={() => commit({ ...data, inPoint: roundTimelineTime(livePlayhead), status: "editing" })}
+              onSetOutPoint={() => commit({ ...data, outPoint: roundTimelineTime(livePlayhead), status: "editing" })}
+              loopEnabled={loopPlaybackEnabled}
+              onLoopEnabledChange={setLoopPlaybackEnabled}
+              timelineZoom={timelineScale}
+              onZoomIn={() => commit({ ...data, timelineZoom: Math.min(80, timelineScale + 4) })}
+              onZoomOut={() => commit({ ...data, timelineZoom: Math.max(8, timelineScale - 4) })}
+              onZoomFit={fitTimelineZoom}
+              onSplit={splitSelectedClip}
+              canSplit={canSplitSelectedClip}
+            />
+            <div className="px-2 py-1.5">
             <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
               <TimelineClipActions
                 selectedClip={selectedClip ?? null}
@@ -2513,37 +3122,46 @@ function VideoEditorStudio({
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-0.5">
-                <button type="button" onClick={() => commit({ ...data, timelineZoom: Math.max(8, timelineScale - 4) })} className="px-1.5 py-0.5 text-[10px] font-semibold text-white/45 hover:text-white/70" title="Alejar">−</button>
+                {(["balanced", "timeline_focus", "viewer_focus"] as const).map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => applyLayoutPreset(preset)}
+                    className={cx(
+                      "px-1.5 py-0.5 text-[9px] font-black uppercase tracking-[0.06em]",
+                      data.layout?.layoutPreset === preset ? "bg-[#3a8f96]/20 text-white" : "text-white/45 hover:text-white/70",
+                    )}
+                    title={`Layout ${preset.replace("_", " ")}`}
+                  >
+                    {preset === "balanced" ? "Bal" : preset === "timeline_focus" ? "TL" : "View"}
+                  </button>
+                ))}
                 <button type="button" onClick={fitTimelineZoom} className="px-1.5 py-0.5 text-[10px] font-semibold text-white/45 hover:text-white/70" title="Ajustar zoom">Fit</button>
-                <button type="button" onClick={() => commit({ ...data, timelineZoom: Math.min(80, timelineScale + 4) })} className="px-1.5 py-0.5 text-[10px] font-semibold text-white/45 hover:text-white/70" title="Acercar">+</button>
                 <button type="button" onClick={() => commit(createVideoEditorTimelineTrack(data, "visual"))} className="px-1.5 py-0.5 text-[10px] font-semibold text-white/45 hover:text-white/70" title="Añadir pista de vídeo">+ Vid</button>
                 <button type="button" onClick={() => commit(createVideoEditorTimelineTrack(data, "audio"))} className="px-1.5 py-0.5 text-[10px] font-semibold text-white/45 hover:text-white/70" title="Añadir pista de audio">+ Aud</button>
               </div>
             </div>
             <div ref={timelineViewportRef} className="relative h-[calc(100%-40px)] min-h-[88px] overflow-auto bg-[#0a0c10]">
               <div className="relative min-w-full" style={{ width: TIMELINE_LABEL_WIDTH + timelineWidth }}>
-                <div className="sticky top-0 z-30 grid border-b border-white/10 bg-[#202329]" style={{ gridTemplateColumns: `${TIMELINE_LABEL_WIDTH}px ${timelineWidth}px` }}>
-                  <div className="sticky left-0 z-30 flex h-9 items-center border-r border-black/45 bg-[#202329] px-3 text-[10px] font-black uppercase tracking-[0.12em] text-white/32">Timecode</div>
-                  <div
-                    className="relative h-9"
-                    onClick={(event) => {
-                      const rect = event.currentTarget.getBoundingClientRect();
-                      setPlayhead((event.clientX - rect.left) / timelineScale);
-                    }}
-                  >
-                    {Array.from({ length: Math.ceil(timelineDuration) + 1 }).map((_, second) => (
-                      <div key={second} className={cx("absolute top-0 h-full border-l", second % 5 === 0 ? "border-white/20" : "border-white/10")} style={{ left: second * timelineScale }}>
-                        <span className="ml-1 text-[10px] tabular-nums text-white/32">{second}s</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                <VideoEditorTimelineRuler
+                  durationSeconds={timelineDuration}
+                  timelineScale={timelineScale}
+                  playheadTime={livePlayhead}
+                  fps={renderState.settings?.fps ?? 25}
+                  markers={data.markers ?? []}
+                  inPoint={data.inPoint}
+                  outPoint={data.outPoint}
+                  onScrub={setPlayhead}
+                  labelWidth={TIMELINE_LABEL_WIDTH}
+                />
                 {timelineTracks.map((track) => {
                   const canDeleteTrack = timelineTracks.filter((item) => item.kind === track.kind).length > 1;
+                  const trackHeight = track.height ?? (track.kind === "visual" ? 54 : 46);
                   return (
                   <div key={track.id} className="grid border-b border-black/35 last:border-b-0" style={{ gridTemplateColumns: `${TIMELINE_LABEL_WIDTH}px ${timelineWidth}px` }}>
                     <div
-                      className={cx("sticky left-0 z-20 flex min-h-[46px] items-center justify-between gap-2 border-r border-black/45 bg-[#242831] px-3 text-[10px] font-black uppercase tracking-[0.1em]", data.selectedTrackId === track.id ? "text-amber-100/90" : "text-white/48")}
+                      className={cx("relative sticky left-0 z-20 flex items-center justify-between gap-2 border-r border-black/45 bg-[#242831] px-3 text-[10px] font-black uppercase tracking-[0.1em]", data.selectedTrackId === track.id ? "text-amber-100/90" : "text-white/48")}
+                      style={{ minHeight: trackHeight }}
                       onClick={() => commit({ ...data, selectedTrackId: track.id, status: "editing" })}
                     >
                       <span className="truncate">{track.label}</span>
@@ -2583,10 +3201,21 @@ function VideoEditorStudio({
                           <Trash2 size={12} />
                         </button>
                       </span>
+                      <div
+                        role="separator"
+                        aria-label={`Redimensionar ${track.label}`}
+                        className="absolute inset-x-0 bottom-0 h-1.5 cursor-row-resize hover:bg-cyan-200/20"
+                        onPointerDown={(event) => {
+                          event.stopPropagation();
+                          event.currentTarget.setPointerCapture(event.pointerId);
+                          setTrackHeightDrag({ trackId: track.id, startY: event.clientY, startHeight: trackHeight });
+                        }}
+                      />
                     </div>
                     <div
                       data-video-editor-track-id={track.id}
-                      className={cx("relative min-h-[46px] bg-[#151820]", track.hidden ? "opacity-40" : undefined, dragTargetTrackId === track.id ? "bg-cyan-300/[0.08] outline outline-1 outline-cyan-200/35" : undefined)}
+                      className={cx("relative bg-[#151820]", track.hidden ? "opacity-40" : undefined, dragTargetTrackId === track.id ? "bg-cyan-300/[0.08] outline outline-1 outline-cyan-200/35" : undefined)}
+                      style={{ minHeight: trackHeight }}
                       onClick={(event) => {
                         if (event.target !== event.currentTarget) return;
                         const rect = event.currentTarget.getBoundingClientRect();
@@ -2604,8 +3233,19 @@ function VideoEditorStudio({
                           type="button"
                           onPointerDown={(event) => {
                             if (event.button !== 0 || clip.locked || track.locked) return;
+                            selectClipForEditing(clip, event);
+                            if (editTool === "trim") return;
+                            if (editTool === "blade") {
+                              event.preventDefault();
+                              if (
+                                livePlayhead >= clip.startTime
+                                && livePlayhead < clip.startTime + clip.durationSeconds
+                              ) {
+                                commit(splitVideoEditorClipAtTime(data, clip.id, livePlayhead));
+                              }
+                              return;
+                            }
                             event.currentTarget.setPointerCapture(event.pointerId);
-                            selectClipForEditing(clip);
                             setDragTargetTrackId(track.id);
                             setDragState({
                               clipId: clip.id,
@@ -2615,13 +3255,25 @@ function VideoEditorStudio({
                               durationSeconds: clip.durationSeconds,
                             });
                           }}
-                          onClick={() => selectClipForEditing(clip)}
-                          className={cx("absolute top-1 flex h-10 items-center justify-between gap-2 overflow-hidden rounded-none border px-3 text-left text-xs font-bold shadow-[0_2px_6px_rgba(0,0,0,0.22)] transition", clip.locked || track.locked ? "cursor-not-allowed opacity-60" : "cursor-grab active:cursor-grabbing", clip.mediaType === "audio" ? "border-emerald-300/28 bg-emerald-500/18 text-emerald-50/82" : "border-sky-300/28 bg-sky-500/18 text-sky-50/82", data.selectedClipId === clip.id ? "ring-2 ring-amber-300/75" : undefined, clip.sourceDurationSeconds && clip.durationSeconds >= getVideoEditorClipMaxDuration(clip) - 0.01 ? "outline outline-1 outline-amber-200/35" : undefined)}
-                          style={{ left: clip.startTime * timelineScale, width: Math.max(28, clip.durationSeconds * timelineScale) }}
+                          onClick={(event) => selectClipForEditing(clip, event)}
+                          className={cx("absolute top-1 flex items-center justify-between gap-2 overflow-hidden rounded-none border px-3 text-left text-xs font-bold shadow-[0_2px_6px_rgba(0,0,0,0.22)] transition", clip.locked || track.locked ? "cursor-not-allowed opacity-60" : "cursor-grab active:cursor-grabbing", clip.mediaType === "audio" ? "border-emerald-300/28 bg-emerald-500/18 text-emerald-50/82" : "border-sky-300/28 bg-sky-500/18 text-sky-50/82", (selectedClipIds.includes(clip.id) || data.selectedClipId === clip.id) ? "ring-2 ring-amber-300/75" : undefined, clip.sourceDurationSeconds && clip.durationSeconds >= getVideoEditorClipMaxDuration(clip) - 0.01 ? "outline outline-1 outline-amber-200/35" : undefined)}
+                          style={{ left: clip.startTime * timelineScale, width: Math.max(28, clip.durationSeconds * timelineScale), height: Math.max(28, trackHeight - 8) }}
                         >
                           <TimelineClipFace clip={clip} mediaVisible={clipVisible} />
                           <span className="relative z-[1] truncate drop-shadow">{clip.title}</span>
                           <span className="relative z-[1] text-[10px] opacity-65 drop-shadow">{clip.durationSeconds.toFixed(1)}s</span>
+                          {getAllCompositionKeyframeTimes(ensureClipComposition(clip)).length > 0
+                            ? getAllCompositionKeyframeTimes(ensureClipComposition(clip)).map((time) => (
+                                <span
+                                  key={`${clip.id}-kf-${time}`}
+                                  className="pointer-events-none absolute bottom-0.5 z-[2] h-1.5 w-1.5 rotate-45 border border-amber-300/80 bg-white/90"
+                                  style={{
+                                    left: `${Math.min(96, (time / Math.max(0.1, clip.durationSeconds)) * 100)}%`,
+                                  }}
+                                  title={`Keyframe ${formatTime(time)}`}
+                                />
+                              ))
+                            : null}
                           <span
                             role="presentation"
                             onPointerDown={(event) => {
@@ -2661,6 +3313,95 @@ function VideoEditorStudio({
                         </button>
                         );
                       })}
+                      {track.id === "design"
+                        ? (data.overlayClips ?? []).map((overlay) => {
+                            const keyframeTimes = getAllCompositionKeyframeTimes(normalizeComposition(overlay.composition));
+                            return (
+                              <button
+                                key={overlay.id}
+                                type="button"
+                                onPointerDown={(event) => {
+                                  if (event.button !== 0 || track.locked) return;
+                                  event.currentTarget.setPointerCapture(event.pointerId);
+                                  commit({ ...data, selectedOverlayId: overlay.id, selectedClipId: undefined, status: "editing" });
+                                  setInspectorTab("edit");
+                                  setEditSubMode("design");
+                                  setOverlayDragState({
+                                    overlayId: overlay.id,
+                                    mode: "move",
+                                    startX: event.clientX,
+                                    startTime: overlay.startTime,
+                                    durationSeconds: overlay.durationSeconds,
+                                  });
+                                }}
+                                onClick={() => {
+                                  commit({ ...data, selectedOverlayId: overlay.id, selectedClipId: undefined, status: "editing" });
+                                  setInspectorTab("edit");
+                                  setEditSubMode("design");
+                                }}
+                                className={cx(
+                                  "absolute top-1 flex h-8 items-center justify-between gap-1 overflow-hidden rounded-none border px-2 text-left text-[10px] font-bold shadow-[0_2px_6px_rgba(0,0,0,0.22)] transition",
+                                  track.locked ? "cursor-not-allowed opacity-60" : "cursor-grab active:cursor-grabbing",
+                                  "border-[#3a8f96]/35 bg-[#3a8f96]/15 text-teal-50/85",
+                                  data.selectedOverlayId === overlay.id ? "ring-2 ring-[#3a8f96]/75" : undefined,
+                                )}
+                                style={{
+                                  left: overlay.startTime * timelineScale,
+                                  width: Math.max(28, overlay.durationSeconds * timelineScale),
+                                }}
+                              >
+                                <span className="relative z-[1] truncate drop-shadow">{overlay.title}</span>
+                                <span className="relative z-[1] shrink-0 text-[9px] opacity-65 drop-shadow">{overlay.durationSeconds.toFixed(1)}s</span>
+                                {keyframeTimes.length > 0
+                                  ? keyframeTimes.map((time) => (
+                                      <span
+                                        key={`${overlay.id}-kf-${time}`}
+                                        className="pointer-events-none absolute bottom-0.5 z-[2] h-1.5 w-1.5 rotate-45 border border-[#3a8f96] bg-white/90"
+                                        style={{
+                                          left: `${Math.min(96, (time / Math.max(0.1, overlay.durationSeconds)) * 100)}%`,
+                                        }}
+                                        title={`Keyframe ${formatTime(time)}`}
+                                      />
+                                    ))
+                                  : null}
+                                <span
+                                  role="presentation"
+                                  onPointerDown={(event) => {
+                                    if (track.locked) return;
+                                    event.stopPropagation();
+                                    event.currentTarget.setPointerCapture(event.pointerId);
+                                    setOverlayDragState({
+                                      overlayId: overlay.id,
+                                      mode: "resize-start",
+                                      startX: event.clientX,
+                                      startTime: overlay.startTime,
+                                      durationSeconds: overlay.durationSeconds,
+                                    });
+                                  }}
+                                  className="absolute left-0 top-0 h-full w-2 cursor-ew-resize rounded-none bg-white/10 hover:bg-[#3a8f96]/30"
+                                  title="Trim inicio"
+                                />
+                                <span
+                                  role="presentation"
+                                  onPointerDown={(event) => {
+                                    if (track.locked) return;
+                                    event.stopPropagation();
+                                    event.currentTarget.setPointerCapture(event.pointerId);
+                                    setOverlayDragState({
+                                      overlayId: overlay.id,
+                                      mode: "resize-end",
+                                      startX: event.clientX,
+                                      startTime: overlay.startTime,
+                                      durationSeconds: overlay.durationSeconds,
+                                    });
+                                  }}
+                                  className="absolute right-0 top-0 h-full w-2 cursor-ew-resize rounded-none bg-white/10 hover:bg-[#3a8f96]/30"
+                                  title="Trim final"
+                                />
+                              </button>
+                            );
+                          })
+                        : null}
                     </div>
                   </div>
                   );
@@ -2774,6 +3515,9 @@ function VideoEditorStudio({
                 </div>
                 <div className="pointer-events-none absolute top-0 z-50 h-0 w-0 border-l-[6px] border-r-[6px] border-t-[9px] border-l-transparent border-r-transparent border-t-red-400" style={{ left: TIMELINE_LABEL_WIDTH + livePlayhead * timelineScale - 6 }} />
                 <div className="pointer-events-none absolute bottom-0 top-0 z-40 w-px bg-red-400 shadow-[0_0_10px_rgba(248,113,113,0.9)]" style={{ left: TIMELINE_LABEL_WIDTH + livePlayhead * timelineScale }} />
+                {snapGuideTime !== null ? (
+                  <div className="pointer-events-none absolute bottom-0 top-9 z-45 w-px bg-cyan-300 shadow-[0_0_8px_rgba(103,232,249,0.85)]" style={{ left: TIMELINE_LABEL_WIDTH + snapGuideTime * timelineScale }} />
+                ) : null}
               </div>
             </div>
             {dragPreview ? (
@@ -2781,6 +3525,7 @@ function VideoEditorStudio({
                 {dragPreview.label}
               </div>
             ) : null}
+            </div>
           </section>
         </main>
       )}
