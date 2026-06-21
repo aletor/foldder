@@ -115,6 +115,8 @@ export function normalizeVideoEditorData(raw: unknown): VideoEditorNodeData {
     audioRequests: Array.isArray(input.audioRequests) ? input.audioRequests : [],
     subtitleTracks: Array.isArray(input.subtitleTracks) ? input.subtitleTracks : [],
     selectedSubtitleSegmentId: typeof input.selectedSubtitleSegmentId === "string" ? input.selectedSubtitleSegmentId : undefined,
+    overlayClips: Array.isArray(input.overlayClips) ? input.overlayClips : [],
+    selectedOverlayId: typeof input.selectedOverlayId === "string" ? input.selectedOverlayId : undefined,
     status: input.status ?? "empty",
     render: {
       ...createDefaultVideoEditorRenderState(),
@@ -146,7 +148,7 @@ export function buildVideoEditorRenderManifest(
     const track = layer.id;
     acc[track] = normalized.tracks[track]
       .filter((clip) => {
-        const keep = !layer.hidden && Boolean(clip.assetId || clip.url) && (clip.mediaType === "image" || clip.mediaType === "video" || clip.mediaType === "audio");
+        const keep = !layer.hidden && layer.id !== "design" && Boolean(clip.assetId || clip.url) && (clip.mediaType === "image" || clip.mediaType === "video" || clip.mediaType === "audio");
         if (!keep) ignoredClips++;
         return keep;
       })

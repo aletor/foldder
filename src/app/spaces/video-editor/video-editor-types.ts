@@ -1,5 +1,6 @@
 import type { MediaListOutput } from "../media-list-output";
 import type { VideoEditorSubtitleTrack } from "./subtitles-types";
+import type { VideoEditorComposition, VideoEditorOverlayClip } from "./video-editor-composition-types";
 
 export type VideoEditorBaseTrackKind = "video" | "audio" | "music" | "sfx" | "ambience" | "voiceover";
 export type VideoEditorTrackKind = VideoEditorBaseTrackKind | (string & {});
@@ -64,6 +65,8 @@ export type VideoEditorClip = {
   mute?: boolean;
   framing?: "fit" | "fill" | "crop_center";
   motion?: "none" | "slow_zoom_in" | "slow_zoom_out" | "pan_left" | "pan_right";
+  /** Composición: posición, escala, crop y keyframes en el frame de export. */
+  composition?: VideoEditorComposition;
   sceneId?: string;
   sceneOrder?: number;
   metadata?: unknown;
@@ -111,6 +114,9 @@ export type VideoEditorNodeData = {
   audioRequests: TimelineAudioRequest[];
   subtitleTracks?: VideoEditorSubtitleTrack[];
   selectedSubtitleSegmentId?: string;
+  /** Capas de diseño (texto, formas) — objetos Freehand animables. */
+  overlayClips?: VideoEditorOverlayClip[];
+  selectedOverlayId?: string;
   status: "empty" | "media_loaded" | "editing" | "generating_audio" | "ready";
   render?: VideoEditorRenderState;
 };
@@ -131,6 +137,7 @@ export const VIDEO_EDITOR_TRACK_ORDER: VideoEditorBaseTrackKind[] = [
 
 export const DEFAULT_VIDEO_EDITOR_TIMELINE_TRACKS: VideoEditorTimelineTrack[] = [
   { id: "video", kind: "visual", label: "V1", role: "video", height: 54 },
+  { id: "design", kind: "visual", label: "D1", role: "custom", height: 40 },
   { id: "audio", kind: "audio", label: "A1", role: "audio", height: 46 },
 ];
 
@@ -140,6 +147,7 @@ export function createEmptyVideoEditorData(): VideoEditorNodeData {
     timelineTracks: DEFAULT_VIDEO_EDITOR_TIMELINE_TRACKS,
     tracks: {
       video: [],
+      design: [],
       audio: [],
     },
     selectedTrackId: "video",
@@ -148,6 +156,7 @@ export function createEmptyVideoEditorData(): VideoEditorNodeData {
     totalDurationSeconds: 0,
     audioRequests: [],
     subtitleTracks: [],
+    overlayClips: [],
     status: "empty",
     render: createDefaultVideoEditorRenderState(),
   };

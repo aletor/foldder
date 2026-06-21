@@ -4,7 +4,7 @@ import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, 
 import { createPortal } from "react-dom";
 import { NodeResizer, Position, useNodeId, useReactFlow, useStore, useUpdateNodeInternals, type Edge, type Node, type NodeProps, type ReactFlowState } from "@xyflow/react";
 import { shallow } from "zustand/shallow";
-import { AlertTriangle, Captions, CheckCircle2, Clock, Copy, Download, Eye, EyeOff, File, Film, ImageIcon, Layers, Lock, Music, Pause, Play, Plus, RefreshCw, Scissors, SkipBack, SkipForward, StepBack, StepForward, Trash2, Unlock, Video, Volume2, VolumeX, X } from "lucide-react";
+import { AlertTriangle, Captions, CheckCircle2, Clock, Copy, Download, Eye, EyeOff, File, Film, ImageIcon, Layers, Lock, Music, Pause, Play, Plus, RefreshCw, Scissors, SkipBack, SkipForward, StepBack, StepForward, Trash2, Type, Unlock, Video, Volume2, VolumeX, X } from "lucide-react";
 
 import { downloadS3Object, forceDownloadUrl } from "@/lib/browser-download";
 import { FOLDDER_FIT_VIEW_EASE } from "@/lib/fit-view-ease";
@@ -80,6 +80,20 @@ import {
   resolveNodeChromeHeight,
 } from "../studio-node-aspect";
 import { loadVideoDimensions } from "../presenter/presenter-video-frame-layout";
+import { VideoEditorCompositionPreview } from "./VideoEditorCompositionPreview";
+import { COMPOSITION_EASING_OPTIONS, cloneCompositionTransform, type CompositionEasing, type CompositionTransform } from "./video-editor-composition-types";
+import {
+  addVideoEditorOverlay,
+  createShapeOverlayObject,
+  createTextOverlayObject,
+  ensureClipComposition,
+  getCompositionTargetTransform,
+  patchClipComposition,
+  patchVideoEditorOverlay,
+  removeVideoEditorOverlay,
+  setCompositionKeyframeAtPlayhead,
+} from "./video-editor-composition-engine";
+import { patchCompositionKeyframeEasing } from "./video-editor-composition-math";
 
 const VIDEO_EDITOR_URL_TTL_MS = 50 * 60 * 1000;
 const videoEditorPresignedUrlCache = new globalThis.Map<string, { url: string; expiresAt: number }>();
@@ -132,7 +146,7 @@ function formatTime(seconds: number): string {
   return `${minutes}:${String(secs).padStart(2, "0")}.${tenths}`;
 }
 
-type VideoEditorInspectorTab = "clip" | "audio" | "subtitles" | "render";
+type VideoEditorInspectorTab = "clip" | "design" | "audio" | "subtitles" | "render";
 
 const TIMELINE_LABEL_WIDTH = 128;
 const TIMELINE_SNAP_SECONDS = 0.18;
@@ -1017,6 +1031,20 @@ function VideoEditorStudio({
     .flatMap((track) => data.tracks[track.id] ?? [])
     .sort((a, b) => a.startTime - b.startTime || a.durationSeconds - b.durationSeconds), [data.tracks, timelineTracks]);
   const activeVisualClip = getActiveVisualClipAtTime(data, livePlayhead);
+  const activeVisualUrl = useVideoEditorAssetUrl(activeVisualClip?.url || activeVisualClip?.assetId, activeVisualClip?.s3Key, Boolean(activeVisualClip));
+  const renderState = data.render ?? createDefaultVideoEditorRenderState();
+  const compSize = renderState.settings ?? createDefaultVideoEditorRenderState().settings;
+  const selectedOverlay = (data.overlayClips ?? []).find((o) => o.id === data.selectedOverlayId);
+  const compositionTarget = selectedOverlay
+    ? ({ kind: "overlay" as const, overlayId: selectedOverlay.id })
+    : selectedClip && (selectedClip.mediaType === "video" || selectedClip.mediaType === "image")
+      ? ({ kind: "clip" as const, clipId: selectedClip.id })
+      : activeVisualClip && (activeVisualClip.mediaType === "video" || activeVisualClip.mediaType === "image")
+        ? ({ kind: "clip" as const, clipId: activeVisualClip.id })
+        : null;
+  const compositionTransform = compositionTarget
+    ? getCompositionTargetTransform(data, compositionTarget, livePlayhead)
+    : null;
   const activeAudioClips = getActiveAudioClipsAtTime(data, livePlayhead);
   const preloadClips = useMemo(() => {
     const adjacentVisuals = getAdjacentVisualClipsAtTime(data, livePlayhead);
@@ -1041,7 +1069,6 @@ function VideoEditorStudio({
     timelineDuration + 8,
     (timelineViewport.scrollLeft + timelineViewport.width - TIMELINE_LABEL_WIDTH) / Math.max(1, timelineScale) + 8,
   );
-  const renderState = data.render ?? createDefaultVideoEditorRenderState();
   const renderPreviewUrl = useVideoEditorAssetUrl(renderState.outputUrl || renderState.outputAssetId, renderState.s3Key);
   const renderReadyUrl = renderPreviewUrl || renderState.outputUrl;
   const renderReadyKey = renderState.outputAssetId || renderState.s3Key || renderState.outputUrl || "";
@@ -1096,6 +1123,43 @@ function VideoEditorStudio({
     if (Math.abs((clip.sourceDurationSeconds ?? 0) - durationSeconds) < 0.05) return;
     commit(patchVideoEditorClip(data, clipId, { sourceDurationSeconds: durationSeconds }));
   }, [commit, data, timelineClips]);
+
+  const patchCompositionTransform = useCallback(
+    (patch: {
+      x?: number;
+      y?: number;
+      width?: number;
+      height?: number;
+      opacity?: number;
+      crop?: Partial<CompositionTransform["crop"]>;
+    }) => {
+      if (!compositionTarget || !compositionTransform) return;
+      const next = cloneCompositionTransform(compositionTransform);
+      if (patch.x !== undefined) next.x = patch.x;
+      if (patch.y !== undefined) next.y = patch.y;
+      if (patch.width !== undefined) next.width = patch.width;
+      if (patch.height !== undefined) next.height = patch.height;
+      if (patch.opacity !== undefined) next.opacity = patch.opacity;
+      if (patch.crop) next.crop = { ...next.crop, ...patch.crop };
+      commit(setCompositionKeyframeAtPlayhead(data, compositionTarget, livePlayhead, next));
+    },
+    [commit, compositionTarget, compositionTransform, data, livePlayhead],
+  );
+
+  const addDesignOverlay = useCallback(
+    (kind: "text" | "rect" | "color") => {
+      const object =
+        kind === "text"
+          ? createTextOverlayObject(compSize.width, compSize.height)
+          : createShapeOverlayObject(compSize.width, compSize.height, kind === "color" ? "color" : "rect");
+      const duration = Math.max(2, activeVisualClip?.durationSeconds ?? 4);
+      commit(
+        addVideoEditorOverlay(data, object, livePlayhead, duration),
+      );
+      setInspectorTab("design");
+    },
+    [activeVisualClip?.durationSeconds, commit, compSize.height, compSize.width, data, livePlayhead],
+  );
 
   const deleteSelectedClip = useCallback(() => {
     if (!data.selectedClipId) return;
@@ -1752,7 +1816,18 @@ function VideoEditorStudio({
       {previewFullscreen ? (
         <div className="relative flex min-h-0 flex-1 flex-col bg-black">
           <div className="relative min-h-0 flex-1 overflow-hidden">
-            <ClipPreview clip={activeVisualClip} playheadTime={livePlayhead} isPlaying={isPlaying} mediaVisible onDurationKnown={patchClipSourceDuration} />
+            <VideoEditorCompositionPreview
+              compWidth={compSize.width}
+              compHeight={compSize.height}
+              visualClip={activeVisualClip}
+              visualUrl={activeVisualUrl}
+              overlayClips={data.overlayClips ?? []}
+              playheadTime={livePlayhead}
+              isPlaying={isPlaying}
+              selectedOverlayId={data.selectedOverlayId}
+              onSelectOverlay={(id) => commit({ ...data, selectedOverlayId: id, selectedClipId: undefined, status: "editing" })}
+              onDurationKnown={patchClipSourceDuration}
+            />
             <SubtitlePreviewOverlay track={activeSubtitleTrack} currentTime={livePlayhead} />
           </div>
           <div className="shrink-0 border-t border-white/10 px-4 py-2">
@@ -1851,7 +1926,18 @@ function VideoEditorStudio({
               </label>
             </div>
             <div className="relative min-h-[200px] flex-1 overflow-hidden bg-black">
-              <ClipPreview clip={activeVisualClip} playheadTime={livePlayhead} isPlaying={isPlaying} mediaVisible onDurationKnown={patchClipSourceDuration} />
+              <VideoEditorCompositionPreview
+                compWidth={compSize.width}
+                compHeight={compSize.height}
+                visualClip={activeVisualClip}
+                visualUrl={activeVisualUrl}
+                overlayClips={data.overlayClips ?? []}
+                playheadTime={livePlayhead}
+                isPlaying={isPlaying}
+                selectedOverlayId={data.selectedOverlayId}
+                onSelectOverlay={(id) => commit({ ...data, selectedOverlayId: id, selectedClipId: undefined, status: "editing" })}
+                onDurationKnown={patchClipSourceDuration}
+              />
               <SubtitlePreviewOverlay track={activeSubtitleTrack} currentTime={livePlayhead} />
             </div>
             <div className="mt-2 flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-2">
@@ -1889,6 +1975,7 @@ function VideoEditorStudio({
             <div className="flex shrink-0 items-center border-b border-white/10">
               {[
                 ["clip", "Clip", Film],
+                ["design", "Design", Type],
                 ["audio", "Audio", Music],
                 ["subtitles", "Subs", Captions],
                 ["render", "Render", Download],
@@ -2039,6 +2126,154 @@ function VideoEditorStudio({
                     ) : null}
                   </>
                 )}
+              </div>
+            ) : null}
+            {inspectorTab === "design" ? (
+              <div className="grid gap-2">
+                <InspectorSection title="Añadir" compact>
+                  <div className="grid grid-cols-3 gap-0.5">
+                    <button type="button" onClick={() => addDesignOverlay("text")} className="px-1.5 py-1.5 text-[9px] font-black uppercase tracking-[0.06em] text-white/55 hover:bg-white/[0.04] hover:text-white/80">
+                      + Texto
+                    </button>
+                    <button type="button" onClick={() => addDesignOverlay("rect")} className="px-1.5 py-1.5 text-[9px] font-black uppercase tracking-[0.06em] text-white/55 hover:bg-white/[0.04] hover:text-white/80">
+                      + Forma
+                    </button>
+                    <button type="button" onClick={() => addDesignOverlay("color")} className="px-1.5 py-1.5 text-[9px] font-black uppercase tracking-[0.06em] text-white/55 hover:bg-white/[0.04] hover:text-white/80">
+                      + Color
+                    </button>
+                  </div>
+                </InspectorSection>
+
+                {(data.overlayClips ?? []).length > 0 ? (
+                  <InspectorSection title="Capas" compact>
+                    <div className="max-h-28 space-y-0.5 overflow-auto">
+                      {(data.overlayClips ?? []).map((overlay) => (
+                        <button
+                          key={overlay.id}
+                          type="button"
+                          onClick={() => commit({ ...data, selectedOverlayId: overlay.id, selectedClipId: undefined, status: "editing" })}
+                          className={cx(
+                            "flex w-full items-center justify-between gap-2 px-1.5 py-1 text-left text-[10px] transition",
+                            data.selectedOverlayId === overlay.id ? "bg-[#3a8f96]/15 text-white" : "text-white/55 hover:bg-white/[0.04]",
+                          )}
+                        >
+                          <span className="truncate">{overlay.title}</span>
+                          <span className="shrink-0 tabular-nums text-white/35">{formatTime(overlay.startTime)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </InspectorSection>
+                ) : null}
+
+                {compositionTransform && compositionTarget ? (
+                  <>
+                    <InspectorSection title="Transform" compact>
+                      <p className="text-[9px] text-white/35">
+                        {compositionTarget.kind === "clip" ? "Clip visual" : selectedOverlay?.title ?? "Capa"}
+                      </p>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <label className="grid gap-0.5"><span className="text-[10px] text-white/40">X</span><NumberInput value={compositionTransform.x} onChange={(v) => patchCompositionTransform({ x: v })} step={0.01} /></label>
+                        <label className="grid gap-0.5"><span className="text-[10px] text-white/40">Y</span><NumberInput value={compositionTransform.y} onChange={(v) => patchCompositionTransform({ y: v })} step={0.01} /></label>
+                        <label className="grid gap-0.5"><span className="text-[10px] text-white/40">Ancho</span><NumberInput value={compositionTransform.width} onChange={(v) => patchCompositionTransform({ width: v })} step={0.01} min={0.01} /></label>
+                        <label className="grid gap-0.5"><span className="text-[10px] text-white/40">Alto</span><NumberInput value={compositionTransform.height} onChange={(v) => patchCompositionTransform({ height: v })} step={0.01} min={0.01} /></label>
+                      </div>
+                      <label className="grid gap-0.5"><span className="text-[10px] text-white/40">Opacidad</span><NumberInput value={compositionTransform.opacity} onChange={(v) => patchCompositionTransform({ opacity: Math.max(0, Math.min(1, v)) })} step={0.05} min={0} /></label>
+                      {compositionTarget.kind === "clip" ? (
+                        <div className="grid grid-cols-2 gap-1.5 border-t border-white/[0.06] pt-1.5">
+                          <label className="grid gap-0.5"><span className="text-[10px] text-white/40">Crop X</span><NumberInput value={compositionTransform.crop.x} onChange={(v) => patchCompositionTransform({ crop: { x: v } })} step={0.01} /></label>
+                          <label className="grid gap-0.5"><span className="text-[10px] text-white/40">Crop Y</span><NumberInput value={compositionTransform.crop.y} onChange={(v) => patchCompositionTransform({ crop: { y: v } })} step={0.01} /></label>
+                          <label className="grid gap-0.5"><span className="text-[10px] text-white/40">Crop W</span><NumberInput value={compositionTransform.crop.width} onChange={(v) => patchCompositionTransform({ crop: { width: v } })} step={0.01} min={0.01} /></label>
+                          <label className="grid gap-0.5"><span className="text-[10px] text-white/40">Crop H</span><NumberInput value={compositionTransform.crop.height} onChange={(v) => patchCompositionTransform({ crop: { height: v } })} step={0.01} min={0.01} /></label>
+                        </div>
+                      ) : null}
+                    </InspectorSection>
+
+                    <InspectorSection title="Animación" compact>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!compositionTransform) return;
+                          commit(setCompositionKeyframeAtPlayhead(data, compositionTarget, livePlayhead, compositionTransform));
+                        }}
+                        className="w-full px-2 py-1.5 text-[10px] font-black uppercase tracking-[0.06em] text-[#3a8f96]/90 hover:bg-white/[0.04]"
+                      >
+                        ◆ Keyframe en playhead
+                      </button>
+                      {(() => {
+                        const comp =
+                          compositionTarget.kind === "clip"
+                            ? ensureClipComposition(
+                                Object.values(data.tracks)
+                                  .flat()
+                                  .find((c) => c.id === compositionTarget.clipId)!,
+                              )
+                            : selectedOverlay?.composition;
+                        const keyframes = comp?.keyframes ?? [];
+                        if (!keyframes.length) return null;
+                        return (
+                          <div className="mt-1 space-y-1">
+                            {keyframes.map((kf, idx) => (
+                              <div key={kf.id} className="flex items-center gap-1 text-[10px] text-white/55">
+                                <button type="button" onClick={() => setPlayhead(compositionTarget.kind === "clip" ? (Object.values(data.tracks).flat().find((c) => c.id === compositionTarget.clipId)?.startTime ?? 0) + kf.time : (selectedOverlay?.startTime ?? 0) + kf.time)} className="tabular-nums hover:text-white">{formatTime(kf.time)}</button>
+                                {idx < keyframes.length - 1 ? (
+                                  <select
+                                    value={kf.easing}
+                                    onChange={(e) => {
+                                      const easing = e.target.value as CompositionEasing;
+                                      if (compositionTarget.kind === "clip") {
+                                        const clip = Object.values(data.tracks).flat().find((c) => c.id === compositionTarget.clipId);
+                                        if (!clip) return;
+                                        commit(patchClipComposition(data, clip.id, patchCompositionKeyframeEasing(ensureClipComposition(clip), kf.id, easing)));
+                                      } else if (selectedOverlay) {
+                                        commit(patchVideoEditorOverlay(data, selectedOverlay.id, { composition: patchCompositionKeyframeEasing(selectedOverlay.composition, kf.id, easing) }));
+                                      }
+                                    }}
+                                    className={`${VIDEO_EDITOR_INSPECTOR_INPUT} !py-0.5 text-[9px]`}
+                                  >
+                                    {COMPOSITION_EASING_OPTIONS.map((o) => (
+                                      <option key={o.id} value={o.id}>{o.label}</option>
+                                    ))}
+                                  </select>
+                                ) : null}
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
+                    </InspectorSection>
+                  </>
+                ) : (
+                  <p className="text-[11px] leading-relaxed text-white/35">Selecciona un clip visual o añade una capa de diseño.</p>
+                )}
+
+                {selectedOverlay ? (
+                  <InspectorSection title="Capa seleccionada" compact>
+                    {selectedOverlay.object.type === "text" ? (
+                      <label className="grid gap-0.5">
+                        <span className="text-[10px] text-white/40">Texto</span>
+                        <textarea
+                          value={(selectedOverlay.object as { text?: string }).text ?? ""}
+                          rows={2}
+                          onChange={(e) =>
+                            commit(
+                              patchVideoEditorOverlay(data, selectedOverlay.id, {
+                                object: { ...selectedOverlay.object, text: e.target.value } as typeof selectedOverlay.object,
+                              }),
+                            )
+                          }
+                          className={`${VIDEO_EDITOR_INSPECTOR_INPUT} leading-relaxed`}
+                        />
+                      </label>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => commit(removeVideoEditorOverlay(data, selectedOverlay.id))}
+                      className="text-[10px] font-black uppercase tracking-[0.08em] text-rose-200/75"
+                    >
+                      <Trash2 size={11} className="inline" /> Eliminar capa
+                    </button>
+                  </InspectorSection>
+                ) : null}
               </div>
             ) : null}
             {inspectorTab === "clip" ? (selectedClip ? (
