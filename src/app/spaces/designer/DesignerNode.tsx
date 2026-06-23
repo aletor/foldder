@@ -34,6 +34,8 @@ import {
   setLiveStudioNodeData,
 } from "../studio-live-documents";
 import { nodeFrameFromSnapshot, selectNodeFrameSnapshot } from "../react-flow-selectors";
+import { buildDesignerPageFromLayerizerOutput } from "../layerizer/layerizer-to-designer";
+import type { LayerizerOutput } from "../layerizer/layerizer-types";
 import { useCanvasPerformanceModeRef } from "../use-canvas-performance-mode";
 import { useFoldderRenderMetric } from "../use-performance-metrics";
 import { useCanvasNodeMediaPreviewUrl } from "../hooks/use-authed-media-preview-url";
@@ -44,7 +46,8 @@ const DESIGNER_NODE_MAX_HEIGHT = 2200;
 const DESIGNER_EMPTY_BACKGROUND_SRC = "/assets/nodes/designer-empty-lime.png";
 
 const DESIGNER_NODE_HANDLES: StudioCanvasNodeHandleSpec[] = [
-  { side: "left", top: "50%", style: { transform: "translateY(-50%)" }, type: "target", id: "brain", dataType: "brain", label: "Brain" },
+  { side: "left", top: "35%", style: { transform: "translateY(-50%)" }, type: "target", id: "brain", dataType: "brain", label: "Brain" },
+  { side: "left", top: "65%", style: { transform: "translateY(-50%)" }, type: "target", id: "layout", dataType: "generic", label: "Image Layout" },
   { side: "right", top: "38%", style: { transform: "translateY(-50%)" }, type: "source", id: "image", dataType: "image", label: "Image" },
   { side: "right", top: "62%", style: { transform: "translateY(-50%)" }, type: "source", id: "document", dataType: "generic", label: "Document" },
 ];
@@ -72,6 +75,8 @@ export type DesignerNodeData = {
   activePageIndex?: number;
   /** Auto-optimización: cola legada HR→OPT en segundo plano; las imágenes nuevas solo persisten OPT en S3. */
   autoImageOptimization?: boolean;
+  /** Layerizer: jobId del último Image Layout importado como página (evita reimportar). */
+  _layerizerImportedJobId?: string;
 };
 
 function DesignerNodeResizer(props: React.ComponentProps<typeof NodeResizer>) {
@@ -108,6 +113,23 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
   );
   const currentNodeFrameSnapshot = useStore(
     useCallback((state: ReactFlowState<Node, Edge>) => selectNodeFrameSnapshot(state, id), [id]),
+    shallow,
+  );
+
+  /** Layerizer: salida del nodo conectado al handle `layout` (Image Layout). */
+  const connectedLayerizerOutput = useStore(
+    useCallback(
+      (state: ReactFlowState<Node, Edge>): LayerizerOutput | null => {
+        const edge = state.edges.find((e) => e.target === id && e.targetHandle === "layout");
+        if (!edge) return null;
+        const source = state.nodes.find((n) => n.id === edge.source);
+        const out = (source?.data as { output?: unknown } | undefined)?.output;
+        if (!out || typeof out !== "object") return null;
+        const candidate = out as LayerizerOutput;
+        return candidate.jobId && candidate.background?.url ? candidate : null;
+      },
+      [id],
+    ),
     shallow,
   );
 
@@ -255,6 +277,45 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
   }, [id, setNodes]);
 
   useEffect(() => () => clearLiveStudioNodeData(id), [id]);
+
+  /**
+   * Layerizer → Designer: al conectar un Image Layout, abrir un documento nuevo del tamaño
+   * del fondo con cada objeto extraído como capa. Idempotente por jobId.
+   */
+  useEffect(() => {
+    const output = connectedLayerizerOutput;
+    if (!output) return;
+    if (nodeData._layerizerImportedJobId === output.jobId) return;
+
+    const pageId = `dpg_${id}_lz_${output.jobId}`;
+    const newPage = buildDesignerPageFromLayerizerOutput(output, pageId);
+
+    const isLonePlaceholder =
+      pages.length === 1 &&
+      (pages[0].objects?.length ?? 0) === 0 &&
+      (pages[0].textFrames?.length ?? 0) === 0;
+    const nextPages = isLonePlaceholder ? [newPage] : [...pages, newPage];
+    const nextActiveIdx = nextPages.length - 1;
+
+    const patch: Partial<DesignerNodeData> = {
+      pages: nextPages,
+      activePageIndex: nextActiveIdx,
+      _layerizerImportedJobId: output.jobId,
+    };
+
+    if (isStudioOpen) {
+      liveDesignerPatchRef.current = { ...(liveDesignerPatchRef.current ?? {}), ...patch };
+      setLiveStudioNodeData(id, patch);
+      return;
+    }
+    setNodes((nds) =>
+      nds.map((n) =>
+        n.id === id
+          ? { ...n, data: touchStudioNodeData(n.data as Record<string, unknown>, patch as Record<string, unknown>) }
+          : n,
+      ),
+    );
+  }, [connectedLayerizerOutput, nodeData._layerizerImportedJobId, pages, id, isStudioOpen, setNodes]);
 
   const onExport = useCallback(
     (dataUrl: string) => {

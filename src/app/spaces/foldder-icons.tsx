@@ -772,6 +772,7 @@ export const NODE_TYPE_TO_FOLDDER_ICON: Record<string, FoldderIconKey> = {
   promptInput: 'prompt',
   urlImage: 'web',
   backgroundRemover: 'matting',
+  layerizer: 'matting',
   mediaDescriber: 'eye',
   enhancer: 'enhance',
   grokProcessor: 'grok',

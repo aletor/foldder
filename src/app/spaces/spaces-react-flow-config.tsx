@@ -37,6 +37,7 @@ import { CanvasGroupNode } from "./CanvasGroupNode";
 import { VideoEditorNode } from "./video-editor/VideoEditorNode";
 import { InspirationNode } from "./inspiration/InspirationNode";
 import { ImageCreationAdvancedNode } from "./image-creation-advanced/ImageCreationAdvancedNode";
+import { LayerizerNode } from "./layerizer/LayerizerNode";
 
 export const spacesInitialNodes: Node[] = [];
 
@@ -59,6 +60,7 @@ export const spacesNodeTypes: Record<string, ComponentType<any>> = {
   nanoBanana: NanoBananaNode,
   imageCreationAdvanced: ImageCreationAdvancedNode,
   backgroundRemover: BackgroundRemoverNode,
+  layerizer: LayerizerNode,
   mediaDescriber: MediaDescriberNode,
   imageExport: ImageExportNode,
   urlImage: UrlImageNode,

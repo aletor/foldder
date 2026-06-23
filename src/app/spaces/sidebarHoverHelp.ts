@@ -80,6 +80,10 @@ export const SIDEBAR_HOVER_HELP: Record<string, { title: string; line: string }>
     title: 'Background Remover',
     line: 'Elimina fondo de la imagen',
   },
+  layerizer: {
+    title: 'Layerizer',
+    line: 'Descompone una imagen en capas + fondo limpio',
+  },
   mediaDescriber: {
     title: 'Image Describer',
     line: 'Prompt con cámara, lente y color grade',

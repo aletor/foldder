@@ -1,4 +1,4 @@
-export type HandleType = 'image' | 'video' | 'audio' | 'prompt' | 'mask' | 'pdf' | 'txt' | 'url' | 'json' | 'brain' | 'media_list';
+export type HandleType = 'image' | 'video' | 'audio' | 'prompt' | 'mask' | 'pdf' | 'txt' | 'url' | 'json' | 'brain' | 'media_list' | 'image_layout';
 
 export interface NodeMetadata {
   type: string;
@@ -492,12 +492,32 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
       label: 'string (optional title on the card)',
     },
   },
+  layerizer: {
+    type: 'layerizer',
+    label: 'Layerizer',
+    description:
+      'Inverse of Composite: decomposes one image into pixel-exact layers. Detects objects (Gemini), the user picks which to extract (SAM 3 + matting, no generation), and a single generative call produces a clean plate background. Outputs a layer stack (background + objects) for Designer.',
+    inputs: [{ id: 'image', label: 'Image', type: 'image' as HandleType, required: true }],
+    outputs: [{ id: 'layout', label: 'Image Layout', type: 'image_layout' as HandleType }],
+    dataSchema: {
+      masterUrl: 'string (immutable source image — never rewritten)',
+      detected: 'DetectedObject[] (Gemini: id, label, bbox, isText, score) — pre-paid Estado 1',
+      selected: 'SelectedObject[] (id, prompt SAM, amodalComplete) — Estado 2',
+      jobId: 'string (async extract job)',
+      status: 'LayerizerJobStatus',
+      output: 'LayerizerOutput { masterUrl, background(clean_plate), layers[] }',
+      value: 'LayerizerOutput (mirror of output; flows through the layout handle)',
+    },
+  },
   designer: {
     type: 'designer',
     label: 'Designer',
     description:
-      'Full design studio: vector tools (pen, shapes, text) + page-based layout + threaded text frames + image frames. Combines Freehand vector editing with InDesign-style page management.',
-    inputs: [{ id: 'brain', label: 'Brain', type: 'brain' as HandleType }],
+      'Full design studio: vector tools (pen, shapes, text) + page-based layout + threaded text frames + image frames. Combines Freehand vector editing with InDesign-style page management. Accepts an Image Layout from Layerizer: layers arrive pre-mounted at their original positions for drag-reordering.',
+    inputs: [
+      { id: 'brain', label: 'Brain', type: 'brain' as HandleType },
+      { id: 'layout', label: 'Image Layout', type: 'image_layout' as HandleType },
+    ],
     outputs: [
       { id: 'image', label: 'Image Out', type: 'image' as HandleType },
       { id: 'document', label: 'Document', type: 'json' as HandleType },
@@ -570,6 +590,8 @@ export const ASSISTANT_NODE_DATA_HINTS: Record<string, string> = {
   painter: "bgColor, strokeColor, brushSize, value",
   crop: "aspectRatio, cropConfig, value",
   backgroundRemover: "threshold, expansion, feather",
+  layerizer:
+    "entrada image (master inmutable); detected (Gemini), selected (objetos + amodal opt-in), jobId/status (job async), output/value (LayerizerOutput: background clean_plate + layers extracted); salida layout (image_layout) conecta a designer. Extracción = recorte pixel-exacto (SAM 3 + matting), NUNCA generativo; fondo limpio = 1 llamada Nano Banana",
   projectBrain:
     "label (título opcional); marca y conocimiento en metadata.assets — resume y abre studio; salida brain",
   projectAssets:

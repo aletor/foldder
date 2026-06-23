@@ -125,6 +125,7 @@ const TOOL_ITEMS: Array<{ type: string; label: string }> = [
   { type: 'promptInput', label: 'Prompt' },
   { type: 'urlImage', label: 'URL Image' },
   { type: 'backgroundRemover', label: 'BG Remover' },
+  { type: 'layerizer', label: 'Layerizer' },
   { type: 'mediaDescriber', label: 'Image Describer' },
   { type: 'enhancer', label: 'Enhance' },
   { type: 'imageCreationAdvanced', label: 'Image Advanced' },
@@ -142,6 +143,9 @@ function toolFallbackBorderClass(type: string): string {
   }
   if (type === 'backgroundRemover' || type === 'mediaDescriber' || type === 'enhancer') {
     return 'border-white/25 group-hover/tile:border-cyan-400/50';
+  }
+  if (type === 'layerizer') {
+    return 'border-white/25 group-hover/tile:border-purple-400/50';
   }
   if (type === 'concatenator') {
     return 'border-white/25 group-hover/tile:border-blue-400/50';
