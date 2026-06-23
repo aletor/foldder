@@ -10,7 +10,7 @@ import {
   type NodeProps,
   type Node,
 } from "@xyflow/react";
-import { ChevronRight, Eye, Layers, Loader2, Maximize2, Scissors, Send, Sparkles, Type, Wand2, X } from "lucide-react";
+import { Check, ChevronRight, Eye, Layers, Loader2, Maximize2, MousePointerSquareDashed, Scissors, Send, Sparkles, Type, Wand2, X } from "lucide-react";
 import { runAiJobWithNotification } from "@/lib/ai-job-notifications";
 import { resolvePromptValueFromEdgeSource } from "../canvas-group-logic";
 import { FoldderDataHandle } from "../FoldderDataHandle";
@@ -33,6 +33,23 @@ const PROGRESS_STEPS: Array<{ status: LayerizerJobStatus; label: string }> = [
   { status: "compositing_bg", label: "Fondo limpio" },
   { status: "amodal", label: "Completando" },
   { status: "assembling", label: "Montando" },
+];
+
+// Mensajes que rotan durante el escaneo para reflejar las fases reales del pipeline.
+const DETECT_SCAN_MESSAGES = [
+  "Analizando la composición de la escena…",
+  "Localizando los objetos principales…",
+  "Refinando los límites con SAM…",
+  "Ordenando las capas por relevancia…",
+];
+const TEXT_SCAN_MESSAGES = [
+  "Rastreando bloques de tipografía…",
+  "Delimitando las áreas de texto…",
+];
+const REGION_SCAN_MESSAGES = [
+  "Inspeccionando el área seleccionada…",
+  "Detectando objetos locales…",
+  "Ajustando los límites…",
 ];
 
 function usd(n: number): string {
@@ -72,6 +89,12 @@ function mergeTextDetected(prev: DetectedObject[], found: DetectedObject[]): Det
   return result;
 }
 
+/** Dimensiones del master guardadas en node.data. */
+function dimsFromNodeData(d: LayerizerNodeData): { w: number; h: number } | null {
+  if (d.masterWidth && d.masterHeight) return { w: d.masterWidth, h: d.masterHeight };
+  return null;
+}
+
 export const LayerizerNode = memo(function LayerizerNode({ id, data, selected }: NodeProps) {
   const nodeData = data as LayerizerNodeData;
   const nodes = useNodes();
@@ -82,7 +105,7 @@ export const LayerizerNode = memo(function LayerizerNode({ id, data, selected }:
   const [detecting, setDetecting] = useState(false);
   const [detectingText, setDetectingText] = useState(false);
   const [detected, setDetected] = useState<DetectedObject[]>(nodeData.detected ?? []);
-  const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
+  const [dims, setDims] = useState<{ w: number; h: number } | null>(dimsFromNodeData(nodeData));
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [amodalIds, setAmodalIds] = useState<Set<string>>(new Set());
   const [running, setRunning] = useState(false);
@@ -123,6 +146,31 @@ export const LayerizerNode = memo(function LayerizerNode({ id, data, selected }:
     [id, setNodes],
   );
 
+  // Rehidrata detección y dimensiones desde node.data (p. ej. al reabrir el studio).
+  useEffect(() => {
+    if (nodeData.detected?.length) setDetected(nodeData.detected);
+    const stored = dimsFromNodeData(nodeData);
+    if (stored) setDims(stored);
+  }, [nodeData.detected, nodeData.masterWidth, nodeData.masterHeight]);
+
+  // Si hay detecciones pero faltan dims (sesiones antiguas), resolver desde la imagen al abrir.
+  useEffect(() => {
+    if (!open || dims || !inputImage) return;
+    let cancelled = false;
+    const img = new Image();
+    img.onload = () => {
+      if (cancelled) return;
+      const w = img.naturalWidth;
+      const h = img.naturalHeight;
+      if (w > 0 && h > 0) {
+        setDims({ w, h });
+        patchData({ masterWidth: w, masterHeight: h });
+      }
+    };
+    img.src = inputImage;
+    return () => { cancelled = true; };
+  }, [open, dims, inputImage, patchData]);
+
   const selectedObjects = useMemo<SelectedObject[]>(() => {
     return detected
       .filter((d) => selectedIds.has(d.id))
@@ -157,7 +205,7 @@ export const LayerizerNode = memo(function LayerizerNode({ id, data, selected }:
       setDetected(objs);
       setDims({ w: json.width, h: json.height });
       setSelectedIds(new Set());
-      patchData({ detected: objs, masterUrl: inputImage });
+      patchData({ detected: objs, masterUrl: inputImage, masterWidth: json.width, masterHeight: json.height });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -187,7 +235,11 @@ export const LayerizerNode = memo(function LayerizerNode({ id, data, selected }:
       }
       setDetected((prev) => {
         const merged = mergeTextDetected(prev, found);
-        patchData({ detected: merged, masterUrl: inputImage });
+        patchData({
+          detected: merged,
+          masterUrl: inputImage,
+          ...(json.width && json.height ? { masterWidth: json.width, masterHeight: json.height } : {}),
+        });
         return merged;
       });
       if (json.width && json.height) setDims({ w: json.width, h: json.height });
@@ -221,7 +273,11 @@ export const LayerizerNode = memo(function LayerizerNode({ id, data, selected }:
         }
         setDetected((prev) => {
           const merged = mergeDetected(prev, found);
-          patchData({ detected: merged, masterUrl: inputImage });
+          patchData({
+            detected: merged,
+            masterUrl: inputImage,
+            ...(json.width && json.height ? { masterWidth: json.width, masterHeight: json.height } : {}),
+          });
           return merged;
         });
         if (json.width && json.height) setDims({ w: json.width, h: json.height });
@@ -322,6 +378,8 @@ export const LayerizerNode = memo(function LayerizerNode({ id, data, selected }:
               jobId: ev.jobId,
               status: ev.status,
               type: "image_layout",
+              masterWidth: ev.output.original?.w ?? ev.output.background.w,
+              masterHeight: ev.output.original?.h ?? ev.output.background.h,
             });
           } else if (ev.type === "error") {
             throw new Error(ev.message);
@@ -505,78 +563,84 @@ function ObjectRow(props: ObjectRowProps) {
     onToggleSelect, onToggleAmodal, onToggleExpand, onPreviewMask,
   } = props;
 
-  const accentPreview = hasPreview
-    ? obj.isText
-      ? "bg-cyan-500/30 text-cyan-200"
-      : isPart
-        ? "bg-sky-500/30 text-sky-200"
-        : "bg-purple-500/30 text-purple-200"
-    : "bg-white/10 text-white/40";
-  const rowAccent = obj.isText
-    ? selected
-      ? "border-cyan-500/60 bg-cyan-500/10"
-      : "border-cyan-500/30 border-dashed bg-cyan-500/5"
-    : selected
-      ? isPart
-        ? "border-sky-500/60 bg-sky-500/10"
-        : "border-purple-500/60 bg-purple-500/10"
-      : "border-white/10 bg-white/5";
+  // Paleta por tipo: texto = cian, parte = celeste, objeto = violeta.
+  const tone = obj.isText ? "cyan" : isPart ? "sky" : "purple";
+  // Frameless: sin cajas; la selección se marca con una barra de acento a la izquierda.
+  const ring =
+    selected
+      ? tone === "cyan"
+        ? "border-cyan-400 bg-cyan-500/[0.07]"
+        : tone === "sky"
+          ? "border-sky-400 bg-sky-500/[0.07]"
+          : "border-purple-400 bg-purple-500/[0.07]"
+      : "border-transparent hover:bg-white/[0.03]";
+  const dot =
+    selected
+      ? tone === "cyan"
+        ? "border-cyan-400 bg-cyan-400 text-black"
+        : tone === "sky"
+          ? "border-sky-400 bg-sky-400 text-black"
+          : "border-purple-400 bg-purple-400 text-black"
+      : "border-white/25 text-transparent";
+  const iconColor = selected
+    ? tone === "cyan" ? "text-cyan-300" : tone === "sky" ? "text-sky-300" : "text-purple-300"
+    : "text-white/45";
+
   return (
-    <div className={`flex items-center justify-between gap-2 rounded-md border px-2.5 py-2 ${rowAccent}`}>
-      <div className="flex flex-1 items-center gap-1.5 overflow-hidden">
+    <div className={`group/row flex flex-col border-l-2 px-2.5 py-2 transition-colors ${ring}`}>
+      <div className="flex items-center gap-2 overflow-hidden">
         {expandable ? (
           <button
             onClick={() => onToggleExpand(obj.id)}
             title={expanded ? "Colapsar partes" : "Ver partes"}
-            className="shrink-0 rounded p-0.5 text-white/50 hover:bg-white/10 hover:text-white"
+            className="shrink-0 p-0.5 text-white/40 hover:text-white"
           >
             <ChevronRight size={13} className={`transition-transform ${expanded ? "rotate-90" : ""}`} />
           </button>
         ) : (
-          <span className="w-[18px] shrink-0" />
+          <span className="w-[14px] shrink-0" />
         )}
-        <button onClick={() => onToggleSelect(obj.id)} className="flex flex-1 items-center gap-2 overflow-hidden text-left">
+        <button onClick={() => onToggleSelect(obj.id)} className="flex flex-1 items-center gap-2.5 overflow-hidden text-left">
+          <span className={`flex h-4 w-4 shrink-0 items-center justify-center border transition-all ${dot}`}>
+            <Check size={10} strokeWidth={3.5} />
+          </span>
+          {obj.isText ? <Type size={13} className={iconColor} /> : <Scissors size={13} className={iconColor} />}
+          <span className={`truncate ${isPart ? "text-[11px] text-white/75" : "text-[12px] text-white/90"}`}>{obj.label}</span>
           {obj.isText ? (
-            <Type size={12} className={selected ? "text-cyan-300" : "text-white/40"} />
-          ) : (
-            <Scissors
-              size={12}
-              className={selected ? (isPart ? "text-sky-300" : "text-purple-300") : "text-white/40"}
-            />
-          )}
-          <span className={`truncate ${isPart ? "text-[11px] text-white/80" : "text-xs"}`}>{obj.label}</span>
-          {obj.isText ? (
-            <span className="shrink-0 rounded bg-cyan-500/20 px-1 text-[8px] font-bold text-cyan-300">texto</span>
+            <span className="shrink-0 text-[8px] font-bold uppercase tracking-wider text-cyan-300/80">texto</span>
           ) : null}
           {obj.manual ? (
-            <span className="shrink-0 rounded bg-amber-500/20 px-1 text-[8px] font-bold text-amber-300">manual</span>
+            <span className="shrink-0 text-[8px] font-bold uppercase tracking-wider text-amber-300/80">manual</span>
           ) : null}
           {partsBadge ? (
-            <span className="shrink-0 rounded bg-white/10 px-1 text-[8px] text-white/50">{partsBadge}</span>
+            <span className="ml-auto shrink-0 text-[8px] font-medium text-white/40">{partsBadge}</span>
           ) : null}
         </button>
       </div>
+
       {selected && !obj.isText ? (
-        <>
+        <div className="mt-1.5 flex items-center gap-3 pl-[26px]">
           <button
             onClick={() => onPreviewMask(obj.id)}
             disabled={previewing}
-            title="Previsualizar máscara de selección (SAM)"
-            className={`flex items-center gap-1 rounded px-1.5 py-1 text-[8px] font-bold uppercase tracking-wider disabled:opacity-50 ${accentPreview}`}
+            title="Previsualizar la máscara de selección (SAM)"
+            className={`flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider transition-colors disabled:opacity-50 ${
+              hasPreview ? "text-purple-300" : "text-white/45 hover:text-white/80"
+            }`}
           >
             {previewing ? <Loader2 size={10} className="animate-spin" /> : <Eye size={10} />}
             máscara
           </button>
           <button
             onClick={() => onToggleAmodal(obj.id)}
-            title="Completar zonas ocultas (amodal)"
-            className={`flex items-center gap-1 rounded px-1.5 py-1 text-[8px] font-bold uppercase tracking-wider ${
-              amodal ? "bg-amber-500/30 text-amber-200" : "bg-white/10 text-white/40"
+            title="Completar zonas ocultas del objeto (amodal)"
+            className={`flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider transition-colors ${
+              amodal ? "text-amber-300" : "text-white/45 hover:text-white/80"
             }`}
           >
             <Wand2 size={10} /> amodal
           </button>
-        </>
+        </div>
       ) : null}
     </div>
   );
@@ -669,21 +733,145 @@ function LayerizerFullscreen(props: FullscreenProps) {
     }
   }, [analyzingRegion]);
 
+  // --- Modo "scan": HUD de acciones + línea que recorre la imagen ---
+  const scanning = detecting || detectingText || analyzingRegion;
+  const [scanStep, setScanStep] = useState(0);
+  useEffect(() => {
+    if (!scanning) {
+      setScanStep(0);
+      return;
+    }
+    const id = setInterval(() => setScanStep((i) => i + 1), 1800);
+    return () => clearInterval(id);
+  }, [scanning]);
+  const scanMessages = detecting
+    ? DETECT_SCAN_MESSAGES
+    : detectingText
+      ? TEXT_SCAN_MESSAGES
+      : analyzingRegion
+        ? REGION_SCAN_MESSAGES
+        : [];
+  const scanMessage = scanMessages.length ? scanMessages[scanStep % scanMessages.length] : "";
+
+  // Celebración de un solo disparo al completar la extracción.
+  const prevOutputRef = useRef(false);
+  const [celebrate, setCelebrate] = useState(false);
+  useEffect(() => {
+    const has = !!output;
+    if (has && !prevOutputRef.current) {
+      setCelebrate(true);
+      const t = setTimeout(() => setCelebrate(false), 1700);
+      prevOutputRef.current = has;
+      return () => clearTimeout(t);
+    }
+    prevOutputRef.current = has;
+  }, [output]);
+
   const pct = (v: number, total: number) => `${(v / total) * 100}%`;
+
+  // Fases del flujo para el stepper de la barra superior.
+  const STEPS = [
+    { n: 1, label: "Detectar" },
+    { n: 2, label: "Seleccionar" },
+    { n: 3, label: "Extraer" },
+  ] as const;
+  const phase = output ? 3 : detected.length === 0 ? 1 : running ? 3 : 2;
+  const busy = detecting || detectingText || analyzingRegion;
+
+  const objectSubjects = subjects.filter((s) => !s.isText);
+  const textSubjects = subjects.filter((s) => s.isText);
+
+  const renderSubject = (subject: DetectedObject) => {
+    const parts = partsOf(subject.id);
+    const isExpanded = expandedIds.has(subject.id);
+    const selectedParts = parts.filter((p) => selectedIds.has(p.id)).length;
+    return (
+      <div key={subject.id} className="flex flex-col gap-1">
+        <ObjectRow
+          obj={subject}
+          isPart={false}
+          selected={selectedIds.has(subject.id)}
+          amodal={amodalIds.has(subject.id)}
+          previewing={previewingId === subject.id}
+          hasPreview={!!maskPreviews[subject.id]}
+          expandable={parts.length > 0}
+          expanded={isExpanded}
+          partsBadge={parts.length > 0 ? `${selectedParts}/${parts.length}` : null}
+          onToggleSelect={onToggleSelect}
+          onToggleAmodal={onToggleAmodal}
+          onToggleExpand={onToggleExpand}
+          onPreviewMask={onPreviewMask}
+        />
+        {isExpanded
+          ? parts.map((part) => (
+              <div key={part.id} className="ml-3 border-l border-white/10 pl-2">
+                <ObjectRow
+                  obj={part}
+                  isPart
+                  selected={selectedIds.has(part.id)}
+                  amodal={amodalIds.has(part.id)}
+                  previewing={previewingId === part.id}
+                  hasPreview={!!maskPreviews[part.id]}
+                  expandable={false}
+                  expanded={false}
+                  partsBadge={null}
+                  onToggleSelect={onToggleSelect}
+                  onToggleAmodal={onToggleAmodal}
+                  onToggleExpand={onToggleExpand}
+                  onPreviewMask={onPreviewMask}
+                />
+              </div>
+            ))
+          : null}
+      </div>
+    );
+  };
 
   return (
     <div className="fixed inset-0 z-[9999] flex flex-col bg-black/95 backdrop-blur-md">
-      <div className="flex items-center justify-between border-b border-white/10 px-5 py-3">
-        <div className="flex items-center gap-2 text-white">
+      <style>{`@keyframes layerizer-scan{0%{top:-6%;opacity:0}12%{opacity:1}88%{opacity:1}100%{top:104%;opacity:0}}@keyframes layerizer-pop{0%{transform:scale(0.5);opacity:0}45%{transform:scale(1.08);opacity:1}70%{transform:scale(1);opacity:1}100%{transform:scale(1);opacity:0}}@keyframes layerizer-flash{0%{opacity:0}25%{opacity:1}100%{opacity:0}}`}</style>
+      {/* Profundidad: glows radiales para dar dimensión al fondo. */}
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_22%_12%,rgba(168,85,247,0.14),transparent_55%),radial-gradient(circle_at_88%_88%,rgba(34,211,238,0.10),transparent_55%)]" />
+
+      {/* Barra superior con stepper */}
+      <div className="relative z-10 flex items-center justify-between border-b border-white/10 px-5 py-3">
+        <div className="flex items-center gap-2.5 text-white">
           <Layers size={16} className="text-purple-400" />
           <span className="text-sm font-black uppercase tracking-[0.18em]">Layerizer</span>
         </div>
-        <button onClick={onClose} className="rounded-md p-1.5 text-white/60 hover:bg-white/10 hover:text-white">
+
+        <div className="absolute left-1/2 hidden -translate-x-1/2 items-center md:flex">
+          {STEPS.map((s, i) => {
+            const active = !output && phase === s.n;
+            const done = !!output || phase > s.n;
+            return (
+              <div key={s.n} className="flex items-center">
+                <div
+                  className={`flex items-center gap-1.5 px-3 py-1 text-[10px] font-bold uppercase tracking-wider transition-colors ${
+                    active ? "text-purple-200" : done ? "text-emerald-300/80" : "text-white/35"
+                  }`}
+                >
+                  <span
+                    className={`flex h-4 w-4 items-center justify-center text-[9px] ${
+                      active ? "text-purple-300" : done ? "text-emerald-300/80" : "text-white/35"
+                    }`}
+                  >
+                    {done ? <Check size={11} strokeWidth={3.5} /> : active ? "●" : s.n}
+                  </span>
+                  {s.label}
+                </div>
+                {i < STEPS.length - 1 ? <span className="mx-1 h-px w-5 bg-white/15" /> : null}
+              </div>
+            );
+          })}
+        </div>
+
+        <button onClick={onClose} className="relative z-10 p-1.5 text-white/60 transition-colors hover:text-white">
           <X size={18} />
         </button>
       </div>
 
-      <div className="flex min-h-0 flex-1">
+      <div className="relative z-10 flex min-h-0 flex-1">
         {/* Lienzo con overlays */}
         <div className="relative flex flex-1 items-center justify-center overflow-hidden p-6">
           <div
@@ -704,7 +892,7 @@ function LayerizerFullscreen(props: FullscreenProps) {
             ) : null}
 
             {/* Overlay de máscaras SAM (selección pixel-exacta) sobre objetos seleccionados. */}
-            {detected.map((obj) =>
+            {!output && detected.map((obj) =>
               selectedIds.has(obj.id) && maskPreviews[obj.id] ? (
                 /* eslint-disable-next-line @next/next/no-img-element */
                 <img
@@ -718,7 +906,7 @@ function LayerizerFullscreen(props: FullscreenProps) {
               ) : null,
             )}
 
-            {detected.map((obj) => {
+            {!output && detected.map((obj) => {
               if (obj.parentId && !expandedIds.has(obj.parentId)) return null;
               const isSel = selectedIds.has(obj.id);
               const isPart = !!obj.parentId;
@@ -790,7 +978,7 @@ function LayerizerFullscreen(props: FullscreenProps) {
               >
                 {analyzingRegion ? (
                   <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="flex items-center gap-2 rounded-md bg-amber-500/95 px-3 py-1.5 text-[10px] font-black uppercase tracking-wider text-black shadow-lg">
+                    <div className="flex items-center gap-2 bg-amber-500/95 px-3 py-1.5 text-[10px] font-black uppercase tracking-wider text-black">
                       <Loader2 size={12} className="animate-spin" />
                       Analizando…
                     </div>
@@ -800,7 +988,7 @@ function LayerizerFullscreen(props: FullscreenProps) {
                     <button
                       type="button"
                       onClick={() => onAnalyzeRegion(pendingRect)}
-                      className="flex items-center gap-1.5 rounded-md bg-amber-500 px-3 py-1.5 text-[10px] font-black uppercase tracking-wider text-black hover:bg-amber-400"
+                      className="flex items-center gap-1.5 bg-amber-500 px-3 py-1.5 text-[10px] font-black uppercase tracking-wider text-black hover:bg-amber-400"
                     >
                       <Sparkles size={12} />
                       Analizar en local
@@ -808,7 +996,7 @@ function LayerizerFullscreen(props: FullscreenProps) {
                     <button
                       type="button"
                       onClick={() => setPendingRect(null)}
-                      className="rounded-md bg-white/10 px-2 py-1.5 text-[10px] font-bold uppercase tracking-wider text-white/70 hover:bg-white/20"
+                      className="bg-white/10 px-2 py-1.5 text-[10px] font-bold uppercase tracking-wider text-white/70 hover:bg-white/20"
                     >
                       Cancelar
                     </button>
@@ -816,188 +1004,256 @@ function LayerizerFullscreen(props: FullscreenProps) {
                 )}
               </div>
             ) : null}
-          </div>
 
-          {/* Pista de uso */}
-          <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-black/60 px-3 py-1 text-[9px] text-white/60">
-            Arrastra sobre la imagen (también dentro de otras cajas) para analizar un área · Clic en la etiqueta para seleccionar
-          </div>
-        </div>
-
-        {/* Panel lateral */}
-        <div className="flex w-[320px] flex-col gap-3 overflow-y-auto border-l border-white/10 bg-zinc-950/80 p-4 text-white">
-          {detected.length === 0 ? (
-            <button
-              onClick={onDetect}
-              disabled={detecting || !inputImage}
-              className="flex items-center justify-center gap-2 rounded-lg bg-purple-600 px-4 py-3 text-xs font-black uppercase tracking-[0.15em] hover:bg-purple-500 disabled:opacity-50"
-            >
-              {detecting ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-              {detecting ? "Detectando…" : "Detectar objetos"}
-            </button>
-          ) : (
-            <>
-              <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-[0.15em] text-white/60">
-                <span>Objetos ({selectedIds.size}/{detected.length})</span>
-                <button onClick={onDetect} disabled={detecting || detectingText || analyzingRegion} className="text-purple-300 hover:text-purple-200 disabled:opacity-40">
-                  {detecting ? "…" : "re-detectar"}
-                </button>
-              </div>
-
-              <button
-                onClick={onDetectText}
-                disabled={detectingText || detecting || analyzingRegion || !inputImage}
-                className="flex items-center justify-center gap-2 rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-4 py-2.5 text-[10px] font-black uppercase tracking-[0.12em] text-cyan-200 hover:bg-cyan-500/20 disabled:opacity-50"
-              >
-                {detectingText ? <Loader2 size={13} className="animate-spin" /> : <Type size={13} />}
-                {detectingText ? "Detectando texto…" : "Detectar texto"}
-              </button>
-
-              {detectingText ? (
-                <div className="flex items-center gap-2 rounded-md border border-cyan-500/40 bg-cyan-500/10 px-3 py-2 text-[10px] text-cyan-200">
-                  <Loader2 size={12} className="animate-spin shrink-0" />
-                  Buscando bloques de tipografía…
-                </div>
-              ) : null}
-
-              {analyzingRegion ? (
-                <div className="flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[10px] text-amber-200">
-                  <Loader2 size={12} className="animate-spin shrink-0" />
-                  Analizando área seleccionada…
-                </div>
-              ) : null}
-
-              <div className="flex flex-col gap-1.5">
-                {subjects.map((subject) => {
-                  const parts = partsOf(subject.id);
-                  const isExpanded = expandedIds.has(subject.id);
-                  const selectedParts = parts.filter((p) => selectedIds.has(p.id)).length;
-                  return (
-                    <div key={subject.id} className="flex flex-col gap-1">
-                      <ObjectRow
-                        obj={subject}
-                        isPart={false}
-                        selected={selectedIds.has(subject.id)}
-                        amodal={amodalIds.has(subject.id)}
-                        previewing={previewingId === subject.id}
-                        hasPreview={!!maskPreviews[subject.id]}
-                        expandable={parts.length > 0}
-                        expanded={isExpanded}
-                        partsBadge={parts.length > 0 ? `${selectedParts}/${parts.length}` : null}
-                        onToggleSelect={onToggleSelect}
-                        onToggleAmodal={onToggleAmodal}
-                        onToggleExpand={onToggleExpand}
-                        onPreviewMask={onPreviewMask}
-                      />
-                      {isExpanded
-                        ? parts.map((part) => (
-                            <div key={part.id} className="ml-3 border-l border-white/10 pl-2">
-                              <ObjectRow
-                                obj={part}
-                                isPart
-                                selected={selectedIds.has(part.id)}
-                                amodal={amodalIds.has(part.id)}
-                                previewing={previewingId === part.id}
-                                hasPreview={!!maskPreviews[part.id]}
-                                expandable={false}
-                                expanded={false}
-                                partsBadge={null}
-                                onToggleSelect={onToggleSelect}
-                                onToggleAmodal={onToggleAmodal}
-                                onToggleExpand={onToggleExpand}
-                                onPreviewMask={onPreviewMask}
-                              />
-                            </div>
-                          ))
-                        : null}
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Coste en vivo */}
-              <div className="mt-1 rounded-lg border border-white/10 bg-black/40 p-3 text-[10px] text-white/70">
-                <div className="flex justify-between"><span>Extraer ({cost.objectCount})</span><span>{usd(cost.extractUsd)}</span></div>
-                <div className="flex justify-between"><span>Fondo limpio</span><span>{usd(cost.cleanPlateUsd)}</span></div>
-                {cost.amodalCount > 0 ? (
-                  <div className="flex justify-between"><span>Amodal ({cost.amodalCount})</span><span>{usd(cost.amodalUsd)}</span></div>
-                ) : null}
-                <div className="mt-1 flex justify-between border-t border-white/10 pt-1 text-xs font-black text-white">
-                  <span>Total</span><span>{usd(cost.totalUsd)}</span>
-                </div>
-              </div>
-
-              {/* Progreso */}
-              {running && progress ? (
-                <div className="flex flex-col gap-2 rounded-lg border border-purple-500/30 bg-purple-500/5 p-3">
-                  {PROGRESS_STEPS.map((step, i) => (
-                    <div key={step.status} className="flex items-center gap-2 text-[10px]">
-                      {i < activeStepIndex ? (
-                        <span className="text-emerald-400">✓</span>
-                      ) : i === activeStepIndex ? (
-                        <Loader2 size={11} className="animate-spin text-purple-300" />
-                      ) : (
-                        <span className="text-white/20">○</span>
-                      )}
-                      <span className={i === activeStepIndex ? "text-white" : "text-white/40"}>{step.label}</span>
-                    </div>
-                  ))}
-                  {progress.message ? <span className="text-[9px] text-white/50">{progress.message}</span> : null}
-                </div>
-              ) : null}
-
-              <button
-                onClick={onExtract}
-                disabled={running || selectedIds.size === 0}
-                className="mt-1 flex items-center justify-center gap-2 rounded-lg bg-purple-600 px-4 py-3 text-xs font-black uppercase tracking-[0.15em] hover:bg-purple-500 disabled:opacity-50"
-              >
-                {running ? <Loader2 size={14} className="animate-spin" /> : <Scissors size={14} />}
-                {running ? "Extrayendo…" : "Extract Layout"}
-              </button>
-            </>
-          )}
-
-          {error ? <div className="rounded-md bg-rose-500/15 px-3 py-2 text-[10px] text-rose-300">{error}</div> : null}
-
-          {/* Resultado */}
-          {output ? (
-            <div className="mt-2 flex flex-col gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3">
-              <span className="text-[10px] font-black uppercase tracking-[0.15em] text-emerald-300">
-                {output.layers.length} capas listas
-              </span>
-
-              <div className="grid grid-cols-3 gap-1.5">
-                <div className="relative aspect-square overflow-hidden rounded border border-white/15 bg-[repeating-conic-gradient(#333_0%_25%,#222_0%_50%)] bg-[length:12px_12px]">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={output.original?.url ?? output.masterUrl}
-                    alt="original"
-                    className="h-full w-full object-cover"
-                  />
-                  <span className="absolute bottom-0 left-0 bg-black/70 px-1 text-[7px] text-white">Capa 1</span>
-                </div>
-                <div className="relative aspect-square overflow-hidden rounded border border-white/15 bg-[repeating-conic-gradient(#333_0%_25%,#222_0%_50%)] bg-[length:12px_12px]">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={output.background.url} alt="bg" className="h-full w-full object-cover" />
-                  <span className="absolute bottom-0 left-0 bg-black/70 px-1 text-[7px] text-white">Capa 2</span>
-                </div>
-                {output.layers.map((l) => (
+            {/* Línea de escaneo que recorre la imagen de arriba a abajo */}
+            {detecting || detectingText ? (
+              <div className="pointer-events-none absolute inset-0 overflow-hidden">
+                <div className="absolute inset-0 bg-black/10" />
+                <div className="absolute inset-x-0" style={{ animation: "layerizer-scan 2.4s ease-in-out infinite" }}>
                   <div
-                    key={l.id}
-                    className="relative overflow-hidden rounded border border-white/15 bg-[repeating-conic-gradient(#333_0%_25%,#222_0%_50%)] bg-[length:12px_12px]"
-                    style={{ aspectRatio: `${Math.max(1, l.w)} / ${Math.max(1, l.h)}` }}
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={l.url} alt={l.label} className="h-full w-full" />
-                  </div>
-                ))}
+                    className="h-24 w-full -translate-y-full"
+                    style={{ background: "linear-gradient(to top, rgba(34,211,238,0.18), transparent)" }}
+                  />
+                  <div
+                    className="h-[2px] w-full"
+                    style={{
+                      background:
+                        "linear-gradient(90deg, transparent 0%, rgba(34,211,238,0.95) 38%, rgba(168,85,247,0.95) 62%, transparent 100%)",
+                      boxShadow: "0 0 14px 2px rgba(34,211,238,0.55)",
+                    }}
+                  />
+                </div>
               </div>
-              <div className="flex items-center gap-2 rounded-md bg-emerald-600/20 px-3 py-2 text-[10px] text-emerald-200">
-                <Send size={12} />
-                Conecta la salida <strong>Image Layout</strong> al nodo Designer.
+            ) : null}
+          </div>
+
+          {/* HUD de acciones durante el escaneo */}
+          {scanning ? (
+            <div className="pointer-events-none absolute top-6 left-1/2 -translate-x-1/2 z-20">
+              <div className="flex items-center gap-2.5 text-[11px] font-semibold text-cyan-100 drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">
+                <Loader2 size={13} className="animate-spin text-cyan-300" />
+                <span>{scanMessage}</span>
               </div>
             </div>
           ) : null}
+
+          {/* Indicador de selección */}
+          {detected.length > 0 && !output ? (
+            <div className="pointer-events-none absolute left-6 top-6 text-[10px] font-semibold uppercase tracking-wider text-white/70 drop-shadow-[0_2px_6px_rgba(0,0,0,0.8)]">
+              {selectedIds.size} de {detected.length} seleccionadas
+            </div>
+          ) : null}
+
+          {/* Celebración de un disparo al completar */}
+          {celebrate ? (
+            <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center">
+              <div
+                className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(16,185,129,0.22),transparent_60%)]"
+                style={{ animation: "layerizer-flash 1.7s ease-out forwards" }}
+              />
+              <div
+                className="flex flex-col items-center gap-3"
+                style={{ animation: "layerizer-pop 1.7s ease-out forwards" }}
+              >
+                <Check size={72} strokeWidth={2.5} className="text-emerald-400 drop-shadow-[0_0_40px_rgba(16,185,129,0.85)]" />
+                <span className="text-sm font-black uppercase tracking-[0.2em] text-emerald-300 drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">
+                  Layout listo
+                </span>
+              </div>
+            </div>
+          ) : null}
+
+          {/* Barra flotante de herramientas de entrada */}
+          {detected.length > 0 && !output ? (
+            <div className="absolute bottom-6 left-1/2 -translate-x-1/2">
+              <div className="flex items-center gap-5">
+                <button
+                  onClick={onDetect}
+                  disabled={busy}
+                  title="Volver a detectar objetos"
+                  className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-white/80 transition-colors hover:text-white disabled:opacity-40"
+                >
+                  {detecting ? <Loader2 size={14} className="animate-spin text-purple-300" /> : <Sparkles size={14} className="text-purple-300" />}
+                  Objetos
+                </button>
+                <button
+                  onClick={onDetectText}
+                  disabled={busy || !inputImage}
+                  title="Detectar bloques de texto"
+                  className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-white/80 transition-colors hover:text-white disabled:opacity-40"
+                >
+                  {detectingText ? <Loader2 size={14} className="animate-spin text-cyan-300" /> : <Type size={14} className="text-cyan-300" />}
+                  Texto
+                </button>
+                <span className="h-4 w-px bg-white/15" />
+                <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-white/40">
+                  <MousePointerSquareDashed size={14} className="text-amber-300/70" />
+                  Arrastra para analizar un área
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {/* Bandeja de resultados (final con efecto wow) */}
+          {output ? (
+            <div className="absolute inset-x-0 bottom-0 z-20 border-t border-emerald-400/30 bg-gradient-to-t from-black/85 to-transparent px-6 pb-5 pt-6 backdrop-blur-xl">
+              <div className="mb-2.5 flex items-center justify-between">
+                <span className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[0.15em] text-emerald-300">
+                  <Check size={13} strokeWidth={3} />
+                  {output.layers.length} capas listas
+                </span>
+                <span className="flex items-center gap-1.5 text-[10px] text-emerald-200/85">
+                  <Send size={12} />
+                  Conecta <strong className="font-bold text-emerald-100">Image Layout</strong> al nodo Designer
+                </span>
+              </div>
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                <div className="relative h-20 w-20 shrink-0 overflow-hidden bg-[repeating-conic-gradient(#333_0%_25%,#222_0%_50%)] bg-[length:12px_12px]">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={output.original?.url ?? output.masterUrl} alt="original" className="h-full w-full object-cover" />
+                  <span className="absolute bottom-0 left-0 right-0 bg-black/70 px-1 py-0.5 text-center text-[8px] font-semibold text-white">Capa 1</span>
+                </div>
+                <div className="relative h-20 w-20 shrink-0 overflow-hidden bg-[repeating-conic-gradient(#333_0%_25%,#222_0%_50%)] bg-[length:12px_12px]">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={output.background.url} alt="bg" className="h-full w-full object-cover" />
+                  <span className="absolute bottom-0 left-0 right-0 bg-black/70 px-1 py-0.5 text-center text-[8px] font-semibold text-white">Capa 2</span>
+                </div>
+                {output.layers.map((l, i) => (
+                  <div
+                    key={l.id}
+                    className="relative h-20 w-20 shrink-0 overflow-hidden bg-[repeating-conic-gradient(#333_0%_25%,#222_0%_50%)] bg-[length:12px_12px]"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={l.url} alt={l.label} className="h-full w-full object-contain" />
+                    <span className="absolute bottom-0 left-0 right-0 truncate bg-black/70 px-1 py-0.5 text-center text-[8px] font-semibold text-white">
+                      {l.label || `Capa ${i + 3}`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        {/* Rail inspector */}
+        <div className="flex w-[340px] shrink-0 flex-col border-l border-white/10 bg-zinc-950/70 text-white backdrop-blur-xl">
+          {detected.length === 0 ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-5 p-8 text-center">
+              <Layers size={36} className="text-purple-300/80" />
+              <div className="space-y-1.5">
+                <p className="text-sm font-bold text-white">Detecta las capas</p>
+                <p className="text-[11px] leading-relaxed text-white/50">
+                  Encuentra los objetos principales de la imagen para extraerlos como capas independientes con fondo transparente.
+                </p>
+              </div>
+              <button
+                onClick={onDetect}
+                disabled={detecting || !inputImage}
+                className="flex w-full items-center justify-center gap-2 bg-purple-600 px-4 py-3 text-xs font-black uppercase tracking-[0.15em] transition-colors hover:bg-purple-500 disabled:opacity-50"
+              >
+                {detecting ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                {detecting ? "Detectando…" : "Detectar objetos"}
+              </button>
+              <button
+                onClick={onDetectText}
+                disabled={detectingText || detecting || !inputImage}
+                className="flex items-center gap-1.5 text-[11px] font-semibold text-cyan-300/80 transition-colors hover:text-cyan-200 disabled:opacity-40"
+              >
+                {detectingText ? <Loader2 size={12} className="animate-spin" /> : <Type size={12} />}
+                o detectar texto
+              </button>
+            </div>
+          ) : (
+            <>
+              {/* Zona scrollable: lista de capas */}
+              <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-black uppercase tracking-[0.16em] text-white/55">Capas detectadas</span>
+                  <button
+                    onClick={onDetect}
+                    disabled={busy}
+                    title="Volver a detectar"
+                    className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-purple-300 transition-colors hover:text-purple-200 disabled:opacity-40"
+                  >
+                    {detecting ? <Loader2 size={11} className="animate-spin" /> : <Sparkles size={11} />}
+                    re-detectar
+                  </button>
+                </div>
+
+                {detectingText ? (
+                  <div className="flex items-center gap-2 text-[10px] text-cyan-200">
+                    <Loader2 size={12} className="shrink-0 animate-spin" />
+                    Buscando bloques de tipografía…
+                  </div>
+                ) : null}
+                {analyzingRegion ? (
+                  <div className="flex items-center gap-2 text-[10px] text-amber-200">
+                    <Loader2 size={12} className="shrink-0 animate-spin" />
+                    Analizando área seleccionada…
+                  </div>
+                ) : null}
+
+                {objectSubjects.length > 0 ? (
+                  <div className="flex flex-col gap-1.5">
+                    {textSubjects.length > 0 ? (
+                      <span className="px-0.5 text-[9px] font-bold uppercase tracking-[0.18em] text-white/35">Objetos</span>
+                    ) : null}
+                    {objectSubjects.map(renderSubject)}
+                  </div>
+                ) : null}
+
+                {textSubjects.length > 0 ? (
+                  <div className="flex flex-col gap-1.5">
+                    <span className="px-0.5 text-[9px] font-bold uppercase tracking-[0.18em] text-cyan-300/50">Texto</span>
+                    {textSubjects.map(renderSubject)}
+                  </div>
+                ) : null}
+              </div>
+
+              {/* Footer fijo: coste + acción / progreso */}
+              <div className="shrink-0 space-y-3 border-t border-white/10 p-4">
+                {error ? <div className="border-l-2 border-rose-400 bg-rose-500/10 px-3 py-2 text-[10px] text-rose-300">{error}</div> : null}
+
+                {running && progress ? (
+                  <div className="flex flex-col gap-2">
+                    {PROGRESS_STEPS.map((step, i) => (
+                      <div key={step.status} className="flex items-center gap-2 text-[10px]">
+                        {i < activeStepIndex ? (
+                          <Check size={11} className="text-emerald-400" strokeWidth={3} />
+                        ) : i === activeStepIndex ? (
+                          <Loader2 size={11} className="animate-spin text-purple-300" />
+                        ) : (
+                          <span className="text-white/20">○</span>
+                        )}
+                        <span className={i === activeStepIndex ? "text-white" : "text-white/40"}>{step.label}</span>
+                      </div>
+                    ))}
+                    {progress.message ? <span className="text-[9px] text-white/50">{progress.message}</span> : null}
+                  </div>
+                ) : (
+                  <div className="space-y-1 text-[11px] text-white/65">
+                    <div className="flex justify-between"><span>Extraer ({cost.objectCount})</span><span>{usd(cost.extractUsd)}</span></div>
+                    <div className="flex justify-between"><span>Fondo limpio</span><span>{usd(cost.cleanPlateUsd)}</span></div>
+                    {cost.amodalCount > 0 ? (
+                      <div className="flex justify-between"><span>Amodal ({cost.amodalCount})</span><span>{usd(cost.amodalUsd)}</span></div>
+                    ) : null}
+                    <div className="mt-1.5 flex justify-between border-t border-white/10 pt-1.5 text-xs font-black text-white">
+                      <span>Total</span><span>{usd(cost.totalUsd)}</span>
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  onClick={onExtract}
+                  disabled={running || selectedIds.size === 0}
+                  className="flex w-full items-center justify-center gap-2 bg-purple-600 px-4 py-3.5 text-xs font-black uppercase tracking-[0.15em] transition-colors hover:bg-purple-500 disabled:opacity-50"
+                >
+                  {running ? <Loader2 size={14} className="animate-spin" /> : <Scissors size={14} />}
+                  {running ? "Extrayendo…" : output ? "Volver a extraer" : "Extraer Layout"}
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>

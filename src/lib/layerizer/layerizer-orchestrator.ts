@@ -19,6 +19,7 @@ import { getLayerizerProvider } from "@/lib/layerizer/layerizer-providers";
 import { computeZHints, segmentTextBlock, type MattedObject } from "@/lib/layerizer/layerizer-extract-core";
 import { uploadLayerizerArtifact } from "@/lib/layerizer/layerizer-s3";
 import { LAYERIZER_COST_USD } from "@/lib/layerizer/layerizer-config";
+import sharp from "sharp";
 
 export interface RunLayerizerJobInput {
   jobId: string;
@@ -98,6 +99,42 @@ export async function runLayerizerJob(
     throw new Error("No objects could be extracted");
   }
 
+  // --- Paso D: fondo limpio con las MÁSCARAS REALES de cada objeto.
+  // Se construye a partir de la silueta exacta del matting (no una caja), que es lo
+  // que da un inpaint/describe de calidad. Se lanza aquí para solaparse con el amodal.
+  const altMethod: LayerizerCleanPlateMethod = input.cleanPlateMethod === "mask" ? "describe" : "mask";
+  const masks = matted.map((m) => m.mask);
+  const regions = matted.map((m) => ({
+    label: m.isText ? `text: ${m.label}` : m.label,
+    bbox: m.bbox,
+    isText: m.isText,
+  }));
+  const genCleanPlate = (method: LayerizerCleanPlateMethod) =>
+    provider.cleanPlate({ master, width, height, masks, regions, method });
+
+  const cleanPlatePromise: Promise<{ bg: Buffer; alt: Buffer | null; consumed: number }> = (async () => {
+    let consumed = 0;
+    let bg: Buffer;
+    try {
+      bg = (await genCleanPlate(input.cleanPlateMethod)).background;
+      consumed += LAYERIZER_COST_USD.cleanPlate;
+    } catch (error) {
+      console.warn(`[layerizer:${jobId}] clean plate failed, using master as background:`, error);
+      bg = await sharp(master).png().toBuffer();
+    }
+
+    let alt: Buffer | null = null;
+    if (input.compareCleanPlate) {
+      try {
+        alt = (await genCleanPlate(altMethod)).background;
+        consumed += LAYERIZER_COST_USD.cleanPlate;
+      } catch (error) {
+        console.warn(`[layerizer:${jobId}] alt clean plate (${altMethod}) failed, skipping:`, error);
+      }
+    }
+    return { bg, alt, consumed };
+  })();
+
   // --- Paso E: completado amodal (opt-in por objeto, generativo) ---
   let amodalConsumed = 0;
   const amodalIds = new Set(selected.filter((s) => s.amodalComplete).map((s) => s.id));
@@ -118,102 +155,50 @@ export async function runLayerizerJob(
     );
   }
 
-  // --- Paso D: fondo limpio (una llamada; dos si se compara) ---
-  emit({ status: "compositing_bg", message: "Generando fondo limpio" });
-  const masks = matted.map((m) => m.mask);
-  const regions = matted.map((m) => ({
-    label: m.isText ? `text: ${m.label}` : m.label,
-    bbox: m.bbox,
-    isText: m.isText,
-  }));
-  const altMethod: LayerizerCleanPlateMethod = input.cleanPlateMethod === "mask" ? "describe" : "mask";
+  // --- Paso D: recoger el fondo limpio (lanzado tras el matting, solapado con amodal) ---
+  emit({ status: "compositing_bg", message: "Finalizando fondo limpio" });
+  const { bg: backgroundBuffer, alt: backgroundAltBuffer, consumed: cleanPlateConsumed } = await cleanPlatePromise;
 
-  const genCleanPlate = (method: LayerizerCleanPlateMethod) =>
-    provider.cleanPlate({ master, width, height, masks, regions, method });
-
-  let backgroundBuffer: Buffer | null = null;
-  let cleanPlateConsumed = 0;
-  try {
-    backgroundBuffer = (await genCleanPlate(input.cleanPlateMethod)).background;
-    cleanPlateConsumed += LAYERIZER_COST_USD.cleanPlate;
-  } catch (error) {
-    console.warn(`[layerizer:${jobId}] clean plate failed, using master as background:`, error);
-    // Fallback usable: el master como fondo (sin tapar). El usuario puede regenerar.
-    backgroundBuffer = await import("sharp").then((m) =>
-      (m.default || m)(master).png().toBuffer(),
-    );
-  }
-
-  let backgroundAltBuffer: Buffer | null = null;
-  if (input.compareCleanPlate) {
-    emit({ status: "compositing_bg", message: `Generando fondo alternativo (${altMethod})` });
-    try {
-      backgroundAltBuffer = (await genCleanPlate(altMethod)).background;
-      cleanPlateConsumed += LAYERIZER_COST_USD.cleanPlate;
-    } catch (error) {
-      console.warn(`[layerizer:${jobId}] alt clean plate (${altMethod}) failed, skipping:`, error);
-    }
-  }
-
-  // --- Paso F: montaje (zHint + subida a S3) ---
+  // --- Paso F: montaje (zHint + subidas a S3 en paralelo) ---
   emit({ status: "assembling", message: "Montando capas" });
-  if (!backgroundBuffer) throw new Error("Background generation produced no image");
   const zHints = computeZHints(matted.map((m) => ({ id: m.id, bbox: m.bbox, parentId: m.parentId })));
 
-  const originalUpload = await uploadLayerizerArtifact({
-    userEmail,
-    jobId,
-    name: "original",
-    buffer: master,
-    contentType: "image/png",
+  const [fixedAndLayers, altUpload] = await Promise.all([
+    Promise.all([
+      uploadLayerizerArtifact({ userEmail, jobId, name: "original", buffer: master, contentType: "image/png" }),
+      uploadLayerizerArtifact({ userEmail, jobId, name: "background", buffer: backgroundBuffer, contentType: "image/png" }),
+      ...matted.map((m) =>
+        uploadLayerizerArtifact({ userEmail, jobId, name: `layer_${m.id}`, buffer: m.rgba, contentType: "image/png" }),
+      ),
+    ]),
+    backgroundAltBuffer
+      ? uploadLayerizerArtifact({ userEmail, jobId, name: "background_alt", buffer: backgroundAltBuffer, contentType: "image/png" })
+      : Promise.resolve(null),
+  ]);
+  const [originalUpload, bgUpload, ...layerUploads] = fixedAndLayers;
+
+  const backgroundAlt: LayerizerBackground | undefined = altUpload
+    ? { url: altUpload.url, s3Key: altUpload.s3Key, w: width, h: height, source: "clean_plate" }
+    : undefined;
+
+  const layers: Layer[] = matted.map((m, i) => {
+    const up = layerUploads[i];
+    return {
+      id: m.id,
+      label: m.label,
+      url: up.url,
+      s3Key: up.s3Key,
+      x: m.bbox[0],
+      y: m.bbox[1],
+      w: m.bbox[2],
+      h: m.bbox[3],
+      zHint: zHints.get(m.id) ?? 1,
+      source: "extracted" as const,
+      amodalCompleted: m.amodalCompleted,
+      parentId: m.parentId,
+      isText: m.isText,
+    };
   });
-
-  const bgUpload = await uploadLayerizerArtifact({
-    userEmail,
-    jobId,
-    name: "background",
-    buffer: backgroundBuffer,
-    contentType: "image/png",
-  });
-
-  let backgroundAlt: LayerizerBackground | undefined;
-  if (backgroundAltBuffer) {
-    const altUpload = await uploadLayerizerArtifact({
-      userEmail,
-      jobId,
-      name: "background_alt",
-      buffer: backgroundAltBuffer,
-      contentType: "image/png",
-    });
-    backgroundAlt = { url: altUpload.url, s3Key: altUpload.s3Key, w: width, h: height, source: "clean_plate" };
-  }
-
-  const layers: Layer[] = await Promise.all(
-    matted.map(async (m) => {
-      const up = await uploadLayerizerArtifact({
-        userEmail,
-        jobId,
-        name: `layer_${m.id}`,
-        buffer: m.rgba,
-        contentType: "image/png",
-      });
-      return {
-        id: m.id,
-        label: m.label,
-        url: up.url,
-        s3Key: up.s3Key,
-        x: m.bbox[0],
-        y: m.bbox[1],
-        w: m.bbox[2],
-        h: m.bbox[3],
-        zHint: zHints.get(m.id) ?? 1,
-        source: "extracted" as const,
-        amodalCompleted: m.amodalCompleted,
-        parentId: m.parentId,
-        isText: m.isText,
-      };
-    }),
-  );
 
   const output: LayerizerOutput = {
     jobId,

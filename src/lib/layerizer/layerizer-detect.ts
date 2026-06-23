@@ -241,10 +241,12 @@ export async function detectObjectsWithGemini(input: {
       responseMimeType: "application/json",
       responseSchema,
       temperature: 0.1,
-      // gemini-2.5-flash necesita "thinking" activado para no caer en bucles
-      // degenerados (repetición de coordenadas). Damos presupuesto amplio para
-      // que quepan razonamiento + JSON (uso real ~1.3k tokens; se factura lo usado).
-      maxOutputTokens: 16384,
+      // SAM afina las cajas después, así que Gemini solo necesita ETIQUETAR + localizar
+      // a grosso modo. Acotamos el "thinking" (principal coste de latencia) a un
+      // presupuesto pequeño y bajamos el tope de salida: detección notablemente más
+      // rápida sin perder calidad (los bounds finales vienen de SAM).
+      thinkingConfig: { thinkingBudget: 1024 },
+      maxOutputTokens: 4096,
     },
   });
 

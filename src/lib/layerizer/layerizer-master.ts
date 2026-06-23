@@ -4,6 +4,7 @@
  * User-Agent (evita 403); data URL → decode. El master NUNCA se reescribe.
  */
 
+import { createHash } from "node:crypto";
 import {
   assertUserCanAccessMediaReference,
   inferMimeTypeFromPath,
@@ -14,6 +15,37 @@ export interface ResolvedMaster {
   buffer: Buffer;
   mime: string;
   s3Key?: string;
+}
+
+/**
+ * Cache en memoria del master resuelto (buffer). Evita la doble descarga entre
+ * /detect y /extract para la misma imagen. TTL corto + tope de entradas para acotar RAM.
+ * El control de acceso se sigue verificando SIEMPRE antes de servir desde cache.
+ */
+const MASTER_CACHE_TTL_MS = 5 * 60 * 1000;
+const MASTER_CACHE_MAX = 8;
+const masterCache = new Map<string, { at: number; master: ResolvedMaster }>();
+
+function cacheKey(userEmail: string, image: string): string {
+  return `${userEmail}:${createHash("sha1").update(image).digest("hex")}`;
+}
+
+function readCache(key: string): ResolvedMaster | null {
+  const hit = masterCache.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.at > MASTER_CACHE_TTL_MS) {
+    masterCache.delete(key);
+    return null;
+  }
+  return hit.master;
+}
+
+function writeCache(key: string, master: ResolvedMaster): void {
+  masterCache.set(key, { at: Date.now(), master });
+  if (masterCache.size > MASTER_CACHE_MAX) {
+    const oldest = masterCache.keys().next().value;
+    if (oldest) masterCache.delete(oldest);
+  }
 }
 
 function parseDataUrl(value: string): { buffer: Buffer; mime: string } {
@@ -31,12 +63,17 @@ export async function resolveLayerizerMaster(
   userEmail: string,
   image: string,
 ): Promise<ResolvedMaster> {
+  // El control de acceso se ejecuta SIEMPRE (también en hits de cache).
   const s3Key = await assertUserCanAccessMediaReference(userEmail, image, "image");
+  const key = cacheKey(userEmail, image);
+  const cached = readCache(key);
+  if (cached) return cached;
+
+  let resolved: ResolvedMaster;
   if (s3Key) {
     const buffer = await getFromS3(s3Key);
-    return { buffer, mime: inferMimeTypeFromPath(s3Key, "image/png"), s3Key };
-  }
-  if (image.startsWith("http")) {
+    resolved = { buffer, mime: inferMimeTypeFromPath(s3Key, "image/png"), s3Key };
+  } else if (image.startsWith("http")) {
     const res = await fetch(image, {
       headers: {
         "User-Agent":
@@ -46,8 +83,12 @@ export async function resolveLayerizerMaster(
     });
     if (!res.ok) throw new Error(`Image fetch failed: ${res.status}`);
     const buffer = Buffer.from(await res.arrayBuffer());
-    const mime = res.headers.get("content-type") || "image/png";
-    return { buffer, mime };
+    resolved = { buffer, mime: res.headers.get("content-type") || "image/png" };
+  } else {
+    const { buffer, mime } = parseDataUrl(image);
+    resolved = { buffer, mime };
   }
-  return parseDataUrl(image);
+
+  writeCache(key, resolved);
+  return resolved;
 }

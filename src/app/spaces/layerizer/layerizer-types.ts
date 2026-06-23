@@ -200,6 +200,9 @@ export interface LayerizerNodeData {
   masterS3Key?: string;
   /** Detección del Estado 1 (Gemini). */
   detected?: DetectedObject[];
+  /** Dimensiones del master en px (para rehidratar overlays al reabrir el studio). */
+  masterWidth?: number;
+  masterHeight?: number;
   /** Selección actual del usuario (Estado 2). */
   selected?: SelectedObject[];
   /** Job en curso / último job. */

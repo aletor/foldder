@@ -101,22 +101,25 @@ function samInputFromPrompt(imageUrl: string, prompt: SamPrompt): Record<string,
   return { ...base, point_prompts: prompt.points.map((p) => ({ x: p.x, y: p.y, label: p.label })) };
 }
 
+/** Lado máximo (px) al que se reduce el master antes de mandarlo a SAM (refine). */
+const SAM_REFINE_MAX_SIDE = 1024;
+
 /**
- * SAM 3.1 grounded por TEXTO sobre la imagen COMPLETA. Devuelve la máscara grayscale
- * (W×H) del concepto, o null si falla / no encuentra nada. Se usa para afinar los
- * bounds de la detección (Gemini localiza mal; SAM con texto es preciso).
+ * SAM 3.1 grounded por TEXTO. Devuelve la máscara grayscale (W×H) del concepto, o null.
+ * `imageDataUrl` puede ser una versión REDUCIDA del master: SAM trabaja a esa resolución
+ * y la máscara se reescala a W×H (las bboxes resultantes son igual de válidas, y la
+ * subida/inferencia es mucho más rápida).
  */
-export async function runFalSamTextMask(
-  master: Buffer,
+async function samTextMask(
+  imageDataUrl: string,
   label: string,
   width: number,
   height: number,
 ): Promise<Buffer | null> {
   try {
-    const dataUrl = toDataUrl(await sharp(master).png().toBuffer());
     const out = await falRun<{ masks?: Array<{ url?: string }>; image?: { url?: string } }>(
       LAYERIZER_PROVIDER_ENDPOINTS.fal.segment,
-      { image_url: dataUrl, prompt: label, apply_mask: false, output_format: "png" },
+      { image_url: imageDataUrl, prompt: label, apply_mask: false, output_format: "png" },
       60000,
     );
     const maskUrl = out.masks?.[0]?.url || out.image?.url || firstImageUrl(out);
@@ -129,11 +132,31 @@ export async function runFalSamTextMask(
   }
 }
 
+/** PNG del master reducido a SAM_REFINE_MAX_SIDE de lado mayor (o tal cual si ya es pequeño). */
+async function encodeForSamRefine(master: Buffer, width: number, height: number): Promise<string> {
+  const longest = Math.max(width, height);
+  const pipe =
+    longest > SAM_REFINE_MAX_SIDE
+      ? sharp(master).resize(SAM_REFINE_MAX_SIDE, SAM_REFINE_MAX_SIDE, { fit: "inside" })
+      : sharp(master);
+  return toDataUrl(await pipe.png().toBuffer());
+}
+
+export async function runFalSamTextMask(
+  master: Buffer,
+  label: string,
+  width: number,
+  height: number,
+): Promise<Buffer | null> {
+  return samTextMask(await encodeForSamRefine(master, width, height), label, width, height);
+}
+
 /**
  * Afina los bounds de la detección de Gemini usando SAM 3.1 grounded por texto.
  * Gemini acierta QUÉ objetos son relevantes pero localiza mal (sobre todo objetos
  * pequeños/especulares); SAM con la etiqueta da la caja precisa. Conserva la caja de
- * Gemini como fallback si SAM falla o devuelve ruido. Las llamadas van en paralelo.
+ * Gemini como fallback si SAM falla o devuelve ruido. Las llamadas van en paralelo y
+ * comparten una única versión reducida del master (menos subida e inferencia).
  */
 export async function refineDetectedBoxesWithSamText(
   master: Buffer,
@@ -141,10 +164,12 @@ export async function refineDetectedBoxesWithSamText(
   height: number,
   objects: DetectedObject[],
 ): Promise<DetectedObject[]> {
+  if (objects.length === 0) return objects;
   const imageArea = Math.max(1, width * height);
+  const imageDataUrl = await encodeForSamRefine(master, width, height);
   return Promise.all(
     objects.map(async (obj) => {
-      const mask = await runFalSamTextMask(master, obj.label, width, height);
+      const mask = await samTextMask(imageDataUrl, obj.label, width, height);
       if (!mask) return obj;
       const bb = await largestComponentBBox(mask, width, height);
       if (!bb) return obj;
