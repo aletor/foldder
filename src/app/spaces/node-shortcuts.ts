@@ -14,7 +14,7 @@ export const NODE_KEYS: Record<string, string> = {
   mediaInput: 'm',
   promptInput: 'p',
   urlImage: 'u',
-  backgroundRemover: 'r',
+  layerizer: 'r',
   mediaDescriber: 'd',
   enhancer: 'h',
   grokProcessor: 'k',

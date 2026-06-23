@@ -80,7 +80,6 @@ export const HANDLE_DROP_MAP: Record<string, string> = {
   "image:target": "nanoBanana",
   "video:source": "imageExport",
   "video:target": "geminiVideo",
-  "mask:target": "backgroundRemover",
   "url:source": "mediaDescriber",
   "url:target": "mediaInput",
   "audio:source": "imageExport",

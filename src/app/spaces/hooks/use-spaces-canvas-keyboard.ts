@@ -304,7 +304,7 @@ export function useSpacesCanvasKeyboard(
         case 'd': addNode('mediaDescriber'); break;
         case 'h': addNode('enhancer'); break;
         case 'k': addNode('grokProcessor'); break;
-        case 'r': addNode('backgroundRemover'); break;
+        case 'r': addNode('layerizer'); break;
         case 'v': addNode('geminiVideo'); break;
         case 'y': addNode('vfxGenerator'); break;
         // ── Lógica ───────────────────────────────────────────────────────

@@ -43,6 +43,8 @@ import {
   filterEdgesForCollapsedCanvasGroups,
   edgeTargetsMemberInput,
 } from "./canvas-group-logic";
+import { countDissolveLiftNodes, dissolveSpaceIntoParent } from "./dissolve-space";
+import { groupNodesIntoSpace } from "./group-nodes-into-space";
 
 import Sidebar from "./Sidebar";
 import { TouchSelectionToolbar } from "./TouchSelectionToolbar";
@@ -770,6 +772,7 @@ export function SpacesContent() {
   /** Evita doble clic en «Delete» antes de que React oculte el diálogo. */
   const projectDeleteLockRef = useRef(false);
   const [navigationStack, setNavigationStack] = useState<string[]>([]);
+  const [dissolveSpaceConfirm, setDissolveSpaceConfirm] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, nodeId?: string } | null>(null);
 
   /** Indicador visual breve tras guardado automático (intervalo 1 min) */
@@ -3322,6 +3325,86 @@ export function SpacesContent() {
     });
   }, [activeSpaceId, nodes, edges, spacesMap, setNodes, setEdges, fitView, syncCurrentSpaceState, scheduleNodeInternalsRefresh, scheduleEdgeGeometryRefresh, markCanvasNodesIntroCompleted]);
 
+  /** Sube un nivel en la jerarquía de spaces (sync + pop del stack). */
+  const goUpOneCanvas = useCallback(() => {
+    if (activeSpaceId === "root") return;
+    const { newMap: updatedSpacesMap } = syncCurrentSpaceState(nodes, edges, spacesMap, activeSpaceId);
+    const parentId = navigationStack.length > 0 ? navigationStack[navigationStack.length - 1] : "root";
+    const parentSpace = updatedSpacesMap[parentId];
+    if (!parentSpace?.nodes) return;
+    setSpacesMap(updatedSpacesMap);
+    const nextNodes = [...parentSpace.nodes];
+    setNodes(nextNodes);
+    markCanvasNodesIntroCompleted(nextNodes.map((n: Node) => n.id));
+    setEdges([...(parentSpace.edges || [])]);
+    scheduleNodeInternalsRefresh(nextNodes.map((n: any) => String(n.id)));
+    scheduleEdgeGeometryRefresh();
+    setNavigationStack((prev) => prev.slice(0, -1));
+    setActiveSpaceId(parentId);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        void fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(480), interpolate: "smooth", ...FOLDDER_FIT_VIEW_EASE });
+      });
+    });
+  }, [
+    activeSpaceId,
+    nodes,
+    edges,
+    spacesMap,
+    navigationStack,
+    setNodes,
+    setEdges,
+    fitView,
+    syncCurrentSpaceState,
+    scheduleNodeInternalsRefresh,
+    scheduleEdgeGeometryRefresh,
+    markCanvasNodesIntroCompleted,
+  ]);
+
+  /** Disuelve el space activo: nodos al lienzo padre, puentea Input/Output, elimina el contenedor. */
+  const dissolveActiveSpace = useCallback(() => {
+    if (activeSpaceId === "root") return;
+    const parentId = navigationStack.length > 0 ? navigationStack[navigationStack.length - 1] : "root";
+    takeSnapshot();
+    const { newMap: syncedMap } = syncCurrentSpaceState(nodes, edges, spacesMap, activeSpaceId);
+    const result = dissolveSpaceIntoParent({
+      spaceId: activeSpaceId,
+      parentSpaceId: parentId,
+      spacesMap: syncedMap,
+      innerNodes: nodes,
+      innerEdges: edges,
+    });
+    if (!result) return;
+    setSpacesMap(result.spacesMap);
+    setNodes(result.parentNodes);
+    markCanvasNodesIntroCompleted(result.parentNodes.map((n) => n.id));
+    setEdges(result.parentEdges);
+    scheduleNodeInternalsRefresh(result.parentNodes.map((n) => String(n.id)));
+    scheduleEdgeGeometryRefresh();
+    setNavigationStack((prev) => prev.slice(0, -1));
+    setActiveSpaceId(parentId);
+    setDissolveSpaceConfirm(false);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        void fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(480), interpolate: "smooth", ...FOLDDER_FIT_VIEW_EASE });
+      });
+    });
+  }, [
+    activeSpaceId,
+    navigationStack,
+    nodes,
+    edges,
+    spacesMap,
+    takeSnapshot,
+    syncCurrentSpaceState,
+    setNodes,
+    setEdges,
+    fitView,
+    scheduleNodeInternalsRefresh,
+    scheduleEdgeGeometryRefresh,
+    markCanvasNodesIntroCompleted,
+  ]);
+
   const handleEscapeNavigation = useCallback((): boolean => {
     if (assistantClarify) {
       setAssistantClarify(null);
@@ -3349,8 +3432,12 @@ export function SpacesContent() {
       setContextMenu(null);
       return true;
     }
+    if (dissolveSpaceConfirm) {
+      setDissolveSpaceConfirm(false);
+      return true;
+    }
     if (activeSpaceId !== 'root') {
-      goToRootCanvas();
+      goUpOneCanvas();
       return true;
     }
     return false;
@@ -3366,8 +3453,9 @@ export function SpacesContent() {
     canvasViewMode,
     exitCardsViewMode,
     contextMenu,
+    dissolveSpaceConfirm,
     activeSpaceId,
-    goToRootCanvas,
+    goUpOneCanvas,
   ]);
 
   navigationEscapeRef.current = handleEscapeNavigation;
@@ -4916,71 +5004,13 @@ export function SpacesContent() {
   }, []);
 
   const groupSelectedToSpace = useCallback(() => {
-    const selectedNodes = nodes.filter(
-      (n) => n.selected
-    );
+    const selectedNodes = nodes.filter((n) => n.selected);
     if (selectedNodes.length === 0) {
       setContextMenu(null);
       return;
     }
 
     takeSnapshot();
-
-    const selectedIds = new Set(selectedNodes.map((n) => n.id));
-    const internalEdges = edges.filter(
-      (e) => selectedIds.has(e.source) && selectedIds.has(e.target)
-    );
-
-    const isSubgraphConnected = (): boolean => {
-      if (selectedIds.size <= 1) return true;
-      const adj = new Map<string, string[]>();
-      const link = (a: string, b: string) => {
-        if (!adj.has(a)) adj.set(a, []);
-        if (!adj.has(b)) adj.set(b, []);
-        adj.get(a)!.push(b);
-        adj.get(b)!.push(a);
-      };
-      internalEdges.forEach((e) => link(e.source, e.target));
-      const start = selectedNodes[0].id;
-      const seen = new Set<string>();
-      const stack = [start];
-      while (stack.length) {
-        const id = stack.pop()!;
-        if (seen.has(id)) continue;
-        seen.add(id);
-        for (const nb of adj.get(id) || []) {
-          if (selectedIds.has(nb) && !seen.has(nb)) stack.push(nb);
-        }
-      }
-      return seen.size === selectedIds.size;
-    };
-
-    const connected = isSubgraphConnected();
-
-    const sinks = selectedNodes.filter(
-      (n) =>
-        !internalEdges.some(
-          (e) => e.source === n.id && selectedIds.has(e.target)
-        )
-    );
-    const sources = selectedNodes.filter(
-      (n) =>
-        !internalEdges.some(
-          (e) => e.target === n.id && selectedIds.has(e.source)
-        )
-    );
-
-    const reg = (t: string) => NODE_REGISTRY[t];
-    let includeSpaceInput = true;
-    if (sources.length === 1) {
-      if ((reg(sources[0].type)?.inputs?.length ?? 0) === 0) {
-        includeSpaceInput = false;
-      }
-    } else if (sources.length > 1) {
-      if (sources.every((s) => (reg(s.type)?.inputs?.length ?? 0) === 0)) {
-        includeSpaceInput = false;
-      }
-    }
 
     const minX = Math.min(...selectedNodes.map((n) => n.position.x));
     const minY = Math.min(...selectedNodes.map((n) => n.position.y));
@@ -4989,126 +5019,31 @@ export function SpacesContent() {
     const avgX = (minX + maxX) / 2;
     const avgY = (minY + maxY) / 2;
 
-    const newSpacesMap = { ...spacesMap };
     const spaceId = `space_group_${Date.now()}`;
-
-    const nestedNodes = selectedNodes.map((n) => ({
-      ...n,
-      position: {
-        x: n.position.x - minX + 200,
-        y: n.position.y - minY + 200,
-      },
-      selected: false,
-    }));
-
-    const pickRightmost = (arr: typeof nestedNodes) =>
-      arr.reduce((prev, cur) =>
-        cur.position.x > prev.position.x ||
-        (cur.position.x === prev.position.x && cur.position.y > prev.position.y)
-          ? cur
-          : prev
-      );
-
-    let lastNode = pickRightmost(nestedNodes);
-    if (connected && sinks.length > 0) {
-      const sinkNested = sinks
-        .map((s) => nestedNodes.find((nn) => nn.id === s.id))
-        .filter((n): n is (typeof nestedNodes)[0] => n != null);
-      if (sinkNested.length > 0) lastNode = pickRightmost(sinkNested);
-    }
-
-    const lastNodeMeta = NODE_REGISTRY[lastNode.type];
-    const lastNodeOutput = lastNodeMeta?.outputs?.[0];
-
-    const autoOutEdge = lastNodeOutput
-      ? [
-          {
-            id: `nested_auto_out_${Date.now()}`,
-            source: lastNode.id,
-            sourceHandle: lastNodeOutput.id,
-            target: 'out',
-            targetHandle: 'in',
-            type: 'buttonEdge',
-            animated: false,
-          },
-        ]
-      : [];
-
-    const allInternalEdges = [
-      ...internalEdges.map((e: any) => ({ ...e, id: `nested_${e.id}` })),
-      ...autoOutEdge,
-    ];
-
-    const virtualOutNode = { id: 'out', type: 'spaceOutput', data: {} };
-    const structure = analyzeSpaceStructure(
-      [...nestedNodes, virtualOutNode],
-      allInternalEdges
-    );
-
-    const autoOutputType = lastNodeOutput?.type || structure.type;
-    const autoOutputValue = lastNode.data?.value || structure.value || null;
-
-    const maxNestedX = Math.max(...nestedNodes.map((n: any) => n.position.x));
-
-    const innerNodes: any[] = [];
-    if (includeSpaceInput) {
-      innerNodes.push({
-        id: 'in',
-        type: 'spaceInput',
-        position: { x: 50, y: 250 },
-        data: { label: 'Input' },
-      });
-    }
-    innerNodes.push({
-      id: 'out',
-      type: 'spaceOutput',
-      position: {
-        x: maxNestedX + 320,
-        y: lastNode.position.y,
-      },
-      data: { label: 'Output', outputType: autoOutputType },
-    });
-    innerNodes.push(...nestedNodes);
-
-    newSpacesMap[spaceId] = {
-      id: spaceId,
-      name: `Grouped Space`,
-      nodes: innerNodes,
-      edges: allInternalEdges,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      outputType: autoOutputType,
-      outputValue: autoOutputValue,
-      hasInput: includeSpaceInput,
-      hasOutput: true,
-      internalCategories: structure.internalCategories,
-    };
-
     const spaceNodeId = `node_space_${Date.now()}`;
+
+    const result = groupNodesIntoSpace({
+      selectedNodes,
+      edges,
+      allNodes: nodes,
+      spaceId,
+      spaceNodeId,
+      spacePosition: { x: avgX, y: avgY },
+    });
+    if (!result) {
+      setContextMenu(null);
+      return;
+    }
+
     const newNode = prepareCanvasNodeForCreate({
-      id: spaceNodeId,
-      type: 'space',
-      position: { x: avgX, y: avgY },
-      data: withFoldderCanvasIntro('space', {
-        spaceId,
-        label: structure.label || 'Nested Group',
-        hasInput: includeSpaceInput,
-        hasOutput: true,
-        outputType: autoOutputType,
-        value: autoOutputValue,
-        internalCategories: structure.internalCategories,
-      }),
+      ...result.spaceNode,
+      data: withFoldderCanvasIntro("space", result.spaceNode.data),
     });
 
-    const remainingNodes = nodes.filter((n) => !selectedIds.has(n.id));
-    const remainingEdges = edges.filter(
-      (e) => !selectedIds.has(e.source) && !selectedIds.has(e.target)
-    );
-
-    setNodes([...remainingNodes, newNode]);
+    setNodes(result.parentNodes.map((n) => (n.id === spaceNodeId ? newNode : n)));
     scheduleFoldderCanvasIntroEnd(spaceNodeId);
-    setEdges(remainingEdges);
-    setSpacesMap(newSpacesMap);
+    setEdges(result.parentEdges);
+    setSpacesMap({ ...spacesMap, [spaceId]: result.spaceEntry });
     setContextMenu(null);
   }, [
     nodes,
@@ -5118,7 +5053,6 @@ export function SpacesContent() {
     setEdges,
     setSpacesMap,
     takeSnapshot,
-    analyzeSpaceStructure,
     scheduleFoldderCanvasIntroEnd,
   ]);
 
@@ -5958,43 +5892,14 @@ export function SpacesContent() {
           options={CANVAS_BACKGROUNDS}
           solidColor={canvasBgColor}
         />
-        {/* Dentro de un Space anidado: viñeta + bordes laterales borrosos (se quita al volver a root) */}
+        {/* Dentro de un Space anidado: bordes laterales (sin blur/viñeta) */}
         {isAuthenticated && activeSpaceId !== 'root' && (
           <div
             className="pointer-events-none fixed inset-0 z-[35] transition-opacity duration-500 ease-out"
             aria-hidden
           >
-            <div
-              className="absolute inset-0"
-              style={{
-                background:
-                  'radial-gradient(ellipse 72% 58% at 50% 48%, rgba(15,23,42,0) 0%, rgba(15,23,42,0.14) 58%, rgba(15,23,42,0.38) 100%)',
-              }}
-            />
-            {!isTouchUI ? (
-              <>
-            <div
-              className="absolute left-0 top-0 bottom-0 w-[min(26vw,380px)]"
-              style={{
-                background: 'linear-gradient(to right, rgba(15,23,42,0.42), rgba(15,23,42,0.08) 55%, transparent)',
-                backdropFilter: 'blur(14px) saturate(1.05)',
-                WebkitBackdropFilter: 'blur(14px) saturate(1.05)',
-                maskImage: 'linear-gradient(to right, black 0%, black 35%, transparent 100%)',
-                WebkitMaskImage: 'linear-gradient(to right, black 0%, black 35%, transparent 100%)',
-              }}
-            />
-            <div
-              className="absolute right-0 top-0 bottom-0 w-[min(26vw,380px)]"
-              style={{
-                background: 'linear-gradient(to left, rgba(15,23,42,0.42), rgba(15,23,42,0.08) 55%, transparent)',
-                backdropFilter: 'blur(14px) saturate(1.05)',
-                WebkitBackdropFilter: 'blur(14px) saturate(1.05)',
-                maskImage: 'linear-gradient(to left, black 0%, black 35%, transparent 100%)',
-                WebkitMaskImage: 'linear-gradient(to left, black 0%, black 35%, transparent 100%)',
-              }}
-            />
-              </>
-            ) : null}
+            <div className="absolute bottom-0 left-0 top-0 w-[15px]" style={{ backgroundColor: '#336699' }} />
+            <div className="absolute bottom-0 right-0 top-0 w-[15px]" style={{ backgroundColor: '#336699' }} />
           </div>
         )}
         {/* Wheel: listener global (ratón→zoom, trackpad→pan); panOnScroll false para no solapar con XY Flow. noPanClassName placeholder evita .nopan bloqueando wheel en nodos */}
@@ -6468,21 +6373,41 @@ export function SpacesContent() {
           </div>
           {isAuthenticated && activeSpaceId !== 'root' && (
             <div className="pointer-events-none w-full flex justify-center px-3 pt-3 sm:pt-4">
-              <p className="max-w-[min(640px,92vw)] text-center text-[10px] sm:text-[11px] font-medium leading-snug text-slate-600">
-                Estás dentro del space{' '}
+              <p className="max-w-[min(720px,92vw)] text-center text-[10px] sm:text-[11px] font-medium leading-snug text-slate-600">
+                Estás en{' '}
                 <span className="font-bold text-slate-800">
                   {spacesMap[activeSpaceId]?.name || 'Space'}
                 </span>
-                , pulsa{' '}
+                {' · '}
+                {countDissolveLiftNodes(nodes)} nodos
+                {' '}
                 <button
                   type="button"
-                  onClick={() => goToRootCanvas()}
+                  onClick={() => goUpOneCanvas()}
+                  className="pointer-events-auto inline rounded-none bg-white/50 px-1.5 py-0.5 text-[9px] font-semibold text-slate-700 align-baseline cursor-pointer transition-colors hover:bg-white/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50"
+                  aria-label="Subir al lienzo padre"
+                >
+                  Subir
+                </button>
+                {' '}
+                <button
+                  type="button"
+                  onClick={() => setDissolveSpaceConfirm(true)}
+                  disabled={countDissolveLiftNodes(nodes) === 0}
+                  className="pointer-events-auto inline rounded-none bg-[#336699] px-2 py-0.5 text-[9px] font-semibold text-white align-baseline cursor-pointer transition-colors hover:bg-[#285580] disabled:opacity-40 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50"
+                  aria-label="Sacar nodos al lienzo principal"
+                >
+                  Sacar nodos al lienzo
+                </button>
+                {' '}
+                <button
+                  type="button"
+                  onClick={() => goUpOneCanvas()}
                   className="pointer-events-auto inline rounded-none bg-white/50 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-slate-700 align-baseline cursor-pointer transition-colors hover:bg-white/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50"
-                  aria-label="Salir del space (equivalente a ESC)"
+                  aria-label="Subir al lienzo padre (ESC)"
                 >
                   ESC
-                </button>{' '}
-                para salir
+                </button>
               </p>
             </div>
           )}
@@ -6526,6 +6451,49 @@ export function SpacesContent() {
             }}
             onOpenGuionistaTextAsset={openGuionistaTextAsset}
           />
+        )}
+
+        {dissolveSpaceConfirm && activeSpaceId !== 'root' && (
+          <div className="fixed inset-0 z-[10006] flex items-center justify-center p-4" data-foldder-canvas-modals>
+            <div
+              className="absolute inset-0 bg-black/45 backdrop-blur-xl"
+              onClick={() => setDissolveSpaceConfirm(false)}
+              aria-hidden
+            />
+            <div
+              className="relative z-10 w-full max-w-md rounded-none border border-white/25 bg-white/20 p-6 shadow-2xl shadow-black/20 backdrop-blur-xl"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="dissolve-space-title"
+            >
+              <h2
+                id="dissolve-space-title"
+                className="mb-3 text-sm font-black uppercase tracking-wide text-slate-800"
+              >
+                ¿Sacar {countDissolveLiftNodes(nodes)} nodos al lienzo?
+              </h2>
+              <p className="mb-5 text-sm leading-relaxed text-slate-700">
+                El space <strong>{spacesMap[activeSpaceId]?.name || 'Space'}</strong> desaparecerá y sus nodos
+                pasarán al lienzo principal. Las conexiones de entrada y salida se conservan.
+              </p>
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDissolveSpaceConfirm(false)}
+                  className="rounded-none border border-white/25 bg-white/15 px-4 py-2 text-xs font-bold text-slate-800 transition-colors hover:bg-white/35"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => dissolveActiveSpace()}
+                  className="rounded-none bg-[#336699] px-4 py-2 text-xs font-black uppercase tracking-wider text-white transition-colors hover:bg-[#285580]"
+                >
+                  Sacar al lienzo
+                </button>
+              </div>
+            </div>
+          </div>
         )}
 
         {assistantClarify && (

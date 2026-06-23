@@ -16,6 +16,7 @@ import { resolvePromptValueFromEdgeSource } from "../canvas-group-logic";
 import { FoldderDataHandle } from "../FoldderDataHandle";
 import { NodeIcon, resolveFoldderNodeState } from "../foldder-icons";
 import { FoldderNodeHeaderTitle, NodeLabel } from "../foldder-node-ui";
+import { FoldderStudioTouchedMark } from "../studio-node/foldder-studio-touched-mark";
 import { useRegisterAssistantNodeRun } from "../use-assistant-node-run";
 import { layerizerCostBreakdown } from "@/lib/layerizer/layerizer-cost";
 import type {
@@ -406,7 +407,7 @@ export const LayerizerNode = memo(function LayerizerNode({ id, data, selected }:
 
   return (
     <div
-      className="custom-node foldder-node--frameless node--media group/node"
+      className={`custom-node layerizer-node foldder-node--frameless node--media group/node ${previewUrl ? "" : "layerizer-node--empty"}`}
       style={{
         width: 260,
         minWidth: 220,
@@ -414,10 +415,12 @@ export const LayerizerNode = memo(function LayerizerNode({ id, data, selected }:
         // Sin imagen: altura mínima para el placeholder "Connect an image".
         aspectRatio: imgAR ? String(imgAR) : undefined,
         minHeight: imgAR ? 0 : 150,
-        "--foldder-frameless-accent": "#a855f7",
+        "--foldder-frameless-accent": "#a6c85e",
       } as React.CSSProperties}
     >
       <NodeLabel id={id} label={nodeData.label} defaultLabel="Layerizer" />
+
+      {previewUrl ? <FoldderStudioTouchedMark nodeType="layerizer" /> : null}
 
       <div className="handle-wrapper handle-left">
         <FoldderDataHandle type="target" position={Position.Left} id="image" dataType="image" />

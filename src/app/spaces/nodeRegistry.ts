@@ -324,22 +324,6 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
       type: 'image',
     },
   },
-  backgroundRemover: {
-    type: 'backgroundRemover',
-    label: 'Background Remover',
-    description: 'Professional human matting and background removal using 851-labs.',
-    inputs: [
-      { id: 'media', label: 'Image', type: 'image' }
-    ],
-    outputs: [
-      { id: 'rgba', label: 'Cutout', type: 'image' },
-    ],
-    dataSchema: {
-      threshold: 0.9,
-      expansion: 0,
-      feather: 0.6
-    }
-  },
   mediaDescriber: {
     type: 'mediaDescriber',
     label: 'Image Describer',
@@ -589,7 +573,6 @@ export const ASSISTANT_NODE_DATA_HINTS: Record<string, string> = {
   spaceOutput: "label",
   painter: "bgColor, strokeColor, brushSize, value",
   crop: "aspectRatio, cropConfig, value",
-  backgroundRemover: "threshold, expansion, feather",
   layerizer:
     "entrada image (master inmutable); detected (Gemini), selected (objetos + amodal opt-in), jobId/status (job async), output/value (LayerizerOutput: background clean_plate + layers extracted); salida layout (image_layout) conecta a designer. Extracción = recorte pixel-exacto (SAM 3 + matting), NUNCA generativo; fondo limpio = 1 llamada Nano Banana",
   projectBrain:

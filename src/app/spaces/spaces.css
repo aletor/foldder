@@ -497,8 +497,8 @@
   text-shadow: none;
 }
 
-.react-flow__node .custom-node:is(.inspiration-node, .image-creation-advanced-node, .crop-node, .mask-node, .video-editor-node):not(.canvas-group-frame) > [class*="group/label"] > div,
-.react-flow__node .custom-node:is(.inspiration-node, .image-creation-advanced-node, .crop-node, .mask-node, .video-editor-node):not(.canvas-group-frame) > [class*="group/label"] > input,
+.react-flow__node .custom-node:is(.inspiration-node, .image-creation-advanced-node, .crop-node, .layerizer-node, .video-editor-node):not(.canvas-group-frame) > [class*="group/label"] > div,
+.react-flow__node .custom-node:is(.inspiration-node, .image-creation-advanced-node, .crop-node, .layerizer-node, .video-editor-node):not(.canvas-group-frame) > [class*="group/label"] > input,
 .react-flow__node .custom-node.foldder-node--frameless.node--media:not(.foldder-frameless-label-dark) > [class*="group/label"] > div,
 .react-flow__node .custom-node.foldder-node--frameless.node--media:not(.foldder-frameless-label-dark) > [class*="group/label"] > input {
   color: rgba(255, 255, 255, 0.86) !important;
@@ -563,7 +563,7 @@
 .custom-node.foldder-studio-node--cine.foldder-node--frameless.node--media,
 .custom-node.foldder-studio-node--projectBrain.foldder-node--frameless.node--media,
 .custom-node.nano-banana-node.foldder-node--frameless.node--media,
-.custom-node.mask-node.foldder-node--frameless.node--media,
+.custom-node.layerizer-node.foldder-node--frameless.node--media,
 .custom-node.url-image-node.foldder-node--frameless.node--media {
   overflow: visible !important;
   overflow-clip-margin: 0;
@@ -646,7 +646,7 @@
   box-shadow: none !important;
 }
 
-.custom-node.mask-node > .foldder-studio-touched-mark {
+.custom-node.layerizer-node > .foldder-studio-touched-mark {
   position: absolute !important;
   top: 0 !important;
   left: 0 !important;
@@ -6064,7 +6064,7 @@ body.nb-studio-open [data-foldder-canvas-launcher] {
 .custom-node.image-export-node { --foldder-node-card-bg: #DDDE55; }
 .custom-node.gemini-video-node { --foldder-node-card-bg: #3239ba; }
 .custom-node.crop-node { --foldder-node-card-bg: #F0804D; }
-.custom-node.mask-node { --foldder-node-card-bg: #a6c85e; }
+.custom-node.layerizer-node { --foldder-node-card-bg: #a6c85e; }
 .custom-node.vfx-generator-node { --foldder-node-card-bg: var(--foldder-palette-s); }
 .custom-node.presenter-node { --foldder-node-card-bg: #f5b91b; }
 .custom-node.painter-node { --foldder-node-card-bg: #890AF3; }
@@ -6443,8 +6443,8 @@ body.nb-studio-open [data-foldder-canvas-launcher] {
    Mismo patrón que el describer: doble selector para ganar especificidad (0,5,0)
    en el lienzo y en el preview de arrastre del sidebar. El main se hace
    transparente solo en idle para que se vea la imagen de la tarjeta. */
-.react-flow__node .custom-node.foldder-node--frameless.mask-node.node--media.mask-node--empty,
-.foldder-library-preview-node .custom-node.foldder-node--frameless.mask-node.node--media.mask-node--empty {
+.react-flow__node .custom-node.foldder-node--frameless.layerizer-node.node--media.layerizer-node--empty,
+.foldder-library-preview-node .custom-node.foldder-node--frameless.layerizer-node.node--media.layerizer-node--empty {
   background-color: #a6c85e !important;
   background-image: url("/nodes/bg-remover-bg.png") !important;
   background-size: cover !important;
@@ -6452,7 +6452,7 @@ body.nb-studio-open [data-foldder-canvas-launcher] {
   background-repeat: no-repeat !important;
 }
 
-.custom-node.mask-node.mask-node--empty .foldder-frameless-main {
+.custom-node.layerizer-node.layerizer-node--empty .foldder-frameless-main {
   background: transparent !important;
 }
 

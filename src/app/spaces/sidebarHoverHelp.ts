@@ -76,10 +76,6 @@ export const SIDEBAR_HOVER_HELP: Record<string, { title: string; line: string }>
     title: 'Crop',
     line: 'Recorta y encuadra imagen',
   },
-  backgroundRemover: {
-    title: 'Background Remover',
-    line: 'Elimina fondo de la imagen',
-  },
   layerizer: {
     title: 'Layerizer',
     line: 'Descompone una imagen en capas + fondo limpio',

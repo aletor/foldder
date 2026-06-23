@@ -18,7 +18,7 @@ const NODE_TYPE_ALIASES: Record<string, string> = {
 };
 
 const EXTRA_NODE_IMAGE_SRC: Record<string, string> = {
-  backgroundRemover: "/nodes/bg-remover-bg.png",
+  layerizer: "/nodes/bg-remover-bg.png",
   mediaDescriber: "/nodes/describer-bg.png",
 };
 
@@ -63,9 +63,9 @@ export const HOME_V2_NODE_CARDS: readonly { label: string; description: string; 
     type: "photoRoom",
   },
   {
-    label: "Background Remover",
-    description: "Elimina el **fondo** de la imagen con **precisión**.",
-    type: "backgroundRemover",
+    label: "Layerizer",
+    description: "Descompone una imagen en **capas** con **fondo limpio**.",
+    type: "layerizer",
   },
   {
     label: "Image Describer",

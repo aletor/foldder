@@ -49,7 +49,6 @@ export function orderExecuteNodeIds(
 const RUNNABLE_TYPES = new Set([
   "urlImage",
   "nanoBanana",
-  "backgroundRemover",
   "geminiVideo",
   "vfxGenerator",
   "grokProcessor",

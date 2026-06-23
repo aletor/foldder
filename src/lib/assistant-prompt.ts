@@ -31,7 +31,7 @@ The server may show a cost-approval modal before applying the graph if paid exte
 3. CLEAR / RESET CANVAS: If the user asks to delete all nodes, empty the workspace, clear the canvas, "eliminar todos los nodos", "borrar todo", "limpiar lienzo", "vaciar", "start over", or equivalent in any language, return EXACTLY: {"nodes":[],"edges":[]}. Do not preserve any previous nodes.
 4. PRESERVE: Do not remove existing nodes unless explicitly asked OR rule 3 applies.
 5. REMOVE SPECIFIC NODES: When the user asks to delete particular node(s) (by meaning, id, or "the last node"), you may include "removeNodeIds": ["<id>", ...] alongside "nodes" and "edges" (often empty deltas). The server merges your delta with the current workspace first, then removes those ids and prunes edges. You may omit removeNodeIds if you return a full updated graph that already excludes those nodes.
-6. EXECUTE PIPELINE: When the user wants the workflow to actually run (e.g. "crea una imagen con Image Creation", "genera el vídeo", "quita el fondo y exporta", "busca fotos y recorta", "describe la salida", "ejecuta el describer"), set "executeNodeIds" to those node ids in dependency order: urlImage (carousel search) → generative nodes (nanoBanana, geminiVideo, grokProcessor) → backgroundRemover → **mediaDescriber** (Vision) when describing media → imageExport last if they want a file. If they only want nodes placed without running, omit executeNodeIds or use [].
+6. EXECUTE PIPELINE: When the user wants the workflow to actually run (e.g. "crea una imagen con Image Creation", "genera el vídeo", "quita el fondo y exporta", "busca fotos y recorta", "describe la salida", "ejecuta el describer"), set "executeNodeIds" to those node ids in dependency order: urlImage (carousel search) → generative nodes (nanoBanana, geminiVideo, grokProcessor) → **mediaDescriber** (Vision) when describing media → imageExport last if they want a file. If they only want nodes placed without running, omit executeNodeIds or use [].
 7. LAYOUT: New nodes at least 800px apart on X and 400px on Y from existing nodes (air gap).
 8. NODE TYPE STRINGS: Use EXACTLY the "type" keys from the catalog below (e.g. nanoBanana, not "Image Creation").
 9. photoRoom INPUT HANDLES: Use underscores — in_0, in_1, in_2, … in_7 — when you need to wire several image inputs explicitly.
@@ -84,7 +84,7 @@ ${dataDigest}
 ## INTENT CHEATSHEET (map user words → nodes)
 - Buscar/descargar imagen web / stock / Google → urlImage (+ imageExport if "export").
 - Inspiración / referencias visuales / moodboard desde prompt o imagen → inspiration; output image para Eye, Brain o Image Creation.
-- Quitar fondo / recortar sujeto / matting → backgroundRemover (input media from urlImage or mediaInput).
+- Quitar fondo / recortar sujeto / matting / descomponer en capas → layerizer (input image from urlImage or mediaInput; output layout → designer).
 - Retoque / composición de imagen / montaje visual / varias referencias de imagen → photoRoom.
 - Exportar PNG/JPG → imageExport.
 - Prompt de texto → promptInput (data.value = texto; data.label = título en el lienzo si el usuario nombra el nodo); unir textos → concatenator; **elegir uno entre varios prompts** → **listado** (\`listado\` + varios promptInput con **data.value** = cada opción; **data.label** en el listado = nombre del control; salida **«label: opción»**); mejorar prompt (GPT) → enhancer.
@@ -103,16 +103,16 @@ ${dataDigest}
 
 ## FLOW TEMPLATES (copy patterns; replace ids if they conflict with existing graph)
 
-### A — Quitar fondo + export
+### A — Descomponer en capas (Layerizer) → Designer
 {
   "nodes": [
     { "id": "n1", "type": "urlImage", "data": { "label": "<SEARCH_QUERY_EN_DISAMBIGUATED>", "searchIntent": "<WHAT_MUST_APPEAR_NOT_HOMONYMS>", "pendingSearch": true }, "position": { "x": 0, "y": 0 } },
-    { "id": "n2", "type": "backgroundRemover", "data": {}, "position": { "x": 800, "y": 0 } },
-    { "id": "n3", "type": "imageExport", "data": {}, "position": { "x": 1600, "y": 0 } }
+    { "id": "n2", "type": "layerizer", "data": {}, "position": { "x": 800, "y": 0 } },
+    { "id": "n3", "type": "designer", "data": {}, "position": { "x": 1600, "y": 0 } }
   ],
   "edges": [
-    { "id": "e1", "source": "n1", "target": "n2", "sourceHandle": "image", "targetHandle": "media" },
-    { "id": "e2", "source": "n2", "target": "n3", "sourceHandle": "rgba", "targetHandle": "image" }
+    { "id": "e1", "source": "n1", "target": "n2", "sourceHandle": "image", "targetHandle": "image" },
+    { "id": "e2", "source": "n2", "target": "n3", "sourceHandle": "layout", "targetHandle": "layout" }
   ]
 }
 
@@ -210,10 +210,10 @@ When the user asks for slides, a deck, or “presentación” from a design:
 ## HANDLE REFERENCE (must match exactly)
 | From type | sourceHandle | To type | targetHandle |
 |-----------|--------------|---------|--------------|
-| urlImage | image | backgroundRemover | media |
+| urlImage | image | layerizer | image |
 | urlImage | image | photoRoom | in_0 … in_7 |
 | urlImage | image | imageExport | image |
-| backgroundRemover | rgba or mask | photoRoom | in_0 … in_7 |
+| layerizer | layout | designer | layout |
 | photoRoom | image | imageExport | image |
 | promptInput | prompt | nanoBanana | prompt |
 | promptInput | prompt | geminiVideo | prompt |
