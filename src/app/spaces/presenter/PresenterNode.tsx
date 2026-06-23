@@ -15,6 +15,8 @@ import type { PresenterImageVideoPlacement } from "./presenter-image-video-types
 import { firstPlayableIndex } from "./presenter-skip-slide";
 import type { SlideTransitionId } from "./slide-transition-types";
 import { DEFAULT_SLIDE_TRANSITION } from "./slide-transition-types";
+import type { PresenterEditorMode, PresenterProLayerTrack } from "./presenter-pro-timing";
+import { DEFAULT_PRO_SLIDE_DURATION_MS } from "./presenter-pro-timing";
 import { PresenterStudio } from "./PresenterStudio";
 import { type FoldderStudioEventDetail } from "../desktop-studio-events";
 import { useFoldderRenderMetric } from "../use-performance-metrics";
@@ -48,6 +50,12 @@ export type PresenterNodeData = {
   imageVideoPlacements?: PresenterImageVideoPlacement[];
   /** Transiciones entre slides (persistidas en el nodo Presenter). */
   transitionsByPageId?: Record<string, SlideTransitionId>;
+  /** Editor del Presenter: pasos por clic (simple) o timeline (pro). */
+  presenterEditorMode?: PresenterEditorMode;
+  /** Duración de cada slide en modo Pro (ms). */
+  proSlideDurationByPageId?: Record<string, number>;
+  /** In/out por capa en modo Pro, por página. */
+  proLayerTracksByPageId?: Record<string, Record<string, PresenterProLayerTrack>>;
 };
 
 function useDesignerDocumentPages(presenterId: string): {
@@ -213,6 +221,45 @@ export const PresenterNode = memo(({ id, data, selected }: NodeProps<any>) => {
     [id, setNodes],
   );
 
+  const setPresenterEditorMode = useCallback(
+    (mode: PresenterEditorMode) => {
+      setNodes((nds) =>
+        nds.map((n) =>
+          n.id === id && n.type === "presenter"
+            ? { ...n, data: touchStudioNodeData(n.data as Record<string, unknown>, { presenterEditorMode: mode }) }
+            : n,
+        ),
+      );
+    },
+    [id, setNodes],
+  );
+
+  const setProSlideDurationByPageId = useCallback(
+    (next: Record<string, number>) => {
+      setNodes((nds) =>
+        nds.map((n) =>
+          n.id === id && n.type === "presenter"
+            ? { ...n, data: touchStudioNodeData(n.data as Record<string, unknown>, { proSlideDurationByPageId: next }) }
+            : n,
+        ),
+      );
+    },
+    [id, setNodes],
+  );
+
+  const setProLayerTracksByPageId = useCallback(
+    (next: Record<string, Record<string, PresenterProLayerTrack>>) => {
+      setNodes((nds) =>
+        nds.map((n) =>
+          n.id === id && n.type === "presenter"
+            ? { ...n, data: touchStudioNodeData(n.data as Record<string, unknown>, { proLayerTracksByPageId: next }) }
+            : n,
+        ),
+      );
+    },
+    [id, setNodes],
+  );
+
   const initialTransitions = useMemo(() => {
     const stored = nodeData.transitionsByPageId ?? {};
     const merged: Record<string, SlideTransitionId> = { ...stored };
@@ -221,6 +268,19 @@ export const PresenterNode = memo(({ id, data, selected }: NodeProps<any>) => {
     }
     return merged;
   }, [nodeData.transitionsByPageId, pages]);
+
+  const initialProSlideDurations = useMemo(() => {
+    const stored = nodeData.proSlideDurationByPageId ?? {};
+    const merged: Record<string, number> = { ...stored };
+    for (const p of pages ?? []) {
+      if (merged[p.id] === undefined) merged[p.id] = DEFAULT_PRO_SLIDE_DURATION_MS;
+    }
+    return merged;
+  }, [nodeData.proSlideDurationByPageId, pages]);
+
+  const initialProLayerTracks = useMemo(() => {
+    return nodeData.proLayerTracksByPageId ?? {};
+  }, [nodeData.proLayerTracksByPageId]);
 
   React.useEffect(() => {
     const onOpenStudio = (ev: Event) => {
@@ -438,6 +498,12 @@ export const PresenterNode = memo(({ id, data, selected }: NodeProps<any>) => {
             onImageVideoPlacementsChange={setImageVideoPlacements}
             initialTransitionsByPageId={initialTransitions}
             onTransitionsByPageIdChange={setTransitionsByPageId}
+            initialPresenterEditorMode={nodeData.presenterEditorMode ?? "simple"}
+            onPresenterEditorModeChange={setPresenterEditorMode}
+            initialProSlideDurationByPageId={initialProSlideDurations}
+            onProSlideDurationByPageIdChange={setProSlideDurationByPageId}
+            initialProLayerTracksByPageId={initialProLayerTracks}
+            onProLayerTracksByPageIdChange={setProLayerTracksByPageId}
             shareContext={{
               deckKey: designerNodeId ? `${designerNodeId}::${id}` : `presenter::${id}`,
               deckTitle: nodeData.label?.trim() || "Presentation",

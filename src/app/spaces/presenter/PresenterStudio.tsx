@@ -7,6 +7,7 @@ import {
   ChevronRight,
   ChevronsDown,
   ChevronsUp,
+  Clock,
   EyeOff,
   Maximize2,
   Minimize2,
@@ -52,6 +53,17 @@ import {
 import type { PresenterImageVideoCanvasBinding, PresenterImageVideoPlacement } from "./presenter-image-video-types";
 import { collectPresenterImageTargets } from "./presenter-image-video-collect";
 import { PresenterVideoPropertiesPanel } from "./PresenterVideoPropertiesPanel";
+import { PresenterProLayerPanel } from "./PresenterProLayerPanel";
+import { PresenterProTimeline } from "./PresenterProTimeline";
+import {
+  clampProTrack,
+  DEFAULT_PRO_SLIDE_DURATION_MS,
+  listProTimelineRows,
+  formatProClock,
+  type PlayProTimingState,
+  type PresenterEditorMode,
+  type PresenterProLayerTrack,
+} from "./presenter-pro-timing";
 import { findVideoPlacementForCanvasSelection } from "./presenter-video-selection";
 import {
   FoldderStudioHeader,
@@ -79,6 +91,12 @@ type Props = {
   /** Transiciones entre slides (persistidas en el nodo Presenter). */
   initialTransitionsByPageId?: Record<string, SlideTransitionId>;
   onTransitionsByPageIdChange?: (next: Record<string, SlideTransitionId>) => void;
+  initialPresenterEditorMode?: PresenterEditorMode;
+  onPresenterEditorModeChange?: (mode: PresenterEditorMode) => void;
+  initialProSlideDurationByPageId?: Record<string, number>;
+  onProSlideDurationByPageIdChange?: (next: Record<string, number>) => void;
+  initialProLayerTracksByPageId?: Record<string, Record<string, PresenterProLayerTrack>>;
+  onProLayerTracksByPageIdChange?: (next: Record<string, Record<string, PresenterProLayerTrack>>) => void;
 };
 
 type PendingAnim = {
@@ -94,6 +112,12 @@ function initTransitions(pages: DesignerPageState[]): Record<string, SlideTransi
   return o;
 }
 
+function initProSlideDurations(pages: DesignerPageState[]): Record<string, number> {
+  const o: Record<string, number> = {};
+  for (const p of pages) o[p.id] = DEFAULT_PRO_SLIDE_DURATION_MS;
+  return o;
+}
+
 export function PresenterStudio({
   pages,
   onClose,
@@ -103,10 +127,20 @@ export function PresenterStudio({
   onImageVideoPlacementsChange,
   initialTransitionsByPageId,
   onTransitionsByPageIdChange,
+  initialPresenterEditorMode = "simple",
+  onPresenterEditorModeChange,
+  initialProSlideDurationByPageId,
+  onProSlideDurationByPageIdChange,
+  initialProLayerTracksByPageId,
+  onProLayerTracksByPageIdChange,
 }: Props) {
   const [shareOpen, setShareOpen] = useState(false);
-  /** Panel lateral derecho: propiedades de vídeo · animaciones (iconos siempre visibles). */
-  const [rightPanelTab, setRightPanelTab] = useState<"properties" | "animations" | null>("animations");
+  /** Panel lateral derecho: propiedades de vídeo · animaciones · timing (Pro). */
+  const [rightPanelTab, setRightPanelTab] = useState<"properties" | "animations" | "timing" | null>(
+    initialPresenterEditorMode === "pro" ? "timing" : "animations",
+  );
+  const [editorMode, setEditorMode] = useState<PresenterEditorMode>(initialPresenterEditorMode);
+  const isProMode = editorMode === "pro";
   const [playMode, setPlayMode] = useState(false);
   const playShellRef = useRef<HTMLDivElement | null>(null);
   const playAnimTimerRef = useRef<number | null>(null);
@@ -131,6 +165,20 @@ export function PresenterStudio({
   });
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [pickerPreviewTransition, setPickerPreviewTransition] = useState<SlideTransitionId | null>(null);
+  const [proSlideDurationByPageId, setProSlideDurationByPageId] = useState<Record<string, number>>(() => {
+    const base = initialProSlideDurationByPageId ?? initProSlideDurations(pages);
+    const next = { ...base };
+    for (const p of pages) {
+      if (next[p.id] === undefined) next[p.id] = DEFAULT_PRO_SLIDE_DURATION_MS;
+    }
+    return next;
+  });
+  const [proLayerTracksByPageId, setProLayerTracksByPageId] = useState<
+    Record<string, Record<string, PresenterProLayerTrack>>
+  >(() => initialProLayerTracksByPageId ?? {});
+  const [proPlayheadMs, setProPlayheadMs] = useState(0);
+  const [proTransportPlaying, setProTransportPlaying] = useState(false);
+  const proAutoAdvancingRef = useRef(false);
 
   /** Picker anclado al botón de transición (portal fijo). */
   const [picker, setPicker] = useState<{ pageId: string; rect: DOMRect } | null>(null);
@@ -154,6 +202,20 @@ export function PresenterStudio({
       setShowOnboarding(true);
     }
   }, []);
+
+  useEffect(() => {
+    setProSlideDurationByPageId((prev) => {
+      const next = { ...prev };
+      for (const p of pages) {
+        if (next[p.id] === undefined) next[p.id] = DEFAULT_PRO_SLIDE_DURATION_MS;
+      }
+      return next;
+    });
+  }, [pages]);
+
+  useEffect(() => {
+    setEditorMode(initialPresenterEditorMode);
+  }, [initialPresenterEditorMode]);
 
   useEffect(() => {
     document.body.classList.add("nb-studio-open", "foldder-studio-flush");
@@ -202,7 +264,7 @@ export function PresenterStudio({
     (pageId: string, id: SlideTransitionId) => {
       setTransitionsByPageId((prev) => {
         const next = { ...prev, [pageId]: id };
-        onTransitionsByPageIdChange?.(next);
+        queueMicrotask(() => onTransitionsByPageIdChange?.(next));
         return next;
       });
     },
@@ -226,6 +288,150 @@ export function PresenterStudio({
   );
 
   const currentPage = pages[safeRailIdx] ?? null;
+  const currentPageId = currentPage?.id ?? "";
+  const currentSlideDurationMs = currentPageId
+    ? proSlideDurationByPageId[currentPageId] ?? DEFAULT_PRO_SLIDE_DURATION_MS
+    : DEFAULT_PRO_SLIDE_DURATION_MS;
+  const currentProTracks = currentPageId ? proLayerTracksByPageId[currentPageId] ?? {} : {};
+
+  const setEditorModeAndPersist = useCallback(
+    (mode: PresenterEditorMode) => {
+      setEditorMode(mode);
+      onPresenterEditorModeChange?.(mode);
+      if (mode === "pro") {
+        setRightPanelTab((t) => (t === "animations" ? "timing" : t ?? "timing"));
+      } else {
+        setRightPanelTab((t) => (t === "timing" ? "animations" : t));
+      }
+      setProTransportPlaying(false);
+      setProPlayheadMs(0);
+    },
+    [onPresenterEditorModeChange],
+  );
+
+  const patchProSlideDuration = useCallback(
+    (pageId: string, ms: number) => {
+      setProSlideDurationByPageId((prev) => {
+        const next = { ...prev, [pageId]: ms };
+        queueMicrotask(() => onProSlideDurationByPageIdChange?.(next));
+        return next;
+      });
+      setProLayerTracksByPageId((prev) => {
+        const pageTracks = prev[pageId];
+        if (!pageTracks) return prev;
+        const clamped: Record<string, PresenterProLayerTrack> = {};
+        for (const [k, t] of Object.entries(pageTracks)) {
+          clamped[k] = clampProTrack(t, ms);
+        }
+        const next = { ...prev, [pageId]: clamped };
+        queueMicrotask(() => onProLayerTracksByPageIdChange?.(next));
+        return next;
+      });
+    },
+    [onProSlideDurationByPageIdChange, onProLayerTracksByPageIdChange],
+  );
+
+  const patchProTrack = useCallback(
+    (pageId: string, key: string, track: PresenterProLayerTrack) => {
+      const dur = proSlideDurationByPageId[pageId] ?? DEFAULT_PRO_SLIDE_DURATION_MS;
+      const clamped = clampProTrack(track, dur);
+      setProLayerTracksByPageId((prev) => {
+        const pageTracks = { ...(prev[pageId] ?? {}), [key]: clamped };
+        const next = { ...prev, [pageId]: pageTracks };
+        queueMicrotask(() => onProLayerTracksByPageIdChange?.(next));
+        return next;
+      });
+    },
+    [onProLayerTracksByPageIdChange, proSlideDurationByPageId],
+  );
+
+  const editorProTiming = useMemo((): PlayProTimingState | null => {
+    if (!isProMode || !currentPageId || playMode) return null;
+    return {
+      playheadMs: proPlayheadMs,
+      slideDurationMs: currentSlideDurationMs,
+      tracksByKey: currentProTracks,
+    };
+  }, [isProMode, currentPageId, playMode, proPlayheadMs, currentSlideDurationMs, currentProTracks]);
+
+  const playProTiming = useMemo((): PlayProTimingState | null => {
+    if (!isProMode || !playMode || !currentPageId) return null;
+    return {
+      playheadMs: proPlayheadMs,
+      slideDurationMs: currentSlideDurationMs,
+      tracksByKey: currentProTracks,
+    };
+  }, [isProMode, playMode, currentPageId, proPlayheadMs, currentSlideDurationMs, currentProTracks]);
+
+  const advanceProSlideAfterEnd = useCallback(() => {
+    const nextI = nextPlayableIndex(pages, activeIdx);
+    if (nextI !== null) {
+      proAutoAdvancingRef.current = true;
+      goToIdx(nextI);
+      setProPlayheadMs(0);
+      setProTransportPlaying(true);
+      return true;
+    }
+    setProTransportPlaying(false);
+    setProPlayheadMs(0);
+    return false;
+  }, [pages, activeIdx, goToIdx]);
+
+  useEffect(() => {
+    if (!proTransportPlaying) return;
+
+    let rafId = 0;
+    let last = performance.now();
+    let slideEnded = false;
+
+    const tick = (now: number) => {
+      const dt = now - last;
+      last = now;
+
+      setProPlayheadMs((prev) => {
+        if (slideEnded) return prev;
+        const next = prev + dt;
+        if (next >= currentSlideDurationMs) {
+          slideEnded = true;
+          if (playMode) {
+            window.setTimeout(() => advanceProSlideAfterEnd(), 0);
+          } else {
+            window.setTimeout(() => setProTransportPlaying(false), 0);
+          }
+          return currentSlideDurationMs;
+        }
+        return next;
+      });
+
+      if (!slideEnded) {
+        rafId = requestAnimationFrame(tick);
+      }
+    };
+
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, [proTransportPlaying, currentSlideDurationMs, playMode, advanceProSlideAfterEnd]);
+
+  useEffect(() => {
+    setProPlayheadMs(0);
+    if (proAutoAdvancingRef.current) {
+      proAutoAdvancingRef.current = false;
+      return;
+    }
+    setProTransportPlaying(false);
+  }, [activeIdx]);
+
+  useEffect(() => {
+    if (!isProMode) setProTransportPlaying(false);
+  }, [isProMode]);
+
+  const toggleProTransport = useCallback(() => {
+    setProTransportPlaying((p) => {
+      if (p) return false;
+      if (proPlayheadMs >= currentSlideDurationMs) setProPlayheadMs(0);
+      return true;
+    });
+  }, [proPlayheadMs, currentSlideDurationMs]);
 
   /** Alineado con el slide que pinta `PresenterSlideStage` (una sola capa). */
   const canvasPageId = pages[activeIdx]?.id ?? "";
@@ -310,9 +516,14 @@ export function PresenterStudio({
 
   useLayoutEffect(() => {
     if (!currentPage) return;
-    const steps = mergeStepsWithPage(currentPage);
-    setAnimationSelectedKeys(steps[0] ? [presenterStepKey(steps[0])] : []);
-  }, [currentPage?.id]);
+    if (isProMode) {
+      const rows = listProTimelineRows(currentPage.objects ?? []);
+      setAnimationSelectedKeys(rows[0] ? [rows[0].key] : []);
+    } else {
+      const steps = mergeStepsWithPage(currentPage);
+      setAnimationSelectedKeys(steps[0] ? [presenterStepKey(steps[0])] : []);
+    }
+  }, [currentPage?.id, isProMode]);
 
   const handlePickKey = useCallback((key: string | null, mods: PickPointerModifiers) => {
     const multi = mods.ctrlKey || mods.metaKey;
@@ -324,7 +535,8 @@ export function PresenterStudio({
       else next.add(key);
       return Array.from(next);
     });
-  }, []);
+    if (isProMode && key) setRightPanelTab("timing");
+  }, [isProMode]);
 
   const handleMarqueeSelect = useCallback((keys: string[], mods: PickPointerModifiers) => {
     const multi = mods.ctrlKey || mods.metaKey;
@@ -518,11 +730,12 @@ export function PresenterStudio({
   }, [playMode, clearEditorEnterPreview]);
 
   const playRevealForOverlay = useMemo((): PlayRevealState | null => {
+    if (isProMode) return null;
     if (!playMode || !currentPage) return null;
     const steps = mergeStepsWithPage(currentPage);
     if (!steps.length) return null;
     return { revealCount: playRevealCount, steps };
-  }, [playMode, currentPage, playRevealCount]);
+  }, [isProMode, playMode, currentPage, playRevealCount]);
 
   useEffect(() => {
     if (!playMode) return;
@@ -602,6 +815,8 @@ export function PresenterStudio({
   const exitPlay = useCallback(() => {
     setPlayMode(false);
     setPlayBarHidden(false);
+    setProTransportPlaying(false);
+    setProPlayheadMs(0);
     if (typeof document !== "undefined" && document.fullscreenElement) {
       void document.exitFullscreen().catch(() => undefined);
     }
@@ -612,8 +827,12 @@ export function PresenterStudio({
     setPlayRevealCount(0);
     setAnimateEnterTargetKey(null);
     setPlayBarHidden(false);
+    setProPlayheadMs(0);
     setPlayMode(true);
-  }, []);
+    if (editorMode === "pro") {
+      setProTransportPlaying(true);
+    }
+  }, [editorMode]);
 
   const wasPlayModeRef = useRef(false);
   useEffect(() => {
@@ -670,7 +889,24 @@ export function PresenterStudio({
     return () => window.removeEventListener("keydown", onKey, true);
   }, [shareOpen, playMode, enterPlay, exitPlay]);
 
-  /** En Play: flechas = revelar grupos (orden del panel) y luego siguiente slide. */
+  /** Pro (editor): Espacio = play/pause del timeline. */
+  useEffect(() => {
+    if (!isProMode || playMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (shareOpen) return;
+      const el = e.target as HTMLElement | null;
+      if (el?.closest("input, textarea, select, [contenteditable]")) return;
+      if (e.key !== " " && e.code !== "Space") return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      e.preventDefault();
+      e.stopPropagation();
+      toggleProTransport();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [isProMode, playMode, shareOpen, toggleProTransport]);
+
+  /** En Play: flechas = revelar grupos (Simple) · Pro = solo tiempo (Espacio pausa). */
   useEffect(() => {
     if (!playMode) return;
     const onKey = (e: KeyboardEvent) => {
@@ -678,6 +914,14 @@ export function PresenterStudio({
         e.preventDefault();
         e.stopPropagation();
         exitPlay();
+        return;
+      }
+      if (isProMode) {
+        if (e.key === " " || e.code === "Space") {
+          e.preventDefault();
+          e.stopPropagation();
+          toggleProTransport();
+        }
         return;
       }
       if (e.key === "ArrowRight") {
@@ -693,7 +937,7 @@ export function PresenterStudio({
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [playMode, playAdvanceRight, playAdvanceLeft, exitPlay]);
+  }, [playMode, isProMode, playAdvanceRight, playAdvanceLeft, exitPlay, toggleProTransport]);
 
   const stageFocusIdx = pendingAnim ? pendingAnim.to : activeIdx;
 
@@ -727,6 +971,32 @@ export function PresenterStudio({
         onClose={onClose}
         actions={
           <>
+            <div
+              className="flex items-center rounded-md border border-white/15 bg-[#0e1014] p-0.5"
+              role="group"
+              aria-label="Modo de edición"
+            >
+              <button
+                type="button"
+                onClick={() => setEditorModeAndPersist("simple")}
+                aria-pressed={!isProMode}
+                className={`rounded px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide transition-colors ${
+                  !isProMode ? "bg-[#f5b91b] text-black" : "text-zinc-400 hover:text-zinc-200"
+                }`}
+              >
+                Simple
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditorModeAndPersist("pro")}
+                aria-pressed={isProMode}
+                className={`rounded px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide transition-colors ${
+                  isProMode ? "bg-[#f5b91b] text-black" : "text-zinc-400 hover:text-zinc-200"
+                }`}
+              >
+                Pro
+              </button>
+            </div>
             <button
               type="button"
               onClick={enterPlay}
@@ -854,6 +1124,7 @@ export function PresenterStudio({
               pendingAnim={pendingAnim}
               onAnimationEnd={onAnimationEnd}
               playReveal={previewPlayReveal}
+              playProTiming={editorProTiming}
               animateEnterTargetKey={previewAnimateKey}
               allowPickDuringReveal={Boolean(previewPlayReveal)}
               showPresentationBounds={!playMode}
@@ -869,6 +1140,30 @@ export function PresenterStudio({
               }
             />
           </div>
+          {isProMode && currentPage && !playMode ? (
+            <PresenterProTimeline
+              page={currentPage}
+              slideDurationMs={currentSlideDurationMs}
+              onSlideDurationChange={(ms) => {
+                if (!currentPageId) return;
+                patchProSlideDuration(currentPageId, ms);
+              }}
+              tracks={currentProTracks}
+              onPatchTrack={(key, track) => {
+                if (!currentPageId) return;
+                patchProTrack(currentPageId, key, track);
+              }}
+              selectedKeys={animationSelectedKeys}
+              onSelectKey={(key) => {
+                setAnimationSelectedKeys([key]);
+                setRightPanelTab("timing");
+              }}
+              playheadMs={proPlayheadMs}
+              onPlayheadChange={setProPlayheadMs}
+              isPlaying={proTransportPlaying}
+              onTogglePlay={toggleProTransport}
+            />
+          ) : null}
         </main>
 
         <div className="flex min-h-0 max-h-full shrink-0 flex-row items-stretch overflow-hidden">
@@ -879,7 +1174,7 @@ export function PresenterStudio({
               onPatch={onVideoPatch}
             />
           )}
-          {rightPanelTab === "animations" && currentPage && (
+          {rightPanelTab === "animations" && !isProMode && currentPage && (
             <PresenterAnimationsPanel
               key={currentPage.id}
               page={currentPage}
@@ -889,6 +1184,20 @@ export function PresenterStudio({
               onChangeSteps={commitGroupSteps}
               onApplyEnterToMultiSelection={applyEnterToMultiSelection}
               onPreviewPresetHover={handlePreviewPresetHover}
+              onClose={() => setRightPanelTab(null)}
+            />
+          )}
+          {rightPanelTab === "timing" && isProMode && currentPage && (
+            <PresenterProLayerPanel
+              key={currentPage.id}
+              page={currentPage}
+              selectedStepKeys={animationSelectedKeys}
+              slideDurationMs={currentSlideDurationMs}
+              tracks={currentProTracks}
+              onPatchTrack={(key, track) => {
+                if (!currentPageId) return;
+                patchProTrack(currentPageId, key, track);
+              }}
               onClose={() => setRightPanelTab(null)}
             />
           )}
@@ -909,19 +1218,35 @@ export function PresenterStudio({
             >
               <SlidersHorizontal className="h-4 w-4 shrink-0" strokeWidth={2} aria-hidden />
             </button>
-            <button
-              type="button"
-              title="Animaciones"
-              aria-pressed={rightPanelTab === "animations"}
-              onClick={() => setRightPanelTab((t) => (t === "animations" ? null : "animations"))}
-              className={`flex h-11 w-full items-center justify-center transition-colors ${
-                rightPanelTab === "animations"
-                  ? "bg-[#f5b91b]/15 text-[#f5b91b]"
-                  : "text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
-              }`}
-            >
-              <Sparkles className="h-4 w-4 shrink-0" aria-hidden />
-            </button>
+            {isProMode ? (
+              <button
+                type="button"
+                title="Timing (inicio, fin, duración)"
+                aria-pressed={rightPanelTab === "timing"}
+                onClick={() => setRightPanelTab((t) => (t === "timing" ? null : "timing"))}
+                className={`flex h-11 w-full items-center justify-center transition-colors ${
+                  rightPanelTab === "timing"
+                    ? "bg-[#f5b91b]/15 text-[#f5b91b]"
+                    : "text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
+                }`}
+              >
+                <Clock className="h-4 w-4 shrink-0" strokeWidth={2} aria-hidden />
+              </button>
+            ) : (
+              <button
+                type="button"
+                title="Animaciones"
+                aria-pressed={rightPanelTab === "animations"}
+                onClick={() => setRightPanelTab((t) => (t === "animations" ? null : "animations"))}
+                className={`flex h-11 w-full items-center justify-center transition-colors ${
+                  rightPanelTab === "animations"
+                    ? "bg-[#f5b91b]/15 text-[#f5b91b]"
+                    : "text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-200"
+                }`}
+              >
+                <Sparkles className="h-4 w-4 shrink-0" strokeWidth={2} aria-hidden />
+              </button>
+            )}
           </nav>
         </div>
       </div>
@@ -1003,6 +1328,7 @@ export function PresenterStudio({
                   pendingAnim={pendingAnim}
                   onAnimationEnd={onAnimationEnd}
                   playReveal={playRevealForOverlay}
+                  playProTiming={playProTiming}
                   animateEnterTargetKey={animateEnterTargetKey}
                   showPresentationBounds={false}
                   presenterImageVideo={presenterImageVideoForStage}
@@ -1013,29 +1339,52 @@ export function PresenterStudio({
             {!playBarHidden && (
               <footer className="flex h-[52px] shrink-0 items-center gap-3 border-t border-white/[0.08] bg-[#0a0a0c] px-3">
                 <div className="flex shrink-0 items-center gap-0.5">
-                  <button
-                    type="button"
-                    onClick={playAdvanceLeft}
-                    disabled={!canGoPlayPrev}
-                    className="rounded-lg p-2 text-white transition-colors hover:bg-white/10 disabled:pointer-events-none disabled:opacity-35"
-                    aria-label="Slide anterior"
-                    title="Anterior"
-                  >
-                    <ChevronLeft size={22} strokeWidth={2} aria-hidden />
-                  </button>
-                  <span className="min-w-[3.5rem] text-center text-[13px] font-medium tabular-nums text-white/90">
-                    {playModeCounterText ?? `${stageFocusIdx + 1} / ${pages.length}`}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={playAdvanceRight}
-                    disabled={!canGoPlayNext}
-                    className="rounded-lg p-2 text-white transition-colors hover:bg-white/10 disabled:pointer-events-none disabled:opacity-35"
-                    aria-label="Slide siguiente"
-                    title="Siguiente"
-                  >
-                    <ChevronRight size={22} strokeWidth={2} aria-hidden />
-                  </button>
+                  {isProMode ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={toggleProTransport}
+                        className="rounded-lg p-2 text-white transition-colors hover:bg-white/10"
+                        aria-label={proTransportPlaying ? "Pausar" : "Reproducir"}
+                        title={proTransportPlaying ? "Pausar (Espacio)" : "Reproducir (Espacio)"}
+                      >
+                        {proTransportPlaying ? (
+                          <span className="block h-3.5 w-3.5 border-y-[5px] border-x-[3px] border-y-transparent border-x-white" aria-hidden />
+                        ) : (
+                          <Play className="h-4 w-4 fill-current" strokeWidth={0} aria-hidden />
+                        )}
+                      </button>
+                      <span className="min-w-[7rem] text-center text-[13px] font-medium tabular-nums text-white/90">
+                        {formatProClock(proPlayheadMs)} / {formatProClock(currentSlideDurationMs)}
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={playAdvanceLeft}
+                        disabled={!canGoPlayPrev}
+                        className="rounded-lg p-2 text-white transition-colors hover:bg-white/10 disabled:pointer-events-none disabled:opacity-35"
+                        aria-label="Slide anterior"
+                        title="Anterior"
+                      >
+                        <ChevronLeft size={22} strokeWidth={2} aria-hidden />
+                      </button>
+                      <span className="min-w-[3.5rem] text-center text-[13px] font-medium tabular-nums text-white/90">
+                        {playModeCounterText ?? `${stageFocusIdx + 1} / ${pages.length}`}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={playAdvanceRight}
+                        disabled={!canGoPlayNext}
+                        className="rounded-lg p-2 text-white transition-colors hover:bg-white/10 disabled:pointer-events-none disabled:opacity-35"
+                        aria-label="Slide siguiente"
+                        title="Siguiente"
+                      >
+                        <ChevronRight size={22} strokeWidth={2} aria-hidden />
+                      </button>
+                    </>
+                  )}
                 </div>
 
                 <div className="flex min-h-[6px] min-w-0 flex-1 items-center gap-[3px] px-1">

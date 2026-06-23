@@ -4,9 +4,11 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { getPageDimensions } from "../indesign/page-formats";
 import type { DesignerPageState } from "../designer/DesignerNode";
 import { DesignerPageCanvasView, type PickPresenterInteraction, type PlayRevealState } from "./DesignerPageCanvasView";
+import type { PlayProTimingState } from "./presenter-pro-timing";
 import type { PresenterImageVideoCanvasBinding } from "./presenter-image-video-types";
 import type { SlideTransitionId } from "./slide-transition-types";
 import { DEFAULT_SLIDE_TRANSITION } from "./slide-transition-types";
+import { usePresenterSlideViewport } from "./use-presenter-slide-viewport";
 
 const TRANSITION_MS = 420;
 
@@ -111,6 +113,8 @@ type Props = {
   onAnimationEnd: () => void;
   /** Revelado por grupos (modo Play); no aplica durante transición entre slides (doble capa). */
   playReveal?: PlayRevealState | null;
+  /** Visibilidad por tiempo (modo Pro). */
+  playProTiming?: PlayProTimingState | null;
   animateEnterTargetKey?: string | null;
   /** Clic en el slide para elegir elementos (vista edición del Presenter). */
   pickInteraction?: PickPresenterInteraction | null;
@@ -209,6 +213,7 @@ export function PresenterSlideStage({
   pendingAnim,
   onAnimationEnd,
   playReveal = null,
+  playProTiming = null,
   animateEnterTargetKey = null,
   pickInteraction = null,
   allowPickDuringReveal = false,
@@ -218,7 +223,15 @@ export function PresenterSlideStage({
   const [play, setPlay] = useState(false);
   const timerRef = useRef<number | null>(null);
   const boundsContainerRef = useRef<HTMLDivElement | null>(null);
-  const boundsSlideRef = useRef<HTMLDivElement | null>(null);
+  const page = pages[activeIdx];
+  const pageId = page?.id ?? activeIdx;
+  const {
+    viewport,
+    slideRef: boundsSlideRef,
+    hostRef: viewportHostRef,
+    onDoubleClick: onViewportDoubleClick,
+    viewportEnabled,
+  } = usePresenterSlideViewport(showPresentationBounds, pageId);
 
   useLayoutEffect(() => {
     if (!pendingAnim) {
@@ -310,7 +323,6 @@ export function PresenterSlideStage({
     );
   }
 
-  const page = pages[activeIdx];
   if (!page) return null;
   const dims = getPageDimensions(page);
   const lw = Math.max(1, dims.width);
@@ -330,15 +342,28 @@ export function PresenterSlideStage({
         logicalH={lh}
       />
       <div
-        ref={boundsSlideRef}
-        className={`relative z-10 min-h-0 min-w-0 shrink-0 overflow-hidden ${showPresentationBounds ? "rounded-[2px]" : "rounded-none"}`}
-        style={{
-          ...slideBoxStyle(dims.width, dims.height),
-          ...(showPresentationBounds
-            ? { boxShadow: "inset 0 0 0 2px rgba(56, 189, 248, 0.5)" }
-            : undefined),
-        }}
+        ref={viewportHostRef}
+        data-presenter-slide-viewport=""
+        className={`relative z-10 flex h-full w-full min-h-0 min-w-0 items-center justify-center ${
+          viewportEnabled ? "touch-none" : ""
+        }`}
+        onDoubleClick={onViewportDoubleClick}
+        title={viewportEnabled ? "Doble clic en el fondo para ajustar a pantalla · Rueda para zoom" : undefined}
       >
+        <div
+          ref={boundsSlideRef}
+          className={`relative min-h-0 min-w-0 shrink-0 overflow-hidden ${showPresentationBounds ? "rounded-[2px]" : "rounded-none"}`}
+          style={{
+            ...slideBoxStyle(dims.width, dims.height),
+            ...(showPresentationBounds
+              ? {
+                  boxShadow: "inset 0 0 0 2px rgba(56, 189, 248, 0.5)",
+                  transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`,
+                  transformOrigin: "center center",
+                }
+              : undefined),
+          }}
+        >
         {showPresentationBounds && (
           <div
             className="pointer-events-none absolute top-1.5 left-1/2 z-20 -translate-x-1/2 rounded border border-black/20 bg-black/50 px-1.5 py-0.5 font-mono text-[9px] font-medium tabular-nums text-white/95 shadow-sm backdrop-blur-[2px]"
@@ -352,11 +377,13 @@ export function PresenterSlideStage({
           pageWidth={dims.width}
           pageHeight={dims.height}
           playReveal={playReveal}
+          playProTiming={playProTiming}
           animateEnterTargetKey={animateEnterTargetKey}
           pickInteraction={pickInteraction}
           allowPickDuringReveal={allowPickDuringReveal}
           presenterImageVideo={presenterImageVideo}
         />
+        </div>
       </div>
     </div>
   );

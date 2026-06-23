@@ -11,6 +11,7 @@ import {
 import { gradientDefId, migrateFill, renderFillDef } from "../freehand/fill";
 import type { PresenterGroupEnterId, PresenterRevealStep } from "./presenter-group-animations";
 import { getEnterForObject, isObjectRevealed, revealTargetKey } from "./presenter-group-animations";
+import { isObjectVisibleAtProTime, type PlayProTimingState } from "./presenter-pro-timing";
 import { boundsForGroupId, boundsForObjectId } from "./presenter-group-bounds";
 import { collectPresenterImageTargets, type PresenterImageTarget } from "./presenter-image-video-collect";
 import { PresenterImageVideoOverlays } from "./PresenterImageVideoOverlays";
@@ -28,7 +29,19 @@ export type PlayRevealState = {
   steps: PresenterRevealStep[];
 };
 
-function shouldPaintObject(o: FreehandObject, playReveal: PlayRevealState | null | undefined): boolean {
+function shouldPaintObject(
+  o: FreehandObject,
+  playReveal: PlayRevealState | null | undefined,
+  playProTiming: PlayProTimingState | null | undefined,
+): boolean {
+  if (playProTiming) {
+    return isObjectVisibleAtProTime(
+      o,
+      playProTiming.playheadMs,
+      playProTiming.tracksByKey,
+      playProTiming.slideDurationMs,
+    );
+  }
   if (!playReveal?.steps?.length) return true;
   return isObjectRevealed(o, playReveal.revealCount, playReveal.steps);
 }
@@ -219,13 +232,14 @@ function buildMarqueePickEntries(
   clipObjects: FreehandObject[],
   clippedGroups: Map<string, FreehandObject[]>,
   playReveal: PlayRevealState | null | undefined,
+  playProTiming: PlayProTimingState | null | undefined,
 ): { key: string; bounds: { x: number; y: number; width: number; height: number } }[] {
   const seen = new Set<string>();
   const out: { key: string; bounds: { x: number; y: number; width: number; height: number } }[] = [];
 
   for (const obj of objects) {
     if (obj.isClipMask || obj.clipMaskId) continue;
-    if (!shouldPaintObject(obj, playReveal)) continue;
+    if (!shouldPaintObject(obj, playReveal, playProTiming)) continue;
     const k = revealTargetKey(obj);
     if (seen.has(k)) continue;
     const b = boundsForPresenterKey(objects, k);
@@ -236,8 +250,8 @@ function buildMarqueePickEntries(
 
   for (const [clipId, members] of clippedGroups) {
     const mask = clipObjects.find((c) => c.id === clipId);
-    if (!mask || !shouldPaintObject(mask, playReveal)) continue;
-    if (!members.every((m) => shouldPaintObject(m, playReveal))) continue;
+    if (!mask || !shouldPaintObject(mask, playReveal, playProTiming)) continue;
+    if (!members.every((m) => shouldPaintObject(m, playReveal, playProTiming))) continue;
     const k = revealTargetKey(mask);
     if (seen.has(k)) continue;
     const b = boundsForPresenterKey(objects, k);
@@ -290,6 +304,7 @@ export function DesignerPageCanvasView({
   pageHeight,
   background = "#fafafa",
   playReveal = null,
+  playProTiming = null,
   animateEnterTargetKey = null,
   pickInteraction = null,
   allowPickDuringReveal = false,
@@ -300,6 +315,8 @@ export function DesignerPageCanvasView({
   pageHeight: number;
   background?: string;
   playReveal?: PlayRevealState | null;
+  /** Visibilidad por tiempo (modo Pro). Tiene prioridad sobre `playReveal`. */
+  playProTiming?: PlayProTimingState | null;
   /** Paso que acaba de revelarse (animación de entrada una vez). */
   animateEnterTargetKey?: string | null;
   pickInteraction?: PickPresenterInteraction | null;
@@ -330,7 +347,9 @@ export function DesignerPageCanvasView({
   const clipObjects = useMemo(() => objects.filter((o) => o.isClipMask), [objects]);
   const allowPick =
     Boolean(pickInteraction) &&
-    (!(playReveal?.steps && playReveal.steps.length > 0) || allowPickDuringReveal);
+    (Boolean(playProTiming) ||
+      !(playReveal?.steps && playReveal.steps.length > 0) ||
+      allowPickDuringReveal);
 
   const selectionOverlayRects = useMemo(() => {
     if (!allowPick || !pickInteraction?.highlightKeys?.length) return [];
@@ -358,8 +377,8 @@ export function DesignerPageCanvasView({
   }, [objects]);
 
   const marqueePickTargets = useMemo(
-    () => buildMarqueePickEntries(objects, clipObjects, clippedGroups, playReveal),
-    [objects, clipObjects, clippedGroups, playReveal],
+    () => buildMarqueePickEntries(objects, clipObjects, clippedGroups, playReveal, playProTiming),
+    [objects, clipObjects, clippedGroups, playReveal, playProTiming],
   );
 
   const normalizedMarqueeRect = useMemo(() => {
@@ -406,7 +425,7 @@ export function DesignerPageCanvasView({
     for (const obj of objects) {
       if (obj.isClipMask) continue;
       if (obj.clipMaskId) continue;
-      if (!shouldPaintObject(obj, playReveal)) continue;
+      if (!shouldPaintObject(obj, playReveal, playProTiming)) continue;
       const vt = presenterImageTargetById.get(obj.id);
       if (vt && !seen.has(vt.id)) {
         seen.add(vt.id);
@@ -415,8 +434,8 @@ export function DesignerPageCanvasView({
     }
     for (const [clipId, members] of clippedGroups.entries()) {
       const mask = clipObjects.find((c) => c.id === clipId);
-      if (!mask || !shouldPaintObject(mask, playReveal)) continue;
-      if (!members.every((m) => shouldPaintObject(m, playReveal))) continue;
+      if (!mask || !shouldPaintObject(mask, playReveal, playProTiming)) continue;
+      if (!members.every((m) => shouldPaintObject(m, playReveal, playProTiming))) continue;
       for (const m of members) {
         const mvt = presenterImageTargetById.get(m.id);
         if (mvt && !seen.has(mvt.id)) {
@@ -426,7 +445,7 @@ export function DesignerPageCanvasView({
       }
     }
     return out;
-  }, [presenterImageVideo, objects, clippedGroups, clipObjects, presenterImageTargetById, playReveal]);
+  }, [presenterImageVideo, objects, clippedGroups, clipObjects, presenterImageTargetById, playReveal, playProTiming]);
 
   const pageClipUrl = `url(#${pageClipPathId})`;
 
@@ -555,7 +574,7 @@ export function DesignerPageCanvasView({
       {objects.map((obj) => {
         if (obj.isClipMask) return null;
         if (obj.clipMaskId) return null;
-        if (!shouldPaintObject(obj, playReveal)) return null;
+        if (!shouldPaintObject(obj, playReveal, playProTiming)) return null;
         const tKey = revealTargetKey(obj);
         const runAnim = Boolean(
           playReveal?.steps?.length && animateEnterTargetKey && tKey === animateEnterTargetKey,
@@ -590,8 +609,8 @@ export function DesignerPageCanvasView({
       {Array.from(clippedGroups.entries()).map(([clipId, members]) => {
         const mask = clipObjects.find((c) => c.id === clipId);
         if (!mask) return null;
-        if (!shouldPaintObject(mask, playReveal)) return null;
-        if (!members.every((m) => shouldPaintObject(m, playReveal))) return null;
+        if (!shouldPaintObject(mask, playReveal, playProTiming)) return null;
+        if (!members.every((m) => shouldPaintObject(m, playReveal, playProTiming))) return null;
         const clipAnim = clipGroupAnimationClass(mask, playReveal, animateEnterTargetKey);
         const clipTKey = revealTargetKey(mask);
         const clipCls = clipAnim || undefined;

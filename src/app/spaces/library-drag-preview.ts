@@ -88,6 +88,14 @@ export function hideNativeLibraryDragPreview(event: React.DragEvent) {
   setLibraryDragPreviewImage(event);
 }
 
+/** Arrastre de archivos del escritorio / Finder (no tiles de la librería). */
+export function isExternalFileDataTransfer(dt: DataTransfer | null | undefined): boolean {
+  if (!dt) return false;
+  const types = Array.from(dt.types ?? []);
+  if (types.includes("Files") || types.includes("application/x-moz-file")) return true;
+  return (dt.files?.length ?? 0) > 0;
+}
+
 /** True si el cursor está sobre el contenedor `.react-flow` del lienzo. */
 export function isClientPointOverReactFlowCanvas(
   clientX: number,

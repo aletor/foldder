@@ -226,6 +226,7 @@ import {
   FOLDDER_LIBRARY_PREVIEW_NODE_ID,
   getReactFlowCanvasRect,
   isClientPointOverReactFlowCanvas,
+  isExternalFileDataTransfer,
   libraryDragEdgePanDelta,
   libraryPreviewPositionFromFlowPoint,
   resolveLibraryPreviewNodeFrame,
@@ -815,6 +816,18 @@ export function SpacesContent() {
   const libraryDragPreviewRafRef = useRef<number | null>(null);
   const libraryDragPointerRef = useRef<{ x: number; y: number } | null>(null);
   const libraryDragEdgePanRafRef = useRef<number | null>(null);
+
+  /** Arrastre de archivos del escritorio: preview bajo el cursor (como la librería). */
+  const [fileDragPreview, setFileDragPreview] = useState<{
+    type: string;
+    position: { x: number; y: number };
+  } | null>(null);
+  const fileDragPreviewRef = useRef<typeof fileDragPreview>(null);
+  fileDragPreviewRef.current = fileDragPreview;
+  const fileDragPointerRef = useRef<{ x: number; y: number } | null>(null);
+  const fileDragPreviewRafRef = useRef<number | null>(null);
+  /** Arrastre de archivo activo (aunque el preview se oculte fuera del lienzo). */
+  const [fileDragActive, setFileDragActive] = useState(false);
 
   /** Arrastre desde un conector de nodo: preview que sigue al cursor (igual que el sidebar). */
   const [connectDragActive, setConnectDragActive] = useState(false);
@@ -5447,6 +5460,11 @@ export function SpacesContent() {
     [renderCanvasDragPreview, connectDragPreview],
   );
 
+  const fileDragPreviewElement = useMemo(
+    () => renderCanvasDragPreview(fileDragPreview),
+    [renderCanvasDragPreview, fileDragPreview],
+  );
+
   const flowEdges = useMemo(() => {
     const base = filterEdgesForCollapsedCanvasGroups(nodes, edges);
     if (!isTouchUI) return base;
@@ -5513,15 +5531,102 @@ export function SpacesContent() {
     [screenToFlowPosition],
   );
 
+  const clearFileDragPreview = useCallback(() => {
+    fileDragPointerRef.current = null;
+    setFileDragActive(false);
+    setFileDragPreview(null);
+  }, []);
+
+  const syncFileDragPreviewAtClientPoint = useCallback(
+    (clientX: number, clientY: number) => {
+      if (libraryDragTypeRef.current) {
+        clearFileDragPreview();
+        return;
+      }
+      fileDragPointerRef.current = { x: clientX, y: clientY };
+      if (canvasViewModeRef.current !== "free") {
+        setFileDragPreview(null);
+        return;
+      }
+      if (
+        !isClientPointOverReactFlowCanvas(
+          clientX,
+          clientY,
+          reactFlowWrapper.current,
+        )
+      ) {
+        setFileDragPreview(null);
+        return;
+      }
+      const top = document.elementFromPoint(clientX, clientY);
+      if (top instanceof HTMLElement && top.closest("[data-foldder-studio-canvas]")) {
+        setFileDragPreview(null);
+        return;
+      }
+
+      const p = screenToFlowPosition({ x: clientX, y: clientY });
+      setFileDragPreview({
+        type: "mediaInput",
+        position: libraryPreviewPositionFromFlowPoint(p, "mediaInput"),
+      });
+    },
+    [clearFileDragPreview, screenToFlowPosition],
+  );
+
   const onDragOver = useCallback(
     (event: React.DragEvent) => {
       event.preventDefault();
+
+      if (libraryDragTypeRef.current) {
+        event.dataTransfer.dropEffect = "move";
+        libraryDragPointerRef.current = { x: event.clientX, y: event.clientY };
+        syncLibraryDragPreviewAtClientPoint(event.clientX, event.clientY);
+        return;
+      }
+
+      if (isExternalFileDataTransfer(event.dataTransfer)) {
+        event.dataTransfer.dropEffect = "copy";
+        setFileDragActive(true);
+        syncFileDragPreviewAtClientPoint(event.clientX, event.clientY);
+        return;
+      }
+
       event.dataTransfer.dropEffect = "move";
-      libraryDragPointerRef.current = { x: event.clientX, y: event.clientY };
-      syncLibraryDragPreviewAtClientPoint(event.clientX, event.clientY);
     },
-    [syncLibraryDragPreviewAtClientPoint],
+    [syncFileDragPreviewAtClientPoint, syncLibraryDragPreviewAtClientPoint],
   );
+
+  useEffect(() => {
+    const onDocumentDragOver = (event: DragEvent) => {
+      if (libraryDragTypeRef.current) return;
+      if (!isExternalFileDataTransfer(event.dataTransfer)) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+
+      const { clientX, clientY } = event;
+      setFileDragActive(true);
+      if (fileDragPreviewRafRef.current != null) return;
+      fileDragPreviewRafRef.current = window.requestAnimationFrame(() => {
+        fileDragPreviewRafRef.current = null;
+        syncFileDragPreviewAtClientPoint(clientX, clientY);
+      });
+    };
+
+    const onDocumentDragEnd = () => clearFileDragPreview();
+
+    document.addEventListener("dragover", onDocumentDragOver);
+    document.addEventListener("dragend", onDocumentDragEnd);
+    document.addEventListener("drop", onDocumentDragEnd);
+    return () => {
+      document.removeEventListener("dragover", onDocumentDragOver);
+      document.removeEventListener("dragend", onDocumentDragEnd);
+      document.removeEventListener("drop", onDocumentDragEnd);
+      if (fileDragPreviewRafRef.current != null) {
+        window.cancelAnimationFrame(fileDragPreviewRafRef.current);
+        fileDragPreviewRafRef.current = null;
+      }
+    };
+  }, [clearFileDragPreview, syncFileDragPreviewAtClientPoint]);
 
   useEffect(() => {
     if (!paletteDragActive) return;
@@ -5552,15 +5657,17 @@ export function SpacesContent() {
   }, [paletteDragActive, syncLibraryDragPreviewAtClientPoint]);
 
   useEffect(() => {
-    if (!paletteDragActive) return;
+    if (!paletteDragActive && !fileDragActive) return;
 
     let running = true;
 
     const tick = () => {
       if (!running) return;
-      const pointer = libraryDragPointerRef.current;
-      const dragType = libraryDragTypeRef.current;
-      if (pointer && dragType) {
+      const isLibrary = Boolean(libraryDragTypeRef.current);
+      const pointer = isLibrary ? libraryDragPointerRef.current : fileDragPointerRef.current;
+      const dragActive = isLibrary ? libraryDragTypeRef.current : fileDragActive;
+
+      if (pointer && dragActive) {
         const canvasRect = getReactFlowCanvasRect(reactFlowWrapper.current);
         if (canvasRect) {
           const { x: panX, y: panY } = libraryDragEdgePanDelta(
@@ -5574,7 +5681,11 @@ export function SpacesContent() {
               { x: viewport.x + panX, y: viewport.y + panY, zoom: viewport.zoom },
               { duration: 0 },
             );
-            syncLibraryDragPreviewAtClientPoint(pointer.x, pointer.y);
+            if (isLibrary) {
+              syncLibraryDragPreviewAtClientPoint(pointer.x, pointer.y);
+            } else {
+              syncFileDragPreviewAtClientPoint(pointer.x, pointer.y);
+            }
           }
         }
       }
@@ -5590,7 +5701,14 @@ export function SpacesContent() {
         libraryDragEdgePanRafRef.current = null;
       }
     };
-  }, [paletteDragActive, getViewport, setViewport, syncLibraryDragPreviewAtClientPoint]);
+  }, [
+    paletteDragActive,
+    fileDragActive,
+    getViewport,
+    setViewport,
+    syncLibraryDragPreviewAtClientPoint,
+    syncFileDragPreviewAtClientPoint,
+  ]);
 
   const onDrop = useCallback(
     (event: React.DragEvent) => {
@@ -5607,12 +5725,14 @@ export function SpacesContent() {
 
       const snapTargetId = libraryDropTargetIdRef.current;
       const previewSnapshot = libraryDragPreviewRef.current;
+      const filePreviewSnapshot = fileDragPreviewRef.current;
 
       libraryDragTypeRef.current = null;
       libraryDropTargetIdRef.current = null;
       setLibraryDropTargetId(null);
       setLibraryCompatibleIds([]);
       setLibraryDragPreview(null);
+      clearFileDragPreview();
 
       const files = Array.from(dt.files);
 
@@ -5739,25 +5859,21 @@ export function SpacesContent() {
           return 'url';
         };
 
-        let virtualNodes: Node[] = [...nodes];
+        const basePlacement =
+          filePreviewSnapshot?.position ??
+          libraryPreviewPositionFromFlowPoint(position, "mediaInput");
+
         for (let index = 0; index < files.length; index++) {
           const file = files[index];
           const fileType = inferMediaType(file.name, file.type);
-          const preferredCenter = {
-            x: position.x + index * 20 + 160,
-            y: position.y + index * 20 + 120,
-          };
-          const placement = findEmptyPositionForNewNode('mediaInput', virtualNodes, preferredCenter);
+          const placement =
+            index === 0
+              ? basePlacement
+              : snapPositionToGrid({
+                  x: basePlacement.x + index * 28,
+                  y: basePlacement.y + index * 28,
+                });
           const nodeId = `node_${Date.now()}_${index}_${Math.floor(Math.random() * 1000)}`;
-          virtualNodes = [
-            ...virtualNodes,
-            {
-              id: nodeId,
-              type: 'mediaInput',
-              position: placement,
-              data: {},
-            } as Node,
-          ];
 
           const newNode = prepareCanvasNodeForCreate({
             id: nodeId,
@@ -5821,9 +5937,6 @@ export function SpacesContent() {
             }
           })();
         }
-        setTimeout(() => {
-          fitView({ padding: FIT_VIEW_PADDING, duration: fitAnim(800), ...FOLDDER_FIT_VIEW_EASE });
-        }, 100);
         return;
       }
     },
@@ -5839,6 +5952,7 @@ export function SpacesContent() {
       scheduleFoldderCanvasIntroEnd,
       setSidebarLockedCollapsed,
       projectScopeId,
+      clearFileDragPreview,
     ]
   );
 
@@ -5987,6 +6101,7 @@ export function SpacesContent() {
           <FoldderCanvasGridBackground gap={FOLDDER_GRID_STEP} lineWidth={0.7} color="#111" dotSize={5} />
           {libraryDragPreviewElement}
           {connectDragPreviewElement}
+          {fileDragPreviewElement}
         </ReactFlow>
         </DesignerSpaceIdContext.Provider>
         </ProjectBrainCanvasContext.Provider>
