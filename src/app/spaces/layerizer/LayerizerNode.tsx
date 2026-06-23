@@ -412,7 +412,8 @@ export const LayerizerNode = memo(function LayerizerNode({ id, data, selected }:
         minWidth: 220,
         // Con imagen: la tarjeta adopta su aspect ratio (sin marco/letterbox).
         // Sin imagen: altura mínima para el placeholder "Connect an image".
-        ...(imgAR ? { aspectRatio: String(imgAR), minHeight: 0 } : { minHeight: 150 }),
+        aspectRatio: imgAR ? String(imgAR) : undefined,
+        minHeight: imgAR ? 0 : 150,
         "--foldder-frameless-accent": "#a855f7",
       } as React.CSSProperties}
     >
