@@ -677,6 +677,14 @@ import {
   GOOGLE_FONTS_POPULAR,
   googleFontStylesheetHref,
 } from "./freehand/google-fonts";
+import { GoogleFontInstallModal } from "./freehand/GoogleFontInstallModal";
+import {
+  buildDesignerFontPickerGroups,
+  DesignerFontFamilyPicker,
+} from "./freehand/DesignerFontFamilyPicker";
+import { mergeGoogleFontCatalogMaps } from "./freehand/google-fonts-catalog";
+import { ensureGoogleFontPreviewBatchLoaded } from "./freehand/google-fonts-preview-loader";
+import { useGoogleFontsCatalog } from "./hooks/use-google-fonts-catalog";
 import { sanitizeStoryLinkHref, type SpanStyle } from "./indesign/text-model";
 import { computeFittingLayout } from "./indesign/image-frame-layout";
 import { extractDocumentColorStats, normalizeHexColor, replaceHexEverywhere } from "./freehand/extract-document-colors";
@@ -8429,6 +8437,21 @@ function substituteNativeTextForRasterExport(svgXml: string, objects: FreehandOb
   return new XMLSerializer().serializeToString(doc.documentElement);
 }
 
+/** Raster PNG: convierte texto a trazados para que las tipografías se respeten al rasterizar el SVG (blob). */
+async function substituteTextForRasterExport(svgXml: string, objects: FreehandObject[]): Promise<string> {
+  const textObjs = objects.filter((o): o is TextObject => o.type === "text" && o.visible && !o.isClipMask);
+  if (textObjs.length === 0) return svgXml;
+  try {
+    return await substituteTextWithOutlinedPathsInSvg(
+      svgXml,
+      textObjs.map(textObjectToVectorPdfOutlineItem),
+    );
+  } catch (e) {
+    console.warn("[Freehand] Text outline for raster export failed, using native SVG text", e);
+    return substituteNativeTextForRasterExport(svgXml, objects);
+  }
+}
+
 function objToSvgStringStatic(obj: FreehandObject, w: number, h: number, ox: number, oy: number): string {
   const parts: string[] = [];
   const fill = migrateFill(obj.fill);
@@ -10638,6 +10661,9 @@ export function FreehandStudioCanvas({
   const [pathCornerRadiusLinked, setPathCornerRadiusLinked] = useState(true);
   /** Panel de capas: desplegado por defecto abajo en la columna derecha. */
   const [layersPanelExpanded, setLayersPanelExpanded] = useState(true);
+  const layersPanelScrollRef = useRef<HTMLDivElement | null>(null);
+  /** Evita auto-scroll al seleccionar desde el propio listado de capas. */
+  const layerPanelSelectionRef = useRef(false);
   /** Desplegable modo de fusión encima del listado de capas. */
   const [layerBlendMenuOpen, setLayerBlendMenuOpen] = useState(false);
   const layerBlendMenuWrapRef = useRef<HTMLDivElement | null>(null);
@@ -10872,13 +10898,18 @@ export function FreehandStudioCanvas({
   const [customDesignerFontsHydrated, setCustomDesignerFontsHydrated] = useState(false);
   const customDesignerFontsRef = useRef<DesignerCustomFontStyle[]>([]);
   const [googleFontInstallModalOpen, setGoogleFontInstallModalOpen] = useState(false);
-  const [googleFontInstallQuery, setGoogleFontInstallQuery] = useState("");
   const [googleFontInstallSelection, setGoogleFontInstallSelection] = useState<string>("");
   const [googleFontInstallBusy, setGoogleFontInstallBusy] = useState(false);
   const googleFontInstallPromisesRef = useRef<Map<string, Promise<void>>>(new Map());
+  const {
+    catalog: googleFontsFullCatalog,
+    loading: googleFontsCatalogLoading,
+    error: googleFontsCatalogError,
+    refresh: refreshGoogleFontsCatalog,
+  } = useGoogleFontsCatalog(googleFontInstallModalOpen);
   const googleFontCategoryByFamily = useMemo(
-    () => new Map<string, string>(GOOGLE_FONTS_LIBRARY.map((g) => [g.family, g.category])),
-    [],
+    () => mergeGoogleFontCatalogMaps(GOOGLE_FONTS_LIBRARY, googleFontsFullCatalog),
+    [googleFontsFullCatalog],
   );
   const systemFontStylesByFamily = useMemo(() => {
     const map = new Map<string, Array<{ style: string; weight: number; family: string }>>();
@@ -10944,6 +10975,21 @@ export function FreehandStudioCanvas({
     () => GOOGLE_FONTS_POPULAR.filter((g) => !installedGoogleFontsSet.has(g.family)),
     [installedGoogleFontsSet],
   );
+  const systemPreviewFamilyByLabel = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const [label, styles] of systemFontStylesByFamily) {
+      map.set(label, styles[0]?.family ?? "Helvetica, sans-serif");
+    }
+    return map;
+  }, [systemFontStylesByFamily]);
+
+  useEffect(() => {
+    const families = [
+      ...installedGoogleFontsDropdownOptions,
+      ...popularGoogleFontsDropdownOptions.map((g) => g.family),
+    ];
+    if (families.length > 0) void ensureGoogleFontPreviewBatchLoaded(families);
+  }, [installedGoogleFontsDropdownOptions, popularGoogleFontsDropdownOptions]);
 
   useEffect(() => {
     customDesignerFontsRef.current = customDesignerFonts;
@@ -10977,16 +11023,6 @@ export function FreehandStudioCanvas({
     persistDesignerCustomFonts(customDesignerFonts);
   }, [customDesignerFonts, customDesignerFontsHydrated]);
 
-  const googleFontsInstallResults = useMemo(() => {
-    const q = googleFontInstallQuery.trim().toLowerCase();
-    if (!q) return GOOGLE_FONTS_LIBRARY;
-    return GOOGLE_FONTS_LIBRARY.filter(
-      (font) =>
-        font.family.toLowerCase().includes(q) ||
-        font.category.toLowerCase().includes(q),
-    );
-  }, [googleFontInstallQuery]);
-
   const [savedPaletteColors, setSavedPaletteColors] = useState<string[]>([]);
 
   useEffect(() => {
@@ -11008,7 +11044,7 @@ export function FreehandStudioCanvas({
         new Set(
           parsed
             .map((value) => (typeof value === "string" ? value.trim() : ""))
-            .filter((family) => family.length > 0 && googleFontCategoryByFamily.has(family)),
+            .filter((family) => family.length > 0),
         ),
       ).sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" }));
       if (valid.length === 0) return;
@@ -11017,7 +11053,7 @@ export function FreehandStudioCanvas({
     } catch {
       /* noop */
     }
-  }, [googleFontCategoryByFamily]);
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -11704,7 +11740,7 @@ export function FreehandStudioCanvas({
             scale,
             background: bg,
           });
-          const str = substituteNativeTextForRasterExport(strRaw, objs);
+          const str = await substituteTextForRasterExport(strRaw, objs);
           const cw = Math.max(1, Math.round(bounds.w * scale));
           const ch = Math.max(1, Math.round(bounds.h * scale));
           const canvas = await svgStringToCanvasSafe(str, cw, ch);
@@ -13562,7 +13598,10 @@ export function FreehandStudioCanvas({
     if (!t) return;
     const fam = t.fontFamily.split(",")[0].replace(/['"]/g, "").trim();
     if (!fam) return;
-    const isGoogle = GOOGLE_FONTS_LIBRARY.some((g) => g.family === fam);
+    const isGoogle =
+      installedGoogleFontsSet.has(fam) ||
+      googleFontCategoryByFamily.has(fam) ||
+      GOOGLE_FONTS_LIBRARY.some((g) => g.family === fam);
     let el = document.getElementById("fh-gfont-active") as HTMLLinkElement | null;
     if (!isGoogle) {
       if (el) el.removeAttribute("href");
@@ -13575,12 +13614,31 @@ export function FreehandStudioCanvas({
       document.head.appendChild(el);
     }
     el.href = googleFontStylesheetHref(fam);
-  }, [firstSelected]);
+  }, [firstSelected, googleFontCategoryByFamily, installedGoogleFontsSet]);
 
   useEffect(() => {
     if (selectedIds.size === 0) setPrimarySelectedId(null);
     else if (selectedIds.size === 1) setPrimarySelectedId(Array.from(selectedIds)[0] ?? null);
   }, [selectedIds]);
+
+  /** PhotoRoom: al seleccionar en el lienzo, desplazar el listado para dejar la capa arriba (sin reordenar). */
+  useLayoutEffect(() => {
+    if (!isPhotoRoomStudioEmbed || !layersPanelExpanded) return;
+    if (layerPanelSelectionRef.current) {
+      layerPanelSelectionRef.current = false;
+      return;
+    }
+    const targetId =
+      primarySelectedId ??
+      (selectedIds.size === 1 ? Array.from(selectedIds)[0] ?? null : null);
+    if (!targetId) return;
+    const scrollEl = layersPanelScrollRef.current;
+    if (!scrollEl) return;
+    const row = scrollEl.querySelector(`[data-fh-layer-row="${targetId}"]`) as HTMLElement | null;
+    if (!row) return;
+    const delta = row.getBoundingClientRect().top - scrollEl.getBoundingClientRect().top;
+    scrollEl.scrollTop += delta;
+  }, [isPhotoRoomStudioEmbed, layersPanelExpanded, primarySelectedId, selectedIdsKey, objects.length]);
 
   useEffect(() => {
     if (dragState) {
@@ -13821,14 +13879,30 @@ export function FreehandStudioCanvas({
       const src = reader.result as string;
       const img = new Image();
       img.onload = () => {
-        const maxDim = 600;
-        let w = img.width, h = img.height;
-        if (w > maxDim || h > maxDim) {
-          const scale = maxDim / Math.max(w, h);
-          w *= scale; h *= scale;
+        const nw = img.naturalWidth || img.width || 1;
+        const nh = img.naturalHeight || img.height || 1;
+        let w = nw;
+        let h = nh;
+        if (!photoRoomStudioEmbedRef.current) {
+          const maxDim = 600;
+          if (w > maxDim || h > maxDim) {
+            const scale = maxDim / Math.max(w, h);
+            w *= scale;
+            h *= scale;
+          }
         }
-        const ox = at?.x ?? 200;
-        const oy = at?.y ?? 200;
+        let ox = at?.x;
+        let oy = at?.y;
+        if (ox == null || oy == null) {
+          if (photoRoomStudioEmbedRef.current) {
+            const ab = pickPrimaryArtboard(artboardsRef.current, null);
+            ox = ab ? ab.width / 2 : 200;
+            oy = ab ? ab.height / 2 : 200;
+          } else {
+            ox = 200;
+            oy = 200;
+          }
+        }
         const dataMime = /^data:([^;,]+)/.exec(src)?.[1]?.trim() ?? "";
         const newObj: ImageObject = {
           ...defaultObj({ name: file.name?.trim() || `Image ${objectsRef.current.length + 1}` }),
@@ -13839,13 +13913,13 @@ export function FreehandStudioCanvas({
           height: h,
           fill: solidFill("none"), stroke: "none", strokeWidth: 0,
           src,
-          intrinsicRatio: img.width / Math.max(img.height, 1),
+          intrinsicRatio: nw / Math.max(nh, 1),
           imageAssetMeta: {
             fileName: file.name?.trim() || "Imagen",
             mimeType: (file.type && file.type.trim()) || dataMime || "image/*",
             byteSize: file.size,
-            pixelWidth: img.naturalWidth || img.width,
-            pixelHeight: img.naturalHeight || img.height,
+            pixelWidth: nw,
+            pixelHeight: nh,
           },
         } as ImageObject;
         if (designerMode && designerBrainTelemetryRef.current) {
@@ -15411,12 +15485,11 @@ export function FreehandStudioCanvas({
   }, []);
 
   const openGoogleFontInstallModal = useCallback(() => {
-    const first = GOOGLE_FONTS_LIBRARY[0]?.family ?? "";
+    const first = googleFontsFullCatalog[0]?.family ?? GOOGLE_FONTS_LIBRARY[0]?.family ?? "";
     const fallback = installedGoogleFontsDropdownOptions[0] || first;
     setGoogleFontInstallSelection((prev) => prev || fallback);
-    setGoogleFontInstallQuery("");
     setGoogleFontInstallModalOpen(true);
-  }, [installedGoogleFontsDropdownOptions]);
+  }, [googleFontsFullCatalog, installedGoogleFontsDropdownOptions]);
 
   const confirmGoogleFontInstall = useCallback(async () => {
     const family = googleFontInstallSelection.trim();
@@ -15450,21 +15523,6 @@ export function FreehandStudioCanvas({
       void ensureGoogleFontStylesheetLoaded(family).catch(() => undefined);
     }
   }, [installedGoogleFonts, ensureGoogleFontStylesheetLoaded]);
-
-  useEffect(() => {
-    if (!googleFontInstallModalOpen) return;
-    const sampleFamilies = googleFontsInstallResults.slice(0, 18).map((f) => f.family);
-    if (googleFontInstallSelection) sampleFamilies.unshift(googleFontInstallSelection);
-    const uniqueFamilies = Array.from(new Set(sampleFamilies));
-    for (const family of uniqueFamilies) {
-      void ensureGoogleFontStylesheetLoaded(family).catch(() => undefined);
-    }
-  }, [
-    googleFontInstallModalOpen,
-    googleFontsInstallResults,
-    googleFontInstallSelection,
-    ensureGoogleFontStylesheetLoaded,
-  ]);
 
   /** Misma mutación que `updateSelectedProp` pero sin apilar historial (p. ej. arrastre tipo scrub). */
   const updateSelectedPropSilent = useCallback((key: string, value: any) => {
@@ -17289,7 +17347,7 @@ export function FreehandStudioCanvas({
       scale: 1,
       background: bg,
     });
-    const str = substituteNativeTextForRasterExport(strRaw, objects);
+    const str = await substituteTextForRasterExport(strRaw, objects);
     const canvas = await svgStringToCanvasSafe(str, bounds.w, bounds.h);
     canvas.toBlob((blob) => {
       if (!blob) return;
@@ -17317,7 +17375,7 @@ export function FreehandStudioCanvas({
       scale: 1,
       background: bg,
     });
-    const str = substituteNativeTextForRasterExport(strRaw, objects);
+    const str = await substituteTextForRasterExport(strRaw, objects);
     const jpgBg = bg === "transparent" ? "#ffffff" : bg;
     const canvas = await svgStringToCanvasSafe(str, bounds.w, bounds.h, jpgBg);
     canvas.toBlob((blob) => {
@@ -17346,7 +17404,7 @@ export function FreehandStudioCanvas({
       scale: 1,
       background: bg,
     });
-    const str = substituteNativeTextForRasterExport(strRaw, objects);
+    const str = await substituteTextForRasterExport(strRaw, objects);
     const canvas = await svgStringToCanvasSafe(str, bounds.w, bounds.h);
     const dataUrl = canvasToPngDataUrlSafe(canvas);
     const tel = designerBrainTelemetryRef.current;
@@ -17405,7 +17463,7 @@ export function FreehandStudioCanvas({
     const targets = objs.filter((o) => exportIds.has(o.id) && o.visible);
     const b = getGroupBounds(targets);
     if (b.w < 1 || b.h < 1) return;
-    const str = substituteNativeTextForRasterExport(
+    const str = await substituteTextForRasterExport(
       buildStandaloneSvgFromCanvasDom(svg, {
         exportIds,
         bounds: b,
@@ -17539,7 +17597,7 @@ export function FreehandStudioCanvas({
           scale: 1,
           background,
         });
-        const str = substituteNativeTextForRasterExport(strRaw, objs);
+        const str = await substituteTextForRasterExport(strRaw, objs);
         const w = Math.max(1, Math.round(bounds.w));
         const h = Math.max(1, Math.round(bounds.h));
         const bgForCanvas = background === "transparent" ? undefined : background;
@@ -17666,7 +17724,7 @@ export function FreehandStudioCanvas({
         const str =
           opts.format === "svg" || opts.format === "pdf"
             ? strRaw
-            : substituteNativeTextForRasterExport(strRaw, objs);
+            : await substituteTextForRasterExport(strRaw, objs);
         const base = opts.filename.replace(/\.(png|svg|jpg|jpeg|pdf)$/i, "");
         const ext =
           opts.format === "svg" ? "svg" : opts.format === "jpg" ? "jpg" : opts.format === "pdf" ? "pdf" : "png";
@@ -17751,7 +17809,7 @@ export function FreehandStudioCanvas({
                 blob: await svgMarkupToPdfBlob(pdfMarkup, { optimizeImages: opts.optimizeImages === true }),
               });
             } else {
-              const str = substituteNativeTextForRasterExport(strRaw, objs);
+              const str = await substituteTextForRasterExport(strRaw, objs);
               const pw = Math.max(1, Math.round(b.w * opts.scale));
               const ph = Math.max(1, Math.round(b.h * opts.scale));
               const canvas = await svgStringToCanvasSafe(str, pw, ph, bgForCanvas);
@@ -29054,52 +29112,26 @@ export function FreehandStudioCanvas({
                       <div className={tfSec}>Typography</div>
 
                       <div className="flex gap-2">
-                        <select
+                        <DesignerFontFamilyPicker
                           value={fontSelectValue}
-                          onChange={(e) => {
-                            applyDesignerFontDropdown(e.target.value);
-                          }}
-                          className="h-8 min-h-0 min-w-0 flex-1 rounded-[6px] border border-[#2d2f34] bg-[#1e2024] px-2 py-0 text-[11px] text-zinc-100"
-                        >
-                          <option value="">— Font —</option>
-                          {showCurrentFontOption ? (
-                            <optgroup label="Fuente actual">
-                              <option value={fontSelectValue}>{fontSelectValue}</option>
-                            </optgroup>
-                          ) : null}
-                          {customDesignerFontsDropdownOptions.length > 0 ? (
-                            <optgroup label="Tipografías importadas">
-                              {customDesignerFontsDropdownOptions.map((family) => (
-                                <option key={family} value={family}>
-                                  {family}
-                                </option>
-                              ))}
-                            </optgroup>
-                          ) : null}
-                          {installedGoogleFontsDropdownOptions.length > 0 ? (
-                            <optgroup label="Google Fonts instaladas">
-                              {installedGoogleFontsDropdownOptions.map((family) => (
-                                <option key={family} value={family}>
-                                  {family} ({googleFontCategoryByFamily.get(family) ?? "Google"})
-                                </option>
-                              ))}
-                            </optgroup>
-                          ) : null}
-                          <optgroup label="Google Fonts recomendadas">
-                            {popularGoogleFontsDropdownOptions.map((g) => (
-                              <option key={g.family} value={g.family}>
-                                {g.family} ({g.category})
-                              </option>
-                            ))}
-                          </optgroup>
-                          <optgroup label="Helvetica · sistema">
-                            {systemFontFamilyOptions.map((family) => (
-                              <option key={family} value={`${DESIGNER_SYSTEM_FONT_FAMILY_VALUE_PREFIX}${family}`}>
-                                {family}
-                              </option>
-                            ))}
-                          </optgroup>
-                        </select>
+                          onChange={applyDesignerFontDropdown}
+                          groups={buildDesignerFontPickerGroups({
+                            currentFont: showCurrentFontOption
+                              ? {
+                                  value: fontSelectValue,
+                                  label: fontSelectValue,
+                                  previewText: fontSelectValue,
+                                  previewFamily: tx.fontFamily,
+                                }
+                              : null,
+                            customFamilies: customDesignerFontsDropdownOptions,
+                            installedGoogleFamilies: installedGoogleFontsDropdownOptions,
+                            popularGoogleFonts: popularGoogleFontsDropdownOptions,
+                            systemFamilyLabels: systemFontFamilyOptions,
+                            systemPreviewFamilyByLabel,
+                            googleCategoryByFamily: googleFontCategoryByFamily,
+                          })}
+                        />
                         <button
                           type="button"
                           title="Importar .ttf · .otf · woff"
@@ -29429,52 +29461,28 @@ export function FreehandStudioCanvas({
                           />
                         </div>
                         <label className="text-[8px] text-zinc-500">Fuentes</label>
-                        <select
+                        <DesignerFontFamilyPicker
                           value={fontSelectValue}
-                          onChange={(e) => {
-                            applyDesignerFontDropdown(e.target.value);
-                          }}
-                          className="w-full rounded border border-white/10 bg-white/5 px-2 py-1.5 text-[10px] text-white"
-                        >
-                          <option value="">— Elegir fuente —</option>
-                          {showCurrentFontOption ? (
-                            <optgroup label="Fuente actual">
-                              <option value={fontSelectValue}>{fontSelectValue}</option>
-                            </optgroup>
-                          ) : null}
-                          {customDesignerFontsDropdownOptions.length > 0 ? (
-                            <optgroup label="Tipografías importadas">
-                              {customDesignerFontsDropdownOptions.map((family) => (
-                                <option key={family} value={family}>
-                                  {family}
-                                </option>
-                              ))}
-                            </optgroup>
-                          ) : null}
-                          {installedGoogleFontsDropdownOptions.length > 0 ? (
-                            <optgroup label="Google Fonts instaladas">
-                              {installedGoogleFontsDropdownOptions.map((family) => (
-                                <option key={family} value={family}>
-                                  {family} ({googleFontCategoryByFamily.get(family) ?? "Google"})
-                                </option>
-                              ))}
-                            </optgroup>
-                          ) : null}
-                          <optgroup label="Google Fonts recomendadas">
-                            {popularGoogleFontsDropdownOptions.map((g) => (
-                              <option key={g.family} value={g.family}>
-                                {g.family} ({g.category})
-                              </option>
-                            ))}
-                          </optgroup>
-                          <optgroup label="Helvetica · sistema">
-                            {systemFontFamilyOptions.map((family) => (
-                              <option key={family} value={`${DESIGNER_SYSTEM_FONT_FAMILY_VALUE_PREFIX}${family}`}>
-                                {family}
-                              </option>
-                            ))}
-                          </optgroup>
-                        </select>
+                          onChange={applyDesignerFontDropdown}
+                          placeholder="— Elegir fuente —"
+                          buttonClassName="flex w-full items-center justify-between gap-2 rounded border border-white/10 bg-white/5 px-2 py-1.5 text-left text-[10px] text-white transition hover:border-white/20"
+                          groups={buildDesignerFontPickerGroups({
+                            currentFont: showCurrentFontOption
+                              ? {
+                                  value: fontSelectValue,
+                                  label: fontSelectValue,
+                                  previewText: fontSelectValue,
+                                  previewFamily: top.fontFamily,
+                                }
+                              : null,
+                            customFamilies: customDesignerFontsDropdownOptions,
+                            installedGoogleFamilies: installedGoogleFontsDropdownOptions,
+                            popularGoogleFonts: popularGoogleFontsDropdownOptions,
+                            systemFamilyLabels: systemFontFamilyOptions,
+                            systemPreviewFamilyByLabel,
+                            googleCategoryByFamily: googleFontCategoryByFamily,
+                          })}
+                        />
                         <div className="flex gap-1">
                           <button
                             type="button"
@@ -29939,7 +29947,7 @@ export function FreehandStudioCanvas({
                   </button>
                 </div>
                 <div className="flex min-h-0 flex-1 flex-col">
-                  <div className="min-h-0 flex-1 overflow-y-auto p-3">
+                  <div ref={layersPanelScrollRef} className="min-h-0 flex-1 overflow-y-auto p-3">
                     <div className="space-y-0.5">
                     {[...objects].reverse().map((obj) => {
                       const isSel = selectedIds.has(obj.id);
@@ -29949,6 +29957,7 @@ export function FreehandStudioCanvas({
                       return (
                         <div
                           key={obj.id}
+                          data-fh-layer-row={obj.id}
                           draggable={layerRowDraggable}
                           onDragStart={(e) => {
                             if (!layerRowDraggable) return;
@@ -30005,6 +30014,7 @@ export function FreehandStudioCanvas({
                               e.metaKey ||
                               e.ctrlKey ||
                               (typeof e.nativeEvent.getModifierState === "function" && e.nativeEvent.getModifierState("Shift"));
+                            layerPanelSelectionRef.current = true;
                             const ns = resolveSelection(obj.id, extend);
                             setSelectedIds(ns);
                             if (ns.has(obj.id)) setPrimarySelectedId(obj.id);
@@ -30229,131 +30239,24 @@ export function FreehandStudioCanvas({
       {/* ── Context menu ─────────────────────────────────────────── */}
       {ctxMenu && <CtxMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenuItems} onClose={() => setCtxMenu(null)} />}
 
-      {googleFontInstallModalOpen &&
-        typeof document !== "undefined" &&
-        createPortal(
-          <div className="fixed inset-0 z-[100125] flex items-center justify-center p-4">
-            <button
-              type="button"
-              className="absolute inset-0 bg-black/65"
-              aria-label="Cerrar"
-              disabled={googleFontInstallBusy}
-              onClick={() => {
-                if (googleFontInstallBusy) return;
-                setGoogleFontInstallModalOpen(false);
-              }}
-            />
-            <div
-              className="relative z-10 flex w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-white/[0.12] bg-[#12151a] shadow-2xl"
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="designer-google-font-install-title"
-              onMouseDown={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-center justify-between gap-3 border-b border-white/[0.1] px-4 py-3">
-                <div>
-                  <h2 id="designer-google-font-install-title" className="text-[13px] font-semibold text-zinc-100">
-                    Instalar google font
-                  </h2>
-                  <p className="mt-0.5 text-[11px] text-zinc-500">
-                    Selecciona una fuente de Google Fonts para añadirla al sistema de Designer.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  disabled={googleFontInstallBusy}
-                  onClick={() => setGoogleFontInstallModalOpen(false)}
-                  className="inline-flex h-8 items-center justify-center rounded-[6px] border border-white/[0.12] bg-white/[0.04] px-3 text-[11px] font-semibold text-zinc-200 transition hover:bg-white/[0.1] disabled:opacity-40"
-                >
-                  Cerrar
-                </button>
-              </div>
-
-              <div className="space-y-3 p-4">
-                <input
-                  type="text"
-                  value={googleFontInstallQuery}
-                  onChange={(e) => setGoogleFontInstallQuery(e.target.value)}
-                  placeholder="Buscar fuente o categoría"
-                  className="h-9 w-full rounded-[6px] border border-white/[0.12] bg-[#0f131a] px-3 text-[12px] text-zinc-100 outline-none ring-violet-500/40 focus:ring-2"
-                />
-                <div className="max-h-[52vh] overflow-y-auto rounded-[8px] border border-white/[0.08] bg-[#0f131a] p-2">
-                  {googleFontsInstallResults.length === 0 ? (
-                    <div className="px-3 py-6 text-center text-[12px] text-zinc-500">
-                      No hay resultados para esa búsqueda.
-                    </div>
-                  ) : (
-                    <div className="space-y-1">
-                      {googleFontsInstallResults.map((font) => {
-                        const isSelected = googleFontInstallSelection === font.family;
-                        const isInstalled = installedGoogleFontsSet.has(font.family);
-                        return (
-                          <button
-                            key={font.family}
-                            type="button"
-                            onClick={() => setGoogleFontInstallSelection(font.family)}
-                            className={`flex w-full items-center justify-between gap-3 rounded-[6px] border px-3 py-2 text-left transition ${
-                              isSelected
-                                ? "border-violet-400/60 bg-violet-500/20"
-                                : "border-transparent bg-white/[0.02] hover:border-white/[0.12] hover:bg-white/[0.05]"
-                            }`}
-                          >
-                            <div className="min-w-0 flex-1">
-                              <div
-                                className="truncate text-[13px] text-zinc-100"
-                                style={{ fontFamily: `${font.family}, system-ui, sans-serif` }}
-                              >
-                                {font.family}
-                              </div>
-                              <div className="text-[10px] uppercase tracking-wide text-zinc-500">{font.category}</div>
-                              <div
-                                className="mt-1.5 truncate rounded-[4px] border border-white/[0.08] bg-black/20 px-2 py-1 text-[15px] leading-tight text-zinc-200"
-                                style={{ fontFamily: `${font.family}, system-ui, sans-serif` }}
-                                aria-hidden
-                              >
-                                The quick brown fox 123
-                              </div>
-                            </div>
-                            {isInstalled ? (
-                              <span className="rounded border border-emerald-400/30 bg-emerald-500/15 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-emerald-200">
-                                Instalada
-                              </span>
-                            ) : (
-                              <span className="rounded border border-white/[0.14] bg-white/[0.04] px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-zinc-400">
-                                Disponible
-                              </span>
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex items-center justify-end gap-2 border-t border-white/[0.08] px-4 py-3">
-                <button
-                  type="button"
-                  disabled={googleFontInstallBusy}
-                  onClick={() => setGoogleFontInstallModalOpen(false)}
-                  className="rounded-[6px] border border-white/[0.12] bg-white/[0.04] px-3 py-1.5 text-[11px] font-medium text-zinc-300 transition hover:bg-white/[0.1] disabled:opacity-40"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="button"
-                  disabled={googleFontInstallBusy || !googleFontInstallSelection}
-                  onClick={() => void confirmGoogleFontInstall()}
-                  className="inline-flex items-center gap-2 rounded-[6px] border border-violet-400/40 bg-violet-600/35 px-3 py-1.5 text-[11px] font-semibold text-violet-50 transition hover:bg-violet-600/50 disabled:opacity-40"
-                >
-                  {googleFontInstallBusy ? <Loader2 size={13} className="animate-spin" aria-hidden /> : null}
-                  {googleFontInstallBusy ? "Instalando..." : "Instalar y usar"}
-                </button>
-              </div>
-            </div>
-          </div>,
-          document.body,
-        )}
+      <GoogleFontInstallModal
+        open={googleFontInstallModalOpen}
+        busy={googleFontInstallBusy}
+        loadingCatalog={googleFontsCatalogLoading}
+        catalogError={googleFontsCatalogError}
+        catalogCount={googleFontsFullCatalog.length}
+        catalog={googleFontsFullCatalog}
+        categoryByFamily={googleFontCategoryByFamily}
+        installedFamilies={installedGoogleFontsSet}
+        selection={googleFontInstallSelection}
+        onSelectionChange={setGoogleFontInstallSelection}
+        onClose={() => {
+          if (googleFontInstallBusy) return;
+          setGoogleFontInstallModalOpen(false);
+        }}
+        onConfirm={() => void confirmGoogleFontInstall()}
+        onRetryCatalog={() => void refreshGoogleFontsCatalog()}
+      />
 
       {foldderImagePickerOpen &&
         typeof document !== "undefined" &&

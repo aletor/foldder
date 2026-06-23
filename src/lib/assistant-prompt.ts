@@ -84,7 +84,7 @@ ${dataDigest}
 ## INTENT CHEATSHEET (map user words → nodes)
 - Buscar/descargar imagen web / stock / Google → urlImage (+ imageExport if "export").
 - Inspiración / referencias visuales / moodboard desde prompt o imagen → inspiration; output image para Eye, Brain o Image Creation.
-- Quitar fondo / recortar sujeto / matting / descomponer en capas → layerizer (input image from urlImage or mediaInput; output layout → designer).
+- Quitar fondo / recortar sujeto / matting / descomponer en capas → layerizer (input image from urlImage or mediaInput; output layout → designer or photoRoom).
 - Retoque / composición de imagen / montaje visual / varias referencias de imagen → photoRoom.
 - Exportar PNG/JPG → imageExport.
 - Prompt de texto → promptInput (data.value = texto; data.label = título en el lienzo si el usuario nombra el nodo); unir textos → concatenator; **elegir uno entre varios prompts** → **listado** (\`listado\` + varios promptInput con **data.value** = cada opción; **data.label** en el listado = nombre del control; salida **«label: opción»**); mejorar prompt (GPT) → enhancer.
@@ -109,6 +109,19 @@ ${dataDigest}
     { "id": "n1", "type": "urlImage", "data": { "label": "<SEARCH_QUERY_EN_DISAMBIGUATED>", "searchIntent": "<WHAT_MUST_APPEAR_NOT_HOMONYMS>", "pendingSearch": true }, "position": { "x": 0, "y": 0 } },
     { "id": "n2", "type": "layerizer", "data": {}, "position": { "x": 800, "y": 0 } },
     { "id": "n3", "type": "designer", "data": {}, "position": { "x": 1600, "y": 0 } }
+  ],
+  "edges": [
+    { "id": "e1", "source": "n1", "target": "n2", "sourceHandle": "image", "targetHandle": "image" },
+    { "id": "e2", "source": "n2", "target": "n3", "sourceHandle": "layout", "targetHandle": "layout" }
+  ]
+}
+
+### A2 — Descomponer en capas (Layerizer) → PhotoRoom
+{
+  "nodes": [
+    { "id": "n1", "type": "urlImage", "data": { "label": "<SEARCH_QUERY_EN>", "searchIntent": "<VISION_INTENT>", "pendingSearch": true }, "position": { "x": 0, "y": 0 } },
+    { "id": "n2", "type": "layerizer", "data": {}, "position": { "x": 800, "y": 0 } },
+    { "id": "n3", "type": "photoRoom", "data": {}, "position": { "x": 1600, "y": 0 } }
   ],
   "edges": [
     { "id": "e1", "source": "n1", "target": "n2", "sourceHandle": "image", "targetHandle": "image" },
@@ -214,6 +227,7 @@ When the user asks for slides, a deck, or “presentación” from a design:
 | urlImage | image | photoRoom | in_0 … in_7 |
 | urlImage | image | imageExport | image |
 | layerizer | layout | designer | layout |
+| layerizer | layout | photoRoom | layout |
 | photoRoom | image | imageExport | image |
 | promptInput | prompt | nanoBanana | prompt |
 | promptInput | prompt | geminiVideo | prompt |

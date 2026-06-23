@@ -95,6 +95,46 @@ async function tryFetchArrayBuffer(url: string): Promise<ArrayBuffer | null> {
   }
 }
 
+async function tryFetchText(url: string): Promise<string | null> {
+  try {
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    return await r.text();
+  } catch {
+    return null;
+  }
+}
+
+function parseFontUrlsFromGoogleCss(css: string): string[] {
+  const urls: string[] = [];
+  for (const m of css.matchAll(/url\(([^)]+)\)\s*format\(['"]woff2['"]\)/g)) {
+    urls.push(m[1].replace(/^['"]|['"]$/g, ""));
+  }
+  if (urls.length === 0) {
+    const m = css.match(/url\(([^)]+)\)/);
+    if (m) urls.push(m[1].replace(/^['"]|['"]$/g, ""));
+  }
+  return urls;
+}
+
+/** Descarga el binario de una familia Google Fonts vía CSS2 (fonts.gstatic.com). */
+async function fetchFontFromGoogleFonts(primary: string, fontWeight: number): Promise<ArrayBuffer | null> {
+  const familyParam = primary.trim().replace(/\s+/g, "+");
+  const cssUrls = [
+    `https://fonts.googleapis.com/css2?family=${familyParam}:wght@${fontWeight}&display=swap`,
+    `https://fonts.googleapis.com/css2?family=${familyParam}&display=swap`,
+  ];
+  for (const cssUrl of cssUrls) {
+    const css = await tryFetchText(cssUrl);
+    if (!css) continue;
+    for (const fontUrl of parseFontUrlsFromGoogleCss(css)) {
+      const buf = await tryFetchArrayBuffer(fontUrl);
+      if (buf) return buf;
+    }
+  }
+  return null;
+}
+
 /** opentype.js acepta WOFF; probamos pesos cercanos por si falta un corte. */
 function pickLatinFileWeights(requested: number): number[] {
   const r = Math.min(900, Math.max(100, Math.round(requested / 100) * 100));
@@ -164,6 +204,9 @@ async function fetchFontBinary(primary: string, fontWeight: number): Promise<Arr
     if (alt) return alt;
   }
 
+  const fromGoogle = await fetchFontFromGoogleFonts(primary, fontWeight);
+  if (fromGoogle) return fromGoogle;
+
   return await tryFetchArrayBuffer(notoSansFallbackUrl(fontWeight));
 }
 
@@ -171,9 +214,14 @@ export async function loadFontForTextConversion(args: {
   fontFamily: string;
   fontSize: number;
   fontWeight: number;
+  /** Export raster: intenta descargar aunque la fuente no esté cargada en document.fonts. */
+  forceFetch?: boolean;
 }): Promise<{ font: opentype.Font } | { error: string }> {
   const primary = parsePrimaryFontFamily(args.fontFamily);
-  if (!isFontFaceAvailableForConversion(primary, args.fontWeight, args.fontSize)) {
+  if (
+    !args.forceFetch &&
+    !isFontFaceAvailableForConversion(primary, args.fontWeight, args.fontSize)
+  ) {
     return { error: FONT_CONVERSION_UNAVAILABLE };
   }
   const cacheKey = `${normalizeFamilyKey(primary)}|${args.fontWeight}`;
@@ -1204,6 +1252,7 @@ export async function substituteTextWithOutlinedPathsInSvg(
       fontFamily: t.fontFamily,
       fontSize: t.fontSize,
       fontWeight: t.fontWeight,
+      forceFetch: true,
     });
     if ("error" in fontRes) {
       g.querySelectorAll("foreignObject").forEach((el) => el.remove());

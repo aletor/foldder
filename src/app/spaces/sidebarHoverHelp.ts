@@ -66,7 +66,7 @@ export const SIDEBAR_HOVER_HELP: Record<string, { title: string; line: string }>
   },
   photoRoom: {
     title: 'PhotoRoom',
-    line: 'Retoque de imagen: varias entradas; salida imagen (Studio en evolución)',
+    line: 'Retoque y composición; acepta capas desde Layerizer (layout) o imágenes in_0…',
   },
   painter: {
     title: 'Painter',
@@ -78,7 +78,7 @@ export const SIDEBAR_HOVER_HELP: Record<string, { title: string; line: string }>
   },
   layerizer: {
     title: 'Layerizer',
-    line: 'Descompone una imagen en capas + fondo limpio',
+    line: 'Capas + fondo limpio → Designer o PhotoRoom (layout)',
   },
   mediaDescriber: {
     title: 'Image Describer',

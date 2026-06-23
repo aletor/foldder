@@ -119,6 +119,8 @@ export const LayerizerNode = memo(function LayerizerNode({ id, data, selected }:
   const [analyzingRegion, setAnalyzingRegion] = useState(false);
   // Aspect ratio (w/h) de la imagen conectada, para que la tarjeta se adapte.
   const [imgAR, setImgAR] = useState<number | null>(null);
+  const detectedRef = useRef(detected);
+  detectedRef.current = detected;
 
   const toggleExpand = useCallback((subjectId: string) => {
     setExpandedIds((prev) => {
@@ -234,14 +236,12 @@ export const LayerizerNode = memo(function LayerizerNode({ id, data, selected }:
         setError("No se encontraron bloques de texto.");
         return;
       }
-      setDetected((prev) => {
-        const merged = mergeTextDetected(prev, found);
-        patchData({
-          detected: merged,
-          masterUrl: inputImage,
-          ...(json.width && json.height ? { masterWidth: json.width, masterHeight: json.height } : {}),
-        });
-        return merged;
+      const merged = mergeTextDetected(detectedRef.current, found);
+      setDetected(merged);
+      patchData({
+        detected: merged,
+        masterUrl: inputImage,
+        ...(json.width && json.height ? { masterWidth: json.width, masterHeight: json.height } : {}),
       });
       if (json.width && json.height) setDims({ w: json.width, h: json.height });
     } catch (e) {
@@ -272,14 +272,12 @@ export const LayerizerNode = memo(function LayerizerNode({ id, data, selected }:
           setError("No se encontraron objetos en el área.");
           return;
         }
-        setDetected((prev) => {
-          const merged = mergeDetected(prev, found);
-          patchData({
-            detected: merged,
-            masterUrl: inputImage,
-            ...(json.width && json.height ? { masterWidth: json.width, masterHeight: json.height } : {}),
-          });
-          return merged;
+        const merged = mergeDetected(detectedRef.current, found);
+        setDetected(merged);
+        patchData({
+          detected: merged,
+          masterUrl: inputImage,
+          ...(json.width && json.height ? { masterWidth: json.width, masterHeight: json.height } : {}),
         });
         if (json.width && json.height) setDims({ w: json.width, h: json.height });
       } catch (e) {

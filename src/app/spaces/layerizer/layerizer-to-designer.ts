@@ -1,5 +1,5 @@
 /**
- * Layerizer → Designer: convierte un LayerizerOutput en una página de Designer.
+ * Layerizer → Designer / PhotoRoom: convierte LayerizerOutput en capas Freehand apiladas.
  *
  * Orden de apilamiento (abajo → arriba):
  * 1. Original (master)
@@ -11,6 +11,7 @@ import { solidFill } from "../freehand/fill";
 import { DEFAULT_DESIGNER_PAGE_FORMAT } from "../indesign/page-formats";
 import type { FreehandObject } from "../FreehandStudio";
 import type { DesignerPageState } from "../designer/DesignerNode";
+import type { PhotoRoomArtboardState } from "../photo-room/photo-room-types";
 import type { LayerizerOutput } from "./layerizer-types";
 
 function imageObject(args: {
@@ -55,21 +56,17 @@ function resolveOriginal(output: LayerizerOutput): { url: string; w: number; h: 
   };
 }
 
-/** Construye la página Designer (tamaño = fondo; original + fondo + capas por zHint). */
-export function buildDesignerPageFromLayerizerOutput(
-  output: LayerizerOutput,
-  pageId: string,
-): DesignerPageState {
+/** Capas apiladas (tamaño lienzo = fondo limpio). */
+export function buildLayerizerStackObjects(output: LayerizerOutput, idPrefix: string): FreehandObject[] {
   const W = Math.max(1, Math.round(output.background.w));
   const H = Math.max(1, Math.round(output.background.h));
   const original = resolveOriginal(output);
 
   const objects: FreehandObject[] = [];
 
-  // Capa 1 (inferior): imagen original.
   objects.push(
     imageObject({
-      id: `${pageId}__original`,
+      id: `${idPrefix}__original`,
       name: "Capa 1 — Original",
       src: original.url,
       x: 0,
@@ -80,10 +77,9 @@ export function buildDesignerPageFromLayerizerOutput(
     }),
   );
 
-  // Capa 2: fondo limpio generativo.
   objects.push(
     imageObject({
-      id: `${pageId}__bg`,
+      id: `${idPrefix}__bg`,
       name: "Capa 2 — Fondo limpio",
       src: output.background.url,
       x: 0,
@@ -94,14 +90,13 @@ export function buildDesignerPageFromLayerizerOutput(
     }),
   );
 
-  // Capas 3+: objetos extraídos (zHint ascendente → mayor queda encima).
   const layers = [...output.layers].sort((a, b) => a.zHint - b.zHint);
   for (const layer of layers) {
     const w = Math.max(1, Math.round(layer.w));
     const h = Math.max(1, Math.round(layer.h));
     objects.push(
       imageObject({
-        id: `${pageId}__layer_${layer.id}`,
+        id: `${idPrefix}__layer_${layer.id}`,
         name: layer.label || "Capa",
         src: layer.url,
         x: Math.round(layer.x),
@@ -113,15 +108,62 @@ export function buildDesignerPageFromLayerizerOutput(
     );
   }
 
+  return objects;
+}
+
+/** Construye la página Designer (tamaño = fondo; original + fondo + capas por zHint). */
+export function buildDesignerPageFromLayerizerOutput(
+  output: LayerizerOutput,
+  pageId: string,
+): DesignerPageState {
+  const W = Math.max(1, Math.round(output.background.w));
+  const H = Math.max(1, Math.round(output.background.h));
+
   return {
     id: pageId,
     format: DEFAULT_DESIGNER_PAGE_FORMAT,
     customWidth: W,
     customHeight: H,
-    objects,
+    objects: buildLayerizerStackObjects(output, pageId),
     layoutGuides: [],
     stories: [],
     textFrames: [],
     imageFrames: [],
   };
+}
+
+export type PhotoRoomLayerizerImport = {
+  studioArtboard: PhotoRoomArtboardState;
+  studioObjects: FreehandObject[];
+  studioLayoutGuides: [];
+  photoRoomDocSetupDone: true;
+  _layerizerImportedJobId: string;
+};
+
+/** Layerizer → PhotoRoom: artboard al tamaño del fondo + capas superpuestas. */
+export function buildPhotoRoomFromLayerizerOutput(
+  output: LayerizerOutput,
+  nodeId: string,
+): PhotoRoomLayerizerImport {
+  const W = Math.max(1, Math.round(output.background.w));
+  const H = Math.max(1, Math.round(output.background.h));
+  const idPrefix = `${nodeId}__lz_${output.jobId}`;
+
+  return {
+    studioArtboard: {
+      id: `pr_ab_${nodeId}_lz_${output.jobId}`,
+      width: W,
+      height: H,
+      background: "#ffffff",
+    },
+    studioObjects: buildLayerizerStackObjects(output, idPrefix),
+    studioLayoutGuides: [],
+    photoRoomDocSetupDone: true,
+    _layerizerImportedJobId: output.jobId,
+  };
+}
+
+/** Prefijo de ids de capas importadas desde Layerizer en un nodo PhotoRoom. */
+export function photoRoomLayerizerObjectIdPrefix(nodeId: string, jobId: string): string {
+  return `${nodeId}__lz_${jobId}`;
 }

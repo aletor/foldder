@@ -7717,3 +7717,7 @@ body.foldder-studio-flush .left-toolbar-flyout-panel :is(button, span, div):not(
     transition: none !important;
   }
 }
+
+[data-designer-font-picker-label] {
+  font-family: var(--designer-font-preview-family, inherit) !important;
+}

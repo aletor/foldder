@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
-import { LayoutGrid, Monitor, Smartphone } from "lucide-react";
+import { LayoutGrid } from "lucide-react";
 import PhotoRoomFreehandStudio from "./studio/PhotoRoomFreehandStudio";
 import type { DesignerStudioApi, FreehandObject, LayoutGuide } from "../FreehandStudio";
 import type { FoldderExportCreatedDetail } from "../foldder-export-events";
@@ -15,6 +15,7 @@ import {
   newDocumentBackgroundToCss,
 } from "./new-document-model";
 import { PhotoRoomNewDocumentPanel } from "./PhotoRoomNewDocumentPanel";
+import { PhotoRoomCanvasMeasuresControls } from "./PhotoRoomCanvasMeasuresControls";
 import { useBrainNodeTelemetry } from "@/lib/brain/use-brain-node-telemetry";
 import { useStudioBodyLock } from "../studio-node/studio-node-architecture";
 
@@ -25,84 +26,27 @@ function clampDim(n: number): number {
 }
 
 function PhotoRoomCanvasSideControls({
-  nodeId,
   artboard,
-  applySize,
+  onDimensionsChange,
+  onBackgroundChange,
   onOpenPresetModal,
 }: {
-  nodeId: string;
   artboard: PhotoRoomArtboardState;
-  applySize: (w: number, h: number) => void;
+  onDimensionsChange: (width: number, height: number) => void;
+  onBackgroundChange: (background: NewDocumentConfig["background"]) => void;
   onOpenPresetModal: () => void;
 }) {
-  const isLandscape = artboard.width >= artboard.height;
-  const isPortrait = artboard.height > artboard.width;
-  const orientBase = "nodrag flex h-8 flex-1 items-center justify-center transition-colors";
-  const orientOn = "bg-white text-slate-950";
-  const orientOff = "text-white/45 hover:bg-white/[0.08] hover:text-white";
+  const background = artboardCssToDocumentBackground(artboard.background);
   return (
     <div data-foldder-studio-flush className="flex w-full flex-col gap-2">
-      {/* W × H — fila flush con divisores */}
-      <div className="flex min-w-0 items-stretch border border-white/10 bg-black/30">
-        <label className="sr-only" htmlFor={`pr-w-${nodeId}`}>
-          Ancho px
-        </label>
-        <input
-          id={`pr-w-${nodeId}`}
-          type="number"
-          min={64}
-          max={8192}
-          className="nodrag min-w-0 flex-1 bg-transparent px-2 py-1.5 text-center font-mono text-[11px] tabular-nums text-white outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
-          value={artboard.width}
-          onChange={(e) => applySize(Number(e.target.value), artboard.height)}
-        />
-        <span className="flex shrink-0 items-center border-x border-white/10 px-1.5 text-[11px] text-white/40">
-          ×
-        </span>
-        <label className="sr-only" htmlFor={`pr-h-${nodeId}`}>
-          Alto px
-        </label>
-        <input
-          id={`pr-h-${nodeId}`}
-          type="number"
-          min={64}
-          max={8192}
-          className="nodrag min-w-0 flex-1 bg-transparent px-2 py-1.5 text-center font-mono text-[11px] tabular-nums text-white outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
-          value={artboard.height}
-          onChange={(e) => applySize(artboard.width, Number(e.target.value))}
-        />
-        <span className="flex shrink-0 items-center border-l border-white/10 px-2 text-[8px] font-black uppercase tracking-[0.1em] text-white/40">
-          px
-        </span>
-      </div>
-      {/* Orientación — segment control flush */}
-      <div className="flex items-stretch divide-x divide-white/10 border border-white/10 bg-white/[0.04]">
-        <button
-          type="button"
-          title="Orientación horizontal (intercambia alto y ancho si está en vertical)"
-          className={`${orientBase} ${isLandscape ? orientOn : orientOff}`}
-          onClick={() => {
-            if (artboard.height > artboard.width) {
-              applySize(artboard.height, artboard.width);
-            }
-          }}
-        >
-          <Monitor size={16} strokeWidth={2} className="shrink-0" />
-        </button>
-        <button
-          type="button"
-          title="Orientación vertical (intercambia alto y ancho si está en horizontal)"
-          className={`${orientBase} ${isPortrait ? orientOn : orientOff}`}
-          onClick={() => {
-            if (artboard.width > artboard.height) {
-              applySize(artboard.height, artboard.width);
-            }
-          }}
-        >
-          <Smartphone size={16} strokeWidth={2} className="shrink-0" />
-        </button>
-      </div>
-      {/* Presets — CTA azul full-bleed flush */}
+      <PhotoRoomCanvasMeasuresControls
+        width={artboard.width}
+        height={artboard.height}
+        background={background}
+        onDimensionsChange={onDimensionsChange}
+        onBackgroundChange={onBackgroundChange}
+        variant="panel"
+      />
       <button
         type="button"
         title="Abrir presets Web/Arte, fondo y medidas avanzadas"
@@ -253,15 +197,25 @@ export default function PhotoRoomStudio({
     [onPersist],
   );
 
-  const applySize = useCallback(
+  const applyDimensions = useCallback(
     (w: number, h: number) => {
-      const nw = clampDim(w);
-      const nh = clampDim(h);
       onPersist({
         studioArtboard: {
           ...artboard,
-          width: nw,
-          height: nh,
+          width: clampDim(w),
+          height: clampDim(h),
+        },
+      });
+    },
+    [artboard, onPersist],
+  );
+
+  const applyBackground = useCallback(
+    (background: NewDocumentConfig["background"]) => {
+      onPersist({
+        studioArtboard: {
+          ...artboard,
+          background: newDocumentBackgroundToCss(background),
         },
       });
     },
@@ -395,9 +349,9 @@ export default function PhotoRoomStudio({
           studioHeaderSubtitle="Lienzo único — P pantalla completa"
           studioPhotoRoomCanvasPanel={
             <PhotoRoomCanvasSideControls
-              nodeId={nodeId}
               artboard={liveArtboard}
-              applySize={applySize}
+              onDimensionsChange={applyDimensions}
+              onBackgroundChange={applyBackground}
               onOpenPresetModal={openCanvasPresetModal}
             />
           }

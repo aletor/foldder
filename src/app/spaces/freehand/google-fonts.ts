@@ -146,15 +146,28 @@ export function findDesignerSystemFontPreset(
 }
 
 /** Valor controlado del `<select>` de fuentes (Google por nombre, preset con prefijo). */
-export function designerFontSelectControlValue(fontFamily: string, fontWeight: number): string {
+export function designerFontSelectControlValue(
+  fontFamily: string,
+  fontWeight: number,
+  knownGoogleFamilies?: ReadonlySet<string>,
+): string {
   const preset = findDesignerSystemFontPreset(fontFamily, fontWeight);
   if (preset) return `${DESIGNER_FONT_PRESET_VALUE_PREFIX}${preset.id}`;
   const primary = fontFamily.split(",")[0].replace(/['"]/g, "").trim();
+  if (knownGoogleFamilies?.has(primary)) return primary;
   if (GOOGLE_FONTS_LIBRARY.some((g) => g.family === primary)) return primary;
   return "";
 }
 
 export function googleFontStylesheetHref(family: string): string {
   const name = family.trim().replace(/\s+/g, "+");
-  return `https://fonts.googleapis.com/css2?family=${name}:ital,wght@0,100..900;1,100..900&display=swap`;
+  return `https://fonts.googleapis.com/css2?family=${name}&display=swap`;
+}
+
+/** Una sola petición CSS para previsualizar varias familias en el modal de instalación. */
+export function googleFontBatchStylesheetHref(families: string[]): string {
+  const unique = [...new Set(families.map((f) => f.trim()).filter(Boolean))];
+  if (unique.length === 0) return "";
+  const params = unique.map((f) => `family=${f.replace(/\s+/g, "+")}`).join("&");
+  return `https://fonts.googleapis.com/css2?${params}&display=swap`;
 }

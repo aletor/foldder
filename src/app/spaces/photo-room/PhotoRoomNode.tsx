@@ -49,6 +49,8 @@ import { useNodeViewportVisibility } from "../use-node-viewport-visibility";
 import type { PhotoRoomNodeStudioData } from "./photo-room-types";
 import { registerPendingNanoStudioOpenFromPhotoRoom } from "./photo-room-nano-open-pending";
 import { isFoldderLibraryPreviewData } from "../library-drag-preview";
+import { buildPhotoRoomFromLayerizerOutput } from "../layerizer/layerizer-to-designer";
+import type { LayerizerOutput } from "../layerizer/layerizer-types";
 
 /** Tras `flushSync`, el `useEffect` del Nano aún puede no haber registrado el listener; `requestAnimationFrame` va después. */
 function dispatchOpenNanoStudioFromPhotoRoom(nanoNodeId: string, photoRoomNodeId: string) {
@@ -222,6 +224,22 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
     useCallback((state: ReactFlowState<Node, Edge>) => selectPhotoRoomFlowSnapshot(state, id), [id]),
     shallow,
   );
+  /** Layerizer: salida del nodo conectado al handle `layout` (Image Layout). */
+  const connectedLayerizerOutput = useStore(
+    useCallback(
+      (state: ReactFlowState<Node, Edge>): LayerizerOutput | null => {
+        const edge = state.edges.find((e) => e.target === id && e.targetHandle === "layout");
+        if (!edge) return null;
+        const source = state.nodes.find((n) => n.id === edge.source);
+        const out = (source?.data as { output?: unknown } | undefined)?.output;
+        if (!out || typeof out !== "object") return null;
+        const candidate = out as LayerizerOutput;
+        return candidate.jobId && candidate.background?.url ? candidate : null;
+      },
+      [id],
+    ),
+    shallow,
+  );
   const currentNodeFrame = nodeFrameFromSnapshot(currentNodeFrameSnapshot);
   const brainConnected = photoRoomFlowSnapshot[0] === "1";
   const effectiveNodeData = showStudio && liveStudioData ? { ...nodeData, ...liveStudioData } : nodeData;
@@ -298,6 +316,49 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
   }, [id, setNodes]);
 
   useEffect(() => () => clearLiveStudioNodeData(id), [id]);
+
+  /**
+   * Layerizer → PhotoRoom: artboard al tamaño del fondo + capas superpuestas. Idempotente por jobId.
+   */
+  useEffect(() => {
+    if (isLibraryPreview) return;
+    const output = connectedLayerizerOutput;
+    if (!output) return;
+    if (nodeData._layerizerImportedJobId === output.jobId) return;
+
+    const importPatch = buildPhotoRoomFromLayerizerOutput(output, id);
+    const layerizerIdPrefix = `${id}__lz_`;
+    const keptUserObjects = studioObjects.filter((o) => !String(o.id).startsWith(layerizerIdPrefix));
+    const isEmptyStudio = studioObjects.length === 0;
+    const nextObjects = isEmptyStudio ? importPatch.studioObjects : [...keptUserObjects, ...importPatch.studioObjects];
+
+    const patch: Partial<PhotoRoomNodeData> = {
+      ...importPatch,
+      studioObjects: nextObjects,
+    };
+
+    if (showStudioRef.current) {
+      const next = { ...(liveStudioDataRef.current ?? {}), ...patch };
+      liveStudioDataRef.current = next;
+      setLiveStudioNodeData(id, next as Record<string, unknown>);
+      setLiveStudioData(next);
+      return;
+    }
+    setNodes((nds: Node[]) =>
+      nds.map((n) =>
+        n.id === id
+          ? { ...n, data: touchStudioNodeData(n.data as Record<string, unknown>, patch as Record<string, unknown>) }
+          : n,
+      ),
+    );
+  }, [
+    connectedLayerizerOutput,
+    id,
+    isLibraryPreview,
+    nodeData._layerizerImportedJobId,
+    setNodes,
+    studioObjects,
+  ]);
 
   const handleStudioExportPreview = useCallback(
     (dataUrl: string) => {
@@ -602,6 +663,7 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
         labelStyle: ok ? { color: "#f59e0b" } : undefined,
       };
     }),
+    { side: "left", top: "88%", type: "target", id: "layout", dataType: "generic", label: "Image Layout" },
     { side: "left", top: "96%", type: "target", id: "brain", dataType: "brain", label: "Brain" },
     { side: "right", top: "50%", type: "source", id: "image", dataType: "image", label: "Salida imagen" },
   ], [connectedBySlot, visibleSlots]);
@@ -635,6 +697,18 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
     () => photoRoomConnectedInputs.map((c) => `${c.slot}:${c.src}`).join("|"),
     [photoRoomConnectedInputs],
   );
+
+  /** Cambios de tipografía/texto → refrescar miniatura en vivo del nodo. */
+  const studioTextPreviewSig = useMemo(() => {
+    if (!Array.isArray(studioObjects)) return "";
+    return studioObjects
+      .filter((o) => o.type === "text" || o.type === "textOnPath")
+      .map((o) => {
+        const t = o as { id: string; fontFamily?: string; fontWeight?: number; text?: string };
+        return `${t.id}|${t.fontFamily ?? ""}|${t.fontWeight ?? 400}|${(t.text ?? "").length}`;
+      })
+      .join(";");
+  }, [studioObjects]);
 
   /**
    * Studio cerrado: quitar del documento persistido las capas de entrada sin cable (no vaciar `value`:
@@ -735,7 +809,7 @@ export const PhotoRoomNode = memo(({ id, data, selected }: NodeProps<any>) => {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [isLibraryPreview, photoRoomInputsSig, showStudio, handleStudioExportPreview, id]);
+  }, [isLibraryPreview, photoRoomInputsSig, showStudio, studioTextPreviewSig, handleStudioExportPreview, id]);
 
   /** Permite a Image Describer exportar el lienzo abierto sin cerrar PhotoRoom. */
   useEffect(() => {

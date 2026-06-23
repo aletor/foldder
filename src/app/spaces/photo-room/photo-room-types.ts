@@ -22,4 +22,6 @@ export type PhotoRoomNodeStudioData = {
   /** Tras el primer “Crear” o “Cancelar” del asistente de nuevo documento, no se vuelve a mostrar. */
   photoRoomDocSetupDone?: boolean;
   photoRoomDocMeta?: PhotoRoomDocumentMeta;
+  /** Layerizer: jobId del último Image Layout importado (evita reimportar). */
+  _layerizerImportedJobId?: string;
 };
