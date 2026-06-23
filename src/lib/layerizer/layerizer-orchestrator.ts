@@ -16,7 +16,7 @@ import type {
   SelectedObject,
 } from "@/app/spaces/layerizer/layerizer-types";
 import { getLayerizerProvider } from "@/lib/layerizer/layerizer-providers";
-import { computeZHints, type MattedObject } from "@/lib/layerizer/layerizer-extract-core";
+import { computeZHints, segmentTextBlock, type MattedObject } from "@/lib/layerizer/layerizer-extract-core";
 import { uploadLayerizerArtifact } from "@/lib/layerizer/layerizer-s3";
 import { LAYERIZER_COST_USD } from "@/lib/layerizer/layerizer-config";
 
@@ -58,15 +58,16 @@ export async function runLayerizerJob(
   // --- Pasos B+C: segmentación + matting por objeto (en paralelo) ---
   emit({ status: "segmenting", message: "Segmentando objetos" });
   const settled = await Promise.allSettled(
-    selected.map((sel) =>
-      provider.segmentAndMatte({
+    selected.map((sel) => {
+      const base = {
         master,
         width,
         height,
         prompt: sel.prompt,
         fallbackBbox: boxFromPrompt(sel),
-      }),
-    ),
+      };
+      return sel.isText ? segmentTextBlock(base) : provider.segmentAndMatte(base);
+    }),
   );
 
   const matted: MattedObject[] = [];
@@ -81,6 +82,7 @@ export async function runLayerizerJob(
         bbox: res.value.bbox,
         amodalCompleted: false,
         parentId: sel.parentId,
+        isText: sel.isText,
       });
     } else {
       console.warn(`[layerizer:${jobId}] matting failed for ${sel.id}:`, res.reason);
@@ -103,7 +105,7 @@ export async function runLayerizerJob(
     emit({ status: "amodal", message: `Completando ${amodalIds.size} objeto(s)` });
     await Promise.all(
       matted.map(async (m) => {
-        if (!amodalIds.has(m.id)) return;
+        if (!amodalIds.has(m.id) || m.isText) return;
         try {
           const res = await provider.amodalComplete({ layerRgba: m.rgba, label: m.label });
           m.rgba = res.rgba;
@@ -119,7 +121,11 @@ export async function runLayerizerJob(
   // --- Paso D: fondo limpio (una llamada; dos si se compara) ---
   emit({ status: "compositing_bg", message: "Generando fondo limpio" });
   const masks = matted.map((m) => m.mask);
-  const regions = matted.map((m) => ({ label: m.label, bbox: m.bbox }));
+  const regions = matted.map((m) => ({
+    label: m.isText ? `text: ${m.label}` : m.label,
+    bbox: m.bbox,
+    isText: m.isText,
+  }));
   const altMethod: LayerizerCleanPlateMethod = input.cleanPlateMethod === "mask" ? "describe" : "mask";
 
   const genCleanPlate = (method: LayerizerCleanPlateMethod) =>
@@ -204,6 +210,7 @@ export async function runLayerizerJob(
         source: "extracted" as const,
         amodalCompleted: m.amodalCompleted,
         parentId: m.parentId,
+        isText: m.isText,
       };
     }),
   );

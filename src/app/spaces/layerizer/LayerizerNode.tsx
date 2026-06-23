@@ -10,7 +10,7 @@ import {
   type NodeProps,
   type Node,
 } from "@xyflow/react";
-import { ChevronRight, Eye, Layers, Loader2, Maximize2, Scissors, Send, Sparkles, Wand2, X } from "lucide-react";
+import { ChevronRight, Eye, Layers, Loader2, Maximize2, Scissors, Send, Sparkles, Type, Wand2, X } from "lucide-react";
 import { runAiJobWithNotification } from "@/lib/ai-job-notifications";
 import { resolvePromptValueFromEdgeSource } from "../canvas-group-logic";
 import { FoldderDataHandle } from "../FoldderDataHandle";
@@ -62,6 +62,16 @@ function mergeDetected(prev: DetectedObject[], found: DetectedObject[]): Detecte
   return result;
 }
 
+/** Fusiona bloques de texto nuevos evitando duplicados por IoU. */
+function mergeTextDetected(prev: DetectedObject[], found: DetectedObject[]): DetectedObject[] {
+  const result = [...prev];
+  for (const f of found) {
+    const dup = result.some((p) => p.isText && iou(p.bbox, f.bbox) > 0.5);
+    if (!dup) result.push({ ...f, isText: true });
+  }
+  return result;
+}
+
 export const LayerizerNode = memo(function LayerizerNode({ id, data, selected }: NodeProps) {
   const nodeData = data as LayerizerNodeData;
   const nodes = useNodes();
@@ -70,6 +80,7 @@ export const LayerizerNode = memo(function LayerizerNode({ id, data, selected }:
 
   const [open, setOpen] = useState(false);
   const [detecting, setDetecting] = useState(false);
+  const [detectingText, setDetectingText] = useState(false);
   const [detected, setDetected] = useState<DetectedObject[]>(nodeData.detected ?? []);
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -121,6 +132,7 @@ export const LayerizerNode = memo(function LayerizerNode({ id, data, selected }:
         prompt: { kind: "box" as const, box: d.bbox },
         amodalComplete: amodalIds.has(d.id),
         parentId: d.parentId,
+        isText: d.isText,
       }));
   }, [detected, selectedIds, amodalIds]);
 
@@ -150,6 +162,39 @@ export const LayerizerNode = memo(function LayerizerNode({ id, data, selected }:
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setDetecting(false);
+    }
+  }, [inputImage, patchData]);
+
+  const detectText = useCallback(async () => {
+    if (!inputImage) {
+      setError("Conecta una imagen a la entrada.");
+      return;
+    }
+    setError(null);
+    setDetectingText(true);
+    try {
+      const res = await fetch("/api/spaces/layerizer/detect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image: inputImage, mode: "text" }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Detección de texto fallida");
+      const found = (json.objects ?? []) as DetectedObject[];
+      if (found.length === 0) {
+        setError("No se encontraron bloques de texto.");
+        return;
+      }
+      setDetected((prev) => {
+        const merged = mergeTextDetected(prev, found);
+        patchData({ detected: merged, masterUrl: inputImage });
+        return merged;
+      });
+      if (json.width && json.height) setDims({ w: json.width, h: json.height });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDetectingText(false);
     }
   }, [inputImage, patchData]);
 
@@ -378,6 +423,7 @@ export const LayerizerNode = memo(function LayerizerNode({ id, data, selected }:
               detected={detected}
               dims={dims}
               detecting={detecting}
+              detectingText={detectingText}
               selectedIds={selectedIds}
               amodalIds={amodalIds}
               running={running}
@@ -391,6 +437,7 @@ export const LayerizerNode = memo(function LayerizerNode({ id, data, selected }:
               expandedIds={expandedIds}
               analyzingRegion={analyzingRegion}
               onDetect={detect}
+              onDetectText={detectText}
               onAnalyzeRegion={analyzeRegion}
               onToggleSelect={toggleSelect}
               onToggleAmodal={toggleAmodal}
@@ -411,6 +458,7 @@ interface FullscreenProps {
   detected: DetectedObject[];
   dims: { w: number; h: number } | null;
   detecting: boolean;
+  detectingText: boolean;
   selectedIds: Set<string>;
   amodalIds: Set<string>;
   running: boolean;
@@ -424,6 +472,7 @@ interface FullscreenProps {
   expandedIds: Set<string>;
   analyzingRegion: boolean;
   onDetect: () => void;
+  onDetectText: () => void;
   onAnalyzeRegion: (region: [number, number, number, number]) => void;
   onToggleSelect: (id: string) => void;
   onToggleAmodal: (id: string) => void;
@@ -457,20 +506,23 @@ function ObjectRow(props: ObjectRowProps) {
   } = props;
 
   const accentPreview = hasPreview
-    ? isPart
-      ? "bg-sky-500/30 text-sky-200"
-      : "bg-purple-500/30 text-purple-200"
+    ? obj.isText
+      ? "bg-cyan-500/30 text-cyan-200"
+      : isPart
+        ? "bg-sky-500/30 text-sky-200"
+        : "bg-purple-500/30 text-purple-200"
     : "bg-white/10 text-white/40";
+  const rowAccent = obj.isText
+    ? selected
+      ? "border-cyan-500/60 bg-cyan-500/10"
+      : "border-cyan-500/30 border-dashed bg-cyan-500/5"
+    : selected
+      ? isPart
+        ? "border-sky-500/60 bg-sky-500/10"
+        : "border-purple-500/60 bg-purple-500/10"
+      : "border-white/10 bg-white/5";
   return (
-    <div
-      className={`flex items-center justify-between gap-2 rounded-md border px-2.5 py-2 ${
-        selected
-          ? isPart
-            ? "border-sky-500/60 bg-sky-500/10"
-            : "border-purple-500/60 bg-purple-500/10"
-          : "border-white/10 bg-white/5"
-      }`}
-    >
+    <div className={`flex items-center justify-between gap-2 rounded-md border px-2.5 py-2 ${rowAccent}`}>
       <div className="flex flex-1 items-center gap-1.5 overflow-hidden">
         {expandable ? (
           <button
@@ -484,11 +536,18 @@ function ObjectRow(props: ObjectRowProps) {
           <span className="w-[18px] shrink-0" />
         )}
         <button onClick={() => onToggleSelect(obj.id)} className="flex flex-1 items-center gap-2 overflow-hidden text-left">
-          <Scissors
-            size={12}
-            className={selected ? (isPart ? "text-sky-300" : "text-purple-300") : "text-white/40"}
-          />
+          {obj.isText ? (
+            <Type size={12} className={selected ? "text-cyan-300" : "text-white/40"} />
+          ) : (
+            <Scissors
+              size={12}
+              className={selected ? (isPart ? "text-sky-300" : "text-purple-300") : "text-white/40"}
+            />
+          )}
           <span className={`truncate ${isPart ? "text-[11px] text-white/80" : "text-xs"}`}>{obj.label}</span>
+          {obj.isText ? (
+            <span className="shrink-0 rounded bg-cyan-500/20 px-1 text-[8px] font-bold text-cyan-300">texto</span>
+          ) : null}
           {obj.manual ? (
             <span className="shrink-0 rounded bg-amber-500/20 px-1 text-[8px] font-bold text-amber-300">manual</span>
           ) : null}
@@ -497,7 +556,7 @@ function ObjectRow(props: ObjectRowProps) {
           ) : null}
         </button>
       </div>
-      {selected ? (
+      {selected && !obj.isText ? (
         <>
           <button
             onClick={() => onPreviewMask(obj.id)}
@@ -525,10 +584,10 @@ function ObjectRow(props: ObjectRowProps) {
 
 function LayerizerFullscreen(props: FullscreenProps) {
   const {
-    inputImage, detected, dims, detecting, selectedIds, amodalIds, running, progress,
+    inputImage, detected, dims, detecting, detectingText, selectedIds, amodalIds, running, progress,
     output, error, cost, activeStepIndex,
     maskPreviews, previewingId, expandedIds, analyzingRegion,
-    onDetect, onAnalyzeRegion, onToggleSelect, onToggleAmodal, onToggleExpand, onPreviewMask, onExtract, onClose,
+    onDetect, onDetectText, onAnalyzeRegion, onToggleSelect, onToggleAmodal, onToggleExpand, onPreviewMask, onExtract, onClose,
   } = props;
 
   const W = dims?.w || 1;
@@ -663,17 +722,22 @@ function LayerizerFullscreen(props: FullscreenProps) {
               if (obj.parentId && !expandedIds.has(obj.parentId)) return null;
               const isSel = selectedIds.has(obj.id);
               const isPart = !!obj.parentId;
+              const isTxt = !!obj.isText;
               return (
                 <div
                   key={obj.id}
                   className={`pointer-events-none absolute border-2 transition-colors ${
-                    isSel
-                      ? isPart
-                        ? "border-sky-400 bg-sky-400/20"
-                        : "border-purple-400 bg-purple-400/20"
-                      : isPart
-                        ? "border-sky-300/40 border-dashed bg-sky-300/5"
-                        : "border-white/40 bg-white/5"
+                    isTxt
+                      ? isSel
+                        ? "border-cyan-400 bg-cyan-400/15"
+                        : "border-cyan-400/50 border-dashed bg-cyan-400/5"
+                      : isSel
+                        ? isPart
+                          ? "border-sky-400 bg-sky-400/20"
+                          : "border-purple-400 bg-purple-400/20"
+                        : isPart
+                          ? "border-sky-300/40 border-dashed bg-sky-300/5"
+                          : "border-white/40 bg-white/5"
                   }`}
                   style={{
                     left: `${(obj.bbox[0] / W) * 100}%`,
@@ -687,7 +751,7 @@ function LayerizerFullscreen(props: FullscreenProps) {
                     onClick={() => onToggleSelect(obj.id)}
                     title="Clic para seleccionar"
                     className={`pointer-events-auto absolute -top-5 left-0 whitespace-nowrap px-1.5 py-0.5 text-[9px] font-bold text-white ${
-                      isPart ? "bg-sky-600/80" : "bg-black/70"
+                      isTxt ? "bg-cyan-700/90" : isPart ? "bg-sky-600/80" : "bg-black/70"
                     }`}
                   >
                     {obj.label}
@@ -775,10 +839,26 @@ function LayerizerFullscreen(props: FullscreenProps) {
             <>
               <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-[0.15em] text-white/60">
                 <span>Objetos ({selectedIds.size}/{detected.length})</span>
-                <button onClick={onDetect} disabled={detecting || analyzingRegion} className="text-purple-300 hover:text-purple-200 disabled:opacity-40">
+                <button onClick={onDetect} disabled={detecting || detectingText || analyzingRegion} className="text-purple-300 hover:text-purple-200 disabled:opacity-40">
                   {detecting ? "…" : "re-detectar"}
                 </button>
               </div>
+
+              <button
+                onClick={onDetectText}
+                disabled={detectingText || detecting || analyzingRegion || !inputImage}
+                className="flex items-center justify-center gap-2 rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-4 py-2.5 text-[10px] font-black uppercase tracking-[0.12em] text-cyan-200 hover:bg-cyan-500/20 disabled:opacity-50"
+              >
+                {detectingText ? <Loader2 size={13} className="animate-spin" /> : <Type size={13} />}
+                {detectingText ? "Detectando texto…" : "Detectar texto"}
+              </button>
+
+              {detectingText ? (
+                <div className="flex items-center gap-2 rounded-md border border-cyan-500/40 bg-cyan-500/10 px-3 py-2 text-[10px] text-cyan-200">
+                  <Loader2 size={12} className="animate-spin shrink-0" />
+                  Buscando bloques de tipografía…
+                </div>
+              ) : null}
 
               {analyzingRegion ? (
                 <div className="flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[10px] text-amber-200">

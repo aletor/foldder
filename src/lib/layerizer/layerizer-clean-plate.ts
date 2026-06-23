@@ -20,7 +20,8 @@ interface CleanPlateArgs {
   height: number;
   /** Máscaras grayscale (resolución master) de los objetos a tapar. */
   masks: Buffer[];
-  regions: Array<{ label: string; bbox: [number, number, number, number] }>;
+  /** Etiquetas + bbox para el método `describe` (referencia espacial). */
+  regions: Array<{ label: string; bbox: [number, number, number, number]; isText?: boolean }>;
   method: LayerizerCleanPlateMethod;
 }
 
@@ -127,15 +128,23 @@ export async function generateCleanPlate(args: CleanPlateArgs): Promise<Buffer> 
   // Las zonas a eliminar se pintan de magenta sólido: la señal más robusta para inpaint.
   const marked = await markRemovalRegions(master, dilated, width, height);
 
+  const hasText = args.regions.some((r) => r.isText);
+  const textNote = hasText
+    ? " For typography/text blocks: erase every letter completely — no ghost text, halos or outlines. Fill with the photo/gradient/court behind the text."
+    : "";
+
   const prompt = [
     "This image has some objects painted over with solid magenta (#FF00FF):",
     refs + ".",
     "Task: erase those objects completely and rebuild a clean, photorealistic background exactly where the magenta is.",
-    "Fill every magenta pixel by naturally extending the surrounding scene (walls, seating, table, floor, etc.) with matching colors, lighting, perspective, texture and film grain.",
+    "Fill every magenta pixel by naturally extending the surrounding scene (walls, seating, table, floor, court, sky, gradients, etc.) with matching colors, lighting, perspective, texture and film grain.",
     "Also remove any shadows or reflections those objects cast on nearby surfaces.",
+    textNote,
     "Do NOT leave any magenta. Do NOT add new objects, people, text or watermarks. Keep every non-magenta pixel identical.",
     "Return the full edited image at the same resolution.",
-  ].join(" ");
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   const generated = await callGeminiImageEdit([marked], prompt);
   // Normaliza a la resolución del master (Gemini puede devolver otro tamaño).

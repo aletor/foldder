@@ -55,7 +55,7 @@ export interface CleanPlateInput {
   /** Máscaras (PNG grayscale, resolución master) de TODOS los objetos a tapar. */
   masks: Buffer[];
   /** Etiquetas + bbox para el método `describe` (referencia espacial). */
-  regions: Array<{ label: string; bbox: [number, number, number, number] }>;
+  regions: Array<{ label: string; bbox: [number, number, number, number]; isText?: boolean }>;
   method: LayerizerCleanPlateMethod;
 }
 

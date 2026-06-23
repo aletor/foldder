@@ -46,6 +46,8 @@ export async function POST(req: NextRequest) {
     // Región opcional [x, y, w, h] en px del master para análisis local manual.
     const rawRegion = Array.isArray(body?.region) ? body.region.map((n: unknown) => Number(n)) : null;
     const hasRegion = rawRegion && rawRegion.length === 4 && rawRegion.every(Number.isFinite);
+    const detectMode: "auto" | "local" | "text" =
+      body?.mode === "text" ? "text" : hasRegion ? "local" : "auto";
 
     const master = await resolveLayerizerMaster(usageUserEmail, image);
     const meta = await sharp(master.buffer).metadata();
@@ -62,11 +64,11 @@ export async function POST(req: NextRequest) {
     const detectBuffer = knownMime ? master.buffer : await sharp(master.buffer).png().toBuffer();
     const detectMime = knownMime ?? "image/png";
 
-    // El modo auto afina los bounds con SAM 3.1 (texto) si hay host fal: reservar holgura
-    // para hasta 5 objetos refinados. El modo local (recorte) sigue solo con Gemini.
-    const willRefine = !hasRegion && resolveLayerizerHost() === "fal";
+    // SAM refine en auto y text (no en local). Reservar holgura para hasta 8 bloques de texto.
+    const willRefine = detectMode !== "local" && resolveLayerizerHost() === "fal";
+    const refineSlots = detectMode === "text" ? 8 : 5;
     const detectReserveUsd =
-      LAYERIZER_COST_USD.detect + (willRefine ? 5 * LAYERIZER_COST_USD.detectRefinePerObject : 0);
+      LAYERIZER_COST_USD.detect + (willRefine ? refineSlots * LAYERIZER_COST_USD.detectRefinePerObject : 0);
     walletCharge = await reserveApiWalletCharge({
       req,
       userEmail: usageUserEmail,
@@ -74,7 +76,10 @@ export async function POST(req: NextRequest) {
       provider: "gemini",
       route: "/api/spaces/layerizer/detect",
       maxCostMicros: reserveUsdToMicros(detectReserveUsd, { multiplier: 1.25 }),
-      metadata: { model: "gemini-2.5-flash", op: hasRegion ? "layerizer-detect-local" : "layerizer-detect" },
+      metadata: {
+        model: "gemini-2.5-flash",
+        op: detectMode === "text" ? "layerizer-detect-text" : hasRegion ? "layerizer-detect-local" : "layerizer-detect",
+      },
     });
 
     let result: { objects: DetectedObject[]; width: number; height: number };
@@ -114,11 +119,11 @@ export async function POST(req: NextRequest) {
         baseUrl: req.url,
         imageBuffer: detectBuffer,
         imageMimeType: detectMime,
+        mode: detectMode === "text" ? "text" : "auto",
       });
     }
 
-    // Paso A.2 — afinar bounds con SAM 3.1 (texto). Gemini acierta etiquetas pero
-    // localiza mal; SAM da cajas precisas. Solo modo auto y solo si hay host fal.
+    // Paso A.2 — afinar bounds con SAM 3.1 (texto). Solo modos auto y text.
     let refinedCount = 0;
     if (willRefine && result.objects.length > 0) {
       const before = result.objects.map((o) => o.bbox.join(","));

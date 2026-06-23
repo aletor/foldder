@@ -82,6 +82,8 @@ export interface SelectedObject {
   label?: string; // etiqueta heredada de la detección (UI / Designer)
   /** id del sujeto contenedor; las partes se apilan por encima de su sujeto. */
   parentId?: string;
+  /** Bloque de tipografía/gráfico (extracción rectangular + borrado del fondo). */
+  isText?: boolean;
 }
 
 /** Una capa extraída del master (objeto recortado con alfa real). */
@@ -99,6 +101,8 @@ export interface Layer {
   amodalCompleted: boolean;
   /** id del sujeto contenedor; las partes quedan por encima de su sujeto. */
   parentId?: string;
+  /** Capa de bloque tipográfico (recorte rectangular). */
+  isText?: boolean;
 }
 
 /** Capa de fondo a página completa (original o fondo limpio generativo). */

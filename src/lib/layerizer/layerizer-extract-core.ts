@@ -55,6 +55,30 @@ export async function matteCropWithReplicate(
 /** Margen de recorte para no cortar extremidades (manos/pies que se salen del bbox). */
 export const SEGMENT_CROP_EXPAND = 0.12;
 
+/** Extracción de bloque tipográfico: recorte rectangular + máscara sólida para el fondo limpio. */
+export async function segmentTextBlock(input: SegmentMatteInput): Promise<SegmentMatteResult> {
+  const { master, width, height } = input;
+  const detBox = resolveSegmentBbox(input.prompt, input.fallbackBbox, width, height);
+  const bbox = clampBox(detBox, width, height);
+  const [bx, by, bw, bh] = bbox;
+
+  const rgba = await sharp(master).extract({ left: bx, top: by, width: bw, height: bh }).png().toBuffer();
+  const whiteTile = await sharp({
+    create: { width: bw, height: bh, channels: 3, background: { r: 255, g: 255, b: 255 } },
+  })
+    .png()
+    .toBuffer();
+  const fullMask = await sharp({
+    create: { width, height, channels: 3, background: { r: 0, g: 0, b: 0 } },
+  })
+    .composite([{ input: whiteTile, left: bx, top: by }])
+    .grayscale()
+    .png()
+    .toBuffer();
+
+  return { rgba, mask: fullMask, bbox };
+}
+
 export async function segmentAndMatte(input: SegmentMatteInput): Promise<SegmentMatteResult> {
   const { master, width, height } = input;
   const detBox = resolveSegmentBbox(input.prompt, input.fallbackBbox, width, height);
@@ -74,6 +98,7 @@ export interface MattedObject {
   bbox: [number, number, number, number];
   amodalCompleted: boolean;
   parentId?: string;
+  isText?: boolean;
 }
 
 /**

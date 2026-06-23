@@ -153,10 +153,10 @@ export async function detectObjectsWithGemini(input: {
   /**
    * "auto" (default): detección global PLANA de los pocos objetos más salientes
    * de la escena (cualquier tipo; personas primero). Rápida y barata.
-   * "local": análisis inclusivo y PLANO de una región seleccionada por el usuario
-   * (incluye mobiliario/objetos, sin filtros de saliencia).
+   * "local": análisis inclusivo y PLANO de una región seleccionada por el usuario.
+   * "text": bloques de tipografía/gráfico del diseño (titulares, marcadores, etc.).
    */
-  mode?: "auto" | "local";
+  mode?: "auto" | "local" | "text";
   /** Bytes del master ya resueltos (evita re-descargar URLs autenticadas como /api/spaces/s3-file). */
   imageBuffer?: Buffer;
   imageMimeType?: string;
@@ -169,9 +169,11 @@ export async function detectObjectsWithGemini(input: {
     : await parseReferenceImageForGemini(input.image, { baseUrl: input.baseUrl });
   if (!parsed) throw new Error("Could not parse image for detection");
 
-  const maxObjects = input.maxObjects ?? 5;
+  const maxObjects = input.maxObjects ?? (input.mode === "text" ? 8 : 5);
   const includeText = input.includeText ?? false;
-  const isLocal = (input.mode ?? "auto") === "local";
+  const mode = input.mode ?? "auto";
+  const isLocal = mode === "local";
+  const isTextMode = mode === "text";
 
   const autoPrompt = [
     "You are a precise object detector for an image layer-extraction tool.",
@@ -195,7 +197,18 @@ export async function detectObjectsWithGemini(input: {
     "isText = true only for readable text/typography/logos. score = confidence 0..1.",
   ].join("\n");
 
-  const prompt = isLocal ? localPrompt : autoPrompt;
+  const textPrompt = [
+    "You are a precise typography and graphic-text detector for an image layer-extraction tool.",
+    "Detect DISTINCT READABLE TEXT BLOCKS used as graphic design overlays on the image.",
+    "INCLUDE: headlines and display type (player names, WINNER, titles), scoreboards / score tables, subtitles, captions, vertical side text (e.g. event name along an edge), watermarks with readable letters.",
+    "Each block = ONE layer: the whole scoreboard as one box, the whole headline as one box, each major text element separate.",
+    "EXCLUDE: tiny illegible text, text printed on clothing or objects (brand on a cap), pure image logos without readable letters, and physical objects (people, balls, rackets).",
+    `Return AT MOST ${maxObjects} text blocks, largest / most prominent first.`,
+    "box_2d is the 2D bounding box as EXACTLY four integers [ymin, xmin, ymax, xmax], each normalized to 0..1000 of the WHOLE image. Tightly wrap the visible text block.",
+    "isText MUST be true for every item. score = confidence 0..1.",
+  ].join("\n");
+
+  const prompt = isTextMode ? textPrompt : isLocal ? localPrompt : autoPrompt;
 
   const boxSchema = { type: "ARRAY", items: { type: "INTEGER" }, minItems: 4, maxItems: 4 };
   const responseSchema = {
@@ -277,8 +290,8 @@ export async function detectObjectsWithGemini(input: {
 
   // Descarta ruido: diminutos, baja confianza y (por defecto) texto de entorno.
   const imageArea = Math.max(1, input.width * input.height);
-  const MIN_AREA_FRACTION = isLocal ? 0.004 : 0.012; // en local los objetos pueden ser menores
-  const MIN_SCORE = isLocal ? 0.2 : 0.3;
+  const MIN_AREA_FRACTION = isTextMode ? 0.003 : isLocal ? 0.004 : 0.012;
+  const MIN_SCORE = isTextMode ? 0.25 : isLocal ? 0.2 : 0.3;
 
   const parseOne = (
     raw: GeminiDetectedRaw,
@@ -314,23 +327,26 @@ export async function detectObjectsWithGemini(input: {
   for (const rawUnknown of rawArray) {
     const parsed = parseOne(rawUnknown as GeminiDetectedRaw);
     if (!parsed) continue;
-    if (parsed.isText && !includeText) continue; // carteles/texto de entorno = ruido
+    if (parsed.isText && !includeText && !isTextMode) continue;
+    if (isTextMode) parsed.isText = true;
     if (parsed.score < MIN_SCORE) continue;
     if ((parsed.bbox[2] * parsed.bbox[3]) / imageArea < MIN_AREA_FRACTION) continue;
     candidates.push(parsed);
   }
 
-  // Orden: en local por tamaño (inclusivo); en auto por saliencia (protagonistas primero).
+  // Orden: local por tamaño; texto por área; auto por saliencia.
   candidates.sort((a, b) =>
-    isLocal ? b.bbox[2] * b.bbox[3] - a.bbox[2] * a.bbox[3] : saliency(b) - saliency(a),
+    isLocal || isTextMode
+      ? b.bbox[2] * b.bbox[3] - a.bbox[2] * a.bbox[3]
+      : saliency(b) - saliency(a),
   );
 
-  const prefix = isLocal ? "det_l" : "det_s";
+  const prefix = isLocal ? "det_l" : isTextMode ? "det_t" : "det_s";
   const objects: DetectedObject[] = candidates.slice(0, maxObjects).map((c, i) => ({
     id: `${prefix}${i}_${Math.random().toString(36).slice(2, 8)}`,
     label: c.label,
-    bbox: padBox(c.bbox, input.width, input.height),
-    isText: c.isText,
+    bbox: padBox(c.bbox, input.width, input.height, isTextMode ? 0.01 : 0.02),
+    isText: isTextMode ? true : c.isText,
     score: c.score,
     ...(isLocal ? { manual: true } : {}),
   }));
