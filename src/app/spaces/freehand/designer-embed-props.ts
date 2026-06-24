@@ -1,5 +1,6 @@
 import type * as React from "react";
 import type { BrainNodeTelemetryApi } from "@/lib/brain/brain-telemetry";
+import type { Dataset } from "@/app/spaces/dataset/dataset-types";
 import type { FreehandObject, DesignerStudioApi } from "../FreehandStudio";
 import type { VectorPdfExportOptions } from "./text-outline";
 
@@ -99,4 +100,12 @@ export type DesignerEmbedProps = {
   designerSkipAutoNodeExportOnClose?: boolean;
   /** Telemetría Brain agnóstica del nodo (canvas Designer usa `nodeType: DESIGNER`). */
   designerBrainTelemetry?: BrainNodeTelemetryApi | null;
+  /** Dataset conectado al nodo Designer en el grafo (handle `dataset`). */
+  designerConnectedDataset?: Dataset | null;
+  /** Cargando Dataset global referenciado por el nodo fuente. */
+  designerConnectedDatasetLoading?: boolean;
+  /** Fila del Dataset a usar en la página activa (0 = primera fila). */
+  designerActivePageDatasetRowIndex?: number;
+  /** Fija la fila del Dataset de la página activa (re-aplica los datos enlazados). */
+  onDesignerSetActivePageRowIndex?: (rowIndex: number) => void;
 };

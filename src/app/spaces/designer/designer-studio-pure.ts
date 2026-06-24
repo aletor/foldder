@@ -1,10 +1,11 @@
 /**
  * Funciones puras del Designer Studio (sin React): claves de sesión, duplicado de página, helpers de texto.
  */
-import type { FreehandObject } from "../FreehandStudio";
+import type { FreehandObject, RectObject } from "../FreehandStudio";
 import type { DesignerPageState } from "./DesignerNode";
 import type { SpanStyle, StoryNode } from "../indesign/text-model";
 import { flattenStoryContent } from "../indesign/text-model";
+import { getPageDimensions } from "../indesign/page-formats";
 
 /** Dimensiones intrínsecas del archivo local (evita diferencias S3/CORS/EXIF vs `<Image>` remota). */
 export async function readImageFilePixelSize(file: File): Promise<{ w: number; h: number }> {
@@ -44,6 +45,29 @@ export function designerCanvasSessionKey(
   height: number,
 ): string {
   return `designer-fh-${instanceKey}__${pageId}__${Math.round(width)}_${Math.round(height)}`;
+}
+
+/** Huella del contenido visible de una página; invalida miniaturas raster cuando cambia el diseño. */
+export function designerPageThumbContentKey(page: DesignerPageState): string {
+  const pd = getPageDimensions(page);
+  const objs = page.objects ?? [];
+  let acc = `${Math.round(pd.width)}x${Math.round(pd.height)}|${page.pageBackground ?? ""}|${objs.length}`;
+  for (const o of objs) {
+    if (!o.visible || o.isClipMask) continue;
+    acc += `|${o.id}:${o.type}`;
+    const geom = o as { x?: number; y?: number; width?: number; height?: number; text?: string; fill?: unknown };
+    acc += `:${Math.round(geom.x ?? 0)},${Math.round(geom.y ?? 0)},${Math.round(geom.width ?? 0)},${Math.round(geom.height ?? 0)}`;
+    if (typeof geom.text === "string") acc += `:t${geom.text.length}:${geom.text.slice(0, 48)}`;
+    if (o.type === "rect" && o.isImageFrame) {
+      const ifc = (o as RectObject).imageFrameContent;
+      acc += `:if${ifc?.src?.slice(-32) ?? ""}:${ifc?.offsetX ?? 0},${ifc?.offsetY ?? 0},${ifc?.scaleX ?? 1},${ifc?.scaleY ?? 1}`;
+    }
+    if (o.type === "image") {
+      const im = o as { src?: string };
+      acc += `:im${im.src?.slice(-32) ?? ""}`;
+    }
+  }
+  return acc;
 }
 
 let _dpgSeq = 0;

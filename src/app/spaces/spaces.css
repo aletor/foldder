@@ -1756,6 +1756,122 @@
   --foldder-frameless-accent: #1f2328;
 }
 
+/* Export Multimedia: frameless · mismo fondo/color que Enhancer (#21817f) */
+.custom-node.export-multimedia-node { --foldder-node-card-bg: #21817f; }
+
+.custom-node.export-multimedia-node.foldder-node--frameless.node--glass .node-content {
+  padding: 0 !important;
+  justify-content: flex-start !important;
+  align-items: stretch !important;
+}
+
+.custom-node.export-multimedia-node .export-multimedia-node-main {
+  position: absolute !important;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden !important;
+  background: #21817f !important;
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: flex-start !important;
+}
+
+.custom-node.export-multimedia-node .export-multimedia-node-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+  user-select: none;
+}
+
+.custom-node.export-multimedia-node .export-multimedia-node-dock {
+  position: absolute;
+  top: 38px;
+  left: 0;
+  right: 0;
+  bottom: 48px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  padding: 10px 14px 14px;
+  overflow: hidden;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.62) 0%,
+    rgba(0, 0, 0, 0.28) 42%,
+    transparent 100%
+  );
+}
+
+.custom-node.export-multimedia-node .export-multimedia-stat-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.custom-node.export-multimedia-node .export-multimedia-stat-total {
+  font-size: 26px;
+  font-weight: 900;
+  letter-spacing: -0.05em;
+  line-height: 1;
+  color: #ffffff;
+}
+
+.custom-node.export-multimedia-node .export-multimedia-stat-sub {
+  font-size: 10px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.custom-node.export-multimedia-node .export-multimedia-thumbs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: center;
+  gap: 6px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.custom-node.export-multimedia-node .export-multimedia-empty-text {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.custom-node.export-multimedia-node .export-multimedia-node-footer {
+  display: flex !important;
+  position: absolute !important;
+  inset: auto 0 0 0 !important;
+  z-index: 9;
+  align-items: stretch;
+  justify-content: stretch;
+  padding: 0 var(--foldder-frameless-overlay-side) var(--foldder-frameless-overlay-bottom) !important;
+  background: transparent !important;
+}
+
+.custom-node.export-multimedia-node .export-multimedia-node-footer .export-multimedia-open-button {
+  position: relative !important;
+  inset: auto !important;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+  justify-content: center;
+  border-radius: 0 !important;
+}
+
+.custom-node.foldder-node--frameless.export-multimedia-node {
+  --foldder-frameless-accent: #1f2328;
+}
+
 /* Painter: frameless + imagen de fondo + #890AF3 */
 .custom-node.painter-node.foldder-node--frameless.node--glass .node-content,
 .custom-node.painter-node .painter-node-main {
@@ -6386,6 +6502,20 @@ body.nb-studio-open [data-foldder-canvas-launcher] {
 }
 
 .spaces-canvas .react-flow__node:has(.enhancer-node) {
+  overflow: visible !important;
+}
+
+/* Export Multimedia: tarjeta teal (#21817f); imagen en .export-multimedia-node-bg */
+.react-flow__node .custom-node.foldder-node--frameless.export-multimedia-node.node--glass,
+.foldder-library-preview-node .custom-node.foldder-node--frameless.export-multimedia-node.node--glass {
+  background: #21817f !important;
+  background-color: #21817f !important;
+  min-height: 240px !important;
+  overflow: visible !important;
+  overflow-clip-margin: 56px;
+}
+
+.spaces-canvas .react-flow__node:has(.export-multimedia-node) {
   overflow: visible !important;
 }
 

@@ -40,6 +40,13 @@ import { useCanvasPerformanceModeRef } from "../use-canvas-performance-mode";
 import { useFoldderRenderMetric } from "../use-performance-metrics";
 import { useCanvasNodeMediaPreviewUrl } from "../hooks/use-authed-media-preview-url";
 import { useNodeViewportVisibility } from "../use-node-viewport-visibility";
+import { useDesignerConnectedDataset } from "./use-designer-connected-dataset";
+import {
+  applyDatasetToAllPages,
+  collectDatasetLoopListId,
+  reconcileDatasetLoopPages,
+} from "./designer-dataset-page";
+import { duplicateDesignerPageState } from "./designer-studio-pure";
 
 const DESIGNER_NODE_MAX_WIDTH = 960;
 const DESIGNER_NODE_MAX_HEIGHT = 2200;
@@ -49,8 +56,9 @@ const DESIGNER_NODE_HANDLES: StudioCanvasNodeHandleSpec[] = [
   { side: "left", top: "25%", style: { transform: "translateY(-50%)" }, type: "target", id: "brain", dataType: "brain", label: "Brain" },
   { side: "left", top: "50%", style: { transform: "translateY(-50%)" }, type: "target", id: "dataset", dataType: "dataset", label: "Dataset" },
   { side: "left", top: "75%", style: { transform: "translateY(-50%)" }, type: "target", id: "layout", dataType: "generic", label: "Image Layout" },
-  { side: "right", top: "38%", style: { transform: "translateY(-50%)" }, type: "source", id: "image", dataType: "image", label: "Image" },
-  { side: "right", top: "62%", style: { transform: "translateY(-50%)" }, type: "source", id: "document", dataType: "generic", label: "Document" },
+  { side: "right", top: "30%", style: { transform: "translateY(-50%)" }, type: "source", id: "image", dataType: "image", label: "Image" },
+  { side: "right", top: "52%", style: { transform: "translateY(-50%)" }, type: "source", id: "document", dataType: "generic", label: "Document" },
+  { side: "right", top: "74%", style: { transform: "translateY(-50%)" }, type: "source", id: "media_list", dataType: "generic", label: "Export Multimedia" },
 ];
 
 export type DesignerPageState = {
@@ -58,6 +66,8 @@ export type DesignerPageState = {
   format: IndesignPageFormatId;
   customWidth?: number;
   customHeight?: number;
+  /** Fondo del pliego: blanco, negro o transparente. */
+  pageBackground?: "white" | "black" | "transparent";
   objects: FreehandObject[];
   layoutGuides?: LayoutGuide[];
   stories?: Story[];
@@ -67,6 +77,15 @@ export type DesignerPageState = {
   presenterGroupSteps?: PresenterGroupStep[];
   /** Presenter: omitir en modo Play; miniatura muy atenuada en el rail. */
   presenterSkipSlide?: boolean;
+  /** Fila del Dataset enlazado para esta página (por defecto = índice de página). */
+  datasetRowIndex?: number;
+  /**
+   * Modo bucle: id del listado del Dataset que generó esta página con "+ Bucle".
+   * Si está presente en las páginas, el deck se mantiene en alta/baja según las filas del listado.
+   */
+  datasetLoopListId?: string;
+  /** Modo bucle: id estable de la fila (Card) que representa esta página; permite mapear alta/baja/reordenado. */
+  datasetLoopCardId?: string;
 };
 
 export type DesignerNodeData = {
@@ -78,6 +97,8 @@ export type DesignerNodeData = {
   autoImageOptimization?: boolean;
   /** Layerizer: jobId del último Image Layout importado como página (evita reimportar). */
   _layerizerImportedJobId?: string;
+  /** Raster en vivo por página (pageId → dataURL); alimenta la salida media_list / Export Multimedia. */
+  pageThumbnails?: Record<string, string>;
 };
 
 function DesignerNodeResizer(props: React.ComponentProps<typeof NodeResizer>) {
@@ -112,6 +133,7 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
       [id],
     ),
   );
+  const { datasetConnected, connectedDataset, datasetLoading } = useDesignerConnectedDataset(id);
   const currentNodeFrameSnapshot = useStore(
     useCallback((state: ReactFlowState<Node, Edge>) => selectNodeFrameSnapshot(state, id), [id]),
     shallow,
@@ -257,6 +279,26 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
     [id, isStudioOpen, setNodes],
   );
 
+  const onUpdatePageThumbnails = useCallback(
+    (thumbnails: Record<string, string>) => {
+      const patch: Partial<DesignerNodeData> = { pageThumbnails: thumbnails };
+      if (isStudioOpen) {
+        liveDesignerPatchRef.current = {
+          ...(liveDesignerPatchRef.current ?? {}),
+          ...patch,
+        };
+        setLiveStudioNodeData(id, patch);
+        return;
+      }
+      setNodes((nds) =>
+        nds.map((n) =>
+          n.id === id ? { ...n, data: { ...n.data, ...patch } } : n,
+        ),
+      );
+    },
+    [id, isStudioOpen, setNodes],
+  );
+
   const commitLiveDesignerPatch = useCallback(() => {
     const patch = liveDesignerPatchRef.current;
     if (!patch || Object.keys(patch).length === 0) {
@@ -278,6 +320,58 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
   }, [id, setNodes]);
 
   useEffect(() => () => clearLiveStudioNodeData(id), [id]);
+
+  /**
+   * Sincronización Dataset → Designer a nivel de NODO (estudio cerrado). El estudio abierto ya
+   * sincroniza por su cuenta; aquí cubrimos el caso de editar el Dataset sin abrir el Designer:
+   *
+   * - Deck en modo bucle: alta/baja/reordenado de slides según las filas del listado (por `cardId`).
+   * - Resto: re-aplica los valores enlazados a las páginas con bindings.
+   *
+   * Guard por `datasetId:version` → solo corre cuando cambia de verdad el contenido del Dataset,
+   * nunca por reescribir `pages` (no entra en bucle).
+   */
+  const lastNodeDatasetSyncRef = useRef<string | null>(null);
+  useEffect(() => {
+    const ds = connectedDataset;
+    if (!ds) {
+      lastNodeDatasetSyncRef.current = null;
+      return;
+    }
+    const syncKey = `${ds.id}:${ds.version}`;
+    // Con el estudio abierto manda el estudio; solo marcamos para no duplicar al cerrar.
+    if (isStudioOpen) {
+      lastNodeDatasetSyncRef.current = syncKey;
+      return;
+    }
+    if (lastNodeDatasetSyncRef.current === syncKey) return;
+    lastNodeDatasetSyncRef.current = syncKey;
+
+    const current = (Array.isArray(nodeData.pages) ? nodeData.pages : []) as DesignerPageState[];
+    if (current.length === 0) return;
+
+    const loopListId = collectDatasetLoopListId(current);
+    const loopActive = !!loopListId && ds.lists.some((l) => l.id === loopListId);
+    const next = loopActive
+      ? reconcileDatasetLoopPages(current, ds, loopListId!, activeIdx, duplicateDesignerPageState)
+      : applyDatasetToAllPages(current, ds);
+    if (next === current) return;
+
+    const nextActiveIdx = Math.min(activeIdx, Math.max(0, next.length - 1));
+    setNodes((nds) =>
+      nds.map((n) =>
+        n.id === id
+          ? {
+              ...n,
+              data: touchStudioNodeData(n.data as Record<string, unknown>, {
+                pages: next,
+                activePageIndex: nextActiveIdx,
+              } as Record<string, unknown>),
+            }
+          : n,
+      ),
+    );
+  }, [connectedDataset, isStudioOpen, id, setNodes, nodeData.pages, activeIdx]);
 
   /**
    * Layerizer → Designer: al conectar un Image Layout, abrir un documento nuevo del tamaño
@@ -430,6 +524,9 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
             activePageIndex={activeIdx}
             designerCanvasInstanceKey={id}
             brainConnected={brainConnected}
+            datasetConnected={datasetConnected}
+            designerConnectedDataset={connectedDataset}
+            designerConnectedDatasetLoading={datasetLoading}
             onClose={() => {
               commitLiveDesignerPatch();
               closeStudio();
@@ -439,6 +536,7 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
               dispatchFoldderExportCreated({ ...detail, sourceNodeId: id });
             }}
             onUpdatePages={onUpdatePages}
+            onUpdatePageThumbnails={onUpdatePageThumbnails}
             autoImageOptimization={nodeData.autoImageOptimization !== false}
             onAutoImageOptimizationChange={onAutoImageOptimizationChange}
           />
@@ -455,10 +553,14 @@ function DesignerStudioLazy(props: {
   activePageIndex: number;
   designerCanvasInstanceKey: string;
   brainConnected?: boolean;
+  datasetConnected?: boolean;
+  designerConnectedDataset?: import("@/app/spaces/dataset/dataset-types").Dataset | null;
+  designerConnectedDatasetLoading?: boolean;
   onClose: () => void;
   onExport: (dataUrl: string) => void;
   onFinalExport?: (detail: Omit<FoldderExportCreatedDetail, "sourceNodeId">) => void;
   onUpdatePages: (pages: DesignerPageState[], activeIdx?: number) => void;
+  onUpdatePageThumbnails?: (thumbnails: Record<string, string>) => void;
   autoImageOptimization?: boolean;
   onAutoImageOptimizationChange?: (enabled: boolean) => void;
 }) {

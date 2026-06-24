@@ -188,8 +188,8 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
 	  export_multimedia: {
 	    type: 'export_multimedia',
 	    label: 'Export Multimedia',
-	    description: 'Recibe una media_list y permite revisar, filtrar, descargar medios y exportar un manifest JSON.',
-	    inputs: [{ id: 'media_list', label: 'Media List', type: 'media_list' as HandleType, required: true }],
+	    description: 'Recibe una o varias media_list (p. ej. varios Designer) y permite revisar, filtrar, descargar medios y exportar un manifest JSON.',
+	    inputs: [{ id: 'media_list-n', label: 'Media List (ml0…)', type: 'media_list' as HandleType, required: true }],
 	    outputs: [],
 	    dataSchema: {
 	      label: 'string',
@@ -199,7 +199,7 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
 	    type: 'exportMultiple',
 	    label: 'Export Multiple',
 	    description: 'Alias legacy de Export Multimedia para proyectos existentes.',
-	    inputs: [{ id: 'media_list', label: 'Media List', type: 'media_list' as HandleType, required: true }],
+	    inputs: [{ id: 'media_list-n', label: 'Media List (ml0…)', type: 'media_list' as HandleType, required: true }],
 	    outputs: [],
 	    dataSchema: {
 	      label: 'string',
@@ -507,11 +507,14 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
     outputs: [
       { id: 'image', label: 'Image Out', type: 'image' as HandleType },
       { id: 'document', label: 'Document', type: 'json' as HandleType },
+      { id: 'media_list', label: 'Export Multimedia', type: 'media_list' as HandleType },
     ],
     dataSchema: {
       pages:
         'DesignerPageState[] (id, format, objects, layoutGuides, stories, textFrames, imageFrames)',
       activePageIndex: 'number',
+      pageThumbnails:
+        'Record<pageId, dataURL> (raster en vivo por p\u00e1gina para la salida media_list / Export Multimedia)',
       label: 'string',
       value: 'string (exported raster data URL)',
     },
@@ -596,7 +599,7 @@ export const ASSISTANT_NODE_DATA_HINTS: Record<string, string> = {
   projectAssets:
     "label (título opcional); salida prompt reservada; inventario de medios desde el grafo — abre Foldder",
   designer:
-    "pages (DesignerPageState[]), activePageIndex, label, value (export raster), autoImageOptimization; salida document (json) conecta a presenter",
+    "pages (DesignerPageState[]), activePageIndex, label, value (export raster), autoImageOptimization, pageThumbnails (raster por p\u00e1gina); salida document (json) conecta a presenter; salida media_list conecta a Export Multimedia (thumbnails en vivo + descarga full-res por p\u00e1gina)",
   presenter:
     "label; conectar entrada document desde designer; transitionsByPageId; imageVideoPlacements; el UI lee pages del Designer vía grafo (slides / Presenter / share)",
   canvasGroup:

@@ -118,6 +118,6 @@ export const SIDEBAR_HOVER_HELP: Record<string, { title: string; line: string }>
   },
   export_multimedia: {
     title: 'Export Multimedia',
-    line: 'Recibe media_list: revisa, filtra, descarga medios y exporta un manifest JSON',
+    line: 'Recibe una o varias media_list: revisa, filtra, descarga medios y exporta un manifest JSON',
   },
 };

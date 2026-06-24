@@ -2,7 +2,6 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
-import { LayoutGrid } from "lucide-react";
 import PhotoRoomFreehandStudio from "./studio/PhotoRoomFreehandStudio";
 import type { DesignerStudioApi, FreehandObject, LayoutGuide } from "../FreehandStudio";
 import type { FoldderExportCreatedDetail } from "../foldder-export-events";
@@ -15,7 +14,7 @@ import {
   newDocumentBackgroundToCss,
 } from "./new-document-model";
 import { PhotoRoomNewDocumentPanel } from "./PhotoRoomNewDocumentPanel";
-import { PhotoRoomCanvasMeasuresControls } from "./PhotoRoomCanvasMeasuresControls";
+import { StudioCanvasSideControls } from "../studio-node/StudioCanvasSideControls";
 import { useBrainNodeTelemetry } from "@/lib/brain/use-brain-node-telemetry";
 import { useStudioBodyLock } from "../studio-node/studio-node-architecture";
 
@@ -23,41 +22,6 @@ export type PhotoRoomConnectedImageInput = { slot: string; src: string };
 
 function clampDim(n: number): number {
   return Math.max(64, Math.min(8192, Math.round(n)));
-}
-
-function PhotoRoomCanvasSideControls({
-  artboard,
-  onDimensionsChange,
-  onBackgroundChange,
-  onOpenPresetModal,
-}: {
-  artboard: PhotoRoomArtboardState;
-  onDimensionsChange: (width: number, height: number) => void;
-  onBackgroundChange: (background: NewDocumentConfig["background"]) => void;
-  onOpenPresetModal: () => void;
-}) {
-  const background = artboardCssToDocumentBackground(artboard.background);
-  return (
-    <div data-foldder-studio-flush className="flex w-full flex-col gap-2">
-      <PhotoRoomCanvasMeasuresControls
-        width={artboard.width}
-        height={artboard.height}
-        background={background}
-        onDimensionsChange={onDimensionsChange}
-        onBackgroundChange={onBackgroundChange}
-        variant="panel"
-      />
-      <button
-        type="button"
-        title="Abrir presets Web/Arte, fondo y medidas avanzadas"
-        onClick={onOpenPresetModal}
-        className="nodrag flex h-9 w-full items-center justify-center gap-2 bg-[#71449f] px-2 text-[10px] font-black uppercase tracking-[0.1em] text-white transition hover:bg-[#8055b0]"
-      >
-        <LayoutGrid size={14} strokeWidth={2.5} className="shrink-0" aria-hidden />
-        Presets y fondo…
-      </button>
-    </div>
-  );
 }
 
 export type PhotoRoomStudioProps = {
@@ -348,8 +312,10 @@ export default function PhotoRoomStudio({
           studioHeaderTitle="PhotoRoom"
           studioHeaderSubtitle="Lienzo único — P pantalla completa"
           studioPhotoRoomCanvasPanel={
-            <PhotoRoomCanvasSideControls
-              artboard={liveArtboard}
+            <StudioCanvasSideControls
+              width={liveArtboard.width}
+              height={liveArtboard.height}
+              background={artboardCssToDocumentBackground(liveArtboard.background)}
               onDimensionsChange={applyDimensions}
               onBackgroundChange={applyBackground}
               onOpenPresetModal={openCanvasPresetModal}

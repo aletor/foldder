@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildVideoEditorClipsFromMediaList, isMediaListItemDownloadable } from "./media-list-consumers";
+import { buildVideoEditorClipsFromMediaList, isMediaListItemDownloadable, mergeMediaListOutputs } from "./media-list-consumers";
 import type { MediaListOutput } from "./media-list-output";
 
 function output(items: MediaListOutput["items"]): MediaListOutput {
@@ -60,5 +60,28 @@ describe("media_list consumers", () => {
     expect(clips).toHaveLength(1);
     expect(clips[0]?.mediaType).toBe("video");
     expect(clips[0]?.assetId).toBe("asset://video");
+  });
+
+  it("merges multiple media_list outputs preserving unique item ids", () => {
+    const merged = mergeMediaListOutputs([
+      output([
+        { id: "a1", order: 0, title: "A", mediaType: "image", role: "designer_page", status: "generated", assetId: "asset://a" },
+      ]),
+      output([
+        { id: "b1", order: 0, title: "B", mediaType: "image", role: "designer_page", status: "generated", assetId: "asset://b" },
+      ]),
+    ]);
+    expect(merged?.items).toHaveLength(2);
+    expect(merged?.items.map((item) => item.id)).toEqual(["a1", "b1"]);
+    expect((merged?.metadata as { mergedSourceCount?: number }).mergedSourceCount).toBe(2);
+  });
+
+  it("dedupes colliding item ids when merging lists from different sources", () => {
+    const merged = mergeMediaListOutputs([
+      output([{ id: "same", order: 0, title: "A", mediaType: "image", role: "x", status: "generated", assetId: "a" }]),
+      output([{ id: "same", order: 0, title: "B", mediaType: "image", role: "x", status: "generated", assetId: "b" }]),
+    ]);
+    expect(merged?.items).toHaveLength(2);
+    expect(new Set(merged?.items.map((item) => item.id)).size).toBe(2);
   });
 });

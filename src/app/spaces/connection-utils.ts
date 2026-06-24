@@ -74,6 +74,13 @@ export function areNodesConnectable(
     targetHandleType = 'prompt';
   }
 
+  if (
+    (targetNode.type === 'export_multimedia' || targetNode.type === 'exportMultiple') &&
+    (connection.targetHandle?.startsWith('ml') || connection.targetHandle === 'media_list')
+  ) {
+    targetHandleType = 'media_list';
+  }
+
   if (sourceNode.type === 'mediaInput') {
     const actualType = (sourceNode.data as { type?: string })?.type;
     if (actualType === targetHandleType) return true;
@@ -131,8 +138,67 @@ const MULTI_SLOT_NODES: Record<string, Record<string, string[]>> = {
   videoEditor: {
     video: ['video_0', 'video_1', 'video_2', 'video_3', 'video_4', 'video_5', 'video_6', 'video_7'],
   },
+  export_multimedia: {
+    media_list: ['ml0', 'ml1', 'ml2', 'ml3', 'ml4', 'ml5', 'ml6', 'ml7'],
+  },
+  exportMultiple: {
+    media_list: ['ml0', 'ml1', 'ml2', 'ml3', 'ml4', 'ml5', 'ml6', 'ml7'],
+  },
   vfxGenerator: { prompt: ['prompt'] },
 };
+
+/** Normaliza handle legacy `media_list` / vacío → `ml0`. */
+export function normalizeExportMultimediaTargetHandle(handle: string | null | undefined): string {
+  if (!handle || handle === "media_list") return "ml0";
+  if (MULTI_SLOT_NODES.export_multimedia?.media_list?.includes(handle)) return handle;
+  return "ml0";
+}
+
+export function isExportMultimediaSlotTaken(
+  nodeId: string,
+  slotId: string,
+  edgeList: Pick<Edge, "target" | "targetHandle">[],
+): boolean {
+  return edgeList.some((e) => {
+    if (e.target !== nodeId) return false;
+    return normalizeExportMultimediaTargetHandle(e.targetHandle) === slotId;
+  });
+}
+
+/** Primera ranura libre ml0…ml7 (o la propuesta si sigue libre). */
+export function resolveExportMultimediaTargetHandle(
+  nodeId: string,
+  nodeType: string,
+  proposedHandle: string | null | undefined,
+  edgeList: Pick<Edge, "target" | "targetHandle">[],
+): string | null {
+  const slots = MULTI_SLOT_NODES[nodeType]?.media_list;
+  if (!slots?.length) return proposedHandle ?? null;
+
+  if (proposedHandle) {
+    const normalized = normalizeExportMultimediaTargetHandle(proposedHandle);
+    if (slots.includes(normalized) && !isExportMultimediaSlotTaken(nodeId, normalized, edgeList)) {
+      return normalized;
+    }
+  }
+
+  for (const slotId of slots) {
+    if (!isExportMultimediaSlotTaken(nodeId, slotId, edgeList)) return slotId;
+  }
+  return null;
+}
+
+function isTargetSlotTaken(
+  nodeId: string,
+  nodeType: string,
+  slotId: string,
+  edgeList: Pick<Edge, "target" | "targetHandle">[],
+): boolean {
+  if (nodeType === "export_multimedia" || nodeType === "exportMultiple") {
+    return isExportMultimediaSlotTaken(nodeId, slotId, edgeList);
+  }
+  return edgeList.some((e) => e.target === nodeId && e.targetHandle === slotId);
+}
 
 /** Orden de ranura en el nodo destino (p0 → 0, p1 → 1…). Desconocido → 0 y se desempata por posición. */
 function targetHandleSlotIndex(nodeType: string, targetHandle: string | null | undefined): number {
@@ -202,8 +268,7 @@ function firstFreeTargetHandleOnNode(
   const slots = MULTI_SLOT_NODES[nodeType]?.[inpType];
   if (slots?.length) {
     for (const slotId of slots) {
-      const taken = edgeList.some((e) => e.target === nodeId && e.targetHandle === slotId);
-      if (!taken) return slotId;
+      if (!isTargetSlotTaken(nodeId, nodeType, slotId, edgeList)) return slotId;
     }
     return null;
   }

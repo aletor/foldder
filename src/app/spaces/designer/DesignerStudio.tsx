@@ -10,12 +10,18 @@ import FreehandStudio, {
 import type { DesignerPageState } from "./DesignerNode";
 import {
   DEFAULT_DESIGNER_PAGE_FORMAT,
-  type IndesignPageFormatId,
   formatById,
   getPageDimensions,
 } from "../indesign/page-formats";
 import { createArtboard, type Artboard } from "../freehand/artboard";
 import type { VectorPdfExportOptions } from "../freehand/text-outline";
+import { PhotoRoomNewDocumentPanel } from "../photo-room/PhotoRoomNewDocumentPanel";
+import {
+  artboardCssToDocumentBackground,
+  newDocumentBackgroundToCss,
+  type NewDocumentConfig,
+} from "../photo-room/new-document-model";
+import { StudioCanvasSideControls } from "../studio-node/StudioCanvasSideControls";
 import { computeFittingLayout } from "../indesign/image-frame-layout";
 import { layoutPageStories } from "../indesign/text-layout";
 import type { Story, StoryNode, TextFrame, Typography } from "../indesign/text-model";
@@ -48,19 +54,37 @@ import { uploadImportedDesignerBlobUrlsToS3 } from "./designer-de-s3-hydrate";
 import {
   buildRichSpansForFrame,
   designerCanvasSessionKey,
+  designerPageThumbContentKey,
   dpgUid,
   duplicateDesignerPageState,
   readImageFilePixelSize,
 } from "./designer-studio-pure";
-import { DesignerFormatModal, type DesignerFormatModalState } from "./DesignerFormatModal";
+import {
+  applyDatasetRowToDesignerPage,
+  applyDatasetToAllPages,
+  collectDatasetLoopListId,
+  datasetBoundKeysForObject,
+  datasetListRowCount,
+  datasetMaxRowCount,
+  nextDatasetRowIndex,
+  reconcileDatasetLoopPages,
+  resolveDesignerPageDatasetRowIndex,
+  stripDatasetLoopMarkers,
+} from "./designer-dataset-page";
 import { DesignerPagesRail } from "./DesignerPagesRail";
 import { DesignerStudioPageBar } from "./DesignerStudioPageBar";
+import { DesignerDeletePagesModal } from "./DesignerDeletePagesModal";
 import { useDesignerImagePipeline } from "./useDesignerImagePipeline";
 import { useDesignerTextFrameLayoutSync } from "./useDesignerTextFrameLayoutSync";
 import { useBrainNodeTelemetry } from "@/lib/brain/use-brain-node-telemetry";
 import type { DesignerEmbedProps } from "../freehand/designer-embed-props";
 import type { FoldderExportCreatedDetail } from "../foldder-export-events";
 import { countDesignerImagesInPages } from "./designer-export-image-summary";
+
+function clampCanvasDim(n: number): number {
+  return Math.max(64, Math.min(8192, Math.round(n)));
+}
+
 import {
   logDesignerExportImagesSummary,
   trackDesignerImageImported,
@@ -74,6 +98,18 @@ export type HeadlessPdfExportRequest = {
   onError: (err: Error) => void;
 };
 
+/**
+ * Exporta PNG a resolución completa por página (montaje headless). `targetPageIds` limita las
+ * páginas a renderizar (null = todas). Reporta cada página vía `onPage` y termina con `onDone`.
+ */
+export type HeadlessImageExportRequest = {
+  requestId: number;
+  targetPageIds?: string[] | null;
+  onPage: (pageId: string, dataUrl: string) => void;
+  onDone: () => void;
+  onError: (err: Error) => void;
+};
+
 interface DesignerStudioProps {
   initialPages: DesignerPageState[];
   activePageIndex: number;
@@ -81,13 +117,19 @@ interface DesignerStudioProps {
   onExport: (dataUrl: string) => void;
   onFinalExport?: (detail: Omit<FoldderExportCreatedDetail, "sourceNodeId">) => void;
   onUpdatePages: (pages: DesignerPageState[], activeIdx?: number) => void;
+  /** Raster en vivo por página (pageId → dataURL) para la salida media_list / Export Multimedia. */
+  onUpdatePageThumbnails?: (thumbnails: Record<string, string>) => void;
   /** Id estable del nodo en el canvas (React Flow); el lienzo no se remonta al cambiar de página. */
   designerCanvasInstanceKey: string;
   /** Persistido en el nodo Designer: auto-optimización de imágenes en background. */
   autoImageOptimization?: boolean;
   onAutoImageOptimizationChange?: (enabled: boolean) => void;
   brainConnected?: boolean;
+  datasetConnected?: boolean;
+  designerConnectedDataset?: import("@/app/spaces/dataset/dataset-types").Dataset | null;
+  designerConnectedDatasetLoading?: boolean;
   headlessPdfExport?: HeadlessPdfExportRequest | null;
+  headlessImageExport?: HeadlessImageExportRequest | null;
 }
 
 export function safeDesignerExportFilenameBase(raw: string | undefined): string {
@@ -111,11 +153,16 @@ export default function DesignerStudio({
   onExport,
   onFinalExport,
   onUpdatePages,
+  onUpdatePageThumbnails,
   designerCanvasInstanceKey,
   autoImageOptimization = true,
   onAutoImageOptimizationChange,
   brainConnected = false,
+  datasetConnected = false,
+  designerConnectedDataset = null,
+  designerConnectedDatasetLoading = false,
   headlessPdfExport = null,
+  headlessImageExport = null,
 }: DesignerStudioProps) {
   /**
    * El editor inline puede inyectar estilos métricos (font-size/family/letter-spacing) en spans.
@@ -165,17 +212,33 @@ export default function DesignerStudio({
   );
 
   /** null | nueva página | cambiar tamaño de una página existente */
-  const [formatModal, setFormatModal] = useState<DesignerFormatModalState>(null);
-  const [pendingFormat, setPendingFormat] = useState<IndesignPageFormatId>(DEFAULT_DESIGNER_PAGE_FORMAT);
+  const [canvasPresetModalOpen, setCanvasPresetModalOpen] = useState(false);
+  const [canvasPresetModalKey, setCanvasPresetModalKey] = useState(0);
+  const [canvasPresetPageIndex, setCanvasPresetPageIndex] = useState(0);
+  const [canvasResizePreview, setCanvasResizePreview] = useState<{
+    width: number;
+    height: number;
+    background: NewDocumentConfig["background"];
+  } | null>(null);
+
+  /** Índices de páginas pendientes de eliminar (modal de confirmación). */
+  const [deletePagesPending, setDeletePagesPending] = useState<number[] | null>(null);
 
   /** Evita activar la página al soltar tras un drag HTML5 de reordenación. */
   const suppressPageThumbClickRef = useRef(false);
 
   /** Miniaturas raster del lienzo real (misma pipeline que el preview del nodo). */
   const [pageThumbnails, setPageThumbnails] = useState<Record<string, string>>({});
+  /** Huella del contenido al capturar cada miniatura; evita mostrar rasters obsoletos en el rail. */
+  const [pageThumbnailContentKeys, setPageThumbnailContentKeys] = useState<Record<string, string>>({});
   /** En el navegador `setTimeout` devuelve `number`; con @types/node a veces choca con `NodeJS.Timeout`. */
   const railThumbTimerRef = useRef<number | undefined>(undefined);
   const scheduleRailThumbRef = useRef<() => void>(() => {});
+  const captureRailThumbnailForPageIndexRef = useRef<(pageIndex: number) => Promise<boolean>>(async () => false);
+  const refreshRailThumbnailsForPagesRef = useRef<
+    (pageIds: string[], opts?: { delayMs?: number }) => Promise<void>
+  >(async () => {});
+  const railThumbBatchGenRef = useRef(0);
 
   const [designerFitToViewNonce, setDesignerFitToViewNonce] = useState(0);
   const requestDesignerFitToView = useCallback(() => {
@@ -191,9 +254,20 @@ export default function DesignerStudio({
       const n = pagesRef.current.length;
       if (nextIdx < 0 || nextIdx >= n || nextIdx === cur) return;
       const animate = opts?.animate !== false;
-      setDesignerPageEnterDirection(animate ? (nextIdx > cur ? "next" : "prev") : null);
-      setActivePageIndex(nextIdx);
-      queueMicrotask(() => requestDesignerFitToView());
+      const finishSwitch = () => {
+        setDesignerPageEnterDirection(animate ? (nextIdx > cur ? "next" : "prev") : null);
+        setActivePageIndex(nextIdx);
+        queueMicrotask(() => requestDesignerFitToView());
+      };
+
+      window.clearTimeout(railThumbTimerRef.current);
+      void (async () => {
+        await Promise.race([
+          captureRailThumbnailForPageIndexRef.current(cur),
+          new Promise<void>((resolve) => window.setTimeout(resolve, 700)),
+        ]);
+        finishSwitch();
+      })();
     },
     [requestDesignerFitToView],
   );
@@ -250,6 +324,11 @@ export default function DesignerStudio({
   pagesRef.current = pages;
   const activeIdxRef = useRef(activePageIndex);
   activeIdxRef.current = activePageIndex;
+  const pageThumbnailsRef = useRef(pageThumbnails);
+  pageThumbnailsRef.current = pageThumbnails;
+
+  /** Clave `datasetId:version` ya sincronizada; evita re-aplicar bindings de forma redundante. */
+  const lastDatasetSyncVersionRef = useRef<string | null>(null);
 
   /** Clave estable: un solo FreehandStudio para todo el documento; el cambio de página hidrata objetos sin remount. */
   const freehandStudioInstanceKey = useMemo(
@@ -276,22 +355,46 @@ export default function DesignerStudio({
     };
   }, [freehandStudioInstanceKey, activePageIndex, pages.length]);
 
+  const captureRailThumbnailForPageIndex = useCallback(
+    async (pageIndex: number): Promise<boolean> => {
+      if (activeIdxRef.current !== pageIndex) return false;
+      const api = studioApiRef.current;
+      const p = pagesRef.current[pageIndex];
+      if (!api?.getNodePreviewPngDataUrl || !p) return false;
+      const pd = getPageDimensions(p);
+      const expectedKey = designerCanvasSessionKey(designerCanvasInstanceKey, p.id, pd.width, pd.height);
+
+      let ready = false;
+      for (let t = 0; t < 150; t++) {
+        if (api.getExportSessionKey?.() === expectedKey) {
+          ready = true;
+          break;
+        }
+        await new Promise((r) => window.setTimeout(r, 16));
+      }
+      if (!ready) return false;
+
+      try {
+        const url = await api.getNodePreviewPngDataUrl({ maxSide: 320 });
+        if (!url) return false;
+        const contentKey = designerPageThumbContentKey(p);
+        setPageThumbnails((prev) => (prev[p.id] === url ? prev : { ...prev, [p.id]: url }));
+        setPageThumbnailContentKeys((prev) =>
+          prev[p.id] === contentKey ? prev : { ...prev, [p.id]: contentKey },
+        );
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [designerCanvasInstanceKey],
+  );
+
   const captureRailThumbnailForActivePage = useCallback(async () => {
-    const api = studioApiRef.current;
-    const idx = activeIdxRef.current;
-    const p = pagesRef.current[idx];
-    if (!api?.getNodePreviewPngDataUrl || !p) return;
-    const pd = getPageDimensions(p);
-    const expectedKey = designerCanvasSessionKey(designerCanvasInstanceKey, p.id, pd.width, pd.height);
-    if (api.getExportSessionKey?.() !== expectedKey) return;
-    try {
-      const url = await api.getNodePreviewPngDataUrl({ maxSide: 220 });
-      if (!url) return;
-      setPageThumbnails((prev) => (prev[p.id] === url ? prev : { ...prev, [p.id]: url }));
-    } catch {
-      /* ignore */
-    }
-  }, []);
+    await captureRailThumbnailForPageIndex(activeIdxRef.current);
+  }, [captureRailThumbnailForPageIndex]);
+
+  captureRailThumbnailForPageIndexRef.current = captureRailThumbnailForPageIndex;
 
   const scheduleRailThumbnail = useCallback(() => {
     if (typeof window === "undefined") return;
@@ -312,6 +415,14 @@ export default function DesignerStudio({
       window.clearTimeout(railThumbTimerRef.current);
     };
   }, [freehandStudioInstanceKey, scheduleRailThumbnail]);
+
+  /** Tras cambiar de página, esperar hidratación del lienzo y capturar la miniatura activa. */
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      scheduleRailThumbnail();
+    }, 520);
+    return () => window.clearTimeout(t);
+  }, [activePageIndex, scheduleRailThumbnail]);
 
   const commitPages = useCallback(
     (fn: (prev: DesignerPageState[]) => DesignerPageState[]) => {
@@ -336,22 +447,51 @@ export default function DesignerStudio({
     onUpdatePages(pages, activePageIndex);
   }, [pages, activePageIndex, onUpdatePages]);
 
+  // Publica el raster por página (media_list / Export Multimedia) en vivo.
+  useEffect(() => {
+    onUpdatePageThumbnails?.(pageThumbnails);
+  }, [pageThumbnails, onUpdatePageThumbnails]);
+
   const activePage = pages[activePageIndex] ?? pages[0];
+
+  const liveCanvas = useMemo(() => {
+    if (!activePage) {
+      return { width: 1920, height: 1080, background: "#ffffff" as const };
+    }
+    const dims = getPageDimensions(activePage);
+    const backgroundCss = newDocumentBackgroundToCss(activePage.pageBackground ?? "white");
+    if (canvasResizePreview && canvasPresetModalOpen) {
+      return {
+        width: clampCanvasDim(canvasResizePreview.width),
+        height: clampCanvasDim(canvasResizePreview.height),
+        background: newDocumentBackgroundToCss(canvasResizePreview.background),
+      };
+    }
+    return { width: dims.width, height: dims.height, background: backgroundCss };
+  }, [activePage, canvasResizePreview, canvasPresetModalOpen]);
+
+  const canvasDimFitSkipRef = useRef(true);
+  useEffect(() => {
+    if (canvasDimFitSkipRef.current) {
+      canvasDimFitSkipRef.current = false;
+      return;
+    }
+    requestDesignerFitToView();
+  }, [liveCanvas.width, liveCanvas.height, requestDesignerFitToView]);
 
   const initialArtboards = useMemo((): Artboard[] => {
     if (!activePage) return [];
-    const dims = getPageDimensions(activePage);
     return [
       createArtboard({
         name: `Page ${activePageIndex + 1}`,
         x: 0,
         y: 0,
-        width: dims.width,
-        height: dims.height,
-        background: "#ffffff",
+        width: liveCanvas.width,
+        height: liveCanvas.height,
+        background: liveCanvas.background,
       }),
     ];
-  }, [activePage, activePageIndex]);
+  }, [activePage, activePageIndex, liveCanvas.width, liveCanvas.height, liveCanvas.background]);
 
   const { syncTextFrameLayoutsRef } = useDesignerTextFrameLayoutSync({
     studioApiRef,
@@ -806,100 +946,356 @@ export default function DesignerStudio({
 
   // ── Page management ──
 
-  const addPage = useCallback(() => {
-    const newPage: DesignerPageState = {
-      id: dpgUid(),
-      format: pendingFormat,
-      objects: [],
-      layoutGuides: [],
-      stories: [],
-      textFrames: [],
-      imageFrames: [],
-    };
-    commitPages((prev) => {
-      const next = [...prev, newPage];
-      queueMicrotask(() => {
-        setDesignerPageEnterDirection("next");
-        setActivePageIndex(next.length - 1);
+  const patchPageCanvas = useCallback(
+    (
+      pageIndex: number,
+      patch: {
+        width?: number;
+        height?: number;
+        background?: NewDocumentConfig["background"];
+      },
+    ) => {
+      setPages((prev) => {
+        const n = [...prev];
+        const p = n[pageIndex];
+        if (!p) return prev;
+        n[pageIndex] = {
+          ...p,
+          ...(patch.width != null ? { customWidth: clampCanvasDim(patch.width) } : {}),
+          ...(patch.height != null ? { customHeight: clampCanvasDim(patch.height) } : {}),
+          ...(patch.background != null ? { pageBackground: patch.background } : {}),
+        };
+        return n;
       });
-      return next;
-    });
-    setFormatModal(null);
-  }, [commitPages, pendingFormat]);
+    },
+    [],
+  );
 
-  const applyPageFormatPreset = useCallback(() => {
-    setPages((prev) => {
-      if (formatModal?.kind !== "resize") return prev;
-      const idx = formatModal.pageIndex;
-      if (idx < 0 || idx >= prev.length) return prev;
-      const n = [...prev];
-      const p = n[idx];
-      if (!p) return prev;
-      n[idx] = {
-        ...p,
-        format: pendingFormat,
-        customWidth: undefined,
-        customHeight: undefined,
-      };
-      return n;
-    });
-    setFormatModal(null);
-  }, [formatModal, pendingFormat]);
+  const applyActivePageDimensions = useCallback(
+    (w: number, h: number) => {
+      patchPageCanvas(activeIdxRef.current, { width: w, height: h });
+      requestDesignerFitToView();
+    },
+    [patchPageCanvas, requestDesignerFitToView],
+  );
 
-  const deletePage = useCallback((idx: number) => {
-    const removedId = pagesRef.current[idx]?.id;
-    if (removedId) {
+  const applyActivePageBackground = useCallback(
+    (background: NewDocumentConfig["background"]) => {
+      patchPageCanvas(activeIdxRef.current, { background });
+    },
+    [patchPageCanvas],
+  );
+
+  const openCanvasPresetModal = useCallback((pageIndex: number) => {
+    const p = pagesRef.current[pageIndex];
+    if (!p) return;
+    const dims = getPageDimensions(p);
+    setCanvasPresetPageIndex(pageIndex);
+    setCanvasPresetModalKey((k) => k + 1);
+    setCanvasResizePreview({
+      width: dims.width,
+      height: dims.height,
+      background: p.pageBackground ?? "white",
+    });
+    setCanvasPresetModalOpen(true);
+  }, []);
+
+  const handleCanvasPreviewFromModal = useCallback(
+    (partial: { width: number; height: number; background: NewDocumentConfig["background"] }) => {
+      setCanvasResizePreview(partial);
+    },
+    [],
+  );
+
+  const handleCanvasPresetConfirm = useCallback(
+    (config: NewDocumentConfig) => {
+      const idx = canvasPresetPageIndex;
+      flushSync(() => {
+        patchPageCanvas(idx, {
+          width: config.width,
+          height: config.height,
+          background: config.background,
+        });
+      });
+      setCanvasPresetModalOpen(false);
+      setTimeout(() => {
+        setCanvasResizePreview(null);
+        requestDesignerFitToView();
+      }, 0);
+    },
+    [canvasPresetPageIndex, patchPageCanvas, requestDesignerFitToView],
+  );
+
+  const handleCanvasPresetCancel = useCallback(() => {
+    setCanvasResizePreview(null);
+    setCanvasPresetModalOpen(false);
+  }, []);
+
+  const requestDeletePages = useCallback((indices: number[]) => {
+    const unique = [...new Set(indices)].filter((i) => i >= 0 && i < pagesRef.current.length);
+    if (unique.length === 0 || pagesRef.current.length <= 1) return;
+    setDeletePagesPending(unique);
+  }, []);
+
+  const confirmDeletePages = useCallback(() => {
+    if (!deletePagesPending?.length) return;
+    const removeSet = new Set(deletePagesPending);
+    if (removeSet.size >= pagesRef.current.length) return;
+
+    for (const idx of deletePagesPending) {
+      const removedId = pagesRef.current[idx]?.id;
+      if (!removedId) continue;
       setPageThumbnails((th) => {
         if (!th[removedId]) return th;
         const next = { ...th };
         delete next[removedId];
         return next;
       });
+      setPageThumbnailContentKeys((keys) => {
+        if (!keys[removedId]) return keys;
+        const next = { ...keys };
+        delete next[removedId];
+        return next;
+      });
     }
+
+    const currentActive = activeIdxRef.current;
+    let deletedBeforeActive = 0;
+    let activeRemoved = false;
+    for (const i of removeSet) {
+      if (i < currentActive) deletedBeforeActive += 1;
+      if (i === currentActive) activeRemoved = true;
+    }
+    const newLen = pagesRef.current.length - removeSet.size;
+    let newActive = currentActive - deletedBeforeActive;
+    if (activeRemoved) newActive = Math.min(currentActive, Math.max(0, newLen - 1));
+
     setDesignerPageEnterDirection(null);
     setPages((prev) => {
       if (prev.length <= 1) return prev;
-      const filtered = prev.filter((_, i) => i !== idx);
-      setActivePageIndex((ai) => {
-        if (ai < idx) return ai;
-        if (ai > idx) return ai - 1;
-        return Math.min(idx, Math.max(0, filtered.length - 1));
-      });
-      return filtered;
+      return stripDatasetLoopMarkers(prev.filter((_, i) => !removeSet.has(i)));
     });
-  }, []);
+    setActivePageIndex(Math.max(0, Math.min(newActive, newLen - 1)));
+    setDeletePagesPending(null);
+  }, [deletePagesPending]);
 
   const duplicatePage = useCallback(
     (idx: number) => {
       const source = pagesRef.current[idx];
       if (!source) return;
-      const dup = duplicateDesignerPageState(source);
-      commitPages((prev) => {
-        const next = [...prev.slice(0, idx + 1), dup, ...prev.slice(idx + 1)];
-        queueMicrotask(() => {
-          setDesignerPageEnterDirection("next");
-          setActivePageIndex(idx + 1);
-        });
-        return next;
-      });
-    },
-    [commitPages],
-  );
-
-  const addPageFromLast = useCallback(() => {
-    const lastIdx = Math.max(0, pagesRef.current.length - 1);
-    const source = pagesRef.current[lastIdx];
-    if (!source) return;
-    const dup = duplicateDesignerPageState(source);
+      const nextRow = nextDatasetRowIndex(pagesRef.current, designerConnectedDataset);
+      let dup = duplicateDesignerPageState(source);
+      if (designerConnectedDataset) {
+        dup = applyDatasetRowToDesignerPage(dup, designerConnectedDataset, nextRow);
+      } else {
+        dup = { ...dup, datasetRowIndex: undefined };
+      }
     commitPages((prev) => {
-      const next = [...prev, dup];
+      const next = stripDatasetLoopMarkers([...prev.slice(0, idx + 1), dup, ...prev.slice(idx + 1)]);
       queueMicrotask(() => {
         setDesignerPageEnterDirection("next");
-        setActivePageIndex(next.length - 1);
+        setActivePageIndex(idx + 1);
       });
       return next;
     });
-  }, [commitPages]);
+  },
+  [commitPages, designerConnectedDataset],
+);
+
+  const addBlankPageAfterActive = useCallback(() => {
+    const idx = activeIdxRef.current;
+    const source = pagesRef.current[idx] ?? pagesRef.current[0];
+    if (!source) return;
+    const nextRow = nextDatasetRowIndex(pagesRef.current, designerConnectedDataset);
+    const blank: DesignerPageState = {
+      id: dpgUid(),
+      format: source.format,
+      ...(source.customWidth != null ? { customWidth: source.customWidth } : {}),
+      ...(source.customHeight != null ? { customHeight: source.customHeight } : {}),
+      pageBackground: source.pageBackground ?? "white",
+      objects: [],
+      layoutGuides: [],
+      stories: [],
+      textFrames: [],
+      imageFrames: [],
+      ...(designerConnectedDataset ? { datasetRowIndex: nextRow } : {}),
+    };
+    commitPages((prev) => {
+      const next = stripDatasetLoopMarkers([...prev.slice(0, idx + 1), blank, ...prev.slice(idx + 1)]);
+      queueMicrotask(() => {
+        setDesignerPageEnterDirection("next");
+        setActivePageIndex(idx + 1);
+      });
+      return next;
+    });
+    queueMicrotask(() => scheduleRailThumbRef.current());
+  }, [commitPages, designerConnectedDataset]);
+
+  /**
+   * "+ Bucle": genera una página por cada fila del listado elegido, usando la página activa
+   * como plantilla. Cada página recibe su `datasetRowIndex` explícito (0..N-1) y se rellenan
+   * los objetos enlazados. Reemplaza el deck actual por el conjunto generado.
+   */
+  const generateDatasetLoopPages = useCallback(
+    (listId: string) => {
+      if (!designerConnectedDataset) return;
+      const list = designerConnectedDataset.lists.find((row) => row.id === listId);
+      const rowCount = datasetListRowCount(designerConnectedDataset, listId);
+      if (!list || rowCount <= 0) return;
+      const template = pagesRef.current[activeIdxRef.current] ?? pagesRef.current[0];
+      if (!template) return;
+
+      const generated: DesignerPageState[] = [];
+      for (let row = 0; row < rowCount; row++) {
+        const dup = duplicateDesignerPageState(template);
+        const applied = applyDatasetRowToDesignerPage(dup, designerConnectedDataset, row);
+        generated.push({
+          ...applied,
+          datasetLoopListId: listId,
+          datasetLoopCardId: list.cards[row]?.id,
+        });
+      }
+      lastDatasetSyncVersionRef.current = `${designerConnectedDataset.id}:${designerConnectedDataset.version}`;
+
+      const pageIds = generated.map((p) => p.id);
+      railThumbBatchGenRef.current += 1;
+      setPageThumbnails({});
+      setPageThumbnailContentKeys({});
+
+      commitPages(() => {
+        queueMicrotask(() => {
+          setDesignerPageEnterDirection(null);
+          setActivePageIndex(0);
+          void refreshRailThumbnailsForPagesRef.current(pageIds, { delayMs: 320 });
+        });
+        return generated;
+      });
+    },
+    [commitPages, designerConnectedDataset],
+  );
+
+  /**
+   * Fija la fila del Dataset de la página activa. Re-aplica los datos enlazados a esa página
+   * y parchea el lienzo vivo con cambios mínimos (sin re-hidratar). Salir de modo bucle no aplica:
+   * cambiar la fila a mano es una edición estructural, así que se quitan los marcadores de bucle.
+   */
+  const setActivePageRowIndex = useCallback(
+    (rowIndex: number) => {
+      const ds = designerConnectedDataset;
+      if (!ds) return;
+      const idx = activeIdxRef.current;
+      const page = pagesRef.current[idx];
+      if (!page) return;
+      const rowCount = datasetMaxRowCount(ds);
+      const clamped = rowCount > 0 ? Math.max(0, Math.min(rowIndex, rowCount - 1)) : Math.max(0, rowIndex);
+      if (clamped === resolveDesignerPageDatasetRowIndex(page)) return;
+
+      const applied = applyDatasetRowToDesignerPage(page, ds, clamped);
+      const withRow =
+        applied === page ? { ...page, datasetRowIndex: clamped } : applied;
+
+      commitPages((prev) => {
+        const next = [...prev];
+        next[idx] = withRow;
+        return stripDatasetLoopMarkers(next);
+      });
+
+      const api = studioApiRef.current;
+      if (api) {
+        queueMicrotask(() => {
+          const live = api.getObjects();
+          for (const liveObj of live) {
+            const t = withRow.objects.find((o) => o.id === liveObj.id);
+            if (!t) continue;
+            const keys = datasetBoundKeysForObject(t);
+            if (keys.length === 0) continue;
+            const liveRec = liveObj as unknown as Record<string, unknown>;
+            const targetRec = t as unknown as Record<string, unknown>;
+            const patch: Record<string, unknown> = {};
+            for (const k of keys) {
+              if (liveRec[k] !== targetRec[k]) patch[k] = targetRec[k];
+            }
+            if (Object.keys(patch).length > 0) api.patchObject(liveObj.id, patch);
+          }
+          scheduleRailThumbRef.current();
+        });
+      }
+    },
+    [commitPages, designerConnectedDataset],
+  );
+
+  /**
+   * Sincronización Dataset → slides. Se dispara SOLO cuando cambia el contenido del Dataset
+   * (`version`), nunca por cambios en `pages`, así que no puede entrar en bucle.
+   *
+   * - Deck en modo bucle: reconcilia altas/bajas/reordenado de filas (por `cardId`) y re-aplica datos.
+   * - Resto: re-aplica los valores enlazados a todas las páginas con bindings.
+   *
+   * La página activa se actualiza en el lienzo vivo con parches mínimos (`patchObject`), sin
+   * re-hidratar (no resetea viewport/historial). Si la página activa desaparece, el clamp de índice
+   * provoca la re-hidratación natural por cambio de página.
+   */
+  useEffect(() => {
+    const ds = designerConnectedDataset;
+    if (!ds) {
+      lastDatasetSyncVersionRef.current = null;
+      return;
+    }
+    const syncKey = `${ds.id}:${ds.version}`;
+    if (lastDatasetSyncVersionRef.current === syncKey) return;
+    lastDatasetSyncVersionRef.current = syncKey;
+
+    const current = pagesRef.current;
+    const loopListId = collectDatasetLoopListId(current);
+    const loopActive = !!loopListId && ds.lists.some((list) => list.id === loopListId);
+
+    const next = loopActive
+      ? reconcileDatasetLoopPages(current, ds, loopListId!, activeIdxRef.current, duplicateDesignerPageState)
+      : applyDatasetToAllPages(current, ds);
+
+    if (next === current) return;
+
+    const activeId = current[activeIdxRef.current]?.id;
+    setPages(next);
+
+    const newActiveIdx = activeId != null ? next.findIndex((p) => p.id === activeId) : -1;
+    if (newActiveIdx < 0) {
+      setDesignerPageEnterDirection(null);
+      setActivePageIndex((idx) => Math.min(idx, Math.max(0, next.length - 1)));
+    } else {
+      if (newActiveIdx !== activeIdxRef.current) setActivePageIndex(newActiveIdx);
+      const target = next[newActiveIdx];
+      const api = studioApiRef.current;
+      if (target && api) {
+        queueMicrotask(() => {
+          const live = api.getObjects();
+          for (const liveObj of live) {
+            const t = target.objects.find((o) => o.id === liveObj.id);
+            if (!t) continue;
+            const keys = datasetBoundKeysForObject(t);
+            if (keys.length === 0) continue;
+            const liveRec = liveObj as unknown as Record<string, unknown>;
+            const targetRec = t as unknown as Record<string, unknown>;
+            const patch: Record<string, unknown> = {};
+            for (const k of keys) {
+              if (liveRec[k] !== targetRec[k]) patch[k] = targetRec[k];
+            }
+            if (Object.keys(patch).length > 0) api.patchObject(liveObj.id, patch);
+          }
+        });
+      }
+    }
+    queueMicrotask(() => {
+      if (loopActive) {
+        void refreshRailThumbnailsForPagesRef.current(
+          next.map((p) => p.id),
+          { delayMs: 320 },
+        );
+      } else {
+        scheduleRailThumbRef.current();
+      }
+    });
+  }, [designerConnectedDataset]);
 
   const movePage = useCallback(
     (fromIndex: number, toIndex: number) => {
@@ -912,7 +1308,7 @@ export default function DesignerStudio({
         const next = [...prev];
         const [item] = next.splice(fromIndex, 1);
         next.splice(toIndex, 0, item!);
-        return next;
+        return stripDatasetLoopMarkers(next);
       });
       setActivePageIndex((active) => {
         if (active === fromIndex) return toIndex;
@@ -1500,10 +1896,152 @@ export default function DesignerStudio({
     if (url) onExport(url);
   }, [onExport, designerCanvasInstanceKey]);
 
+  /**
+   * Renderiza cada página (o `targetPageIds`) y devuelve su PNG. `maxSide` controla la resolución:
+   * sin él (o `fullResolution`) usa el tamaño real del documento. Itera cambiando de página activa
+   * con `flushSync` (mismo patrón que el PDF multipágina) esperando a que el lienzo monte.
+   */
+  const renderPagesToPng = useCallback(
+    async (
+      opts: {
+        targetPageIds?: string[] | null;
+        maxSide?: number;
+        fullResolution?: boolean;
+        onPage?: (pageId: string, dataUrl: string) => void;
+      } = {},
+    ): Promise<Record<string, string>> => {
+      const list = pagesRef.current;
+      const out: Record<string, string> = {};
+      if (list.length === 0) return out;
+      const savedIdx = activeIdxRef.current;
+      const targetSet = opts.targetPageIds && opts.targetPageIds.length > 0 ? new Set(opts.targetPageIds) : null;
+      try {
+        for (let i = 0; i < list.length; i++) {
+          const pg = list[i];
+          if (!pg) continue;
+          if (targetSet && !targetSet.has(pg.id)) continue;
+          const pd = getPageDimensions(pg);
+          const expectedKey = designerCanvasSessionKey(designerCanvasInstanceKey, pg.id, pd.width, pd.height);
+          flushSync(() => {
+            setDesignerPageEnterDirection(null);
+            setActivePageIndex(i);
+          });
+          syncTextFrameLayoutsRef.current();
+          let api: DesignerStudioApi | null = null;
+          let ready = false;
+          for (let t = 0; t < 220; t++) {
+            api = studioApiRef.current;
+            if (api?.getExportSessionKey?.() === expectedKey && typeof api.getNodePreviewPngDataUrl === "function") {
+              ready = true;
+              break;
+            }
+            await new Promise((r) => setTimeout(r, 12));
+          }
+          if (!ready || !api?.getNodePreviewPngDataUrl) continue;
+          try {
+            const url = await api.getNodePreviewPngDataUrl(
+              opts.fullResolution
+                ? { fullResolution: true }
+                : { maxSide: opts.maxSide ?? 320 },
+            );
+            if (url) {
+              out[pg.id] = url;
+              opts.onPage?.(pg.id, url);
+              const contentKey = designerPageThumbContentKey(pg);
+              setPageThumbnailContentKeys((prev) =>
+                prev[pg.id] === contentKey ? prev : { ...prev, [pg.id]: contentKey },
+              );
+            }
+          } catch (e) {
+            console.warn("[Designer] renderPagesToPng: página", i + 1, e);
+          }
+        }
+      } finally {
+        flushSync(() => {
+          setDesignerPageEnterDirection(null);
+          setActivePageIndex(savedIdx);
+        });
+      }
+      return out;
+    },
+    [designerCanvasInstanceKey, syncTextFrameLayoutsRef],
+  );
+
+  const refreshRailThumbnailsForPages = useCallback(
+    async (pageIds: string[], opts?: { delayMs?: number }) => {
+      if (pageIds.length === 0) return;
+      const gen = ++railThumbBatchGenRef.current;
+      if (opts?.delayMs && opts.delayMs > 0) {
+        await new Promise((r) => window.setTimeout(r, opts.delayMs));
+      }
+      if (gen !== railThumbBatchGenRef.current) return;
+      await renderPagesToPng({
+        targetPageIds: pageIds,
+        maxSide: 320,
+        onPage: (pageId, dataUrl) => {
+          if (gen !== railThumbBatchGenRef.current) return;
+          setPageThumbnails((prev) => (prev[pageId] === dataUrl ? prev : { ...prev, [pageId]: dataUrl }));
+        },
+      });
+    },
+    [renderPagesToPng],
+  );
+
+  refreshRailThumbnailsForPagesRef.current = refreshRailThumbnailsForPages;
+
   const handleCloseWithFirstPagePreview = useCallback(async () => {
-    await captureFirstPageThumbnail();
+    // Solo renderiza las páginas que aún no tienen raster (las visitadas/editadas ya lo capturaron en vivo).
+    try {
+      const have = pageThumbnailsRef.current;
+      const missing = pagesRef.current.filter((p) => !have[p.id]).map((p) => p.id);
+      let merged = have;
+      if (missing.length > 0) {
+        const rendered = await renderPagesToPng({ targetPageIds: missing, maxSide: 320 });
+        if (Object.keys(rendered).length > 0) {
+          merged = { ...have, ...rendered };
+          setPageThumbnails(merged);
+        }
+      }
+      // Publica el raster final de forma síncrona para que el commit del patch live lo persista.
+      onUpdatePageThumbnails?.(merged);
+      // Miniatura del nodo en el grafo = 1.ª página.
+      const first = pagesRef.current[0];
+      const firstThumb = first ? merged[first.id] : undefined;
+      if (firstThumb) onExport(firstThumb);
+      else await captureFirstPageThumbnail();
+    } catch {
+      await captureFirstPageThumbnail();
+    }
     onClose();
-  }, [captureFirstPageThumbnail, onClose]);
+  }, [captureFirstPageThumbnail, onClose, onExport, onUpdatePageThumbnails, renderPagesToPng]);
+
+  /** Export headless de PNG full-res por página (Export Multimedia). */
+  useEffect(() => {
+    if (!headlessImageExport) return;
+    let cancelled = false;
+    const { requestId: _rid, targetPageIds, onPage, onDone, onError } = headlessImageExport;
+    void (async () => {
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 400));
+      if (cancelled) return;
+      try {
+        await renderPagesToPng({
+          targetPageIds: targetPageIds ?? null,
+          fullResolution: true,
+          onPage: (pageId, dataUrl) => {
+            if (!cancelled) onPage(pageId, dataUrl);
+          },
+        });
+        if (!cancelled) onDone();
+      } catch (e) {
+        if (!cancelled) onError(e instanceof Error ? e : new Error(String(e)));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Solo re-disparar al cambiar el requestId (evita re-ejecuciones por identidad del objeto inline).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [headlessImageExport?.requestId, renderPagesToPng]);
 
   const deExportLockRef = useRef(false);
   const handleExportDe = useCallback(async () => {
@@ -1568,6 +2106,7 @@ export default function DesignerStudio({
         setPages(finalPages);
         setActivePageIndex(result.activePageIndex);
         setPageThumbnails({});
+        setPageThumbnailContentKeys({});
         onAutoImageOptimizationChange?.(result.autoImageOptimization);
         queueMicrotask(() => {
           requestDesignerFitToView();
@@ -1590,6 +2129,10 @@ export default function DesignerStudio({
     designerMode: true,
     designerSkipAutoNodeExportOnClose: true,
     designerBrainTelemetry: brainTelemetry,
+    designerConnectedDataset: datasetConnected ? designerConnectedDataset : null,
+    designerConnectedDatasetLoading: datasetConnected ? designerConnectedDatasetLoading : false,
+    designerActivePageDatasetRowIndex: resolveDesignerPageDatasetRowIndex(activePage),
+    onDesignerSetActivePageRowIndex: setActivePageRowIndex,
     designerPageEnterDirection,
     onDesignerTextFrameCreate: handleDesignerTextFrameCreate,
     onDesignerImageFramePlace: handleDesignerImageFramePlace,
@@ -1636,6 +2179,7 @@ export default function DesignerStudio({
         pages={pages}
         activePageIndex={activePageIndex}
         pageThumbnails={pageThumbnails}
+        pageThumbnailContentKeys={pageThumbnailContentKeys}
         scrollElRef={designerPagesRailScrollElRef}
         onRailScroll={(top) => {
           designerPagesRailScrollTopRef.current = top;
@@ -1645,11 +2189,22 @@ export default function DesignerStudio({
         movePage={movePage}
         swapOrientation={swapOrientation}
         duplicatePage={duplicatePage}
-        deletePage={deletePage}
-        onAddPage={addPageFromLast}
+        onRequestDeletePages={requestDeletePages}
+        onAddPage={addBlankPageAfterActive}
+        datasetLoopLists={
+          datasetConnected && designerConnectedDataset
+            ? designerConnectedDataset.lists.map((list) => ({
+                id: list.id,
+                name: list.name,
+                cardCount: list.cards.length,
+              }))
+            : []
+        }
+        onGenerateLoop={generateDatasetLoopPages}
+        loopActive={!!collectDatasetLoopListId(pages)}
         onRequestResizePageModal={(i) => {
-          setPendingFormat(pages[i]?.format ?? DEFAULT_DESIGNER_PAGE_FORMAT);
-          setFormatModal({ kind: "resize", pageIndex: i });
+          goToDesignerPage(i);
+          openCanvasPresetModal(i);
         }}
       />
     ),
@@ -1658,7 +2213,7 @@ export default function DesignerStudio({
   return (
     <div
       className={
-        headlessPdfExport
+        headlessPdfExport || headlessImageExport
           ? "pointer-events-none fixed left-[-10000px] top-0 h-[900px] w-[1400px] overflow-hidden opacity-0"
           : "fixed inset-0 z-[9999] flex flex-col bg-[#0b0d10]"
       }
@@ -1675,6 +2230,16 @@ export default function DesignerStudio({
         onUpdateObjects={handleUpdateObjects}
         onUpdateLayoutGuides={handleUpdateLayoutGuides}
         brainConnected={brainConnected}
+        studioPhotoRoomCanvasPanel={
+          <StudioCanvasSideControls
+            width={liveCanvas.width}
+            height={liveCanvas.height}
+            background={artboardCssToDocumentBackground(liveCanvas.background)}
+            onDimensionsChange={applyActivePageDimensions}
+            onBackgroundChange={applyActivePageBackground}
+            onOpenPresetModal={() => openCanvasPresetModal(activePageIndex)}
+          />
+        }
         {...designerFreehandProps}
       />
 
@@ -1706,14 +2271,27 @@ export default function DesignerStudio({
 
       <DesignerStudioPageBar pages={pages} activePageIndex={activePageIndex} onGoToPage={goToDesignerPage} />
 
-      <DesignerFormatModal
-        formatModal={formatModal}
-        pendingFormat={pendingFormat}
-        onPendingFormatChange={setPendingFormat}
-        onDismiss={() => setFormatModal(null)}
-        onConfirmAdd={addPage}
-        onConfirmResize={applyPageFormatPreset}
-      />
+      {canvasPresetModalOpen ? (
+        <PhotoRoomNewDocumentPanel
+          key={canvasPresetModalKey}
+          mode="resize"
+          initialWidth={liveCanvas.width}
+          initialHeight={liveCanvas.height}
+          initialBackground={artboardCssToDocumentBackground(liveCanvas.background)}
+          onCanvasPreviewChange={handleCanvasPreviewFromModal}
+          onConfirm={handleCanvasPresetConfirm}
+          onCancel={handleCanvasPresetCancel}
+        />
+      ) : null}
+
+      {deletePagesPending ? (
+        <DesignerDeletePagesModal
+          pageNumbers={deletePagesPending.map((i) => i + 1)}
+          totalPages={pages.length}
+          onCancel={() => setDeletePagesPending(null)}
+          onConfirm={confirmDeletePages}
+        />
+      ) : null}
     </div>
   );
 }

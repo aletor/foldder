@@ -119,6 +119,29 @@ export interface DatasetPreview {
   gapCount: number;
 }
 
+/** Enlace de un objeto del Designer a un campo de un listado del Dataset conectado. */
+export interface DesignerDatasetFieldBinding {
+  listId: string;
+  listKey: string;
+  fieldId: string;
+  fieldKey: string;
+}
+
+/** @deprecated Usar `DesignerDatasetFieldBinding`. */
+export type DesignerDatasetTextBinding = DesignerDatasetFieldBinding;
+
+export type DesignerDatasetPropertySource = "list" | "constant";
+
+/** Enlace de una propiedad concreta del objeto (x, fill, etc.) al Dataset. */
+export interface DesignerDatasetPropertyBinding {
+  propertyKey: string;
+  source: DesignerDatasetPropertySource;
+  listId?: string;
+  listKey?: string;
+  fieldId: string;
+  fieldKey: string;
+}
+
 export interface DatasetNodeData {
   label?: string;
   dataset?: Dataset;

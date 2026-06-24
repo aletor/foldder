@@ -804,6 +804,8 @@ export const NODE_TYPE_TO_FOLDDER_ICON: Record<string, FoldderIconKey> = {
   spaceInput: 'spaceIn',
   spaceOutput: 'output',
   imageExport: 'export',
+  export_multimedia: 'export',
+  exportMultiple: 'export',
   painter: 'painter',
   crop: 'crop',
   canvasGroup: 'layout',

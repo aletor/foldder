@@ -166,6 +166,7 @@ import {
   preferredCenterRightOfRightmostNode,
   orderedSourcesForSharedTarget,
   positionNewNodeRightOfSources,
+  resolveExportMultimediaTargetHandle,
 } from "./connection-utils";
 import {
   FolderPlus,
@@ -4796,8 +4797,20 @@ export function SpacesContent() {
   const onConnect: OnConnect = useCallback(
     (params) => {
       takeSnapshot();
-      const edgeId = `e-${params.source}-${params.target}-${params.sourceHandle || 'def'}-${params.targetHandle || 'def'}-${Math.random().toString(36).substring(2, 6)}`;
-      setEdges((eds) => addEdge({ ...params, id: edgeId, type: 'buttonEdge' }, eds));
+      const targetNode = liveNodesRef.current.find((n: { id: string }) => n.id === params.target);
+      let targetHandle = params.targetHandle;
+      if (targetNode?.type === "export_multimedia" || targetNode?.type === "exportMultiple") {
+        const resolved = resolveExportMultimediaTargetHandle(
+          params.target,
+          targetNode.type as string,
+          params.targetHandle,
+          liveEdgesRef.current,
+        );
+        if (!resolved) return;
+        targetHandle = resolved;
+      }
+      const edgeId = `e-${params.source}-${params.target}-${params.sourceHandle || 'def'}-${targetHandle || 'def'}-${Math.random().toString(36).substring(2, 6)}`;
+      setEdges((eds) => addEdge({ ...params, targetHandle, id: edgeId, type: 'buttonEdge' }, eds));
       const srcNode = liveNodesRef.current.find((n: { id: string }) => n.id === params.source);
       if (
         srcNode?.type === "nanoBanana" &&
@@ -5497,8 +5510,19 @@ export function SpacesContent() {
     const sourceNode = nodes.find((n) => n.id === connection.source);
     const targetNode = nodes.find((n) => n.id === connection.target);
     if (!sourceNode || !targetNode) return false;
-    return areNodesConnectable(sourceNode, targetNode, connection, nodes);
-  }, [nodes]);
+    if (!areNodesConnectable(sourceNode, targetNode, connection, nodes)) return false;
+    if (targetNode.type === "export_multimedia" || targetNode.type === "exportMultiple") {
+      return (
+        resolveExportMultimediaTargetHandle(
+          targetNode.id,
+          targetNode.type as string,
+          connection.targetHandle,
+          edges,
+        ) != null
+      );
+    }
+    return true;
+  }, [nodes, edges]);
 
   const syncLibraryDragPreviewAtClientPoint = useCallback(
     (clientX: number, clientY: number) => {

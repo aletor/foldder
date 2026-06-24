@@ -320,6 +320,100 @@ export function setScope(dataset: Dataset, scope: DatasetScope, ctx: SetScopeCon
 
 // ── Contrato de consumo ─────────────────────────────────────────────────────
 
+export function fieldValueAsText(value: FieldValue | undefined): string {
+  if (!value) return "";
+  switch (value.type) {
+    case "text":
+    case "select":
+    case "url":
+    case "color":
+      return value.value;
+    case "number":
+      return String(value.value);
+    default:
+      return "";
+  }
+}
+
+/** Primera fila de un listado para un campo de tipo texto (vacío si no hay filas). */
+export function getFirstListFieldText(dataset: Dataset, listId: string, fieldId: string): string | null {
+  return getListFieldTextAtRow(dataset, listId, fieldId, 0);
+}
+
+export function getListFieldValueAtRow(
+  dataset: Dataset,
+  listId: string,
+  fieldId: string,
+  rowIndex: number,
+): FieldValue | null {
+  const normalized = normalizeDataset(dataset);
+  const list = normalized.lists.find((row) => row.id === listId);
+  if (!list) return null;
+  const card = list.cards[rowIndex];
+  if (!card) return null;
+  return card.values[fieldId] ?? null;
+}
+
+export function getConstantFieldValue(dataset: Dataset, fieldId: string): FieldValue | null {
+  const normalized = normalizeDataset(dataset);
+  return normalized.constants.values[fieldId] ?? null;
+}
+
+export function getListFieldTextAtRow(
+  dataset: Dataset,
+  listId: string,
+  fieldId: string,
+  rowIndex: number,
+): string | null {
+  const normalized = normalizeDataset(dataset);
+  const list = normalized.lists.find((row) => row.id === listId);
+  if (!list) return null;
+  const field = list.schema.find((f) => f.id === fieldId);
+  if (!field || field.type !== "text") return null;
+  const value = getListFieldValueAtRow(dataset, listId, fieldId, rowIndex);
+  if (!value) return "";
+  return fieldValueAsText(value);
+}
+
+export type DatasetImageFieldValue = {
+  url: string;
+  assetId?: string;
+  w?: number;
+  h?: number;
+};
+
+/** Primera fila de un listado para un campo de tipo imagen (vacío si no hay filas o imagen). */
+export function getFirstListFieldImage(
+  dataset: Dataset,
+  listId: string,
+  fieldId: string,
+): DatasetImageFieldValue | null {
+  return getListFieldImageAtRow(dataset, listId, fieldId, 0);
+}
+
+export function getListFieldImageAtRow(
+  dataset: Dataset,
+  listId: string,
+  fieldId: string,
+  rowIndex: number,
+): DatasetImageFieldValue | null {
+  const normalized = normalizeDataset(dataset);
+  const list = normalized.lists.find((row) => row.id === listId);
+  if (!list) return null;
+  const field = list.schema.find((f) => f.id === fieldId);
+  if (!field || field.type !== "image") return null;
+  const card = list.cards[rowIndex];
+  if (!card) return { url: "" };
+  const value = card.values[fieldId];
+  if (!value || value.type !== "image" || isValueEmpty(value)) return { url: "" };
+  return {
+    url: value.url,
+    assetId: value.assetId || undefined,
+    w: value.w,
+    h: value.h,
+  };
+}
+
 export function getBinding(dataset: Dataset, listId: string): DatasetBinding | null {
   const normalized = normalizeDataset(dataset);
   const list = normalized.lists.find((row) => row.id === listId);

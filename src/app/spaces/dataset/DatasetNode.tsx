@@ -1,7 +1,15 @@
 "use client";
 
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { NodeResizer, useReactFlow, type NodeProps } from "@xyflow/react";
+import {
+  NodeResizer,
+  useReactFlow,
+  useStore,
+  type Edge,
+  type Node,
+  type NodeProps,
+  type ReactFlowState,
+} from "@xyflow/react";
 import { StudioCanvasNodeShell, type StudioCanvasNodeHandleSpec } from "../studio-node/studio-canvas-node";
 import { StudioNodePortal, useStudioNodeController } from "../studio-node/studio-node-architecture";
 import { FoldderStudioModeCenterButton } from "../foldder-node-ui";
@@ -25,6 +33,55 @@ import { buildDatasetPreview } from "./dataset-project";
 import { isFoldderLibraryPreviewData } from "../library-drag-preview";
 
 const DATASET_EMPTY_BACKGROUND_SRC = resolveFoldderNodeStudioBackground("dataset");
+
+/** Nombres legibles por tipo de nodo (fallback: el propio tipo capitalizado). */
+const NODE_TYPE_LABELS: Record<string, string> = {
+  designer: "Designer",
+  presenter: "Presenter",
+  listado: "Listado",
+  guionista: "Guionista",
+  cine: "Cine",
+  nanoBanana: "Nano Banana",
+  imageCreationAdvanced: "Image Creation",
+  photoRoom: "PhotoRoom",
+  videoEditor: "Video Editor",
+  video_editor: "Video Editor",
+  geminiVideo: "Gemini Video",
+  vfxGenerator: "VFX",
+  painter: "Painter",
+};
+
+function friendlyNodeName(type: string, label: string): string {
+  const trimmed = label.trim();
+  if (trimmed) return trimmed;
+  if (NODE_TYPE_LABELS[type]) return NODE_TYPE_LABELS[type];
+  if (!type) return "Nodo";
+  return type.charAt(0).toUpperCase() + type.slice(1);
+}
+
+type DatasetConsumerInfo = { id: string; type: string; label: string };
+
+/** Nodos del lienzo conectados al handle source `dataset` (consumidores de este Dataset). */
+function selectDatasetConsumers(state: ReactFlowState<Node, Edge>, datasetNodeId: string): string {
+  const out: DatasetConsumerInfo[] = [];
+  const seen = new Set<string>();
+  for (const edge of state.edges) {
+    if (edge.source !== datasetNodeId) continue;
+    if (seen.has(edge.target)) continue;
+    const target = state.nodes.find((node) => node.id === edge.target);
+    if (!target) continue;
+    seen.add(edge.target);
+    out.push({
+      id: target.id,
+      type: target.type ?? "",
+      label: typeof (target.data as { label?: unknown } | undefined)?.label === "string"
+        ? ((target.data as { label?: string }).label ?? "")
+        : "",
+    });
+  }
+  // Firma estable: solo cambia cuando cambia la lista/identidad/etiqueta de consumidores.
+  return JSON.stringify(out);
+}
 
 const DATASET_NODE_HANDLES: StudioCanvasNodeHandleSpec[] = [
   {
@@ -457,6 +514,14 @@ export const DatasetNode = memo(({ id, data, selected }: NodeProps<any>) => {
     [cardView, versionStale],
   );
 
+  const consumersSignature = useStore(
+    useCallback((state: ReactFlowState<Node, Edge>) => selectDatasetConsumers(state, id), [id]),
+  );
+  const connectedConsumers = useMemo(
+    () => JSON.parse(consumersSignature) as DatasetConsumerInfo[],
+    [consumersSignature],
+  );
+
   return (
     <StudioCanvasNodeShell
       nodeId={id}
@@ -487,6 +552,22 @@ export const DatasetNode = memo(({ id, data, selected }: NodeProps<any>) => {
           <p className="line-clamp-3 px-3 pt-2 text-[11px] font-light leading-relaxed text-slate-600">
             {summaryText}
           </p>
+          {connectedConsumers.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-1 px-3 pt-1.5">
+              <span className="text-[9px] font-medium uppercase tracking-wide text-slate-400">
+                Conectado a
+              </span>
+              {connectedConsumers.map((consumer) => (
+                <span
+                  key={consumer.id}
+                  className="inline-flex max-w-[120px] items-center truncate rounded-[4px] border border-slate-300/60 bg-white/70 px-1.5 py-0.5 text-[9px] font-medium text-slate-600"
+                  title={friendlyNodeName(consumer.type, consumer.label)}
+                >
+                  {friendlyNodeName(consumer.type, consumer.label)}
+                </span>
+              ))}
+            </div>
+          ) : null}
           <div className="flex-1" />
           <FoldderStudioModeCenterButton onClick={() => openStudio()} />
         </div>
