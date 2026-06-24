@@ -48,6 +48,24 @@ export function designerCanvasSessionKey(
 }
 
 /** Huella del contenido visible de una página; invalida miniaturas raster cuando cambia el diseño. */
+/** Páginas cuyo raster del rail falta o no coincide con el contenido actual. */
+export function designerPagesNeedingRailThumbnails(
+  pages: DesignerPageState[],
+  thumbnails: Record<string, string>,
+  contentKeys: Record<string, string>,
+  targetPageIds?: string[] | null,
+): string[] {
+  const targetSet = targetPageIds && targetPageIds.length > 0 ? new Set(targetPageIds) : null;
+  const out: string[] = [];
+  for (const p of pages) {
+    if (targetSet && !targetSet.has(p.id)) continue;
+    const key = designerPageThumbContentKey(p);
+    if (thumbnails[p.id] && contentKeys[p.id] === key) continue;
+    out.push(p.id);
+  }
+  return out;
+}
+
 export function designerPageThumbContentKey(page: DesignerPageState): string {
   const pd = getPageDimensions(page);
   const objs = page.objects ?? [];

@@ -1,6 +1,7 @@
 import type * as React from "react";
 import type { BrainNodeTelemetryApi } from "@/lib/brain/brain-telemetry";
 import type { Dataset } from "@/app/spaces/dataset/dataset-types";
+import type { GenerativeFillRect } from "@/lib/designer/generative-fill/types";
 import type { FreehandObject, DesignerStudioApi } from "../FreehandStudio";
 import type { VectorPdfExportOptions } from "./text-outline";
 
@@ -108,4 +109,15 @@ export type DesignerEmbedProps = {
   designerActivePageDatasetRowIndex?: number;
   /** Fija la fila del Dataset de la página activa (re-aplica los datos enlazados). */
   onDesignerSetActivePageRowIndex?: (rowIndex: number) => void;
+  /**
+   * Designer: captura multipágina en background (miniaturas rail / export).
+   * Oculta el lienzo para evitar parpadeos al iterar páginas.
+   */
+  designerPageCaptureBusy?: boolean;
+  designerPageCaptureProgress?: { done: number; total: number } | null;
+  /** Designer: relleno generativo — selección multi-rect controlada por el padre. */
+  designerGenerativeFill?: {
+    selections: GenerativeFillRect[];
+    onSelectionsChange: (next: GenerativeFillRect[]) => void;
+  } | null;
 };

@@ -803,6 +803,12 @@ import { fingerprintFromChoice } from "@/lib/brain/brain-visual-variety";
 import type { TelemetryImageSource } from "@/lib/brain/brain-models";
 import { trackDesignerImageImported, trackDesignerImageUsed } from "./designer/designer-image-telemetry";
 import {
+  clampRectToBounds,
+  commitGenerativeFillRect,
+  normalizeDragRect,
+  pointInsideAnyRect,
+} from "./designer/generative-fill/generative-fill-canvas";
+import {
   emitPhotoroomExportToBrain,
   trackPhotoroomImageEdited,
   trackPhotoroomImageImported,
@@ -844,7 +850,9 @@ type Tool =
   /** Lazo libre (L). */
   | "lassoMarquee"
   /** Lazo poligonal (⇧L). */
-  | "polygonMarquee";
+  | "polygonMarquee"
+  /** Designer: selección multi-rect para relleno generativo sobre el pliego. */
+  | "generativeFillSelect";
 
 type ToolFlyoutGroupId = "tf-pen" | "tf-shape" | "tf-photo-marquee" | "tf-text" | "tf-img";
 
@@ -1263,6 +1271,8 @@ interface ImageObject extends FreehandObjectBase {
   src: string;
   /** Natural aspect w/h for proportional scaling */
   intrinsicRatio?: number;
+  /** Override SVG preserveAspectRatio (generative fill needs pixel-perfect stretch). */
+  imagePreserveAspectRatio?: "none" | "xMidYMid meet";
   /** Metadatos del archivo al importar desde disco (p. ej. nombre y peso originales). */
   imageAssetMeta?: {
     fileName: string;
@@ -1388,6 +1398,8 @@ export interface FreehandStudioProps extends DesignerEmbedProps {
   photoRoomConnectedInputs?: { slot: string; src: string }[];
   /** Bloque de tamaño/orientación del lienzo en el panel Propiedades (sin capa seleccionada). Usado por Designer. */
   studioCanvasPanel?: React.ReactNode;
+  /** Relleno generativo en Propiedades (solo con herramienta generativeFillSelect). */
+  studioGenerativeFillPanel?: React.ReactNode;
   /** Instancia embebida de un studio de retoque de imagen (telemetría Brain dedicada). Bandera explícita. */
   photoRoomStudioEmbed?: boolean;
   /**
@@ -5188,14 +5200,15 @@ function snapCanvasPointTo45From(from: Point, to: Point): Point {
   return { x: nx, y: ny };
 }
 
-/** Sufijo de className para la animación de cambio de página en Designer (`designer-page-slide-in-*` en globals.css). No aplica mientras el lienzo precarga rasters (la animación va al mostrarse la página). */
+/** Sufijo de className para la animación de cambio de página en Designer (`designer-page-slide-in-*` en globals.css). No aplica mientras el lienzo precarga rasters o captura miniaturas en background. */
 function designerCanvasPageEnterClassSuffix(
   designerMode: boolean | undefined,
   direction: "next" | "prev" | null | undefined,
   rasterPhase: "idle" | "loading",
+  pageCaptureBusy: boolean | undefined,
 ): string {
   if (!designerMode || direction == null) return "";
-  if (rasterPhase === "loading") return "";
+  if (rasterPhase === "loading" || pageCaptureBusy) return "";
   return direction === "next" ? " designer-page-slide-in-next" : " designer-page-slide-in-prev";
 }
 
@@ -7165,7 +7178,7 @@ export function renderObj(
       }
       const le = resolveLayerEffectsForRender(obj, opts);
       const fxActive = hasActiveLayerEffects(le);
-      const par = "xMidYMid meet";
+      const par = im.imagePreserveAspectRatio ?? "xMidYMid meet";
       const lmask = (obj as FreehandObjectBase).layerMask;
       const inner = fxActive ? (
         <g style={{ isolation: "isolate" }}>
@@ -9079,6 +9092,7 @@ export function FreehandStudioCanvas({
   studioHeaderAccessory,
   photoRoomConnectedInputs,
   studioCanvasPanel,
+  studioGenerativeFillPanel,
   photoRoomOnModificarImagenIA,
   photoRoomOnRasterizeInputImage,
   photoRoomOnOpenConnectedNanoStudio,
@@ -9118,9 +9132,14 @@ export function FreehandStudioCanvas({
   designerConnectedDatasetLoading = false,
   designerActivePageDatasetRowIndex = 0,
   onDesignerSetActivePageRowIndex,
+  designerPageCaptureBusy = false,
+  designerPageCaptureProgress = null,
+  designerGenerativeFill = null,
 }: FreehandStudioProps) {
   const designerBrainTelemetryRef = useRef(designerBrainTelemetry);
   designerBrainTelemetryRef.current = designerBrainTelemetry;
+  const designerGenerativeFillRef = useRef(designerGenerativeFill);
+  designerGenerativeFillRef.current = designerGenerativeFill;
   const photoRoomStudioEmbedRef = useRef(!!photoRoomStudioEmbed);
   photoRoomStudioEmbedRef.current = !!photoRoomStudioEmbed;
   const projectBrainCtx = useProjectBrainCanvas();
@@ -9518,7 +9537,7 @@ export function FreehandStudioCanvas({
 
   // Drag state
   const [dragState, setDragState] = useState<{
-    type: "move" | "resize" | "skew" | "rotationPivot" | "textBoxResize" | "pan" | "create" | "createText" | "createTextFrame" | "createImageFrame" | "directSelect" | "pathCornerRadius" | "marquee" | "photoRectMarquee" | "photoEllipseMarquee" | "photoLassoMarquee" | "photoPolygonMarquee" | "photoMarqueeNudge" | "photoMarqueeFloatRotate" | "photoMarqueeFloatResize" | "penHandle" | "rotate" | "gradient" | "guideMove" | "guidePull" | "imageContentPan" | "imageContentResize" | "brushPaint" | "photoGradientLine" | "photoGradientVertex" | "cornerRadius";
+    type: "move" | "resize" | "skew" | "rotationPivot" | "textBoxResize" | "pan" | "create" | "createText" | "createTextFrame" | "createImageFrame" | "directSelect" | "pathCornerRadius" | "marquee" | "photoRectMarquee" | "photoEllipseMarquee" | "photoLassoMarquee" | "photoPolygonMarquee" | "photoMarqueeNudge" | "photoMarqueeFloatRotate" | "photoMarqueeFloatResize" | "penHandle" | "rotate" | "gradient" | "guideMove" | "guidePull" | "imageContentPan" | "imageContentResize" | "brushPaint" | "photoGradientLine" | "photoGradientVertex" | "cornerRadius" | "generativeFillRect";
     startX: number;
     startY: number;
     startCanvas?: Point;
@@ -9568,6 +9587,8 @@ export function FreehandStudioCanvas({
     photoMarqueeAdditive?: boolean;
     /** Solo marcos raster: restar (Alt/Option al iniciar el trazo). */
     photoMarqueeSubtract?: boolean;
+    /** Relleno generativo: Shift = añadir rect a la selección. */
+    generativeFillAdditive?: boolean;
     /** Solo `photoLassoMarquee`: puntos del trazo (mundo). */
     photoLassoPoints?: Point[];
     /** Solo `photoPolygonMarquee`: vértices colocados; `currentCanvas` = rubber band al cursor. */
@@ -9904,6 +9925,13 @@ export function FreehandStudioCanvas({
       window.removeEventListener("blur", onBlur);
     };
   }, [activeTool, studioCaps.toolPhotoMarquee]);
+
+  useEffect(() => {
+    if (activeTool === "generativeFillSelect" || !designerGenerativeFillRef.current) return;
+    if (designerGenerativeFillRef.current.selections.length > 0) {
+      designerGenerativeFillRef.current.onSelectionsChange([]);
+    }
+  }, [activeTool]);
 
   useEffect(() => {
     if (!studioCaps.toolPhotoMarquee) return;
@@ -18331,6 +18359,50 @@ export function FreehandStudioCanvas({
       return;
     }
 
+    if (
+      studioCaps.toolGenerativeFill &&
+      activeTool === "generativeFillSelect" &&
+      designerGenerativeFillRef.current &&
+      e.button === 0
+    ) {
+      e.preventDefault();
+      setSelectedIds(new Set());
+      setSelectedPoints(new Map());
+      const gf = designerGenerativeFillRef.current;
+      const ab = pickPrimaryArtboard(artboardsRef.current, null);
+      const bounds: Rect = ab
+        ? artboardToRect(ab)
+        : { x: 0, y: 0, w: artboardsRef.current[0]?.width ?? 1920, h: artboardsRef.current[0]?.height ?? 1080 };
+      const additive = e.shiftKey;
+      const committed = gf.selections;
+      const hasSelection = committed.length > 0;
+      const insideAny = pointInsideAnyRect(pos, committed);
+      if (hasSelection && !insideAny && !additive) {
+        gf.onSelectionsChange([]);
+        return;
+      }
+      const gfDrag = {
+        type: "generativeFillRect" as const,
+        startX: e.clientX,
+        startY: e.clientY,
+        marqueeOrigin: pos,
+        currentCanvas: pos,
+        generativeFillAdditive: additive,
+        bounds,
+      };
+      dragStateRef.current = gfDrag;
+      setDragState(gfDrag);
+      const pe = e.nativeEvent as PointerEvent;
+      if (typeof pe.pointerId === "number") {
+        try {
+          (e.currentTarget as HTMLElement).setPointerCapture(pe.pointerId);
+        } catch {
+          /* noop */
+        }
+      }
+      return;
+    }
+
     // ── Marco raster: rect / elipse / lazo / polígono (Ctrl/⌘ suma, Alt resta) ─
     if (studioCaps.toolPhotoMarquee && activeTool === "rectMarquee" && e.button === 0) {
       e.preventDefault();
@@ -21203,6 +21275,16 @@ export function FreehandStudioCanvas({
       return;
     }
 
+    if (dragState.type === "generativeFillRect" && dragState.marqueeOrigin) {
+      const pos = screenToCanvas(e.clientX, e.clientY);
+      setDragState((prev) => {
+        const next = prev ? { ...prev, currentCanvas: pos } : null;
+        dragStateRef.current = next;
+        return next;
+      });
+      return;
+    }
+
     if (dragState.type === "photoEllipseMarquee" && dragState.marqueeOrigin) {
       const raw = screenToCanvas(e.clientX, e.clientY);
       const o = dragState.marqueeOrigin;
@@ -21862,6 +21944,23 @@ export function FreehandStudioCanvas({
         setPhotoEllipseMarqueeSelection([]);
         setPhotoRectMarqueeSelection([]);
         setPhotoPolygonMarqueeSelection([]);
+      }
+      return;
+    }
+
+    if (ds.type === "generativeFillRect" && ds.marqueeOrigin && ds.currentCanvas) {
+      const o = ds.marqueeOrigin;
+      const c = ds.currentCanvas;
+      const raw = normalizeDragRect(o, c);
+      const bounds = ds.bounds ?? ({ x: 0, y: 0, w: 1920, h: 1080 } as Rect);
+      dragStateRef.current = null;
+      setDragState(null);
+      const clamped = clampRectToBounds(raw, bounds);
+      const gf = designerGenerativeFillRef.current;
+      if (gf && clamped) {
+        gf.onSelectionsChange(
+          commitGenerativeFillRect(gf.selections, clamped, !!ds.generativeFillAdditive),
+        );
       }
       return;
     }
@@ -22805,6 +22904,20 @@ export function FreehandStudioCanvas({
     return { x: Math.min(o.x, c.x), y: Math.min(o.y, c.y), w: Math.abs(c.x - o.x), h: Math.abs(c.y - o.y) };
   }, [dragState]);
 
+  const generativeFillDragRect = useMemo(() => {
+    if (
+      !dragState ||
+      dragState.type !== "generativeFillRect" ||
+      !dragState.marqueeOrigin ||
+      !dragState.currentCanvas
+    ) {
+      return null;
+    }
+    return normalizeDragRect(dragState.marqueeOrigin, dragState.currentCanvas);
+  }, [dragState]);
+
+  const generativeFillCommittedRects = designerGenerativeFill?.selections ?? [];
+
   const photoRectMarqueeDragSubtract = useMemo(
     () => dragState?.type === "photoRectMarquee" && !!dragState.photoMarqueeSubtract,
     [dragState],
@@ -23008,7 +23121,7 @@ export function FreehandStudioCanvas({
   /** Vuelve a lanzar la animación horizontal al cambiar de página o al terminar la precarga de rasters (CSS no repite si la clase sigue siendo next/prev). */
   useLayoutEffect(() => {
     if (!designerMode || designerPageEnterDirection == null) return;
-    if (designerCanvasRasterLoad.phase === "loading") return;
+    if (designerCanvasRasterLoad.phase === "loading" || designerPageCaptureBusy) return;
     const el = designerPageSlideLayerRef.current;
     if (!el) return;
     el.style.animation = "none";
@@ -23019,6 +23132,7 @@ export function FreehandStudioCanvas({
     designerActivePageId,
     designerPageEnterDirection,
     designerCanvasRasterLoad.phase,
+    designerPageCaptureBusy,
   ]);
 
   // ═══════════════════════════════════════════════════════════════════
@@ -23336,6 +23450,20 @@ export function FreehandStudioCanvas({
         <ToolBtn active={activeTool === "select"} onClick={() => { setActiveTool("select"); setSelectedPoints(new Map()); }} title="Selection (V)">
           <MousePointer2 size={19} strokeWidth={TOOLBAR_ICON_STROKE} />
         </ToolBtn>
+
+        {studioCaps.toolGenerativeFill && (
+          <ToolBtn
+            active={activeTool === "generativeFillSelect"}
+            onClick={() => {
+              setActiveTool("generativeFillSelect");
+              setSelectedIds(new Set());
+              setSelectedPoints(new Map());
+            }}
+            title="Relleno generativo — arrastra para seleccionar zonas (Shift = añadir otra)"
+          >
+            <Sparkles size={19} strokeWidth={TOOLBAR_ICON_STROKE} />
+          </ToolBtn>
+        )}
 
         {studioCaps.toolPhotoMarquee && (
           <ToolFlyoutGroup
@@ -24039,6 +24167,7 @@ export function FreehandStudioCanvas({
           designerMode,
           designerPageEnterDirection,
           designerCanvasRasterLoad.phase,
+          designerPageCaptureBusy,
         )}`}
         style={{ cursor }}
         onMouseDown={isTouchUI ? undefined : handleMouseDown}
@@ -24220,7 +24349,32 @@ export function FreehandStudioCanvas({
             />
           )}
           <div ref={containerRef} className="relative min-h-0 flex-1 overflow-hidden">
-        {designerMode && designerCanvasRasterLoad.phase === "loading" && (
+        {designerMode && designerPageCaptureBusy && (
+          <div
+            className="absolute inset-0 z-[200] flex flex-col items-center justify-center bg-[#0b0d10]"
+            style={{ pointerEvents: "auto" }}
+            aria-busy
+            aria-live="polite"
+          >
+            <p className="mb-3 text-[12px] text-zinc-400">Preparando miniaturas…</p>
+            {designerPageCaptureProgress && designerPageCaptureProgress.total > 0 ? (
+              <>
+                <div className="h-1.5 w-52 max-w-[min(22rem,85vw)] overflow-hidden rounded-full bg-zinc-800">
+                  <div
+                    className="h-full rounded-full bg-violet-500 transition-[width] duration-200 ease-out"
+                    style={{
+                      width: `${(designerPageCaptureProgress.done / designerPageCaptureProgress.total) * 100}%`,
+                    }}
+                  />
+                </div>
+                <p className="mt-2 tabular-nums text-[10px] text-zinc-500">
+                  {designerPageCaptureProgress.done} / {designerPageCaptureProgress.total}
+                </p>
+              </>
+            ) : null}
+          </div>
+        )}
+        {designerMode && designerCanvasRasterLoad.phase === "loading" && !designerPageCaptureBusy && (
           <div
             className="absolute inset-0 z-[200] flex flex-col items-center justify-center bg-[#0b0d10]"
             style={{ pointerEvents: "auto" }}
@@ -24246,8 +24400,16 @@ export function FreehandStudioCanvas({
           className="absolute inset-0 w-full h-full"
           style={{
             userSelect: "none",
-            opacity: designerMode && designerCanvasRasterLoad.phase === "loading" ? 0 : 1,
-            pointerEvents: designerMode && designerCanvasRasterLoad.phase === "loading" ? "none" : undefined,
+            opacity:
+              designerMode &&
+              (designerCanvasRasterLoad.phase === "loading" || designerPageCaptureBusy)
+                ? 0
+                : 1,
+            pointerEvents:
+              designerMode &&
+              (designerCanvasRasterLoad.phase === "loading" || designerPageCaptureBusy)
+                ? "none"
+                : undefined,
           }}
         >
           <defs>
@@ -25037,6 +25199,52 @@ export function FreehandStudioCanvas({
                 )}
               </g>
             )}
+
+            {studioCaps.toolGenerativeFill &&
+              activeTool === "generativeFillSelect" &&
+              (generativeFillCommittedRects.length > 0 || generativeFillDragRect) && (
+                <g pointerEvents="none" data-ui="generative-fill-selection">
+                  {generativeFillCommittedRects.map((r, i) =>
+                    r.w > 1 && r.h > 1 ? (
+                      <rect
+                        key={`gf-sel-${i}`}
+                        x={r.x}
+                        y={r.y}
+                        width={r.w}
+                        height={r.h}
+                        fill="rgba(45,212,191,0.08)"
+                        stroke="#2dd4bf"
+                        strokeWidth={1.75}
+                        vectorEffect="nonScalingStroke"
+                        strokeDasharray="5 4"
+                      >
+                        <animate
+                          attributeName="stroke-dashoffset"
+                          from="0"
+                          to="-9"
+                          dur="0.4s"
+                          repeatCount="indefinite"
+                        />
+                      </rect>
+                    ) : null,
+                  )}
+                  {generativeFillDragRect && generativeFillDragRect.w > 2 && generativeFillDragRect.h > 2 ? (
+                    <rect
+                      x={generativeFillDragRect.x}
+                      y={generativeFillDragRect.y}
+                      width={generativeFillDragRect.w}
+                      height={generativeFillDragRect.h}
+                      fill="rgba(45,212,191,0.12)"
+                      stroke="#5eead4"
+                      strokeWidth={1.75}
+                      vectorEffect="nonScalingStroke"
+                      strokeDasharray="4 3"
+                      pointerEvents="none"
+                      data-ui="generative-fill-drag"
+                    />
+                  ) : null}
+                </g>
+              )}
 
             {/* Per-object selection outlines (single + multi): all equal */}
             {selectedObjects.length > 0 && !canvasZenMode && (activeTool === "select" || activeTool === "directSelect") && selectedObjects.map((obj) => {
@@ -26257,8 +26465,19 @@ export function FreehandStudioCanvas({
                 </div>
               </div>
             )}
+            {studioCaps.toolGenerativeFill &&
+              activeTool === "generativeFillSelect" &&
+              studioGenerativeFillPanel != null && (
+                <div className="border-b border-white/[0.08] px-[14px] py-3">
+                  <div className="mb-2.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                    Relleno generativo
+                  </div>
+                  {studioGenerativeFillPanel}
+                </div>
+              )}
             {studioCanvasPanel != null &&
               selectedObjects.length === 0 &&
+              activeTool !== "generativeFillSelect" &&
               (designerMode || photoRoomConnectedInputs !== undefined) && (
                 <div className="border-b border-white/[0.08] px-[14px] py-3">
                   <div className="mb-2.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">

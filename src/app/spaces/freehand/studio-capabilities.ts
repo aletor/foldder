@@ -28,6 +28,8 @@ export type FreehandStudioCapabilities = {
   photoMarqueeFromVector: boolean;
   /** Herramientas de marco raster (rect / elipse / lazo; toolbar + teclas M/L/O). */
   toolPhotoMarquee: boolean;
+  /** Designer: selección rectangular multi-zona para relleno generativo (composite). */
+  toolGenerativeFill: boolean;
 };
 
 const CAPS_DESIGNER: FreehandStudioCapabilities = {
@@ -40,10 +42,14 @@ const CAPS_DESIGNER: FreehandStudioCapabilities = {
   layerMask: true,
   photoMarqueeFromVector: true,
   toolPhotoMarquee: true,
+  toolGenerativeFill: true,
 };
 
 /** Entorno sin Designer: mismo perfil conservador. */
-const CAPS_GENERIC: FreehandStudioCapabilities = { ...CAPS_DESIGNER };
+const CAPS_GENERIC: FreehandStudioCapabilities = {
+  ...CAPS_DESIGNER,
+  toolGenerativeFill: false,
+};
 
 export function inferDefaultStudioCapabilities(opts: {
   designerMode: boolean;

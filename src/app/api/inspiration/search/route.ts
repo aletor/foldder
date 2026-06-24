@@ -4,29 +4,20 @@ import {
   ApiServiceDisabledError,
   assertApiServiceEnabled,
 } from "@/lib/api-usage-controls";
+import { ArenaProviderError, searchArenaImages } from "@/lib/inspiration/arena-api";
+import { planArenaSearchTerms } from "@/lib/inspiration/inspiration-query-planner";
+import {
+  INSPIRATION_FACET_QUERY_SUFFIX,
+  type InspirationFacet,
+  type InspirationInputKind,
+  type InspirationProvider,
+  type InspirationResult,
+  inspirationProviderServiceId,
+  normalizeInspirationFacet,
+  normalizeInspirationInputKind,
+  normalizeInspirationProvider,
+} from "@/lib/inspiration/inspiration-shared";
 import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
-
-type InspirationFacet = "similar" | "textures" | "colors" | "style" | "people" | "backgrounds";
-type InspirationInputKind = "prompt" | "image";
-type InspirationProvider = "pexels" | "unsplash";
-
-type InspirationResult = {
-  id: string;
-  source: "Pexels" | "Unsplash";
-  imageUrl: string;
-  thumbUrl: string;
-  title?: string;
-  author?: string;
-  sourceUrl?: string;
-  width?: number;
-  height?: number;
-  color?: string;
-};
-
-type InspirationCacheEntry = {
-  expiresAt: number;
-  results: InspirationResult[];
-};
 
 class InspirationProviderError extends Error {
   constructor(message: string, public status: number) {
@@ -35,13 +26,9 @@ class InspirationProviderError extends Error {
   }
 }
 
-const FACET_QUERY_SUFFIX: Record<InspirationFacet, string> = {
-  similar: "visual reference, similar mood, clear composition",
-  textures: "textures, materials, surfaces, pattern details, fabric, stone, wood, metal, paper grain",
-  colors: "color palette, tones, clean palette, visual color mood",
-  style: "visual style, art direction, editorial moodboard, aesthetic, look and feel",
-  people: "people, portrait, human figures, characters, lifestyle",
-  backgrounds: "backgrounds, environments, interiors, locations, empty spaces, scenery",
+type InspirationCacheEntry = {
+  expiresAt: number;
+  results: InspirationResult[];
 };
 
 const SEARCH_CACHE_TTL_MS = 30 * 60 * 1000;
@@ -127,20 +114,6 @@ const IMAGE_DESCRIPTION_STOPWORDS = new Set([
   "con",
 ]);
 
-function normalizeFacet(value: unknown): InspirationFacet {
-  return typeof value === "string" && value in FACET_QUERY_SUFFIX
-    ? (value as InspirationFacet)
-    : "similar";
-}
-
-function normalizeInputKind(value: unknown): InspirationInputKind {
-  return value === "image" ? "image" : "prompt";
-}
-
-function normalizeProvider(value: unknown): InspirationProvider {
-  return value === "unsplash" ? "unsplash" : "pexels";
-}
-
 function compactSearchText(value: string, max: number): string {
   const s = value.trim().replace(/\s+/g, " ");
   return s.length > max ? s.slice(0, max).replace(/\s+\S*$/, "").trim() : s;
@@ -173,13 +146,13 @@ function normalizeImageDescriptionForSearch(value: string, maxTerms: number): st
   return out.join(" ");
 }
 
-function buildSearchQuery(baseQuery: string, facet: InspirationFacet, inputKind: InspirationInputKind): string {
+function buildStockSearchQuery(baseQuery: string, facet: InspirationFacet, inputKind: InspirationInputKind): string {
   const core = baseQuery.trim().replace(/\s+/g, " ");
   const searchCore =
     inputKind === "image"
       ? normalizeImageDescriptionForSearch(core, 12) || compactSearchText(core, 96)
       : core;
-  return [searchCore, FACET_QUERY_SUFFIX[facet], "realistic, clean, commercial, usable reference"]
+  return [searchCore, INSPIRATION_FACET_QUERY_SUFFIX[facet], "realistic, clean, commercial, usable reference"]
     .filter(Boolean)
     .join(", ");
 }
@@ -316,6 +289,16 @@ async function searchUnsplash(query: string, limit: number): Promise<Inspiration
   return (json.results ?? []).map(normalizeUnsplashPhoto).filter((item): item is InspirationResult => Boolean(item));
 }
 
+async function searchProvider(
+  provider: InspirationProvider,
+  query: string,
+  limit: number,
+): Promise<InspirationResult[]> {
+  if (provider === "unsplash") return searchUnsplash(query, limit);
+  if (provider === "arena") return searchArenaImages(query, limit);
+  return searchPexels(query, limit);
+}
+
 async function searchProviderWithCache(
   provider: InspirationProvider,
   query: string,
@@ -328,9 +311,7 @@ async function searchProviderWithCache(
   const existing = inFlightSearches.get(cacheKey);
   if (existing) return { results: await existing, cached: true };
 
-  const promise = provider === "unsplash"
-    ? searchUnsplash(query, limit)
-    : searchPexels(query, limit);
+  const promise = searchProvider(provider, query, limit);
   inFlightSearches.set(cacheKey, promise);
   try {
     const results = await promise;
@@ -359,14 +340,28 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "query_required" }, { status: 400 });
     }
 
-    const facet = normalizeFacet(body.facet);
-    const inputKind = normalizeInputKind(body.inputKind);
-    const provider = normalizeProvider(body.provider);
-    const serviceId = provider === "unsplash" ? "unsplash-search" : "pexels-search";
+    const facet = normalizeInspirationFacet(body.facet);
+    const inputKind = normalizeInspirationInputKind(body.inputKind);
+    const provider = normalizeInspirationProvider(body.provider);
+    const serviceId = inspirationProviderServiceId(provider);
     await assertApiServiceEnabled(serviceId);
 
     const limit = Math.min(Math.max(Number(body.limit) || 40, 1), 40);
-    const searchQuery = buildSearchQuery(baseQuery, facet, inputKind);
+
+    let searchQuery = buildStockSearchQuery(baseQuery, facet, inputKind);
+    let queryPlanSource: "stock" | "gemini" | "fallback" | undefined = "stock";
+
+    if (provider === "arena") {
+      const planned = await planArenaSearchTerms({
+        intent: baseQuery,
+        facet,
+        inputKind,
+        userEmail: authState.user.email,
+      });
+      searchQuery = planned.terms;
+      queryPlanSource = planned.source;
+    }
+
     const { results, cached } = await searchProviderWithCache(provider, searchQuery, limit);
 
     if (!cached) {
@@ -378,7 +373,14 @@ export async function POST(req: Request) {
         operation: `${provider}_photo_search`,
         costIsKnown: false,
         costUsd: 0,
-        metadata: { source: provider, facet, inputKind, resultCount: results.length },
+        metadata: {
+          source: provider,
+          facet,
+          inputKind,
+          resultCount: results.length,
+          queryPlanSource,
+          searchQuery,
+        },
       });
     }
 
@@ -387,6 +389,7 @@ export async function POST(req: Request) {
       facet,
       provider,
       query: searchQuery,
+      queryPlanSource,
       cached,
       results,
     });
@@ -398,9 +401,16 @@ export async function POST(req: Request) {
       );
     }
     console.error("[inspiration/search]", error);
+    const status =
+      error instanceof InspirationProviderError || error instanceof ArenaProviderError
+        ? error.status
+        : 500;
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "inspiration_search_failed" },
-      { status: error instanceof InspirationProviderError ? error.status : 500 },
+      {
+        error: error instanceof Error ? error.message : "inspiration_search_failed",
+        code: error instanceof ArenaProviderError ? error.code : undefined,
+      },
+      { status },
     );
   }
 }

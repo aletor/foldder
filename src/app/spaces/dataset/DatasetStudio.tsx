@@ -47,6 +47,7 @@ import {
   datasetScopeMetricLabel,
   datasetScopeSuccessNotice,
 } from "./dataset-scope-copy";
+import { exportDatasetFolddataFile, FOLDDER_FOLDDATA_EXTENSION } from "./dataset-folddata";
 
 export const SHARED_SHEET_ID = "__shared__";
 
@@ -63,6 +64,7 @@ type DatasetStudioProps = {
   ) => Promise<{ ok: boolean; dataset: Dataset; reason?: string }>;
   onSelectGlobalDataset?: (item: DatasetListItem) => void;
   onCreateNewLocal?: () => void;
+  onRequestImportFolddata?: () => void;
   onClose: () => void;
 };
 
@@ -77,6 +79,7 @@ export function DatasetStudio({
   onScopeChange,
   onSelectGlobalDataset,
   onCreateNewLocal,
+  onRequestImportFolddata,
   onClose,
 }: DatasetStudioProps) {
   const dataset = useMemo(() => normalizeDataset(rawDataset), [rawDataset]);
@@ -93,6 +96,7 @@ export function DatasetStudio({
   const [changeSourceOpen, setChangeSourceOpen] = useState(false);
   const [globalRows, setGlobalRows] = useState<DatasetListItem[]>([]);
   const [globalLoading, setGlobalLoading] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const [menuAnchor, setMenuAnchor] = useState<{ top: number; right: number } | null>(null);
 
@@ -151,6 +155,25 @@ export function DatasetStudio({
       .catch(() => setGlobalRows([]))
       .finally(() => setGlobalLoading(false));
   }, [closeHeaderMenu]);
+
+  const runExportFolddata = useCallback(async () => {
+    closeHeaderMenu();
+    setExportBusy(true);
+    try {
+      await exportDatasetFolddataFile({ dataset });
+      showScopeNotice(
+        `Snapshot exportado (${FOLDDER_FOLDDATA_EXTENSION}). Es independiente del Dataset vivo en tu cuenta.`,
+        "success",
+      );
+    } catch (error) {
+      showScopeNotice(
+        error instanceof Error ? error.message : "No se pudo exportar el Dataset",
+        "error",
+      );
+    } finally {
+      setExportBusy(false);
+    }
+  }, [closeHeaderMenu, dataset, showScopeNotice]);
 
   const runScopeChange = useCallback(
     async (direction: ScopeConfirmDirection) => {
@@ -287,7 +310,7 @@ export function DatasetStudio({
               >
                 <button
                   type="button"
-                  disabled={scopeBusy}
+                  disabled={scopeBusy || exportBusy}
                   onClick={() => {
                     closeHeaderMenu();
                     setScopeConfirm(dataset.scope === "global" ? "demote" : "promote");
@@ -296,6 +319,27 @@ export function DatasetStudio({
                 >
                   {datasetScopeMenuActionLabel(dataset.scope)}
                 </button>
+                <button
+                  type="button"
+                  disabled={exportBusy}
+                  onClick={() => void runExportFolddata()}
+                  className="flex w-full border-t border-white/10 px-3 py-2.5 text-left text-[10px] font-black uppercase tracking-[0.08em] text-white/75 hover:bg-white/[0.06] disabled:opacity-50"
+                >
+                  {exportBusy ? "Exportando…" : `Exportar ${FOLDDER_FOLDDATA_EXTENSION}`}
+                </button>
+                {onRequestImportFolddata ? (
+                  <button
+                    type="button"
+                    disabled={exportBusy}
+                    onClick={() => {
+                      closeHeaderMenu();
+                      onRequestImportFolddata();
+                    }}
+                    className="flex w-full border-t border-white/10 px-3 py-2.5 text-left text-[10px] font-black uppercase tracking-[0.08em] text-white/75 hover:bg-white/[0.06] disabled:opacity-50"
+                  >
+                    {`Importar ${FOLDDER_FOLDDATA_EXTENSION}`}
+                  </button>
+                ) : null}
                 {onSelectGlobalDataset ? (
                   <button
                     type="button"

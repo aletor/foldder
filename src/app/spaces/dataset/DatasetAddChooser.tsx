@@ -12,11 +12,12 @@ import {
 type DatasetAddChooserProps = {
   onCreateLocal: () => void;
   onConnectGlobal: () => void;
+  onImportFile: () => void;
   onClose: () => void;
 };
 
 /** Chooser al añadir un nodo Dataset desde el sidebar. */
-export function DatasetAddChooser({ onCreateLocal, onConnectGlobal, onClose }: DatasetAddChooserProps) {
+export function DatasetAddChooser({ onCreateLocal, onConnectGlobal, onImportFile, onClose }: DatasetAddChooserProps) {
   return (
     <div className={datasetModalOverlayClass} onClick={onClose}>
       <div {...datasetModalPanelProps()} onClick={(e) => e.stopPropagation()}>
@@ -52,15 +53,14 @@ export function DatasetAddChooser({ onCreateLocal, onConnectGlobal, onClose }: D
 
           <button
             type="button"
-            disabled
-            title="Próximamente"
-            className="flex flex-col items-start gap-2 border-t border-white/10 bg-[#0b0f14] p-4 text-left opacity-40 sm:col-span-2"
+            onClick={onImportFile}
+            className="flex flex-col items-start gap-2 border-t border-white/10 bg-[#0b0f14] p-4 text-left transition hover:bg-white/[0.04] sm:col-span-2"
           >
-            <span className="flex h-9 w-9 items-center justify-center bg-white/[0.04] text-white/35">
+            <span className="flex h-9 w-9 items-center justify-center bg-[var(--foldder-studio-accent,#14b8a6)]/15 text-[var(--foldder-studio-accent,#14b8a6)]">
               <FileUp size={18} strokeWidth={2.5} />
             </span>
-            <span className="text-[11px] font-black uppercase tracking-[0.06em] text-white/55">Importar archivo</span>
-            <span className="text-[10px] text-white/30">.folddata — próximamente</span>
+            <span className="text-[11px] font-black uppercase tracking-[0.06em] text-white/85">Importar archivo</span>
+            <span className="text-[10px] leading-relaxed text-white/40">Snapshot .folddata desvinculado</span>
           </button>
         </div>
 

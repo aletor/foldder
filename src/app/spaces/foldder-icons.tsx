@@ -13,6 +13,7 @@ export type FoldderIconKey =
   | 'prompt'
   | 'canvas'
   | 'web'
+  | 'lightbulb'
   | 'matting'
   | 'eye'
   | 'enhance'
@@ -218,6 +219,17 @@ export function FoldderWeb({ state, className, size }: GlyphProps) {
       <circle cx="8" cy="8" r="4.75" />
       <ellipse cx="8" cy="8" rx="2.25" ry="4.75" opacity={0.55} />
       <path d="M8 3.25 V12.75" opacity={0.45} />
+    </FoldderIcon>
+  );
+}
+
+/** Inspiration: lightbulb */
+export function FoldderLightbulb({ state, className, size }: GlyphProps) {
+  return (
+    <FoldderIcon state={state} className={className} size={size}>
+      <path d="M8 2.5 C5.2 2.5 3 4.7 3 7.5 C3 9.15 4 10.65 5.5 11.55 V12.75 H10.5 V11.55 C12 10.65 13 9.15 13 7.5 C13 4.7 10.8 2.5 8 2.5 Z" />
+      <path d="M6.25 13.75 H9.75" />
+      <path d="M6.75 14.65 H9.25" opacity={0.75} />
     </FoldderIcon>
   );
 }
@@ -693,6 +705,7 @@ export const FOLDDER_ICON_COLORS: Record<FoldderIconKey, string> = {
   prompt: '#38bdf8',
   canvas: '#06b6d4',
   web: '#2dd4bf',
+  lightbulb: '#0ac38a',
   matting: '#5eead4',
   eye: '#14b8a6',
   enhance: '#a78bfa',
@@ -728,6 +741,7 @@ export const FOLDDER_NODE_ICONS: Record<FoldderIconKey, React.FC<GlyphProps>> = 
   prompt: FoldderPrompt,
   canvas: FoldderCanvas,
   web: FoldderWeb,
+  lightbulb: FoldderLightbulb,
   matting: FoldderMatting,
   eye: FoldderEye,
   enhance: FoldderEnhance,
@@ -788,7 +802,7 @@ export const NODE_TYPE_TO_FOLDDER_ICON: Record<string, FoldderIconKey> = {
   presenter: 'presenter',
   projectBrain: 'brain',
   projectAssets: 'foldderApp',
-  inspiration: 'web',
+  inspiration: 'lightbulb',
   notes: 'notes',
   guionista: 'guionista',
   cine: 'cine',

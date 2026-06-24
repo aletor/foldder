@@ -89,6 +89,7 @@ export const USAGE_SERVICES = [
   { id: "openai-embeddings", label: "OpenAI · Embeddings", category: "embeddings" as const },
   { id: "pexels-search", label: "Pexels · Inspiration search", category: "external-api" as const },
   { id: "unsplash-search", label: "Unsplash · Inspiration search", category: "external-api" as const },
+  { id: "arena-search", label: "Are.na · Inspiration search", category: "external-api" as const },
   { id: "beeble-api", label: "Beeble · API proxy", category: "external-api" as const },
   { id: "runway-status", label: "Runway · Status polling", category: "ia-video" as const },
   { id: "grok-status", label: "xAI Grok · Status polling", category: "ia-video" as const },
@@ -119,6 +120,7 @@ export type UsageProvider =
   | "volcengine"
   | "pexels"
   | "unsplash"
+  | "arena"
   | "beeble"
   | "aws";
 
@@ -221,6 +223,7 @@ export function inferServiceIdFromRecord(r: UsageRecordLine): UsageServiceId {
   if (routePath.includes("/inspiration/search")) {
     if (r.provider === "pexels") return "pexels-search";
     if (r.provider === "unsplash") return "unsplash-search";
+    if (r.provider === "arena") return "arena-search";
     return "unknown-external";
   }
   if (routePath.includes("/beeble/")) return "beeble-api";
@@ -238,7 +241,7 @@ export function inferServiceIdFromRecord(r: UsageRecordLine): UsageServiceId {
     warnAmbiguousLegacy(`provider ${r.provider} sin ruta reconocida`, r);
     return "unknown-external";
   }
-  if (r.provider === "beeble" || r.provider === "aws" || r.provider === "unsplash") {
+  if (r.provider === "beeble" || r.provider === "aws" || r.provider === "unsplash" || r.provider === "arena") {
     return "unknown-external";
   }
   warnAmbiguousLegacy("proveedor desconocido", r);

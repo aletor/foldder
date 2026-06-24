@@ -295,7 +295,7 @@ export function useSpacesCanvasKeyboard(
         // ── Ingesta ──────────────────────────────────────────────────────
         case 'p': addNode('promptInput'); break;
         case 'm': addNode('mediaInput'); break;
-        case 'u': addNode('urlImage'); break;
+        case 'u': addNode('inspiration'); break;
         case '2': addNode('projectBrain'); break;
         case '3': addNode('projectAssets'); break;
         // ── Inteligencia ─────────────────────────────────────────────────

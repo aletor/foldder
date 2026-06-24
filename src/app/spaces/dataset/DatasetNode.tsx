@@ -13,7 +13,7 @@ import {
 import { StudioCanvasNodeShell, type StudioCanvasNodeHandleSpec } from "../studio-node/studio-canvas-node";
 import { StudioNodePortal, useStudioNodeController } from "../studio-node/studio-node-architecture";
 import { FoldderStudioModeCenterButton } from "../foldder-node-ui";
-import { hasFoldderStudioTouched, touchStudioNodeData } from "../studio-node/foldder-studio-touched";
+import { touchStudioNodeData } from "../studio-node/foldder-studio-touched";
 import { resolveFoldderNodeStudioBackground } from "../studio-node/foldder-studio-node-backgrounds";
 import { useFoldderRenderMetric } from "../use-performance-metrics";
 import {
@@ -22,13 +22,26 @@ import {
 } from "../FoldderStudioHeader";
 import { DATASET_STUDIO_ACCENT } from "./DatasetStudioChrome";
 import { datasetScopeSummaryTag } from "./dataset-scope-copy";
-import type { Dataset, DatasetNodeData, DatasetPreview } from "./dataset-types";
+import type { Dataset, DatasetNodeData, DatasetPreview, DatasetScope } from "./dataset-types";
 import { createDataset, normalizeDataset, setScope, validate } from "./dataset-logic";
 import { DatasetStudio } from "./DatasetStudio";
 import { DatasetConnectModal } from "./DatasetConnectModal";
 import { DatasetAddChooser } from "./DatasetAddChooser";
+import { DatasetImportScopeModal } from "./DatasetImportScopeModal";
+import {
+  FOLDDER_FOLDDATA_EXTENSION,
+  importDatasetFolddataFile,
+  prepareImportedDataset,
+} from "./dataset-folddata";
 import { useDatasetCanvasContext } from "./dataset-canvas-context";
-import { deleteGlobalDataset, fetchGlobalDataset, listGlobalDatasets, saveGlobalDataset, type DatasetListItem } from "./dataset-api";
+import {
+  createGlobalDataset,
+  deleteGlobalDataset,
+  fetchGlobalDataset,
+  listGlobalDatasets,
+  saveGlobalDataset,
+  type DatasetListItem,
+} from "./dataset-api";
 import { buildDatasetPreview } from "./dataset-project";
 import { isFoldderLibraryPreviewData } from "../library-drag-preview";
 
@@ -143,41 +156,53 @@ function cardViewFromNode(data: DatasetNodeData, projectScopeId: string) {
   };
 }
 
-function buildDatasetNodeSummary(
+function buildDatasetNodeExteriorInfo(
   cardView: ReturnType<typeof cardViewFromNode>,
   versionStale: boolean,
-): string {
+): {
+  isEmpty: boolean;
+  headline: string;
+  listNamesLine: string;
+  metaLine?: string;
+} {
   const isEmpty =
     cardView.cardCount === 0 && cardView.listCount <= 1 && cardView.constantCount === 0;
 
   if (isEmpty) {
-    return "Tabla vacía — abre Studio para definir columnas y filas.";
+    return { isEmpty: true, headline: "", listNamesLine: "" };
   }
 
-  const parts: string[] = [
-    `${cardView.cardCount} fila${cardView.cardCount === 1 ? "" : "s"}`,
-    `${cardView.listCount} pestaña${cardView.listCount === 1 ? "" : "s"}`,
-  ];
+  const listadoWord = cardView.listCount === 1 ? "listado" : "listados";
+  const elementoWord = cardView.cardCount === 1 ? "elemento" : "elementos";
+  const headline = `${cardView.listCount} ${listadoWord}, ${cardView.cardCount} ${elementoWord}`;
 
+  const listNamesLine = cardView.lists
+    .map((list) => list.name.trim())
+    .filter(Boolean)
+    .join(", ");
+
+  const metaParts: string[] = [];
+  if (!cardView.complete) {
+    metaParts.push(`${cardView.gapCount} vacío${cardView.gapCount === 1 ? "" : "s"}`);
+  }
   if (cardView.constantCount > 0) {
-    parts.push(`${cardView.constantCount} compartido${cardView.constantCount === 1 ? "" : "s"}`);
+    metaParts.push(
+      `${cardView.constantCount} compartido${cardView.constantCount === 1 ? "" : "s"}`,
+    );
   }
-
-  parts.push(
-    cardView.complete
-      ? "Listo"
-      : `${cardView.gapCount} vacío${cardView.gapCount === 1 ? "" : "s"}`,
-  );
-
   if (cardView.scope === "global") {
-    parts.push(datasetScopeSummaryTag("global"));
+    metaParts.push(datasetScopeSummaryTag("global"));
   }
-
   if (versionStale) {
-    parts.push("Actualizado en otro proyecto");
+    metaParts.push("Actualizado en otro proyecto");
   }
 
-  return parts.join(" · ");
+  return {
+    isEmpty: false,
+    headline,
+    listNamesLine,
+    metaLine: metaParts.length > 0 ? metaParts.join(" · ") : undefined,
+  };
 }
 
 export const DatasetNode = memo(({ id, data, selected }: NodeProps<any>) => {
@@ -198,11 +223,15 @@ export const DatasetNode = memo(({ id, data, selected }: NodeProps<any>) => {
   const [studioLoading, setStudioLoading] = useState(false);
   const [studioError, setStudioError] = useState<string | null>(null);
   const [consumerCount, setConsumerCount] = useState(0);
+  const [importScopeOpen, setImportScopeOpen] = useState(false);
+  const [pendingImportFile, setPendingImportFile] = useState<File | null>(null);
+  const [importBusy, setImportBusy] = useState(false);
   const saveTimerRef = useRef<number | null>(null);
   const saveChainRef = useRef<Promise<void>>(Promise.resolve());
   const globalVersionRef = useRef(nodeData.datasetRef?.version ?? 0);
   const loadedGlobalIdRef = useRef<string | null>(null);
   const initialChooserHandledRef = useRef(false);
+  const importFileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (typeof nodeData.datasetRef?.version === "number") {
@@ -219,8 +248,6 @@ export const DatasetNode = memo(({ id, data, selected }: NodeProps<any>) => {
   }, []);
 
   const cardView = useMemo(() => cardViewFromNode(nodeData, projectScopeId), [nodeData, projectScopeId]);
-  const studioTouched =
-    hasFoldderStudioTouched(nodeData as Record<string, unknown>) || cardView.cardCount > 0 || Boolean(nodeData.datasetRef);
   const versionStale =
     cardView.isGlobalRef &&
     cardView.remoteVersion != null &&
@@ -466,6 +493,67 @@ export const DatasetNode = memo(({ id, data, selected }: NodeProps<any>) => {
     openStudio();
   }, [applyLocalInline, openStudio, patchNodeData, projectScopeId]);
 
+  const requestImportFolddata = useCallback(() => {
+    importFileInputRef.current?.click();
+  }, []);
+
+  const handleImportFileChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setPendingImportFile(file);
+    setImportScopeOpen(true);
+    setChooserOpen(false);
+    setConnectOpen(false);
+  }, []);
+
+  const cancelImportFolddata = useCallback(() => {
+    if (importBusy) return;
+    setImportScopeOpen(false);
+    setPendingImportFile(null);
+  }, [importBusy]);
+
+  const handleImportConfirm = useCallback(
+    async (scope: DatasetScope) => {
+      if (!pendingImportFile) return;
+      setImportBusy(true);
+      setStudioError(null);
+      try {
+        const { dataset: raw } = await importDatasetFolddataFile(pendingImportFile);
+        const imported = prepareImportedDataset(raw, scope, projectScopeId);
+        cancelPendingGlobalSave();
+        if (scope === "global") {
+          const response = await createGlobalDataset(imported.name, imported);
+          loadedGlobalIdRef.current = response.dataset.id;
+          globalVersionRef.current = response.dataset.version;
+          applyGlobalRef(response.dataset, response.consumerProjectIds);
+          setStudioDataset(response.dataset);
+        } else {
+          loadedGlobalIdRef.current = null;
+          applyLocalInline(imported);
+          setStudioDataset(imported);
+        }
+        setImportScopeOpen(false);
+        setPendingImportFile(null);
+        patchNodeData({ _datasetShowChooser: undefined });
+        openStudio();
+      } catch (error) {
+        setStudioError(error instanceof Error ? error.message : "No se pudo importar el archivo");
+      } finally {
+        setImportBusy(false);
+      }
+    },
+    [
+      applyGlobalRef,
+      applyLocalInline,
+      cancelPendingGlobalSave,
+      openStudio,
+      patchNodeData,
+      pendingImportFile,
+      projectScopeId,
+    ],
+  );
+
   useEffect(() => {
     if (isLibraryPreview) {
       setChooserOpen(false);
@@ -508,8 +596,8 @@ export const DatasetNode = memo(({ id, data, selected }: NodeProps<any>) => {
     [applyGlobalRef, nodeData.datasetRef?.datasetId],
   );
 
-  const summaryText = useMemo(
-    () => buildDatasetNodeSummary(cardView, versionStale),
+  const exteriorInfo = useMemo(
+    () => buildDatasetNodeExteriorInfo(cardView, versionStale),
     [cardView, versionStale],
   );
 
@@ -530,11 +618,10 @@ export const DatasetNode = memo(({ id, data, selected }: NodeProps<any>) => {
       defaultLabel="Dataset"
       title={cardView.name || "Dataset"}
       minWidth={200}
-      className="dataset-node foldder-frameless-label-dark"
+      className="dataset-node"
       handles={DATASET_NODE_HANDLES}
       variant="frameless"
       material="media"
-      studioTouched={studioTouched}
     >
       <NodeResizer minWidth={200} minHeight={120} maxWidth={960} maxHeight={420} isVisible={selected} />
       <div className="foldder-frameless-main relative flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -548,25 +635,38 @@ export const DatasetNode = memo(({ id, data, selected }: NodeProps<any>) => {
         </div>
 
         <div className="relative z-10 flex min-h-0 flex-1 flex-col pointer-events-none">
-          <p className="line-clamp-3 px-3 pt-2 text-[11px] font-light leading-relaxed text-slate-600">
-            {summaryText}
-          </p>
-          {connectedConsumers.length > 0 ? (
-            <div className="flex flex-wrap items-center gap-1 px-3 pt-1.5">
-              <span className="text-[9px] font-medium uppercase tracking-wide text-slate-400">
-                Conectado a
-              </span>
-              {connectedConsumers.map((consumer) => (
-                <span
-                  key={consumer.id}
-                  className="inline-flex max-w-[120px] items-center truncate rounded-[4px] border border-slate-300/60 bg-white/70 px-1.5 py-0.5 text-[9px] font-medium text-slate-600"
-                  title={friendlyNodeName(consumer.type, consumer.label)}
-                >
-                  {friendlyNodeName(consumer.type, consumer.label)}
+          <div className="foldder-frameless-secondary-panel nodrag flex flex-col gap-1 text-[8px] text-white/80">
+            {exteriorInfo.isEmpty ? (
+              <>
+                <span className="font-black uppercase tracking-[0.15em] text-white/70">
+                  Tabla vacía
                 </span>
-              ))}
-            </div>
-          ) : null}
+                <span className="leading-snug text-white/55">
+                  Abre Studio para definir columnas y filas.
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="font-black uppercase tracking-[0.15em] text-white/90">
+                  {exteriorInfo.headline}
+                </span>
+                {exteriorInfo.listNamesLine ? (
+                  <span className="leading-snug text-white/75">{exteriorInfo.listNamesLine}</span>
+                ) : null}
+                {exteriorInfo.metaLine ? (
+                  <span className="text-[7px] leading-snug text-white/55">{exteriorInfo.metaLine}</span>
+                ) : null}
+                {connectedConsumers.length > 0 ? (
+                  <span className="text-[7px] leading-snug text-white/55">
+                    Conectado a{" "}
+                    {connectedConsumers
+                      .map((c) => friendlyNodeName(c.type, c.label))
+                      .join(", ")}
+                  </span>
+                ) : null}
+              </>
+            )}
+          </div>
           <div className="flex-1" />
           <FoldderStudioModeCenterButton onClick={() => openStudio()} />
         </div>
@@ -580,6 +680,7 @@ export const DatasetNode = memo(({ id, data, selected }: NodeProps<any>) => {
               setChooserOpen(false);
               setConnectOpen(true);
             }}
+            onImportFile={requestImportFolddata}
             onClose={() => {
               setChooserOpen(false);
               patchNodeData({ _datasetShowChooser: undefined });
@@ -654,9 +755,30 @@ export const DatasetNode = memo(({ id, data, selected }: NodeProps<any>) => {
               onScopeChange={handleScopeChange}
               onSelectGlobalDataset={handleSelectGlobalFromStudio}
               onCreateNewLocal={handleCreateLocal}
+              onRequestImportFolddata={requestImportFolddata}
               onClose={() => closeStudio()}
             />
           ) : null}
+        </StudioNodePortal>
+      ) : null}
+
+      <input
+        ref={importFileInputRef}
+        type="file"
+        accept={FOLDDER_FOLDDATA_EXTENSION}
+        className="hidden"
+        aria-hidden
+        onChange={handleImportFileChange}
+      />
+
+      {importScopeOpen && pendingImportFile && !isLibraryPreview ? (
+        <StudioNodePortal bodyLock={false}>
+          <DatasetImportScopeModal
+            filename={pendingImportFile.name}
+            busy={importBusy}
+            onCancel={cancelImportFolddata}
+            onConfirm={(scope) => void handleImportConfirm(scope)}
+          />
         </StudioNodePortal>
       ) : null}
     </StudioCanvasNodeShell>

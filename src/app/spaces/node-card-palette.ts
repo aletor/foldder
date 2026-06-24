@@ -18,7 +18,7 @@ export const FOLDDER_NODE_CARD_BG: Record<string, string> = {
   geminiVideo: "#3239ba",
   crop: "#F0804D",
   layerizer: "#a6c85e",
-  dataset: "#3f7e8c",
+  dataset: "#37B7DF",
   vfxGenerator: "#6B597F",
   presenter: "#f5b91b",
   painter: "#890AF3",

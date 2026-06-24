@@ -42,7 +42,7 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
     type: 'inspiration',
     label: 'Inspiration',
     description:
-      'Visual reference search node: accepts a prompt or image, explores Pexels references, and outputs one selected image.',
+      'Explore licensed photo references on Pexels, Unsplash, and Are.na from a prompt or connected image. Optional: paste a direct image link.',
     inputs: [
       { id: 'prompt', label: 'Prompt', type: 'prompt' },
       { id: 'image', label: 'Image', type: 'image' },
@@ -52,6 +52,7 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
       facet: 'similar | textures | colors | style | people | backgrounds',
       manualPrompt: 'string',
       imageIntent: 'string (simple visual description for image input)',
+      referenceSource: 'direct | stock',
       results: 'InspirationResult[]',
       selected: 'InspirationResult',
       value: 'string (selected image URL)',

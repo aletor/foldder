@@ -97,6 +97,8 @@ const BILLABLE_PROVIDER_ROUTE_PATTERNS = [
   "api.x.ai",
   "PEXELS_API_KEY",
   "UNSPLASH_ACCESS_KEY",
+  "ARENA_CLIENT_ID",
+  "ARENA_CLIENT_SECRET",
   "createVideoEditorFargateRenderJob",
 ];
 

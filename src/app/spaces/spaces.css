@@ -497,8 +497,8 @@
   text-shadow: none;
 }
 
-.react-flow__node .custom-node:is(.inspiration-node, .image-creation-advanced-node, .crop-node, .layerizer-node, .video-editor-node):not(.canvas-group-frame) > [class*="group/label"] > div,
-.react-flow__node .custom-node:is(.inspiration-node, .image-creation-advanced-node, .crop-node, .layerizer-node, .video-editor-node):not(.canvas-group-frame) > [class*="group/label"] > input,
+.react-flow__node .custom-node:is(.inspiration-node, .image-creation-advanced-node, .crop-node, .layerizer-node, .video-editor-node, .dataset-node):not(.canvas-group-frame) > [class*="group/label"] > div,
+.react-flow__node .custom-node:is(.inspiration-node, .image-creation-advanced-node, .crop-node, .layerizer-node, .video-editor-node, .dataset-node):not(.canvas-group-frame) > [class*="group/label"] > input,
 .react-flow__node .custom-node.foldder-node--frameless.node--media:not(.foldder-frameless-label-dark) > [class*="group/label"] > div,
 .react-flow__node .custom-node.foldder-node--frameless.node--media:not(.foldder-frameless-label-dark) > [class*="group/label"] > input {
   color: rgba(255, 255, 255, 0.86) !important;
@@ -3042,6 +3042,27 @@
   background: #0ac38a;
   object-fit: contain !important;
   object-position: center bottom !important;
+}
+
+.custom-node.inspiration-node .inspiration-node-link-action {
+  border: 1px solid rgba(4, 57, 39, 0.22);
+  background: rgba(0, 0, 0, 0.16);
+  color: rgba(4, 57, 39, 0.88);
+}
+
+.custom-node.inspiration-node .inspiration-node-link-action:hover {
+  border-color: rgba(4, 57, 39, 0.36);
+  background: rgba(255, 255, 255, 0.28);
+  color: #022418;
+}
+
+.custom-node.inspiration-node.inspiration-node--empty .foldder-frameless-action {
+  background: rgba(255, 255, 255, 0.93) !important;
+}
+
+.custom-node.inspiration-node .inspiration-node-empty-actions {
+  border-top: 1px solid rgba(4, 57, 39, 0.14);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(0, 0, 0, 0.08) 100%);
 }
 
 .custom-node.presenter-node.presenter-node--empty,
@@ -7037,6 +7058,7 @@ body.nb-studio-open [data-foldder-canvas-launcher] {
   span,
   div,
   textarea,
+  input,
   h1,
   p
 ):not([class*="rounded-full"]) {
@@ -7170,11 +7192,197 @@ body.nb-studio-open [data-foldder-canvas-launcher] {
 }
 
 [data-foldder-inspiration-sidebar] {
-  max-width: 148px;
+  max-width: 196px;
 }
 
 [data-foldder-inspiration-sidebar] textarea {
   field-sizing: content;
+}
+
+[data-foldder-inspiration-sidebar] .inspiration-studio-idea-input {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.28);
+}
+
+[data-foldder-inspiration-sidebar] .inspiration-studio-idea-input:focus {
+  border-color: rgba(10, 195, 138, 0.45);
+  background: rgba(0, 0, 0, 0.38);
+}
+
+[data-foldder-inspiration-sidebar] .inspiration-studio-idea-chip {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.24);
+  padding: 8px 10px;
+}
+
+[data-foldder-inspiration-sidebar] .inspiration-studio-facet {
+  border: 1px solid transparent;
+}
+
+[data-foldder-inspiration-sidebar] .inspiration-studio-facet:not(:disabled):hover {
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+/* Inspiration studio — frameless action dock (full-width, always visible) */
+[data-foldder-inspiration-dock].inspiration-studio-dock {
+  flex-shrink: 0;
+  border-top: 1px solid rgba(10, 195, 138, 0.28);
+  background:
+    linear-gradient(180deg, rgba(10, 195, 138, 0.1) 0%, rgba(8, 12, 16, 0.98) 42%),
+    #0b0f14;
+  backdrop-filter: blur(14px);
+}
+
+[data-foldder-inspiration-dock] .inspiration-studio-dock__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+}
+
+[data-foldder-inspiration-dock] .inspiration-studio-dock__search {
+  display: inline-flex;
+  min-height: 42px;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 20px;
+  border: none;
+  background: rgba(255, 255, 255, 0.93);
+  color: #043927;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  transition: background 140ms ease, opacity 140ms ease;
+}
+
+[data-foldder-inspiration-dock] .inspiration-studio-dock__search:hover:not(:disabled) {
+  background: #ffffff;
+}
+
+[data-foldder-inspiration-dock] .inspiration-studio-dock__search:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+  background: rgba(255, 255, 255, 0.55);
+  color: rgba(4, 57, 39, 0.55);
+}
+
+[data-foldder-inspiration-dock] .inspiration-studio-dock__link-toggle {
+  display: inline-flex;
+  min-height: 42px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 14px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+[data-foldder-inspiration-dock] .inspiration-studio-dock__link-toggle:hover {
+  border-color: rgba(10, 195, 138, 0.42);
+  background: rgba(10, 195, 138, 0.12);
+  color: #d7ffef;
+}
+
+[data-foldder-inspiration-dock] .inspiration-studio-dock__link-toggle.is-open {
+  border-color: rgba(10, 195, 138, 0.5);
+  background: rgba(10, 195, 138, 0.16);
+  color: #ecfff6;
+}
+
+[data-foldder-inspiration-dock] .inspiration-studio-dock__link-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "field apply"
+    "hint hint";
+  gap: 8px 10px;
+  padding: 0 16px 14px;
+}
+
+[data-foldder-inspiration-dock] .inspiration-studio-dock__link-field {
+  grid-area: field;
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(0, 0, 0, 0.34);
+}
+
+[data-foldder-inspiration-dock] .inspiration-studio-dock__link-field:focus-within {
+  border-color: rgba(10, 195, 138, 0.45);
+  background: rgba(0, 0, 0, 0.46);
+}
+
+[data-foldder-inspiration-dock] .inspiration-studio-dock__link-apply {
+  grid-area: apply;
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 16px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+[data-foldder-inspiration-dock] .inspiration-studio-dock__link-apply:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+}
+
+[data-foldder-inspiration-dock] .inspiration-studio-dock__link-apply:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
+}
+
+[data-foldder-inspiration-dock] .inspiration-studio-dock__link-hint,
+[data-foldder-inspiration-dock] .inspiration-studio-dock__link-error {
+  grid-area: hint;
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+[data-foldder-inspiration-dock] .inspiration-studio-dock__link-hint {
+  color: rgba(255, 255, 255, 0.42);
+}
+
+[data-foldder-inspiration-dock] .inspiration-studio-dock__link-error {
+  color: #fecaca;
+}
+
+@media (max-width: 720px) {
+  [data-foldder-inspiration-dock] .inspiration-studio-dock__row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  [data-foldder-inspiration-dock] .inspiration-studio-dock__link-panel {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "field"
+      "apply"
+      "hint";
+  }
 }
 
 /* Studio header — node identity bar (shared across all studio modes) */
@@ -7515,12 +7723,24 @@ body.foldder-studio-flush .left-toolbar-flyout-panel :is(button, span, div):not(
 .custom-node.foldder-studio-node--dataset .dataset-empty-background,
 .custom-node.dataset-node .dataset-empty-background {
   pointer-events: none;
+  background: #37b7df !important;
+}
+
+.custom-node.foldder-studio-node--dataset .foldder-frameless-main,
+.custom-node.dataset-node .foldder-frameless-main {
+  background: #37b7df !important;
+}
+
+.custom-node.dataset-node {
+  --foldder-node-card-bg: #37b7df;
+  --foldder-frameless-accent: #37b7df;
 }
 
 .custom-node.foldder-studio-node--dataset .dataset-empty-background img,
 .custom-node.dataset-node .dataset-empty-background img {
   object-fit: contain;
-  object-position: bottom;
+  object-position: center bottom;
+  background: #37b7df;
 }
 
 /* ============================================================================

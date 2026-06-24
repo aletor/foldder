@@ -86,6 +86,8 @@ export type DesignerPageState = {
   datasetLoopListId?: string;
   /** Modo bucle: id estable de la fila (Card) que representa esta página; permite mapear alta/baja/reordenado. */
   datasetLoopCardId?: string;
+  /** Correcciones de relleno generativo no destructivas (metadata; capa en objects). */
+  generativeFillCorrections?: import("@/lib/designer/generative-fill/types").GenerativeFillCorrection[];
 };
 
 export type DesignerNodeData = {
@@ -522,6 +524,7 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
           <DesignerStudioLazy
             initialPages={pages}
             activePageIndex={activeIdx}
+            initialPageThumbnails={nodeData.pageThumbnails ?? {}}
             designerCanvasInstanceKey={id}
             brainConnected={brainConnected}
             datasetConnected={datasetConnected}
@@ -551,6 +554,7 @@ DesignerNode.displayName = "DesignerNode";
 function DesignerStudioLazy(props: {
   initialPages: DesignerPageState[];
   activePageIndex: number;
+  initialPageThumbnails?: Record<string, string>;
   designerCanvasInstanceKey: string;
   brainConnected?: boolean;
   datasetConnected?: boolean;

@@ -14,10 +14,12 @@ import {
   type Node,
 } from "@xyflow/react";
 import {
+  ChevronDown,
+  ChevronUp,
   Compass,
   Layers3,
+  Link2,
   Loader2,
-  Maximize2,
   Palette,
   Search,
   Sparkles,
@@ -47,12 +49,13 @@ import {
 import { FoldderStudioTouchedMark } from "../studio-node/foldder-studio-touched-mark";
 
 type InspirationFacet = "similar" | "textures" | "colors" | "style" | "people" | "backgrounds";
-type InspirationProvider = "pexels" | "unsplash";
+type InspirationProvider = "pexels" | "unsplash" | "arena";
 type InspirationStatus = "empty" | "ready" | "searching" | "results" | "selected" | "output" | "error";
+type InspirationReferenceSource = "direct" | "stock";
 
 type InspirationResult = {
   id: string;
-  source: "Pexels" | "Unsplash";
+  source: "Pexels" | "Unsplash" | "Are.na";
   imageUrl: string;
   thumbUrl: string;
   title?: string;
@@ -72,6 +75,7 @@ type InspirationNodeData = {
   provider?: InspirationProvider;
   results?: InspirationResult[];
   selected?: InspirationResult | null;
+  referenceSource?: InspirationReferenceSource;
   value?: string;
   type?: string;
   status?: InspirationStatus;
@@ -93,6 +97,7 @@ const FACETS: Array<{ id: InspirationFacet; es: string; en: string; icon: React.
 const PROVIDERS: Array<{ id: InspirationProvider; label: string }> = [
   { id: "pexels", label: "Pexels" },
   { id: "unsplash", label: "Unsplash" },
+  { id: "arena", label: "Are.na" },
 ];
 
 function firstImageUrlFromNode(node: Node | undefined): string {
@@ -106,6 +111,31 @@ function firstImageUrlFromNode(node: Node | undefined): string {
 function compactText(value: string, max = 150): string {
   const s = value.trim().replace(/\s+/g, " ");
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;
+}
+
+function looksLikeImageUrl(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  if (/^data:image\//i.test(trimmed)) return true;
+  if (/^https?:\/\//i.test(trimmed)) return true;
+  if (/^blob:/i.test(trimmed)) return true;
+  return false;
+}
+
+function inspirationOriginLabel(data: InspirationNodeData): string | null {
+  if (data.referenceSource === "direct") return "Direct link";
+  const selected = data.selected;
+  if (selected) {
+    const facetLabel = FACETS.find((item) => item.id === data.facet)?.en;
+    const providerLabel =
+      PROVIDERS.find((item) => item.id === data.provider)?.label ?? selected.source;
+    return facetLabel ? `${providerLabel} · ${facetLabel}` : providerLabel;
+  }
+  if (data.referenceSource === "stock" && data.provider) {
+    const providerLabel = PROVIDERS.find((item) => item.id === data.provider)?.label;
+    if (providerLabel) return providerLabel;
+  }
+  return null;
 }
 
 function photoAspectRatio(width?: number, height?: number): number | null {
@@ -174,11 +204,13 @@ function scheduleInspirationNodeInternalsRefresh(
 }
 
 function statusMessage(status: InspirationStatus, hasInput: boolean): string {
-  if (!hasInput) return "Connect a prompt or image to find visual references.";
+  if (!hasInput) {
+    return "Connect a prompt or image, or find references on Pexels, Unsplash, or Are.na.";
+  }
   if (status === "searching") return "Searching visual references…";
   if (status === "error") return "Couldn’t load references. Try another search.";
   if (status === "selected") return "Selected reference ready.";
-  if (status === "output") return "Output image ready.";
+  if (status === "output") return "Reference ready for the pipeline.";
   if (status === "results") return "Choose one reference image.";
   return "Ready to search inspiration.";
 }
@@ -189,6 +221,7 @@ function InspirationStudio({
   nodeLabel,
   promptInput,
   imageInput,
+  expandDirectLink,
   onClose,
   onPatch,
 }: {
@@ -197,6 +230,7 @@ function InspirationStudio({
   nodeLabel: string;
   promptInput: string;
   imageInput: string;
+  expandDirectLink?: boolean;
   onClose: () => void;
   onPatch: (patch: Partial<InspirationNodeData>) => void;
 }) {
@@ -205,7 +239,14 @@ function InspirationStudio({
   const results = Array.isArray(data.results) ? data.results : [];
   const selected = data.selected ?? null;
   const [manualPrompt, setManualPrompt] = useState(data.manualPrompt ?? "");
+  const [directLinkExpanded, setDirectLinkExpanded] = useState(Boolean(expandDirectLink));
+  const [directUrl, setDirectUrl] = useState(
+    data.referenceSource === "direct" && typeof data.value === "string" ? data.value : "",
+  );
+  const [directLinkError, setDirectLinkError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const effectiveImageInput =
+    imageInput || (looksLikeImageUrl(directUrl) ? directUrl.trim() : "");
   const imageIntentCacheRef = useRef<{ imageUrl: string; intent: string } | null>(
     data.imageIntent && data.imageIntentSource
       ? { imageUrl: data.imageIntentSource, intent: data.imageIntent }
@@ -213,23 +254,25 @@ function InspirationStudio({
   );
   const imageIntentPromiseRef = useRef<{ imageUrl: string; promise: Promise<string> } | null>(null);
 
-  const hasAnyInput = Boolean(promptInput || imageInput || manualPrompt.trim());
+  const hasAnyInput = Boolean(promptInput || effectiveImageInput || manualPrompt.trim());
 
   const describeImageIfNeeded = useCallback(async () => {
-    if (!imageInput || promptInput || manualPrompt.trim()) return data.imageIntent || "";
-    if (imageIntentCacheRef.current?.imageUrl === imageInput) return imageIntentCacheRef.current.intent;
-    if (data.imageIntent && data.imageIntentSource === imageInput) {
-      imageIntentCacheRef.current = { imageUrl: imageInput, intent: data.imageIntent };
+    if (!effectiveImageInput || promptInput || manualPrompt.trim()) return data.imageIntent || "";
+    if (imageIntentCacheRef.current?.imageUrl === effectiveImageInput) return imageIntentCacheRef.current.intent;
+    if (data.imageIntent && data.imageIntentSource === effectiveImageInput) {
+      imageIntentCacheRef.current = { imageUrl: effectiveImageInput, intent: data.imageIntent };
       return data.imageIntent;
     }
-    if (imageIntentPromiseRef.current?.imageUrl === imageInput) return imageIntentPromiseRef.current.promise;
+    if (imageIntentPromiseRef.current?.imageUrl === effectiveImageInput) {
+      return imageIntentPromiseRef.current.promise;
+    }
 
     const promise = (async () => {
     const res = await fetch("/api/spaces/describe", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        url: imageInput,
+        url: effectiveImageInput,
         type: "image",
         metadata: { source: "inspiration-input" },
       }),
@@ -237,18 +280,18 @@ function InspirationStudio({
     const json = await readJsonWithHttpError<{ description?: string; error?: string }>(res, "/api/spaces/describe");
     const description = typeof json.description === "string" ? compactText(json.description, 420) : "";
     if (!description) throw new Error(json.error || "image_description_failed");
-      imageIntentCacheRef.current = { imageUrl: imageInput, intent: description };
-      onPatch({ imageIntent: description, imageIntentSource: imageInput });
+      imageIntentCacheRef.current = { imageUrl: effectiveImageInput, intent: description };
+      onPatch({ imageIntent: description, imageIntentSource: effectiveImageInput });
     return description;
     })();
 
-    imageIntentPromiseRef.current = { imageUrl: imageInput, promise };
+    imageIntentPromiseRef.current = { imageUrl: effectiveImageInput, promise };
     try {
       return await promise;
     } finally {
       if (imageIntentPromiseRef.current?.promise === promise) imageIntentPromiseRef.current = null;
     }
-  }, [data.imageIntent, data.imageIntentSource, imageInput, manualPrompt, onPatch, promptInput]);
+  }, [data.imageIntent, data.imageIntentSource, effectiveImageInput, manualPrompt, onPatch, promptInput]);
 
   const runSearch = useCallback(
     async (nextFacet = facet, nextProvider = provider) => {
@@ -280,9 +323,9 @@ function InspirationStudio({
               limit: 40,
             }),
           });
-          let json: { results?: InspirationResult[]; error?: string; notice?: string };
+          let json: { results?: InspirationResult[]; error?: string; notice?: string; code?: string };
           try {
-            json = await readJsonWithHttpError<{ results?: InspirationResult[]; error?: string; notice?: string }>(
+            json = await readJsonWithHttpError<{ results?: InspirationResult[]; error?: string; notice?: string; code?: string }>(
               res,
               "/api/inspiration/search",
             );
@@ -321,6 +364,7 @@ function InspirationStudio({
         value: result.imageUrl,
         type: "image",
         selected: result,
+        referenceSource: "stock",
         status: "output",
         facet,
         provider,
@@ -331,6 +375,31 @@ function InspirationStudio({
     },
     [facet, onClose, onPatch, provider],
   );
+
+  const applyDirectLink = useCallback(async () => {
+    const url = directUrl.trim();
+    if (!looksLikeImageUrl(url)) {
+      setDirectLinkError("Enter a valid image URL.");
+      return;
+    }
+    setDirectLinkError(null);
+    try {
+      await loadImageDimensions(url);
+    } catch {
+      setDirectLinkError("Couldn’t load this link. Check the URL and try again.");
+      return;
+    }
+    onPatch({
+      value: url,
+      type: "image",
+      selected: null,
+      referenceSource: "direct",
+      status: "output",
+      error: undefined,
+      notice: undefined,
+    });
+    onClose();
+  }, [directUrl, onClose, onPatch]);
 
   return (
     <StudioNodePortal>
@@ -348,18 +417,24 @@ function InspirationStudio({
           onClose={onClose}
         />
 
-        <div className="grid min-h-0 flex-1 grid-cols-[148px_minmax(0,1fr)] divide-x divide-white/10">
+        <div className="grid min-h-0 flex-1 grid-cols-[minmax(176px,196px)_minmax(0,1fr)] divide-x divide-white/10">
           <aside
-            className="flex min-h-0 w-[148px] shrink-0 flex-col overflow-hidden bg-white/[0.02]"
+            className="flex min-h-0 shrink-0 flex-col overflow-hidden bg-[#0ac38a]/[0.04]"
             data-foldder-inspiration-sidebar
           >
-            <div className="shrink-0 border-b border-white/8 px-2 py-1.5">
+            <div className="shrink-0 border-b border-white/10 px-3 py-2.5">
+              <p className="mb-1.5 text-[8px] font-black uppercase tracking-[0.14em] text-emerald-200/70">Idea</p>
               {promptInput ? (
-                <p className="line-clamp-3 text-[9px] leading-snug text-white/62" title={promptInput}>
+                <p
+                  className="inspiration-studio-idea-chip line-clamp-4 text-[10px] leading-snug text-white/78"
+                  title={promptInput}
+                >
                   {compactText(promptInput, 120)}
                 </p>
-              ) : imageInput ? (
-                <p className="text-[9px] leading-snug text-white/45">Linked image</p>
+              ) : effectiveImageInput ? (
+                <p className="inspiration-studio-idea-chip text-[10px] leading-snug text-white/62">
+                  {imageInput ? "Linked image from canvas" : "Link ready for similar search"}
+                </p>
               ) : (
                 <textarea
                   value={manualPrompt}
@@ -370,15 +445,16 @@ function InspirationStudio({
                       status: event.target.value.trim() ? "ready" : "empty",
                     });
                   }}
-                  placeholder="Idea…"
-                  rows={2}
-                  className="min-h-[40px] w-full resize-none bg-white/[0.05] px-1.5 py-1 text-[10px] leading-snug text-white outline-none placeholder:text-white/28 focus:bg-white/[0.09]"
+                  placeholder="Describe what you want to find…"
+                  rows={3}
+                  className="inspiration-studio-idea-input min-h-[56px] w-full resize-none px-2 py-1.5 text-[11px] leading-snug text-white outline-none placeholder:text-white/30"
                 />
               )}
             </div>
 
-            <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto py-1">
-              <div className="flex flex-col gap-px px-1">
+            <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto px-2 py-2">
+              <p className="mb-1.5 px-1 text-[8px] font-black uppercase tracking-[0.14em] text-emerald-200/70">Explore</p>
+              <div className="flex flex-col gap-0.5">
                 {FACETS.map((item) => {
                   const active = facet === item.id;
                   return (
@@ -388,32 +464,21 @@ function InspirationStudio({
                       title={item.en}
                       onClick={() => void runSearch(item.id)}
                       disabled={loading || !hasAnyInput}
-                      className={`flex h-8 items-center gap-1.5 px-1.5 text-left transition disabled:cursor-not-allowed disabled:opacity-35 ${
+                      className={`inspiration-studio-facet flex h-9 items-center gap-2 px-2 text-left transition disabled:cursor-not-allowed disabled:opacity-35 ${
                         active
-                          ? "bg-emerald-500/24 text-emerald-100"
-                          : "text-white/55 hover:bg-white/[0.07] hover:text-white/90"
+                          ? "bg-[#0ac38a]/28 text-emerald-50"
+                          : "text-white/62 hover:bg-white/[0.07] hover:text-white/92"
                       }`}
                     >
-                      <span className={`shrink-0 ${active ? "text-emerald-200" : "text-white/40"}`}>
-                        {React.cloneElement(item.icon as React.ReactElement<{ size?: number }>, { size: 12 })}
+                      <span className={`shrink-0 ${active ? "text-emerald-100" : "text-white/42"}`}>
+                        {React.cloneElement(item.icon as React.ReactElement<{ size?: number }>, { size: 13 })}
                       </span>
-                      <span className="truncate text-[8px] font-black uppercase tracking-[0.04em]">{item.en}</span>
+                      <span className="truncate text-[9px] font-black uppercase tracking-[0.06em]">{item.en}</span>
                     </button>
                   );
                 })}
               </div>
             </div>
-
-            <button
-              type="button"
-              title="Search"
-              onClick={() => void runSearch()}
-              disabled={loading || !hasAnyInput}
-              className="flex h-8 shrink-0 items-center justify-center gap-1.5 border-t border-white/8 bg-emerald-600/90 text-[8px] font-black uppercase tracking-[0.08em] text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-white/[0.04] disabled:text-white/25"
-            >
-              {loading ? <Loader2 size={12} className="animate-spin" /> : <Search size={12} />}
-              Search
-            </button>
           </aside>
 
           <section className="flex min-h-0 flex-col overflow-hidden">
@@ -433,7 +498,7 @@ function InspirationStudio({
                       }
                     }}
                     disabled={loading}
-                    className={`flex-1 text-[10px] font-black uppercase tracking-[0.1em] transition disabled:pointer-events-none disabled:opacity-50 ${
+                    className={`min-w-0 flex-1 px-2 text-[9px] font-black uppercase tracking-[0.08em] transition disabled:pointer-events-none disabled:opacity-50 ${
                       active
                         ? "bg-white text-slate-950"
                         : "text-white/45 hover:bg-white/[0.08] hover:text-white"
@@ -443,7 +508,7 @@ function InspirationStudio({
                   </button>
                 );
               })}
-              <div className="flex min-w-0 flex-[1.4] items-center justify-end px-3">
+              <div className="hidden min-w-0 flex-[1.2] items-center justify-end px-3 xl:flex">
                 <p className="truncate text-[9px] font-semibold uppercase tracking-[0.06em] text-white/35">
                   {results.length > 0
                     ? `${results.length} refs · ${PROVIDERS.find((item) => item.id === provider)?.label ?? provider}`
@@ -475,12 +540,13 @@ function InspirationStudio({
                 </div>
               ) : results.length === 0 ? (
                 <div className="flex h-full min-h-[320px] flex-col items-center justify-center px-6 text-center">
-                  <Compass size={28} className="mb-3 text-emerald-300/80" />
-                  <p className="text-[13px] font-black uppercase tracking-[0.08em] text-white/75">
+                  <Compass size={28} className="mb-3 text-[#0ac38a]/85" />
+                  <p className="text-[13px] font-black uppercase tracking-[0.08em] text-white/82">
                     Start with an idea or image
                   </p>
-                  <p className="mt-2 max-w-[300px] text-[10px] leading-relaxed text-white/38">
-                    Pick a facet, choose a provider, and send the result to Eye, Brain or Image Creation.
+                  <p className="mt-2 max-w-[340px] text-[10px] leading-relaxed text-white/48">
+                    Pick a facet and provider, then use <span className="text-white/72">Search references</span> in the
+                    bar below.
                   </p>
                 </div>
               ) : (
@@ -522,6 +588,70 @@ function InspirationStudio({
             </div>
           </section>
         </div>
+
+        <footer className="inspiration-studio-dock" data-foldder-inspiration-dock>
+          <div className="inspiration-studio-dock__row">
+            <button
+              type="button"
+              title="Search references"
+              onClick={() => void runSearch()}
+              disabled={loading || !hasAnyInput}
+              className="inspiration-studio-dock__search nodrag"
+            >
+              {loading ? <Loader2 size={15} className="animate-spin" aria-hidden /> : <Search size={15} aria-hidden />}
+              Search references
+            </button>
+            <button
+              type="button"
+              onClick={() => setDirectLinkExpanded((open) => !open)}
+              aria-expanded={directLinkExpanded}
+              className={`inspiration-studio-dock__link-toggle nodrag ${directLinkExpanded ? "is-open" : ""}`}
+            >
+              <Link2 size={14} aria-hidden />
+              {directLinkExpanded ? "Hide direct link" : "Have a link?"}
+              {directLinkExpanded ? <ChevronUp size={13} aria-hidden /> : <ChevronDown size={13} aria-hidden />}
+            </button>
+          </div>
+
+          {directLinkExpanded ? (
+            <div className="inspiration-studio-dock__link-panel">
+              <div className="inspiration-studio-dock__link-field">
+                <Link2 size={14} className="shrink-0 text-white/45" aria-hidden />
+                <input
+                  type="text"
+                  value={directUrl}
+                  onChange={(event) => {
+                    setDirectUrl(event.target.value);
+                    setDirectLinkError(null);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      void applyDirectLink();
+                    }
+                  }}
+                  placeholder="Paste image URL…"
+                  className="min-w-0 flex-1 bg-transparent text-[12px] leading-snug text-white outline-none placeholder:text-white/32"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => void applyDirectLink()}
+                disabled={!looksLikeImageUrl(directUrl)}
+                className="inspiration-studio-dock__link-apply nodrag"
+              >
+                Use as reference
+              </button>
+              {directLinkError ? (
+                <p className="inspiration-studio-dock__link-error">{directLinkError}</p>
+              ) : (
+                <p className="inspiration-studio-dock__link-hint">
+                  Optional — skip stock search if you already have the image.
+                </p>
+              )}
+            </div>
+          ) : null}
+        </footer>
       </div>
     </StudioNodePortal>
   );
@@ -537,6 +667,7 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
   const { setNodes } = useReactFlow();
   const updateNodeInternals = useUpdateNodeInternals();
   const [studioOpen, setStudioOpen] = useState(false);
+  const [studioExpandDirectLink, setStudioExpandDirectLink] = useState(false);
   const [studioTouched, setStudioTouched] = useState(
     () => hasFoldderStudioTouched(data as Record<string, unknown>),
   );
@@ -569,7 +700,6 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
   const outputUrl = typeof nodeData.value === "string" ? nodeData.value : "";
   const selectedRef = nodeData.selected ?? null;
   const { displayUrl: inspirationCanvasUrl } = useCanvasNodeMediaPreviewUrl(outputUrl || null);
-  const resultsCount = Array.isArray(nodeData.results) ? nodeData.results.length : 0;
   const previewUrl = outputUrl || selectedRef?.thumbUrl || selectedRef?.imageUrl || "";
   const previewImageSize = useMemo(() => {
     if (!previewUrl) return null;
@@ -582,6 +712,17 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
   const previewImageWidth = previewImageSize?.width ?? null;
   const previewImageHeight = previewImageSize?.height ?? null;
   const showInspirationEmpty = !outputUrl && !selectedRef;
+  const originLabel = inspirationOriginLabel(nodeData);
+
+  const openStudio = useCallback((options?: { expandDirectLink?: boolean }) => {
+    setStudioExpandDirectLink(Boolean(options?.expandDirectLink));
+    setStudioOpen(true);
+  }, []);
+
+  const closeStudio = useCallback(() => {
+    setStudioOpen(false);
+    setStudioExpandDirectLink(false);
+  }, []);
 
   useEffect(() => {
     if (hasFoldderStudioTouched(nodeData as Record<string, unknown>)) {
@@ -728,7 +869,7 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
               draggable={false}
             />
           </div>
-          <div className="relative z-10 mt-auto flex flex-col gap-3 px-3 pb-3 pt-2">
+          <div className="inspiration-node-empty-actions relative z-10 mt-auto flex flex-col gap-2 px-3 pb-3 pt-2">
             <p className="foldder-frameless-chip min-h-[26px] text-[9px] leading-snug text-white/80">
               {nodeData.error || statusMessage(status, hasInput)}
             </p>
@@ -736,18 +877,34 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
               type="button"
               onClick={(event) => {
                 event.stopPropagation();
-                setStudioOpen(true);
+                openStudio();
               }}
-              className="foldder-frameless-action nodrag flex w-full items-center justify-center gap-2 rounded-none bg-white/[0.88] px-3 py-2 text-[10px] font-black uppercase tracking-widest text-emerald-950 transition hover:bg-white"
+              className="foldder-frameless-action nodrag flex w-full items-center justify-center gap-2 px-3 py-2.5 text-[10px] font-black uppercase tracking-widest text-emerald-950 transition hover:bg-white"
             >
-              <Maximize2 size={13} />
-              Open Studio
+              <Search size={13} />
+              Find references
+            </button>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                openStudio({ expandDirectLink: true });
+              }}
+              className="inspiration-node-link-action nodrag flex w-full items-center justify-center gap-1.5 px-3 py-2 text-[9px] font-black uppercase tracking-[0.12em] transition"
+            >
+              <Link2 size={11} aria-hidden />
+              Already have a link?
             </button>
           </div>
         </div>
       ) : (
         <div className="node-content foldder-frameless-main relative flex min-h-0 flex-1 flex-col overflow-hidden">
           <div ref={previewFrameRef} className="relative h-full w-full overflow-hidden bg-slate-950/70">
+            {originLabel ? (
+              <span className="absolute left-2 top-2 z-10 bg-black/58 px-2 py-1 text-[8px] font-black uppercase tracking-[0.08em] text-white/82 backdrop-blur-sm">
+                {originLabel}
+              </span>
+            ) : null}
             {outputUrl ? (
               <img src={inspirationCanvasUrl ?? outputUrl} alt="" className="h-full w-full object-contain" draggable={false} decoding="async" />
             ) : selectedRef ? (
@@ -763,12 +920,12 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
             type="button"
             onClick={(event) => {
               event.stopPropagation();
-              setStudioOpen(true);
+              openStudio();
             }}
             className="foldder-frameless-action nodrag absolute bottom-3 right-3 z-10 flex items-center gap-1.5 rounded-none bg-black/55 px-2.5 py-1.5 text-[9px] font-black uppercase tracking-[0.1em] text-white/90 opacity-0 transition hover:bg-black/70 group-hover/node:opacity-100 focus-visible:opacity-100"
           >
-            <Maximize2 size={12} />
-            Studio
+            <Sparkles size={12} />
+            Change reference
           </button>
         </div>
       )}
@@ -785,7 +942,8 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
           nodeLabel={nodeData.label?.trim() || "Inspiration"}
           promptInput={promptInput}
           imageInput={imageInput}
-          onClose={() => setStudioOpen(false)}
+          expandDirectLink={studioExpandDirectLink}
+          onClose={closeStudio}
           onPatch={patchData}
         />
       ) : null}

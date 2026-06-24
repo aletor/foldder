@@ -103,6 +103,7 @@ function tileBorderClassForType(type: string, fallback: string): string {
   if (type === 'geminiVideo') return 'border-[#ed9ae0] group-hover/tile:border-[#ed9ae0]';
   if (type === 'video_editor' || type === 'videoEditor') return 'border-[#5ec4cc] group-hover/tile:border-[#7dd8df]';
   if (type === 'presenter') return 'border-[#8ac091] group-hover/tile:border-[#8ac091]';
+  if (type === 'dataset') return 'border-[#37b7df] group-hover/tile:border-[#37b7df]';
   if (type === 'projectBrain') return 'border-slate-400/60 group-hover/tile:border-slate-300/80';
   return fallback;
 }
@@ -112,7 +113,6 @@ const HIGH_END_PRODUCTION_ITEMS: Array<{ type: string; label: string }> = [
   { type: 'guionista', label: 'Guionista' },
   { type: 'cine', label: 'Cine' },
   { type: 'designer', label: 'Designer' },
-  { type: 'inspiration', label: 'Inspiration' },
   { type: 'nanoBanana', label: 'Image Creation' },
   { type: 'geminiVideo', label: 'Video Creation' },
   { type: 'presenter', label: 'Presenter' },
@@ -121,7 +121,7 @@ const HIGH_END_PRODUCTION_ITEMS: Array<{ type: string; label: string }> = [
 
 const TOOL_ITEMS: Array<{ type: string; label: string }> = [
   { type: 'promptInput', label: 'Prompt' },
-  { type: 'urlImage', label: 'URL Image' },
+  { type: 'inspiration', label: 'Inspiration' },
   { type: 'layerizer', label: 'Layerizer' },
   { type: 'dataset', label: 'Dataset' },
   { type: 'mediaDescriber', label: 'Image Describer' },
@@ -136,7 +136,7 @@ const TOOL_ITEMS: Array<{ type: string; label: string }> = [
 ];
 
 function toolFallbackBorderClass(type: string): string {
-  if (type === 'promptInput' || type === 'urlImage') {
+  if (type === 'promptInput' || type === 'inspiration') {
     return 'border-white/25 group-hover/tile:border-emerald-400/50';
   }
   if (type === 'mediaDescriber' || type === 'enhancer') {

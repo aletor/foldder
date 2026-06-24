@@ -55,6 +55,7 @@ import {
   buildRichSpansForFrame,
   designerCanvasSessionKey,
   designerPageThumbContentKey,
+  designerPagesNeedingRailThumbnails,
   dpgUid,
   duplicateDesignerPageState,
   readImageFilePixelSize,
@@ -72,6 +73,8 @@ import {
   stripDatasetLoopMarkers,
 } from "./designer-dataset-page";
 import { DesignerPagesRail } from "./DesignerPagesRail";
+import { DesignerGenerativeFillPanel } from "./generative-fill/DesignerGenerativeFillPanel";
+import { useDesignerGenerativeFill } from "./generative-fill/useDesignerGenerativeFill";
 import { DesignerStudioPageBar } from "./DesignerStudioPageBar";
 import { DesignerDeletePagesModal } from "./DesignerDeletePagesModal";
 import { useDesignerImagePipeline } from "./useDesignerImagePipeline";
@@ -113,6 +116,8 @@ export type HeadlessImageExportRequest = {
 interface DesignerStudioProps {
   initialPages: DesignerPageState[];
   activePageIndex: number;
+  /** Miniaturas ya persistidas en el nodo (evita regenerar al abrir). */
+  initialPageThumbnails?: Record<string, string>;
   onClose: () => void;
   onExport: (dataUrl: string) => void;
   onFinalExport?: (detail: Omit<FoldderExportCreatedDetail, "sourceNodeId">) => void;
@@ -149,6 +154,7 @@ function flatStoryText(nodes: StoryNode[]): string {
 export default function DesignerStudio({
   initialPages,
   activePageIndex: initialActiveIdx,
+  initialPageThumbnails = {},
   onClose,
   onExport,
   onFinalExport,
@@ -228,9 +234,39 @@ export default function DesignerStudio({
   const suppressPageThumbClickRef = useRef(false);
 
   /** Miniaturas raster del lienzo real (misma pipeline que el preview del nodo). */
-  const [pageThumbnails, setPageThumbnails] = useState<Record<string, string>>({});
+  const [pageThumbnails, setPageThumbnails] = useState<Record<string, string>>(
+    () => initialPageThumbnails,
+  );
   /** Huella del contenido al capturar cada miniatura; evita mostrar rasters obsoletos en el rail. */
-  const [pageThumbnailContentKeys, setPageThumbnailContentKeys] = useState<Record<string, string>>({});
+  const [pageThumbnailContentKeys, setPageThumbnailContentKeys] = useState<Record<string, string>>(() => {
+    const list =
+      initialPages.length > 0
+        ? initialPages
+        : [
+            {
+              id: "",
+              format: DEFAULT_DESIGNER_PAGE_FORMAT,
+              objects: [],
+              layoutGuides: [],
+              stories: [],
+              textFrames: [],
+              imageFrames: [],
+            },
+          ];
+    const keys: Record<string, string> = {};
+    for (const p of list) {
+      if (p.id && initialPageThumbnails[p.id]) {
+        keys[p.id] = designerPageThumbContentKey(p);
+      }
+    }
+    return keys;
+  });
+  /** Oculta el lienzo mientras se itera páginas para capturar PNG (rail / export). */
+  const [designerPageCaptureBusy, setDesignerPageCaptureBusy] = useState(false);
+  const [designerPageCaptureProgress, setDesignerPageCaptureProgress] = useState<{
+    done: number;
+    total: number;
+  } | null>(null);
   /** En el navegador `setTimeout` devuelve `number`; con @types/node a veces choca con `NodeJS.Timeout`. */
   const railThumbTimerRef = useRef<number | undefined>(undefined);
   const scheduleRailThumbRef = useRef<() => void>(() => {});
@@ -326,6 +362,8 @@ export default function DesignerStudio({
   activeIdxRef.current = activePageIndex;
   const pageThumbnailsRef = useRef(pageThumbnails);
   pageThumbnailsRef.current = pageThumbnails;
+  const pageThumbnailContentKeysRef = useRef(pageThumbnailContentKeys);
+  pageThumbnailContentKeysRef.current = pageThumbnailContentKeys;
 
   /** Clave `datasetId:version` ya sincronizada; evita re-aplicar bindings de forma redundante. */
   const lastDatasetSyncVersionRef = useRef<string | null>(null);
@@ -453,6 +491,14 @@ export default function DesignerStudio({
   }, [pageThumbnails, onUpdatePageThumbnails]);
 
   const activePage = pages[activePageIndex] ?? pages[0];
+
+  const { panelProps: generativeFillPanelProps, generativeFillBridge } = useDesignerGenerativeFill({
+    activePage,
+    activePageIndex,
+    studioApiRef,
+    setPages,
+    activeIdxRef,
+  });
 
   const liveCanvas = useMemo(() => {
     if (!activePage) {
@@ -1287,10 +1333,15 @@ export default function DesignerStudio({
     }
     queueMicrotask(() => {
       if (loopActive) {
-        void refreshRailThumbnailsForPagesRef.current(
+        const needIds = designerPagesNeedingRailThumbnails(
+          next,
+          pageThumbnailsRef.current,
+          pageThumbnailContentKeysRef.current,
           next.map((p) => p.id),
-          { delayMs: 320 },
         );
+        if (needIds.length > 0) {
+          void refreshRailThumbnailsForPagesRef.current(needIds, { delayMs: 320 });
+        }
       } else {
         scheduleRailThumbRef.current();
       }
@@ -1915,6 +1966,16 @@ export default function DesignerStudio({
       if (list.length === 0) return out;
       const savedIdx = activeIdxRef.current;
       const targetSet = opts.targetPageIds && opts.targetPageIds.length > 0 ? new Set(opts.targetPageIds) : null;
+      const captureTotal =
+        targetSet != null
+          ? list.filter((p) => p && targetSet.has(p.id)).length
+          : list.length;
+      if (captureTotal === 0) return out;
+      let captureDone = 0;
+      flushSync(() => {
+        setDesignerPageCaptureBusy(true);
+        setDesignerPageCaptureProgress({ done: 0, total: captureTotal });
+      });
       try {
         for (let i = 0; i < list.length; i++) {
           const pg = list[i];
@@ -1955,11 +2016,15 @@ export default function DesignerStudio({
           } catch (e) {
             console.warn("[Designer] renderPagesToPng: página", i + 1, e);
           }
+          captureDone += 1;
+          setDesignerPageCaptureProgress({ done: captureDone, total: captureTotal });
         }
       } finally {
         flushSync(() => {
           setDesignerPageEnterDirection(null);
           setActivePageIndex(savedIdx);
+          setDesignerPageCaptureBusy(false);
+          setDesignerPageCaptureProgress(null);
         });
       }
       return out;
@@ -1969,14 +2034,20 @@ export default function DesignerStudio({
 
   const refreshRailThumbnailsForPages = useCallback(
     async (pageIds: string[], opts?: { delayMs?: number }) => {
-      if (pageIds.length === 0) return;
+      const needIds = designerPagesNeedingRailThumbnails(
+        pagesRef.current,
+        pageThumbnailsRef.current,
+        pageThumbnailContentKeysRef.current,
+        pageIds,
+      );
+      if (needIds.length === 0) return;
       const gen = ++railThumbBatchGenRef.current;
       if (opts?.delayMs && opts.delayMs > 0) {
         await new Promise((r) => window.setTimeout(r, opts.delayMs));
       }
       if (gen !== railThumbBatchGenRef.current) return;
       await renderPagesToPng({
-        targetPageIds: pageIds,
+        targetPageIds: needIds,
         maxSide: 320,
         onPage: (pageId, dataUrl) => {
           if (gen !== railThumbBatchGenRef.current) return;
@@ -1993,7 +2064,11 @@ export default function DesignerStudio({
     // Solo renderiza las páginas que aún no tienen raster (las visitadas/editadas ya lo capturaron en vivo).
     try {
       const have = pageThumbnailsRef.current;
-      const missing = pagesRef.current.filter((p) => !have[p.id]).map((p) => p.id);
+      const missing = designerPagesNeedingRailThumbnails(
+        pagesRef.current,
+        have,
+        pageThumbnailContentKeysRef.current,
+      );
       let merged = have;
       if (missing.length > 0) {
         const rendered = await renderPagesToPng({ targetPageIds: missing, maxSide: 320 });
@@ -2174,6 +2249,9 @@ export default function DesignerStudio({
     designerFitToViewNonce,
     designerCanvasZenMode,
     onDesignerCanvasZenModeChange: setDesignerCanvasZenMode,
+    designerPageCaptureBusy,
+    designerPageCaptureProgress,
+    designerGenerativeFill: generativeFillBridge,
     designerPagesRail: (
       <DesignerPagesRail
         pages={pages}
@@ -2240,6 +2318,7 @@ export default function DesignerStudio({
             onOpenPresetModal={() => openCanvasPresetModal(activePageIndex)}
           />
         }
+        studioGenerativeFillPanel={<DesignerGenerativeFillPanel {...generativeFillPanelProps} />}
         {...designerFreehandProps}
       />
 

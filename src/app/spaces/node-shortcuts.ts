@@ -12,7 +12,7 @@ export const NODE_KEYS: Record<string, string> = {
   projectAssets: '3',
   mediaInput: 'm',
   promptInput: 'p',
-  urlImage: 'u',
+  inspiration: 'u',
   layerizer: 'r',
   mediaDescriber: 'd',
   enhancer: 'h',

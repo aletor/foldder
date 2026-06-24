@@ -34,7 +34,7 @@ export const SIDEBAR_HOVER_HELP: Record<string, { title: string; line: string }>
   },
   inspiration: {
     title: 'Inspiration',
-    line: 'Busca referencias visuales desde prompt o imagen y devuelve una imagen seleccionada',
+    line: 'Explora referencias en Pexels, Unsplash y Are.na. Opcional: pega un enlace directo.',
   },
   nanoBanana: {
     title: 'Image Creation',
