@@ -90,6 +90,7 @@ import {
   Plus,
   Sparkles,
   Blend,
+  Contrast,
 } from "lucide-react";
 import { ScrubNumberInput } from "./ScrubNumberInput";
 import { FreehandExportModal, type ProfessionalExportOptions } from "./freehand/FreehandExportModal";
@@ -616,6 +617,7 @@ import {
   isLayerMaskVisible,
   isLayerMaskRasterEligible,
 } from "./freehand/layer-mask-types";
+import { bakeLayerMaskIntoRasterDataUrl } from "./freehand/layer-mask-apply";
 import {
   applyLinearGradientToImageData,
   applyRadialGradientToImageData,
@@ -639,6 +641,58 @@ import {
 } from "./freehand/photo-image-adjustments";
 import { PhotoImageAdjustmentsModal } from "./freehand/PhotoImageAdjustmentsModal";
 import { LayerStylesModal } from "./freehand/LayerStylesModal";
+import {
+  adjustmentLayerDisplayName,
+  adjustmentLayerFilterId,
+  defaultAdjustmentLayerSettings,
+  isAdjustmentLayerObject,
+  isAdjustmentLayerSettingsNeutral,
+  type AdjustmentLayerKind,
+  type AdjustmentLayerSettings,
+} from "./freehand/adjustment-layer-types";
+import {
+  AdjustmentLayerFilterDef,
+  buildLayerStackRenderSegments,
+  collectAdjustmentLayers,
+} from "./freehand/adjustment-layer-render";
+import {
+  buildPhotoMarqueePolyBase,
+  ellipseToPhotoMarqueeRing,
+  findSingleSelectedImageForPhotoMarquee,
+  invertPhotoMarqueePolysWithinBounds,
+  isPhotoMarqueeAdditivePointerHeld,
+  isPhotoMarqueeStudioDragType,
+  isPhotoMarqueeSubtractPointerHeld,
+  photoMarqueePointInsideCommitted,
+  photoRoomMarqueeToolCursorBlocked,
+  PHOTO_LASSO_SAMPLE_PX,
+  PHOTO_POLY_CLOSE_PX,
+  rectToPhotoMarqueeRing,
+  rectUnionBoundarySvgPathDs,
+  subtractRectFromRect,
+  translatePhotoMarqueeCommitted,
+  unionPhotoMarqueeWorldBounds,
+  type PhotoMarqueeEllipse,
+} from "./freehand/photo-marquee-geometry";
+import {
+  buildPhotoMarqueeFloatLiftFromMarquee,
+  extractPhotoMarqueeRasterFromImage,
+  PHOTO_MARQUEE_PASTE_STAGGER_PX,
+  rasterCommitPhotoMarqueeFloatToImage,
+  rasterErasePhotoMarqueeRegionFromImage,
+  type ActivePixelSelection,
+  type PhotoMarqueeFloatLift,
+  type PhotoMarqueeFloatTf,
+  type PhotoMarqueePixelMapper,
+  type PhotoMarqueeRasterClip,
+} from "./freehand/photo-marquee-raster";
+import { mergePhotoPolygonSelection, polylineToSvgPathD, ringToSvgPathD, ringsUnionOutlineSvgD } from "./freehand/photo-marquee-polygon-paper";
+import {
+  MarqueeEllipseToolIcon,
+  MarqueeLassoToolIcon,
+  MarqueePolygonToolIcon,
+  MarqueeRectToolIcon,
+} from "./freehand/photo-marquee-toolbar-icons";
 import {
   buildStandaloneSvgFromCanvasDom,
   expandExportIds,
@@ -700,6 +754,7 @@ import {
   PALETTE_SWATCH_BTN_CLASS,
   persistSavedPalette,
 } from "./freehand/FreehandColorPalette";
+import { AppearancePropertiesSection } from "./freehand/AppearancePropertiesSection";
 import { ColorDropTarget } from "./freehand/ColorDropTarget";
 import {
   getColorFromDragEvent,
@@ -781,13 +836,22 @@ type Tool =
   /** Tampón de clonación: mismo pincel; Alt+clic define el origen; clona manteniendo el offset (modo alineado). */
   | "cloneStamp"
   /** PhotoRoom: degradado lineal raster (arrastre en capa o máscara). */
-  | "photoGradient";
+  | "photoGradient"
+  /** Marco raster rectangular (M). */
+  | "rectMarquee"
+  /** Marco raster elíptico (O). */
+  | "ellipseMarquee"
+  /** Lazo libre (L). */
+  | "lassoMarquee"
+  /** Lazo poligonal (⇧L). */
+  | "polygonMarquee";
 
-type ToolFlyoutGroupId = "tf-pen" | "tf-shape" | "tf-text" | "tf-img";
+type ToolFlyoutGroupId = "tf-pen" | "tf-shape" | "tf-photo-marquee" | "tf-text" | "tf-img";
 
 type ToolFlyoutPrimaryState = {
   "tf-pen": "directSelect" | "pen" | "scissors";
   "tf-shape": "rect" | "line" | "ellipse";
+  "tf-photo-marquee": "rectMarquee" | "ellipseMarquee" | "lassoMarquee" | "polygonMarquee";
   "tf-text": "text" | "textPath" | "textFrame";
   "tf-img": "importImage" | "imageFrame";
 };
@@ -795,6 +859,7 @@ type ToolFlyoutPrimaryState = {
 const DEFAULT_TOOL_FLYOUT_PRIMARY: ToolFlyoutPrimaryState = {
   "tf-pen": "directSelect",
   "tf-shape": "rect",
+  "tf-photo-marquee": "rectMarquee",
   "tf-text": "text",
   "tf-img": "importImage",
 };
@@ -809,6 +874,11 @@ function toolFlyoutGroupForTool(tool: Tool): ToolFlyoutGroupId | null {
     case "line":
     case "ellipse":
       return "tf-shape";
+    case "rectMarquee":
+    case "ellipseMarquee":
+    case "lassoMarquee":
+    case "polygonMarquee":
+      return "tf-photo-marquee";
     case "text":
     case "textPath":
     case "textFrame":
@@ -1278,6 +1348,13 @@ export interface ClippingContainerObject extends FreehandObjectBase {
   content: FreehandObject[];
 }
 
+/** Capa de ajuste no destructiva (brillo/contraste/niveles); afecta capas inferiores en el stack. */
+export interface AdjustmentLayerObject extends FreehandObjectBase {
+  type: "adjustmentLayer";
+  adjustmentKind: AdjustmentLayerKind;
+  adjustment: AdjustmentLayerSettings;
+}
+
 export type FreehandObject =
   | RectObject
   | EllipseObject
@@ -1286,7 +1363,8 @@ export type FreehandObject =
   | TextObject
   | TextOnPathObject
   | BooleanGroupObject
-  | ClippingContainerObject;
+  | ClippingContainerObject
+  | AdjustmentLayerObject;
 
 export interface FreehandStudioProps extends DesignerEmbedProps {
   nodeId: string;
@@ -2533,6 +2611,91 @@ function pathAnchorsToWorld(p: PathObject): PathObject {
   };
 }
 
+/** Elipse primitiva (local) → anillo en mundo; incluye rotación / espejo. */
+function ellipsePrimitiveToWorldPolyRing(o: FreehandObject, segments: number): Point[] {
+  const rx = o.width / 2;
+  const ry = o.height / 2;
+  const cx = o.width / 2;
+  const cy = o.height / 2;
+  const out: Point[] = [];
+  for (let i = 0; i < segments; i++) {
+    const t = (i / segments) * Math.PI * 2;
+    out.push(objLocalToWorldPoint({ x: cx + rx * Math.cos(t), y: cy + ry * Math.sin(t) }, o));
+  }
+  return out;
+}
+
+/** Anillo Bézier cerrado → polilínea en mundo (p. ej. selección desde pluma). */
+function sampleClosedBezierRingToWorld(ring: BezierPoint[], o: FreehandObject, samplesPerSeg: number): Point[] {
+  const n = ring.length;
+  if (n < 2) return [];
+  const out: Point[] = [];
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    const a = ring[i]!;
+    const b = ring[j]!;
+    for (let s = 0; s < samplesPerSeg; s++) {
+      const t = s / samplesPerSeg;
+      const pt = cubicBezierAt(t, a.anchor, a.handleOut, b.handleIn, b.anchor);
+      out.push(pathBezierPointToWorld(pt, o));
+    }
+  }
+  return out;
+}
+
+function polyRingToSvgPathD(ring: Point[]): string {
+  if (ring.length < 2) return "";
+  let d = `M ${ring[0]!.x} ${ring[0]!.y}`;
+  for (let i = 1; i < ring.length; i++) d += ` L ${ring[i]!.x} ${ring[i]!.y}`;
+  return `${d} Z`;
+}
+
+/**
+ * Convierte rectángulo, elipse o path vectorial en datos de selección raster
+ * (mismo formato que lazo / rect / elipse).
+ */
+function vectorObjectToPhotoMarqueeParts(
+  o: FreehandObject,
+): { rects: Rect[]; polys: Point[][]; ellipses: PhotoMarqueeEllipse[] } | null {
+  if (!o.visible || o.locked) return null;
+  if (o.type === "rect") {
+    return { rects: [], polys: [rectWorldCorners(o)], ellipses: [] };
+  }
+  if (o.type === "ellipse") {
+    const plainAxis = !o.rotation && !o.flipX && !o.flipY;
+    if (plainAxis) {
+      const cx = o.x + o.width / 2;
+      const cy = o.y + o.height / 2;
+      return {
+        rects: [],
+        polys: [],
+        ellipses: [{ cx, cy, rx: o.width / 2, ry: o.height / 2 }],
+      };
+    }
+    return { rects: [], polys: [ellipsePrimitiveToWorldPolyRing(o, 72)], ellipses: [] };
+  }
+  if (o.type === "path") {
+    const p = o as PathObject;
+    if (p.svgPathD && String(p.svgPathD).trim().length > 0 && (!p.points || p.points.length < 2)) {
+      return { rects: [], polys: [objectWorldCorners(p)], ellipses: [] };
+    }
+    if (!p.closed) {
+      return { rects: [], polys: [objectWorldCorners(p)], ellipses: [] };
+    }
+    const rings = getPathRings(p);
+    const polys: Point[][] = [];
+    const sp = 8;
+    for (const ring of rings) {
+      if (ring.length < 2) continue;
+      const wr = sampleClosedBezierRingToWorld(ring, o, sp);
+      if (wr.length >= 3) polys.push(wr);
+    }
+    if (polys.length > 0) return { rects: [], polys, ellipses: [] };
+    return { rects: [], polys: [objectWorldCorners(p)], ellipses: [] };
+  }
+  return null;
+}
+
 /**
  * Mundo → coordenadas locales del marco del objeto (origen esquina sup. izq., 0…width × 0…height).
  * El `<image>` está en (o.x,o.y) y el `transform` solo rota/espeja alrededor del centro; hay que restar el origen del marco.
@@ -3488,6 +3651,8 @@ function hitTestObject(
     case "booleanGroup":
     case "image":
       return pointInRotatedRect(pos.x, pos.y, obj);
+    case "adjustmentLayer":
+      return false;
     case "rect":
       return pointInRoundedRectObject(pos.x, pos.y, obj as RectObject);
     case "clippingContainer": {
@@ -4227,6 +4392,14 @@ function deepCloneFreehandObject(o: FreehandObject, newId: () => string): Freeha
     const t = o as TextObject;
     return { ...t, id, fill: cloneFill(migrateFill(t.fill)) };
   }
+  if (o.type === "adjustmentLayer") {
+    const a = o as AdjustmentLayerObject;
+    return {
+      ...a,
+      id,
+      adjustment: { ...a.adjustment, levels: { ...a.adjustment.levels } },
+    };
+  }
   return { ...o, id, fill: cloneFill(migrateFill(o.fill)) };
 }
 
@@ -4800,6 +4973,71 @@ function worldPointToImagePixelFloat(
   return objectLocalToImagePixelFloat(imgObj, iw, ih, lp.x, lp.y);
 }
 
+/** Esquinas en espacio local del objeto del rectángulo de píxeles [ix0,ix1)×[iy0,iy1). */
+function imageMeetPixelRectCornersObjectLocal(
+  imgObj: ImageObject,
+  iw: number,
+  ih: number,
+  ix0: number,
+  iy0: number,
+  ix1: number,
+  iy1: number,
+): Point[] {
+  const boxW = imgObj.width;
+  const boxH = imgObj.height;
+  const scale = Math.min(boxW / Math.max(iw, 1), boxH / Math.max(ih, 1));
+  const dw = iw * scale;
+  const dh = ih * scale;
+  const ox = (boxW - dw) / 2;
+  const oy = (boxH - dh) / 2;
+  const xl = ox + (ix0 / Math.max(iw, 1)) * dw;
+  const xr = ox + (ix1 / Math.max(iw, 1)) * dw;
+  const yt = oy + (iy0 / Math.max(ih, 1)) * dh;
+  const yb = oy + (iy1 / Math.max(ih, 1)) * dh;
+  return [
+    { x: xl, y: yt },
+    { x: xr, y: yt },
+    { x: xl, y: yb },
+    { x: xr, y: yb },
+  ];
+}
+
+function buildPhotoMarqueePixelMapper(
+  imgObj: ImageObject,
+  iw: number,
+  ih: number,
+): PhotoMarqueePixelMapper {
+  return {
+    worldToPixel: (wp) => worldPointToImagePixelFloat(imgObj, iw, ih, wp),
+    pixelRectToWorldBounds: (ix0, iy0, ix1, iy1) => {
+      const corners = imageMeetPixelRectCornersObjectLocal(imgObj, iw, ih, ix0, iy0, ix1, iy1).map(
+        (lp) => objLocalToWorldPoint(lp, imgObj),
+      );
+      let wx0 = Infinity;
+      let wy0 = Infinity;
+      let wx1 = -Infinity;
+      let wy1 = -Infinity;
+      for (const c of corners) {
+        wx0 = Math.min(wx0, c.x);
+        wy0 = Math.min(wy0, c.y);
+        wx1 = Math.max(wx1, c.x);
+        wy1 = Math.max(wy1, c.y);
+      }
+      return { x: wx0, y: wy0, w: Math.max(1e-6, wx1 - wx0), h: Math.max(1e-6, wy1 - wy0) };
+    },
+  };
+}
+
+async function loadImageNaturalSize(src: string): Promise<{ w: number; h: number } | null> {
+  if (typeof document === "undefined") return null;
+  return new Promise((res) => {
+    const im = new Image();
+    im.onload = () => res({ w: im.naturalWidth || 1, h: im.naturalHeight || 1 });
+    im.onerror = () => res(null);
+    im.src = src;
+  });
+}
+
 /** Trazo de máscara en coords de píxel del bitmap natural (0…iw × 0…ih). */
 function fillSelectionPixelMaskPath(
   ctx: CanvasRenderingContext2D,
@@ -5231,7 +5469,7 @@ function applyLinkedCornerRadiusToPathPoints(points: BezierPoint[], p: Pick<Path
   });
 }
 
-function pathCornerRadiusStats(p: PathObject): { count: number; maxRadius: number; value: number } {
+export function pathCornerRadiusStats(p: PathObject): { count: number; maxRadius: number; value: number } {
   let count = 0;
   let maxRadius = Infinity;
   let total = 0;
@@ -7079,6 +7317,8 @@ export function renderObj(
         </g>
       );
     }
+    case "adjustmentLayer":
+      return null;
     default: return null;
   }
 }
@@ -8282,8 +8522,33 @@ function layerRowIcon(o: FreehandObject) {
     case "image": return <ImageIconLucide size={12} className={cls} />;
     case "booleanGroup": return <Layers size={12} className={cls} />;
     case "clippingContainer": return <Crop size={12} className={cls} />;
+    case "adjustmentLayer":
+      return <Contrast size={12} className={`${cls} text-sky-400/80`} strokeWidth={2} />;
     default: return <Square size={12} className={cls} />;
   }
+}
+
+function layerPanelRasterThumbSrc(o: FreehandObject): string | null {
+  if (o.type === "image") {
+    const src = (o as ImageObject).src;
+    return typeof src === "string" && src.trim().length > 0 ? src : null;
+  }
+  if (o.type === "booleanGroup") {
+    const src = (o as BooleanGroupObject).cachedResult;
+    return typeof src === "string" && src.trim().length > 0 ? src : null;
+  }
+  return null;
+}
+
+const LAYER_PANEL_THUMB_CHECKER =
+  "repeating-conic-gradient(#6b7280 0% 25%, #9ca3af 0% 50%) 50% / 6px 6px";
+
+function layerPanelThumbFrameClass(selected: boolean): string {
+  return `relative h-[22px] w-[22px] shrink-0 overflow-hidden border-2 transition-shadow ${
+    selected
+      ? "border-white shadow-[0_0_0_1px_rgba(255,255,255,0.85)]"
+      : "border-zinc-950 hover:border-zinc-600"
+  }`;
 }
 
 /** Relleno/trazo para la siguiente forma o trazo a pluma, deducidos de un objeto con estilo vectorial. */
@@ -8675,10 +8940,12 @@ function ImagePropertiesInfoSection({
   image,
   expanded,
   onToggle,
+  plain = false,
 }: {
   image: ImageObject;
   expanded: boolean;
-  onToggle: () => void;
+  onToggle?: () => void;
+  plain?: boolean;
 }) {
   const meta = image.imageAssetMeta;
   const src = (image.src ?? "").trim();
@@ -8747,24 +9014,8 @@ function ImagePropertiesInfoSection({
   const dtCls = "shrink-0 text-[10px] text-zinc-500 uppercase tracking-wider";
   const ddCls = "min-w-0 text-right font-mono text-[11px] text-zinc-200 break-all";
 
-  return (
-    <div className="border-b border-white/[0.08] px-[14px] py-3">
-      <button
-        type="button"
-        className="flex w-full items-center justify-between gap-2 text-left transition-colors hover:bg-white/[0.04] -mx-1 rounded-md px-1 py-0.5"
-        title={expanded ? "Plegar información" : "Desplegar información"}
-        aria-expanded={expanded}
-        onClick={onToggle}
-      >
-        <span className="text-[10px] text-zinc-500 uppercase tracking-wider">INFO</span>
-        {expanded ? (
-          <ChevronDown size={14} strokeWidth={2} className="shrink-0 text-zinc-500" />
-        ) : (
-          <ChevronRight size={14} strokeWidth={2} className="shrink-0 text-zinc-500" />
-        )}
-      </button>
-      {expanded && (
-        <dl className="mt-2 space-y-2">
+  const infoBody = (
+        <dl className={plain ? "space-y-2 px-[14px] py-3" : "mt-2 space-y-2"}>
           <div className={rowCls}>
             <dt className={dtCls}>Formato</dt>
             <dd className={ddCls}>{formatLabel}</dd>
@@ -8784,7 +9035,27 @@ function ImagePropertiesInfoSection({
             <dd className={ddCls}>{dimLabel}</dd>
           </div>
         </dl>
-      )}
+  );
+
+  if (plain) return infoBody;
+
+  return (
+    <div className="border-b border-white/[0.08] px-[14px] py-3">
+      <button
+        type="button"
+        className="flex w-full items-center justify-between gap-2 text-left transition-colors hover:bg-white/[0.04] -mx-1 rounded-md px-1 py-0.5"
+        title={expanded ? "Plegar información" : "Desplegar información"}
+        aria-expanded={expanded}
+        onClick={onToggle}
+      >
+        <span className="text-[10px] text-zinc-500 uppercase tracking-wider">INFO</span>
+        {expanded ? (
+          <ChevronDown size={14} strokeWidth={2} className="shrink-0 text-zinc-500" />
+        ) : (
+          <ChevronRight size={14} strokeWidth={2} className="shrink-0 text-zinc-500" />
+        )}
+      </button>
+      {expanded ? infoBody : null}
     </div>
   );
 }
@@ -9122,6 +9393,15 @@ export function FreehandStudioCanvas({
       setActiveTool("select");
       return;
     }
+    if (
+      (activeTool === "rectMarquee" ||
+        activeTool === "ellipseMarquee" ||
+        activeTool === "lassoMarquee" ||
+        activeTool === "polygonMarquee") &&
+      !studioCaps.toolPhotoMarquee
+    ) {
+      setActiveTool("select");
+    }
   }, [activeTool, studioCaps, designerMode]);
 
   useEffect(() => {
@@ -9238,7 +9518,7 @@ export function FreehandStudioCanvas({
 
   // Drag state
   const [dragState, setDragState] = useState<{
-    type: "move" | "resize" | "skew" | "rotationPivot" | "textBoxResize" | "pan" | "create" | "createText" | "createTextFrame" | "createImageFrame" | "directSelect" | "pathCornerRadius" | "marquee" | "penHandle" | "rotate" | "gradient" | "guideMove" | "guidePull" | "imageContentPan" | "imageContentResize" | "brushPaint" | "photoGradientLine" | "photoGradientVertex" | "cornerRadius";
+    type: "move" | "resize" | "skew" | "rotationPivot" | "textBoxResize" | "pan" | "create" | "createText" | "createTextFrame" | "createImageFrame" | "directSelect" | "pathCornerRadius" | "marquee" | "photoRectMarquee" | "photoEllipseMarquee" | "photoLassoMarquee" | "photoPolygonMarquee" | "photoMarqueeNudge" | "photoMarqueeFloatRotate" | "photoMarqueeFloatResize" | "penHandle" | "rotate" | "gradient" | "guideMove" | "guidePull" | "imageContentPan" | "imageContentResize" | "brushPaint" | "photoGradientLine" | "photoGradientVertex" | "cornerRadius";
     startX: number;
     startY: number;
     startCanvas?: Point;
@@ -9284,6 +9564,18 @@ export function FreehandStudioCanvas({
     pathCornerRadiusPointIdx?: number;
     pathCornerRadiusLinked?: boolean;
     marqueeOrigin?: Point;
+    /** Solo marcos raster: sumar (Ctrl/⌘ al iniciar el trazo). */
+    photoMarqueeAdditive?: boolean;
+    /** Solo marcos raster: restar (Alt/Option al iniciar el trazo). */
+    photoMarqueeSubtract?: boolean;
+    /** Solo `photoLassoMarquee`: puntos del trazo (mundo). */
+    photoLassoPoints?: Point[];
+    /** Solo `photoPolygonMarquee`: vértices colocados; `currentCanvas` = rubber band al cursor. */
+    photoPolygonVertices?: Point[];
+    /** Solo `photoMarqueeNudge`: snapshot al iniciar el arrastre dentro del marco confirmado. */
+    photoMarqueeSnapRects?: Rect[];
+    photoMarqueeSnapPolys?: Point[][];
+    photoMarqueeSnapEllipses?: PhotoMarqueeEllipse[];
     snapDelta?: Point;
     shiftKey?: boolean;
     rotateCenter?: Point;
@@ -9455,12 +9747,189 @@ export function FreehandStudioCanvas({
   const brushPreviewRingRef = useRef<{ inner: Point[]; outer: Point[] } | null>(null);
   const brushPreviewLastWorldRef = useRef<Point | null>(null);
   const [brushPreviewRings, setBrushPreviewRings] = useState<{ inner: Point[]; outer: Point[] } | null>(null);
-  /** Bloque Transform en propiedades: plegado por defecto. */
-  const [transformPanelExpanded, setTransformPanelExpanded] = useState(false);
-  const [imageInfoPanelExpanded, setImageInfoPanelExpanded] = useState(false);
+  /** Pestaña activa en propiedades: Color | Appearance | Info | Transform. */
+  const [propertiesMainTab, setPropertiesMainTab] = useState<
+    "color" | "appearance" | "info" | "transform"
+  >("color");
+  /** Selección raster (hormigas): rectángulos, polígonos y elipses en coordenadas de mundo. */
+  const [photoRectMarqueeSelection, setPhotoRectMarqueeSelection] = useState<Rect[]>([]);
+  const [photoPolygonMarqueeSelection, setPhotoPolygonMarqueeSelection] = useState<Point[][]>([]);
+  const [photoEllipseMarqueeSelection, setPhotoEllipseMarqueeSelection] = useState<PhotoMarqueeEllipse[]>([]);
+  const [photoMarqueeMaskFeatherPx, setPhotoMarqueeMaskFeatherPx] = useState(0);
+  const photoRectMarqueeSelectionRef = useRef(photoRectMarqueeSelection);
+  const photoPolygonMarqueeSelectionRef = useRef(photoPolygonMarqueeSelection);
+  const photoEllipseMarqueeSelectionRef = useRef(photoEllipseMarqueeSelection);
+  const photoMarqueeMaskFeatherPxRef = useRef(photoMarqueeMaskFeatherPx);
+  photoRectMarqueeSelectionRef.current = photoRectMarqueeSelection;
+  photoPolygonMarqueeSelectionRef.current = photoPolygonMarqueeSelection;
+  photoEllipseMarqueeSelectionRef.current = photoEllipseMarqueeSelection;
+  photoMarqueeMaskFeatherPxRef.current = photoMarqueeMaskFeatherPx;
+  const photoRectMarqueePendingRef = useRef<{ clientX: number; clientY: number } | null>(null);
+  const [photoRectMarqueeAddModHeld, setPhotoRectMarqueeAddModHeld] = useState(false);
+  const [photoRectMarqueeAltModHeld, setPhotoRectMarqueeAltModHeld] = useState(false);
+  const photoRectMarqueeAddModRef = useRef(false);
+  const photoRectMarqueeAltModRef = useRef(false);
+
+  const [photoMarqueeFloatLift, setPhotoMarqueeFloatLift] = useState<PhotoMarqueeFloatLift | null>(null);
+  const photoMarqueeFloatLiftRef = useRef<PhotoMarqueeFloatLift | null>(null);
+  const photoMarqueeFloatExtractingRef = useRef(false);
+  const [photoMarqueeFloatTf, setPhotoMarqueeFloatTf] = useState<PhotoMarqueeFloatTf>({
+    rotationDeg: 0,
+    scaleX: 1,
+    scaleY: 1,
+  });
+  const photoMarqueeFloatTfRef = useRef(photoMarqueeFloatTf);
+  photoMarqueeFloatTfRef.current = photoMarqueeFloatTf;
+  const photoMarqueeLastSelSnapshotRef = useRef<{
+    rects: Rect[];
+    polys: Point[][];
+    ellipses: PhotoMarqueeEllipse[];
+  } | null>(null);
+  const photoMarqueeHadSelectionRef = useRef(false);
+  const commitPhotoMarqueeFloatToSourceRef = useRef<(() => Promise<boolean>) | null>(null);
+
+  useLayoutEffect(() => {
+    const has =
+      photoRectMarqueeSelection.length > 0 ||
+      photoPolygonMarqueeSelection.length > 0 ||
+      photoEllipseMarqueeSelection.length > 0;
+    if (has) {
+      photoMarqueeLastSelSnapshotRef.current = {
+        rects: photoRectMarqueeSelection.map((r) => ({ ...r })),
+        polys: photoPolygonMarqueeSelection.map((ring) => ring.map((p) => ({ ...p }))),
+        ellipses: photoEllipseMarqueeSelection.map((e) => ({ ...e })),
+      };
+    }
+  }, [photoRectMarqueeSelection, photoPolygonMarqueeSelection, photoEllipseMarqueeSelection]);
+
+  const requestPhotoMarqueeFloatLift = useCallback((img: ImageObject) => {
+    if (photoMarqueeFloatLiftRef.current || photoMarqueeFloatExtractingRef.current) return;
+    photoMarqueeFloatExtractingRef.current = true;
+    void (async () => {
+      try {
+        const dims = await loadImageNaturalSize(img.src);
+        if (!dims) return;
+        const mapper = buildPhotoMarqueePixelMapper(img, dims.w, dims.h);
+        const lift = await buildPhotoMarqueeFloatLiftFromMarquee(
+          img.src,
+          img.id,
+          mapper,
+          photoRectMarqueeSelectionRef.current.map((r) => ({ ...r })),
+          photoPolygonMarqueeSelectionRef.current.map((ring) => ring.map((p) => ({ ...p }))),
+          photoEllipseMarqueeSelectionRef.current.map((el) => ({ ...el })),
+          photoMarqueeMaskFeatherPxRef.current,
+        );
+        if (lift) {
+          photoMarqueeFloatLiftRef.current = lift;
+          setPhotoMarqueeFloatLift(lift);
+          setPhotoMarqueeFloatTf({ rotationDeg: 0, scaleX: 1, scaleY: 1 });
+        }
+      } finally {
+        photoMarqueeFloatExtractingRef.current = false;
+      }
+    })();
+  }, []);
+
+  const beginPhotoMarqueeNudgeDrag = useCallback(
+    (clientX: number, clientY: number, img: ImageObject) => {
+      requestPhotoMarqueeFloatLift(img);
+      const nudge = {
+        type: "photoMarqueeNudge" as const,
+        startX: clientX,
+        startY: clientY,
+        photoMarqueeSnapRects: photoRectMarqueeSelectionRef.current.map((r) => ({ ...r })),
+        photoMarqueeSnapPolys: photoPolygonMarqueeSelectionRef.current.map((ring) =>
+          ring.map((p) => ({ ...p })),
+        ),
+        photoMarqueeSnapEllipses: photoEllipseMarqueeSelectionRef.current.map((el) => ({ ...el })),
+      };
+      dragStateRef.current = nudge;
+      setDragState(nudge);
+    },
+    [requestPhotoMarqueeFloatLift],
+  );
+
+  const clearPhotoMarqueeFloatPreview = useCallback(() => {
+    setPhotoMarqueeFloatLift(null);
+    photoMarqueeFloatLiftRef.current = null;
+    setPhotoMarqueeFloatTf({ rotationDeg: 0, scaleX: 1, scaleY: 1 });
+  }, []);
+
   useEffect(() => {
-    setImageInfoPanelExpanded(false);
-  }, [primarySelectedId]);
+    const photoMarqueeLike =
+      activeTool === "rectMarquee" ||
+      activeTool === "ellipseMarquee" ||
+      activeTool === "lassoMarquee" ||
+      activeTool === "polygonMarquee";
+    if (!studioCaps.toolPhotoMarquee || !photoMarqueeLike) {
+      setPhotoRectMarqueeAddModHeld(false);
+      setPhotoRectMarqueeAltModHeld(false);
+      photoRectMarqueeAddModRef.current = false;
+      photoRectMarqueeAltModRef.current = false;
+      return;
+    }
+    const sync = (e: KeyboardEvent | MouseEvent) => {
+      const ne = e as KeyboardEvent & MouseEvent;
+      const alt = !!(
+        ne.altKey ||
+        (typeof ne.getModifierState === "function" && ne.getModifierState("Alt"))
+      );
+      const add =
+        !alt &&
+        !!(
+          ne.ctrlKey ||
+          ne.metaKey ||
+          (typeof ne.getModifierState === "function" &&
+            (ne.getModifierState("Control") || ne.getModifierState("Meta")))
+        );
+      photoRectMarqueeAltModRef.current = alt;
+      photoRectMarqueeAddModRef.current = add;
+      setPhotoRectMarqueeAltModHeld(alt);
+      setPhotoRectMarqueeAddModHeld(add);
+    };
+    const onBlur = () => {
+      photoRectMarqueeAddModRef.current = false;
+      photoRectMarqueeAltModRef.current = false;
+      setPhotoRectMarqueeAddModHeld(false);
+      setPhotoRectMarqueeAltModHeld(false);
+    };
+    window.addEventListener("keydown", sync as EventListener);
+    window.addEventListener("keyup", sync as EventListener);
+    window.addEventListener("mousemove", sync);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", sync as EventListener);
+      window.removeEventListener("keyup", sync as EventListener);
+      window.removeEventListener("mousemove", sync);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, [activeTool, studioCaps.toolPhotoMarquee]);
+
+  useEffect(() => {
+    if (!studioCaps.toolPhotoMarquee) return;
+    const marqueeUiTool =
+      activeTool === "select" ||
+      activeTool === "rectMarquee" ||
+      activeTool === "ellipseMarquee" ||
+      activeTool === "lassoMarquee" ||
+      activeTool === "polygonMarquee";
+    if (marqueeUiTool) return;
+    const has =
+      photoRectMarqueeSelection.length > 0 ||
+      photoPolygonMarqueeSelection.length > 0 ||
+      photoEllipseMarqueeSelection.length > 0;
+    if (!has) return;
+    setPhotoRectMarqueeSelection([]);
+    setPhotoPolygonMarqueeSelection([]);
+    setPhotoEllipseMarqueeSelection([]);
+  }, [
+    activeTool,
+    studioCaps.toolPhotoMarquee,
+    photoRectMarqueeSelection.length,
+    photoPolygonMarqueeSelection.length,
+    photoEllipseMarqueeSelection.length,
+  ]);
+
   /** Modal Layer Styles (PhotoRoom): borrador + preview en lienzo hasta OK. */
   const [layerStylesUi, setLayerStylesUi] = useState<{
     open: boolean;
@@ -9474,6 +9943,15 @@ export function FreehandStudioCanvas({
     maskEditObjectIdRef.current = maskEditObjectId;
   }, [maskEditObjectId]);
 
+  /** Activa edición de máscara y cambia al pincel para pintar en la máscara (no en la imagen). */
+  const enterLayerMaskEdit = useCallback(
+    (layerId: string) => {
+      setMaskEditObjectId(layerId);
+      if (studioCaps.toolBrush) setActiveTool("brush");
+    },
+    [studioCaps.toolBrush],
+  );
+
   /** Degradado raster (PhotoRoom): colores = trazo → relleno de la paleta; opciones en Propiedades. */
   const [photoGradientSession, setPhotoGradientSession] = useState<PhotoGradientRuntimeSession | null>(null);
   const photoGradientSessionRef = useRef(photoGradientSession);
@@ -9485,14 +9963,23 @@ export function FreehandStudioCanvas({
   /** Última aplicación async durante scrub numérico (panel degradado). */
   const photoRasterGradientScrubApplyRef = useRef<Promise<void> | null>(null);
 
-  /** Ajustes de imagen (PhotoRoom): sesión activa mientras el modal está abierto. */
-  type PhotoAdjustmentsSession = PhotoImageAdjustments & {
-    objectId: string;
-    /** src de la capa al abrir el modal, para revertir al cancelar. */
-    openSrc: string;
-    /** meta de ajustes al abrir, para revertir al cancelar. */
-    openMeta: PhotoImageAdjustments | null;
-  };
+  /** Ajustes: sesión activa mientras el modal está abierto (capa imagen legacy o capa de ajuste). */
+  type PhotoAdjustmentsSession =
+    | (PhotoImageAdjustments & {
+        mode: "image";
+        objectId: string;
+        openSrc: string;
+        openMeta: PhotoImageAdjustments | null;
+      })
+    | ({
+        mode: "adjustmentLayer";
+        objectId: string;
+        brightness: number;
+        contrast: number;
+        saturation: number;
+        levels: PhotoImageAdjustments["levels"];
+        openMeta: AdjustmentLayerObject["adjustment"];
+      });
   const [photoAdjustmentsSession, setPhotoAdjustmentsSession] = useState<PhotoAdjustmentsSession | null>(null);
   const photoAdjustmentsSessionRef = useRef(photoAdjustmentsSession);
   photoAdjustmentsSessionRef.current = photoAdjustmentsSession;
@@ -9513,8 +10000,6 @@ export function FreehandStudioCanvas({
     if (!layerStylesUi.open || !layerStylesUi.targetId || !layerStylesUi.draft) return undefined;
     return new Map<string, LayerEffects>([[layerStylesUi.targetId, layerStylesUi.draft]]);
   }, [layerStylesUi.open, layerStylesUi.targetId, layerStylesUi.draft]);
-  /** Bloque Color (paleta + fill + stroke): plegado por defecto. */
-  const [colorPanelExpanded, setColorPanelExpanded] = useState(false);
   /** Sugerencias Brain: variantes para el objeto seleccionado (sin auto-aplicar). */
   const [brainSuggestionsTick, setBrainSuggestionsTick] = useState(0);
   const [brainManualTextKind, setBrainManualTextKind] = useState<BrainTextBlockKind | "">("");
@@ -9819,6 +10304,9 @@ export function FreehandStudioCanvas({
   // UI state
   const [spaceHeld, setSpaceHeld] = useState(false);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; canvas?: Point } | null>(null);
+  const [layerMaskCtxMenu, setLayerMaskCtxMenu] = useState<{ x: number; y: number; layerId: string } | null>(
+    null,
+  );
   const [textEditingId, setTextEditingId] = useState<string | null>(null);
   const [textOnPathEditingId, setTextOnPathEditingId] = useState<string | null>(null);
   const [textOnPathEditorAnchor, setTextOnPathEditorAnchor] = useState<Point | null>(null);
@@ -10743,6 +11231,104 @@ export function FreehandStudioCanvas({
   const selectedIdsKey = useMemo(() => Array.from(selectedIds).sort().join(","), [selectedIds]);
   const firstSelected = selectedObjects[0] ?? null;
   const singleSelected = selectedObjects.length === 1 ? selectedObjects[0] ?? null : null;
+
+  const hasPhotoMarqueeSelection =
+    photoRectMarqueeSelection.length > 0 ||
+    photoPolygonMarqueeSelection.length > 0 ||
+    photoEllipseMarqueeSelection.length > 0;
+
+  const canConvertSelectionToPhotoMarquee = useMemo(() => {
+    if (!studioCaps.photoMarqueeFromVector) return false;
+    if (selectedObjects.length !== 1) return false;
+    return vectorObjectToPhotoMarqueeParts(selectedObjects[0]!) != null;
+  }, [selectedObjects, studioCaps.photoMarqueeFromVector]);
+
+  const replacePhotoMarqueeWithVectorOutline = useCallback(() => {
+    if (selectedIds.size !== 1) return;
+    const id = Array.from(selectedIds)[0]!;
+    const o = objects.find((x) => x.id === id);
+    if (!o) return;
+    const parts = vectorObjectToPhotoMarqueeParts(o);
+    if (!parts) return;
+    setPhotoRectMarqueeSelection(parts.rects.map((r) => ({ ...r })));
+    setPhotoPolygonMarqueeSelection(parts.polys.map((ring) => ring.map((p) => ({ ...p }))));
+    setPhotoEllipseMarqueeSelection(parts.ellipses.map((e) => ({ ...e })));
+  }, [objects, selectedIds]);
+
+  const deselectPhotoMarquee = useCallback(() => {
+    if (!studioCaps.toolPhotoMarquee && !studioCaps.photoMarqueeFromVector) return;
+    setPhotoRectMarqueeSelection([]);
+    setPhotoPolygonMarqueeSelection([]);
+    setPhotoEllipseMarqueeSelection([]);
+    setPhotoMarqueeMaskFeatherPx(0);
+  }, [studioCaps.toolPhotoMarquee, studioCaps.photoMarqueeFromVector]);
+
+  const invertPhotoMarqueeFromPanel = useCallback(() => {
+    if (!studioCaps.toolPhotoMarquee) return;
+    const rectsSnap = photoRectMarqueeSelectionRef.current.map((r) => ({ ...r }));
+    const polysSnap = photoPolygonMarqueeSelectionRef.current.map((ring) => ring.map((p) => ({ ...p })));
+    const ellipsesSnap = photoEllipseMarqueeSelectionRef.current.map((e) => ({ ...e }));
+    if (!rectsSnap.length && !polysSnap.length && !ellipsesSnap.length) return;
+    const img = findSingleSelectedImageForPhotoMarquee(selectedIdsRef.current, objectsRef.current);
+    const ab = pickPrimaryArtboard(artboards, null);
+    const bounds: Rect = img
+      ? { x: img.x, y: img.y, w: img.width, h: img.height }
+      : ab
+        ? artboardToRect(ab)
+        : { x: 0, y: 0, w: artboards[0]?.width ?? 1920, h: artboards[0]?.height ?? 1080 };
+    const nextPolys = invertPhotoMarqueePolysWithinBounds(rectsSnap, polysSnap, ellipsesSnap, bounds);
+    if (nextPolys.length === 0) {
+      setPhotoRectMarqueeSelection([]);
+      setPhotoPolygonMarqueeSelection([]);
+      setPhotoEllipseMarqueeSelection([]);
+      return;
+    }
+    setPhotoRectMarqueeSelection([]);
+    setPhotoEllipseMarqueeSelection([]);
+    setPhotoPolygonMarqueeSelection(nextPolys);
+  }, [studioCaps.toolPhotoMarquee, artboards]);
+
+  useEffect(() => {
+    if (!studioCaps.toolPhotoMarquee) return;
+    const has =
+      photoRectMarqueeSelection.length > 0 ||
+      photoPolygonMarqueeSelection.length > 0 ||
+      photoEllipseMarqueeSelection.length > 0;
+    const prevHad = photoMarqueeHadSelectionRef.current;
+    photoMarqueeHadSelectionRef.current = has;
+    if (!prevHad || has) return;
+    if (!photoMarqueeFloatLiftRef.current || !photoMarqueeLastSelSnapshotRef.current) return;
+    void (async () => {
+      await commitPhotoMarqueeFloatToSourceRef.current?.();
+      clearPhotoMarqueeFloatPreview();
+    })();
+  }, [
+    studioCaps.toolPhotoMarquee,
+    photoRectMarqueeSelection,
+    photoPolygonMarqueeSelection,
+    photoEllipseMarqueeSelection,
+    clearPhotoMarqueeFloatPreview,
+  ]);
+
+  useEffect(() => {
+    if (!studioCaps.toolPhotoMarquee) return;
+    const marqueeUiTool =
+      activeTool === "select" ||
+      activeTool === "rectMarquee" ||
+      activeTool === "ellipseMarquee" ||
+      activeTool === "lassoMarquee" ||
+      activeTool === "polygonMarquee";
+    if (marqueeUiTool) return;
+    if (!photoMarqueeFloatLiftRef.current) return;
+    void (async () => {
+      await commitPhotoMarqueeFloatToSourceRef.current?.();
+      clearPhotoMarqueeFloatPreview();
+      setPhotoRectMarqueeSelection([]);
+      setPhotoPolygonMarqueeSelection([]);
+      setPhotoEllipseMarqueeSelection([]);
+      setPhotoMarqueeMaskFeatherPx(0);
+    })();
+  }, [activeTool, studioCaps.toolPhotoMarquee, clearPhotoMarqueeFloatPreview]);
 
   const selectedTextValue = useMemo(() => {
     if (!singleSelected) return "";
@@ -12360,6 +12946,9 @@ export function FreehandStudioCanvas({
         });
         setSelectedIds(new Set([o.id]));
         setPrimarySelectedId(o.id);
+        enterLayerMaskEdit(o.id);
+        setToast("Máscara añadida — pinta con el pincel (B). Negro oculta, blanco muestra.");
+        window.setTimeout(() => setToast(null), 3600);
         const api = designerBrainTelemetryRef.current;
         if (photoRoomStudioEmbedRef.current && api?.nodeType === "PHOTOROOM") {
           trackPhotoroomMaskUsed(api.track, {
@@ -12370,7 +12959,7 @@ export function FreehandStudioCanvas({
         }
       });
     },
-    [studioCaps.layerMask, primarySelectedId, objects, firstSelected, pushHistory],
+    [studioCaps.layerMask, primarySelectedId, objects, firstSelected, pushHistory, enterLayerMaskEdit],
   );
 
   const deleteLayerMaskForObject = useCallback(
@@ -12389,6 +12978,47 @@ export function FreehandStudioCanvas({
           maskId: `layer-mask-cleared:${id}`,
         });
       }
+    },
+    [pushHistory],
+  );
+
+  const applyLayerMaskForObject = useCallback(
+    (id: string) => {
+      const o = objectsRef.current.find((x) => x.id === id);
+      if (!o || !isLayerMaskRasterEligible(o) || !hasLayerMaskBlock(o)) return;
+      const lm = (o as FreehandObjectBase).layerMask!;
+      const rasterSrc =
+        o.type === "image" ? (o as ImageObject).src : (o as BooleanGroupObject).cachedResult!;
+      void bakeLayerMaskIntoRasterDataUrl(rasterSrc, lm)
+        .then((baked) => {
+          setMaskEditObjectId((prev) => (prev === id ? null : prev));
+          setObjects((prev) => {
+            const next = prev.map((item) => {
+              if (item.id !== id) return item;
+              if (item.type === "image") {
+                return { ...item, src: baked, layerMask: null } as ImageObject;
+              }
+              if (item.type === "booleanGroup") {
+                return { ...item, cachedResult: baked, layerMask: null } as BooleanGroupObject;
+              }
+              return item;
+            });
+            pushHistory(next, new Set([id]));
+            return next;
+          });
+          const api = designerBrainTelemetryRef.current;
+          if (photoRoomStudioEmbedRef.current && api?.nodeType === "PHOTOROOM") {
+            trackPhotoroomMaskUsed(api.track, {
+              layerId: id,
+              canvasObjectId: id,
+              maskId: `layer-mask-applied:${id}`,
+            });
+          }
+        })
+        .catch(() => {
+          setToast("No se pudo aplicar la máscara de capa.");
+          window.setTimeout(() => setToast(null), 3200);
+        });
     },
     [pushHistory],
   );
@@ -13899,6 +14529,27 @@ export function FreehandStudioCanvas({
   const applyPhotoImageAdjustmentsSession = useCallback(
     async (sess: PhotoAdjustmentsSession, opts?: { recordHistory?: boolean }) => {
       const recordHistory = opts?.recordHistory !== false;
+
+      if (sess.mode === "adjustmentLayer") {
+        const oid = sess.objectId;
+        const patch = {
+          brightness: sess.brightness,
+          contrast: sess.contrast,
+          saturation: sess.saturation,
+          levels: { ...sess.levels },
+        };
+        setObjects((prev) => {
+          const next = prev.map((obj) =>
+            obj.id === oid && obj.type === "adjustmentLayer"
+              ? ({ ...obj, adjustment: patch } as AdjustmentLayerObject)
+              : obj,
+          );
+          if (recordHistory) pushHistory(next, new Set([oid]));
+          return next;
+        });
+        return;
+      }
+
       const gen = ++photoAdjustmentsApplyGenRef.current;
       const o = objectsRef.current.find((x) => x.id === sess.objectId);
       if (!o || o.type !== "image" || (o as ImageObject).photoRoomInputSlot) return;
@@ -13966,7 +14617,18 @@ export function FreehandStudioCanvas({
       if (obj.type !== "image" || obj.photoRoomInputSlot) return;
       const meta = obj.photoImageAdjustments ?? null;
       const baseSnapshotUrl = meta?.baseSnapshotUrl ?? obj.src;
-      const selection: PhotoAdjSelection | null = meta?.selection ?? null;
+      const rects = photoRectMarqueeSelectionRef.current;
+      const polys = photoPolygonMarqueeSelectionRef.current;
+      const ellipses = photoEllipseMarqueeSelectionRef.current;
+      const hasMarquee = rects.length > 0 || polys.length > 0 || ellipses.length > 0;
+      const selection: PhotoAdjSelection | null = hasMarquee
+        ? {
+            rects: rects.map((r) => ({ ...r })),
+            polys: polys.map((ring) => ring.map((p) => ({ ...p }))),
+            ellipses: ellipses.map((e) => ({ ...e })),
+            featherPx: photoMarqueeMaskFeatherPxRef.current,
+          }
+        : meta?.selection ?? null;
       let histogram: number[] = new Array<number>(256).fill(0);
       try {
         const { canvas, ctx } = await loadImageToBrushCanvas(baseSnapshotUrl, obj.width, obj.height);
@@ -13980,6 +14642,7 @@ export function FreehandStudioCanvas({
       }
       const base = meta ?? defaultPhotoImageAdjustments(baseSnapshotUrl);
       const session: PhotoAdjustmentsSession = {
+        mode: "image",
         baseSnapshotUrl,
         brightness: base.brightness,
         contrast: base.contrast,
@@ -13998,7 +14661,61 @@ export function FreehandStudioCanvas({
     [],
   );
 
-  /** PhotoRoom: aplica cambios en vivo del modal (sin registrar historial hasta aceptar). */
+  const openAdjustmentLayerEditor = useCallback((adj: AdjustmentLayerObject) => {
+    const session: PhotoAdjustmentsSession = {
+      mode: "adjustmentLayer",
+      objectId: adj.id,
+      brightness: adj.adjustment.brightness,
+      contrast: adj.adjustment.contrast,
+      saturation: adj.adjustment.saturation,
+      levels: { ...adj.adjustment.levels },
+      openMeta: {
+        brightness: adj.adjustment.brightness,
+        contrast: adj.adjustment.contrast,
+        saturation: adj.adjustment.saturation,
+        levels: { ...adj.adjustment.levels },
+      },
+    };
+    ++photoAdjustmentsApplyGenRef.current;
+    setPhotoAdjustmentsHistogram(new Array<number>(256).fill(0));
+    setPhotoAdjustmentsSession(session);
+    photoAdjustmentsSessionRef.current = session;
+  }, []);
+
+  const createAdjustmentLayer = useCallback(() => {
+    const selId =
+      primarySelectedId ?? (selectedIds.size === 1 ? Array.from(selectedIds)[0] : null);
+    const ab = pickPrimaryArtboard(artboards, null);
+    const r = ab ? artboardToRect(ab) : { x: 0, y: 0, w: 1920, h: 1080 };
+    const adj: AdjustmentLayerObject = {
+      ...defaultObj({
+        name: adjustmentLayerDisplayName("levels"),
+        x: r.x,
+        y: r.y,
+        width: r.w,
+        height: r.h,
+      }),
+      type: "adjustmentLayer",
+      adjustmentKind: "levels",
+      adjustment: defaultAdjustmentLayerSettings(),
+      fill: solidFill("none"),
+      stroke: "none",
+      strokeWidth: 0,
+    };
+    setObjects((prev) => {
+      const insertAfter = selId ? prev.findIndex((o) => o.id === selId) : prev.length - 1;
+      const idx = Math.max(-1, insertAfter);
+      const next = [...prev];
+      next.splice(idx + 1, 0, adj);
+      pushHistory(next, new Set([adj.id]));
+      return next;
+    });
+    setSelectedIds(new Set([adj.id]));
+    setPrimarySelectedId(adj.id);
+    openAdjustmentLayerEditor(adj);
+  }, [artboards, openAdjustmentLayerEditor, primarySelectedId, pushHistory, selectedIds]);
+
+  /** Aplica cambios en vivo del modal (sin registrar historial hasta aceptar). */
   const updatePhotoImageAdjustments = useCallback(
     (values: {
       brightness: number;
@@ -14008,13 +14725,22 @@ export function FreehandStudioCanvas({
     }) => {
       const sess = photoAdjustmentsSessionRef.current;
       if (!sess) return;
-      const merged: PhotoAdjustmentsSession = {
-        ...sess,
-        brightness: values.brightness,
-        contrast: values.contrast,
-        saturation: values.saturation,
-        levels: { ...values.levels },
-      };
+      const merged: PhotoAdjustmentsSession =
+        sess.mode === "adjustmentLayer"
+          ? {
+              ...sess,
+              brightness: values.brightness,
+              contrast: values.contrast,
+              saturation: values.saturation,
+              levels: { ...values.levels },
+            }
+          : {
+              ...sess,
+              brightness: values.brightness,
+              contrast: values.contrast,
+              saturation: values.saturation,
+              levels: { ...values.levels },
+            };
       setPhotoAdjustmentsSession(merged);
       photoAdjustmentsSessionRef.current = merged;
       const p = applyPhotoImageAdjustmentsSession(merged, { recordHistory: false });
@@ -14023,46 +14749,62 @@ export function FreehandStudioCanvas({
     [applyPhotoImageAdjustmentsSession],
   );
 
-  /** PhotoRoom: vuelve a valores neutros sin cerrar el modal (re-hornea en vivo). */
   const resetPhotoImageAdjustmentsModal = useCallback(() => {
     const sess = photoAdjustmentsSessionRef.current;
     if (!sess) return;
-    const neutralLevels = defaultPhotoImageAdjustments(sess.baseSnapshotUrl).levels;
-    const merged: PhotoAdjustmentsSession = {
-      ...sess,
-      brightness: 0,
-      contrast: 0,
-      saturation: 0,
-      levels: { ...neutralLevels },
-    };
+    const neutralLevels = defaultAdjustmentLayerSettings().levels;
+    const merged: PhotoAdjustmentsSession =
+      sess.mode === "adjustmentLayer"
+        ? {
+            ...sess,
+            brightness: 0,
+            contrast: 0,
+            saturation: 0,
+            levels: { ...neutralLevels },
+          }
+        : {
+            ...sess,
+            brightness: 0,
+            contrast: 0,
+            saturation: 0,
+            levels: { ...defaultPhotoImageAdjustments(sess.baseSnapshotUrl).levels },
+          };
     setPhotoAdjustmentsSession(merged);
     photoAdjustmentsSessionRef.current = merged;
     const p = applyPhotoImageAdjustmentsSession(merged, { recordHistory: false });
     photoAdjustmentsScrubApplyRef.current = p;
   }, [applyPhotoImageAdjustmentsSession]);
 
-  /** PhotoRoom: cancela el modal y revierte la capa al estado previo a abrirlo. */
   const cancelPhotoImageAdjustments = useCallback(() => {
     const sess = photoAdjustmentsSessionRef.current;
     ++photoAdjustmentsApplyGenRef.current;
     if (sess) {
       const oid = sess.objectId;
-      setObjects((prev) =>
-        prev.map((obj) => {
-          if (obj.id !== oid || obj.type !== "image") return obj;
-          const rest = { ...obj } as ImageObject & { photoImageAdjustments?: unknown };
-          if (sess.openMeta) rest.photoImageAdjustments = sess.openMeta;
-          else delete rest.photoImageAdjustments;
-          return { ...rest, src: sess.openSrc } as ImageObject;
-        }),
-      );
+      if (sess.mode === "adjustmentLayer") {
+        setObjects((prev) =>
+          prev.map((obj) =>
+            obj.id === oid && obj.type === "adjustmentLayer"
+              ? ({ ...obj, adjustment: { ...sess.openMeta, levels: { ...sess.openMeta.levels } } } as AdjustmentLayerObject)
+              : obj,
+          ),
+        );
+      } else {
+        setObjects((prev) =>
+          prev.map((obj) => {
+            if (obj.id !== oid || obj.type !== "image") return obj;
+            const rest = { ...obj } as ImageObject & { photoImageAdjustments?: unknown };
+            if (sess.openMeta) rest.photoImageAdjustments = sess.openMeta;
+            else delete rest.photoImageAdjustments;
+            return { ...rest, src: sess.openSrc } as ImageObject;
+          }),
+        );
+      }
     }
     setPhotoAdjustmentsSession(null);
     photoAdjustmentsSessionRef.current = null;
     setPhotoAdjustmentsHistogram(null);
   }, []);
 
-  /** PhotoRoom: acepta el modal registrando un único paso de historial. */
   const commitPhotoImageAdjustments = useCallback(async () => {
     const sess = photoAdjustmentsSessionRef.current;
     try {
@@ -14073,6 +14815,10 @@ export function FreehandStudioCanvas({
     if (sess) {
       const oid = sess.objectId;
       setObjects((prev) => {
+        if (sess.mode === "adjustmentLayer") {
+          pushHistory(prev, new Set([oid]));
+          return prev;
+        }
         const cur = prev.find((o) => o.id === oid) as ImageObject | undefined;
         if (cur && cur.src !== sess.openSrc) pushHistory(prev, new Set([oid]));
         return prev;
@@ -14915,8 +15661,130 @@ export function FreehandStudioCanvas({
   }, []);
 
   const objectClipboardRef = useRef<FreehandObject[] | null>(null);
+  /** Recorte raster copiado con la selección (capa imagen). */
+  const photoMarqueeRasterClipboardRef = useRef<PhotoMarqueeRasterClip | null>(null);
+  const activePixelSelectionRef = useRef<ActivePixelSelection | null>(null);
+  const photoMarqueePasteStaggerRef = useRef(0);
+
+  const copyPhotoMarqueeRasterSelection = useCallback(async () => {
+    const sel = selectedIdsRef.current;
+    const img = findSingleSelectedImageForPhotoMarquee(sel, objectsRef.current) as ImageObject | undefined;
+    if (!img?.src) return;
+    const rects = photoRectMarqueeSelectionRef.current;
+    const polys = photoPolygonMarqueeSelectionRef.current;
+    const ellipses = photoEllipseMarqueeSelectionRef.current;
+    const hasMarquee = rects.length > 0 || polys.length > 0 || ellipses.length > 0;
+    if (!hasMarquee) return;
+    try {
+      const dims = await loadImageNaturalSize(img.src);
+      if (!dims) {
+        setToast("No se pudo leer la imagen");
+        window.setTimeout(() => setToast(null), 2600);
+        return;
+      }
+      const mapper = buildPhotoMarqueePixelMapper(img, dims.w, dims.h);
+      const clip = await extractPhotoMarqueeRasterFromImage(
+        img.src,
+        img.id,
+        mapper,
+        rects.map((r) => ({ ...r })),
+        polys.map((ring) => ring.map((p) => ({ ...p }))),
+        ellipses.map((e) => ({ ...e })),
+        photoMarqueeMaskFeatherPxRef.current,
+      );
+      if (!clip) {
+        setToast("No hay píxeles en la selección");
+        window.setTimeout(() => setToast(null), 2400);
+        return;
+      }
+      photoMarqueeRasterClipboardRef.current = clip;
+      photoMarqueePasteStaggerRef.current = 0;
+      activePixelSelectionRef.current = {
+        sourceLayerId: clip.sourceLayerId,
+        naturalWidth: clip.naturalWidth,
+        naturalHeight: clip.naturalHeight,
+        pixelCrop: clip.pixelCrop,
+        worldBounds: clip.worldBounds,
+      };
+      objectClipboardRef.current = null;
+      if (designerClipboardRef) designerClipboardRef.current = null;
+    } catch {
+      setToast("No se pudo copiar la imagen (CORS o origen bloqueado)");
+      window.setTimeout(() => setToast(null), 3200);
+    }
+  }, [designerClipboardRef]);
+
+  const pastePhotoMarqueeRaster = useCallback(() => {
+    if (!studioCaps.toolPhotoMarquee) return false;
+    const clip = photoMarqueeRasterClipboardRef.current;
+    if (!clip) return false;
+    const r0 = photoRectMarqueeSelectionRef.current;
+    const p0 = photoPolygonMarqueeSelectionRef.current;
+    const e0 = photoEllipseMarqueeSelectionRef.current;
+    const hasMarquee = r0.length > 0 || p0.length > 0 || e0.length > 0;
+    const ub = hasMarquee ? unionPhotoMarqueeWorldBounds(r0, p0, e0) : null;
+    const wb = ub && ub.w > 1e-6 && ub.h > 1e-6 ? ub : clip.worldBounds;
+    const stagger = photoMarqueePasteStaggerRef.current;
+    const off = stagger * PHOTO_MARQUEE_PASTE_STAGGER_PX;
+    photoMarqueePasteStaggerRef.current = stagger + 1;
+    const newObj: ImageObject = {
+      ...defaultObj({ name: `Selección ${objectsRef.current.filter((o) => o.type === "image").length + 1}` }),
+      type: "image",
+      x: wb.x + off,
+      y: wb.y + off,
+      width: Math.max(1e-6, wb.w),
+      height: Math.max(1e-6, wb.h),
+      fill: solidFill("none"),
+      stroke: "none",
+      strokeWidth: 0,
+      src: clip.dataUrl,
+      intrinsicRatio: clip.cropW / Math.max(clip.cropH, 1),
+    } as ImageObject;
+    const next = [...objectsRef.current, newObj];
+    const ns = new Set([clip.sourceLayerId]);
+    setObjects(next);
+    setSelectedIds(ns);
+    pushHistory(next, ns);
+    return true;
+  }, [pushHistory, studioCaps.toolPhotoMarquee]);
+
+  const commitPhotoMarqueeFloatToSource = useCallback(async (): Promise<boolean> => {
+    const lift = photoMarqueeFloatLiftRef.current;
+    const snap = photoMarqueeLastSelSnapshotRef.current;
+    const tf = photoMarqueeFloatTfRef.current;
+    if (!lift || !snap) return false;
+    const imgObj = objectsRef.current.find(
+      (o) => o.id === lift.sourceLayerId && o.type === "image",
+    ) as ImageObject | undefined;
+    if (!imgObj?.src) return false;
+    const u = unionPhotoMarqueeWorldBounds(snap.rects, snap.polys, snap.ellipses);
+    if (!u || u.w < 1e-9 || u.h < 1e-9) return false;
+    const dims = await loadImageNaturalSize(imgObj.src);
+    if (!dims) return false;
+    const mapper = buildPhotoMarqueePixelMapper(imgObj, dims.w, dims.h);
+    const url = await rasterCommitPhotoMarqueeFloatToImage(imgObj.src, mapper, lift, u, tf);
+    if (!url) {
+      setToast("No se pudo aplicar la selección al bitmap");
+      window.setTimeout(() => setToast(null), 2800);
+      return false;
+    }
+    const sel = selectedIdsRef.current;
+    setObjects((prev) => {
+      const next = prev.map((o) =>
+        o.id === imgObj.id && o.type === "image" ? ({ ...o, src: url } as ImageObject) : o,
+      );
+      pushHistory(next, sel);
+      queueMicrotask(() => onUpdateObjectsRef.current(next));
+      return next;
+    });
+    return true;
+  }, [pushHistory]);
+  commitPhotoMarqueeFloatToSourceRef.current = commitPhotoMarqueeFloatToSource;
 
   const copySelectedObjects = useCallback(() => {
+    photoMarqueeRasterClipboardRef.current = null;
+    activePixelSelectionRef.current = null;
+    photoMarqueePasteStaggerRef.current = 0;
     const sel = selectedIdsRef.current;
     const objs = objectsRef.current.filter((o) => sel.has(o.id) && !o.photoRoomInputSlot);
     if (objs.length === 0) return;
@@ -14931,6 +15799,9 @@ export function FreehandStudioCanvas({
   }, [designerMode, designerClipboardRef, designerClipboardSourcePageIdRef, designerActivePageId]);
 
   const pasteClipboardObjects = useCallback(() => {
+    if (photoMarqueeRasterClipboardRef.current) {
+      if (pastePhotoMarqueeRaster()) return;
+    }
     const designerClip = designerClipboardRef?.current;
     const usedDesignerClip = !!(designerMode && designerClip && designerClip.length > 0);
     const clip = usedDesignerClip ? designerClip : objectClipboardRef.current;
@@ -14963,6 +15834,7 @@ export function FreehandStudioCanvas({
     designerClipboardRef,
     designerClipboardSourcePageIdRef,
     designerActivePageId,
+    pastePhotoMarqueeRaster,
   ]);
 
   const convertTextToOutlines = useCallback(async () => {
@@ -16711,6 +17583,21 @@ export function FreehandStudioCanvas({
       if ((e.key === "v" || e.key === "V") && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault(); setActiveTool("select"); return;
       }
+      if ((e.key === "m" || e.key === "M") && !e.metaKey && !e.ctrlKey && !e.altKey && studioCaps.toolPhotoMarquee) {
+        e.preventDefault();
+        setActiveTool("rectMarquee");
+        return;
+      }
+      if ((e.key === "l" || e.key === "L") && !e.metaKey && !e.ctrlKey && !e.altKey && studioCaps.toolPhotoMarquee) {
+        e.preventDefault();
+        setActiveTool(e.shiftKey ? "polygonMarquee" : "lassoMarquee");
+        return;
+      }
+      if ((e.key === "o" || e.key === "O") && !e.metaKey && !e.ctrlKey && !e.altKey && studioCaps.toolPhotoMarquee) {
+        e.preventDefault();
+        setActiveTool("ellipseMarquee");
+        return;
+      }
       if ((e.key === "b" || e.key === "B") && !e.metaKey && !e.ctrlKey && !e.altKey && studioCaps.toolBrush) {
         e.preventDefault();
         setActiveTool("brush");
@@ -16812,11 +17699,43 @@ export function FreehandStudioCanvas({
 
       if ((e.metaKey || e.ctrlKey) && e.code === "KeyC") {
         e.preventDefault();
+        const srcImg = findSingleSelectedImageForPhotoMarquee(
+          selectedIdsRef.current,
+          objectsRef.current,
+        );
+        if (
+          studioCaps.toolPhotoMarquee &&
+          srcImg &&
+          (photoRectMarqueeSelectionRef.current.length > 0 ||
+            photoPolygonMarqueeSelectionRef.current.length > 0 ||
+            photoEllipseMarqueeSelectionRef.current.length > 0)
+        ) {
+          void copyPhotoMarqueeRasterSelection();
+          return;
+        }
         copySelectedObjects();
         return;
       }
       if ((e.metaKey || e.ctrlKey) && e.code === "KeyX") {
         e.preventDefault();
+        const srcImg = findSingleSelectedImageForPhotoMarquee(
+          selectedIdsRef.current,
+          objectsRef.current,
+        );
+        if (
+          studioCaps.toolPhotoMarquee &&
+          srcImg &&
+          (photoRectMarqueeSelectionRef.current.length > 0 ||
+            photoPolygonMarqueeSelectionRef.current.length > 0 ||
+            photoEllipseMarqueeSelectionRef.current.length > 0)
+        ) {
+          void copyPhotoMarqueeRasterSelection().then(() => {
+            setPhotoRectMarqueeSelection([]);
+            setPhotoPolygonMarqueeSelection([]);
+            setPhotoEllipseMarqueeSelection([]);
+          });
+          return;
+        }
         cutSelectedObjects();
         return;
       }
@@ -16830,6 +17749,56 @@ export function FreehandStudioCanvas({
       if ((e.key === "Delete" || e.key === "Backspace")) {
         e.preventDefault();
         if (activeTool === "directSelect" && selectedPoints.size > 0) { deleteSelectedPoints(); return; }
+        const delImg = findSingleSelectedImageForPhotoMarquee(
+          selectedIdsRef.current,
+          objectsRef.current,
+        ) as ImageObject | undefined;
+        if (
+          studioCaps.toolPhotoMarquee &&
+          delImg?.src &&
+          (photoRectMarqueeSelectionRef.current.length > 0 ||
+            photoPolygonMarqueeSelectionRef.current.length > 0 ||
+            photoEllipseMarqueeSelectionRef.current.length > 0)
+        ) {
+          void (async () => {
+            const dims = await loadImageNaturalSize(delImg.src);
+            if (!dims) {
+              setToast("No se pudo leer la imagen");
+              window.setTimeout(() => setToast(null), 2600);
+              return;
+            }
+            const mapper = buildPhotoMarqueePixelMapper(delImg, dims.w, dims.h);
+            const url = await rasterErasePhotoMarqueeRegionFromImage(
+              delImg.src,
+              mapper,
+              photoRectMarqueeSelectionRef.current.map((r) => ({ ...r })),
+              photoPolygonMarqueeSelectionRef.current.map((ring) => ring.map((p) => ({ ...p }))),
+              photoEllipseMarqueeSelectionRef.current.map((el) => ({ ...el })),
+              photoMarqueeMaskFeatherPxRef.current,
+            );
+            if (!url) {
+              setToast("No se pudo borrar la zona del bitmap");
+              window.setTimeout(() => setToast(null), 2600);
+              return;
+            }
+            const id = delImg.id;
+            const sel = selectedIdsRef.current;
+            setObjects((prev) => {
+              const next = prev.map((o) =>
+                o.id === id && o.type === "image" ? ({ ...o, src: url } as ImageObject) : o,
+              );
+              pushHistory(next, sel);
+              queueMicrotask(() => onUpdateObjectsRef.current(next));
+              return next;
+            });
+            setPhotoRectMarqueeSelection([]);
+            setPhotoPolygonMarqueeSelection([]);
+            setPhotoEllipseMarqueeSelection([]);
+            setPhotoMarqueeMaskFeatherPx(0);
+            clearPhotoMarqueeFloatPreview();
+          })();
+          return;
+        }
         deleteSelected();
         return;
       }
@@ -16887,6 +17856,66 @@ export function FreehandStudioCanvas({
 
         const sel = selectedIdsRef.current;
         const sp = selectedPointsRef.current;
+        const marqueeSrcImg = findSingleSelectedImageForPhotoMarquee(sel, objectsRef.current) as
+          | ImageObject
+          | undefined;
+
+        if (
+          studioCaps.toolPhotoMarquee &&
+          marqueeSrcImg?.src &&
+          (activeTool === "select" ||
+            activeTool === "rectMarquee" ||
+            activeTool === "ellipseMarquee" ||
+            activeTool === "lassoMarquee" ||
+            activeTool === "polygonMarquee") &&
+          (photoRectMarqueeSelectionRef.current.length > 0 ||
+            photoPolygonMarqueeSelectionRef.current.length > 0 ||
+            photoEllipseMarqueeSelectionRef.current.length > 0)
+        ) {
+          e.preventDefault();
+          const applyMarqueeDelta = () => {
+            const t = translatePhotoMarqueeCommitted(
+              mdx,
+              mdy,
+              photoRectMarqueeSelectionRef.current,
+              photoPolygonMarqueeSelectionRef.current,
+              photoEllipseMarqueeSelectionRef.current,
+            );
+            setPhotoRectMarqueeSelection(t.rects);
+            setPhotoPolygonMarqueeSelection(t.polys);
+            setPhotoEllipseMarqueeSelection(t.ellipses);
+          };
+          if (!photoMarqueeFloatLiftRef.current) {
+            if (photoMarqueeFloatExtractingRef.current) return;
+            photoMarqueeFloatExtractingRef.current = true;
+            void (async () => {
+              try {
+                const dims = await loadImageNaturalSize(marqueeSrcImg.src);
+                if (!dims) return;
+                const mapper = buildPhotoMarqueePixelMapper(marqueeSrcImg, dims.w, dims.h);
+                const lift = await buildPhotoMarqueeFloatLiftFromMarquee(
+                  marqueeSrcImg.src,
+                  marqueeSrcImg.id,
+                  mapper,
+                  photoRectMarqueeSelectionRef.current.map((r) => ({ ...r })),
+                  photoPolygonMarqueeSelectionRef.current.map((ring) => ring.map((p) => ({ ...p }))),
+                  photoEllipseMarqueeSelectionRef.current.map((el) => ({ ...el })),
+                  photoMarqueeMaskFeatherPxRef.current,
+                );
+                if (!lift) return;
+                photoMarqueeFloatLiftRef.current = lift;
+                setPhotoMarqueeFloatLift(lift);
+                setPhotoMarqueeFloatTf({ rotationDeg: 0, scaleX: 1, scaleY: 1 });
+                applyMarqueeDelta();
+              } finally {
+                photoMarqueeFloatExtractingRef.current = false;
+              }
+            })();
+            return;
+          }
+          applyMarqueeDelta();
+          return;
+        }
 
         if (activeTool === "directSelect" && sp.size > 0) {
           e.preventDefault();
@@ -16967,6 +17996,42 @@ export function FreehandStudioCanvas({
           return;
         }
         const dsEsc = dragStateRef.current?.type;
+        if (dsEsc === "photoMarqueeNudge") {
+          const dsn = dragStateRef.current;
+          if (dsn?.type === "photoMarqueeNudge" && dsn.photoMarqueeSnapRects) {
+            setPhotoRectMarqueeSelection(dsn.photoMarqueeSnapRects.map((r) => ({ ...r })));
+            setPhotoPolygonMarqueeSelection(
+              (dsn.photoMarqueeSnapPolys ?? []).map((ring) => ring.map((p) => ({ ...p }))),
+            );
+            setPhotoEllipseMarqueeSelection(
+              (dsn.photoMarqueeSnapEllipses ?? []).map((el) => ({ ...el })),
+            );
+          }
+          clearPhotoMarqueeFloatPreview();
+          dragStateRef.current = null;
+          setDragState(null);
+          return;
+        }
+        if (
+          studioCaps.toolPhotoMarquee &&
+          dsEsc &&
+          isPhotoMarqueeStudioDragType(dsEsc)
+        ) {
+          dragStateRef.current = null;
+          setDragState(null);
+          return;
+        }
+        if (
+          studioCaps.toolPhotoMarquee &&
+          (photoRectMarqueeSelectionRef.current.length > 0 ||
+            photoPolygonMarqueeSelectionRef.current.length > 0 ||
+            photoEllipseMarqueeSelectionRef.current.length > 0)
+        ) {
+          setPhotoRectMarqueeSelection([]);
+          setPhotoPolygonMarqueeSelection([]);
+          setPhotoEllipseMarqueeSelection([]);
+          return;
+        }
         if (canvasZenMode) {
           setCanvasZenMode(false);
           scheduleFitAllAfterLayout();
@@ -17053,6 +18118,7 @@ export function FreehandStudioCanvas({
       undo, redo, pushHistory, deleteSelected, duplicateSelected, groupSelected,
       ungroupSelected, bringForward, sendBackward, finishPenPath, deleteSelectedPoints, exitIsolation,
       copySelectedObjects, cutSelectedObjects, pasteClipboardObjects, pasteInside, quickExportSelectionPng, convertTextToOutlines,
+      copyPhotoMarqueeRasterSelection,
       designerMode, onDesignerNavigatePage, imageFrameContentEditId, clipContentEditId, canvasZenMode, scheduleFitAllAfterLayout,
       isPhotoRoomStudioEmbed, studioCaps, finishBrushStroke]);
 
@@ -17195,6 +18261,296 @@ export function FreehandStudioCanvas({
           return;
         }
       }
+    }
+
+    // ── Marco raster: lazo poligonal (clics sucesivos) ─
+    if (studioCaps.toolPhotoMarquee && e.button === 0 && dragStateRef.current?.type === "photoPolygonMarquee") {
+      e.preventDefault();
+      const ds = dragStateRef.current;
+      const verts = ds.photoPolygonVertices ?? [];
+      if (verts.length < 1) {
+        dragStateRef.current = null;
+        setDragState(null);
+        return;
+      }
+      const posPoly = screenToCanvas(e.clientX, e.clientY);
+      const closePx = PHOTO_POLY_CLOSE_PX / viewport.zoom;
+      const commitPoly = (ring: Point[]) => {
+        const additive = !!ds.photoMarqueeAdditive;
+        const subtract = !!ds.photoMarqueeSubtract;
+        const mode = subtract ? "subtract" : additive ? "add" : "replace";
+        dragStateRef.current = null;
+        setDragState(null);
+        const prevRects = photoRectMarqueeSelection;
+        const prevPoly = photoPolygonMarqueeSelection;
+        const prevEllipses = photoEllipseMarqueeSelection;
+        const base = buildPhotoMarqueePolyBase(prevPoly, prevRects, prevEllipses, mode);
+        const next = mergePhotoPolygonSelection(base, ring, mode);
+        setPhotoRectMarqueeSelection([]);
+        setPhotoEllipseMarqueeSelection([]);
+        setPhotoPolygonMarqueeSelection(next);
+      };
+      if (e.detail >= 2) {
+        const ring =
+          verts.length >= 3 ? verts : verts.length >= 2 ? [...verts, posPoly] : [...verts, posPoly];
+        if (ring.length >= 3) commitPoly(ring);
+        return;
+      }
+      if (verts.length >= 3) {
+        const d0 = Math.hypot(posPoly.x - verts[0]!.x, posPoly.y - verts[0]!.y);
+        if (d0 <= closePx) {
+          commitPoly(verts);
+          return;
+        }
+      }
+      const nextVerts = [...verts, posPoly];
+      const nextr = {
+        ...ds,
+        photoPolygonVertices: nextVerts,
+        currentCanvas: posPoly,
+      };
+      dragStateRef.current = nextr;
+      setDragState(nextr);
+      return;
+    }
+
+    // ── Marco raster: rect / elipse / lazo / polígono (Ctrl/⌘ suma, Alt resta) ─
+    if (studioCaps.toolPhotoMarquee && activeTool === "rectMarquee" && e.button === 0) {
+      e.preventDefault();
+      setSelectedPoints(new Map());
+      photoRectMarqueePendingRef.current = null;
+      const committed = photoRectMarqueeSelection;
+      const insideAny = photoMarqueePointInsideCommitted(
+        pos,
+        committed,
+        photoPolygonMarqueeSelection,
+        photoEllipseMarqueeSelection,
+      );
+      const hasSelection =
+        committed.length > 0 ||
+        photoPolygonMarqueeSelection.length > 0 ||
+        photoEllipseMarqueeSelection.length > 0;
+      const subtractPointer = isPhotoMarqueeSubtractPointerHeld(e);
+      const additivePointer = isPhotoMarqueeAdditivePointerHeld(e);
+      const restarSeleccion =
+        hasSelection && (subtractPointer || photoRectMarqueeAltModRef.current);
+      const sumarSeleccion =
+        hasSelection &&
+        !restarSeleccion &&
+        (additivePointer || photoRectMarqueeAddModRef.current);
+      if (hasSelection && !insideAny && !restarSeleccion && !sumarSeleccion) {
+        setSelectedPoints(new Map());
+        photoRectMarqueePendingRef.current = null;
+        setPhotoRectMarqueeSelection([]);
+        setPhotoPolygonMarqueeSelection([]);
+        setPhotoEllipseMarqueeSelection([]);
+        return;
+      }
+      if (insideAny && !sumarSeleccion && !restarSeleccion) {
+        photoRectMarqueePendingRef.current = { clientX: e.clientX, clientY: e.clientY };
+        return;
+      }
+      const prDrag = {
+        type: "photoRectMarquee" as const,
+        startX: e.clientX,
+        startY: e.clientY,
+        marqueeOrigin: pos,
+        currentCanvas: pos,
+        photoMarqueeSubtract: restarSeleccion || (!hasSelection && subtractPointer),
+        photoMarqueeAdditive: restarSeleccion
+          ? false
+          : hasSelection
+            ? sumarSeleccion
+            : additivePointer,
+      };
+      dragStateRef.current = prDrag;
+      setDragState(prDrag);
+      const pe = e.nativeEvent as PointerEvent;
+      if (typeof pe.pointerId === "number") {
+        try {
+          (e.currentTarget as HTMLElement).setPointerCapture(pe.pointerId);
+        } catch {
+          /* noop */
+        }
+      }
+      return;
+    }
+
+    if (studioCaps.toolPhotoMarquee && activeTool === "ellipseMarquee" && e.button === 0) {
+      e.preventDefault();
+      setSelectedPoints(new Map());
+      photoRectMarqueePendingRef.current = null;
+      const insideAny = photoMarqueePointInsideCommitted(
+        pos,
+        photoRectMarqueeSelection,
+        photoPolygonMarqueeSelection,
+        photoEllipseMarqueeSelection,
+      );
+      const hasSelection =
+        photoRectMarqueeSelection.length > 0 ||
+        photoPolygonMarqueeSelection.length > 0 ||
+        photoEllipseMarqueeSelection.length > 0;
+      const subtractPointer = isPhotoMarqueeSubtractPointerHeld(e);
+      const additivePointer = isPhotoMarqueeAdditivePointerHeld(e);
+      const restarSeleccion =
+        hasSelection && (subtractPointer || photoRectMarqueeAltModRef.current);
+      const sumarSeleccion =
+        hasSelection &&
+        !restarSeleccion &&
+        (additivePointer || photoRectMarqueeAddModRef.current);
+      if (hasSelection && !insideAny && !restarSeleccion && !sumarSeleccion) {
+        setSelectedPoints(new Map());
+        photoRectMarqueePendingRef.current = null;
+        setPhotoRectMarqueeSelection([]);
+        setPhotoPolygonMarqueeSelection([]);
+        setPhotoEllipseMarqueeSelection([]);
+        return;
+      }
+      if (insideAny && !sumarSeleccion && !restarSeleccion) {
+        photoRectMarqueePendingRef.current = { clientX: e.clientX, clientY: e.clientY };
+        return;
+      }
+      const prDrag = {
+        type: "photoEllipseMarquee" as const,
+        startX: e.clientX,
+        startY: e.clientY,
+        marqueeOrigin: pos,
+        currentCanvas: pos,
+        photoMarqueeSubtract: restarSeleccion || (!hasSelection && subtractPointer),
+        photoMarqueeAdditive: restarSeleccion
+          ? false
+          : hasSelection
+            ? sumarSeleccion
+            : additivePointer,
+      };
+      dragStateRef.current = prDrag;
+      setDragState(prDrag);
+      const pe = e.nativeEvent as PointerEvent;
+      if (typeof pe.pointerId === "number") {
+        try {
+          (e.currentTarget as HTMLElement).setPointerCapture(pe.pointerId);
+        } catch {
+          /* noop */
+        }
+      }
+      return;
+    }
+
+    if (studioCaps.toolPhotoMarquee && activeTool === "lassoMarquee" && e.button === 0) {
+      e.preventDefault();
+      setSelectedPoints(new Map());
+      photoRectMarqueePendingRef.current = null;
+      const hasSelection =
+        photoRectMarqueeSelection.length > 0 ||
+        photoPolygonMarqueeSelection.length > 0 ||
+        photoEllipseMarqueeSelection.length > 0;
+      const insideAny = photoMarqueePointInsideCommitted(
+        pos,
+        photoRectMarqueeSelection,
+        photoPolygonMarqueeSelection,
+        photoEllipseMarqueeSelection,
+      );
+      const subtractPointer = isPhotoMarqueeSubtractPointerHeld(e);
+      const additivePointer = isPhotoMarqueeAdditivePointerHeld(e);
+      const restarSeleccion =
+        hasSelection && (subtractPointer || photoRectMarqueeAltModRef.current);
+      const sumarSeleccion =
+        hasSelection &&
+        !restarSeleccion &&
+        (additivePointer || photoRectMarqueeAddModRef.current);
+      if (hasSelection && !insideAny && !restarSeleccion && !sumarSeleccion) {
+        setSelectedPoints(new Map());
+        photoRectMarqueePendingRef.current = null;
+        setPhotoRectMarqueeSelection([]);
+        setPhotoPolygonMarqueeSelection([]);
+        setPhotoEllipseMarqueeSelection([]);
+        return;
+      }
+      if (insideAny && !sumarSeleccion && !restarSeleccion) {
+        photoRectMarqueePendingRef.current = { clientX: e.clientX, clientY: e.clientY };
+        return;
+      }
+      const prDrag = {
+        type: "photoLassoMarquee" as const,
+        startX: e.clientX,
+        startY: e.clientY,
+        photoLassoPoints: [pos],
+        currentCanvas: pos,
+        photoMarqueeSubtract: restarSeleccion || (!hasSelection && subtractPointer),
+        photoMarqueeAdditive: restarSeleccion
+          ? false
+          : hasSelection
+            ? sumarSeleccion
+            : additivePointer,
+      };
+      dragStateRef.current = prDrag;
+      setDragState(prDrag);
+      const pe = e.nativeEvent as PointerEvent;
+      if (typeof pe.pointerId === "number") {
+        try {
+          (e.currentTarget as HTMLElement).setPointerCapture(pe.pointerId);
+        } catch {
+          /* noop */
+        }
+      }
+      return;
+    }
+
+    if (
+      studioCaps.toolPhotoMarquee &&
+      activeTool === "polygonMarquee" &&
+      e.button === 0 &&
+      dragStateRef.current?.type !== "photoPolygonMarquee"
+    ) {
+      e.preventDefault();
+      setSelectedPoints(new Map());
+      photoRectMarqueePendingRef.current = null;
+      const hasSelection =
+        photoRectMarqueeSelection.length > 0 ||
+        photoPolygonMarqueeSelection.length > 0 ||
+        photoEllipseMarqueeSelection.length > 0;
+      const insideAny = photoMarqueePointInsideCommitted(
+        pos,
+        photoRectMarqueeSelection,
+        photoPolygonMarqueeSelection,
+        photoEllipseMarqueeSelection,
+      );
+      const subtractPointer = isPhotoMarqueeSubtractPointerHeld(e);
+      const additivePointer = isPhotoMarqueeAdditivePointerHeld(e);
+      const restarSeleccion =
+        hasSelection && (subtractPointer || photoRectMarqueeAltModRef.current);
+      const sumarSeleccion =
+        hasSelection &&
+        !restarSeleccion &&
+        (additivePointer || photoRectMarqueeAddModRef.current);
+      if (hasSelection && !insideAny && !restarSeleccion && !sumarSeleccion) {
+        setSelectedPoints(new Map());
+        photoRectMarqueePendingRef.current = null;
+        setPhotoRectMarqueeSelection([]);
+        setPhotoPolygonMarqueeSelection([]);
+        setPhotoEllipseMarqueeSelection([]);
+        return;
+      }
+      if (insideAny && !sumarSeleccion && !restarSeleccion) {
+        photoRectMarqueePendingRef.current = { clientX: e.clientX, clientY: e.clientY };
+        return;
+      }
+      const prDrag = {
+        type: "photoPolygonMarquee" as const,
+        startX: e.clientX,
+        startY: e.clientY,
+        photoPolygonVertices: [pos],
+        currentCanvas: pos,
+        photoMarqueeSubtract: restarSeleccion || (!hasSelection && subtractPointer),
+        photoMarqueeAdditive: restarSeleccion
+          ? false
+          : hasSelection
+            ? sumarSeleccion
+            : additivePointer,
+      };
+      dragStateRef.current = prDrag;
+      setDragState(prDrag);
+      return;
     }
 
     // ── Brush (pincel raster sobre capa imagen; clic vacío = nueva capa al tamaño del pliego) ─
@@ -18406,6 +19762,35 @@ export function FreehandStudioCanvas({
       }
     }
 
+    // Designer: V + marco raster confirmado → arrastrar píxeles (float lift).
+    if (
+      studioCaps.toolPhotoMarquee &&
+      activeTool === "select" &&
+      e.button === 0 &&
+      !extendSel &&
+      (photoRectMarqueeSelectionRef.current.length > 0 ||
+        photoPolygonMarqueeSelectionRef.current.length > 0 ||
+        photoEllipseMarqueeSelectionRef.current.length > 0)
+    ) {
+      const insideMarquee = photoMarqueePointInsideCommitted(
+        pos,
+        photoRectMarqueeSelectionRef.current,
+        photoPolygonMarqueeSelectionRef.current,
+        photoEllipseMarqueeSelectionRef.current,
+      );
+      if (!insideMarquee) {
+        setPhotoRectMarqueeSelection([]);
+        setPhotoPolygonMarqueeSelection([]);
+        setPhotoEllipseMarqueeSelection([]);
+      } else if (!e.altKey) {
+        const sole = findSingleSelectedImageForPhotoMarquee(selectedIds, objects) as ImageObject | undefined;
+        if (sole?.src && sole.visible && !sole.locked) {
+          beginPhotoMarqueeNudgeDrag(e.clientX, e.clientY, sole);
+          return;
+        }
+      }
+    }
+
     // Todos los objetos bajo el cursor (frente → fondo). Con solape + Mayús, elegir uno que aún no esté entero en la selección.
     const hits: FreehandObject[] = [];
     for (let i = objects.length - 1; i >= 0; i--) {
@@ -19181,6 +20566,79 @@ export function FreehandStudioCanvas({
   const handleMouseMove = useCallback((e: ReactMouseEvent) => {
     /** Ref sincrónico; el state de React puede no haber hecho commit tras mousedown/setDragState. */
     const dragState = dragStateRef.current;
+    const prPending = photoRectMarqueePendingRef.current;
+    if (
+      prPending &&
+      (e.buttons & 1) &&
+      !dragState &&
+      studioCaps.toolPhotoMarquee &&
+      (activeTool === "rectMarquee" ||
+        activeTool === "ellipseMarquee" ||
+        activeTool === "lassoMarquee" ||
+        activeTool === "polygonMarquee")
+    ) {
+      const dist = Math.hypot(e.clientX - prPending.clientX, e.clientY - prPending.clientY);
+      if (dist > 3) {
+        photoRectMarqueePendingRef.current = null;
+        const subtractFromPending =
+          photoRectMarqueeAltModRef.current || isPhotoMarqueeSubtractPointerHeld(e);
+        const additiveFromPending =
+          !subtractFromPending &&
+          (photoRectMarqueeAddModRef.current || isPhotoMarqueeAdditivePointerHeld(e));
+        if (!additiveFromPending && !subtractFromPending) {
+          const sole = findSingleSelectedImageForPhotoMarquee(
+            selectedIdsRef.current,
+            objectsRef.current,
+          ) as ImageObject | undefined;
+          if (sole?.src && sole.visible && !sole.locked) {
+            beginPhotoMarqueeNudgeDrag(prPending.clientX, prPending.clientY, sole);
+            return;
+          }
+          setPhotoRectMarqueeSelection([]);
+          setPhotoPolygonMarqueeSelection([]);
+          setPhotoEllipseMarqueeSelection([]);
+        }
+        const origin = screenToCanvas(prPending.clientX, prPending.clientY);
+        const cur = screenToCanvas(e.clientX, e.clientY);
+        const common = {
+          startX: prPending.clientX,
+          startY: prPending.clientY,
+          photoMarqueeSubtract: subtractFromPending,
+          photoMarqueeAdditive: additiveFromPending,
+        };
+        const prNext =
+          activeTool === "rectMarquee"
+            ? ({
+                type: "photoRectMarquee" as const,
+                ...common,
+                marqueeOrigin: origin,
+                currentCanvas: cur,
+              })
+            : activeTool === "ellipseMarquee"
+              ? ({
+                  type: "photoEllipseMarquee" as const,
+                  ...common,
+                  marqueeOrigin: origin,
+                  currentCanvas: cur,
+                })
+              : activeTool === "lassoMarquee"
+                ? ({
+                    type: "photoLassoMarquee" as const,
+                    ...common,
+                    photoLassoPoints: [origin, cur],
+                    currentCanvas: cur,
+                  })
+                : ({
+                    type: "photoPolygonMarquee" as const,
+                    ...common,
+                    photoPolygonVertices: [origin],
+                    currentCanvas: cur,
+                  });
+        dragStateRef.current = prNext;
+        setDragState(prNext);
+        return;
+      }
+    }
     if (!dragState) {
       const pos = screenToCanvas(e.clientX, e.clientY);
       if (activeTool === "pen" && !isPenDrawing) {
@@ -19299,7 +20757,12 @@ export function FreehandStudioCanvas({
       if (
         !spaceHeld &&
         ((studioCaps.toolCloneStamp && activeTool === "cloneStamp") ||
-          (studioCaps.toolPhotoGradient && activeTool === "photoGradient"))
+          (studioCaps.toolPhotoGradient && activeTool === "photoGradient") ||
+          (studioCaps.toolPhotoMarquee &&
+            (activeTool === "rectMarquee" ||
+              activeTool === "ellipseMarquee" ||
+              activeTool === "lassoMarquee" ||
+              activeTool === "polygonMarquee")))
       ) {
         const th = 8 / viewport.zoom;
         let blocked = false;
@@ -19312,6 +20775,15 @@ export function FreehandStudioCanvas({
             th,
             photoGradientDrawSurface(studioCaps.layerMask, maskEditObjectIdRef.current),
             maskEditObjectIdRef.current,
+          );
+        } else if (studioCaps.toolPhotoMarquee) {
+          blocked = photoRoomMarqueeToolCursorBlocked(
+            pos,
+            selectedIdsRef.current,
+            objectsRef.current,
+            th,
+            (p, obj, threshold, all) =>
+              hitTestObject(p, obj as FreehandObject, threshold, all as FreehandObject[]),
           );
         }
         if (prToolCursorBlockedRef.current !== blocked) {
@@ -19391,6 +20863,35 @@ export function FreehandStudioCanvas({
     const dy = e.clientY - dragState.startY;
 
     if (dragState.type === "guidePull" || dragState.type === "guideMove") {
+      return;
+    }
+
+    if (!studioCaps.toolPhotoMarquee && isPhotoMarqueeStudioDragType(dragState.type)) {
+      dragStateRef.current = null;
+      setDragState(null);
+      return;
+    }
+
+    if (dragState.type === "photoMarqueeNudge" && dragState.photoMarqueeSnapRects != null) {
+      const scale = canvasScaleFromPointer(viewport.zoom);
+      let mdx = dx * scale;
+      let mdy = dy * scale;
+      if (isShiftHeld(e)) {
+        const c = snapDeltaTo45(mdx, mdy);
+        mdx = c.x;
+        mdy = c.y;
+      }
+      const sn = dragState;
+      const t = translatePhotoMarqueeCommitted(
+        mdx,
+        mdy,
+        sn.photoMarqueeSnapRects!,
+        sn.photoMarqueeSnapPolys ?? [],
+        sn.photoMarqueeSnapEllipses ?? [],
+      );
+      setPhotoRectMarqueeSelection(t.rects);
+      setPhotoPolygonMarqueeSelection(t.polys);
+      setPhotoEllipseMarqueeSelection(t.ellipses);
       return;
     }
 
@@ -19671,6 +21172,53 @@ export function FreehandStudioCanvas({
         const last = pts[pts.length - 1];
         pts[pts.length - 1] = applyPenCreationHandleDrag(last, pos);
         return pts;
+      });
+      return;
+    }
+
+    if (dragState.type === "photoRectMarquee" && dragState.marqueeOrigin) {
+      const pos = screenToCanvas(e.clientX, e.clientY);
+      setDragState((prev) => {
+        const next = prev ? { ...prev, currentCanvas: pos } : null;
+        dragStateRef.current = next;
+        return next;
+      });
+      return;
+    }
+
+    if (dragState.type === "photoEllipseMarquee" && dragState.marqueeOrigin) {
+      const raw = screenToCanvas(e.clientX, e.clientY);
+      const o = dragState.marqueeOrigin;
+      const pos = isShiftHeld(e) ? oppositeCornerForSquareDrag(o, raw) : raw;
+      setDragState((prev) => {
+        const next = prev ? { ...prev, currentCanvas: pos } : null;
+        dragStateRef.current = next;
+        return next;
+      });
+      return;
+    }
+
+    if (dragState.type === "photoLassoMarquee" && dragState.photoLassoPoints) {
+      const pos = screenToCanvas(e.clientX, e.clientY);
+      const ds = dragStateRef.current;
+      if (!ds || ds.type !== "photoLassoMarquee" || !ds.photoLassoPoints) return;
+      const pts = ds.photoLassoPoints;
+      const last = pts[pts.length - 1]!;
+      const sample = PHOTO_LASSO_SAMPLE_PX / viewport.zoom;
+      const nextPts =
+        Math.hypot(pos.x - last.x, pos.y - last.y) >= sample ? [...pts, pos] : pts;
+      const nextr = { ...ds, photoLassoPoints: nextPts, currentCanvas: pos };
+      dragStateRef.current = nextr;
+      setDragState(nextr);
+      return;
+    }
+
+    if (dragState.type === "photoPolygonMarquee") {
+      const pos = screenToCanvas(e.clientX, e.clientY);
+      setDragState((prev) => {
+        const next = prev && prev.type === "photoPolygonMarquee" ? { ...prev, currentCanvas: pos } : null;
+        dragStateRef.current = next;
+        return next;
       });
       return;
     }
@@ -20165,6 +21713,200 @@ export function FreehandStudioCanvas({
       dragStateRef.current = null;
       setDragState(null);
       void applyPhotoRasterGradientSession(nextSession, {});
+      return;
+    }
+
+    if (ds.type === "photoMarqueeNudge") {
+      dragStateRef.current = null;
+      setDragState(null);
+      return;
+    }
+
+    if (ds.type === "photoLassoMarquee" && ds.photoLassoPoints && ds.currentCanvas) {
+      const additive = !!ds.photoMarqueeAdditive;
+      const subtract = !!ds.photoMarqueeSubtract;
+      const mode = subtract ? "subtract" : additive ? "add" : "replace";
+      dragStateRef.current = null;
+      setDragState(null);
+      const ring = [...ds.photoLassoPoints];
+      if (mode === "replace" && ring.length >= 1) {
+        let minX = ring[0]!.x,
+          maxX = ring[0]!.x,
+          minY = ring[0]!.y,
+          maxY = ring[0]!.y;
+        for (const p of ring) {
+          minX = Math.min(minX, p.x);
+          maxX = Math.max(maxX, p.x);
+          minY = Math.min(minY, p.y);
+          maxY = Math.max(maxY, p.y);
+        }
+        const tolDeg = 2 / viewport.zoom;
+        if (maxX - minX <= tolDeg && maxY - minY <= tolDeg) {
+          setPhotoRectMarqueeSelection([]);
+          setPhotoPolygonMarqueeSelection([]);
+          setPhotoEllipseMarqueeSelection([]);
+          return;
+        }
+      }
+      const first = ring[0]!;
+      const la = ring[ring.length - 1]!;
+      const closeTol = 3 / viewport.zoom;
+      if (Math.hypot(la.x - first.x, la.y - first.y) > closeTol) {
+        ring.push({ ...first });
+      }
+      const prevRects = photoRectMarqueeSelection;
+      const prevPoly = photoPolygonMarqueeSelection;
+      const prevEllipses = photoEllipseMarqueeSelection;
+      const base = buildPhotoMarqueePolyBase(prevPoly, prevRects, prevEllipses, mode);
+      const next = mergePhotoPolygonSelection(base, ring, mode);
+      setPhotoRectMarqueeSelection([]);
+      setPhotoEllipseMarqueeSelection([]);
+      setPhotoPolygonMarqueeSelection(next);
+      return;
+    }
+
+    if (ds.type === "photoEllipseMarquee" && ds.marqueeOrigin && ds.currentCanvas) {
+      const o = ds.marqueeOrigin;
+      const raw = ds.currentCanvas;
+      const c = e.shiftKey ? oppositeCornerForSquareDrag(o, raw) : raw;
+      const mx = Math.min(o.x, c.x),
+        my = Math.min(o.y, c.y);
+      const mw = Math.abs(c.x - o.x),
+        mh = Math.abs(c.y - o.y);
+      const additive = !!ds.photoMarqueeAdditive;
+      const subtract = !!ds.photoMarqueeSubtract;
+      dragStateRef.current = null;
+      setDragState(null);
+      if (mw > 2 && mh > 2) {
+        const newEl: PhotoMarqueeEllipse = {
+          cx: mx + mw / 2,
+          cy: my + mh / 2,
+          rx: mw / 2,
+          ry: mh / 2,
+        };
+        const ring = ellipseToPhotoMarqueeRing(newEl);
+        const prevRects = photoRectMarqueeSelection;
+        const prevPoly = photoPolygonMarqueeSelection;
+        const prevEllipses = photoEllipseMarqueeSelection;
+        const hasRects = prevRects.length > 0;
+        const hasPoly = prevPoly.length > 0;
+        const hasEllipses = prevEllipses.length > 0;
+        const mode = subtract ? "subtract" : additive ? "add" : "replace";
+        const useRingMerge = hasPoly || hasEllipses || (hasRects && (hasPoly || hasEllipses));
+
+        if (useRingMerge) {
+          const base = buildPhotoMarqueePolyBase(prevPoly, prevRects, prevEllipses, mode);
+          const next = mergePhotoPolygonSelection(base, ring, mode);
+          setPhotoRectMarqueeSelection([]);
+          setPhotoEllipseMarqueeSelection([]);
+          setPhotoPolygonMarqueeSelection(next);
+          return;
+        }
+
+        if (hasRects && !hasPoly && !hasEllipses) {
+          setPhotoEllipseMarqueeSelection([]);
+          let base: Point[][] = [];
+          for (const r of prevRects) {
+            base = mergePhotoPolygonSelection(base, rectToPhotoMarqueeRing(r), "add");
+          }
+          const next = mergePhotoPolygonSelection(base, ring, mode);
+          setPhotoRectMarqueeSelection([]);
+          setPhotoPolygonMarqueeSelection(next);
+          return;
+        }
+
+        if (hasEllipses && !hasPoly && !hasRects) {
+          setPhotoRectMarqueeSelection([]);
+          setPhotoPolygonMarqueeSelection([]);
+          if (subtract && prevEllipses.length > 0) {
+            let base: Point[][] = [];
+            for (const el of prevEllipses) {
+              base = mergePhotoPolygonSelection(base, ellipseToPhotoMarqueeRing(el), "add");
+            }
+            const next = mergePhotoPolygonSelection(base, ring, "subtract");
+            setPhotoEllipseMarqueeSelection([]);
+            setPhotoPolygonMarqueeSelection(next);
+            return;
+          }
+          if (additive && prevEllipses.length > 0) {
+            setPhotoEllipseMarqueeSelection([...prevEllipses, newEl]);
+            return;
+          }
+          setPhotoEllipseMarqueeSelection([newEl]);
+          return;
+        }
+
+        setPhotoPolygonMarqueeSelection([]);
+        setPhotoEllipseMarqueeSelection([newEl]);
+        setPhotoRectMarqueeSelection([]);
+        return;
+      }
+      if (!additive && !subtract) {
+        setPhotoEllipseMarqueeSelection([]);
+        setPhotoRectMarqueeSelection([]);
+        setPhotoPolygonMarqueeSelection([]);
+      }
+      return;
+    }
+
+    if (ds.type === "photoRectMarquee" && ds.marqueeOrigin && ds.currentCanvas) {
+      const o = ds.marqueeOrigin,
+        c = ds.currentCanvas;
+      const mx = Math.min(o.x, c.x),
+        my = Math.min(o.y, c.y);
+      const mw = Math.abs(c.x - o.x),
+        mh = Math.abs(c.y - o.y);
+      const additive = !!ds.photoMarqueeAdditive;
+      const subtract = !!ds.photoMarqueeSubtract;
+      dragStateRef.current = null;
+      setDragState(null);
+      if (mw > 2 && mh > 2) {
+        const newRect: Rect = { x: mx, y: my, w: mw, h: mh };
+        const ring = rectToPhotoMarqueeRing(newRect);
+        const prevRects = photoRectMarqueeSelection;
+        const prevPoly = photoPolygonMarqueeSelection;
+        const prevEllipses = photoEllipseMarqueeSelection;
+        const hasRects = prevRects.length > 0;
+        const hasPoly = prevPoly.length > 0;
+        const hasEllipses = prevEllipses.length > 0;
+        const mode = subtract ? "subtract" : additive ? "add" : "replace";
+        const useRingMerge = hasPoly || hasEllipses || (hasRects && (hasPoly || hasEllipses));
+
+        if (useRingMerge) {
+          const base = buildPhotoMarqueePolyBase(prevPoly, prevRects, prevEllipses, mode);
+          const next = mergePhotoPolygonSelection(base, ring, mode);
+          setPhotoRectMarqueeSelection([]);
+          setPhotoEllipseMarqueeSelection([]);
+          setPhotoPolygonMarqueeSelection(next);
+          return;
+        }
+
+        if (hasRects && !hasPoly && !hasEllipses) {
+          setPhotoPolygonMarqueeSelection([]);
+          setPhotoEllipseMarqueeSelection([]);
+          setPhotoRectMarqueeSelection((prev) => {
+            if (subtract && prev.length > 0) {
+              return prev
+                .flatMap((r) => subtractRectFromRect(r, newRect))
+                .filter((r) => r.w > 1e-6 && r.h > 1e-6);
+            }
+            if (subtract && prev.length === 0) return [];
+            if (additive && prev.length > 0) return [...prev, newRect];
+            return [newRect];
+          });
+          return;
+        }
+
+        setPhotoPolygonMarqueeSelection([]);
+        setPhotoEllipseMarqueeSelection([]);
+        setPhotoRectMarqueeSelection([newRect]);
+        return;
+      }
+      if (!additive && !subtract) {
+        setPhotoRectMarqueeSelection([]);
+        setPhotoPolygonMarqueeSelection([]);
+        setPhotoEllipseMarqueeSelection([]);
+      }
       return;
     }
 
@@ -20692,6 +22434,7 @@ export function FreehandStudioCanvas({
 
   const handleContextMenu = useCallback((e: ReactMouseEvent) => {
     e.preventDefault();
+    setLayerMaskCtxMenu(null);
     // Same as right-button mousedown: some platforms deliver contextmenu without a reliable button-2 path
     const pos = screenToCanvas(e.clientX, e.clientY);
     for (let i = objects.length - 1; i >= 0; i--) {
@@ -20997,6 +22740,7 @@ export function FreehandStudioCanvas({
       };
       return m[dragState.imageCorner] ?? "default";
     }
+    if (dragState?.type === "photoMarqueeNudge") return "move";
     if (dragState?.type === "resize" && dragState.handle) {
       const h = dragState.handle;
       const map: Record<string, string> = {
@@ -21037,6 +22781,117 @@ export function FreehandStudioCanvas({
     const o = dragState.marqueeOrigin, c = dragState.currentCanvas;
     return { x: Math.min(o.x, c.x), y: Math.min(o.y, c.y), w: Math.abs(c.x - o.x), h: Math.abs(c.y - o.y) };
   }, [dragState]);
+
+  const photoRectMarqueeDragRect = useMemo(() => {
+    if (!dragState || dragState.type !== "photoRectMarquee" || !dragState.marqueeOrigin || !dragState.currentCanvas) return null;
+    const o = dragState.marqueeOrigin, c = dragState.currentCanvas;
+    return { x: Math.min(o.x, c.x), y: Math.min(o.y, c.y), w: Math.abs(c.x - o.x), h: Math.abs(c.y - o.y) };
+  }, [dragState]);
+
+  const photoRectMarqueeDragSubtract = useMemo(
+    () => dragState?.type === "photoRectMarquee" && !!dragState.photoMarqueeSubtract,
+    [dragState],
+  );
+
+  const photoEllipseMarqueeDragEllipse = useMemo(() => {
+    if (!dragState || dragState.type !== "photoEllipseMarquee" || !dragState.marqueeOrigin || !dragState.currentCanvas) {
+      return null;
+    }
+    const o = dragState.marqueeOrigin, c = dragState.currentCanvas;
+    const mx = Math.min(o.x, c.x), my = Math.min(o.y, c.y);
+    const mw = Math.abs(c.x - o.x), mh = Math.abs(c.y - o.y);
+    if (mw < 2 || mh < 2) return null;
+    return { cx: mx + mw / 2, cy: my + mh / 2, rx: mw / 2, ry: mh / 2 };
+  }, [dragState]);
+
+  const photoEllipseMarqueeDragSubtract = useMemo(
+    () => dragState?.type === "photoEllipseMarquee" && !!dragState.photoMarqueeSubtract,
+    [dragState],
+  );
+
+  const photoMarqueeSelectionOutlinePaths = useMemo(
+    () => rectUnionBoundarySvgPathDs(photoRectMarqueeSelection),
+    [photoRectMarqueeSelection],
+  );
+
+  const photoPolygonMarqueeOutlineDs = useMemo(() => {
+    const d = ringsUnionOutlineSvgD(photoPolygonMarqueeSelection);
+    return d.length > 0 ? [d] : [];
+  }, [photoPolygonMarqueeSelection]);
+
+  const photoLassoDragPreviewD = useMemo(() => {
+    if (!dragState || dragState.type !== "photoLassoMarquee" || !dragState.photoLassoPoints?.length) return null;
+    const pts = dragState.photoLassoPoints;
+    const cur = dragState.currentCanvas;
+    if (!cur) return polylineToSvgPathD(pts);
+    const extended = [...pts];
+    const last = extended[extended.length - 1]!;
+    if (Math.hypot(cur.x - last.x, cur.y - last.y) > 1e-9) extended.push(cur);
+    return polylineToSvgPathD(extended);
+  }, [dragState]);
+
+  const photoPolygonDragPreviewD = useMemo(() => {
+    if (!dragState || dragState.type !== "photoPolygonMarquee") return null;
+    const verts = dragState.photoPolygonVertices ?? [];
+    const cur = dragState.currentCanvas;
+    if (verts.length === 0 || !cur) return null;
+    let d = polylineToSvgPathD(verts);
+    const lv = verts[verts.length - 1]!;
+    if (Math.hypot(cur.x - lv.x, cur.y - lv.y) > 1e-9) {
+      d += ` L ${cur.x} ${cur.y}`;
+    }
+    return d;
+  }, [dragState]);
+
+  const photoLassoDragSubtract = useMemo(
+    () => dragState?.type === "photoLassoMarquee" && !!dragState.photoMarqueeSubtract,
+    [dragState],
+  );
+
+  const photoPolygonDragSubtract = useMemo(
+    () => dragState?.type === "photoPolygonMarquee" && !!dragState.photoMarqueeSubtract,
+    [dragState],
+  );
+
+  const photoMarqueeFloatUnion = useMemo(() => {
+    if (!photoMarqueeFloatLift) return null;
+    return unionPhotoMarqueeWorldBounds(
+      photoRectMarqueeSelection,
+      photoPolygonMarqueeSelection,
+      photoEllipseMarqueeSelection,
+    );
+  }, [
+    photoMarqueeFloatLift,
+    photoRectMarqueeSelection,
+    photoPolygonMarqueeSelection,
+    photoEllipseMarqueeSelection,
+  ]);
+
+  const photoMarqueeFloatCoverFill = useMemo(() => {
+    const ab = artboards[0];
+    if (!ab) return "#0b0d10";
+    if (artboardBackgroundIsTransparentForDisplay(ab.background)) {
+      return `url(#fh-transp-${svgIdSafeSegment(ab.id)})`;
+    }
+    return ab.background ?? "#0b0d10";
+  }, [artboards]);
+
+  const photoMarqueeFloatClipPoints = useMemo((): string | null => {
+    if (!photoMarqueeFloatLift) return null;
+    const im = objects.find((o) => o.id === photoMarqueeFloatLift.sourceLayerId && o.type === "image");
+    if (!im) return null;
+    return rectWorldCorners(im)
+      .map((p) => `${p.x},${p.y}`)
+      .join(" ");
+  }, [photoMarqueeFloatLift, objects]);
+
+  const photoMarqueeFloatClipId = useMemo(
+    () =>
+      photoMarqueeFloatLift
+        ? `fh-mrq-float-${svgIdSafeSegment(photoMarqueeFloatLift.sourceLayerId)}`
+        : null,
+    [photoMarqueeFloatLift],
+  );
 
   /** Eje del degradado raster (preview + sesión). */
   const photoGradientOverlayLine = useMemo(() => {
@@ -21126,6 +22981,7 @@ export function FreehandStudioCanvas({
     }
     return map;
   }, [objects]);
+  const layerStackRenderSegments = useMemo(() => buildLayerStackRenderSegments(objects), [objects]);
 
   const imageFrameOptimizeShowFrameId =
     designerMode && designerOptimizeProgress?.visible && designerOptimizeProgress.activeFrameId
@@ -21155,6 +23011,7 @@ export function FreehandStudioCanvas({
   const primaryPenTool = toolFlyoutPrimary["tf-pen"];
   const primaryPenToolSafe = !designerMode && primaryPenTool === "scissors" ? "directSelect" : primaryPenTool;
   const primaryShapeTool = toolFlyoutPrimary["tf-shape"];
+  const primaryPhotoMarqueeTool = toolFlyoutPrimary["tf-photo-marquee"];
   const primaryTextTool = toolFlyoutPrimary["tf-text"];
   const primaryImageTool = toolFlyoutPrimary["tf-img"];
   const studioHeaderNodeGlyph = designerMode
@@ -21462,6 +23319,89 @@ export function FreehandStudioCanvas({
         <ToolBtn active={activeTool === "select"} onClick={() => { setActiveTool("select"); setSelectedPoints(new Map()); }} title="Selection (V)">
           <MousePointer2 size={19} strokeWidth={TOOLBAR_ICON_STROKE} />
         </ToolBtn>
+
+        {studioCaps.toolPhotoMarquee && (
+          <ToolFlyoutGroup
+            groupId="tf-photo-marquee"
+            flyoutOpen={leftToolbarToolFlyout}
+            setFlyoutOpen={setLeftToolbarToolFlyout}
+            active={
+              activeTool === "rectMarquee" ||
+              activeTool === "ellipseMarquee" ||
+              activeTool === "lassoMarquee" ||
+              activeTool === "polygonMarquee"
+            }
+            mainTitle="Selección raster: rectángulo (M), elipse (O), lazo (L), poligonal (⇧L). Ctrl/⌘ suma; Alt resta."
+            onMainClick={() => {
+              setActiveTool(primaryPhotoMarqueeTool);
+              setLeftToolbarToolFlyout(null);
+            }}
+            mainIcon={
+              primaryPhotoMarqueeTool === "lassoMarquee" ? (
+                <MarqueeLassoToolIcon size={19} />
+              ) : primaryPhotoMarqueeTool === "polygonMarquee" ? (
+                <MarqueePolygonToolIcon size={19} />
+              ) : primaryPhotoMarqueeTool === "ellipseMarquee" ? (
+                <MarqueeEllipseToolIcon size={19} />
+              ) : (
+                <MarqueeRectToolIcon size={19} />
+              )
+            }
+          >
+            <button
+              type="button"
+              title="Marco rectangular (M)"
+              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] transition ${
+                activeTool === "rectMarquee" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
+              }`}
+              onClick={() => {
+                setActiveTool("rectMarquee");
+                setLeftToolbarToolFlyout(null);
+              }}
+            >
+              <MarqueeRectToolIcon size={17} />
+            </button>
+            <button
+              type="button"
+              title="Marco elíptico (O). ⇧ al arrastrar = círculo. Ctrl/⌘ suma; Alt resta."
+              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] transition ${
+                activeTool === "ellipseMarquee" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
+              }`}
+              onClick={() => {
+                setActiveTool("ellipseMarquee");
+                setLeftToolbarToolFlyout(null);
+              }}
+            >
+              <MarqueeEllipseToolIcon size={17} />
+            </button>
+            <button
+              type="button"
+              title="Lazo libre (L)"
+              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] transition ${
+                activeTool === "lassoMarquee" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
+              }`}
+              onClick={() => {
+                setActiveTool("lassoMarquee");
+                setLeftToolbarToolFlyout(null);
+              }}
+            >
+              <MarqueeLassoToolIcon size={17} />
+            </button>
+            <button
+              type="button"
+              title="Lazo poligonal (⇧L)"
+              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] transition ${
+                activeTool === "polygonMarquee" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
+              }`}
+              onClick={() => {
+                setActiveTool("polygonMarquee");
+                setLeftToolbarToolFlyout(null);
+              }}
+            >
+              <MarqueePolygonToolIcon size={17} />
+            </button>
+          </ToolFlyoutGroup>
+        )}
 
         <ToolFlyoutGroup
           groupId="tf-pen"
@@ -22303,6 +24243,9 @@ export function FreehandStudioCanvas({
               return f.type === "solid" ? null : renderFillDef(f, gradientDefId(o.id));
             })}
             {clipObjects.map((co) => renderClipDef(co))}
+            {collectAdjustmentLayers(objects).map((layer) => (
+              <AdjustmentLayerFilterDef key={layer.id} layer={layer} />
+            ))}
             {pageContentClipRect && (
               <clipPath id="fh-page-content-clip" clipPathUnits="userSpaceOnUse">
                 <rect
@@ -22400,11 +24343,9 @@ export function FreehandStudioCanvas({
               clipPath={pageContentClipRect ? "url(#fh-page-content-clip)" : undefined}
               data-fh-page-content="1"
             >
-              {/* Render objects */}
-              {objects.map((obj) => {
-                if (obj.isClipMask) return null;
-                if (obj.clipMaskId) return null;
-                return (
+              {/* Render objects (capas de ajuste envuelven el stack inferior, estilo Photoshop) */}
+              {layerStackRenderSegments.map((seg, segIdx) => {
+                const renderStackObject = (obj: FreehandObject) => (
                   <g
                     key={obj.id}
                     data-fh-obj={obj.id}
@@ -22418,6 +24359,21 @@ export function FreehandStudioCanvas({
                       previewLayerEffectsById,
                     })}
                   </g>
+                );
+                if (seg.kind === "filtered") {
+                  return (
+                    <g
+                      key={`adj-seg-${seg.layer.id}`}
+                      filter={`url(#${adjustmentLayerFilterId(seg.layer.id)})`}
+                    >
+                      {seg.children.map(renderStackObject)}
+                    </g>
+                  );
+                }
+                return (
+                  <React.Fragment key={`plain-seg-${segIdx}`}>
+                    {seg.children.map(renderStackObject)}
+                  </React.Fragment>
                 );
               })}
 
@@ -22865,6 +24821,204 @@ export function FreehandStudioCanvas({
               <rect x={marqueeRect.x} y={marqueeRect.y} width={marqueeRect.w} height={marqueeRect.h}
                 fill="rgba(99,102,241,0.08)" stroke="#6366f1" strokeWidth={1 / viewport.zoom}
                 strokeDasharray={`${3 / viewport.zoom}`} data-ui="marquee" />
+            )}
+
+            {/* Marco raster: arrastre (preview) */}
+            {studioCaps.toolPhotoMarquee &&
+              photoRectMarqueeDragRect &&
+              photoRectMarqueeDragRect.w > 2 &&
+              photoRectMarqueeDragRect.h > 2 && (
+                <rect
+                  x={photoRectMarqueeDragRect.x}
+                  y={photoRectMarqueeDragRect.y}
+                  width={photoRectMarqueeDragRect.w}
+                  height={photoRectMarqueeDragRect.h}
+                  fill={photoRectMarqueeDragSubtract ? "rgba(217,70,239,0.12)" : "rgba(251,146,60,0.1)"}
+                  stroke={photoRectMarqueeDragSubtract ? "#d946ef" : "#fb923c"}
+                  strokeWidth={1 / viewport.zoom}
+                  strokeDasharray={`${4 / viewport.zoom} ${3 / viewport.zoom}`}
+                  pointerEvents="none"
+                  data-ui="photo-marquee-drag"
+                />
+              )}
+            {studioCaps.toolPhotoMarquee &&
+              photoEllipseMarqueeDragEllipse &&
+              photoEllipseMarqueeDragEllipse.rx > 1 &&
+              photoEllipseMarqueeDragEllipse.ry > 1 && (
+                <ellipse
+                  cx={photoEllipseMarqueeDragEllipse.cx}
+                  cy={photoEllipseMarqueeDragEllipse.cy}
+                  rx={photoEllipseMarqueeDragEllipse.rx}
+                  ry={photoEllipseMarqueeDragEllipse.ry}
+                  fill={photoEllipseMarqueeDragSubtract ? "rgba(217,70,239,0.12)" : "rgba(251,146,60,0.1)"}
+                  stroke={photoEllipseMarqueeDragSubtract ? "#d946ef" : "#fb923c"}
+                  strokeWidth={1 / viewport.zoom}
+                  strokeDasharray={`${4 / viewport.zoom} ${3 / viewport.zoom}`}
+                  pointerEvents="none"
+                  data-ui="photo-ellipse-marquee-drag"
+                />
+              )}
+            {studioCaps.toolPhotoMarquee && photoLassoDragPreviewD && (
+              <path
+                d={photoLassoDragPreviewD}
+                fill="none"
+                stroke={photoLassoDragSubtract ? "#d946ef" : "#fb923c"}
+                strokeWidth={1 / viewport.zoom}
+                strokeDasharray={`${4 / viewport.zoom} ${3 / viewport.zoom}`}
+                strokeLinejoin="round"
+                strokeLinecap="round"
+                pointerEvents="none"
+                data-ui="photo-lasso-drag"
+              />
+            )}
+            {studioCaps.toolPhotoMarquee && photoPolygonDragPreviewD && (
+              <path
+                d={photoPolygonDragPreviewD}
+                fill="none"
+                stroke={photoPolygonDragSubtract ? "#d946ef" : "#fb923c"}
+                strokeWidth={1 / viewport.zoom}
+                strokeDasharray={`${4 / viewport.zoom} ${3 / viewport.zoom}`}
+                strokeLinejoin="miter"
+                pointerEvents="none"
+                data-ui="photo-polygon-drag"
+              />
+            )}
+
+            {/* Float lift: tapar origen + textura que sigue al mover la selección */}
+            {studioCaps.toolPhotoMarquee &&
+              photoMarqueeFloatLift &&
+              photoMarqueeFloatClipPoints &&
+              photoMarqueeFloatClipId && (
+                <g pointerEvents="none" data-ui="photo-marquee-float-cover">
+                  <defs>
+                    <clipPath id={photoMarqueeFloatClipId}>
+                      <polygon points={photoMarqueeFloatClipPoints} />
+                    </clipPath>
+                  </defs>
+                  <g clipPath={`url(#${photoMarqueeFloatClipId})`}>
+                    {photoMarqueeFloatLift.liftRects.map((r, i) => (
+                      <rect
+                        key={`flcv-r-${i}`}
+                        x={r.x}
+                        y={r.y}
+                        width={r.w}
+                        height={r.h}
+                        fill={photoMarqueeFloatCoverFill}
+                      />
+                    ))}
+                    {photoMarqueeFloatLift.liftPolys.map((ring, i) => {
+                      const d = ringToSvgPathD(ring);
+                      if (!d) return null;
+                      return (
+                        <path
+                          key={`flcv-p-${i}`}
+                          d={d}
+                          fill={photoMarqueeFloatCoverFill}
+                          fillRule="evenodd"
+                        />
+                      );
+                    })}
+                    {photoMarqueeFloatLift.liftEllipses.map((el, i) =>
+                      el.rx > 0 && el.ry > 0 ? (
+                        <ellipse
+                          key={`flcv-e-${i}`}
+                          cx={el.cx}
+                          cy={el.cy}
+                          rx={el.rx}
+                          ry={el.ry}
+                          fill={photoMarqueeFloatCoverFill}
+                        />
+                      ) : null,
+                    )}
+                  </g>
+                </g>
+              )}
+            {studioCaps.toolPhotoMarquee &&
+              photoMarqueeFloatLift &&
+              photoMarqueeFloatUnion &&
+              photoMarqueeFloatUnion.w > 1e-6 &&
+              photoMarqueeFloatUnion.h > 1e-6 &&
+              (() => {
+                const u = photoMarqueeFloatUnion;
+                const cx = u.x + u.w / 2;
+                const cy = u.y + u.h / 2;
+                const { rotationDeg, scaleX, scaleY } = photoMarqueeFloatTf;
+                const tfStr = `translate(${cx},${cy}) rotate(${rotationDeg}) scale(${scaleX},${scaleY}) translate(${-cx},${-cy})`;
+                return (
+                  <g data-ui="photo-marquee-float-group" pointerEvents="none">
+                    <g transform={tfStr}>
+                      <image
+                        href={photoMarqueeFloatLift.dataUrl}
+                        x={u.x}
+                        y={u.y}
+                        width={u.w}
+                        height={u.h}
+                        preserveAspectRatio="xMidYMid meet"
+                        data-ui="photo-marquee-float-texture"
+                      />
+                    </g>
+                  </g>
+                );
+              })()}
+
+            {/* Selección raster (hormigas) */}
+            {(studioCaps.toolPhotoMarquee || studioCaps.photoMarqueeFromVector) && hasPhotoMarqueeSelection && (
+              <g pointerEvents="none" data-ui="photo-marquee-selection-group">
+                {photoMarqueeSelectionOutlinePaths.map((d, pi) => (
+                  <path
+                    key={`photo-marquee-sel-${pi}`}
+                    d={d}
+                    fill="none"
+                    stroke="#f8fafc"
+                    strokeWidth={1.75}
+                    vectorEffect="nonScalingStroke"
+                    strokeDasharray="5 4"
+                    strokeLinejoin="miter"
+                    strokeLinecap="butt"
+                    pointerEvents="none"
+                    data-ui="photo-marquee-selection"
+                  >
+                    <animate attributeName="stroke-dashoffset" from="0" to="-9" dur="0.4s" repeatCount="indefinite" />
+                  </path>
+                ))}
+                {photoPolygonMarqueeOutlineDs.map((d, pi) => (
+                  <path
+                    key={`photo-poly-sel-${pi}`}
+                    d={d}
+                    fill="none"
+                    stroke="#f8fafc"
+                    strokeWidth={1.75}
+                    vectorEffect="nonScalingStroke"
+                    strokeDasharray="5 4"
+                    strokeLinejoin="miter"
+                    strokeLinecap="butt"
+                    pointerEvents="none"
+                    data-ui="photo-marquee-polygon-selection"
+                  >
+                    <animate attributeName="stroke-dashoffset" from="0" to="-9" dur="0.4s" repeatCount="indefinite" />
+                  </path>
+                ))}
+                {photoEllipseMarqueeSelection.map((el, ei) =>
+                  el.rx > 0 && el.ry > 0 ? (
+                    <ellipse
+                      key={`photo-marquee-ellipse-${ei}`}
+                      cx={el.cx}
+                      cy={el.cy}
+                      rx={el.rx}
+                      ry={el.ry}
+                      fill="none"
+                      stroke="#f8fafc"
+                      strokeWidth={1.75}
+                      vectorEffect="nonScalingStroke"
+                      strokeDasharray="5 4"
+                      pointerEvents="none"
+                      data-ui="photo-marquee-ellipse-selection"
+                    >
+                      <animate attributeName="stroke-dashoffset" from="0" to="-9" dur="0.4s" repeatCount="indefinite" />
+                    </ellipse>
+                  ) : null,
+                )}
+              </g>
             )}
 
             {/* Per-object selection outlines (single + multi): all equal */}
@@ -24215,6 +26369,69 @@ export function FreehandStudioCanvas({
                   </div>
                 </div>
               )}
+            {canConvertSelectionToPhotoMarquee && (
+              <div className="border-b border-white/[0.08] px-[14px] py-3">
+                <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                  Selección
+                </div>
+                <button
+                  type="button"
+                  onClick={replacePhotoMarqueeWithVectorOutline}
+                  className="w-full rounded-[5px] border border-white/[0.08] bg-white/[0.04] px-2.5 py-1.5 text-left text-[11px] text-zinc-200 transition-colors hover:bg-white/[0.08]"
+                >
+                  Convertir en selección
+                </button>
+              </div>
+            )}
+            {studioCaps.toolPhotoMarquee && hasPhotoMarqueeSelection && (
+              <div className="border-b border-white/[0.08] px-[14px] py-3">
+                <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                  Marco de selección
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <button
+                    type="button"
+                    onClick={invertPhotoMarqueeFromPanel}
+                    className="rounded-[5px] border border-white/[0.08] bg-white/[0.04] px-2.5 py-1.5 text-left text-[11px] text-zinc-200 transition-colors hover:bg-white/[0.08]"
+                  >
+                    Invertir selección
+                  </button>
+                  <button
+                    type="button"
+                    onClick={deselectPhotoMarquee}
+                    className="rounded-[5px] border border-white/[0.08] bg-white/[0.04] px-2.5 py-1.5 text-left text-[11px] text-zinc-200 transition-colors hover:bg-white/[0.08]"
+                  >
+                    Deseleccionar
+                  </button>
+                </div>
+                <div className="mt-3 space-y-2 border-t border-white/[0.06] pt-3">
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Feather (máscara suave)</div>
+                  <p className="text-[9px] leading-snug text-zinc-600">
+                    0 = borde duro. Mayor valor = degradado de opacidad en el borde al copiar o borrar selección.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <label className="w-[72px] shrink-0 text-[10px] text-zinc-500 uppercase tracking-wider" htmlFor="fh-marquee-feather-px">
+                      Radio px
+                    </label>
+                    <ScrubNumberInput
+                      id="fh-marquee-feather-px"
+                      value={photoMarqueeMaskFeatherPx}
+                      onKeyboardCommit={(n) =>
+                        setPhotoMarqueeMaskFeatherPx(clamp(Math.round(n), 0, 200))
+                      }
+                      onScrubLive={(n) => setPhotoMarqueeMaskFeatherPx(clamp(Math.round(n), 0, 200))}
+                      onScrubEnd={() => {}}
+                      step={1}
+                      roundFn={(n) => clamp(Math.round(n), 0, 200)}
+                      min={0}
+                      max={200}
+                      title={PROP_PANEL_SCRUB_HINT}
+                      className={`min-w-0 flex-1 ${PROP_PANEL_SCRUB_CLASS}`}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
             {studioCaps.combineRasterLayers && selectedIds.size >= 2 && (
               <div className="border-b border-white/[0.08] px-[14px] py-3">
                 <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
@@ -24825,24 +27042,45 @@ export function FreehandStudioCanvas({
               )}
             </div>
             )}
-            {/* Color: paleta + fill + stroke (plegable, plegado por defecto) */}
+            {firstSelected?.type === "image" && (
+              <div className="border-b border-white/[0.08] px-[14px] py-3">
+                <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                  Imagen
+                </div>
+                <button
+                  type="button"
+                  onClick={() => openFoldderImagePicker("image", firstSelected.id)}
+                  className="flex h-8 w-full items-center justify-center rounded-[6px] border border-sky-400/35 bg-sky-500/15 text-[11px] font-semibold text-sky-100 transition hover:bg-sky-500/25"
+                >
+                  Abrir desde Foldder
+                </button>
+              </div>
+            )}
+            {/* Color · Appearance · Info · Transform (pestañas) */}
             <div className="border-b border-white/[0.08]">
-              <button
-                type="button"
-                className="flex w-full items-center justify-between gap-2 px-[14px] py-3 text-left transition-colors hover:bg-white/[0.04]"
-                title={colorPanelExpanded ? "Plegar color" : "Desplegar color"}
-                aria-expanded={colorPanelExpanded}
-                onClick={() => setColorPanelExpanded((v) => !v)}
-              >
-                <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Color</span>
-                {colorPanelExpanded ? (
-                  <ChevronDown size={14} strokeWidth={2} className="shrink-0 text-zinc-500" />
-                ) : (
-                  <ChevronRight size={14} strokeWidth={2} className="shrink-0 text-zinc-500" />
-                )}
-              </button>
-              {colorPanelExpanded && (
-                <>
+              <div className="flex shrink-0 gap-0.5 border-b border-white/[0.08] bg-[#151820] px-2 pt-2">
+                {(["color", "appearance", "info", "transform"] as const).map((tab) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    onClick={() => setPropertiesMainTab(tab)}
+                    className={`flex-1 rounded-t-[5px] border-b-2 px-1.5 py-2 text-[9px] font-semibold uppercase tracking-wider transition-colors ${
+                      propertiesMainTab === tab
+                        ? "border-violet-400 bg-white/[0.04] text-violet-100"
+                        : "border-transparent text-zinc-500 hover:text-zinc-300"
+                    }`}
+                  >
+                    {tab === "color"
+                      ? "Color"
+                      : tab === "appearance"
+                        ? "Appearance"
+                        : tab === "info"
+                          ? "Info"
+                          : "Transform"}
+                  </button>
+                ))}
+              </div>
+              {propertiesMainTab === "color" && (
                   <FreehandColorPalette
                     embedded
                     flush={flushChrome}
@@ -24857,826 +27095,64 @@ export function FreehandStudioCanvas({
                     onReplaceDocumentColor={replaceDocumentColorLive}
                     onCommitHistory={commitPaletteHistory}
                   />
-                  {firstSelected && (
-                    <>
-                {/* Fill */}
-                {firstSelected.type !== "image" &&
-                firstSelected.type !== "booleanGroup" &&
-                !isLineToolPath(firstSelected) ? (
-                <div className="border-t border-b border-white/[0.08] py-3 px-[14px] space-y-3">
-                {firstSelected.type === "textOnPath" ? (
-                  (() => {
-                    const top = firstSelected as TextOnPathObject;
-                    const noFillTp = top.fill === "none" || top.fill === "transparent";
-                    const tpHex = /^#[0-9A-Fa-f]{6}$/.test(top.fill) ? top.fill : "#000000";
-                    return (
-                  <div className="space-y-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-center gap-1">
-                        <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Fill</span>
-                        {renderDatasetPropertyLink("fill")}
-                      </div>
-                      <div className="flex flex-col items-end gap-1">
-                        <ColorDropTarget
-                          className="flex items-center gap-1.5"
-                          onApplyHex={(hex) => updateSelectedProp("fill", hex)}
-                        >
-                          <button
-                            type="button"
-                            title="Sin relleno"
-                            aria-pressed={noFillTp}
-                            onClick={() => updateSelectedProp("fill", "none")}
-                            className={`relative h-[22px] w-[22px] shrink-0 overflow-hidden rounded-[5px] border bg-[#2a2d33] transition-colors ${
-                              noFillTp
-                                ? "border-[#534AB7] ring-1 ring-[#534AB7]/40"
-                                : "border-white/[0.08] hover:bg-white/[0.06]"
-                            }`}
-                          >
-                            <svg width="22" height="22" viewBox="0 0 22 22" className="pointer-events-none absolute inset-0 text-red-500" aria-hidden>
-                              <line x1="4" y1="18" x2="18" y2="4" stroke="currentColor" strokeWidth="1.35" strokeLinecap="square" />
-                            </svg>
-                          </button>
-                          <input
-                            type="color"
-                            value={noFillTp ? "#000000" : tpHex}
-                            onChange={(e) => updateSelectedProp("fill", e.target.value)}
-                            className="h-[22px] w-[22px] shrink-0 cursor-pointer rounded-[5px] border border-white/[0.08] bg-transparent"
-                            title="Elige un color para el relleno del texto"
-                          />
-                        </ColorDropTarget>
-                      </div>
-                    </div>
-                  </div>
-                    );
-                  })()
-                ) : (
-                  (() => {
-                    const mf = migrateFill(firstSelected.fill);
-                    const noFill = mf.type === "solid" && mf.color === "none";
-                    const fillExpanded = mf.type !== "solid" || !noFill;
-                    const fillPickerValue =
-                      mf.type === "solid"
-                        ? mf.color === "none"
-                          ? "#000000"
-                          : mf.color
-                        : mf.type === "gradient-linear" || mf.type === "gradient-radial"
-                          ? mf.stops[0]?.color ?? "#6366f1"
-                          : "#000000";
-                    return (
-                  <div className="space-y-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-center gap-1">
-                        <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Fill</span>
-                        {renderDatasetPropertyLink("fill")}
-                      </div>
-                      <div className="flex flex-col items-end gap-1">
-                        <ColorDropTarget
-                          className="flex items-center gap-1.5"
-                          onApplyHex={(hex) => {
-                            if (!applyInlineCssToSimpleTextSelection({ color: hex })) {
-                              updateSelectedFill(() => solidFill(hex));
-                            }
-                            setFillColor(hex);
-                          }}
-                        >
-                          <button
-                            type="button"
-                            title="Sin relleno"
-                            aria-label="Sin relleno"
-                            aria-pressed={noFill}
-                            onClick={() => updateSelectedFill(() => solidFill("none"))}
-                            className={`relative h-[22px] w-[22px] shrink-0 overflow-hidden rounded-[5px] border bg-[#2a2d33] transition-colors ${
-                              noFill
-                                ? "border-[#534AB7] ring-1 ring-[#534AB7]/40"
-                                : "border-white/[0.08] hover:bg-white/[0.06]"
-                            }`}
-                          >
-                            <svg
-                              width="22"
-                              height="22"
-                              viewBox="0 0 22 22"
-                              className="pointer-events-none absolute inset-0 text-red-500"
-                              aria-hidden
-                            >
-                              <line x1="4" y1="18" x2="18" y2="4" stroke="currentColor" strokeWidth="1.35" strokeLinecap="square" />
-                            </svg>
-                          </button>
-                          <input
-                            type="color"
-                            value={fillPickerValue}
-                            onChange={(e) => {
-                              const c = e.target.value;
-                              if (!applyInlineCssToSimpleTextSelection({ color: c })) {
-                                updateSelectedFill(() => solidFill(c));
-                              }
-                              setFillColor(c);
-                            }}
-                            className="h-[22px] w-[22px] shrink-0 cursor-pointer rounded-[5px] border border-white/[0.08] bg-transparent"
-                            title="Elige un color para relleno sólido (reactiva el relleno)"
-                          />
-                        </ColorDropTarget>
-                      </div>
-                    </div>
-                    {fillExpanded ? (
-                    <>
-                    <div className="flex gap-1.5">
-                      {([
-                        { id: "solid" as const, label: "Solid" },
-                        { id: "gradient-linear" as const, label: "Linear" },
-                        { id: "gradient-radial" as const, label: "Radial" },
-                      ]).map((m) => {
-                        const cur = mf.type;
-                        const active = cur === m.id;
-                        return (
-                          <button
-                            key={m.id}
-                            type="button"
-                            className={`flex-1 rounded-[5px] border px-2 py-1 text-[12px] transition-colors ${active ? "border-[#534AB7] bg-[#534AB7] text-white" : "border-white/[0.08] bg-transparent text-zinc-400 hover:text-zinc-200"}`}
-                            onClick={() => {
-                              if (m.id === "solid") {
-                                const prev = mf;
-                                const c = prev.type === "solid" ? prev.color : "#6366f1";
-                                updateSelectedFill(() => solidFill(c));
-                                setFillColor(c === "none" ? "#6366f1" : c);
-                              } else if (m.id === "gradient-linear") {
-                                updateSelectedFill(() => defaultLinearGradient());
-                              } else {
-                                updateSelectedFill(() => defaultRadialGradient());
-                              }
-                            }}
-                          >{m.label}</button>
-                        );
-                      })}
-                    </div>
-                    {mf.type === "solid" && (() => {
-                      const sf = mf;
-                      const solidHex = sf.color !== "none" ? sf.color : "#000000";
-                      return (
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <input
-                          key={solidHex}
-                          type="text"
-                          defaultValue={solidHex}
-                          disabled={noFill}
-                          spellCheck={false}
-                          onBlur={(e) => {
-                            const v = e.currentTarget.value.trim();
-                            if (/^#[0-9A-Fa-f]{6}$/.test(v)) {
-                              updateSelectedFill(() => solidFill(v));
-                              setFillColor(v);
-                            } else {
-                              e.currentTarget.value = solidHex;
-                            }
-                          }}
-                          className={`min-w-0 flex-1 rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 font-mono text-[12px] text-zinc-100 ${noFill ? "cursor-not-allowed opacity-40" : ""}`}
-                        />
-                        <div className="flex min-w-[44px] shrink-0 items-center gap-0.5">
-                          <ScrubNumberInput
-                            value={Math.round(firstSelected.opacity * 100)}
-                            onKeyboardCommit={(n) =>
-                              updateSelectedProp("opacity", clamp(Math.round(n), 0, 100) / 100)
-                            }
-                            onScrubLive={(n) =>
-                              updateSelectedPropSilent("opacity", clamp(Math.round(n), 0, 100) / 100)
-                            }
-                            onScrubEnd={commitHistoryAfterScrub}
-                            step={1}
-                            roundFn={(n) => clamp(Math.round(n), 0, 100)}
-                            min={0}
-                            max={100}
-                            title={`Opacidad % · ${PROP_PANEL_SCRUB_HINT}`}
-                            className={`w-11 text-center ${PROP_PANEL_SCRUB_CLASS}`}
-                          />
-                          <span className="text-[11px] text-zinc-500">%</span>
-                        </div>
-                      </div>
-                      );
-                    })()}
-                    {mf.type === "gradient-linear" && (() => {
-                      const gf = mf as Extract<FillAppearance, { type: "gradient-linear" }>;
-                      const ang = Math.round(angleFromLinearGradient(gf));
-                      return (
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Angle</span>
-                            <ScrubNumberInput
-                              value={ang}
-                              onKeyboardCommit={(deg) => {
-                                const d = Number(deg) || 0;
-                                const xy = linearGradientFromAngle(d);
-                                updateSelectedFill((f) =>
-                                  f.type === "gradient-linear" ? { ...f, ...xy, stops: f.stops.map((s) => ({ ...s })) } : f,
-                                );
-                              }}
-                              onScrubLive={(deg) => {
-                                const d = Number(deg) || 0;
-                                const xy = linearGradientFromAngle(d);
-                                updateSelectedFillSilent((f) =>
-                                  f.type === "gradient-linear" ? { ...f, ...xy, stops: f.stops.map((s) => ({ ...s })) } : f,
-                                );
-                              }}
-                              onScrubEnd={commitHistoryAfterScrub}
-                              step={1}
-                              title="Arrastra horizontalmente · Mayús = ×10"
-                              className="w-16 cursor-ew-resize rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 font-mono text-[12px] text-zinc-100"
-                            />
-                          </div>
-                          <div className="h-3 rounded-full border border-white/10 relative overflow-hidden"
-                            style={{
-                              background: `linear-gradient(90deg, ${gf.stops.map((s) => `rgba(${parseInt(s.color.slice(1, 3), 16)},${parseInt(s.color.slice(3, 5), 16)},${parseInt(s.color.slice(5, 7), 16)},${s.opacity}) ${s.position}%`).join(",")})`,
-                            }}
-                          />
-                          <div className="flex flex-wrap gap-1.5">
-                            <button type="button" className="rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 text-[10px] text-zinc-300 hover:bg-white/10" onClick={() => updateSelectedFill((f) => (f.type === "gradient-linear" ? { ...f, stops: addMidStop(f.stops) } : f))}>+ Stop</button>
-                            <button type="button" className="rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 text-[10px] text-zinc-300 hover:bg-white/10" onClick={() => updateSelectedFill((f) => (f.type === "gradient-linear" ? { ...f, stops: reverseGradientStops(f.stops) } : f))}>Reverse</button>
-                          </div>
-                          <div className="space-y-1 max-h-28 overflow-y-auto">
-                            {gf.stops.map((s, si) => (
-                              <div key={si} className="flex items-center gap-1">
-                                <ColorDropTarget
-                                  className="inline-flex shrink-0"
-                                  onApplyHex={(hex) => {
-                                    updateSelectedFill((f) => {
-                                      if (f.type !== "gradient-linear") return f;
-                                      const stops = f.stops.map((st, j) => (j === si ? { ...st, color: hex } : st));
-                                      return { ...f, stops };
-                                    });
-                                  }}
-                                >
-                                  <input type="color" value={s.color} className="h-6 w-6 shrink-0 rounded-[5px] border border-white/[0.08]"
-                                    onChange={(e) => {
-                                      const c = e.target.value;
-                                      updateSelectedFill((f) => {
-                                        if (f.type !== "gradient-linear") return f;
-                                        const stops = f.stops.map((st, j) => (j === si ? { ...st, color: c } : st));
-                                        return { ...f, stops };
-                                      });
-                                    }} />
-                                </ColorDropTarget>
-                                <input type="range" min={0} max={1} step={0.01} value={s.opacity} className="flex-1 accent-violet-500"
-                                  onChange={(e) => {
-                                    const op = Number(e.target.value);
-                                    updateSelectedFill((f) => {
-                                      if (f.type !== "gradient-linear") return f;
-                                      const stops = f.stops.map((st, j) => (j === si ? { ...st, opacity: op } : st));
-                                      return { ...f, stops };
-                                    });
-                                  }} />
-                                <ScrubNumberInput
-                                  value={s.position}
-                                  onKeyboardCommit={(p) => {
-                                    updateSelectedFill((f) => {
-                                      if (f.type !== "gradient-linear") return f;
-                                      const stops = f.stops.map((st, j) => (j === si ? { ...st, position: clamp(p, 0, 100) } : st));
-                                      return { ...f, stops };
-                                    });
-                                  }}
-                                  onScrubLive={(p) => {
-                                    updateSelectedFillSilent((f) => {
-                                      if (f.type !== "gradient-linear") return f;
-                                      const stops = f.stops.map((st, j) => (j === si ? { ...st, position: clamp(p, 0, 100) } : st));
-                                      return { ...f, stops };
-                                    });
-                                  }}
-                                  onScrubEnd={commitHistoryAfterScrub}
-                                  step={1}
-                                  roundFn={(n) => clamp(Math.round(n), 0, 100)}
-                                  min={0}
-                                  max={100}
-                                  title="Arrastra horizontalmente · Mayús = ×10"
-                                  className="w-10 cursor-ew-resize rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 text-[12px] text-zinc-100"
-                                />
-                                <button type="button" className="text-zinc-500 text-[8px]" disabled={gf.stops.length <= 2}
-                                  onClick={() => updateSelectedFill((f) => {
-                                    if (f.type !== "gradient-linear" || f.stops.length <= 2) return f;
-                                    return { ...f, stops: f.stops.filter((_, j) => j !== si) };
-                                  })}>✕</button>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    })()}
-                    {mf.type === "gradient-radial" && (() => {
-                      const gf = mf as Extract<FillAppearance, { type: "gradient-radial" }>;
-                      return (
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Radius</span>
-                            <ScrubNumberInput
-                              value={Math.round(gf.r * 100) / 100}
-                              onKeyboardCommit={(r) => updateSelectedFill((f) => (f.type === "gradient-radial" ? { ...f, r: clamp(r, 0.02, 2) } : f))}
-                              onScrubLive={(r) => updateSelectedFillSilent((f) => (f.type === "gradient-radial" ? { ...f, r: clamp(r, 0.02, 2) } : f))}
-                              onScrubEnd={commitHistoryAfterScrub}
-                              step={0.02}
-                              roundFn={(n) => Math.round(clamp(n, 0.02, 2) * 100) / 100}
-                              min={0.02}
-                              max={2}
-                              title="Arrastra horizontalmente · Mayús = ×10"
-                              className="w-16 cursor-ew-resize rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 font-mono text-[12px] text-zinc-100"
-                            />
-                          </div>
-                          <div className="h-3 rounded-full border border-white/10" style={{ background: `radial-gradient(circle, ${gf.stops.map((s) => `${s.color} ${s.position}%`).join(",")})` }} />
-                          <div className="flex flex-wrap gap-1.5">
-                            <button type="button" className="rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 text-[10px] text-zinc-300 hover:bg-white/10" onClick={() => updateSelectedFill((f) => (f.type === "gradient-radial" ? { ...f, stops: addMidStop(f.stops) } : f))}>+ Stop</button>
-                            <button type="button" className="rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 text-[10px] text-zinc-300 hover:bg-white/10" onClick={() => updateSelectedFill((f) => (f.type === "gradient-radial" ? { ...f, stops: reverseGradientStops(f.stops) } : f))}>Reverse</button>
-                          </div>
-                          {gf.stops.map((s, si) => (
-                            <div key={si} className="flex items-center gap-1">
-                              <ColorDropTarget
-                                className="inline-flex shrink-0"
-                                onApplyHex={(hex) => {
-                                  updateSelectedFill((f) => {
-                                    if (f.type !== "gradient-radial") return f;
-                                    const stops = f.stops.map((st, j) => (j === si ? { ...st, color: hex } : st));
-                                    return { ...f, stops };
-                                  });
-                                }}
-                              >
-                                <input type="color" value={s.color} className="h-6 w-6 shrink-0 rounded-[5px] border border-white/[0.08]"
-                                  onChange={(e) => {
-                                    const c = e.target.value;
-                                    updateSelectedFill((f) => {
-                                      if (f.type !== "gradient-radial") return f;
-                                      const stops = f.stops.map((st, j) => (j === si ? { ...st, color: c } : st));
-                                      return { ...f, stops };
-                                    });
-                                  }} />
-                              </ColorDropTarget>
-                              <input type="range" min={0} max={1} step={0.01} value={s.opacity} className="flex-1 accent-violet-500"
-                                onChange={(e) => {
-                                  const op = Number(e.target.value);
-                                  updateSelectedFill((f) => {
-                                    if (f.type !== "gradient-radial") return f;
-                                    const stops = f.stops.map((st, j) => (j === si ? { ...st, opacity: op } : st));
-                                    return { ...f, stops };
-                                  });
-                                }} />
-                              <ScrubNumberInput
-                                value={s.position}
-                                onKeyboardCommit={(p) => {
-                                  updateSelectedFill((f) => {
-                                    if (f.type !== "gradient-radial") return f;
-                                    const stops = f.stops.map((st, j) => (j === si ? { ...st, position: clamp(p, 0, 100) } : st));
-                                    return { ...f, stops };
-                                  });
-                                }}
-                                onScrubLive={(p) => {
-                                  updateSelectedFillSilent((f) => {
-                                    if (f.type !== "gradient-radial") return f;
-                                    const stops = f.stops.map((st, j) => (j === si ? { ...st, position: clamp(p, 0, 100) } : st));
-                                    return { ...f, stops };
-                                  });
-                                }}
-                                onScrubEnd={commitHistoryAfterScrub}
-                                step={1}
-                                roundFn={(n) => clamp(Math.round(n), 0, 100)}
-                                min={0}
-                                max={100}
-                                title="Arrastra horizontalmente · Mayús = ×10"
-                                className="w-10 cursor-ew-resize rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 text-[12px] text-zinc-100"
-                              />
-                            </div>
-                          ))}
-                        </div>
-                      );
-                    })()}
-                    </>
-                    ) : null}
-                  </div>
-                    );
-                  })()
-                )}
-                </div>
-                ) : null}
-
-                {/* Stroke — swatches; opciones al elegir color */}
-                {(() => {
-                  const noStroke = firstSelected.stroke === "none";
-                  return (
-                <div className={`border-b border-white/[0.08] py-3 px-[14px] ${noStroke ? "space-y-0" : "space-y-2.5"}`}>
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-1">
-                      <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Stroke</span>
-                      {renderDatasetPropertyLink("stroke")}
-                    </div>
-                    <div className="flex flex-col items-end gap-1">
-                      <ColorDropTarget
-                        className="flex items-center gap-1.5"
-                        onApplyHex={(hex) => applyStrokeColorWithVisibleWidth(hex)}
-                      >
-                        <button
-                          type="button"
-                          title="Sin trazo (ningún borde)"
-                          aria-label="Sin trazo"
-                          aria-pressed={noStroke}
-                          onClick={() => updateSelectedProp("stroke", "none")}
-                          className={`relative h-[22px] w-[22px] shrink-0 overflow-hidden rounded-[5px] border bg-[#2a2d33] transition-colors ${
-                            noStroke
-                              ? "border-[#534AB7] ring-1 ring-[#534AB7]/40"
-                              : "border-white/[0.08] hover:bg-white/[0.06]"
-                          }`}
-                        >
-                          <svg
-                            width="22"
-                            height="22"
-                            viewBox="0 0 22 22"
-                            className="pointer-events-none absolute inset-0 text-red-500"
-                            aria-hidden
-                          >
-                            <line x1="4" y1="18" x2="18" y2="4" stroke="currentColor" strokeWidth="1.35" strokeLinecap="square" />
-                          </svg>
-                        </button>
-                        <input
-                          type="color"
-                          value={noStroke ? "#000000" : firstSelected.stroke}
-                          onChange={(e) => {
-                            applyStrokeColorWithVisibleWidth(e.target.value);
-                          }}
-                          className="h-[22px] w-[22px] shrink-0 cursor-pointer rounded-[5px] border border-white/[0.08] bg-transparent"
-                          title="Elige un color para activar el trazo de nuevo"
-                        />
-                      </ColorDropTarget>
-                    </div>
-                  </div>
-                  {!noStroke ? (() => {
-                    const dashStr = firstSelected.strokeDasharray ?? "";
-                    const dashParts = parseStrokeDashSix(dashStr);
-                    const hasDash = !!dashStr.trim();
-                    const alignStroke = firstSelected.strokeAlignment ?? "center";
-                    const jn = firstSelected.strokeLinejoin;
-                    const pathSel = firstSelected.type === "path" ? (firstSelected as PathObject) : null;
-                    const mkLinked = firstSelected.strokeMarkerScaleLinked !== false;
-                    const dashPhaseAlt = () => {
-                      const nums = dashStr.trim().split(/[\s,]+/).map(Number).filter((n) => !Number.isNaN(n));
-                      const period = nums.length ? nums.reduce((a, b) => a + b, 0) : 0;
-                      const cur = firstSelected.strokeDashoffset ?? 0;
-                      const next = period > 0 && Math.abs(cur) < 1e-6 ? period / 2 : 0;
-                      updateSelectedProp("strokeDashoffset", next);
-                    };
-                    const setDashPart = (idx: number, val: string) => {
-                      const next = [...dashParts];
-                      next[idx] = val;
-                      const joined = joinStrokeDashSix(next);
-                      updateSelectedProp("strokeDasharray", joined);
-                      setStrokeDasharray(joined);
-                    };
-                    return (
-                    <>
-                  <div className="flex items-center gap-2">
-                    <span className="w-[52px] shrink-0 text-[10px] text-zinc-500 uppercase tracking-wider">Peso</span>
-                    <ScrubNumberInput
-                      value={firstSelected.strokeWidth}
-                      onKeyboardCommit={(n) => updateSelectedProp("strokeWidth", clamp(n, 0, 50))}
-                      onScrubLive={(n) => updateSelectedPropSilent("strokeWidth", clamp(n, 0, 50))}
-                      onScrubEnd={commitHistoryAfterScrub}
-                      step={0.5}
-                      roundFn={(n) => Math.round(clamp(n, 0, 50) * 2) / 2}
-                      min={0}
-                      max={50}
-                      title="Arrastra horizontalmente · Mayús = ×10"
-                      className="min-w-0 flex-1 cursor-ew-resize rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 font-mono text-[12px] text-zinc-100"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Extremos</span>
-                    <div className="flex overflow-hidden rounded-[5px] border border-white/[0.08] divide-x divide-white/[0.08]">
-                      {([
-                        { v: "butt" as const, Icon: Minus, label: "Tope" },
-                        { v: "round" as const, Icon: Circle, label: "Redondo" },
-                        { v: "square" as const, Icon: RectangleHorizontal, label: "Proyectado" },
-                      ]).map(({ v, Icon, label }) => (
-                        <button
-                          key={v}
-                          type="button"
-                          title={label}
-                          onClick={() => {
-                            updateSelectedProp("strokeLinecap", v);
-                            setStrokeLinecap(v);
-                          }}
-                          className={`flex flex-1 items-center justify-center py-1.5 transition-colors ${firstSelected.strokeLinecap === v ? "bg-[#534AB7] text-white" : "bg-transparent text-zinc-400 hover:text-zinc-200"}`}
-                        >
-                          <Icon size={13} strokeWidth={2} />
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="w-[52px] shrink-0 text-[10px] text-zinc-500 uppercase tracking-wider">Inglete</span>
-                    <div className="flex min-w-0 flex-1 overflow-hidden rounded-[5px] border border-white/[0.08] divide-x divide-white/[0.08]">
-                      {([
-                        { v: "miter" as const, Icon: Triangle, label: "Inglete" },
-                        { v: "round" as const, Icon: Circle, label: "Redondo" },
-                        { v: "bevel" as const, Icon: Diamond, label: "Bisel" },
-                      ]).map(({ v, Icon, label }) => (
-                        <button
-                          key={v}
-                          type="button"
-                          title={label}
-                          onClick={() => {
-                            updateSelectedProp("strokeLinejoin", v);
-                            setStrokeLinejoin(v);
-                          }}
-                          className={`flex flex-1 items-center justify-center py-1.5 transition-colors ${firstSelected.strokeLinejoin === v ? "bg-[#534AB7] text-white" : "bg-transparent text-zinc-400 hover:text-zinc-200"}`}
-                        >
-                          <Icon size={13} strokeWidth={2} />
-                        </button>
-                      ))}
-                    </div>
-                    {jn === "miter" ? (
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[9px] text-zinc-500 whitespace-nowrap">Lím.</span>
-                        <ScrubNumberInput
-                          value={firstSelected.strokeMiterlimit ?? 4}
-                          onKeyboardCommit={(n) => updateSelectedProp("strokeMiterlimit", clamp(n, 1, 180))}
-                          onScrubLive={(n) => updateSelectedPropSilent("strokeMiterlimit", clamp(n, 1, 180))}
-                          onScrubEnd={commitHistoryAfterScrub}
-                          step={0.5}
-                          roundFn={(n) => Math.round(clamp(n, 1, 180) * 2) / 2}
-                          min={1}
-                          max={180}
-                          title="stroke-miterlimit"
-                          className="w-14 cursor-ew-resize rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-1.5 py-1 font-mono text-[11px] text-zinc-100"
-                        />
-                      </div>
-                    ) : null}
-                  </div>
-                  <div className="space-y-1">
-                    <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Alinear trazo</span>
-                    <div className="flex overflow-hidden rounded-[5px] border border-white/[0.08] divide-x divide-white/[0.08]">
-                      {([
-                        { id: "center" as const, label: "Centro" },
-                        { id: "inside" as const, label: "Interior" },
-                        { id: "outside" as const, label: "Exterior" },
-                      ]).map(({ id, label }) => (
-                        <button
-                          key={id}
-                          type="button"
-                          title={label}
-                          onClick={() => updateSelectedProp("strokeAlignment", id)}
-                          className={`flex flex-1 items-center justify-center px-1 py-1.5 text-[10px] font-medium transition-colors ${alignStroke === id ? "bg-[#534AB7] text-white" : "bg-transparent text-zinc-400 hover:text-zinc-200"}`}
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="border-t border-white/[0.08] pt-2.5 space-y-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <label className="flex cursor-pointer items-center gap-2 text-[10px] text-zinc-500">
-                        <input
-                          type="checkbox"
-                          className="rounded border-white/20 bg-white/[0.06]"
-                          checked={hasDash}
-                          onChange={(e) => {
-                            const on = e.target.checked;
-                            const v = on ? (dashStr.trim() || "8 4") : "";
-                            updateSelectedProp("strokeDasharray", v);
-                            setStrokeDasharray(v);
-                            if (!on) updateSelectedProp("strokeDashoffset", 0);
-                          }}
-                        />
-                        Línea discontinua
-                      </label>
-                      <div className="flex gap-0.5">
-                        <button
-                          type="button"
-                          title="Fase 0"
-                          disabled={!hasDash}
-                          onClick={() => updateSelectedProp("strokeDashoffset", 0)}
-                          className="rounded-[5px] border border-white/[0.08] px-1.5 py-0.5 text-[9px] text-zinc-400 hover:bg-white/[0.06] disabled:opacity-40"
-                        >
-                          0
-                        </button>
-                        <button
-                          type="button"
-                          title="Alternar fase del patrón"
-                          disabled={!hasDash}
-                          onClick={dashPhaseAlt}
-                          className="rounded-[5px] border border-white/[0.08] px-1.5 py-0.5 text-[9px] text-zinc-400 hover:bg-white/[0.06] disabled:opacity-40"
-                        >
-                          ½
-                        </button>
-                      </div>
-                    </div>
-                    {hasDash ? (
-                      <div className="space-y-1">
-                        <div className="grid grid-cols-3 gap-1">
-                          {dashParts.map((val, idx) => (
-                            <div key={idx} className="space-y-0.5">
-                              <input
-                                type="text"
-                                inputMode="decimal"
-                                value={val}
-                                placeholder="—"
-                                onChange={(e) => setDashPart(idx, e.target.value)}
-                                className="w-full rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-1 py-0.5 text-center font-mono text-[10px] text-zinc-100"
-                              />
-                              <span className="block text-center text-[7px] text-zinc-600">
-                                {idx % 2 === 0 ? "raya" : "hueco"}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-
-                  {pathSel ? (
-                    <div className="border-t border-white/[0.08] pt-2.5 space-y-2">
-                      <div className="flex items-center justify-between gap-1">
-                        <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Extremos línea</span>
-                        <button
-                          type="button"
-                          title="Intercambiar inicio y fin"
-                          onClick={() => {
-                            const a = pathSel.strokeMarkerStart ?? "none";
-                            const b = pathSel.strokeMarkerEnd ?? "none";
-                            const sa = pathSel.strokeMarkerStartScale ?? 100;
-                            const sb = pathSel.strokeMarkerEndScale ?? 100;
-                            updateSelectedProp("strokeMarkerStart", b);
-                            updateSelectedProp("strokeMarkerEnd", a);
-                            if (!mkLinked) {
-                              updateSelectedProp("strokeMarkerStartScale", sb);
-                              updateSelectedProp("strokeMarkerEndScale", sa);
-                            }
-                          }}
-                          className="rounded-[5px] border border-white/[0.08] p-1 text-zinc-400 hover:bg-white/[0.06]"
-                        >
-                          <ArrowLeftRight size={14} strokeWidth={2} aria-hidden />
-                        </button>
-                      </div>
-                      <div className="grid grid-cols-2 gap-1.5">
-                        <div className="space-y-0.5">
-                          <span className="text-[8px] text-zinc-600">Inicio</span>
-                          <select
-                            value={pathSel.strokeMarkerStart ?? "none"}
-                            onChange={(e) => updateSelectedProp("strokeMarkerStart", e.target.value as StrokeMarkerKind)}
-                            className="w-full rounded-[5px] border border-white/[0.08] bg-[#1e2024] px-1.5 py-1 text-[10px] text-zinc-100"
-                          >
-                            <option value="none">Ninguno</option>
-                            <option value="arrow">Flecha</option>
-                            <option value="dot">Bola</option>
-                          </select>
-                        </div>
-                        <div className="space-y-0.5">
-                          <span className="text-[8px] text-zinc-600">Final</span>
-                          <select
-                            value={pathSel.strokeMarkerEnd ?? "none"}
-                            onChange={(e) => updateSelectedProp("strokeMarkerEnd", e.target.value as StrokeMarkerKind)}
-                            className="w-full rounded-[5px] border border-white/[0.08] bg-[#1e2024] px-1.5 py-1 text-[10px] text-zinc-100"
-                          >
-                            <option value="none">Ninguno</option>
-                            <option value="arrow">Flecha</option>
-                            <option value="dot">Bola</option>
-                          </select>
-                        </div>
-                      </div>
-                      <div className="flex items-end gap-1.5">
-                        <div className="grid flex-1 grid-cols-2 gap-1.5">
-                          <div className="space-y-0.5">
-                            <span className="text-[8px] text-zinc-600">Escala inicio %</span>
-                            <ScrubNumberInput
-                              value={pathSel.strokeMarkerStartScale ?? 100}
-                              onKeyboardCommit={(n) => {
-                                const v = clamp(Math.round(n), 25, 400);
-                                updateSelectedProp("strokeMarkerStartScale", v);
-                                if (mkLinked) updateSelectedProp("strokeMarkerEndScale", v);
-                              }}
-                              onScrubLive={(n) => {
-                                const v = clamp(Math.round(n), 25, 400);
-                                updateSelectedPropSilent("strokeMarkerStartScale", v);
-                                if (mkLinked) updateSelectedPropSilent("strokeMarkerEndScale", v);
-                              }}
-                              onScrubEnd={commitHistoryAfterScrub}
-                              step={5}
-                              roundFn={(n) => clamp(Math.round(n), 25, 400)}
-                              min={25}
-                              max={400}
-                              title="%"
-                              className="w-full cursor-ew-resize rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-1 py-0.5 text-[10px] text-zinc-100"
-                            />
-                          </div>
-                          <div className="space-y-0.5">
-                            <span className="text-[8px] text-zinc-600">Escala fin %</span>
-                            <ScrubNumberInput
-                              value={pathSel.strokeMarkerEndScale ?? 100}
-                              disabled={mkLinked}
-                              onKeyboardCommit={(n) => {
-                                const v = clamp(Math.round(n), 25, 400);
-                                updateSelectedProp("strokeMarkerEndScale", v);
-                              }}
-                              onScrubLive={(n) => {
-                                const v = clamp(Math.round(n), 25, 400);
-                                updateSelectedPropSilent("strokeMarkerEndScale", v);
-                              }}
-                              onScrubEnd={commitHistoryAfterScrub}
-                              step={5}
-                              roundFn={(n) => clamp(Math.round(n), 25, 400)}
-                              min={25}
-                              max={400}
-                              title="%"
-                              className="w-full cursor-ew-resize rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-1 py-0.5 text-[10px] text-zinc-100 disabled:opacity-40"
-                            />
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          title={mkLinked ? "Desvincular escalas" : "Vincular escalas"}
-                          onClick={() => updateSelectedProp("strokeMarkerScaleLinked", !mkLinked)}
-                          className={`mb-0.5 rounded-[5px] border p-1.5 transition-colors ${mkLinked ? "border-[#534AB7] bg-[#534AB7] text-white" : "border-white/[0.08] text-zinc-400 hover:bg-white/[0.06]"}`}
-                        >
-                          <Link2 size={14} strokeWidth={2} aria-hidden />
-                        </button>
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {firstSelected.type === "text" && firstSelected.strokeWidth > 0 ? (
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="w-14 shrink-0 text-[10px] text-zinc-500 uppercase tracking-wider">Posición</span>
-                      <div className="flex flex-1 gap-1.5">
-                        {([
-                          { id: "over" as const, label: "Encima" },
-                          { id: "under" as const, label: "Debajo" },
-                        ]).map((p) => {
-                          const tx = firstSelected as TextObject;
-                          const cur = tx.strokePosition ?? "over";
-                          const active = cur === p.id;
-                          return (
-                            <button
-                              key={p.id}
-                              type="button"
-                              onClick={() => updateSelectedProp("strokePosition", p.id)}
-                              className={`flex-1 rounded-[5px] border px-2 py-1 text-[11px] transition-colors ${active ? "border-[#534AB7] bg-[#534AB7] text-white" : "border-white/[0.08] bg-transparent text-zinc-400 hover:text-zinc-200"}`}
-                            >
-                              {p.label}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ) : null}
-                    </>
-                    );
-                  })() : null}
-                </div>
-                  );
-                })()}
-                    </>
-                  )}
-                </>
               )}
+              {propertiesMainTab === "appearance" && firstSelected && (
+                <AppearancePropertiesSection
+                  object={firstSelected}
+                  showFill={
+                    firstSelected.type !== "image" &&
+                    firstSelected.type !== "booleanGroup" &&
+                    !isLineToolPath(firstSelected)
+                  }
+                  recentColors={savedPaletteColors}
+                  scrubHint={PROP_PANEL_SCRUB_HINT}
+                  pathCornerRadiusLinked={pathCornerRadiusLinked}
+                  onPathCornerRadiusLinkedChange={setPathCornerRadiusLinked}
+                  onFillChange={updateSelectedFill}
+                  onFillChangeSilent={updateSelectedFillSilent}
+                  onPropChange={updateSelectedProp}
+                  onPropChangeSilent={updateSelectedPropSilent}
+                  onStrokeColor={applyStrokeColorWithVisibleWidth}
+                  onRectCornerRadius={updateSelectedRectCornerRadius}
+                  onPathCornerRadius={updateSelectedPathCornerRadius}
+                  onCommitScrub={commitHistoryAfterScrub}
+                  onFillColorUi={setFillColor}
+                  onTextFill={(hex) => updateSelectedProp("fill", hex)}
+                  onTextFillInline={(hex) => applyInlineCssToSimpleTextSelection({ color: hex })}
+                  pathCornerStats={
+                    firstSelected.type === "path"
+                      ? pathCornerRadiusStats(firstSelected as PathObject)
+                      : { count: 0, maxRadius: 0, value: 0 }
+                  }
+                  renderDatasetLink={renderDatasetPropertyLink}
+                />
+              )}
+              {propertiesMainTab === "appearance" && !firstSelected && (
+                <p className="px-[14px] py-4 text-[11px] leading-snug text-zinc-500">
+                  Selecciona un objeto para editar relleno, trazo y esquinas.
+                </p>
+              )}
+              {propertiesMainTab === "info" &&
+                (firstSelected?.type === "image" ? (
+                  <ImagePropertiesInfoSection
+                    image={firstSelected as ImageObject}
+                    expanded
+                    plain
+                  />
+                ) : (
+                  <p className="px-[14px] py-4 text-[11px] leading-snug text-zinc-500">
+                    {firstSelected
+                      ? "La información de archivo está disponible para capas de imagen."
+                      : "Selecciona una capa de imagen para ver su información."}
+                  </p>
+                ))}
+              {propertiesMainTab === "transform" && !firstSelected && (
+                  <p className="px-[14px] py-4 text-[11px] italic text-zinc-500">No object selected</p>
+                )}
             </div>
 
             {firstSelected ? (
               <>
-                {firstSelected.type === "image" && (
-                  <ImagePropertiesInfoSection
-                    image={firstSelected as ImageObject}
-                    expanded={imageInfoPanelExpanded}
-                    onToggle={() => setImageInfoPanelExpanded((v) => !v)}
-                  />
-                )}
-                {firstSelected.type === "image" && (
-                  <div className="border-b border-white/[0.08] px-[14px] py-3">
-                    <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
-                      Imagen
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => openFoldderImagePicker("image", firstSelected.id)}
-                      className="flex h-8 w-full items-center justify-center rounded-[6px] border border-sky-400/35 bg-sky-500/15 text-[11px] font-semibold text-sky-100 transition hover:bg-sky-500/25"
-                    >
-                      Abrir desde Foldder
-                    </button>
-                  </div>
-                )}
-                {firstSelected.type === "image" &&
-                  !(firstSelected as ImageObject).photoRoomInputSlot &&
-                  (() => {
-                    const img = firstSelected as ImageObject & FreehandObjectBase;
-                    const meta = img.photoImageAdjustments;
-                    const modified = !!meta && !isPhotoImageAdjustmentsNeutral(meta);
-                    return (
-                      <div className="border-b border-white/[0.08] px-[14px] py-3">
-                        <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
-                          Ajustes
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => void openPhotoImageAdjustments(img)}
-                          className="flex h-8 w-full items-center justify-center gap-2 rounded-[6px] border border-violet-400/35 bg-violet-500/15 text-[11px] font-semibold text-violet-100 transition hover:bg-violet-500/25"
-                        >
-                          Brillo, contraste y niveles…
-                          {modified ? (
-                            <span className="h-1.5 w-1.5 rounded-full bg-violet-300" aria-hidden />
-                          ) : null}
-                        </button>
-                      </div>
-                    );
-                  })()}
                 {studioCaps.toolPhotoGradient &&
                   (() => {
                     const isMaskCtx =
@@ -25808,102 +27284,10 @@ export function FreehandStudioCanvas({
                       </div>
                     );
                   })()}
-                {((studioCaps.layerStyles && isLayerStylesEligible(firstSelected)) ||
-                  (studioCaps.layerMask && isLayerMaskRasterEligible(firstSelected))) ? (
-                  <div className="border-b border-white/[0.08] px-[14px] py-3">
-                    <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
-                      Effects
-                    </div>
-                    <div className="flex flex-col gap-1.5">
-                      {studioCaps.layerStyles && isLayerStylesEligible(firstSelected) ? (
-                        <button
-                          type="button"
-                          onClick={() => openLayerStylesModal(firstSelected)}
-                          className="w-full rounded-[5px] border border-white/[0.1] bg-white/[0.05] px-2.5 py-1.5 text-left text-[11px] text-zinc-200 transition-colors hover:bg-white/[0.09]"
-                        >
-                          Layer Styles…
-                        </button>
-                      ) : null}
-                      {studioCaps.layerMask && isLayerMaskRasterEligible(firstSelected) ? (
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          {!hasLayerMaskBlock(firstSelected) ? (
-                            <button
-                              type="button"
-                              onClick={() => addLayerMaskToSelection(firstSelected)}
-                              className="inline-flex flex-1 min-w-0 items-center justify-center gap-1.5 rounded-[5px] border border-white/[0.1] bg-white/[0.05] px-2.5 py-1.5 text-left text-[11px] text-zinc-200 transition-colors hover:bg-white/[0.09]"
-                            >
-                              <Blend size={12} className="shrink-0 text-zinc-400" strokeWidth={2} />
-                              Layer mask…
-                            </button>
-                          ) : (
-                            <>
-                              <span className="w-9 h-9 shrink-0 overflow-hidden rounded border border-white/15 bg-zinc-900/80">
-                                {/** eslint-disable-next-line @next/next/no-img-element */}
-                                <img
-                                  src={(firstSelected as FreehandObjectBase).layerMask!.src}
-                                  alt=""
-                                  className="h-full w-full object-cover"
-                                />
-                              </span>
-                              <div className="flex min-w-0 flex-1 flex-col gap-1">
-                                <div className="flex flex-wrap gap-1">
-                                  <button
-                                    type="button"
-                                    className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5 text-[10px] text-zinc-300 hover:bg-white/10"
-                                    onClick={() => {
-                                      const m = (firstSelected as FreehandObjectBase).layerMask!;
-                                      const on = m.enabled !== false;
-                                      updateSelectedProp("layerMask", { ...m, enabled: !on } as never);
-                                    }}
-                                  >
-                                    {(firstSelected as FreehandObjectBase).layerMask?.enabled === false
-                                      ? "Activar"
-                                      : "Desactivar"}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5 text-[10px] text-zinc-300 hover:bg-white/10"
-                                    onClick={() => {
-                                      const m = (firstSelected as FreehandObjectBase).layerMask!;
-                                      updateSelectedProp("layerMask", { ...m, inverted: !m.inverted } as never);
-                                    }}
-                                  >
-                                    Invert
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="rounded border border-rose-500/30 bg-rose-500/10 px-1.5 py-0.5 text-[10px] text-rose-200/90 hover:bg-rose-500/20"
-                                    onClick={() => deleteLayerMaskForObject(firstSelected.id)}
-                                  >
-                                    Borrar
-                                  </button>
-                                </div>
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-                ) : null}
-                {/* Transform (plegable, plegado por defecto) */}
+                {propertiesMainTab === "transform" && (
+                <>
                 <div className="border-b border-white/[0.08] px-[14px] py-3">
-                  <button
-                    type="button"
-                    className="flex w-full items-center justify-between gap-2 text-left transition-colors hover:bg-white/[0.04] -mx-1 rounded-md px-1 py-0.5"
-                    title={transformPanelExpanded ? "Plegar transformación" : "Desplegar transformación"}
-                    aria-expanded={transformPanelExpanded}
-                    onClick={() => setTransformPanelExpanded((v) => !v)}
-                  >
-                    <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Transform</span>
-                    {transformPanelExpanded ? (
-                      <ChevronDown size={14} strokeWidth={2} className="shrink-0 text-zinc-500" />
-                    ) : (
-                      <ChevronRight size={14} strokeWidth={2} className="shrink-0 text-zinc-500" />
-                    )}
-                  </button>
-                  {transformPanelExpanded && (
-                    <div className="mt-2 space-y-2">
+                    <div className="space-y-2">
                       <div className="grid grid-cols-2 gap-1.5">
                         {(["x", "y"] as const).map((key) => (
                           <div key={key} className="space-y-0.5">
@@ -25998,168 +27382,7 @@ export function FreehandStudioCanvas({
                         </div>
                       </div>
                     </div>
-                  )}
                 </div>
-
-                {firstSelected.type === "rect" && (() => {
-                  const r = rectObjectWithNormalizedCorners(firstSelected as RectObject);
-                  const corners = rectCornerRadiusObject(r);
-                  const linked = rectCornersLinked(r);
-                  const maxR = Math.round((Math.min(r.width, r.height) / 2) * 100) / 100;
-                  const inputClass =
-                    "w-full cursor-ew-resize rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 font-mono text-[12px] text-zinc-100";
-                  const setSingleCorner = (corner: keyof RectangleCornerRadius, value: number, silent = false) => {
-                    const clamped = clamp(value, 0, maxR);
-                    updateSelectedRectCornerRadius({ [corner]: clamped }, { corner, linked: false, silent });
-                  };
-                  return (
-                    <div className="border-b border-white/[0.08] px-[14px] py-3">
-                      <div className="mb-2 flex items-center justify-between gap-2">
-                        <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Corner Radius</span>
-                        <div className="flex items-center gap-1">
-                          {renderDatasetPropertyLink("cornerRadius")}
-                          <button
-                          type="button"
-                          title={linked ? "Desenlazar esquinas" : "Enlazar esquinas"}
-                          onClick={() => {
-                            if (linked) {
-                              updateSelectedRectCornerRadius(corners, { linked: false });
-                              return;
-                            }
-                            updateSelectedRectCornerRadius(corners.topLeft, { linked: true });
-                          }}
-                          className={`rounded-[5px] border p-1.5 transition-colors ${linked ? "border-[#534AB7] bg-[#534AB7] text-white" : "border-white/[0.08] text-zinc-400 hover:bg-white/[0.06]"}`}
-                        >
-                          {linked ? <Link2 size={14} strokeWidth={2} aria-hidden /> : <Unlink2 size={14} strokeWidth={2} aria-hidden />}
-                        </button>
-                        </div>
-                      </div>
-                      {linked ? (
-                        <ScrubNumberInput
-                          value={Math.round(corners.topLeft * 100) / 100}
-                          onKeyboardCommit={(n) => updateSelectedRectCornerRadius(clamp(n, 0, maxR), { linked: true })}
-                          onScrubLive={(n) => updateSelectedRectCornerRadius(clamp(n, 0, maxR), { linked: true, silent: true })}
-                          onScrubEnd={commitHistoryAfterScrub}
-                          step={1}
-                          roundFn={(n) => Math.round(clamp(n, 0, maxR) * 100) / 100}
-                          min={0}
-                          max={maxR}
-                          title={PROP_PANEL_SCRUB_HINT}
-                          className={inputClass}
-                        />
-                      ) : (
-                        <div className="grid grid-cols-2 gap-1.5">
-                          <div className="space-y-0.5">
-                            <span className="text-[9px] text-zinc-500 uppercase tracking-wider">Top Left</span>
-                            <ScrubNumberInput
-                              value={Math.round(corners.topLeft * 100) / 100}
-                              onKeyboardCommit={(n) => setSingleCorner("topLeft", n)}
-                              onScrubLive={(n) => setSingleCorner("topLeft", n, true)}
-                              onScrubEnd={commitHistoryAfterScrub}
-                              step={1}
-                              roundFn={(n) => Math.round(clamp(n, 0, maxR) * 100) / 100}
-                              min={0}
-                              max={maxR}
-                              title={PROP_PANEL_SCRUB_HINT}
-                              className={inputClass}
-                            />
-                          </div>
-                          <div className="space-y-0.5">
-                            <span className="text-[9px] text-zinc-500 uppercase tracking-wider">Top Right</span>
-                            <ScrubNumberInput
-                              value={Math.round(corners.topRight * 100) / 100}
-                              onKeyboardCommit={(n) => setSingleCorner("topRight", n)}
-                              onScrubLive={(n) => setSingleCorner("topRight", n, true)}
-                              onScrubEnd={commitHistoryAfterScrub}
-                              step={1}
-                              roundFn={(n) => Math.round(clamp(n, 0, maxR) * 100) / 100}
-                              min={0}
-                              max={maxR}
-                              title={PROP_PANEL_SCRUB_HINT}
-                              className={inputClass}
-                            />
-                          </div>
-                          <div className="space-y-0.5">
-                            <span className="text-[9px] text-zinc-500 uppercase tracking-wider">Bottom Right</span>
-                            <ScrubNumberInput
-                              value={Math.round(corners.bottomRight * 100) / 100}
-                              onKeyboardCommit={(n) => setSingleCorner("bottomRight", n)}
-                              onScrubLive={(n) => setSingleCorner("bottomRight", n, true)}
-                              onScrubEnd={commitHistoryAfterScrub}
-                              step={1}
-                              roundFn={(n) => Math.round(clamp(n, 0, maxR) * 100) / 100}
-                              min={0}
-                              max={maxR}
-                              title={PROP_PANEL_SCRUB_HINT}
-                              className={inputClass}
-                            />
-                          </div>
-                          <div className="space-y-0.5">
-                            <span className="text-[9px] text-zinc-500 uppercase tracking-wider">Bottom Left</span>
-                            <ScrubNumberInput
-                              value={Math.round(corners.bottomLeft * 100) / 100}
-                              onKeyboardCommit={(n) => setSingleCorner("bottomLeft", n)}
-                              onScrubLive={(n) => setSingleCorner("bottomLeft", n, true)}
-                              onScrubEnd={commitHistoryAfterScrub}
-                              step={1}
-                              roundFn={(n) => Math.round(clamp(n, 0, maxR) * 100) / 100}
-                              min={0}
-                              max={maxR}
-                              title={PROP_PANEL_SCRUB_HINT}
-                              className={inputClass}
-                            />
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })()}
-
-                {firstSelected.type === "path" && (() => {
-                  const p = firstSelected as PathObject;
-                  const stats = pathCornerRadiusStats(p);
-                  const inputClass =
-                    "w-full cursor-ew-resize rounded-[5px] border border-white/[0.08] bg-white/[0.06] px-2 py-1 font-mono text-[12px] text-zinc-100 disabled:cursor-not-allowed disabled:opacity-40";
-                  return (
-                    <div className="border-b border-white/[0.08] px-[14px] py-3">
-                      <div className="mb-2 flex items-center justify-between gap-2">
-                        <div>
-                          <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Corner Radius</span>
-                          <p className="mt-0.5 text-[10px] text-zinc-500">
-                            {stats.count > 0 ? `${stats.count} esquinas rectas detectadas` : "Sin esquinas rectas editables"}
-                          </p>
-                        </div>
-                        <button
-                          type="button"
-                          title={pathCornerRadiusLinked ? "Desenlazar esquinas del path" : "Enlazar esquinas del path"}
-                          onClick={() => setPathCornerRadiusLinked((v) => !v)}
-                          className={`rounded-[5px] border p-1.5 transition-colors ${pathCornerRadiusLinked ? "border-[#534AB7] bg-[#534AB7] text-white" : "border-white/[0.08] text-zinc-400 hover:bg-white/[0.06]"}`}
-                        >
-                          {pathCornerRadiusLinked ? <Link2 size={14} strokeWidth={2} aria-hidden /> : <Unlink2 size={14} strokeWidth={2} aria-hidden />}
-                        </button>
-                      </div>
-                      {pathCornerRadiusLinked ? (
-                        <ScrubNumberInput
-                          value={Math.round(stats.value * 100) / 100}
-                          onKeyboardCommit={(n) => updateSelectedPathCornerRadius(clamp(n, 0, stats.maxRadius))}
-                          onScrubLive={(n) => updateSelectedPathCornerRadius(clamp(n, 0, stats.maxRadius), { silent: true })}
-                          onScrubEnd={commitHistoryAfterScrub}
-                          step={1}
-                          roundFn={(n) => Math.round(clamp(n, 0, stats.maxRadius) * 100) / 100}
-                          min={0}
-                          max={stats.maxRadius}
-                          disabled={stats.count === 0}
-                          title={stats.count > 0 ? PROP_PANEL_SCRUB_HINT : "Este path no tiene esquinas rectas compatibles"}
-                          className={inputClass}
-                        />
-                      ) : (
-                        <div className="rounded-[6px] border border-white/[0.08] bg-white/[0.035] px-2.5 py-2 text-[10px] leading-snug text-zinc-400">
-                          Esquinas desenlazadas: ajusta cada punto desde los handles del lienzo. Mantén Alt al arrastrar para forzar una sola esquina.
-                        </div>
-                      )}
-                    </div>
-                  );
-                })()}
 
                 {/* ── Designer: Marco de imagen ── */}
                 {designerMode && firstSelected.isImageFrame && (() => {
@@ -27062,10 +28285,10 @@ export function FreehandStudioCanvas({
                   </div>
                 )}
                 </div>
+                </>
+                )}
               </>
-            ) : (
-              <div className="text-[10px] text-zinc-600 italic">No object selected</div>
-            )}
+            ) : null}
 
           {/* ── Multi-selección: grupo / boolean (alinear arriba en modo Designer) ── */}
           {selectedObjects.length >= 2 && (
@@ -27102,7 +28325,7 @@ export function FreehandStudioCanvas({
           {/* ── Layers (plegable abajo, solo en la columna derecha) ── */}
           <div
             className={`flex min-h-0 shrink-0 flex-col border-t border-white/[0.08] bg-[#12151a] ${
-              layersPanelExpanded ? "max-h-[min(280px,38vh)] min-h-[120px] flex-1" : ""
+              layersPanelExpanded ? "max-h-[min(420px,52vh)] min-h-[120px] flex-1" : ""
             }`}
           >
             <div className="flex shrink-0 flex-col gap-1.5 border-b border-white/[0.08] bg-[#151820] px-2 py-2">
@@ -27278,7 +28501,10 @@ export function FreehandStudioCanvas({
                             layerPanelSelectionRef.current = true;
                             const ns = resolveSelection(obj.id, extend);
                             setSelectedIds(ns);
-                            if (ns.has(obj.id)) setPrimarySelectedId(obj.id);
+                            if (ns.has(obj.id)) {
+                              setPrimarySelectedId(obj.id);
+                              setMaskEditObjectId(null);
+                            }
                           }}
                         >
                           <button
@@ -27303,64 +28529,91 @@ export function FreehandStudioCanvas({
                           >
                             {obj.locked ? <Lock size={12} className="text-amber-400" /> : <Unlock size={12} className="opacity-40" />}
                           </button>
-                          {studioCaps.layerStyles && isLayerStylesEligible(obj) ? (
-                            <button
-                              type="button"
-                              title="Layer Styles…"
-                              className={`shrink-0 rounded p-0.5 hover:bg-white/10 hover:text-white ${
-                                hasActiveLayerEffects((obj as FreehandObjectBase).layerEffects)
-                                  ? "text-violet-400"
-                                  : "text-zinc-500 opacity-70"
-                              }`}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedIds(new Set([obj.id]));
-                                setPrimarySelectedId(obj.id);
-                                openLayerStylesModal(obj);
-                              }}
-                            >
-                              <Sparkles size={12} strokeWidth={2} />
-                            </button>
-                          ) : null}
-                          {studioCaps.layerMask && isLayerMaskRasterEligible(obj) ? (
-                            <button
-                              type="button"
-                              title={
-                                hasLayerMaskBlock(obj)
-                                  ? "Editar máscara (pincel) — clic otra vez para salir"
-                                  : "Añadir máscara de capa"
-                              }
-                              className={`shrink-0 overflow-hidden rounded border p-0.5 transition-colors ${
-                                maskEditObjectId === obj.id
-                                  ? "border-violet-400 ring-1 ring-violet-400/80 bg-violet-500/20"
-                                  : "border-white/10 hover:border-white/25 hover:bg-white/10"
-                              }`}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedIds(new Set([obj.id]));
-                                setPrimarySelectedId(obj.id);
-                                if (hasLayerMaskBlock(obj)) {
-                                  setMaskEditObjectId((id) => (id === obj.id ? null : obj.id));
-                                } else {
-                                  addLayerMaskToSelection(obj);
-                                }
-                              }}
-                            >
-                              {hasLayerMaskBlock(obj) ? (
-                                <img
-                                  src={(obj as FreehandObjectBase).layerMask!.src}
-                                  alt=""
-                                  className="h-3.5 w-3.5 object-cover"
+                          {(() => {
+                            const layerThumbSrc = layerPanelRasterThumbSrc(obj);
+                            const showMaskThumbs =
+                              studioCaps.layerMask &&
+                              hasLayerMaskBlock(obj) &&
+                              isLayerMaskRasterEligible(obj) &&
+                              layerThumbSrc;
+                            if (!showMaskThumbs) return layerRowIcon(obj);
+                            const maskSrc = (obj as FreehandObjectBase).layerMask!.src;
+                            const maskSelected = maskEditObjectId === obj.id;
+                            const layerThumbSelected = isSel && !maskSelected;
+                            const selectLayerContent = (e: React.MouseEvent) => {
+                              e.stopPropagation();
+                              layerPanelSelectionRef.current = true;
+                              setSelectedIds(new Set([obj.id]));
+                              setPrimarySelectedId(obj.id);
+                              setMaskEditObjectId(null);
+                            };
+                            return (
+                              <div
+                                className="flex shrink-0 items-center gap-px"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <button
+                                  type="button"
+                                  title="Contenido de capa"
+                                  className={layerPanelThumbFrameClass(layerThumbSelected)}
+                                  style={{ background: LAYER_PANEL_THUMB_CHECKER }}
+                                  onClick={selectLayerContent}
+                                >
+                                  {/** eslint-disable-next-line @next/next/no-img-element */}
+                                  <img
+                                    src={layerThumbSrc}
+                                    alt=""
+                                    className="block h-full w-full object-cover"
+                                    draggable={false}
+                                  />
+                                </button>
+                                <Link2
+                                  size={9}
+                                  strokeWidth={2.25}
+                                  className="shrink-0 text-zinc-500"
+                                  aria-hidden
                                 />
-                              ) : (
-                                <Blend size={12} className="text-zinc-500 opacity-80" strokeWidth={2} />
-                              )}
-                            </button>
-                          ) : null}
-                          {layerRowIcon(obj)}
+                                <button
+                                  type="button"
+                                  title="Máscara de capa (pincel B)"
+                                  className={layerPanelThumbFrameClass(maskSelected)}
+                                  style={{ background: "#ffffff" }}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    layerPanelSelectionRef.current = true;
+                                    setSelectedIds(new Set([obj.id]));
+                                    setPrimarySelectedId(obj.id);
+                                    enterLayerMaskEdit(obj.id);
+                                  }}
+                                  onContextMenu={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    setCtxMenu(null);
+                                    layerPanelSelectionRef.current = true;
+                                    setSelectedIds(new Set([obj.id]));
+                                    setPrimarySelectedId(obj.id);
+                                    setLayerMaskCtxMenu({ x: e.clientX, y: e.clientY, layerId: obj.id });
+                                  }}
+                                >
+                                  {/** eslint-disable-next-line @next/next/no-img-element */}
+                                  <img
+                                    src={maskSrc}
+                                    alt=""
+                                    className="block h-full w-full object-cover"
+                                    draggable={false}
+                                  />
+                                </button>
+                              </div>
+                            );
+                          })()}
                           <span
-                            className="flex-1 truncate"
+                            className="min-w-0 flex-1 truncate"
                             onDoubleClick={(e) => {
+                              if (obj.type === "adjustmentLayer") {
+                                e.stopPropagation();
+                                openAdjustmentLayerEditor(obj as AdjustmentLayerObject);
+                                return;
+                              }
                               if (obj.type === "booleanGroup") {
                                 e.stopPropagation();
                                 enterIsolation(obj.id);
@@ -27391,38 +28644,21 @@ export function FreehandStudioCanvas({
                                 ▣ clip ({(obj as ClippingContainerObject).content.length})
                               </span>
                             )}
+                            {obj.type === "adjustmentLayer" &&
+                            !isAdjustmentLayerSettingsNeutral((obj as AdjustmentLayerObject).adjustment) ? (
+                              <span className="ml-1 text-[8px] text-sky-400/90">●</span>
+                            ) : null}
                           </span>
-                          {!isPrInput ? (
-                            <button
-                              type="button"
-                              title="Delete"
-                              className="shrink-0 hover:text-red-400"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setObjects((p) => {
-                                  const n = p.filter((o) => o.id !== obj.id);
-                                  pushHistory(n, new Set());
-                                  return n;
-                                });
-                                setSelectedIds((s) => {
-                                  const ns = new Set(s);
-                                  ns.delete(obj.id);
-                                  return ns;
-                                });
-                              }}
-                            >
-                              <Trash2 size={11} />
-                            </button>
-                          ) : (
+                          {isPrInput ? (
                             <span className="inline-flex w-3 shrink-0" aria-hidden />
-                          )}
+                          ) : null}
                         </div>
                       );
                     })}
                     </div>
                   </div>
                   <div
-                    className={`flex shrink-0 justify-center border-t border-white/10 bg-[#151820] px-3 py-2 ${
+                    className={`flex shrink-0 items-center justify-between gap-1 border-t border-white/10 bg-[#151820] px-2 py-1.5 ${
                       layerDropTarget === LAYER_PANEL_NEW_LAYER_DROP ? "ring-1 ring-inset ring-violet-400" : ""
                     }`}
                     onDragOver={(e) => {
@@ -27444,14 +28680,102 @@ export function FreehandStudioCanvas({
                       duplicateLayerOnPanelNewDrop(dragId);
                     }}
                   >
-                    <button
-                      type="button"
-                      className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/[0.12] bg-[#1e2229] text-zinc-400 transition-colors hover:border-violet-500/40 hover:bg-violet-600/20 hover:text-white"
-                      title="Nueva capa vacía (arriba del todo). Arrastra una capa aquí para duplicarla."
-                      onClick={() => createEmptyLayerOnTop()}
-                    >
-                      <Plus size={18} strokeWidth={2} />
-                    </button>
+                    {(() => {
+                      const tgt = layerPanelTarget;
+                      const canFx = !!(tgt && studioCaps.layerStyles && isLayerStylesEligible(tgt));
+                      const canMask = !!(tgt && studioCaps.layerMask && isLayerMaskRasterEligible(tgt));
+                      const maskActive = !!(tgt && maskEditObjectId === tgt.id);
+                      const adjSelected = tgt?.type === "adjustmentLayer";
+                      const btnClass = (on: boolean, disabled?: boolean) =>
+                        `flex h-8 min-w-[2rem] items-center justify-center rounded-[4px] border px-1.5 text-[10px] transition-colors ${
+                          disabled
+                            ? "cursor-not-allowed border-transparent text-zinc-600 opacity-40"
+                            : on
+                              ? "border-violet-400/50 bg-violet-500/20 text-violet-100"
+                              : "border-transparent text-zinc-400 hover:border-white/15 hover:bg-white/[0.06] hover:text-zinc-100"
+                        }`;
+                      return (
+                        <>
+                          <div className="flex min-w-0 flex-1 items-center gap-0.5">
+                            <button
+                              type="button"
+                              disabled={!canFx}
+                              title="Estilos de capa (fx) — superposición de color, degradado, resplandor…"
+                              className={btnClass(!!(tgt && hasActiveLayerEffects((tgt as FreehandObjectBase).layerEffects)))}
+                              onClick={() => tgt && openLayerStylesModal(tgt)}
+                            >
+                              <span className="font-serif text-[11px] font-bold leading-none">fx</span>
+                            </button>
+                            <button
+                              type="button"
+                              disabled={!canMask}
+                              title={
+                                tgt && hasLayerMaskBlock(tgt)
+                                  ? "Editar máscara de capa (pincel B)"
+                                  : "Añadir máscara de capa"
+                              }
+                              className={btnClass(maskActive || !!(tgt && hasLayerMaskBlock(tgt)))}
+                              onClick={() => {
+                                if (!tgt) return;
+                                if (hasLayerMaskBlock(tgt)) {
+                                  if (maskEditObjectId === tgt.id) {
+                                    setMaskEditObjectId(null);
+                                  } else {
+                                    enterLayerMaskEdit(tgt.id);
+                                  }
+                                } else {
+                                  addLayerMaskToSelection(tgt);
+                                }
+                              }}
+                            >
+                              <Blend size={15} strokeWidth={1.75} />
+                            </button>
+                            <button
+                              type="button"
+                              title={
+                                adjSelected
+                                  ? "Editar capa de ajuste (brillo, contraste, niveles…)"
+                                  : "Nueva capa de ajuste sobre la selección"
+                              }
+                              className={btnClass(
+                                !!(adjSelected &&
+                                  !isAdjustmentLayerSettingsNeutral(
+                                    (tgt as AdjustmentLayerObject).adjustment,
+                                  )),
+                              )}
+                              onClick={() => {
+                                if (adjSelected && tgt?.type === "adjustmentLayer") {
+                                  openAdjustmentLayerEditor(tgt as AdjustmentLayerObject);
+                                } else {
+                                  createAdjustmentLayer();
+                                }
+                              }}
+                            >
+                              <Contrast size={15} strokeWidth={1.75} />
+                            </button>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-0.5">
+                            <button
+                              type="button"
+                              className={btnClass(false)}
+                              title="Nueva capa vacía (arriba). Arrastra una capa aquí para duplicarla."
+                              onClick={() => createEmptyLayerOnTop()}
+                            >
+                              <Plus size={16} strokeWidth={2} />
+                            </button>
+                            <button
+                              type="button"
+                              disabled={selectedIds.size === 0}
+                              title="Eliminar capa(s) seleccionada(s)"
+                              className={btnClass(false, selectedIds.size === 0)}
+                              onClick={() => deleteSelected()}
+                            >
+                              <Trash2 size={15} strokeWidth={1.75} />
+                            </button>
+                          </div>
+                        </>
+                      );
+                    })()}
                   </div>
                 </div>
               </>
@@ -27499,6 +28823,24 @@ export function FreehandStudioCanvas({
 
       {/* ── Context menu ─────────────────────────────────────────── */}
       {ctxMenu && <CtxMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenuItems} onClose={() => setCtxMenu(null)} />}
+      {layerMaskCtxMenu && (
+        <CtxMenu
+          x={layerMaskCtxMenu.x}
+          y={layerMaskCtxMenu.y}
+          items={[
+            {
+              label: "Eliminar máscara de capa",
+              action: () => deleteLayerMaskForObject(layerMaskCtxMenu.layerId),
+            },
+            {
+              label: "Aplicar máscara de capa",
+              action: () => applyLayerMaskForObject(layerMaskCtxMenu.layerId),
+              separator: true,
+            },
+          ]}
+          onClose={() => setLayerMaskCtxMenu(null)}
+        />
+      )}
 
       <GoogleFontInstallModal
         open={googleFontInstallModalOpen}
@@ -27745,7 +29087,9 @@ export function FreehandStudioCanvas({
         <PhotoImageAdjustmentsModal
           open
           histogram={photoAdjustmentsHistogram}
-          hasSelection={!!photoAdjustmentsSession.selection}
+          hasSelection={
+            photoAdjustmentsSession.mode === "image" && !!photoAdjustmentsSession.selection
+          }
           values={{
             brightness: photoAdjustmentsSession.brightness,
             contrast: photoAdjustmentsSession.contrast,

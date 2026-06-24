@@ -122,6 +122,31 @@ function buildToneLut(a: AdjustmentValues): Uint8ClampedArray {
   return lut;
 }
 
+/** Valores 0..1 para `feFuncR/G/B type="table"` en filtros SVG (256 entradas). */
+export function buildToneLutTableValues(a: AdjustmentValues): string {
+  const lut = buildToneLut(a);
+  return Array.from(lut, (v) => (v / 255).toFixed(5)).join(" ");
+}
+
+/** Matriz `feColorMatrix` para saturación (-100..100, 0 = identidad). */
+export function buildSaturationColorMatrixValues(saturation: number): string {
+  const s = 1 + saturation / 100;
+  if (Math.abs(s - 1) < 1e-6) {
+    return "1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 1 0";
+  }
+  const wR = 0.299;
+  const wG = 0.587;
+  const wB = 0.114;
+  const m = (w: number) => w + (1 - w) * s;
+  const o = (w: number) => w * (1 - s);
+  return [
+    m(wR), o(wG), o(wB), 0, 0,
+    o(wR), m(wG), o(wB), 0, 0,
+    o(wR), o(wG), m(wB), 0, 0,
+    0, 0, 0, 1, 0,
+  ].join(" ");
+}
+
 /** Aplica los ajustes in-place sobre los píxeles RGBA. */
 export function applyPhotoImageAdjustmentsToImageData(
   img: ImageData,

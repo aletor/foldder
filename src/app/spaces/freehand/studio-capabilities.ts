@@ -24,6 +24,10 @@ export type FreehandStudioCapabilities = {
   layerStyles: boolean;
   /** Máscara de capa (bitmap en escala de grises) por capa raster. */
   layerMask: boolean;
+  /** Panel Propiedades: «Convertir en selección» desde rect/elipse/path vectorial. */
+  photoMarqueeFromVector: boolean;
+  /** Herramientas de marco raster (rect / elipse / lazo; toolbar + teclas M/L/O). */
+  toolPhotoMarquee: boolean;
 };
 
 const CAPS_DESIGNER: FreehandStudioCapabilities = {
@@ -34,6 +38,8 @@ const CAPS_DESIGNER: FreehandStudioCapabilities = {
   combineRasterLayers: true,
   layerStyles: true,
   layerMask: true,
+  photoMarqueeFromVector: true,
+  toolPhotoMarquee: true,
 };
 
 /** Entorno sin Designer: mismo perfil conservador. */
