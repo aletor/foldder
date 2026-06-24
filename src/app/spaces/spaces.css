@@ -562,6 +562,7 @@
 .custom-node.foldder-studio-node--photoRoom.foldder-node--frameless.node--media,
 .custom-node.foldder-studio-node--cine.foldder-node--frameless.node--media,
 .custom-node.foldder-studio-node--projectBrain.foldder-node--frameless.node--media,
+.custom-node.foldder-studio-node--dataset.foldder-node--frameless.node--media,
 .custom-node.nano-banana-node.foldder-node--frameless.node--media,
 .custom-node.layerizer-node.foldder-node--frameless.node--media,
 .custom-node.url-image-node.foldder-node--frameless.node--media {
@@ -575,6 +576,7 @@
 .spaces-canvas .react-flow__node:has(.foldder-studio-node--photoRoom),
 .spaces-canvas .react-flow__node:has(.foldder-studio-node--cine),
 .spaces-canvas .react-flow__node:has(.foldder-studio-node--projectBrain),
+.spaces-canvas .react-flow__node:has(.foldder-studio-node--dataset),
 .spaces-canvas .react-flow__node:has(.nano-banana-node),
 .spaces-canvas .react-flow__node:has(.url-image-node) {
   overflow: visible !important;
@@ -4428,6 +4430,7 @@
 .react-flow__handle:not(.foldder-data-handle).handle-url    { border-color: #10b981 !important; }
 .react-flow__handle:not(.foldder-data-handle).handle-rose   { border-color: #f43f5e !important; }
 .react-flow__handle:not(.foldder-data-handle).handle-emerald{ border-color: #10b981 !important; }
+.react-flow__handle:not(.foldder-data-handle).handle-dataset { border-color: #14b8a6 !important; }
 
 /* Conectores con icono: cuadrado redondeado; anillo de color solo si está conectado.
    border-radius compensado como ancho/alto para radio ~constante en pantalla al hacer zoom */
@@ -4490,6 +4493,7 @@
 .foldder-data-handle--connected.handle-url    { box-shadow: 0 0 0 2.8px rgba(16, 185, 129, 0.55) !important; }
 .foldder-data-handle--connected.handle-rose   { box-shadow: 0 0 0 2.8px rgba(244, 63, 94, 0.55) !important; }
 .foldder-data-handle--connected.handle-emerald{ box-shadow: 0 0 0 2.8px rgba(16, 185, 129, 0.55) !important; }
+.foldder-data-handle--connected.handle-dataset { box-shadow: 0 0 0 2.8px rgba(20, 184, 166, 0.55) !important; }
 .foldder-data-handle--connected.handle-generic { box-shadow: 0 0 0 2.8px rgba(148, 163, 184, 0.5) !important; }
 
 /* Misma composición que @xyflow/react/style.css: si falta el eje Y/X, los bounds del handle fallan y las aristas no se dibujan (getEdgePosition → null). */
@@ -4800,7 +4804,7 @@ body.nb-studio-open [data-foldder-canvas-launcher] {
 
 .foldder-sidebar-tile--tool .foldder-sidebar-tile__label {
   margin-top: 4px;
-  font-size: 7px;
+  font-size: 9px;
   font-weight: 400;
   color: #ffffff;
 }
@@ -7387,6 +7391,38 @@ body.foldder-studio-flush .left-toolbar-flyout-panel :is(button, span, div):not(
   opacity: 1 !important;
   visibility: visible !important;
   transform: translateZ(0);
+}
+
+/* ============================================================================
+   Dataset studio — Flush Chrome (data-foldder-dataset-studio)
+   ============================================================================ */
+[data-foldder-dataset-studio] {
+  --foldder-studio-accent: #14b8a6;
+}
+
+[data-foldder-dataset-studio] :is(button, span, div, input, label, select, textarea, pre, article, table, th, td):not([data-foldder-keep-round]) {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+[data-foldder-dataset-studio] [class*="rounded-full"]:not([data-foldder-keep-round]) {
+  border-radius: 0 !important;
+}
+
+[data-foldder-dataset-studio] input[type="checkbox"],
+[data-foldder-dataset-studio] input[type="radio"] {
+  border-radius: 0 !important;
+}
+
+.custom-node.foldder-studio-node--dataset .dataset-empty-background,
+.custom-node.dataset-node .dataset-empty-background {
+  pointer-events: none;
+}
+
+.custom-node.foldder-studio-node--dataset .dataset-empty-background img,
+.custom-node.dataset-node .dataset-empty-background img {
+  object-fit: contain;
+  object-position: bottom;
 }
 
 /* ============================================================================

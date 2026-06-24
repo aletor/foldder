@@ -1,4 +1,4 @@
-export type HandleType = 'image' | 'video' | 'audio' | 'prompt' | 'mask' | 'pdf' | 'txt' | 'url' | 'json' | 'brain' | 'media_list' | 'image_layout';
+export type HandleType = 'image' | 'video' | 'audio' | 'prompt' | 'mask' | 'pdf' | 'txt' | 'url' | 'json' | 'brain' | 'media_list' | 'image_layout' | 'dataset';
 
 export interface NodeMetadata {
   type: string;
@@ -501,6 +501,7 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
       'Full design studio: vector tools (pen, shapes, text) + page-based layout + threaded text frames + image frames. Combines Freehand vector editing with InDesign-style page management. Accepts an Image Layout from Layerizer: layers arrive pre-mounted at their original positions for drag-reordering.',
     inputs: [
       { id: 'brain', label: 'Brain', type: 'brain' as HandleType },
+      { id: 'dataset', label: 'Dataset', type: 'dataset' as HandleType },
       { id: 'layout', label: 'Image Layout', type: 'image_layout' as HandleType },
     ],
     outputs: [
@@ -526,6 +527,20 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
       label: 'string',
       imageVideoPlacements: 'PresenterImageVideoPlacement[]',
       transitionsByPageId: 'Record<pageId, SlideTransitionId>',
+    },
+  },
+  dataset: {
+    type: 'dataset',
+    label: 'Dataset',
+    description:
+      'Tabla tipada y persistente: cards iterables (una pieza por card en el destino) + constantes compartidas que se inyectan en todas las piezas. Fuente de verdad reutilizable; expone filas tipadas + constantes a cualquier nodo de materialización (Designer, PhotoRoom, Cine, Animate).',
+    inputs: [],
+    outputs: [{ id: 'dataset', label: 'Dataset', type: 'dataset' as HandleType }],
+    dataSchema: {
+      label: 'string (nombre del Dataset)',
+      dataset:
+        'Dataset { id, name, scope, lists: DatasetList[], constants: Constants, version } — cada listado itera por separado; binding = listKey + fieldKey',
+      datasetRef: '{ datasetId, version } (referencia a Dataset global; fase 2)',
     },
   },
   canvasGroup: {

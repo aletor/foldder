@@ -201,6 +201,8 @@ export function defaultDataForCanvasDropNode(nodeType: string): Record<string, u
       };
     case "presenter":
       return { label: "Presenter" };
+    case "dataset":
+      return { label: "Dataset", _datasetShowChooser: true };
     case "export_multimedia":
       return { label: "Export Multimedia" };
     case "exportMultiple":

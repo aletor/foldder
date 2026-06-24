@@ -9,6 +9,7 @@ export const FOLDDER_NODE_STUDIO_BACKGROUND_SRC: Record<string, string> = {
   cine: "/assets/nodes/cine-empty-red.png",
   designer: "/assets/nodes/designer-empty-lime.png",
   guionista: "/assets/nodes/guionista-empty-blue.png",
+  dataset: "/assets/nodes/guionista-empty-blue.png",
   inspiration: "/assets/nodes/inspiration-empty-green.png",
   geminiVideo: "/assets/nodes/gemini-video-empty-blue.png",
   nanoBanana: "/assets/nodes/nano-banana-empty-pink.png",

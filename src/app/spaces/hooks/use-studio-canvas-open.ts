@@ -1,12 +1,27 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { FOLDDER_STUDIO_BODY_CLASS } from "../studio-node/studio-node-architecture";
 
 const STUDIO_CANVAS_SELECTOR = "[data-foldder-studio-canvas]";
+const STUDIO_PANEL_SELECTOR = "[data-foldder-studio-panel]";
+const STUDIO_BLOCK_SELECTOR = `${STUDIO_CANVAS_SELECTOR}, ${STUDIO_PANEL_SELECTOR}`;
+
+/** True while a full-screen studio blocks canvas file drops / drag previews. */
+export function isFoldderStudioBlockingCanvas(): boolean {
+  if (typeof document === "undefined") return false;
+  if (document.body.classList.contains(FOLDDER_STUDIO_BODY_CLASS)) return true;
+  return Boolean(document.querySelector(STUDIO_BLOCK_SELECTOR));
+}
+
+export function isPointerOverFoldderStudio(clientX: number, clientY: number): boolean {
+  if (typeof document === "undefined") return false;
+  const top = document.elementFromPoint(clientX, clientY);
+  return Boolean(top instanceof HTMLElement && top.closest(STUDIO_BLOCK_SELECTOR));
+}
 
 function isStudioCanvasOpen(): boolean {
-  if (typeof document === "undefined") return false;
-  return Boolean(document.querySelector(STUDIO_CANVAS_SELECTOR));
+  return isFoldderStudioBlockingCanvas();
 }
 
 function mutationMayAffectStudioOpen(mutations: MutationRecord[]): boolean {
@@ -15,6 +30,12 @@ function mutationMayAffectStudioOpen(mutations: MutationRecord[]): boolean {
       const el = m.target;
       if (el instanceof Element) {
         if (el.matches(STUDIO_CANVAS_SELECTOR) || el.closest(STUDIO_CANVAS_SELECTOR)) {
+          return true;
+        }
+        if (el.matches(STUDIO_PANEL_SELECTOR) || el.closest(STUDIO_PANEL_SELECTOR)) {
+          return true;
+        }
+        if (el === document.body && m.attributeName === "class") {
           return true;
         }
       }
@@ -26,11 +47,17 @@ function mutationMayAffectStudioOpen(mutations: MutationRecord[]): boolean {
         if (n.matches(STUDIO_CANVAS_SELECTOR) || n.querySelector(STUDIO_CANVAS_SELECTOR)) {
           return true;
         }
+        if (n.matches(STUDIO_PANEL_SELECTOR) || n.querySelector(STUDIO_PANEL_SELECTOR)) {
+          return true;
+        }
       }
     }
     for (const n of m.removedNodes) {
       if (n instanceof Element) {
         if (n.matches(STUDIO_CANVAS_SELECTOR) || n.querySelector(STUDIO_CANVAS_SELECTOR)) {
+          return true;
+        }
+        if (n.matches(STUDIO_PANEL_SELECTOR) || n.querySelector(STUDIO_PANEL_SELECTOR)) {
           return true;
         }
       }
@@ -67,7 +94,7 @@ export function useStudioCanvasOpen(): boolean {
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ["data-foldder-studio-canvas"],
+      attributeFilter: ["data-foldder-studio-canvas", "data-foldder-studio-panel", "class"],
     });
 
     return () => {

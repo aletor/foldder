@@ -28,6 +28,9 @@ import { useLanguage } from "@/components/LanguageProvider";
 import { LANGUAGE_OPTIONS } from "@/lib/i18n";
 import { ProjectBrainCanvasContext } from "./project-brain-canvas-context";
 import { ProjectAssetsCanvasContext } from "./project-assets-canvas-context";
+import { DatasetCanvasContext } from "./dataset/dataset-canvas-context";
+import { registerProjectDatasetConsumers } from "./dataset/dataset-api";
+import { collectGlobalDatasetIdsFromSpaces } from "./dataset/dataset-project";
 
 import {
   applyCanvasGroupCollapse,
@@ -53,7 +56,7 @@ import { useTouchNodeLongPress } from "./use-touch-node-long-press";
 import { TouchLiteEdge } from "./touch-lite-edge";
 import { useInputMode } from "./input-mode-context";
 import type { TouchCanvasTool } from "./touch-canvas-tool";
-import { useStudioCanvasOpen } from "./hooks/use-studio-canvas-open";
+import { isFoldderStudioBlockingCanvas, isPointerOverFoldderStudio, useStudioCanvasOpen } from "./hooks/use-studio-canvas-open";
 import { AgentHUD } from "./AgentHUD";
 import { AiRequestHud } from "./AiRequestHud";
 import { AiJobToastStack } from "./AiJobToastStack";
@@ -1002,6 +1005,8 @@ export function SpacesContent() {
     }),
     [metadata.assets, projectScopeId, brainFlowNodes, brainFlowEdges],
   );
+
+  const datasetCanvasValue = useMemo(() => ({ projectScopeId }), [projectScopeId]);
 
   const reconciledFoldderLibrary = useMemo(
     () =>
@@ -3813,6 +3818,14 @@ export function SpacesContent() {
       if (!savedProject || typeof savedProject !== 'object' || !savedProject.id) {
         return false;
       }
+      const globalDatasetIds = collectGlobalDatasetIdsFromSpaces(
+        savedProject.spaces as Record<string, { nodes?: Node[] } | undefined>,
+      );
+      if (globalDatasetIds.length > 0) {
+        void registerProjectDatasetConsumers(savedProject.id, globalDatasetIds).catch((error) => {
+          console.warn("[FOLDDER save] dataset consumer registration failed:", error);
+        });
+      }
       upsertSavedProjectMeta({
         id: savedProject.id,
         name: savedProject.name,
@@ -5543,6 +5556,10 @@ export function SpacesContent() {
         clearFileDragPreview();
         return;
       }
+      if (isFoldderStudioBlockingCanvas() || isPointerOverFoldderStudio(clientX, clientY)) {
+        clearFileDragPreview();
+        return;
+      }
       fileDragPointerRef.current = { x: clientX, y: clientY };
       if (canvasViewModeRef.current !== "free") {
         setFileDragPreview(null);
@@ -5559,7 +5576,7 @@ export function SpacesContent() {
         return;
       }
       const top = document.elementFromPoint(clientX, clientY);
-      if (top instanceof HTMLElement && top.closest("[data-foldder-studio-canvas]")) {
+      if (top instanceof HTMLElement && top.closest("[data-foldder-studio-canvas], [data-foldder-studio-panel]")) {
         setFileDragPreview(null);
         return;
       }
@@ -5575,6 +5592,11 @@ export function SpacesContent() {
 
   const onDragOver = useCallback(
     (event: React.DragEvent) => {
+      if (isFoldderStudioBlockingCanvas() || isPointerOverFoldderStudio(event.clientX, event.clientY)) {
+        clearFileDragPreview();
+        return;
+      }
+
       event.preventDefault();
 
       if (libraryDragTypeRef.current) {
@@ -5593,13 +5615,17 @@ export function SpacesContent() {
 
       event.dataTransfer.dropEffect = "move";
     },
-    [syncFileDragPreviewAtClientPoint, syncLibraryDragPreviewAtClientPoint],
+    [clearFileDragPreview, syncFileDragPreviewAtClientPoint, syncLibraryDragPreviewAtClientPoint],
   );
 
   useEffect(() => {
     const onDocumentDragOver = (event: DragEvent) => {
       if (libraryDragTypeRef.current) return;
       if (!isExternalFileDataTransfer(event.dataTransfer)) return;
+      if (isFoldderStudioBlockingCanvas() || isPointerOverFoldderStudio(event.clientX, event.clientY)) {
+        clearFileDragPreview();
+        return;
+      }
       event.preventDefault();
       if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
 
@@ -5712,6 +5738,12 @@ export function SpacesContent() {
 
   const onDrop = useCallback(
     (event: React.DragEvent) => {
+      if (isFoldderStudioBlockingCanvas() || isPointerOverFoldderStudio(event.clientX, event.clientY)) {
+        event.preventDefault();
+        clearFileDragPreview();
+        return;
+      }
+
       event.preventDefault();
 
       const dt = event.dataTransfer;
@@ -6020,6 +6052,7 @@ export function SpacesContent() {
         <SpacesActiveProjectIdContext.Provider value={activeProjectId}>
         <ProjectAssetsCanvasContext.Provider value={projectAssetsCanvasValue}>
         <ProjectBrainCanvasContext.Provider value={projectBrainCanvasValue}>
+        <DatasetCanvasContext.Provider value={datasetCanvasValue}>
         <DesignerSpaceIdContext.Provider value={activeSpaceId === "root" ? null : activeSpaceId}>
         <ReactFlow
           onInit={onCanvasInit}
@@ -6104,6 +6137,7 @@ export function SpacesContent() {
           {fileDragPreviewElement}
         </ReactFlow>
         </DesignerSpaceIdContext.Provider>
+        </DatasetCanvasContext.Provider>
         </ProjectBrainCanvasContext.Provider>
         </ProjectAssetsCanvasContext.Provider>
         </SpacesActiveProjectIdContext.Provider>

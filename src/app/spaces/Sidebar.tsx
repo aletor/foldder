@@ -125,6 +125,7 @@ const TOOL_ITEMS: Array<{ type: string; label: string }> = [
   { type: 'promptInput', label: 'Prompt' },
   { type: 'urlImage', label: 'URL Image' },
   { type: 'layerizer', label: 'Layerizer' },
+  { type: 'dataset', label: 'Dataset' },
   { type: 'mediaDescriber', label: 'Image Describer' },
   { type: 'enhancer', label: 'Enhance' },
   { type: 'imageCreationAdvanced', label: 'Image Advanced' },

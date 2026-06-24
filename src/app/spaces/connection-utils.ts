@@ -87,6 +87,11 @@ export function areNodesConnectable(
     return sourceHandleType === 'brain' && targetHandleType === 'brain';
   }
 
+  // Dataset handle only connects dataset output → dataset input.
+  if (connection.sourceHandle === 'dataset' || connection.targetHandle === 'dataset') {
+    return sourceHandleType === 'dataset' && targetHandleType === 'dataset';
+  }
+
   if (sourceHandleType === 'url' || targetHandleType === 'url') return true;
   return sourceHandleType === targetHandleType;
 }

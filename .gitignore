@@ -48,6 +48,7 @@ next-env.d.ts
 
 # Presenter share DB (local tokens + payloads)
 /data/presenter-shares.json
+/data/datasets/
 
 # portable Node bundle (no subir)
 .node-portable/

@@ -29,6 +29,10 @@ const COLLAPSED_PROXY_TOP_OFFSET = 40;
 
 function foldderTypeFromRegistry(t: string | undefined): FoldderHandleDataType {
   switch (t) {
+    case "brain":
+      return "brain";
+    case "dataset":
+      return "dataset";
     case "prompt":
       return "prompt";
     case "image":

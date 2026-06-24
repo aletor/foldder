@@ -46,8 +46,9 @@ const DESIGNER_NODE_MAX_HEIGHT = 2200;
 const DESIGNER_EMPTY_BACKGROUND_SRC = "/assets/nodes/designer-empty-lime.png";
 
 const DESIGNER_NODE_HANDLES: StudioCanvasNodeHandleSpec[] = [
-  { side: "left", top: "35%", style: { transform: "translateY(-50%)" }, type: "target", id: "brain", dataType: "brain", label: "Brain" },
-  { side: "left", top: "65%", style: { transform: "translateY(-50%)" }, type: "target", id: "layout", dataType: "generic", label: "Image Layout" },
+  { side: "left", top: "25%", style: { transform: "translateY(-50%)" }, type: "target", id: "brain", dataType: "brain", label: "Brain" },
+  { side: "left", top: "50%", style: { transform: "translateY(-50%)" }, type: "target", id: "dataset", dataType: "dataset", label: "Dataset" },
+  { side: "left", top: "75%", style: { transform: "translateY(-50%)" }, type: "target", id: "layout", dataType: "generic", label: "Image Layout" },
   { side: "right", top: "38%", style: { transform: "translateY(-50%)" }, type: "source", id: "image", dataType: "image", label: "Image" },
   { side: "right", top: "62%", style: { transform: "translateY(-50%)" }, type: "source", id: "document", dataType: "generic", label: "Document" },
 ];

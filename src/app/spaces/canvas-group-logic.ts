@@ -1,4 +1,5 @@
 import type { Edge, Node } from "@xyflow/react";
+import { normalizeDatasetNodesForPersistence } from "./dataset/dataset-project";
 import { NODE_REGISTRY } from "./nodeRegistry";
 import { stripEphemeralNodeClassNames, stripFoldderCanvasIntroFromNodeData } from "./spaces-canvas-intro";
 
@@ -294,7 +295,9 @@ export function normalizeSpacesMapNodesForPersistence(
   for (const key of Object.keys(out)) {
     const sp = out[key] as { nodes?: Node[]; edges?: Edge[] } | undefined;
     if (!sp || !Array.isArray(sp.nodes)) continue;
-    const normalizedNodes = normalizeNodesForPersistence(sp.nodes as Node[]);
+    const normalizedNodes = normalizeDatasetNodesForPersistence(
+      normalizeNodesForPersistence(sp.nodes as Node[]),
+    );
     const allowedNodeIds = new Set(normalizedNodes.map((n) => n.id));
     const normalizedEdges = Array.isArray(sp.edges)
       ? sp.edges.filter((e) => allowedNodeIds.has(e.source) && allowedNodeIds.has(e.target))

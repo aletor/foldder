@@ -24,6 +24,7 @@ export type FoldderIconKey =
   | 'vfx'
   | 'concat'
   | 'listPick'
+  | 'dataset'
   | 'space'
   | 'spaceIn'
   | 'output'
@@ -504,6 +505,19 @@ export function FoldderListPick({ state, className, size }: GlyphProps) {
   );
 }
 
+/** Tabla tipada — filas y columnas (Dataset) */
+export function FoldderDataset({ state, className, size }: GlyphProps) {
+  return (
+    <FoldderIcon state={state} className={className} size={size}>
+      <rect x="2.75" y="2.75" width="10.5" height="10.5" rx="1" />
+      <path d="M2.75 6 H13.25" strokeWidth={1.2} />
+      <path d="M2.75 9.5 H13.25" strokeWidth={1.2} />
+      <path d="M6.25 2.75 V13.25" strokeWidth={1.2} />
+      <path d="M10 2.75 V13.25" strokeWidth={1.2} />
+    </FoldderIcon>
+  );
+}
+
 export function FoldderSpaceIn({ state, className, size }: GlyphProps) {
   return (
     <FoldderIcon state={state} className={className} size={size}>
@@ -713,6 +727,7 @@ export const FOLDDER_ICON_COLORS: Record<FoldderIconKey, string> = {
   vfx: '#67e8f9',
   concat: '#fdba74',
   listPick: '#a5b4fc',
+  dataset: '#14b8a6',
   space: '#fb923c',
   spaceIn: '#fdba74',
   output: '#fbbf24',
@@ -748,6 +763,7 @@ export const FOLDDER_NODE_ICONS: Record<FoldderIconKey, React.FC<GlyphProps>> = 
   vfx: FoldderVfx,
   concat: FoldderConcat,
   listPick: FoldderListPick,
+  dataset: FoldderDataset,
   space: FoldderSpace,
   spaceIn: FoldderSpaceIn,
   output: FoldderOutput,
@@ -772,6 +788,7 @@ export const NODE_TYPE_TO_FOLDDER_ICON: Record<string, FoldderIconKey> = {
   promptInput: 'prompt',
   urlImage: 'web',
   layerizer: 'matting',
+  dataset: 'dataset',
   mediaDescriber: 'eye',
   enhancer: 'enhance',
   grokProcessor: 'grok',
