@@ -9747,9 +9747,9 @@ export function FreehandStudioCanvas({
   const brushPreviewRingRef = useRef<{ inner: Point[]; outer: Point[] } | null>(null);
   const brushPreviewLastWorldRef = useRef<Point | null>(null);
   const [brushPreviewRings, setBrushPreviewRings] = useState<{ inner: Point[]; outer: Point[] } | null>(null);
-  /** Pestaña activa en propiedades: Color | Appearance | Info | Transform. */
+  /** Pestaña activa en propiedades: Color | Appearance | Info | Text | Transform. */
   const [propertiesMainTab, setPropertiesMainTab] = useState<
-    "color" | "appearance" | "info" | "transform"
+    "color" | "appearance" | "info" | "text" | "transform"
   >("color");
   /** Selección raster (hormigas): rectángulos, polígonos y elipses en coordenadas de mundo. */
   const [photoRectMarqueeSelection, setPhotoRectMarqueeSelection] = useState<Rect[]>([]);
@@ -11231,6 +11231,23 @@ export function FreehandStudioCanvas({
   const selectedIdsKey = useMemo(() => Array.from(selectedIds).sort().join(","), [selectedIds]);
   const firstSelected = selectedObjects[0] ?? null;
   const singleSelected = selectedObjects.length === 1 ? selectedObjects[0] ?? null : null;
+
+  const propertiesMainTabOptions = useMemo((): Array<"color" | "appearance" | "info" | "text" | "transform"> => {
+    const tabs: Array<"color" | "appearance" | "info" | "text" | "transform"> = ["color", "appearance"];
+    tabs.push(firstSelected?.type === "text" ? "text" : "info");
+    tabs.push("transform");
+    return tabs;
+  }, [firstSelected?.type]);
+
+  useEffect(() => {
+    if (!propertiesMainTabOptions.includes(propertiesMainTab)) {
+      setPropertiesMainTab(firstSelected?.type === "text" ? "text" : "color");
+      return;
+    }
+    if (firstSelected?.type === "text" && propertiesMainTab === "info") {
+      setPropertiesMainTab("text");
+    }
+  }, [propertiesMainTabOptions, propertiesMainTab, firstSelected?.type]);
 
   const hasPhotoMarqueeSelection =
     photoRectMarqueeSelection.length > 0 ||
@@ -27056,10 +27073,10 @@ export function FreehandStudioCanvas({
                 </button>
               </div>
             )}
-            {/* Color · Appearance · Info · Transform (pestañas) */}
+            {/* Color · Appearance · Info/Text · Transform (pestañas) */}
             <div className="border-b border-white/[0.08]">
               <div className="flex shrink-0 gap-0.5 border-b border-white/[0.08] bg-[#151820] px-2 pt-2">
-                {(["color", "appearance", "info", "transform"] as const).map((tab) => (
+                {propertiesMainTabOptions.map((tab) => (
                   <button
                     key={tab}
                     type="button"
@@ -27076,7 +27093,9 @@ export function FreehandStudioCanvas({
                         ? "Appearance"
                         : tab === "info"
                           ? "Info"
-                          : "Transform"}
+                          : tab === "text"
+                            ? "Text"
+                            : "Transform"}
                   </button>
                 ))}
               </div>
@@ -27500,9 +27519,12 @@ export function FreehandStudioCanvas({
                   );
                 })()}
 
-                <div className="space-y-2.5 px-[14px] pb-3 pt-1">
+                </>
+                )}
 
-                {firstSelected.type === "text" && (() => {
+            {propertiesMainTab === "text" && firstSelected.type === "text" && (
+              <div className="max-h-[min(52vh,520px)] overflow-y-auto border-b border-white/[0.08]">
+                {(() => {
                   const tx = firstSelected as TextObject;
                   /** Misma línea visual que el bloque Transform (#121417 panel / inputs #1e2024), compacto en altura. */
                   const tfInp =
@@ -27886,6 +27908,12 @@ export function FreehandStudioCanvas({
                     </div>
                   );
                 })()}
+              </div>
+            )}
+
+            {propertiesMainTab === "transform" && (
+                <>
+                <div className="space-y-2.5 px-[14px] pb-3 pt-1">
 
                 {firstSelected.type === "textOnPath" && (() => {
                   const top = firstSelected as TextOnPathObject;
