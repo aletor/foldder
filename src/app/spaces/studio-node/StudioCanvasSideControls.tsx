@@ -2,8 +2,8 @@
 
 import React from "react";
 import { LayoutGrid } from "lucide-react";
-import { PhotoRoomCanvasMeasuresControls } from "../photo-room/PhotoRoomCanvasMeasuresControls";
-import type { NewDocumentConfig } from "../photo-room/new-document-model";
+import { StudioCanvasMeasuresControls } from "./StudioCanvasMeasuresControls";
+import type { NewDocumentConfig } from "./studio-canvas-document-model";
 
 export type StudioCanvasSideControlsProps = {
   width: number;
@@ -25,7 +25,7 @@ export function StudioCanvasSideControls({
 }: StudioCanvasSideControlsProps) {
   return (
     <div data-foldder-studio-flush className="flex w-full min-w-0 flex-col gap-2">
-      <PhotoRoomCanvasMeasuresControls
+      <StudioCanvasMeasuresControls
         width={width}
         height={height}
         background={background}
@@ -37,7 +37,7 @@ export function StudioCanvasSideControls({
         type="button"
         title="Abrir presets Web/Arte, fondo y medidas avanzadas"
         onClick={onOpenPresetModal}
-        className="nodrag flex h-9 w-full items-center justify-center gap-2 bg-[#71449f] px-2 text-[10px] font-black uppercase tracking-[0.1em] text-white transition hover:bg-[#8055b0]"
+        className="nodrag flex h-9 w-full items-center justify-center gap-2 bg-[#534AB7] px-2 text-[10px] font-black uppercase tracking-[0.1em] text-white transition hover:bg-[#6357c9]"
       >
         <LayoutGrid size={14} strokeWidth={2.5} className="shrink-0" aria-hidden />
         Presets y fondo…

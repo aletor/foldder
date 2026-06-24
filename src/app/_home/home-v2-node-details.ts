@@ -32,27 +32,6 @@ export type HomeV2NodeDetailContent = {
 };
 
 const NODE_DETAIL_CONTENT: Record<string, HomeV2NodeDetailContent> = {
-  photoRoom: {
-    intro:
-      "**Composición visual** en un lienzo: **capas**, retoque, máscaras e **IA** en el mismo flujo.",
-    features: [
-      {
-        id: "layers",
-        line: "Cada imagen entra como **capa editable**.",
-        icon: "layers",
-      },
-      {
-        id: "retouch",
-        line: "**Pincel, máscaras y estilos** en el mismo flujo.",
-        icon: "brush",
-      },
-      {
-        id: "ai",
-        line: "**IA integrada** sin salir del proyecto.",
-        icon: "sparkles",
-      },
-    ],
-  },
   designer: {
     intro:
       "**Diseño editorial** multipágina: layouts, textos e imágenes listos para **exportar o presentar**.",

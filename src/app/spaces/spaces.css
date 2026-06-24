@@ -559,7 +559,6 @@
 .custom-node.foldder-studio-node--guionista.foldder-node--frameless.node--media,
 .custom-node.foldder-studio-node--designer.foldder-node--frameless.node--media,
 .custom-node.foldder-studio-node--presenter.foldder-node--frameless.node--media,
-.custom-node.foldder-studio-node--photoRoom.foldder-node--frameless.node--media,
 .custom-node.foldder-studio-node--cine.foldder-node--frameless.node--media,
 .custom-node.foldder-studio-node--projectBrain.foldder-node--frameless.node--media,
 .custom-node.foldder-studio-node--dataset.foldder-node--frameless.node--media,
@@ -573,7 +572,6 @@
 .spaces-canvas .react-flow__node:has(.foldder-studio-node--guionista),
 .spaces-canvas .react-flow__node:has(.foldder-studio-node--designer),
 .spaces-canvas .react-flow__node:has(.foldder-studio-node--presenter),
-.spaces-canvas .react-flow__node:has(.foldder-studio-node--photoRoom),
 .spaces-canvas .react-flow__node:has(.foldder-studio-node--cine),
 .spaces-canvas .react-flow__node:has(.foldder-studio-node--projectBrain),
 .spaces-canvas .react-flow__node:has(.foldder-studio-node--dataset),
@@ -862,7 +860,6 @@
 }
 
 .custom-node.foldder-node--frameless.node--media :is(
-  .photoroom-empty-background,
   .guionista-empty-background,
   .designer-empty-background,
   .cine-empty-background,
@@ -910,7 +907,6 @@
 
 .custom-node.foldder-node--frameless.node--media > .foldder-frameless-main,
 .custom-node.foldder-node--frameless.node--media > .foldder-frameless-main > .guionista-empty-background,
-.custom-node.foldder-node--frameless.node--media > .foldder-frameless-main > .photoroom-empty-background,
 .custom-node.foldder-node--frameless.node--media > .foldder-frameless-main > .designer-empty-background,
 .custom-node.foldder-node--frameless.node--media > .foldder-frameless-main > .cine-empty-background,
 .custom-node.foldder-node--frameless.node--media > .foldder-frameless-main > .nano-banana-empty-background,
@@ -4081,31 +4077,23 @@
   max-width: calc(100% - 166px);
 }
 
-.custom-node.foldder-studio-node--photoRoom .foldder-frameless-main > div[style],
 .custom-node.foldder-studio-node--designer .foldder-frameless-main > div[style] {
   border: none !important;
   box-shadow: none !important;
-}
-
-.custom-node.foldder-studio-node--photoRoom .foldder-frameless-main {
-  background: #71449f !important;
 }
 
 .custom-node.foldder-studio-node--designer .foldder-frameless-main {
   background: #abbc14 !important;
 }
 
-.custom-node.foldder-studio-node--photoRoom .foldder-frameless-main > div,
 .custom-node.foldder-studio-node--designer .foldder-frameless-main > div {
   border-radius: var(--foldder-frameless-radius) !important;
 }
 
-.custom-node.foldder-studio-node--photoRoom,
 .custom-node.foldder-studio-node--designer {
   background: #111111 !important;
 }
 
-.custom-node.foldder-studio-node--photoRoom .foldder-frameless-main > div[style],
 .custom-node.foldder-studio-node--designer .foldder-frameless-main > div[style] {
   width: 100% !important;
   height: 100% !important;
@@ -4113,19 +4101,8 @@
   background: #111111 !important;
 }
 
-.custom-node.foldder-studio-node--photoRoom .foldder-frameless-main > div.flex,
 .custom-node.foldder-studio-node--designer .foldder-frameless-main > div.flex {
   color: rgba(255, 255, 255, 0.64) !important;
-}
-
-.custom-node.foldder-studio-node--photoRoom .foldder-frameless-main > .photoroom-empty-background {
-  background: #71449f !important;
-}
-
-.custom-node.foldder-studio-node--photoRoom .photoroom-empty-background img {
-  display: block;
-  background: #71449f;
-  object-position: center bottom;
 }
 
 .custom-node.foldder-studio-node--designer .foldder-frameless-main > .designer-empty-background {
@@ -5126,11 +5103,6 @@ body.nb-studio-open [data-foldder-canvas-launcher] {
   background-position: center;
   background-repeat: no-repeat;
   filter: brightness(1.08);
-}
-
-.foldder-sidebar-tile--image-bg[data-tile-type="photoRoom"],
-.foldder-sidebar-tile--image-bg[data-tile-type="photoRoom"]:hover {
-  background-color: #71449f;
 }
 
 .foldder-sidebar-tile--image-bg[data-tile-type="guionista"],
@@ -6164,8 +6136,6 @@ body.nb-studio-open [data-foldder-canvas-launcher] {
 .custom-node.space-io-node { --foldder-node-card-bg: var(--foldder-palette-aa); }
 
 .custom-node.inspiration-node { --foldder-node-card-bg: #0ac38a; }
-.custom-node.foldder-studio-node--photoRoom,
-.custom-node.photo-room-node { --foldder-node-card-bg: #71449f; }
 .custom-node.foldder-frameless-accent-image { --foldder-node-card-bg: var(--foldder-palette-c); }
 .custom-node.image-creation-advanced-node { --foldder-node-card-bg: var(--foldder-palette-d); }
 .custom-node.foldder-studio-node--designer,
@@ -6967,7 +6937,7 @@ body.nb-studio-open [data-foldder-canvas-launcher] {
   border-color: rgba(255, 255, 255, 0.1) !important;
 }
 
-/* Layer Style modal (Freehand / PhotoRoom) — flush rectangular chrome */
+/* Layer Style modal (Freehand) — flush rectangular chrome */
 [data-foldder-layer-style-panel] {
   border-radius: 0 !important;
 }
@@ -7174,11 +7144,11 @@ body.nb-studio-open [data-foldder-canvas-launcher] {
   min-height: 0;
 }
 
-[data-foldder-photoroom-newdoc] {
+[data-foldder-studio-newdoc] {
   border-radius: 0 !important;
 }
 
-[data-foldder-photoroom-newdoc] :is(
+[data-foldder-studio-newdoc] :is(
   button,
   span,
   div,
@@ -7189,7 +7159,7 @@ body.nb-studio-open [data-foldder-canvas-launcher] {
   border-radius: 0 !important;
 }
 
-[data-foldder-photoroom-newdoc] button {
+[data-foldder-studio-newdoc] button {
   box-shadow: none !important;
 }
 
@@ -7367,8 +7337,6 @@ body.nb-studio-open [data-foldder-canvas-launcher] {
 .custom-node.image-creation-advanced-node { --foldder-studio-touched-color: #f16389; }
 .custom-node.designer-node,
 .custom-node.foldder-studio-node--designer { --foldder-studio-touched-color: #abbc14; }
-.custom-node.photo-room-node,
-.custom-node.foldder-studio-node--photoRoom { --foldder-studio-touched-color: #71449f; }
 .custom-node.guionista-node,
 .custom-node.foldder-studio-node--guionista { --foldder-studio-touched-color: #1b71df; }
 .custom-node.cine-node,
@@ -7387,12 +7355,12 @@ body.nb-studio-open [data-foldder-canvas-launcher] {
 .custom-node.foldder-studio-node--projectAssets { --foldder-studio-touched-color: #965b92; }
 
 /* ============================================================================
-   PhotoRoom studio — Flush Chrome variant.
-   Applied ONLY on chrome containers tagged with [data-foldder-studio-flush]
+   Studio chrome — Flush Chrome variant.
+   Applied on chrome containers tagged with [data-foldder-studio-flush]
    (internal header, left toolbar, right properties/layers panel, status bar,
-   popovers/flyouts/menus). The Designer studio shares the same JSX but is NOT
-   tagged, so it keeps its previous look. Geometry/shadows/accents are forced
-   here; semantic colors (CTA blue, etc.) are handled in the JSX.
+   popovers/flyouts/menus). Shared by Designer, Dataset, Presenter, Cine, Brain
+   and other studios. Geometry/shadows/accents are forced here; semantic colors
+   (CTA blue, etc.) are handled in the JSX.
    ============================================================================ */
 [data-foldder-studio-flush] {
   border-radius: 0 !important;
@@ -7435,8 +7403,8 @@ body.nb-studio-open [data-foldder-canvas-launcher] {
   accent-color: var(--foldder-studio-accent, #71449f) !important;
 }
 
-/* Shared popovers (context menu + left toolbar flyout) only flush when the
-   PhotoRoom studio is open (body class). Designer keeps its rounded look. */
+/* Shared popovers (context menu + left toolbar flyout) only flush when a
+   flush-chrome studio is open (body class). */
 body.foldder-studio-flush .context-menu {
   border-radius: 0 !important;
   background: #0b0f14 !important;

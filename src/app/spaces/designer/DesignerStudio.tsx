@@ -15,12 +15,12 @@ import {
 } from "../indesign/page-formats";
 import { createArtboard, type Artboard } from "../freehand/artboard";
 import type { VectorPdfExportOptions } from "../freehand/text-outline";
-import { PhotoRoomNewDocumentPanel } from "../photo-room/PhotoRoomNewDocumentPanel";
+import { StudioCanvasPresetPanel } from "../studio-node/StudioCanvasPresetPanel";
 import {
   artboardCssToDocumentBackground,
   newDocumentBackgroundToCss,
   type NewDocumentConfig,
-} from "../photo-room/new-document-model";
+} from "../studio-node/studio-canvas-document-model";
 import { StudioCanvasSideControls } from "../studio-node/StudioCanvasSideControls";
 import { computeFittingLayout } from "../indesign/image-frame-layout";
 import { layoutPageStories } from "../indesign/text-layout";
@@ -2230,7 +2230,7 @@ export default function DesignerStudio({
         onUpdateObjects={handleUpdateObjects}
         onUpdateLayoutGuides={handleUpdateLayoutGuides}
         brainConnected={brainConnected}
-        studioPhotoRoomCanvasPanel={
+        studioCanvasPanel={
           <StudioCanvasSideControls
             width={liveCanvas.width}
             height={liveCanvas.height}
@@ -2272,7 +2272,7 @@ export default function DesignerStudio({
       <DesignerStudioPageBar pages={pages} activePageIndex={activePageIndex} onGoToPage={goToDesignerPage} />
 
       {canvasPresetModalOpen ? (
-        <PhotoRoomNewDocumentPanel
+        <StudioCanvasPresetPanel
           key={canvasPresetModalKey}
           mode="resize"
           initialWidth={liveCanvas.width}

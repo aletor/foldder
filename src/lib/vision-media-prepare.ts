@@ -55,7 +55,7 @@ export async function loadImageBufferFromMediaReference(
 
   if (trimmed.startsWith("blob:")) {
     throw new VisionMediaPrepareError(
-      "Local preview images cannot be analyzed. Close PhotoRoom to export the image first.",
+      "Local preview images cannot be analyzed. Close the studio to export the image first.",
       "blob_url",
     );
   }
@@ -69,7 +69,7 @@ export async function loadImageBufferFromMediaReference(
 
   if (fetchUrl.includes("/api/spaces/s3-file") || fetchUrl.includes("/api/spaces/s3-download")) {
     throw new VisionMediaPrepareError(
-      "Could not resolve image storage key. Re-export from PhotoRoom and try again.",
+      "Could not resolve image storage key. Re-export from the studio and try again.",
       "unresolved_s3_route",
     );
   }

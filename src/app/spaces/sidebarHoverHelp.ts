@@ -64,10 +64,6 @@ export const SIDEBAR_HOVER_HELP: Record<string, { title: string; line: string }>
     title: 'Enhancer',
     line: 'Mejora y amplía tu prompt',
   },
-  photoRoom: {
-    title: 'PhotoRoom',
-    line: 'Retoque y composición; acepta capas desde Layerizer (layout) o imágenes in_0…',
-  },
   painter: {
     title: 'Painter',
     line: 'Dibuja manualmente sobre el lienzo',
@@ -78,7 +74,7 @@ export const SIDEBAR_HOVER_HELP: Record<string, { title: string; line: string }>
   },
   layerizer: {
     title: 'Layerizer',
-    line: 'Capas + fondo limpio → Designer o PhotoRoom (layout)',
+    line: 'Capas + fondo limpio → Designer (layout)',
   },
   mediaDescriber: {
     title: 'Image Describer',

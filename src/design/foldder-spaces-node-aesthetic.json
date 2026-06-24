@@ -7,7 +7,7 @@
     "description": "Contrato visual VIGENTE de los nodos del canvas (Foldder Spaces). Sustituye a la v1 (glass + esquinas redondeadas), que ya no aplica. El sistema actual es: chrome plano y nítido (border-radius 0 en TODO), tarjetas frameless, media a sangre con controles superpuestos, y botones en chip blanco cuadrado. Usar como única fuente de verdad al crear o tocar nodos.",
     "implementation": {
       "globalCss": "src/app/spaces/spaces.css",
-      "components": "src/app/spaces/CustomNodes.tsx (+ subcarpetas nano-banana/, video-editor/, photo-room/, designer/, presenter/)",
+      "components": "src/app/spaces/CustomNodes.tsx (+ subcarpetas nano-banana/, video-editor/, designer/, presenter/)",
       "sharedUi": "src/app/spaces/foldder-node-ui.tsx (NodeLabel, FoldderNodeHeaderTitle, FoldderStudioModeCenterButton, FoldderNodeResizer)"
     }
   },
@@ -91,7 +91,7 @@
     "var": "--foldder-frameless-accent",
     "note": "Color de acento (slider/handle/focus) por nodo. Ejemplos: crop #f59e0b, backgroundRemover #22d3ee, describer (palette-j).",
     "cardColorVar": "--foldder-node-card-bg",
-    "examples": { "inspiration": "#0ac38a", "photoRoom": "#71449f", "designer": "palette-e", "describer": "imagen + #fb339a" }
+    "examples": { "inspiration": "#0ac38a", "designer": "palette-e", "describer": "imagen + #fb339a" }
   },
 
   "handles": {

@@ -1,6 +1,6 @@
 # Foldder Flush Chrome — Guía de diseño
 
-> **Propósito:** documentar el sistema visual aplicado al top HUD, sidebar, modales y paneles de Spaces para poder replicarlo de forma consistente en **todas las versiones Studio** (Designer, PhotoRoom, Cine, Guionista, Presenter, Brain, etc.) sin desvirtuar el patrón.
+> **Propósito:** documentar el sistema visual aplicado al top HUD, sidebar, modales y paneles de Spaces para poder replicarlo de forma consistente en **todas las versiones Studio** (Designer, Cine, Guionista, Presenter, Brain, etc.) sin desvirtuar el patrón.
 
 **Nombre interno:** *Flush Chrome* (cristal plano, rectangular, sin cajas flotantes).
 
@@ -330,7 +330,7 @@ Copiar y adaptar en `spaces.css`:
 | `FoldderStudioHeader.tsx` | Revisar alturas y bordes en cabeceras fullscreen | Aplicar fila `h-10` flush; `data-foldder-studio-header` |
 | `DesignerStudioPageBar.tsx` | `rounded-md`, anillos violeta | Grid flush bottom bar, tab activo `bg-white text-slate-950` |
 | `DesignerFormatModal.tsx` | Probable modal legacy | Aplicar plantilla panel §4 |
-| `GuionistaStudio.tsx`, `CineStudio.tsx`, `PhotoRoomStudio.tsx`, etc. | Revisar modales internos | Buscar `rounded-`, `bg-white/9`, `border border-` |
+| `GuionistaStudio.tsx`, `CineStudio.tsx`, etc. | Revisar modales internos | Buscar `rounded-`, `bg-white/9`, `border border-` |
 | `WalletCostGuardDialog.tsx` | Dialog billing | Unificar con panel oscuro |
 
 ### 7.2 Pasos por componente Studio

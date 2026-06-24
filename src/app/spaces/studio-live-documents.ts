@@ -43,7 +43,7 @@ type LiveStudioExportFn = (opts?: LiveStudioExportOptions) => Promise<string | n
 
 const liveStudioExportByNodeId = new Map<string, LiveStudioExportFn>();
 
-/** Registra export PNG del studio abierto (PhotoRoom) para APIs downstream (Describer). */
+/** Registra export PNG del studio abierto (p. ej. Designer) para APIs downstream (Describer). */
 export function registerLiveStudioExport(nodeId: string, fn: LiveStudioExportFn) {
   liveStudioExportByNodeId.set(nodeId, fn);
 }

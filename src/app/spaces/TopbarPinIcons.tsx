@@ -264,11 +264,6 @@ export function TopbarGlyphFoldderApp({ size = 26, className }: GlyphProps) {
   return <TopbarRasterGlyph src="/logo_topbar.svg" size={size} className={className} />;
 }
 
-/** PhotoRoom — marco de imagen + varita / retoque (alineado con foldder-icons). */
-export function TopbarGlyphPhotoRoom({ size = 26, className }: GlyphProps) {
-  return <TopbarRasterGlyph src="/photoroom_icon.svg" size={size} className={className} />;
-}
-
 /** Guionista — editorial writing studio mark. */
 export function TopbarGlyphGuionista({ size = 26, className }: GlyphProps) {
   return <TopbarRasterGlyph src="/guionista_icon.svg" size={size} className={className} />;
@@ -326,7 +321,6 @@ export const TOPBAR_GLYPH_BY_NODE_TYPE: Record<
   | "cine"
   | "designer"
   | "nanoBanana"
-  | "photoRoom"
   | "geminiVideo"
   | "video_editor"
   | "videoEditor"
@@ -340,7 +334,6 @@ export const TOPBAR_GLYPH_BY_NODE_TYPE: Record<
   cine: TopbarGlyphCine,
   designer: TopbarGlyphDesignerStudio,
   nanoBanana: TopbarGlyphImageGenerator,
-  photoRoom: TopbarGlyphPhotoRoom,
   geminiVideo: TopbarGlyphVideoGenerator,
   video_editor: TopbarGlyphVideoEdition,
   videoEditor: TopbarGlyphVideoEdition,

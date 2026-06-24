@@ -66,7 +66,7 @@ function mutationMayAffectStudioOpen(mutations: MutationRecord[]): boolean {
   return false;
 }
 
-/** True while PhotoRoom / Designer full-screen studio is mounted. */
+/** True while a Designer full-screen studio is mounted. */
 export function useStudioCanvasOpen(): boolean {
   const [open, setOpen] = useState(false);
 

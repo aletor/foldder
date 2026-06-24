@@ -13,7 +13,6 @@ export const FOLDDER_NODE_STUDIO_BACKGROUND_SRC: Record<string, string> = {
   inspiration: "/assets/nodes/inspiration-empty-green.png",
   geminiVideo: "/assets/nodes/gemini-video-empty-blue.png",
   nanoBanana: "/assets/nodes/nano-banana-empty-pink.png",
-  photoRoom: "/assets/nodes/photoroom-empty-purple.jpg",
   presenter: "/assets/nodes/presenter-empty-yellow.jpg",
   video_editor: "/assets/nodes/video-editor-empty.jpg",
   videoEditor: "/assets/nodes/video-editor-empty.jpg",

@@ -24,7 +24,6 @@ const STATIC_NODE_GRID_PRESETS: Record<string, GridPreset> = {
   // Tier 1 — 5×4 · creación principal
   designer: { cols: 5, rows: 4 },
   imageCreationAdvanced: { cols: 5, rows: 4 },
-  photoRoom: { cols: 5, rows: 4 },
   nanoBanana: { cols: 5, rows: 4 },
   cine: { cols: 5, rows: 4 },
   geminiVideo: { cols: 5, rows: 4 },
@@ -77,7 +76,6 @@ const ASPECT_RATIO_NODE_TYPES = new Set([
   "inspiration",
   "mediaInput",
   "nanoBanana",
-  "photoRoom",
   "urlImage",
   "vfxGenerator",
   "videoEditor",

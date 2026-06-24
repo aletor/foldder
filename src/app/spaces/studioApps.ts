@@ -4,7 +4,6 @@ export type StudioAppId =
   | "brain"
   | "files"
   | "designer"
-  | "photoRoom"
   | "painter"
   | "nanoBanana"
   | "geminiVideo"
@@ -49,16 +48,6 @@ export const STUDIO_APPS: StudioAppConfig[] = [
     nodeType: "designer",
     fileKind: "designer",
     extension: ".design",
-    showInDock: true,
-    canCreateFile: true,
-    canOpenFile: true,
-  },
-  {
-    appId: "photoRoom",
-    label: "PhotoRoom",
-    nodeType: "photoRoom",
-    fileKind: "photoroom",
-    extension: ".photoroom",
     showInDock: true,
     canCreateFile: true,
     canOpenFile: true,

@@ -40,7 +40,7 @@ function layoutDimsForBounds(n: Node): { w: number; h: number } {
     if (t === "geminiVideo" || t === "vfxGenerator") {
       if (!hasW) w = sw ?? 380;
       if (!hasH) h = sh ?? 560;
-    } else if (t === "nanoBanana" || t === "photoRoom" || t === "grokProcessor") {
+    } else if (t === "nanoBanana" || t === "grokProcessor") {
       if (!hasW) w = sw ?? 400;
       if (!hasH) h = sh ?? 420;
     } else if (t === "promptInput" || t === "mediaInput") {
@@ -682,9 +682,6 @@ export function resolveHandleDataType(
     (nodeType === "listado" || nodeType === "concatenator" || nodeType === "enhancer")
   ) {
     return "prompt";
-  }
-  if (flow === "in" && /^in_\d+$/.test(handleId) && nodeType === "photoRoom") {
-    return "image";
   }
   return undefined;
 }

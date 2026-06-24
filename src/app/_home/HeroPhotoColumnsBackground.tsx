@@ -494,16 +494,12 @@ export function HeroPhotoColumnsBackground() {
     window.addEventListener("keydown", onKeyDown);
 
     const heroVideoTypes = new Set<string>();
-    const photoRoomImageSrc = nodeCards.find((card) => card.type === "photoRoom")?.imageSrc;
 
     for (let i = 0; i < BOX_COUNT; i++) {
       const column = Math.floor(i / 4);
       const col = COLUMN_CONFIG[column];
       const baseCard = nodeCards[i % nodeCards.length]!;
-      const nodeCard =
-        baseCard.type === "videoEditor" && photoRoomImageSrc
-          ? { ...baseCard, imageSrc: photoRoomImageSrc }
-          : baseCard;
+      const nodeCard = baseCard;
       const useHeroVideo = Boolean(nodeCard.heroVideoSrc) && !heroVideoTypes.has(nodeCard.type);
       if (useHeroVideo) heroVideoTypes.add(nodeCard.type);
       const card = createPhotoCard(nodeCard, column, useHeroVideo, !perfMode);

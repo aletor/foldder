@@ -36,7 +36,6 @@ export type FoldderIconKey =
   | 'mask'
   | 'freehand'
   | 'brain'
-  | 'photoRoom'
   | 'guionista'
   | 'presenter'
   | 'notes'
@@ -341,28 +340,6 @@ export function FoldderImageAdvanced({ state, className, size }: GlyphProps) {
   );
 }
 
-/** PhotoRoom — marco + retoque (varita + brillo) */
-export function FoldderPhotoRoom({ state, className, size }: GlyphProps) {
-  return (
-    <FoldderIcon state={state} className={className} size={size}>
-      <rect x="2.35" y="3.4" width="9.2" height="7.2" rx="1" />
-      <circle cx="5.15" cy="6.35" r="0.85" fill="currentColor" stroke="none" strokeWidth={0} opacity={0.28} />
-      <path
-        d="M10.35 2.85 L11.55 4.05 L11.95 5.35"
-        strokeWidth={1.35}
-        opacity={0.95}
-      />
-      <path d="M10.25 6.85 L12.85 9.45" strokeWidth={1.4} />
-      <path
-        d="M13.15 10.1 L13.85 10.8 M13.5 9.9 L13.85 10.25 M13.85 9.9 L13.5 10.25"
-        strokeWidth={1.05}
-        opacity={0.75}
-      />
-      <circle cx="13.35" cy="10.55" r="0.5" fill="currentColor" stroke="none" strokeWidth={0} />
-    </FoldderIcon>
-  );
-}
-
 /** Marco de vídeo + triángulo play (lectura inmediata) */
 export function FoldderVideo({ state, className, size }: GlyphProps) {
   const s = state ?? 'idle';
@@ -637,7 +614,7 @@ export function FoldderFreehand({ state, className, size = 16 }: GlyphProps) {
   );
 }
 
-/** Guionista raster mark — same asset logic as Designer/PhotoRoom icons. */
+/** Guionista raster mark — same asset logic as the Designer icon. */
 export function FoldderGuionista({ state, className, size = 16 }: GlyphProps) {
   const s = state ?? 'idle';
   return (
@@ -673,7 +650,7 @@ export function FoldderGuionista({ state, className, size = 16 }: GlyphProps) {
   );
 }
 
-/** Presenter raster mark — same asset logic as Designer/PhotoRoom icons. */
+/** Presenter raster mark — same asset logic as the Designer icon. */
 export function FoldderPresenter({ state, className, size = 16 }: GlyphProps) {
   const s = state ?? 'idle';
   return (
@@ -739,7 +716,6 @@ export const FOLDDER_ICON_COLORS: Record<FoldderIconKey, string> = {
   mask: '#99f6e4',
   freehand: '#22d3ee',
   brain: '#c084fc',
-  photoRoom: '#f472b6',
   guionista: '#e9d5ff',
   presenter: '#c084fc',
   notes: '#fbbf24',
@@ -775,7 +751,6 @@ export const FOLDDER_NODE_ICONS: Record<FoldderIconKey, React.FC<GlyphProps>> = 
   mask: FoldderMask,
   freehand: FoldderFreehand,
   brain: FoldderBrain,
-  photoRoom: FoldderPhotoRoom,
   guionista: FoldderGuionista,
   presenter: FoldderPresenter,
   notes: FoldderNotes,
@@ -811,7 +786,6 @@ export const NODE_TYPE_TO_FOLDDER_ICON: Record<string, FoldderIconKey> = {
   canvasGroup: 'layout',
   designer: 'freehand',
   presenter: 'presenter',
-  photoRoom: 'photoRoom',
   projectBrain: 'brain',
   projectAssets: 'foldderApp',
   inspiration: 'web',

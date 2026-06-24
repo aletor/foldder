@@ -43,7 +43,6 @@ import { normalizeGenerativeImagePrompt } from "@/lib/normalize-generative-image
 import { nodeFrameNeedsSync, parseAspectRatioValue, resolveAspectLockedNodeFrame, resolveNodeChromeHeight } from "../studio-node-aspect";
 import { useProjectBrainCanvas } from "../project-brain-canvas-context";
 import { normalizeProjectAssets } from "../project-assets-metadata";
-import { takePendingNanoStudioOpenFromPhotoRoom } from "../photo-room/photo-room-nano-open-pending";
 import { takePendingNanoStudioOpenFromCine } from "../cine/cine-nano-open-pending";
 import type { CineImageStudioResult, CineImageStudioSession } from "../cine-types";
 import { useRegisterAssistantNodeRun } from "../use-assistant-node-run";
@@ -588,7 +587,7 @@ interface NanoBananaStudioProps {
   /** Última composición Brain aplicada en Studio (para «Ver por qué» en el nodo). */
   onBrainImageGeneratorDiagnostics?: (d: BrainImageGeneratorPromptDiagnostics | null) => void;
   /** Entradas desde otros Studio: botón superior = volver al Studio origen. */
-  topBarCloseMode?: 'default' | 'returnPhotoRoom' | 'returnCine';
+  topBarCloseMode?: 'default' | 'returnCine';
   onClose: () => void;
   onGenerated: (dataUrl: string, s3Key?: string) => void;
   onResolutionChange?: (resolution: '1k' | '2k' | '4k') => void;
@@ -1653,12 +1652,10 @@ const NanoBananaStudio = memo(({
               type="button"
               onClick={onClose}
               className={foldderStudioHeaderActionClassName()}
-              title={topBarCloseMode === "returnCine" ? "Volver a Cine" : "Volver a PhotoRoom"}
+              title="Volver a Cine"
             >
               <ChevronLeft size={14} strokeWidth={2.5} aria-hidden />
-              <span className="hidden sm:inline">
-                {topBarCloseMode === "returnCine" ? "Cine" : "PhotoRoom"}
-              </span>
+              <span className="hidden sm:inline">Cine</span>
             </button>
           ) : undefined
         }
@@ -2363,7 +2360,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
     /** Persisted with the project (Studio + main-run versions). */
     generationHistory?: string[];
   };
-  const { setNodes, setEdges, fitView, getNodes, getEdges } = useReactFlow();
+  const { setNodes, setEdges, getNodes, getEdges } = useReactFlow();
   const [status, setStatus] = useState('idle');
   const [progress, setProgress] = useState(0);
   const [result, setResult] = useState<string | null>(null);
@@ -2411,15 +2408,13 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   const previewRef = useRef<HTMLDivElement | null>(null);
   const frameSyncKeyRef = useRef<string | null>(null);
   const nodeMediaVisible = useNodeViewportVisibility(id, 900, selected);
-  /** Al abrir Studio desde PhotoRoom «Modificar imagen con IA»: id del nodo PhotoRoom para fitView + reabrir su Studio. */
-  const photoRoomReturnTargetRef = useRef<string | null>(null);
   const cineReturnSessionRef = useRef<CineImageStudioSession | null>(null);
   const latestStudioAssetRef = useRef<string | null>(null);
   const latestStudioS3KeyRef = useRef<string | null>(null);
   const [cineStudioPrompt, setCineStudioPrompt] = useState("");
   const [cineStudioSourceImage, setCineStudioSourceImage] = useState<string | null>(null);
   const [cineStudioHistory, setCineStudioHistory] = useState<string[]>([]);
-  const [nanoStudioTopBarCloseMode, setNanoStudioTopBarCloseMode] = useState<'default' | 'returnPhotoRoom' | 'returnCine'>('default');
+  const [nanoStudioTopBarCloseMode, setNanoStudioTopBarCloseMode] = useState<'default' | 'returnCine'>('default');
 
   const updateNodeInternals = useUpdateNodeInternals();
   const canvasPerformanceModeRef = useCanvasPerformanceModeRef(
@@ -2502,7 +2497,6 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   }, [id, brainTelemetry]);
 
   const openNanoStudioNormal = useCallback(() => {
-    photoRoomReturnTargetRef.current = null;
     cineReturnSessionRef.current = null;
     setCineStudioPrompt("");
     setCineStudioSourceImage(null);
@@ -2512,7 +2506,6 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   }, []);
 
   const closeNanoStudio = useCallback(() => {
-    const prFlowId = photoRoomReturnTargetRef.current;
     const cineSession = cineReturnSessionRef.current;
     const cineResult: CineImageStudioResult | null = cineSession
       ? {
@@ -2524,7 +2517,6 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
           mode: cineSession.mode,
         }
       : null;
-    photoRoomReturnTargetRef.current = null;
     cineReturnSessionRef.current = null;
     latestStudioS3KeyRef.current = null;
     setCineStudioPrompt("");
@@ -2551,20 +2543,6 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
       }
     }
 
-    if (prFlowId) {
-      requestAnimationFrame(() => {
-        void fitView({
-          nodes: [{ id: prFlowId }],
-          padding: 0.45,
-          duration: 560,
-          interpolate: 'smooth',
-          ...FOLDDER_FIT_VIEW_EASE,
-        });
-        window.dispatchEvent(
-          new CustomEvent('foldder-open-photo-room-studio', { detail: { photoRoomNodeId: prFlowId } }),
-        );
-      });
-    }
     if (cineSession) {
       requestAnimationFrame(() => {
         window.dispatchEvent(
@@ -2585,28 +2563,10 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
         );
       });
     }
-  }, [fitView, getNodes, getEdges, setNodes, setEdges, id]);
-
-  useEffect(() => {
-    const onOpenFromPhotoRoom = (ev: Event) => {
-      const e = ev as CustomEvent<{ nanoNodeId: string; photoRoomNodeId: string }>;
-      if (e.detail?.nanoNodeId !== id) return;
-      photoRoomReturnTargetRef.current = e.detail.photoRoomNodeId;
-      cineReturnSessionRef.current = null;
-      setCineStudioPrompt("");
-      setCineStudioSourceImage(null);
-      setCineStudioHistory([]);
-      setNanoStudioTopBarCloseMode('returnPhotoRoom');
-      setShowStudio(true);
-    };
-    window.addEventListener('foldder-open-nano-studio-from-photo-room', onOpenFromPhotoRoom as EventListener);
-    return () =>
-      window.removeEventListener('foldder-open-nano-studio-from-photo-room', onOpenFromPhotoRoom as EventListener);
-  }, [id]);
+  }, [getNodes, getEdges, setNodes, setEdges, id]);
 
   useEffect(() => {
     const openFromCineSession = (session: CineImageStudioSession) => {
-      photoRoomReturnTargetRef.current = null;
       cineReturnSessionRef.current = session;
       latestStudioAssetRef.current = null;
       latestStudioS3KeyRef.current = null;
@@ -2631,7 +2591,6 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
     const onOpenStudio = (ev: Event) => {
       const detail = (ev as CustomEvent<FoldderStudioEventDetail>).detail;
       if (detail?.nodeId !== id) return;
-      photoRoomReturnTargetRef.current = null;
       cineReturnSessionRef.current = null;
       setCineStudioPrompt("");
       setCineStudioSourceImage(null);
@@ -2656,23 +2615,9 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
     };
   }, [closeNanoStudio, id]);
 
-  /** Creación reciente desde PhotoRoom: consume registro síncrono al montar (antes que `useEffect` del listener). */
-  useLayoutEffect(() => {
-    const pending = takePendingNanoStudioOpenFromPhotoRoom(id);
-    if (!pending) return;
-    photoRoomReturnTargetRef.current = pending.photoRoomNodeId;
-    cineReturnSessionRef.current = null;
-    setCineStudioPrompt("");
-    setCineStudioSourceImage(null);
-    setCineStudioHistory([]);
-    setNanoStudioTopBarCloseMode('returnPhotoRoom');
-    setShowStudio(true);
-  }, [id]);
-
   useLayoutEffect(() => {
     const pending = takePendingNanoStudioOpenFromCine(id);
     if (!pending) return;
-    photoRoomReturnTargetRef.current = null;
     cineReturnSessionRef.current = pending;
     latestStudioAssetRef.current = null;
     latestStudioS3KeyRef.current = null;

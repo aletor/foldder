@@ -97,7 +97,6 @@ function tileBorderClassForType(type: string, fallback: string): string {
   if (type === 'designer') return 'border-[#fdb04b] group-hover/tile:border-[#fdb04b]';
   if (type === 'guionista') return 'border-[#37f1e8] group-hover/tile:border-[#37f1e8]';
   if (type === 'cine') return 'border-[#b48689] group-hover/tile:border-[#b48689]';
-  if (type === 'photoRoom') return 'border-[#63d4fd] group-hover/tile:border-[#63d4fd]';
   if (type === 'nanoBanana') return 'border-[#e0dc52] group-hover/tile:border-[#e0dc52]';
   if (type === 'inspiration') return 'border-emerald-400/70 group-hover/tile:border-emerald-300/90';
   if (type === 'imageCreationAdvanced') return 'border-[#f6e56e] group-hover/tile:border-[#f6e56e]';
@@ -114,7 +113,6 @@ const HIGH_END_PRODUCTION_ITEMS: Array<{ type: string; label: string }> = [
   { type: 'cine', label: 'Cine' },
   { type: 'designer', label: 'Designer' },
   { type: 'inspiration', label: 'Inspiration' },
-  { type: 'photoRoom', label: 'PhotoRoom' },
   { type: 'nanoBanana', label: 'Image Creation' },
   { type: 'geminiVideo', label: 'Video Creation' },
   { type: 'presenter', label: 'Presenter' },

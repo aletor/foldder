@@ -43,7 +43,6 @@ const NODE_TYPE_LABELS: Record<string, string> = {
   cine: "Cine",
   nanoBanana: "Nano Banana",
   imageCreationAdvanced: "Image Creation",
-  photoRoom: "PhotoRoom",
   videoEditor: "Video Editor",
   video_editor: "Video Editor",
   geminiVideo: "Gemini Video",

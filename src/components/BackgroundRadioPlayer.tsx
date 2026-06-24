@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 type PlayerStatus = "idle" | "loading" | "playing" | "error";
 
@@ -40,6 +40,8 @@ const EQ_BARS = [
 
 const GENRE_KEY = "foldder-bg-radio-genre";
 const VOLUME_KEY = "foldder-bg-radio-volume";
+/** Evento interno para notificar cambios de preferencias en la misma pestaña. */
+const PREFS_EVENT = "foldder-bg-radio-prefs";
 const DEFAULT_VOLUME = 0.32;
 const CONNECT_TIMEOUT_MS = 9000;
 const FETCH_TIMEOUT_MS = 8000;
@@ -85,16 +87,36 @@ async function fetchStations(tag: string): Promise<RadioStation[]> {
   throw new Error("radio_browser_unreachable");
 }
 
-function readStoredGenre(): Genre {
-  if (typeof window === "undefined") return GENRES[0];
-  const id = window.localStorage.getItem(GENRE_KEY);
-  return GENRES.find((g) => g.id === id) ?? GENRES[0];
+/** Suscripción a cambios de preferencias (otras pestañas vía `storage`, esta vía evento interno). */
+function subscribePrefs(onChange: () => void): () => void {
+  if (typeof window === "undefined") return () => undefined;
+  window.addEventListener("storage", onChange);
+  window.addEventListener(PREFS_EVENT, onChange);
+  return () => {
+    window.removeEventListener("storage", onChange);
+    window.removeEventListener(PREFS_EVENT, onChange);
+  };
+}
+
+/** Snapshot estable (string) del id de género guardado; el servidor usa el primero. */
+function readStoredGenreId(): string {
+  return window.localStorage.getItem(GENRE_KEY) ?? GENRES[0].id;
 }
 
 function readStoredVolume(): number {
   if (typeof window === "undefined") return DEFAULT_VOLUME;
   const stored = Number(window.localStorage.getItem(VOLUME_KEY));
   return Number.isFinite(stored) && stored >= 0 && stored <= 1 ? stored : DEFAULT_VOLUME;
+}
+
+function persistGenre(id: string): void {
+  window.localStorage.setItem(GENRE_KEY, id);
+  window.dispatchEvent(new Event(PREFS_EVENT));
+}
+
+function persistVolume(value: number): void {
+  window.localStorage.setItem(VOLUME_KEY, String(value));
+  window.dispatchEvent(new Event(PREFS_EVENT));
 }
 
 export function BackgroundRadioPlayer() {
@@ -109,9 +131,14 @@ export function BackgroundRadioPlayer() {
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
   const [status, setStatus] = useState<PlayerStatus>("idle");
-  const [genre, setGenre] = useState<Genre>(() => readStoredGenre());
-  const [volume, setVolume] = useState<number>(() => readStoredVolume());
   const [panelOpen, setPanelOpen] = useState(false);
+
+  // SSR-safe: servidor y primer render de cliente usan los valores por defecto
+  // (getServerSnapshot); tras la hidratación se sincronizan las preferencias de
+  // localStorage. Evita el desajuste de hidratación en title/aria-label.
+  const genreId = useSyncExternalStore(subscribePrefs, readStoredGenreId, () => GENRES[0].id);
+  const genre = useMemo(() => GENRES.find((g) => g.id === genreId) ?? GENRES[0], [genreId]);
+  const volume = useSyncExternalStore(subscribePrefs, readStoredVolume, () => DEFAULT_VOLUME);
 
   const genreRef = useRef(genre);
   useEffect(() => {
@@ -223,9 +250,8 @@ export function BackgroundRadioPlayer() {
 
   const selectGenre = useCallback(
     (next: Genre) => {
-      setGenre(next);
       genreRef.current = next;
-      window.localStorage.setItem(GENRE_KEY, next.id);
+      persistGenre(next.id);
       if (loadedTagRef.current !== next.tag) {
         stationsRef.current = [];
         loadedTagRef.current = null;
@@ -239,9 +265,8 @@ export function BackgroundRadioPlayer() {
   );
 
   const changeVolume = useCallback((next: number) => {
-    setVolume(next);
     if (audioRef.current) audioRef.current.volume = next;
-    window.localStorage.setItem(VOLUME_KEY, String(next));
+    persistVolume(next);
   }, []);
 
   const openPanel = useCallback(() => setPanelOpen(true), []);

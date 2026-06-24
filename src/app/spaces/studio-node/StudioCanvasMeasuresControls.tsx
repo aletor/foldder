@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Link2, Link2Off } from "lucide-react";
 import { ScrubNumberInput } from "../ScrubNumberInput";
-import type { NewDocumentConfig } from "./new-document-model";
+import type { NewDocumentConfig } from "./studio-canvas-document-model";
 
 function CheckerboardBg({ className }: { className?: string }) {
   return (
@@ -21,7 +21,7 @@ function CheckerboardBg({ className }: { className?: string }) {
   );
 }
 
-export type PhotoRoomCanvasMeasuresControlsProps = {
+export type StudioCanvasMeasuresControlsProps = {
   width: number;
   height: number;
   background: NewDocumentConfig["background"];
@@ -31,14 +31,14 @@ export type PhotoRoomCanvasMeasuresControlsProps = {
   variant?: "modal" | "panel";
 };
 
-export function PhotoRoomCanvasMeasuresControls({
+export function StudioCanvasMeasuresControls({
   width,
   height,
   background,
   onDimensionsChange,
   onBackgroundChange,
   variant = "modal",
-}: PhotoRoomCanvasMeasuresControlsProps) {
+}: StudioCanvasMeasuresControlsProps) {
   const [lockAspect, setLockAspect] = useState(false);
   const aspectRef = useRef(width > 0 && height > 0 ? width / height : 1);
 

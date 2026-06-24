@@ -84,26 +84,6 @@ describe("collectProjectMedia", () => {
     expect(generated.some((item) => item.nodeId === "cine1")).toBe(true);
   });
 
-  it("recoge export de PhotoRoom en value o studioObjects", () => {
-    const key = "knowledge-files/proj/photoroom.png";
-    const stable = `/api/spaces/s3-file?key=${encodeURIComponent(key)}`;
-    const nodes: Node[] = [
-      {
-        id: "pr1",
-        type: "photoRoom",
-        position: { x: 0, y: 0 },
-        data: {
-          value: stable,
-          type: "image",
-          studioObjects: [{ type: "image", src: stable }],
-        },
-      },
-    ];
-    const { generated } = collectProjectMedia(nodes);
-    expect(generated).toHaveLength(1);
-    expect(generated[0]?.sourceLabel).toBe("PhotoRoom");
-  });
-
   it("Inspiration: solo la referencia seleccionada, no todo el grid de búsqueda", () => {
     const selectedUrl = "https://images.pexels.com/photos/selected.jpg";
     const nodes: Node[] = [

@@ -1,8 +1,8 @@
 "use client";
 
 import React, { useCallback, useLayoutEffect, useMemo, useState, type ComponentProps } from "react";
-import type { NewDocumentConfig } from "./new-document-model";
-import { PhotoRoomCanvasMeasuresControls } from "./PhotoRoomCanvasMeasuresControls";
+import type { NewDocumentConfig } from "./studio-canvas-document-model";
+import { StudioCanvasMeasuresControls } from "./StudioCanvasMeasuresControls";
 
 export interface NewDocumentPanelProps {
   onConfirm: (config: NewDocumentConfig) => void;
@@ -21,7 +21,7 @@ export interface NewDocumentPanelProps {
   }) => void;
 }
 
-export type PhotoRoomNewDocumentPanelProps = NewDocumentPanelProps;
+export type StudioCanvasPresetPanelProps = NewDocumentPanelProps;
 
 type TabId = "web" | "art";
 
@@ -316,7 +316,7 @@ function PresetShapeIcon({
   }
 }
 
-export function PhotoRoomNewDocumentPanel({
+export function StudioCanvasPresetPanel({
   onConfirm,
   onCancel,
   mode = "create",
@@ -324,7 +324,7 @@ export function PhotoRoomNewDocumentPanel({
   initialHeight,
   initialBackground,
   onCanvasPreviewChange,
-}: PhotoRoomNewDocumentPanelProps) {
+}: StudioCanvasPresetPanelProps) {
   const isResize = mode === "resize";
   const initW = initialWidth ?? 1920;
   const initH = initialHeight ?? 1080;
@@ -390,7 +390,7 @@ export function PhotoRoomNewDocumentPanel({
     });
   }, [canCreate, onConfirm, documentName, widthNum, heightNum, background]);
 
-  const titleId = isResize ? "photoroom-resize-title" : "photoroom-newdoc-title";
+  const titleId = isResize ? "studio-canvas-resize-title" : "studio-canvas-newdoc-title";
 
   return (
     <div
@@ -398,7 +398,7 @@ export function PhotoRoomNewDocumentPanel({
       role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}
-      data-foldder-photoroom-newdoc
+      data-foldder-studio-newdoc
     >
       <button
         type="button"
@@ -502,7 +502,7 @@ export function PhotoRoomNewDocumentPanel({
               <span className="text-[9px] font-black uppercase tracking-[0.12em] text-white/50">Medidas</span>
             </div>
             <div className="flex min-h-0 flex-1 flex-col gap-4 p-4">
-              <PhotoRoomCanvasMeasuresControls
+              <StudioCanvasMeasuresControls
                 width={widthNum}
                 height={heightNum}
                 background={background}

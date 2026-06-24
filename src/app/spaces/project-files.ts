@@ -2,7 +2,6 @@ import type { Node } from "@xyflow/react";
 
 export type ProjectFileKind =
   | "designer"
-  | "photoroom"
   | "presenter"
   | "brain"
   | "assets"
@@ -45,7 +44,6 @@ type StudioNodeFileDescriptor = {
 
 const NODE_TYPE_TO_FILE: Record<string, StudioNodeFileDescriptor> = {
   designer: { kind: "designer", extension: ".design", baseName: "Designer" },
-  photoRoom: { kind: "photoroom", extension: ".photoroom", baseName: "PhotoRoom" },
   geminiVideo: { kind: "video", extension: ".video", baseName: "Video" },
   nanoBanana: { kind: "image", extension: ".image", baseName: "Imagen IA" },
   vfxGenerator: { kind: "vfx", extension: ".vfx", baseName: "VFX" },
@@ -55,7 +53,6 @@ const NODE_TYPE_TO_FILE: Record<string, StudioNodeFileDescriptor> = {
 
 const VALID_KINDS = new Set<ProjectFileKind>([
   "designer",
-  "photoroom",
   "presenter",
   "brain",
   "assets",
@@ -104,8 +101,6 @@ export function getStudioAppForFileKind(kind: ProjectFileKind): string | undefin
   switch (kind) {
     case "designer":
       return "designer";
-    case "photoroom":
-      return "photoRoom";
     case "presenter":
       return "presenter";
     case "image":
@@ -319,8 +314,6 @@ function defaultExtensionForKind(kind: ProjectFileKind): string | undefined {
   switch (kind) {
     case "designer":
       return ".design";
-    case "photoroom":
-      return ".photoroom";
     case "presenter":
       return ".presenter";
     case "image":
@@ -344,8 +337,6 @@ function legacyKindToProjectFileKind(kind: string): ProjectFileKind {
   switch (kind) {
     case "design":
       return "designer";
-    case "photo":
-      return "photoroom";
     case "present":
       return "presenter";
     case "paint":

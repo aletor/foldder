@@ -134,7 +134,6 @@ import {
 import {
   resolveMediaUrlForDescriber,
   resolveMediaUrlFromEdgeSource,
-  resolvePhotoRoomDocumentSize,
 } from './resolve-connected-media-url';
 import { mergeLiveStudioNodeDataIntoNodes, tryLiveDesignerMultipagePdfExport } from './studio-live-documents';
 import type { DesignerPageState } from './designer/DesignerNode';
@@ -1288,7 +1287,6 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
     if (!page) return null;
     return getPageDimensions(page);
   }, [designerPages, designerActivePageIndex]);
-  const documentSize = exportMode === "image" ? resolvePhotoRoomDocumentSize(sourceNode) : null;
 
   const resolvedImageUrl = useMemo(() => {
     if (exportMode === "video") {
@@ -1338,18 +1336,8 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
         });
       }
     };
-    img.onerror = () => {
-      if (documentSize) {
-        setDetectedSize({
-          url: imageUrl,
-          w: documentSize.w,
-          h: documentSize.h,
-          measured: false,
-        });
-      }
-    };
     img.src = imageUrl;
-  }, [documentSize, imageUrl]);
+  }, [imageUrl]);
 
   useEffect(() => {
     if (!imageUrl || exportMode !== "image") {
@@ -1528,13 +1516,10 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
 
   const actualExportW = activeDetectedSize?.w ?? null;
   const actualExportH = activeDetectedSize?.h ?? null;
-  const exportW = actualExportW || documentSize?.w || 1920;
-  const exportH = actualExportH || documentSize?.h || 1080;
+  const exportW = actualExportW || 1920;
+  const exportH = actualExportH || 1080;
   const composeW = actualExportW ?? exportW;
   const composeH = actualExportH ?? exportH;
-  const resolutionMismatch =
-    Boolean(documentSize && actualExportW && actualExportH) &&
-    (actualExportW! < documentSize!.w * 0.9 || actualExportH! < documentSize!.h * 0.9);
 
   const directImageSrc = exportMode === "image" ? (imageUrl || null) : exportMode === "designer-pdf" ? (designerPreviewUrl || null) : null;
   const exportPreviewS3Key =
@@ -1639,11 +1624,6 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
     if (!layers.length) return alert("The connected node has no image to export.");
     if (!activeDetectedSize?.measured) {
       return alert("Espera a que se mida la imagen conectada antes de exportar.");
-    }
-    if (resolutionMismatch && documentSize) {
-      return alert(
-        `PhotoRoom exportó a ${actualExportW}×${actualExportH} px pero el documento mide ${documentSize.w}×${documentSize.h} px. Cierra PhotoRoom (exporta a tamaño completo) y vuelve a intentar.`,
-      );
     }
 
     const exportFormat = formatOverride ?? format;
@@ -1819,11 +1799,9 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
     : `${displayW}×${displayH} px · midiendo…`;
   const aspectRatioLabel = formatExportAspectRatio(displayW, displayH);
   const megapixelsLabel = formatExportMegapixels(displayW, displayH);
-  const exportStatusLabel = resolutionMismatch
-    ? "Baja resolución"
-    : activeDetectedSize?.measured
-      ? "Listo para exportar"
-      : "Midiendo imagen…";
+  const exportStatusLabel = activeDetectedSize?.measured
+    ? "Listo para exportar"
+    : "Midiendo imagen…";
   const sourceNodeLabel = sourceNode?.type
     ? sourceNode.type.replace(/([A-Z])/g, " $1").replace(/^./, (s) => s.toUpperCase()).trim()
     : "—";
@@ -2076,7 +2054,7 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
                   </div>
                   <div className="image-export-meta-row image-export-meta-row--status">
                     <span className="image-export-meta-label">Estado</span>
-                    <span className={`image-export-meta-value ${resolutionMismatch ? "is-warning" : ""}`}>
+                    <span className="image-export-meta-value">
                       {exportStatusLabel}
                     </span>
                   </div>
@@ -2152,12 +2130,6 @@ export const ImageExportNode = memo(function ImageExportNode({ id, data, selecte
         ) : null}
 
         <div className="image-export-controls flex shrink-0 flex-col gap-3">
-          {exportMode === "image" && resolutionMismatch && documentSize ? (
-            <div className="image-export-warning rounded-none border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-[9px] font-semibold leading-snug text-amber-100">
-              PhotoRoom guardó una miniatura de {actualExportW}×{actualExportH} px. Cierra el studio para exportar a{" "}
-              {documentSize.w}×{documentSize.h} px.
-            </div>
-          ) : null}
           {exportError ? (
             <div className="image-export-error rounded-none border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-[9px] font-semibold leading-snug text-rose-100">
               {exportError}
@@ -3639,7 +3611,7 @@ export const SpaceNode = memo(function SpaceNode({ id, data, selected }: NodePro
 
   return (
     <div className="relative" style={{ isolation: 'isolate' }}>
-      {/* Ghost card stack (nested-space identity) — capas con colores PhotoRoom / Designer / Presenter */}
+      {/* Ghost card stack (nested-space identity) — capas con colores Designer / Presenter */}
       <div className="absolute inset-0 rounded-none border border-white/20"
         style={{
           transform: 'translate(20px, 20px) rotate(3deg)',

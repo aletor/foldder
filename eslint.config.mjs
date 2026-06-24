@@ -26,7 +26,6 @@ const eslintConfig = defineConfig([
       "src/app/spaces/image-creation-advanced/ImageCreationAdvancedNode.tsx",
       "src/app/spaces/indesign/text-layout.ts",
       "src/app/spaces/nano-banana/NanoBananaNode.tsx",
-      "src/app/spaces/photo-room/PhotoRoomNode.tsx",
       "src/app/spaces/presenter/DesignerPageCanvasView.tsx",
       "src/app/spaces/presenter/PresenterImageVideoOverlays.tsx",
       "src/app/spaces/presenter/PresenterNode.tsx",

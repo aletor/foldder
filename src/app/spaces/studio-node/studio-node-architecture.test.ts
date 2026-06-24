@@ -10,7 +10,7 @@ describe("Studio node architecture", () => {
 
   it("declares complex studio nodes in one manifest", () => {
     expect(STUDIO_NODE_MANIFESTS.designer.chrome).toBe("freehand");
-    expect(STUDIO_NODE_MANIFESTS.photoRoom.ownsPortal).toBe(true);
+    expect(STUDIO_NODE_MANIFESTS.nanoBanana.ownsPortal).toBe(true);
     expect(STUDIO_NODE_MANIFESTS.guionista.chrome).toBe("editorial");
     expect(STUDIO_NODE_MANIFESTS.cine.chrome).toBe("cinematic");
     expect(STUDIO_NODE_MANIFESTS.nanoBanana.modulePath).toContain("nano-banana/NanoBananaNode");
@@ -18,7 +18,6 @@ describe("Studio node architecture", () => {
 
   it("resolves manifests by node type or app id", () => {
     expect(getStudioNodeManifest("designer")?.label).toBe("Designer");
-    expect(getStudioNodeManifest("photoRoom")?.label).toBe("PhotoRoom");
     expect(getStudioNodeManifest("brain")?.nodeType).toBe("projectBrain");
     expect(getStudioNodeManifest("unknown")).toBeUndefined();
   });

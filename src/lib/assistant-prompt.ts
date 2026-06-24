@@ -34,8 +34,7 @@ The server may show a cost-approval modal before applying the graph if paid exte
 6. EXECUTE PIPELINE: When the user wants the workflow to actually run (e.g. "crea una imagen con Image Creation", "genera el vídeo", "quita el fondo y exporta", "busca fotos y recorta", "describe la salida", "ejecuta el describer"), set "executeNodeIds" to those node ids in dependency order: urlImage (carousel search) → generative nodes (nanoBanana, geminiVideo, grokProcessor) → **mediaDescriber** (Vision) when describing media → imageExport last if they want a file. If they only want nodes placed without running, omit executeNodeIds or use [].
 7. LAYOUT: New nodes at least 800px apart on X and 400px on Y from existing nodes (air gap).
 8. NODE TYPE STRINGS: Use EXACTLY the "type" keys from the catalog below (e.g. nanoBanana, not "Image Creation").
-9. photoRoom INPUT HANDLES: Use underscores — in_0, in_1, in_2, … in_7 — when you need to wire several image inputs explicitly.
-10. concatenator / listado / enhancer: Use handles p0, p1, p2, … for multiple prompt inputs in order. **concatenator** and **listado** only **show** the next empty slot after the last connection (one handle at first; p1 appears after p0 is wired, up to p7). **listado** outputs only the **selected** connected prompt (dropdown); **concatenator** joins all connected texts.
+9. concatenator / listado / enhancer: Use handles p0, p1, p2, … for multiple prompt inputs in order. **concatenator** and **listado** only **show** the next empty slot after the last connection (one handle at first; p1 appears after p0 is wired, up to p7). **listado** outputs only the **selected** connected prompt (dropdown); **concatenator** joins all connected texts.
 11. urlImage (IMAGE SEARCH — accuracy): Always set data.pendingSearch: true when a new search should run. You MUST set TWO fields:
     • data.label — Short **English** search query for the image search provider (keywords that improve results: e.g. "Earth Moon lunar surface NASA", "Shakira singer portrait concert", not vague single words).
     • data.searchIntent — One clear sentence: what MUST appear in the image for it to be correct. The server uses vision (Gemini) to **discard** wrong results (e.g. actor Diego Luna when the user asked for the celestial Moon; generic stock microphone when the user asked for a specific singer). Be explicit: name the intended subject and what to EXCLUDE (homonyms, generic stock).
@@ -62,7 +61,7 @@ The app has a **fixed bottom bar** (order left→right): **Brain → Design → 
 
 **Brain** (fullscreen panel + optional graph node \`projectBrain\`):
 - Stores **project** settings in \`metadata.assets\`: **brand** (logo positive/negative images, three hex colors) and **knowledge** (reference URLs + uploaded PDFs/docs for client/project context).
-- Persisted when the user **saves the project**. If CONTEXT includes **"Brain / project assets (metadata)"**, use those **hex colors** in styling hints, prompts, \`photoRoom\`, \`designer\`, or other compatible nodes; you still output normal nodes — you do **not** embed logos in JSON.
+- Persisted when the user **saves the project**. If CONTEXT includes **"Brain / project assets (metadata)"**, use those **hex colors** in styling hints, prompts, \`designer\`, or other compatible nodes; you still output normal nodes — you do **not** embed logos in JSON.
 - For "use my brand colors / company palette / colores del cliente", prefer values from that Brain summary when present.
 
 **Assets** (fullscreen panel + optional graph node \`projectAssets\`):
@@ -84,8 +83,7 @@ ${dataDigest}
 ## INTENT CHEATSHEET (map user words → nodes)
 - Buscar/descargar imagen web / stock / Google → urlImage (+ imageExport if "export").
 - Inspiración / referencias visuales / moodboard desde prompt o imagen → inspiration; output image para Eye, Brain o Image Creation.
-- Quitar fondo / recortar sujeto / matting / descomponer en capas → layerizer (input image from urlImage or mediaInput; output layout → designer or photoRoom).
-- Retoque / composición de imagen / montaje visual / varias referencias de imagen → photoRoom.
+- Quitar fondo / recortar sujeto / matting / descomponer en capas → layerizer (input image from urlImage or mediaInput; output layout → designer).
 - Exportar PNG/JPG → imageExport.
 - Prompt de texto → promptInput (data.value = texto; data.label = título en el lienzo si el usuario nombra el nodo); unir textos → concatenator; **elegir uno entre varios prompts** → **listado** (\`listado\` + varios promptInput con **data.value** = cada opción; **data.label** en el listado = nombre del control; salida **«label: opción»**); mejorar prompt (GPT) → enhancer.
 - Imagen IA (Image Creation / Gemini image) → nanoBanana + promptInput (prompt handle id "prompt"); refs opcionales image, image2, image3, image4.
@@ -98,7 +96,7 @@ ${dataDigest}
 - **Marco de grupo en el lienzo / agrupar nodos / “carpeta visual”** → \`canvasGroup\` es solo organización en el **mismo** canvas; lo normal es **UI** (seleccionar 2+ nodos → **G**). El asistente prioriza devolver el **flujo** (todos los tipos de nodo de datos: promptInput, nanoBanana, urlImage, …) y mencionar el atajo; solo emite \`canvasGroup\` en JSON si el usuario lo pide explícitamente (ver regla 17).
 - **Design / Designer / maquetación páginas / editorial / vectores en documento** → \`designer\` (salidas \`image\`, \`document\`; el \`document\` alimenta Presenter).
 - **Present / slides / presentación / diapositivas desde diseño** → \`presenter\` + edge \`designer\` (\`document\`) → \`presenter\` (\`document\`).
-- **Brain** (marca + conocimiento en \`metadata.assets\`): el tipo de nodo \`projectBrain\` es solo resumen en el lienzo; la edición completa es el panel Brain / studio. Si CONTEXT trae resumen de Brain, úsalo para colores/marca al proponer \`photoRoom\`, \`designer\`, prompts u otros nodos.
+- **Brain** (marca + conocimiento en \`metadata.assets\`): el tipo de nodo \`projectBrain\` es solo resumen en el lienzo; la edición completa es el panel Brain / studio. Si CONTEXT trae resumen de Brain, úsalo para colores/marca al proponer \`designer\`, prompts u otros nodos.
 - **Assets** (biblioteca multimedia): el tipo \`projectAssets\` resume medios en el lienzo; el panel fullscreen audita archivos; la edición de marca es en Brain.
 
 ## FLOW TEMPLATES (copy patterns; replace ids if they conflict with existing graph)
@@ -113,32 +111,6 @@ ${dataDigest}
   "edges": [
     { "id": "e1", "source": "n1", "target": "n2", "sourceHandle": "image", "targetHandle": "image" },
     { "id": "e2", "source": "n2", "target": "n3", "sourceHandle": "layout", "targetHandle": "layout" }
-  ]
-}
-
-### A2 — Descomponer en capas (Layerizer) → PhotoRoom
-{
-  "nodes": [
-    { "id": "n1", "type": "urlImage", "data": { "label": "<SEARCH_QUERY_EN>", "searchIntent": "<VISION_INTENT>", "pendingSearch": true }, "position": { "x": 0, "y": 0 } },
-    { "id": "n2", "type": "layerizer", "data": {}, "position": { "x": 800, "y": 0 } },
-    { "id": "n3", "type": "photoRoom", "data": {}, "position": { "x": 1600, "y": 0 } }
-  ],
-  "edges": [
-    { "id": "e1", "source": "n1", "target": "n2", "sourceHandle": "image", "targetHandle": "image" },
-    { "id": "e2", "source": "n2", "target": "n3", "sourceHandle": "layout", "targetHandle": "layout" }
-  ]
-}
-
-### B — PhotoRoom + export
-{
-  "nodes": [
-    { "id": "n1", "type": "urlImage", "data": { "label": "<SEARCH_QUERY_EN>", "searchIntent": "<VISION_INTENT>", "pendingSearch": true }, "position": { "x": 0, "y": 0 } },
-    { "id": "n2", "type": "photoRoom", "data": {}, "position": { "x": 800, "y": 0 } },
-    { "id": "n3", "type": "imageExport", "data": {}, "position": { "x": 1600, "y": 0 } }
-  ],
-  "edges": [
-    { "id": "e1", "source": "n1", "target": "n2", "sourceHandle": "image", "targetHandle": "in_0" },
-    { "id": "e2", "source": "n2", "target": "n3", "sourceHandle": "image", "targetHandle": "image" }
   ]
 }
 
@@ -224,11 +196,8 @@ When the user asks for slides, a deck, or “presentación” from a design:
 | From type | sourceHandle | To type | targetHandle |
 |-----------|--------------|---------|--------------|
 | urlImage | image | layerizer | image |
-| urlImage | image | photoRoom | in_0 … in_7 |
 | urlImage | image | imageExport | image |
 | layerizer | layout | designer | layout |
-| layerizer | layout | photoRoom | layout |
-| photoRoom | image | imageExport | image |
 | promptInput | prompt | nanoBanana | prompt |
 | promptInput | prompt | geminiVideo | prompt |
 | promptInput | prompt | grokProcessor | prompt |

@@ -23,7 +23,6 @@ const EXTRA_NODE_IMAGE_SRC: Record<string, string> = {
 };
 
 const NODE_DETAIL_IMAGE_SRC: Record<string, string> = {
-  photoRoom: "/home-v2/node-detail-photoroom-ref.png",
   designer: "/home-v2/node-detail-designer-ref.png",
   nanoBanana: "/home-v2/node-detail-image-creation-ref.png",
   geminiVideo: "/home-v2/node-detail-video-generator-ref.png",
@@ -32,7 +31,6 @@ const NODE_DETAIL_IMAGE_SRC: Record<string, string> = {
 };
 
 const NODE_HERO_VIDEO_SRC: Record<string, string> = {
-  photoRoom: "/home-v2/hero/tazas.mp4",
   nanoBanana: "/home-v2/hero/trusted-access.mp4",
   geminiVideo: "/home-v2/hero/video-post-oaro-3.mp4",
   cine: "/home-v2/hero/oaro-id-secure.mp4",
@@ -40,7 +38,7 @@ const NODE_HERO_VIDEO_SRC: Record<string, string> = {
   designer: "/home-v2/hero/main.mp4",
 };
 
-/** 12 nodos con imagen de fondo — una sola pila en home_v2. */
+/** 11 nodos con imagen de fondo — una sola pila en home_v2. */
 export const HOME_V2_NODE_CARDS: readonly { label: string; description: string; type: string }[] = [
   {
     label: "Inspiration",
@@ -56,11 +54,6 @@ export const HOME_V2_NODE_CARDS: readonly { label: string; description: string; 
     label: "Image Creation",
     description: "**Genera imagen** desde **prompt y referencias** visuales conectadas.",
     type: "nanoBanana",
-  },
-  {
-    label: "PhotoRoom",
-    description: "**Retoque y composición** de imagen con varias entradas conectadas.",
-    type: "photoRoom",
   },
   {
     label: "Layerizer",

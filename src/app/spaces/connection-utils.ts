@@ -129,9 +129,6 @@ const MULTI_SLOT_NODES: Record<string, Record<string, string[]>> = {
       'p0', 'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8', 'p9', 'p10', 'p11', 'p12', 'p13', 'p14', 'p15',
     ],
   },
-  photoRoom: {
-    image: ['in_0', 'in_1', 'in_2', 'in_3', 'in_4', 'in_5', 'in_6', 'in_7'],
-  },
   video_editor: {
     video: ['video_0', 'video_1', 'video_2', 'video_3', 'video_4', 'video_5', 'video_6', 'video_7'],
   },
@@ -418,7 +415,6 @@ const DEFAULT_W: Record<string, number> = {
   mediaInput: 300,
   promptInput: 300,
   urlImage: 340,
-  photoRoom: 280,
   imageExport: 320,
   grokProcessor: 320,
   /** Lienzo real suele ser ≥ minWidth 320 tras layout; usado para estimar huecos al cablear. */

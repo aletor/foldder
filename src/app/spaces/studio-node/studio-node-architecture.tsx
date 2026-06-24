@@ -66,15 +66,6 @@ export const STUDIO_NODE_MANIFESTS = {
     ownsPortal: false,
     description: "Documento visual multipágina sobre FreehandStudio.",
   },
-  photoRoom: {
-    nodeType: "photoRoom",
-    appId: "photoRoom",
-    label: "PhotoRoom",
-    chrome: "freehand",
-    modulePath: "src/app/spaces/photo-room",
-    ownsPortal: true,
-    description: "Retoque y composición de imagen sobre FreehandStudio.",
-  },
   guionista: {
     nodeType: "guionista",
     label: "Guionista",

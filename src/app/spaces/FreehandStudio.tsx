@@ -637,20 +637,13 @@ import {
   type PhotoAdjSelection,
   type PhotoImageAdjustments,
 } from "./freehand/photo-image-adjustments";
-import { PhotoImageAdjustmentsModal } from "./photo-room/PhotoImageAdjustmentsModal";
+import { PhotoImageAdjustmentsModal } from "./freehand/PhotoImageAdjustmentsModal";
 import { LayerStylesModal } from "./freehand/LayerStylesModal";
 import {
   buildStandaloneSvgFromCanvasDom,
   expandExportIds,
   type Rect as ExportRect,
 } from "./freehand/freehand-export";
-import {
-  mergePhotoPolygonSelection,
-  pointInPolygon as photoPointInPolygon,
-  polylineToSvgPathD,
-  ringToSvgPathD,
-  ringsUnionOutlineSvgD,
-} from "./freehand/photo-marquee-polygon-paper";
 import {
   type FillAppearance,
   migrateFill,
@@ -722,7 +715,7 @@ import {
   DesignerRulerHorizontal,
   DesignerRulerVertical,
 } from "./designer/DesignerCanvasRulers";
-import { TopbarGlyphDesignerStudio, TopbarGlyphPhotoRoom } from "./TopbarPinIcons";
+import { TopbarGlyphDesignerStudio } from "./TopbarPinIcons";
 import { ImageFrameFittingGlyph } from "./freehand/ImageFrameFittingGlyph";
 import { normalizeProjectAssets, type VisualCapsule, type VisualCapsuleSuggestion } from "./project-assets-metadata";
 import { hydrateKnowledgeImageDocumentsWithViewUrlsClient } from "@/lib/brain/brain-knowledge-image-view-urls-client";
@@ -762,7 +755,7 @@ import {
   trackPhotoroomLayerUsed,
   trackPhotoroomMaskUsed,
   trackPhotoroomStyleApplied,
-} from "./photo-room/photo-room-brain-telemetry";
+} from "./freehand/photoroom-brain-telemetry";
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  TYPES
@@ -788,22 +781,13 @@ type Tool =
   /** Tampón de clonación: mismo pincel; Alt+clic define el origen; clona manteniendo el offset (modo alineado). */
   | "cloneStamp"
   /** PhotoRoom: degradado lineal raster (arrastre en capa o máscara). */
-  | "photoGradient"
-  /** PhotoRoom: marco rectangular tipo Photoshop (selección raster; fase visual). */
-  | "rectMarquee"
-  /** PhotoRoom: lazo libre (polilínea cerrada). */
-  | "lassoMarquee"
-  /** PhotoRoom: lazo poligonal (vértices en clics). */
-  | "polygonMarquee"
-  /** PhotoRoom: marco elíptico (selección tipo óvalo). */
-  | "ellipseMarquee";
+  | "photoGradient";
 
-type ToolFlyoutGroupId = "tf-pen" | "tf-shape" | "tf-photo-marquee" | "tf-text" | "tf-img";
+type ToolFlyoutGroupId = "tf-pen" | "tf-shape" | "tf-text" | "tf-img";
 
 type ToolFlyoutPrimaryState = {
   "tf-pen": "directSelect" | "pen" | "scissors";
   "tf-shape": "rect" | "line" | "ellipse";
-  "tf-photo-marquee": "rectMarquee" | "ellipseMarquee" | "lassoMarquee" | "polygonMarquee";
   "tf-text": "text" | "textPath" | "textFrame";
   "tf-img": "importImage" | "imageFrame";
 };
@@ -811,7 +795,6 @@ type ToolFlyoutPrimaryState = {
 const DEFAULT_TOOL_FLYOUT_PRIMARY: ToolFlyoutPrimaryState = {
   "tf-pen": "directSelect",
   "tf-shape": "rect",
-  "tf-photo-marquee": "rectMarquee",
   "tf-text": "text",
   "tf-img": "importImage",
 };
@@ -826,11 +809,6 @@ function toolFlyoutGroupForTool(tool: Tool): ToolFlyoutGroupId | null {
     case "line":
     case "ellipse":
       return "tf-shape";
-    case "rectMarquee":
-    case "ellipseMarquee":
-    case "lassoMarquee":
-    case "polygonMarquee":
-      return "tf-photo-marquee";
     case "text":
     case "textPath":
     case "textFrame":
@@ -845,13 +823,6 @@ function toolFlyoutGroupForTool(tool: Tool): ToolFlyoutGroupId | null {
 interface Point { x: number; y: number }
 interface Rect { x: number; y: number; w: number; h: number }
 
-/** Elipse de marco PhotoRoom (unidad en coords. de mundo). */
-interface PhotoEllipseMarquee {
-  cx: number;
-  cy: number;
-  rx: number;
-  ry: number;
-}
 
 /** Illustrator-style: smooth = symmetric tangents; cusp = G1 continuous, independent lengths; corner = independent handles (sharp). */
 type VertexMode = "smooth" | "cusp" | "corner";
@@ -1337,12 +1308,9 @@ export interface FreehandStudioProps extends DesignerEmbedProps {
   studioHeaderAccessory?: React.ReactNode;
   /** PhotoRoom: entradas de imagen del grafo → capas inferiores (no eliminables; solo ocultar). */
   photoRoomConnectedInputs?: { slot: string; src: string }[];
-  /** PhotoRoom: bloque de tamaño/orientación del lienzo en el panel Propiedades (sin capa seleccionada). */
-  studioPhotoRoomCanvasPanel?: React.ReactNode;
-  /**
-   * PhotoRoom: instancia embebida del nodo (telemetría Brain con `nodeType: PHOTOROOM`).
-   * Preferir esta bandera explícita frente a inferir solo por `studioPhotoRoomCanvasPanel`.
-   */
+  /** Bloque de tamaño/orientación del lienzo en el panel Propiedades (sin capa seleccionada). Usado por Designer. */
+  studioCanvasPanel?: React.ReactNode;
+  /** Instancia embebida de un studio de retoque de imagen (telemetría Brain dedicada). Bandera explícita. */
   photoRoomStudioEmbed?: boolean;
   /**
    * PhotoRoom: crear en el grafo Media → Nano Banana → este PhotoRoom y enlazar la capa como entrada conectada
@@ -1367,7 +1335,7 @@ export interface FreehandStudioProps extends DesignerEmbedProps {
   photoRoomOnOpenConnectedNanoStudio?: (payload: { photoRoomInputSlot: string }) => void;
   /**
    * Herramientas y acciones permitidas en esta instancia (allowlist).
-   * Si se omite, se infiere de `designerMode` y del panel PhotoRoom (`studioPhotoRoomCanvasPanel`).
+   * Si se omite, se infiere de `designerMode` y de `photoRoomStudioEmbed`.
    */
   studioCapabilities?: Partial<FreehandStudioCapabilities>;
   /** Activa sugerencias basadas en Brain cuando el nodo actual está conectado al handle `brain`. */
@@ -2611,7 +2579,7 @@ function imageCanvasPixelToWorld(p: Point, o: FreehandObject, cw: number, ch: nu
 type BrushRasterSession = {
   objectId: string;
   target: "pixels" | "mask";
-  kind: "image" | "boolean";
+  kind: "image" | "boolean" | "imageFrame";
   canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
   /** Marco de la capa (imagen o booleano con caché); mismas reglas de transform. */
@@ -2630,7 +2598,7 @@ function expandBrushRasterSessionForPixelDisc(
   py: number,
   radiusPx: number,
 ): { s: BrushRasterSession; padL: number; padT: number; changed: boolean } {
-  if (s.target === "mask" || s.kind === "boolean") {
+  if (s.target === "mask" || s.kind === "boolean" || s.kind === "imageFrame") {
     return { s, padL: 0, padT: 0, changed: false };
   }
   const cw = s.canvas.width;
@@ -2748,75 +2716,6 @@ function paintMaskBrushStrokeSegment(
   paintBrushStrokeSegment(ctx, from, to, radiusPx, hardness01, opacity01, flow01, g);
 }
 
-/**
- * Bitmap de máscara (blanco = visible) a partir de marcos PhotoRoom en mundo.
- * Sin selección: debería llamarse con rects/polys/ellipses vacíos → canvas blanco.
- */
-function buildLayerMaskCanvasFromMarqueeSelection(
-  o: FreehandObject,
-  cw: number,
-  ch: number,
-  rects: Rect[],
-  polys: Point[][],
-  ellipses: PhotoEllipseMarquee[],
-): HTMLCanvasElement {
-  const c = document.createElement("canvas");
-  c.width = Math.max(1, cw);
-  c.height = Math.max(1, ch);
-  const ctx = c.getContext("2d");
-  if (!ctx) return c;
-  const hasAny = rects.length > 0 || polys.length > 0 || ellipses.length > 0;
-  if (!hasAny) {
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, cw, ch);
-    return c;
-  }
-  ctx.fillStyle = "#000000";
-  ctx.fillRect(0, 0, cw, ch);
-  ctx.fillStyle = "#ffffff";
-  ctx.beginPath();
-  const toP = (wp: Point) => worldToImageCanvasPixelsUnbounded(wp, o, cw, ch);
-  for (const r of rects) {
-    const c0 = toP({ x: r.x, y: r.y });
-    const c1 = toP({ x: r.x + r.w, y: r.y });
-    const c2 = toP({ x: r.x + r.w, y: r.y + r.h });
-    const c3 = toP({ x: r.x, y: r.y + r.h });
-    ctx.moveTo(c0.x, c0.y);
-    ctx.lineTo(c1.x, c1.y);
-    ctx.lineTo(c2.x, c2.y);
-    ctx.lineTo(c3.x, c3.y);
-    ctx.closePath();
-  }
-  for (const ring of polys) {
-    if (ring.length < 3) continue;
-    const p0 = toP(ring[0]!);
-    ctx.moveTo(p0.x, p0.y);
-    for (let i = 1; i < ring.length; i++) {
-      const p = toP(ring[i]!);
-      ctx.lineTo(p.x, p.y);
-    }
-    ctx.closePath();
-  }
-  for (const e of ellipses) {
-    if (e.rx <= 0 || e.ry <= 0) continue;
-    const segs = 48;
-    let first: { x: number; y: number } | null = null;
-    for (let i = 0; i <= segs; i++) {
-      const t = (i / segs) * Math.PI * 2;
-      const wp = { x: e.cx + e.rx * Math.cos(t), y: e.cy + e.ry * Math.sin(t) };
-      const cv = toP(wp);
-      if (!first) {
-        first = cv;
-        ctx.moveTo(cv.x, cv.y);
-      } else {
-        ctx.lineTo(cv.x, cv.y);
-      }
-    }
-    if (first) ctx.closePath();
-  }
-  ctx.fill("evenodd");
-  return c;
-}
 
 /** `brushSize` en unidades mundo → radio en píxeles del canvas del bitmap de la capa. */
 function brushRadiusInImagePixels(brushSizeWorld: number, canvasPixelWidth: number, imageObjectWidth: number): number {
@@ -2970,6 +2869,126 @@ function pickTopImageForBrush(pos: Point, objects: FreehandObject[]): ImageObjec
   return null;
 }
 
+type ImageFrameBrushGeom = NonNullable<ReturnType<typeof getImageFrameContentGeom>>;
+
+type RasterBrushTarget =
+  | { kind: "image"; obj: ImageObject }
+  | { kind: "imageFrame"; obj: RectObject; geom: ImageFrameBrushGeom };
+
+/** Capa imagen o contenido de marco de imagen (Designer) bajo el cursor. */
+function pickTopRasterBrushTarget(
+  pos: Point,
+  objects: FreehandObject[],
+  zoom = 1,
+): RasterBrushTarget | null {
+  const img = pickTopImageForBrush(pos, objects);
+  if (img) return { kind: "image", obj: img };
+  for (let i = objects.length - 1; i >= 0; i--) {
+    const o = objects[i];
+    if (o.type !== "rect" || !o.isImageFrame || !o.visible || o.locked) continue;
+    const geom = getImageFrameContentGeom(o);
+    if (!geom) continue;
+    if (hitTestImageContentEdit(pos, o, zoom) == null) continue;
+    return { kind: "imageFrame", obj: o as RectObject, geom };
+  }
+  return null;
+}
+
+function worldToRasterBrushPixels(
+  world: Point,
+  target: RasterBrushTarget,
+  cw: number,
+  ch: number,
+  unbounded = false,
+): Point | null {
+  if (target.kind === "image") {
+    return unbounded
+      ? worldToImageCanvasPixelsUnbounded(world, target.obj, cw, ch)
+      : worldToImageCanvasPixels(world, target.obj, cw, ch);
+  }
+  const loc = worldPointToObjLocal(world, target.obj);
+  const relX = loc.x - target.geom.ifc.offsetX;
+  const relY = loc.y - target.geom.ifc.offsetY;
+  if (
+    !unbounded &&
+    (relX < 0 || relY < 0 || relX > target.geom.iw + 1e-6 || relY > target.geom.ih + 1e-6)
+  ) {
+    return null;
+  }
+  return {
+    x: (relX / Math.max(target.geom.iw, 1e-9)) * cw,
+    y: (relY / Math.max(target.geom.ih, 1e-9)) * ch,
+  };
+}
+
+function brushRasterProxyFromTarget(target: RasterBrushTarget): FreehandObject {
+  if (target.kind === "image") return target.obj;
+  return {
+    ...target.obj,
+    x: target.obj.x + target.geom.ifc.offsetX,
+    y: target.obj.y + target.geom.ifc.offsetY,
+    width: target.geom.iw,
+    height: target.geom.ih,
+  };
+}
+
+function rasterBrushTargetSrc(target: RasterBrushTarget): string {
+  return target.kind === "image" ? target.obj.src : target.geom.ifc.src;
+}
+
+function rasterBrushTargetFallbackSize(target: RasterBrushTarget): { w: number; h: number } {
+  if (target.kind === "image") {
+    return { w: target.obj.width, h: target.obj.height };
+  }
+  return { w: target.geom.ow, h: target.geom.oh };
+}
+
+function rasterBrushTargetFromObjectId(
+  id: string,
+  objects: FreehandObject[],
+): RasterBrushTarget | null {
+  const o = objects.find((x) => x.id === id);
+  if (!o || !o.visible || o.locked) return null;
+  if (o.type === "image" && !(o as ImageObject).photoRoomInputSlot) {
+    return { kind: "image", obj: o as ImageObject };
+  }
+  if (o.type === "rect" && o.isImageFrame) {
+    const geom = getImageFrameContentGeom(o);
+    if (geom) return { kind: "imageFrame", obj: o as RectObject, geom };
+  }
+  return null;
+}
+
+function applyBrushStrokeToObject(
+  o: FreehandObject,
+  objectId: string,
+  kind: BrushRasterSession["kind"],
+  url: string,
+  raster: FreehandObject,
+  canvasW: number,
+  canvasH: number,
+): FreehandObject {
+  if (o.id !== objectId) return o;
+  if (kind === "imageFrame" && o.type === "rect" && o.isImageFrame && o.imageFrameContent) {
+    const ifc = o.imageFrameContent;
+    const dispW = ifc.originalWidth * ifc.scaleX;
+    const dispH = ifc.originalHeight * ifc.scaleY;
+    return {
+      ...o,
+      imageFrameContent: {
+        ...ifc,
+        src: url,
+        originalWidth: canvasW,
+        originalHeight: canvasH,
+        scaleX: dispW / Math.max(canvasW, 1e-9),
+        scaleY: dispH / Math.max(canvasH, 1e-9),
+      },
+    } as RectObject;
+  }
+  if (kind !== "image" || o.type !== "image") return o;
+  return { ...o, src: url, x: raster.x, y: raster.y, width: raster.width, height: raster.height } as ImageObject;
+}
+
 /** Capa imagen o máscara raster bajo el cursor (coherente con pincel / máscara). */
 function pickTopRasterForPhotoGradient(
   pos: Point,
@@ -3069,9 +3088,10 @@ function buildBrushPreviewRingWorld(
       }
     }
   }
-  const hit = pickTopImageForBrush(cursorWorld, objs);
+  const hit = pickTopRasterBrushTarget(cursorWorld, objs, 1);
   if (hit) {
-    const sub = brushPreviewRingOnRasterInBounds(hit, cursorWorld, brushSizeWorld, extraRadiusWorld);
+    const proxy = brushRasterProxyFromTarget(hit);
+    const sub = brushPreviewRingOnRasterInBounds(proxy, cursorWorld, brushSizeWorld, extraRadiusWorld);
     if (sub) return sub;
   }
   const ring: Point[] = [];
@@ -3707,27 +3727,6 @@ function restoreRasterGestureProxiesInObjects(
   });
 }
 
-/** Marco PhotoRoom: sumar — Ctrl/⌘ (no cuenta si Alt/Option: eso es restar). */
-function isPhotoMarqueeAdditivePointerHeld(e: ReactMouseEvent): boolean {
-  if (e.altKey) return false;
-  const ne = e.nativeEvent as MouseEvent;
-  if (typeof ne.getModifierState === "function" && ne.getModifierState("Alt")) return false;
-  if (e.ctrlKey || e.metaKey) return true;
-  if (typeof ne.getModifierState !== "function") return false;
-  return ne.getModifierState("Control") || ne.getModifierState("Meta");
-}
-
-/** Marco PhotoRoom: restar área — Alt / Option. */
-function isPhotoMarqueeSubtractPointerHeld(e: ReactMouseEvent): boolean {
-  if (e.altKey) return true;
-  const ne = e.nativeEvent as MouseEvent;
-  return typeof ne.getModifierState === "function" && ne.getModifierState("Alt");
-}
-
-/** Muestreo de puntos en lazo libre (canvas world). */
-const PHOTO_LASSO_SAMPLE_PX = 4;
-/** Clic cerca del primer vértice para cerrar polígono (se divide por zoom). */
-const PHOTO_POLY_CLOSE_PX = 14;
 
 /** Mayús al crear rectángulo/elipse: segunda esquina para un cuadrado / círculo perfecto (lado = max(|dx|,|dy|)). */
 function oppositeCornerForSquareDrag(origin: Point, pointer: Point): Point {
@@ -4751,295 +4750,7 @@ function rectsIntersect(a: Rect, b: Rect): boolean {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
 
-/** Partes de `r` alineadas a ejes que quedan fuera de `cut` (diferencia AABB). */
-function subtractRectFromRect(r: Rect, cut: Rect): Rect[] {
-  if (!rectsIntersect(r, cut)) return [{ ...r }];
-  const ix1 = Math.max(r.x, cut.x);
-  const iy1 = Math.max(r.y, cut.y);
-  const ix2 = Math.min(r.x + r.w, cut.x + cut.w);
-  const iy2 = Math.min(r.y + r.h, cut.y + cut.h);
-  if (ix2 <= ix1 || iy2 <= iy1) return [{ ...r }];
-  const out: Rect[] = [];
-  if (iy1 > r.y) {
-    const h = iy1 - r.y;
-    if (h > 0 && r.w > 0) out.push({ x: r.x, y: r.y, w: r.w, h });
-  }
-  if (iy2 < r.y + r.h) {
-    const h = r.y + r.h - iy2;
-    if (h > 0 && r.w > 0) out.push({ x: r.x, y: iy2, w: r.w, h });
-  }
-  const midH = iy2 - iy1;
-  if (midH > 0) {
-    if (ix1 > r.x) {
-      const w = ix1 - r.x;
-      if (w > 0) out.push({ x: r.x, y: iy1, w, h: midH });
-    }
-    if (ix2 < r.x + r.w) {
-      const w = r.x + r.w - ix2;
-      if (w > 0) out.push({ x: ix2, y: iy1, w, h: midH });
-    }
-  }
-  return out;
-}
 
-/** Rectángulo de marco PhotoRoom → anillo CCW para operaciones con polígonos (Paper). */
-function rectToPhotoMarqueeRing(r: Rect): Point[] {
-  return [
-    { x: r.x, y: r.y },
-    { x: r.x + r.w, y: r.y },
-    { x: r.x + r.w, y: r.y + r.h },
-    { x: r.x, y: r.y + r.h },
-  ];
-}
-
-function pointInPhotoEllipse(p: Point, e: PhotoEllipseMarquee): boolean {
-  if (e.rx <= 0 || e.ry <= 0) return false;
-  const dx = (p.x - e.cx) / e.rx;
-  const dy = (p.y - e.cy) / e.ry;
-  return dx * dx + dy * dy <= 1;
-}
-
-/** Anillo para Paper.js (aprox. círculo/elipse). */
-function ellipseToPhotoMarqueeRing(e: PhotoEllipseMarquee, segments = 64): Point[] {
-  const { cx, cy, rx, ry } = e;
-  if (rx <= 0 || ry <= 0) return [];
-  const out: Point[] = [];
-  for (let i = 0; i < segments; i++) {
-    const t = (i / segments) * Math.PI * 2;
-    out.push({ x: cx + rx * Math.cos(t), y: cy + ry * Math.sin(t) });
-  }
-  return out;
-}
-
-/** Anillo Bézier cerrado (espacio de `PathObject.points`) → polilínea en mundo (p. ej. selección PhotoRoom). */
-function sampleClosedBezierRingToWorld(ring: BezierPoint[], o: FreehandObject, samplesPerSeg: number): Point[] {
-  const n = ring.length;
-  if (n < 2) return [];
-  const out: Point[] = [];
-  for (let i = 0; i < n; i++) {
-    const j = (i + 1) % n;
-    const a = ring[i]!, b = ring[j]!;
-    for (let s = 0; s < samplesPerSeg; s++) {
-      const t = s / samplesPerSeg;
-      const pt = cubicBezierAt(t, a.anchor, a.handleOut, b.handleIn, b.anchor);
-      out.push(pathBezierPointToWorld(pt, o));
-    }
-  }
-  return out;
-}
-
-/** Elipse primitiva (local) → anillo en mundo; incluye rotación / espejo. */
-function ellipsePrimitiveToWorldPolyRing(o: FreehandObject, segments: number): Point[] {
-  const rx = o.width / 2, ry = o.height / 2;
-  const cx = o.width / 2, cy = o.height / 2;
-  const out: Point[] = [];
-  for (let i = 0; i < segments; i++) {
-    const t = (i / segments) * Math.PI * 2;
-    out.push(objLocalToWorldPoint({ x: cx + rx * Math.cos(t), y: cy + ry * Math.sin(t) }, o));
-  }
-  return out;
-}
-
-/**
- * Convierte rectángulo, elipse o path vectorial en datos de selección PhotoRoom (mismo formato que lazo / rect / elipse).
- */
-function vectorObjectToPhotoMarqueeParts(o: FreehandObject): { rects: Rect[]; polys: Point[][]; ellipses: PhotoEllipseMarquee[] } | null {
-  if (!o.visible || o.locked) return null;
-  if (o.type === "rect") {
-    return { rects: [], polys: [rectWorldCorners(o)], ellipses: [] };
-  }
-  if (o.type === "ellipse") {
-    const plainAxis = !o.rotation && !o.flipX && !o.flipY;
-    if (plainAxis) {
-      const cx = o.x + o.width / 2, cy = o.y + o.height / 2;
-      return {
-        rects: [],
-        polys: [],
-        ellipses: [{ cx, cy, rx: o.width / 2, ry: o.height / 2 }],
-      };
-    }
-    return { rects: [], polys: [ellipsePrimitiveToWorldPolyRing(o, 72)], ellipses: [] };
-  }
-  if (o.type === "path") {
-    const p = o as PathObject;
-    if (p.svgPathD && String(p.svgPathD).trim().length > 0 && (!p.points || p.points.length < 2)) {
-      return { rects: [], polys: [objectWorldCorners(p)], ellipses: [] };
-    }
-    if (!p.closed) {
-      return { rects: [], polys: [objectWorldCorners(p)], ellipses: [] };
-    }
-    const rings = getPathRings(p);
-    const polys: Point[][] = [];
-    const sp = 8;
-    for (const ring of rings) {
-      if (ring.length < 2) continue;
-      const wr = sampleClosedBezierRingToWorld(ring, o, sp);
-      if (wr.length >= 3) polys.push(wr);
-    }
-    if (polys.length > 0) return { rects: [], polys, ellipses: [] };
-    return { rects: [], polys: [objectWorldCorners(p)], ellipses: [] };
-  }
-  return null;
-}
-
-/** Base poligonal para sumar/restar: polígonos + rectángulos + elipses como anillos. `replace` → []. */
-function buildPhotoMarqueePolyBase(
-  prevPoly: Point[][],
-  prevRects: Rect[],
-  prevEllipses: PhotoEllipseMarquee[],
-  mode: "replace" | "add" | "subtract",
-): Point[][] {
-  if (mode === "replace") return [];
-  let acc = prevPoly;
-  for (const r of prevRects) {
-    acc = mergePhotoPolygonSelection(acc, rectToPhotoMarqueeRing(r), "add");
-  }
-  for (const el of prevEllipses) {
-    const ring = ellipseToPhotoMarqueeRing(el);
-    if (ring.length >= 3) acc = mergePhotoPolygonSelection(acc, ring, "add");
-  }
-  return acc;
-}
-
-/** Tipos de `dragState` exclusivos del marco PhotoRoom (rect/elipse/lazo + flotante). */
-function isPhotoMarqueeStudioDragType(t: string): boolean {
-  return (
-    t === "photoRectMarquee" ||
-    t === "photoEllipseMarquee" ||
-    t === "photoLassoMarquee" ||
-    t === "photoPolygonMarquee" ||
-    t === "photoMarqueeNudge" ||
-    t === "photoMarqueeFloatRotate" ||
-    t === "photoMarqueeFloatResize"
-  );
-}
-
-function photoMarqueePointInsideCommitted(
-  pos: Point,
-  rects: Rect[],
-  polys: Point[][],
-  ellipses: PhotoEllipseMarquee[],
-): boolean {
-  if (rects.some((r) => pointInWorldRect(pos, r))) return true;
-  if (polys.some((ring) => photoPointInPolygon(pos, ring))) return true;
-  if (ellipses.some((el) => pointInPhotoEllipse(pos, el))) return true;
-  return false;
-}
-
-/** Traslada en mundo la selección PhotoRoom confirmada (rect / polígono / elipse). */
-function translatePhotoMarqueeCommitted(
-  dx: number,
-  dy: number,
-  rects: Rect[],
-  polys: Point[][],
-  ellipses: PhotoEllipseMarquee[],
-): { rects: Rect[]; polys: Point[][]; ellipses: PhotoEllipseMarquee[] } {
-  return {
-    rects: rects.map((r) => ({ ...r, x: r.x + dx, y: r.y + dy })),
-    polys: polys.map((ring) => ring.map((p) => ({ x: p.x + dx, y: p.y + dy }))),
-    ellipses: ellipses.map((e) => ({ ...e, cx: e.cx + dx, cy: e.cy + dy })),
-  };
-}
-
-/** AABB en mundo que envuelve toda la selección (para pegar / UI). */
-function unionPhotoMarqueeWorldBounds(
-  rects: Rect[],
-  polys: Point[][],
-  ellipses: PhotoEllipseMarquee[],
-): Rect | null {
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  const expand = (x: number, y: number) => {
-    minX = Math.min(minX, x);
-    minY = Math.min(minY, y);
-    maxX = Math.max(maxX, x);
-    maxY = Math.max(maxY, y);
-  };
-  for (const r of rects) {
-    expand(r.x, r.y);
-    expand(r.x + r.w, r.y + r.h);
-  }
-  for (const ring of polys) {
-    for (const p of ring) expand(p.x, p.y);
-  }
-  for (const e of ellipses) {
-    expand(e.cx - e.rx, e.cy - e.ry);
-    expand(e.cx + e.rx, e.cy + e.ry);
-  }
-  if (!Number.isFinite(minX)) return null;
-  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
-}
-
-/** Invierte la selección PhotoRoom dentro de `bounds`: área del lienzo o de la capa imagen menos la región actual (Paper.js). */
-function invertPhotoMarqueePolysWithinBounds(
-  rects: Rect[],
-  polys: Point[][],
-  ellipses: PhotoEllipseMarquee[],
-  bounds: Rect,
-): Point[][] {
-  if (bounds.w < 1e-9 || bounds.h < 1e-9) return [];
-
-  /**
-   * Solo rectángulos alineados a ejes: diferencia exacta sin Paper.js (evita fallos booleanos / fallback que dejaba `bounds` entero).
-   */
-  if (polys.length === 0 && ellipses.length === 0 && rects.length > 0) {
-    let pieces: Rect[] = [{ ...bounds }];
-    for (const s of rects) {
-      pieces = pieces.flatMap((p) => subtractRectFromRect(p, s));
-    }
-    return pieces
-      .filter((r) => r.w > 1e-9 && r.h > 1e-9)
-      .map((r) => rectToPhotoMarqueeRing(r))
-      .filter((ring) => ring.length >= 3);
-  }
-
-  let acc: Point[][] = [rectToPhotoMarqueeRing(bounds)];
-  for (const r of rects) {
-    acc = mergePhotoPolygonSelection(acc, rectToPhotoMarqueeRing(r), "subtract");
-  }
-  for (const ring of polys) {
-    if (ring.length >= 3) acc = mergePhotoPolygonSelection(acc, ring, "subtract");
-  }
-  for (const el of ellipses) {
-    const ring = ellipseToPhotoMarqueeRing(el);
-    if (ring.length >= 3) acc = mergePhotoPolygonSelection(acc, ring, "subtract");
-  }
-  return acc.filter((r) => r.length >= 3);
-}
-
-/**
- * Selección raster “comprometida”: ligada a una capa imagen y a un recorte en píxeles del bitmap natural.
- * No incluye píxeles; sirve para saber de qué capa sale y dónde cae el AABB en mundo sin recomputar desde los arrays del marquee.
- */
-type ActivePixelSelection = {
-  sourceLayerId: string;
-  naturalWidth: number;
-  naturalHeight: number;
-  pixelCrop: { minIx: number; minIy: number; maxIx: number; maxIy: number };
-  /** AABB en mundo del recorte (mapeo meet, mismas esquinas que al extraer). */
-  worldBounds: Rect;
-};
-
-/** Portapapeles interno PhotoRoom: PNG + metadatos de `ActivePixelSelection` para pegar sin rescalar mal ni perder el vínculo con la capa origen. */
-type PhotoMarqueeRasterClip = ActivePixelSelection & {
-  dataUrl: string;
-  cropW: number;
-  cropH: number;
-};
-
-/** Exactamente una capa `image` visible y no bloqueada en la selección (p. ej. grupo con formas + foto). */
-function findSingleSelectedImageForPhotoMarquee(
-  sel: Set<string>,
-  objs: readonly FreehandObject[],
-): ImageObject | undefined {
-  let found: ImageObject | undefined;
-  for (const id of sel) {
-    const o = objs.find((x) => x.id === id);
-    if (o?.type !== "image" || !o.visible || o.locked) continue;
-    if (found) return undefined;
-    found = o as ImageObject;
-  }
-  return found;
-}
 
 function pickTopVisibleObjectForCursor(pos: Point, objs: FreehandObject[], threshold: number): FreehandObject | null {
   for (let i = objs.length - 1; i >= 0; i--) {
@@ -5051,80 +4762,11 @@ function pickTopVisibleObjectForCursor(pos: Point, objs: FreehandObject[], thres
   return null;
 }
 
-/** Tampón: solo capas imagen “locales” (`pickTopImageForBrush`); cursor prohibido sobre el resto. */
-function photoRoomCloneStampCursorBlocked(pos: Point, objs: FreehandObject[], threshold: number): boolean {
-  const top = pickTopVisibleObjectForCursor(pos, objs, threshold);
-  if (!top) return false;
-  return pickTopImageForBrush(pos, objs) == null;
+/** Tampón: solo capas imagen o marcos con bitmap bajo el cursor; cursor prohibido sobre el resto. */
+function photoRoomCloneStampCursorBlocked(pos: Point, objs: FreehandObject[], _threshold: number): boolean {
+  return pickTopRasterBrushTarget(pos, objs, 1) == null;
 }
 
-/** Marcos PhotoRoom: requieren una única imagen activa; si la selección no es eso o el hover cae en no-imagen, inactivo. */
-function photoRoomMarqueeToolCursorBlocked(
-  pos: Point,
-  sel: Set<string>,
-  objs: FreehandObject[],
-  threshold: number,
-): boolean {
-  const sole = findSingleSelectedImageForPhotoMarquee(sel, objs);
-  if (sole) return false;
-  if (sel.size > 0) return true;
-  const top = pickTopVisibleObjectForCursor(pos, objs, threshold);
-  if (!top) return false;
-  return top.type !== "image";
-}
-
-/**
- * Coherente con `<image preserveAspectRatio="xMidYMid meet">` en el render del lienzo:
- * el bitmap encaja dentro de la caja sin deformar (bandas si el aspecto no coincide).
- */
-function imageMeetPixelCenterToObjectLocal(
-  imgObj: ImageObject,
-  iw: number,
-  ih: number,
-  ix: number,
-  iy: number,
-): Point {
-  const boxW = imgObj.width;
-  const boxH = imgObj.height;
-  const scale = Math.min(boxW / Math.max(iw, 1), boxH / Math.max(ih, 1));
-  const dw = iw * scale;
-  const dh = ih * scale;
-  const ox = (boxW - dw) / 2;
-  const oy = (boxH - dh) / 2;
-  return {
-    x: ox + ((ix + 0.5) / Math.max(iw, 1)) * dw,
-    y: oy + ((iy + 0.5) / Math.max(ih, 1)) * dh,
-  };
-}
-
-/** Esquinas en espacio local del objeto del rectángulo de píxeles [ix0,ix1)×[iy0,iy1) (índices exclusivos al final). */
-function imageMeetPixelRectCornersObjectLocal(
-  imgObj: ImageObject,
-  iw: number,
-  ih: number,
-  ix0: number,
-  iy0: number,
-  ix1: number,
-  iy1: number,
-): Point[] {
-  const boxW = imgObj.width;
-  const boxH = imgObj.height;
-  const scale = Math.min(boxW / Math.max(iw, 1), boxH / Math.max(ih, 1));
-  const dw = iw * scale;
-  const dh = ih * scale;
-  const ox = (boxW - dw) / 2;
-  const oy = (boxH - dh) / 2;
-  const xl = ox + (ix0 / Math.max(iw, 1)) * dw;
-  const xr = ox + (ix1 / Math.max(iw, 1)) * dw;
-  const yt = oy + (iy0 / Math.max(ih, 1)) * dh;
-  const yb = oy + (iy1 / Math.max(ih, 1)) * dh;
-  return [
-    { x: xl, y: yt },
-    { x: xr, y: yt },
-    { x: xl, y: yb },
-    { x: xr, y: yb },
-  ];
-}
 
 /** Local objeto (0…width × 0…height) → coordenadas de píxel fraccionarias en el bitmap natural (coherente con meet). */
 function objectLocalToImagePixelFloat(
@@ -5158,467 +4800,15 @@ function worldPointToImagePixelFloat(
   return objectLocalToImagePixelFloat(imgObj, iw, ih, lp.x, lp.y);
 }
 
-const PHOTO_MARQUEE_BBOX_PAD_PX = 1;
-/** Desplazamiento por cada pegado repetido del mismo recorte raster (alineado con paste de objetos). */
-const PHOTO_MARQUEE_PASTE_STAGGER_PX = 24;
-
-/** BBox en índices de píxel [minIx,maxIx] inclusivo a partir de vértices/muestras de la selección en mundo. */
-function computePhotoMarqueeImagePixelBBox(
-  imgObj: ImageObject,
-  iw: number,
-  ih: number,
-  rects: Rect[],
-  polys: Point[][],
-  ellipses: PhotoEllipseMarquee[],
-): { minIx: number; minIy: number; maxIx: number; maxIy: number } | null {
-  let minF = Infinity, minG = Infinity, maxF = -Infinity, maxG = -Infinity;
-  const add = (wp: Point) => {
-    const f = worldPointToImagePixelFloat(imgObj, iw, ih, wp);
-    if (!f) return;
-    minF = Math.min(minF, f.ix);
-    minG = Math.min(minG, f.iy);
-    maxF = Math.max(maxF, f.ix);
-    maxG = Math.max(maxG, f.iy);
-  };
-  for (const r of rects) {
-    add({ x: r.x, y: r.y });
-    add({ x: r.x + r.w, y: r.y });
-    add({ x: r.x + r.w, y: r.y + r.h });
-    add({ x: r.x, y: r.y + r.h });
-  }
-  for (const ring of polys) {
-    for (const p of ring) add(p);
-  }
-  for (const e of ellipses) {
-    const segs = 48;
-    for (let i = 0; i <= segs; i++) {
-      const t = (i / segs) * Math.PI * 2;
-      add({ x: e.cx + e.rx * Math.cos(t), y: e.cy + e.ry * Math.sin(t) });
-    }
-  }
-  if (!Number.isFinite(minF)) return null;
-  const pad = PHOTO_MARQUEE_BBOX_PAD_PX;
-  const minIx = Math.max(0, Math.floor(minF) - pad);
-  const minIy = Math.max(0, Math.floor(minG) - pad);
-  const maxIx = Math.min(iw - 1, Math.ceil(maxF) + pad);
-  const maxIy = Math.min(ih - 1, Math.ceil(maxG) + pad);
-  if (minIx > maxIx || minIy > maxIy) return null;
-  return { minIx, minIy, maxIx, maxIy };
-}
-
-/**
- * Máscara RGBA (blanco + alfa) en coords de recorte píxel natural, mismo tamaño cw×ch.
- * featherPx > 0: desenfoque gaussiano (CSS) del contorno → alfa con degradado (estilo Photoshop).
- */
-function buildPhotoMarqueeCropAlphaMask(
-  imgObj: ImageObject,
-  iw: number,
-  ih: number,
-  minIx: number,
-  minIy: number,
-  cw: number,
-  ch: number,
-  rects: Rect[],
-  polys: Point[][],
-  ellipses: PhotoEllipseMarquee[],
-  featherPx: number,
-): HTMLCanvasElement | null {
-  if (typeof document === "undefined" || cw < 1 || ch < 1) return null;
-  const feather = Math.max(0, Math.min(200, featherPx));
-  const margin = feather > 0.5 ? Math.max(2, Math.ceil(feather * 3)) : 0;
-  const W = cw + 2 * margin;
-  const H = ch + 2 * margin;
-  const toRel = (wp: Point): { x: number; y: number } | null => {
-    const f = worldPointToImagePixelFloat(imgObj, iw, ih, wp);
-    if (!f) return null;
-    return { x: f.ix - minIx + margin, y: f.iy - minIy + margin };
-  };
-  const mask = document.createElement("canvas");
-  mask.width = W;
-  mask.height = H;
-  const mctx = mask.getContext("2d");
-  if (!mctx) return null;
-  mctx.fillStyle = "#000";
-  mctx.fillRect(0, 0, W, H);
-  mctx.fillStyle = "#fff";
-  mctx.beginPath();
-  for (const r of rects) {
-    const c0 = toRel({ x: r.x, y: r.y });
-    const c1 = toRel({ x: r.x + r.w, y: r.y });
-    const c2 = toRel({ x: r.x + r.w, y: r.y + r.h });
-    const c3 = toRel({ x: r.x, y: r.y + r.h });
-    if (c0 && c1 && c2 && c3) {
-      mctx.moveTo(c0.x, c0.y);
-      mctx.lineTo(c1.x, c1.y);
-      mctx.lineTo(c2.x, c2.y);
-      mctx.lineTo(c3.x, c3.y);
-      mctx.closePath();
-    }
-  }
-  for (const ring of polys) {
-    if (ring.length < 3) continue;
-    const p0 = toRel(ring[0]!);
-    if (!p0) continue;
-    mctx.moveTo(p0.x, p0.y);
-    for (let i = 1; i < ring.length; i++) {
-      const p = toRel(ring[i]!);
-      if (p) mctx.lineTo(p.x, p.y);
-    }
-    mctx.closePath();
-  }
-  for (const e of ellipses) {
-    if (e.rx <= 0 || e.ry <= 0) continue;
-    const segs = 48;
-    let first: { x: number; y: number } | null = null;
-    for (let i = 0; i <= segs; i++) {
-      const t = (i / segs) * Math.PI * 2;
-      const wp = { x: e.cx + e.rx * Math.cos(t), y: e.cy + e.ry * Math.sin(t) };
-      const c = toRel(wp);
-      if (!c) continue;
-      if (!first) {
-        first = c;
-        mctx.moveTo(c.x, c.y);
-      } else {
-        mctx.lineTo(c.x, c.y);
-      }
-    }
-    if (first) mctx.closePath();
-  }
-  mctx.fill("evenodd");
-
-  let blurPlane: HTMLCanvasElement;
-  if (margin > 0) {
-    const blurC = document.createElement("canvas");
-    blurC.width = W;
-    blurC.height = H;
-    const bctx = blurC.getContext("2d");
-    if (!bctx) return null;
-    bctx.filter = `blur(${feather}px)`;
-    bctx.drawImage(mask, 0, 0);
-    bctx.filter = "none";
-    blurPlane = blurC;
-  } else {
-    blurPlane = mask;
-  }
-
-  let blurData: ImageData;
-  try {
-    const bctx = blurPlane.getContext("2d");
-    if (!bctx) return null;
-    blurData = bctx.getImageData(margin, margin, cw, ch);
-  } catch {
-    return null;
-  }
-
-  const out = document.createElement("canvas");
-  out.width = cw;
-  out.height = ch;
-  const octx = out.getContext("2d");
-  if (!octx) return null;
-  const outImg = octx.createImageData(cw, ch);
-  const d = blurData.data;
-  const od = outImg.data;
-  for (let i = 0; i < cw * ch; i++) {
-    const a = d[i * 4] ?? 0;
-    od[i * 4] = 255;
-    od[i * 4 + 1] = 255;
-    od[i * 4 + 2] = 255;
-    od[i * 4 + 3] = a;
-  }
-  octx.putImageData(outImg, 0, 0);
-  return out;
-}
-
-/** `destination-out` usando alfa suave (misma geometría que la selección). */
-function applySoftMarqueeDestinationOut(
-  octx: CanvasRenderingContext2D,
-  imgObj: ImageObject,
-  iw: number,
-  ih: number,
-  rects: Rect[],
-  polys: Point[][],
-  ellipses: PhotoEllipseMarquee[],
-  featherPx: number,
-): void {
-  const bbox = computePhotoMarqueeImagePixelBBox(imgObj, iw, ih, rects, polys, ellipses);
-  if (!bbox) return;
-  let { minIx, minIy, maxIx, maxIy } = bbox;
-  const feather = Math.max(0, Math.min(200, featherPx));
-  const grow = feather > 0.5 ? Math.ceil(feather * 2.5) : 0;
-  if (grow > 0) {
-    minIx = Math.max(0, minIx - grow);
-    minIy = Math.max(0, minIy - grow);
-    maxIx = Math.min(iw - 1, maxIx + grow);
-    maxIy = Math.min(ih - 1, maxIy + grow);
-  }
-  const cw = maxIx - minIx + 1;
-  const ch = maxIy - minIy + 1;
-  const alphaCrop = buildPhotoMarqueeCropAlphaMask(
-    imgObj,
-    iw,
-    ih,
-    minIx,
-    minIy,
-    cw,
-    ch,
-    rects,
-    polys,
-    ellipses,
-    feather,
-  );
-  if (!alphaCrop) return;
-  const punch = document.createElement("canvas");
-  punch.width = iw;
-  punch.height = ih;
-  const pctx = punch.getContext("2d");
-  if (!pctx) return;
-  pctx.clearRect(0, 0, iw, ih);
-  pctx.drawImage(alphaCrop, minIx, minIy);
-  octx.save();
-  octx.globalCompositeOperation = "destination-out";
-  octx.drawImage(punch, 0, 0);
-  octx.restore();
-}
-
-/**
- * Recorta los píxeles de la capa imagen según la selección PhotoRoom (mundo).
- * Solo procesa el bbox en espacio de píxeles + máscara por canvas (sin barrer iw×ih).
- * maskFeatherPx: degradado de opacidad en el borde (PNG con canal alfa suave).
- */
-async function extractPhotoMarqueeRasterFromImage(
-  imgObj: ImageObject,
-  rects: Rect[],
-  polys: Point[][],
-  ellipses: PhotoEllipseMarquee[],
-  maskFeatherPx = 0,
-): Promise<PhotoMarqueeRasterClip | null> {
-  if (typeof document === "undefined") return null;
-  const load = await new Promise<HTMLImageElement | null>((res) => {
-    const im = new Image();
-    im.onload = () => res(im);
-    im.onerror = () => res(null);
-    im.src = imgObj.src;
-  });
-  if (!load || !load.complete) return null;
-  const iw = load.naturalWidth || 1;
-  const ih = load.naturalHeight || 1;
-
-  const bbox0 = computePhotoMarqueeImagePixelBBox(imgObj, iw, ih, rects, polys, ellipses);
-  if (!bbox0) return null;
-  let { minIx, minIy, maxIx, maxIy } = bbox0;
-  const feather = Math.max(0, Math.min(200, maskFeatherPx));
-  const grow = feather > 0.5 ? Math.ceil(feather * 2.5) : 0;
-  if (grow > 0) {
-    minIx = Math.max(0, minIx - grow);
-    minIy = Math.max(0, minIy - grow);
-    maxIx = Math.min(iw - 1, maxIx + grow);
-    maxIy = Math.min(ih - 1, maxIy + grow);
-  }
-  const cw = maxIx - minIx + 1;
-  const ch = maxIy - minIy + 1;
-
-  const rgb = document.createElement("canvas");
-  rgb.width = cw;
-  rgb.height = ch;
-  const rctx = rgb.getContext("2d");
-  if (!rctx) return null;
-  rctx.drawImage(load, minIx, minIy, cw, ch, 0, 0, cw, ch);
-
-  const alphaMask = buildPhotoMarqueeCropAlphaMask(
-    imgObj,
-    iw,
-    ih,
-    minIx,
-    minIy,
-    cw,
-    ch,
-    rects,
-    polys,
-    ellipses,
-    feather,
-  );
-  if (!alphaMask) return null;
-
-  const out = document.createElement("canvas");
-  out.width = cw;
-  out.height = ch;
-  const octx = out.getContext("2d");
-  if (!octx) return null;
-  octx.drawImage(rgb, 0, 0);
-  octx.globalCompositeOperation = "destination-in";
-  octx.drawImage(alphaMask, 0, 0);
-  octx.globalCompositeOperation = "source-over";
-
-  let dataUrl: string;
-  try {
-    dataUrl = out.toDataURL("image/png");
-  } catch {
-    return null;
-  }
-
-  const corners = imageMeetPixelRectCornersObjectLocal(
-    imgObj,
-    iw,
-    ih,
-    minIx,
-    minIy,
-    maxIx + 1,
-    maxIy + 1,
-  ).map((lp) => objLocalToWorldPoint(lp, imgObj));
-  let wx0 = Infinity, wy0 = Infinity, wx1 = -Infinity, wy1 = -Infinity;
-  for (const c of corners) {
-    wx0 = Math.min(wx0, c.x);
-    wy0 = Math.min(wy0, c.y);
-    wx1 = Math.max(wx1, c.x);
-    wy1 = Math.max(wy1, c.y);
-  }
-  const worldBounds: Rect = { x: wx0, y: wy0, w: Math.max(1e-6, wx1 - wx0), h: Math.max(1e-6, wy1 - wy0) };
-  return {
-    sourceLayerId: imgObj.id,
-    naturalWidth: iw,
-    naturalHeight: ih,
-    pixelCrop: { minIx, minIy, maxIx, maxIy },
-    worldBounds,
-    dataUrl,
-    cropW: cw,
-    cropH: ch,
-  };
-}
-
-/** Vista previa al mover la selección raster: textura + geometría inicial del “hueco” sobre la capa. */
-type PhotoMarqueeFloatLift = {
-  sourceLayerId: string;
-  dataUrl: string;
-  cropW: number;
-  cropH: number;
-  liftRects: Rect[];
-  liftPolys: Point[][];
-  liftEllipses: PhotoEllipseMarquee[];
-  /** Misma máscara al usarse al extraer: agujero y pegado respetan degradado de opacidad. */
-  maskFeatherPx: number;
-};
-
-async function buildPhotoMarqueeFloatLiftFromMarquee(
-  img: ImageObject,
-  rects: Rect[],
-  polys: Point[][],
-  ellipses: PhotoEllipseMarquee[],
-  maskFeatherPx: number,
-): Promise<PhotoMarqueeFloatLift | null> {
-  const clip = await extractPhotoMarqueeRasterFromImage(img, rects, polys, ellipses, maskFeatherPx);
-  if (!clip) return null;
-  return {
-    sourceLayerId: clip.sourceLayerId,
-    dataUrl: clip.dataUrl,
-    cropW: clip.cropW,
-    cropH: clip.cropH,
-    liftRects: rects.map((r) => ({ ...r })),
-    liftPolys: polys.map((ring) => ring.map((p) => ({ ...p }))),
-    liftEllipses: ellipses.map((e) => ({ ...e })),
-    maskFeatherPx: Math.max(0, Math.min(200, maskFeatherPx)),
-  };
-}
-
-/** Coherente con `preserveAspectRatio="xMidYMid meet"` sobre un viewport mundo `outer`. */
-function meetInnerRectInWorld(outer: Rect, intrinsicW: number, intrinsicH: number): Rect {
-  const iw = Math.max(1, intrinsicW);
-  const ih = Math.max(1, intrinsicH);
-  const s = Math.min(outer.w / iw, outer.h / ih);
-  const rw = iw * s;
-  const rh = ih * s;
-  return {
-    x: outer.x + (outer.w - rw) / 2,
-    y: outer.y + (outer.h - rh) / 2,
-    w: rw,
-    h: rh,
-  };
-}
-
-/**
- * Misma cadena que SVG `translate(cx,cy) rotate(r) scale(sx,sy) translate(-cx,-cy)` sobre un punto mundo.
- */
-function mapPhotoMarqueeFloatTf(
-  p: Point,
-  u: Rect,
-  rotationDeg: number,
-  scaleX: number,
-  scaleY: number,
-): Point {
-  const cx = u.x + u.w / 2;
-  const cy = u.y + u.h / 2;
-  const rad = (rotationDeg * Math.PI) / 180;
-  const cos = Math.cos(rad);
-  const sin = Math.sin(rad);
-  const dx = (p.x - cx) * scaleX;
-  const dy = (p.y - cy) * scaleY;
-  const xr = dx * cos - dy * sin;
-  const yr = dx * sin + dy * cos;
-  return { x: xr + cx, y: yr + cy };
-}
-
-function rawHandlePointForPhotoFloat(handleId: string, u: Rect): Point {
-  const x = u.x;
-  const y = u.y;
-  const w = u.w;
-  const h0 = u.h;
-  switch (handleId) {
-    case "nw":
-      return { x, y };
-    case "ne":
-      return { x: x + w, y };
-    case "se":
-      return { x: x + w, y: y + h0 };
-    case "sw":
-      return { x, y: y + h0 };
-    case "n":
-      return { x: x + w / 2, y };
-    case "s":
-      return { x: x + w / 2, y: y + h0 };
-    case "e":
-      return { x: x + w, y: y + h0 / 2 };
-    case "w":
-      return { x, y: y + h0 / 2 };
-    default:
-      return { x: x + w / 2, y: y + h0 / 2 };
-  }
-}
-
-function oppositePivotForPhotoFloatHandle(handleId: string, u: Rect): Point {
-  const x = u.x;
-  const y = u.y;
-  const w = u.w;
-  const h0 = u.h;
-  switch (handleId) {
-    case "nw":
-      return { x: x + w, y: y + h0 };
-    case "ne":
-      return { x: x, y: y + h0 };
-    case "se":
-      return { x: x + w, y: y };
-    case "sw":
-      return { x: x, y: y + h0 };
-    case "n":
-      return { x: x + w / 2, y: y + h0 };
-    case "s":
-      return { x: x + w / 2, y: y };
-    case "e":
-      return { x: x, y: y + h0 / 2 };
-    case "w":
-      return { x: x + w, y: y + h0 / 2 };
-    default:
-      return { x: x + w / 2, y: y + h0 / 2 };
-  }
-}
-
 /** Trazo de máscara en coords de píxel del bitmap natural (0…iw × 0…ih). */
-function fillPhotoMarqueePixelMaskPath(
+function fillSelectionPixelMaskPath(
   ctx: CanvasRenderingContext2D,
   imgObj: ImageObject,
   iw: number,
   ih: number,
   rects: Rect[],
   polys: Point[][],
-  ellipses: PhotoEllipseMarquee[],
+  ellipses: { cx: number; cy: number; rx: number; ry: number }[],
 ): void {
   const toPx = (wp: Point): { x: number; y: number } | null => {
     const f = worldPointToImagePixelFloat(imgObj, iw, ih, wp);
@@ -5671,9 +4861,8 @@ function fillPhotoMarqueePixelMaskPath(
 }
 
 /**
- * Construye una máscara de cobertura (0..255 por píxel, canal único) de la selección PhotoRoom
- * en el espacio de píxeles del bitmap natural (iw×ih). Aplica desenfoque para el feather.
- * Se usa para limitar ajustes de imagen a la región seleccionada.
+ * Máscara de cobertura (0..255 por píxel) de una selección persistida en el espacio de píxeles del bitmap.
+ * Usada por ajustes de imagen limitados a una región (`PhotoAdjSelection`).
  */
 function buildSelectionAlphaArray(
   imgObj: ImageObject,
@@ -5692,7 +4881,7 @@ function buildSelectionAlphaArray(
   const feather = Math.max(0, Math.min(200, sel.featherPx || 0));
   if (feather > 0.5) c.filter = `blur(${feather}px)`;
   c.fillStyle = "#fff";
-  fillPhotoMarqueePixelMaskPath(c, imgObj, iw, ih, sel.rects, sel.polys, sel.ellipses);
+  fillSelectionPixelMaskPath(c, imgObj, iw, ih, sel.rects, sel.polys, sel.ellipses);
   c.fill("evenodd");
   c.filter = "none";
   let data: Uint8ClampedArray;
@@ -5704,286 +4893,6 @@ function buildSelectionAlphaArray(
   const out = new Uint8ClampedArray(iw * ih);
   for (let i = 0, p = 0; i < data.length; i += 4, p++) out[p] = data[i]!;
   return out;
-}
-
-type PhotoMarqueeFloatTf = { rotationDeg: number; scaleX: number; scaleY: number };
-
-async function rasterCommitPhotoMarqueeFloatToImage(
-  imgObj: ImageObject,
-  lift: PhotoMarqueeFloatLift,
-  currentUnion: Rect,
-  tf: PhotoMarqueeFloatTf,
-): Promise<string | null> {
-  if (typeof document === "undefined") return null;
-  const load = await new Promise<HTMLImageElement | null>((res) => {
-    const im = new Image();
-    im.onload = () => res(im);
-    im.onerror = () => res(null);
-    im.src = imgObj.src;
-  });
-  const floatImg = await new Promise<HTMLImageElement | null>((res) => {
-    const im = new Image();
-    im.onload = () => res(im);
-    im.onerror = () => res(null);
-    im.src = lift.dataUrl;
-  });
-  if (!load?.complete || !floatImg?.complete) return null;
-  const iw = load.naturalWidth || 1;
-  const ih = load.naturalHeight || 1;
-  const cw = lift.cropW;
-  const ch = lift.cropH;
-
-  const out = document.createElement("canvas");
-  out.width = iw;
-  out.height = ih;
-  const octx = out.getContext("2d");
-  if (!octx) return null;
-  octx.drawImage(load, 0, 0);
-
-  if (lift.maskFeatherPx > 0.5) {
-    applySoftMarqueeDestinationOut(
-      octx,
-      imgObj,
-      iw,
-      ih,
-      lift.liftRects,
-      lift.liftPolys,
-      lift.liftEllipses,
-      lift.maskFeatherPx,
-    );
-  } else {
-    octx.save();
-    octx.globalCompositeOperation = "destination-out";
-    fillPhotoMarqueePixelMaskPath(octx, imgObj, iw, ih, lift.liftRects, lift.liftPolys, lift.liftEllipses);
-    octx.fillStyle = "rgba(0,0,0,1)";
-    octx.fill("evenodd");
-    octx.restore();
-  }
-
-  const inner = meetInnerRectInWorld(currentUnion, cw, ch);
-  const cornersWorld = [
-    { x: inner.x, y: inner.y },
-    { x: inner.x + inner.w, y: inner.y },
-    { x: inner.x + inner.w, y: inner.y + inner.h },
-    { x: inner.x, y: inner.y + inner.h },
-  ].map((c) => mapPhotoMarqueeFloatTf(c, currentUnion, tf.rotationDeg, tf.scaleX, tf.scaleY));
-  const cornersPx = cornersWorld
-    .map((c) => worldPointToImagePixelFloat(imgObj, iw, ih, c))
-    .filter((p): p is NonNullable<typeof p> => p != null);
-  if (cornersPx.length !== 4) {
-    try {
-      return out.toDataURL("image/png");
-    } catch {
-      return null;
-    }
-  }
-  const d0 = { x: cornersPx[0]!.ix, y: cornersPx[0]!.iy };
-  const d1 = { x: cornersPx[1]!.ix, y: cornersPx[1]!.iy };
-  const d2 = { x: cornersPx[3]!.ix, y: cornersPx[3]!.iy };
-
-  const a = (d1.x - d0.x) / Math.max(cw, 1);
-  const c = (d2.x - d0.x) / Math.max(ch, 1);
-  const b = (d1.y - d0.y) / Math.max(cw, 1);
-  const d = (d2.y - d0.y) / Math.max(ch, 1);
-  const ee = d0.x;
-  const f = d0.y;
-
-  octx.save();
-  octx.setTransform(a, b, c, d, ee, f);
-  octx.globalCompositeOperation = "source-over";
-  octx.drawImage(floatImg, 0, 0, cw, ch);
-  octx.restore();
-
-  try {
-    return out.toDataURL("image/png");
-  } catch {
-    return null;
-  }
-}
-
-async function rasterErasePhotoMarqueeRegionFromImage(
-  imgObj: ImageObject,
-  rects: Rect[],
-  polys: Point[][],
-  ellipses: PhotoEllipseMarquee[],
-  maskFeatherPx = 0,
-): Promise<string | null> {
-  if (typeof document === "undefined") return null;
-  const load = await new Promise<HTMLImageElement | null>((res) => {
-    const im = new Image();
-    im.onload = () => res(im);
-    im.onerror = () => res(null);
-    im.src = imgObj.src;
-  });
-  if (!load?.complete) return null;
-  const iw = load.naturalWidth || 1;
-  const ih = load.naturalHeight || 1;
-  const out = document.createElement("canvas");
-  out.width = iw;
-  out.height = ih;
-  const octx = out.getContext("2d");
-  if (!octx) return null;
-  octx.drawImage(load, 0, 0);
-  const feather = Math.max(0, Math.min(200, maskFeatherPx));
-  if (feather > 0.5) {
-    applySoftMarqueeDestinationOut(octx, imgObj, iw, ih, rects, polys, ellipses, feather);
-  } else {
-    octx.save();
-    octx.globalCompositeOperation = "destination-out";
-    fillPhotoMarqueePixelMaskPath(octx, imgObj, iw, ih, rects, polys, ellipses);
-    octx.fillStyle = "rgba(0,0,0,1)";
-    octx.fill("evenodd");
-    octx.restore();
-  }
-  try {
-    return out.toDataURL("image/png");
-  } catch {
-    return null;
-  }
-}
-
-const PHOTO_MARQUEE_PT_EPS = 1e-9;
-
-function photoMarqueePtKey(p: { x: number; y: number }): string {
-  return `${p.x},${p.y}`;
-}
-
-function photoMarqueeSamePt(
-  a: { x: number; y: number },
-  b: { x: number; y: number },
-): boolean {
-  return Math.abs(a.x - b.x) < PHOTO_MARQUEE_PT_EPS && Math.abs(a.y - b.y) < PHOTO_MARQUEE_PT_EPS;
-}
-
-/** Celda [x1,x2]×[y1,y2] intersecta algún rect de la lista (unión de AABB). */
-function cellOverlapsRectUnion(x1: number, x2: number, y1: number, y2: number, rects: Rect[]): boolean {
-  for (const r of rects) {
-    if (x2 <= r.x || x1 >= r.x + r.w || y2 <= r.y || y1 >= r.y + r.h) continue;
-    return true;
-  }
-  return false;
-}
-
-/**
- * Contorno ortogonal de la unión de rectángulos alineados a ejes: un solo trazo por componente
- * conexa (sin aristas internas donde los rectángulos se solapan o comparten lado).
- */
-function rectUnionBoundarySvgPathDs(rects: Rect[]): string[] {
-  const valid = rects.filter((r) => r.w > 0 && r.h > 0);
-  if (valid.length === 0) return [];
-
-  const xs = new Set<number>();
-  const ys = new Set<number>();
-  for (const r of valid) {
-    xs.add(r.x);
-    xs.add(r.x + r.w);
-    ys.add(r.y);
-    ys.add(r.y + r.h);
-  }
-  const xsa = [...xs].sort((a, b) => a - b);
-  const ysa = [...ys].sort((a, b) => a - b);
-  const nx = xsa.length - 1;
-  const ny = ysa.length - 1;
-  if (nx <= 0 || ny <= 0) return [];
-
-  const filled = new Array<boolean>(nx * ny);
-  const fi = (i: number, j: number) => i + j * nx;
-  for (let j = 0; j < ny; j++) {
-    for (let i = 0; i < nx; i++) {
-      filled[fi(i, j)] = cellOverlapsRectUnion(xsa[i], xsa[i + 1], ysa[j], ysa[j + 1], valid);
-    }
-  }
-
-  type Pt = { x: number; y: number };
-  type Seg = { a: Pt; b: Pt; id: number };
-  const segs: Seg[] = [];
-  let sid = 0;
-
-  for (let vi = 0; vi <= nx; vi++) {
-    const x = xsa[vi];
-    for (let j = 0; j < ny; j++) {
-      const L = vi > 0 && filled[fi(vi - 1, j)];
-      const R = vi < nx && filled[fi(vi, j)];
-      if (L !== R) {
-        const a = { x, y: ysa[j] };
-        const b = { x, y: ysa[j + 1] };
-        segs.push({ a, b, id: sid++ });
-      }
-    }
-  }
-
-  for (let hj = 0; hj <= ny; hj++) {
-    const y = ysa[hj];
-    for (let i = 0; i < nx; i++) {
-      const B = hj > 0 && filled[fi(i, hj - 1)];
-      const T = hj < ny && filled[fi(i, hj)];
-      if (B !== T) {
-        const a = { x: xsa[i], y };
-        const b = { x: xsa[i + 1], y };
-        segs.push({ a, b, id: sid++ });
-      }
-    }
-  }
-
-  if (segs.length === 0) return [];
-
-  const adj = new Map<string, { other: Pt; id: number }[]>();
-  const addAdj = (u: Pt, v: Pt, id: number) => {
-    const ku = photoMarqueePtKey(u);
-    const kv = photoMarqueePtKey(v);
-    if (!adj.has(ku)) adj.set(ku, []);
-    if (!adj.has(kv)) adj.set(kv, []);
-    adj.get(ku)!.push({ other: v, id });
-    adj.get(kv)!.push({ other: u, id });
-  };
-  for (const s of segs) {
-    addAdj(s.a, s.b, s.id);
-  }
-
-  const used = new Set<number>();
-  const loops: Pt[][] = [];
-
-  for (const s of segs) {
-    if (used.has(s.id)) continue;
-    const trial = new Set<number>([s.id]);
-    let cur = s.b;
-    let lastSeg = s.id;
-    const loop: Pt[] = [s.a, s.b];
-    let guard = 0;
-    let closed = false;
-    while (guard++ <= segs.length + 4) {
-      const list = adj.get(photoMarqueePtKey(cur));
-      if (!list) break;
-      const nbrs = list.filter((n) => n.id !== lastSeg);
-      if (nbrs.length !== 1) break;
-      const nbr = nbrs[0];
-      trial.add(nbr.id);
-      lastSeg = nbr.id;
-      cur = nbr.other;
-      if (photoMarqueeSamePt(cur, s.a)) {
-        closed = true;
-        break;
-      }
-      loop.push(cur);
-    }
-    if (closed && loop.length >= 3) {
-      trial.forEach((id) => used.add(id));
-      loops.push(loop);
-    } else {
-      trial.forEach((id) => used.add(id));
-    }
-  }
-
-  return loops.map((loop) => {
-    if (loop.length < 2) return "";
-    const p0 = loop[0];
-    let d = `M ${p0.x} ${p0.y}`;
-    for (let i = 1; i < loop.length; i++) {
-      d += ` L ${loop[i].x} ${loop[i].y}`;
-    }
-    d += " Z";
-    return d;
-  }).filter(Boolean);
 }
 
 // ── Snap ────────────────────────────────────────────────────────────────
@@ -9083,43 +7992,6 @@ function PhotoCloneStampToolIcon({ size = 19, className }: { size?: number; clas
   );
 }
 
-function MarqueeRectToolIcon({ size = 19, className }: { size?: number; className?: string }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 20 20" fill="none" className={className} aria-hidden>
-      <rect x="2.75" y="3.25" width="14.5" height="13.5" rx="1.6" stroke="currentColor" strokeWidth={1.7} strokeDasharray="2.3 2" />
-    </svg>
-  );
-}
-
-function MarqueeEllipseToolIcon({ size = 19, className }: { size?: number; className?: string }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 20 20" fill="none" className={className} aria-hidden>
-      <ellipse cx="10" cy="10" rx="7" ry="6.3" stroke="currentColor" strokeWidth={1.7} strokeDasharray="2.1 1.8" />
-    </svg>
-  );
-}
-
-function MarqueeLassoToolIcon({ size = 19, className }: { size?: number; className?: string }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 20 20" fill="none" className={className} aria-hidden>
-      <path d="M4 10.8c0-3.25 2.75-5.75 6.4-5.75 3.2 0 5.6 1.95 5.6 4.75 0 2.35-1.45 4.45-3.8 5.4-.95.4-1.1 1.7-.25 2.25l.55.35" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeDasharray="2 2" />
-      <circle cx="12.95" cy="17.2" r="1.1" fill="currentColor" />
-    </svg>
-  );
-}
-
-function MarqueePolygonToolIcon({ size = 19, className }: { size?: number; className?: string }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 20 20" fill="none" className={className} aria-hidden>
-      <path d="M3.2 13.8 5.6 5.4 14.4 4.2 16.8 12.4 9.8 16.2Z" stroke="currentColor" strokeWidth={1.65} strokeLinejoin="round" strokeDasharray="2 1.8" />
-      <circle cx="5.6" cy="5.4" r="1.05" fill="currentColor" />
-      <circle cx="14.4" cy="4.2" r="1.05" fill="currentColor" />
-      <circle cx="16.8" cy="12.4" r="1.05" fill="currentColor" />
-      <circle cx="9.8" cy="16.2" r="1.05" fill="currentColor" />
-      <circle cx="3.2" cy="13.8" r="1.05" fill="currentColor" />
-    </svg>
-  );
-}
 
 function PhotoGradientToolIcon({ size = 19, className }: { size?: number; className?: string }) {
   const gid = useId();
@@ -9918,7 +8790,7 @@ function ImagePropertiesInfoSection({
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  MAIN COMPONENT (lienzo compartido; Designer importa el default, PhotoRoom usa PhotoRoomFreehandStudio)
+//  MAIN COMPONENT (lienzo compartido; Designer importa el default)
 // ═══════════════════════════════════════════════════════════════════════════
 
 export function FreehandStudioCanvas({
@@ -9935,7 +8807,7 @@ export function FreehandStudioCanvas({
   studioHeaderSubtitle = "Vector document",
   studioHeaderAccessory,
   photoRoomConnectedInputs,
-  studioPhotoRoomCanvasPanel,
+  studioCanvasPanel,
   photoRoomOnModificarImagenIA,
   photoRoomOnRasterizeInputImage,
   photoRoomOnOpenConnectedNanoStudio,
@@ -10126,63 +8998,8 @@ export function FreehandStudioCanvas({
 
   const photoRoomSizedRef = useRef<Set<string>>(new Set());
 
-  /** PhotoRoom: marco rectangular confirmado (coordenadas mundo); fase A = preview / hormigas, sin píxeles aún. */
-  const [photoRectMarqueeSelection, setPhotoRectMarqueeSelection] = useState<Rect[]>([]);
-  /** PhotoRoom: selección por polígono(s) cerrado(s); excluye rectángulos (se limpia al confirmar el otro modo). */
-  const [photoPolygonMarqueeSelection, setPhotoPolygonMarqueeSelection] = useState<Point[][]>([]);
-  /** PhotoRoom: marcos elípticos confirmados. */
-  const [photoEllipseMarqueeSelection, setPhotoEllipseMarqueeSelection] = useState<PhotoEllipseMarquee[]>([]);
-  /** PhotoRoom: feather de máscara (px en bitmap natural). 0 = borde duro; >0 = degradado de opacidad al copiar/borrar/mover. */
-  const [photoMarqueeMaskFeatherPx, setPhotoMarqueeMaskFeatherPx] = useState(0);
-  const photoMarqueeMaskFeatherPxRef = useRef(0);
-  photoMarqueeMaskFeatherPxRef.current = photoMarqueeMaskFeatherPx;
-  /** Refs síncronos para atajos/teclado (evita cierres obsoletos sobre la selección). */
-  const photoRectMarqueeSelectionRef = useRef(photoRectMarqueeSelection);
-  const photoPolygonMarqueeSelectionRef = useRef(photoPolygonMarqueeSelection);
-  const photoEllipseMarqueeSelectionRef = useRef(photoEllipseMarqueeSelection);
-  photoRectMarqueeSelectionRef.current = photoRectMarqueeSelection;
-  photoPolygonMarqueeSelectionRef.current = photoPolygonMarqueeSelection;
-  photoEllipseMarqueeSelectionRef.current = photoEllipseMarqueeSelection;
-  /** Clic dentro del marco confirmado: no arrancar drag hasta superar umbral (así un clic suelto no quita las hormigas). */
-  const photoRectMarqueePendingRef = useRef<{ clientX: number; clientY: number } | null>(null);
-  /** Al mover la selección (V / flechas): textura extraída + máscara inicial para tapar el origen. */
-  const [photoMarqueeFloatLift, setPhotoMarqueeFloatLift] = useState<PhotoMarqueeFloatLift | null>(null);
-  const photoMarqueeFloatLiftRef = useRef<PhotoMarqueeFloatLift | null>(null);
-  const photoMarqueeFloatExtractingRef = useRef(false);
-  /** Rotación / escala de la textura flotante (preview + bake al deseleccionar). */
-  const [photoMarqueeFloatTf, setPhotoMarqueeFloatTf] = useState<PhotoMarqueeFloatTf>({
-    rotationDeg: 0,
-    scaleX: 1,
-    scaleY: 1,
-  });
-  const photoMarqueeFloatTfRef = useRef(photoMarqueeFloatTf);
-  photoMarqueeFloatTfRef.current = photoMarqueeFloatTf;
-  /** Última selección PhotoRoom no vacía (para volcar píxeles al vaciar el marco). */
-  const photoMarqueeLastSelSnapshotRef = useRef<{
-    rects: Rect[];
-    polys: Point[][];
-    ellipses: PhotoEllipseMarquee[];
-  } | null>(null);
-  const photoMarqueeHadSelectionRef = useRef(false);
-  /** Definido más abajo; el efecto de `photoRoomInputsSig` debe poder llamarlo sin TDZ. */
-  const commitPhotoMarqueeFloatToSourceRef = useRef<(() => Promise<boolean>) | null>(null);
-
-  useLayoutEffect(() => {
-    const has =
-      photoRectMarqueeSelection.length > 0 ||
-      photoPolygonMarqueeSelection.length > 0 ||
-      photoEllipseMarqueeSelection.length > 0;
-    if (has) {
-      photoMarqueeLastSelSnapshotRef.current = {
-        rects: photoRectMarqueeSelection.map((r) => ({ ...r })),
-        polys: photoPolygonMarqueeSelection.map((ring) => ring.map((p) => ({ ...p }))),
-        ellipses: photoEllipseMarqueeSelection.map((e) => ({ ...e })),
-      };
-    }
-  }, [photoRectMarqueeSelection, photoPolygonMarqueeSelection, photoEllipseMarqueeSelection]);
-
-  /** Studio del nodo PhotoRoom (incluye solo imágenes importadas en el lienzo; no exige cables al grafo). */
-  const isPhotoRoomStudioEmbed = photoRoomStudioEmbed === true || studioPhotoRoomCanvasPanel != null;
+  /** Studio embebido de retoque de imagen (perfil ráster). Designer NO lo activa. */
+  const isPhotoRoomStudioEmbed = photoRoomStudioEmbed === true;
   /** Variante visual "Flush Chrome" del chrome del studio: PhotoRoom y Designer (Freehand suelto queda intacto). */
   const flushChrome = isPhotoRoomStudioEmbed || !!designerMode;
   /** Atributo hook que activa las reglas CSS Flush Chrome en un contenedor de chrome. */
@@ -10213,10 +9030,9 @@ export function FreehandStudioCanvas({
     () =>
       resolveStudioCapabilities({
         designerMode: !!designerMode,
-        isPhotoRoomEmbed: isPhotoRoomStudioEmbed,
         override: studioCapabilities,
       }),
-    [designerMode, isPhotoRoomStudioEmbed, studioCapabilities, photoRoomStudioEmbed],
+    [designerMode, studioCapabilities],
   );
 
   const artboardW = artboards[0]?.width ?? 1920;
@@ -10228,19 +9044,7 @@ export function FreehandStudioCanvas({
       photoRoomInputsSigPrevRef.current = null;
       return;
     }
-    const prev = photoRoomInputsSigPrevRef.current;
     photoRoomInputsSigPrevRef.current = photoRoomInputsSig;
-    if (prev !== null && prev !== photoRoomInputsSig) {
-      void (async () => {
-        await (commitPhotoMarqueeFloatToSourceRef.current?.() ?? Promise.resolve(false));
-        setPhotoRectMarqueeSelection([]);
-        setPhotoPolygonMarqueeSelection([]);
-        setPhotoEllipseMarqueeSelection([]);
-        setPhotoMarqueeFloatLift(null);
-        photoMarqueeFloatLiftRef.current = null;
-        setPhotoMarqueeFloatTf({ rotationDeg: 0, scaleX: 1, scaleY: 1 });
-      })();
-    }
   }, [photoRoomInputsSig, photoRoomConnectedInputs]);
 
   useEffect(() => {
@@ -10318,15 +9122,6 @@ export function FreehandStudioCanvas({
       setActiveTool("select");
       return;
     }
-    if (
-      (activeTool === "rectMarquee" ||
-        activeTool === "ellipseMarquee" ||
-        activeTool === "lassoMarquee" ||
-        activeTool === "polygonMarquee") &&
-      !studioCaps.toolPhotoMarquee
-    ) {
-      setActiveTool("select");
-    }
   }, [activeTool, studioCaps, designerMode]);
 
   useEffect(() => {
@@ -10374,55 +9169,6 @@ export function FreehandStudioCanvas({
       return next;
     });
   }, [photoRoomInputsSig, nodeId, artboardW, artboardH]);
-
-  /** Indicadores Ctrl/⌘ (+) y Alt/Option (−) en marco PhotoRoom; refs evitan desfase con React. */
-  const [photoRectMarqueeAddModHeld, setPhotoRectMarqueeAddModHeld] = useState(false);
-  const [photoRectMarqueeAltModHeld, setPhotoRectMarqueeAltModHeld] = useState(false);
-  const photoRectMarqueeAddModRef = useRef(false);
-  const photoRectMarqueeAltModRef = useRef(false);
-  useEffect(() => {
-    const photoMarqueeLike =
-      activeTool === "rectMarquee" ||
-      activeTool === "ellipseMarquee" ||
-      activeTool === "lassoMarquee" ||
-      activeTool === "polygonMarquee";
-    if (!isPhotoRoomStudioEmbed || !studioCaps.toolPhotoMarquee || !photoMarqueeLike) {
-      setPhotoRectMarqueeAddModHeld(false);
-      setPhotoRectMarqueeAltModHeld(false);
-      photoRectMarqueeAddModRef.current = false;
-      photoRectMarqueeAltModRef.current = false;
-      return;
-    }
-    const sync = (e: KeyboardEvent | MouseEvent) => {
-      const ne = e as KeyboardEvent & MouseEvent;
-      const alt = !!(ne.altKey ||
-        (typeof ne.getModifierState === "function" && ne.getModifierState("Alt")));
-      const add = !alt &&
-        !!(ne.ctrlKey || ne.metaKey ||
-          (typeof ne.getModifierState === "function" &&
-            (ne.getModifierState("Control") || ne.getModifierState("Meta"))));
-      photoRectMarqueeAltModRef.current = alt;
-      photoRectMarqueeAddModRef.current = add;
-      setPhotoRectMarqueeAltModHeld(alt);
-      setPhotoRectMarqueeAddModHeld(add);
-    };
-    const onBlur = () => {
-      photoRectMarqueeAddModRef.current = false;
-      photoRectMarqueeAltModRef.current = false;
-      setPhotoRectMarqueeAddModHeld(false);
-      setPhotoRectMarqueeAltModHeld(false);
-    };
-    window.addEventListener("keydown", sync as EventListener);
-    window.addEventListener("keyup", sync as EventListener);
-    window.addEventListener("mousemove", sync);
-    window.addEventListener("blur", onBlur);
-    return () => {
-      window.removeEventListener("keydown", sync as EventListener);
-      window.removeEventListener("keyup", sync as EventListener);
-      window.removeEventListener("mousemove", sync);
-      window.removeEventListener("blur", onBlur);
-    };
-  }, [isPhotoRoomStudioEmbed, studioCaps.toolPhotoMarquee, activeTool]);
 
   const [viewport, setViewport] = useState({ x: 0, y: 0, zoom: 1 });
   const { isTouchUI } = useInputMode();
@@ -10492,7 +9238,7 @@ export function FreehandStudioCanvas({
 
   // Drag state
   const [dragState, setDragState] = useState<{
-    type: "move" | "resize" | "skew" | "rotationPivot" | "textBoxResize" | "pan" | "create" | "createText" | "createTextFrame" | "createImageFrame" | "directSelect" | "pathCornerRadius" | "marquee" | "photoRectMarquee" | "photoEllipseMarquee" | "photoLassoMarquee" | "photoPolygonMarquee" | "photoMarqueeNudge" | "photoMarqueeFloatRotate" | "photoMarqueeFloatResize" | "penHandle" | "rotate" | "gradient" | "guideMove" | "guidePull" | "imageContentPan" | "imageContentResize" | "brushPaint" | "photoGradientLine" | "photoGradientVertex" | "cornerRadius";
+    type: "move" | "resize" | "skew" | "rotationPivot" | "textBoxResize" | "pan" | "create" | "createText" | "createTextFrame" | "createImageFrame" | "directSelect" | "pathCornerRadius" | "marquee" | "penHandle" | "rotate" | "gradient" | "guideMove" | "guidePull" | "imageContentPan" | "imageContentResize" | "brushPaint" | "photoGradientLine" | "photoGradientVertex" | "cornerRadius";
     startX: number;
     startY: number;
     startCanvas?: Point;
@@ -10540,18 +9286,6 @@ export function FreehandStudioCanvas({
     marqueeOrigin?: Point;
     snapDelta?: Point;
     shiftKey?: boolean;
-    /** Solo `photoRectMarquee`: sumar rectángulo (Ctrl/⌘ al iniciar el trazo). */
-    photoMarqueeAdditive?: boolean;
-    /** Solo `photoRectMarquee`: restar rectángulo (Alt/Option al iniciar el trazo). */
-    photoMarqueeSubtract?: boolean;
-    /** Solo `photoLassoMarquee`: puntos del trazo (mundo). */
-    photoLassoPoints?: Point[];
-    /** Solo `photoPolygonMarquee`: vértices colocados; `currentCanvas` = rubber band al cursor. */
-    photoPolygonVertices?: Point[];
-    /** Instantánea al inicio del gesto (mover selección PhotoRoom con la herramienta V). */
-    photoMarqueeSnapRects?: Rect[];
-    photoMarqueeSnapPolys?: Point[][];
-    photoMarqueeSnapEllipses?: PhotoEllipseMarquee[];
     rotateCenter?: Point;
     rotateStartAngle?: number;
     rotateInitialRotations?: Map<string, number>;
@@ -10577,16 +9311,6 @@ export function FreehandStudioCanvas({
     startOffsetX?: number;
     startOffsetY?: number;
     imageCorner?: "nw" | "ne" | "sw" | "se";
-    /** Tiradores de la textura flotante PhotoRoom. */
-    photoMarqueeFloatHandle?: string;
-    photoMarqueeFloatSnapTf?: PhotoMarqueeFloatTf;
-    photoMarqueeFloatSnapUnion?: Rect;
-    photoMarqueeFloatStartAngleRad?: number;
-    photoMarqueeFloatPivotWorld?: Point;
-    photoMarqueeFloatHandleStartWorld?: Point;
-    photoMarqueeFloatResizePivotWorld?: Point;
-    photoMarqueeFloatResizeStartVal?: number;
-    photoMarqueeFloatResizeKind?: "corner" | "ns" | "ew";
     /** Pincel: último punto en coords. de píxel del canvas del bitmap. */
     brushLastPixel?: Point;
     /** Degradado raster: capa objetivo del gesto. */
@@ -10715,7 +9439,7 @@ export function FreehandStudioCanvas({
   const brushSessionRef = useRef<{
     objectId: string;
     target: "pixels" | "mask";
-    kind: "image" | "boolean";
+    kind: "image" | "boolean" | "imageFrame";
     canvas: HTMLCanvasElement;
     ctx: CanvasRenderingContext2D;
     /** Copia estable del marco de capa (imagen o booleano) al iniciar el trazo. */
@@ -12435,7 +11159,6 @@ export function FreehandStudioCanvas({
       { key: "canvas", label: "Canvas visual nodal" },
       { key: "brain", label: "Brain de conocimiento e ingesta" },
       { key: "designer", label: "Designer multipágina editorial" },
-      { key: "photoroom", label: "PhotoRoom para edición no destructiva" },
       { key: "presenter", label: "Presenter para slides y publicación" },
       { key: "s3", label: "Assets en S3 + DynamoDB" },
       { key: "gemini", label: "Integración multimodelo con Gemini" },
@@ -13620,14 +12343,14 @@ export function FreehandStudioCanvas({
         o.type === "image" ? (o as ImageObject).src : (o as BooleanGroupObject).cachedResult!;
       void loadImageToBrushCanvas(dataSrc, o.width, o.height).then(({ canvas }) => {
         const cw = canvas.width, ch = canvas.height;
-        const maskCanvas = buildLayerMaskCanvasFromMarqueeSelection(
-          o,
-          cw,
-          ch,
-          photoRectMarqueeSelectionRef.current,
-          photoPolygonMarqueeSelectionRef.current,
-          photoEllipseMarqueeSelectionRef.current,
-        );
+        const maskCanvas = document.createElement("canvas");
+        maskCanvas.width = Math.max(1, cw);
+        maskCanvas.height = Math.max(1, ch);
+        const maskCtx = maskCanvas.getContext("2d");
+        if (maskCtx) {
+          maskCtx.fillStyle = "#ffffff";
+          maskCtx.fillRect(0, 0, cw, ch);
+        }
         const dataUrl = maskCanvas.toDataURL("image/png");
         const nm = defaultLayerMask({ src: dataUrl, pixelW: cw, pixelH: ch });
         setObjects((prev) => {
@@ -13669,30 +12392,6 @@ export function FreehandStudioCanvas({
     },
     [pushHistory],
   );
-
-  const canConvertSelectionToPhotoMarquee = useMemo(() => {
-    if (!studioCaps.photoMarqueeFromVector) return false;
-    if (selectedObjects.length !== 1) return false;
-    return vectorObjectToPhotoMarqueeParts(selectedObjects[0]!) != null;
-  }, [selectedObjects, studioCaps.photoMarqueeFromVector]);
-
-  const replacePhotoMarqueeWithVectorOutline = useCallback(() => {
-    if (selectedIds.size !== 1) return;
-    const id = Array.from(selectedIds)[0]!;
-    const o = objects.find((x) => x.id === id);
-    if (!o) return;
-    const parts = vectorObjectToPhotoMarqueeParts(o);
-    if (!parts) return;
-    void (async () => {
-      await (commitPhotoMarqueeFloatToSourceRef.current?.() ?? Promise.resolve(false));
-      setPhotoMarqueeFloatLift(null);
-      photoMarqueeFloatLiftRef.current = null;
-      setPhotoMarqueeFloatTf({ rotationDeg: 0, scaleX: 1, scaleY: 1 });
-      setPhotoRectMarqueeSelection(parts.rects.map((r) => ({ ...r })));
-      setPhotoPolygonMarqueeSelection(parts.polys.map((ring) => ring.map((p) => ({ ...p }))));
-      setPhotoEllipseMarqueeSelection(parts.ellipses.map((e) => ({ ...e })));
-    })();
-  }, [objects, selectedIds]);
 
   const createEmptyLayerOnTop = useCallback(() => {
     let newId: string | null = null;
@@ -14876,10 +13575,9 @@ export function FreehandStudioCanvas({
       return;
     }
     setObjects((prev) =>
-      prev.map((o) => {
-        if (o.id !== s.objectId || o.type !== "image") return o;
-        return { ...o, src: url, x: r.x, y: r.y, width: r.width, height: r.height } as FreehandObject;
-      }),
+      prev.map((o) =>
+        applyBrushStrokeToObject(o, s.objectId, s.kind, url, r, s.canvas.width, s.canvas.height),
+      ),
     );
     if (prTel && api) {
       trackPhotoroomImageEdited(api.track, { canvasObjectId: s.objectId, layerId: s.objectId });
@@ -15056,9 +13754,7 @@ export function FreehandStudioCanvas({
       } else {
         setObjects((prev) => {
           const next = prev.map((o) =>
-            o.id === oid && o.type === "image"
-              ? { ...o, src: url, x: r.x, y: r.y, width: r.width, height: r.height }
-              : o,
+            applyBrushStrokeToObject(o, oid, s.kind, url, r, s.canvas.width, s.canvas.height),
           );
           pushHistory(next, new Set([oid]));
           return next;
@@ -15270,18 +13966,7 @@ export function FreehandStudioCanvas({
       if (obj.type !== "image" || obj.photoRoomInputSlot) return;
       const meta = obj.photoImageAdjustments ?? null;
       const baseSnapshotUrl = meta?.baseSnapshotUrl ?? obj.src;
-      const rects = photoRectMarqueeSelectionRef.current;
-      const polys = photoPolygonMarqueeSelectionRef.current;
-      const ellipses = photoEllipseMarqueeSelectionRef.current;
-      const hasMarquee = rects.length > 0 || polys.length > 0 || ellipses.length > 0;
-      const selection: PhotoAdjSelection | null = hasMarquee
-        ? {
-            rects: rects.map((r) => ({ ...r })),
-            polys: polys.map((ring) => ring.map((p) => ({ ...p }))),
-            ellipses: ellipses.map((e) => ({ ...e })),
-            featherPx: photoMarqueeMaskFeatherPxRef.current,
-          }
-        : meta?.selection ?? null;
+      const selection: PhotoAdjSelection | null = meta?.selection ?? null;
       let histogram: number[] = new Array<number>(256).fill(0);
       try {
         const { canvas, ctx } = await loadImageToBrushCanvas(baseSnapshotUrl, obj.width, obj.height);
@@ -16230,215 +14915,8 @@ export function FreehandStudioCanvas({
   }, []);
 
   const objectClipboardRef = useRef<FreehandObject[] | null>(null);
-  /** PhotoRoom: recorte raster copiado con la selección (capa imagen). */
-  const photoMarqueeRasterClipboardRef = useRef<PhotoMarqueeRasterClip | null>(null);
-  /** Misma información que el clip, sin bitmap: vínculo capa + recorte píxel + AABB mundo. */
-  const activePixelSelectionRef = useRef<ActivePixelSelection | null>(null);
-  /** Índice de pegados consecutivos del mismo clip (0 = sin offset, 1 = +24, …). Se resetea en cada copy raster. */
-  const photoMarqueePasteStaggerRef = useRef(0);
-
-  const copyPhotoMarqueeRasterSelection = useCallback(async () => {
-    const sel = selectedIdsRef.current;
-    const img = findSingleSelectedImageForPhotoMarquee(sel, objectsRef.current);
-    if (!img) return;
-    const rects = photoRectMarqueeSelectionRef.current;
-    const polys = photoPolygonMarqueeSelectionRef.current;
-    const ellipses = photoEllipseMarqueeSelectionRef.current;
-    const hasMarquee = rects.length > 0 || polys.length > 0 || ellipses.length > 0;
-    if (!hasMarquee) return;
-    try {
-      const clip = await extractPhotoMarqueeRasterFromImage(
-        img,
-        rects,
-        polys,
-        ellipses,
-        photoMarqueeMaskFeatherPxRef.current,
-      );
-      if (!clip) {
-        setToast("No hay píxeles en la selección");
-        window.setTimeout(() => setToast(null), 2400);
-        return;
-      }
-      photoMarqueeRasterClipboardRef.current = clip;
-      photoMarqueePasteStaggerRef.current = 0;
-      activePixelSelectionRef.current = {
-        sourceLayerId: clip.sourceLayerId,
-        naturalWidth: clip.naturalWidth,
-        naturalHeight: clip.naturalHeight,
-        pixelCrop: clip.pixelCrop,
-        worldBounds: clip.worldBounds,
-      };
-      objectClipboardRef.current = null;
-      if (designerClipboardRef) designerClipboardRef.current = null;
-    } catch {
-      setToast("No se pudo copiar la imagen (CORS o origen bloqueado)");
-      window.setTimeout(() => setToast(null), 3200);
-    }
-  }, [designerClipboardRef]);
-
-  /** Vuelca la textura flotante (y el hueco del origen) en el bitmap de la capa imagen. */
-  const commitPhotoMarqueeFloatToSource = useCallback(async (): Promise<boolean> => {
-    const lift = photoMarqueeFloatLiftRef.current;
-    const snap = photoMarqueeLastSelSnapshotRef.current;
-    const tf = photoMarqueeFloatTfRef.current;
-    if (!lift || !snap) return false;
-    const imgObj = objectsRef.current.find(
-      (o) => o.id === lift.sourceLayerId && o.type === "image",
-    ) as ImageObject | undefined;
-    if (!imgObj) return false;
-    const u = unionPhotoMarqueeWorldBounds(snap.rects, snap.polys, snap.ellipses);
-    if (!u || u.w < 1e-9 || u.h < 1e-9) return false;
-    const url = await rasterCommitPhotoMarqueeFloatToImage(imgObj, lift, u, tf);
-    if (!url) {
-      setToast("No se pudo aplicar la selección al bitmap");
-      window.setTimeout(() => setToast(null), 2800);
-      return false;
-    }
-    const sel = selectedIdsRef.current;
-    setObjects((prev) => {
-      const next = prev.map((o) =>
-        o.id === imgObj.id && o.type === "image" ? ({ ...o, src: url } as ImageObject) : o,
-      );
-      pushHistory(next, sel);
-      queueMicrotask(() => onUpdateObjectsRef.current(next));
-      return next;
-    });
-    return true;
-  }, [pushHistory]);
-  commitPhotoMarqueeFloatToSourceRef.current = commitPhotoMarqueeFloatToSource;
-
-  const deselectPhotoMarquee = useCallback(() => {
-    if (!isPhotoRoomStudioEmbed || !studioCaps.toolPhotoMarquee) return;
-    setPhotoRectMarqueeSelection([]);
-    setPhotoPolygonMarqueeSelection([]);
-    setPhotoEllipseMarqueeSelection([]);
-    setPhotoMarqueeMaskFeatherPx(0);
-  }, [isPhotoRoomStudioEmbed, studioCaps.toolPhotoMarquee]);
-
-  const invertPhotoMarqueeFromPanel = useCallback(() => {
-    if (!isPhotoRoomStudioEmbed || !studioCaps.toolPhotoMarquee) return;
-    const rectsSnap = photoRectMarqueeSelectionRef.current.map((r) => ({ ...r }));
-    const polysSnap = photoPolygonMarqueeSelectionRef.current.map((ring) => ring.map((p) => ({ ...p })));
-    const ellipsesSnap = photoEllipseMarqueeSelectionRef.current.map((e) => ({ ...e }));
-    if (!rectsSnap.length && !polysSnap.length && !ellipsesSnap.length) return;
-    void (async () => {
-      await (commitPhotoMarqueeFloatToSourceRef.current?.() ?? Promise.resolve(false));
-      const img = findSingleSelectedImageForPhotoMarquee(selectedIdsRef.current, objectsRef.current);
-      const ab = pickPrimaryArtboard(artboards, null);
-      const bounds: Rect = img
-        ? { x: img.x, y: img.y, w: img.width, h: img.height }
-        : ab
-          ? artboardToRect(ab)
-          : { x: 0, y: 0, w: artboards[0]?.width ?? 1920, h: artboards[0]?.height ?? 1080 };
-      const nextPolys = invertPhotoMarqueePolysWithinBounds(rectsSnap, polysSnap, ellipsesSnap, bounds);
-      setPhotoMarqueeFloatLift(null);
-      photoMarqueeFloatLiftRef.current = null;
-      setPhotoMarqueeFloatTf({ rotationDeg: 0, scaleX: 1, scaleY: 1 });
-      if (nextPolys.length === 0) {
-        setPhotoRectMarqueeSelection([]);
-        setPhotoPolygonMarqueeSelection([]);
-        setPhotoEllipseMarqueeSelection([]);
-        return;
-      }
-      setPhotoRectMarqueeSelection([]);
-      setPhotoEllipseMarqueeSelection([]);
-      setPhotoPolygonMarqueeSelection(nextPolys);
-    })();
-  }, [isPhotoRoomStudioEmbed, studioCaps.toolPhotoMarquee, artboards]);
-
-  useEffect(() => {
-    if (!isPhotoRoomStudioEmbed || !studioCaps.toolPhotoMarquee) return;
-    const has =
-      photoRectMarqueeSelection.length > 0 ||
-      photoPolygonMarqueeSelection.length > 0 ||
-      photoEllipseMarqueeSelection.length > 0;
-    const prevHad = photoMarqueeHadSelectionRef.current;
-    photoMarqueeHadSelectionRef.current = has;
-    if (!prevHad || has) return;
-    if (!photoMarqueeFloatLiftRef.current || !photoMarqueeLastSelSnapshotRef.current) return;
-    void (async () => {
-      await commitPhotoMarqueeFloatToSource();
-      setPhotoMarqueeFloatLift(null);
-      photoMarqueeFloatLiftRef.current = null;
-      setPhotoMarqueeFloatTf({ rotationDeg: 0, scaleX: 1, scaleY: 1 });
-    })();
-  }, [
-    isPhotoRoomStudioEmbed,
-    studioCaps.toolPhotoMarquee,
-    photoRectMarqueeSelection,
-    photoPolygonMarqueeSelection,
-    photoEllipseMarqueeSelection,
-    commitPhotoMarqueeFloatToSource,
-  ]);
-
-  /** Al pasar a otra herramienta (pincel, formas…), volcar la textura flotante y limpiar el marco. */
-  useEffect(() => {
-    if (!isPhotoRoomStudioEmbed || !studioCaps.toolPhotoMarquee) return;
-    const marqueeUiTool =
-      activeTool === "select" ||
-      activeTool === "rectMarquee" ||
-      activeTool === "ellipseMarquee" ||
-      activeTool === "lassoMarquee" ||
-      activeTool === "polygonMarquee";
-    if (marqueeUiTool) return;
-    const has =
-      photoRectMarqueeSelection.length > 0 ||
-      photoPolygonMarqueeSelection.length > 0 ||
-      photoEllipseMarqueeSelection.length > 0;
-    if (!has) return;
-    setPhotoRectMarqueeSelection([]);
-    setPhotoPolygonMarqueeSelection([]);
-    setPhotoEllipseMarqueeSelection([]);
-  }, [
-    activeTool,
-    isPhotoRoomStudioEmbed,
-    studioCaps.toolPhotoMarquee,
-    photoRectMarqueeSelection.length,
-    photoPolygonMarqueeSelection.length,
-    photoEllipseMarqueeSelection.length,
-  ]);
-
-  const pastePhotoMarqueeRaster = useCallback(() => {
-    if (!studioCaps.toolPhotoMarquee) return false;
-    const clip = photoMarqueeRasterClipboardRef.current;
-    if (!clip) return false;
-    const r0 = photoRectMarqueeSelectionRef.current;
-    const p0 = photoPolygonMarqueeSelectionRef.current;
-    const e0 = photoEllipseMarqueeSelectionRef.current;
-    const hasMarquee = r0.length > 0 || p0.length > 0 || e0.length > 0;
-    const ub = hasMarquee ? unionPhotoMarqueeWorldBounds(r0, p0, e0) : null;
-    const wb =
-      ub && ub.w > 1e-6 && ub.h > 1e-6 ? ub : clip.worldBounds;
-    const stagger = photoMarqueePasteStaggerRef.current;
-    const off = stagger * PHOTO_MARQUEE_PASTE_STAGGER_PX;
-    photoMarqueePasteStaggerRef.current = stagger + 1;
-    const newObj: ImageObject = {
-      ...defaultObj({ name: `Selección ${objectsRef.current.filter((o) => o.type === "image").length + 1}` }),
-      type: "image",
-      x: wb.x + off,
-      y: wb.y + off,
-      width: Math.max(1e-6, wb.w),
-      height: Math.max(1e-6, wb.h),
-      fill: solidFill("none"),
-      stroke: "none",
-      strokeWidth: 0,
-      src: clip.dataUrl,
-      intrinsicRatio: clip.cropW / Math.max(clip.cropH, 1),
-    } as ImageObject;
-    const next = [...objectsRef.current, newObj];
-    /** Reseleccionar la capa imagen de origen: el marquee sigue en mundo sobre ella; si dejáramos la capa pegada, Cmd+C volvería a mapear mal y el recorte fallaría al repetir. */
-    const ns = new Set([clip.sourceLayerId]);
-    setObjects(next);
-    setSelectedIds(ns);
-    pushHistory(next, ns);
-    /** No vaciar el portapapeles: Cmd+V puede repetirse (mismo clip hasta un nuevo copy u otro tipo de copia). */
-    return true;
-  }, [pushHistory, studioCaps.toolPhotoMarquee]);
 
   const copySelectedObjects = useCallback(() => {
-    photoMarqueeRasterClipboardRef.current = null;
-    activePixelSelectionRef.current = null;
-    photoMarqueePasteStaggerRef.current = 0;
     const sel = selectedIdsRef.current;
     const objs = objectsRef.current.filter((o) => sel.has(o.id) && !o.photoRoomInputSlot);
     if (objs.length === 0) return;
@@ -16453,9 +14931,6 @@ export function FreehandStudioCanvas({
   }, [designerMode, designerClipboardRef, designerClipboardSourcePageIdRef, designerActivePageId]);
 
   const pasteClipboardObjects = useCallback(() => {
-    if (photoMarqueeRasterClipboardRef.current) {
-      if (pastePhotoMarqueeRaster()) return;
-    }
     const designerClip = designerClipboardRef?.current;
     const usedDesignerClip = !!(designerMode && designerClip && designerClip.length > 0);
     const clip = usedDesignerClip ? designerClip : objectClipboardRef.current;
@@ -16488,7 +14963,6 @@ export function FreehandStudioCanvas({
     designerClipboardRef,
     designerClipboardSourcePageIdRef,
     designerActivePageId,
-    pastePhotoMarqueeRaster,
   ]);
 
   const convertTextToOutlines = useCallback(async () => {
@@ -18237,22 +16711,6 @@ export function FreehandStudioCanvas({
       if ((e.key === "v" || e.key === "V") && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault(); setActiveTool("select"); return;
       }
-      if ((e.key === "m" || e.key === "M") && !e.metaKey && !e.ctrlKey && !e.altKey && studioCaps.toolPhotoMarquee) {
-        e.preventDefault();
-        setActiveTool("rectMarquee");
-        return;
-      }
-      if ((e.key === "l" || e.key === "L") && !e.metaKey && !e.ctrlKey && !e.altKey && studioCaps.toolPhotoMarquee) {
-        e.preventDefault();
-        setActiveTool(e.shiftKey ? "polygonMarquee" : "lassoMarquee");
-        return;
-      }
-      if ((e.key === "o" || e.key === "O") && !e.metaKey && !e.ctrlKey && !e.altKey && studioCaps.toolPhotoMarquee) {
-        e.preventDefault();
-        setActiveTool("ellipseMarquee");
-        return;
-      }
-      if (e.key === "a" && !e.metaKey && !e.ctrlKey) { e.preventDefault(); setActiveTool("directSelect"); return; }
       if ((e.key === "b" || e.key === "B") && !e.metaKey && !e.ctrlKey && !e.altKey && studioCaps.toolBrush) {
         e.preventDefault();
         setActiveTool("brush");
@@ -18354,43 +16812,11 @@ export function FreehandStudioCanvas({
 
       if ((e.metaKey || e.ctrlKey) && e.code === "KeyC") {
         e.preventDefault();
-        const srcImg = findSingleSelectedImageForPhotoMarquee(
-          selectedIdsRef.current,
-          objectsRef.current,
-        );
-        if (
-          studioCaps.toolPhotoMarquee &&
-          srcImg &&
-          (photoRectMarqueeSelectionRef.current.length > 0 ||
-            photoPolygonMarqueeSelectionRef.current.length > 0 ||
-            photoEllipseMarqueeSelectionRef.current.length > 0)
-        ) {
-          void copyPhotoMarqueeRasterSelection();
-          return;
-        }
         copySelectedObjects();
         return;
       }
       if ((e.metaKey || e.ctrlKey) && e.code === "KeyX") {
         e.preventDefault();
-        const srcImg = findSingleSelectedImageForPhotoMarquee(
-          selectedIdsRef.current,
-          objectsRef.current,
-        );
-        if (
-          studioCaps.toolPhotoMarquee &&
-          srcImg &&
-          (photoRectMarqueeSelectionRef.current.length > 0 ||
-            photoPolygonMarqueeSelectionRef.current.length > 0 ||
-            photoEllipseMarqueeSelectionRef.current.length > 0)
-        ) {
-          void copyPhotoMarqueeRasterSelection().then(() => {
-            setPhotoRectMarqueeSelection([]);
-            setPhotoPolygonMarqueeSelection([]);
-            setPhotoEllipseMarqueeSelection([]);
-          });
-          return;
-        }
         cutSelectedObjects();
         return;
       }
@@ -18404,48 +16830,6 @@ export function FreehandStudioCanvas({
       if ((e.key === "Delete" || e.key === "Backspace")) {
         e.preventDefault();
         if (activeTool === "directSelect" && selectedPoints.size > 0) { deleteSelectedPoints(); return; }
-        const delImg = findSingleSelectedImageForPhotoMarquee(selectedIdsRef.current, objectsRef.current);
-        if (
-          isPhotoRoomStudioEmbed &&
-          studioCaps.toolPhotoMarquee &&
-          delImg &&
-          (photoRectMarqueeSelectionRef.current.length > 0 ||
-            photoPolygonMarqueeSelectionRef.current.length > 0 ||
-            photoEllipseMarqueeSelectionRef.current.length > 0)
-        ) {
-          void (async () => {
-            const url = await rasterErasePhotoMarqueeRegionFromImage(
-              delImg,
-              photoRectMarqueeSelectionRef.current.map((r) => ({ ...r })),
-              photoPolygonMarqueeSelectionRef.current.map((ring) => ring.map((p) => ({ ...p }))),
-              photoEllipseMarqueeSelectionRef.current.map((el) => ({ ...el })),
-              photoMarqueeMaskFeatherPxRef.current,
-            );
-            if (!url) {
-              setToast("No se pudo borrar la zona del bitmap");
-              window.setTimeout(() => setToast(null), 2600);
-              return;
-            }
-            const id = delImg.id;
-            const sel = selectedIdsRef.current;
-            setObjects((prev) => {
-              const next = prev.map((o) =>
-                o.id === id && o.type === "image" ? ({ ...o, src: url } as ImageObject) : o,
-              );
-              pushHistory(next, sel);
-              queueMicrotask(() => onUpdateObjectsRef.current(next));
-              return next;
-            });
-            setPhotoRectMarqueeSelection([]);
-            setPhotoPolygonMarqueeSelection([]);
-            setPhotoEllipseMarqueeSelection([]);
-            setPhotoMarqueeMaskFeatherPx(0);
-            setPhotoMarqueeFloatLift(null);
-            photoMarqueeFloatLiftRef.current = null;
-            setPhotoMarqueeFloatTf({ rotationDeg: 0, scaleX: 1, scaleY: 1 });
-          })();
-          return;
-        }
         deleteSelected();
         return;
       }
@@ -18503,56 +16887,6 @@ export function FreehandStudioCanvas({
 
         const sel = selectedIdsRef.current;
         const sp = selectedPointsRef.current;
-        const marqueeSrcImg = findSingleSelectedImageForPhotoMarquee(sel, objectsRef.current);
-
-        if (
-          isPhotoRoomStudioEmbed &&
-          studioCaps.toolPhotoMarquee &&
-          marqueeSrcImg &&
-          (activeTool === "select" ||
-            activeTool === "rectMarquee" ||
-            activeTool === "ellipseMarquee" ||
-            activeTool === "lassoMarquee" ||
-            activeTool === "polygonMarquee") &&
-          (photoRectMarqueeSelectionRef.current.length > 0 ||
-            photoPolygonMarqueeSelectionRef.current.length > 0 ||
-            photoEllipseMarqueeSelectionRef.current.length > 0)
-        ) {
-          e.preventDefault();
-          const applyMarqueeDelta = () => {
-            const t = translatePhotoMarqueeCommitted(
-              mdx,
-              mdy,
-              photoRectMarqueeSelectionRef.current,
-              photoPolygonMarqueeSelectionRef.current,
-              photoEllipseMarqueeSelectionRef.current,
-            );
-            setPhotoRectMarqueeSelection(t.rects);
-            setPhotoPolygonMarqueeSelection(t.polys);
-            setPhotoEllipseMarqueeSelection(t.ellipses);
-          };
-          if (!photoMarqueeFloatLiftRef.current) {
-            if (photoMarqueeFloatExtractingRef.current) return;
-            photoMarqueeFloatExtractingRef.current = true;
-            void buildPhotoMarqueeFloatLiftFromMarquee(
-              marqueeSrcImg,
-              photoRectMarqueeSelectionRef.current.map((r) => ({ ...r })),
-              photoPolygonMarqueeSelectionRef.current.map((ring) => ring.map((p) => ({ ...p }))),
-              photoEllipseMarqueeSelectionRef.current.map((el) => ({ ...el })),
-              photoMarqueeMaskFeatherPxRef.current,
-            ).then((lift) => {
-              photoMarqueeFloatExtractingRef.current = false;
-              if (!lift) return;
-              photoMarqueeFloatLiftRef.current = lift;
-              setPhotoMarqueeFloatLift(lift);
-              setPhotoMarqueeFloatTf({ rotationDeg: 0, scaleX: 1, scaleY: 1 });
-              applyMarqueeDelta();
-            });
-            return;
-          }
-          applyMarqueeDelta();
-          return;
-        }
 
         if (activeTool === "directSelect" && sp.size > 0) {
           e.preventDefault();
@@ -18632,50 +16966,7 @@ export function FreehandStudioCanvas({
           setMaskEditObjectId(null);
           return;
         }
-        photoRectMarqueePendingRef.current = null;
         const dsEsc = dragStateRef.current?.type;
-        if (dsEsc === "photoMarqueeNudge") {
-          const dsn = dragStateRef.current;
-          if (dsn?.type === "photoMarqueeNudge" && dsn.photoMarqueeSnapRects) {
-            setPhotoRectMarqueeSelection(dsn.photoMarqueeSnapRects.map((r) => ({ ...r })));
-            setPhotoPolygonMarqueeSelection(
-              (dsn.photoMarqueeSnapPolys ?? []).map((ring) => ring.map((p) => ({ ...p }))),
-            );
-            setPhotoEllipseMarqueeSelection(
-              (dsn.photoMarqueeSnapEllipses ?? []).map((el) => ({ ...el })),
-            );
-          }
-          setPhotoMarqueeFloatLift(null);
-          photoMarqueeFloatLiftRef.current = null;
-          setPhotoMarqueeFloatTf({ rotationDeg: 0, scaleX: 1, scaleY: 1 });
-          setDragState(null);
-          return;
-        }
-        if (
-          isPhotoRoomStudioEmbed &&
-          studioCaps.toolPhotoMarquee &&
-          (dsEsc === "photoRectMarquee" ||
-            dsEsc === "photoEllipseMarquee" ||
-            dsEsc === "photoLassoMarquee" ||
-            dsEsc === "photoPolygonMarquee")
-        ) {
-          setDragState(null);
-          return;
-        }
-        if (dsEsc === "photoMarqueeFloatRotate" || dsEsc === "photoMarqueeFloatResize") {
-          setDragState(null);
-          return;
-        }
-        if (
-          photoRectMarqueeSelectionRef.current.length > 0 ||
-          photoPolygonMarqueeSelectionRef.current.length > 0 ||
-          photoEllipseMarqueeSelectionRef.current.length > 0
-        ) {
-          setPhotoRectMarqueeSelection([]);
-          setPhotoPolygonMarqueeSelection([]);
-          setPhotoEllipseMarqueeSelection([]);
-          return;
-        }
         if (canvasZenMode) {
           setCanvasZenMode(false);
           scheduleFitAllAfterLayout();
@@ -18762,7 +17053,6 @@ export function FreehandStudioCanvas({
       undo, redo, pushHistory, deleteSelected, duplicateSelected, groupSelected,
       ungroupSelected, bringForward, sendBackward, finishPenPath, deleteSelectedPoints, exitIsolation,
       copySelectedObjects, cutSelectedObjects, pasteClipboardObjects, pasteInside, quickExportSelectionPng, convertTextToOutlines,
-      copyPhotoMarqueeRasterSelection,
       designerMode, onDesignerNavigatePage, imageFrameContentEditId, clipContentEditId, canvasZenMode, scheduleFitAllAfterLayout,
       isPhotoRoomStudioEmbed, studioCaps, finishBrushStroke]);
 
@@ -18842,325 +17132,6 @@ export function FreehandStudioCanvas({
         return;
       }
       setActiveTool("select");
-      return;
-    }
-
-    // ── PhotoRoom: lazo poligonal — continuar (vértices / cerrar) ─
-    if (isPhotoRoomStudioEmbed && studioCaps.toolPhotoMarquee && e.button === 0 && dragStateRef.current?.type === "photoPolygonMarquee") {
-      e.preventDefault();
-      const ds = dragStateRef.current;
-      const verts = ds.photoPolygonVertices ?? [];
-      if (verts.length < 1) {
-        dragStateRef.current = null;
-        setDragState(null);
-        return;
-      }
-      const posPoly = screenToCanvas(e.clientX, e.clientY);
-      const closePx = PHOTO_POLY_CLOSE_PX / viewport.zoom;
-      const commitPoly = (ring: Point[]) => {
-        const additive = !!ds.photoMarqueeAdditive;
-        const subtract = !!ds.photoMarqueeSubtract;
-        const mode = subtract ? "subtract" : additive ? "add" : "replace";
-        dragStateRef.current = null;
-        setDragState(null);
-        const prevRects = photoRectMarqueeSelection;
-        const prevPoly = photoPolygonMarqueeSelection;
-        const prevEllipses = photoEllipseMarqueeSelection;
-        const base = buildPhotoMarqueePolyBase(prevPoly, prevRects, prevEllipses, mode);
-        const next = mergePhotoPolygonSelection(base, ring, mode);
-        setPhotoRectMarqueeSelection([]);
-        setPhotoEllipseMarqueeSelection([]);
-        setPhotoPolygonMarqueeSelection(next);
-      };
-      if (e.detail >= 2) {
-        const ring =
-          verts.length >= 3 ? verts : verts.length >= 2 ? [...verts, posPoly] : [...verts, posPoly];
-        if (ring.length >= 3) commitPoly(ring);
-        return;
-      }
-      if (verts.length >= 3) {
-        const d0 = Math.hypot(posPoly.x - verts[0]!.x, posPoly.y - verts[0]!.y);
-        if (d0 <= closePx) {
-          commitPoly(verts);
-          return;
-        }
-      }
-      const nextVerts = [...verts, posPoly];
-      const nextr = {
-        ...ds,
-        photoPolygonVertices: nextVerts,
-        currentCanvas: posPoly,
-      };
-      dragStateRef.current = nextr;
-      setDragState(nextr);
-      return;
-    }
-
-    // ── PhotoRoom: Ctrl/⌘ suma, Alt resta, sin modificador sustituye; ver indicadores +/− ─
-    if (isPhotoRoomStudioEmbed && studioCaps.toolPhotoMarquee && activeTool === "rectMarquee" && e.button === 0) {
-      e.preventDefault();
-      setSelectedPoints(new Map());
-      photoRectMarqueePendingRef.current = null;
-      const committed = photoRectMarqueeSelection;
-      const insideAny = photoMarqueePointInsideCommitted(
-        pos,
-        committed,
-        photoPolygonMarqueeSelection,
-        photoEllipseMarqueeSelection,
-      );
-      const hasSelection =
-        committed.length > 0 ||
-        photoPolygonMarqueeSelection.length > 0 ||
-        photoEllipseMarqueeSelection.length > 0;
-      const subtractPointer = isPhotoMarqueeSubtractPointerHeld(e);
-      const additivePointer = isPhotoMarqueeAdditivePointerHeld(e);
-      const restarSeleccion =
-        hasSelection && (subtractPointer || photoRectMarqueeAltModRef.current);
-      const sumarSeleccion =
-        hasSelection &&
-        !restarSeleccion &&
-        (additivePointer || photoRectMarqueeAddModRef.current);
-      if (
-        hasSelection &&
-        !insideAny &&
-        !restarSeleccion &&
-        !sumarSeleccion
-      ) {
-        e.preventDefault();
-        setSelectedPoints(new Map());
-        photoRectMarqueePendingRef.current = null;
-        setPhotoRectMarqueeSelection([]);
-        setPhotoPolygonMarqueeSelection([]);
-        setPhotoEllipseMarqueeSelection([]);
-        return;
-      }
-      if (insideAny && !sumarSeleccion && !restarSeleccion) {
-        photoRectMarqueePendingRef.current = { clientX: e.clientX, clientY: e.clientY };
-        return;
-      }
-      const prDrag = {
-        type: "photoRectMarquee" as const,
-        startX: e.clientX,
-        startY: e.clientY,
-        marqueeOrigin: pos,
-        currentCanvas: pos,
-        photoMarqueeSubtract: restarSeleccion || (!hasSelection && subtractPointer),
-        photoMarqueeAdditive: restarSeleccion
-          ? false
-          : hasSelection
-            ? sumarSeleccion
-            : additivePointer,
-      };
-      /** Mismo tick que el primer mousemove: si no, `handleMouseMove` ve dragState=null en el closure y aborta el trazo. */
-      dragStateRef.current = prDrag;
-      setDragState(prDrag);
-      const pe = e.nativeEvent as PointerEvent;
-      if (typeof pe.pointerId === "number") {
-        try {
-          (e.currentTarget as HTMLElement).setPointerCapture(pe.pointerId);
-        } catch {
-          /* noop */
-        }
-      }
-      return;
-    }
-
-    // ── PhotoRoom: marco elíptico (⇧ = círculo perfecto al arrastrar) ─
-    if (isPhotoRoomStudioEmbed && studioCaps.toolPhotoMarquee && activeTool === "ellipseMarquee" && e.button === 0) {
-      e.preventDefault();
-      setSelectedPoints(new Map());
-      photoRectMarqueePendingRef.current = null;
-      const insideAny = photoMarqueePointInsideCommitted(
-        pos,
-        photoRectMarqueeSelection,
-        photoPolygonMarqueeSelection,
-        photoEllipseMarqueeSelection,
-      );
-      const hasSelection =
-        photoRectMarqueeSelection.length > 0 ||
-        photoPolygonMarqueeSelection.length > 0 ||
-        photoEllipseMarqueeSelection.length > 0;
-      const subtractPointer = isPhotoMarqueeSubtractPointerHeld(e);
-      const additivePointer = isPhotoMarqueeAdditivePointerHeld(e);
-      const restarSeleccion =
-        hasSelection && (subtractPointer || photoRectMarqueeAltModRef.current);
-      const sumarSeleccion =
-        hasSelection &&
-        !restarSeleccion &&
-        (additivePointer || photoRectMarqueeAddModRef.current);
-      if (
-        hasSelection &&
-        !insideAny &&
-        !restarSeleccion &&
-        !sumarSeleccion
-      ) {
-        e.preventDefault();
-        setSelectedPoints(new Map());
-        photoRectMarqueePendingRef.current = null;
-        setPhotoRectMarqueeSelection([]);
-        setPhotoPolygonMarqueeSelection([]);
-        setPhotoEllipseMarqueeSelection([]);
-        return;
-      }
-      if (insideAny && !sumarSeleccion && !restarSeleccion) {
-        photoRectMarqueePendingRef.current = { clientX: e.clientX, clientY: e.clientY };
-        return;
-      }
-      const prDrag = {
-        type: "photoEllipseMarquee" as const,
-        startX: e.clientX,
-        startY: e.clientY,
-        marqueeOrigin: pos,
-        currentCanvas: pos,
-        photoMarqueeSubtract: restarSeleccion || (!hasSelection && subtractPointer),
-        photoMarqueeAdditive: restarSeleccion
-          ? false
-          : hasSelection
-            ? sumarSeleccion
-            : additivePointer,
-      };
-      dragStateRef.current = prDrag;
-      setDragState(prDrag);
-      const pe = e.nativeEvent as PointerEvent;
-      if (typeof pe.pointerId === "number") {
-        try {
-          (e.currentTarget as HTMLElement).setPointerCapture(pe.pointerId);
-        } catch {
-          /* noop */
-        }
-      }
-      return;
-    }
-
-    // ── PhotoRoom: lazo libre ─
-    if (isPhotoRoomStudioEmbed && studioCaps.toolPhotoMarquee && activeTool === "lassoMarquee" && e.button === 0) {
-      e.preventDefault();
-      setSelectedPoints(new Map());
-      photoRectMarqueePendingRef.current = null;
-      const hasSelection =
-        photoRectMarqueeSelection.length > 0 ||
-        photoPolygonMarqueeSelection.length > 0 ||
-        photoEllipseMarqueeSelection.length > 0;
-      const insideAny = photoMarqueePointInsideCommitted(
-        pos,
-        photoRectMarqueeSelection,
-        photoPolygonMarqueeSelection,
-        photoEllipseMarqueeSelection,
-      );
-      const subtractPointer = isPhotoMarqueeSubtractPointerHeld(e);
-      const additivePointer = isPhotoMarqueeAdditivePointerHeld(e);
-      const restarSeleccion =
-        hasSelection && (subtractPointer || photoRectMarqueeAltModRef.current);
-      const sumarSeleccion =
-        hasSelection &&
-        !restarSeleccion &&
-        (additivePointer || photoRectMarqueeAddModRef.current);
-      if (
-        hasSelection &&
-        !insideAny &&
-        !restarSeleccion &&
-        !sumarSeleccion
-      ) {
-        e.preventDefault();
-        setSelectedPoints(new Map());
-        photoRectMarqueePendingRef.current = null;
-        setPhotoRectMarqueeSelection([]);
-        setPhotoPolygonMarqueeSelection([]);
-        setPhotoEllipseMarqueeSelection([]);
-        return;
-      }
-      if (insideAny && !sumarSeleccion && !restarSeleccion) {
-        photoRectMarqueePendingRef.current = { clientX: e.clientX, clientY: e.clientY };
-        return;
-      }
-      const prDrag = {
-        type: "photoLassoMarquee" as const,
-        startX: e.clientX,
-        startY: e.clientY,
-        photoLassoPoints: [pos],
-        currentCanvas: pos,
-        photoMarqueeSubtract: restarSeleccion || (!hasSelection && subtractPointer),
-        photoMarqueeAdditive: restarSeleccion
-          ? false
-          : hasSelection
-            ? sumarSeleccion
-            : additivePointer,
-      };
-      dragStateRef.current = prDrag;
-      setDragState(prDrag);
-      const pe = e.nativeEvent as PointerEvent;
-      if (typeof pe.pointerId === "number") {
-        try {
-          (e.currentTarget as HTMLElement).setPointerCapture(pe.pointerId);
-        } catch {
-          /* noop */
-        }
-      }
-      return;
-    }
-
-    // ── PhotoRoom: lazo poligonal (primer clic; el resto en `photoPolygonMarquee`) ─
-    if (
-      isPhotoRoomStudioEmbed &&
-      studioCaps.toolPhotoMarquee &&
-      activeTool === "polygonMarquee" &&
-      e.button === 0 &&
-      dragStateRef.current?.type !== "photoPolygonMarquee"
-    ) {
-      e.preventDefault();
-      setSelectedPoints(new Map());
-      photoRectMarqueePendingRef.current = null;
-      const hasSelection =
-        photoRectMarqueeSelection.length > 0 ||
-        photoPolygonMarqueeSelection.length > 0 ||
-        photoEllipseMarqueeSelection.length > 0;
-      const insideAny = photoMarqueePointInsideCommitted(
-        pos,
-        photoRectMarqueeSelection,
-        photoPolygonMarqueeSelection,
-        photoEllipseMarqueeSelection,
-      );
-      const subtractPointer = isPhotoMarqueeSubtractPointerHeld(e);
-      const additivePointer = isPhotoMarqueeAdditivePointerHeld(e);
-      const restarSeleccion =
-        hasSelection && (subtractPointer || photoRectMarqueeAltModRef.current);
-      const sumarSeleccion =
-        hasSelection &&
-        !restarSeleccion &&
-        (additivePointer || photoRectMarqueeAddModRef.current);
-      if (
-        hasSelection &&
-        !insideAny &&
-        !restarSeleccion &&
-        !sumarSeleccion
-      ) {
-        e.preventDefault();
-        setSelectedPoints(new Map());
-        photoRectMarqueePendingRef.current = null;
-        setPhotoRectMarqueeSelection([]);
-        setPhotoPolygonMarqueeSelection([]);
-        setPhotoEllipseMarqueeSelection([]);
-        return;
-      }
-      if (insideAny && !sumarSeleccion && !restarSeleccion) {
-        photoRectMarqueePendingRef.current = { clientX: e.clientX, clientY: e.clientY };
-        return;
-      }
-      const prDrag = {
-        type: "photoPolygonMarquee" as const,
-        startX: e.clientX,
-        startY: e.clientY,
-        photoPolygonVertices: [pos],
-        currentCanvas: pos,
-        photoMarqueeSubtract: restarSeleccion || (!hasSelection && subtractPointer),
-        photoMarqueeAdditive: restarSeleccion
-          ? false
-          : hasSelection
-            ? sumarSeleccion
-            : additivePointer,
-      };
-      dragStateRef.current = prDrag;
-      setDragState(prDrag);
       return;
     }
 
@@ -19271,22 +17242,24 @@ export function FreehandStudioCanvas({
         }
         return;
       }
-      const hit = pickTopImageForBrush(pos, objects);
+      const rasterHit = pickTopRasterBrushTarget(pos, objects, viewport.zoom);
       const stampDab = (
-        img: ImageObject,
+        target: RasterBrushTarget,
         canvas: HTMLCanvasElement,
         ctx: CanvasRenderingContext2D,
         lp: Point,
       ) => {
+        const proxy = brushRasterProxyFromTarget(target);
+        const brushKind = target.kind === "imageFrame" ? "imageFrame" : "image";
         brushSessionRef.current = {
-          objectId: img.id,
+          objectId: target.kind === "image" ? target.obj.id : target.obj.id,
           target: "pixels",
-          kind: "image",
+          kind: brushKind,
           canvas,
           ctx,
-          raster: img,
+          raster: proxy,
         };
-        const radiusPx = brushRadiusInImagePixels(brushSize, canvas.width, img.width);
+        const radiusPx = brushRadiusInImagePixels(brushSize, canvas.width, proxy.width);
         stampBrushCircle(ctx, lp.x, lp.y, radiusPx, h01, o01, f01, rgb);
         const nextBrushDrag = {
           type: "brushPaint" as const,
@@ -19298,11 +17271,12 @@ export function FreehandStudioCanvas({
         setDragState(nextBrushDrag);
         scheduleBrushPreview();
       };
-      if (hit) {
-        void loadImageToBrushCanvas(hit.src, hit.width, hit.height).then(({ canvas, ctx }) => {
-          const lp = worldToImageCanvasPixels(pos, hit, canvas.width, canvas.height);
+      if (rasterHit) {
+        const fb = rasterBrushTargetFallbackSize(rasterHit);
+        void loadImageToBrushCanvas(rasterBrushTargetSrc(rasterHit), fb.w, fb.h).then(({ canvas, ctx }) => {
+          const lp = worldToRasterBrushPixels(pos, rasterHit, canvas.width, canvas.height);
           if (!lp) return;
-          stampDab(hit, canvas, ctx, lp);
+          stampDab(rasterHit, canvas, ctx, lp);
         });
         return;
       }
@@ -19329,7 +17303,7 @@ export function FreehandStudioCanvas({
       setObjects((prev) => [...prev, imgObj]);
       setSelectedIds(new Set([imgObj.id]));
       setPrimarySelectedId(imgObj.id);
-      stampDab(imgObj, canvas, ctx, lp);
+      stampDab({ kind: "image", obj: imgObj }, canvas, ctx, lp);
       return;
     }
 
@@ -19337,27 +17311,28 @@ export function FreehandStudioCanvas({
     if (activeTool === "cloneStamp" && e.button === 0 && studioCaps.toolCloneStamp) {
       e.preventDefault();
       setSelectedPoints(new Map());
-      let hit = pickTopImageForBrush(pos, objects);
+      let rasterHit = pickTopRasterBrushTarget(pos, objects, viewport.zoom);
       const h01 = brushHardnessPct / 100;
       const o01 = brushOpacityPct / 100;
       const f01 = brushFlowPct / 100;
 
       if (e.altKey) {
-        if (!hit) {
-          setToast("Alt+clic sobre una capa imagen para fijar el origen del clon.");
+        if (!rasterHit) {
+          setToast("Alt+clic sobre una imagen o marco con foto para fijar el origen del clon.");
           window.setTimeout(() => setToast(null), 2800);
           return;
         }
-        const hitImg = hit;
-        void loadImageToBrushCanvas(hitImg.src, hitImg.width, hitImg.height).then(({ canvas }) => {
-          const lp = worldToImageCanvasPixels(pos, hitImg, canvas.width, canvas.height);
+        const target = rasterHit;
+        const fb = rasterBrushTargetFallbackSize(target);
+        void loadImageToBrushCanvas(rasterBrushTargetSrc(target), fb.w, fb.h).then(({ canvas }) => {
+          const lp = worldToRasterBrushPixels(pos, target, canvas.width, canvas.height);
           if (!lp) {
             setToast("El origen debe estar dentro del marco de la imagen.");
             window.setTimeout(() => setToast(null), 2600);
             return;
           }
           setCloneSource({
-            imageId: hitImg.id,
+            imageId: target.kind === "image" ? target.obj.id : target.obj.id,
             pixel: { ...lp },
             canvasW: canvas.width,
             canvasH: canvas.height,
@@ -19370,49 +17345,48 @@ export function FreehandStudioCanvas({
       }
 
       if (!cloneSource) {
-        setToast("Alt+clic en la capa imagen para definir el origen del clon.");
+        setToast("Alt+clic en la imagen para definir el origen del clon.");
         window.setTimeout(() => setToast(null), 3200);
         return;
       }
-      if (!hit) {
-        const o = objects.find((x) => x.id === cloneSource.imageId);
-        if (
-          o &&
-          o.type === "image" &&
-          o.visible &&
-          !o.locked &&
-          !o.photoRoomInputSlot
-        ) {
-          hit = o as ImageObject;
-        }
+      if (!rasterHit) {
+        rasterHit = rasterBrushTargetFromObjectId(cloneSource.imageId, objects);
       }
-      if (!hit || hit.id !== cloneSource.imageId) {
-        setToast("No se encontró la capa imagen del clon. Alt+clic para fijar el origen.");
+      if (!rasterHit || rasterHit.obj.id !== cloneSource.imageId) {
+        setToast("No se encontró la capa del clon. Alt+clic para fijar el origen.");
         window.setTimeout(() => setToast(null), 3200);
         return;
       }
 
-      void loadImageToBrushCanvas(hit.src, hit.width, hit.height).then(({ canvas, ctx }) => {
+      const target = rasterHit;
+      const fb = rasterBrushTargetFallbackSize(target);
+      const proxy = brushRasterProxyFromTarget(target);
+      const brushKind = target.kind === "imageFrame" ? "imageFrame" : "image";
+
+      void loadImageToBrushCanvas(rasterBrushTargetSrc(target), fb.w, fb.h).then(({ canvas, ctx }) => {
         let s: BrushRasterSession = {
-          objectId: hit.id,
+          objectId: target.obj.id,
           target: "pixels",
-          kind: "image",
+          kind: brushKind,
           canvas,
           ctx,
-          raster: hit,
+          raster: proxy,
           cloneSourcePixel: { ...cloneSource.pixel },
         };
-        let lp = worldToImageCanvasPixelsUnbounded(pos, s.raster, s.canvas.width, s.canvas.height);
+        let lp = worldToRasterBrushPixels(pos, target, s.canvas.width, s.canvas.height, true);
+        if (!lp) return;
         for (let guard = 0; guard < 8; guard++) {
           const radiusPx = brushRadiusInImagePixels(brushSize, s.canvas.width, s.raster.width);
           const ex = expandBrushRasterSessionForPixelDisc(s, lp.x, lp.y, radiusPx);
           s = ex.s;
           if (ex.changed) {
-            lp = worldToImageCanvasPixelsUnbounded(pos, s.raster, s.canvas.width, s.canvas.height);
+            lp = worldToRasterBrushPixels(pos, target, s.canvas.width, s.canvas.height, true);
+            if (!lp) break;
             continue;
           }
           break;
         }
+        if (!lp) return;
         const radiusPx = brushRadiusInImagePixels(brushSize, s.canvas.width, s.raster.width);
         /** Origen de muestreo = donde está la cruz al hacer clic (no el Alt fijo tras el primer trazo). */
         const altAdj = s.cloneSourcePixel!;
@@ -19439,9 +17413,8 @@ export function FreehandStudioCanvas({
       return;
     }
 
-    // ── Degradado lineal raster (PhotoRoom) ─────────────────────────
+    // ── Degradado lineal raster ─────────────────────────────────────
     if (
-      isPhotoRoomStudioEmbed &&
       activeTool === "photoGradient" &&
       e.button === 0 &&
       studioCaps.toolPhotoGradient
@@ -20433,137 +18406,6 @@ export function FreehandStudioCanvas({
       }
     }
 
-    // PhotoRoom: tiradores de la textura flotante (rotar / escalar).
-    if (
-      isPhotoRoomStudioEmbed &&
-      studioCaps.toolPhotoMarquee &&
-      activeTool === "select" &&
-      e.button === 0 &&
-      !extendSel &&
-      !e.altKey &&
-      photoMarqueeFloatLiftRef.current &&
-      (photoRectMarqueeSelectionRef.current.length > 0 ||
-        photoPolygonMarqueeSelectionRef.current.length > 0 ||
-        photoEllipseMarqueeSelectionRef.current.length > 0)
-    ) {
-      const sole = findSingleSelectedImageForPhotoMarquee(selectedIds, objects);
-      if (sole?.type === "image" && sole.visible && !sole.locked) {
-        const u = unionPhotoMarqueeWorldBounds(
-          photoRectMarqueeSelectionRef.current,
-          photoPolygonMarqueeSelectionRef.current,
-          photoEllipseMarqueeSelectionRef.current,
-        );
-        if (u && u.w > 1e-6 && u.h > 1e-6) {
-          const tf = photoMarqueeFloatTfRef.current;
-          const handleSize = 9 / viewport.zoom;
-          const rotOffset = 16 / viewport.zoom;
-          const cx = u.x + u.w / 2;
-          const cy = u.y + u.h / 2;
-          const rotHint = { x: cx, y: u.y - rotOffset };
-          const rc = mapPhotoMarqueeFloatTf(rotHint, u, tf.rotationDeg, tf.scaleX, tf.scaleY);
-          if (dist(pos, rc) < handleSize + 2 / viewport.zoom) {
-            const startAng = Math.atan2(pos.y - cy, pos.x - cx);
-            setDragState({
-              type: "photoMarqueeFloatRotate",
-              startX: e.clientX,
-              startY: e.clientY,
-              photoMarqueeFloatSnapUnion: { ...u },
-              photoMarqueeFloatSnapTf: { ...tf },
-              photoMarqueeFloatStartAngleRad: startAng,
-            });
-            return;
-          }
-          const hIds = ["nw", "ne", "se", "sw", "n", "s", "e", "w"] as const;
-          for (const hid of hIds) {
-            const raw = rawHandlePointForPhotoFloat(hid, u);
-            const hp = mapPhotoMarqueeFloatTf(raw, u, tf.rotationDeg, tf.scaleX, tf.scaleY);
-            if (dist(pos, hp) < handleSize) {
-              const pivot = oppositePivotForPhotoFloatHandle(hid, u);
-              const rawH = rawHandlePointForPhotoFloat(hid, u);
-              let kind: "corner" | "ns" | "ew" = "corner";
-              let startVal: number;
-              if (hid === "n" || hid === "s") {
-                kind = "ns";
-                startVal = rawH.y - pivot.y;
-              } else if (hid === "e" || hid === "w") {
-                kind = "ew";
-                startVal = rawH.x - pivot.x;
-              } else {
-                startVal = Math.hypot(rawH.x - pivot.x, rawH.y - pivot.y);
-              }
-              setDragState({
-                type: "photoMarqueeFloatResize",
-                startX: e.clientX,
-                startY: e.clientY,
-                photoMarqueeFloatHandle: hid,
-                photoMarqueeFloatSnapTf: { ...tf },
-                photoMarqueeFloatSnapUnion: { ...u },
-                photoMarqueeFloatResizePivotWorld: { ...pivot },
-                photoMarqueeFloatResizeStartVal: startVal,
-                photoMarqueeFloatResizeKind: kind,
-              });
-              return;
-            }
-          }
-        }
-      }
-    }
-
-    // PhotoRoom + V: arrastrar dentro del marco de selección raster (traslada la geometría en mundo).
-    // Clic fuera del marco → vaciar selección raster (rect / lazo / elipse) y seguir (p. ej. marco de objetos).
-    if (
-      isPhotoRoomStudioEmbed &&
-      studioCaps.toolPhotoMarquee &&
-      activeTool === "select" &&
-      e.button === 0 &&
-      !extendSel &&
-      (photoRectMarqueeSelectionRef.current.length > 0 ||
-        photoPolygonMarqueeSelectionRef.current.length > 0 ||
-        photoEllipseMarqueeSelectionRef.current.length > 0)
-    ) {
-      const insideMarquee = photoMarqueePointInsideCommitted(
-        pos,
-        photoRectMarqueeSelectionRef.current,
-        photoPolygonMarqueeSelectionRef.current,
-        photoEllipseMarqueeSelectionRef.current,
-      );
-      if (!insideMarquee) {
-        setPhotoRectMarqueeSelection([]);
-        setPhotoPolygonMarqueeSelection([]);
-        setPhotoEllipseMarqueeSelection([]);
-      } else if (!e.altKey) {
-        const sole = findSingleSelectedImageForPhotoMarquee(selectedIds, objects);
-        if (sole?.type === "image" && sole.visible && !sole.locked) {
-          if (!photoMarqueeFloatLiftRef.current && !photoMarqueeFloatExtractingRef.current) {
-            photoMarqueeFloatExtractingRef.current = true;
-            void buildPhotoMarqueeFloatLiftFromMarquee(
-              sole,
-              photoRectMarqueeSelectionRef.current.map((r) => ({ ...r })),
-              photoPolygonMarqueeSelectionRef.current.map((ring) => ring.map((p) => ({ ...p }))),
-              photoEllipseMarqueeSelectionRef.current.map((el) => ({ ...el })),
-              photoMarqueeMaskFeatherPxRef.current,
-            ).then((lift) => {
-              photoMarqueeFloatExtractingRef.current = false;
-              if (lift) {
-                photoMarqueeFloatLiftRef.current = lift;
-                setPhotoMarqueeFloatLift(lift);
-                setPhotoMarqueeFloatTf({ rotationDeg: 0, scaleX: 1, scaleY: 1 });
-              }
-            });
-          }
-          setDragState({
-            type: "photoMarqueeNudge",
-            startX: e.clientX,
-            startY: e.clientY,
-            photoMarqueeSnapRects: photoRectMarqueeSelectionRef.current.map((r) => ({ ...r })),
-            photoMarqueeSnapPolys: photoPolygonMarqueeSelectionRef.current.map((ring) => ring.map((p) => ({ ...p }))),
-            photoMarqueeSnapEllipses: photoEllipseMarqueeSelectionRef.current.map((el) => ({ ...el })),
-          });
-          return;
-        }
-      }
-    }
-
     // Todos los objetos bajo el cursor (frente → fondo). Con solape + Mayús, elegir uno que aún no esté entero en la selección.
     const hits: FreehandObject[] = [];
     for (let i = objects.length - 1; i >= 0; i--) {
@@ -20672,8 +18514,7 @@ export function FreehandStudioCanvas({
   }, [activeTool, viewport, spaceHeld, objects, artboards, selectedIds, selectedIdsKey, selectedObjects, groupBounds, selectionFrame,
       screenToCanvas, isPenDrawing, penPoints, finishPenPath, resolveSelection, addPointOnSegment, cutPathOnSegment, closeOpenPathWithPen, pushHistory,
       layoutGuides, showLayoutGuides, designerMode, imageFrameContentEditId, setupGuideWindowListeners,
-      isClipContentIsolation, clipContentEditId, isPhotoRoomStudioEmbed, photoRectMarqueeSelection,
-      photoPolygonMarqueeSelection, photoEllipseMarqueeSelection,
+      isClipContentIsolation, clipContentEditId, isPhotoRoomStudioEmbed,
       fillColor, brushPaintRgb, brushSize, brushHardnessPct, brushOpacityPct, brushFlowPct, scheduleBrushPreview,
       scheduleCloneAlignedBrushOverlay,
       cloneSource, setToast, studioCaps, transformHandlesArmed, selectionRotationPivots]);
@@ -21340,107 +19181,6 @@ export function FreehandStudioCanvas({
   const handleMouseMove = useCallback((e: ReactMouseEvent) => {
     /** Ref sincrónico; el state de React puede no haber hecho commit tras mousedown/setDragState. */
     const dragState = dragStateRef.current;
-    const prPending = photoRectMarqueePendingRef.current;
-    if (
-      prPending &&
-      (e.buttons & 1) &&
-      !dragState &&
-      isPhotoRoomStudioEmbed &&
-      studioCaps.toolPhotoMarquee &&
-      (activeTool === "rectMarquee" ||
-        activeTool === "ellipseMarquee" ||
-        activeTool === "lassoMarquee" ||
-        activeTool === "polygonMarquee")
-    ) {
-      const dist = Math.hypot(e.clientX - prPending.clientX, e.clientY - prPending.clientY);
-      if (dist > 3) {
-        photoRectMarqueePendingRef.current = null;
-        const subtractFromPending =
-          photoRectMarqueeAltModRef.current || isPhotoMarqueeSubtractPointerHeld(e);
-        const additiveFromPending =
-          !subtractFromPending &&
-          (photoRectMarqueeAddModRef.current || isPhotoMarqueeAdditivePointerHeld(e));
-        if (!additiveFromPending && !subtractFromPending) {
-          const sole = findSingleSelectedImageForPhotoMarquee(selectedIdsRef.current, objectsRef.current);
-          if (sole?.type === "image" && sole.visible && !sole.locked) {
-            if (!photoMarqueeFloatLiftRef.current && !photoMarqueeFloatExtractingRef.current) {
-              photoMarqueeFloatExtractingRef.current = true;
-              void buildPhotoMarqueeFloatLiftFromMarquee(
-                sole,
-                photoRectMarqueeSelectionRef.current.map((r) => ({ ...r })),
-                photoPolygonMarqueeSelectionRef.current.map((ring) => ring.map((p) => ({ ...p }))),
-                photoEllipseMarqueeSelectionRef.current.map((el) => ({ ...el })),
-                photoMarqueeMaskFeatherPxRef.current,
-              ).then((lift) => {
-                photoMarqueeFloatExtractingRef.current = false;
-                if (lift) {
-                  photoMarqueeFloatLiftRef.current = lift;
-                  setPhotoMarqueeFloatLift(lift);
-                  setPhotoMarqueeFloatTf({ rotationDeg: 0, scaleX: 1, scaleY: 1 });
-                }
-              });
-            }
-            const nudge = {
-              type: "photoMarqueeNudge" as const,
-              startX: prPending.clientX,
-              startY: prPending.clientY,
-              photoMarqueeSnapRects: photoRectMarqueeSelectionRef.current.map((r) => ({ ...r })),
-              photoMarqueeSnapPolys: photoPolygonMarqueeSelectionRef.current.map((ring) =>
-                ring.map((p) => ({ ...p })),
-              ),
-              photoMarqueeSnapEllipses: photoEllipseMarqueeSelectionRef.current.map((el) => ({ ...el })),
-            };
-            dragStateRef.current = nudge;
-            setDragState(nudge);
-            return;
-          }
-        }
-        if (!additiveFromPending && !subtractFromPending) {
-          setPhotoRectMarqueeSelection([]);
-          setPhotoPolygonMarqueeSelection([]);
-          setPhotoEllipseMarqueeSelection([]);
-        }
-        const origin = screenToCanvas(prPending.clientX, prPending.clientY);
-        const cur = screenToCanvas(e.clientX, e.clientY);
-        const common = {
-          startX: prPending.clientX,
-          startY: prPending.clientY,
-          photoMarqueeSubtract: subtractFromPending,
-          photoMarqueeAdditive: additiveFromPending,
-        };
-        const prNext =
-          activeTool === "rectMarquee"
-            ? ({
-                type: "photoRectMarquee" as const,
-                ...common,
-                marqueeOrigin: origin,
-                currentCanvas: cur,
-              })
-            : activeTool === "ellipseMarquee"
-              ? ({
-                  type: "photoEllipseMarquee" as const,
-                  ...common,
-                  marqueeOrigin: origin,
-                  currentCanvas: cur,
-                })
-              : activeTool === "lassoMarquee"
-                ? ({
-                    type: "photoLassoMarquee" as const,
-                    ...common,
-                    photoLassoPoints: [origin, cur],
-                    currentCanvas: cur,
-                  })
-                : ({
-                    type: "photoPolygonMarquee" as const,
-                    ...common,
-                    photoPolygonVertices: [origin],
-                    currentCanvas: cur,
-                  });
-        dragStateRef.current = prNext;
-        setDragState(prNext);
-        return;
-      }
-    }
     if (!dragState) {
       const pos = screenToCanvas(e.clientX, e.clientY);
       if (activeTool === "pen" && !isPenDrawing) {
@@ -21556,7 +19296,11 @@ export function FreehandStudioCanvas({
           setHoverCornerRadiusHandle(null);
         }
       }
-      if (isPhotoRoomStudioEmbed && !spaceHeld) {
+      if (
+        !spaceHeld &&
+        ((studioCaps.toolCloneStamp && activeTool === "cloneStamp") ||
+          (studioCaps.toolPhotoGradient && activeTool === "photoGradient"))
+      ) {
         const th = 8 / viewport.zoom;
         let blocked = false;
         if (studioCaps.toolCloneStamp && activeTool === "cloneStamp") {
@@ -21569,14 +19313,6 @@ export function FreehandStudioCanvas({
             photoGradientDrawSurface(studioCaps.layerMask, maskEditObjectIdRef.current),
             maskEditObjectIdRef.current,
           );
-        } else if (
-          studioCaps.toolPhotoMarquee &&
-          (activeTool === "rectMarquee" ||
-            activeTool === "ellipseMarquee" ||
-            activeTool === "lassoMarquee" ||
-            activeTool === "polygonMarquee")
-        ) {
-          blocked = photoRoomMarqueeToolCursorBlocked(pos, selectedIdsRef.current, objectsRef.current, th);
         }
         if (prToolCursorBlockedRef.current !== blocked) {
           prToolCursorBlockedRef.current = blocked;
@@ -21637,12 +19373,7 @@ export function FreehandStudioCanvas({
         setBrushPreviewRings((prev) => (prev == null ? prev : null));
         setCloneStampBrushPreview(null);
       }
-      if (
-        activeTool === "photoGradient" &&
-        studioCaps.toolPhotoGradient &&
-        !spaceHeld &&
-        isPhotoRoomStudioEmbed
-      ) {
+      if (activeTool === "photoGradient" && studioCaps.toolPhotoGradient && !spaceHeld) {
         const s = photoGradientSessionRef.current;
         if (s) {
           const zth = PHOTO_GRADIENT_VERTEX_HIT_PX / viewport.zoom;
@@ -21660,15 +19391,6 @@ export function FreehandStudioCanvas({
     const dy = e.clientY - dragState.startY;
 
     if (dragState.type === "guidePull" || dragState.type === "guideMove") {
-      return;
-    }
-
-    if (
-      (!isPhotoRoomStudioEmbed || !studioCaps.toolPhotoMarquee) &&
-      isPhotoMarqueeStudioDragType(dragState.type)
-    ) {
-      dragStateRef.current = null;
-      setDragState(null);
       return;
     }
 
@@ -21738,88 +19460,6 @@ export function FreehandStudioCanvas({
           return applyAnchoredObjectSkew(src, edge, dragState.skewAxis!, skewDelta);
         }),
       );
-      return;
-    }
-
-    if (
-      dragState.type === "photoMarqueeFloatRotate" &&
-      dragState.photoMarqueeFloatSnapUnion &&
-      dragState.photoMarqueeFloatStartAngleRad != null &&
-      dragState.photoMarqueeFloatSnapTf
-    ) {
-      const u = dragState.photoMarqueeFloatSnapUnion;
-      const snap = dragState.photoMarqueeFloatSnapTf;
-      const pos = screenToCanvas(e.clientX, e.clientY);
-      const cx = u.x + u.w / 2;
-      const cy = u.y + u.h / 2;
-      const newAng = Math.atan2(pos.y - cy, pos.x - cx);
-      const delta = shortestAngleDeltaRad(newAng, dragState.photoMarqueeFloatStartAngleRad);
-      let nextDeg = snap.rotationDeg + (delta * 180) / Math.PI;
-      if (e.shiftKey) nextDeg = Math.round(nextDeg / 15) * 15;
-      setPhotoMarqueeFloatTf((prev) => ({ ...prev, rotationDeg: nextDeg }));
-      return;
-    }
-
-    if (
-      dragState.type === "photoMarqueeFloatResize" &&
-      dragState.photoMarqueeFloatSnapUnion &&
-      dragState.photoMarqueeFloatResizePivotWorld &&
-      dragState.photoMarqueeFloatResizeStartVal != null &&
-      dragState.photoMarqueeFloatSnapTf &&
-      dragState.photoMarqueeFloatResizeKind &&
-      dragState.photoMarqueeFloatHandle
-    ) {
-      const pos = screenToCanvas(e.clientX, e.clientY);
-      const snap = dragState.photoMarqueeFloatSnapTf;
-      const piv = dragState.photoMarqueeFloatResizePivotWorld;
-      const kind = dragState.photoMarqueeFloatResizeKind;
-      const hid = dragState.photoMarqueeFloatHandle;
-      const s0 = dragState.photoMarqueeFloatResizeStartVal;
-      let rat = 1;
-      if (kind === "ns") {
-        rat = Math.abs(pos.y - piv.y) / Math.max(Math.abs(s0), 1e-9);
-      } else if (kind === "ew") {
-        rat = Math.abs(pos.x - piv.x) / Math.max(Math.abs(s0), 1e-9);
-      } else {
-        rat = Math.hypot(pos.x - piv.x, pos.y - piv.y) / Math.max(s0, 1e-9);
-      }
-      rat = Math.max(0.02, rat);
-      let sx = snap.scaleX;
-      let sy = snap.scaleY;
-      if (hid === "nw" || hid === "ne" || hid === "se" || hid === "sw") {
-        sx *= rat;
-        sy *= rat;
-      } else if (hid === "n" || hid === "s") {
-        sy *= rat;
-      } else {
-        sx *= rat;
-      }
-      setPhotoMarqueeFloatTf((prev) => ({ ...prev, scaleX: sx, scaleY: sy }));
-      return;
-    }
-
-    if (
-      dragState.type === "photoMarqueeNudge" &&
-      dragState.photoMarqueeSnapRects != null
-    ) {
-      const scale = canvasScaleFromPointer(viewport.zoom);
-      let mdx = dx * scale, mdy = dy * scale;
-      if (isShiftHeld(e)) {
-        const c = snapDeltaTo45(mdx, mdy);
-        mdx = c.x;
-        mdy = c.y;
-      }
-      const sn = dragState;
-      const t = translatePhotoMarqueeCommitted(
-        mdx,
-        mdy,
-        sn.photoMarqueeSnapRects!,
-        sn.photoMarqueeSnapPolys ?? [],
-        sn.photoMarqueeSnapEllipses ?? [],
-      );
-      setPhotoRectMarqueeSelection(t.rects);
-      setPhotoPolygonMarqueeSelection(t.polys);
-      setPhotoEllipseMarqueeSelection(t.ellipses);
       return;
     }
 
@@ -22038,53 +19678,6 @@ export function FreehandStudioCanvas({
     if (dragState.type === "marquee" && dragState.marqueeOrigin) {
       const pos = screenToCanvas(e.clientX, e.clientY);
       setDragState((prev) => prev ? { ...prev, currentCanvas: pos } : null);
-      return;
-    }
-
-    if (dragState.type === "photoRectMarquee" && dragState.marqueeOrigin) {
-      const pos = screenToCanvas(e.clientX, e.clientY);
-      setDragState((prev) => {
-        const next = prev ? { ...prev, currentCanvas: pos } : null;
-        dragStateRef.current = next;
-        return next;
-      });
-      return;
-    }
-
-    if (dragState.type === "photoEllipseMarquee" && dragState.marqueeOrigin) {
-      const raw = screenToCanvas(e.clientX, e.clientY);
-      const o = dragState.marqueeOrigin;
-      const pos = isShiftHeld(e) ? oppositeCornerForSquareDrag(o, raw) : raw;
-      setDragState((prev) => {
-        const next = prev ? { ...prev, currentCanvas: pos } : null;
-        dragStateRef.current = next;
-        return next;
-      });
-      return;
-    }
-
-    if (dragState.type === "photoLassoMarquee" && dragState.photoLassoPoints) {
-      const pos = screenToCanvas(e.clientX, e.clientY);
-      const ds = dragStateRef.current;
-      if (!ds || ds.type !== "photoLassoMarquee" || !ds.photoLassoPoints) return;
-      const pts = ds.photoLassoPoints;
-      const last = pts[pts.length - 1]!;
-      const sample = PHOTO_LASSO_SAMPLE_PX / viewport.zoom;
-      const nextPts =
-        Math.hypot(pos.x - last.x, pos.y - last.y) >= sample ? [...pts, pos] : pts;
-      const nextr = { ...ds, photoLassoPoints: nextPts, currentCanvas: pos };
-      dragStateRef.current = nextr;
-      setDragState(nextr);
-      return;
-    }
-
-    if (dragState.type === "photoPolygonMarquee") {
-      const pos = screenToCanvas(e.clientX, e.clientY);
-      setDragState((prev) => {
-        const next = prev && prev.type === "photoPolygonMarquee" ? { ...prev, currentCanvas: pos } : null;
-        dragStateRef.current = next;
-        return next;
-      });
       return;
     }
 
@@ -22409,7 +20002,6 @@ export function FreehandStudioCanvas({
     isPenDrawing,
     penDragging,
     isPhotoRoomStudioEmbed,
-    studioCaps.toolPhotoMarquee,
     studioCaps.toolPhotoGradient,
     studioCaps.layerMask,
     fillColor,
@@ -22426,7 +20018,6 @@ export function FreehandStudioCanvas({
   ]);
 
   const handleMouseUp = useCallback((e: ReactMouseEvent) => {
-    photoRectMarqueePendingRef.current = null;
     const dsUp = dragStateRef.current;
     if (guideGestureRef.current || dsUp?.type === "guidePull" || dsUp?.type === "guideMove") {
       finishGuideGesture(e.clientX, e.clientY);
@@ -22434,24 +20025,9 @@ export function FreehandStudioCanvas({
     }
     const ds = dragStateRef.current;
     if (!ds) return;
-    if (
-      (!isPhotoRoomStudioEmbed || !studioCaps.toolPhotoMarquee) &&
-      isPhotoMarqueeStudioDragType(ds.type)
-    ) {
-      dragStateRef.current = null;
-      setDragState(null);
-      return;
-    }
-    setSnapGuides([]);
     const moveDragCommitted =
       ds.type !== "move" ||
-      !ds.positions ||
       Math.hypot(e.clientX - ds.startX, e.clientY - ds.startY) >= OBJECT_MOVE_DRAG_THRESHOLD_PX;
-
-    if (selectionGestureRafRef.current != null) {
-      cancelAnimationFrame(selectionGestureRafRef.current);
-      selectionGestureRafRef.current = null;
-    }
     const flushSelectionGeometryOnUp =
       (ds.type === "move" && !!ds.positions && moveDragCommitted) ||
       (ds.type === "rotate" && ds.rotateCenter != null && ds.rotateStartAngle != null) ||
@@ -22589,196 +20165,6 @@ export function FreehandStudioCanvas({
       dragStateRef.current = null;
       setDragState(null);
       void applyPhotoRasterGradientSession(nextSession, {});
-      return;
-    }
-
-    if (ds.type === "photoMarqueeNudge") {
-      setDragState(null);
-      return;
-    }
-
-    if (ds.type === "photoMarqueeFloatRotate" || ds.type === "photoMarqueeFloatResize") {
-      setDragState(null);
-      return;
-    }
-
-    if (ds.type === "photoLassoMarquee" && ds.photoLassoPoints && ds.currentCanvas) {
-      const additive = !!ds.photoMarqueeAdditive;
-      const subtract = !!ds.photoMarqueeSubtract;
-      const mode = subtract ? "subtract" : additive ? "add" : "replace";
-      dragStateRef.current = null;
-      setDragState(null);
-      const ring = [...ds.photoLassoPoints];
-      if (mode === "replace" && ring.length >= 1) {
-        let minX = ring[0]!.x, maxX = ring[0]!.x, minY = ring[0]!.y, maxY = ring[0]!.y;
-        for (const p of ring) {
-          minX = Math.min(minX, p.x);
-          maxX = Math.max(maxX, p.x);
-          minY = Math.min(minY, p.y);
-          maxY = Math.max(maxY, p.y);
-        }
-        const tolDeg = 2 / viewport.zoom;
-        if (maxX - minX <= tolDeg && maxY - minY <= tolDeg) {
-          setPhotoRectMarqueeSelection([]);
-          setPhotoPolygonMarqueeSelection([]);
-          setPhotoEllipseMarqueeSelection([]);
-          return;
-        }
-      }
-      const first = ring[0]!;
-      const la = ring[ring.length - 1]!;
-      const closeTol = 3 / viewport.zoom;
-      if (Math.hypot(la.x - first.x, la.y - first.y) > closeTol) {
-        ring.push({ ...first });
-      }
-      const prevRects = photoRectMarqueeSelection;
-      const prevPoly = photoPolygonMarqueeSelection;
-      const prevEllipses = photoEllipseMarqueeSelection;
-      const base = buildPhotoMarqueePolyBase(prevPoly, prevRects, prevEllipses, mode);
-      const next = mergePhotoPolygonSelection(base, ring, mode);
-      setPhotoRectMarqueeSelection([]);
-      setPhotoEllipseMarqueeSelection([]);
-      setPhotoPolygonMarqueeSelection(next);
-      return;
-    }
-
-    if (ds.type === "photoEllipseMarquee" && ds.marqueeOrigin && ds.currentCanvas) {
-      const o = ds.marqueeOrigin;
-      const raw = ds.currentCanvas;
-      const c = e.shiftKey ? oppositeCornerForSquareDrag(o, raw) : raw;
-      const mx = Math.min(o.x, c.x), my = Math.min(o.y, c.y);
-      const mw = Math.abs(c.x - o.x), mh = Math.abs(c.y - o.y);
-      const additive = !!ds.photoMarqueeAdditive;
-      const subtract = !!ds.photoMarqueeSubtract;
-      dragStateRef.current = null;
-      setDragState(null);
-      if (mw > 2 && mh > 2) {
-        const newEl: PhotoEllipseMarquee = {
-          cx: mx + mw / 2,
-          cy: my + mh / 2,
-          rx: mw / 2,
-          ry: mh / 2,
-        };
-        const ring = ellipseToPhotoMarqueeRing(newEl);
-        const prevRects = photoRectMarqueeSelection;
-        const prevPoly = photoPolygonMarqueeSelection;
-        const prevEllipses = photoEllipseMarqueeSelection;
-        const hasRects = prevRects.length > 0;
-        const hasPoly = prevPoly.length > 0;
-        const hasEllipses = prevEllipses.length > 0;
-        const mode = subtract ? "subtract" : additive ? "add" : "replace";
-        const useRingMerge = hasPoly || hasEllipses || (hasRects && (hasPoly || hasEllipses));
-
-        if (useRingMerge) {
-          const base = buildPhotoMarqueePolyBase(prevPoly, prevRects, prevEllipses, mode);
-          const next = mergePhotoPolygonSelection(base, ring, mode);
-          setPhotoRectMarqueeSelection([]);
-          setPhotoEllipseMarqueeSelection([]);
-          setPhotoPolygonMarqueeSelection(next);
-          return;
-        }
-
-        if (hasRects && !hasPoly && !hasEllipses) {
-          setPhotoEllipseMarqueeSelection([]);
-          let base: Point[][] = [];
-          for (const r of prevRects) {
-            base = mergePhotoPolygonSelection(base, rectToPhotoMarqueeRing(r), "add");
-          }
-          const next = mergePhotoPolygonSelection(base, ring, mode);
-          setPhotoRectMarqueeSelection([]);
-          setPhotoPolygonMarqueeSelection(next);
-          return;
-        }
-
-        if (hasEllipses && !hasPoly && !hasRects) {
-          setPhotoRectMarqueeSelection([]);
-          setPhotoPolygonMarqueeSelection([]);
-          if (subtract && prevEllipses.length > 0) {
-            let base: Point[][] = [];
-            for (const el of prevEllipses) {
-              base = mergePhotoPolygonSelection(base, ellipseToPhotoMarqueeRing(el), "add");
-            }
-            const next = mergePhotoPolygonSelection(base, ring, "subtract");
-            setPhotoEllipseMarqueeSelection([]);
-            setPhotoPolygonMarqueeSelection(next);
-            return;
-          }
-          if (additive && prevEllipses.length > 0) {
-            setPhotoEllipseMarqueeSelection([...prevEllipses, newEl]);
-            return;
-          }
-          setPhotoEllipseMarqueeSelection([newEl]);
-          return;
-        }
-
-        setPhotoPolygonMarqueeSelection([]);
-        setPhotoEllipseMarqueeSelection([newEl]);
-        setPhotoRectMarqueeSelection([]);
-        return;
-      }
-      if (!additive && !subtract) {
-        setPhotoEllipseMarqueeSelection([]);
-        setPhotoRectMarqueeSelection([]);
-        setPhotoPolygonMarqueeSelection([]);
-      }
-      return;
-    }
-
-    if (ds.type === "photoRectMarquee" && ds.marqueeOrigin && ds.currentCanvas) {
-      const o = ds.marqueeOrigin, c = ds.currentCanvas;
-      const mx = Math.min(o.x, c.x), my = Math.min(o.y, c.y);
-      const mw = Math.abs(c.x - o.x), mh = Math.abs(c.y - o.y);
-      const additive = !!ds.photoMarqueeAdditive;
-      const subtract = !!ds.photoMarqueeSubtract;
-      dragStateRef.current = null;
-      setDragState(null);
-      if (mw > 2 && mh > 2) {
-        const newRect: Rect = { x: mx, y: my, w: mw, h: mh };
-        const ring = rectToPhotoMarqueeRing(newRect);
-        const prevRects = photoRectMarqueeSelection;
-        const prevPoly = photoPolygonMarqueeSelection;
-        const prevEllipses = photoEllipseMarqueeSelection;
-        const hasRects = prevRects.length > 0;
-        const hasPoly = prevPoly.length > 0;
-        const hasEllipses = prevEllipses.length > 0;
-        const mode = subtract ? "subtract" : additive ? "add" : "replace";
-        const useRingMerge = hasPoly || hasEllipses || (hasRects && (hasPoly || hasEllipses));
-
-        if (useRingMerge) {
-          const base = buildPhotoMarqueePolyBase(prevPoly, prevRects, prevEllipses, mode);
-          const next = mergePhotoPolygonSelection(base, ring, mode);
-          setPhotoRectMarqueeSelection([]);
-          setPhotoEllipseMarqueeSelection([]);
-          setPhotoPolygonMarqueeSelection(next);
-          return;
-        }
-
-        if (hasRects && !hasPoly && !hasEllipses) {
-          setPhotoPolygonMarqueeSelection([]);
-          setPhotoEllipseMarqueeSelection([]);
-          setPhotoRectMarqueeSelection((prev) => {
-            if (subtract && prev.length > 0) {
-              return prev
-                .flatMap((r) => subtractRectFromRect(r, newRect))
-                .filter((r) => r.w > 1e-6 && r.h > 1e-6);
-            }
-            if (subtract && prev.length === 0) return [];
-            if (additive && prev.length > 0) return [...prev, newRect];
-            return [newRect];
-          });
-          return;
-        }
-
-        setPhotoPolygonMarqueeSelection([]);
-        setPhotoEllipseMarqueeSelection([]);
-        setPhotoRectMarqueeSelection([newRect]);
-        return;
-      }
-      if (!additive && !subtract) {
-        setPhotoRectMarqueeSelection([]);
-        setPhotoPolygonMarqueeSelection([]);
-        setPhotoEllipseMarqueeSelection([]);
-      }
       return;
     }
 
@@ -23231,12 +20617,8 @@ export function FreehandStudioCanvas({
     viewport.zoom,
     finishGuideGesture,
     updateDuplicateStepFromBaseline,
-    photoRectMarqueeSelection,
-    photoPolygonMarqueeSelection,
-    photoEllipseMarqueeSelection,
     finishBrushStroke,
     isPhotoRoomStudioEmbed,
-    studioCaps.toolPhotoMarquee,
     studioCaps.toolCloneStamp,
     studioCaps.toolPhotoGradient,
     studioCaps.layerMask,
@@ -23258,7 +20640,6 @@ export function FreehandStudioCanvas({
   }, [cancelBrushCursorOverlayRaf]);
 
   const cancelStudioTouchGesture = useCallback(() => {
-    photoRectMarqueePendingRef.current = null;
     dragStateRef.current = null;
     setDragState(null);
   }, []);
@@ -23637,38 +21018,6 @@ export function FreehandStudioCanvas({
     if (dragState?.type === "rotate") return "grab";
     if (dragState?.type === "move") return "move";
     if (!dragState && hoverCornerRadiusHandle) return "nwse-resize";
-    if (
-      !dragState &&
-      prToolCursorBlocked &&
-      (activeTool === "cloneStamp" ||
-        activeTool === "photoGradient" ||
-        activeTool === "rectMarquee" ||
-        activeTool === "ellipseMarquee" ||
-        activeTool === "lassoMarquee" ||
-        activeTool === "polygonMarquee")
-    ) {
-      return "not-allowed";
-    }
-    if (
-      activeTool === "pen" ||
-      activeTool === "scissors" ||
-      activeTool === "brush" ||
-      activeTool === "cloneStamp" ||
-      activeTool === "photoGradient" ||
-      activeTool === "rect" ||
-      activeTool === "line" ||
-      activeTool === "ellipse" ||
-      activeTool === "text" ||
-      activeTool === "textPath" ||
-      activeTool === "textFrame" ||
-      activeTool === "imageFrame" ||
-      activeTool === "rectMarquee" ||
-      activeTool === "ellipseMarquee" ||
-      activeTool === "lassoMarquee" ||
-      activeTool === "polygonMarquee"
-    ) {
-      return "crosshair";
-    }
     return "default";
   }, [activeTool, spaceHeld, dragState, prToolCursorBlocked, hoverCornerRadiusHandle]);
 
@@ -23688,35 +21037,6 @@ export function FreehandStudioCanvas({
     const o = dragState.marqueeOrigin, c = dragState.currentCanvas;
     return { x: Math.min(o.x, c.x), y: Math.min(o.y, c.y), w: Math.abs(c.x - o.x), h: Math.abs(c.y - o.y) };
   }, [dragState]);
-
-  /** PhotoRoom: arrastre del marco rectangular (preview). */
-  const photoRectMarqueeDragRect = useMemo(() => {
-    if (!dragState || dragState.type !== "photoRectMarquee" || !dragState.marqueeOrigin || !dragState.currentCanvas) return null;
-    const o = dragState.marqueeOrigin, c = dragState.currentCanvas;
-    return { x: Math.min(o.x, c.x), y: Math.min(o.y, c.y), w: Math.abs(c.x - o.x), h: Math.abs(c.y - o.y) };
-  }, [dragState]);
-
-  const photoRectMarqueeDragSubtract = useMemo(
-    () => dragState?.type === "photoRectMarquee" && !!dragState.photoMarqueeSubtract,
-    [dragState],
-  );
-
-  /** PhotoRoom: arrastre del marco elíptico (preview). */
-  const photoEllipseMarqueeDragEllipse = useMemo(() => {
-    if (!dragState || dragState.type !== "photoEllipseMarquee" || !dragState.marqueeOrigin || !dragState.currentCanvas) {
-      return null;
-    }
-    const o = dragState.marqueeOrigin, c = dragState.currentCanvas;
-    const mx = Math.min(o.x, c.x), my = Math.min(o.y, c.y);
-    const mw = Math.abs(c.x - o.x), mh = Math.abs(c.y - o.y);
-    if (mw < 2 || mh < 2) return null;
-    return { cx: mx + mw / 2, cy: my + mh / 2, rx: mw / 2, ry: mh / 2 };
-  }, [dragState]);
-
-  const photoEllipseMarqueeDragSubtract = useMemo(
-    () => dragState?.type === "photoEllipseMarquee" && !!dragState.photoMarqueeSubtract,
-    [dragState],
-  );
 
   /** Eje del degradado raster (preview + sesión). */
   const photoGradientOverlayLine = useMemo(() => {
@@ -23757,94 +21077,6 @@ export function FreehandStudioCanvas({
     }
     return null;
   }, [activeTool, studioCaps.toolPhotoGradient, dragState, photoGradientSession]);
-
-  /** Un solo contorno (hormigas) para la unión de rectángulos PhotoRoom, sin aristas dobles internas. */
-  const photoMarqueeSelectionOutlinePaths = useMemo(
-    () => rectUnionBoundarySvgPathDs(photoRectMarqueeSelection),
-    [photoRectMarqueeSelection],
-  );
-
-  /** Perímetro de la unión booleana (un `d`) para hormigas sin aristas internas al concatenar lazos. */
-  const photoPolygonMarqueeOutlineDs = useMemo(() => {
-    const d = ringsUnionOutlineSvgD(photoPolygonMarqueeSelection);
-    return d.length > 0 ? [d] : [];
-  }, [photoPolygonMarqueeSelection]);
-
-  const photoLassoDragPreviewD = useMemo(() => {
-    if (!dragState || dragState.type !== "photoLassoMarquee" || !dragState.photoLassoPoints?.length) return null;
-    const pts = dragState.photoLassoPoints;
-    const cur = dragState.currentCanvas;
-    if (!cur) return polylineToSvgPathD(pts);
-    const extended = [...pts];
-    const last = extended[extended.length - 1]!;
-    if (Math.hypot(cur.x - last.x, cur.y - last.y) > 1e-9) extended.push(cur);
-    return polylineToSvgPathD(extended);
-  }, [dragState]);
-
-  const photoPolygonDragPreviewD = useMemo(() => {
-    if (!dragState || dragState.type !== "photoPolygonMarquee") return null;
-    const verts = dragState.photoPolygonVertices ?? [];
-    const cur = dragState.currentCanvas;
-    if (verts.length === 0 || !cur) return null;
-    let d = polylineToSvgPathD(verts);
-    const lv = verts[verts.length - 1]!;
-    if (Math.hypot(cur.x - lv.x, cur.y - lv.y) > 1e-9) {
-      d += ` L ${cur.x} ${cur.y}`;
-    }
-    return d;
-  }, [dragState]);
-
-  const photoLassoDragSubtract = useMemo(
-    () => dragState?.type === "photoLassoMarquee" && !!dragState.photoMarqueeSubtract,
-    [dragState],
-  );
-
-  const photoPolygonDragSubtract = useMemo(
-    () => dragState?.type === "photoPolygonMarquee" && !!dragState.photoMarqueeSubtract,
-    [dragState],
-  );
-
-  /** Colocación en mundo de la textura flotante (sigue la selección al moverla). */
-  const photoMarqueeFloatUnion = useMemo(() => {
-    if (!photoMarqueeFloatLift) return null;
-    return unionPhotoMarqueeWorldBounds(
-      photoRectMarqueeSelection,
-      photoPolygonMarqueeSelection,
-      photoEllipseMarqueeSelection,
-    );
-  }, [
-    photoMarqueeFloatLift,
-    photoRectMarqueeSelection,
-    photoPolygonMarqueeSelection,
-    photoEllipseMarqueeSelection,
-  ]);
-
-  const photoMarqueeFloatCoverFill = useMemo(() => {
-    const ab = artboards[0];
-    if (!ab) return "#0b0d10";
-    if (artboardBackgroundIsTransparentForDisplay(ab.background)) {
-      return `url(#fh-transp-${svgIdSafeSegment(ab.id)})`;
-    }
-    return ab.background ?? "#0b0d10";
-  }, [artboards]);
-
-  /** Recorte del tapón al rectángulo de la imagen en mundo (evita tapar otras capas). */
-  const photoMarqueeFloatClipPoints = useMemo((): string | null => {
-    if (!photoMarqueeFloatLift) return null;
-    const im = objects.find((o) => o.id === photoMarqueeFloatLift.sourceLayerId && o.type === "image");
-    if (!im) return null;
-    return rectWorldCorners(im)
-      .map((p) => `${p.x},${p.y}`)
-      .join(" ");
-  }, [photoMarqueeFloatLift, objects]);
-
-  const photoMarqueeFloatClipId = useMemo(
-    () =>
-      photoMarqueeFloatLift
-        ? `fh-mrq-float-${svgIdSafeSegment(photoMarqueeFloatLift.sourceLayerId)}`
-        : null,
-    [photoMarqueeFloatLift],
-  );
 
   // Create preview rect
   const createPreviewRect = useMemo(() => {
@@ -23923,14 +21155,11 @@ export function FreehandStudioCanvas({
   const primaryPenTool = toolFlyoutPrimary["tf-pen"];
   const primaryPenToolSafe = !designerMode && primaryPenTool === "scissors" ? "directSelect" : primaryPenTool;
   const primaryShapeTool = toolFlyoutPrimary["tf-shape"];
-  const primaryPhotoMarqueeTool = toolFlyoutPrimary["tf-photo-marquee"];
   const primaryTextTool = toolFlyoutPrimary["tf-text"];
   const primaryImageTool = toolFlyoutPrimary["tf-img"];
-  const studioHeaderNodeGlyph = isPhotoRoomStudioEmbed
-    ? <TopbarGlyphPhotoRoom size={18} className="shrink-0" />
-    : designerMode
-      ? <TopbarGlyphDesignerStudio size={18} className="shrink-0" />
-      : null;
+  const studioHeaderNodeGlyph = designerMode
+    ? <TopbarGlyphDesignerStudio size={18} className="shrink-0" />
+    : null;
 
   return (
     <div
@@ -24233,88 +21462,6 @@ export function FreehandStudioCanvas({
         <ToolBtn active={activeTool === "select"} onClick={() => { setActiveTool("select"); setSelectedPoints(new Map()); }} title="Selection (V)">
           <MousePointer2 size={19} strokeWidth={TOOLBAR_ICON_STROKE} />
         </ToolBtn>
-        {studioCaps.toolPhotoMarquee && (
-          <ToolFlyoutGroup
-            groupId="tf-photo-marquee"
-            flyoutOpen={leftToolbarToolFlyout}
-            setFlyoutOpen={setLeftToolbarToolFlyout}
-            active={
-              activeTool === "rectMarquee" ||
-              activeTool === "ellipseMarquee" ||
-              activeTool === "lassoMarquee" ||
-              activeTool === "polygonMarquee"
-            }
-            mainTitle="Selección PhotoRoom: rectángulo (M), elipse (O), lazo (L), poligonal (⇧L). Ctrl/⌘ suma; Alt resta."
-            onMainClick={() => {
-              setActiveTool(primaryPhotoMarqueeTool);
-              setLeftToolbarToolFlyout(null);
-            }}
-            mainIcon={
-              primaryPhotoMarqueeTool === "lassoMarquee" ? (
-                <MarqueeLassoToolIcon size={19} />
-              ) : primaryPhotoMarqueeTool === "polygonMarquee" ? (
-                <MarqueePolygonToolIcon size={19} />
-              ) : primaryPhotoMarqueeTool === "ellipseMarquee" ? (
-                <MarqueeEllipseToolIcon size={19} />
-              ) : (
-                <MarqueeRectToolIcon size={19} />
-              )
-            }
-          >
-            <button
-              type="button"
-              title="Marco rectangular (M)"
-              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] transition ${
-                activeTool === "rectMarquee" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
-              }`}
-              onClick={() => {
-                setActiveTool("rectMarquee");
-                setLeftToolbarToolFlyout(null);
-              }}
-            >
-              <MarqueeRectToolIcon size={17} />
-            </button>
-            <button
-              type="button"
-              title="Marco elíptico (O). ⇧ al arrastrar = círculo. Ctrl/⌘ suma; Alt resta."
-              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] transition ${
-                activeTool === "ellipseMarquee" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
-              }`}
-              onClick={() => {
-                setActiveTool("ellipseMarquee");
-                setLeftToolbarToolFlyout(null);
-              }}
-            >
-              <MarqueeEllipseToolIcon size={17} />
-            </button>
-            <button
-              type="button"
-              title="Lazo libre (L)"
-              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] transition ${
-                activeTool === "lassoMarquee" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
-              }`}
-              onClick={() => {
-                setActiveTool("lassoMarquee");
-                setLeftToolbarToolFlyout(null);
-              }}
-            >
-              <MarqueeLassoToolIcon size={17} />
-            </button>
-            <button
-              type="button"
-              title="Lazo poligonal (⇧L)"
-              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] transition ${
-                activeTool === "polygonMarquee" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
-              }`}
-              onClick={() => {
-                setActiveTool("polygonMarquee");
-                setLeftToolbarToolFlyout(null);
-              }}
-            >
-              <MarqueePolygonToolIcon size={17} />
-            </button>
-          </ToolFlyoutGroup>
-        )}
 
         <ToolFlyoutGroup
           groupId="tf-pen"
@@ -24444,26 +21591,35 @@ export function FreehandStudioCanvas({
           </button>
         </ToolFlyoutGroup>
 
-        {studioCaps.toolCloneStamp && (
-        <ToolBtn
-          active={activeTool === "cloneStamp"}
-          onClick={() => setActiveTool("cloneStamp")}
-          title="Tampón de clon (S) — Alt+clic en la imagen = origen; pinta clonando con el mismo tamaño/dureza/opacidad/flow"
-        >
-          <PhotoCloneStampToolIcon size={19} />
-        </ToolBtn>
-        )}
-        {studioCaps.toolBrush && (
-        <ToolBtn
-          active={activeTool === "brush"}
-          onClick={() => setActiveTool("brush")}
-          title="Pincel (B) — pinta en capas imagen; clic en vacío crea capa del tamaño del pliego"
-        >
-          <PhotoBrushToolIcon size={19} />
-        </ToolBtn>
-        )}
         {designerMode ? (
           <>
+            {studioCaps.toolCloneStamp ? (
+              <ToolBtn
+                active={activeTool === "cloneStamp"}
+                onClick={() => setActiveTool("cloneStamp")}
+                title="Tampón de clon (S) — Alt+clic en la imagen = origen"
+              >
+                <PhotoCloneStampToolIcon size={19} />
+              </ToolBtn>
+            ) : null}
+            {studioCaps.toolBrush ? (
+              <ToolBtn
+                active={activeTool === "brush"}
+                onClick={() => setActiveTool("brush")}
+                title="Pincel (B) — pinta en capas imagen o marcos con foto"
+              >
+                <PhotoBrushToolIcon size={19} />
+              </ToolBtn>
+            ) : null}
+            {studioCaps.toolPhotoGradient ? (
+              <ToolBtn
+                active={activeTool === "photoGradient"}
+                onClick={() => setActiveTool("photoGradient")}
+                title="Degradado (⇧G) — arrastra en capa o máscara (modo máscara = destino máscara); ajustes en Propiedades; doble clic en vértice = color"
+              >
+                <PhotoGradientToolIcon size={19} />
+              </ToolBtn>
+            ) : null}
             <ToolFlyoutGroup
               groupId="tf-text"
               flyoutOpen={leftToolbarToolFlyout}
@@ -24627,16 +21783,6 @@ export function FreehandStudioCanvas({
               <FileType2 size={18} strokeWidth={TOOLBAR_ICON_STROKE} />
             </ToolBtn>
           </>
-        )}
-
-        {studioCaps.toolPhotoGradient && isPhotoRoomStudioEmbed && (
-          <ToolBtn
-            active={activeTool === "photoGradient"}
-            onClick={() => setActiveTool("photoGradient")}
-            title="Degradado (⇧G) — arrastra en capa o máscara (modo máscara = destino máscara); ajustes en Propiedades; doble clic en vértice = color"
-          >
-            <PhotoGradientToolIcon size={19} />
-          </ToolBtn>
         )}
 
         <div
@@ -24952,12 +22098,7 @@ export function FreehandStudioCanvas({
           if ((e.target as HTMLElement).closest?.("[data-fh-text-editor]")) return;
           const pos = screenToCanvas(e.clientX, e.clientY);
           const dsTh = 8 / viewport.zoom;
-          if (
-            activeTool === "photoGradient" &&
-            studioCaps.toolPhotoGradient &&
-            isPhotoRoomStudioEmbed &&
-            photoGradientSession
-          ) {
+          if (activeTool === "photoGradient" && studioCaps.toolPhotoGradient && photoGradientSession) {
             const zth = PHOTO_GRADIENT_VERTEX_HIT_PX / viewport.zoom;
             const s = photoGradientSession;
             if (dist(pos, s.startWorld) < zth) {
@@ -25122,49 +22263,6 @@ export function FreehandStudioCanvas({
             />
           )}
           <div ref={containerRef} className="relative min-h-0 flex-1 overflow-hidden">
-        {isPhotoRoomStudioEmbed &&
-          studioCaps.toolPhotoMarquee &&
-          (activeTool === "rectMarquee" ||
-            activeTool === "ellipseMarquee" ||
-            activeTool === "lassoMarquee" ||
-            activeTool === "polygonMarquee") &&
-          (photoRectMarqueeSelection.length > 0 ||
-            photoPolygonMarqueeSelection.length > 0 ||
-            photoEllipseMarqueeSelection.length > 0) &&
-          photoRectMarqueeAddModHeld && (
-            <div
-              data-foldder-studio-flush={flushAttr}
-              className="pointer-events-none absolute bottom-5 left-1/2 z-[120] flex -translate-x-1/2 items-center gap-2 border border-orange-400/35 bg-[#0b0f14] px-3 py-1.5 text-[12px] text-orange-100"
-              data-ui="photo-marquee-add-hint"
-            >
-              <span className="flex h-6 w-6 items-center justify-center bg-orange-500/25 text-[18px] font-light leading-none text-orange-50">
-                +
-              </span>
-              <span className="max-w-[min(20rem,85vw)] text-[11px] text-zinc-300">
-                Con Ctrl (Windows/Linux) o ⌘ (Mac) pulsado, el siguiente trazo suma a la selección. Sin modificador, sustituye la selección. Alt/Option resta área.
-              </span>
-            </div>
-          )}
-        {isPhotoRoomStudioEmbed &&
-          studioCaps.toolPhotoMarquee &&
-          (activeTool === "rectMarquee" ||
-            activeTool === "ellipseMarquee" ||
-            activeTool === "lassoMarquee" ||
-            activeTool === "polygonMarquee") &&
-          photoRectMarqueeAltModHeld && (
-            <div
-              data-foldder-studio-flush={flushAttr}
-              className="pointer-events-none absolute bottom-[4.25rem] left-1/2 z-[120] flex -translate-x-1/2 items-center gap-2 border border-fuchsia-500/35 bg-[#0b0f14] px-3 py-1.5 text-[12px] text-fuchsia-100"
-              data-ui="photo-marquee-subtract-hint"
-            >
-              <span className="flex h-6 w-6 items-center justify-center bg-fuchsia-600/25 text-[18px] font-light leading-none text-fuchsia-50">
-                −
-              </span>
-              <span className="max-w-[min(20rem,85vw)] text-[11px] text-zinc-300">
-                Con Alt (Windows/Linux) u Option (Mac) pulsado, el siguiente trazo resta de la selección.
-              </span>
-            </div>
-          )}
         {designerMode && designerCanvasRasterLoad.phase === "loading" && (
           <div
             className="absolute inset-0 z-[200] flex flex-col items-center justify-center bg-[#0b0d10]"
@@ -25768,274 +22866,6 @@ export function FreehandStudioCanvas({
                 fill="rgba(99,102,241,0.08)" stroke="#6366f1" strokeWidth={1 / viewport.zoom}
                 strokeDasharray={`${3 / viewport.zoom}`} data-ui="marquee" />
             )}
-
-            {/* PhotoRoom: marco rectangular (arrastre + selección con hormigas) */}
-            {isPhotoRoomStudioEmbed &&
-              studioCaps.toolPhotoMarquee &&
-              photoRectMarqueeDragRect &&
-              photoRectMarqueeDragRect.w > 2 &&
-              photoRectMarqueeDragRect.h > 2 && (
-                <rect
-                  x={photoRectMarqueeDragRect.x}
-                  y={photoRectMarqueeDragRect.y}
-                  width={photoRectMarqueeDragRect.w}
-                  height={photoRectMarqueeDragRect.h}
-                  fill={photoRectMarqueeDragSubtract ? "rgba(217,70,239,0.12)" : "rgba(251,146,60,0.1)"}
-                  stroke={photoRectMarqueeDragSubtract ? "#d946ef" : "#fb923c"}
-                  strokeWidth={1 / viewport.zoom}
-                  strokeDasharray={`${4 / viewport.zoom} ${3 / viewport.zoom}`}
-                  pointerEvents="none"
-                  data-ui="photo-marquee-drag"
-                />
-              )}
-            {isPhotoRoomStudioEmbed &&
-              studioCaps.toolPhotoMarquee &&
-              photoEllipseMarqueeDragEllipse &&
-              photoEllipseMarqueeDragEllipse.rx > 1 &&
-              photoEllipseMarqueeDragEllipse.ry > 1 && (
-                <ellipse
-                  cx={photoEllipseMarqueeDragEllipse.cx}
-                  cy={photoEllipseMarqueeDragEllipse.cy}
-                  rx={photoEllipseMarqueeDragEllipse.rx}
-                  ry={photoEllipseMarqueeDragEllipse.ry}
-                  fill={photoEllipseMarqueeDragSubtract ? "rgba(217,70,239,0.12)" : "rgba(251,146,60,0.1)"}
-                  stroke={photoEllipseMarqueeDragSubtract ? "#d946ef" : "#fb923c"}
-                  strokeWidth={1 / viewport.zoom}
-                  strokeDasharray={`${4 / viewport.zoom} ${3 / viewport.zoom}`}
-                  pointerEvents="none"
-                  data-ui="photo-ellipse-marquee-drag"
-                />
-              )}
-            {isPhotoRoomStudioEmbed && studioCaps.toolPhotoMarquee && photoLassoDragPreviewD && (
-              <path
-                d={photoLassoDragPreviewD}
-                fill="none"
-                stroke={photoLassoDragSubtract ? "#d946ef" : "#fb923c"}
-                strokeWidth={1 / viewport.zoom}
-                strokeDasharray={`${4 / viewport.zoom} ${3 / viewport.zoom}`}
-                strokeLinejoin="round"
-                strokeLinecap="round"
-                pointerEvents="none"
-                data-ui="photo-lasso-drag"
-              />
-            )}
-            {isPhotoRoomStudioEmbed && studioCaps.toolPhotoMarquee && photoPolygonDragPreviewD && (
-              <path
-                d={photoPolygonDragPreviewD}
-                fill="none"
-                stroke={photoPolygonDragSubtract ? "#d946ef" : "#fb923c"}
-                strokeWidth={1 / viewport.zoom}
-                strokeDasharray={`${4 / viewport.zoom} ${3 / viewport.zoom}`}
-                strokeLinejoin="miter"
-                pointerEvents="none"
-                data-ui="photo-polygon-drag"
-              />
-            )}
-            {isPhotoRoomStudioEmbed &&
-              studioCaps.toolPhotoMarquee &&
-              photoMarqueeSelectionOutlinePaths.map((d, pi) => (
-                <path
-                  key={`photo-marquee-sel-${pi}`}
-                  d={d}
-                  fill="none"
-                  stroke="#f8fafc"
-                  strokeWidth={1.75}
-                  vectorEffect="nonScalingStroke"
-                  strokeDasharray="5 4"
-                  strokeLinejoin="miter"
-                  strokeLinecap="butt"
-                  pointerEvents="none"
-                  data-ui="photo-marquee-selection"
-                >
-                  <animate
-                    attributeName="stroke-dashoffset"
-                    from="0"
-                    to="-9"
-                    dur="0.4s"
-                    repeatCount="indefinite"
-                  />
-                </path>
-              ))}
-            {isPhotoRoomStudioEmbed &&
-              studioCaps.toolPhotoMarquee &&
-              photoPolygonMarqueeOutlineDs.map((d, pi) => (
-                <path
-                  key={`photo-poly-sel-${pi}`}
-                  d={d}
-                  fill="none"
-                  stroke="#f8fafc"
-                  strokeWidth={1.75}
-                  vectorEffect="nonScalingStroke"
-                  strokeDasharray="5 4"
-                  strokeLinejoin="miter"
-                  strokeLinecap="butt"
-                  pointerEvents="none"
-                  data-ui="photo-marquee-polygon-selection"
-                >
-                  <animate
-                    attributeName="stroke-dashoffset"
-                    from="0"
-                    to="-9"
-                    dur="0.4s"
-                    repeatCount="indefinite"
-                  />
-                </path>
-              ))}
-            {isPhotoRoomStudioEmbed &&
-              studioCaps.toolPhotoMarquee &&
-              photoEllipseMarqueeSelection.map((el, ei) =>
-                el.rx > 0 && el.ry > 0 ? (
-                  <ellipse
-                    key={`photo-ellipse-sel-${ei}`}
-                    cx={el.cx}
-                    cy={el.cy}
-                    rx={el.rx}
-                    ry={el.ry}
-                    fill="none"
-                    stroke="#f8fafc"
-                    strokeWidth={1.75}
-                    vectorEffect="nonScalingStroke"
-                    strokeDasharray="5 4"
-                    pointerEvents="none"
-                    data-ui="photo-marquee-ellipse-selection"
-                  >
-                    <animate
-                      attributeName="stroke-dashoffset"
-                      from="0"
-                      to="-9"
-                      dur="0.4s"
-                      repeatCount="indefinite"
-                    />
-                  </ellipse>
-                ) : null,
-              )}
-
-            {/* PhotoRoom: tapar píxeles en el origen + textura que sigue al mover la selección (V / flechas). */}
-            {isPhotoRoomStudioEmbed &&
-              studioCaps.toolPhotoMarquee &&
-              photoMarqueeFloatLift &&
-              photoMarqueeFloatClipPoints &&
-              photoMarqueeFloatClipId && (
-                <g pointerEvents="none" data-ui="photo-marquee-float-cover">
-                  <defs>
-                    <clipPath id={photoMarqueeFloatClipId}>
-                      <polygon points={photoMarqueeFloatClipPoints} />
-                    </clipPath>
-                  </defs>
-                  <g clipPath={`url(#${photoMarqueeFloatClipId})`}>
-                    {photoMarqueeFloatLift.liftRects.map((r, i) => (
-                      <rect
-                        key={`flcv-r-${i}`}
-                        x={r.x}
-                        y={r.y}
-                        width={r.w}
-                        height={r.h}
-                        fill={photoMarqueeFloatCoverFill}
-                      />
-                    ))}
-                    {photoMarqueeFloatLift.liftPolys.map((ring, i) => {
-                      const d = ringToSvgPathD(ring);
-                      if (!d) return null;
-                      return (
-                        <path
-                          key={`flcv-p-${i}`}
-                          d={d}
-                          fill={photoMarqueeFloatCoverFill}
-                          fillRule="evenodd"
-                        />
-                      );
-                    })}
-                    {photoMarqueeFloatLift.liftEllipses.map((el, i) =>
-                      el.rx > 0 && el.ry > 0 ? (
-                        <ellipse
-                          key={`flcv-e-${i}`}
-                          cx={el.cx}
-                          cy={el.cy}
-                          rx={el.rx}
-                          ry={el.ry}
-                          fill={photoMarqueeFloatCoverFill}
-                        />
-                      ) : null,
-                    )}
-                  </g>
-                </g>
-              )}
-            {isPhotoRoomStudioEmbed &&
-              studioCaps.toolPhotoMarquee &&
-              photoMarqueeFloatLift &&
-              photoMarqueeFloatUnion &&
-              photoMarqueeFloatUnion.w > 1e-6 &&
-              photoMarqueeFloatUnion.h > 1e-6 &&
-              (() => {
-                const u = photoMarqueeFloatUnion;
-                const cx = u.x + u.w / 2;
-                const cy = u.y + u.h / 2;
-                const { rotationDeg, scaleX, scaleY } = photoMarqueeFloatTf;
-                const tfStr = `translate(${cx},${cy}) rotate(${rotationDeg}) scale(${scaleX},${scaleY}) translate(${-cx},${-cy})`;
-                const hz = 7 / viewport.zoom;
-                const rotHint = mapPhotoMarqueeFloatTf(
-                  { x: cx, y: u.y - 16 / viewport.zoom },
-                  u,
-                  rotationDeg,
-                  scaleX,
-                  scaleY,
-                );
-                const hIds = ["nw", "ne", "se", "sw", "n", "s", "e", "w"] as const;
-                return (
-                  <g data-ui="photo-marquee-float-group">
-                    <g transform={tfStr} pointerEvents="none">
-                      <image
-                        href={photoMarqueeFloatLift.dataUrl}
-                        x={u.x}
-                        y={u.y}
-                        width={u.w}
-                        height={u.h}
-                        preserveAspectRatio="xMidYMid meet"
-                        data-ui="photo-marquee-float-texture"
-                      />
-                    </g>
-                    <g pointerEvents="auto" data-ui="photo-marquee-float-handles">
-                      <rect
-                        x={u.x}
-                        y={u.y}
-                        width={u.w}
-                        height={u.h}
-                        fill="none"
-                        stroke="rgba(56,189,248,0.78)"
-                        strokeWidth={1 / viewport.zoom}
-                        pointerEvents="none"
-                      />
-                      {hIds.map((hid) => {
-                        const raw = rawHandlePointForPhotoFloat(hid, u);
-                        const hp = mapPhotoMarqueeFloatTf(raw, u, rotationDeg, scaleX, scaleY);
-                        return (
-                          <rect
-                            key={`pfh-${hid}`}
-                            x={hp.x - hz / 2}
-                            y={hp.y - hz / 2}
-                            width={hz}
-                            height={hz}
-                            fill="#0f172a"
-                            stroke="rgba(255,255,255,0.92)"
-                            strokeWidth={1 / viewport.zoom}
-                            rx={1.5 / viewport.zoom}
-                            style={{ cursor: `${hid}-resize` } as React.CSSProperties}
-                          />
-                        );
-                      })}
-                      <circle
-                        cx={rotHint.x}
-                        cy={rotHint.y}
-                        r={hz * 0.62}
-                        fill="#0f172a"
-                        stroke="#38bdf8"
-                        strokeWidth={1 / viewport.zoom}
-                        style={{ cursor: "grab" } as React.CSSProperties}
-                      />
-                    </g>
-                  </g>
-                );
-              })()}
 
             {/* Per-object selection outlines (single + multi): all equal */}
             {selectedObjects.length > 0 && !canvasZenMode && (activeTool === "select" || activeTool === "directSelect") && selectedObjects.map((obj) => {
@@ -27256,68 +24086,14 @@ export function FreehandStudioCanvas({
                 </div>
               </div>
             )}
-            {studioPhotoRoomCanvasPanel != null &&
+            {studioCanvasPanel != null &&
               selectedObjects.length === 0 &&
               (designerMode || photoRoomConnectedInputs !== undefined) && (
                 <div className="border-b border-white/[0.08] px-[14px] py-3">
                   <div className="mb-2.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
                     Canvas
                   </div>
-                  {studioPhotoRoomCanvasPanel}
-                </div>
-              )}
-            {isPhotoRoomStudioEmbed &&
-              studioCaps.toolPhotoMarquee &&
-              (photoRectMarqueeSelection.length > 0 ||
-                photoPolygonMarqueeSelection.length > 0 ||
-                photoEllipseMarqueeSelection.length > 0) && (
-                <div className="border-b border-white/[0.08] px-[14px] py-3">
-                  <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
-                    Marco de selección
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <button
-                      type="button"
-                      onClick={invertPhotoMarqueeFromPanel}
-                      className="rounded-[5px] border border-white/[0.08] bg-white/[0.04] px-2.5 py-1.5 text-left text-[11px] text-zinc-200 transition-colors hover:bg-white/[0.08]"
-                    >
-                      Invertir selección
-                    </button>
-                    <button
-                      type="button"
-                      onClick={deselectPhotoMarquee}
-                      className="rounded-[5px] border border-white/[0.08] bg-white/[0.04] px-2.5 py-1.5 text-left text-[11px] text-zinc-200 transition-colors hover:bg-white/[0.08]"
-                    >
-                      Deseleccionar
-                    </button>
-                  </div>
-                  <div className="mt-3 space-y-2 border-t border-white/[0.06] pt-3">
-                    <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Feather (máscara suave)</div>
-                    <p className="text-[9px] leading-snug text-zinc-600">
-                      0 = borde duro. Mayor valor = degradado de opacidad en el borde al copiar (⌘C), borrar selección o mover
-                      píxeles: el número activo se usa en esa acción; no hay botón «Aplicar». Las hormigas siguen nítidas.
-                    </p>
-                    <div className="flex items-center gap-2">
-                      <label className="w-[72px] shrink-0 text-[10px] text-zinc-500 uppercase tracking-wider" htmlFor="fh-marquee-feather-px">
-                        Radio px
-                      </label>
-                      <ScrubNumberInput
-                        id="fh-marquee-feather-px"
-                        value={photoMarqueeMaskFeatherPx}
-                        onKeyboardCommit={(n) =>
-                          setPhotoMarqueeMaskFeatherPx(clamp(Math.round(n), 0, 200))
-                        }
-                        onScrubLive={(n) => setPhotoMarqueeMaskFeatherPx(clamp(Math.round(n), 0, 200))}
-                        onScrubEnd={() => {}}
-                        step={1}
-                        roundFn={(n) => clamp(Math.round(n), 0, 200)}
-                        min={0}
-                        max={200}
-                        title={PROP_PANEL_SCRUB_HINT}
-                        className={`min-w-0 flex-1 ${PROP_PANEL_SCRUB_CLASS}`}
-                      />
-                    </div>
-                  </div>
+                  {studioCanvasPanel}
                 </div>
               )}
             {isPhotoRoomStudioEmbed &&
@@ -27439,20 +24215,6 @@ export function FreehandStudioCanvas({
                   </div>
                 </div>
               )}
-            {canConvertSelectionToPhotoMarquee && (
-              <div className="border-b border-white/[0.08] px-[14px] py-3">
-                <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
-                  Selección (PhotoRoom)
-                </div>
-                <button
-                  type="button"
-                  onClick={replacePhotoMarqueeWithVectorOutline}
-                  className="w-full rounded-[5px] border border-white/[0.08] bg-white/[0.04] px-2.5 py-1.5 text-left text-[11px] text-zinc-200 transition-colors hover:bg-white/[0.08]"
-                >
-                  Convertir en selección
-                </button>
-              </div>
-            )}
             {studioCaps.combineRasterLayers && selectedIds.size >= 2 && (
               <div className="border-b border-white/[0.08] px-[14px] py-3">
                 <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
@@ -28891,8 +25653,7 @@ export function FreehandStudioCanvas({
                     </button>
                   </div>
                 )}
-                {isPhotoRoomStudioEmbed &&
-                  firstSelected.type === "image" &&
+                {firstSelected.type === "image" &&
                   !(firstSelected as ImageObject).photoRoomInputSlot &&
                   (() => {
                     const img = firstSelected as ImageObject & FreehandObjectBase;
@@ -28916,8 +25677,7 @@ export function FreehandStudioCanvas({
                       </div>
                     );
                   })()}
-                {isPhotoRoomStudioEmbed &&
-                  studioCaps.toolPhotoGradient &&
+                {studioCaps.toolPhotoGradient &&
                   (() => {
                     const isMaskCtx =
                       !!studioCaps.layerMask && maskEditObjectId === firstSelected.id;

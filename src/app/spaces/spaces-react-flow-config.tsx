@@ -31,7 +31,6 @@ import { CineNode } from "./cine/CineNode";
 import { GuionistaNode } from "./guionista/GuionistaNode";
 import { ExportMultimediaNode, ExportMultipleNode } from "./MediaListConsumerNodes";
 import { NanoBananaNode } from "./nano-banana/NanoBananaNode";
-import { PhotoRoomNode } from "./photo-room/PhotoRoomNode";
 import { CanvasGroupNode } from "./CanvasGroupNode";
 import { VideoEditorNode } from "./video-editor/VideoEditorNode";
 import { InspirationNode } from "./inspiration/InspirationNode";
@@ -76,7 +75,6 @@ export const spacesNodeTypes: Record<string, ComponentType<any>> = {
   projectBrain: ProjectBrainNode,
   projectAssets: ProjectAssetsNode,
   presenter: PresenterNode,
-  photoRoom: PhotoRoomNode,
   canvasGroup: CanvasGroupNode,
 };
 

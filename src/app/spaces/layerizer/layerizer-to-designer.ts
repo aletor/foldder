@@ -1,5 +1,5 @@
 /**
- * Layerizer → Designer / PhotoRoom: convierte LayerizerOutput en capas Freehand apiladas.
+ * Layerizer → Designer: convierte LayerizerOutput en capas Freehand apiladas.
  *
  * Orden de apilamiento (abajo → arriba):
  * 1. Original (master)
@@ -11,7 +11,6 @@ import { solidFill } from "../freehand/fill";
 import { DEFAULT_DESIGNER_PAGE_FORMAT } from "../indesign/page-formats";
 import type { FreehandObject } from "../FreehandStudio";
 import type { DesignerPageState } from "../designer/DesignerNode";
-import type { PhotoRoomArtboardState } from "../photo-room/photo-room-types";
 import type { LayerizerOutput } from "./layerizer-types";
 
 function imageObject(args: {
@@ -130,40 +129,4 @@ export function buildDesignerPageFromLayerizerOutput(
     textFrames: [],
     imageFrames: [],
   };
-}
-
-export type PhotoRoomLayerizerImport = {
-  studioArtboard: PhotoRoomArtboardState;
-  studioObjects: FreehandObject[];
-  studioLayoutGuides: [];
-  photoRoomDocSetupDone: true;
-  _layerizerImportedJobId: string;
-};
-
-/** Layerizer → PhotoRoom: artboard al tamaño del fondo + capas superpuestas. */
-export function buildPhotoRoomFromLayerizerOutput(
-  output: LayerizerOutput,
-  nodeId: string,
-): PhotoRoomLayerizerImport {
-  const W = Math.max(1, Math.round(output.background.w));
-  const H = Math.max(1, Math.round(output.background.h));
-  const idPrefix = `${nodeId}__lz_${output.jobId}`;
-
-  return {
-    studioArtboard: {
-      id: `pr_ab_${nodeId}_lz_${output.jobId}`,
-      width: W,
-      height: H,
-      background: "#ffffff",
-    },
-    studioObjects: buildLayerizerStackObjects(output, idPrefix),
-    studioLayoutGuides: [],
-    photoRoomDocSetupDone: true,
-    _layerizerImportedJobId: output.jobId,
-  };
-}
-
-/** Prefijo de ids de capas importadas desde Layerizer en un nodo PhotoRoom. */
-export function photoRoomLayerizerObjectIdPrefix(nodeId: string, jobId: string): string {
-  return `${nodeId}__lz_${jobId}`;
 }

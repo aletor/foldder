@@ -4,7 +4,7 @@ import {
   buildPhotoroomExportSummaryFromObjects,
   emitPhotoroomExportToBrain,
   trackPhotoroomImageImported,
-} from "./photo-room-brain-telemetry";
+} from "./photoroom-brain-telemetry";
 import type { BrainNodeTelemetryApi } from "@/lib/brain/brain-telemetry";
 
 describe("photo-room-brain-telemetry", () => {

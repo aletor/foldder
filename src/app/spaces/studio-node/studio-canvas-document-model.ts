@@ -1,6 +1,6 @@
 /**
- * Configuración visible para nuevo documento PhotoRoom (asistente de inicio).
- * Resolución y modo de color no forman parte del tipo público.
+ * Configuración visible del lienzo de un studio (medidas + fondo) y helpers de fondo.
+ * Compartido por Designer (panel de presets, controles de medidas del canvas).
  */
 export type NewDocumentConfig = {
   name: string;
@@ -8,20 +8,6 @@ export type NewDocumentConfig = {
   height: number;
   background: "white" | "black" | "transparent";
 };
-
-/** Documento interno tras crear (p. ej. persistencia futura o metadatos de export). */
-export type PhotoRoomDocumentInternal = NewDocumentConfig & {
-  resolution: 72;
-  colorMode: "RGB";
-};
-
-export function createPhotoRoomDocument(config: NewDocumentConfig): PhotoRoomDocumentInternal {
-  return {
-    ...config,
-    resolution: 72,
-    colorMode: "RGB",
-  };
-}
 
 export function newDocumentBackgroundToCss(bg: NewDocumentConfig["background"]): string {
   switch (bg) {

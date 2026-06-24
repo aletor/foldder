@@ -103,10 +103,6 @@ function pushUnique(
 function nodeLooksGenerated(nodeType: string, data: Record<string, unknown>): boolean {
   if (GENERATOR_NODE_TYPES.has(nodeType)) return true;
   if (data.generatedByAi === true) return true;
-  if (nodeType === "photoRoom" && typeof data.value === "string" && data.value.trim()) {
-    const objs = data.studioObjects;
-    return Array.isArray(objs) && objs.length > 0;
-  }
   return false;
 }
 
@@ -276,8 +272,6 @@ function presenterVideoUrls(data: Record<string, unknown>, into: string[]) {
 
 function labelForNodeType(nodeType: string): string {
   switch (nodeType) {
-    case "photoRoom":
-      return "PhotoRoom";
     case "imageCreationAdvanced":
       return "Image Creation";
     case "nanoBanana":

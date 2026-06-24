@@ -66,17 +66,17 @@ describe("StudioCanvasNodeShell", () => {
   it("supports custom branded header icons", () => {
     render(
       <StudioCanvasNodeShell
-        nodeId="photo-room"
-        nodeType="photoRoom"
-        defaultLabel="PhotoRoom"
-        title="PhotoRoom"
-        headerIcon={<span data-testid="brand-icon">PR</span>}
+        nodeId="designer-branded"
+        nodeType="designer"
+        defaultLabel="Designer"
+        title="Designer"
+        headerIcon={<span data-testid="brand-icon">DS</span>}
       >
         <div />
       </StudioCanvasNodeShell>,
     );
 
-    expect(screen.getByTestId("brand-icon")).toHaveTextContent("PR");
+    expect(screen.getByTestId("brand-icon")).toHaveTextContent("DS");
     expect(screen.queryByTestId("node-icon")).not.toBeInTheDocument();
   });
 });

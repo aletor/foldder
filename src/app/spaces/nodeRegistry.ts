@@ -20,24 +20,6 @@ export interface NodeMetadata {
 }
 
 export const NODE_REGISTRY: Record<string, NodeMetadata> = {
-  photoRoom: {
-    type: 'photoRoom',
-    label: 'PhotoRoom',
-    description:
-      'Retoque y composición de imagen: varias entradas de imagen (ranuras dinámicas); acepta Image Layout desde Layerizer (capas pre-montadas al tamaño del fondo). Salida imagen. Studio en evolución.',
-    inputs: [
-      { id: 'in-n', label: 'Imágenes', type: 'image' },
-      { id: 'layout', label: 'Image Layout', type: 'image_layout' as HandleType },
-      { id: 'brain', label: 'Brain', type: 'brain' },
-    ],
-    outputs: [{ id: 'image', label: 'Imagen', type: 'image' }],
-    dataSchema: {
-      studioObjects: 'FreehandObject[] (vector en studio)',
-      studioLayoutGuides: 'LayoutGuide[]',
-      studioArtboard: '{ id, width, height, background? } px — por defecto 1920×1080',
-      value: 'string (preview PNG / salida)',
-    },
-  },
   urlImage: {
     type: 'urlImage',
     label: 'URL Image / Carousel',
@@ -481,7 +463,7 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
     type: 'layerizer',
     label: 'Layerizer',
     description:
-      'Inverse of Composite: decomposes one image into pixel-exact layers. Detects objects (Gemini), the user picks which to extract (SAM 3 + matting, no generation), and a single generative call produces a clean plate background. Outputs a layer stack (background + objects) for Designer or PhotoRoom.',
+      'Inverse of Composite: decomposes one image into pixel-exact layers. Detects objects (Gemini), the user picks which to extract (SAM 3 + matting, no generation), and a single generative call produces a clean plate background. Outputs a layer stack (background + objects) for Designer.',
     inputs: [{ id: 'image', label: 'Image', type: 'image' as HandleType, required: true }],
     outputs: [{ id: 'layout', label: 'Image Layout', type: 'image_layout' as HandleType }],
     dataSchema: {
@@ -536,7 +518,7 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
     type: 'dataset',
     label: 'Dataset',
     description:
-      'Tabla tipada y persistente: cards iterables (una pieza por card en el destino) + constantes compartidas que se inyectan en todas las piezas. Fuente de verdad reutilizable; expone filas tipadas + constantes a cualquier nodo de materialización (Designer, PhotoRoom, Cine, Animate).',
+      'Tabla tipada y persistente: cards iterables (una pieza por card en el destino) + constantes compartidas que se inyectan en todas las piezas. Fuente de verdad reutilizable; expone filas tipadas + constantes a cualquier nodo de materialización (Designer, Cine, Animate).',
     inputs: [],
     outputs: [{ id: 'dataset', label: 'Dataset', type: 'dataset' as HandleType }],
     dataSchema: {
@@ -585,15 +567,13 @@ export const ASSISTANT_NODE_DATA_HINTS: Record<string, string> = {
   inspiration:
     "facet, manualPrompt, imageIntent, results[], selected, value (URL de la imagen seleccionada), type ('image'); entrada prompt o image; busca 40 referencias en Pexels; salida siempre image al seleccionar una imagen",
   imageExport: "format (png|jpeg), label",
-  photoRoom:
-    "studioObjects, studioLayoutGuides, studioArtboard (px); value/salida imagen; label; entradas in_0… por cable; entrada layout (image_layout) desde layerizer — capas pre-montadas",
   space: "label, hasInput, hasOutput, value",
   spaceInput: "label",
   spaceOutput: "label",
   painter: "bgColor, strokeColor, brushSize, value",
   crop: "aspectRatio, cropConfig, value",
   layerizer:
-    "entrada image (master inmutable); detected (Gemini), selected (objetos + amodal opt-in), jobId/status (job async), output/value (LayerizerOutput: background clean_plate + layers extracted); salida layout (image_layout) conecta a designer o photoRoom. Extracción = recorte pixel-exacto (SAM 3 + matting), NUNCA generativo; fondo limpio = 1 llamada Nano Banana",
+    "entrada image (master inmutable); detected (Gemini), selected (objetos + amodal opt-in), jobId/status (job async), output/value (LayerizerOutput: background clean_plate + layers extracted); salida layout (image_layout) conecta a designer. Extracción = recorte pixel-exacto (SAM 3 + matting), NUNCA generativo; fondo limpio = 1 llamada Nano Banana",
   projectBrain:
     "label (título opcional); marca y conocimiento en metadata.assets — resume y abre studio; salida brain",
   projectAssets:

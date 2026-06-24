@@ -114,10 +114,6 @@ export function resolveHandleMetaForCanvasDrop(
         return { type: "prompt", id: handleId };
       }
     }
-    /** PhotoRoom: entradas reales `in_0`… en el DOM; el registro usa el id genérico `in-n`. */
-    if (/^in_\d+$/.test(handleId) && nodeType === "photoRoom") {
-      return { type: "image", id: handleId };
-    }
   }
 
   return null;
@@ -143,16 +139,6 @@ export function pickNewNodeTypeForCanvasDrop(
 
   if (srcNodeType === "painter" && fromFlow === "target" && fromHandleId === "image") {
     return "urlImage";
-  }
-
-  /** PhotoRoom: arrastrar desde entrada de imagen → Nano Banana a la izquierda. */
-  if (
-    srcNodeType === "photoRoom" &&
-    fromFlow === "target" &&
-    fromHandleId &&
-    /^in_\d+$/.test(fromHandleId)
-  ) {
-    return "nanoBanana";
   }
 
   return HANDLE_DROP_MAP[baseKey];

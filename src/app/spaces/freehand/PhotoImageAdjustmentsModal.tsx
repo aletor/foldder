@@ -8,7 +8,7 @@ import {
   gammaToMidPos,
   midPosToGamma,
   type PhotoLevels,
-} from "../freehand/photo-image-adjustments";
+} from "./photo-image-adjustments";
 
 export type PhotoImageAdjustmentsValues = {
   brightness: number;

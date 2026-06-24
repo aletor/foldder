@@ -34,6 +34,7 @@ const COST_ENDPOINTS: CostEndpointGuard[] = [
   { route: "src/app/api/spaces/cine/analyze/route.ts", services: ['"openai-cine-analyze"'] },
   { route: "src/app/api/spaces/describe/route.ts", services: ['"openai-describe"'] },
   { route: "src/app/api/spaces/guionista/route.ts", services: ['"openai-brain-content"'] },
+  { route: "src/app/api/spaces/layerizer/preview-mask/route.ts", services: ['"layerizer-segment"'] },
   { route: "src/app/api/spaces/search/route.ts", services: ['"gemini-search-verify"'] },
   { route: "src/app/api/spaces/text-content/route.ts", services: ['"openai-assistant"'] },
   { route: "src/app/api/spaces/video-matte/route.ts", services: ['"replicate-vmatte"'] },

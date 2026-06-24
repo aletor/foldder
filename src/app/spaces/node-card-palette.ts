@@ -1,7 +1,6 @@
 /** Card background colors — keep in sync with `.spaces-canvas` palette in spaces.css */
 export const FOLDDER_NODE_CARD_BG: Record<string, string> = {
   inspiration: "#0ac38a",
-  photoRoom: "#71449f",
   nanoBanana: "#f16389",
   imageCreationAdvanced: "#9E8458",
   designer: "#8A8B58",
