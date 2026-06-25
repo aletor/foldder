@@ -9,6 +9,7 @@ import {
   type PopulateInputBinding,
 } from "./populate-types";
 import { PopulatePromptEditor } from "./PopulatePromptEditor";
+import type { ActiveImageRef } from "./populate-active-refs";
 
 export interface PopulateTemplatePanelProps {
   /** Prompt plantilla (texto fijo + tokens {campo}); editado dentro de Populate. */
@@ -20,10 +21,9 @@ export interface PopulateTemplatePanelProps {
   constantFields?: FieldDef[];
   listId: string | null;
   /**
-   * Slots de imagen del nodo creativo, derivados de su DECLARACIÓN
-   * (`orchestration.inputs`), no hardcodeados. Para Image Creation son las 4 refs.
+   * Referencias de imagen conectadas al nodo creativo (solo cables activos).
    */
-  imageSlots: CreativeInputDescriptor[];
+  imageSlots: ActiveImageRef[];
   /** Etiqueta del input de texto principal (del declaración; p. ej. "Prompt"). */
   promptLabel?: string;
   onChangePrompt: (next: string) => void;
@@ -109,6 +109,9 @@ export function PopulateTemplatePanel({
 
       {imageSlots.length > 0 ? (
         <div className="populate-template-panel__refs">
+          <span className="populate-template-panel__refs-head">
+            Referencias conectadas ({imageSlots.length})
+          </span>
           {imageSlots.map((slot) => {
             const binding = bindings[slot.inputId];
             const current =
@@ -116,13 +119,18 @@ export function PopulateTemplatePanel({
             return (
               <label key={slot.inputId} className="populate-template-panel__ref">
                 <span className="populate-template-panel__ref-label">{slot.label}</span>
+                {slot.sourceLabel ? (
+                  <span className="populate-template-panel__ref-connected" title="Cable activo en Image Creation">
+                    Conectado: {slot.sourceLabel}
+                  </span>
+                ) : null}
                 <select
                   className="populate-template-panel__select nodrag"
                   value={current}
                   onChange={(e) => setRefSource(slot.inputId, e.target.value)}
                   onPointerDown={(e) => e.stopPropagation()}
                 >
-                  <option value={FIXED_VALUE}>Imagen fija</option>
+                  <option value={FIXED_VALUE}>Imagen fija (actual)</option>
                   {imageColumns.map((f) => (
                     <option key={f.id} value={f.id}>
                       Columna: {f.label}
@@ -133,7 +141,11 @@ export function PopulateTemplatePanel({
             );
           })}
         </div>
-      ) : null}
+      ) : (
+        <span className="populate-template-panel__refs-empty">
+          Conecta referencias de imagen a Image Creation para variarlas desde el Dataset.
+        </span>
+      )}
     </div>
   );
 }

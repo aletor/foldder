@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { findPopulateShareByToken } from "@/lib/populate-share-db";
 import { toPublicPopulateShareRecord } from "@/lib/populate-share-types";
 import { PublicPopulateFormClient } from "./PublicPopulateFormClient";
+import { PublicDesignerFormClient } from "./PublicDesignerFormClient";
 
 function isPastIsoDate(value: string): boolean {
   const t = new Date(value).getTime();
@@ -28,5 +29,9 @@ export default async function PublicPopulateFormPage(props: { params: Promise<{ 
     );
   }
 
-  return <PublicPopulateFormClient initial={toPublicPopulateShareRecord(row)} />;
+  const record = toPublicPopulateShareRecord(row);
+  if (record.payload.designer) {
+    return <PublicDesignerFormClient initial={record} />;
+  }
+  return <PublicPopulateFormClient initial={record} />;
 }

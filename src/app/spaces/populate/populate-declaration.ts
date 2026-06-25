@@ -21,7 +21,12 @@ import {
   type CreativeInputDescriptor,
 } from "./populate-types";
 
+/** Estrategia de orquestación; ver `NodeMetadata.orchestration.mode`. */
+export type NodeOrchestrationMode = "input-binding" | "node-clone";
+
 export interface NodeOrchestrationDeclaration {
+  /** Estrategia: variar inputs (Image Creation) o clonar el nodo entero por fila (Designer). */
+  mode: NodeOrchestrationMode;
   /** Inputs de texto variables (p. ej. el prompt). */
   textInputs: CreativeInputDescriptor[];
   /** Inputs de imagen variables (referencias). */
@@ -35,6 +40,7 @@ export interface NodeOrchestrationDeclaration {
 }
 
 const EMPTY: NodeOrchestrationDeclaration = {
+  mode: "input-binding",
   textInputs: [],
   imageInputs: [],
   videoInputs: [],
@@ -44,13 +50,16 @@ const EMPTY: NodeOrchestrationDeclaration = {
 function split(
   descriptors: CreativeInputDescriptor[],
   promptDataKey: string | undefined,
+  mode: NodeOrchestrationMode = "input-binding",
 ): NodeOrchestrationDeclaration {
   return {
+    mode,
     textInputs: descriptors.filter((d) => d.kind === "text"),
     imageInputs: descriptors.filter((d) => d.kind === "image"),
     videoInputs: descriptors.filter((d) => d.kind === "video"),
     promptDataKey,
-    orchestrable: descriptors.length > 0,
+    // node-clone es orquestable aunque no declare inputs estáticos (sus campos son por instancia).
+    orchestrable: descriptors.length > 0 || mode === "node-clone",
   };
 }
 
@@ -67,13 +76,13 @@ export function getNodeOrchestrationDeclaration(
 
   // 1) Declaración explícita (preferida): el nodo dice exactamente qué expone.
   const explicit = meta.orchestration;
-  if (explicit?.inputs?.length) {
-    const descriptors: CreativeInputDescriptor[] = explicit.inputs.map((i) => ({
+  if (explicit && (explicit.inputs?.length || explicit.mode === "node-clone")) {
+    const descriptors: CreativeInputDescriptor[] = (explicit.inputs ?? []).map((i) => ({
       inputId: i.id,
       label: i.label,
       kind: i.kind,
     }));
-    return split(descriptors, explicit.promptDataKey);
+    return split(descriptors, explicit.promptDataKey, explicit.mode ?? "input-binding");
   }
 
   // 2) Fallback: derivar de los tipos de los handles de entrada.

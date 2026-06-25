@@ -15,6 +15,7 @@ export type SpacesCanvasKeyboardShortcutsRef = {
   setNodes: import("react").Dispatch<import("react").SetStateAction<Node[]>>;
   setEdges: import("react").Dispatch<import("react").SetStateAction<Edge[]>>;
   takeSnapshot: () => void;
+  saveProject: () => Promise<boolean>;
   fitViewToNodeIds: (ids: string[], duration?: number, opts?: { padding?: number }) => void;
   handleEscape: () => boolean;
   setCardsFocusIndex: (updater: (f: number) => number) => void;
@@ -42,6 +43,7 @@ export function useSpacesCanvasKeyboard(
         setNodes: doSetNodes,
         setEdges: doSetEdges,
         takeSnapshot: doTakeSnapshot,
+        saveProject: doSaveProject,
         fitViewToNodeIds: doFitViewToNodeIds,
       } = keyboardShortcutsRef.current;
 
@@ -225,6 +227,12 @@ export function useSpacesCanvasKeyboard(
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault();
         if (e.shiftKey) doRedo(); else doUndo();
+        return;
+      }
+      // Ctrl+S / Cmd+S — guardar proyecto de inmediato
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        void doSaveProject();
         return;
       }
       // Ctrl+D — duplicate selected nodes (ranuras múltiples: clon debajo + arista al siguiente handle libre)

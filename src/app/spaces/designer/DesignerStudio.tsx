@@ -8,6 +8,8 @@ import FreehandStudio, {
   type DesignerStudioApi,
 } from "../FreehandStudio";
 import type { DesignerPageState } from "./DesignerNode";
+import { saveDesignerPagesToInspiration } from "../inspiration/save-designer-template";
+import { useProjectAssetsCanvas } from "../project-assets-canvas-context";
 import {
   DEFAULT_DESIGNER_PAGE_FORMAT,
   formatById,
@@ -191,6 +193,8 @@ export default function DesignerStudio({
   }, []);
 
   const designerSpaceId = useDesignerSpaceId();
+  const projectAssetsCtx = useProjectAssetsCanvas();
+  const inspirationProjectId = projectAssetsCtx?.projectScopeId ?? null;
   const brainTelemetry = useBrainNodeTelemetry({
     canvasNodeId: designerCanvasInstanceKey,
     nodeType: "DESIGNER",
@@ -1390,6 +1394,22 @@ export default function DesignerStudio({
     [commitPages],
   );
 
+  /** Renombra una slide (cosmético: no afecta a la estructura ni al modo bucle). */
+  const renameSlide = useCallback(
+    (idx: number, name: string) => {
+      commitPages((prev) => {
+        const n = [...prev];
+        const p = n[idx];
+        if (!p) return prev;
+        const trimmed = name.trimStart();
+        if ((p.slideName ?? "") === trimmed) return prev;
+        n[idx] = { ...p, slideName: trimmed };
+        return n;
+      });
+    },
+    [commitPages],
+  );
+
   // ── Threading: append frame after overflow ──
 
   const appendGuardRef = useRef<string | null>(null);
@@ -2060,6 +2080,52 @@ export default function DesignerStudio({
 
   refreshRailThumbnailsForPagesRef.current = refreshRailThumbnailsForPages;
 
+  // --- Guardar en Inspiración (plantilla Designer) desde el modal Export ---
+  const [saveInspirationState, setSaveInspirationState] = useState<
+    "idle" | "busy" | "done" | "error"
+  >("idle");
+
+  const handleSaveToInspiration = useCallback(async () => {
+    if (saveInspirationState === "busy") return;
+    const realPages = pagesRef.current;
+    const hasContent = realPages.some((p) => (p.objects?.length ?? 0) > 0);
+    if (!hasContent) {
+      window.alert("Diseña algo antes de guardarlo en Inspiración.");
+      return;
+    }
+    const firstId = realPages[0]?.id ?? null;
+    const defaultTitle = safeDesignerExportFilenameBase(undefined) || "Plantilla";
+    const title = window.prompt("Nombre de la plantilla para Inspiración", defaultTitle);
+    if (title === null) return; // cancelado
+
+    setSaveInspirationState("busy");
+    try {
+      const rendered = await renderPagesToPng({
+        targetPageIds: firstId ? [firstId] : null,
+        maxSide: 640,
+      });
+      const thumbDataUrl = (firstId ? rendered[firstId] : undefined) ?? Object.values(rendered)[0];
+      if (!thumbDataUrl) throw new Error("No se pudo rasterizar la miniatura.");
+      await saveDesignerPagesToInspiration({
+        pages: realPages,
+        thumbDataUrl,
+        title: title.trim() || defaultTitle,
+        projectId: inspirationProjectId,
+      });
+      setSaveInspirationState("done");
+      window.setTimeout(() => setSaveInspirationState("idle"), 2200);
+    } catch (error) {
+      console.error("[Designer] guardar en Inspiración (modal Export)", error);
+      window.alert(
+        error instanceof Error
+          ? `No se pudo guardar en Inspiración: ${error.message}`
+          : "No se pudo guardar en Inspiración.",
+      );
+      setSaveInspirationState("error");
+      window.setTimeout(() => setSaveInspirationState("idle"), 2200);
+    }
+  }, [inspirationProjectId, renderPagesToPng, saveInspirationState]);
+
   const handleCloseWithFirstPagePreview = useCallback(async () => {
     // Solo renderiza las páginas que aún no tienen raster (las visitadas/editadas ya lo capturaron en vivo).
     try {
@@ -2241,6 +2307,10 @@ export default function DesignerStudio({
       onImport: () => deImportInputRef.current?.click(),
       busy: deExportBusy || deImportHydrating,
     },
+    designerSaveToInspiration: {
+      state: saveInspirationState,
+      onSave: handleSaveToInspiration,
+    },
     designerAutoOptimizeSwitch: {
       enabled: autoImageOptimization,
       onChange: (v) => onAutoImageOptimizationChange?.(v),
@@ -2269,6 +2339,7 @@ export default function DesignerStudio({
         duplicatePage={duplicatePage}
         onRequestDeletePages={requestDeletePages}
         onAddPage={addBlankPageAfterActive}
+        onRenameSlide={renameSlide}
         datasetLoopLists={
           datasetConnected && designerConnectedDataset
             ? designerConnectedDataset.lists.map((list) => ({

@@ -116,50 +116,86 @@ export function applyDatasetRowToDesignerObject(
   return next;
 }
 
-/** Aplica la fila `rowIndex` del Dataset a todos los objetos enlazados de una página. */
+/**
+ * Recorre el árbol de objetos de una página aplicando `transformOne` a CADA objeto, incluidos los
+ * anidados dentro de `booleanGroup` (children) y `clippingContainer` (mask + content, es decir el
+ * "pegar dentro"). Parchea las stories de los marcos de texto que cambien. Devuelve la misma página
+ * (misma referencia) si nada cambia, para no provocar renders innecesarios.
+ */
+export function transformDesignerPageObjectsDeep(
+  page: DesignerPageState,
+  transformOne: (obj: FreehandObject) => FreehandObject,
+): DesignerPageState {
+  let stories = page.stories ?? [];
+  let pageChanged = false;
+
+  const walk = (obj: FreehandObject): FreehandObject => {
+    let next = transformOne(obj);
+    let changed = next !== obj;
+    if (changed && next.type === "text" && next.isTextFrame && typeof next.storyId === "string" && next.storyId) {
+      stories = patchStoryContentPlain(stories, next.storyId, next.text ?? "");
+    }
+    if (next.type === "booleanGroup") {
+      const grp = next;
+      const children = grp.children.map(walk);
+      if (children.some((c, i) => c !== grp.children[i])) {
+        next = { ...grp, children };
+        changed = true;
+      }
+    } else if (next.type === "clippingContainer") {
+      const clip = next;
+      const mask = walk(clip.mask as unknown as FreehandObject) as unknown as typeof clip.mask;
+      const content = clip.content.map(walk);
+      if (mask !== clip.mask || content.some((c, i) => c !== clip.content[i])) {
+        next = { ...clip, mask, content };
+        changed = true;
+      }
+    }
+    if (changed) pageChanged = true;
+    return next;
+  };
+
+  const objects = (page.objects ?? []).map(walk);
+  if (!pageChanged) return page;
+  return { ...page, objects, stories };
+}
+
+/** Aplica la fila `rowIndex` del Dataset a todos los objetos enlazados de una página (recursivo). */
 export function applyDatasetRowToDesignerPage(
   page: DesignerPageState,
   dataset: Dataset,
   rowIndex: number,
 ): DesignerPageState {
-  let stories = page.stories ?? [];
-  let objectsChanged = false;
-  const objects = (page.objects ?? []).map((obj) => {
-    const next = applyDatasetRowToDesignerObject(obj, dataset, rowIndex);
-    if (next !== obj) {
-      objectsChanged = true;
-      if (
-        next.type === "text" &&
-        next.isTextFrame &&
-        typeof next.storyId === "string" &&
-        next.storyId
-      ) {
-        stories = patchStoryContentPlain(stories, next.storyId, next.text ?? "");
-      }
-    }
-    return next;
-  });
-
-  if (!objectsChanged && rowIndex === page.datasetRowIndex) {
-    return page;
-  }
-
-  return {
-    ...page,
-    datasetRowIndex: rowIndex,
-    objects: objectsChanged ? objects : page.objects ?? [],
-    stories,
-  };
+  const transformed = transformDesignerPageObjectsDeep(page, (obj) =>
+    applyDatasetRowToDesignerObject(obj, dataset, rowIndex),
+  );
+  if (transformed === page && page.datasetRowIndex === rowIndex) return page;
+  return { ...transformed, datasetRowIndex: rowIndex };
 }
 
-/** ¿La página tiene algún objeto enlazado al Dataset (campo o propiedad)? */
+function objectHasDatasetBindings(o: FreehandObject): boolean {
+  if (
+    !!o._designerDatasetBinding ||
+    (!!o._designerDatasetPropertyBindings &&
+      Object.keys(o._designerDatasetPropertyBindings).length > 0)
+  ) {
+    return true;
+  }
+  if (o.type === "booleanGroup") {
+    return o.children.some(objectHasDatasetBindings);
+  }
+  if (o.type === "clippingContainer") {
+    return (
+      objectHasDatasetBindings(o.mask as unknown as FreehandObject) ||
+      o.content.some(objectHasDatasetBindings)
+    );
+  }
+  return false;
+}
+
+/** ¿La página tiene algún objeto enlazado al Dataset (campo o propiedad), incluso anidado? */
 export function designerPageHasDatasetBindings(page: DesignerPageState): boolean {
-  return (page.objects ?? []).some(
-    (o) =>
-      !!o._designerDatasetBinding ||
-      (!!o._designerDatasetPropertyBindings &&
-        Object.keys(o._designerDatasetPropertyBindings).length > 0),
-  );
+  return (page.objects ?? []).some(objectHasDatasetBindings);
 }
 
 /**

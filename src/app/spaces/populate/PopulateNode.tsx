@@ -1,6 +1,6 @@
 "use client";
 
-import React, { memo, useCallback, useMemo, useState } from "react";
+import React, { memo, useCallback, useMemo, useRef, useState } from "react";
 import {
   useReactFlow,
   useStore,
@@ -15,10 +15,11 @@ import {
   FolderOpen,
   Loader2,
   Repeat,
+  Sparkles,
 } from "lucide-react";
 import { StudioCanvasNodeShell, type StudioCanvasNodeHandleSpec } from "../studio-node/studio-canvas-node";
-import { resolveMediaUrlFromEdgeSource } from "../resolve-connected-media-url";
 import { resolvePromptValueFromEdgeSourceMap } from "../canvas-group-logic";
+import { getNodeOrchestrationDeclaration } from "./populate-declaration";
 import {
   POPULATE_COMMIT_EVENT,
   useConnectedDatasetForNode,
@@ -29,11 +30,17 @@ import type {
   PopulateInputBinding,
   PopulateNodeData,
 } from "./populate-types";
+import { findPopulateTemplateLinkEdge } from "./populate-template-link";
+import { activeImageRefsSignature, resolveActiveImageRefs, type ActiveImageRef } from "./populate-active-refs";
 import { extractPromptTokens } from "./populate-tokens";
 import { resolveImageBindingForRow, resolvePromptForRow } from "./populate-resolve";
-import { getNodeOrchestrationDeclaration } from "./populate-declaration";
-import { PopulateTemplatePanel } from "./PopulateTemplatePanel";
-import { PopulateFormPanel } from "./PopulateFormPanel";
+import { PopulateStudio } from "./PopulateStudio";
+import { buildPopulateCompactSummary } from "./populate-studio-summary";
+import {
+  defaultPopulateDatasetOutputSettings,
+} from "./PopulateDatasetOutputPanel";
+import { persistPopulateDatasetOutput } from "./persist-populate-dataset-output";
+import type { PopulateDatasetOutputSettings } from "./populate-types";
 import {
   autofillFormFromRow,
   derivePopulateForm,
@@ -41,6 +48,7 @@ import {
   resolveFormPrompt,
 } from "./populate-form";
 import { buildPopulateSharePayload } from "./populate-share-payload";
+import type { PopulateSharePayload } from "@/lib/populate-share-types";
 import { generatePopulateImage, type PopulateTemplateModel } from "./populate-generate";
 import {
   buildGeneratedSubgraph,
@@ -48,8 +56,33 @@ import {
   buildRowSubgraph,
   type MaterializedRow,
 } from "./populate-materialize";
+import { isNodeCloneTemplateType, resolveDesignerTemplateConfig } from "./populate-designer-template";
+import { extractDesignerDynamicFields } from "./populate-designer-fields";
+import {
+  buildDesignerGeneratedSubgraph,
+  freezeDesignerPagesForRow,
+  type DesignerMaterializedRow,
+} from "./populate-designer-materialize";
+import { rasterizeAndUploadDesignerRows, uploadDesignerSlideRaster } from "./populate-designer-raster";
+import {
+  deriveDesignerForm,
+  freezeDesignerPagesForForm,
+  resolveDesignerSlotValues,
+} from "./populate-designer-form";
+import { makePopulateDesignerGroupId, type DesignerDatasetOutputSettings } from "./populate-designer-dataset-output";
+import { persistPopulateDesignerDatasetOutput } from "./persist-populate-designer-dataset-output";
+import {
+  DesignerHeadlessRasterPortal,
+  type DesignerHeadlessRasterRequest,
+} from "../designer/DesignerHeadlessRasterPortal";
+import { useProjectAssetsCanvas } from "../project-assets-canvas-context";
+import type { DesignerPageState } from "../designer/DesignerNode";
 
 const POPULATE_ACCENT = "#FD52EB";
+const EMPTY_SLOT_BINDINGS: Record<
+  string,
+  { listId: string; listKey: string; fieldId: string; fieldKey: string }
+> = {};
 const POPULATE_EMPTY_BACKGROUND_SRC = "/assets/nodes/populate-empty-pink.png";
 
 const HANDLES: StudioCanvasNodeHandleSpec[] = [
@@ -76,7 +109,9 @@ type TemplateConfig = {
   seedPrompt: string;
   bindings: PopulateBindings;
   fixedRefUrls: Record<string, string>;
-  /** Inputs de imagen y texto leídos por DECLARACIÓN del nodo creativo. */
+  /** Referencias de imagen con cable activo en Image Creation (solo estas se configuran). */
+  activeImageRefs: ActiveImageRef[];
+  /** @deprecated Usar activeImageRefs; alias de slots activos para resolución. */
   imageInputs: CreativeInputDescriptor[];
   textInputs: CreativeInputDescriptor[];
 };
@@ -86,7 +121,7 @@ function resolveTemplateConfig(
   nodes: Node[],
   edges: Edge[],
 ): TemplateConfig | null {
-  const linkEdge = edges.find((e) => e.target === populateId && e.targetHandle === "template");
+  const linkEdge = findPopulateTemplateLinkEdge(populateId, nodes, edges);
   if (!linkEdge) return null;
   const tpl = nodes.find((n) => n.id === linkEdge.source);
   if (!tpl) return null;
@@ -114,15 +149,16 @@ function resolveTemplateConfig(
   const bindings =
     popData.templateBindings ?? (data._populateBindings as PopulateBindings) ?? {};
 
-  // URLs de referencia fija: lo conectado a cada handle de imagen DECLARADO.
-  const fixedRefUrls: Record<string, string> = {};
-  for (const slot of declaration.imageInputs) {
-    const refEdge = edges.find((e) => e.target === tpl.id && e.targetHandle === slot.inputId);
-    if (refEdge) {
-      const url = resolveMediaUrlFromEdgeSource(refEdge, nodes, edges);
-      if (url) fixedRefUrls[slot.inputId] = url;
-    }
-  }
+  // Referencias ACTIVAS: solo handles con cable entrante y URL resuelta.
+  const activeImageRefs = resolveActiveImageRefs({
+    templateNodeId: tpl.id,
+    imageInputs: declaration.imageInputs,
+    nodes,
+    edges,
+  });
+  const fixedRefUrls: Record<string, string> = Object.fromEntries(
+    activeImageRefs.map((ref) => [ref.inputId, ref.fixedUrl]),
+  );
 
   return {
     templateNodeId: tpl.id,
@@ -142,7 +178,8 @@ function resolveTemplateConfig(
     seedPrompt,
     bindings,
     fixedRefUrls,
-    imageInputs: declaration.imageInputs,
+    activeImageRefs,
+    imageInputs: activeImageRefs,
     textInputs: declaration.textInputs,
   };
 }
@@ -157,7 +194,42 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
   const [shareError, setShareError] = useState<string | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [studioOpen, setStudioOpen] = useState(false);
+  const [previewRowIndex, setPreviewRowIndex] = useState(0);
+
+  const projectAssetsCtx = useProjectAssetsCanvas();
+  const projectId = projectAssetsCtx?.projectScopeId ?? null;
+
+  // Driver del raster headless (Fase 4b): monta un Designer offscreen y resuelve {pageId: dataUrl}.
+  const [designerRasterReq, setDesignerRasterReq] = useState<DesignerHeadlessRasterRequest | null>(null);
+  const designerRasterRef = useRef<{
+    resolve: (m: Record<string, string>) => void;
+    reject: (e: Error) => void;
+    collected: Record<string, string>;
+  } | null>(null);
+  const designerRasterSeqRef = useRef(0);
+
+  const rasterizeDesignerPages = useCallback(
+    (pages: DesignerPageState[], pageIds: string[]) =>
+      new Promise<Record<string, string>>((resolve, reject) => {
+        designerRasterRef.current = { resolve, reject, collected: {} };
+        const seq = (designerRasterSeqRef.current += 1);
+        setDesignerRasterReq({
+          requestId: seq,
+          instanceKey: `${id}_raster_${seq}`,
+          pages,
+          targetPageIds: pageIds,
+        });
+      }),
+    [id],
+  );
+
+  const onPreviewRowChange = useCallback((rowIndex: number) => {
+    setPreviewRowIndex(rowIndex);
+    setPreviewUrl(null);
+  }, []);
 
   const lists = useMemo(() => connectedDataset?.lists ?? [], [connectedDataset]);
   const listId = useMemo(() => {
@@ -188,7 +260,7 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
       return rowIndices.map((rowIndex) => {
         const prompt = resolvePromptForRow(template.promptTemplate, dataset, listId, rowIndex);
         const refs: MaterializedRow["refs"] = [];
-        for (const slot of template.imageInputs) {
+        for (const slot of template.activeImageRefs) {
           const binding = template.bindings[slot.inputId];
           let url: string | null = null;
           let label: string = slot.label;
@@ -228,19 +300,20 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
     setError(null);
     const template = getTemplate();
     if (!template) {
-      setError("Conecta un nodo Image Creation al handle Plantilla.");
+      setError("Conecta Image Creation (salida Image out) al handle Plantilla de Populate.");
       return;
     }
     if (rowCount === 0) {
       setError("El listado no tiene filas.");
       return;
     }
-    const [row] = buildRows(template, [0]);
+    const rowIdx = Math.max(0, Math.min(previewRowIndex, rowCount - 1));
+    const [row] = buildRows(template, [rowIdx]);
     if (!row || !row.prompt.trim()) {
       setError("La plantilla no tiene prompt. Escribe el prompt en Image Creation.");
       return;
     }
-    setBusy(true);
+    setPreviewLoading(true);
     setPreviewUrl(null);
     patchSelf({ status: "preview" });
     try {
@@ -255,15 +328,15 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
       setError(err instanceof Error ? err.message : "Error en la previsualización.");
       patchSelf({ status: "error" });
     } finally {
-      setBusy(false);
+      setPreviewLoading(false);
     }
-  }, [getTemplate, rowCount, buildRows, patchSelf, toGenModel]);
+  }, [getTemplate, rowCount, buildRows, patchSelf, toGenModel, previewRowIndex]);
 
   const onGenerateBatch = useCallback(async () => {
     setError(null);
     const template = getTemplate();
     if (!template) {
-      setError("Conecta un nodo Image Creation al handle Plantilla.");
+      setError("Conecta Image Creation (salida Image out) al handle Plantilla de Populate.");
       return;
     }
     if (rowCount === 0) {
@@ -308,6 +381,34 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
       const sub = buildGeneratedSubgraph(id, rows, template.model, template.templateType);
       const mediaList = buildMediaListOutput(id, label, rows);
       const firstOutput = rows.find((r) => r.output)?.output ?? "";
+      const lastRunOutputs = rows.filter((r) => r.output).map((r) => r.output!);
+
+      let lastDatasetWriteSummary: string | undefined;
+      const outputSettings = nodeData.datasetOutput;
+      if (outputSettings?.enabled && connectedDataset && listId) {
+        try {
+          const writeResult = await persistPopulateDatasetOutput({
+            populateNodeId: id,
+            nodes: getNodes(),
+            edges: getEdges(),
+            dataset: connectedDataset,
+            listId,
+            rows,
+            settings: outputSettings,
+            setNodes,
+          });
+          const skipped =
+            writeResult.skippedCount > 0 ? ` · ${writeResult.skippedCount} omitidas` : "";
+          lastDatasetWriteSummary = `${writeResult.writtenCount} celdas → «${writeResult.fieldLabel}»${skipped}`;
+        } catch (writeErr) {
+          console.error("[Populate] dataset output", writeErr);
+          setError(
+            writeErr instanceof Error
+              ? writeErr.message
+              : "Error al guardar resultados en el Dataset.",
+          );
+        }
+      }
 
       window.dispatchEvent(
         new CustomEvent(POPULATE_COMMIT_EVENT, {
@@ -321,7 +422,12 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
           },
         }),
       );
-      patchSelf({ status: "done" });
+      patchSelf({
+        status: "done",
+        lastRunOutputs,
+        value: firstOutput || undefined,
+        lastDatasetWriteSummary,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error en el lote.");
       patchSelf({ status: "error" });
@@ -329,7 +435,155 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
       setBusy(false);
       setProgress(null);
     }
-  }, [getTemplate, rowCount, buildRows, patchSelf, toGenModel, id, nodeData.label]);
+  }, [
+    getTemplate,
+    rowCount,
+    buildRows,
+    patchSelf,
+    toGenModel,
+    id,
+    nodeData.label,
+    nodeData.datasetOutput,
+    connectedDataset,
+    listId,
+    getNodes,
+    getEdges,
+    setNodes,
+  ]);
+
+  /**
+   * Generación por CLONADO (Designer): multiplica el documento en N instancias congeladas, una por
+   * fila, resolviendo sus enlaces internos. No consume wallet (es render local del propio Designer).
+   */
+  const onGenerateDesignerBatch = useCallback(async () => {
+    setError(null);
+    const cfg = resolveDesignerTemplateConfig(id, getNodes(), getEdges());
+    if (!cfg) {
+      setError("Conecta un Designer (salida Document) al handle Plantilla de Populate.");
+      return;
+    }
+    if (!connectedDataset || !listId) {
+      setError("Conecta un Dataset al handle izquierdo.");
+      return;
+    }
+    if (rowCount === 0) {
+      setError("El listado no tiene filas.");
+      return;
+    }
+    if (cfg.pages.length === 0) {
+      setError("El Designer enlazado no tiene páginas.");
+      return;
+    }
+    if (typeof window !== "undefined") {
+      const ok = window.confirm(
+        `Vas a multiplicar el Designer en ${rowCount} instancia${rowCount === 1 ? "" : "s"} (una por fila), ` +
+          `congeladas con los datos de cada fila. ¿Continuar?`,
+      );
+      if (!ok) return;
+    }
+
+    setBusy(true);
+    setProgress({ done: 0, total: rowCount });
+    patchSelf({ status: "running", progressTotal: rowCount, progressDone: 0, error: undefined });
+    const label = nodeData.label || "Populate";
+
+    // Modo 2: mapeo hueco→columna asignado en la UI de Populate (huecos sin asignar quedan estáticos).
+    const popData = (getNodes().find((n) => n.id === id)?.data ?? {}) as PopulateNodeData;
+    const slotColumnMap = popData.designerSlotBindings ?? {};
+
+    try {
+      const rows: DesignerMaterializedRow[] = [];
+      for (let i = 0; i < rowCount; i += 1) {
+        const pages = freezeDesignerPagesForRow(cfg.pages, connectedDataset, i, slotColumnMap);
+        rows.push({ rowIndex: i, cardId: activeList?.cards[i]?.id, pages });
+        setProgress({ done: i + 1, total: rowCount });
+        patchSelf({ progressDone: i + 1 });
+      }
+
+      const sub = buildDesignerGeneratedSubgraph(id, rows);
+      window.dispatchEvent(
+        new CustomEvent(POPULATE_COMMIT_EVENT, {
+          detail: {
+            populateNodeId: id,
+            spaceName: label,
+            nodes: sub.nodes,
+            edges: sub.edges,
+          },
+        }),
+      );
+
+      // Fase 4b: rasterizar cada instancia y volcar M columnas × N filas al Dataset (si está activado).
+      const outputSettings = nodeData.datasetOutput;
+      if (outputSettings?.enabled && connectedDataset && listId) {
+        try {
+          setProgress({ done: 0, total: rowCount });
+          const slideRows = await rasterizeAndUploadDesignerRows({
+            rows,
+            rasterize: rasterizeDesignerPages,
+            upload: (dataUrl, ctx) =>
+              uploadDesignerSlideRaster(dataUrl, {
+                projectId,
+                mediaId: `pdg_${id}_${ctx.rowIndex}_${ctx.slideKey}`,
+              }),
+            onRowDone: (done, total) => {
+              setProgress({ done, total });
+              patchSelf({ progressDone: done });
+            },
+          });
+          const designerSettings: DesignerDatasetOutputSettings = {
+            enabled: true,
+            groupId: makePopulateDesignerGroupId(id),
+            groupLabel: outputSettings.columnLabel || label,
+            fillMode: outputSettings.fillMode,
+          };
+          const writeResult = await persistPopulateDesignerDatasetOutput({
+            populateNodeId: id,
+            nodes: getNodes(),
+            edges: getEdges(),
+            dataset: connectedDataset,
+            listId,
+            rows: slideRows,
+            settings: designerSettings,
+            setNodes,
+          });
+          patchSelf({
+            lastDatasetWriteSummary:
+              `${writeResult.writtenCount} celdas · ${writeResult.createdColumns} columnas nuevas` +
+              (writeResult.orphanedColumns ? ` · ${writeResult.orphanedColumns} huérfanas` : ""),
+          });
+        } catch (writeErr) {
+          console.error("[Populate] volcado de slides al Dataset", writeErr);
+          setError(
+            writeErr instanceof Error ? writeErr.message : "No se pudo volcar los slides al Dataset.",
+          );
+        } finally {
+          setDesignerRasterReq(null);
+        }
+      }
+
+      patchSelf({ status: "done", lastRunOutputs: [] });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error al multiplicar el Designer.");
+      patchSelf({ status: "error" });
+    } finally {
+      setBusy(false);
+      setProgress(null);
+    }
+  }, [
+    id,
+    getNodes,
+    getEdges,
+    setNodes,
+    connectedDataset,
+    listId,
+    rowCount,
+    activeList,
+    nodeData.label,
+    nodeData.datasetOutput,
+    projectId,
+    rasterizeDesignerPages,
+    patchSelf,
+  ]);
 
   const onOpenResults = useCallback(() => {
     const spaceId = nodeData.spaceId;
@@ -342,17 +596,24 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
   const templateSignature = useStore(
     useCallback(
       (s: ReactFlowState<Node, Edge>) => {
-        const link = s.edges.find((e) => e.target === id && e.targetHandle === "template");
+        const link = findPopulateTemplateLinkEdge(id, s.nodes, s.edges);
         if (!link) return "none";
         const tpl = s.nodes.find((n) => n.id === link.source);
         const d = (tpl?.data ?? {}) as Record<string, unknown>;
+        const declaration = getNodeOrchestrationDeclaration(tpl?.type);
+        const activeRefs = resolveActiveImageRefs({
+          templateNodeId: link.source,
+          imageInputs: declaration.imageInputs,
+          nodes: s.nodes,
+          edges: s.edges,
+        });
         return [
           link.source,
           tpl?.type ?? "",
           typeof d.label === "string" ? d.label : "",
           typeof d.promptText === "string" ? d.promptText : "",
           typeof d.modelKey === "string" ? d.modelKey : "",
-          s.edges.filter((e) => e.target === link.source).length,
+          activeImageRefsSignature(activeRefs),
         ].join("|");
       },
       [id],
@@ -363,6 +624,153 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
     () => getTemplate(),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [getTemplate, templateSignature, nodeData.templatePrompt, nodeData.templateBindings],
+  );
+
+  // Firma reactiva del template de tipo `node-clone` (Designer): nº de páginas + campos dinámicos.
+  const designerSignature = useStore(
+    useCallback(
+      (s: ReactFlowState<Node, Edge>) => {
+        const link = findPopulateTemplateLinkEdge(id, s.nodes, s.edges);
+        if (!link) return "none";
+        const tpl = s.nodes.find((n) => n.id === link.source);
+        if (!tpl || !isNodeCloneTemplateType(tpl.type)) return "none";
+        const pages = Array.isArray((tpl.data as { pages?: unknown[] })?.pages)
+          ? ((tpl.data as { pages: DesignerPageState[] }).pages ?? [])
+          : [];
+        const fields = extractDesignerDynamicFields(pages);
+        return [
+          tpl.type ?? "",
+          pages.length,
+          fields.map((f) => `${f.key}:${f.status}`).join(","),
+        ].join("|");
+      },
+      [id],
+    ),
+  );
+
+  const designerTemplate = useMemo(
+    () => (designerSignature === "none" ? null : resolveDesignerTemplateConfig(id, getNodes(), getEdges())),
+    [designerSignature, id, getNodes, getEdges],
+  );
+  const isDesignerTemplate = !!designerTemplate;
+
+  /** Huecos dinámicos pendientes de asignar columna (Modo 2). */
+  const designerPendingFields = useMemo(
+    () => (designerTemplate?.dynamicFields ?? []).filter((f) => f.status === "pending"),
+    [designerTemplate],
+  );
+  const designerSlotBindings = nodeData.designerSlotBindings ?? EMPTY_SLOT_BINDINGS;
+  const designerMappedCount = useMemo(
+    () => designerPendingFields.filter((f) => Boolean(designerSlotBindings[f.key])).length,
+    [designerPendingFields, designerSlotBindings],
+  );
+
+  /** Modelo de formulario Designer: un campo por hueco dinámico pendiente. */
+  const designerFormModel = useMemo(
+    () =>
+      deriveDesignerForm({
+        dynamicFields: designerTemplate?.dynamicFields ?? [],
+        slotBindings: designerSlotBindings,
+        dataset: connectedDataset ?? null,
+        listId,
+        slideCount: designerTemplate?.pages.length ?? 0,
+      }),
+    [designerTemplate, designerSlotBindings, connectedDataset, listId],
+  );
+  const [designerFormResults, setDesignerFormResults] = useState<string[]>([]);
+
+  /**
+   * Formulario Designer: congela UNA instancia con los valores tecleados y la rasteriza
+   * (tantas imágenes como slides). No consume wallet (render local del propio Designer). Además
+   * deja la instancia congelada en el lienzo, igual que el lote.
+   */
+  const onGenerateDesignerForm = useCallback(async () => {
+    setError(null);
+    const cfg = resolveDesignerTemplateConfig(id, getNodes(), getEdges());
+    if (!cfg) {
+      setError("Conecta un Designer (salida Document) al handle Plantilla de Populate.");
+      return;
+    }
+    if (cfg.pages.length === 0) {
+      setError("El Designer enlazado no tiene páginas.");
+      return;
+    }
+    const freshPop = (getNodes().find((n) => n.id === id)?.data ?? {}) as PopulateNodeData;
+    const fv = freshPop.formValues ?? {};
+    const slotValues = resolveDesignerSlotValues({
+      model: designerFormModel,
+      textValues: fv,
+      imageSelections: fv,
+    });
+
+    const label = nodeData.label || "Populate";
+    setBusy(true);
+    setDesignerFormResults([]);
+    setProgress({ done: 0, total: cfg.pages.length });
+    patchSelf({ status: "running", error: undefined });
+    try {
+      const pages = freezeDesignerPagesForForm(cfg.pages, slotValues);
+      const pageIds = pages.map((p) => p.id);
+      const byId = await rasterizeDesignerPages(pages, pageIds);
+      const results = pageIds.map((pid) => byId[pid]).filter((u): u is string => Boolean(u));
+      setDesignerFormResults(results);
+
+      const sub = buildDesignerGeneratedSubgraph(id, [{ rowIndex: 0, pages }]);
+      window.dispatchEvent(
+        new CustomEvent(POPULATE_COMMIT_EVENT, {
+          detail: { populateNodeId: id, spaceName: label, nodes: sub.nodes, edges: sub.edges },
+        }),
+      );
+      patchSelf({ status: "done" });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error al generar la pieza Designer.");
+      patchSelf({ status: "error" });
+    } finally {
+      setBusy(false);
+      setProgress(null);
+      setDesignerRasterReq(null);
+    }
+  }, [
+    id,
+    getNodes,
+    getEdges,
+    designerFormModel,
+    nodeData.label,
+    rasterizeDesignerPages,
+    patchSelf,
+  ]);
+
+  /** Asigna (o limpia) la columna de un hueco dinámico; clave = `designerSlotKey`. */
+  const onChangeDesignerSlotBinding = useCallback(
+    (slotKey: string, fieldId: string) => {
+      setNodes((nds) =>
+        nds.map((n) => {
+          if (n.id !== id) return n;
+          const d = (n.data ?? {}) as PopulateNodeData;
+          const prev = d.designerSlotBindings ?? {};
+          if (!fieldId) {
+            if (!(slotKey in prev)) return n;
+            const next = { ...prev };
+            delete next[slotKey];
+            return { ...n, data: { ...n.data, designerSlotBindings: next } };
+          }
+          const list = (connectedDataset?.lists ?? []).find((l) => l.id === listId);
+          const field = list?.schema.find((f) => f.id === fieldId);
+          if (!list || !field) return n;
+          return {
+            ...n,
+            data: {
+              ...n.data,
+              designerSlotBindings: {
+                ...prev,
+                [slotKey]: { listId: list.id, listKey: list.key, fieldId: field.id, fieldKey: field.key },
+              },
+            },
+          };
+        }),
+      );
+    },
+    [id, setNodes, connectedDataset, listId],
   );
 
   /** Prompt y bindings efectivos para el editor (Populate manda; si no, semilla). */
@@ -397,7 +805,7 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
     if (!template) return { columnRefs: [] as string[], tokenCount: 0 };
     const labelByFieldId = new Map(activeList?.schema.map((f) => [f.id, f.label]) ?? []);
     const columnRefs: string[] = [];
-    for (const slot of template.imageInputs) {
+    for (const slot of template.activeImageRefs) {
       const b = editorBindings[slot.inputId];
       if (b?.source === "column") {
         const col =
@@ -423,11 +831,11 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
       derivePopulateForm({
         promptTemplate: editorPrompt,
         bindings: editorBindings,
-        imageInputs: template?.imageInputs ?? [],
+        imageInputs: template?.activeImageRefs ?? [],
         dataset: connectedDataset ?? null,
         listId,
       }),
-    [editorPrompt, editorBindings, template?.imageInputs, connectedDataset, listId],
+    [editorPrompt, editorBindings, template?.activeImageRefs, connectedDataset, listId],
   );
 
   const formValues = useMemo(() => nodeData.formValues ?? {}, [nodeData.formValues]);
@@ -493,7 +901,7 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
     setError(null);
     const tpl = getTemplate();
     if (!tpl) {
-      setError("Conecta un nodo Image Creation al handle Plantilla.");
+      setError("Conecta Image Creation (salida Image out) al handle Plantilla de Populate.");
       return;
     }
     const freshPop = getNodes().find((n) => n.id === id);
@@ -507,7 +915,7 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
     }
     const refs = resolveFormImages({
       model: formModel,
-      imageInputs: tpl.imageInputs,
+      imageInputs: tpl.activeImageRefs,
       fixedRefUrls: tpl.fixedRefUrls,
       imageRows: fir,
       dataset: connectedDataset ?? null,
@@ -549,7 +957,7 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
           },
         }),
       );
-      patchSelf({ status: "done" });
+      patchSelf({ status: "done", lastRunOutputs: [result.output], value: result.output });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al generar la pieza.");
       patchSelf({ status: "error" });
@@ -560,7 +968,25 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
 
   const publicFormShareToken = nodeData.publicFormShareToken ?? null;
 
-  const buildSharePayload = useCallback(() => {
+  const buildSharePayload = useCallback((): PopulateSharePayload | null => {
+    // Plantilla Designer: enlace de rasterizado en cliente (N imágenes = N slides).
+    if (isDesignerTemplate) {
+      const cfg = resolveDesignerTemplateConfig(id, getNodes(), getEdges());
+      if (!cfg || cfg.pages.length === 0 || designerFormModel.empty) return null;
+      return {
+        title: nodeData.label || "Populate",
+        promptTemplate: "",
+        formModel: { textFields: [], imageFields: [], rows: [], empty: true },
+        templateModel: { modelKey: "designer", aspectRatio: "" },
+        fixedRefUrls: {},
+        imageInputs: [],
+        designer: {
+          pages: cfg.pages,
+          formFields: designerFormModel.fields,
+          slideCount: cfg.pages.length,
+        },
+      };
+    }
     const tpl = getTemplate();
     if (!tpl) return null;
     return buildPopulateSharePayload({
@@ -569,15 +995,29 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
       formModel,
       templateModel: toGenModel(tpl),
       fixedRefUrls: tpl.fixedRefUrls,
-      imageInputs: tpl.imageInputs,
+      imageInputs: tpl.activeImageRefs,
     });
-  }, [getTemplate, nodeData.label, formModel, toGenModel]);
+  }, [
+    isDesignerTemplate,
+    id,
+    getNodes,
+    getEdges,
+    designerFormModel,
+    getTemplate,
+    nodeData.label,
+    formModel,
+    toGenModel,
+  ]);
 
   const onShareForm = useCallback(async () => {
     setShareError(null);
     const payload = buildSharePayload();
-    if (!payload || payload.formModel.empty) {
-      setShareError("Inserta variables en la plantilla antes de compartir.");
+    if (!payload) {
+      setShareError(
+        isDesignerTemplate
+          ? "Marca campos dinámicos en el Designer antes de compartir."
+          : "Inserta variables en la plantilla antes de compartir.",
+      );
       return;
     }
     setShareBusy(true);
@@ -608,7 +1048,7 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
     } finally {
       setShareBusy(false);
     }
-  }, [buildSharePayload, id, nodeData.label, publicFormShareToken, patchSelf]);
+  }, [buildSharePayload, isDesignerTemplate, id, nodeData.label, publicFormShareToken, patchSelf]);
 
   const onCopyShareUrl = useCallback(() => {
     if (!publicFormShareToken) return;
@@ -637,11 +1077,35 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
     }
   }, [previewUrl, nodeData.label]);
 
-  const formCanGenerate = !!template && !formModel.empty;
-  const ready = !!template && rowCount > 0;
+  const ready = (isDesignerTemplate || !!template) && rowCount > 0;
   const listName = activeList?.name ?? "—";
   const progressPct =
     progress && progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
+  const lastRunOutputs = nodeData.lastRunOutputs ?? [];
+  const compactSummary = buildPopulateCompactSummary({
+    listName,
+    rowCount,
+    templateLabel: template?.templateLabel ?? null,
+    tokenCount: mapping.tokenCount,
+    dynamicRefCount: mapping.columnRefs.length,
+    activeRefCount: template?.activeImageRefs.length ?? 0,
+    mode,
+    hasShareToken: Boolean(publicFormShareToken),
+  });
+  const genModel = useMemo(
+    () => (template ? toGenModel(template) : { modelKey: "flash31", aspectRatio: "16:9", provider: "gemini" as const }),
+    [template, toGenModel],
+  );
+
+  const datasetOutputSettings = useMemo(
+    () => nodeData.datasetOutput ?? defaultPopulateDatasetOutputSettings(template?.templateLabel ?? null),
+    [nodeData.datasetOutput, template?.templateLabel],
+  );
+
+  const onChangeDatasetOutput = useCallback(
+    (next: PopulateDatasetOutputSettings) => patchSelf({ datasetOutput: next }),
+    [patchSelf],
+  );
 
   return (
     <StudioCanvasNodeShell
@@ -702,48 +1166,28 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
           </div>
         ) : null}
 
-        <div className="foldder-frameless-secondary-panel nodrag relative z-10 flex flex-col gap-0.5 text-[8px] text-white/80">
-          <div
-            className="populate-mode-toggle nodrag"
-            onPointerDown={(e) => e.stopPropagation()}
-          >
-            <button
-              type="button"
-              className={mode === "batch" ? "is-active" : ""}
-              onClick={(e) => {
-                e.stopPropagation();
-                setMode("batch");
-              }}
-            >
-              Lote
-            </button>
-            <button
-              type="button"
-              className={mode === "form" ? "is-active" : ""}
-              onClick={(e) => {
-                e.stopPropagation();
-                setMode("form");
-              }}
-            >
-              Formulario
-            </button>
-          </div>
-
+        <div className="populate-node-summary nodrag relative z-10">
           {!datasetConnected ? (
-            <span className="leading-snug text-white/55">
-              Conecta un Dataset (izquierda) y Image Creation → Plantilla (abajo).
-            </span>
+            <p className="populate-node-summary__text populate-node-summary__text--muted">
+              Conecta un Dataset (izquierda) y Image Creation → Image out (abajo).
+            </p>
           ) : datasetLoading ? (
-            <span className="flex items-center gap-1 leading-snug text-white/55">
-              <Loader2 size={10} className="animate-spin" /> Cargando Dataset…
-            </span>
+            <p className="populate-node-summary__text populate-node-summary__text--muted">
+              <Loader2 size={12} className="inline animate-spin" /> Cargando Dataset…
+            </p>
           ) : (
             <>
-              <span className="leading-snug text-white/75">
-                {listName} · {rowCount} {rowCount === 1 ? "fila" : "filas"}
-                {template ? ` · ${template.templateLabel}` : " · sin plantilla"}
-              </span>
-
+              <p className="populate-node-summary__text">
+                {isDesignerTemplate
+                  ? `Designer «${designerTemplate?.templateLabel}» · ${listName} · ${rowCount} fila${
+                      rowCount === 1 ? "" : "s"
+                    } · ${designerTemplate?.pages.length ?? 0} slide${
+                      (designerTemplate?.pages.length ?? 0) === 1 ? "" : "s"
+                    } · ${designerTemplate?.dynamicFields.length ?? 0} campo${
+                      (designerTemplate?.dynamicFields.length ?? 0) === 1 ? "" : "s"
+                    } dinámico${(designerTemplate?.dynamicFields.length ?? 0) === 1 ? "" : "s"}`
+                  : compactSummary}
+              </p>
               {lists.length > 1 ? (
                 <select
                   className="populate-node-list-select nodrag"
@@ -758,80 +1202,29 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
                   ))}
                 </select>
               ) : null}
-
-              {!template ? (
-                <span className="text-[7px] leading-snug text-white/50">
-                  Conecta la salida Plantilla de Image Creation
-                </span>
-              ) : mode === "form" ? (
-                <span className="text-[7px] leading-snug text-white/50">
-                  Rellena el formulario y genera una pieza
-                </span>
-              ) : (
-                <span className="text-[7px] leading-snug text-white/50">
-                  {mapping.tokenCount > 0
-                    ? `Prompt con ${mapping.tokenCount} campo${mapping.tokenCount === 1 ? "" : "s"} del Dataset`
-                    : "Inserta campos {…} en el prompt de abajo"}
-                  {mapping.columnRefs.length > 0
-                    ? ` · ${mapping.columnRefs.length} ref por columna`
-                    : ""}
-                </span>
-              )}
-
-              {mode === "batch" ? (
-                <button
-                  type="button"
-                  disabled={busy || !ready}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void onPreview();
-                  }}
-                  onPointerDown={(e) => e.stopPropagation()}
-                  className="populate-node-preview-link nodrag"
-                >
-                  Probar fila 1
-                </button>
+              {isDesignerTemplate && datasetConnected ? (
+                <p className="populate-node-summary__meta">
+                  {designerMappedCount > 0
+                    ? `${designerMappedCount}/${designerPendingFields.length} campo${
+                        designerPendingFields.length === 1 ? "" : "s"
+                      } mapeado${designerMappedCount === 1 ? "" : "s"}`
+                    : designerPendingFields.length > 0
+                      ? `${designerPendingFields.length} campo${
+                          designerPendingFields.length === 1 ? "" : "s"
+                        } por mapear en Studio`
+                      : "Marca campos dinámicos en el Designer"}
+                  {datasetOutputSettings.enabled ? " · volcado al Dataset activo" : ""}
+                </p>
+              ) : null}
+              {lastRunOutputs.length > 0 && !busy ? (
+                <p className="populate-node-summary__meta">
+                  Última ejecución: {lastRunOutputs.length} imagen
+                  {lastRunOutputs.length === 1 ? "" : "es"}
+                </p>
               ) : null}
             </>
           )}
         </div>
-
-        {template && mode === "batch" ? (
-          <div className="populate-template-editor nodrag relative z-10">
-            <PopulateTemplatePanel
-              promptText={editorPrompt}
-              bindings={editorBindings}
-              schema={activeList?.schema ?? []}
-              constantFields={connectedDataset?.constants.fields ?? []}
-              listId={listId}
-              imageSlots={template.imageInputs}
-              promptLabel={template.textInputs[0]?.label ?? "Prompt"}
-              onChangePrompt={onChangeTemplatePrompt}
-              onChangeBinding={onChangeTemplateBinding}
-            />
-          </div>
-        ) : null}
-
-        {template && mode === "form" ? (
-          <div className="populate-template-editor nodrag relative z-10">
-            <PopulateFormPanel
-              model={formModel}
-              textValues={formValues}
-              imageRows={formImageRows}
-              busy={busy}
-              canGenerate={formCanGenerate}
-              onChangeText={onChangeFormText}
-              onChangeImageRow={onChangeFormImageRow}
-              onAutofill={onAutofillForm}
-              onGenerate={onGenerateForm}
-              shareToken={publicFormShareToken}
-              shareBusy={shareBusy}
-              shareError={shareError}
-              onShare={() => void onShareForm()}
-              onCopyShareUrl={onCopyShareUrl}
-            />
-          </div>
-        ) : null}
 
         {error ? (
           <div className="foldder-frameless-error nodrag flex items-start gap-1.5 px-2 py-1 text-[10px]">
@@ -841,20 +1234,38 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
         ) : null}
 
         <div className="foldder-frameless-footer-action nodrag populate-node-footer relative z-10">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setStudioOpen(true);
+            }}
+            onPointerDown={(e) => e.stopPropagation()}
+            className="populate-open-studio nodrag"
+            title="Abrir Studio para mapear variables y generar"
+          >
+            <Sparkles size={14} strokeWidth={2.2} />
+            Abrir Studio
+          </button>
+
           {mode === "batch" ? (
             <button
               type="button"
               disabled={busy || !ready}
               onClick={(e) => {
                 e.stopPropagation();
-                void onGenerateBatch();
+                void (isDesignerTemplate ? onGenerateDesignerBatch() : onGenerateBatch());
               }}
               onPointerDown={(e) => e.stopPropagation()}
               className="execute-btn populate-run-button nodrag"
               title={
                 ready
-                  ? `Genera ${rowCount} imagen${rowCount === 1 ? "" : "es"}, una por fila`
-                  : "Conecta Dataset y Plantilla"
+                  ? isDesignerTemplate
+                    ? `Multiplica el Designer en ${rowCount} instancia${rowCount === 1 ? "" : "s"}, una por fila`
+                    : `Genera ${rowCount} imagen${rowCount === 1 ? "" : "es"}, una por fila`
+                  : isDesignerTemplate
+                    ? "Conecta Dataset y Designer (Document)"
+                    : "Conecta Dataset e Image out"
               }
             >
               {busy && progress ? (
@@ -865,7 +1276,7 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
               ) : (
                 <>
                   <Repeat size={13} strokeWidth={2.2} />
-                  Ejecutar bucle · {rowCount} {rowCount === 1 ? "fila" : "filas"}
+                  Ejecutar · {rowCount}
                 </>
               )}
             </button>
@@ -882,11 +1293,92 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
               className="action-btn populate-open-results nodrag"
             >
               <FolderOpen size={12} />
-              Abrir resultados
+              Resultados
             </button>
           ) : null}
         </div>
       </div>
+
+      {studioOpen ? (
+        <PopulateStudio
+          nodeId={id}
+          nodeLabel={nodeData.label?.trim() || "Populate"}
+          mode={mode}
+          onModeChange={setMode}
+          onClose={() => setStudioOpen(false)}
+          templateLabel={template?.templateLabel ?? designerTemplate?.templateLabel ?? null}
+          promptText={editorPrompt}
+          promptLabel={template?.textInputs[0]?.label ?? "Prompt"}
+          bindings={editorBindings}
+          activeImageRefs={template?.activeImageRefs ?? []}
+          model={genModel}
+          onChangePrompt={onChangeTemplatePrompt}
+          onChangeBinding={onChangeTemplateBinding}
+          schema={activeList?.schema ?? []}
+          constantFields={connectedDataset?.constants.fields ?? []}
+          listId={listId}
+          listName={listName}
+          rowCount={rowCount}
+          lists={lists}
+          onSelectList={onSelectList}
+          datasetConnected={datasetConnected}
+          datasetLoading={datasetLoading}
+          dataset={connectedDataset ?? null}
+          formModel={formModel}
+          formValues={formValues}
+          formImageRows={formImageRows}
+          onChangeFormText={onChangeFormText}
+          onChangeFormImageRow={onChangeFormImageRow}
+          onAutofillForm={onAutofillForm}
+          busy={busy}
+          progress={progress}
+          lastRunOutputs={lastRunOutputs}
+          previewRowIndex={previewRowIndex}
+          onPreviewRowChange={onPreviewRowChange}
+          previewUrl={previewUrl}
+          previewLoading={previewLoading}
+          onPreview={() => void onPreview()}
+          onGenerateBatch={() => void (isDesignerTemplate ? onGenerateDesignerBatch() : onGenerateBatch())}
+          onGenerateForm={() => void onGenerateForm()}
+          shareToken={publicFormShareToken}
+          shareBusy={shareBusy}
+          shareError={shareError}
+          onShare={() => void onShareForm()}
+          onCopyShareUrl={onCopyShareUrl}
+          error={error}
+          datasetOutput={datasetOutputSettings}
+          onChangeDatasetOutput={onChangeDatasetOutput}
+          lastDatasetWriteSummary={nodeData.lastDatasetWriteSummary ?? null}
+          isDesignerTemplate={isDesignerTemplate}
+          designerFields={designerTemplate?.dynamicFields ?? []}
+          designerSlideCount={designerTemplate?.pages.length ?? 0}
+          designerSlotBindings={designerSlotBindings}
+          onChangeDesignerSlotBinding={onChangeDesignerSlotBinding}
+          designerFormModel={designerFormModel}
+          designerFormValues={formValues}
+          designerFormResults={designerFormResults}
+          onChangeDesignerFormValue={onChangeFormText}
+          onGenerateDesignerForm={() => void onGenerateDesignerForm()}
+        />
+      ) : null}
+      {designerRasterReq ? (
+        <DesignerHeadlessRasterPortal
+          request={designerRasterReq}
+          onPage={(pageId, dataUrl) => {
+            if (designerRasterRef.current) designerRasterRef.current.collected[pageId] = dataUrl;
+          }}
+          onDone={() => {
+            const ref = designerRasterRef.current;
+            designerRasterRef.current = null;
+            ref?.resolve(ref.collected);
+          }}
+          onError={(err) => {
+            const ref = designerRasterRef.current;
+            designerRasterRef.current = null;
+            ref?.reject(err);
+          }}
+        />
+      ) : null}
     </StudioCanvasNodeShell>
   );
 }

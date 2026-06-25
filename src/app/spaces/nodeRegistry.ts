@@ -31,6 +31,15 @@ export interface NodeMetadata {
    *   semilla para la plantilla (p. ej. 'promptText' en Image Creation).
    */
   orchestration?: {
+    /**
+     * Estrategia de orquestación:
+     * - `input-binding` (por defecto): Populate varía los `inputs` del nodo por fila (prompt + refs),
+     *   resolviendo valores y empujándolos a handles (modelo de Image Creation).
+     * - `node-clone`: Populate clona el nodo entero por fila (congelado), resolviendo sus enlaces
+     *   internos. Sus campos dinámicos NO se declaran aquí (son por instancia): se descubren de los
+     *   datos del nodo (p. ej. Designer lee `_designerDatasetBinding` de sus páginas).
+     */
+    mode?: 'input-binding' | 'node-clone';
     inputs: { id: string; label: string; kind: 'text' | 'image' | 'video' }[];
     promptDataKey?: string;
   };
@@ -306,7 +315,6 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
     ],
     outputs: [
       { id: 'image', label: 'Image Out', type: 'image' },
-      { id: 'template', label: 'Plantilla', type: 'template' },
     ],
     dataSchema: {},
     // Declaración para Populate: prompt (texto) + 4 referencias (imagen).
@@ -526,12 +534,20 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
     ],
     dataSchema: {
       pages:
-        'DesignerPageState[] (id, format, objects, layoutGuides, stories, textFrames, imageFrames)',
+        'DesignerPageState[] (id, slideKey, slideName, format, objects, layoutGuides, stories, textFrames, imageFrames)',
       activePageIndex: 'number',
       pageThumbnails:
         'Record<pageId, dataURL> (raster en vivo por p\u00e1gina para la salida media_list / Export Multimedia)',
       label: 'string',
       value: 'string (exported raster data URL)',
+    },
+    // Orquestación por clonado: Populate multiplica el Designer entero por fila (congelado),
+    // resolviendo sus enlaces internos (`_designerDatasetBinding`). Los campos dinámicos son por
+    // instancia (dependen de qué objetos enlazó el usuario), así que se descubren de los datos del
+    // nodo, no de esta lista estática.
+    orchestration: {
+      mode: 'node-clone',
+      inputs: [],
     },
   },
   presenter: {

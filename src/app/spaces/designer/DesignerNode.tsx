@@ -77,6 +77,16 @@ export type DesignerPageState = {
   presenterGroupSteps?: PresenterGroupStep[];
   /** Presenter: omitir en modo Play; miniatura muy atenuada en el rail. */
   presenterSkipSlide?: boolean;
+  /**
+   * Identidad ESTABLE de la slide, independiente de su `id` (que se remapea al clonar) y de su
+   * posición en el rail. La usa Populate para nombrar columnas del Dataset por slide sin que
+   * reordenar/insertar slides las desalinee. Si falta, se usa `id` como fallback determinista
+   * (ver `resolveSlideKey`). El duplicado de una sola página la limpia (slide nueva = clave nueva);
+   * el clon de documento completo (Populate por fila) la re-estampa desde la plantilla.
+   */
+  slideKey?: string;
+  /** Nombre legible de la slide editable en el rail; la columna del Dataset hereda este nombre. */
+  slideName?: string;
   /** Fila del Dataset enlazado para esta página (por defecto = índice de página). */
   datasetRowIndex?: number;
   /**

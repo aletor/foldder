@@ -1,5 +1,19 @@
 import type { CreativeInputDescriptor } from "@/app/spaces/populate/populate-types";
 import type { PopulateFormModel } from "@/app/spaces/populate/populate-form";
+import type { DesignerFormField } from "@/app/spaces/populate/populate-designer-form";
+import type { DesignerPageState } from "@/app/spaces/designer/DesignerNode";
+
+/**
+ * Variante Designer del enlace público: en lugar de generar 1 imagen por IA (server-side), el
+ * cliente rasteriza la plantilla con los valores del formulario y devuelve tantas imágenes como
+ * slides. No consume wallet (es render de plantilla, no generación). Lleva las páginas de la
+ * plantilla (con huecos sin resolver) y los campos del formulario con sus opciones materializadas.
+ */
+export type PopulateShareDesignerPayload = {
+  pages: DesignerPageState[];
+  formFields: DesignerFormField[];
+  slideCount: number;
+};
 
 export type PopulateShareTemplateModel = {
   modelKey: string;
@@ -28,6 +42,8 @@ export type PopulateSharePayload = {
   templateModel: PopulateShareTemplateModel;
   fixedRefUrls: Record<string, string>;
   imageInputs: CreativeInputDescriptor[];
+  /** Presente solo en enlaces de plantilla Designer (rasterizado en cliente, N imágenes). */
+  designer?: PopulateShareDesignerPayload;
 };
 
 export type PopulateShareRecord = {

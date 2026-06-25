@@ -2,7 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element */
 
-import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   NodeProps,
   NodeResizer,
@@ -14,19 +14,24 @@ import {
   type Node,
 } from "@xyflow/react";
 import {
+  Bookmark,
+  Check,
   ChevronDown,
   ChevronUp,
   Compass,
+  LayoutTemplate,
   Layers3,
   Link2,
   Loader2,
   Palette,
   Search,
   Sparkles,
+  Trash2,
+  Upload,
   UserRound,
   Wallpaper,
+  Workflow,
 } from "lucide-react";
-import { runAiJobWithNotification } from "@/lib/ai-job-notifications";
 import { useCanvasNodeMediaPreviewUrl } from "../hooks/use-authed-media-preview-url";
 import { readJsonWithHttpError } from "@/lib/read-response-json";
 import { resolvePromptValueFromEdgeSource } from "../canvas-group-logic";
@@ -47,6 +52,34 @@ import {
   touchStudioNodeData,
 } from "../studio-node/foldder-studio-touched";
 import { FoldderStudioTouchedMark } from "../studio-node/foldder-studio-touched-mark";
+import {
+  buildInspirationFeed,
+  feedHasAnyResults,
+  INSPIRATION_PROVIDERS,
+  inspirationFeedKey,
+  isFeedLoading,
+  type InspirationFeedEntry,
+  type InspirationInputKind,
+} from "./inspiration-feed";
+import {
+  ensureInspirationFeed,
+  getInspirationFeedEntry,
+  subscribeInspirationFeed,
+} from "./inspiration-feed-cache";
+import {
+  addImageToLibrary,
+  deleteInspirationLibraryItem,
+  fetchInspirationFlow,
+  fetchInspirationTemplatePages,
+  listInspirationLibrary,
+  subscribeInspirationLibraryUpdated,
+  type InspirationLibraryItem,
+} from "./inspiration-library-api";
+import { uploadProjectMediaFile } from "../project-media-s3-save";
+import type { DesignerPageState } from "../designer/DesignerNode";
+import { useProjectAssetsCanvas } from "../project-assets-canvas-context";
+import { remapInsertedFlow } from "../flow/flow-graph";
+import type { Edge } from "@xyflow/react";
 
 type InspirationFacet = "similar" | "textures" | "colors" | "style" | "people" | "backgrounds";
 type InspirationProvider = "pexels" | "unsplash" | "arena";
@@ -81,6 +114,11 @@ type InspirationNodeData = {
   status?: InspirationStatus;
   error?: string;
   notice?: string;
+  /** Feed unificado: fuentes activas (toggles), filtro de calidad y última consulta resuelta. */
+  inspirationSources?: InspirationProvider[];
+  inspirationQualityOnly?: boolean;
+  lastQuery?: string;
+  lastInputKind?: InspirationInputKind;
   _foldderCanvasIntro?: boolean;
   _foldderStudioTouched?: boolean;
 };
@@ -215,15 +253,35 @@ function statusMessage(status: InspirationStatus, hasInput: boolean): string {
   return "Ready to search inspiration.";
 }
 
+/** Re-render reactivo cuando cambia el feed cacheado de una clave. */
+function useInspirationFeedEntry(key: string): InspirationFeedEntry | undefined {
+  const [, force] = useReducer((x: number) => x + 1, 0);
+  useEffect(() => {
+    if (!key) return;
+    return subscribeInspirationFeed(key, force);
+  }, [key]);
+  return key ? getInspirationFeedEntry(key) : undefined;
+}
+
+const PROVIDER_LABEL: Record<InspirationProvider, string> = {
+  pexels: "Pexels",
+  unsplash: "Unsplash",
+  arena: "Are.na",
+};
+
+type InspirationStudioSection = "discover" | "library" | "flows";
+
 function InspirationStudio({
-  nodeId,
   data,
   nodeLabel,
   promptInput,
   imageInput,
   expandDirectLink,
+  projectId,
   onClose,
   onPatch,
+  onInsertDesignerTemplate,
+  onInsertFlow,
 }: {
   nodeId: string;
   data: InspirationNodeData;
@@ -231,20 +289,158 @@ function InspirationStudio({
   promptInput: string;
   imageInput: string;
   expandDirectLink?: boolean;
+  projectId: string | null;
   onClose: () => void;
   onPatch: (patch: Partial<InspirationNodeData>) => void;
+  onInsertDesignerTemplate: (args: { pages: DesignerPageState[]; title: string }) => void;
+  onInsertFlow: (args: { nodes: unknown[]; edges: unknown[]; title: string }) => void;
 }) {
-  const facet = data.facet ?? "similar";
-  const provider = data.provider ?? "pexels";
-  const results = Array.isArray(data.results) ? data.results : [];
   const selected = data.selected ?? null;
+  const [section, setSection] = useState<InspirationStudioSection>("discover");
+
+  // --- Librería de usuario ("Mis plantillas") ---
+  const [libraryItems, setLibraryItems] = useState<InspirationLibraryItem[]>([]);
+  const [libraryLoading, setLibraryLoading] = useState(false);
+  const [libraryError, setLibraryError] = useState<string | null>(null);
+  const [libraryBusyId, setLibraryBusyId] = useState<string | null>(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const libraryLoadedRef = useRef(false);
+  const uploadInputRef = useRef<HTMLInputElement | null>(null);
+
+  const reloadLibrary = useCallback(async () => {
+    setLibraryLoading(true);
+    setLibraryError(null);
+    try {
+      const items = await listInspirationLibrary();
+      setLibraryItems(items);
+      libraryLoadedRef.current = true;
+    } catch (error) {
+      setLibraryError(error instanceof Error ? error.message : "No se pudo cargar la librería.");
+    } finally {
+      setLibraryLoading(false);
+    }
+  }, []);
+
+  const librarySectionActive = section === "library" || section === "flows";
+
+  useEffect(() => {
+    if (librarySectionActive && !libraryLoadedRef.current) void reloadLibrary();
+  }, [librarySectionActive, reloadLibrary]);
+
+  useEffect(() => {
+    return subscribeInspirationLibraryUpdated(() => {
+      libraryLoadedRef.current = false;
+      if (librarySectionActive) void reloadLibrary();
+    });
+  }, [librarySectionActive, reloadLibrary]);
+
+  const templateItems = useMemo(() => libraryItems.filter((i) => i.kind !== "flow"), [libraryItems]);
+  const flowItems = useMemo(() => libraryItems.filter((i) => i.kind === "flow"), [libraryItems]);
+
+  const insertTemplate = useCallback(
+    async (item: InspirationLibraryItem) => {
+      setLibraryBusyId(item.id);
+      try {
+        const pages = await fetchInspirationTemplatePages(item.id);
+        if (!pages.length) throw new Error("La plantilla está vacía.");
+        onInsertDesignerTemplate({ pages, title: item.title });
+        onClose();
+      } catch (error) {
+        setLibraryError(error instanceof Error ? error.message : "No se pudo insertar la plantilla.");
+      } finally {
+        setLibraryBusyId(null);
+      }
+    },
+    [onClose, onInsertDesignerTemplate],
+  );
+
+  const insertFlowItem = useCallback(
+    async (item: InspirationLibraryItem) => {
+      setLibraryBusyId(item.id);
+      try {
+        const flow = await fetchInspirationFlow(item.id);
+        if (!flow.nodes.length) throw new Error("El flujo está vacío.");
+        onInsertFlow({ nodes: flow.nodes, edges: flow.edges, title: item.title });
+        onClose();
+      } catch (error) {
+        setLibraryError(error instanceof Error ? error.message : "No se pudo insertar el flujo.");
+      } finally {
+        setLibraryBusyId(null);
+      }
+    },
+    [onClose, onInsertFlow],
+  );
+
+  const selectLibraryImage = useCallback(
+    (item: InspirationLibraryItem) => {
+      if (!item.imageUrl) return;
+      onPatch({
+        value: item.imageUrl,
+        type: "image",
+        selected: null,
+        referenceSource: "direct",
+        status: "output",
+        error: undefined,
+        notice: undefined,
+      });
+      onClose();
+    },
+    [onClose, onPatch],
+  );
+
+  const removeLibraryItem = useCallback(
+    async (item: InspirationLibraryItem) => {
+      if (!window.confirm(`¿Eliminar "${item.title}" de Inspiración?`)) return;
+      setLibraryBusyId(item.id);
+      try {
+        await deleteInspirationLibraryItem(item.id);
+        setLibraryItems((prev) => prev.filter((x) => x.id !== item.id));
+      } catch (error) {
+        setLibraryError(error instanceof Error ? error.message : "No se pudo eliminar.");
+      } finally {
+        setLibraryBusyId(null);
+      }
+    },
+    [],
+  );
+
+  const handleUploadFiles = useCallback(
+    async (files: FileList | File[]) => {
+      const list = Array.from(files).filter((f) => f.type.startsWith("image/"));
+      if (list.length === 0) return;
+      setUploadingImage(true);
+      setLibraryError(null);
+      try {
+        for (const file of list) {
+          const uploaded = await uploadProjectMediaFile(file, {
+            projectId,
+            policy: { preserveImageQuality: true },
+          });
+          await addImageToLibrary({
+            title: file.name.replace(/\.[a-z0-9]+$/i, "") || "Imagen",
+            thumbUrl: uploaded.url,
+            thumbS3Key: uploaded.s3Key,
+            imageUrl: uploaded.url,
+            imageS3Key: uploaded.s3Key,
+          });
+        }
+        await reloadLibrary();
+      } catch (error) {
+        setLibraryError(error instanceof Error ? error.message : "No se pudo subir la imagen.");
+      } finally {
+        setUploadingImage(false);
+      }
+    },
+    [projectId, reloadLibrary],
+  );
   const [manualPrompt, setManualPrompt] = useState(data.manualPrompt ?? "");
   const [directLinkExpanded, setDirectLinkExpanded] = useState(Boolean(expandDirectLink));
   const [directUrl, setDirectUrl] = useState(
     data.referenceSource === "direct" && typeof data.value === "string" ? data.value : "",
   );
   const [directLinkError, setDirectLinkError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [describeBusy, setDescribeBusy] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
   const effectiveImageInput =
     imageInput || (looksLikeImageUrl(directUrl) ? directUrl.trim() : "");
   const imageIntentCacheRef = useRef<{ imageUrl: string; intent: string } | null>(
@@ -255,6 +451,41 @@ function InspirationStudio({
   const imageIntentPromiseRef = useRef<{ imageUrl: string; promise: Promise<string> } | null>(null);
 
   const hasAnyInput = Boolean(promptInput || effectiveImageInput || manualPrompt.trim());
+
+  // --- Feed unificado (las 3 librerías juntas, cacheado) ---
+  const [activeFacet, setActiveFacet] = useState<InspirationFacet>(data.facet ?? "similar");
+  const [activeInputKind, setActiveInputKind] = useState<InspirationInputKind>(
+    data.lastInputKind ?? (promptInput ? "prompt" : "prompt"),
+  );
+  const [activeQuery, setActiveQuery] = useState<string>(() => {
+    if (typeof data.lastQuery === "string" && data.lastQuery.trim()) return data.lastQuery.trim();
+    return (promptInput || (data.manualPrompt ?? "")).trim();
+  });
+
+  const enabledProviders = useMemo<InspirationProvider[]>(() => {
+    const raw = Array.isArray(data.inspirationSources)
+      ? data.inspirationSources.filter((p): p is InspirationProvider =>
+          INSPIRATION_PROVIDERS.includes(p),
+        )
+      : null;
+    return raw && raw.length > 0 ? raw : [...INSPIRATION_PROVIDERS];
+  }, [data.inspirationSources]);
+  const qualityOnly = data.inspirationQualityOnly !== false;
+
+  const feedKey = useMemo(
+    () =>
+      activeQuery
+        ? inspirationFeedKey({ query: activeQuery, facet: activeFacet, inputKind: activeInputKind })
+        : "",
+    [activeQuery, activeFacet, activeInputKind],
+  );
+  const feedEntry = useInspirationFeedEntry(feedKey);
+  const feed = useMemo(
+    () => buildInspirationFeed(feedEntry, { providers: enabledProviders, qualityOnly }),
+    [feedEntry, enabledProviders, qualityOnly],
+  );
+  const feedLoading = isFeedLoading(feedEntry, enabledProviders);
+  const busy = describeBusy || feedLoading;
 
   const describeImageIfNeeded = useCallback(async () => {
     if (!effectiveImageInput || promptInput || manualPrompt.trim()) return data.imageIntent || "";
@@ -294,68 +525,87 @@ function InspirationStudio({
   }, [data.imageIntent, data.imageIntentSource, effectiveImageInput, manualPrompt, onPatch, promptInput]);
 
   const runSearch = useCallback(
-    async (nextFacet = facet, nextProvider = provider) => {
+    async (nextFacet: InspirationFacet = activeFacet, force = false) => {
       if (!hasAnyInput) return;
-      setLoading(true);
-      onPatch({
-        status: "searching",
-        facet: nextFacet,
-        provider: nextProvider,
-        manualPrompt,
-        error: undefined,
-        notice: undefined,
-      });
+      setLocalError(null);
+      setDescribeBusy(true);
       try {
-        let runError: string | null = null;
-        const ok = await runAiJobWithNotification({ nodeId, label: "Inspiration" }, async () => {
-          const visualIntent = await describeImageIfNeeded();
-          const query = (promptInput || manualPrompt || visualIntent).trim();
-          const inputKind = promptInput || manualPrompt.trim() ? "prompt" : "image";
-          if (!query) throw new Error("No prompt or image intent available.");
-          const res = await fetch("/api/inspiration/search", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              query,
-              inputKind,
-              facet: nextFacet,
-              provider: nextProvider,
-              limit: 40,
-            }),
-          });
-          let json: { results?: InspirationResult[]; error?: string; notice?: string; code?: string };
-          try {
-            json = await readJsonWithHttpError<{ results?: InspirationResult[]; error?: string; notice?: string; code?: string }>(
-              res,
-              "/api/inspiration/search",
-            );
-          } catch (error) {
-            runError = error instanceof Error ? error.message : "Couldn’t load references.";
-            throw error;
-          }
-          const list = Array.isArray(json.results) ? json.results : [];
-          onPatch({
-            facet: nextFacet,
-            provider: nextProvider,
-            manualPrompt,
-            results: list,
-            status: list.length > 0 ? "results" : "error",
-            error: list.length > 0 ? undefined : "No references found.",
-            notice: typeof json.notice === "string" && json.notice.trim() ? json.notice : undefined,
-          });
+        const visualIntent = await describeImageIfNeeded();
+        const kind: InspirationInputKind = promptInput || manualPrompt.trim() ? "prompt" : "image";
+        const query = (promptInput || manualPrompt || visualIntent).trim();
+        if (!query) {
+          setLocalError("Escribe una idea o conecta una imagen para buscar.");
+          return;
+        }
+        setActiveFacet(nextFacet);
+        setActiveInputKind(kind);
+        setActiveQuery(query);
+        onPatch({
+          facet: nextFacet,
+          manualPrompt,
+          lastQuery: query,
+          lastInputKind: kind,
+          status: "results",
+          error: undefined,
+          notice: undefined,
         });
-        if (!ok) onPatch({ status: "error", error: runError || "Search cancelled or failed." });
+        const key = inspirationFeedKey({ query, facet: nextFacet, inputKind: kind });
+        ensureInspirationFeed({
+          key,
+          query,
+          facet: nextFacet,
+          inputKind: kind,
+          providers: enabledProviders,
+          force,
+        });
       } catch (error) {
         console.error("[InspirationStudio]", error);
-        onPatch({
-          status: "error",
-        error: error instanceof Error ? error.message : "Couldn’t load references.",
-        });
+        setLocalError(error instanceof Error ? error.message : "No se pudo buscar.");
       } finally {
-        setLoading(false);
+        setDescribeBusy(false);
       }
     },
-    [describeImageIfNeeded, facet, hasAnyInput, manualPrompt, nodeId, onPatch, promptInput, provider],
+    [activeFacet, describeImageIfNeeded, enabledProviders, hasAnyInput, manualPrompt, onPatch, promptInput],
+  );
+
+  // Al abrir con una consulta previa pero sin feed cacheado (p. ej. otro navegador), recárgalo.
+  useEffect(() => {
+    if (!feedKey || !activeQuery) return;
+    const existing = getInspirationFeedEntry(feedKey);
+    if (!feedHasAnyResults(existing)) {
+      ensureInspirationFeed({
+        key: feedKey,
+        query: activeQuery,
+        facet: activeFacet,
+        inputKind: activeInputKind,
+        providers: enabledProviders,
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [feedKey]);
+
+  const toggleProvider = useCallback(
+    (provider: InspirationProvider) => {
+      const set = new Set(enabledProviders);
+      if (set.has(provider)) {
+        if (set.size <= 1) return; // siempre al menos una fuente activa
+        set.delete(provider);
+      } else {
+        set.add(provider);
+      }
+      const next = INSPIRATION_PROVIDERS.filter((p) => set.has(p));
+      onPatch({ inspirationSources: next });
+      if (set.has(provider) && feedKey && activeQuery) {
+        ensureInspirationFeed({
+          key: feedKey,
+          query: activeQuery,
+          facet: activeFacet,
+          inputKind: activeInputKind,
+          providers: [provider],
+        });
+      }
+    },
+    [activeFacet, activeInputKind, activeQuery, enabledProviders, feedKey, onPatch],
   );
 
   const selectResult = useCallback(
@@ -366,14 +616,14 @@ function InspirationStudio({
         selected: result,
         referenceSource: "stock",
         status: "output",
-        facet,
-        provider,
+        facet: activeFacet,
+        provider: result.source === "Unsplash" ? "unsplash" : result.source === "Are.na" ? "arena" : "pexels",
         error: undefined,
         notice: undefined,
       });
       onClose();
     },
-    [facet, onClose, onPatch, provider],
+    [activeFacet, onClose, onPatch],
   );
 
   const applyDirectLink = useCallback(async () => {
@@ -400,6 +650,13 @@ function InspirationStudio({
     });
     onClose();
   }, [directUrl, onClose, onPatch]);
+
+  const loadingSourceCount = enabledProviders.filter(
+    (p) => feedEntry?.sourceState[p] === "loading",
+  ).length;
+  const sourceErrors = enabledProviders
+    .map((p) => (feedEntry?.sourceState[p] === "error" ? PROVIDER_LABEL[p] : null))
+    .filter((x): x is string => Boolean(x));
 
   return (
     <StudioNodePortal>
@@ -456,14 +713,14 @@ function InspirationStudio({
               <p className="mb-1.5 px-1 text-[8px] font-black uppercase tracking-[0.14em] text-emerald-200/70">Explore</p>
               <div className="flex flex-col gap-0.5">
                 {FACETS.map((item) => {
-                  const active = facet === item.id;
+                  const active = activeFacet === item.id;
                   return (
                     <button
                       key={item.id}
                       type="button"
                       title={item.en}
                       onClick={() => void runSearch(item.id)}
-                      disabled={loading || !hasAnyInput}
+                      disabled={describeBusy || !hasAnyInput}
                       className={`inspiration-studio-facet flex h-9 items-center gap-2 px-2 text-left transition disabled:cursor-not-allowed disabled:opacity-35 ${
                         active
                           ? "bg-[#0ac38a]/28 text-emerald-50"
@@ -482,123 +739,405 @@ function InspirationStudio({
           </aside>
 
           <section className="flex min-h-0 flex-col overflow-hidden">
-            <div className="flex h-10 shrink-0 divide-x divide-white/10 bg-white/[0.06]">
-              {PROVIDERS.map((item) => {
-                const active = provider === item.id;
+            {/* Conmutador de sección: Descubrir (stock) ↔ Mis plantillas (librería) */}
+            <div className="flex h-9 shrink-0 items-stretch border-b border-white/10 bg-white/[0.03]">
+              {([
+                { id: "discover" as const, label: "Descubrir", icon: <Compass size={12} />, count: 0 },
+                { id: "library" as const, label: "Mis plantillas", icon: <Bookmark size={12} />, count: templateItems.length },
+                { id: "flows" as const, label: "Mis flujos", icon: <Workflow size={12} />, count: flowItems.length },
+              ]).map((tab) => {
+                const active = section === tab.id;
                 return (
                   <button
-                    key={item.id}
+                    key={tab.id}
                     type="button"
-                    onClick={() => {
-                      if (item.id === provider) return;
-                      if (hasAnyInput) {
-                        void runSearch(facet, item.id);
-                      } else {
-                        onPatch({ provider: item.id });
-                      }
-                    }}
-                    disabled={loading}
-                    className={`min-w-0 flex-1 px-2 text-[9px] font-black uppercase tracking-[0.08em] transition disabled:pointer-events-none disabled:opacity-50 ${
+                    onClick={() => setSection(tab.id)}
+                    className={`flex items-center gap-1.5 px-4 text-[10px] font-black uppercase tracking-[0.08em] transition ${
                       active
-                        ? "bg-white text-slate-950"
-                        : "text-white/45 hover:bg-white/[0.08] hover:text-white"
+                        ? "border-b-2 border-emerald-400 text-white"
+                        : "border-b-2 border-transparent text-white/45 hover:text-white/80"
                     }`}
                   >
-                    {item.label}
+                    {tab.icon}
+                    {tab.label}
+                    {tab.id !== "discover" && tab.count > 0 ? (
+                      <span className="rounded-full bg-white/12 px-1.5 py-0.5 text-[8px] text-white/70">
+                        {tab.count}
+                      </span>
+                    ) : null}
                   </button>
                 );
               })}
-              <div className="hidden min-w-0 flex-[1.2] items-center justify-end px-3 xl:flex">
+            </div>
+
+            {section === "discover" ? (
+            <>
+            {/* Barra de fuentes (toggles no exclusivos) + calidad + contador */}
+            <div className="flex h-11 shrink-0 items-center gap-2 border-b border-white/10 bg-white/[0.04] px-3">
+              <span className="text-[8px] font-black uppercase tracking-[0.14em] text-white/35">Fuentes</span>
+              <div className="flex items-center gap-1.5">
+                {INSPIRATION_PROVIDERS.map((provider) => {
+                  const on = enabledProviders.includes(provider);
+                  const loadingSrc = feedEntry?.sourceState[provider] === "loading";
+                  return (
+                    <button
+                      key={provider}
+                      type="button"
+                      onClick={() => toggleProvider(provider)}
+                      className={`inspiration-source-chip flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[9px] font-black uppercase tracking-[0.06em] transition ${
+                        on
+                          ? "bg-white text-slate-950"
+                          : "bg-white/[0.06] text-white/45 hover:bg-white/[0.12] hover:text-white/80"
+                      }`}
+                    >
+                      {loadingSrc ? (
+                        <Loader2 size={11} className="animate-spin" aria-hidden />
+                      ) : on ? (
+                        <Check size={11} aria-hidden />
+                      ) : null}
+                      {PROVIDER_LABEL[provider]}
+                    </button>
+                  );
+                })}
+              </div>
+              <button
+                type="button"
+                onClick={() => onPatch({ inspirationQualityOnly: !qualityOnly })}
+                title="Filtra fotos pequeñas o con proporciones extremas"
+                className={`ml-1 flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[9px] font-black uppercase tracking-[0.06em] transition ${
+                  qualityOnly
+                    ? "bg-emerald-400/25 text-emerald-50"
+                    : "bg-white/[0.06] text-white/45 hover:bg-white/[0.12] hover:text-white/80"
+                }`}
+              >
+                <Sparkles size={11} aria-hidden />
+                Solo las mejores
+              </button>
+              <div className="ml-auto flex items-center gap-2">
+                {loadingSourceCount > 0 ? (
+                  <span className="flex items-center gap-1.5 text-[9px] font-semibold uppercase tracking-[0.06em] text-emerald-200/80">
+                    <Loader2 size={11} className="animate-spin" aria-hidden />
+                    Cargando…
+                  </span>
+                ) : null}
                 <p className="truncate text-[9px] font-semibold uppercase tracking-[0.06em] text-white/35">
-                  {results.length > 0
-                    ? `${results.length} refs · ${PROVIDERS.find((item) => item.id === provider)?.label ?? provider}`
-                    : "Run search to load references"}
+                  {feed.length > 0 ? `${feed.length} refs` : activeQuery ? "Sin resultados" : "Busca para empezar"}
                 </p>
               </div>
             </div>
 
-            {(data.error || data.notice) && (
-              <div className="shrink-0 divide-y divide-white/8 border-b border-white/8">
-                {data.error ? (
+            {(localError || sourceErrors.length > 0) && (
+              <div className="shrink-0 border-b border-white/8">
+                {localError ? (
                   <div className="flex items-center gap-2 bg-rose-500/15 px-3 py-1.5 text-[10px] font-semibold text-rose-100">
-                    {data.error}
+                    {localError}
                   </div>
                 ) : null}
-                {data.notice ? (
-                  <div className="flex items-center gap-2 bg-amber-400/15 px-3 py-1.5 text-[10px] font-semibold text-amber-100">
-                    {data.notice}
+                {sourceErrors.length > 0 ? (
+                  <div className="flex items-center gap-2 bg-amber-400/12 px-3 py-1.5 text-[10px] font-semibold text-amber-100">
+                    No se pudo cargar: {sourceErrors.join(", ")}
                   </div>
                 ) : null}
               </div>
             )}
 
-            <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto">
-              {loading ? (
-                <div className="flex h-full min-h-[320px] flex-col items-center justify-center gap-3 text-white/45">
-                  <Loader2 size={24} className="animate-spin text-emerald-300" />
-                  <span className="text-[10px] font-black uppercase tracking-[0.12em]">Searching references…</span>
-                </div>
-              ) : results.length === 0 ? (
+            <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto p-2">
+              {feed.length === 0 && !feedLoading ? (
                 <div className="flex h-full min-h-[320px] flex-col items-center justify-center px-6 text-center">
                   <Compass size={28} className="mb-3 text-[#0ac38a]/85" />
                   <p className="text-[13px] font-black uppercase tracking-[0.08em] text-white/82">
-                    Start with an idea or image
+                    {activeQuery ? "Sin referencias" : "Empieza con una idea o imagen"}
                   </p>
                   <p className="mt-2 max-w-[340px] text-[10px] leading-relaxed text-white/48">
-                    Pick a facet and provider, then use <span className="text-white/72">Search references</span> in the
-                    bar below.
+                    {activeQuery
+                      ? "Prueba otra faceta, activa más fuentes o desactiva “Solo las mejores”."
+                      : "Elige una faceta y pulsa Buscar referencias en la barra inferior. Saldrán Pexels, Unsplash y Are.na juntas."}
                   </p>
                 </div>
               ) : (
-                <div className="grid grid-cols-3 divide-x divide-y divide-white/10 lg:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8">
-                  {results.map((result) => {
+                <div className="inspiration-masonry columns-2 gap-2 sm:columns-3 lg:columns-4 xl:columns-5 [&>*]:mb-2">
+                  {feed.map((result) => {
                     const active = selected?.id === result.id;
+                    const ratio =
+                      result.width && result.height ? `${result.width} / ${result.height}` : undefined;
                     return (
                       <button
                         key={result.id}
                         type="button"
                         onClick={() => selectResult(result)}
-                        className={`group relative aspect-[4/5] overflow-hidden bg-black text-left transition hover:brightness-110 ${
-                          active ? "ring-2 ring-inset ring-emerald-400 brightness-110" : ""
+                        style={ratio ? { aspectRatio: ratio } : undefined}
+                        className={`group relative block w-full break-inside-avoid overflow-hidden rounded-md bg-black/60 text-left transition hover:brightness-110 ${
+                          active ? "ring-2 ring-emerald-400 brightness-110" : "ring-1 ring-white/8"
                         }`}
                       >
                         <img
                           src={result.thumbUrl || result.imageUrl}
                           alt={result.title || "Inspiration reference"}
-                          className="h-full w-full object-cover"
+                          className="block h-auto w-full object-cover"
                           loading="lazy"
+                          decoding="async"
                         />
+                        <span className="absolute left-1.5 top-1.5 rounded bg-black/60 px-1.5 py-0.5 text-[7px] font-black uppercase tracking-[0.1em] text-white/75 backdrop-blur-sm">
+                          {result.source}
+                        </span>
                         {active ? (
-                          <span className="absolute left-0 top-0 bg-emerald-500 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-[0.1em] text-emerald-950">
-                            Selected
+                          <span className="absolute right-1.5 top-1.5 rounded bg-emerald-500 px-1.5 py-0.5 text-[7px] font-black uppercase tracking-[0.1em] text-emerald-950">
+                            ✓
                           </span>
                         ) : null}
-                        <div className="absolute inset-x-0 bottom-0 flex flex-col gap-1 bg-black/72 px-2 py-2 opacity-0 transition group-hover:opacity-100">
-                          <p className="text-[8px] font-black uppercase tracking-[0.1em] text-white/70">{result.source}</p>
+                        <div className="absolute inset-x-0 bottom-0 flex flex-col gap-1 bg-gradient-to-t from-black/85 to-transparent px-2 pb-2 pt-5 opacity-0 transition group-hover:opacity-100">
                           <p className="truncate text-[10px] text-white/85">{result.author || result.title || "Reference"}</p>
-                          <span className="mt-0.5 inline-flex w-fit bg-white px-2 py-0.5 text-[8px] font-black uppercase tracking-[0.08em] text-slate-950">
-                            Use image
+                          <span className="inline-flex w-fit bg-white px-2 py-0.5 text-[8px] font-black uppercase tracking-[0.08em] text-slate-950">
+                            Usar imagen
                           </span>
                         </div>
                       </button>
                     );
                   })}
+                  {feedLoading
+                    ? Array.from({ length: 6 }).map((_, i) => (
+                        <div
+                          key={`skeleton-${i}`}
+                          className="mb-2 w-full animate-pulse break-inside-avoid rounded-md bg-white/[0.06]"
+                          style={{ aspectRatio: i % 2 === 0 ? "3 / 4" : "4 / 3" }}
+                        />
+                      ))
+                    : null}
                 </div>
               )}
             </div>
+            </>
+            ) : section === "library" ? (
+            <>
+              {/* Toolbar de la librería */}
+              <div className="flex h-11 shrink-0 items-center gap-2 border-b border-white/10 bg-white/[0.04] px-3">
+                <span className="text-[8px] font-black uppercase tracking-[0.14em] text-white/35">
+                  Subido por mí
+                </span>
+                <p className="text-[9px] font-semibold uppercase tracking-[0.06em] text-white/40">
+                  Plantillas Designer e imágenes
+                </p>
+                <div className="ml-auto flex items-center gap-2">
+                  <input
+                    ref={uploadInputRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    onChange={(event) => {
+                      if (event.target.files) void handleUploadFiles(event.target.files);
+                      event.target.value = "";
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => uploadInputRef.current?.click()}
+                    disabled={uploadingImage}
+                    className="flex items-center gap-1.5 rounded-full bg-white px-3 py-1 text-[9px] font-black uppercase tracking-[0.06em] text-slate-950 transition hover:bg-white/90 disabled:opacity-50"
+                  >
+                    {uploadingImage ? (
+                      <Loader2 size={11} className="animate-spin" aria-hidden />
+                    ) : (
+                      <Upload size={11} aria-hidden />
+                    )}
+                    Subir imagen
+                  </button>
+                </div>
+              </div>
+
+              {libraryError ? (
+                <div className="shrink-0 border-b border-white/8 bg-rose-500/15 px-3 py-1.5 text-[10px] font-semibold text-rose-100">
+                  {libraryError}
+                </div>
+              ) : null}
+
+              <div
+                className="custom-scrollbar min-h-0 flex-1 overflow-y-auto p-2"
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "copy";
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  if (event.dataTransfer.files?.length) void handleUploadFiles(event.dataTransfer.files);
+                }}
+              >
+                {libraryLoading && templateItems.length === 0 ? (
+                  <div className="flex h-full min-h-[320px] flex-col items-center justify-center gap-3 text-white/45">
+                    <Loader2 size={22} className="animate-spin text-emerald-300" />
+                    <span className="text-[10px] font-black uppercase tracking-[0.12em]">Cargando librería…</span>
+                  </div>
+                ) : templateItems.length === 0 ? (
+                  <div className="flex h-full min-h-[320px] flex-col items-center justify-center px-6 text-center">
+                    <Bookmark size={26} className="mb-3 text-[#0ac38a]/85" />
+                    <p className="text-[13px] font-black uppercase tracking-[0.08em] text-white/82">
+                      Tu librería está vacía
+                    </p>
+                    <p className="mt-2 max-w-[360px] text-[10px] leading-relaxed text-white/48">
+                      Guarda plantillas desde un nodo Designer (botón <span className="text-white/72">A Inspiración</span>)
+                      o sube tus propias imágenes con el botón de arriba.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="inspiration-masonry columns-2 gap-2 sm:columns-3 lg:columns-4 xl:columns-5 [&>*]:mb-2">
+                    {templateItems.map((item) => {
+                      const isTemplate = item.kind === "designer-template";
+                      const itemBusy = libraryBusyId === item.id;
+                      return (
+                        <div
+                          key={item.id}
+                          className="group relative block w-full break-inside-avoid overflow-hidden rounded-md bg-black/60 ring-1 ring-white/8"
+                          style={
+                            item.width && item.height
+                              ? { aspectRatio: `${item.width} / ${item.height}` }
+                              : undefined
+                          }
+                        >
+                          <img
+                            src={item.thumbUrl}
+                            alt={item.title}
+                            className="block h-auto w-full object-cover"
+                            loading="lazy"
+                            decoding="async"
+                          />
+                          <span className="absolute left-1.5 top-1.5 flex items-center gap-1 rounded bg-black/60 px-1.5 py-0.5 text-[7px] font-black uppercase tracking-[0.1em] text-white/80 backdrop-blur-sm">
+                            {isTemplate ? <LayoutTemplate size={9} /> : null}
+                            {isTemplate ? `${item.pageCount ?? 1} slides` : "Imagen"}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => void removeLibraryItem(item)}
+                            disabled={itemBusy}
+                            title="Eliminar de Inspiración"
+                            className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded bg-black/55 text-white/70 opacity-0 transition hover:bg-rose-600 hover:text-white group-hover:opacity-100"
+                          >
+                            <Trash2 size={11} aria-hidden />
+                          </button>
+                          <div className="absolute inset-x-0 bottom-0 flex flex-col gap-1.5 bg-gradient-to-t from-black/85 to-transparent px-2 pb-2 pt-6 opacity-0 transition group-hover:opacity-100">
+                            <p className="truncate text-[10px] text-white/85">{item.title}</p>
+                            <button
+                              type="button"
+                              onClick={() => (isTemplate ? void insertTemplate(item) : selectLibraryImage(item))}
+                              disabled={itemBusy}
+                              className="inline-flex w-fit items-center gap-1.5 bg-white px-2 py-0.5 text-[8px] font-black uppercase tracking-[0.08em] text-slate-950 transition hover:bg-white/90 disabled:opacity-60"
+                            >
+                              {itemBusy ? (
+                                <Loader2 size={10} className="animate-spin" aria-hidden />
+                              ) : isTemplate ? (
+                                <LayoutTemplate size={10} aria-hidden />
+                              ) : (
+                                <Check size={10} aria-hidden />
+                              )}
+                              {isTemplate ? "Insertar Designer" : "Usar imagen"}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </>
+            ) : (
+            <>
+              {/* Toolbar de Mis flujos */}
+              <div className="flex h-11 shrink-0 items-center gap-2 border-b border-white/10 bg-white/[0.04] px-3">
+                <span className="text-[8px] font-black uppercase tracking-[0.14em] text-white/35">
+                  Mis flujos
+                </span>
+                <p className="text-[9px] font-semibold uppercase tracking-[0.06em] text-white/40">
+                  Conjuntos de nodos conectados, reutilizables
+                </p>
+              </div>
+
+              {libraryError ? (
+                <div className="shrink-0 border-b border-white/8 bg-rose-500/15 px-3 py-1.5 text-[10px] font-semibold text-rose-100">
+                  {libraryError}
+                </div>
+              ) : null}
+
+              <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto p-3">
+                {libraryLoading && flowItems.length === 0 ? (
+                  <div className="flex h-full min-h-[320px] flex-col items-center justify-center gap-3 text-white/45">
+                    <Loader2 size={22} className="animate-spin text-emerald-300" />
+                    <span className="text-[10px] font-black uppercase tracking-[0.12em]">Cargando flujos…</span>
+                  </div>
+                ) : flowItems.length === 0 ? (
+                  <div className="flex h-full min-h-[320px] flex-col items-center justify-center px-6 text-center">
+                    <Workflow size={26} className="mb-3 text-[#0ac38a]/85" />
+                    <p className="text-[13px] font-black uppercase tracking-[0.08em] text-white/82">
+                      Aún no has guardado flujos
+                    </p>
+                    <p className="mt-2 max-w-[380px] text-[10px] leading-relaxed text-white/48">
+                      Haz clic derecho sobre un nodo del canvas y elige{" "}
+                      <span className="text-white/72">Guardar flujo en Inspiración</span> para guardar todos los nodos
+                      conectados como un flujo reutilizable.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    {flowItems.map((item) => {
+                      const itemBusy = libraryBusyId === item.id;
+                      return (
+                        <div
+                          key={item.id}
+                          className="group relative flex flex-col overflow-hidden rounded-lg border border-white/10 bg-gradient-to-br from-emerald-500/10 via-white/[0.03] to-white/[0.02] p-3 transition hover:border-emerald-400/40"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => void removeLibraryItem(item)}
+                            disabled={itemBusy}
+                            title="Eliminar flujo"
+                            className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded bg-black/45 text-white/60 opacity-0 transition hover:bg-rose-600 hover:text-white group-hover:opacity-100"
+                          >
+                            <Trash2 size={11} aria-hidden />
+                          </button>
+                          <div className="flex items-center gap-2">
+                            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-emerald-500/20 text-emerald-200 ring-1 ring-emerald-400/30">
+                              <Workflow size={16} aria-hidden />
+                            </span>
+                            <div className="min-w-0">
+                              <p className="truncate text-[12px] font-bold text-white/90">{item.title}</p>
+                              <p className="text-[9px] font-semibold uppercase tracking-[0.08em] text-white/45">
+                                {item.nodeCount ?? 0} {item.nodeCount === 1 ? "nodo" : "nodos"}
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => void insertFlowItem(item)}
+                            disabled={itemBusy}
+                            className="mt-3 inline-flex items-center justify-center gap-1.5 rounded-md bg-white px-2.5 py-1.5 text-[9px] font-black uppercase tracking-[0.08em] text-slate-950 transition hover:bg-white/90 disabled:opacity-60"
+                          >
+                            {itemBusy ? (
+                              <Loader2 size={11} className="animate-spin" aria-hidden />
+                            ) : (
+                              <Workflow size={11} aria-hidden />
+                            )}
+                            Insertar flujo
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </>
+            )}
           </section>
         </div>
 
+        {section === "discover" ? (
         <footer className="inspiration-studio-dock" data-foldder-inspiration-dock>
           <div className="inspiration-studio-dock__row">
             <button
               type="button"
               title="Search references"
-              onClick={() => void runSearch()}
-              disabled={loading || !hasAnyInput}
+              onClick={() => void runSearch(activeFacet, true)}
+              disabled={busy || !hasAnyInput}
               className="inspiration-studio-dock__search nodrag"
             >
-              {loading ? <Loader2 size={15} className="animate-spin" aria-hidden /> : <Search size={15} aria-hidden />}
+              {busy ? <Loader2 size={15} className="animate-spin" aria-hidden /> : <Search size={15} aria-hidden />}
               Search references
             </button>
             <button
@@ -652,6 +1191,7 @@ function InspirationStudio({
             </div>
           ) : null}
         </footer>
+        ) : null}
       </div>
     </StudioNodePortal>
   );
@@ -664,7 +1204,9 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
   const flowNode = nodes.find((node) => node.id === id);
   const nodeData = (flowNode?.data ?? data) as InspirationNodeData;
   const edges = useEdges();
-  const { setNodes } = useReactFlow();
+  const { setNodes, setEdges } = useReactFlow();
+  const projectAssetsCtx = useProjectAssetsCanvas();
+  const projectId = projectAssetsCtx?.projectScopeId ?? null;
   const updateNodeInternals = useUpdateNodeInternals();
   const [studioOpen, setStudioOpen] = useState(false);
   const [studioExpandDirectLink, setStudioExpandDirectLink] = useState(false);
@@ -723,6 +1265,49 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
     setStudioOpen(false);
     setStudioExpandDirectLink(false);
   }, []);
+
+  // Insertar plantilla/flujo "consume" el nodo Inspiración: aparece lo elegido donde estaba el nodo
+  // y el nodo Inspiración se elimina del lienzo (es un selector, no un nodo permanente).
+  const insertDesignerTemplate = useCallback(
+    ({ pages, title }: { pages: DesignerPageState[]; title: string }) => {
+      const origin = flowNode ?? nodes.find((n) => n.id === id);
+      const baseX = origin?.position?.x ?? 0;
+      const baseY = origin?.position?.y ?? 0;
+      const newId = `designer_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+      const newNode = {
+        id: newId,
+        type: "designer",
+        position: { x: baseX, y: baseY },
+        selected: true,
+        data: {
+          label: title,
+          pages,
+          activePageIndex: 0,
+          autoImageOptimization: false,
+        },
+      } as Node;
+      setEdges((eds) => eds.filter((e) => e.source !== id && e.target !== id));
+      setNodes((nds) => [...nds.filter((n) => n.id !== id).map((n) => ({ ...n, selected: false })), newNode]);
+    },
+    [flowNode, id, nodes, setEdges, setNodes],
+  );
+
+  const insertFlow = useCallback(
+    ({ nodes: flowNodes, edges: flowEdges }: { nodes: unknown[]; edges: unknown[]; title: string }) => {
+      if (!Array.isArray(flowNodes) || flowNodes.length === 0) return;
+      const origin = flowNode ?? nodes.find((n) => n.id === id);
+      const baseX = origin?.position?.x ?? 0;
+      const baseY = origin?.position?.y ?? 0;
+      const { nodes: newNodes, edges: newEdges } = remapInsertedFlow(
+        flowNodes as Node[],
+        (Array.isArray(flowEdges) ? flowEdges : []) as Edge[],
+        { offset: { x: baseX, y: baseY } },
+      );
+      setEdges((eds) => [...eds.filter((e) => e.source !== id && e.target !== id), ...newEdges]);
+      setNodes((nds) => [...nds.filter((n) => n.id !== id).map((n) => ({ ...n, selected: false })), ...newNodes]);
+    },
+    [flowNode, id, nodes, setEdges, setNodes],
+  );
 
   useEffect(() => {
     if (hasFoldderStudioTouched(nodeData as Record<string, unknown>)) {
@@ -943,8 +1528,11 @@ export const InspirationNode = memo(function InspirationNode({ id, data, selecte
           promptInput={promptInput}
           imageInput={imageInput}
           expandDirectLink={studioExpandDirectLink}
+          projectId={projectId}
           onClose={closeStudio}
           onPatch={patchData}
+          onInsertDesignerTemplate={insertDesignerTemplate}
+          onInsertFlow={insertFlow}
         />
       ) : null}
     </div>

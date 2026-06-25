@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo, useState } from "react";
-import { X } from "lucide-react";
+import { BookmarkPlus, Check, Loader2, X } from "lucide-react";
 import type { Rect } from "./freehand-export";
 import type { VectorPdfExportOptions } from "./text-outline";
 
@@ -43,6 +43,11 @@ type Props = {
     busy: boolean;
     onExport: (opts: VectorPdfExportOptions) => void | Promise<void>;
   } | null;
+  /** Designer: guardar el documento como plantilla en Inspiración. */
+  saveToInspiration?: {
+    state: "idle" | "busy" | "done" | "error";
+    onSave: () => void | Promise<void>;
+  } | null;
   /** Variante Flush Chrome (PhotoRoom): rectangular, sin sombras, fondo plano. */
   flush?: boolean;
 };
@@ -58,6 +63,7 @@ export function FreehandExportModal({
   artboardList = [],
   onExport,
   designerMultipageVectorPdf = null,
+  saveToInspiration = null,
   flush = false,
 }: Props) {
   const [format, setFormat] = useState<ExportFormat>("png");
@@ -147,6 +153,53 @@ export function FreehandExportModal({
         </div>
 
         <div className="space-y-4 px-4 py-4">
+          {saveToInspiration && (
+            <div className="space-y-2.5 rounded-xl border border-emerald-500/25 bg-gradient-to-b from-emerald-950/35 to-[#12151a] p-3.5 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04)]">
+              <div>
+                <label className="text-[10px] font-semibold uppercase tracking-wider text-emerald-200/95">
+                  Guardar en Inspiración
+                </label>
+                <p className="mt-1.5 text-[10px] leading-relaxed text-zinc-400">
+                  Guarda este documento como plantilla reutilizable. Aparecerá en «Mis plantillas» del nodo Inspiración,
+                  disponible en todos tus proyectos.
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={saveToInspiration.state === "busy"}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  void Promise.resolve(saveToInspiration.onSave()).catch((err: unknown) => {
+                    console.error("[Export] Guardar en Inspiración:", err);
+                  });
+                }}
+                className={`flex w-full items-center justify-center gap-2 rounded-lg border px-3 py-2.5 text-[11px] font-semibold shadow-lg transition-colors duration-150 disabled:pointer-events-none disabled:opacity-45 ${
+                  saveToInspiration.state === "done"
+                    ? "border-emerald-400/45 bg-emerald-600/35 text-emerald-50"
+                    : saveToInspiration.state === "error"
+                      ? "border-rose-400/45 bg-rose-600/30 text-rose-50"
+                      : "border-emerald-400/35 bg-emerald-600/30 text-emerald-50 hover:bg-emerald-500/35"
+                }`}
+              >
+                {saveToInspiration.state === "busy" ? (
+                  <Loader2 size={13} className="animate-spin" aria-hidden />
+                ) : saveToInspiration.state === "done" ? (
+                  <Check size={13} aria-hidden />
+                ) : (
+                  <BookmarkPlus size={13} aria-hidden />
+                )}
+                {saveToInspiration.state === "busy"
+                  ? "Guardando…"
+                  : saveToInspiration.state === "done"
+                    ? "Guardado en Inspiración"
+                    : saveToInspiration.state === "error"
+                      ? "Reintentar"
+                      : "Guardar como plantilla"}
+              </button>
+            </div>
+          )}
+
           {showDesignerDocumentPdf && designerMultipageVectorPdf && (
             <div className="space-y-3 rounded-xl border border-violet-500/25 bg-gradient-to-b from-violet-950/35 to-[#12151a] p-3.5 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.04)]">
               <div>

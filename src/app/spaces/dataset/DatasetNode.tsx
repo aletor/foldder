@@ -751,6 +751,7 @@ export const DatasetNode = memo(({ id, data, selected }: NodeProps<any>) => {
               remoteVersion={nodeData.datasetRemoteVersion ?? null}
               saveError={studioError}
               isGlobalRef={Boolean(nodeData.datasetRef)}
+              projectScopeId={projectScopeId}
               onChange={commitDataset}
               onScopeChange={handleScopeChange}
               onSelectGlobalDataset={handleSelectGlobalFromStudio}

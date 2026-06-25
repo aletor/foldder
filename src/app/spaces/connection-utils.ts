@@ -12,7 +12,75 @@ import {
  */
 export const ORCHESTRABLE_CREATIVE_TYPES = new Set<string>([
   'nanoBanana',
+  'designer',
 ]);
+
+/** Handle del input Dataset del Designer (Modo 1: Dataset conectado directamente). */
+export const DESIGNER_DATASET_INPUT_HANDLE = 'dataset';
+/** Handle del input Plantilla de Populate (Modo 2: el Designer es plantilla). */
+export const POPULATE_TEMPLATE_INPUT_HANDLE = 'template';
+
+/** ¿El Designer ya está conectado como plantilla de algún Populate (su salida → handle Plantilla)? */
+export function designerIsPopulateTemplate(
+  designerId: string,
+  edges: Pick<Edge, 'source' | 'targetHandle'>[],
+): boolean {
+  return edges.some(
+    (e) => e.source === designerId && e.targetHandle === POPULATE_TEMPLATE_INPUT_HANDLE,
+  );
+}
+
+/** ¿El Designer ya tiene un Dataset conectado directamente a su handle Dataset (Modo 1)? */
+export function designerHasDirectDataset(
+  designerId: string,
+  edges: Pick<Edge, 'target' | 'targetHandle'>[],
+): boolean {
+  return edges.some(
+    (e) => e.target === designerId && e.targetHandle === DESIGNER_DATASET_INPUT_HANDLE,
+  );
+}
+
+/**
+ * Regla de exclusión Modo 1 (Dataset directo) ↔ Modo 2 (plantilla de Populate): un Designer no puede
+ * estar en ambos a la vez, porque dos fuentes de datos competirían por los mismos campos dinámicos.
+ *
+ * Devuelve el motivo (texto para avisar) si la conexión propuesta crearía el conflicto, o `null` si
+ * es válida. Es puro: el estado se infiere de `nodes` + `edges` actuales.
+ */
+export function designerModeConflictReason(
+  connection: {
+    source?: string | null;
+    target?: string | null;
+    sourceHandle?: string | null;
+    targetHandle?: string | null;
+  },
+  nodes: Pick<Node, 'id' | 'type'>[],
+  edges: Pick<Edge, 'source' | 'target' | 'targetHandle'>[],
+): string | null {
+  const typeById = new Map(nodes.map((n) => [n.id, n.type]));
+
+  // Caso A: conectar un Dataset → handle Dataset de un Designer que YA es plantilla de un Populate.
+  if (
+    connection.targetHandle === DESIGNER_DATASET_INPUT_HANDLE &&
+    connection.target &&
+    typeById.get(connection.target) === 'designer' &&
+    designerIsPopulateTemplate(connection.target, edges)
+  ) {
+    return 'Este Designer ya es plantilla de un Populate. Desconéctalo del Populate para conectarle un Dataset directo.';
+  }
+
+  // Caso B: usar como plantilla de Populate un Designer que YA tiene un Dataset conectado directo.
+  if (
+    connection.targetHandle === POPULATE_TEMPLATE_INPUT_HANDLE &&
+    connection.source &&
+    typeById.get(connection.source) === 'designer' &&
+    designerHasDirectDataset(connection.source, edges)
+  ) {
+    return 'Este Designer ya usa un Dataset directo. Desconéctalo para usarlo como plantilla de Populate.';
+  }
+
+  return null;
+}
 
 /**
  * Same rules as the canvas `isValidConnection` in page.tsx — kept pure for library-drop preview.
@@ -111,8 +179,14 @@ export function areNodesConnectable(
     return sourceHandleType === 'dataset' && targetHandleType === 'dataset';
   }
 
-  // Template handle: a creative node's dedicated "Plantilla" output → Populate "template" input.
-  // Both ends must be the template handle type, and the source must be an orchestrable creative node.
+  // Populate plantilla: salida `image`/`document` (o legacy `template`) de un creativo orquestable → input template.
+  if (targetNode.type === "populate" && connection.targetHandle === "template") {
+    if (!ORCHESTRABLE_CREATIVE_TYPES.has(sourceNode.type as string)) return false;
+    const sh = connection.sourceHandle ?? "image";
+    return sh === "image" || sh === "template" || sh === "document";
+  }
+
+  // Template handle legacy (proyectos con salida template dedicada).
   if (connection.sourceHandle === 'template' || connection.targetHandle === 'template') {
     return (
       sourceHandleType === 'template' &&

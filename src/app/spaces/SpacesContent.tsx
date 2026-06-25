@@ -51,6 +51,8 @@ import { groupNodesIntoSpace } from "./group-nodes-into-space";
 import Sidebar from "./Sidebar";
 import { TouchSelectionToolbar } from "./TouchSelectionToolbar";
 import { TouchNodeContextMenu } from "./TouchNodeContextMenu";
+import { extractFlowSubgraph } from "./flow/flow-graph";
+import { saveFlowToInspiration } from "./inspiration/save-flow";
 import { useTouchNodeLongPress } from "./use-touch-node-long-press";
 import { TouchLiteEdge } from "./touch-lite-edge";
 import { useInputMode } from "./input-mode-context";
@@ -172,6 +174,7 @@ import {
 } from "./space-media-list";
 import {
   areNodesConnectable,
+  designerModeConflictReason,
   findLibraryDropPlan,
   findTouchConnectPlan,
   computeLibraryDropPosition,
@@ -793,6 +796,7 @@ export function SpacesContent() {
   const [navigationStack, setNavigationStack] = useState<string[]>([]);
   const [dissolveSpaceConfirm, setDissolveSpaceConfirm] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, nodeId?: string } | null>(null);
+  const [saveFlowState, setSaveFlowState] = useState<"idle" | "busy" | "done" | "error">("idle");
 
   /** Indicador visual breve tras guardado automático (intervalo 1 min) */
   const [showAutosavePulse, setShowAutosavePulse] = useState(false);
@@ -2483,6 +2487,8 @@ export function SpacesContent() {
   const ungroupSelectedCanvasGroupRef = useRef<() => void>(() => {});
   /** Tecla A: pares → aislados en columna (clásico); impares → aislados en horizontal a lados del núcleo. */
   const autoLayoutKeyParityRef = useRef(0);
+  /** Evita dos snapshots de undo en el mismo arrastre (p. ej. multi-selección). */
+  const dragUndoSessionRef = useRef(false);
 
   // ── Keyboard shortcuts (deps fijas `[]`: ref evita error de tamaño de array con Fast Refresh) ──
   const keyboardShortcutsRef = useRef<SpacesCanvasKeyboardShortcutsRef>({
@@ -2494,6 +2500,7 @@ export function SpacesContent() {
     setNodes,
     setEdges,
     takeSnapshot,
+    saveProject: () => saveProjectRef.current(undefined, { reason: "manual", skipIfUnchanged: false }),
     fitViewToNodeIds,
     handleEscape: () => navigationEscapeRef.current(),
     setCardsFocusIndex,
@@ -2508,6 +2515,7 @@ export function SpacesContent() {
     setNodes,
     setEdges,
     takeSnapshot,
+    saveProject: () => saveProjectRef.current(undefined, { reason: "manual", skipIfUnchanged: false }),
     fitViewToNodeIds,
     handleEscape: () => navigationEscapeRef.current(),
     setCardsFocusIndex,
@@ -4812,6 +4820,7 @@ export function SpacesContent() {
 
   const onNodeDragStop = useCallback(
     (_event: unknown, node: unknown, _nodes: unknown) => {
+      dragUndoSessionRef.current = false;
       if (canvasGroupRefitRafRef.current != null) {
         cancelAnimationFrame(canvasGroupRefitRafRef.current);
         canvasGroupRefitRafRef.current = null;
@@ -4830,11 +4839,23 @@ export function SpacesContent() {
 
   const onNodeDragStart = useCallback(() => {
     beginCanvasPerformanceInteraction();
-    takeSnapshot(); // capture state when drag begins, before positions change
+    if (!dragUndoSessionRef.current) {
+      takeSnapshot();
+      dragUndoSessionRef.current = true;
+    }
   }, [beginCanvasPerformanceInteraction, takeSnapshot]);
 
   const onConnect: OnConnect = useCallback(
     (params) => {
+      const designerConflict = designerModeConflictReason(
+        params,
+        liveNodesRef.current,
+        liveEdgesRef.current,
+      );
+      if (designerConflict) {
+        window.alert(designerConflict);
+        return;
+      }
       takeSnapshot();
       const targetNode = liveNodesRef.current.find((n: { id: string }) => n.id === params.target);
       let targetHandle = params.targetHandle;
@@ -5038,8 +5059,6 @@ export function SpacesContent() {
       data: withFoldderCanvasIntro(newType, seededData),
     });
 
-    takeSnapshot();
-
     const newEdge = {
       id:           edgeId,
       source:       fromType === 'source' ? fromNodeId  : newNodeId,
@@ -5049,6 +5068,18 @@ export function SpacesContent() {
       type:         'buttonEdge',
       animated: false,
     };
+
+    const dropConflict = designerModeConflictReason(
+      newEdge,
+      [...liveNodesRef.current, newNode],
+      liveEdgesRef.current,
+    );
+    if (dropConflict) {
+      window.alert(dropConflict);
+      return;
+    }
+
+    takeSnapshot();
 
     setNodes((nds: any) => [...nds, newNode]);
     scheduleFoldderCanvasIntroEnd(newNodeId);
@@ -5075,11 +5106,72 @@ export function SpacesContent() {
     setContextMenu(null);
   }, []);
 
-  const onNodeContextMenu = useCallback((event: globalThis.MouseEvent | React.MouseEvent<Element, MouseEvent>) => {
+  const onNodeContextMenu = useCallback((event: globalThis.MouseEvent | React.MouseEvent<Element, MouseEvent>, node?: Node) => {
     event.preventDefault();
     event.stopPropagation?.();
-    setContextMenu(null);
-  }, []);
+    if (!node || node.type === "canvasGroup" || node.id === FOLDDER_LIBRARY_PREVIEW_NODE_ID) {
+      setContextMenu(null);
+      return;
+    }
+    setSaveFlowState("idle");
+    setNodes((nds) => {
+      const target = nds.find((n) => n.id === node.id);
+      if (target?.selected) return nds;
+      return nds.map((n) => ({ ...n, selected: n.id === node.id }));
+    });
+    setContextMenu({ x: event.clientX, y: event.clientY, nodeId: node.id });
+  }, [setNodes]);
+
+  const selectFlowFromNode = useCallback((nodeId: string) => {
+    const ids = extractFlowSubgraph(nodeId, liveNodesRef.current, liveEdgesRef.current).nodeIds;
+    const idSet = new Set(ids);
+    setNodes((nds) => nds.map((n) => ({ ...n, selected: idSet.has(n.id) })));
+  }, [setNodes]);
+
+  const saveFlowFromNode = useCallback(async (nodeId: string) => {
+    const { nodes: flowNodes, edges: flowEdges } = extractFlowSubgraph(
+      nodeId,
+      liveNodesRef.current as Node[],
+      liveEdgesRef.current as Edge[],
+    );
+    if (flowNodes.length === 0) {
+      setContextMenu(null);
+      return;
+    }
+    const defaultTitle =
+      flowNodes.length === 1 ? "Mi flujo" : `Flujo de ${flowNodes.length} nodos`;
+    const title = window.prompt(
+      `Nombre del flujo (${flowNodes.length} ${flowNodes.length === 1 ? "nodo" : "nodos"}) para "Mis flujos"`,
+      defaultTitle,
+    );
+    if (title === null) {
+      setContextMenu(null);
+      return;
+    }
+    setSaveFlowState("busy");
+    try {
+      await saveFlowToInspiration({
+        nodes: flowNodes as unknown as Parameters<typeof saveFlowToInspiration>[0]["nodes"],
+        edges: flowEdges as unknown as Parameters<typeof saveFlowToInspiration>[0]["edges"],
+        title: title.trim() || defaultTitle,
+        projectId: projectScopeId,
+      });
+      setSaveFlowState("done");
+      window.setTimeout(() => {
+        setSaveFlowState("idle");
+        setContextMenu(null);
+      }, 1100);
+    } catch (error) {
+      console.error("[Flow] guardar en Inspiración", error);
+      window.alert(
+        error instanceof Error
+          ? `No se pudo guardar el flujo: ${error.message}`
+          : "No se pudo guardar el flujo.",
+      );
+      setSaveFlowState("error");
+      window.setTimeout(() => setSaveFlowState("idle"), 1800);
+    }
+  }, [projectScopeId]);
 
   const groupSelectedToSpace = useCallback(() => {
     const selectedNodes = nodes.filter((n) => n.selected);
@@ -5887,12 +5979,20 @@ export function SpacesContent() {
                   animated: false,
                 };
 
+          const libraryDropConflict = designerModeConflictReason(
+            newEdge,
+            [...nodes, newNode],
+            edges,
+          );
           takeSnapshot();
           setNodes((nds: any) => {
             const next = [...nds, newNode];
-            setEdges((eds: any) => addEdge(newEdge, eds));
+            if (!libraryDropConflict) {
+              setEdges((eds: any) => addEdge(newEdge, eds));
+            }
             return next;
           });
+          if (libraryDropConflict) window.alert(libraryDropConflict);
           scheduleFoldderCanvasIntroEnd(newId);
           setTimeout(() => {
             fitViewToNodeIds([newId], 700);
@@ -6217,7 +6317,7 @@ export function SpacesContent() {
           />
         )}
 
-        {isAuthenticated && touchFreeCanvas && contextMenu?.nodeId && (
+        {isAuthenticated && contextMenu?.nodeId && (
           <TouchNodeContextMenu
             x={contextMenu.x}
             y={contextMenu.y}
@@ -6236,11 +6336,18 @@ export function SpacesContent() {
                 : undefined
             }
             onGroup={() => groupSelectedToCanvasGroup()}
-            onStartConnect={() => {
-              setTouchCanvasTool("connect");
-              setTouchConnectSourceId(contextMenu.nodeId!);
-              setContextMenu(null);
-            }}
+            onStartConnect={
+              touchFreeCanvas
+                ? () => {
+                    setTouchCanvasTool("connect");
+                    setTouchConnectSourceId(contextMenu.nodeId!);
+                    setContextMenu(null);
+                  }
+                : undefined
+            }
+            onSelectFlow={() => selectFlowFromNode(contextMenu.nodeId!)}
+            onSaveFlow={() => void saveFlowFromNode(contextMenu.nodeId!)}
+            saveFlowState={saveFlowState}
           />
         )}
 

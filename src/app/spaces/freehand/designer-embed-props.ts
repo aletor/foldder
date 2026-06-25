@@ -81,6 +81,11 @@ export type DesignerEmbedProps = {
     onImport: () => void;
     busy?: boolean;
   } | null;
+  /** Designer: guardar el documento como plantilla en Inspiración (botón dentro del modal Export). */
+  designerSaveToInspiration?: {
+    state: "idle" | "busy" | "done" | "error";
+    onSave: () => void | Promise<void>;
+  } | null;
   /** Switch “Activar auto-optimización” junto a Export. */
   designerAutoOptimizeSwitch?: {
     enabled: boolean;

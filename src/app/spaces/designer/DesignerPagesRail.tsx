@@ -28,6 +28,8 @@ export type DesignerPagesRailProps = {
   duplicatePage: (idx: number) => void;
   onRequestDeletePages: (indices: number[]) => void;
   onAddPage: () => void;
+  /** Renombra la slide (nombre legible que heredan las columnas del Dataset al popular). */
+  onRenameSlide?: (index: number, name: string) => void;
   /** Listados disponibles para "+ Bucle" (vacío = sin Dataset conectado). */
   datasetLoopLists?: DesignerLoopListOption[];
   /** Genera una página por fila del listado elegido. */
@@ -51,6 +53,7 @@ export function DesignerPagesRail({
   duplicatePage,
   onRequestDeletePages,
   onAddPage,
+  onRenameSlide,
   datasetLoopLists = [],
   onGenerateLoop,
   loopActive = false,
@@ -347,6 +350,16 @@ export function DesignerPagesRail({
                       {resLabel}
                     </span>
                   </div>
+                  <input
+                    type="text"
+                    value={p.slideName ?? ""}
+                    placeholder={`Slide ${i + 1}`}
+                    title="Nombre de la slide (lo heredan las columnas del Dataset al popular)"
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => onRenameSlide?.(i, e.target.value)}
+                    className="nodrag mt-0.5 w-full rounded-[2px] border border-white/[0.08] bg-black/30 px-1 py-0.5 text-center text-[7px] leading-tight text-zinc-300 outline-none placeholder:text-zinc-600 focus:border-sky-400/40"
+                  />
                 </div>
                 <div className="mt-1 flex w-full justify-center gap-0.5">
                   <button

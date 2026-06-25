@@ -5,6 +5,8 @@
  * más un bloque de constantes compartidas en todo el Dataset.
  */
 
+import type { ImageGenerationHistoryEntry } from "./dataset-image-history";
+
 export type FieldType =
   | "text"
   | "number"
@@ -23,6 +25,21 @@ export interface FieldDef {
   required: boolean;
   defaultValue?: unknown;
   options?: string[];
+  /**
+   * Procedencia Populate-Designer: id estable del grupo de columnas (un grupo por Populate-Designer).
+   * Agrupa las M columnas (una por slide) bajo una identidad común.
+   */
+  populateGroupId?: string;
+  /**
+   * Procedencia Populate-Designer: `slideKey` de la slide de origen. Permite re-emparejar la columna
+   * en re-ejecuciones de forma estable, independiente del nombre o del orden de las slides.
+   */
+  populateSlideKey?: string;
+  /**
+   * La slide de origen ya no existe en la plantilla. La columna se conserva (con su historial) y se
+   * marca visualmente como huérfana; el borrado lo decide el usuario (nunca automático).
+   */
+  orphaned?: boolean;
 }
 
 export type FieldValue =
@@ -32,7 +49,20 @@ export type FieldValue =
   | { type: "boolean"; value: boolean }
   | { type: "select"; value: string }
   | { type: "url"; value: string }
-  | { type: "image"; assetId: string; url: string; w?: number; h?: number; hasAlpha?: boolean }
+  | {
+      type: "image";
+      assetId: string;
+      url: string;
+      w?: number;
+      h?: number;
+      hasAlpha?: boolean;
+      /** Clave S3 cuando la imagen viene de generación Populate. */
+      s3Key?: string;
+      /** ISO timestamp de la última escritura Populate en esta celda. */
+      populatedAt?: string;
+      /** Versiones anteriores de esta celda (solo celdas generadas). */
+      generationHistory?: ImageGenerationHistoryEntry[];
+    }
   | { type: "video"; assetId: string; url: string; durationMs?: number; w?: number; h?: number };
 
 export interface Card {
@@ -119,12 +149,24 @@ export interface DatasetPreview {
   gapCount: number;
 }
 
-/** Enlace de un objeto del Designer a un campo de un listado del Dataset conectado. */
+/**
+ * Enlace de un objeto del Designer a un campo del Dataset.
+ *
+ * Dos estados:
+ * - RESUELTO (Modo 1, Dataset conectado al Designer): `listId`/`fieldId` apuntan a una columna real.
+ * - PENDIENTE (Modo 2, Designer como plantilla de Populate): el objeto está marcado como dinámico
+ *   con su `kind` y una `slotLabel`, pero SIN columna (`listId`/`fieldId` vacíos). Populate asigna
+ *   la columna después en su UI de mapeo y, al congelar, rellena el hueco.
+ */
 export interface DesignerDatasetFieldBinding {
   listId: string;
   listKey: string;
   fieldId: string;
   fieldKey: string;
+  /** Tipo del hueco dinámico. Imprescindible en estado PENDIENTE (sin columna que lo infiera). */
+  kind?: "text" | "image";
+  /** Etiqueta legible del hueco (identidad para el mapeo en Populate, estilo token de prompt). */
+  slotLabel?: string;
 }
 
 /** @deprecated Usar `DesignerDatasetFieldBinding`. */

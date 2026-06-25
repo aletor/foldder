@@ -51,5 +51,8 @@ next-env.d.ts
 /data/populate-shares.json
 /data/datasets/
 
+# Inspiration library (local fallback store; S3 is production source of truth)
+/data/inspiration-library/
+
 # portable Node bundle (no subir)
 .node-portable/

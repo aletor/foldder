@@ -74,6 +74,32 @@ export interface PopulateNodeData {
   /** Salida agregada para Export Multimedia. */
   value?: string;
   mediaListOutput?: unknown;
+  /** URLs de la última ejecución (thumbnails en Studio). */
+  lastRunOutputs?: string[];
+  /** Escribir resultados de vuelta al Dataset conectado. */
+  datasetOutput?: PopulateDatasetOutputSettings;
+  /** Resumen de la última escritura al Dataset. */
+  lastDatasetWriteSummary?: string;
+  /**
+   * Modo 2 (plantilla Designer): mapeo hueco→columna del Dataset de Populate.
+   * Clave = `designerSlotKey` (slot del binding pendiente); valor = columna asignada.
+   */
+  designerSlotBindings?: Record<
+    string,
+    { listId: string; listKey: string; fieldId: string; fieldKey: string }
+  >;
+}
+
+/** Opciones de salida Populate → columna del Dataset de entrada. */
+export interface PopulateDatasetOutputSettings {
+  enabled: boolean;
+  columnLabel: string;
+  /** Campo imagen existente cuando se regenera sobre la misma columna. */
+  existingFieldId?: string;
+  /** Si la columna ya existe: crear versionada o actualizar in situ. */
+  conflictStrategy: "versioned" | "update";
+  /** Por defecto solo celdas vacías; overwrite_all fuerza todas las filas generadas. */
+  fillMode: "empty_only" | "overwrite_all";
 }
 
 /** Traduce el tipo de handle de un input a su tipo lógico para Populate. */

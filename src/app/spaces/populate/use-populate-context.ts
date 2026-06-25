@@ -5,7 +5,7 @@
  * a un nodo Populate y resuelve el Dataset que Populate tiene de entrada.
  *
  * Topología (plantilla fuera):
- *   [Dataset] --dataset--> [Populate] <--template-- [Image Creation (plantilla)]
+ *   [Dataset] --dataset--> [Populate] <-- Image out -- [Image Creation]
  *
  * La resolución del Dataset se delega en `useDesignerConnectedDataset` (genérico:
  * resuelve el Dataset conectado a un nodo por el handle `dataset`). Aquí solo
@@ -19,9 +19,14 @@ import { shallow } from "zustand/shallow";
 import { useDesignerConnectedDataset } from "@/app/spaces/designer/use-designer-connected-dataset";
 import type { Dataset, FieldDef } from "@/app/spaces/dataset/dataset-types";
 import type { PopulateNodeData } from "./populate-types";
+import {
+  isPopulateTemplateLinkEdge,
+  POPULATE_TEMPLATE_TARGET_HANDLE,
+} from "./populate-template-link";
 
 export const POPULATE_NODE_TYPE = "populate" as const;
-export const POPULATE_TEMPLATE_HANDLE = "template" as const;
+/** @deprecated Use POPULATE_TEMPLATE_TARGET_HANDLE */
+export const POPULATE_TEMPLATE_HANDLE = POPULATE_TEMPLATE_TARGET_HANDLE;
 
 /** Evento que SpacesContent escucha para depositar los nodos generados en el Nested Space. */
 export const POPULATE_COMMIT_EVENT = "foldder-populate-commit";
@@ -36,18 +41,17 @@ function findPopulateForCreative(
   state: ReactFlowState<Node, Edge>,
   creativeNodeId: string,
 ): Node | null {
-  // Preferimos el handle "template", pero aceptamos cualquier edge creativo → populate.
-  let fallback: Node | null = null;
   for (const edge of state.edges) {
     if (edge.source !== creativeNodeId) continue;
     const candidate = state.nodes.find(
       (n) => n.id === edge.target && n.type === POPULATE_NODE_TYPE,
     );
     if (!candidate) continue;
-    if (edge.targetHandle === POPULATE_TEMPLATE_HANDLE) return candidate;
-    fallback = candidate;
+    if (isPopulateTemplateLinkEdge(edge, candidate.id, state.nodes.find((n) => n.id === creativeNodeId)?.type)) {
+      return candidate;
+    }
   }
-  return fallback;
+  return null;
 }
 
 type PopulateLink = { populateNodeId: string; listId: string | null } | null;

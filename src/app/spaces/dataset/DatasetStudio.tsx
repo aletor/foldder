@@ -27,7 +27,7 @@ import {
   validateList,
 } from "./dataset-logic";
 import { FieldEditor } from "./dataset-field-editor";
-import { DatasetImageCell, DatasetVideoCell } from "./dataset-image-cell";
+import { DatasetImageCell, DatasetImageUploadProvider, DatasetVideoCell } from "./dataset-image-cell";
 import type { DatasetListItem } from "./dataset-api";
 import { listGlobalDatasets } from "./dataset-api";
 import {
@@ -57,6 +57,8 @@ type DatasetStudioProps = {
   remoteVersion?: number | null;
   saveError?: string | null;
   isGlobalRef?: boolean;
+  /** Id de proyecto para subir a S3 las imágenes añadidas (evita data URLs en el documento). */
+  projectScopeId?: string | null;
   onChange: (next: Dataset) => void;
   onScopeChange?: (
     next: Dataset,
@@ -81,6 +83,7 @@ export function DatasetStudio({
   onCreateNewLocal,
   onRequestImportFolddata,
   onClose,
+  projectScopeId = null,
 }: DatasetStudioProps) {
   const dataset = useMemo(() => normalizeDataset(rawDataset), [rawDataset]);
   const [activeSheetId, setActiveSheetId] = useState(dataset.lists[0]?.id ?? SHARED_SHEET_ID);
@@ -234,6 +237,7 @@ export function DatasetStudio({
   const scopeLabel = datasetScopeMetricLabel(dataset.scope);
 
   return (
+    <DatasetImageUploadProvider projectId={projectScopeId}>
     <div
       className="fixed inset-0 z-[100090] flex flex-col bg-[#0b0f14] text-white"
       data-foldder-studio-panel
@@ -487,6 +491,7 @@ export function DatasetStudio({
         />
       ) : null}
     </div>
+    </DatasetImageUploadProvider>
   );
 }
 

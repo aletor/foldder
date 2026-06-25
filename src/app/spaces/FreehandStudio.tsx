@@ -591,6 +591,7 @@ import type { DesignerEmbedProps } from "./freehand/designer-embed-props";
 import { getListFieldImageAtRow, getListFieldTextAtRow } from "@/app/spaces/dataset/dataset-logic";
 import type { DesignerDatasetFieldBinding, DesignerDatasetPropertyBinding } from "@/app/spaces/dataset/dataset-types";
 import { DesignerDatasetPropertyLink } from "./designer/DesignerDatasetPropertyLink";
+import { makePendingDesignerBinding } from "./designer/designer-dataset-binding";
 import {
   applyDesignerDatasetPropertyBindings,
   dragGestureDatasetPropertyKeys,
@@ -9120,6 +9121,7 @@ export function FreehandStudioCanvas({
   designerPageEnterDirection = null,
   designerMultipageVectorPdfExport,
   designerDeDocument = null,
+  designerSaveToInspiration = null,
   designerFitToViewNonce = 0,
   designerAutoOptimizeSwitch,
   designerOptimizeProgress,
@@ -12498,8 +12500,20 @@ export function FreehandStudioCanvas({
     return null;
   }, [singleSelected]);
 
-  const supportsDesignerDatasetBinding =
-    designerMode && !!designerConnectedDataset && designerDatasetFieldKind !== null;
+  /** Binding actual del objeto seleccionado (resuelto o pendiente), o null. */
+  const designerDatasetBinding = singleSelected?._designerDatasetBinding ?? null;
+
+  /** Etiqueta por defecto al marcar un hueco dinámico (nombre de capa o texto). */
+  const designerDatasetDefaultSlotLabel = useMemo(() => {
+    if (!singleSelected) return "Campo";
+    const name = singleSelected.name?.trim();
+    if (name) return name;
+    if (singleSelected.type === "text") {
+      const t = (singleSelected as TextObject).text?.trim();
+      if (t) return t.length > 24 ? `${t.slice(0, 24)}…` : t;
+    }
+    return designerDatasetFieldKind === "image" ? "Imagen" : "Campo";
+  }, [singleSelected, designerDatasetFieldKind]);
 
   const [designerDatasetListId, setDesignerDatasetListId] = useState("");
   const [designerDatasetFieldId, setDesignerDatasetFieldId] = useState("");
@@ -12685,6 +12699,64 @@ export function FreehandStudioCanvas({
     },
     [designerActivePageDatasetRowIndex, designerConnectedDataset, loadImageNaturalSize, pushHistory, singleSelected],
   );
+
+  /**
+   * Modo 2: marca el objeto como campo dinámico SIN Dataset conectado (hueco + tipo + etiqueta).
+   * La columna la asigna Populate después. No cambia el contenido del objeto (texto/imagen de diseño).
+   */
+  const markDesignerDatasetDynamic = useCallback(
+    (label: string) => {
+      if (!singleSelected) return;
+      const kind = designerDatasetFieldKind;
+      if (!kind) return;
+      const targetId = singleSelected.id;
+      const binding = makePendingDesignerBinding(kind, label);
+      setObjects((prev) => {
+        const next = prev.map((o) =>
+          o.id === targetId ? ({ ...o, _designerDatasetBinding: binding } as FreehandObject) : o,
+        );
+        pushHistory(next, new Set([targetId]));
+        return next;
+      });
+      setSelectedIds(new Set([targetId]));
+    },
+    [designerDatasetFieldKind, pushHistory, singleSelected],
+  );
+
+  /** Actualiza la etiqueta del hueco dinámico (identidad para el mapeo en Populate). */
+  const setDesignerDatasetSlotLabel = useCallback(
+    (label: string) => {
+      if (!singleSelected) return;
+      const targetId = singleSelected.id;
+      setObjects((prev) => {
+        const next = prev.map((o) => {
+          if (o.id !== targetId) return o;
+          const b = o._designerDatasetBinding;
+          if (!b) return o;
+          return { ...o, _designerDatasetBinding: { ...b, slotLabel: label } } as FreehandObject;
+        });
+        pushHistory(next, new Set([targetId]));
+        return next;
+      });
+    },
+    [pushHistory, singleSelected],
+  );
+
+  /** Quita la marca dinámica (elimina `_designerDatasetBinding`); el objeto vuelve a estático. */
+  const removeDesignerDatasetBinding = useCallback(() => {
+    if (!singleSelected) return;
+    const targetId = singleSelected.id;
+    setObjects((prev) => {
+      const next = prev.map((o) => {
+        if (o.id !== targetId || !o._designerDatasetBinding) return o;
+        const rest = { ...o };
+        delete (rest as { _designerDatasetBinding?: unknown })._designerDatasetBinding;
+        return rest as FreehandObject;
+      });
+      pushHistory(next, new Set([targetId]));
+      return next;
+    });
+  }, [pushHistory, singleSelected]);
 
   const bindDatasetProperty = useCallback(
     (propertyKey: string, binding: DesignerDatasetPropertyBinding | null) => {
@@ -26707,19 +26779,65 @@ export function FreehandStudioCanvas({
                 </div>
               </div>
             )}
-            {designerConnectedDataset && (
+            {designerMode && (
               <div className="border-b border-white/[0.08] px-[14px] py-3">
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Dataset</div>
                   <List size={12} className="text-teal-300/80" />
                 </div>
 
-                {designerConnectedDatasetLoading ? (
-                  <p className="text-[11px] leading-snug text-zinc-500">Cargando Dataset…</p>
-                ) : !supportsDesignerDatasetBinding ? (
+                {designerDatasetFieldKind === null ? (
                   <p className="text-[11px] leading-snug text-zinc-500">
-                    Selecciona un objeto de texto o un marco de imagen para enlazarlo a un campo del Dataset.
+                    Selecciona un objeto de texto o un marco de imagen para marcarlo como campo dinámico.
                   </p>
+                ) : designerConnectedDatasetLoading ? (
+                  <p className="text-[11px] leading-snug text-zinc-500">Cargando Dataset…</p>
+                ) : !designerConnectedDataset ? (
+                  designerDatasetBinding ? (
+                    <div className="space-y-2.5">
+                      <div className="flex items-center justify-between gap-2 rounded-[5px] border border-teal-400/25 bg-teal-500/10 px-2 py-1.5">
+                        <span className="text-[10px] font-semibold text-teal-200">
+                          Campo dinámico · {designerDatasetFieldKind === "image" ? "imagen" : "texto"}
+                        </span>
+                        <button
+                          type="button"
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onClick={removeDesignerDatasetBinding}
+                          className="nodrag rounded-[4px] border border-white/[0.12] px-1.5 py-0.5 text-[10px] text-zinc-300 transition hover:bg-white/[0.08]"
+                        >
+                          Quitar
+                        </button>
+                      </div>
+                      <label className="block space-y-1">
+                        <span className="text-[9px] font-semibold uppercase tracking-wider text-zinc-500">Nombre del campo</span>
+                        <input
+                          type="text"
+                          value={designerDatasetBinding.slotLabel ?? ""}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onChange={(e) => setDesignerDatasetSlotLabel(e.target.value)}
+                          placeholder="p. ej. Nombre del jugador"
+                          className="nodrag w-full rounded-[5px] border border-white/[0.1] bg-[#1a1e26] px-2 py-1.5 text-[11px] text-zinc-100 outline-none focus:border-teal-400/45"
+                        />
+                      </label>
+                      <p className="text-[10px] leading-snug text-zinc-500">
+                        Sin Dataset conectado. Asignarás la columna en el nodo Populate (plantilla).
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <p className="text-[11px] leading-snug text-zinc-500">
+                        Conéctale un Dataset para elegir columna, o márcalo como dinámico y asígnale la columna en Populate.
+                      </p>
+                      <button
+                        type="button"
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onClick={() => markDesignerDatasetDynamic(designerDatasetDefaultSlotLabel)}
+                        className="nodrag w-full rounded-[5px] border border-teal-400/30 bg-teal-500/10 px-2 py-1.5 text-[11px] font-semibold text-teal-100 transition hover:bg-teal-500/20"
+                      >
+                        Marcar como campo dinámico
+                      </button>
+                    </div>
+                  )
                 ) : designerConnectedDataset.lists.length === 0 ? (
                   <p className="text-[11px] leading-snug text-zinc-500">El Dataset conectado no tiene listados.</p>
                 ) : (
@@ -29237,6 +29355,7 @@ export function FreehandStudioCanvas({
           artboardList={[]}
           onExport={runProfessionalExport}
           designerMultipageVectorPdf={designerMultipageVectorPdfExport ?? null}
+          saveToInspiration={designerSaveToInspiration ?? null}
           flush={flushChrome}
         />
       )}

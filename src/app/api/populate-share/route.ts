@@ -33,7 +33,7 @@ function randomToken(): string {
 function isValidPayload(payload: unknown): payload is PopulateSharePayload {
   if (!payload || typeof payload !== "object") return false;
   const p = payload as PopulateSharePayload;
-  return (
+  const baseOk =
     typeof p.title === "string" &&
     typeof p.promptTemplate === "string" &&
     p.formModel != null &&
@@ -41,8 +41,18 @@ function isValidPayload(payload: unknown): payload is PopulateSharePayload {
     p.templateModel != null &&
     typeof p.templateModel === "object" &&
     typeof p.fixedRefUrls === "object" &&
-    Array.isArray(p.imageInputs)
-  );
+    Array.isArray(p.imageInputs);
+  if (!baseOk) return false;
+  if (p.designer != null) {
+    return Array.isArray(p.designer.pages) && Array.isArray(p.designer.formFields);
+  }
+  return true;
+}
+
+/** ¿El payload tiene contenido suficiente para generar (variables de imagen o campos Designer)? */
+function payloadHasContent(p: PopulateSharePayload): boolean {
+  if (p.designer != null) return p.designer.formFields.length > 0;
+  return !p.formModel.empty;
 }
 
 /** GET ?shareKey= — lista enlaces de un nodo Populate. */
@@ -115,9 +125,9 @@ export async function POST(req: Request) {
     if (!isValidPayload(body.payload)) {
       return NextResponse.json({ error: "payload invalid" }, { status: 400 });
     }
-    if (body.payload.formModel.empty) {
+    if (!payloadHasContent(body.payload)) {
       return NextResponse.json(
-        { error: "El formulario no tiene variables. Inserta campos en la plantilla primero." },
+        { error: "El formulario no tiene campos. Inserta variables o marca campos dinámicos primero." },
         { status: 400 },
       );
     }

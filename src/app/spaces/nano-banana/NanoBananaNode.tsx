@@ -2935,13 +2935,9 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
         <FoldderDataHandle type="target" position={Position.Left} id="prompt" dataType="prompt" />
         <span className="handle-label">Prompt</span>
       </div>
-      <div className="handle-wrapper handle-right" style={{ top: '42%' }}>
+      <div className="handle-wrapper handle-right" style={{ top: '55%' }}>
         <span className="handle-label">Image out</span>
         <FoldderDataHandle type="source" position={Position.Right} id="image" dataType="image" />
-      </div>
-      <div className="handle-wrapper handle-right" style={{ top: '70%' }}>
-        <span className="handle-label">Plantilla</span>
-        <FoldderDataHandle type="source" position={Position.Right} id="template" dataType="template" />
       </div>
 
       {/* ── Header ── */}

@@ -1,0 +1,48 @@
+import { describe, expect, it } from "vitest";
+import {
+  findPopulateTemplateLinkEdge,
+  isPopulateTemplateLinkEdge,
+} from "./populate-template-link";
+
+describe("populate-template-link", () => {
+  const nodes = [
+    { id: "pop1", type: "populate" },
+    { id: "nano1", type: "nanoBanana" },
+    { id: "export1", type: "imageExport" },
+  ];
+
+  it("accepts image out → populate template", () => {
+    const edge = {
+      id: "e1",
+      source: "nano1",
+      target: "pop1",
+      sourceHandle: "image",
+      targetHandle: "template",
+    };
+    expect(isPopulateTemplateLinkEdge(edge, "pop1", "nanoBanana")).toBe(true);
+    expect(findPopulateTemplateLinkEdge("pop1", nodes, [edge as any])?.id).toBe("e1");
+  });
+
+  it("accepts legacy template → populate template", () => {
+    const edge = {
+      id: "e2",
+      source: "nano1",
+      target: "pop1",
+      sourceHandle: "template",
+      targetHandle: "template",
+    };
+    expect(isPopulateTemplateLinkEdge(edge, "pop1", "nanoBanana")).toBe(true);
+  });
+
+  it("rejects non-orchestrable sources", () => {
+    const edge = {
+      id: "e3",
+      source: "export1",
+      target: "pop1",
+      sourceHandle: "image",
+      targetHandle: "template",
+    };
+    expect(isPopulateTemplateLinkEdge(edge, "pop1", "imageExport")).toBe(false);
+    expect(findPopulateTemplateLinkEdge("pop1", nodes, [edge as any])).toBeUndefined();
+  });
+});
