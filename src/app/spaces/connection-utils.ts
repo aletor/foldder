@@ -7,6 +7,14 @@ import {
 } from './canvas-group-logic';
 
 /**
+ * Tipos de nodo creativo que Populate puede orquestar (plantilla).
+ * Empezamos por Image Creation; el resto se irá habilitando con el mismo contrato.
+ */
+export const ORCHESTRABLE_CREATIVE_TYPES = new Set<string>([
+  'nanoBanana',
+]);
+
+/**
  * Same rules as the canvas `isValidConnection` in page.tsx — kept pure for library-drop preview.
  */
 export function areNodesConnectable(
@@ -54,8 +62,12 @@ export function areNodesConnectable(
 
   let sourceHandleType = sourceMetadata.outputs?.find((o) => o.id === connection.sourceHandle)?.type;
 
-  if (sourceNode.type === 'space' && (sourceNode.data as { outputType?: string })?.outputType) {
-    sourceHandleType = (sourceNode.data as { outputType?: string }).outputType as typeof sourceHandleType;
+  if (sourceNode.type === 'space') {
+    if (connection.sourceHandle === 'media_list') {
+      sourceHandleType = 'media_list';
+    } else if ((sourceNode.data as { outputType?: string })?.outputType) {
+      sourceHandleType = (sourceNode.data as { outputType?: string }).outputType as typeof sourceHandleType;
+    }
   }
 
   let targetHandleType = targetMetadata.inputs?.find((i) => i.id === connection.targetHandle)?.type;
@@ -97,6 +109,16 @@ export function areNodesConnectable(
   // Dataset handle only connects dataset output → dataset input.
   if (connection.sourceHandle === 'dataset' || connection.targetHandle === 'dataset') {
     return sourceHandleType === 'dataset' && targetHandleType === 'dataset';
+  }
+
+  // Template handle: a creative node's dedicated "Plantilla" output → Populate "template" input.
+  // Both ends must be the template handle type, and the source must be an orchestrable creative node.
+  if (connection.sourceHandle === 'template' || connection.targetHandle === 'template') {
+    return (
+      sourceHandleType === 'template' &&
+      targetHandleType === 'template' &&
+      ORCHESTRABLE_CREATIVE_TYPES.has(sourceNode.type as string)
+    );
   }
 
   if (sourceHandleType === 'url' || targetHandleType === 'url') return true;

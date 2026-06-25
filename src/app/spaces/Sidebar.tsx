@@ -104,6 +104,7 @@ function tileBorderClassForType(type: string, fallback: string): string {
   if (type === 'video_editor' || type === 'videoEditor') return 'border-[#5ec4cc] group-hover/tile:border-[#7dd8df]';
   if (type === 'presenter') return 'border-[#8ac091] group-hover/tile:border-[#8ac091]';
   if (type === 'dataset') return 'border-[#37b7df] group-hover/tile:border-[#37b7df]';
+  if (type === 'populate') return 'border-[#fd52eb] group-hover/tile:border-[#fd52eb]';
   if (type === 'projectBrain') return 'border-slate-400/60 group-hover/tile:border-slate-300/80';
   return fallback;
 }
@@ -124,6 +125,7 @@ const TOOL_ITEMS: Array<{ type: string; label: string }> = [
   { type: 'inspiration', label: 'Inspiration' },
   { type: 'layerizer', label: 'Layerizer' },
   { type: 'dataset', label: 'Dataset' },
+  { type: 'populate', label: 'Populate' },
   { type: 'mediaDescriber', label: 'Image Describer' },
   { type: 'enhancer', label: 'Enhance' },
   { type: 'imageCreationAdvanced', label: 'Image Advanced' },

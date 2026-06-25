@@ -37,6 +37,7 @@ import { InspirationNode } from "./inspiration/InspirationNode";
 import { ImageCreationAdvancedNode } from "./image-creation-advanced/ImageCreationAdvancedNode";
 import { LayerizerNode } from "./layerizer/LayerizerNode";
 import { DatasetNode } from "./dataset/DatasetNode";
+import { PopulateNode } from "./populate/PopulateNode";
 
 export const spacesInitialNodes: Node[] = [];
 
@@ -60,6 +61,7 @@ export const spacesNodeTypes: Record<string, ComponentType<any>> = {
   imageCreationAdvanced: ImageCreationAdvancedNode,
   layerizer: LayerizerNode,
   dataset: DatasetNode,
+  populate: PopulateNode,
   mediaDescriber: MediaDescriberNode,
   imageExport: ImageExportNode,
   urlImage: UrlImageNode,

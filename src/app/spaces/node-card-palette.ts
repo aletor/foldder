@@ -19,6 +19,7 @@ export const FOLDDER_NODE_CARD_BG: Record<string, string> = {
   crop: "#F0804D",
   layerizer: "#a6c85e",
   dataset: "#37B7DF",
+  populate: "#FD52EB",
   vfxGenerator: "#6B597F",
   presenter: "#f5b91b",
   painter: "#890AF3",

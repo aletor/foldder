@@ -3548,7 +3548,9 @@ export const SpaceNode = memo(function SpaceNode({ id, data, selected }: NodePro
     spaceId?: string,
     hasInput?: boolean,
     hasOutput?: boolean,
-    internalCategories?: string[]
+    internalCategories?: string[],
+    outputMode?: string,
+    mediaListOutput?: { items?: Array<{ url?: string; mediaType?: string }> },
   };
   const { setNodes } = useReactFlow();
   const spaceId = nodeData.spaceId;
@@ -3558,8 +3560,17 @@ export const SpaceNode = memo(function SpaceNode({ id, data, selected }: NodePro
     const onSpaceDataUpdated = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       if (detail?.spaceId === spaceId) {
-        // Trigger a force-update by touching the node
-        setNodes(prev => prev.map(n => n.id === id ? { ...n, data: { ...n.data, _ts: Date.now() } } : n));
+        setNodes(prev => prev.map(n => n.id === id ? {
+          ...n,
+          data: {
+            ...n.data,
+            ...(detail.outputType ? { outputType: detail.outputType } : {}),
+            ...(detail.outputValue != null ? { value: detail.outputValue } : {}),
+            ...(detail.outputMode ? { outputMode: detail.outputMode } : {}),
+            ...(detail.mediaListOutput ? { mediaListOutput: detail.mediaListOutput } : {}),
+            _ts: Date.now(),
+          },
+        } : n));
       }
     };
     window.addEventListener('space-data-updated', onSpaceDataUpdated);
@@ -3605,8 +3616,13 @@ export const SpaceNode = memo(function SpaceNode({ id, data, selected }: NodePro
     return <NodeIcon key={cat} type="space" iconKey={key} size={14} />;
   };
 
+  const isMediaListOutput = nodeData.outputType === 'media_list';
+  const mediaListItems = nodeData.mediaListOutput?.items ?? [];
+  const previewThumb = mediaListItems.find((item) => item.url)?.url;
+
   const hasMediaPreview = Boolean(
-    nodeData.value && (nodeData.outputType === 'image' || nodeData.outputType === 'video'),
+    (nodeData.value && (nodeData.outputType === 'image' || nodeData.outputType === 'video')) ||
+    (isMediaListOutput && previewThumb),
   );
 
   return (
@@ -3653,7 +3669,16 @@ export const SpaceNode = memo(function SpaceNode({ id, data, selected }: NodePro
         <div className="node-content foldder-frameless-main">
           {/* Media a sangre (ocupa todo el nodo) */}
           {hasMediaPreview ? (
-            nodeData.outputType === 'video' ? (
+            isMediaListOutput && previewThumb ? (
+              <>
+                <img src={previewThumb} className="absolute inset-0 h-full w-full object-cover" alt="Space collection" />
+                {mediaListItems.length > 1 ? (
+                  <div className="absolute top-3 right-3 z-[9] rounded-full bg-black/55 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-white">
+                    {mediaListItems.length} items
+                  </div>
+                ) : null}
+              </>
+            ) : nodeData.outputType === 'video' ? (
               <video src={nodeData.value as string} className="absolute inset-0 h-full w-full object-cover" muted />
             ) : (
               <img src={nodeData.value as string} className="absolute inset-0 h-full w-full object-cover" alt="Space output" />
@@ -3684,10 +3709,17 @@ export const SpaceNode = memo(function SpaceNode({ id, data, selected }: NodePro
 
         {/* Output handle only if space has an internal OutputNode */}
         {nodeData.hasOutput !== false && (
-          <div className="handle-wrapper handle-right">
-            <span className="handle-label">Result Out</span>
-            <FoldderDataHandle type="source" position={Position.Right} id="out" dataType={foldderDataTypeFromHandleClass(getHandleClass())} />
-          </div>
+          isMediaListOutput ? (
+            <div className="handle-wrapper handle-right" style={{ top: '50%' }}>
+              <span className="handle-label">Media List</span>
+              <FoldderDataHandle type="source" position={Position.Right} id="media_list" dataType="generic" />
+            </div>
+          ) : (
+            <div className="handle-wrapper handle-right">
+              <span className="handle-label">Result Out</span>
+              <FoldderDataHandle type="source" position={Position.Right} id="out" dataType={foldderDataTypeFromHandleClass(getHandleClass())} />
+            </div>
+          )
         )}
       </div>
     </div>
@@ -3762,17 +3794,32 @@ export const SpaceOutputNode = memo(function SpaceOutputNode({ id, data, selecte
   const nodes = useNodes();
   const edges = useEdges();
 
-  // Find what's connected to the 'in' handle
-  const inputEdge = edges.find((e) => e.target === id && e.targetHandle === 'in');
-  const sourceNode = inputEdge ? nodes.find((n) => n.id === inputEdge.source) : null;
-  const sourceValue: string | undefined = typeof sourceNode?.data?.value === 'string' ? sourceNode.data.value : undefined;
-  // Resolve output type: NODE_REGISTRY is most reliable, fallback to data fields
-  const nodeType = sourceNode?.type as string | undefined;
+  const inputEdges = edges.filter((e) => e.target === id && e.targetHandle === 'in');
+  const sourceNodes = inputEdges
+    .map((edge) => nodes.find((n) => n.id === edge.source))
+    .filter((n): n is Node => n != null);
+  const isCollection = nodeData.outputType === 'media_list' || inputEdges.length >= 2;
+  const primarySource = sourceNodes[0] ?? null;
+  const sourceValue: string | undefined =
+    typeof primarySource?.data?.value === 'string' ? primarySource.data.value : undefined;
+  const nodeType = primarySource?.type as string | undefined;
   const registryOutputType = nodeType ? (NODE_REGISTRY[nodeType]?.outputs?.[0]?.type ?? '') : '';
-  const sourceType: string = registryOutputType || (sourceNode?.data?.outputType as string) || (sourceNode?.data?.type as string) || '';
-  const isVisual = sourceType === 'image' || sourceType === 'video';
+  const sourceType: string =
+    (isCollection ? 'media_list' : '') ||
+    registryOutputType ||
+    (primarySource?.data?.outputType as string) ||
+    (primarySource?.data?.type as string) ||
+    '';
+  const isVisual = !isCollection && (sourceType === 'image' || sourceType === 'video');
+  const collectionThumbs = isCollection
+    ? sourceNodes
+        .map((node) => (typeof node.data?.value === 'string' ? node.data.value : undefined))
+        .filter((url): url is string => Boolean(url))
+        .slice(0, 4)
+    : [];
 
   const getHandleClass = () => {
+    if (isCollection || sourceType === 'media_list') return 'handle-generic';
     if (sourceType === 'brain') return 'handle-brain';
     if (sourceType === 'image') return 'handle-image';
     if (sourceType === 'video') return 'handle-video';
@@ -3807,14 +3854,32 @@ export const SpaceOutputNode = memo(function SpaceOutputNode({ id, data, selecte
 
       {/* Header */}
       <div className="node-header" style={{ padding: 'calc(10px * 0.7) calc(14px * 0.7)' }}>
-        <NodeIcon type="spaceOutput" selected={selected} done={!!inputEdge} size={16} />
+        <NodeIcon type="spaceOutput" selected={selected} done={inputEdges.length > 0} size={16} />
         <FoldderNodeHeaderTitle className="tracking-tighter uppercase" introActive={!!(nodeData as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}>
           Space Output
         </FoldderNodeHeaderTitle>
       </div>
 
       {/* Media preview if connected visual node */}
-      {isVisual && sourceValue ? (
+      {isCollection ? (
+        <div className="relative w-full overflow-hidden" style={{ background: '#0a0a0a', minHeight: 120 }}>
+          {collectionThumbs.length > 0 ? (
+            <div className="grid grid-cols-2 gap-px p-px">
+              {collectionThumbs.map((url) => (
+                <img key={url} src={url} className="aspect-video w-full object-cover" alt="" />
+              ))}
+            </div>
+          ) : (
+            <div className="flex h-28 items-center justify-center text-[9px] font-black uppercase tracking-widest text-gray-500">
+              {inputEdges.length > 0 ? `${inputEdges.length} connected` : 'Collection'}
+            </div>
+          )}
+          <div className="absolute bottom-2 left-2 px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest"
+            style={{ background: 'rgba(0,0,0,0.6)', color: '#94a3b8', backdropFilter: 'blur(6px)' }}>
+            media_list · {inputEdges.length}
+          </div>
+        </div>
+      ) : isVisual && sourceValue ? (
         <div className="relative w-full aspect-video overflow-hidden" style={{ background: '#0a0a0a' }}>
           {sourceType === 'video' ? (
             <video src={sourceValue} className="w-full h-full object-cover" muted />
@@ -3833,7 +3898,7 @@ export const SpaceOutputNode = memo(function SpaceOutputNode({ id, data, selecte
             <CheckCircle size={24} className={theme.icon} />
           </div>
           <span className="text-[9px] font-black text-gray-500 uppercase tracking-widest">
-            {inputEdge ? 'Connected' : 'Exit Point'}
+            {inputEdges.length > 0 ? 'Connected' : 'Exit Point'}
           </span>
         </div>
       )}

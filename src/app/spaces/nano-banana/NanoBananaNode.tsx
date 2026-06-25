@@ -46,6 +46,9 @@ import { normalizeProjectAssets } from "../project-assets-metadata";
 import { takePendingNanoStudioOpenFromCine } from "../cine/cine-nano-open-pending";
 import type { CineImageStudioResult, CineImageStudioSession } from "../cine-types";
 import { useRegisterAssistantNodeRun } from "../use-assistant-node-run";
+import { usePopulateContextForNode } from "../populate/use-populate-context";
+import { PopulateTemplatePanel } from "../populate/PopulateTemplatePanel";
+import type { PopulateBindings, PopulateInputBinding } from "../populate/populate-types";
 import { nodeFrameFromSnapshot, selectNodeFrameSnapshot } from "../react-flow-selectors";
 import { useCanvasPerformanceModeRef } from "../use-canvas-performance-mode";
 import { useFoldderRenderMetric } from "../use-performance-metrics";
@@ -2359,8 +2362,13 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
     imageProvider?: NanoBananaImageProvider;
     /** Persisted with the project (Studio + main-run versions). */
     generationHistory?: string[];
+    /** Populate: prompt plantilla inline con tokens {campo}. */
+    promptText?: string;
+    /** Populate: enlaces por input a columnas del Dataset. */
+    _populateBindings?: PopulateBindings;
   };
   const { setNodes, setEdges, getNodes, getEdges } = useReactFlow();
+  const populateCtx = usePopulateContextForNode(id);
   const [status, setStatus] = useState('idle');
   const [progress, setProgress] = useState(0);
   const [result, setResult] = useState<string | null>(null);
@@ -2672,13 +2680,30 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
   const updateData = (key: string, val: unknown) =>
     setNodes((nds) => nds.map((n) => n.id === id ? { ...n, data: { ...n.data, [key]: val } } : n));
 
+  const inlinePromptText = typeof nodeData.promptText === "string" ? nodeData.promptText : "";
+  /** Prompt efectivo: el conectado manda; si no, el inline (plantilla Populate). */
+  const effectivePromptValue = promptValue || inlinePromptText;
+
+  const onChangePopulateBinding = useCallback(
+    (inputId: string, binding: PopulateInputBinding) => {
+      setNodes((nds) =>
+        nds.map((n) => {
+          if (n.id !== id) return n;
+          const prev = ((n.data as { _populateBindings?: PopulateBindings })._populateBindings) ?? {};
+          return { ...n, data: { ...n.data, _populateBindings: { ...prev, [inputId]: binding } } };
+        }),
+      );
+    },
+    [id, setNodes],
+  );
+
   const onRun = async () => {
-    if (!promptValue) return alert("Connect a prompt node!");
+    if (!effectivePromptValue) return alert("Connect a prompt node!");
 
     const connectedRefImages = refImages.filter((img, index) => connectedSlots[index] && img) as string[];
     const textOnlyRecreation = connectedRefImages.length === 0;
 
-    const userPromptRaw = normalizeGenerativeImagePrompt(String(promptValue ?? ""), {
+    const userPromptRaw = normalizeGenerativeImagePrompt(String(effectivePromptValue ?? ""), {
       targetAspectRatio: nodeData.aspect_ratio || "16:9",
       textOnlyRecreation,
     });
@@ -2926,9 +2951,13 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
         <FoldderDataHandle type="target" position={Position.Left} id="prompt" dataType="prompt" />
         <span className="handle-label">Prompt</span>
       </div>
-      <div className="handle-wrapper handle-right" style={{ top: '50%' }}>
+      <div className="handle-wrapper handle-right" style={{ top: '42%' }}>
         <span className="handle-label">Image out</span>
         <FoldderDataHandle type="source" position={Position.Right} id="image" dataType="image" />
+      </div>
+      <div className="handle-wrapper handle-right" style={{ top: '70%' }}>
+        <span className="handle-label">Plantilla</span>
+        <FoldderDataHandle type="source" position={Position.Right} id="template" dataType="template" />
       </div>
 
       {/* ── Header ── */}
@@ -2960,6 +2989,18 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
           </span>
         </div>
       </div>
+
+      {/* ── Populate: panel de plantilla (fijo/columna + prompt con tokens) ── */}
+      {populateCtx.populateConnected ? (
+        <PopulateTemplatePanel
+          promptText={inlinePromptText}
+          bindings={nodeData._populateBindings ?? {}}
+          schema={populateCtx.schema}
+          listId={populateCtx.listId}
+          onChangePrompt={(next) => updateData("promptText", next)}
+          onChangeBinding={onChangePopulateBinding}
+        />
+      ) : null}
 
       {/* ── Main image area: preview encaja sin recortar (object-contain); la imagen generada sigue con su resolución real ── */}
       <div

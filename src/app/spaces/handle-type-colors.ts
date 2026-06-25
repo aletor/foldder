@@ -20,6 +20,7 @@ export const HANDLE_COLORS: Record<string, string> = {
   pdf: "#f97316",
   txt: "#f59e0b",
   url: "#10b981",
+  template: "#FD52EB",
   rose: "#f43f5e",
   emerald: "#10b981",
 };

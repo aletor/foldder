@@ -562,6 +562,7 @@
 .custom-node.foldder-studio-node--cine.foldder-node--frameless.node--media,
 .custom-node.foldder-studio-node--projectBrain.foldder-node--frameless.node--media,
 .custom-node.foldder-studio-node--dataset.foldder-node--frameless.node--media,
+.custom-node.foldder-studio-node--populate.foldder-node--frameless.node--media,
 .custom-node.nano-banana-node.foldder-node--frameless.node--media,
 .custom-node.layerizer-node.foldder-node--frameless.node--media,
 .custom-node.url-image-node.foldder-node--frameless.node--media {
@@ -575,6 +576,7 @@
 .spaces-canvas .react-flow__node:has(.foldder-studio-node--cine),
 .spaces-canvas .react-flow__node:has(.foldder-studio-node--projectBrain),
 .spaces-canvas .react-flow__node:has(.foldder-studio-node--dataset),
+.spaces-canvas .react-flow__node:has(.foldder-studio-node--populate),
 .spaces-canvas .react-flow__node:has(.nano-banana-node),
 .spaces-canvas .react-flow__node:has(.url-image-node) {
   overflow: visible !important;
@@ -915,6 +917,7 @@
 .custom-node.foldder-node--frameless.node--media > .foldder-frameless-main > .presenter-empty-background,
 .custom-node.foldder-node--frameless.node--media > .foldder-frameless-main > .video-editor-empty-background,
 .custom-node.foldder-node--frameless.node--media > .foldder-frameless-main > .gemini-video-empty-background,
+.custom-node.foldder-node--frameless.node--media > .foldder-frameless-main > .populate-empty-background,
 .custom-node.foldder-node--frameless.node--media > .gemini-video-preview > .gemini-video-empty-background {
   border-radius: 0 !important;
 }
@@ -1750,6 +1753,152 @@
 
 .custom-node.foldder-node--frameless.enhancer-node {
   --foldder-frameless-accent: #1f2328;
+}
+
+/* Populate: bucle por filas — frameless con fondo rosa */
+.custom-node.populate-node {
+  --foldder-frameless-accent: #fd52eb;
+  --foldder-node-card-bg: #fd52eb;
+}
+
+.custom-node.populate-node.foldder-node--frameless.node--media {
+  min-height: 280px;
+  background: #fd52eb !important;
+}
+
+.custom-node.populate-node .foldder-frameless-main {
+  position: absolute !important;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 0 !important;
+  background: #fd52eb !important;
+}
+
+.custom-node.populate-node .populate-empty-background {
+  background: #fd52eb !important;
+  border-radius: 0 !important;
+}
+
+.custom-node.populate-node .populate-empty-background img {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
+  background: #fd52eb;
+  object-fit: cover !important;
+  object-position: center center !important;
+}
+
+.custom-node.populate-node .populate-node-preview {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background: rgba(0, 0, 0, 0.72);
+}
+
+.custom-node.populate-node .populate-node-preview img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.custom-node.populate-node .foldder-frameless-secondary-panel {
+  top: 42px;
+  bottom: auto;
+  left: var(--foldder-frameless-overlay-side);
+  max-width: calc(100% - 28px);
+  padding: 0 !important;
+  background: transparent !important;
+  gap: 4px;
+}
+
+.custom-node.populate-node .populate-node-list-select {
+  margin-top: 4px;
+  width: 100%;
+  max-width: 220px;
+  border: none !important;
+  border-radius: 0 !important;
+  background: rgba(255, 255, 255, 0.1) !important;
+  color: #ffffff !important;
+  padding: 4px 8px !important;
+  font-size: 10px !important;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.custom-node.populate-node .populate-node-preview-link {
+  margin-top: 6px;
+  border: none !important;
+  background: transparent !important;
+  color: rgba(255, 255, 255, 0.72) !important;
+  padding: 0 !important;
+  font-size: 10px !important;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.custom-node.populate-node .populate-node-preview-link:hover:not(:disabled) {
+  color: #ffffff !important;
+  transform: none !important;
+  background: transparent !important;
+}
+
+.custom-node.populate-node .populate-node-preview-link:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.custom-node.populate-node .populate-node-footer {
+  position: absolute !important;
+  inset: auto 0 0 0 !important;
+  z-index: 12;
+  display: flex !important;
+  flex-direction: column;
+  align-items: stretch;
+  padding: 0 var(--foldder-frameless-overlay-side) var(--foldder-frameless-overlay-bottom) !important;
+  background: transparent !important;
+}
+
+.custom-node.populate-node .populate-node-footer .populate-run-button {
+  position: relative !important;
+  inset: auto !important;
+  left: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  width: 100% !important;
+  max-width: none !important;
+  justify-content: center;
+  border-radius: 0 !important;
+  font-size: 11px !important;
+  letter-spacing: 0.06em !important;
+  text-transform: uppercase !important;
+}
+
+.custom-node.populate-node .populate-node-footer .populate-open-results {
+  position: relative !important;
+  inset: auto !important;
+  width: 100% !important;
+  max-width: none !important;
+  margin-top: 6px;
+  justify-content: center;
+  border-radius: 0 !important;
+  background: rgba(255, 255, 255, 0.12) !important;
+  color: #ffffff !important;
+  font-size: 10px !important;
+}
+
+.custom-node.populate-node .foldder-frameless-error {
+  top: 42px;
+  bottom: auto;
+  max-width: calc(100% - 28px);
 }
 
 /* Export Multimedia: frameless · mismo fondo/color que Enhancer (#21817f) */
@@ -4545,6 +4694,7 @@
 .react-flow__handle:not(.foldder-data-handle).handle-rose   { border-color: #f43f5e !important; }
 .react-flow__handle:not(.foldder-data-handle).handle-emerald{ border-color: #10b981 !important; }
 .react-flow__handle:not(.foldder-data-handle).handle-dataset { border-color: #14b8a6 !important; }
+.react-flow__handle:not(.foldder-data-handle).handle-template { border-color: #FD52EB !important; }
 
 /* Conectores con icono: cuadrado redondeado; anillo de color solo si está conectado.
    border-radius compensado como ancho/alto para radio ~constante en pantalla al hacer zoom */
@@ -4608,6 +4758,7 @@
 .foldder-data-handle--connected.handle-rose   { box-shadow: 0 0 0 2.8px rgba(244, 63, 94, 0.55) !important; }
 .foldder-data-handle--connected.handle-emerald{ box-shadow: 0 0 0 2.8px rgba(16, 185, 129, 0.55) !important; }
 .foldder-data-handle--connected.handle-dataset { box-shadow: 0 0 0 2.8px rgba(20, 184, 166, 0.55) !important; }
+.foldder-data-handle--connected.handle-template { box-shadow: 0 0 0 2.8px rgba(253, 82, 235, 0.6) !important; }
 .foldder-data-handle--connected.handle-generic { box-shadow: 0 0 0 2.8px rgba(148, 163, 184, 0.5) !important; }
 
 /* Misma composición que @xyflow/react/style.css: si falta el eje Y/X, los bounds del handle fallan y las aristas no se dibujan (getEdgePosition → null). */

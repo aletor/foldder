@@ -155,6 +155,21 @@ import {
   type FoldderOpenGeminiVideoDetail,
 } from "./presenter/presenter-image-video-types";
 import { useNodeExecutionRunner } from "./NodeExecutionBridge";
+import { POPULATE_COMMIT_EVENT } from "./populate/use-populate-context";
+import {
+  buildPopulateSpacePortalNode,
+  buildPopulateToSpaceEdge,
+  findPopulateSpacePortalNode,
+  internalCategoriesFromGeneratedNodes,
+  resolvePopulateCommitSpaceId,
+} from "./populate/populate-space-portal";
+import {
+  analyzeNestedSpaceStructure,
+  buildMediaSinkToSpaceOutputEdges,
+  collectMediaSinkInfos,
+  detectSpaceOutputMode,
+  type SpaceStructureAnalysis,
+} from "./space-media-list";
 import {
   areNodesConnectable,
   findLibraryDropPlan,
@@ -2989,133 +3004,12 @@ export function SpacesContent() {
     fitView,
   ]);
 
-  // Helper to detect structure and data output from a space
-  const analyzeSpaceStructure = (nodes: any[], edges: any[]): { 
-    type: string, 
-    label: string,
-    value: string | null, 
-    hasInput: boolean, 
-    hasOutput: boolean,
-    internalCategories: string[] 
-  } => {
-    const inputNode = nodes.find(n => n.type === 'spaceInput');
-    const outputNode = nodes.find(n => n.type === 'spaceOutput');
-    
-    // Extract internal categories for visualization
-    const categoriesSet = new Set<string>();
-    nodes.forEach(n => {
-      const type = (n.type || '').toLowerCase();
-      
-      // AI / Intelligence Category
-      if (type.includes('grok') || type.includes('runway') || type.includes('assistant') || type.includes('processor') || type.includes('banana') || type.includes('remover') || type.includes('describer')) {
-        categoriesSet.add('ai');
-      } 
-      
-      // Logic / Utility Category
-      if (type.includes('concatenator') || type.includes('listado') || type.includes('batch') || (type === 'space' && n.id !== 'in' && n.id !== 'out')) {
-        categoriesSet.add('logic');
-      }
-
-      // Prompt Category
-      if (type.includes('prompt') || type.includes('describer') || type.includes('enhancer')) {
-        categoriesSet.add('prompt');
-      }
-
-      // Media / Image Category
-      if (type.includes('image') || type.includes('media') || type.includes('matted')) {
-        categoriesSet.add('image');
-      }
-      
-      // Video Category
-      if (type.includes('video')) {
-        categoriesSet.add('video');
-      }
-
-      // Canvas / Composition Category
-      if (
-        type.includes('export') ||
-        type.includes('paint') ||
-        type.includes('crop') ||
-        type.includes('photo') ||
-        type.includes('design') ||
-        type.includes('present') ||
-        type.includes('textoverlay')
-      ) {
-        categoriesSet.add('canvas');
-      }
-
-      // Tool Category
-      if (type.includes('mask') || type.includes('tool') || type.includes('scissors') || type.includes('vision') || type.includes('describer')) {
-        categoriesSet.add('tool');
-      }
-    });
-
-    const result = {
-      type: 'url',
-      label: 'Space',
-      value: null as string | null,
-      hasInput: !!inputNode,
-      hasOutput: !!outputNode,
-      internalCategories: Array.from(categoriesSet).slice(0, 5) 
-    };
-
-    if (!outputNode) return result;
-
-    // FIND THE EDGE: Be lenient with handle IDs
-    const incomingEdge = edges.find(e => e.target === outputNode.id);
-    if (!incomingEdge) return result;
-
-    const sourceNode = nodes.find(n => n.id === incomingEdge.source);
-    if (!sourceNode) return result;
-
-    // Registry-Based Type Detection (Fail-safe)
-    const sourceMetadata = NODE_REGISTRY[sourceNode.type];
-    // Find matching output type by checking all handles of the source node if specific handle not found
-    let sourceHandleType = sourceMetadata?.outputs.find(o => o.id === incomingEdge.sourceHandle)?.type;
-    if (!sourceHandleType && sourceMetadata?.outputs.length === 1) {
-        sourceHandleType = sourceMetadata.outputs[0].type;
-    }
-    
-    // Check propagated type if it's reaching from a sub-space
-    const propagatedType = (sourceNode.data?.outputType || sourceNode.data?.type || '').toLowerCase();
-
-    // Final mapping to visual result types
-    if (sourceHandleType === 'brain' || propagatedType === 'brain') {
-        result.type = 'brain';
-        result.label = 'Brain Space';
-    }
-    else if (sourceHandleType === 'image' || propagatedType === 'image') {
-        result.type = 'image';
-        result.label = 'Image Space';
-    }
-    else if (sourceHandleType === 'video' || propagatedType === 'video') {
-        result.type = 'video';
-        result.label = 'Video Space';
-    }
-    else if (sourceHandleType === 'prompt' || propagatedType === 'prompt') {
-        result.type = 'prompt';
-        result.label = 'Prompt Space';
-    }
-    else if (sourceHandleType === 'mask' || propagatedType === 'mask') {
-        result.type = 'mask';
-        result.label = 'Mask Space';
-    }
-    else if (sourceHandleType === 'url' || propagatedType === 'url') {
-        result.type = 'url';
-        result.label = 'URL Space';
-    }
-    else if (sourceHandleType === 'json' || propagatedType === 'json') {
-        result.type = 'json';
-        result.label = 'Data Space';
-    }
-    
-    result.value = sourceNode.data?.value || null;
-    return result;
-  };
-
   // Helper to commit current state AND propagate up
   const syncCurrentSpaceState = useCallback((currentNodes: any[], currentEdges: any[], currentSpacesMap: Record<string, any>, currentId: string) => {
-    const structure = analyzeSpaceStructure(currentNodes, currentEdges);
+    const structure = analyzeNestedSpaceStructure(currentNodes, currentEdges, {
+      spaceId: currentId,
+      spaceName: currentSpacesMap[currentId]?.name || "Space",
+    });
     
     // 1. Detect INCOMING type from parent to this space
     let incomingType = 'url';
@@ -3143,6 +3037,8 @@ export function SpacesContent() {
         edges: [...currentEdges],
         outputType: structure.type,
         outputValue: structure.value,
+        outputMode: structure.outputMode,
+        mediaListOutput: structure.mediaListOutput ?? undefined,
         hasInput: structure.hasInput,
         hasOutput: structure.hasOutput,
         internalCategories: structure.internalCategories,
@@ -3169,6 +3065,8 @@ export function SpacesContent() {
                             outputType: structure.type, 
                             inputType: incomingType,
                             value: structure.value,
+                            outputMode: structure.outputMode,
+                            mediaListOutput: structure.mediaListOutput ?? undefined,
                             hasInput: structure.hasInput,
                             hasOutput: structure.hasOutput,
                             internalCategories: [...structure.internalCategories]
@@ -3246,11 +3144,17 @@ export function SpacesContent() {
 
     // 7. Notify any SpaceNode cards in the parent view so they refresh their preview
     window.dispatchEvent(new CustomEvent('space-data-updated', {
-      detail: { spaceId: currentId, outputType: structure.type, outputValue: structure.value }
+      detail: {
+        spaceId: currentId,
+        outputType: structure.type,
+        outputValue: structure.value,
+        outputMode: structure.outputMode,
+        mediaListOutput: structure.mediaListOutput,
+      },
     }));
 
     return { newMap, structure };
-  }, [analyzeSpaceStructure, setNodes, setSpacesMap]);
+  }, [setNodes, setSpacesMap]);
 
   // Navigation Logic
   const handleEnterSpace = useCallback((e: any) => {
@@ -3474,6 +3378,204 @@ export function SpacesContent() {
     window.addEventListener('enter-space', handleEnterSpace);
     return () => window.removeEventListener('enter-space', handleEnterSpace);
   }, [handleEnterSpace]);
+
+  /**
+   * Populate: deposita los nodos generados en el Nested Space, crea o reutiliza
+   * el portal `space` conectado a la derecha del nodo Populate, y actualiza salidas.
+   */
+  const handlePopulateCommit = useCallback((e: any) => {
+    const detail = e?.detail || {};
+    const populateNodeId: string | undefined = detail.populateNodeId;
+    if (!populateNodeId) return;
+    const genNodes: Node[] = Array.isArray(detail.nodes) ? detail.nodes : [];
+    const genEdges: Edge[] = Array.isArray(detail.edges) ? detail.edges : [];
+    const spaceName: string = typeof detail.spaceName === "string" && detail.spaceName.trim()
+      ? detail.spaceName.trim()
+      : "Populate";
+
+    const currentNodes = liveNodesRef.current as Node[];
+    const currentEdges = liveEdgesRef.current as Edge[];
+    const populateNode = currentNodes.find((n) => n.id === populateNodeId);
+    if (!populateNode) return;
+
+    const existingPortal = findPopulateSpacePortalNode(populateNodeId, currentNodes, currentEdges);
+    const { spaceId, portalNodeId, isNewPortal } = resolvePopulateCommitSpaceId(
+      populateNodeId,
+      existingPortal,
+    );
+    const internalCategories = internalCategoriesFromGeneratedNodes(genNodes);
+
+    if (isNewPortal) takeSnapshot();
+
+    let portalStructure: SpaceStructureAnalysis | null = null;
+
+    setSpacesMap((prev) => {
+      const existing = prev[spaceId];
+      const base =
+        existing && Array.isArray(existing.nodes)
+          ? existing
+          : {
+              id: spaceId,
+              name: spaceName,
+              nodes: [
+                { id: "in", type: "spaceInput", position: { x: 80, y: 80 }, data: { label: "Input" } },
+                { id: "out", type: "spaceOutput", position: { x: 1200, y: 80 }, data: { label: "Output" } },
+              ],
+              edges: [],
+              createdAt: new Date().toISOString(),
+            };
+      const prefix = `pop_${populateNodeId}_r`;
+      const keptNodes = (base.nodes as Node[]).filter((n) => !String(n.id).startsWith(prefix));
+      const keptEdges = ((base.edges as Edge[]) || []).filter(
+        (ed) => !String(ed.source).startsWith(prefix) && !String(ed.target).startsWith(prefix),
+      );
+      const allNodes = [...keptNodes, ...genNodes];
+      const baseEdges = [...keptEdges, ...genEdges];
+      const mediaSinkInfos = collectMediaSinkInfos(allNodes, baseEdges);
+      const collectionMode = detectSpaceOutputMode(mediaSinkInfos) === "collection";
+      const sinkToOutEdges = collectionMode
+        ? buildMediaSinkToSpaceOutputEdges(
+            mediaSinkInfos.map((s) => ({ nodeId: s.node.id, sourceHandle: s.sourceHandle })),
+            "out",
+            `pop_${populateNodeId}`,
+          )
+        : [];
+      const allEdges = [...baseEdges, ...sinkToOutEdges];
+      const structure = analyzeNestedSpaceStructure(allNodes, allEdges, { spaceId, spaceName });
+      portalStructure = structure;
+      const innerNodes = allNodes.map((n) =>
+        n.id === "out"
+          ? { ...n, data: { ...(n.data as object), outputType: structure.type } }
+          : n,
+      );
+      return {
+        ...prev,
+        [spaceId]: {
+          ...base,
+          name: spaceName,
+          nodes: innerNodes,
+          edges: allEdges,
+          updatedAt: new Date().toISOString(),
+          internalCategories,
+          hasInput: true,
+          hasOutput: true,
+          outputType: structure.type,
+          outputValue: structure.value,
+          outputMode: structure.outputMode,
+          mediaListOutput: structure.mediaListOutput ?? undefined,
+        },
+      };
+    });
+
+    setNodes((nds) => {
+      const pop = nds.find((n) => n.id === populateNodeId);
+      if (!pop) return nds;
+      const structure = portalStructure;
+
+      let next = nds.map((n) =>
+        n.id === populateNodeId
+          ? {
+              ...n,
+              data: {
+                ...n.data,
+                spaceId,
+                status: "done",
+                ...(detail.mediaListOutput
+                  ? { mediaListOutput: detail.mediaListOutput, media_list: detail.mediaListOutput }
+                  : {}),
+                ...(typeof detail.value === "string" ? { value: detail.value } : {}),
+              },
+            }
+          : n,
+      );
+
+      const portalPatch = {
+        spaceId,
+        label: spaceName,
+        hasInput: true,
+        hasOutput: true,
+        internalCategories,
+        ...(structure
+          ? {
+              outputType: structure.type,
+              value: structure.value,
+              outputMode: structure.outputMode,
+              ...(structure.mediaListOutput ? { mediaListOutput: structure.mediaListOutput } : {}),
+            }
+          : {}),
+      };
+
+      if (existingPortal) {
+        next = next.map((n) =>
+          n.id === existingPortal.id
+            ? {
+                ...n,
+                data: {
+                  ...n.data,
+                  ...portalPatch,
+                },
+              }
+            : n,
+        );
+      } else {
+        const portalNode = buildPopulateSpacePortalNode({
+          portalNodeId,
+          spaceId,
+          spaceName,
+          populateNode: pop,
+          internalCategories,
+        });
+        next = [
+          ...next,
+          prepareCanvasNodeForCreate(
+            withFoldderCanvasIntro("space", {
+              ...portalNode,
+              data: {
+                ...portalNode.data,
+                ...portalPatch,
+              },
+            }),
+          ),
+        ];
+      }
+
+      return next;
+    });
+
+    if (isNewPortal) {
+      const edge = buildPopulateToSpaceEdge(populateNodeId, portalNodeId);
+      setEdges((eds) => {
+        if (eds.some((e) => e.source === populateNodeId && e.target === portalNodeId)) return eds;
+        return [...eds, edge];
+      });
+      scheduleFoldderCanvasIntroEnd(portalNodeId);
+    }
+
+    window.dispatchEvent(
+      new CustomEvent("space-data-updated", {
+        detail: {
+          spaceId,
+          outputType: portalStructure?.type ?? "url",
+          outputValue: portalStructure?.value ?? detail.value ?? null,
+          outputMode: portalStructure?.outputMode,
+          mediaListOutput: portalStructure?.mediaListOutput ?? detail.mediaListOutput ?? null,
+        },
+      }),
+    );
+  }, [
+    liveEdgesRef,
+    liveNodesRef,
+    setEdges,
+    setNodes,
+    setSpacesMap,
+    takeSnapshot,
+    scheduleFoldderCanvasIntroEnd,
+  ]);
+
+  useEffect(() => {
+    window.addEventListener(POPULATE_COMMIT_EVENT, handlePopulateCommit);
+    return () => window.removeEventListener(POPULATE_COMMIT_EVENT, handlePopulateCommit);
+  }, [handlePopulateCommit]);
 
   // Reactive Propagation Bridge: Sync current space structure to map and parents on change
   useEffect(() => {

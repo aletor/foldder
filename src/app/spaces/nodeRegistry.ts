@@ -1,4 +1,4 @@
-export type HandleType = 'image' | 'video' | 'audio' | 'prompt' | 'mask' | 'pdf' | 'txt' | 'url' | 'json' | 'brain' | 'media_list' | 'image_layout' | 'dataset';
+export type HandleType = 'image' | 'video' | 'audio' | 'prompt' | 'mask' | 'pdf' | 'txt' | 'url' | 'json' | 'brain' | 'media_list' | 'image_layout' | 'dataset' | 'template';
 
 export interface NodeMetadata {
   type: string;
@@ -288,7 +288,8 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
       { id: 'image4',  label: 'Ref 4',          type: 'image' },
     ],
     outputs: [
-      { id: 'image', label: 'Image Out', type: 'image' }
+      { id: 'image', label: 'Image Out', type: 'image' },
+      { id: 'template', label: 'Plantilla', type: 'template' },
     ],
     dataSchema: {}
   },
@@ -328,7 +329,8 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
       { id: 'in', label: 'Data In', type: 'url' }
     ],
     outputs: [
-      { id: 'out', label: 'Data Out', type: 'url' }
+      { id: 'out', label: 'Data Out', type: 'url' },
+      { id: 'media_list', label: 'Media List', type: 'media_list' as HandleType },
     ],
     dataSchema: {
       value: 'string (target space ID)'
@@ -527,6 +529,27 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
       dataset:
         'Dataset { id, name, scope, lists: DatasetList[], constants: Constants, version } — cada listado itera por separado; binding = listKey + fieldKey',
       datasetRef: '{ datasetId, version } (referencia a Dataset global; fase 2)',
+    },
+  },
+  populate: {
+    type: 'populate',
+    label: 'Populate',
+    description:
+      'Orquestador: ejecuta un nodo creativo plantilla (conectado al handle "template") una vez por fila de un Dataset, variando los inputs mapeados a columnas. Deposita N nodos reales y autónomos en un Nested Space y agrega su salida (media_list).',
+    inputs: [
+      { id: 'dataset', label: 'Dataset', type: 'dataset' as HandleType, required: true },
+      { id: 'template', label: 'Plantilla', type: 'template' as HandleType },
+    ],
+    outputs: [
+      { id: 'media_list', label: 'Media List', type: 'media_list' as HandleType },
+      { id: 'out', label: 'Resultados', type: 'url' as HandleType },
+    ],
+    dataSchema: {
+      label: 'string',
+      listId: 'string (listado del Dataset a iterar)',
+      spaceId: 'string (Nested Space donde se depositan los nodos generados)',
+      value: 'string (salida agregada para Export Multimedia)',
+      mediaListOutput: 'MediaListOutput (N resultados, uno por fila)',
     },
   },
   canvasGroup: {

@@ -1,6 +1,12 @@
 import type { Edge, Node } from "@xyflow/react";
 import { NODE_REGISTRY } from "./nodeRegistry";
 import type { SpaceMapEntry } from "./dissolve-space";
+import {
+  analyzeNestedSpaceStructure,
+  buildMediaSinkToSpaceOutputEdges,
+  collectMediaSinkInfos,
+  detectSpaceOutputMode,
+} from "./space-media-list";
 
 export type GroupNodesIntoSpaceInput = {
   selectedNodes: Node[];
@@ -166,19 +172,28 @@ export function groupNodesIntoSpace(input: GroupNodesIntoSpaceInput): GroupNodes
     id: nextEdgeId("nested"),
   }));
 
-  const autoOutEdges: Edge[] = lastNodeOutputHandle
-    ? [
-        {
-          id: nextEdgeId("auto_out"),
-          source: lastNode.id,
-          sourceHandle: lastNodeOutputHandle,
-          target: "out",
-          targetHandle: "in",
-          type: "buttonEdge",
-          animated: false,
-        },
-      ]
-    : [];
+  const mediaSinkInfos = collectMediaSinkInfos(nestedNodes, nestedInternalEdges);
+  const collectionMode = detectSpaceOutputMode(mediaSinkInfos) === "collection";
+
+  const autoOutEdges: Edge[] = collectionMode
+    ? buildMediaSinkToSpaceOutputEdges(
+        mediaSinkInfos.map((s) => ({ nodeId: s.node.id, sourceHandle: s.sourceHandle })),
+        "out",
+        `group_${spaceId}`,
+      )
+    : lastNodeOutputHandle
+      ? [
+          {
+            id: nextEdgeId("auto_out"),
+            source: lastNode.id,
+            sourceHandle: lastNodeOutputHandle,
+            target: "out",
+            targetHandle: "in",
+            type: "buttonEdge",
+            animated: false,
+          },
+        ]
+      : [];
 
   const autoInEdges: Edge[] = [];
   if (includeSpaceInput) {
@@ -202,18 +217,14 @@ export function groupNodesIntoSpace(input: GroupNodesIntoSpaceInput): GroupNodes
   const allInternalEdges = [...nestedInternalEdges, ...autoOutEdges, ...autoInEdges];
 
   const virtualOutNode: Node = { id: "out", type: "spaceOutput", position: { x: 0, y: 0 }, data: {} };
-  const structure = analyzeSpaceStructure([...nestedNodes, virtualOutNode], allInternalEdges);
+  const structure = analyzeNestedSpaceStructure(
+    [...nestedNodes, virtualOutNode],
+    allInternalEdges,
+    { spaceId, spaceName: "Grouped Space" },
+  );
 
-  const autoOutputType =
-    (lastNodeOutputHandle
-      ? reg(String(lastNode.type))?.outputs?.find((o) => o.id === lastNodeOutputHandle)?.type
-      : undefined) ||
-    reg(String(lastNode.type))?.outputs?.[0]?.type ||
-    structure.type;
-  const autoOutputValue =
-    (typeof lastNode.data?.value === "string" ? lastNode.data.value : null) ||
-    structure.value ||
-    null;
+  const autoOutputType = structure.type;
+  const autoOutputValue = structure.value;
 
   const maxNestedX = Math.max(...nestedNodes.map((n) => n.position.x));
 
@@ -246,6 +257,7 @@ export function groupNodesIntoSpace(input: GroupNodesIntoSpaceInput): GroupNodes
     updatedAt: new Date().toISOString(),
     outputType: autoOutputType,
     outputValue: autoOutputValue,
+    mediaListOutput: structure.mediaListOutput ?? undefined,
     hasInput: includeSpaceInput,
     hasOutput: true,
     internalCategories: structure.internalCategories,
@@ -262,6 +274,7 @@ export function groupNodesIntoSpace(input: GroupNodesIntoSpaceInput): GroupNodes
       hasOutput: true,
       outputType: autoOutputType,
       value: autoOutputValue,
+      mediaListOutput: structure.mediaListOutput ?? undefined,
       internalCategories: structure.internalCategories,
     },
   };
@@ -272,13 +285,14 @@ export function groupNodesIntoSpace(input: GroupNodesIntoSpaceInput): GroupNodes
   );
 
   const bridgedEdges: Edge[] = [];
+  const bridgeSourceHandle = collectionMode ? "media_list" : "out";
   for (const ext of outgoingExternal) {
-    if (ext.source !== lastNode.id) continue;
+    if (!collectionMode && ext.source !== lastNode.id) continue;
     bridgedEdges.push({
       ...ext,
       id: nextEdgeId("bridge_out"),
       source: spaceNodeId,
-      sourceHandle: "out",
+      sourceHandle: bridgeSourceHandle,
     });
   }
   for (const ext of incomingExternal) {
@@ -296,111 +310,4 @@ export function groupNodesIntoSpace(input: GroupNodesIntoSpaceInput): GroupNodes
     parentNodes: [...remainingNodes, spaceNode],
     parentEdges: [...remainingEdges, ...bridgedEdges],
   };
-}
-
-/** Copia mínima de analyzeSpaceStructure para el tipo de salida del space. */
-function analyzeSpaceStructure(
-  nodes: Node[],
-  edges: Edge[],
-): {
-  type: string;
-  label: string;
-  value: string | null;
-  internalCategories: string[];
-} {
-  const outputNode = nodes.find((n) => n.type === "spaceOutput");
-  const categoriesSet = new Set<string>();
-  nodes.forEach((n) => {
-    const type = (n.type || "").toLowerCase();
-    if (
-      type.includes("grok") ||
-      type.includes("runway") ||
-      type.includes("assistant") ||
-      type.includes("processor") ||
-      type.includes("banana") ||
-      type.includes("remover") ||
-      type.includes("describer")
-    ) {
-      categoriesSet.add("ai");
-    }
-    if (
-      type.includes("concatenator") ||
-      type.includes("listado") ||
-      type.includes("batch") ||
-      (type === "space" && n.id !== "in" && n.id !== "out")
-    ) {
-      categoriesSet.add("logic");
-    }
-    if (type.includes("prompt") || type.includes("describer") || type.includes("enhancer")) {
-      categoriesSet.add("prompt");
-    }
-    if (type.includes("image") || type.includes("media") || type.includes("matted")) {
-      categoriesSet.add("image");
-    }
-    if (type.includes("video")) {
-      categoriesSet.add("video");
-    }
-    if (
-      type.includes("export") ||
-      type.includes("paint") ||
-      type.includes("crop") ||
-      type.includes("photo") ||
-      type.includes("design") ||
-      type.includes("present") ||
-      type.includes("textoverlay")
-    ) {
-      categoriesSet.add("canvas");
-    }
-    if (
-      type.includes("mask") ||
-      type.includes("tool") ||
-      type.includes("scissors") ||
-      type.includes("vision") ||
-      type.includes("describer")
-    ) {
-      categoriesSet.add("tool");
-    }
-  });
-
-  const result = {
-    type: "url",
-    label: "Space",
-    value: null as string | null,
-    internalCategories: Array.from(categoriesSet).slice(0, 5),
-  };
-  if (!outputNode) return result;
-
-  const incomingEdge = edges.find((e) => e.target === outputNode.id);
-  if (!incomingEdge) return result;
-
-  const sourceNode = nodes.find((n) => n.id === incomingEdge.source);
-  if (!sourceNode) return result;
-
-  const sourceMetadata = NODE_REGISTRY[sourceNode.type as string];
-  let sourceHandleType = sourceMetadata?.outputs.find((o) => o.id === incomingEdge.sourceHandle)?.type;
-  if (!sourceHandleType && sourceMetadata?.outputs.length === 1) {
-    sourceHandleType = sourceMetadata.outputs[0].type;
-  }
-
-  const propagatedType = String(sourceNode.data?.outputType || sourceNode.data?.type || "").toLowerCase();
-
-  if (sourceHandleType === "brain" || propagatedType === "brain") {
-    result.type = "brain";
-    result.label = "Brain Space";
-  } else if (sourceHandleType === "image" || sourceHandleType === "image_layout" || propagatedType === "image") {
-    result.type = "image";
-    result.label = "Image Space";
-  } else if (sourceHandleType === "video" || propagatedType === "video") {
-    result.type = "video";
-    result.label = "Video Space";
-  } else if (sourceHandleType === "prompt" || propagatedType === "prompt") {
-    result.type = "prompt";
-    result.label = "Prompt Space";
-  }
-
-  if (typeof sourceNode.data?.value === "string") {
-    result.value = sourceNode.data.value;
-  }
-
-  return result;
 }

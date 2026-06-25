@@ -86,6 +86,10 @@ export function readMediaListFromNode(sourceNode: MediaListSourceNode | undefine
   if (sourceNode.type === "designer") {
     return buildDesignerMediaListOutput(data as DesignerNodeData, sourceNode.id);
   }
+  if (sourceNode.type === "space") {
+    const spaceMl = parseMediaListValue((data as { mediaListOutput?: unknown }).mediaListOutput);
+    if (spaceMl) return spaceMl;
+  }
   return null;
 }
 

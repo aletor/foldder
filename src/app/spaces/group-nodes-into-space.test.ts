@@ -64,4 +64,52 @@ describe("groupNodesIntoSpace", () => {
     expect(bridgedIn).toBeDefined();
     expect(bridgedIn!.targetHandle).toBe("in");
   });
+
+  it("agrupa sinks paralelos en modo colección con media_list", () => {
+    const a: Node = {
+      id: "img1",
+      type: "nanoBanana",
+      position: { x: 0, y: 0 },
+      data: { value: "https://a.jpg", type: "image" },
+      selected: true,
+    };
+    const b: Node = {
+      id: "img2",
+      type: "nanoBanana",
+      position: { x: 0, y: 300 },
+      data: { value: "https://b.jpg", type: "image" },
+      selected: true,
+    };
+    const c: Node = { id: "c", type: "export_multimedia", position: { x: 900, y: 0 }, data: {}, selected: false };
+
+    const edges: Edge[] = [
+      { id: "e1", source: "img1", target: "c", sourceHandle: "image", targetHandle: "ml0" },
+      { id: "e2", source: "img2", target: "c", sourceHandle: "image", targetHandle: "ml1" },
+    ];
+
+    const result = groupNodesIntoSpace({
+      selectedNodes: [a, b],
+      edges,
+      allNodes: [a, b, c],
+      spaceId: "space_collection",
+      spaceNodeId: "space_node_coll",
+      spacePosition: { x: 200, y: 100 },
+    });
+
+    expect(result).not.toBeNull();
+    const inner = result!.spaceEntry;
+    const toOut = inner.edges!.filter((e) => e.target === "out");
+    expect(toOut).toHaveLength(2);
+    expect(inner.outputType).toBe("media_list");
+    expect(inner.mediaListOutput).toBeDefined();
+    expect((inner.mediaListOutput as { items?: unknown[] })?.items).toHaveLength(2);
+
+    const bridged = result!.parentEdges.filter((e) => e.source === "space_node_coll");
+    expect(bridged.length).toBeGreaterThan(0);
+    expect(bridged.every((e) => e.sourceHandle === "media_list")).toBe(true);
+
+    const portal = result!.spaceNode;
+    expect(portal.data.outputType).toBe("media_list");
+    expect(portal.data.mediaListOutput).toBeDefined();
+  });
 });

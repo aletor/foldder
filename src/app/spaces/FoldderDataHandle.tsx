@@ -23,6 +23,7 @@ export type FoldderHandleDataType =
   | "emerald"
   | "rose"
   | "dataset"
+  | "template"
   | "generic";
 
 const TYPE_CLASS: Record<FoldderHandleDataType, string> = {
@@ -38,6 +39,7 @@ const TYPE_CLASS: Record<FoldderHandleDataType, string> = {
   emerald: "handle-emerald",
   rose: "handle-rose",
   dataset: "handle-dataset",
+  template: "handle-template",
   generic: "handle-generic",
 };
 
@@ -55,6 +57,7 @@ const DATA_TYPE_TO_ICON: Record<FoldderHandleDataType, FoldderIconKey> = {
   emerald: "spaceIn",
   rose: "output",
   dataset: "dataset",
+  template: "layout",
   generic: "grok",
 };
 
@@ -91,6 +94,7 @@ export function foldderDataTypeFromHandleClass(className: string): FoldderHandle
   if (className.includes("handle-emerald")) return "emerald";
   if (className.includes("handle-rose")) return "rose";
   if (className.includes("handle-dataset")) return "dataset";
+  if (className.includes("handle-template")) return "template";
   return "generic";
 }
 
