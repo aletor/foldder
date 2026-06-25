@@ -47,8 +47,8 @@ const NANO_X = 520;
 const INPUT_X = 60;
 const INPUT_GAP_Y = 120;
 
-function rowNodeId(populateId: string, rowIndex: number, role: string): string {
-  return `pop_${populateId}_r${rowIndex}_${role}`;
+function rowNodeId(populateId: string, rowKey: string, role: string): string {
+  return `pop_${populateId}_${rowKey}_${role}`;
 }
 
 /** IDs de los nodos generados por un Populate dentro de su Nested Space (para reconciliar/limpiar). */
@@ -56,18 +56,28 @@ export function isGeneratedNodeIdFor(populateId: string, nodeId: string): boolea
   return nodeId.startsWith(`pop_${populateId}_r`);
 }
 
-/** Construye el subgrafo de una fila. `originY` desplaza verticalmente el clúster. */
+/**
+ * Construye el subgrafo de una fila. `originY` desplaza verticalmente el clúster.
+ *
+ * `templateType` es el tipo del nodo creativo plantilla (por defecto Image
+ * Creation). El cableado prompt + referencias por handle es genérico, así que
+ * otros nodos creativos (Video Creation, etc.) funcionarán declarando sus inputs;
+ * solo los campos de `model` son específicos de generación de imagen y se ignoran
+ * sin efecto en nodos que no los usan.
+ */
 export function buildRowSubgraph(
   populateId: string,
   row: MaterializedRow,
   model: MaterializeTemplateModel,
   originY: number,
+  templateType: string = "nanoBanana",
+  rowKey: string = `r${row.rowIndex}`,
 ): { nodes: Node[]; edges: Edge[] } {
   const nodes: Node[] = [];
   const edges: Edge[] = [];
 
-  const nanoId = rowNodeId(populateId, row.rowIndex, "nano");
-  const promptId = rowNodeId(populateId, row.rowIndex, "prompt");
+  const nanoId = rowNodeId(populateId, rowKey, "nano");
+  const promptId = rowNodeId(populateId, rowKey, "prompt");
 
   nodes.push({
     id: promptId,
@@ -86,7 +96,7 @@ export function buildRowSubgraph(
 
   row.refs.forEach((ref, index) => {
     if (!ref.url) return;
-    const refId = rowNodeId(populateId, row.rowIndex, `ref_${ref.inputId}`);
+    const refId = rowNodeId(populateId, rowKey, `ref_${ref.inputId}`);
     nodes.push({
       id: refId,
       type: "mediaInput",
@@ -105,7 +115,7 @@ export function buildRowSubgraph(
 
   nodes.push({
     id: nanoId,
-    type: "nanoBanana",
+    type: templateType,
     position: { x: NANO_X, y: originY },
     data: {
       label: `Fila ${row.rowIndex + 1}`,
@@ -134,11 +144,12 @@ export function buildGeneratedSubgraph(
   populateId: string,
   rows: MaterializedRow[],
   model: MaterializeTemplateModel,
+  templateType: string = "nanoBanana",
 ): { nodes: Node[]; edges: Edge[] } {
   const nodes: Node[] = [];
   const edges: Edge[] = [];
   rows.forEach((row, index) => {
-    const sub = buildRowSubgraph(populateId, row, model, 80 + index * ROW_GAP_Y);
+    const sub = buildRowSubgraph(populateId, row, model, 80 + index * ROW_GAP_Y, templateType);
     nodes.push(...sub.nodes);
     edges.push(...sub.edges);
   });
@@ -159,7 +170,7 @@ export function buildMediaListOutput(
     title: label || "Populate",
     status: ready === 0 ? "empty" : ready === rows.length ? "frames_ready" : "frames_partial",
     items: rows.map((row, index) => ({
-      id: rowNodeId(populateId, row.rowIndex, "nano"),
+      id: rowNodeId(populateId, `r${row.rowIndex}`, "nano"),
       order: index,
       title: `Fila ${row.rowIndex + 1}`,
       mediaType: "image" as const,

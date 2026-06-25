@@ -1,72 +1,78 @@
 "use client";
 
-import React, { useMemo, useRef } from "react";
+import React, { useMemo } from "react";
 import type { FieldDef } from "@/app/spaces/dataset/dataset-types";
-import { insertTokenAtSelection } from "./populate-tokens";
 import {
   datasetFieldTypesForInputKind,
+  type CreativeInputDescriptor,
   type PopulateBindings,
   type PopulateInputBinding,
 } from "./populate-types";
-
-const REF_SLOTS = [
-  { id: "image", label: "Ref 1 (Fondo)" },
-  { id: "image2", label: "Ref 2" },
-  { id: "image3", label: "Ref 3" },
-  { id: "image4", label: "Ref 4" },
-] as const;
+import { PopulatePromptEditor } from "./PopulatePromptEditor";
 
 export interface PopulateTemplatePanelProps {
+  /** Prompt plantilla (texto fijo + tokens {campo}); editado dentro de Populate. */
   promptText: string;
   bindings: PopulateBindings;
+  /** Esquema del listado activo del Dataset (columnas disponibles). */
   schema: FieldDef[];
+  /** Campos constantes del Dataset (para resolver/validar chips de constantes). */
+  constantFields?: FieldDef[];
   listId: string | null;
+  /**
+   * Slots de imagen del nodo creativo, derivados de su DECLARACIÓN
+   * (`orchestration.inputs`), no hardcodeados. Para Image Creation son las 4 refs.
+   */
+  imageSlots: CreativeInputDescriptor[];
+  /** Etiqueta del input de texto principal (del declaración; p. ej. "Prompt"). */
+  promptLabel?: string;
   onChangePrompt: (next: string) => void;
   onChangeBinding: (inputId: string, binding: PopulateInputBinding) => void;
 }
 
+const FIXED_VALUE = "__fixed__";
+
 /**
- * Panel que aparece en Image Creation cuando está conectado a Populate.
- * Permite: escribir el prompt plantilla con tokens {campo} (inserción asistida)
- * y elegir por cada referencia entre "imagen fija" o "columna del Dataset".
+ * Editor de plantilla que vive DENTRO de Populate. Muestra el prompt que se enviará
+ * al nodo creativo y permite insertar campos del Dataset como tokens, y por cada
+ * referencia de imagen elegir "imagen fija" o "columna del Dataset".
+ *
+ * Es agnóstico al tipo de nodo: recibe los slots por declaración. Hoy se usa con
+ * Image Creation; un nodo con más slots de texto (Designer) extenderá esto con un
+ * array de inputs de texto en lugar de un único prompt.
  */
 export function PopulateTemplatePanel({
   promptText,
   bindings,
   schema,
+  constantFields,
   listId,
+  imageSlots,
+  promptLabel = "Prompt",
   onChangePrompt,
   onChangeBinding,
 }: PopulateTemplatePanelProps) {
-  const textRef = useRef<HTMLTextAreaElement>(null);
-
-  const textColumns = useMemo(() => {
+  const insertableFields = useMemo(() => {
     const allowed = datasetFieldTypesForInputKind("text");
-    return schema.filter((f) => allowed.includes(f.type));
-  }, [schema]);
+    const fromList = schema.filter((f) => allowed.includes(f.type));
+    const fromConst = (constantFields ?? []).filter((f) => allowed.includes(f.type));
+    return [...fromList, ...fromConst].map((f) => ({ key: f.key, label: f.label }));
+  }, [schema, constantFields]);
+
+  // Validez/etiqueta de chips: cualquier campo (listado + constantes) resuelve.
+  const validityFields = useMemo(
+    () =>
+      [...schema, ...(constantFields ?? [])].map((f) => ({ key: f.key, label: f.label })),
+    [schema, constantFields],
+  );
 
   const imageColumns = useMemo(() => {
     const allowed = datasetFieldTypesForInputKind("image");
     return schema.filter((f) => allowed.includes(f.type));
   }, [schema]);
 
-  const insertField = (fieldKey: string) => {
-    if (!fieldKey) return;
-    const el = textRef.current;
-    const start = el?.selectionStart ?? promptText.length;
-    const end = el?.selectionEnd ?? promptText.length;
-    const { text, caret } = insertTokenAtSelection(promptText, start, end, fieldKey);
-    onChangePrompt(text);
-    requestAnimationFrame(() => {
-      if (el) {
-        el.focus();
-        el.setSelectionRange(caret, caret);
-      }
-    });
-  };
-
   const setRefSource = (inputId: string, value: string) => {
-    if (value === "__fixed__") {
+    if (value === FIXED_VALUE) {
       onChangeBinding(inputId, { inputId, source: "fixed" });
       return;
     }
@@ -83,70 +89,51 @@ export function PopulateTemplatePanel({
 
   return (
     <div
-      className="nodrag nopan flex flex-col gap-2 border-b border-cyan-500/30 bg-cyan-50/70 px-2 py-2 text-[11px] text-slate-700"
+      className="populate-template-panel nodrag nopan"
       onPointerDown={(e) => e.stopPropagation()}
     >
-      <div className="flex items-center justify-between">
-        <span className="text-[10px] font-bold uppercase tracking-wide text-cyan-700">
-          Plantilla Populate
-        </span>
+      <div className="populate-template-panel__head">
+        <span className="populate-template-panel__title">Plantilla</span>
+        <span className="populate-template-panel__hint">se envía al nodo creativo</span>
       </div>
 
-      <div className="flex flex-col gap-1">
-        <div className="flex items-center justify-between gap-1">
-          <span className="text-[10px] font-semibold text-slate-500">Prompt</span>
-          <select
-            className="nodrag rounded border border-slate-300 bg-white px-1 py-0.5 text-[10px]"
-            value=""
-            onChange={(e) => {
-              insertField(e.target.value);
-              e.target.value = "";
-            }}
-            onPointerDown={(e) => e.stopPropagation()}
-            title="Insertar campo del Dataset"
-          >
-            <option value="">Insertar campo ▾</option>
-            {textColumns.map((f) => (
-              <option key={f.id} value={f.key}>
-                {f.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <textarea
-          ref={textRef}
-          className="nodrag min-h-[52px] w-full resize-y rounded border border-slate-300 bg-white px-1.5 py-1 text-[11px]"
-          placeholder="Texto fijo + {campo} del Dataset…"
+      <div className="populate-template-panel__field">
+        <PopulatePromptEditor
           value={promptText}
-          onChange={(e) => onChangePrompt(e.target.value)}
-          onPointerDown={(e) => e.stopPropagation()}
+          fields={validityFields}
+          insertableFields={insertableFields}
+          label={promptLabel}
+          onChange={onChangePrompt}
         />
       </div>
 
-      <div className="flex flex-col gap-1">
-        {REF_SLOTS.map((slot) => {
-          const binding = bindings[slot.id];
-          const current = binding?.source === "column" ? binding.fieldId ?? "__fixed__" : "__fixed__";
-          return (
-            <label key={slot.id} className="flex items-center gap-1.5">
-              <span className="w-20 shrink-0 text-[10px] text-slate-500">{slot.label}</span>
-              <select
-                className="nodrag w-full rounded border border-slate-300 bg-white px-1 py-0.5 text-[10px]"
-                value={current}
-                onChange={(e) => setRefSource(slot.id, e.target.value)}
-                onPointerDown={(e) => e.stopPropagation()}
-              >
-                <option value="__fixed__">Imagen fija</option>
-                {imageColumns.map((f) => (
-                  <option key={f.id} value={f.id}>
-                    Columna: {f.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          );
-        })}
-      </div>
+      {imageSlots.length > 0 ? (
+        <div className="populate-template-panel__refs">
+          {imageSlots.map((slot) => {
+            const binding = bindings[slot.inputId];
+            const current =
+              binding?.source === "column" ? binding.fieldId ?? FIXED_VALUE : FIXED_VALUE;
+            return (
+              <label key={slot.inputId} className="populate-template-panel__ref">
+                <span className="populate-template-panel__ref-label">{slot.label}</span>
+                <select
+                  className="populate-template-panel__select nodrag"
+                  value={current}
+                  onChange={(e) => setRefSource(slot.inputId, e.target.value)}
+                  onPointerDown={(e) => e.stopPropagation()}
+                >
+                  <option value={FIXED_VALUE}>Imagen fija</option>
+                  {imageColumns.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      Columna: {f.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            );
+          })}
+        </div>
+      ) : null}
     </div>
   );
 }

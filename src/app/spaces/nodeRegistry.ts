@@ -17,6 +17,23 @@ export interface NodeMetadata {
   }[];
   dataSchema: Record<string, unknown>;
   preferredConnections?: Record<string, string>; // Maps output types to specific input handled IDs
+  /**
+   * Declaración estándar de capacidades para orquestación (Populate).
+   *
+   * Inversión de dependencia: Populate conoce a los nodos creativos a través de
+   * ESTA declaración, no con conocimiento codificado tipo por tipo. Un nodo nuevo
+   * se vuelve orquestable describiéndose aquí (o, por defecto, derivando sus
+   * inputs de texto/imagen/vídeo desde `inputs`). Mantener vacío = nodo puro no
+   * orquestable explícitamente (aún puede derivarse por fallback).
+   *
+   * - `inputs`: qué inputs editables puede variar Populate por fila.
+   * - `promptDataKey`: clave en `node.data` con el prompt inline que sirve de
+   *   semilla para la plantilla (p. ej. 'promptText' en Image Creation).
+   */
+  orchestration?: {
+    inputs: { id: string; label: string; kind: 'text' | 'image' | 'video' }[];
+    promptDataKey?: string;
+  };
 }
 
 export const NODE_REGISTRY: Record<string, NodeMetadata> = {
@@ -291,7 +308,20 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
       { id: 'image', label: 'Image Out', type: 'image' },
       { id: 'template', label: 'Plantilla', type: 'template' },
     ],
-    dataSchema: {}
+    dataSchema: {},
+    // Declaración para Populate: prompt (texto) + 4 referencias (imagen).
+    // Cualquier nodo creativo futuro (Video Creation, Designer, Guionista) se
+    // orquesta declarándose igual aquí; Populate no necesita cambiar.
+    orchestration: {
+      inputs: [
+        { id: 'prompt', label: 'Prompt', kind: 'text' },
+        { id: 'image', label: 'Ref 1 (Base)', kind: 'image' },
+        { id: 'image2', label: 'Ref 2', kind: 'image' },
+        { id: 'image3', label: 'Ref 3', kind: 'image' },
+        { id: 'image4', label: 'Ref 4', kind: 'image' },
+      ],
+      promptDataKey: 'promptText',
+    },
   },
   imageCreationAdvanced: {
     type: 'imageCreationAdvanced',

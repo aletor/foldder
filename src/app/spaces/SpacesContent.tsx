@@ -3407,7 +3407,9 @@ export function SpacesContent() {
 
     if (isNewPortal) takeSnapshot();
 
-    let portalStructure: SpaceStructureAnalysis | null = null;
+    // Holder (no `let`): la asignación ocurre dentro del closure de setSpacesMap;
+    // un objeto preserva el tipo al leerlo de forma síncrona después.
+    const portalStructureRef: { current: SpaceStructureAnalysis | null } = { current: null };
 
     setSpacesMap((prev) => {
       const existing = prev[spaceId];
@@ -3424,7 +3426,10 @@ export function SpacesContent() {
               edges: [],
               createdAt: new Date().toISOString(),
             };
-      const prefix = `pop_${populateNodeId}_r`;
+      const prefix =
+        typeof detail.replacePrefix === "string" && detail.replacePrefix.trim()
+          ? detail.replacePrefix.trim()
+          : `pop_${populateNodeId}_r`;
       const keptNodes = (base.nodes as Node[]).filter((n) => !String(n.id).startsWith(prefix));
       const keptEdges = ((base.edges as Edge[]) || []).filter(
         (ed) => !String(ed.source).startsWith(prefix) && !String(ed.target).startsWith(prefix),
@@ -3442,7 +3447,7 @@ export function SpacesContent() {
         : [];
       const allEdges = [...baseEdges, ...sinkToOutEdges];
       const structure = analyzeNestedSpaceStructure(allNodes, allEdges, { spaceId, spaceName });
-      portalStructure = structure;
+      portalStructureRef.current = structure;
       const innerNodes = allNodes.map((n) =>
         n.id === "out"
           ? { ...n, data: { ...(n.data as object), outputType: structure.type } }
@@ -3470,7 +3475,7 @@ export function SpacesContent() {
     setNodes((nds) => {
       const pop = nds.find((n) => n.id === populateNodeId);
       if (!pop) return nds;
-      const structure = portalStructure;
+      const structure = portalStructureRef.current;
 
       let next = nds.map((n) =>
         n.id === populateNodeId
@@ -3555,10 +3560,11 @@ export function SpacesContent() {
       new CustomEvent("space-data-updated", {
         detail: {
           spaceId,
-          outputType: portalStructure?.type ?? "url",
-          outputValue: portalStructure?.value ?? detail.value ?? null,
-          outputMode: portalStructure?.outputMode,
-          mediaListOutput: portalStructure?.mediaListOutput ?? detail.mediaListOutput ?? null,
+          outputType: portalStructureRef.current?.type ?? "url",
+          outputValue: portalStructureRef.current?.value ?? detail.value ?? null,
+          outputMode: portalStructureRef.current?.outputMode,
+          mediaListOutput:
+            portalStructureRef.current?.mediaListOutput ?? detail.mediaListOutput ?? null,
         },
       }),
     );

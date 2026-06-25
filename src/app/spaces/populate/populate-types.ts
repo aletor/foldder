@@ -48,6 +48,22 @@ export interface PopulateNodeData {
   listId?: string;
   /** Id del Nested Space donde se depositan los nodos generados. */
   spaceId?: string;
+  /**
+   * Plantilla gobernada por Populate (no por el nodo creativo):
+   * prompt con tokens {campo} editable dentro de Populate. `undefined` = aún no
+   * sembrado desde el nodo creativo conectado (el editor lo inicializa una vez).
+   */
+  templatePrompt?: string;
+  /** Bindings por input (fijo / columna del Dataset), gobernados por Populate. */
+  templateBindings?: PopulateBindings;
+  /** Modo de ejecución: lote por Dataset o formulario (un resultado manual). */
+  mode?: "batch" | "form";
+  /** Modo formulario: valores tecleados/elegidos por token. */
+  formValues?: Record<string, string>;
+  /** Modo formulario: fila elegida por input de imagen (inputId → rowIndex). */
+  formImageRows?: Record<string, number>;
+  /** Token del enlace público del formulario (URL /f/[token]). */
+  publicFormShareToken?: string;
   /** Última firma datasetId:version materializada (evita regenerar en vano). */
   lastSyncKey?: string;
   status?: PopulateRunStatus;
