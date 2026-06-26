@@ -35,6 +35,7 @@ const GENERATOR_NODE_TYPES = new Set([
   "vfxGenerator",
   "grokProcessor",
   "enhancer",
+  "backgroundRemover",
   "mediaDescriber",
   "imageCreationAdvanced",
   "painter",

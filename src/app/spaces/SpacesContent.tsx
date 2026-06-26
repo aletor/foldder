@@ -184,6 +184,9 @@ import {
   orderedSourcesForSharedTarget,
   positionNewNodeRightOfSources,
   resolveExportMultimediaTargetHandle,
+  isExportMultimediaDatasetTargetHandle,
+  isExportMultimediaDatasetTaken,
+  EXPORT_MULTIMEDIA_DATASET_HANDLE,
 } from "./connection-utils";
 import {
   FolderPlus,
@@ -4860,14 +4863,19 @@ export function SpacesContent() {
       const targetNode = liveNodesRef.current.find((n: { id: string }) => n.id === params.target);
       let targetHandle = params.targetHandle;
       if (targetNode?.type === "export_multimedia" || targetNode?.type === "exportMultiple") {
-        const resolved = resolveExportMultimediaTargetHandle(
-          params.target,
-          targetNode.type as string,
-          params.targetHandle,
-          liveEdgesRef.current,
-        );
-        if (!resolved) return;
-        targetHandle = resolved;
+        if (isExportMultimediaDatasetTargetHandle(params.targetHandle)) {
+          if (isExportMultimediaDatasetTaken(params.target, liveEdgesRef.current)) return;
+          targetHandle = EXPORT_MULTIMEDIA_DATASET_HANDLE;
+        } else {
+          const resolved = resolveExportMultimediaTargetHandle(
+            params.target,
+            targetNode.type as string,
+            params.targetHandle,
+            liveEdgesRef.current,
+          );
+          if (!resolved) return;
+          targetHandle = resolved;
+        }
       }
       const edgeId = `e-${params.source}-${params.target}-${params.sourceHandle || 'def'}-${targetHandle || 'def'}-${Math.random().toString(36).substring(2, 6)}`;
       setEdges((eds) => addEdge({ ...params, targetHandle, id: edgeId, type: 'buttonEdge' }, eds));
@@ -5643,6 +5651,9 @@ export function SpacesContent() {
     if (!sourceNode || !targetNode) return false;
     if (!areNodesConnectable(sourceNode, targetNode, connection, nodes)) return false;
     if (targetNode.type === "export_multimedia" || targetNode.type === "exportMultiple") {
+      if (isExportMultimediaDatasetTargetHandle(connection.targetHandle)) {
+        return !isExportMultimediaDatasetTaken(targetNode.id, edges);
+      }
       return (
         resolveExportMultimediaTargetHandle(
           targetNode.id,

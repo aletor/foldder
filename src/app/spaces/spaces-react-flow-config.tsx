@@ -36,6 +36,7 @@ import { VideoEditorNode } from "./video-editor/VideoEditorNode";
 import { InspirationNode } from "./inspiration/InspirationNode";
 import { ImageCreationAdvancedNode } from "./image-creation-advanced/ImageCreationAdvancedNode";
 import { LayerizerNode } from "./layerizer/LayerizerNode";
+import { BackgroundRemoverNode } from "./background-remover/BackgroundRemoverNode";
 import { DatasetNode } from "./dataset/DatasetNode";
 import { PopulateNode } from "./populate/PopulateNode";
 
@@ -59,6 +60,7 @@ export const spacesNodeTypes: Record<string, ComponentType<any>> = {
   enhancer: EnhancerNode,
   nanoBanana: NanoBananaNode,
   imageCreationAdvanced: ImageCreationAdvancedNode,
+  backgroundRemover: BackgroundRemoverNode,
   layerizer: LayerizerNode,
   dataset: DatasetNode,
   populate: PopulateNode,

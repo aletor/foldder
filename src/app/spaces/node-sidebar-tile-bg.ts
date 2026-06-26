@@ -14,6 +14,7 @@ export const NODE_SIDEBAR_TILE_BACKGROUND_SRC: Record<string, string> = {
   videoEditor: "/assets/nodes/video-editor-sidebar-bg.png",
   imageCreationAdvanced: "/assets/nodes/nano-banana-sidebar-bg.png",
   vfxGenerator: "/assets/nodes/gemini-video-sidebar-bg.png",
+  backgroundRemover: "/nodes/bg-remover-mark.png",
   layerizer: "/nodes/bg-remover-mark.png",
   concatenator: "/nodes/concatenator-mark.png",
   enhancer: "/nodes/enhancer-mark.png",

@@ -122,17 +122,18 @@ const HIGH_END_PRODUCTION_ITEMS: Array<{ type: string; label: string }> = [
 
 const TOOL_ITEMS: Array<{ type: string; label: string }> = [
   { type: 'promptInput', label: 'Prompt' },
-  { type: 'inspiration', label: 'Inspiration' },
+  { type: 'concatenator', label: 'Concat' },
+  { type: 'enhancer', label: 'Enhance' },
+  { type: 'mediaDescriber', label: 'Image Describer' },
+  { type: 'backgroundRemover', label: 'BG Removal' },
   { type: 'layerizer', label: 'Layerizer' },
   { type: 'dataset', label: 'Dataset' },
   { type: 'populate', label: 'Populate' },
-  { type: 'mediaDescriber', label: 'Image Describer' },
-  { type: 'enhancer', label: 'Enhance' },
-  { type: 'imageCreationAdvanced', label: 'Image Advanced' },
-  { type: 'export_multimedia', label: 'Export Multimedia' },
-  { type: 'concatenator', label: 'Concat' },
+  { type: 'inspiration', label: 'Inspiration' },
   { type: 'imageExport', label: 'Export' },
+  { type: 'export_multimedia', label: 'Export Multimedia' },
   { type: 'notes', label: 'Notes' },
+  { type: 'imageCreationAdvanced', label: 'Image Advanced' },
   { type: 'painter', label: 'Painter' },
   { type: 'crop', label: 'Crop' },
 ];
@@ -141,7 +142,7 @@ function toolFallbackBorderClass(type: string): string {
   if (type === 'promptInput' || type === 'inspiration') {
     return 'border-white/25 group-hover/tile:border-emerald-400/50';
   }
-  if (type === 'mediaDescriber' || type === 'enhancer') {
+  if (type === 'backgroundRemover' || type === 'mediaDescriber' || type === 'enhancer') {
     return 'border-white/25 group-hover/tile:border-cyan-400/50';
   }
   if (type === 'layerizer') {

@@ -13,6 +13,15 @@
 
 import type { Edge, Node } from "@xyflow/react";
 import type { MediaListOutput } from "@/app/spaces/media-list-output";
+import { NODE_REGISTRY } from "@/app/spaces/nodeRegistry";
+import { inferMediaListImageMimeType } from "../media-list-download";
+import { primarySinkSourceHandle } from "./pipeline/pipeline-bindings";
+
+export function isPersistableImageUrl(url?: string | null): boolean {
+  const u = url?.trim();
+  if (!u) return false;
+  return u.startsWith("http") || u.startsWith("/") || u.startsWith("data:image/");
+}
 
 export interface MaterializedRefInput {
   /** Handle del Image Creation: "image" | "image2" | "image3" | "image4". */
@@ -139,6 +148,181 @@ export function buildRowSubgraph(
   return { nodes, edges };
 }
 
+export interface PipelineMaterializeStep {
+  nodeType: string;
+  nodeData?: Record<string, unknown>;
+  output?: string;
+  s3Key?: string;
+}
+
+const PIPELINE_STEP_GAP_X = 400;
+
+function primaryInputHandleForNodeType(nodeType: string): string {
+  const meta = NODE_REGISTRY[nodeType];
+  return meta?.inputs?.[0]?.id ?? "media";
+}
+
+function nodeOutputData(
+  nodeType: string,
+  output: string | undefined,
+  s3Key: string | undefined,
+): Record<string, unknown> {
+  if (!output?.trim()) return {};
+  const base = {
+    value: output,
+    type: "image",
+    generatedByAi: true,
+    ...(s3Key ? { s3Key } : {}),
+  };
+  if (nodeType === "backgroundRemover") {
+    return { ...base, result_rgba: output, result_mask: undefined };
+  }
+  return base;
+}
+
+/**
+ * Subgrafo de una fila para tuberías de varios nodos (p. ej. Image Creation → Background Remover).
+ * Con un solo paso `nanoBanana`, delega en `buildRowSubgraph`.
+ */
+export function buildPipelineRowSubgraph(
+  populateId: string,
+  row: MaterializedRow,
+  model: MaterializeTemplateModel,
+  originY: number,
+  steps: PipelineMaterializeStep[],
+  rowKey: string = `r${row.rowIndex}`,
+): { nodes: Node[]; edges: Edge[] } {
+  if (steps.length === 0) return { nodes: [], edges: [] };
+  if (steps.length === 1 && steps[0]!.nodeType === "nanoBanana") {
+    return buildRowSubgraph(
+      populateId,
+      { ...row, output: steps[0]!.output, s3Key: steps[0]!.s3Key },
+      model,
+      originY,
+      "nanoBanana",
+      rowKey,
+    );
+  }
+
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  const firstType = steps[0]!.nodeType;
+  const promptId = rowNodeId(populateId, rowKey, "prompt");
+
+  nodes.push({
+    id: promptId,
+    type: "promptInput",
+    position: { x: INPUT_X, y: originY },
+    data: { label: `Fila ${row.rowIndex + 1}`, value: row.prompt },
+  });
+
+  row.refs.forEach((ref, index) => {
+    if (!ref.url) return;
+    const refId = rowNodeId(populateId, rowKey, `ref_${ref.inputId}`);
+    nodes.push({
+      id: refId,
+      type: "mediaInput",
+      position: { x: INPUT_X, y: originY + (index + 1) * INPUT_GAP_Y },
+      data: { label: ref.label || ref.inputId, value: ref.url, type: "image" },
+    });
+  });
+
+  let prevId: string | null = null;
+  let prevOutputHandle: string | null = null;
+
+  steps.forEach((step, stepIndex) => {
+    const role = stepIndex === 0 && firstType === "nanoBanana" ? "nano" : `step_${stepIndex}`;
+    const nodeId = rowNodeId(populateId, rowKey, role);
+    const x = NANO_X + stepIndex * PIPELINE_STEP_GAP_X;
+    const output = step.output;
+
+    const data: Record<string, unknown> = {
+      label: `Fila ${row.rowIndex + 1}`,
+      ...(step.nodeData ?? {}),
+      ...(output ? nodeOutputData(step.nodeType, output, step.s3Key) : {}),
+    };
+
+    if (step.nodeType === "nanoBanana") {
+      Object.assign(data, {
+        modelKey: model.modelKey || "flash31",
+        aspect_ratio: model.aspect_ratio || "16:9",
+        resolution: model.resolution || "2k",
+        thinking: !!model.thinking,
+        imageProvider: model.imageProvider || "gemini",
+        _populateRowCardId: row.cardId,
+      });
+    }
+
+    nodes.push({
+      id: nodeId,
+      type: step.nodeType,
+      position: { x, y: originY },
+      data,
+    });
+
+    if (stepIndex === 0 && firstType === "nanoBanana") {
+      edges.push({
+        id: `${promptId}__${nodeId}`,
+        source: promptId,
+        sourceHandle: "prompt",
+        target: nodeId,
+        targetHandle: "prompt",
+        type: "buttonEdge",
+      });
+      row.refs.forEach((ref) => {
+        if (!ref.url) return;
+        const refId = rowNodeId(populateId, rowKey, `ref_${ref.inputId}`);
+        edges.push({
+          id: `${refId}__${nodeId}`,
+          source: refId,
+          sourceHandle: "media",
+          target: nodeId,
+          targetHandle: ref.inputId,
+          type: "buttonEdge",
+        });
+      });
+    } else if (prevId && prevOutputHandle) {
+      const inputHandle = primaryInputHandleForNodeType(step.nodeType);
+      edges.push({
+        id: `${prevId}__${nodeId}`,
+        source: prevId,
+        sourceHandle: prevOutputHandle,
+        target: nodeId,
+        targetHandle: inputHandle,
+        type: "buttonEdge",
+      });
+    }
+
+    prevId = nodeId;
+    prevOutputHandle = primarySinkSourceHandle(step.nodeType) ?? "image";
+  });
+
+  return { nodes, edges };
+}
+
+export function buildPipelineGeneratedSubgraph(
+  populateId: string,
+  rows: MaterializedRow[],
+  model: MaterializeTemplateModel,
+  stepsPerRow: PipelineMaterializeStep[][],
+): { nodes: Node[]; edges: Edge[] } {
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  rows.forEach((row, index) => {
+    const steps = stepsPerRow[index] ?? [];
+    const sub = buildPipelineRowSubgraph(
+      populateId,
+      row,
+      model,
+      80 + index * ROW_GAP_Y,
+      steps,
+    );
+    nodes.push(...sub.nodes);
+    edges.push(...sub.edges);
+  });
+  return { nodes, edges };
+}
+
 /** Construye todos los subgrafos de filas, apilados verticalmente. */
 export function buildGeneratedSubgraph(
   populateId: string,
@@ -176,6 +360,17 @@ export function buildMediaListOutput(
       mediaType: "image" as const,
       url: row.output || undefined,
       ...(row.s3Key ? { s3Key: row.s3Key } : {}),
+      ...(row.output || row.s3Key
+        ? { mimeType: inferMediaListImageMimeType({
+            id: "",
+            order: index,
+            title: "",
+            mediaType: "image",
+            status: "generated",
+            url: row.output,
+            s3Key: row.s3Key,
+          }) }
+        : {}),
       status: row.output ? ("generated" as const) : ("pending" as const),
       metadata: { prompt: row.prompt },
     })),

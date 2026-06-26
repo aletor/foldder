@@ -17,6 +17,7 @@ const WALLET_GATED_CLIENT_START_ROUTES = [
   "/api/spaces/assistant",
   "/api/spaces/cine/analyze",
   "/api/spaces/describe",
+  "/api/spaces/matte",
   "/api/spaces/guionista",
   "/api/spaces/search",
   "/api/spaces/text-content",

@@ -72,6 +72,10 @@ export const SIDEBAR_HOVER_HELP: Record<string, { title: string; line: string }>
     title: 'Crop',
     line: 'Recorta y encuadra imagen',
   },
+  backgroundRemover: {
+    title: 'Background Remover',
+    line: 'Elimina fondo de la imagen',
+  },
   layerizer: {
     title: 'Layerizer',
     line: 'Capas + fondo limpio → Designer (layout)',
@@ -114,6 +118,6 @@ export const SIDEBAR_HOVER_HELP: Record<string, { title: string; line: string }>
   },
   export_multimedia: {
     title: 'Export Multimedia',
-    line: 'Recibe una o varias media_list: revisa, filtra, descarga medios y exporta un manifest JSON',
+    line: 'Conecta un Dataset y/o media_list: extrae imágenes y vídeos ordenados por fila y columna, descarga y exporta manifest JSON',
   },
 };

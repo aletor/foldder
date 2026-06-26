@@ -16,6 +16,21 @@ function nano(id: string, x: number, y: number, value?: string): Node {
   };
 }
 
+function bgRemover(id: string, y: number, value: string, s3Key?: string): Node {
+  return {
+    id,
+    type: "backgroundRemover",
+    position: { x: 0, y },
+    data: {
+      label: id,
+      value,
+      result_rgba: value,
+      type: "image",
+      ...(s3Key ? { s3Key } : {}),
+    },
+  };
+}
+
 describe("space-media-list", () => {
   it("detects collection mode with 2+ parallel image sinks", () => {
     const nodes: Node[] = [
@@ -70,5 +85,25 @@ describe("space-media-list", () => {
     ]);
     expect(edges).toHaveLength(2);
     expect(edges.every((e) => e.target === "out" && e.targetHandle === "in")).toBe(true);
+  });
+
+  it("collection mode with background remover cutouts (PNG / data URL)", () => {
+    const png = "data:image/png;base64,iVBORw0KGgo=";
+    const nodes: Node[] = [
+      bgRemover("bg1", 0, png),
+      bgRemover("bg2", 200, png),
+      bgRemover("bg3", 400, "https://cdn/cutout.png", "knowledge-files/user/matte/x.png"),
+      { id: "out", type: "spaceOutput", position: { x: 800, y: 0 }, data: {} },
+    ];
+    const structure = analyzeNestedSpaceStructure(nodes, [], {
+      spaceId: "space_bg",
+      spaceName: "Recortes",
+    });
+    expect(structure.outputMode).toBe("collection");
+    expect(structure.type).toBe("media_list");
+    expect(structure.mediaListOutput?.items).toHaveLength(3);
+    expect(structure.mediaListOutput?.items[0]?.url).toBe(png);
+    expect(structure.mediaListOutput?.items[0]?.mimeType).toBe("image/png");
+    expect(structure.mediaListOutput?.items[2]?.s3Key).toBe("knowledge-files/user/matte/x.png");
   });
 });

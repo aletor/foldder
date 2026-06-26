@@ -250,8 +250,24 @@ const MULTI_SLOT_NODES: Record<string, Record<string, string[]>> = {
   vfxGenerator: { prompt: ['prompt'] },
 };
 
-/** Normaliza handle legacy `media_list` / vacío → `ml0`. */
+export const EXPORT_MULTIMEDIA_DATASET_HANDLE = "dataset";
+
+export function isExportMultimediaDatasetTargetHandle(handle: string | null | undefined): boolean {
+  return handle === EXPORT_MULTIMEDIA_DATASET_HANDLE;
+}
+
+export function isExportMultimediaDatasetTaken(
+  nodeId: string,
+  edgeList: Pick<Edge, "target" | "targetHandle">[],
+): boolean {
+  return edgeList.some(
+    (e) => e.target === nodeId && e.targetHandle === EXPORT_MULTIMEDIA_DATASET_HANDLE,
+  );
+}
+
+/** Normaliza handle legacy `media_list` / vacío → `ml0`. Preserva `dataset`. */
 export function normalizeExportMultimediaTargetHandle(handle: string | null | undefined): string {
+  if (isExportMultimediaDatasetTargetHandle(handle)) return EXPORT_MULTIMEDIA_DATASET_HANDLE;
   if (!handle || handle === "media_list") return "ml0";
   if (MULTI_SLOT_NODES.export_multimedia?.media_list?.includes(handle)) return handle;
   return "ml0";
@@ -268,13 +284,17 @@ export function isExportMultimediaSlotTaken(
   });
 }
 
-/** Primera ranura libre ml0…ml7 (o la propuesta si sigue libre). */
+/** Primera ranura libre ml0…ml7 (o la propuesta si sigue libre). También resuelve el input `dataset`. */
 export function resolveExportMultimediaTargetHandle(
   nodeId: string,
   nodeType: string,
   proposedHandle: string | null | undefined,
   edgeList: Pick<Edge, "target" | "targetHandle">[],
 ): string | null {
+  if (isExportMultimediaDatasetTargetHandle(proposedHandle)) {
+    return isExportMultimediaDatasetTaken(nodeId, edgeList) ? null : EXPORT_MULTIMEDIA_DATASET_HANDLE;
+  }
+
   const slots = MULTI_SLOT_NODES[nodeType]?.media_list;
   if (!slots?.length) return proposedHandle ?? null;
 

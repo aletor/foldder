@@ -13,6 +13,7 @@ export const NODE_KEYS: Record<string, string> = {
   mediaInput: 'm',
   promptInput: 'p',
   inspiration: 'u',
+  backgroundRemover: 'b',
   layerizer: 'r',
   mediaDescriber: 'd',
   enhancer: 'h',

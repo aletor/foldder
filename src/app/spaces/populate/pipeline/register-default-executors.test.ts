@@ -6,7 +6,7 @@ describe("registerDefaultPopulateExecutors", () => {
   it("registra los executors built-in de F1", () => {
     const reg = registerDefaultPopulateExecutors(createExecutorRegistry());
     expect(new Set(reg.types())).toEqual(
-      new Set(["nanoBanana", "designer", "mediaDescriber", "enhancer"]),
+      new Set(["nanoBanana", "designer", "mediaDescriber", "enhancer", "backgroundRemover"]),
     );
   });
 

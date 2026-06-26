@@ -11,7 +11,7 @@
  *   4. ¿Es una configuración válida?            → validatePipeline (sink único, sin ciclos…)
  *
  * Frontera del recorrido: Dataset (iterador), inputs pasivos del canvas (`mediaInput`,
- * `promptInput`) y el propio Populate. Otras fuentes externas con lógica propia (p. ej. Brain)
+ * `promptInput`, `painter`…) y el propio Populate. Otras fuentes externas con lógica propia (p. ej. Brain)
  * SÍ entran en la tubería y se clasifican como constante (una evaluación para todas las filas).
  *
  * Principio rector: un nodo simple conectado es una tubería de longitud 1. No hay un
@@ -35,6 +35,8 @@ export const PIPELINE_FRONTIER_NODE_TYPES = new Set<string>([
   DATASET_NODE_TYPE,
   "mediaInput",
   "promptInput",
+  /** Dibujo libre: ref de imagen fija hacia el creativo (como mediaInput). */
+  "painter",
 ]);
 
 const DEFAULT_FRONTIER = PIPELINE_FRONTIER_NODE_TYPES;

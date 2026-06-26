@@ -13,7 +13,25 @@ describe("pipeline-bindings — sink y namespace", () => {
     expect(primarySinkSourceHandle("nanoBanana")).toBe("image");
     expect(primarySinkSourceHandle("mediaDescriber")).toBe("prompt");
     expect(primarySinkSourceHandle("layerizer")).toBe("layout");
+    expect(primarySinkSourceHandle("backgroundRemover")).toBe("rgba");
     expect(primarySinkSourceHandle("designer")).toBe("document");
+  });
+
+  it("Background Remover puede ser sink (rgba → populate.template)", () => {
+    expect(
+      isValidPopulateSinkEdge({
+        sourceNodeType: "backgroundRemover",
+        sourceHandle: "rgba",
+        isPipelineExecutable: (t) => t === "backgroundRemover",
+      }),
+    ).toBe(true);
+    expect(
+      isValidPopulateSinkEdge({
+        sourceNodeType: "backgroundRemover",
+        sourceHandle: "rgba",
+        isPipelineExecutable: () => false,
+      }),
+    ).toBe(false);
   });
 
   it("Layerizer puede ser sink si tiene executor (layout → populate.template)", () => {
@@ -24,13 +42,6 @@ describe("pipeline-bindings — sink y namespace", () => {
         isPipelineExecutable: (t) => t === "layerizer",
       }),
     ).toBe(true);
-    expect(
-      isValidPopulateSinkEdge({
-        sourceNodeType: "layerizer",
-        sourceHandle: "layout",
-        isPipelineExecutable: () => false,
-      }),
-    ).toBe(false);
   });
 
   it("namespaced binding keys", () => {

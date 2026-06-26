@@ -89,6 +89,8 @@ export function readMediaListFromNode(sourceNode: MediaListSourceNode | undefine
   if (sourceNode.type === "space") {
     const spaceMl = parseMediaListValue((data as { mediaListOutput?: unknown }).mediaListOutput);
     if (spaceMl) return spaceMl;
+    const spaceAlias = parseMediaListValue((data as { media_list?: unknown }).media_list);
+    if (spaceAlias) return spaceAlias;
   }
   return null;
 }

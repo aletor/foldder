@@ -197,18 +197,26 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
 	  export_multimedia: {
 	    type: 'export_multimedia',
 	    label: 'Export Multimedia',
-	    description: 'Recibe una o varias media_list (p. ej. varios Designer) y permite revisar, filtrar, descargar medios y exportar un manifest JSON.',
-	    inputs: [{ id: 'media_list-n', label: 'Media List (ml0…)', type: 'media_list' as HandleType, required: true }],
+	    description: 'Recibe media_list y/o un Dataset: revisa, filtra, descarga medios ordenados y exporta un manifest JSON.',
+	    inputs: [
+	      { id: 'dataset', label: 'Dataset', type: 'dataset' as HandleType, required: false },
+	      { id: 'media_list-n', label: 'Media List (ml0…)', type: 'media_list' as HandleType, required: false },
+	    ],
 	    outputs: [],
 	    dataSchema: {
 	      label: 'string',
+	      /** Listado del Dataset conectado; vacío = todos los listados. */
+	      datasetListId: 'string | null',
 	    },
 	  },
 	  exportMultiple: {
 	    type: 'exportMultiple',
 	    label: 'Export Multiple',
 	    description: 'Alias legacy de Export Multimedia para proyectos existentes.',
-	    inputs: [{ id: 'media_list-n', label: 'Media List (ml0…)', type: 'media_list' as HandleType, required: true }],
+	    inputs: [
+	      { id: 'dataset', label: 'Dataset', type: 'dataset' as HandleType, required: false },
+	      { id: 'media_list-n', label: 'Media List (ml0…)', type: 'media_list' as HandleType, required: false },
+	    ],
 	    outputs: [],
 	    dataSchema: {
 	      label: 'string',
@@ -346,6 +354,22 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
       value: 'string (working/output image URL)',
       type: 'image',
     },
+  },
+  backgroundRemover: {
+    type: 'backgroundRemover',
+    label: 'Background Remover',
+    description: 'Professional human matting and background removal using 851-labs.',
+    inputs: [
+      { id: 'media', label: 'Image', type: 'image' }
+    ],
+    outputs: [
+      { id: 'rgba', label: 'Cutout', type: 'image' },
+    ],
+    dataSchema: {
+      threshold: 0.9,
+      expansion: 0,
+      feather: 0.6
+    }
   },
   mediaDescriber: {
     type: 'mediaDescriber',
@@ -642,6 +666,7 @@ export const ASSISTANT_NODE_DATA_HINTS: Record<string, string> = {
   spaceOutput: "label",
   painter: "bgColor, strokeColor, brushSize, value",
   crop: "aspectRatio, cropConfig, value",
+  backgroundRemover: "threshold, expansion, feather",
   layerizer:
     "entrada image (master inmutable); detected (Gemini), selected (objetos + amodal opt-in), jobId/status (job async), output/value (LayerizerOutput: background clean_plate + layers extracted); salida layout (image_layout) conecta a designer. Extracción = recorte pixel-exacto (SAM 3 + matting), NUNCA generativo; fondo limpio = 1 llamada Nano Banana",
   projectBrain:

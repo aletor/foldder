@@ -16,7 +16,7 @@ import { resolveFullQualityMediaUrl } from "@/lib/canvas-media-thumbnail";
 import { resolveKnowledgeFilesS3Key } from "@/lib/s3-media-hydrate";
 import type { ActiveImageRef } from "./populate-active-refs";
 import { resolveImageBindingForRow, resolvePromptForRow } from "./populate-resolve";
-import type { MaterializedRow } from "./populate-materialize";
+import type { MaterializedRow, PipelineMaterializeStep } from "./populate-materialize";
 import { analyzePipeline, type PipelineAnalysis, type PipelineEdge } from "./pipeline/discover-pipeline";
 import { estimatePipelineCost } from "./pipeline/estimate-pipeline-cost";
 import { executorNodeMap } from "./pipeline/pipeline-adapter";
@@ -26,7 +26,7 @@ import {
 } from "./pipeline/pipeline-bindings";
 import { defaultExecutorRegistry } from "./pipeline/executor-registry";
 import { registerDefaultPopulateExecutors } from "./pipeline/register-default-executors";
-import type { ExecutorNode, PortInputValue } from "./pipeline/node-executor";
+import type { ExecutorNode, NodeOutput, PortInputValue } from "./pipeline/node-executor";
 import { POPULATE_PIPELINE_EXECUTABLE_TYPES } from "./pipeline/populate-pipeline-sink-types";
 
 import type { RowResult } from "./pipeline/run-pipeline";
@@ -210,6 +210,30 @@ export function materializedRowsFromPipeline(args: {
       output,
       s3Key,
     };
+  });
+}
+
+export function buildPipelineStepsPerRow(args: {
+  order: readonly string[];
+  nodeById: Map<string, ExecutorNode>;
+  pipelineRows: RowResult[];
+}): PipelineMaterializeStep[][] {
+  const { order, nodeById, pipelineRows } = args;
+  return pipelineRows.map((row) => {
+    if (row.status !== "ok") return [];
+    return order.map((nodeId) => {
+      const node = nodeById.get(nodeId);
+      const out = row.intermediates[nodeId] as NodeOutput | undefined;
+      let output: string | undefined;
+      if (out?.kind === "image") output = out.url;
+      else if (out?.kind === "text") output = out.text;
+      return {
+        nodeType: node?.type ?? "nanoBanana",
+        nodeData: node?.data,
+        output,
+        s3Key: out?.s3Key,
+      };
+    });
   });
 }
 

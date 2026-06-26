@@ -27,6 +27,12 @@ const PAID_NODE_TYPES: Record<
     eurMin: 0.4,
     eurMax: 2.5,
   },
+  backgroundRemover: {
+    id: "replicate-bg",
+    name: "Replicate · Quitar fondo",
+    eurMin: 0.015,
+    eurMax: 0.06,
+  },
   mediaDescriber: {
     id: "openai-describe",
     name: "OpenAI · Describir imagen (Vision)",

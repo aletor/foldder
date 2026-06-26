@@ -22,15 +22,29 @@ type DatasetSourceSnapshot = {
   datasetRemoteVersion: number | null;
 } | null;
 
+function findDatasetInputEdge(
+  state: ReactFlowState<Node, Edge>,
+  consumerNodeId: string,
+  targetHandle: string = "dataset",
+): Edge | undefined {
+  for (const row of state.edges) {
+    if (row.target !== consumerNodeId) continue;
+    if (row.targetHandle === targetHandle) return row;
+    // Legacy: dataset cableado a ranura media_list (ml0…) por error de resolución de handle.
+    const source = state.nodeLookup.get(row.source) ?? state.nodes.find((n) => n.id === row.source);
+    if (source?.type === "dataset" && row.sourceHandle === "dataset") return row;
+  }
+  return undefined;
+}
+
 function selectConnectedDatasetSource(
   state: ReactFlowState<Node, Edge>,
-  designerNodeId: string,
+  consumerNodeId: string,
+  targetHandle: string = "dataset",
 ): DatasetSourceSnapshot {
-  const edge = state.edges.find(
-    (row) => row.target === designerNodeId && row.targetHandle === "dataset",
-  );
+  const edge = findDatasetInputEdge(state, consumerNodeId, targetHandle);
   if (!edge) return null;
-  const source = state.nodes.find((row) => row.id === edge.source);
+  const source = state.nodeLookup.get(edge.source) ?? state.nodes.find((row) => row.id === edge.source);
   if (!source || source.type !== "dataset") return null;
   const data = (source.data ?? {}) as DatasetNodeData;
   return {
@@ -42,6 +56,8 @@ function selectConnectedDatasetSource(
     datasetRemoteVersion: data.datasetRemoteVersion ?? null,
   };
 }
+
+export { selectConnectedDatasetSource };
 
 export type DesignerConnectedDatasetState = {
   datasetConnected: boolean;

@@ -11,6 +11,7 @@ import { nanoBananaExecutor } from "./executors/nano-banana.executor";
 import { designerExecutor } from "./executors/designer.executor";
 import { mediaDescriberExecutor } from "./executors/media-describer.executor";
 import { enhancerExecutor } from "./executors/enhancer.executor";
+import { backgroundRemoverExecutor } from "./executors/background-remover.executor";
 
 export function registerDefaultPopulateExecutors(
   registry: ExecutorRegistry = defaultExecutorRegistry,
@@ -19,6 +20,7 @@ export function registerDefaultPopulateExecutors(
     .register(nanoBananaExecutor)
     .register(designerExecutor)
     .register(mediaDescriberExecutor)
-    .register(enhancerExecutor);
+    .register(enhancerExecutor)
+    .register(backgroundRemoverExecutor);
   return registry;
 }

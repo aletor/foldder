@@ -35,6 +35,7 @@ const STATIC_NODE_GRID_PRESETS: Record<string, GridPreset> = {
   mediaInput: { cols: 5, rows: 3 },
   urlImage: { cols: 5, rows: 3 },
   crop: { cols: 5, rows: 3 },
+  backgroundRemover: { cols: 5, rows: 3 },
   layerizer: { cols: 5, rows: 3 },
   vfxGenerator: { cols: 5, rows: 3 },
   painter: { cols: 5, rows: 3 },
@@ -66,6 +67,7 @@ const STATIC_NODE_GRID_PRESETS: Record<string, GridPreset> = {
 };
 
 const ASPECT_RATIO_NODE_TYPES = new Set([
+  "backgroundRemover",
   "layerizer",
   "cine",
   "crop",

@@ -2,7 +2,7 @@
 
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { NodeResizer, Position, useEdges, useStore, useUpdateNodeInternals, type Edge, type Node, type NodeProps, type ReactFlowState } from "@xyflow/react";
+import { NodeResizer, Position, useEdges, useReactFlow, useStore, useUpdateNodeInternals, type Edge, type Node, type NodeProps, type ReactFlowState } from "@xyflow/react";
 import { shallow } from "zustand/shallow";
 import { Clipboard, Download, File, Layers, Music, Search, X } from "lucide-react";
 
@@ -22,6 +22,12 @@ import {
   mergeMediaListOutputs,
   readMediaListFromNode,
 } from "./media-list-consumers";
+import { buildDatasetMediaListOutput } from "./dataset/dataset-media-list";
+import {
+  selectConnectedDatasetSource,
+  useDesignerConnectedDataset,
+} from "./designer/use-designer-connected-dataset";
+import { mediaListDownloadFilename, downloadMediaListImageUrl, mediaListImageLikelyHasTransparency } from "./media-list-download";
 import { normalizeExportMultimediaTargetHandle } from "./connection-utils";
 import type { MediaListItem, MediaListOutput } from "./media-list-output";
 import type { DesignerPageState } from "./designer/DesignerNode";
@@ -101,6 +107,7 @@ type ConnectedMediaListSourceSnapshot = {
 function isExportMultimediaMediaListEdge(edge: Edge, nodeId: string): boolean {
   if (edge.target !== nodeId) return false;
   const h = edge.targetHandle;
+  if (h === "dataset") return false;
   if (!h || h === "media_list") return true;
   return (EXPORT_MULTIMEDIA_MEDIA_LIST_HANDLES as readonly string[]).includes(h);
 }
@@ -120,6 +127,7 @@ function selectConnectedMediaListSources(
     .sort((a, b) => exportMultimediaTargetHandleSortKey(exportMultimediaEdgeSlotKey(a.targetHandle)) - exportMultimediaTargetHandleSortKey(exportMultimediaEdgeSlotKey(b.targetHandle)))) {
     const sourceNode = state.nodeLookup.get(edge.source);
     if (!sourceNode) continue;
+    if (sourceNode.type === "dataset") continue;
     if (seenSourceIds.has(sourceNode.id)) continue;
     seenSourceIds.add(sourceNode.id);
     out.push({
@@ -132,7 +140,14 @@ function selectConnectedMediaListSources(
   return out;
 }
 
-function useConnectedMediaList(nodeId: string): MediaListOutput | null {
+type ExportMultimediaNodeData = {
+  label?: string;
+  /** Listado concreto del Dataset; vacío = todos los listados. */
+  datasetListId?: string | null;
+  _foldderCanvasIntro?: boolean;
+};
+
+function useConnectedMediaListSources(nodeId: string): MediaListOutput | null {
   const sources = useStore(
     useCallback((state: ReactFlowState<Node, Edge>) => selectConnectedMediaListSources(state, nodeId), [nodeId]),
     shallow,
@@ -149,6 +164,35 @@ function useConnectedMediaList(nodeId: string): MediaListOutput | null {
       .filter((v): v is MediaListOutput => Boolean(v));
     return mergeMediaListOutputs(outputs);
   }, [sources]);
+}
+
+function useExportMultimediaOutput(
+  nodeId: string,
+  datasetListId: string | null | undefined,
+): { output: MediaListOutput | null; datasetConnected: boolean; datasetLoading: boolean } {
+  const mediaListOutput = useConnectedMediaListSources(nodeId);
+  const datasetSource = useStore(
+    useCallback((state: ReactFlowState<Node, Edge>) => selectConnectedDatasetSource(state, nodeId), [nodeId]),
+    shallow,
+  );
+  const { connectedDataset, datasetConnected, datasetLoading } = useDesignerConnectedDataset(nodeId);
+
+  const output = useMemo(() => {
+    const parts: MediaListOutput[] = [];
+    if (mediaListOutput) parts.push(mediaListOutput);
+    if (connectedDataset && datasetSource) {
+      const fromDataset = buildDatasetMediaListOutput({
+        dataset: connectedDataset,
+        sourceNodeId: datasetSource.sourceNodeId,
+        listId: datasetListId ?? null,
+        title: connectedDataset.name,
+      });
+      if (fromDataset) parts.push(fromDataset);
+    }
+    return mergeMediaListOutputs(parts);
+  }, [mediaListOutput, connectedDataset, datasetSource, datasetListId]);
+
+  return { output, datasetConnected, datasetLoading };
 }
 
 /** Páginas de cada Designer conectado (nodeId → pages) para export full-res bajo demanda. */
@@ -175,15 +219,6 @@ async function resolveMediaListItemDownloadUrl(item: MediaListItem): Promise<str
   if (key) return presignMediaListS3Key(key);
   const direct = item.url || item.assetId;
   return direct && !direct.startsWith("asset://") ? direct : null;
-}
-
-function mediaListDownloadFilename(item: MediaListItem): string {
-  const base = sanitizeDownloadFilename(item.title || item.id || "media");
-  if (/\.[a-z0-9]{2,8}$/i.test(base)) return base;
-  if (item.mediaType === "video") return `${base}.mp4`;
-  if (item.mediaType === "image") return `${base}.jpg`;
-  if (item.mediaType === "audio") return `${base}.mp3`;
-  return base;
 }
 
 function mediaListStats(output: MediaListOutput | null) {
@@ -225,8 +260,12 @@ function MediaThumb({ item, compact = false }: { item: MediaListItem; compact?: 
   ) : item.mediaType === "video" ? (
     <video className="h-full w-full object-contain" src={url} muted playsInline preload="metadata" />
   ) : item.mediaType === "image" ? (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img className="h-full w-full object-contain" src={url} alt={item.title} />
+    <div
+      className={mediaListImageLikelyHasTransparency(item) ? "media-list-thumb-checker h-full w-full" : "h-full w-full"}
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img className="h-full w-full object-contain" src={url} alt={item.title} />
+    </div>
   ) : item.mediaType === "audio" ? (
     <div className="flex h-full w-full items-center justify-center bg-black/60 text-white"><Music size={compact ? 18 : 30} /></div>
   ) : (
@@ -332,10 +371,16 @@ type ExportMultimediaFilter = "all" | "video" | "image" | "audio" | "file" | "pe
 function ExportMultimediaStudio({
   output,
   designerPagesByNode,
+  datasetLists,
+  datasetListId,
+  onDatasetListIdChange,
   onClose,
 }: {
   output: MediaListOutput | null;
   designerPagesByNode: Record<string, DesignerPageState[]>;
+  datasetLists: Array<{ id: string; name: string }>;
+  datasetListId: string | null | undefined;
+  onDatasetListIdChange: (listId: string | null) => void;
   onClose: () => void;
 }) {
   const [filter, setFilter] = useState<ExportMultimediaFilter>("all");
@@ -399,12 +444,22 @@ function ExportMultimediaStudio({
     for (const item of otherItems) {
       const filename = mediaListDownloadFilename(item);
       const key = resolveMediaListS3Key(item);
+      if (key && item.mediaType === "image" && mediaListImageLikelyHasTransparency(item)) {
+        const url = await presignMediaListS3Key(key);
+        if (url) await downloadMediaListImageUrl(url, item);
+        continue;
+      }
       if (key) {
         downloadS3Object(key, filename);
         continue;
       }
       const url = await resolveMediaListItemDownloadUrl(item);
-      if (url) await forceDownloadUrl(url, filename);
+      if (!url) continue;
+      if (item.mediaType === "image") {
+        await downloadMediaListImageUrl(url, item);
+        continue;
+      }
+      await forceDownloadUrl(url, filename);
     }
 
     if (designerItems.length > 0) {
@@ -496,6 +551,23 @@ function ExportMultimediaStudio({
 
           {/* Filtros + búsqueda — barra plana */}
           <div className="flex shrink-0 items-stretch divide-x divide-white/10 border-b border-white/10 bg-white/[0.04]">
+            {datasetLists.length > 0 ? (
+              <label className="flex h-10 min-w-[180px] shrink-0 items-center gap-2 border-r border-white/10 px-3 text-[9px] font-black uppercase tracking-[0.08em] text-white/55">
+                <span className="shrink-0">Listado</span>
+                <select
+                  value={datasetListId ?? ""}
+                  onChange={(event) => onDatasetListIdChange(event.target.value || null)}
+                  className="min-w-0 flex-1 bg-transparent text-[11px] font-semibold normal-case tracking-normal text-white outline-none"
+                >
+                  <option value="">Todos los listados</option>
+                  {datasetLists.map((list) => (
+                    <option key={list.id} value={list.id}>
+                      {list.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
             <div className="flex min-w-0 flex-1 items-stretch divide-x divide-white/10 overflow-x-auto">
               {([
                 ["all", "Todos"],
@@ -545,7 +617,7 @@ function ExportMultimediaStudio({
 
           <main className="custom-scrollbar relative min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6 md:py-5">
             {!output ? (
-              <EmptyState title="Sin media_list conectada" line="Conecta una salida media_list para revisar y descargar multimedia." />
+              <EmptyState title="Sin fuentes conectadas" line="Conecta un Dataset o una salida media_list para revisar y descargar multimedia." />
             ) : !output.items.length ? (
               <EmptyState title="Lista vacía" line="La lista está vacía. Todavía no hay medios generados." />
             ) : (
@@ -631,11 +703,37 @@ function ExportMultimediaStudio({
 
 export const ExportMultimediaNode = memo(function ExportMultimediaNode({ id, data, selected }: NodeProps) {
   useFoldderRenderMetric("ExportMultimediaNode", id);
+  const nodeData = (data ?? {}) as ExportMultimediaNodeData;
+  const { setNodes } = useReactFlow();
   const edges = useEdges();
   const updateNodeInternals = useUpdateNodeInternals();
-  const output = useConnectedMediaList(id);
+  const { output, datasetConnected, datasetLoading } = useExportMultimediaOutput(
+    id,
+    nodeData.datasetListId,
+  );
+  const { connectedDataset } = useDesignerConnectedDataset(id);
   const designerPagesByNode = useConnectedDesignerPagesByNode(id);
   const [studioOpen, setStudioOpen] = useState(false);
+
+  const patchDatasetListId = useCallback(
+    (listId: string | null) => {
+      setNodes((nodes) =>
+        nodes.map((n) =>
+          n.id === id ? { ...n, data: { ...(n.data as object), datasetListId: listId } } : n,
+        ),
+      );
+    },
+    [id, setNodes],
+  );
+
+  const datasetLists = useMemo(
+    () => (connectedDataset?.lists ?? []).map((l) => ({ id: l.id, name: l.name })),
+    [connectedDataset],
+  );
+
+  const datasetEdgeConnected = useStore(
+    useCallback((state: ReactFlowState<Node, Edge>) => !!selectConnectedDatasetSource(state, id), [id]),
+  );
 
   const connectedEdges = useMemo(
     () =>
@@ -659,17 +757,23 @@ export const ExportMultimediaNode = memo(function ExportMultimediaNode({ id, dat
 
   useEffect(() => {
     updateNodeInternals(id);
-  }, [id, visibleCount, updateNodeInternals]);
+  }, [id, visibleCount, datasetEdgeConnected, updateNodeInternals]);
 
-  const connectedSourceCount = connectedEdges.length;
+  const connectedSourceCount = connectedEdges.length + (datasetEdgeConnected ? 1 : 0);
   const stats = mediaListStats(output);
-  const statusLabel = !output
-    ? "sin conexión"
-    : stats.pending > 0
-      ? "algunos archivos pendientes"
-      : stats.downloadable > 0
-        ? "listo para descargar"
-        : "media list recibida";
+  const statusLabel = datasetLoading
+    ? "cargando dataset…"
+    : !output
+      ? datasetConnected
+        ? "dataset conectado · sin medios"
+        : "sin conexión"
+      : stats.pending > 0
+        ? "algunos archivos pendientes"
+        : stats.downloadable > 0
+          ? "listo para descargar"
+          : datasetConnected
+            ? "dataset + medios"
+            : "media list recibida";
 
   const previewItems = (output?.items ?? []).slice(0, 6);
 
@@ -677,7 +781,7 @@ export const ExportMultimediaNode = memo(function ExportMultimediaNode({ id, dat
     <div
       className={cx(
         "custom-node tool-node export-multimedia-node foldder-node--frameless node--glass foldder-frameless-label-dark",
-        output ? "export-multimedia-node--active" : "export-multimedia-node--empty",
+        output || datasetConnected ? "export-multimedia-node--active" : "export-multimedia-node--empty",
       )}
       style={{
         minWidth: 240,
@@ -688,14 +792,24 @@ export const ExportMultimediaNode = memo(function ExportMultimediaNode({ id, dat
       } as React.CSSProperties}
     >
       <NodeResizer minWidth={240} minHeight={240} maxWidth={760} maxHeight={900} isVisible={selected} />
-      <NodeLabel id={id} label={(data as { label?: string }).label} defaultLabel="Export Multimedia" />
+      <NodeLabel id={id} label={nodeData.label} defaultLabel="Export Multimedia" />
+
+      <div className="handle-wrapper handle-left" style={{ top: "8%" }}>
+        <FoldderDataHandle
+          type="target"
+          position={Position.Left}
+          id="dataset"
+          dataType="dataset"
+          className={datasetEdgeConnected ? "foldder-data-handle--connected" : ""}
+        />
+      </div>
 
       {visibleHandles.map((hId, index) => (
         <div
           key={hId}
           className="handle-wrapper handle-left"
           style={{
-            top: `${((index + 1) / (visibleHandles.length + 1)) * 100}%`,
+            top: `${14 + ((index + 1) / (visibleHandles.length + 1)) * 78}%`,
           }}
         >
           <FoldderDataHandle
@@ -710,7 +824,7 @@ export const ExportMultimediaNode = memo(function ExportMultimediaNode({ id, dat
 
       <div className="node-header">
         <NodeIcon type="export_multimedia" selected={selected} size={16} />
-        <FoldderNodeHeaderTitle className="flex-1" introActive={!!(data as { _foldderCanvasIntro?: boolean })._foldderCanvasIntro}>
+        <FoldderNodeHeaderTitle className="flex-1" introActive={!!nodeData._foldderCanvasIntro}>
           Export Multimedia
         </FoldderNodeHeaderTitle>
       </div>
@@ -725,6 +839,7 @@ export const ExportMultimediaNode = memo(function ExportMultimediaNode({ id, dat
                 <span className="export-multimedia-stat-total">{stats.total}</span>
                 <span className="export-multimedia-stat-sub">
                   {connectedSourceCount > 1 ? `${connectedSourceCount} orígenes · ` : ""}
+                  {datasetConnected ? "dataset · " : ""}
                   {stats.images} img · {stats.videos} vid · {stats.files + stats.audio} otros
                   {stats.pending ? ` · ${stats.pending} pend.` : ""}
                 </span>
@@ -741,7 +856,7 @@ export const ExportMultimediaNode = memo(function ExportMultimediaNode({ id, dat
             </>
           ) : (
             <p className="export-multimedia-empty-text">
-              Conecta salidas media_list (p. ej. Export Multimedia de varios Designer).
+              Conecta un Dataset (arriba) o salidas media_list (p. ej. Populate, Designer).
             </p>
           )}
         </div>
@@ -752,9 +867,9 @@ export const ExportMultimediaNode = memo(function ExportMultimediaNode({ id, dat
           type="button"
           className="execute-btn export-multimedia-open-button nodrag w-full"
           onClick={() => setStudioOpen(true)}
-          disabled={!output}
+          disabled={!output || datasetLoading}
         >
-          {output ? `Abrir · ${statusLabel}` : "Sin conexión"}
+          {datasetLoading ? "Cargando dataset…" : output ? `Abrir · ${statusLabel}` : "Sin conexión"}
         </button>
       </div>
 
@@ -762,6 +877,9 @@ export const ExportMultimediaNode = memo(function ExportMultimediaNode({ id, dat
         <ExportMultimediaStudio
           output={output}
           designerPagesByNode={designerPagesByNode}
+          datasetLists={datasetLists}
+          datasetListId={nodeData.datasetListId}
+          onDatasetListIdChange={patchDatasetListId}
           onClose={() => setStudioOpen(false)}
         />
       ) : null}

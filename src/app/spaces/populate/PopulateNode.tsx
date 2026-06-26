@@ -54,6 +54,7 @@ import { generatePopulateImage, type PopulateTemplateModel } from "./populate-ge
 import {
   adaptPopulateBindingsForPipeline,
   analyzePopulatePipeline,
+  buildPipelineStepsPerRow,
   buildPromptTemplatesByNodeId,
   createResolveFixedExternal,
   findPopulateCreativeTemplateNodeId,
@@ -67,7 +68,9 @@ import { runPopulatePipeline } from "./pipeline/populate-pipeline-run";
 import {
   buildGeneratedSubgraph,
   buildMediaListOutput,
+  buildPipelineGeneratedSubgraph,
   buildRowSubgraph,
+  isPersistableImageUrl,
   type MaterializedRow,
 } from "./populate-materialize";
 import { isNodeCloneTemplateType, resolveDesignerTemplateConfig } from "./populate-designer-template";
@@ -77,7 +80,7 @@ import {
   freezeDesignerPagesForRow,
   type DesignerMaterializedRow,
 } from "./populate-designer-materialize";
-import { rasterizeAndUploadDesignerRows, uploadDesignerSlideRaster } from "./populate-designer-raster";
+import { rasterizeAndUploadDesignerRows, uploadDesignerSlideRaster, ensureMaterializedRowsHaveStableUrls } from "./populate-designer-raster";
 import {
   deriveDesignerForm,
   freezeDesignerPagesForForm,
@@ -446,7 +449,7 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
       });
 
       const cardIdsByRow = activeList?.cards.map((c) => c.id) ?? [];
-      const rows = materializedRowsFromPipeline({
+      let rows = materializedRowsFromPipeline({
         rows: pipelineResult.rows,
         templatePrompt,
         dataset: connectedDataset,
@@ -456,24 +459,29 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
         fixedRefUrls: template.fixedRefUrls,
         cardIdsByRow,
       });
+      rows = await ensureMaterializedRowsHaveStableUrls(rows, projectId, id);
 
-      const sinkType = template.templateType;
-      const singleNanoSink =
-        analysis.order.length === 1 && sinkType === "nanoBanana";
-      const sub = singleNanoSink
+      const stepsPerRow = buildPipelineStepsPerRow({
+        order: analysis.order,
+        nodeById,
+        pipelineRows: pipelineResult.rows,
+      });
+      const soleNanoSink =
+        analysis.order.length === 1 && nodeById.get(analysis.order[0]!)?.type === "nanoBanana";
+      const sub = soleNanoSink
         ? buildGeneratedSubgraph(id, rows, template.model, "nanoBanana")
-        : { nodes: [] as Node[], edges: [] as Edge[] };
+        : buildPipelineGeneratedSubgraph(id, rows, template.model, stepsPerRow);
       const mediaList = buildMediaListOutput(id, label, rows);
       const imageOutputs = rows
         .map((r) => r.output)
-        .filter((u): u is string => !!u && (u.startsWith("http") || u.startsWith("/")));
+        .filter((u): u is string => isPersistableImageUrl(u));
       const firstOutput = imageOutputs[0] ?? rows.find((r) => r.output)?.output ?? "";
       const lastRunOutputs = imageOutputs.length > 0 ? imageOutputs : rows.filter((r) => r.output).map((r) => r.output!);
 
       let lastDatasetWriteSummary: string | undefined;
       const outputSettings = nodeData.datasetOutput;
       if (outputSettings?.enabled && connectedDataset && listId) {
-        const rowsWithImages = rows.filter((r) => r.output?.startsWith("http") || r.output?.startsWith("/"));
+        const rowsWithImages = rows.filter((r) => isPersistableImageUrl(r.output));
         if (rowsWithImages.length === 0 && pipelineResult.okCount > 0) {
           setError("La salida de la tubería no es imagen; no se puede volcar al Dataset como imagen.");
         } else {

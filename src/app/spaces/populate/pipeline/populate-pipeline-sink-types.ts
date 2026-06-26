@@ -8,4 +8,5 @@ export const POPULATE_PIPELINE_EXECUTABLE_TYPES = new Set<string>([
   "mediaDescriber",
   "enhancer",
   "designer",
+  "backgroundRemover",
 ]);

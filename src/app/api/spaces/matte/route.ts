@@ -1,0 +1,266 @@
+import { NextRequest, NextResponse } from 'next/server';
+import crypto from 'crypto';
+import {
+  recordApiUsage,
+} from '@/lib/api-usage';
+import sharp from 'sharp';
+import Replicate from 'replicate';
+import { getPresignedUrl, uploadBufferToS3Key } from '@/lib/s3-utils';
+import { stableKnowledgeFileUrlFromKey } from '@/lib/s3-media-hydrate';
+import {
+  ApiServiceDisabledError,
+  assertApiServiceEnabled,
+} from "@/lib/api-usage-controls";
+import {
+  assertUserCanAccessMediaReference,
+  ForbiddenMediaReferenceError,
+  inferMimeTypeFromPath,
+} from "@/lib/api-media-access";
+import { requireSpacesAuthUser } from "@/lib/spaces-access-control";
+import { getFromS3 } from "@/lib/s3-utils";
+import {
+  reserveApiWalletCharge,
+  reserveUsdToMicros,
+  releaseApiWalletChargeOnError,
+  walletGateErrorResponse,
+  type ApiWalletCharge,
+} from "@/lib/wallet-api-gate";
+
+function userScopedMatteImageKey(userEmail: string): string {
+  const normalizedEmail = userEmail.trim().toLowerCase();
+  const ownerHash = crypto.createHash('sha256').update(normalizedEmail).digest('hex').slice(0, 20);
+  return `knowledge-files/user-assets/${ownerHash}/matte/${Date.now()}-${crypto.randomUUID()}.png`;
+}
+
+function parseImageDataUrl(value: string): { buffer: Buffer; mime: string } {
+  const marker = ";base64,";
+  const idx = value.indexOf(marker);
+  if (!value.startsWith("data:") || idx === -1) {
+    throw new Error("Invalid image data URL");
+  }
+  const mime = value.slice(5, idx).split(";")[0] || "image/png";
+  return {
+    buffer: Buffer.from(value.slice(idx + marker.length), "base64"),
+    mime,
+  };
+}
+
+export async function POST(req: NextRequest) {
+  console.log(`[Background Remover] POST request received`);
+  let walletCharge: ApiWalletCharge | null = null;
+  let releaseWalletOnError = true;
+  try {
+    await assertApiServiceEnabled("replicate-bg");
+    const authState = await requireSpacesAuthUser(req);
+    if (!authState.ok) return authState.response;
+    const usageUserEmail = authState.user.email;
+    const body = await req.json();
+    const { 
+      image, 
+      expansion = 0, 
+      feather = 0.6,
+      threshold = 0.9 
+    } = body;
+
+    if (typeof image !== "string" || !image.trim()) {
+      return NextResponse.json({ error: 'Missing image input' }, { status: 400 });
+    }
+    console.log(`--- BACKGROUND REMOVER START ---`);
+
+    // 0. Pre-fetch image if URL to avoid 403 Forbidden on Replicate workers (bypass with User-Agent)
+    let imageBuffer: Buffer;
+    let imageInputForReplicate: string = image;
+
+    const s3Key = await assertUserCanAccessMediaReference(usageUserEmail, image, "image");
+    if (s3Key) {
+      imageBuffer = await getFromS3(s3Key);
+      const mime = inferMimeTypeFromPath(s3Key, "image/png");
+      imageInputForReplicate = `data:${mime};base64,${imageBuffer.toString("base64")}`;
+      console.log(`[Background Remover] Loaded authorized S3 image: ${s3Key}`);
+    } else if (image.startsWith('http')) {
+      console.log(`[Background Remover] Pre-fetching image to bypass potential 403: ${image}`);
+      const imgFetchRes = await fetch(image, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        },
+        signal: AbortSignal.timeout(15000)
+      });
+      if (!imgFetchRes.ok) throw new Error(`Image fetch failed: ${imgFetchRes.status}`);
+      const arrBuf = await imgFetchRes.arrayBuffer();
+      imageBuffer = Buffer.from(arrBuf);
+      console.log(`[Background Remover] Image download status: ${imgFetchRes.status}. First 10 bytes: ${imageBuffer.slice(0, 10).toString('hex')}`);
+      const mime = imgFetchRes.headers.get('content-type') || 'image/png';
+      imageInputForReplicate = `data:${mime};base64,${imageBuffer.toString('base64')}`;
+    } else {
+      const parsedImage = parseImageDataUrl(image);
+      imageBuffer = parsedImage.buffer;
+      console.log(`[Background Remover] Base64 Image. First 10 bytes: ${imageBuffer.slice(0, 10).toString('hex')}`);
+      imageInputForReplicate = image; // Use original base64
+    }
+
+    if (!process.env.REPLICATE_API_TOKEN) {
+      return NextResponse.json({ error: 'REPLICATE_API_TOKEN is not configured' }, { status: 500 });
+    }
+
+    const replicate = new Replicate({
+      auth: process.env.REPLICATE_API_TOKEN || "",
+    });
+    walletCharge = await reserveApiWalletCharge({
+      req,
+      userEmail: usageUserEmail,
+      serviceId: "replicate-bg",
+      provider: "replicate",
+      route: "/api/spaces/matte",
+      maxCostMicros: reserveUsdToMicros(0.01, { multiplier: 1.25 }),
+      metadata: { model: "851-labs/background-remover" },
+    });
+
+    // 1. ML Inference: Professional Matting (851-labs/background-remover)
+    // Single attempt only: retries must be initiated by the user to avoid uncontrolled cost.
+    let maskUrl: string;
+    try {
+      const output = await replicate.run(
+        "851-labs/background-remover:a029dff38972b5fda4ec5d75d7d1cd25aeff621d2cf4946a41055d7db66b80bc",
+        {
+          input: {
+            image: imageInputForReplicate,
+            threshold: Number(threshold),
+            reverse: false,
+          },
+        },
+      );
+      maskUrl = Array.isArray(output) ? output[0] : output.toString();
+      releaseWalletOnError = false;
+      await walletCharge?.capture({
+        actualCostUsd: 0.01,
+        metadata: { model: "851-labs/background-remover" },
+      });
+      await recordApiUsage({
+        provider: "replicate",
+        userEmail: usageUserEmail,
+        serviceId: "replicate-bg",
+        route: "/api/spaces/matte",
+        model: "851-labs/background-remover",
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        costUsd: 0.01,
+        note: "Eliminar fondo (estimado)",
+      });
+    } catch (mlErr: unknown) {
+      const mlMessage = mlErr instanceof Error ? mlErr.message : String(mlErr);
+      const mlStatus =
+        typeof mlErr === "object" && mlErr !== null && "status" in mlErr
+          ? (mlErr as { status?: number }).status
+          : undefined;
+      const is429 = mlMessage.includes("429") || mlStatus === 429;
+      console.error("[Background Remover] ML Error:", mlErr);
+      await walletCharge?.release({ reason: "provider_inference_error", metadata: { status: mlStatus, retryable: is429 } });
+      releaseWalletOnError = false;
+      return NextResponse.json(
+        {
+          error: is429
+            ? "Replicate rate limit or low balance. No automatic retry was made; try again manually in a moment."
+            : `ML Engine failed: ${mlMessage}`,
+          details: mlMessage,
+          retryable: is429,
+        },
+        { status: is429 ? 429 : 500 },
+      );
+    }
+
+    // 2. Fetch Mask (Image buffer already available)
+    console.log(`[Background Remover] Downloading mask: ${maskUrl}`);
+    const maskFetchRes = await fetch(maskUrl, { signal: AbortSignal.timeout(15000) });
+    if (!maskFetchRes.ok) throw new Error(`Failed to download mask: ${maskFetchRes.status}`);
+    const maskBuffer = Buffer.from(await maskFetchRes.arrayBuffer());
+    console.log(`[Background Remover] Mask downloaded. First 10 bytes: ${maskBuffer.slice(0, 10).toString('hex')}`);
+    console.log(`[Background Remover] Processing buffers... (Mask size: ${maskBuffer.length})`);
+
+    // Verify imageBuffer is valid
+    const imgMetadata = await sharp(imageBuffer).metadata();
+    const w = imgMetadata.width || 1080;
+    const h = imgMetadata.height || 1080;
+
+    // 3. Process Mask
+    // Replicate masks are typically grayscale. We force to grayscale and resize.
+    const finalMaskPngBuffer = await sharp(maskBuffer)
+      .resize(w, h)
+      .grayscale()
+      .png()
+      .toBuffer();
+
+    // 4. Calculate BBox from raw mask pixels
+    const rawMask = await sharp(finalMaskPngBuffer).raw().toBuffer();
+    let minX = w, minY = h, maxX = 0, maxY = 0;
+    let found = false;
+    let bbox = [0, 0, w, h];
+
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (rawMask[y * w + x] > 128) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+          found = true;
+        }
+      }
+    }
+    if (found) bbox = [minX, minY, maxX - minX, maxY - minY];
+
+    // 5. Compose Cutout
+    // Use 'dest-in' blend mode which uses the alpha of the mask to crop the source
+    const rgbaBuffer = await sharp(imageBuffer)
+      .resize(w, h)
+      .toColourspace('srgb')
+      .ensureAlpha()
+      .composite([{
+        input: finalMaskPngBuffer,
+        blend: 'dest-in'
+      }])
+      .png()
+      .toBuffer();
+
+    const rgbaDataUrl = `data:image/png;base64,${rgbaBuffer.toString('base64')}`;
+    const rgbaS3Key = await uploadBufferToS3Key(
+      userScopedMatteImageKey(usageUserEmail),
+      rgbaBuffer,
+      'image/png',
+    );
+    const rgbaUrl = stableKnowledgeFileUrlFromKey(rgbaS3Key) ?? (await getPresignedUrl(rgbaS3Key));
+
+    return NextResponse.json({
+      mask: `data:image/png;base64,${finalMaskPngBuffer.toString('base64')}`,
+      rgba_image: rgbaDataUrl,
+      rgba_url: rgbaUrl,
+      rgba_s3_key: rgbaS3Key,
+      bbox,
+      metadata: {
+        engine: '851-labs',
+        threshold,
+        expansion,
+        feather,
+        resolution: `${w}x${h}`,
+        format: imgMetadata.format
+      }
+    });
+
+  } catch (error: unknown) {
+    if (error instanceof ApiServiceDisabledError) {
+      return NextResponse.json(
+        { error: `API bloqueada en admin: ${error.label}` },
+        { status: 423 },
+      );
+    }
+    if (error instanceof ForbiddenMediaReferenceError) {
+      return NextResponse.json({ error: error.message }, { status: 403 });
+    }
+    if (releaseWalletOnError) await releaseApiWalletChargeOnError(walletCharge, error);
+    const walletResponse = walletGateErrorResponse(error);
+    if (walletResponse) return walletResponse;
+    console.error('[Background Remover] CRITICAL ERROR:', error);
+    const message = error instanceof Error ? error.message : String(error);
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}

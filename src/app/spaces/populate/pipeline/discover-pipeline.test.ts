@@ -72,6 +72,32 @@ describe("discoverPipeline — descubrimiento del subgrafo", () => {
     expect(analysis.validation.ok).toBe(true);
   });
 
+  it("painter es frontera: ref de imagen fija sin ejecución en la tubería", () => {
+    const nodes: N[] = [
+      { id: "pop", type: "populate" },
+      { id: "ds", type: "dataset" },
+      { id: "img", type: "nanoBanana" },
+      { id: "bg", type: "backgroundRemover" },
+      { id: "pt", type: "painter" },
+    ];
+    const edges: PipelineEdge[] = [
+      edge("ds", "pop", "dataset"),
+      { source: "pt", target: "img", sourceHandle: "image", targetHandle: "image2" },
+      edge("img", "bg", "image"),
+      edge("bg", "pop", "template"),
+    ];
+    expect(discoverPipelineNodeIds("pop", nodes, edges)).toEqual(["bg", "img"]);
+    const analysis = analyzePipeline({
+      populateId: "pop",
+      nodes,
+      edges,
+      datasetBoundNodeIds: new Set(["img"]),
+    });
+    expect(analysis.order).toEqual(["img", "bg"]);
+    expect(analysis.validation.ok).toBe(true);
+    expect(analysis.order).not.toContain("pt");
+  });
+
   it("cadena lineal de 3 nodos: descubre toda la tubería hacia atrás", () => {
     const nodes: N[] = [
       { id: "pop", type: "populate" },

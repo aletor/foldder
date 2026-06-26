@@ -65,6 +65,8 @@ function englishTitle(request: WalletCostDecisionRequest): string {
       return "Generate Seedance video";
     case "/api/spaces/video-matte":
       return "Video matte";
+    case "/api/spaces/matte":
+      return "Remove background";
     case "/api/gemini/analyze-areas":
       return "Analyze image";
     case "/api/gemini/analyze-correction":
@@ -140,6 +142,7 @@ function operationDescription(request: WalletCostDecisionRequest, language: Dial
       return es
         ? "Esta operación de texto usa un modelo de pago. El coste depende de la longitud de entrada y salida; la reserva evita saldo negativo."
         : "This text operation uses a paid model. Cost depends on input and output length; the reserve prevents negative balance.";
+    case "/api/spaces/matte":
     case "/api/spaces/video-matte":
       return es
         ? "Esta operación usa un proveedor externo para procesar la imagen o el vídeo. Si falla, la reserva se libera."

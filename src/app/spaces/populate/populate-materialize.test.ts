@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   buildGeneratedSubgraph,
   buildMediaListOutput,
+  buildPipelineGeneratedSubgraph,
+  buildPipelineRowSubgraph,
   buildRowSubgraph,
   isGeneratedNodeIdFor,
+  isPersistableImageUrl,
   type MaterializedRow,
 } from "./populate-materialize";
 
@@ -70,5 +73,59 @@ describe("populate-materialize", () => {
     expect(ml.items[0]?.url).toBe("https://cdn/out_a.png");
     expect(ml.items[1]?.status).toBe("pending");
     expect(ml.status).toBe("frames_partial");
+  });
+
+  it("accepts data URLs as persistable image outputs", () => {
+    expect(isPersistableImageUrl("data:image/png;base64,abc")).toBe(true);
+    expect(isPersistableImageUrl("https://cdn/x.png")).toBe(true);
+    expect(isPersistableImageUrl("text/plain")).toBe(false);
+  });
+
+  it("chains nanoBanana and backgroundRemover per row", () => {
+    const row: MaterializedRow = {
+      rowIndex: 0,
+      cardId: "card_a",
+      prompt: "salta en trampolín",
+      refs: [{ inputId: "image", url: "https://cdn/ref.png", label: "Ref 1" }],
+      output: "https://cdn/cutout.png",
+      s3Key: "k/cutout",
+    };
+    const steps = [
+      {
+        nodeType: "nanoBanana",
+        output: "https://cdn/gen.png",
+        s3Key: "k/gen",
+      },
+      {
+        nodeType: "backgroundRemover",
+        nodeData: { threshold: 0.9, expansion: 0, feather: 0.6 },
+        output: "https://cdn/cutout.png",
+        s3Key: "k/cutout",
+      },
+    ];
+    const { nodes, edges } = buildPipelineRowSubgraph("pop1", row, model, 80, steps);
+    const nano = nodes.find((n) => n.type === "nanoBanana");
+    const bg = nodes.find((n) => n.type === "backgroundRemover");
+    expect(nano?.data?.value).toBe("https://cdn/gen.png");
+    expect(bg?.data?.value).toBe("https://cdn/cutout.png");
+    expect(bg?.data?.result_rgba).toBe("https://cdn/cutout.png");
+    expect(
+      edges.some(
+        (e) => e.source === nano?.id && e.target === bg?.id && e.sourceHandle === "image",
+      ),
+    ).toBe(true);
+  });
+
+  it("stacks pipeline rows", () => {
+    const row: MaterializedRow = {
+      rowIndex: 0,
+      prompt: "p",
+      refs: [],
+      output: "https://cdn/out.png",
+    };
+    const { nodes } = buildPipelineGeneratedSubgraph("pop1", [row], model, [
+      [{ nodeType: "nanoBanana", output: "https://cdn/out.png" }],
+    ]);
+    expect(nodes.some((n) => n.type === "nanoBanana")).toBe(true);
   });
 });

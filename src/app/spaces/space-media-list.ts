@@ -4,6 +4,7 @@
 
 import type { Edge, Node } from "@xyflow/react";
 import { NODE_REGISTRY, type HandleType } from "./nodeRegistry";
+import { inferMediaListImageMimeType } from "./media-list-download";
 import type { MediaListItem, MediaListOutput } from "./media-list-output";
 import { isMediaListOutput } from "./media-list-output";
 
@@ -23,6 +24,7 @@ const MEDIA_SINK_NODE_TYPES = new Set([
   "crop",
   "layerizer",
   "painter",
+  "backgroundRemover",
 ]);
 
 export type SpaceOutputMode = "scalar" | "collection";
@@ -74,6 +76,17 @@ function resolvePrimaryMediaOutputHandle(nodeType: string): { id: string; type: 
   return meta.outputs[0] ?? null;
 }
 
+function resolveImageSinkUrl(nodeType: string, data: Record<string, unknown>): string | undefined {
+  const candidates: unknown[] =
+    nodeType === "backgroundRemover"
+      ? [data.value, data.result_rgba, data.rgba, data.output]
+      : [data.value, data.output, data.result_rgba];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+  }
+  return undefined;
+}
+
 /** Extrae media de un nodo si es un sink multimedia reconocible. */
 export function getMediaSinkInfo(node: Node): MediaSinkInfo | null {
   const nodeType = String(node.type ?? "");
@@ -109,7 +122,7 @@ export function getMediaSinkInfo(node: Node): MediaSinkInfo | null {
   }
   if (!mediaType) return null;
 
-  const url = typeof data.value === "string" && data.value.trim() ? data.value.trim() : undefined;
+  const url = resolveImageSinkUrl(nodeType, data);
   const s3Key = typeof data.s3Key === "string" && data.s3Key.trim() ? data.s3Key.trim() : undefined;
   const label =
     typeof data.label === "string" && data.label.trim()
@@ -161,7 +174,7 @@ export function buildMediaListFromSinkInfos(
 ): MediaListOutput {
   const items: MediaListItem[] = sinks.map((sink, index) => {
     const hasMedia = Boolean(sink.url || sink.s3Key);
-    return {
+    const item: MediaListItem = {
       id: sink.node.id,
       order: index,
       title: sink.label || `Item ${index + 1}`,
@@ -175,6 +188,17 @@ export function buildMediaListFromSinkInfos(
         spaceId,
       },
     };
+    if (sink.mediaType === "image" && hasMedia) {
+      const mime = inferMediaListImageMimeType({
+        ...item,
+        order: index,
+        title: item.title,
+        mediaType: "image",
+        status: item.status,
+      });
+      if (mime) item.mimeType = mime;
+    }
+    return item;
   });
 
   const ready = items.filter((i) => i.status === "generated").length;
@@ -320,7 +344,8 @@ export function analyzeNestedSpaceStructure(
 
   if (outputMode === "collection") {
     const mediaListOutput = buildMediaListFromSinkInfos(mediaSinkInfos, spaceId, spaceName);
-    const firstUrl = mediaListOutput.items.find((i) => i.url)?.url ?? null;
+    const firstItem = mediaListOutput.items.find((i) => i.url || i.s3Key);
+    const firstUrl = firstItem?.url ?? null;
     return {
       ...base,
       type: "media_list",

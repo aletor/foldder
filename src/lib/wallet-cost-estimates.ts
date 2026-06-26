@@ -192,6 +192,18 @@ export function estimateWalletCostForRoute(
     };
   }
 
+  if (route === "/api/spaces/matte") {
+    const estimated = 0.01;
+    return {
+      label: "Quitar fondo",
+      route,
+      category: "image",
+      estimatedCostMicros: usdToMicros(estimated),
+      reserveMicros: reserveUsdToMicros(estimated, 1.25),
+      tone: "quiet",
+    };
+  }
+
   if (route === "/api/gemini/analyze-areas") {
     const estimated = 0.02;
     return {

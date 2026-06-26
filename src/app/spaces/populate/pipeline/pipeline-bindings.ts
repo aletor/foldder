@@ -47,6 +47,7 @@ export const POPULATE_SINK_SOURCE_HANDLES = new Set([
   "template", // legacy
   "prompt",
   "layout", // Layerizer → image_layout
+  "rgba", // Background Remover → cutout
   "video",
 ]);
 
@@ -57,6 +58,7 @@ export function primarySinkSourceHandle(nodeType: string | undefined | null): st
   if (nodeType === "nanoBanana") return "image";
   if (nodeType === "mediaDescriber") return "prompt";
   if (nodeType === "layerizer") return "layout";
+  if (nodeType === "backgroundRemover") return "rgba";
   const meta = NODE_REGISTRY[nodeType];
   if (!meta?.outputs?.length) return null;
   const first = meta.outputs[0]!.id;

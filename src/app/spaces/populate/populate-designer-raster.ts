@@ -17,6 +17,7 @@ import type {
   DesignerSlideRaster,
 } from "./populate-designer-dataset-output";
 import type { DesignerMaterializedRow } from "./populate-designer-materialize";
+import type { MaterializedRow } from "./populate-materialize";
 
 const DATA_IMAGE_URL_RE = /^data:(image\/[^;,]+)(?:;[^,]*)?;base64,(.*)$/i;
 
@@ -49,6 +50,36 @@ export async function uploadDesignerSlideRaster(
     policy: { preserveImageQuality: true },
   });
   return { url: uploaded.url, s3Key: uploaded.s3Key };
+}
+
+/** Sube un data URL de imagen de Populate a S3 si hace falta. */
+export async function uploadPopulateImageOutput(
+  url: string,
+  opts: { projectId: string | null; mediaId: string },
+): Promise<{ url: string; s3Key: string } | null> {
+  if (!url.startsWith("data:image/")) return null;
+  return uploadDesignerSlideRaster(url, opts);
+}
+
+/** Convierte salidas data URL en URLs estables de S3 para Dataset y nested space. */
+export async function ensureMaterializedRowsHaveStableUrls(
+  rows: MaterializedRow[],
+  projectId: string | null,
+  populateId: string,
+): Promise<MaterializedRow[]> {
+  const out: MaterializedRow[] = [];
+  for (const row of rows) {
+    if (!row.output?.startsWith("data:image/")) {
+      out.push(row);
+      continue;
+    }
+    const uploaded = await uploadPopulateImageOutput(row.output, {
+      projectId,
+      mediaId: `pop_${populateId}_r${row.rowIndex}`,
+    });
+    out.push(uploaded ? { ...row, output: uploaded.url, s3Key: uploaded.s3Key } : row);
+  }
+  return out;
 }
 
 export interface RasterizeAndUploadArgs {

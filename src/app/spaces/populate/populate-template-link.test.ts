@@ -45,4 +45,20 @@ describe("populate-template-link", () => {
     expect(isPopulateTemplateLinkEdge(edge, "pop1", "imageExport")).toBe(false);
     expect(findPopulateTemplateLinkEdge("pop1", nodes, [edge as any])).toBeUndefined();
   });
+
+  it("accepts backgroundRemover rgba → populate template", () => {
+    const edge = {
+      id: "e4",
+      source: "bg1",
+      target: "pop1",
+      sourceHandle: "rgba",
+      targetHandle: "template",
+    };
+    expect(isPopulateTemplateLinkEdge(edge, "pop1", "backgroundRemover")).toBe(true);
+    const nodesWithBg = [
+      ...nodes,
+      { id: "bg1", type: "backgroundRemover" },
+    ];
+    expect(findPopulateTemplateLinkEdge("pop1", nodesWithBg, [edge as any])?.id).toBe("e4");
+  });
 });

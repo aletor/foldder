@@ -73,7 +73,7 @@ export type MediaListItem = {
 export type MediaListGroup = {
   id: string;
   title: string;
-  role: "characters" | "backgrounds" | "storyboard" | "videos" | "approved_videos" | "sheets";
+  role: "characters" | "backgrounds" | "storyboard" | "videos" | "approved_videos" | "sheets" | "dataset_list";
   itemIds: string[];
 };
 
@@ -98,6 +98,8 @@ export type MediaListOutput = {
     totalFrames?: number;
     totalVideos?: number;
     approvedVideos?: number;
+    datasetId?: string;
+    datasetListId?: string;
     generatedAt: string;
   };
 };
