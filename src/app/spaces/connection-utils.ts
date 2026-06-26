@@ -5,6 +5,11 @@ import {
   parseCanvasGroupInHandle,
   parseCanvasGroupOutHandle,
 } from './canvas-group-logic';
+import {
+  isValidPopulateSinkEdge,
+  primarySinkSourceHandle,
+} from './populate/pipeline/pipeline-bindings';
+import { POPULATE_PIPELINE_EXECUTABLE_TYPES } from './populate/pipeline/populate-pipeline-sink-types';
 
 /**
  * Tipos de nodo creativo que Populate puede orquestar (plantilla).
@@ -179,19 +184,24 @@ export function areNodesConnectable(
     return sourceHandleType === 'dataset' && targetHandleType === 'dataset';
   }
 
-  // Populate plantilla: salida `image`/`document` (o legacy `template`) de un creativo orquestable → input template.
+  // Populate plantilla: salida primaria de un nodo con executor de tubería → input template.
   if (targetNode.type === "populate" && connection.targetHandle === "template") {
-    if (!ORCHESTRABLE_CREATIVE_TYPES.has(sourceNode.type as string)) return false;
-    const sh = connection.sourceHandle ?? "image";
-    return sh === "image" || sh === "template" || sh === "document";
+    const sourceType = sourceNode.type as string;
+    const sh = connection.sourceHandle ?? primarySinkSourceHandle(sourceType) ?? "image";
+    return isValidPopulateSinkEdge({
+      sourceNodeType: sourceType,
+      sourceHandle: sh,
+      isPipelineExecutable: (t) => !!t && POPULATE_PIPELINE_EXECUTABLE_TYPES.has(t),
+    });
   }
 
   // Template handle legacy (proyectos con salida template dedicada).
   if (connection.sourceHandle === 'template' || connection.targetHandle === 'template') {
+    const sourceType = sourceNode.type as string;
     return (
       sourceHandleType === 'template' &&
       targetHandleType === 'template' &&
-      ORCHESTRABLE_CREATIVE_TYPES.has(sourceNode.type as string)
+      POPULATE_PIPELINE_EXECUTABLE_TYPES.has(sourceType)
     );
   }
 

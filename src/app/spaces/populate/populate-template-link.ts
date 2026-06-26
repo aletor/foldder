@@ -1,13 +1,23 @@
 import type { Edge } from "@xyflow/react";
-import { ORCHESTRABLE_CREATIVE_TYPES } from "@/app/spaces/connection-utils";
+import {
+  isValidPopulateSinkEdge,
+  POPULATE_SINK_SOURCE_HANDLES,
+  primarySinkSourceHandle,
+} from "./pipeline/pipeline-bindings";
+import { POPULATE_PIPELINE_EXECUTABLE_TYPES } from "./pipeline/populate-pipeline-sink-types";
 
 export const POPULATE_TEMPLATE_TARGET_HANDLE = "template" as const;
 
 /** Handles de salida del creativo que pueden cablear la plantilla de Populate. */
-export const POPULATE_TEMPLATE_SOURCE_HANDLES = new Set(["image", "template", "document"]);
+export const POPULATE_TEMPLATE_SOURCE_HANDLES = POPULATE_SINK_SOURCE_HANDLES;
 
-function isOrchestrableCreativeType(nodeType: string | undefined | null): boolean {
-  return !!nodeType && ORCHESTRABLE_CREATIVE_TYPES.has(nodeType);
+function isPipelineSinkType(nodeType: string | undefined | null): boolean {
+  if (!nodeType || !POPULATE_PIPELINE_EXECUTABLE_TYPES.has(nodeType)) return false;
+  return isValidPopulateSinkEdge({
+    sourceNodeType: nodeType,
+    sourceHandle: primarySinkSourceHandle(nodeType),
+    isPipelineExecutable: (t) => !!t && POPULATE_PIPELINE_EXECUTABLE_TYPES.has(t),
+  });
 }
 
 export function isPopulateTemplateLinkEdge(
@@ -18,10 +28,10 @@ export function isPopulateTemplateLinkEdge(
   if (edge.target !== populateId || edge.targetHandle !== POPULATE_TEMPLATE_TARGET_HANDLE) {
     return false;
   }
-  if (sourceNodeType != null && !isOrchestrableCreativeType(sourceNodeType)) {
+  if (sourceNodeType != null && !isPipelineSinkType(sourceNodeType)) {
     return false;
   }
-  const sourceHandle = edge.sourceHandle ?? "image";
+  const sourceHandle = edge.sourceHandle ?? primarySinkSourceHandle(sourceNodeType) ?? "image";
   return POPULATE_TEMPLATE_SOURCE_HANDLES.has(sourceHandle);
 }
 
@@ -30,10 +40,10 @@ export function findPopulateTemplateLinkEdge(
   nodes: { id: string; type?: string }[],
   edges: Edge[],
 ): Edge | undefined {
-  const orchestrableIds = new Set(
-    nodes.filter((n) => isOrchestrableCreativeType(n.type)).map((n) => n.id),
+  const sinkIds = new Set(
+    nodes.filter((n) => isPipelineSinkType(n.type)).map((n) => n.id),
   );
   return edges.find(
-    (e) => isPopulateTemplateLinkEdge(e, populateId) && orchestrableIds.has(e.source),
+    (e) => isPopulateTemplateLinkEdge(e, populateId) && sinkIds.has(e.source),
   );
 }

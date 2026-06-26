@@ -1,6 +1,7 @@
 "use client";
 
 import React, { memo, useCallback, useMemo, useRef, useState } from "react";
+import { useSession } from "next-auth/react";
 import {
   useReactFlow,
   useStore,
@@ -50,6 +51,19 @@ import {
 import { buildPopulateSharePayload } from "./populate-share-payload";
 import type { PopulateSharePayload } from "@/lib/populate-share-types";
 import { generatePopulateImage, type PopulateTemplateModel } from "./populate-generate";
+import {
+  adaptPopulateBindingsForPipeline,
+  analyzePopulatePipeline,
+  buildPromptTemplatesByNodeId,
+  createResolveFixedExternal,
+  findPopulateCreativeTemplateNodeId,
+  formatPipelineCostConfirm,
+  materializedRowsFromPipeline,
+} from "./populate-pipeline-integration";
+import { defaultExecutorRegistry } from "./pipeline/executor-registry";
+import { estimatePipelineCost } from "./pipeline/estimate-pipeline-cost";
+import { executorNodeMap } from "./pipeline/pipeline-adapter";
+import { runPopulatePipeline } from "./pipeline/populate-pipeline-run";
 import {
   buildGeneratedSubgraph,
   buildMediaListOutput,
@@ -123,12 +137,18 @@ function resolveTemplateConfig(
 ): TemplateConfig | null {
   const linkEdge = findPopulateTemplateLinkEdge(populateId, nodes, edges);
   if (!linkEdge) return null;
-  const tpl = nodes.find((n) => n.id === linkEdge.source);
-  if (!tpl) return null;
-  const data = (tpl.data ?? {}) as Record<string, unknown>;
+  const sinkNode = nodes.find((n) => n.id === linkEdge.source);
+  if (!sinkNode) return null;
   const populateNode = nodes.find((n) => n.id === populateId);
   const popData = (populateNode?.data ?? {}) as PopulateNodeData;
   const nodesById = new Map(nodes.map((n) => [n.id, n]));
+
+  const creativeNodeId =
+    findPopulateCreativeTemplateNodeId(populateId, nodes, edges, popData.templateBindings) ??
+    linkEdge.source;
+  const tpl = nodes.find((n) => n.id === creativeNodeId) ?? sinkNode;
+  const data = (tpl.data ?? {}) as Record<string, unknown>;
+  const sinkData = (sinkNode.data ?? {}) as Record<string, unknown>;
 
   // Declaración estándar del nodo creativo (NO hardcode por tipo).
   const declaration = getNodeOrchestrationDeclaration(tpl.type);
@@ -162,11 +182,13 @@ function resolveTemplateConfig(
 
   return {
     templateNodeId: tpl.id,
-    templateType: tpl.type ?? "",
+    templateType: sinkNode.type ?? "",
     templateLabel:
-      typeof data.label === "string" && data.label.trim()
-        ? (data.label as string)
-        : "Image Creation",
+      typeof sinkData.label === "string" && sinkData.label.trim()
+        ? (sinkData.label as string)
+        : typeof data.label === "string" && data.label.trim()
+          ? (data.label as string)
+          : "Plantilla",
     model: {
       modelKey: data.modelKey as string | undefined,
       aspect_ratio: data.aspect_ratio as string | undefined,
@@ -186,6 +208,8 @@ function resolveTemplateConfig(
 
 function PopulateNodeImpl({ id, data, selected }: NodeProps) {
   const nodeData = (data ?? {}) as PopulateNodeData;
+  const { data: session } = useSession();
+  const ownerEmail = session?.user?.email ?? "";
   const { getNodes, getEdges, setNodes } = useReactFlow();
   const { connectedDataset, datasetConnected, datasetLoading } = useConnectedDatasetForNode(id);
 
@@ -336,98 +360,178 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
     setError(null);
     const template = getTemplate();
     if (!template) {
-      setError("Conecta Image Creation (salida Image out) al handle Plantilla de Populate.");
+      setError("Conecta un nodo creativo (salida → Plantilla) al handle Plantilla de Populate.");
+      return;
+    }
+    if (!connectedDataset || !listId) {
+      setError("Conecta un Dataset al handle izquierdo.");
       return;
     }
     if (rowCount === 0) {
       setError("El listado no tiene filas.");
       return;
     }
+
+    const flowNodes = getNodes();
+    const flowEdges = getEdges();
+    const executorNodes = flowNodes.map((n) => ({
+      id: n.id,
+      type: n.type ?? "",
+      data: (n.data ?? {}) as Record<string, unknown>,
+    }));
+
+    const bindings = nodeData.templateBindings ?? template.bindings ?? {};
+    const analysis = analyzePopulatePipeline(id, executorNodes, flowEdges, bindings);
+    if (!analysis.validation.ok) {
+      setError(analysis.validation.errors.join(" "));
+      return;
+    }
+
+    const nodeById = executorNodeMap(executorNodes);
+    const adaptedBindings = adaptPopulateBindingsForPipeline(bindings, analysis, nodeById);
+    const promptTemplatesByNodeId = buildPromptTemplatesByNodeId({
+      analysis,
+      templatePrompt: nodeData.templatePrompt ?? template.promptTemplate,
+      nodeById,
+    });
+    const cost = estimatePipelineCost({
+      order: analysis.order,
+      iterated: analysis.iterated,
+      rowCount,
+      registry: defaultExecutorRegistry,
+      nodeById,
+    });
+    if (cost.missingExecutorTypes.length > 0) {
+      setError(
+        `La tubería incluye nodos sin soporte de ejecución: ${cost.missingExecutorTypes.join(", ")}.`,
+      );
+      return;
+    }
+
     if (typeof window !== "undefined") {
       const ok = window.confirm(
-        `Vas a generar ${rowCount} imágenes (una por fila). Esto consume wallet. ¿Continuar?`,
+        formatPipelineCostConfirm({
+          rowCount,
+          cost,
+          sinkLabel: template.templateLabel,
+        }),
       );
       if (!ok) return;
     }
 
-    const rowIndices = Array.from({ length: rowCount }, (_, i) => i);
-    const rows = buildRows(template, rowIndices);
     setBusy(true);
     setProgress({ done: 0, total: rowCount });
     patchSelf({ status: "running", progressTotal: rowCount, progressDone: 0, error: undefined });
 
     const label = nodeData.label || "Populate";
+    const templatePrompt = nodeData.templatePrompt ?? template.promptTemplate;
 
     try {
-      for (let i = 0; i < rows.length; i += 1) {
-        const row = rows[i]!;
-        if (!row.prompt.trim()) continue;
-        try {
-          const result = await generatePopulateImage({
-            prompt: row.prompt,
-            images: row.refs.map((r) => r.url),
-            model: toGenModel(template),
-          });
-          row.output = result.output;
-          row.s3Key = result.s3Key;
-        } catch (err) {
-          // No abortamos el lote por un fallo puntual; se queda pendiente.
-          console.error("[Populate] fila", row.rowIndex, err);
-        }
-        setProgress({ done: i + 1, total: rowCount });
-        patchSelf({ progressDone: i + 1 });
-      }
+      const pipelineResult = await runPopulatePipeline({
+        populateId: id,
+        nodes: executorNodes,
+        edges: flowEdges,
+        dataset: connectedDataset,
+        listId,
+        bindings: adaptedBindings,
+        templatePrompt,
+        promptTemplatesByNodeId,
+        registry: defaultExecutorRegistry,
+        ownerEmail,
+        resolveFixedExternal: createResolveFixedExternal(flowNodes, flowEdges),
+        onRowResult: (row) => {
+          setProgress({ done: row.rowIndex + 1, total: rowCount });
+          patchSelf({ progressDone: row.rowIndex + 1 });
+        },
+      });
 
-      const sub = buildGeneratedSubgraph(id, rows, template.model, template.templateType);
+      const cardIdsByRow = activeList?.cards.map((c) => c.id) ?? [];
+      const rows = materializedRowsFromPipeline({
+        rows: pipelineResult.rows,
+        templatePrompt,
+        dataset: connectedDataset,
+        listId,
+        bindings: template.bindings,
+        activeImageRefs: template.activeImageRefs,
+        fixedRefUrls: template.fixedRefUrls,
+        cardIdsByRow,
+      });
+
+      const sinkType = template.templateType;
+      const singleNanoSink =
+        analysis.order.length === 1 && sinkType === "nanoBanana";
+      const sub = singleNanoSink
+        ? buildGeneratedSubgraph(id, rows, template.model, "nanoBanana")
+        : { nodes: [] as Node[], edges: [] as Edge[] };
       const mediaList = buildMediaListOutput(id, label, rows);
-      const firstOutput = rows.find((r) => r.output)?.output ?? "";
-      const lastRunOutputs = rows.filter((r) => r.output).map((r) => r.output!);
+      const imageOutputs = rows
+        .map((r) => r.output)
+        .filter((u): u is string => !!u && (u.startsWith("http") || u.startsWith("/")));
+      const firstOutput = imageOutputs[0] ?? rows.find((r) => r.output)?.output ?? "";
+      const lastRunOutputs = imageOutputs.length > 0 ? imageOutputs : rows.filter((r) => r.output).map((r) => r.output!);
 
       let lastDatasetWriteSummary: string | undefined;
       const outputSettings = nodeData.datasetOutput;
       if (outputSettings?.enabled && connectedDataset && listId) {
-        try {
-          const writeResult = await persistPopulateDatasetOutput({
-            populateNodeId: id,
-            nodes: getNodes(),
-            edges: getEdges(),
-            dataset: connectedDataset,
-            listId,
-            rows,
-            settings: outputSettings,
-            setNodes,
-          });
-          const skipped =
-            writeResult.skippedCount > 0 ? ` · ${writeResult.skippedCount} omitidas` : "";
-          lastDatasetWriteSummary = `${writeResult.writtenCount} celdas → «${writeResult.fieldLabel}»${skipped}`;
-        } catch (writeErr) {
-          console.error("[Populate] dataset output", writeErr);
-          setError(
-            writeErr instanceof Error
-              ? writeErr.message
-              : "Error al guardar resultados en el Dataset.",
-          );
+        const rowsWithImages = rows.filter((r) => r.output?.startsWith("http") || r.output?.startsWith("/"));
+        if (rowsWithImages.length === 0 && pipelineResult.okCount > 0) {
+          setError("La salida de la tubería no es imagen; no se puede volcar al Dataset como imagen.");
+        } else {
+          try {
+            const writeResult = await persistPopulateDatasetOutput({
+              populateNodeId: id,
+              nodes: flowNodes,
+              edges: flowEdges,
+              dataset: connectedDataset,
+              listId,
+              rows: rowsWithImages.length > 0 ? rowsWithImages : rows,
+              settings: outputSettings,
+              setNodes,
+            });
+            const skipped =
+              writeResult.skippedCount > 0 ? ` · ${writeResult.skippedCount} omitidas` : "";
+            lastDatasetWriteSummary = `${writeResult.writtenCount} celdas → «${writeResult.fieldLabel}»${skipped}`;
+          } catch (writeErr) {
+            console.error("[Populate] dataset output", writeErr);
+            setError(
+              writeErr instanceof Error
+                ? writeErr.message
+                : "Error al guardar resultados en el Dataset.",
+            );
+          }
         }
       }
 
-      window.dispatchEvent(
-        new CustomEvent(POPULATE_COMMIT_EVENT, {
-          detail: {
-            populateNodeId: id,
-            spaceName: label,
-            nodes: sub.nodes,
-            edges: sub.edges,
-            mediaListOutput: mediaList,
-            value: firstOutput,
-          },
-        }),
-      );
-      patchSelf({
-        status: "done",
-        lastRunOutputs,
-        value: firstOutput || undefined,
-        lastDatasetWriteSummary,
-      });
+      if (pipelineResult.failedCount > 0 && pipelineResult.okCount === 0) {
+        const firstErr = pipelineResult.rows.find((r) => r.error)?.error;
+        setError(firstErr ?? `Fallaron las ${pipelineResult.failedCount} filas.`);
+        patchSelf({ status: "error" });
+      } else {
+        if (pipelineResult.failedCount > 0) {
+          setError(
+            `${pipelineResult.failedCount} fila${pipelineResult.failedCount === 1 ? "" : "s"} fallaron; ` +
+              `${pipelineResult.okCount} correctas.`,
+          );
+        }
+        window.dispatchEvent(
+          new CustomEvent(POPULATE_COMMIT_EVENT, {
+            detail: {
+              populateNodeId: id,
+              spaceName: label,
+              nodes: sub.nodes,
+              edges: sub.edges,
+              mediaListOutput: mediaList,
+              value: firstOutput,
+            },
+          }),
+        );
+        patchSelf({
+          status: "done",
+          lastRunOutputs,
+          value: firstOutput || undefined,
+          lastDatasetWriteSummary,
+        });
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error en el lote.");
       patchSelf({ status: "error" });
@@ -438,17 +542,19 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
   }, [
     getTemplate,
     rowCount,
-    buildRows,
     patchSelf,
-    toGenModel,
     id,
     nodeData.label,
+    nodeData.templateBindings,
+    nodeData.templatePrompt,
     nodeData.datasetOutput,
     connectedDataset,
     listId,
     getNodes,
     getEdges,
     setNodes,
+    ownerEmail,
+    activeList,
   ]);
 
   /**

@@ -1,0 +1,24 @@
+"use client";
+
+/**
+ * Cablea los executors built-in en un registro (por defecto, el compartido). Llamar una vez
+ * desde el cliente antes de ejecutar una tubería de Populate. Idempotente (registrar por tipo
+ * sobrescribe). Añadir un nodo nuevo = registrar aquí su executor; el motor no se toca.
+ */
+
+import { defaultExecutorRegistry, type ExecutorRegistry } from "./executor-registry";
+import { nanoBananaExecutor } from "./executors/nano-banana.executor";
+import { designerExecutor } from "./executors/designer.executor";
+import { mediaDescriberExecutor } from "./executors/media-describer.executor";
+import { enhancerExecutor } from "./executors/enhancer.executor";
+
+export function registerDefaultPopulateExecutors(
+  registry: ExecutorRegistry = defaultExecutorRegistry,
+): ExecutorRegistry {
+  registry
+    .register(nanoBananaExecutor)
+    .register(designerExecutor)
+    .register(mediaDescriberExecutor)
+    .register(enhancerExecutor);
+  return registry;
+}
