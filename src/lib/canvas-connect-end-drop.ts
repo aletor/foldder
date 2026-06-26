@@ -73,6 +73,8 @@ export function getNodeFlowRect(opts: {
 export const HANDLE_DROP_MAP: Record<string, string> = {
   "prompt:source": "enhancer",
   "prompt:target": "promptInput",
+  /** Entrada dataset (Designer, Populate…) → suelta en el lienzo crea Dataset. */
+  "dataset:target": "dataset",
   /** Salida document (json) del Designer → suelta en el lienzo crea Presenter. */
   "json:source": "presenter",
   "media_list:source": "export_multimedia",
