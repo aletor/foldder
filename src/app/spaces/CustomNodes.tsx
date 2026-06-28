@@ -4,10 +4,10 @@
 
 import React, { memo, useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef, type ComponentProps } from 'react';
 import { createPortal } from 'react-dom';
-import { Position, NodeProps, BaseEdge, getSmoothStepPath, EdgeProps, useReactFlow, useStore, useUpdateNodeInternals, useNodes, useEdges, NodeResizer, useNodeId, type Node, type Edge, type ReactFlowState, type ConnectionLineComponentProps } from '@xyflow/react';
+import { Position, NodeProps, BaseEdge, getSmoothStepPath, getBezierPath, EdgeProps, useReactFlow, useStore, useUpdateNodeInternals, useNodes, useEdges, NodeResizer, useNodeId, type Node, type Edge, type ReactFlowState, type ConnectionLineComponentProps } from '@xyflow/react';
 import { getSmartOrthogonalPath, type SmartEdgeRect } from './smart-edge-routing';
 import { useCanvasPerformanceMode } from './use-canvas-performance-mode';
-import { useCanvasAnimatedEdgesEnabled } from './canvas-animated-edges-preference';
+import { useCanvasEdgeLineMode } from './canvas-animated-edges-preference';
 import {
   Video, 
   Play, 
@@ -500,8 +500,10 @@ export const ButtonEdge = ({
   markerEnd,
 }: EdgeProps) => {
   const performanceMode = useCanvasPerformanceMode();
-  const animatedEdgesEnabled = useCanvasAnimatedEdgesEnabled();
-  const useLiteEdge = performanceMode || !animatedEdgesEnabled;
+  const edgeLineMode = useCanvasEdgeLineMode();
+  // "lite" = trazo estático sin puntos ni enrutado inteligente. Aplica a "basic", a "none" y al modo
+  // animado mientras dura una interacción (performanceMode), para no recalcular rutas en ese momento.
+  const useLiteEdge = edgeLineMode !== "animated" || performanceMode;
   const nodes = useNodes();
   const edges = useEdges();
   const rectsSig = useStore((state) => (useLiteEdge ? "" : nodeRectsSignature(state)));
@@ -534,14 +536,14 @@ export const ButtonEdge = ({
   if (smartPath) {
     edgePath = smartPath.svgPath;
   } else {
-    [edgePath] = getSmoothStepPath({
+    // "basic": conector bézier por defecto (sin cálculos de evitación → buen rendimiento).
+    [edgePath] = getBezierPath({
       sourceX,
       sourceY,
       sourcePosition,
       targetX,
       targetY,
       targetPosition,
-      borderRadius: useLiteEdge ? 4 : 10,
     });
   }
 
@@ -588,6 +590,9 @@ export const ButtonEdge = ({
     setDots(next);
   }, [edgePath, useLiteEdge]);
 
+  // "none": no se dibuja nada (máximo rendimiento). La conexión sigue existiendo en el grafo.
+  if (edgeLineMode === "none") return null;
+
   if (useLiteEdge) {
     return (
       <>
@@ -610,7 +615,7 @@ export const ButtonEdge = ({
           style={{
             ...style,
             stroke: `url(#${gradientId})`,
-            strokeWidth: animatedEdgesEnabled ? 1.5 : 2,
+            strokeWidth: edgeLineMode === "animated" ? 1.5 : 2,
             opacity: performanceMode ? 0.55 : 0.92,
           }}
         />

@@ -313,6 +313,26 @@ export function normalizeNodesForPersistence(nodes: Node[]): Node[] {
     .map(normalizeNodeForPersistence);
 }
 
+/**
+ * Colapsa edges redundantes: dos edges con el mismo (source, sourceHandle, target, targetHandle)
+ * son idénticos para React Flow (no puede existir más de una conexión entre los mismos handles).
+ * `dissolveSpaceIntoParent` hace un producto cartesiano sin dedup, así que cada ciclo
+ * agrupar→disolver multiplicaba los edges (3→9→27→…→cientos), dejando proyectos con miles de
+ * edges duplicados que congelan el lienzo. Deduplicar aquí sana el proyecto en carga/guardado.
+ */
+export function dedupeEdgesByConnection<T extends Edge>(edges: T[]): T[] {
+  if (!Array.isArray(edges) || edges.length === 0) return edges;
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const e of edges) {
+    const key = `${e.source}\u0000${e.sourceHandle ?? ""}\u0000${e.target}\u0000${e.targetHandle ?? ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(e);
+  }
+  return out.length === edges.length ? edges : out;
+}
+
 /** Todos los espacios del proyecto: mismo criterio de apilado al persistir en disco. */
 export function normalizeSpacesMapNodesForPersistence(
   spaces: Record<string, { nodes?: Node[] } | undefined> | null | undefined
@@ -327,7 +347,9 @@ export function normalizeSpacesMapNodesForPersistence(
     );
     const allowedNodeIds = new Set(normalizedNodes.map((n) => n.id));
     const normalizedEdges = Array.isArray(sp.edges)
-      ? sp.edges.filter((e) => allowedNodeIds.has(e.source) && allowedNodeIds.has(e.target))
+      ? dedupeEdgesByConnection(
+          sp.edges.filter((e) => allowedNodeIds.has(e.source) && allowedNodeIds.has(e.target)),
+        )
       : sp.edges;
     out[key] = { ...sp, nodes: normalizedNodes, edges: normalizedEdges };
   }
@@ -340,7 +362,9 @@ export function sanitizeLegacyRemovedNodesFromGraph(
 ): { nodes: Node[]; edges: Edge[] } {
   const filteredNodes = nodes.filter((n) => !LEGACY_REMOVED_CANVAS_NODE_TYPES.has(String(n.type ?? "")));
   const allowedNodeIds = new Set(filteredNodes.map((n) => n.id));
-  const filteredEdges = edges.filter((e) => allowedNodeIds.has(e.source) && allowedNodeIds.has(e.target));
+  const filteredEdges = dedupeEdgesByConnection(
+    edges.filter((e) => allowedNodeIds.has(e.source) && allowedNodeIds.has(e.target)),
+  );
   return {
     nodes: filteredNodes.map(normalizeNodeForPersistence),
     edges: filteredEdges,

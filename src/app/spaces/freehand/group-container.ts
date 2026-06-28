@@ -66,6 +66,31 @@ export function collectTreeIds(objects: FreehandObject[]): string[] {
   return ids;
 }
 
+/**
+ * Devuelve los nodos cuyo id está en `ids`, buscando en CUALQUIER nivel (también dentro de carpetas),
+ * en orden de árbol (padre antes que hijos). Es el equivalente "consciente del árbol" de
+ * `objects.filter((o) => ids.has(o.id))`: para documentos planos da exactamente el mismo resultado, pero
+ * además encuentra capas anidadas en carpetas (grupos tipo Photoshop) para poder seleccionarlas y
+ * editarlas sin tener que "entrar" en la carpeta.
+ */
+export function collectNodesByIds(
+  objects: FreehandObject[],
+  ids: ReadonlySet<string>,
+): FreehandObject[] {
+  const out: FreehandObject[] = [];
+  // Devuelve como máximo un nodo por id. Si el documento tuviera ids
+  // duplicados (datos corruptos), evitamos colecciones con duplicados que
+  // romperían keys de React y la selección.
+  const seen = new Set<string>();
+  forEachTree(objects, (o) => {
+    if (ids.has(o.id) && !seen.has(o.id)) {
+      seen.add(o.id);
+      out.push(o);
+    }
+  });
+  return out;
+}
+
 export interface TreeLocation {
   node: FreehandObject;
   /** Carpeta contenedora, o `null` si está en la raíz. */
@@ -202,9 +227,16 @@ export interface PanelRow {
  */
 export function flattenTreeForPanel(objects: FreehandObject[]): PanelRow[] {
   const rows: PanelRow[] = [];
+  // Emite como máximo una fila por id. Si el documento tuviera ids duplicados (misma capa en raíz +
+  // dentro de una carpeta, o duplicada por una operación) el panel produciría dos filas con la misma
+  // `key` de React. Dedupar aquí garantiza keys únicas ya en el PRIMER render, sin depender del
+  // efecto asíncrono que sana el estado.
+  const seen = new Set<string>();
   const walk = (list: FreehandObject[], depth: number, parentId: string | null) => {
     for (let i = list.length - 1; i >= 0; i--) {
       const o = list[i]!;
+      if (seen.has(o.id)) continue;
+      seen.add(o.id);
       const container = isGroupContainer(o);
       const collapsed = container ? !!o.collapsed : false;
       rows.push({ obj: o, depth, parentId, isContainer: container, collapsed });
@@ -276,6 +308,78 @@ export function wrapSelectionInGroup(
     o.id === anchor.parentId && isGroupContainer(o) ? withGroupChildren(o, nextSiblings) : o,
   );
   return { tree, folder };
+}
+
+/**
+ * Integridad del árbol: elimina cualquier objeto cuyo `id` ya haya aparecido antes (en cualquier
+ * nivel), conservando la primera aparición. Sirve para sanar documentos corruptos donde una capa
+ * quedó referenciada dos veces (raíz + dentro de una carpeta, o duplicada por una operación), lo que
+ * rompe las `key` de React en el panel y hace que "se creen capas fantasma" / "empiece a fallar todo".
+ * Devuelve el mismo array si no había duplicados (estabilidad referencial → sin renders extra).
+ */
+export function dedupeTreeById(objects: FreehandObject[]): FreehandObject[] {
+  const seen = new Set<string>();
+  let changed = false;
+  const walk = (list: FreehandObject[]): FreehandObject[] => {
+    const out: FreehandObject[] = [];
+    for (const o of list) {
+      if (seen.has(o.id)) {
+        changed = true;
+        continue;
+      }
+      seen.add(o.id);
+      if (isGroupContainer(o)) {
+        const kids = walk(o.children);
+        const sameKids =
+          kids.length === o.children.length && kids.every((c, i) => c === o.children[i]);
+        out.push(sameKids ? o : withGroupChildren(o, kids));
+      } else {
+        out.push(o);
+      }
+    }
+    return out;
+  };
+  const result = walk(objects);
+  return changed ? result : objects;
+}
+
+/** Ids de todos los nodos del árbol con un `groupId` concreto (grupo vectorial; pueden vivir anidados). */
+export function collectTreeIdsWithGroupId(objects: FreehandObject[], groupId: string): string[] {
+  const ids: string[] = [];
+  forEachTree(objects, (o) => {
+    if ((o as { groupId?: string }).groupId === groupId) ids.push(o.id);
+  });
+  return ids;
+}
+
+/**
+ * Resuelve la selección al clicar un objeto del árbol (panel o lienzo), buscándolo en CUALQUIER
+ * nivel (no solo en la raíz). Expande el grupo vectorial (`groupId`) salvo que sea el grupo en
+ * aislamiento. Con `shiftKey` alterna la pertenencia de los miembros; sin él, reemplaza. Si el id no
+ * existe en el árbol, devuelve una copia de la selección actual (no-op seguro).
+ */
+export function resolveTreeSelection(
+  objects: FreehandObject[],
+  objId: string,
+  currentSel: ReadonlySet<string>,
+  shiftKey: boolean,
+  options?: { vectorIsolationGroupId?: string | null },
+): Set<string> {
+  const loc = findInTree(objects, objId);
+  if (!loc) return new Set(currentSel);
+  const gid = (loc.node as { groupId?: string }).groupId;
+  const vecIso = options?.vectorIsolationGroupId ?? null;
+  const expandGroup = Boolean(gid && !(vecIso && gid === vecIso));
+  const members = expandGroup ? collectTreeIdsWithGroupId(objects, gid!) : [objId];
+
+  if (shiftKey) {
+    const s = new Set(currentSel);
+    const allIn = members.every((id) => s.has(id));
+    if (allIn) members.forEach((id) => s.delete(id));
+    else members.forEach((id) => s.add(id));
+    return s;
+  }
+  return new Set(members);
 }
 
 /** Disuelve una carpeta: sustituye el `groupContainer` por sus hijos en su posición. Inmutable. */

@@ -316,7 +316,12 @@ function stripVolatileProjectMetadata(metadata: Record<string, unknown> | null |
   if (!metadata || typeof metadata !== "object") return {};
   // `ui` contains viewport/navigation state. It is persisted with real saves, but
   // must not make the content fingerprint dirty by itself.
-  const { savedAt: _savedAt, ui: _ui, ...stable } = metadata;
+  // `saveManifest` is derived save telemetry (media upload counts change every save:
+  // uploaded=N en el primer guardado, uploaded=0/reused=N en los siguientes). Si entra en
+  // el fingerprint, `skipIfUnchanged` NUNCA coincide y el proyecto se reguarda en bucle
+  // cada debounce/heartbeat aunque nada haya cambiado. Se sigue persistiendo (se re-añade
+  // al payload), pero NO cuenta como cambio de contenido.
+  const { savedAt: _savedAt, ui: _ui, saveManifest: _saveManifest, ...stable } = metadata;
   return stable;
 }
 

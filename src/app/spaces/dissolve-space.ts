@@ -25,6 +25,19 @@ export type DissolveSpaceResult = {
 
 const PORTAL_TYPES = new Set(["spaceInput", "spaceOutput"]);
 
+/** Colapsa edges redundantes (misma conexión source/handle→target/handle). */
+function dedupeEdgesByConnectionKey(edges: Edge[]): Edge[] {
+  const seen = new Set<string>();
+  const out: Edge[] = [];
+  for (const e of edges) {
+    const key = `${e.source}\u0000${e.sourceHandle ?? ""}\u0000${e.target}\u0000${e.targetHandle ?? ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(e);
+  }
+  return out;
+}
+
 /** Asigna ids estables para nodos internos; renombra solo si chocan con el lienzo padre. */
 function buildIdRemap(contentNodes: Node[], parentIds: Set<string>): Map<string, string> {
   const remap = new Map<string, string>();
@@ -145,7 +158,15 @@ export function dissolveSpaceIntoParent(input: DissolveSpaceInput): DissolveSpac
   );
 
   const newParentNodes = parentNodes.filter((n) => n.id !== spaceNode.id).concat(liftedNodes);
-  const newParentEdges = [...parentEdgesWithoutSpace, ...bridgedEdges, ...keptInnerEdges];
+  // El puente Input/Output es un producto cartesiano (parentIncoming × innerFromInput). Si la
+  // entrada ya traía edges duplicados, el producto los multiplica y cada ciclo agrupar→disolver
+  // los vuelve a multiplicar (3→9→27→…). Colapsamos por conexión: dos edges con el mismo
+  // (source, sourceHandle, target, targetHandle) son idénticos para React Flow.
+  const newParentEdges = dedupeEdgesByConnectionKey([
+    ...parentEdgesWithoutSpace,
+    ...bridgedEdges,
+    ...keptInnerEdges,
+  ]);
 
   const nextMap = { ...spacesMap };
   delete nextMap[spaceId];

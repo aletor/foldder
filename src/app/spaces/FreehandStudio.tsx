@@ -644,13 +644,19 @@ import {
   subscribeImageAlpha,
 } from "./freehand/image-alpha-hit";
 import {
+  collectNodesByIds,
   collectTreeIds,
+  collectTreeIdsWithGroupId,
+  dedupeTreeById,
   findInTree,
   flattenTreeForPanel,
+  forEachTree,
   insertNodesIntoTree,
+  isGroupContainer,
   isSelfOrDescendant,
   mapTree,
   removeNodesFromTree,
+  resolveTreeSelection,
   ungroupContainer,
   wrapSelectionInGroup,
   type InsertTarget,
@@ -3803,6 +3809,34 @@ function hitTestObject(
   }
 }
 
+/**
+ * Capa "hoja" más al frente bajo el cursor, ATRAVESANDO carpetas (groupContainer). Las carpetas son solo
+ * organización (grupos tipo Photoshop), no un objetivo de clic en sí: se cruzan hasta la capa real. Así un
+ * clic dentro de una carpeta selecciona la capa concreta, sin "entrar" ni aislar. Devuelve `null` si no hay
+ * ninguna capa real bajo el cursor (p. ej. un hueco entre capas dentro del bbox de la carpeta).
+ */
+function frontmostLeafAtPoint(
+  list: FreehandObject[],
+  pos: Point,
+  threshold: number,
+  allObjects: FreehandObject[],
+  selectedIdsForAlpha: ReadonlySet<string>,
+): FreehandObject | null {
+  for (let i = list.length - 1; i >= 0; i--) {
+    const o = list[i]!;
+    if (!o.visible || o.locked) continue;
+    if (o.isClipMask || o.clipMaskId) continue;
+    if (isGroupContainer(o)) {
+      const child = frontmostLeafAtPoint(o.children, pos, threshold, allObjects, selectedIdsForAlpha);
+      if (child) return child;
+      continue;
+    }
+    const alphaAware = !(o.type === "image" && selectedIdsForAlpha.has(o.id));
+    if (hitTestObject(pos, o, threshold, allObjects, { imageAlpha: alphaAware })) return o;
+  }
+  return null;
+}
+
 /** En aislamiento de grupo vectorial, no expandir selección a todos los miembros con el mismo `groupId`. */
 function vectorIsolationGroupId(stack: IsolationFrame[]): string | undefined {
   const top = stack[stack.length - 1];
@@ -4479,8 +4513,8 @@ function clipContainerOuterBoundsFromMask(mask: ClipMaskShape): Rect {
   return getObjBounds(mask as FreehandObject);
 }
 
-function deepCloneFreehandObject(o: FreehandObject, newId: () => string): FreehandObject {
-  const id = newId();
+function deepCloneFreehandObject(o: FreehandObject, newId: (node: FreehandObject) => string): FreehandObject {
+  const id = newId(o);
   if (o.type === "path") {
     const p = o as PathObject;
     return {
@@ -4541,7 +4575,11 @@ function deepCloneFreehandObject(o: FreehandObject, newId: () => string): Freeha
 }
 
 function deepCloneFreehandObjectKeepIds(o: FreehandObject): FreehandObject {
-  return deepCloneFreehandObject(o, () => o.id);
+  // Conserva el id PROPIO de cada nodo (no el de la raíz). El bug anterior — `() => o.id` capturaba
+  // la raíz, así que al clonar una carpeta TODOS sus hijos heredaban el id de la carpeta — generaba
+  // ids duplicados en cada snapshot de carpeta (mover/escalar/rotar) y corrompía el documento; con el
+  // saneado vivo, los hijos se borraban al desplazar una carpeta.
+  return deepCloneFreehandObject(o, (node) => node.id);
 }
 
 /**
@@ -5065,6 +5103,25 @@ function getGroupBounds(objs: FreehandObject[]): Rect {
 
 function rectsIntersect(a: Rect, b: Rect): boolean {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+/**
+ * Recomputa x/y/width/height de cada carpeta (groupContainer) a partir de su contenido. `mapTree` es
+ * post-orden (hijos antes que el padre), así que las carpetas anidadas quedan bien. Se llama tras mover,
+ * redimensionar o rotar capas SUELTAS dentro de una carpeta, para que la caja del grupo (selección,
+ * máscara) siga ajustada al contenido — sin reordenar ni "encapsular" nada. Devuelve la MISMA referencia
+ * cuando no hay carpetas que tocar (no provoca renders ni guarda innecesario).
+ */
+function recomputeContainerBoundsTree(objects: FreehandObject[]): FreehandObject[] {
+  let changed = false;
+  const next = mapTree(objects, (o) => {
+    if (!isGroupContainer(o) || o.children.length === 0) return o;
+    const b = getGroupBounds(o.children);
+    if (o.x === b.x && o.y === b.y && o.width === b.w && o.height === b.h) return o;
+    changed = true;
+    return { ...o, x: b.x, y: b.y, width: b.w, height: b.h };
+  });
+  return changed ? next : objects;
 }
 
 
@@ -9088,7 +9145,11 @@ function textTypographyCreationFromObject(o: FreehandObject): TextCreationTypogr
 /** Objetos de una página Designer al hidratar sin remount. */
 function migrateDesignerPageObjects(raw: FreehandObject[]): FreehandObject[] {
   if (raw.length === 0) return [];
-  return raw.map((o) => {
+  // `mapTree` aplica la normalización también a los hijos de las carpetas (groupContainer), no solo
+  // a la raíz; antes las capas dentro de carpetas se quedaban sin migrar (fill/blend) y podían pintar
+  // mal. `dedupeTreeById` sana documentos con capas referenciadas dos veces (raíz + carpeta, o
+  // duplicadas por una operación), que rompen las keys del panel y "hacen fallar todo".
+  const migrated = mapTree(raw, (o) => {
     const base = o as FreehandObjectBase;
     const withBase = {
       ...o,
@@ -9099,7 +9160,8 @@ function migrateDesignerPageObjects(raw: FreehandObject[]): FreehandObject[] {
       return rectObjectWithNormalizedCorners(withBase as RectObject);
     }
     return withBase;
-  }) as FreehandObject[];
+  });
+  return dedupeTreeById(migrated);
 }
 
 /** Id estable por slot para capas de entrada PhotoRoom (coincide con `nodeId` del FreehandStudio). */
@@ -10128,6 +10190,12 @@ export function FreehandStudioCanvas({
   const layersPanelScrollRef = useRef<HTMLDivElement | null>(null);
   /** Evita auto-scroll al seleccionar desde el propio listado de capas. */
   const layerPanelSelectionRef = useRef(false);
+  /**
+   * Capa pendiente de hacer scroll DESPUÉS de desplegar su(s) carpeta(s) contenedora(s): al seleccionar
+   * una capa anidada en una carpeta plegada, primero la desplegamos (re-render) y en el siguiente layout
+   * ya existe su fila en el DOM para llevarla arriba.
+   */
+  const pendingLayerScrollIdRef = useRef<string | null>(null);
   /** Desplegable modo de fusión encima del listado de capas. */
   const [layerBlendMenuOpen, setLayerBlendMenuOpen] = useState(false);
   const layerBlendMenuWrapRef = useRef<HTMLDivElement | null>(null);
@@ -10941,6 +11009,31 @@ export function FreehandStudioCanvas({
   const leftToolbarSwatchDockRef = useRef<HTMLDivElement>(null);
   const leftToolbarColorPopoverRef = useRef<HTMLDivElement>(null);
 
+  /**
+   * Herramienta puntero (V): al clicar dentro de una carpeta, ¿seleccionar la CAPA (entrando en la
+   * carpeta) o la CARPETA entera? Por defecto "layer" (capa). Se recuerda entre sesiones.
+   */
+  const [pointerSelectMode, setPointerSelectMode] = useState<"layer" | "folder">(() => {
+    if (typeof window === "undefined") return "layer";
+    return window.localStorage.getItem("foldder.pointerSelectMode") === "folder" ? "folder" : "layer";
+  });
+  const pointerSelectModeRef = useRef(pointerSelectMode);
+  pointerSelectModeRef.current = pointerSelectMode;
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("foldder.pointerSelectMode", pointerSelectMode);
+    }
+  }, [pointerSelectMode]);
+
+  /** Activa la herramienta puntero (V) y, si hay carpetas, abre el selector capa/carpeta ("me pregunta"). */
+  const activateSelectTool = useCallback(() => {
+    setActiveTool("select");
+    setSelectedPoints(new Map());
+    if (objectsRef.current.some((o) => o.type === "groupContainer")) {
+      setLeftToolbarToolFlyout("tf-select-mode");
+    }
+  }, []);
+
   // Isolation mode for BooleanGroups
   const [isolationDepth, setIsolationDepth] = useState(0);
   const isolationStackRef = useRef<IsolationFrame[]>([]);
@@ -11036,6 +11129,16 @@ export function FreehandStudioCanvas({
     });
     if (!changed) return;
     setObjects(next.filter((o) => !absorbedGuideIds.has(o.id)));
+  }, [objects]);
+
+  // Integridad del árbol en vivo: si una operación o un documento cargado dejó un id duplicado
+  // (misma capa en raíz + dentro de una carpeta, o duplicada), las keys de React y la selección se
+  // rompen ("empieza a fallar todo"). Sanamos en el momento, no solo al hidratar. `dedupeTreeById`
+  // devuelve el MISMO array cuando no hay duplicados (estabilidad referencial), así que este efecto
+  // no entra en bucle: tras sanar una vez, ya no vuelve a escribir.
+  useEffect(() => {
+    const deduped = dedupeTreeById(objects);
+    if (deduped !== objects) setObjects(deduped);
   }, [objects]);
 
   const brushPaintRgb = useMemo(() => {
@@ -11673,7 +11776,10 @@ export function FreehandStudioCanvas({
 
   // ── Derived ───────────────────────────────────────────────────────
 
-  const selectedObjects = useMemo(() => objects.filter((o) => selectedIds.has(o.id)), [objects, selectedIds]);
+  // Consciente del árbol: las capas dentro de una carpeta (grupo tipo Photoshop) son seleccionables y
+  // editables DIRECTAMENTE, en el mismo documento, sin "entrar" en la carpeta. Para documentos sin
+  // carpetas devuelve exactamente lo mismo que el `filter` de raíz de antes.
+  const selectedObjects = useMemo(() => collectNodesByIds(objects, selectedIds), [objects, selectedIds]);
   const selectedIdsKey = useMemo(() => Array.from(selectedIds).sort().join(","), [selectedIds]);
   const firstSelected = selectedObjects[0] ?? null;
   const singleSelected = selectedObjects.length === 1 ? selectedObjects[0] ?? null : null;
@@ -13727,7 +13833,8 @@ export function FreehandStudioCanvas({
     (sourceId: string) => {
       let copyId: string | null = null;
       setObjects((prev) => {
-        const src = prev.find((o) => o.id === sourceId);
+        // Consciente del árbol: la capa arrastrada puede vivir dentro de una carpeta.
+        const src = findInTree(prev, sourceId)?.node;
         if (!src || src.photoRoomInputSlot) return prev;
         const copy = remapGroupIdsForClones([deepCloneFreehandObject(src, uid)], uid)[0];
         copyId = copy.id;
@@ -13980,9 +14087,24 @@ export function FreehandStudioCanvas({
     else if (selectedIds.size === 1) setPrimarySelectedId(Array.from(selectedIds)[0] ?? null);
   }, [selectedIds]);
 
-  /** PhotoRoom: al seleccionar en el lienzo, desplazar el listado para dejar la capa arriba (sin reordenar). */
+  /** Lleva la fila de una capa al primer puesto visible del listado (solo scroll, sin reordenar). */
+  const scrollLayerRowToTop = useCallback((targetId: string) => {
+    const scrollEl = layersPanelScrollRef.current;
+    if (!scrollEl) return;
+    const row = scrollEl.querySelector(`[data-fh-layer-row="${targetId}"]`) as HTMLElement | null;
+    if (!row) return;
+    const delta = row.getBoundingClientRect().top - scrollEl.getBoundingClientRect().top;
+    scrollEl.scrollTop += delta;
+  }, []);
+
+  /**
+   * PhotoRoom y Designer: al seleccionar en el lienzo, desplazar el listado para dejar la capa
+   * seleccionada arriba del todo (sin reordenar, solo scroll). Si la capa vive en una carpeta plegada,
+   * primero se despliegan sus carpetas contenedoras y el scroll se hace en el efecto de abajo (cuando ya
+   * existe su fila en el DOM). No actúa al seleccionar desde el propio listado (lo evita el guard).
+   */
   useLayoutEffect(() => {
-    if (!isPhotoRoomStudioEmbed || !layersPanelExpanded) return;
+    if ((!isPhotoRoomStudioEmbed && !designerMode) || !layersPanelExpanded) return;
     if (layerPanelSelectionRef.current) {
       layerPanelSelectionRef.current = false;
       return;
@@ -13991,13 +14113,36 @@ export function FreehandStudioCanvas({
       primarySelectedId ??
       (selectedIds.size === 1 ? Array.from(selectedIds)[0] ?? null : null);
     if (!targetId) return;
-    const scrollEl = layersPanelScrollRef.current;
-    if (!scrollEl) return;
-    const row = scrollEl.querySelector(`[data-fh-layer-row="${targetId}"]`) as HTMLElement | null;
-    if (!row) return;
-    const delta = row.getBoundingClientRect().top - scrollEl.getBoundingClientRect().top;
-    scrollEl.scrollTop += delta;
-  }, [isPhotoRoomStudioEmbed, layersPanelExpanded, primarySelectedId, selectedIdsKey, objects.length]);
+
+    const loc = findInTree(objectsRef.current, targetId);
+    const collapsedAncestors = loc
+      ? loc.path.filter((fid) => {
+          const f = findInTree(objectsRef.current, fid)?.node;
+          return !!f && f.type === "groupContainer" && !!(f as GroupContainerObject).collapsed;
+        })
+      : [];
+    if (collapsedAncestors.length > 0) {
+      const toOpen = new Set(collapsedAncestors);
+      setObjects((prev) =>
+        mapTree(prev, (o) =>
+          toOpen.has(o.id) && o.type === "groupContainer"
+            ? { ...(o as GroupContainerObject), collapsed: false }
+            : o,
+        ),
+      );
+      pendingLayerScrollIdRef.current = targetId; // su fila aparecerá tras el re-render
+      return;
+    }
+    scrollLayerRowToTop(targetId);
+  }, [isPhotoRoomStudioEmbed, designerMode, layersPanelExpanded, primarySelectedId, selectedIdsKey, objects.length, scrollLayerRowToTop]);
+
+  /** Scroll diferido tras desplegar las carpetas contenedoras de la capa recién seleccionada. */
+  useLayoutEffect(() => {
+    const id = pendingLayerScrollIdRef.current;
+    if (!id) return;
+    pendingLayerScrollIdRef.current = null;
+    scrollLayerRowToTop(id);
+  }, [objects, scrollLayerRowToTop]);
 
   useEffect(() => {
     if (dragState) {
@@ -14119,25 +14264,13 @@ export function FreehandStudioCanvas({
 
   // Resolve group: if an object has a groupId, selecting it selects the whole group (except inside vector-group isolation)
   const resolveSelection = useCallback((objId: string, shiftKey: boolean): Set<string> => {
-    const objs = objectsRef.current;
-    const sel = selectedIdsRef.current;
-    const obj = objs.find((o) => o.id === objId);
-    if (!obj) return sel;
+    // Consciente del árbol: localiza el objeto en cualquier nivel (también dentro de carpetas), no
+    // solo en la raíz. Antes, clicar una capa anidada en el panel devolvía la selección anterior
+    // (find a nivel raíz fallaba) y parecía que las carpetas estaban rotas.
     const vecIsoGid = vectorIsolationGroupId(isolationStackRef.current);
-    const gid = obj.groupId;
-    const expandGroup = Boolean(gid && !(vecIsoGid && gid === vecIsoGid));
-    const groupMembers = expandGroup
-      ? objs.filter((o) => o.groupId === gid).map((o) => o.id)
-      : [objId];
-
-    if (shiftKey) {
-      const s = new Set(sel);
-      const allIn = groupMembers.every((id) => s.has(id));
-      if (allIn) groupMembers.forEach((id) => s.delete(id));
-      else groupMembers.forEach((id) => s.add(id));
-      return s;
-    }
-    return new Set(groupMembers);
+    return resolveTreeSelection(objectsRef.current, objId, selectedIdsRef.current, shiftKey, {
+      vectorIsolationGroupId: vecIsoGid,
+    });
   }, []);
 
   const computeFitViewport = useCallback((marginPx: number = 40): { x: number; y: number; zoom: number } | null => {
@@ -14917,11 +15050,15 @@ export function FreehandStudioCanvas({
     if (sel.size === 0) return;
     const stripKeys = manualEditDatasetPropertyKeys(key);
     setObjects((prev) => {
-      const next = prev.map((o) => {
+      // `mapTree`: aplica la edición a la capa esté donde esté (también dentro de carpetas). Si la capa
+      // editada vive en un grupo y cambia su geometría, recomputamos la caja del grupo para que siga
+      // ajustada (sin reordenar ni encapsular). Para docs planos equivale al `map` de raíz de antes.
+      const edited = mapTree(prev, (o) => {
         if (!sel.has(o.id)) return o;
         const patched = { ...o, [key]: value } as FreehandObject;
         return stripKeys.length > 0 ? stripDatasetPropertyBindings(patched, stripKeys) : patched;
       });
+      const next = recomputeContainerBoundsTree(edited);
       if (key === "opacity") updateDuplicateStepFromBaseline(next);
       pushHistory(next, sel);
       return next;
@@ -14933,7 +15070,7 @@ export function FreehandStudioCanvas({
     (key: string, value: unknown) => {
       if (!layerPanelTargetId) return;
       setObjects((prev) => {
-        const next = prev.map((o) => (o.id === layerPanelTargetId ? { ...o, [key]: value } : o));
+        const next = mapTree(prev, (o) => (o.id === layerPanelTargetId ? { ...o, [key]: value } : o));
         if (key === "opacity") updateDuplicateStepFromBaseline(next);
         pushHistory(next, new Set([layerPanelTargetId]));
         return next;
@@ -14946,7 +15083,7 @@ export function FreehandStudioCanvas({
     (key: string, value: unknown) => {
       if (!layerPanelTargetId) return;
       setObjects((prev) => {
-        const next = prev.map((o) => (o.id === layerPanelTargetId ? { ...o, [key]: value } : o));
+        const next = mapTree(prev, (o) => (o.id === layerPanelTargetId ? { ...o, [key]: value } : o));
         if (key === "opacity") updateDuplicateStepFromBaseline(next);
         return next;
       });
@@ -15999,11 +16136,12 @@ export function FreehandStudioCanvas({
     if (sel.size === 0) return;
     const stripKeys = manualEditDatasetPropertyKeys(key);
     setObjects((prev) => {
-      const next = prev.map((o) => {
+      const edited = mapTree(prev, (o) => {
         if (!sel.has(o.id)) return o;
         const patched = { ...o, [key]: value } as FreehandObject;
         return stripKeys.length > 0 ? stripDatasetPropertyBindings(patched, stripKeys) : patched;
       });
+      const next = recomputeContainerBoundsTree(edited);
       if (key === "opacity") updateDuplicateStepFromBaseline(next);
       return next;
     });
@@ -16018,7 +16156,7 @@ export function FreehandStudioCanvas({
       if (sel.size === 0) return;
       const silent = opts?.silent === true;
       setObjects((prev) => {
-        const next = prev.map((o) => {
+        const next = mapTree(prev, (o) => {
           if (!sel.has(o.id) || o.type !== "rect") return o;
           const r = rectObjectWithNormalizedCorners(o as RectObject);
           let corners: RectangleCornerRadius;
@@ -16064,7 +16202,7 @@ export function FreehandStudioCanvas({
       if (sel.size === 0) return;
       const silent = opts?.silent === true;
       setObjects((prev) => {
-        const next = prev.map((o) => {
+        const next = mapTree(prev, (o) => {
           if (!sel.has(o.id) || o.type !== "path") return o;
           const p = o as PathObject;
           const stats = pathCornerRadiusStats(p);
@@ -16414,7 +16552,7 @@ export function FreehandStudioCanvas({
     const sel = selectedIdsRef.current;
     if (sel.size === 0) return;
     setObjects((prev) => {
-      const next = prev.map((o) => {
+      const next = mapTree(prev, (o) => {
         if (!sel.has(o.id)) return o;
         if (o.type === "textOnPath") return o;
         const patched = { ...o, fill: updater(migrateFill(o.fill)) } as FreehandObject;
@@ -16429,7 +16567,7 @@ export function FreehandStudioCanvas({
     const sel = selectedIdsRef.current;
     if (sel.size === 0) return;
     setObjects((prev) =>
-      prev.map((o) => {
+      mapTree(prev, (o) => {
         if (!sel.has(o.id)) return o;
         if (o.type === "textOnPath") return o;
         const patched = { ...o, fill: updater(migrateFill(o.fill)) } as FreehandObject;
@@ -16735,13 +16873,16 @@ export function FreehandStudioCanvas({
     const sel = selectedIdsRef.current;
     if (sel.size === 0) return;
     setObjects((prev) => {
-      const next = prev.filter((o) => {
-        if (!sel.has(o.id)) return true;
-        if (o.photoRoomInputSlot) return true;
-        return false;
-      });
-      pushHistory(next, new Set());
-      return next;
+      // Tree-aware: corta también capas anidadas en carpetas (protege entradas PhotoRoom).
+      const toRemove = new Set<string>();
+      for (const id of sel) {
+        const loc = findInTree(prev, id);
+        if (loc && !loc.node.photoRoomInputSlot) toRemove.add(id);
+      }
+      if (toRemove.size === 0) return prev;
+      const { tree } = removeNodesFromTree(prev, toRemove);
+      pushHistory(tree, new Set());
+      return tree;
     });
     setSelectedIds(new Set());
   }, [copySelectedObjects, pushHistory]);
@@ -16751,9 +16892,9 @@ export function FreehandStudioCanvas({
     const objs = objectsRef.current;
     if (sel.size === 0) return;
     const step = duplicateStepRef.current;
-    const cloned = objs
-      .filter((o) => sel.has(o.id) && !o.photoRoomInputSlot)
-      .map((o) => deepCloneFreehandObject(o, uid));
+    // Tree-aware: incluye capas dentro de carpetas (si no, Cmd+D sobre una capa anidada no haría nada).
+    const sources = collectNodesByIds(objs, sel).filter((o) => !o.photoRoomInputSlot);
+    const cloned = sources.map((o) => deepCloneFreehandObject(o, uid));
     const remapped = remapGroupIdsForClones(cloned, uid);
     const dupes = (() => {
       if (step.kind === "rotate") return remapped.map((o) => applyRotateAroundSelectionPivot(o, step.pivot, step.angleDeltaDeg));
@@ -16762,7 +16903,16 @@ export function FreehandStudioCanvas({
     })();
     if (dupes.length === 0) return;
     duplicateEditBaselineRef.current = new Map(dupes.map((o) => [o.id, deepCloneFreehandObjectKeepIds(o)]));
-    const next = [...objs, ...dupes];
+    // Cada copia se inserta en la MISMA carpeta que su origen (duplicar en sitio, como Photoshop). Las de
+    // raíz se añaden al final. `dupes` va en paralelo a `sources`.
+    let next = objs;
+    const rootDupes: FreehandObject[] = [];
+    for (let i = 0; i < dupes.length; i++) {
+      const parent = findInTree(objs, sources[i]!.id)?.parent;
+      if (parent) next = insertNodesIntoTree(next, [dupes[i]!], { mode: "into", containerId: parent.id });
+      else rootDupes.push(dupes[i]!);
+    }
+    if (rootDupes.length > 0) next = [...next, ...rootDupes];
     const ns = new Set(dupes.map((d) => d.id));
     preserveDuplicateChainSelectionRef.current = true;
     setObjects(next); setSelectedIds(ns);
@@ -18411,7 +18561,7 @@ export function FreehandStudioCanvas({
       if (e.code === "Space" && !e.repeat) { e.preventDefault(); setSpaceHeld(true); return; }
       // Plain V = select tool; must not steal Ctrl/Meta+V (paste) or Ctrl+Shift+V (paste inside)
       if ((e.key === "v" || e.key === "V") && !e.metaKey && !e.ctrlKey && !e.altKey) {
-        e.preventDefault(); setActiveTool("select"); return;
+        e.preventDefault(); activateSelectTool(); return;
       }
       if ((e.key === "m" || e.key === "M") && !e.metaKey && !e.ctrlKey && !e.altKey && studioCaps.toolPhotoMarquee) {
         e.preventDefault();
@@ -20677,17 +20827,44 @@ export function FreehandStudioCanvas({
 
     if (hits.length > 0) {
       const vecIsoGid = vectorIsolationGroupId(isolationStackRef.current);
-      const obj = pickHitForExtendSelection(hits, extendSel, selectedIdsRef.current, objects, vecIsoGid) ?? hits[0];
+      let obj = pickHitForExtendSelection(hits, extendSel, selectedIdsRef.current, objects, vecIsoGid) ?? hits[0];
+
+      // Carpetas = grupos tipo Photoshop (organización en el mismo documento, NO subcomposiciones que se
+      // "abren"). En modo "capa" (por defecto) el clic ATRAVIESA la carpeta y selecciona DIRECTAMENTE la
+      // capa real bajo el cursor: se puede mover, editar, etc. sin aislar nada. En modo "carpeta" se
+      // selecciona la carpeta entera (para moverla/opacidad/máscara como conjunto).
+      if (
+        activeTool === "select" &&
+        pointerSelectModeRef.current === "layer" &&
+        obj.type === "groupContainer"
+      ) {
+        const leaf = frontmostLeafAtPoint(objects, pos, threshold, objects, selectedIdsRef.current);
+        if (!leaf) {
+          // Hueco dentro del bbox de la carpeta: no hay capa real bajo el cursor → como clic en vacío.
+          if (!extendSel) {
+            setSelectedIds(new Set());
+            setPrimarySelectedId(null);
+          }
+          return;
+        }
+        obj = leaf;
+      }
+
       // Alt/Option + drag → duplicate then drag the clones
       if (e.altKey) {
         const baseSel = selectedIds.has(obj.id) ? selectedIds : resolveSelection(obj.id, false);
-        const toClone = objects.filter((o) => baseSel.has(o.id));
+        // Tree-aware: incluye capas anidadas en carpetas (si no, alt+arrastrar no duplicaría nada).
+        const toClone = collectNodesByIds(objects, baseSel);
         if (toClone.length > 0) {
           const clones = remapGroupIdsForClones(
             toClone.map((o) => deepCloneFreehandObject(o, uid)),
             uid,
           );
-          const next = [...objects, ...clones];
+          // Si la capa origen vive en una carpeta, la copia se queda en la MISMA carpeta (no salta a raíz).
+          const srcLoc = findInTree(objects, obj.id);
+          const next = srcLoc?.parent
+            ? insertNodesIntoTree(objects, clones, { mode: "into", containerId: srcLoc.parent.id })
+            : [...objects, ...clones];
           duplicateEditBaselineRef.current = new Map(clones.map((o) => [o.id, deepCloneFreehandObjectKeepIds(o)]));
           setObjects(next);
           const cloneSel = new Set(clones.map((c) => c.id));
@@ -20738,7 +20915,9 @@ export function FreehandStudioCanvas({
       const pathPointsMap = new Map<string, BezierPoint[]>();
       const pathSvgMatrixStart = new Map<string, { e: number; f: number }>();
       for (const sid of newSel) {
-        const o = objects.find((x) => x.id === sid);
+        // Tree-aware: una capa seleccionada puede vivir dentro de una carpeta; hay que localizarla a
+        // cualquier nivel para incluirla en el gesto de mover (si no, no se movería).
+        const o = findInTree(objects, sid)?.node;
         if (o) {
           positions.set(sid, { x: o.x, y: o.y });
           moveSnapshot.set(sid, deepCloneFreehandObjectKeepIds(o));
@@ -20811,8 +20990,8 @@ export function FreehandStudioCanvas({
         const movingIds = new Set(dragState.positions.keys());
         const tentBounds = getGroupBounds(
           Array.from(dragState.positions.keys()).map((id) => {
-            const src = dragState.moveSnapshot?.get(id) ?? objects.find((o) => o.id === id)!;
-            return translateFreehandObject(src, mdx, mdy);
+            const src = dragState.moveSnapshot?.get(id) ?? findInTree(objects, id)?.node;
+            return translateFreehandObject(src!, mdx, mdy);
           })
         );
         const vg = layoutGuidesRef.current.filter((g) => g.orientation === "vertical").map((g) => g.position);
@@ -20840,7 +21019,7 @@ export function FreehandStudioCanvas({
         setSnapGuides([]);
       }
 
-      setObjects((prev) => prev.map((o) => {
+      setObjects((prev) => recomputeContainerBoundsTree(mapTree(prev, (o) => {
         const sp = dragState.positions!.get(o.id);
         if (!sp) return o;
         const moveSrc = dragState.moveSnapshot?.get(o.id);
@@ -20884,7 +21063,7 @@ export function FreehandStudioCanvas({
           }
         }
         return { ...o, x: sp.x + mdx, y: sp.y + mdy };
-      }));
+      })));
       return;
     }
 
@@ -20951,7 +21130,7 @@ export function FreehandStudioCanvas({
       const sx = signedW / f0.w;
       const sy = signedH / f0.h;
 
-      setObjects((prev) => prev.map((o) => {
+      setObjects((prev) => recomputeContainerBoundsTree(mapTree(prev, (o) => {
         if (!dragState.allBounds!.has(o.id)) return o;
         const src = dragState.resizeSnapshot?.get(o.id);
         if (!src) return o;
@@ -21070,7 +21249,7 @@ export function FreehandStudioCanvas({
           flipX: nextFlipX,
           flipY: nextFlipY,
         };
-      }));
+      })));
       return;
     }
 
@@ -21155,7 +21334,7 @@ export function FreehandStudioCanvas({
 
       const sx = signedW / b.w;
       const sy = signedH / b.h;
-      setObjects((prev) => prev.map((o) => {
+      setObjects((prev) => recomputeContainerBoundsTree(mapTree(prev, (o) => {
         const src = dragState.resizeSnapshot?.get(o.id);
         if (!src) return o;
         const nextFlipX = toggleFlipFromScale(src.flipX, sx);
@@ -21277,7 +21456,7 @@ export function FreehandStudioCanvas({
           flipX: nextFlipX,
           flipY: nextFlipY,
         };
-      }));
+      })));
       return;
     }
 
@@ -21346,7 +21525,7 @@ export function FreehandStudioCanvas({
       const snaps = dragState.rotateInitialSnapshots;
       const proxyMap = selectionGestureProxyByIdRef.current;
       setObjects((prev) =>
-        prev.map((o) => {
+        recomputeContainerBoundsTree(mapTree(prev, (o) => {
           const initRot = dragState.rotateInitialRotations?.get(o.id);
           if (initRot == null) return o;
           if (snaps?.has(o.id)) {
@@ -21357,7 +21536,7 @@ export function FreehandStudioCanvas({
             );
           }
           return { ...o, rotation: initRot + angleDelta };
-        }),
+        })),
       );
     }
   }, [setSnapGuides, setObjects]);
@@ -22907,14 +23086,30 @@ export function FreehandStudioCanvas({
         } else {
           const marqueeSel = new Set<string>();
           const vecIsoGid = vectorIsolationGroupId(isolationStackRef.current);
-          for (const obj of objects) {
-            if (obj.locked || !obj.visible || obj.isClipMask) continue;
-            const objRect = getObjBounds(obj, objects);
-            if (rectsIntersect(marqueeRect, objRect)) {
+          // Modo "capa" (por defecto): el marco selecciona las CAPAS reales que toca, también las que viven
+          // dentro de carpetas (las carpetas son organización, no se seleccionan como bloque). Modo
+          // "carpeta": comportamiento clásico a nivel raíz (una carpeta entra entera si toca su caja).
+          if (pointerSelectModeRef.current === "layer") {
+            forEachTree(objects, (obj) => {
+              if (isGroupContainer(obj)) return; // atravesar carpetas, no seleccionarlas
+              if (obj.locked || !obj.visible || obj.isClipMask) return;
+              const objRect = getObjBounds(obj, objects);
+              if (!rectsIntersect(marqueeRect, objRect)) return;
               const gid = obj.groupId;
               const expandMarquee = gid && !(vecIsoGid && gid === vecIsoGid);
-              if (expandMarquee) objects.filter((oo) => oo.groupId === gid).forEach((oo) => marqueeSel.add(oo.id));
+              if (expandMarquee) collectTreeIdsWithGroupId(objects, gid!).forEach((cid) => marqueeSel.add(cid));
               else marqueeSel.add(obj.id);
+            });
+          } else {
+            for (const obj of objects) {
+              if (obj.locked || !obj.visible || obj.isClipMask) continue;
+              const objRect = getObjBounds(obj, objects);
+              if (rectsIntersect(marqueeRect, objRect)) {
+                const gid = obj.groupId;
+                const expandMarquee = gid && !(vecIsoGid && gid === vecIsoGid);
+                if (expandMarquee) objects.filter((oo) => oo.groupId === gid).forEach((oo) => marqueeSel.add(oo.id));
+                else marqueeSel.add(obj.id);
+              }
             }
           }
           if (ds.shiftKey) {
@@ -23556,6 +23751,23 @@ export function FreehandStudioCanvas({
       ];
     }
 
+    if (single?.type === "groupContainer") {
+      const gc = single as GroupContainerObject;
+      return [
+        { label: gc.collapsed ? "Desplegar carpeta" : "Plegar carpeta", action: () => toggleFolderCollapsed(gc.id) },
+        { label: "Desagrupar (mantener capas)", shortcut: "⌘⇧G", action: ungroupSelectedFolder, separator: true },
+        // Opcional (no forzado): enfocar la carpeta. El flujo normal NO requiere "entrar".
+        { label: "Aislar carpeta (enfocar)", action: () => enterGroupIsolation(gc.id), separator: true },
+        { label: "Duplicate", shortcut: "⌘D", action: duplicateSelected },
+        { label: "Delete", action: deleteSelected, disabled: !hasDeletableSelection },
+        { label: "Export selection", action: () => { setExportModalScope("selection"); setShowExportModal(true); }, separator: true },
+        { label: "Bring to front", action: bringToFront },
+        { label: "Send to back", action: sendToBack },
+        { label: "Lock / Unlock", action: () => updateSelectedProp("locked", !gc.locked) },
+        { label: "Hide / Show", action: () => updateSelectedProp("visible", !gc.visible) },
+      ];
+    }
+
     if (single?.type === "booleanGroup") {
       return [
         { label: "Edit boolean group", action: () => enterIsolation(single.id) },
@@ -23638,6 +23850,7 @@ export function FreehandStudioCanvas({
       cycleVertexMode, booleanOp, enterIsolation, flattenBooleanToDefinitivePath, exitIsolation, alignObjects, fitAllCanvas,
       resetZoomCanvas, pasteClipboardObjects, pasteInside, cutSelectedObjects, copySelectedObjects, renameSelected,
       convertTextToOutlines, releaseClippingStructure, enterClippingIsolation, switchClippingIsolationMode, enterVectorGroupIsolation,
+      enterGroupIsolation, toggleFolderCollapsed, ungroupSelectedFolder,
       layoutGuides.length, showLayoutGuides]);
 
   // ── Cursor ────────────────────────────────────────────────────────
@@ -24244,9 +24457,54 @@ export function FreehandStudioCanvas({
           flushChrome ? "bg-[#0b0f14]" : "bg-[#12151a]"
         }`}
       >
-        <ToolBtn active={activeTool === "select"} onClick={() => { setActiveTool("select"); setSelectedPoints(new Map()); }} title="Selection (V)">
-          <MousePointer2 size={19} strokeWidth={TOOLBAR_ICON_STROKE} />
-        </ToolBtn>
+        {objects.some((o) => o.type === "groupContainer") ? (
+          <ToolFlyoutGroup
+            groupId="tf-select-mode"
+            flyoutOpen={leftToolbarToolFlyout}
+            setFlyoutOpen={setLeftToolbarToolFlyout}
+            active={activeTool === "select"}
+            mainTitle={`Selección (V) — clic selecciona ${pointerSelectMode === "folder" ? "la carpeta" : "la capa"}`}
+            onMainClick={activateSelectTool}
+            mainIcon={<MousePointer2 size={19} strokeWidth={TOOLBAR_ICON_STROKE} />}
+          >
+            <div className="px-1.5 pb-1 pt-0.5 text-[8px] font-bold uppercase tracking-wider text-zinc-500">
+              Al hacer clic, seleccionar
+            </div>
+            {([
+              { mode: "layer" as const, label: "Capa", hint: "Selecciona la capa directamente, también dentro de carpetas (sin entrar)", icon: <Layers size={14} strokeWidth={2} /> },
+              { mode: "folder" as const, label: "Carpeta", hint: "Selecciona la carpeta entera (mover/opacidad/máscara en conjunto)", icon: <Folder size={14} strokeWidth={2} /> },
+            ]).map((opt) => (
+              <button
+                key={opt.mode}
+                type="button"
+                title={opt.hint}
+                onClick={() => {
+                  setActiveTool("select");
+                  setSelectedPoints(new Map());
+                  setPointerSelectMode(opt.mode);
+                  setLeftToolbarToolFlyout(null);
+                }}
+                className={`flex w-full items-center gap-2 rounded-[2px] px-2 py-1.5 text-[11px] transition ${
+                  pointerSelectMode === opt.mode
+                    ? "bg-white/[0.15] text-white"
+                    : "text-zinc-400 hover:bg-white/[0.08] hover:text-white"
+                }`}
+              >
+                {opt.icon}
+                <span className="flex-1 whitespace-nowrap text-left">{opt.label}</span>
+                {pointerSelectMode === opt.mode ? (
+                  <Check size={13} strokeWidth={2.5} className="text-violet-300" />
+                ) : (
+                  <span className="inline-flex w-[13px]" aria-hidden />
+                )}
+              </button>
+            ))}
+          </ToolFlyoutGroup>
+        ) : (
+          <ToolBtn active={activeTool === "select"} onClick={activateSelectTool} title="Selection (V)">
+            <MousePointer2 size={19} strokeWidth={TOOLBAR_ICON_STROKE} />
+          </ToolBtn>
+        )}
 
         {studioCaps.toolGenerativeFill && (
           <ToolBtn
@@ -25077,7 +25335,14 @@ export function FreehandStudioCanvas({
               return;
             }
             if (obj.type === "groupContainer" && hitTestObject(pos, obj, threshold, objects)) {
-              enterGroupIsolation(obj.id);
+              // Carpeta = grupo tipo Photoshop: el doble clic NO abre otra vista ni aísla. Selecciona
+              // DIRECTAMENTE la capa real bajo el cursor (atraviesa carpetas anidadas). Útil sobre todo en
+              // modo "carpeta", donde el clic simple elige la carpeta y el doble clic baja a la capa.
+              const leaf = frontmostLeafAtPoint(objects, pos, threshold, objects, selectedIdsRef.current);
+              if (leaf) {
+                setSelectedIds(new Set([leaf.id]));
+                setPrimarySelectedId(leaf.id);
+              }
               return;
             }
             if (obj.type === "clippingContainer" && hitTestObject(pos, obj, threshold, objects)) {
@@ -29785,8 +30050,11 @@ export function FreehandStudioCanvas({
                                 enterIsolation(obj.id);
                               }
                               if (obj.type === "groupContainer") {
+                                // Carpeta = grupo organizador en el MISMO documento: el doble clic en el
+                                // panel solo despliega/pliega (no "entra" en una vista aparte). Sus capas
+                                // siguen accesibles directamente en el árbol.
                                 e.stopPropagation();
-                                enterGroupIsolation(obj.id);
+                                toggleFolderCollapsed(obj.id);
                               }
                               if (obj.type === "clippingContainer") {
                                 e.stopPropagation();
