@@ -662,6 +662,14 @@ import {
   type InsertTarget,
   type PanelRow,
 } from "./freehand/group-container";
+import { deepCloneFreehandObject, deepCloneFreehandObjectKeepIds } from "./freehand/clone-object";
+import {
+  applyPenCreationHandleDrag,
+  applyVertexHandleDrag,
+  getVertexMode,
+  isCollapsedBezierHandle,
+  normalizeBezierPointForVertexMode,
+} from "./freehand/bezier-point";
 import {
   applyLinearGradientToImageData,
   applyRadialGradientToImageData,
@@ -942,14 +950,14 @@ function toolFlyoutGroupForTool(tool: Tool): ToolFlyoutGroupId | null {
   }
 }
 
-interface Point { x: number; y: number }
+export interface Point { x: number; y: number }
 interface Rect { x: number; y: number; w: number; h: number }
 
 
 /** Illustrator-style: smooth = symmetric tangents; cusp = G1 continuous, independent lengths; corner = independent handles (sharp). */
-type VertexMode = "smooth" | "cusp" | "corner";
+export type VertexMode = "smooth" | "cusp" | "corner";
 
-interface BezierPoint {
+export interface BezierPoint {
   anchor: Point;
   handleIn: Point;
   handleOut: Point;
@@ -960,97 +968,8 @@ interface BezierPoint {
   cornerRadius?: number;
 }
 
-function isCollapsedBezierHandle(anchor: Point, handle: Point): boolean {
-  return Math.hypot(handle.x - anchor.x, handle.y - anchor.y) < 1e-5;
-}
-
-function getVertexMode(pt: BezierPoint): VertexMode {
-  if (pt.cornerMode) return "corner";
-  if (pt.vertexMode === "corner" || pt.vertexMode === "cusp") return pt.vertexMode;
-  if (isCollapsedBezierHandle(pt.anchor, pt.handleIn) || isCollapsedBezierHandle(pt.anchor, pt.handleOut)) return "corner";
-  if (pt.vertexMode) return pt.vertexMode;
-  return "smooth";
-}
-
-/** Apply drag to one handle according to vertex mode (see Adobe Illustrator anchor point types). */
-function applyVertexHandleDrag(pt: BezierPoint, ht: "handleIn" | "handleOut", newPos: Point): BezierPoint {
-  const mode = getVertexMode(pt);
-  if (mode === "corner") {
-    return { ...pt, [ht]: newPos };
-  }
-  if (mode === "smooth") {
-    if (ht === "handleOut") {
-      const handleIn = { x: 2 * pt.anchor.x - newPos.x, y: 2 * pt.anchor.y - newPos.y };
-      return { ...pt, handleOut: newPos, handleIn };
-    }
-    const handleOut = { x: 2 * pt.anchor.x - newPos.x, y: 2 * pt.anchor.y - newPos.y };
-    return { ...pt, handleIn: newPos, handleOut };
-  }
-  // cusp: opposite tangent directions, preserve each side's handle length (asymmetric smooth / "broken" handles)
-  if (ht === "handleOut") {
-    const dx = newPos.x - pt.anchor.x, dy = newPos.y - pt.anchor.y;
-    const len = Math.hypot(dx, dy) || 1e-9;
-    const ux = dx / len, uy = dy / len;
-    const lenIn = Math.max(1e-6, dist(pt.anchor, pt.handleIn));
-    return {
-      ...pt,
-      handleOut: newPos,
-      handleIn: { x: pt.anchor.x - ux * lenIn, y: pt.anchor.y - uy * lenIn },
-    };
-  }
-  const dx = newPos.x - pt.anchor.x, dy = newPos.y - pt.anchor.y;
-  const len = Math.hypot(dx, dy) || 1e-9;
-  const ux = dx / len, uy = dy / len;
-  const lenOut = Math.max(1e-6, dist(pt.anchor, pt.handleOut));
-  return {
-    ...pt,
-    handleIn: newPos,
-    handleOut: { x: pt.anchor.x - ux * lenOut, y: pt.anchor.y - uy * lenOut },
-  };
-}
-
-function applyPenCreationHandleDrag(pt: BezierPoint, newHandleOut: Point): BezierPoint {
-  return {
-    ...pt,
-    handleOut: newHandleOut,
-    handleIn: {
-      x: 2 * pt.anchor.x - newHandleOut.x,
-      y: 2 * pt.anchor.y - newHandleOut.y,
-    },
-    vertexMode: "smooth",
-    cornerMode: false,
-  };
-}
-
-/** When switching mode from UI: normalize handles to a valid state for that mode. */
-function normalizeBezierPointForVertexMode(pt: BezierPoint, mode: VertexMode): BezierPoint {
-  const a = pt.anchor;
-  if (mode === "corner") {
-    return { ...pt, vertexMode: "corner", cornerMode: true };
-  }
-  let out = pt.handleOut;
-  let inn = pt.handleIn;
-  if (dist(a, out) < 1e-6 && dist(a, inn) < 1e-6) {
-    out = { x: a.x + 48, y: a.y };
-    inn = { x: a.x - 48, y: a.y };
-  }
-  if (mode === "smooth") {
-    const handleIn = { x: 2 * a.x - out.x, y: 2 * a.y - out.y };
-    return { ...pt, vertexMode: "smooth", cornerMode: false, handleOut: out, handleIn };
-  }
-  const dx = out.x - a.x, dy = out.y - a.y;
-  const L = Math.hypot(dx, dy) || 1e-9;
-  const ux = dx / L, uy = dy / L;
-  const lenIn = Math.max(1e-6, dist(a, inn));
-  const lenOut = Math.max(1e-6, dist(a, out));
-  return {
-    ...pt,
-    vertexMode: "cusp",
-    cornerMode: false,
-    handleOut: { x: a.x + ux * lenOut, y: a.y + uy * lenOut },
-    handleIn: { x: a.x - ux * lenIn, y: a.y - uy * lenIn },
-  };
-}
+// Geometría de puntos Bézier (isCollapsedBezierHandle, getVertexMode, applyVertexHandleDrag,
+// applyPenCreationHandleDrag, normalizeBezierPointForVertexMode) en `./freehand/bezier-point`.
 
 type StrokeMarkerKind = "none" | "arrow" | "dot";
 
@@ -1329,7 +1248,7 @@ interface ImageObject extends FreehandObjectBase {
   };
 }
 
-interface TextObject extends FreehandObjectBase {
+export interface TextObject extends FreehandObjectBase {
   type: "text";
   textMode: "point" | "area";
   text: string;
@@ -1356,7 +1275,7 @@ interface TextObject extends FreehandObjectBase {
 }
 
 /** Texto siguiendo un PathObject por id; geometría de guía en tiempo de render. */
-interface TextOnPathObject extends Omit<FreehandObjectBase, "fill"> {
+export interface TextOnPathObject extends Omit<FreehandObjectBase, "fill"> {
   type: "textOnPath";
   guidePathId: string;
   /** Designer: guía propia del texto. Evita depender de un path externo para selección/transformación. */
@@ -1385,7 +1304,7 @@ interface TextOnPathObject extends Omit<FreehandObjectBase, "fill"> {
 
 type BooleanOperation = "union" | "subtract" | "intersect" | "exclude";
 
-interface BooleanGroupObject extends FreehandObjectBase {
+export interface BooleanGroupObject extends FreehandObjectBase {
   type: "booleanGroup";
   operation: BooleanOperation;
   children: FreehandObject[];
@@ -4513,74 +4432,8 @@ function clipContainerOuterBoundsFromMask(mask: ClipMaskShape): Rect {
   return getObjBounds(mask as FreehandObject);
 }
 
-function deepCloneFreehandObject(o: FreehandObject, newId: (node: FreehandObject) => string): FreehandObject {
-  const id = newId(o);
-  if (o.type === "path") {
-    const p = o as PathObject;
-    return {
-      ...p,
-      id,
-      points: p.points.map((pt) => ({
-        ...pt,
-        anchor: { ...pt.anchor },
-        handleIn: { ...pt.handleIn },
-        handleOut: { ...pt.handleOut },
-      })),
-    };
-  }
-  if (o.type === "booleanGroup") {
-    const g = o as BooleanGroupObject;
-    return {
-      ...g,
-      id,
-      children: g.children.map((ch) => deepCloneFreehandObject(ch, newId)),
-      cachedResult: g.cachedResult,
-    };
-  }
-  if (o.type === "groupContainer") {
-    const g = o as GroupContainerObject;
-    return {
-      ...g,
-      id,
-      children: g.children.map((ch) => deepCloneFreehandObject(ch, newId)),
-    };
-  }
-  if (o.type === "clippingContainer") {
-    const c = o as ClippingContainerObject;
-    return {
-      ...c,
-      id,
-      mask: deepCloneFreehandObject(c.mask, newId) as ClipMaskShape,
-      content: c.content.map((ch) => deepCloneFreehandObject(ch, newId)),
-    };
-  }
-  if (o.type === "textOnPath") {
-    const t = o as TextOnPathObject;
-    const guidePath = t.guidePath ? (deepCloneFreehandObject(t.guidePath, newId) as PathObject) : undefined;
-    return { ...t, id, guidePath, guidePathId: guidePath?.id ?? t.guidePathId };
-  }
-  if (o.type === "text") {
-    const t = o as TextObject;
-    return { ...t, id, fill: cloneFill(migrateFill(t.fill)) };
-  }
-  if (o.type === "adjustmentLayer") {
-    const a = o as AdjustmentLayerObject;
-    return {
-      ...a,
-      id,
-      adjustment: { ...a.adjustment, levels: { ...a.adjustment.levels } },
-    };
-  }
-  return { ...o, id, fill: cloneFill(migrateFill(o.fill)) };
-}
-
-function deepCloneFreehandObjectKeepIds(o: FreehandObject): FreehandObject {
-  // Conserva el id PROPIO de cada nodo (no el de la raíz). El bug anterior — `() => o.id` capturaba
-  // la raíz, así que al clonar una carpeta TODOS sus hijos heredaban el id de la carpeta — generaba
-  // ids duplicados en cada snapshot de carpeta (mover/escalar/rotar) y corrompía el documento; con el
-  // saneado vivo, los hijos se borraban al desplazar una carpeta.
-  return deepCloneFreehandObject(o, (node) => node.id);
-}
+// `deepCloneFreehandObject` y `deepCloneFreehandObjectKeepIds` viven en `./freehand/clone-object`
+// (extraídos para poder testearlos aislados; ver import al inicio del archivo).
 
 /**
  * Duplicate batches must never keep the original vector-group id, otherwise
