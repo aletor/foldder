@@ -489,6 +489,20 @@ import {
   richSpansToInlineHtml,
   simpleTextRichPayloadFromHtml,
 } from "./freehand/designer-rich-text";
+import { CtxMenu, type ContextMenuItem } from "./freehand/studio-context-menu";
+import {
+  TOOLBAR_ICON_STROKE,
+  PhotoBrushToolIcon,
+  PhotoCloneStampToolIcon,
+  PhotoGradientToolIcon,
+  TextPathToolIcon,
+  ToolBtn,
+  ToolFlyoutGroup,
+} from "./freehand/studio-toolbar";
+import { FreehandStudioHeader } from "./freehand/FreehandStudioHeader";
+import { FreehandStudioLeftToolbar } from "./freehand/FreehandStudioLeftToolbar";
+import { FreehandStudioIsolationBreadcrumb } from "./freehand/FreehandStudioIsolationBreadcrumb";
+import { FreehandStudioStatusBar } from "./freehand/FreehandStudioStatusBar";
 import {
   buildObjTransform,
   inverseObjMatrix,
@@ -521,7 +535,7 @@ import {
 //  TYPES
 // ═══════════════════════════════════════════════════════════════════════════
 
-type Tool =
+export type Tool =
   | "select"
   | "directSelect"
   | "pen"
@@ -555,7 +569,7 @@ type Tool =
 
 type ToolFlyoutGroupId = "tf-pen" | "tf-shape" | "tf-photo-marquee" | "tf-text" | "tf-img";
 
-type ToolFlyoutPrimaryState = {
+export type ToolFlyoutPrimaryState = {
   "tf-pen": "directSelect" | "pen" | "scissors";
   "tf-shape": "rect" | "line" | "ellipse";
   "tf-photo-marquee": "rectMarquee" | "ellipseMarquee" | "lassoMarquee" | "polygonMarquee";
@@ -1079,13 +1093,6 @@ export interface DesignerStudioApi {
   }) => Promise<string | null>;
 }
 
-interface ContextMenuItem {
-  label: string;
-  action: () => void;
-  separator?: boolean;
-  disabled?: boolean;
-  shortcut?: string;
-}
 
 type IsolationFrame =
   | {
@@ -7678,313 +7685,7 @@ function svgStringToCanvas(svgStr: string, w: number, h: number, bgColor?: strin
 //  SUB-COMPONENTS
 // ═══════════════════════════════════════════════════════════════════════════
 
-const TOOLBAR_ICON_STROKE = 1.75 as const;
-/** Pulsación mantenida sobre el icono del grupo para abrir el submenú (rollout). */
-const TOOLBAR_FLYOUT_PRESS_MS = 220;
 
-/**
- * Herramienta Pincel — referencia del usuario: mango alargado (arriba-dcha) y cabeza en lágrima (abajo-izq),
- * dos siluetas con hueco entre ellas (como el PNG).
- */
-function PhotoBrushToolIcon({ size = 19, className }: { size?: number; className?: string }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className} aria-hidden>
-      <g fill="currentColor">
-        <path d="M4.2 18.5C3.75 16.85 4.3 15.1 5.55 13.8 6.8 12.5 8.6 11.65 10.5 11.35 11.9 11.15 13.35 11.35 14.65 11.9 15.1 12.35 14.85 13.1 14.1 13.6 12.35 14.95 9.9 16.15 7.45 16.95 6.25 17.3 5.15 17.85 4.2 18.5z" />
-        <path d="M20.9 3.15C21.45 3.6 21.5 4.45 21.1 5.15 20.2 6.95 18.7 8.55 17.05 9.95 16 10.8 14.85 11.5 13.6 12 13.05 12.2 12.45 11.85 12.25 11.25 12.1 10.85 12.25 10.35 12.55 10 14.1 8.2 15.65 6.35 17.1 4.5 17.9 3.5 18.65 2.55 19.75 2.05 20.25 1.85 20.8 2.1 21.05 2.55 21.2 2.85 21.15 3.15 20.9 3.15z" />
-      </g>
-    </svg>
-  );
-}
-
-/**
- * Tampón de clonación — silueta de sello manual (mango redondo, cuello, cuerpo, base de goma),
- * alineada con el icono de referencia del usuario.
- */
-function PhotoCloneStampToolIcon({ size = 19, className }: { size?: number; className?: string }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className={className} aria-hidden>
-      <g fill="currentColor">
-        <circle cx="12" cy="5.6" r="3.35" />
-        <rect x="10.25" y="8.85" width="3.5" height="2.05" rx="0.35" />
-        <rect x="4.85" y="10.75" width="14.3" height="6.65" rx="0.45" />
-        <rect x="6.1" y="18.05" width="11.8" height="2.35" rx="0.35" />
-      </g>
-      <g
-        stroke="currentColor"
-        strokeWidth={1.35}
-        strokeLinecap="round"
-        fill="none"
-      >
-        <path d="M8.15 3.35 Q6.9 3.9 6.2 5.15" />
-        <path d="M3.6 10.9h2.35" />
-        <path d="M20.35 12.9q0.85 1.35 0.35 2.85" />
-      </g>
-    </svg>
-  );
-}
-
-
-function PhotoGradientToolIcon({ size = 19, className }: { size?: number; className?: string }) {
-  const gid = useId();
-  return (
-    <svg width={size} height={size} viewBox="0 0 20 20" fill="none" className={className} aria-hidden>
-      <defs>
-        <linearGradient id={gid} x1="2.5" y1="10" x2="17.5" y2="10" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor="#2f2f34" />
-          <stop offset="1" stopColor="#d9d9dc" />
-        </linearGradient>
-      </defs>
-      <rect x="2.5" y="3.2" width="15" height="13.6" rx="1.5" fill={`url(#${gid})`} stroke="currentColor" strokeWidth={1.2} />
-    </svg>
-  );
-}
-
-function TextPathToolIcon({ size = 19, className }: { size?: number; className?: string }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 20 20" fill="none" className={className} aria-hidden>
-      <path d="M6 4.2h8M10 4.2v7.1" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" />
-      <path
-        d="M3.4 15.1 C5.8 12.7 8.1 17.1 10.7 14.4 C12.6 12.4 15 12.7 16.8 14.6"
-        stroke="currentColor"
-        strokeWidth={1.75}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function ToolBtn({ active, onClick, title, children }: { active?: boolean; onClick: () => void; title: string; children: React.ReactNode }) {
-  return (
-    <button type="button" title={title} onClick={onClick}
-      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-[2px] transition-all duration-150 ease-out ${
-        active
-          ? "bg-white/[0.11] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.12)]"
-          : "text-zinc-500 hover:bg-white/[0.06] hover:text-white"
-      }`}
-    >{children}</button>
-  );
-}
-
-/** Grupo estilo Photoshop: icono + chevron decorativo; mantén pulsado un instante (rollout). Suelta sobre una opción para elegirla. */
-function ToolFlyoutGroup({
-  groupId,
-  flyoutOpen,
-  setFlyoutOpen,
-  active,
-  mainTitle,
-  onMainClick,
-  mainIcon,
-  children,
-}: {
-  groupId: string;
-  flyoutOpen: string | null;
-  setFlyoutOpen: (id: string | null) => void;
-  active: boolean;
-  mainTitle: string;
-  onMainClick: () => void;
-  mainIcon: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  const open = flyoutOpen === groupId;
-  const longPressTimerRef = useRef<number | null>(null);
-  const skipMainClickRef = useRef(false);
-  const rolloutFromMainHoldRef = useRef(false);
-  const flyoutPanelRef = useRef<HTMLDivElement | null>(null);
-  const mainBtnRef = useRef<HTMLButtonElement | null>(null);
-  const [flyoutFixedPos, setFlyoutFixedPos] = useState<{ left: number; top: number } | null>(null);
-
-  const clearLongPress = useCallback(() => {
-    if (longPressTimerRef.current != null) {
-      window.clearTimeout(longPressTimerRef.current);
-      longPressTimerRef.current = null;
-    }
-  }, []);
-
-  const handleMainPointerDown = useCallback(
-    (e: React.PointerEvent) => {
-      if (e.button !== 0) return;
-      skipMainClickRef.current = false;
-      rolloutFromMainHoldRef.current = false;
-      clearLongPress();
-      longPressTimerRef.current = window.setTimeout(() => {
-        longPressTimerRef.current = null;
-        skipMainClickRef.current = true;
-        rolloutFromMainHoldRef.current = true;
-        setFlyoutOpen(groupId);
-      }, TOOLBAR_FLYOUT_PRESS_MS);
-    },
-    [clearLongPress, groupId, setFlyoutOpen],
-  );
-
-  const handleMainPointerEnd = useCallback(() => {
-    clearLongPress();
-  }, [clearLongPress]);
-
-  /** Tras abrir el menú manteniendo pulsado: el primer pointerup elige la opción bajo el cursor (rollout), aunque el mousedown fuera en el icono principal. */
-  useEffect(() => {
-    if (!open) {
-      rolloutFromMainHoldRef.current = false;
-      return;
-    }
-    if (!rolloutFromMainHoldRef.current) return;
-
-    const onPointerUpCapture = (e: PointerEvent) => {
-      if (e.button !== 0) return;
-      const panel = flyoutPanelRef.current;
-      if (!panel) return;
-
-      const el = document.elementFromPoint(e.clientX, e.clientY);
-      if (!el) {
-        setFlyoutOpen(null);
-        rolloutFromMainHoldRef.current = false;
-        return;
-      }
-      const hitBtn = (el as HTMLElement).closest("button") as HTMLButtonElement | null;
-      if (hitBtn && panel.contains(hitBtn)) {
-        queueMicrotask(() => hitBtn.click());
-      } else {
-        setFlyoutOpen(null);
-      }
-      rolloutFromMainHoldRef.current = false;
-    };
-
-    window.addEventListener("pointerup", onPointerUpCapture, true);
-    return () => window.removeEventListener("pointerup", onPointerUpCapture, true);
-  }, [open, setFlyoutOpen]);
-
-  useLayoutEffect(() => {
-    if (!open) {
-      setFlyoutFixedPos(null);
-      return;
-    }
-    const update = () => {
-      const btn = mainBtnRef.current;
-      if (!btn) return;
-      const r = btn.getBoundingClientRect();
-      const gap = 6;
-      setFlyoutFixedPos({ left: r.right + gap, top: r.top });
-    };
-    update();
-    window.addEventListener("scroll", update, true);
-    window.addEventListener("resize", update);
-    return () => {
-      window.removeEventListener("scroll", update, true);
-      window.removeEventListener("resize", update);
-    };
-  }, [open]);
-
-  const handleMainClick = useCallback(
-    (e: React.MouseEvent<HTMLButtonElement>) => {
-      if (skipMainClickRef.current) {
-        skipMainClickRef.current = false;
-        e.preventDefault();
-        return;
-      }
-      onMainClick();
-    },
-    [onMainClick],
-  );
-
-  const mainHint = `${mainTitle} — Mantén pulsado un instante y arrastra hasta una herramienta.`;
-
-  return (
-    <div className="relative h-9 w-9 shrink-0" data-tool-flyout-root>
-      <button
-        ref={mainBtnRef}
-        type="button"
-        title={mainHint}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={handleMainClick}
-        onPointerDown={handleMainPointerDown}
-        onPointerUp={handleMainPointerEnd}
-        onPointerCancel={handleMainPointerEnd}
-        onPointerLeave={handleMainPointerEnd}
-        className={`relative flex h-full w-full items-center justify-center rounded-[2px] pr-1.5 pb-1.5 transition-all duration-150 ease-out ${
-          active
-            ? "bg-white/[0.11] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.12)]"
-            : "text-zinc-500 hover:bg-white/[0.06] hover:text-white"
-        }`}
-      >
-        {mainIcon}
-        <span
-          className="pointer-events-none absolute bottom-0.5 right-0.5 flex h-3.5 w-3.5 items-center justify-center text-zinc-400"
-          aria-hidden
-        >
-          <ChevronRight className="h-2.5 w-2.5 opacity-90" strokeWidth={2.25} />
-        </span>
-      </button>
-      {open &&
-        flyoutFixedPos != null &&
-        typeof document !== "undefined" &&
-        createPortal(
-          <div
-            ref={flyoutPanelRef}
-            className="left-toolbar-flyout-panel fixed z-[100045] flex min-w-[44px] flex-col gap-1 rounded-[2px] border border-white/[0.09] bg-[#15181f] p-1.5 shadow-[0_8px_28px_rgba(0,0,0,0.55)]"
-            style={{ left: flyoutFixedPos.left, top: flyoutFixedPos.top }}
-            data-tool-flyout-panel
-          >
-            {children}
-          </div>,
-          document.body,
-        )}
-    </div>
-  );
-}
-
-function CtxMenu({ x, y, items, onClose }: { x: number; y: number; items: ContextMenuItem[]; onClose: () => void }) {
-  const remeasureKey = items.map((i) => `${i.label}\0${!!i.disabled}\0${!!i.separator}`).join("|");
-  const { ref, style } = useClampedFixedPosition(x, y, true, remeasureKey);
-
-  useEffect(() => {
-    const h = () => {
-      onClose();
-    };
-    window.addEventListener("mousedown", h);
-    return () => window.removeEventListener("mousedown", h);
-  }, [onClose]);
-
-  return (
-    <div
-      ref={ref}
-      className="context-menu !z-[100001] min-w-[220px] max-h-[min(70vh,calc(100vh-24px))] overflow-y-auto overflow-x-hidden"
-      style={{ ...style, position: "fixed", zIndex: 100001 }}
-      onMouseDown={(e) => e.stopPropagation()}
-    >
-      <div className="mb-0.5 shrink-0 border-b border-white/5 px-2.5 py-1 text-[8px] font-black uppercase tracking-widest text-white/30">
-        Acciones
-      </div>
-      {items.map((item, i) => {
-        const isDanger = item.label === "Delete" || item.label.startsWith("Eliminar");
-        return (
-          <React.Fragment key={`${item.label}-${i}`}>
-            {item.separator ? <div className="context-menu-separator" /> : null}
-            <button
-              type="button"
-              disabled={item.disabled}
-              className={`context-menu-item w-full justify-between border-0 bg-transparent font-[inherit] ${
-                isDanger ? "danger" : ""
-              }`}
-              onClick={() => {
-                item.action();
-                onClose();
-              }}
-            >
-              <span>{item.label}</span>
-              {item.shortcut ? (
-                <span className="shrink-0 font-mono text-[9px] font-normal normal-case tracking-normal text-white/35 tabular-nums">
-                  {item.shortcut}
-                </span>
-              ) : null}
-            </button>
-          </React.Fragment>
-        );
-      })}
-    </div>
-  );
-}
 
 function clipMapFromObjects(objs: FreehandObject[]): Map<string, FreehandObject[]> {
   const map = new Map<string, FreehandObject[]>();
@@ -23223,1020 +22924,111 @@ export function FreehandStudioCanvas({
       />
 
       {!canvasZenMode && (
-      <header
-        data-foldder-studio-flush={flushAttr}
-        className={`relative z-30 flex shrink-0 items-center border-b border-white/[0.08] min-w-0 ${
-          flushChrome ? "h-10 gap-2 bg-[#0b0f14] px-2" : "h-14 gap-3 bg-[#12151a] px-3"
-        }`}
-      >
-        <div className="min-w-0 shrink flex items-center gap-2">
-          {studioHeaderNodeGlyph ? (
-            <span
-              className={`inline-flex shrink-0 items-center justify-center border border-white/10 bg-black/45 ${
-                flushChrome ? "h-7 w-7" : "h-7 w-7 rounded-[8px]"
-              }`}
-            >
-              {studioHeaderNodeGlyph}
-            </span>
-          ) : null}
-          <div className="min-w-0">
-            <div
-              className={`truncate text-white ${
-                flushChrome
-                  ? "text-[11px] font-black uppercase tracking-[0.1em]"
-                  : "text-[13px] font-semibold tracking-tight"
-              }`}
-            >
-              {studioHeaderTitle}
-            </div>
-            {flushChrome ? null : (
-              <div className="truncate text-[10px] text-zinc-500">{studioHeaderSubtitle}</div>
-            )}
-          </div>
-        </div>
-        {studioHeaderAccessory ? (
-          <div className="flex min-w-0 shrink items-center gap-2">{studioHeaderAccessory}</div>
-        ) : null}
-        <div className={`ml-auto flex min-w-0 flex-wrap items-center justify-end ${flushChrome ? "gap-1" : "gap-2"}`}>
-        <div
-          className="flex min-w-0 flex-wrap items-center gap-px rounded-lg border border-white/[0.08] bg-[#0b0d10] px-1 py-0.5"
-          title="Alinear (selecciona 2+ objetos)"
-        >
-          <button
-            type="button"
-            title="Horizontal: izquierda"
-            disabled={selectedObjects.length < 2}
-            onClick={() => alignObjects("left")}
-            className="rounded p-1 text-zinc-300 transition hover:bg-white/[0.08] hover:text-white disabled:pointer-events-none disabled:opacity-30"
-          >
-            <AlignHorizontalJustifyStart size={14} strokeWidth={1.75} />
-          </button>
-          <button
-            type="button"
-            title="Horizontal: centrar"
-            disabled={selectedObjects.length < 2}
-            onClick={() => alignObjects("centerH")}
-            className="rounded p-1 text-zinc-300 transition hover:bg-white/[0.08] hover:text-white disabled:pointer-events-none disabled:opacity-30"
-          >
-            <AlignHorizontalJustifyCenter size={14} strokeWidth={1.75} />
-          </button>
-          <button
-            type="button"
-            title="Horizontal: derecha"
-            disabled={selectedObjects.length < 2}
-            onClick={() => alignObjects("right")}
-            className="rounded p-1 text-zinc-300 transition hover:bg-white/[0.08] hover:text-white disabled:pointer-events-none disabled:opacity-30"
-          >
-            <AlignHorizontalJustifyEnd size={14} strokeWidth={1.75} />
-          </button>
-          <span className="mx-0.5 h-4 w-px shrink-0 bg-white/15" aria-hidden />
-          <button
-            type="button"
-            title="Vertical: arriba"
-            disabled={selectedObjects.length < 2}
-            onClick={() => alignObjects("top")}
-            className="rounded p-1 text-zinc-300 transition hover:bg-white/[0.08] hover:text-white disabled:pointer-events-none disabled:opacity-30"
-          >
-            <AlignVerticalJustifyStart size={14} strokeWidth={1.75} />
-          </button>
-          <button
-            type="button"
-            title="Vertical: centrar"
-            disabled={selectedObjects.length < 2}
-            onClick={() => alignObjects("centerV")}
-            className="rounded p-1 text-zinc-300 transition hover:bg-white/[0.08] hover:text-white disabled:pointer-events-none disabled:opacity-30"
-          >
-            <AlignVerticalJustifyCenter size={14} strokeWidth={1.75} />
-          </button>
-          <button
-            type="button"
-            title="Vertical: abajo"
-            disabled={selectedObjects.length < 2}
-            onClick={() => alignObjects("bottom")}
-            className="rounded p-1 text-zinc-300 transition hover:bg-white/[0.08] hover:text-white disabled:pointer-events-none disabled:opacity-30"
-          >
-            <AlignVerticalJustifyEnd size={14} strokeWidth={1.75} />
-          </button>
-          <span className="mx-0.5 h-4 w-px shrink-0 bg-white/15" aria-hidden />
-          <button
-            type="button"
-            title="Distribuir horizontalmente"
-            disabled={selectedObjects.length < 2}
-            onClick={() => alignObjects("distH")}
-            className="rounded p-1 text-zinc-300 transition hover:bg-white/[0.08] hover:text-white disabled:pointer-events-none disabled:opacity-30"
-          >
-            <AlignHorizontalSpaceBetween size={14} strokeWidth={1.75} />
-          </button>
-          <button
-            type="button"
-            title="Distribuir verticalmente"
-            disabled={selectedObjects.length < 2}
-            onClick={() => alignObjects("distV")}
-            className="rounded p-1 text-zinc-300 transition hover:bg-white/[0.08] hover:text-white disabled:pointer-events-none disabled:opacity-30"
-          >
-            <AlignVerticalSpaceBetween size={14} strokeWidth={1.75} />
-          </button>
-        </div>
-        <div className="flex items-center gap-1 rounded-lg border border-white/[0.08] bg-[#0b0d10] px-1 py-0.5 shrink-0">
-          <button
-            type="button"
-            className="rounded px-2 py-1 text-[12px] text-zinc-400 transition-colors duration-150 hover:bg-white/[0.06] hover:text-white"
-            onClick={() =>
-              setViewport((v) => {
-                const nz = clamp(v.zoom / 1.15, 0.05, 20);
-                return { ...v, zoom: nz };
-              })
-            }
-            title="Zoom out"
-          >
-            −
-          </button>
-          <span className="min-w-[3.25rem] text-center font-mono text-[11px] tabular-nums text-zinc-300">
-            {Math.round(viewport.zoom * 100)}%
-          </span>
-          <button
-            type="button"
-            className="rounded px-2 py-1 text-[12px] text-zinc-400 transition-colors duration-150 hover:bg-white/[0.06] hover:text-white"
-            onClick={() =>
-              setViewport((v) => {
-                const nz = clamp(v.zoom * 1.15, 0.05, 20);
-                return { ...v, zoom: nz };
-              })
-            }
-            title="Zoom in"
-          >
-            +
-          </button>
-        </div>
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={undo}
-            className="rounded-lg p-2 text-zinc-400 transition-colors duration-150 hover:bg-white/[0.06] hover:text-white"
-            title="Undo (⌘Z)"
-          >
-            <Undo2 size={18} strokeWidth={1.5} />
-          </button>
-          <button
-            type="button"
-            onClick={redo}
-            className="rounded-lg p-2 text-zinc-400 transition-colors duration-150 hover:bg-white/[0.06] hover:text-white"
-            title="Redo (⇧⌘Z)"
-          >
-            <Redo2 size={18} strokeWidth={1.5} />
-          </button>
-        </div>
-        {designerMode && designerDeDocument && (
-          <div className="flex shrink-0 items-center gap-1">
-            <button
-              type="button"
-              disabled={!!designerDeDocument.busy}
-              onClick={() => designerDeDocument.onImport()}
-              className="flex shrink-0 items-center gap-1.5 rounded-lg border border-white/[0.12] bg-[#0b0d10] px-2.5 py-2 text-[11px] font-semibold text-zinc-200 transition hover:bg-white/[0.06] hover:text-white disabled:opacity-45"
-              title="Importar documento .de (páginas e imágenes embebidas)"
-            >
-              <FileUp size={15} strokeWidth={1.75} />
-              Importar .de
-            </button>
-            <button
-              type="button"
-              disabled={!!designerDeDocument.busy}
-              onClick={() => void designerDeDocument.onExport()}
-              className="flex shrink-0 items-center gap-1.5 rounded-lg border border-violet-500/35 bg-violet-950/40 px-2.5 py-2 text-[11px] font-semibold text-violet-100 transition hover:bg-violet-900/50 disabled:opacity-45"
-              title="Exportar documento .de (ZIP: JSON + imágenes, sin depender de S3)"
-            >
-              {designerDeDocument.busy ? (
-                <Loader2 size={15} className="animate-spin" strokeWidth={1.75} />
-              ) : (
-                <FileDown size={15} strokeWidth={1.75} />
-              )}
-              Exportar .de
-            </button>
-          </div>
-        )}
-        {designerMode && designerAutoOptimizeSwitch && (
-          <div className="flex min-w-0 max-w-full shrink-0 items-center gap-3 rounded-md border border-white/[0.12] bg-[#0b0d10] px-3.5 py-2">
-            <span className="min-w-0 select-none text-[11px] font-medium leading-snug text-zinc-200">
-              Activar auto-optimización
-            </span>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={designerAutoOptimizeSwitch.enabled}
-              title={
-                designerAutoOptimizeSwitch.enabled
-                  ? "Desactivar auto-optimización"
-                  : "Activar auto-optimización"
-              }
-              onClick={() => designerAutoOptimizeSwitch.onChange(!designerAutoOptimizeSwitch.enabled)}
-              className={`relative box-border h-[22px] w-[40px] shrink-0 overflow-hidden rounded-md transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-500/80 ${
-                designerAutoOptimizeSwitch.enabled ? "bg-violet-600" : "bg-zinc-600"
-              }`}
-            >
-              <span
-                className={`pointer-events-none absolute top-1/2 h-[18px] w-[18px] -translate-y-1/2 rounded-sm bg-white shadow-sm ring-1 ring-black/10 transition-[left] duration-200 ease-out ${
-                  designerAutoOptimizeSwitch.enabled ? "left-[20px]" : "left-[2px]"
-                }`}
-              />
-            </button>
-          </div>
-        )}
-        <button
-          type="button"
-          onClick={() => {
+        <FreehandStudioHeader
+          flushAttr={flushAttr}
+          flushChrome={flushChrome}
+          flushCtaClass={flushCtaClass}
+          studioHeaderNodeGlyph={studioHeaderNodeGlyph}
+          studioHeaderTitle={studioHeaderTitle}
+          studioHeaderSubtitle={studioHeaderSubtitle}
+          studioHeaderAccessory={studioHeaderAccessory}
+          selectedCount={selectedObjects.length}
+          alignObjects={alignObjects}
+          viewportZoom={viewport.zoom}
+          onZoomOut={() =>
+            setViewport((v) => {
+              const nz = clamp(v.zoom / 1.15, 0.05, 20);
+              return { ...v, zoom: nz };
+            })
+          }
+          onZoomIn={() =>
+            setViewport((v) => {
+              const nz = clamp(v.zoom * 1.15, 0.05, 20);
+              return { ...v, zoom: nz };
+            })
+          }
+          onUndo={undo}
+          onRedo={redo}
+          designerMode={designerMode}
+          designerDeDocument={designerDeDocument}
+          designerAutoOptimizeSwitch={designerAutoOptimizeSwitch}
+          onOpenExport={() => {
             setExportModalScope(selectedIds.size > 0 ? "selection" : "full");
             setShowExportModal(true);
           }}
-          className={`flex shrink-0 items-center gap-2 transition-colors duration-150 ${
-            flushChrome
-              ? `h-8 px-3.5 text-[10px] font-black uppercase tracking-[0.1em] ${flushCtaClass}`
-              : "rounded-lg bg-sky-600 px-3 py-2 text-[12px] font-semibold text-white shadow-lg shadow-sky-900/25 hover:bg-sky-500"
-          }`}
-        >
-          <Download size={16} strokeWidth={1.5} />
-          Export
-        </button>
-        <button
-          type="button"
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={() => void handleCloseStudio()}
-          className="relative z-10 shrink-0 rounded-lg p-2 text-zinc-400 transition-colors duration-150 hover:bg-white/[0.08] hover:text-white"
-          title="Cerrar — guarda la vista previa en el nodo"
-        >
-          <X size={18} strokeWidth={1.5} />
-        </button>
-        </div>
-      </header>
+          onClose={() => void handleCloseStudio()}
+        />
       )}
 
       <div className={`flex min-h-0 min-w-0 flex-1 flex-row${canvasZenMode ? " w-full" : ""}`}>
       {!canvasZenMode && (
-      // Flyouts render in a body portal (`fixed`); keep this column above the canvas for chevrons/hover stacking.
-      <div
-        data-foldder-studio-flush={flushAttr}
-        className={`relative z-30 flex w-[52px] shrink-0 flex-col items-center gap-0.5 overflow-y-auto border-r border-white/[0.08] px-1.5 py-2.5 ${
-          flushChrome ? "bg-[#0b0f14]" : "bg-[#12151a]"
-        }`}
-      >
-        {objects.some((o) => o.type === "groupContainer") ? (
-          <ToolFlyoutGroup
-            groupId="tf-select-mode"
-            flyoutOpen={leftToolbarToolFlyout}
-            setFlyoutOpen={setLeftToolbarToolFlyout}
-            active={activeTool === "select"}
-            mainTitle={`Selección (V) — clic selecciona ${pointerSelectMode === "folder" ? "la carpeta" : "la capa"}`}
-            onMainClick={activateSelectTool}
-            mainIcon={<MousePointer2 size={19} strokeWidth={TOOLBAR_ICON_STROKE} />}
-          >
-            <div className="px-1.5 pb-1 pt-0.5 text-[8px] font-bold uppercase tracking-wider text-zinc-500">
-              Al hacer clic, seleccionar
-            </div>
-            {([
-              { mode: "layer" as const, label: "Capa", hint: "Selecciona la capa directamente, también dentro de carpetas (sin entrar)", icon: <Layers size={14} strokeWidth={2} /> },
-              { mode: "folder" as const, label: "Carpeta", hint: "Selecciona la carpeta entera (mover/opacidad/máscara en conjunto)", icon: <Folder size={14} strokeWidth={2} /> },
-            ]).map((opt) => (
-              <button
-                key={opt.mode}
-                type="button"
-                title={opt.hint}
-                onClick={() => {
-                  setActiveTool("select");
-                  setSelectedPoints(new Map());
-                  setPointerSelectMode(opt.mode);
-                  setLeftToolbarToolFlyout(null);
-                }}
-                className={`flex w-full items-center gap-2 rounded-[2px] px-2 py-1.5 text-[11px] transition ${
-                  pointerSelectMode === opt.mode
-                    ? "bg-white/[0.15] text-white"
-                    : "text-zinc-400 hover:bg-white/[0.08] hover:text-white"
-                }`}
-              >
-                {opt.icon}
-                <span className="flex-1 whitespace-nowrap text-left">{opt.label}</span>
-                {pointerSelectMode === opt.mode ? (
-                  <Check size={13} strokeWidth={2.5} className="text-violet-300" />
-                ) : (
-                  <span className="inline-flex w-[13px]" aria-hidden />
-                )}
-              </button>
-            ))}
-          </ToolFlyoutGroup>
-        ) : (
-          <ToolBtn active={activeTool === "select"} onClick={activateSelectTool} title="Selection (V)">
-            <MousePointer2 size={19} strokeWidth={TOOLBAR_ICON_STROKE} />
-          </ToolBtn>
-        )}
-
-        {studioCaps.toolGenerativeFill && (
-          <ToolBtn
-            active={activeTool === "generativeFillSelect"}
-            onClick={() => {
-              setActiveTool("generativeFillSelect");
-              setSelectedIds(new Set());
-              setSelectedPoints(new Map());
-            }}
-            title="Relleno generativo — arrastra para seleccionar zonas (Shift = añadir otra)"
-          >
-            <Sparkles size={19} strokeWidth={TOOLBAR_ICON_STROKE} />
-          </ToolBtn>
-        )}
-
-        {studioCaps.toolPhotoMarquee && (
-          <ToolFlyoutGroup
-            groupId="tf-photo-marquee"
-            flyoutOpen={leftToolbarToolFlyout}
-            setFlyoutOpen={setLeftToolbarToolFlyout}
-            active={
-              activeTool === "rectMarquee" ||
-              activeTool === "ellipseMarquee" ||
-              activeTool === "lassoMarquee" ||
-              activeTool === "polygonMarquee"
-            }
-            mainTitle="Selección raster: rectángulo (M), elipse (O), lazo (L), poligonal (⇧L). Ctrl/⌘ suma; Alt resta."
-            onMainClick={() => {
-              setActiveTool(primaryPhotoMarqueeTool);
-              setLeftToolbarToolFlyout(null);
-            }}
-            mainIcon={
-              primaryPhotoMarqueeTool === "lassoMarquee" ? (
-                <MarqueeLassoToolIcon size={19} />
-              ) : primaryPhotoMarqueeTool === "polygonMarquee" ? (
-                <MarqueePolygonToolIcon size={19} />
-              ) : primaryPhotoMarqueeTool === "ellipseMarquee" ? (
-                <MarqueeEllipseToolIcon size={19} />
-              ) : (
-                <MarqueeRectToolIcon size={19} />
-              )
-            }
-          >
-            <button
-              type="button"
-              title="Marco rectangular (M)"
-              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] transition ${
-                activeTool === "rectMarquee" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
-              }`}
-              onClick={() => {
-                setActiveTool("rectMarquee");
-                setLeftToolbarToolFlyout(null);
-              }}
-            >
-              <MarqueeRectToolIcon size={17} />
-            </button>
-            <button
-              type="button"
-              title="Marco elíptico (O). ⇧ al arrastrar = círculo. Ctrl/⌘ suma; Alt resta."
-              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] transition ${
-                activeTool === "ellipseMarquee" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
-              }`}
-              onClick={() => {
-                setActiveTool("ellipseMarquee");
-                setLeftToolbarToolFlyout(null);
-              }}
-            >
-              <MarqueeEllipseToolIcon size={17} />
-            </button>
-            <button
-              type="button"
-              title="Lazo libre (L)"
-              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] transition ${
-                activeTool === "lassoMarquee" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
-              }`}
-              onClick={() => {
-                setActiveTool("lassoMarquee");
-                setLeftToolbarToolFlyout(null);
-              }}
-            >
-              <MarqueeLassoToolIcon size={17} />
-            </button>
-            <button
-              type="button"
-              title="Lazo poligonal (⇧L)"
-              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] transition ${
-                activeTool === "polygonMarquee" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
-              }`}
-              onClick={() => {
-                setActiveTool("polygonMarquee");
-                setLeftToolbarToolFlyout(null);
-              }}
-            >
-              <MarqueePolygonToolIcon size={17} />
-            </button>
-          </ToolFlyoutGroup>
-        )}
-
-        <ToolFlyoutGroup
-          groupId="tf-pen"
-          flyoutOpen={leftToolbarToolFlyout}
-          setFlyoutOpen={setLeftToolbarToolFlyout}
-          active={activeTool === "directSelect" || activeTool === "pen" || activeTool === "scissors"}
-          mainTitle={
-            primaryPenToolSafe === "pen"
-              ? "Pluma (⇧P)"
-              : primaryPenToolSafe === "scissors"
-                ? "Tijeras (⇧C)"
-                : "Selección directa (A)"
-          }
-          onMainClick={() => setActiveTool(primaryPenToolSafe)}
-          mainIcon={
-            primaryPenToolSafe === "pen" ? (
-              <PenTool size={19} strokeWidth={TOOLBAR_ICON_STROKE} />
-            ) : primaryPenToolSafe === "scissors" ? (
-              <Scissors size={19} strokeWidth={TOOLBAR_ICON_STROKE} />
-            ) : (
-              <MousePointer2 size={19} strokeWidth={TOOLBAR_ICON_STROKE} className="opacity-60" />
-            )
-          }
-        >
-          <button
-            type="button"
-            title="Selección directa (A)"
-            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] transition ${
-              activeTool === "directSelect" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
-            }`}
-            onClick={() => {
-              setActiveTool("directSelect");
-              setLeftToolbarToolFlyout(null);
-            }}
-          >
-            <MousePointer2 size={17} strokeWidth={TOOLBAR_ICON_STROKE} className="opacity-60" />
-          </button>
-          <button
-            type="button"
-            title="Pluma (⇧P)"
-            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] transition ${
-              activeTool === "pen" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
-            }`}
-            onClick={() => {
-              setActiveTool("pen");
-              setLeftToolbarToolFlyout(null);
-            }}
-          >
-            <PenTool size={17} strokeWidth={TOOLBAR_ICON_STROKE} />
-          </button>
-          {designerMode && (
-            <button
-              type="button"
-              title="Tijeras (⇧C)"
-              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] transition ${
-                activeTool === "scissors" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
-              }`}
-              onClick={() => {
-                setActiveTool("scissors");
-                setLeftToolbarToolFlyout(null);
-              }}
-            >
-              <Scissors size={17} strokeWidth={TOOLBAR_ICON_STROKE} />
-            </button>
-          )}
-        </ToolFlyoutGroup>
-
-        <ToolFlyoutGroup
-          groupId="tf-shape"
-          flyoutOpen={leftToolbarToolFlyout}
-          setFlyoutOpen={setLeftToolbarToolFlyout}
-          active={activeTool === "rect" || activeTool === "line" || activeTool === "ellipse"}
-          mainTitle={
-            primaryShapeTool === "line"
-              ? "Línea"
-              : primaryShapeTool === "ellipse"
-                ? (designerMode ? "Elipse (E)" : "Elipse (C o E)")
-                : "Rectángulo (R)"
-          }
-          onMainClick={() => setActiveTool(primaryShapeTool)}
-          mainIcon={
-            primaryShapeTool === "line"
-              ? <Minus size={19} strokeWidth={TOOLBAR_ICON_STROKE} />
-              : primaryShapeTool === "ellipse"
-                ? <Circle size={19} strokeWidth={TOOLBAR_ICON_STROKE} />
-                : <Square size={19} strokeWidth={TOOLBAR_ICON_STROKE} />
-          }
-        >
-          <button
-            type="button"
-            title="Rectángulo (R)"
-            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] transition ${
-              activeTool === "rect" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
-            }`}
-            onClick={() => {
-              setActiveTool("rect");
-              setLeftToolbarToolFlyout(null);
-            }}
-          >
-            <Square size={17} strokeWidth={TOOLBAR_ICON_STROKE} />
-          </button>
-          <button
-            type="button"
-            title={designerMode ? "Elipse (E)" : "Elipse (C o E)"}
-            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] transition ${
-              activeTool === "ellipse" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
-            }`}
-            onClick={() => {
-              setActiveTool("ellipse");
-              setLeftToolbarToolFlyout(null);
-            }}
-          >
-            <Circle size={17} strokeWidth={TOOLBAR_ICON_STROKE} />
-          </button>
-          <button
-            type="button"
-            title="Línea"
-            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] transition ${
-              activeTool === "line" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
-            }`}
-            onClick={() => {
-              setActiveTool("line");
-              setLeftToolbarToolFlyout(null);
-            }}
-          >
-            <Minus size={17} strokeWidth={TOOLBAR_ICON_STROKE} />
-          </button>
-        </ToolFlyoutGroup>
-
-        {designerMode ? (
-          <>
-            {studioCaps.toolCloneStamp ? (
-              <ToolBtn
-                active={activeTool === "cloneStamp"}
-                onClick={() => setActiveTool("cloneStamp")}
-                title="Tampón de clon (S) — Alt+clic en la imagen = origen"
-              >
-                <PhotoCloneStampToolIcon size={19} />
-              </ToolBtn>
-            ) : null}
-            {studioCaps.toolBrush ? (
-              <ToolBtn
-                active={activeTool === "brush"}
-                onClick={() => setActiveTool("brush")}
-                title="Pincel (B) — pinta en capas imagen o marcos con foto"
-              >
-                <PhotoBrushToolIcon size={19} />
-              </ToolBtn>
-            ) : null}
-            {studioCaps.toolPhotoGradient ? (
-              <ToolBtn
-                active={activeTool === "photoGradient"}
-                onClick={() => setActiveTool("photoGradient")}
-                title="Degradado (⇧G) — arrastra en capa o máscara (modo máscara = destino máscara); ajustes en Propiedades; doble clic en vértice = color"
-              >
-                <PhotoGradientToolIcon size={19} />
-              </ToolBtn>
-            ) : null}
-            <ToolFlyoutGroup
-              groupId="tf-text"
-              flyoutOpen={leftToolbarToolFlyout}
-              setFlyoutOpen={setLeftToolbarToolFlyout}
-              active={activeTool === "text" || activeTool === "textPath" || activeTool === "textFrame"}
-              mainTitle={
-                primaryTextTool === "textFrame"
-                  ? "Marco de texto encadenado (C)"
-                  : primaryTextTool === "textPath"
-                    ? "Texto sobre trazo"
-                    : "Texto (T)"
-              }
-              onMainClick={() => setActiveTool(primaryTextTool)}
-              mainIcon={
-                primaryTextTool === "textFrame" ? (
-                  <svg width="19" height="19" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={TOOLBAR_ICON_STROKE} strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="2.5" y="3" width="15" height="14" rx="1.25" strokeDasharray="2.5 2" />
-                    <path d="M6 7.5h8M6 10h8M6 12.5h4" />
-                  </svg>
-                ) : primaryTextTool === "textPath" ? (
-                  <TextPathToolIcon size={19} />
-                ) : (
-                  <Type size={19} strokeWidth={TOOLBAR_ICON_STROKE} />
-                )
-              }
-            >
-              <button
-                type="button"
-                title="Texto (T)"
-                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] transition ${
-                  activeTool === "text" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
-                }`}
-                onClick={() => {
-                  setActiveTool("text");
-                  setLeftToolbarToolFlyout(null);
-                }}
-              >
-                <Type size={17} strokeWidth={TOOLBAR_ICON_STROKE} />
-              </button>
-              <button
-                type="button"
-                title="Texto sobre trazo"
-                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] transition ${
-                  activeTool === "textPath" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
-                }`}
-                onClick={() => {
-                  setActiveTool("textPath");
-                  setLeftToolbarToolFlyout(null);
-                }}
-              >
-                <TextPathToolIcon size={17} />
-              </button>
-              <button
-                type="button"
-                title="Marco de texto encadenado (C)"
-                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] transition ${
-                  activeTool === "textFrame" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
-                }`}
-                onClick={() => {
-                  setActiveTool("textFrame");
-                  setLeftToolbarToolFlyout(null);
-                }}
-              >
-                <svg width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={TOOLBAR_ICON_STROKE} strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="2.5" y="3" width="15" height="14" rx="1.25" strokeDasharray="2.5 2" />
-                  <path d="M6 7.5h8M6 10h8M6 12.5h4" />
-                </svg>
-              </button>
-            </ToolFlyoutGroup>
-
-            <ToolFlyoutGroup
-              groupId="tf-img"
-              flyoutOpen={leftToolbarToolFlyout}
-              setFlyoutOpen={setLeftToolbarToolFlyout}
-              active={activeTool === "imageFrame"}
-              mainTitle={primaryImageTool === "imageFrame" ? "Marco de imagen" : "Importar imagen"}
-              onMainClick={() => {
-                if (primaryImageTool === "imageFrame") setActiveTool("imageFrame");
-                else fileInputRef.current?.click();
-              }}
-              mainIcon={
-                primaryImageTool === "imageFrame" ? (
-                  <svg width="19" height="19" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={TOOLBAR_ICON_STROKE} strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="2.5" y="3" width="15" height="14" rx="1.25" />
-                    <line x1="2.5" y1="3" x2="17.5" y2="17" opacity={0.45} strokeWidth={1.25} />
-                    <line x1="17.5" y1="3" x2="2.5" y2="17" opacity={0.45} strokeWidth={1.25} />
-                  </svg>
-                ) : (
-                  <ImageIconLucide size={19} strokeWidth={TOOLBAR_ICON_STROKE} />
-                )
-              }
-            >
-              <button
-                type="button"
-                title="Importar imagen"
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] text-zinc-500 transition hover:bg-white/[0.08] hover:text-white"
-                onClick={() => {
-                  setToolFlyoutPrimary((prev) => ({ ...prev, "tf-img": "importImage" }));
-                  fileInputRef.current?.click();
-                  setLeftToolbarToolFlyout(null);
-                }}
-              >
-                <ImageIconLucide size={17} strokeWidth={TOOLBAR_ICON_STROKE} />
-              </button>
-              <button
-                type="button"
-                title="Marco de imagen"
-                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-[2px] transition ${
-                  activeTool === "imageFrame" ? "bg-white/[0.15] text-white" : "text-zinc-500 hover:bg-white/[0.08] hover:text-white"
-                }`}
-                onClick={() => {
-                  setActiveTool("imageFrame");
-                  setLeftToolbarToolFlyout(null);
-                }}
-              >
-                <svg width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={TOOLBAR_ICON_STROKE} strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="2.5" y="3" width="15" height="14" rx="1.25" />
-                  <line x1="2.5" y1="3" x2="17.5" y2="17" opacity={0.45} strokeWidth={1.25} />
-                  <line x1="17.5" y1="3" x2="2.5" y2="17" opacity={0.45} strokeWidth={1.25} />
-                </svg>
-              </button>
-            </ToolFlyoutGroup>
-
-            <ToolBtn onClick={() => svgInputRef.current?.click()} title="Importar SVG">
-              <svg width={20} height={20} viewBox="0 0 20 20" fill="none" aria-hidden className="text-current">
-                <path
-                  d="M4 3.5h12a1.5 1.5 0 0 1 1.5 1.5v10a1.5 1.5 0 0 1-1.5 1.5H4A1.5 1.5 0 0 1 2.5 15V5A1.5 1.5 0 0 1 4 3.5Z"
-                  stroke="currentColor"
-                  strokeWidth={1.5}
-                  strokeLinejoin="round"
-                />
-                <text
-                  x="10"
-                  y="13.2"
-                  textAnchor="middle"
-                  fill="currentColor"
-                  fontSize="5.2"
-                  fontWeight={700}
-                  fontFamily='ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace'
-                  letterSpacing="-0.04em"
-                >
-                  SVG
-                </text>
-              </svg>
-            </ToolBtn>
-          </>
-        ) : (
-            <ToolBtn active={activeTool === "text"} onClick={() => setActiveTool("text")} title="Text (T)">
-            <Type size={19} strokeWidth={TOOLBAR_ICON_STROKE} />
-          </ToolBtn>
-        )}
-
-        <div className="my-1 h-px w-6 bg-white/[0.08]" />
-
-        {!designerMode && (
-          <>
-            <ToolBtn onClick={() => fileInputRef.current?.click()} title="Import image">
-              <Upload size={18} strokeWidth={TOOLBAR_ICON_STROKE} />
-            </ToolBtn>
-            <ToolBtn onClick={() => svgInputRef.current?.click()} title="Import SVG">
-              <FileType2 size={18} strokeWidth={TOOLBAR_ICON_STROKE} />
-            </ToolBtn>
-          </>
-        )}
-
-        <div
-          ref={leftToolbarSwatchDockRef}
-          className="relative mt-1 flex w-full flex-col items-center"
-          data-left-toolbar-swatch-dock
-        >
-          <div className="relative h-[28px] w-[40px] shrink-0">
-            <div className="absolute left-[2px] top-[1px] h-[26px] w-[26px]">
-              <button
-                type="button"
-                disabled={leftToolbarSwatchPreview.noVectorStyle}
-                onClick={openLeftToolbarColorPicker("stroke")}
-                {...(!leftToolbarSwatchPreview.noVectorStyle
-                  ? { onDragOver: leftToolbarSwatchDragOver, onDrop: leftToolbarDropStroke }
-                  : {})}
-                className={`absolute left-0 top-0 z-0 flex h-[18px] w-[18px] items-center justify-center rounded-[3px] border border-white/25 bg-[#2a2d33] shadow-sm transition hover:brightness-110 ${
-                  leftToolbarSwatchPreview.noVectorStyle ? "cursor-not-allowed opacity-40" : ""
-                }`}
-                title="Trazo — elegir color o sin trazo"
-                aria-label="Color de trazo"
-                aria-expanded={leftToolbarColorTarget === "stroke"}
-              >
-                {leftToolbarSwatchPreview.strokeNone ? (
-                  <span className="relative block h-[14px] w-[14px] overflow-hidden rounded-[2px] bg-white">
-                    <span className="absolute inset-y-0.5 left-1/2 w-0.5 -translate-x-1/2 rounded-full bg-red-500" />
-                  </span>
-                ) : (
-                  <span
-                    className="block h-[14px] w-[14px] rounded-[2px]"
-                    style={{ backgroundColor: leftToolbarSwatchPreview.strokeHex }}
-                  />
-                )}
-              </button>
-              {!leftToolbarSwatchPreview.hideFillForLine && (
-                <button
-                  type="button"
-                  disabled={leftToolbarSwatchPreview.noVectorStyle}
-                  onClick={openLeftToolbarColorPicker("fill")}
-                  {...(!leftToolbarSwatchPreview.noVectorStyle
-                    ? { onDragOver: leftToolbarSwatchDragOver, onDrop: leftToolbarDropFill }
-                    : {})}
-                  className={`absolute bottom-0 right-0 z-10 flex h-[18px] w-[18px] items-center justify-center rounded-[3px] border-2 border-sky-500/45 bg-[#2a2d33] shadow-md transition hover:brightness-110 ${
-                    leftToolbarSwatchPreview.noVectorStyle ? "cursor-not-allowed opacity-40" : ""
-                  }`}
-                  title="Relleno — elegir color o sin relleno"
-                  aria-label="Color de relleno"
-                  aria-expanded={leftToolbarColorTarget === "fill"}
-                >
-                  {leftToolbarSwatchPreview.fillNone ? (
-                    <span className="relative block h-[14px] w-[14px] overflow-hidden rounded-[2px] bg-white">
-                      <span className="absolute inset-y-0.5 left-1/2 w-0.5 -translate-x-1/2 rounded-full bg-red-500" />
-                    </span>
-                  ) : (
-                    <span
-                      className="block h-[14px] w-[14px] rounded-[2px]"
-                      style={{ backgroundColor: leftToolbarSwatchPreview.fillHex }}
-                    />
-                  )}
-                </button>
-              )}
-            </div>
-            <button
-              type="button"
-              disabled={leftToolbarSwatchPreview.noVectorStyle || leftToolbarSwatchPreview.hideFillForLine}
-              onClick={swapLeftToolbarFillAndStroke}
-              className={`absolute right-0 top-[5px] flex h-[16px] w-[16px] items-center justify-center rounded-full border border-white/[0.12] bg-white/[0.06] text-zinc-300 shadow-sm transition hover:border-white/25 hover:bg-white/[0.1] hover:text-white ${
-                leftToolbarSwatchPreview.noVectorStyle || leftToolbarSwatchPreview.hideFillForLine
-                  ? "cursor-not-allowed opacity-35"
-                  : ""
-              }`}
-              title="Intercambiar relleno y trazo"
-              aria-label="Intercambiar relleno y trazo"
-            >
-              <ArrowLeftRight className="h-2.5 w-2.5" strokeWidth={2.6} aria-hidden />
-            </button>
-          </div>
-        </div>
-
-        {leftToolbarColorTarget &&
-          typeof document !== "undefined" &&
-          createPortal(
-            <div
-              ref={leftToolbarColorPopoverRef}
-              data-left-toolbar-color-popover
-              data-foldder-studio-flush={flushAttr}
-              className={`fixed z-[100050] max-h-[min(420px,calc(100vh-24px))] w-[232px] overflow-y-auto border border-white/[0.08] p-3.5 ${
-                flushChrome ? "bg-[#0b0f14]" : "rounded-[6px] bg-[#12151a] shadow-xl"
-              }`}
-              style={{ top: leftToolbarColorPos.top, left: leftToolbarColorPos.left }}
-              onMouseDown={(e) => e.stopPropagation()}
-              onMouseEnter={() => {
-                leftToolbarEyeAbortRef.current?.abort();
-                leftToolbarEyeAbortRef.current = null;
-                setLeftToolbarEyeBusy(false);
-              }}
-              onMouseLeave={() => {
-                if (leftToolbarAdvancedPickerOpen || leftToolbarEyeBusy) return;
-                if (typeof window === "undefined" || !(window as any).EyeDropper) return;
-                if (!leftToolbarColorTarget) return;
-                void (async () => {
-                  setLeftToolbarEyeBusy(true);
-                  const ac = new AbortController();
-                  leftToolbarEyeAbortRef.current = ac;
-                  try {
-                    const Ctor = (window as any).EyeDropper as new () => {
-                      open: (opts?: { signal?: AbortSignal }) => Promise<{ sRGBHex: string }>;
-                    };
-                    const ed = new Ctor();
-                    const picked = await ed.open({ signal: ac.signal });
-                    const hex = normalizeHexColor(picked.sRGBHex) ?? picked.sRGBHex;
-                    if (leftToolbarColorTarget === "fill") applyLeftToolbarFill(hex);
-                    else applyLeftToolbarStroke(hex);
-                    setLeftToolbarAdvancedPickerOpen(false);
-                    setLeftToolbarColorTarget(null);
-                  } catch {
-                    /* cancelado o bloqueado */
-                  } finally {
-                    if (leftToolbarEyeAbortRef.current === ac) leftToolbarEyeAbortRef.current = null;
-                    setLeftToolbarEyeBusy(false);
-                  }
-                })();
-              }}
-            >
-              <div className="mb-2.5 text-[10px] font-medium uppercase tracking-wider text-zinc-500">
-                {leftToolbarColorTarget === "fill" ? "Relleno" : "Trazo"}
-              </div>
-
-              <div className="mb-1 text-[8px] font-bold uppercase tracking-wider text-zinc-600">Sin color</div>
-              <button
-                type="button"
-                title={leftToolbarColorTarget === "fill" ? "Sin relleno" : "Sin trazo"}
-                className="relative flex h-[14px] w-[14px] min-h-[14px] min-w-[14px] shrink-0 items-center justify-center rounded-[3px] border border-white/[0.12] bg-white transition hover:border-white/25"
-                onClick={() => {
-                  if (leftToolbarColorTarget === "fill") applyLeftToolbarFill("none");
-                  else applyLeftToolbarStroke("none");
-                  closeLeftToolbarColorUI();
-                }}
-              >
-                <span className="absolute inset-y-0.5 left-1/2 w-px -translate-x-1/2 bg-red-500" />
-              </button>
-
-              <div className="my-2.5 h-px bg-white/[0.08]" />
-
-              <div className="mb-1 text-[8px] font-bold uppercase tracking-wider text-zinc-600">BrandKit</div>
-              <div className="flex flex-wrap gap-1">
-                {!brainConnected || brainPaletteColors.length === 0 ? (
-                  <p className="text-[9px] text-zinc-600">Sin colores de BrandKit conectados.</p>
-                ) : (
-                  brainPaletteColors.map((hex) => (
-                    <button
-                      key={`lt-brain-${leftToolbarColorTarget}-${hex}`}
-                      type="button"
-                      draggable
-                      title={`${hex} — clic o arrastrar`}
-                      className={PALETTE_SWATCH_BTN_CLASS}
-                      style={{ backgroundColor: hex }}
-                      onDragStart={(e) => setColorDragData(e, hex)}
-                      onClick={() => applyLeftToolbarTargetHexAndClose(hex)}
-                    />
-                  ))
-                )}
-              </div>
-
-              <div className="my-2.5 h-px bg-white/[0.08]" />
-
-              <div className="mb-1 text-[8px] font-bold uppercase tracking-wider text-zinc-600">En uso</div>
-              <div className="flex flex-wrap gap-1">
-                {documentColorStats.length === 0 ? (
-                  <p className="text-[9px] text-zinc-600">Los colores del lienzo aparecen aquí.</p>
-                ) : (
-                  documentColorStats.map(({ hex, count }) => (
-                    <button
-                      key={`lt-inuse-${leftToolbarColorTarget}-${hex}`}
-                      type="button"
-                      draggable
-                      title={`${hex} · ${count}× — clic o arrastrar`}
-                      className={PALETTE_SWATCH_BTN_CLASS}
-                      style={{ backgroundColor: hex }}
-                      onDragStart={(e) => setColorDragData(e, hex)}
-                      onClick={() => applyLeftToolbarTargetHexAndClose(hex)}
-                    />
-                  ))
-                )}
-              </div>
-
-              <div className="my-2.5 h-px bg-white/[0.08]" />
-
-              <div className="mb-1 text-[8px] font-bold uppercase tracking-wider text-zinc-600">Guardados</div>
-              <div className="flex flex-wrap items-center gap-1">
-                <button
-                  type="button"
-                  draggable
-                  title="Negro — clic o arrastrar"
-                  className={PALETTE_SWATCH_BTN_CLASS}
-                  style={{ backgroundColor: "#000000" }}
-                  onDragStart={(e) => setColorDragData(e, "#000000")}
-                  onClick={() => applyLeftToolbarTargetHexAndClose("#000000")}
-                />
-                <button
-                  type="button"
-                  draggable
-                  title="Blanco — clic o arrastrar"
-                  className={PALETTE_SWATCH_BTN_CLASS}
-                  style={{
-                    backgroundColor: "#ffffff",
-                    boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.12)",
-                  }}
-                  onDragStart={(e) => setColorDragData(e, "#ffffff")}
-                  onClick={() => applyLeftToolbarTargetHexAndClose("#ffffff")}
-                />
-                {savedPaletteColors.map((hex, realIndex) => {
-                  const n = normalizeHexColor(hex)?.toLowerCase();
-                  if (n === "#000000" || n === "#ffffff") return null;
-                  return (
-                    <button
-                      key={`lt-saved-${leftToolbarColorTarget}-${hex}-${realIndex}`}
-                      type="button"
-                      draggable
-                      title={`${hex} — clic o arrastrar`}
-                      className={PALETTE_SWATCH_BTN_CLASS}
-                      style={{ backgroundColor: hex }}
-                      onDragStart={(e) => setColorDragData(e, hex)}
-                      onClick={() => applyLeftToolbarTargetHexAndClose(hex)}
-                    />
-                  );
-                })}
-                <button
-                  type="button"
-                  title="Añadir con selector de color"
-                  className="flex h-[14px] w-[14px] min-h-[14px] min-w-[14px] shrink-0 items-center justify-center rounded-[3px] border border-dashed border-white/25 bg-white/[0.03] text-[11px] font-light text-zinc-500 hover:border-violet-400/50 hover:bg-white/[0.06] hover:text-white"
-                  onClick={() => setLeftToolbarAdvancedPickerOpen(true)}
-                >
-                  +
-                </button>
-              </div>
-            </div>,
-            document.body,
-          )}
-
-        {leftToolbarColorTarget ? (
-          <ColorPickerModal
-            open={leftToolbarAdvancedPickerOpen}
-            flush={flushChrome}
-            accentClass={flushCtaClass}
-            accentRangeClass={flushRangeAccentClass}
-            accentFocusClass={flushFocusClass}
-            title={leftToolbarColorTarget === "fill" ? "Elegir color de relleno" : "Elegir color de trazo"}
-            confirmLabel="Aplicar y guardar"
-            initialHex={leftToolbarPickerInitialHex}
-            onClose={() => setLeftToolbarAdvancedPickerOpen(false)}
-            onConfirm={handleLeftToolbarPickerConfirm}
-          />
-        ) : null}
-
-        <div className="flex-1 min-h-[8px]" />
-
-        <ToolBtn active={snapEnabled} onClick={() => setSnapEnabled((p) => !p)} title={`Snap ${snapEnabled ? "on" : "off"}`}>
-          <Magnet size={18} strokeWidth={1.5} />
-        </ToolBtn>
-      </div>
+        <FreehandStudioLeftToolbar
+          flushAttr={flushAttr}
+          flushChrome={flushChrome}
+          flushCtaClass={flushCtaClass}
+          flushRangeAccentClass={flushRangeAccentClass}
+          flushFocusClass={flushFocusClass}
+          objects={objects}
+          designerMode={designerMode}
+          studioCaps={studioCaps}
+          activeTool={activeTool}
+          setActiveTool={setActiveTool}
+          pointerSelectMode={pointerSelectMode}
+          setPointerSelectMode={setPointerSelectMode}
+          setSelectedIds={setSelectedIds}
+          setSelectedPoints={setSelectedPoints}
+          leftToolbarToolFlyout={leftToolbarToolFlyout}
+          setLeftToolbarToolFlyout={setLeftToolbarToolFlyout}
+          activateSelectTool={activateSelectTool}
+          primaryPhotoMarqueeTool={primaryPhotoMarqueeTool}
+          primaryPenToolSafe={primaryPenToolSafe}
+          primaryShapeTool={primaryShapeTool}
+          primaryTextTool={primaryTextTool}
+          primaryImageTool={primaryImageTool}
+          setToolFlyoutPrimary={setToolFlyoutPrimary}
+          fileInputRef={fileInputRef}
+          svgInputRef={svgInputRef}
+          leftToolbarSwatchDockRef={leftToolbarSwatchDockRef}
+          leftToolbarSwatchPreview={leftToolbarSwatchPreview}
+          openLeftToolbarColorPicker={openLeftToolbarColorPicker}
+          leftToolbarSwatchDragOver={leftToolbarSwatchDragOver}
+          leftToolbarDropStroke={leftToolbarDropStroke}
+          leftToolbarDropFill={leftToolbarDropFill}
+          leftToolbarColorTarget={leftToolbarColorTarget}
+          setLeftToolbarColorTarget={setLeftToolbarColorTarget}
+          leftToolbarColorPos={leftToolbarColorPos}
+          leftToolbarAdvancedPickerOpen={leftToolbarAdvancedPickerOpen}
+          setLeftToolbarAdvancedPickerOpen={setLeftToolbarAdvancedPickerOpen}
+          leftToolbarColorPopoverRef={leftToolbarColorPopoverRef}
+          leftToolbarEyeAbortRef={leftToolbarEyeAbortRef}
+          setLeftToolbarEyeBusy={setLeftToolbarEyeBusy}
+          leftToolbarEyeBusy={leftToolbarEyeBusy}
+          brainConnected={brainConnected}
+          brainPaletteColors={brainPaletteColors}
+          documentColorStats={documentColorStats}
+          savedPaletteColors={savedPaletteColors}
+          setColorDragData={setColorDragData}
+          applyLeftToolbarFill={applyLeftToolbarFill}
+          applyLeftToolbarStroke={applyLeftToolbarStroke}
+          closeLeftToolbarColorUI={closeLeftToolbarColorUI}
+          applyLeftToolbarTargetHexAndClose={applyLeftToolbarTargetHexAndClose}
+          leftToolbarPickerInitialHex={leftToolbarPickerInitialHex}
+          handleLeftToolbarPickerConfirm={handleLeftToolbarPickerConfirm}
+          swapLeftToolbarFillAndStroke={swapLeftToolbarFillAndStroke}
+          normalizeHexColor={normalizeHexColor}
+          snapEnabled={snapEnabled}
+          setSnapEnabled={setSnapEnabled}
+        />
       )}
 
       <div className={`relative flex min-w-0 flex-1 flex-col overflow-hidden bg-[#0B0D10]${canvasZenMode ? " w-full" : ""}`}>
 
         {/* Isolation breadcrumb */}
         {!canvasZenMode && isolationDepth > 0 && (
-          <div className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-violet-900/40 border-b border-violet-500/30 text-[10px] font-bold uppercase tracking-wider">
-            <button type="button" onClick={() => exitToLevel(0)}
-              className="text-violet-300 hover:text-white transition-colors">Scene</button>
-            {isolationStackRef.current.map((frame, i) => {
-              const id = frame.kind === "clipping" ? frame.containerId : frame.groupId;
-              const label = frame.kind === "clipping"
-                ? (frame.parentObjects.find((o) => o.id === frame.containerId)?.name ?? "Clip container")
-                : frame.kind === "vectorGroup"
-                  ? "Vector group"
-                  : frame.kind === "group"
-                    ? (frame.parentObjects.find((o) => o.id === frame.groupId)?.name ?? "Carpeta")
-                    : (frame.parentObjects.find((o) => o.id === frame.groupId)?.name ?? "Boolean Group");
-              const sub = frame.kind === "clipping" && frame.editMode === "mask" ? " · mask" : "";
-              return (
-                <React.Fragment key={id}>
-                  <span className="text-violet-500/60">/</span>
-                  <button type="button"
-                    onClick={() => exitToLevel(i)}
-                    className={`${i === isolationStackRef.current.length - 1 ? "text-white" : "text-violet-300 hover:text-white"} transition-colors`}>
-                    {label}{sub}
-                  </button>
-                </React.Fragment>
-              );
-            })}
-            <span className="text-violet-500/40 ml-2 normal-case tracking-normal font-normal italic">Esc to exit · editing limited to this scope</span>
-          </div>
+          <FreehandStudioIsolationBreadcrumb
+            frames={isolationStackRef.current}
+            onExitToLevel={exitToLevel}
+          />
         )}
 
       <div
@@ -29272,19 +28064,12 @@ export function FreehandStudioCanvas({
           </div>
         </div>
 
-        {/* Status bar */}
-        <div
-          className={`flex shrink-0 border-t border-white/[0.08] ${
-            flushChrome ? "h-10 items-center bg-white/[0.04] px-3" : "flex-col gap-1.5 px-3 py-2"
-          }`}
-        >
-          <div className="flex w-full items-center justify-between text-[9px] text-zinc-500">
-            <span className={flushChrome ? "font-black uppercase tracking-[0.1em] text-white/45" : ""}>
-              {objects.length} objects · {selectedIds.size} selected
-              {isolationDepth > 0 ? ` · Isolation (depth ${isolationDepth})` : ""}
-            </span>
-          </div>
-        </div>
+        <FreehandStudioStatusBar
+          flushChrome={flushChrome}
+          objectCount={objects.length}
+          selectedCount={selectedIds.size}
+          isolationDepth={isolationDepth}
+        />
       </div>
       )}
       </div>
