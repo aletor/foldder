@@ -31,7 +31,11 @@ import type {
   PopulateInputBinding,
   PopulateNodeData,
 } from "./populate-types";
-import { findPopulateTemplateLinkEdge } from "./populate-template-link";
+import {
+  isPopulateTemplateLinkEdge,
+  findPopulateTemplateLinkEdge,
+} from "./populate-template-link";
+import { resolveSpacePortalInnerTemplate, expandSpacePortalTemplateForPipeline } from "../space-portal-populate-link";
 import { activeImageRefsSignature, resolveActiveImageRefs, type ActiveImageRef } from "./populate-active-refs";
 import { extractPromptTokens } from "./populate-tokens";
 import { resolveImageBindingForRow, resolvePromptForRow } from "./populate-resolve";
@@ -40,7 +44,9 @@ import { buildPopulateCompactSummary } from "./populate-studio-summary";
 import {
   defaultPopulateDatasetOutputSettings,
 } from "./PopulateDatasetOutputPanel";
-import { persistPopulateDatasetOutput } from "./persist-populate-dataset-output";
+import { finalizePopulateBatchRun, type FinalizePopulateChannelInput } from "./populate-batch-finalize";
+import { findPipelineSinkIds, type PipelineEdge } from "./pipeline/discover-pipeline";
+import type { RowResult } from "./pipeline/run-pipeline";
 import type { PopulateDatasetOutputSettings } from "./populate-types";
 import {
   autofillFormFromRow,
@@ -54,23 +60,22 @@ import { generatePopulateImage, type PopulateTemplateModel } from "./populate-ge
 import {
   adaptPopulateBindingsForPipeline,
   analyzePopulatePipeline,
-  buildPipelineStepsPerRow,
+  buildMultiChannelPipelinePromptTemplates,
   buildPromptTemplatesByNodeId,
   createResolveFixedExternal,
   findPopulateCreativeTemplateNodeId,
   formatPipelineCostConfirm,
-  materializedRowsFromPipeline,
 } from "./populate-pipeline-integration";
+import {
+  promptTextFromCreativeNode,
+} from "./populate-channel-prompt";
 import { defaultExecutorRegistry } from "./pipeline/executor-registry";
 import { estimatePipelineCost } from "./pipeline/estimate-pipeline-cost";
 import { executorNodeMap } from "./pipeline/pipeline-adapter";
 import { runPopulatePipeline } from "./pipeline/populate-pipeline-run";
 import {
-  buildGeneratedSubgraph,
   buildMediaListOutput,
-  buildPipelineGeneratedSubgraph,
   buildRowSubgraph,
-  isPersistableImageUrl,
   type MaterializedRow,
 } from "./populate-materialize";
 import { isNodeCloneTemplateType, resolveDesignerTemplateConfig } from "./populate-designer-template";
@@ -80,7 +85,7 @@ import {
   freezeDesignerPagesForRow,
   type DesignerMaterializedRow,
 } from "./populate-designer-materialize";
-import { rasterizeAndUploadDesignerRows, uploadDesignerSlideRaster, ensureMaterializedRowsHaveStableUrls } from "./populate-designer-raster";
+import { rasterizeAndUploadDesignerRows, uploadDesignerSlideRaster } from "./populate-designer-raster";
 import {
   deriveDesignerForm,
   freezeDesignerPagesForForm,
@@ -146,12 +151,30 @@ function resolveTemplateConfig(
   const popData = (populateNode?.data ?? {}) as PopulateNodeData;
   const nodesById = new Map(nodes.map((n) => [n.id, n]));
 
+  const innerFromSpace =
+    sinkNode.type === "space" ? resolveSpacePortalInnerTemplate(sinkNode, {}) : null;
+  const virtualTemplateNode: Node | null = innerFromSpace
+    ? {
+        id: `${sinkNode.id}__${innerFromSpace.innerNodeId}`,
+        type: innerFromSpace.nodeType,
+        position: sinkNode.position,
+        data: innerFromSpace.nodeData,
+      }
+    : null;
+
   const creativeNodeId =
     findPopulateCreativeTemplateNodeId(populateId, nodes, edges, popData.templateBindings) ??
+    virtualTemplateNode?.id ??
     linkEdge.source;
-  const tpl = nodes.find((n) => n.id === creativeNodeId) ?? sinkNode;
+  const tpl =
+    nodes.find((n) => n.id === creativeNodeId) ??
+    virtualTemplateNode ??
+    sinkNode;
   const data = (tpl.data ?? {}) as Record<string, unknown>;
-  const sinkData = (sinkNode.data ?? {}) as Record<string, unknown>;
+  const templateType = String(tpl.type ?? "");
+  const templateLabel =
+    innerFromSpace?.label ??
+    (typeof data.label === "string" && data.label.trim() ? (data.label as string) : templateType);
 
   // Declaración estándar del nodo creativo (NO hardcode por tipo).
   const declaration = getNodeOrchestrationDeclaration(tpl.type);
@@ -185,13 +208,8 @@ function resolveTemplateConfig(
 
   return {
     templateNodeId: tpl.id,
-    templateType: sinkNode.type ?? "",
-    templateLabel:
-      typeof sinkData.label === "string" && sinkData.label.trim()
-        ? (sinkData.label as string)
-        : typeof data.label === "string" && data.label.trim()
-          ? (data.label as string)
-          : "Plantilla",
+    templateType,
+    templateLabel: templateLabel || "Plantilla",
     model: {
       modelKey: data.modelKey as string | undefined,
       aspect_ratio: data.aspect_ratio as string | undefined,
@@ -237,6 +255,8 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
     collected: Record<string, string>;
   } | null>(null);
   const designerRasterSeqRef = useRef(0);
+  const batchPipelineRowsRef = useRef<RowResult[]>([]);
+  const batchCommitQueueRef = useRef(Promise.resolve());
 
   const rasterizeDesignerPages = useCallback(
     (pages: DesignerPageState[], pageIds: string[]) =>
@@ -284,8 +304,9 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
       const dataset = connectedDataset;
       if (!dataset || !listId) return [];
       const labelByFieldId = new Map(activeList?.schema.map((f) => [f.id, f.label]) ?? []);
+      const manualTokens = nodeData.templateManualTokens;
       return rowIndices.map((rowIndex) => {
-        const prompt = resolvePromptForRow(template.promptTemplate, dataset, listId, rowIndex);
+        const prompt = resolvePromptForRow(template.promptTemplate, dataset, listId, rowIndex, manualTokens);
         const refs: MaterializedRow["refs"] = [];
         for (const slot of template.activeImageRefs) {
           const binding = template.bindings[slot.inputId];
@@ -307,7 +328,7 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
         };
       });
     },
-    [connectedDataset, listId, activeList],
+    [connectedDataset, listId, activeList, nodeData.templateManualTokens],
   );
 
   const getTemplate = useCallback(
@@ -377,14 +398,18 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
 
     const flowNodes = getNodes();
     const flowEdges = getEdges();
-    const executorNodes = flowNodes.map((n) => ({
+    const { nodes: pipelineNodes, edges: pipelineEdges } = expandSpacePortalTemplateForPipeline(
+      flowNodes,
+      flowEdges,
+    );
+    const executorNodes = pipelineNodes.map((n) => ({
       id: n.id,
       type: n.type ?? "",
       data: (n.data ?? {}) as Record<string, unknown>,
     }));
 
     const bindings = nodeData.templateBindings ?? template.bindings ?? {};
-    const analysis = analyzePopulatePipeline(id, executorNodes, flowEdges, bindings);
+    const analysis = analyzePopulatePipeline(id, executorNodes, pipelineEdges, bindings);
     if (!analysis.validation.ok) {
       setError(analysis.validation.errors.join(" "));
       return;
@@ -392,11 +417,54 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
 
     const nodeById = executorNodeMap(executorNodes);
     const adaptedBindings = adaptPopulateBindingsForPipeline(bindings, analysis, nodeById);
-    const promptTemplatesByNodeId = buildPromptTemplatesByNodeId({
-      analysis,
-      templatePrompt: nodeData.templatePrompt ?? template.promptTemplate,
-      nodeById,
-    });
+
+    // Multi-canal: si hay 2+ creadores conectados a la plantilla, un canal por sink (cada uno
+    // genera su imagen y se vuelca a su propia columna). Con 1 sink, camino legacy intacto.
+    const sinkIds = analysis.sinkIds;
+    const channelInputs: FinalizePopulateChannelInput[] =
+      sinkIds.length > 1
+        ? sinkIds.map((sid, i) => {
+            const sNode = nodeById.get(sid);
+            const sData = (sNode?.data ?? {}) as Record<string, unknown>;
+            const sLabel =
+              nodeData.channelLabels?.[sid] ??
+              (typeof sData.label === "string" && sData.label.trim()
+                ? (sData.label as string)
+                : `Canal ${i + 1}`);
+            const nodePrompt = promptTextFromCreativeNode(sNode);
+            const channelPrompt = nodeData.channelPrompts?.[sid];
+            return {
+              channelId: sid,
+              label: sLabel,
+              templateType: sNode?.type ?? "nanoBanana",
+              nodePrompt,
+              channelPrompt,
+              templateModel: {
+                modelKey: sData.modelKey as string | undefined,
+                aspect_ratio: sData.aspect_ratio as string | undefined,
+                resolution: sData.resolution as string | undefined,
+                thinking: sData.thinking as boolean | undefined,
+                imageProvider: sData.imageProvider as string | undefined,
+              },
+              settings: nodeData.datasetOutputsByChannel?.[sid],
+            };
+          })
+        : [];
+    const runMultiChannel = channelInputs.length > 1;
+    const templatePromptForRun = nodeData.templatePrompt ?? template.promptTemplate;
+    const promptTemplatesByNodeId = runMultiChannel
+      ? buildMultiChannelPipelinePromptTemplates({
+          channels: channelInputs,
+          analysis,
+          edges: pipelineEdges,
+          nodeById,
+          templatePrompt: templatePromptForRun,
+        })
+      : buildPromptTemplatesByNodeId({
+          analysis,
+          templatePrompt: templatePromptForRun,
+          nodeById,
+        });
     const cost = estimatePipelineCost({
       order: analysis.order,
       iterated: analysis.iterated,
@@ -416,7 +484,9 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
         formatPipelineCostConfirm({
           rowCount,
           cost,
-          sinkLabel: template.templateLabel,
+          sinkLabel: runMultiChannel
+            ? `${channelInputs.length} canales: ${channelInputs.map((c) => c.label).join(", ")}`
+            : template.templateLabel,
         }),
       );
       if (!ok) return;
@@ -424,125 +494,136 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
 
     setBusy(true);
     setProgress({ done: 0, total: rowCount });
-    patchSelf({ status: "running", progressTotal: rowCount, progressDone: 0, error: undefined });
+    patchSelf({
+      status: "running",
+      progressTotal: rowCount,
+      progressDone: 0,
+      error: undefined,
+      lastRunFailures: undefined,
+      lastRunOkCount: undefined,
+      lastRunFailedCount: undefined,
+    });
 
     const label = nodeData.label || "Populate";
     const templatePrompt = nodeData.templatePrompt ?? template.promptTemplate;
+    const cardIdsByRow = activeList?.cards.map((c) => c.id) ?? [];
 
-    try {
-      const pipelineResult = await runPopulatePipeline({
+    batchPipelineRowsRef.current = [];
+    batchCommitQueueRef.current = Promise.resolve();
+
+    const applyBatchResult = async (
+      pipelineRows: RowResult[],
+      opts: { writeDataset: boolean; abortError?: string },
+    ) => {
+      const result = await finalizePopulateBatchRun({
         populateId: id,
-        nodes: executorNodes,
-        edges: flowEdges,
-        dataset: connectedDataset,
-        listId,
-        bindings: adaptedBindings,
+        label,
+        projectId,
+        pipelineRows,
+        totalRows: rowCount,
         templatePrompt,
-        promptTemplatesByNodeId,
-        registry: defaultExecutorRegistry,
-        ownerEmail,
-        resolveFixedExternal: createResolveFixedExternal(flowNodes, flowEdges),
-        onRowResult: (row) => {
-          setProgress({ done: row.rowIndex + 1, total: rowCount });
-          patchSelf({ progressDone: row.rowIndex + 1 });
-        },
-      });
-
-      const cardIdsByRow = activeList?.cards.map((c) => c.id) ?? [];
-      let rows = materializedRowsFromPipeline({
-        rows: pipelineResult.rows,
-        templatePrompt,
-        dataset: connectedDataset,
+        connectedDataset,
         listId,
         bindings: template.bindings,
         activeImageRefs: template.activeImageRefs,
         fixedRefUrls: template.fixedRefUrls,
         cardIdsByRow,
-      });
-      rows = await ensureMaterializedRowsHaveStableUrls(rows, projectId, id);
-
-      const stepsPerRow = buildPipelineStepsPerRow({
-        order: analysis.order,
+        manualTokenValues: nodeData.templateManualTokens,
+        analysisOrder: analysis.order,
         nodeById,
-        pipelineRows: pipelineResult.rows,
+        templateModel: template.model,
+        templateType: template.templateType,
+        soleNanoSink:
+          analysis.order.length === 1 && nodeById.get(analysis.order[0]!)?.type === "nanoBanana",
+        datasetOutput: nodeData.datasetOutput,
+        channels: runMultiChannel ? channelInputs : undefined,
+        flowNodes,
+        flowEdges,
+        setNodes,
+        writeDataset: opts.writeDataset,
+        abortError: opts.abortError,
       });
-      const soleNanoSink =
-        analysis.order.length === 1 && nodeById.get(analysis.order[0]!)?.type === "nanoBanana";
-      const sub = soleNanoSink
-        ? buildGeneratedSubgraph(id, rows, template.model, "nanoBanana")
-        : buildPipelineGeneratedSubgraph(id, rows, template.model, stepsPerRow);
-      const mediaList = buildMediaListOutput(id, label, rows);
-      const imageOutputs = rows
-        .map((r) => r.output)
-        .filter((u): u is string => isPersistableImageUrl(u));
-      const firstOutput = imageOutputs[0] ?? rows.find((r) => r.output)?.output ?? "";
-      const lastRunOutputs = imageOutputs.length > 0 ? imageOutputs : rows.filter((r) => r.output).map((r) => r.output!);
 
-      let lastDatasetWriteSummary: string | undefined;
-      const outputSettings = nodeData.datasetOutput;
-      if (outputSettings?.enabled && connectedDataset && listId) {
-        const rowsWithImages = rows.filter((r) => isPersistableImageUrl(r.output));
-        if (rowsWithImages.length === 0 && pipelineResult.okCount > 0) {
-          setError("La salida de la tubería no es imagen; no se puede volcar al Dataset como imagen.");
-        } else {
-          try {
-            const writeResult = await persistPopulateDatasetOutput({
-              populateNodeId: id,
-              nodes: flowNodes,
-              edges: flowEdges,
-              dataset: connectedDataset,
-              listId,
-              rows: rowsWithImages.length > 0 ? rowsWithImages : rows,
-              settings: outputSettings,
-              setNodes,
-            });
-            const skipped =
-              writeResult.skippedCount > 0 ? ` · ${writeResult.skippedCount} omitidas` : "";
-            lastDatasetWriteSummary = `${writeResult.writtenCount} celdas → «${writeResult.fieldLabel}»${skipped}`;
-          } catch (writeErr) {
-            console.error("[Populate] dataset output", writeErr);
-            setError(
-              writeErr instanceof Error
-                ? writeErr.message
-                : "Error al guardar resultados en el Dataset.",
-            );
-          }
-        }
-      }
-
-      if (pipelineResult.failedCount > 0 && pipelineResult.okCount === 0) {
-        const firstErr = pipelineResult.rows.find((r) => r.error)?.error;
-        setError(firstErr ?? `Fallaron las ${pipelineResult.failedCount} filas.`);
-        patchSelf({ status: "error" });
-      } else {
-        if (pipelineResult.failedCount > 0) {
-          setError(
-            `${pipelineResult.failedCount} fila${pipelineResult.failedCount === 1 ? "" : "s"} fallaron; ` +
-              `${pipelineResult.okCount} correctas.`,
-          );
-        }
+      if (result.lastRunOutputs.length > 0) {
         window.dispatchEvent(
           new CustomEvent(POPULATE_COMMIT_EVENT, {
             detail: {
               populateNodeId: id,
               spaceName: label,
-              nodes: sub.nodes,
-              edges: sub.edges,
-              mediaListOutput: mediaList,
-              value: firstOutput,
+              nodes: result.subgraph.nodes,
+              edges: result.subgraph.edges,
+              mediaListOutput: result.mediaList,
+              value: result.firstOutput,
             },
           }),
         );
-        patchSelf({
-          status: "done",
-          lastRunOutputs,
-          value: firstOutput || undefined,
-          lastDatasetWriteSummary,
-        });
       }
+
+      patchSelf({
+        status: result.status,
+        lastRunOutputs: result.lastRunOutputs,
+        value: result.firstOutput || undefined,
+        lastDatasetWriteSummary: result.lastDatasetWriteSummary,
+        mediaListOutput: result.mediaList,
+        lastRunFailures: result.failures.length > 0 ? result.failures : undefined,
+        lastRunOkCount: result.okCount,
+        lastRunFailedCount: result.failedCount,
+        progressDone: pipelineRows.length,
+        error: result.summaryError,
+      });
+
+      if (result.summaryError) setError(result.summaryError);
+      else if (result.okCount > 0 && result.failedCount === 0 && !opts.abortError) setError(null);
+    };
+
+    const queueIncrementalCommit = (rows: RowResult[]) => {
+      batchCommitQueueRef.current = batchCommitQueueRef.current
+        .then(async () => {
+          await applyBatchResult(rows, { writeDataset: false });
+        })
+        .catch((err) => {
+          console.error("[Populate] incremental commit", err);
+        });
+    };
+
+    try {
+      const pipelineResult = await runPopulatePipeline({
+        populateId: id,
+        nodes: executorNodes,
+        edges: pipelineEdges,
+        dataset: connectedDataset,
+        listId,
+        bindings: adaptedBindings,
+        templatePrompt,
+        promptTemplatesByNodeId,
+        manualTokenValues: nodeData.templateManualTokens,
+        registry: defaultExecutorRegistry,
+        ownerEmail,
+        resolveFixedExternal: createResolveFixedExternal(pipelineNodes, pipelineEdges),
+        onRowResult: (row) => {
+          batchPipelineRowsRef.current[row.rowIndex] = row;
+          const doneCount = row.rowIndex + 1;
+          setProgress({ done: doneCount, total: rowCount });
+          patchSelf({ progressDone: doneCount });
+          queueIncrementalCommit([...batchPipelineRowsRef.current.filter(Boolean)]);
+        },
+      });
+
+      batchPipelineRowsRef.current = pipelineResult.rows;
+      await batchCommitQueueRef.current;
+      await applyBatchResult(pipelineResult.rows, { writeDataset: true });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error en el lote.");
-      patchSelf({ status: "error" });
+      await batchCommitQueueRef.current;
+      const partial = batchPipelineRowsRef.current.filter(Boolean);
+      if (partial.length > 0) {
+        await applyBatchResult(partial, {
+          writeDataset: true,
+          abortError: err instanceof Error ? err.message : "Error en el lote.",
+        });
+      } else {
+        setError(err instanceof Error ? err.message : "Error en el lote.");
+        patchSelf({ status: "error" });
+      }
     } finally {
       setBusy(false);
       setProgress(null);
@@ -555,7 +636,11 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
     nodeData.label,
     nodeData.templateBindings,
     nodeData.templatePrompt,
+    nodeData.templateManualTokens,
     nodeData.datasetOutput,
+    nodeData.datasetOutputsByChannel,
+    nodeData.channelLabels,
+    nodeData.channelPrompts,
     connectedDataset,
     listId,
     getNodes,
@@ -563,6 +648,7 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
     setNodes,
     ownerEmail,
     activeList,
+    projectId,
   ]);
 
   /**
@@ -740,6 +826,84 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
     [getTemplate, templateSignature, nodeData.templatePrompt, nodeData.templateBindings],
   );
 
+  // Firma reactiva de los CANALES (sinks): un canal por nodo creativo conectado a `template`.
+  const channelsSignature = useStore(
+    useCallback(
+      (s: ReactFlowState<Node, Edge>) =>
+        s.edges
+          .filter((e) => e.target === id && e.targetHandle === "template")
+          .map((e) => {
+            const n = s.nodes.find((nn) => nn.id === e.source);
+            const d = (n?.data ?? {}) as Record<string, unknown>;
+            const nodePrompt = typeof d.promptText === "string" ? d.promptText : "";
+            return `${e.source}:${n?.type ?? ""}:${typeof d.label === "string" ? d.label : ""}:${nodePrompt}`;
+          })
+          .join("|"),
+      [id],
+    ),
+  );
+
+  /** Canales detectados (sinks). Con ≥2 el Studio muestra una columna destino por canal. */
+  const populateChannels = useMemo<{ channelId: string; label: string }[]>(() => {
+    const nodes = getNodes();
+    const edges = getEdges();
+    const sinkIds = findPipelineSinkIds(id, edges as unknown as PipelineEdge[]);
+    return sinkIds.map((sid, i) => {
+      const n = nodes.find((nn) => nn.id === sid);
+      const d = (n?.data ?? {}) as Record<string, unknown>;
+      const label =
+        nodeData.channelLabels?.[sid] ??
+        (typeof d.label === "string" && d.label.trim() ? (d.label as string) : `Canal ${i + 1}`);
+      return { channelId: sid, label };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, getNodes, getEdges, channelsSignature, nodeData.channelLabels]);
+
+  const isMultiChannel = populateChannels.length > 1;
+
+  const channelOutputs = useMemo(() => {
+    const nodes = getNodes();
+    return populateChannels.map((ch) => {
+      const n = nodes.find((nn) => nn.id === ch.channelId);
+      const executorNode = n
+        ? { id: ch.channelId, type: n.type ?? "", data: (n.data ?? {}) as Record<string, unknown> }
+        : undefined;
+      return {
+        channelId: ch.channelId,
+        label: ch.label,
+        nodePrompt: promptTextFromCreativeNode(executorNode),
+        channelPrompt: nodeData.channelPrompts?.[ch.channelId] ?? "",
+        settings:
+          nodeData.datasetOutputsByChannel?.[ch.channelId] ??
+          defaultPopulateDatasetOutputSettings(ch.label),
+      };
+    });
+  }, [populateChannels, nodeData.datasetOutputsByChannel, nodeData.channelPrompts, getNodes]);
+
+  const onChangeChannelOutput = useCallback(
+    (channelId: string, next: PopulateDatasetOutputSettings) => {
+      patchSelf({
+        datasetOutputsByChannel: {
+          ...(nodeData.datasetOutputsByChannel ?? {}),
+          [channelId]: next,
+        },
+      });
+    },
+    [patchSelf, nodeData.datasetOutputsByChannel],
+  );
+
+  const onChangeChannelPrompt = useCallback(
+    (channelId: string, next: string) => {
+      patchSelf({
+        channelPrompts: {
+          ...(nodeData.channelPrompts ?? {}),
+          [channelId]: next,
+        },
+      });
+    },
+    [patchSelf, nodeData.channelPrompts],
+  );
+
   // Firma reactiva del template de tipo `node-clone` (Designer): nº de páginas + campos dinámicos.
   const designerSignature = useStore(
     useCallback(
@@ -914,6 +1078,26 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
     [id, setNodes, template?.bindings],
   );
 
+  /**
+   * Marca/desmarca un token del prompt como "manual" y guarda su valor.
+   * `value === null` ⇒ vuelve a columna/constante (se borra el token manual).
+   */
+  const onChangeTemplateManualToken = useCallback(
+    (tokenKey: string, value: string | null) => {
+      setNodes((nds) =>
+        nds.map((n) => {
+          if (n.id !== id) return n;
+          const d = (n.data ?? {}) as PopulateNodeData;
+          const next: Record<string, string> = { ...(d.templateManualTokens ?? {}) };
+          if (value === null) delete next[tokenKey];
+          else next[tokenKey] = value;
+          return { ...n, data: { ...n.data, templateManualTokens: next } };
+        }),
+      );
+    },
+    [id, setNodes],
+  );
+
   /** Resumen de mapeo: qué referencias toman columna y cuántos {campos} hay en el prompt. */
   const mapping = useMemo(() => {
     if (!template) return { columnRefs: [] as string[], tokenCount: 0 };
@@ -1071,7 +1255,7 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
           },
         }),
       );
-      patchSelf({ status: "done", lastRunOutputs: [result.output], value: result.output });
+      patchSelf({ status: "done", lastRunOutputs: [result.output], value: result.output, mediaListOutput: mediaList });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al generar la pieza.");
       patchSelf({ status: "error" });
@@ -1196,6 +1380,11 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
   const progressPct =
     progress && progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
   const lastRunOutputs = nodeData.lastRunOutputs ?? [];
+  const lastRunFailures = nodeData.lastRunFailures ?? [];
+  const runStatus = nodeData.status;
+  const lastRunOkCount = nodeData.lastRunOkCount;
+  const lastRunFailedCount = nodeData.lastRunFailedCount;
+  const studioError = error ?? nodeData.error ?? null;
   const compactSummary = buildPopulateCompactSummary({
     listName,
     rowCount,
@@ -1334,16 +1523,20 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
                 <p className="populate-node-summary__meta">
                   Última ejecución: {lastRunOutputs.length} imagen
                   {lastRunOutputs.length === 1 ? "" : "es"}
+                  {runStatus === "partial" ? " · parcial" : ""}
+                  {nodeData.lastRunFailedCount
+                    ? ` · ${nodeData.lastRunFailedCount} fallo${nodeData.lastRunFailedCount === 1 ? "" : "s"}`
+                    : ""}
                 </p>
               ) : null}
             </>
           )}
         </div>
 
-        {error ? (
+        {studioError ? (
           <div className="foldder-frameless-error nodrag flex items-start gap-1.5 px-2 py-1 text-[10px]">
             <AlertTriangle size={11} className="mt-0.5 shrink-0" />
-            <span>{error}</span>
+            <span>{studioError}</span>
           </div>
         ) : null}
 
@@ -1396,7 +1589,7 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
             </button>
           ) : null}
 
-          {nodeData.spaceId ? (
+          {(nodeData.spaceId || lastRunOutputs.length > 0) ? (
             <button
               type="button"
               onClick={(e) => {
@@ -1428,6 +1621,8 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
           model={genModel}
           onChangePrompt={onChangeTemplatePrompt}
           onChangeBinding={onChangeTemplateBinding}
+          manualTokens={nodeData.templateManualTokens ?? {}}
+          onChangeManualToken={onChangeTemplateManualToken}
           schema={activeList?.schema ?? []}
           constantFields={connectedDataset?.constants.fields ?? []}
           listId={listId}
@@ -1447,6 +1642,10 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
           busy={busy}
           progress={progress}
           lastRunOutputs={lastRunOutputs}
+          lastRunFailures={lastRunFailures}
+          lastRunOkCount={lastRunOkCount}
+          lastRunFailedCount={lastRunFailedCount}
+          runStatus={runStatus}
           previewRowIndex={previewRowIndex}
           onPreviewRowChange={onPreviewRowChange}
           previewUrl={previewUrl}
@@ -1459,9 +1658,12 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
           shareError={shareError}
           onShare={() => void onShareForm()}
           onCopyShareUrl={onCopyShareUrl}
-          error={error}
+          error={studioError}
           datasetOutput={datasetOutputSettings}
           onChangeDatasetOutput={onChangeDatasetOutput}
+          channels={isMultiChannel ? channelOutputs : undefined}
+          onChangeChannelOutput={onChangeChannelOutput}
+          onChangeChannelPrompt={onChangeChannelPrompt}
           lastDatasetWriteSummary={nodeData.lastDatasetWriteSummary ?? null}
           isDesignerTemplate={isDesignerTemplate}
           designerFields={designerTemplate?.dynamicFields ?? []}

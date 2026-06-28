@@ -31,7 +31,7 @@ import { useFoldderRenderMetric } from "../use-performance-metrics";
 const GUIONISTA_NODE_HANDLES: StudioCanvasNodeHandleSpec[] = [
   { side: "left", top: "30%", type: "target", id: "prompt", dataType: "prompt", label: "Prompt" },
   { side: "left", top: "52%", type: "target", id: "text", dataType: "txt", label: "Text" },
-  { side: "left", top: "74%", type: "target", id: "brain", dataType: "brain", label: "Brain" },
+  { side: "left", top: "74%", type: "target", id: "brain", dataType: "brain", label: "BrandKit" },
   { side: "right", top: "38%", type: "source", id: "text", dataType: "txt", label: "Text out" },
   { side: "right", top: "68%", type: "source", id: "prompt", dataType: "prompt", label: "Prompt out" },
 ];
@@ -392,7 +392,7 @@ export const GuionistaNode = memo(function GuionistaNode({ id, data, selected }:
             </div>
           </div>
           <p className="mt-2 line-clamp-3 text-[11px] font-light leading-relaxed text-slate-600">
-            {hasGeneratedText ? compactText.preview : "Conecta una idea, texto o Brain y abre Studio para escribir."}
+            {hasGeneratedText ? compactText.preview : "Conecta una idea, texto o BrandKit y abre Studio para escribir."}
           </p>
 
           <div className="mt-3 flex flex-wrap items-center gap-1.5">
@@ -405,7 +405,7 @@ export const GuionistaNode = memo(function GuionistaNode({ id, data, selected }:
               </span>
             )}
             <StudioCanvasPill active={brainConnected} activeClassName="border-sky-400/20 bg-sky-400/10 text-sky-700">
-              {brainConnected ? "Brain" : "Sin Brain"}
+              {brainConnected ? "BrandKit" : "Sin BrandKit"}
             </StudioCanvasPill>
           </div>
         </div>

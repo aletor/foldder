@@ -1,7 +1,7 @@
 "use client";
 
-import React from "react";
-import { Columns3, Pin, Plus } from "lucide-react";
+import React, { useCallback, useEffect, useState } from "react";
+import { Columns3, Pin, Plus, X } from "lucide-react";
 
 export const DATASET_STUDIO_ACCENT = "#14b8a6";
 
@@ -22,6 +22,9 @@ export function DatasetSheetTabBar({
   onNewTabNameChange,
   onConfirmNewTab,
   onCancelNewTab,
+  onDeleteList,
+  canDeleteLists = false,
+  onRenameList,
   sharedFieldCount,
 }: {
   lists: Array<{ id: string; name: string; cards: unknown[] }>;
@@ -36,8 +39,38 @@ export function DatasetSheetTabBar({
   onNewTabNameChange: (v: string) => void;
   onConfirmNewTab: () => void;
   onCancelNewTab: () => void;
+  onDeleteList?: (listId: string) => void;
+  canDeleteLists?: boolean;
+  onRenameList?: (listId: string, name: string) => void;
   sharedFieldCount: number;
 }) {
+  const [renamingListId, setRenamingListId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+
+  const cancelRename = useCallback(() => {
+    setRenamingListId(null);
+    setRenameDraft("");
+  }, []);
+
+  const confirmRename = useCallback(() => {
+    if (!renamingListId || !onRenameList) {
+      cancelRename();
+      return;
+    }
+    const trimmed = renameDraft.trim();
+    if (trimmed) onRenameList(renamingListId, trimmed);
+    cancelRename();
+  }, [cancelRename, onRenameList, renameDraft, renamingListId]);
+
+  useEffect(() => {
+    if (!renamingListId) return undefined;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") cancelRename();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [cancelRename, renamingListId]);
+
   return (
     <nav
       className="flex h-10 shrink-0 border-b border-white/10 bg-white/[0.06]"
@@ -46,22 +79,67 @@ export function DatasetSheetTabBar({
       <div className="custom-scrollbar flex min-w-0 flex-1 overflow-x-auto divide-x divide-white/10">
         {lists.map((list) => {
           const active = !isShared && activeSheetId === list.id;
+          const deletable = canDeleteLists && onDeleteList && renamingListId !== list.id;
+          const renaming = renamingListId === list.id;
           return (
-            <button
+            <div
               key={list.id}
-              type="button"
-              onClick={() => onSelectList(list.id)}
-              aria-current={active ? "page" : undefined}
               className={cx(
-                "flex shrink-0 items-center gap-1.5 px-3 text-[9px] font-black uppercase tracking-[0.08em] transition",
-                active ? "bg-white text-slate-950" : "text-white/45 hover:bg-white/[0.08] hover:text-white/78",
+                "group/tab flex shrink-0 items-stretch transition",
+                active || renaming ? "bg-white text-slate-950" : "text-white/45 hover:bg-white/[0.08] hover:text-white/78",
               )}
             >
-              <span className="max-w-[120px] truncate">{list.name}</span>
-              <span className={cx("tabular-nums", active ? "text-slate-600" : "text-white/30")}>
-                {list.cards.length}
-              </span>
-            </button>
+              {renaming ? (
+                <input
+                  autoFocus
+                  value={renameDraft}
+                  onChange={(e) => setRenameDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") confirmRename();
+                    if (e.key === "Escape") cancelRename();
+                  }}
+                  onBlur={confirmRename}
+                  aria-label={`Renombrar pestaña ${list.name}`}
+                  className="w-28 min-w-0 bg-transparent px-3 text-[9px] font-black uppercase tracking-[0.08em] text-slate-950 outline-none placeholder:text-slate-400"
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => onSelectList(list.id)}
+                  onDoubleClick={(e) => {
+                    e.preventDefault();
+                    if (!onRenameList) return;
+                    onSelectList(list.id);
+                    setRenamingListId(list.id);
+                    setRenameDraft(list.name);
+                  }}
+                  title={onRenameList ? `${list.name} · doble clic para renombrar` : list.name}
+                  aria-current={active ? "page" : undefined}
+                  className="flex min-w-0 items-center gap-1.5 px-3 text-[9px] font-black uppercase tracking-[0.08em]"
+                >
+                  <span className="max-w-[120px] truncate">{list.name}</span>
+                  <span className={cx("tabular-nums", active ? "text-slate-600" : "text-white/30")}>
+                    {list.cards.length}
+                  </span>
+                </button>
+              )}
+              {deletable ? (
+                <button
+                  type="button"
+                  onClick={() => onDeleteList(list.id)}
+                  title={`Eliminar «${list.name}»`}
+                  aria-label={`Eliminar pestaña ${list.name}`}
+                  className={cx(
+                    "flex w-7 shrink-0 items-center justify-center transition",
+                    active
+                      ? "text-slate-400 hover:bg-rose-500/15 hover:text-rose-600"
+                      : "text-white/25 opacity-0 group-hover/tab:opacity-100 hover:bg-rose-500/20 hover:text-rose-300",
+                  )}
+                >
+                  <X size={12} strokeWidth={2.5} />
+                </button>
+              ) : null}
+            </div>
           );
         })}
 

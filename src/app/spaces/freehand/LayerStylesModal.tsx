@@ -6,10 +6,16 @@ import { X } from "lucide-react";
 import { ScrubNumberInput } from "../ScrubNumberInput";
 import {
   defaultLayerEffects,
+  defaultPhotoFilter,
+  isSvgPhotoFilterPreset,
+  PHOTO_FILTER_PRESETS,
+  photoFilterCssString,
   type LayerEffectBlendMode,
   type LayerEffects,
   type OuterGlowTechnique,
+  type PhotoFilterPreset,
 } from "./layer-effects-types";
+import { PhotoFilterSvgFilter } from "./PhotoFilterSvg";
 
 const PROP_PANEL_SCRUB_CLASS =
   "cursor-ew-resize rounded-none border border-white/10 bg-black/30 px-2 py-1 font-mono text-[11px] tabular-nums text-white outline-none focus:border-[#71449f] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none";
@@ -36,7 +42,7 @@ const BLEND_OPTIONS: { value: LayerEffectBlendMode; label: string }[] = [
   { value: "plus-darker", label: "Subexponer lineal" },
 ];
 
-type EffectTab = "colorOverlay" | "gradientOverlay" | "outerGlow";
+type EffectTab = "colorOverlay" | "gradientOverlay" | "outerGlow" | "photoFilter";
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
@@ -44,6 +50,7 @@ function clamp(n: number, lo: number, hi: number): number {
 
 export function LayerStylesModal({
   open,
+  targetType,
   draft,
   onDraftChange,
   onOk,
@@ -51,13 +58,19 @@ export function LayerStylesModal({
   onReset,
 }: {
   open: boolean;
+  targetType?: string;
   draft: LayerEffects;
   onDraftChange: (next: LayerEffects) => void;
   onOk: () => void;
   onCancel: () => void;
   onReset: () => void;
 }) {
-  const [tab, setTab] = useState<EffectTab>("colorOverlay");
+  /**
+   * Texto (`<foreignObject>`) y carpetas (grupo de capas) solo soportan de forma fiable el filtro
+   * fotográfico (filter CSS); los overlays color/degradado/glow requieren una silueta raster propia.
+   */
+  const overlaysSupported = targetType !== "text" && targetType !== "groupContainer";
+  const [tab, setTab] = useState<EffectTab>(overlaysSupported ? "colorOverlay" : "photoFilter");
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const dragSessionRef = useRef<{
     pointerId: number;
@@ -69,18 +82,20 @@ export function LayerStylesModal({
 
   useEffect(() => {
     if (open) {
-      setTab("colorOverlay");
+      setTab(overlaysSupported ? "colorOverlay" : "photoFilter");
       setDragOffset({ x: 0, y: 0 });
     }
-  }, [open]);
+  }, [open, overlaysSupported]);
 
   const co = draft.colorOverlay!;
   const go = draft.gradientOverlay!;
   const og = draft.outerGlow ?? defaultLayerEffects().outerGlow!;
+  const pf = draft.photoFilter ?? defaultPhotoFilter();
 
   const coEnabled = !!co.enabled;
   const goEnabled = !!go.enabled;
   const ogEnabled = !!og.enabled;
+  const pfEnabled = !!pf.enabled;
 
   /** No usar `<label>` + `<button>` anidados: en varios navegadores el clic no llega a `setTab` y el panel no cambia. */
   const tabItems: {
@@ -89,23 +104,33 @@ export function LayerStylesModal({
     enabled: boolean;
     onToggle: (checked: boolean) => void;
   }[] = [
+    ...(overlaysSupported
+      ? [
+          {
+            id: "colorOverlay" as EffectTab,
+            label: "Color Overlay",
+            enabled: coEnabled,
+            onToggle: (c: boolean) => onDraftChange({ ...draft, colorOverlay: { ...co, enabled: c } }),
+          },
+          {
+            id: "gradientOverlay" as EffectTab,
+            label: "Gradient Overlay",
+            enabled: goEnabled,
+            onToggle: (c: boolean) => onDraftChange({ ...draft, gradientOverlay: { ...go, enabled: c } }),
+          },
+          {
+            id: "outerGlow" as EffectTab,
+            label: "Outer Glow",
+            enabled: ogEnabled,
+            onToggle: (c: boolean) => onDraftChange({ ...draft, outerGlow: { ...og, enabled: c } }),
+          },
+        ]
+      : []),
     {
-      id: "colorOverlay",
-      label: "Color Overlay",
-      enabled: coEnabled,
-      onToggle: (c) => onDraftChange({ ...draft, colorOverlay: { ...co, enabled: c } }),
-    },
-    {
-      id: "gradientOverlay",
-      label: "Gradient Overlay",
-      enabled: goEnabled,
-      onToggle: (c) => onDraftChange({ ...draft, gradientOverlay: { ...go, enabled: c } }),
-    },
-    {
-      id: "outerGlow",
-      label: "Outer Glow",
-      enabled: ogEnabled,
-      onToggle: (c) => onDraftChange({ ...draft, outerGlow: { ...og, enabled: c } }),
+      id: "photoFilter",
+      label: "Filtro de foto",
+      enabled: pfEnabled,
+      onToggle: (c) => onDraftChange({ ...draft, photoFilter: { ...pf, enabled: c } }),
     },
   ];
 
@@ -517,7 +542,7 @@ export function LayerStylesModal({
           ))}
         </div>
       </div>
-    ) : (
+    ) : tab === "outerGlow" ? (
       <div className="space-y-2.5 p-3">
         <div className="space-y-1">
           <span className="text-[8px] font-black uppercase tracking-[0.12em] text-white/40">Fusión</span>
@@ -935,6 +960,194 @@ export function LayerStylesModal({
             />
           </div>
         </div>
+      </div>
+    ) : (
+      <div className="space-y-3 p-3">
+        {/* defs SVG ocultos para el preview de presets de mapeo tonal (duotono/teal&orange/split-tone). */}
+        <svg width={0} height={0} aria-hidden style={{ position: "absolute" }}>
+          <defs>
+            {PHOTO_FILTER_PRESETS.filter((p) => isSvgPhotoFilterPreset(p.id)).map((p) => (
+              <PhotoFilterSvgFilter
+                key={p.id}
+                id={`fh-pf-prev-${p.id}`}
+                preset={p.id}
+                intensity={1}
+              />
+            ))}
+          </defs>
+        </svg>
+        <div className="space-y-1.5">
+          <span className="text-[8px] font-black uppercase tracking-[0.12em] text-white/40">Preajuste</span>
+          <div className="grid grid-cols-3 gap-1.5">
+            {PHOTO_FILTER_PRESETS.map((p) => {
+              const active = pf.preset === p.id;
+              const previewFilter = isSvgPhotoFilterPreset(p.id)
+                ? `url(#fh-pf-prev-${p.id})`
+                : photoFilterCssString(p.id, 1);
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() =>
+                    onDraftChange({
+                      ...draft,
+                      photoFilter: { ...pf, enabled: true, preset: p.id as PhotoFilterPreset },
+                    })
+                  }
+                  className={`flex flex-col items-stretch gap-1 rounded-none border p-1 text-left transition ${
+                    active
+                      ? "border-[#71449f] bg-[#71449f]/20"
+                      : "border-white/10 hover:border-white/25 hover:bg-white/[0.04]"
+                  }`}
+                  title={p.label}
+                >
+                  <span
+                    className="h-9 w-full"
+                    style={{
+                      backgroundImage:
+                        "linear-gradient(135deg, #6b5b3a 0%, #c98f5a 35%, #e8cba0 60%, #4a6b7a 100%)",
+                      filter: previewFilter,
+                    }}
+                    aria-hidden
+                  />
+                  <span
+                    className={`truncate text-[9px] ${active ? "font-semibold text-white" : "text-white/55"}`}
+                  >
+                    {p.label}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <div className="space-y-1">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[8px] font-black uppercase tracking-[0.12em] text-white/40">Intensidad</span>
+            <ScrubNumberInput
+              value={Math.round(pf.intensity * 100)}
+              onKeyboardCommit={(n) =>
+                onDraftChange({ ...draft, photoFilter: { ...pf, intensity: clamp(Math.round(n), 0, 100) / 100 } })
+              }
+              onScrubLive={(n) =>
+                onDraftChange({ ...draft, photoFilter: { ...pf, intensity: clamp(Math.round(n), 0, 100) / 100 } })
+              }
+              onScrubEnd={() => {}}
+              step={1}
+              roundFn={(n) => clamp(Math.round(n), 0, 100)}
+              min={0}
+              max={100}
+              title={`% · ${PROP_PANEL_SCRUB_HINT}`}
+              className={`w-14 text-right ${PROP_PANEL_SCRUB_CLASS}`}
+            />
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={Math.round(pf.intensity * 100)}
+            onChange={(e) =>
+              onDraftChange({ ...draft, photoFilter: { ...pf, intensity: Number(e.target.value) / 100 } })
+            }
+            className="w-full accent-[#71449f]"
+          />
+        </div>
+        <div className="space-y-1">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[8px] font-black uppercase tracking-[0.12em] text-white/40">Grano</span>
+            <ScrubNumberInput
+              value={Math.round(pf.grain * 100)}
+              onKeyboardCommit={(n) =>
+                onDraftChange({ ...draft, photoFilter: { ...pf, grain: clamp(Math.round(n), 0, 100) / 100 } })
+              }
+              onScrubLive={(n) =>
+                onDraftChange({ ...draft, photoFilter: { ...pf, grain: clamp(Math.round(n), 0, 100) / 100 } })
+              }
+              onScrubEnd={() => {}}
+              step={1}
+              roundFn={(n) => clamp(Math.round(n), 0, 100)}
+              min={0}
+              max={100}
+              title={`% · ${PROP_PANEL_SCRUB_HINT}`}
+              className={`w-14 text-right ${PROP_PANEL_SCRUB_CLASS}`}
+            />
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={Math.round(pf.grain * 100)}
+            onChange={(e) =>
+              onDraftChange({ ...draft, photoFilter: { ...pf, grain: Number(e.target.value) / 100 } })
+            }
+            className="w-full accent-[#71449f]"
+          />
+        </div>
+        <div className="space-y-1">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[8px] font-black uppercase tracking-[0.12em] text-white/40">Tamaño grano</span>
+            <ScrubNumberInput
+              value={Math.round((pf.grainSize ?? 0.5) * 100)}
+              onKeyboardCommit={(n) =>
+                onDraftChange({ ...draft, photoFilter: { ...pf, grainSize: clamp(Math.round(n), 0, 100) / 100 } })
+              }
+              onScrubLive={(n) =>
+                onDraftChange({ ...draft, photoFilter: { ...pf, grainSize: clamp(Math.round(n), 0, 100) / 100 } })
+              }
+              onScrubEnd={() => {}}
+              step={1}
+              roundFn={(n) => clamp(Math.round(n), 0, 100)}
+              min={0}
+              max={100}
+              title={`% · ${PROP_PANEL_SCRUB_HINT}`}
+              className={`w-14 text-right ${PROP_PANEL_SCRUB_CLASS}`}
+            />
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={Math.round((pf.grainSize ?? 0.5) * 100)}
+            onChange={(e) =>
+              onDraftChange({ ...draft, photoFilter: { ...pf, grainSize: Number(e.target.value) / 100 } })
+            }
+            className="w-full accent-[#71449f]"
+          />
+        </div>
+        <div className="space-y-1">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[8px] font-black uppercase tracking-[0.12em] text-white/40">Viñeta</span>
+            <ScrubNumberInput
+              value={Math.round(pf.vignette * 100)}
+              onKeyboardCommit={(n) =>
+                onDraftChange({ ...draft, photoFilter: { ...pf, vignette: clamp(Math.round(n), 0, 100) / 100 } })
+              }
+              onScrubLive={(n) =>
+                onDraftChange({ ...draft, photoFilter: { ...pf, vignette: clamp(Math.round(n), 0, 100) / 100 } })
+              }
+              onScrubEnd={() => {}}
+              step={1}
+              roundFn={(n) => clamp(Math.round(n), 0, 100)}
+              min={0}
+              max={100}
+              title={`% · ${PROP_PANEL_SCRUB_HINT}`}
+              className={`w-14 text-right ${PROP_PANEL_SCRUB_CLASS}`}
+            />
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={Math.round(pf.vignette * 100)}
+            onChange={(e) =>
+              onDraftChange({ ...draft, photoFilter: { ...pf, vignette: Number(e.target.value) / 100 } })
+            }
+            className="w-full accent-[#71449f]"
+          />
+        </div>
+        <p className="text-[9px] leading-relaxed text-white/35">
+          El filtro tiñe el contenido de la capa (imagen, forma o texto). El grano y la viñeta se recortan a
+          la silueta. Para activarlo, marca la casilla «Filtro de foto».
+        </p>
       </div>
     );
 

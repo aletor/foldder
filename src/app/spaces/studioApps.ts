@@ -26,7 +26,7 @@ export type StudioAppConfig = {
 export const STUDIO_APPS: StudioAppConfig[] = [
   {
     appId: "brain",
-    label: "Brain",
+    label: "BrandKit",
     nodeType: "projectBrain",
     fileKind: "brain",
     showInDock: true,

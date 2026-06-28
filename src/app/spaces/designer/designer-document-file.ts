@@ -45,6 +45,9 @@ function walkObjects(o: FreehandObject, visit: (url: string) => void): void {
     walkObjects(o.mask as FreehandObject, visit);
     for (const c of o.content) walkObjects(c, visit);
   }
+  if (o.type === "groupContainer") {
+    for (const c of o.children) walkObjects(c, visit);
+  }
 }
 
 function collectImageUrlsFromPages(pages: DesignerPageState[]): string[] {
@@ -143,6 +146,9 @@ function stripS3MetaFromObject(o: FreehandObject): void {
   if (o.type === "clippingContainer") {
     stripS3MetaFromObject(o.mask as FreehandObject);
     for (const c of o.content) stripS3MetaFromObject(c);
+  }
+  if (o.type === "groupContainer") {
+    for (const c of o.children) stripS3MetaFromObject(c);
   }
 }
 

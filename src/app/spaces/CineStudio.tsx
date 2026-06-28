@@ -1784,7 +1784,7 @@ export function CineStudio({ nodeId, data, onChange, onClose, brainConnected = f
                     <DirectionInlineToggle
                       checked={Boolean(safeData.visualDirection.useBrain)}
                       onChange={(event) => mutations.commit((draft) => ({ ...draft, visualDirection: { ...draft.visualDirection, useBrain: event.target.checked } }))}
-                      label="Usar Brain"
+                      label="Usar BrandKit"
                     />
                   </div>
                 </div>

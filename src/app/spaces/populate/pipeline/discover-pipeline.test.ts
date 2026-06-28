@@ -4,6 +4,7 @@ import {
   classifyConstantIterated,
   discoverPipelineNodeIds,
   findPipelineSinkId,
+  findPipelineSinkIds,
   topoSortPipeline,
   validatePipeline,
   type PipelineEdge,
@@ -248,9 +249,10 @@ describe("validatePipeline", () => {
     const v = validatePipeline({ populateId: "pop", nodes: base, edges });
     expect(v.ok).toBe(true);
     expect(v.sinkId).toBe("img");
+    expect(v.sinkIds).toEqual(["img"]);
   });
 
-  it("rechaza sink múltiple (dos nodos entrando al handle de plantilla)", () => {
+  it("acepta sink múltiple como canales de salida (uno por conexión a plantilla)", () => {
     const nodes: N[] = [...base, { id: "img2", type: "nanoBanana" }];
     const edges: PipelineEdge[] = [
       edge("ds", "pop", "dataset"),
@@ -258,9 +260,18 @@ describe("validatePipeline", () => {
       edge("img2", "pop", "template"),
     ];
     const v = validatePipeline({ populateId: "pop", nodes, edges });
-    expect(v.ok).toBe(false);
+    expect(v.ok).toBe(true);
+    // No hay sink "primario" único, pero sí dos canales.
     expect(v.sinkId).toBeNull();
-    expect(v.errors.some((e) => /único sink/i.test(e))).toBe(true);
+    expect(new Set(v.sinkIds)).toEqual(new Set(["img", "img2"]));
+  });
+
+  it("falla si no hay ningún sink (nada conectado a la plantilla)", () => {
+    const edges: PipelineEdge[] = [edge("ds", "pop", "dataset")];
+    const v = validatePipeline({ populateId: "pop", nodes: base, edges });
+    expect(v.ok).toBe(false);
+    expect(v.sinkIds).toEqual([]);
+    expect(v.errors.some((e) => /no tiene plantilla/i.test(e))).toBe(true);
   });
 
   it("prohíbe Populate anidado dentro de la tubería (v1)", () => {
@@ -323,5 +334,39 @@ describe("analyzePipeline — integración", () => {
     // orden: brain antes que img; img antes que bg.
     expect(analysis.order.indexOf("brain")).toBeLessThan(analysis.order.indexOf("img"));
     expect(analysis.order.indexOf("img")).toBeLessThan(analysis.order.indexOf("bg"));
+  });
+
+  it("multi-canal: dos creadores comparten un Brain → unión de subgrafos, 2 sinks", () => {
+    const nodes: N[] = [
+      { id: "pop", type: "populate" },
+      { id: "ds", type: "dataset" },
+      { id: "brain", type: "projectBrain" },
+      { id: "imgA", type: "nanoBanana" },
+      { id: "imgB", type: "nanoBanana" },
+    ];
+    const edges: PipelineEdge[] = [
+      edge("ds", "pop", "dataset"),
+      edge("imgA", "pop", "template"),
+      edge("imgB", "pop", "template"),
+      edge("brain", "imgA", "brain"),
+      edge("brain", "imgB", "brain"),
+    ];
+
+    expect(new Set(findPipelineSinkIds("pop", edges))).toEqual(new Set(["imgA", "imgB"]));
+
+    const analysis = analyzePipeline({
+      populateId: "pop",
+      nodes,
+      edges,
+      datasetBoundNodeIds: new Set(["imgA", "imgB"]),
+    });
+
+    expect(analysis.validation.ok).toBe(true);
+    expect(analysis.sinkId).toBeNull(); // no hay sink primario único
+    expect(new Set(analysis.sinkIds)).toEqual(new Set(["imgA", "imgB"]));
+    // El Brain compartido se descubre UNA sola vez (deduplicado por id) y es constante.
+    expect(new Set(analysis.pipelineNodeIds)).toEqual(new Set(["brain", "imgA", "imgB"]));
+    expect(analysis.constant).toEqual(new Set(["brain"]));
+    expect(analysis.iterated).toEqual(new Set(["imgA", "imgB"]));
   });
 });

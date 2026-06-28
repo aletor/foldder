@@ -57,6 +57,8 @@ export function primarySinkSourceHandle(nodeType: string | undefined | null): st
   if (nodeType === "designer") return "document";
   if (nodeType === "nanoBanana") return "image";
   if (nodeType === "mediaDescriber") return "prompt";
+  if (nodeType === "concatenator") return "prompt";
+  if (nodeType === "enhancer") return "prompt";
   if (nodeType === "layerizer") return "layout";
   if (nodeType === "backgroundRemover") return "rgba";
   const meta = NODE_REGISTRY[nodeType];
@@ -127,14 +129,42 @@ export function columnOverrideForRow(args: {
   rowIndex: number;
   /** Plantilla de prompt con tokens (solo inputs de texto con binding). */
   promptTemplate?: string;
+  /** Tokens del prompt marcados como manuales (constantes en todas las filas). */
+  manualTokenValues?: Record<string, string>;
   inputKind: "text" | "image" | "video";
 }): PortInputValue | undefined {
   const { binding, dataset, listId, rowIndex, inputKind } = args;
-  if (!binding || binding.source !== "column") return undefined;
+
+  // Texto fijo del Studio (sin binding de columna): plantilla Populate sin tokens.
+  if (!binding) {
+    if (inputKind === "text" && args.promptTemplate?.trim()) {
+      const text = resolvePromptForRow(
+        args.promptTemplate,
+        dataset,
+        listId,
+        rowIndex,
+        args.manualTokenValues,
+      );
+      return text ? { kind: "text", text } : undefined;
+    }
+    return undefined;
+  }
+
+  // Entrada manual: valor único introducido en el formulario, constante para todas las filas.
+  if (binding.source === "manual") {
+    const value = (binding.manualValue ?? "").trim();
+    if (!value) return undefined;
+    if (inputKind === "text") return { kind: "text", text: value };
+    if (inputKind === "image") return { kind: "image", url: value };
+    if (inputKind === "video") return { kind: "video", url: value };
+    return undefined;
+  }
+
+  if (binding.source !== "column") return undefined;
 
   if (inputKind === "text") {
     if (args.promptTemplate) {
-      const text = resolvePromptForRow(args.promptTemplate, dataset, listId, rowIndex);
+      const text = resolvePromptForRow(args.promptTemplate, dataset, listId, rowIndex, args.manualTokenValues);
       return text ? { kind: "text", text } : undefined;
     }
     // Sin plantilla: valor directo de la columna enlazada.

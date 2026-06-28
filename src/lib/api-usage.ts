@@ -85,6 +85,7 @@ export const USAGE_SERVICES = [
   { id: "openai-brain-analyze", label: "OpenAI · Brain análisis documental", category: "brain" as const },
   { id: "openai-brain-chat", label: "OpenAI · Brain chat conocimiento", category: "brain" as const },
   { id: "openai-brain-content", label: "OpenAI · Brain generación contenido", category: "brain" as const },
+  { id: "openai-dataset-assistant", label: "OpenAI · Dataset Copilot (GPT-4o)", category: "ia-text" as const },
   { id: "openai-cine-analyze", label: "OpenAI · Cine análisis de guion", category: "ia-text" as const },
   { id: "openai-embeddings", label: "OpenAI · Embeddings", category: "embeddings" as const },
   { id: "pexels-search", label: "Pexels · Inspiration search", category: "external-api" as const },
@@ -205,6 +206,7 @@ export function inferServiceIdFromRecord(r: UsageRecordLine): UsageServiceId {
     warnAmbiguousLegacy("/spaces/search sin evidencia clara de verificación Gemini", r);
     return "unknown-ai";
   }
+  if (routePath.includes("/datasets/assistant")) return "openai-dataset-assistant";
   if (routePath.includes("/assistant")) return "openai-assistant";
   if (routePath.includes("/enhance")) return "openai-enhance";
   if (routePath.includes("/describe")) return "openai-describe";

@@ -7,6 +7,7 @@ import {
   collectMediaSinkInfos,
   detectSpaceOutputMode,
 } from "./space-media-list";
+import { normalizeSpaceNodeForRuntime } from "./space-node-drag";
 
 export type GroupNodesIntoSpaceInput = {
   selectedNodes: Node[];
@@ -263,7 +264,7 @@ export function groupNodesIntoSpace(input: GroupNodesIntoSpaceInput): GroupNodes
     internalCategories: structure.internalCategories,
   };
 
-  const spaceNode: Node = {
+  const spaceNode: Node = normalizeSpaceNodeForRuntime({
     id: spaceNodeId,
     type: "space",
     position: spacePosition,
@@ -277,7 +278,7 @@ export function groupNodesIntoSpace(input: GroupNodesIntoSpaceInput): GroupNodes
       mediaListOutput: structure.mediaListOutput ?? undefined,
       internalCategories: structure.internalCategories,
     },
-  };
+  });
 
   const remainingNodes = allNodes.filter((n) => !selectedIds.has(n.id));
   const remainingEdges = edges.filter(

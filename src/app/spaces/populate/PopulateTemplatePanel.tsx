@@ -31,6 +31,7 @@ export interface PopulateTemplatePanelProps {
 }
 
 const FIXED_VALUE = "__fixed__";
+const MANUAL_VALUE = "__manual__";
 
 /**
  * Editor de plantilla que vive DENTRO de Populate. Muestra el prompt que se enviará
@@ -76,6 +77,15 @@ export function PopulateTemplatePanel({
       onChangeBinding(inputId, { inputId, source: "fixed" });
       return;
     }
+    if (value === MANUAL_VALUE) {
+      const prev = bindings[inputId];
+      onChangeBinding(inputId, {
+        inputId,
+        source: "manual",
+        manualValue: prev?.manualValue ?? "",
+      });
+      return;
+    }
     const field = imageColumns.find((f) => f.id === value);
     if (!field) return;
     onChangeBinding(inputId, {
@@ -86,6 +96,12 @@ export function PopulateTemplatePanel({
       fieldKey: field.key,
     });
   };
+
+  const setManualValue = (inputId: string, manualValue: string) => {
+    onChangeBinding(inputId, { inputId, source: "manual", manualValue });
+  };
+
+  const manualSlots = imageSlots.filter((slot) => bindings[slot.inputId]?.source === "manual");
 
   return (
     <div
@@ -115,7 +131,11 @@ export function PopulateTemplatePanel({
           {imageSlots.map((slot) => {
             const binding = bindings[slot.inputId];
             const current =
-              binding?.source === "column" ? binding.fieldId ?? FIXED_VALUE : FIXED_VALUE;
+              binding?.source === "manual"
+                ? MANUAL_VALUE
+                : binding?.source === "column"
+                  ? binding.fieldId ?? FIXED_VALUE
+                  : FIXED_VALUE;
             return (
               <label key={slot.inputId} className="populate-template-panel__ref">
                 <span className="populate-template-panel__ref-label">{slot.label}</span>
@@ -136,16 +156,39 @@ export function PopulateTemplatePanel({
                       Columna: {f.label}
                     </option>
                   ))}
+                  <option value={MANUAL_VALUE}>Manual (rellenar antes de generar)</option>
                 </select>
               </label>
             );
           })}
         </div>
-      ) : (
+      ) : null}
+
+      {manualSlots.length > 0 ? (
+        <div className="populate-template-panel__refs">
+          <span className="populate-template-panel__refs-head">Rellenar antes de generar</span>
+          {manualSlots.map((slot) => {
+            const binding = bindings[slot.inputId];
+            return (
+              <label key={slot.inputId} className="populate-template-panel__ref">
+                <span className="populate-template-panel__ref-label">{binding?.manualLabel || slot.label}</span>
+                <input
+                  type="text"
+                  className="populate-template-panel__select nodrag"
+                  value={binding?.manualValue ?? ""}
+                  placeholder={binding?.manualPlaceholder || "Pega una URL de imagen…"}
+                  onChange={(e) => setManualValue(slot.inputId, e.target.value)}
+                  onPointerDown={(e) => e.stopPropagation()}
+                />
+              </label>
+            );
+          })}
+        </div>
+      ) : imageSlots.length === 0 ? (
         <span className="populate-template-panel__refs-empty">
           Conecta referencias de imagen a Image Creation para variarlas desde el Dataset.
         </span>
-      )}
+      ) : null}
     </div>
   );
 }

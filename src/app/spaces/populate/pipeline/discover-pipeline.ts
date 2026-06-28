@@ -100,7 +100,10 @@ export function pipelineInputProducerIds(
 
 /**
  * El sink de la tubería: el único nodo cuyo output entra al handle de plantilla de Populate.
- * Devuelve `null` si no hay exactamente uno (cero o múltiples → inválido, ver validatePipeline).
+ * Devuelve `null` si no hay exactamente uno (cero o múltiples → no hay sink "primario" único).
+ *
+ * Nota: con multi-sink (canales de salida) puede haber varios; usa `findPipelineSinkIds`
+ * para obtenerlos todos. Este helper se conserva para el camino legacy de 1 sink.
  */
 export function findPipelineSinkId(
   populateId: string,
@@ -109,6 +112,19 @@ export function findPipelineSinkId(
 ): string | null {
   const producers = pipelineInputProducerIds(populateId, edges, pipelineInputHandle);
   return producers.length === 1 ? producers[0] : null;
+}
+
+/**
+ * Todos los nodos cuyo output entra al handle de plantilla de Populate (un canal de salida
+ * por conexión). Orden de aparición de las aristas; el caller puede reordenarlos (p. ej. por
+ * posición Y en el canvas). Vacío si no hay ninguno.
+ */
+export function findPipelineSinkIds(
+  populateId: string,
+  edges: readonly PipelineEdge[],
+  pipelineInputHandle: string = POPULATE_PIPELINE_INPUT_HANDLE,
+): string[] {
+  return pipelineInputProducerIds(populateId, edges, pipelineInputHandle);
 }
 
 /**
@@ -271,13 +287,16 @@ export function classifyConstantIterated(args: {
 export interface PipelineValidation {
   ok: boolean;
   errors: string[];
-  /** Sink resuelto (null si no hay exactamente uno). */
+  /** Sink primario (null si no hay exactamente uno). Camino legacy de 1 canal. */
   sinkId: string | null;
+  /** Todos los sinks (canales de salida); uno por conexión al handle de plantilla. */
+  sinkIds: string[];
 }
 
 /**
- * Reglas de validez (§11 spec):
- *  - DAG con SINK ÚNICO (una sola conexión entra al handle de plantilla de Populate).
+ * Reglas de validez (§11 spec, actualizado para multi-sink):
+ *  - DAG con AL MENOS un sink (una o varias conexiones entran al handle de plantilla).
+ *    Cada conexión es un "canal de salida" independiente.
  *  - Sin ciclos en la tubería.
  *  - Populate anidado dentro de la tubería: prohibido en v1.
  */
@@ -294,11 +313,9 @@ export function validatePipeline<N extends PipelineNodeRef>(args: {
   const sinkProducers = pipelineInputProducerIds(populateId, edges, pipelineInputHandle);
   if (sinkProducers.length === 0) {
     errors.push("La tubería no tiene plantilla: conecta un nodo al handle de Populate.");
-  } else if (sinkProducers.length > 1) {
-    errors.push(
-      "La tubería debe tener un único sink: hay varias conexiones entrando a la plantilla de Populate.",
-    );
   }
+  // Varios sinks ya no es error: son canales de salida (una imagen/columna por canal).
+  const sinkIds = sinkProducers;
   const sinkId = sinkProducers.length === 1 ? sinkProducers[0] : null;
 
   const pipelineIds = discoverPipelineNodeIds(populateId, nodes, edges, { pipelineInputHandle });
@@ -314,7 +331,7 @@ export function validatePipeline<N extends PipelineNodeRef>(args: {
     errors.push("La tubería contiene un ciclo: debe ser un grafo acíclico (DAG).");
   }
 
-  return { ok: errors.length === 0, errors, sinkId };
+  return { ok: errors.length === 0, errors, sinkId, sinkIds };
 }
 
 export interface PipelineAnalysis {
@@ -322,8 +339,10 @@ export interface PipelineAnalysis {
   pipelineNodeIds: string[];
   /** Orden topológico de ejecución. */
   order: string[];
-  /** Sink único (null si inválido). */
+  /** Sink primario (null si hay 0 o >1). Camino legacy de 1 canal. */
   sinkId: string | null;
+  /** Todos los sinks (canales de salida), uno por conexión al handle de plantilla. */
+  sinkIds: string[];
   iterated: Set<string>;
   constant: Set<string>;
   validation: PipelineValidation;
@@ -358,6 +377,7 @@ export function analyzePipeline<N extends PipelineNodeRef>(args: {
     pipelineNodeIds,
     order: topo.order,
     sinkId: validation.sinkId,
+    sinkIds: validation.sinkIds,
     iterated,
     constant,
     validation,

@@ -17,8 +17,8 @@ export const SIDEBAR_HOVER_HELP: Record<string, { title: string; line: string }>
     line: 'Preproducción audiovisual: guion, reparto, fondos, storyboard y prompts de frames',
   },
   projectBrain: {
-    title: 'Brain',
-    line: 'Dashboard compacto: ADN, fuentes, nodos conectados y pendientes; abre Brain para editar',
+    title: 'BrandKit',
+    line: 'Dashboard compacto: ADN, fuentes, nodos conectados y pendientes; abre el BrandKit para editar',
   },
   projectAssets: {
     title: 'Foldder',

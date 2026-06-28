@@ -110,7 +110,7 @@ function tileBorderClassForType(type: string, fallback: string): string {
 }
 
 const HIGH_END_PRODUCTION_ITEMS: Array<{ type: string; label: string }> = [
-  { type: 'projectBrain', label: 'Brain' },
+  { type: 'projectBrain', label: 'BrandKit' },
   { type: 'guionista', label: 'Guionista' },
   { type: 'cine', label: 'Cine' },
   { type: 'designer', label: 'Designer' },

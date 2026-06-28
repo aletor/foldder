@@ -10,6 +10,7 @@ import type {
   FieldDef,
   FieldType,
 } from "@/app/spaces/dataset/dataset-types";
+import { brandKitConstantId } from "@/app/spaces/brandkit/brandkit-logic";
 import { normalizeHexColor } from "../freehand/extract-document-colors";
 import { solidFill } from "../freehand/fill";
 
@@ -153,8 +154,14 @@ function resolveBindingRawValue(
   dataset: Dataset,
   rowIndex: number,
 ): string | number | null {
-  if (binding.source === "constant") {
-    const value = getConstantFieldValue(dataset, binding.fieldId);
+  // BrandKit (source "node") y constantes del Dataset se resuelven igual: por constante.
+  // El nodo BrandKit aporta sus campos como constantes namespaced `bk:<nodeId>:<fieldId>`.
+  if (binding.source === "node" || binding.source === "constant") {
+    const constantId =
+      binding.source === "node"
+        ? brandKitConstantId(binding.nodeId ?? "", binding.fieldId)
+        : binding.fieldId;
+    const value = getConstantFieldValue(dataset, constantId);
     if (!value) return null;
     if (value.type === "number") return value.value;
     if (value.type === "color" || value.type === "text" || value.type === "select" || value.type === "url") {

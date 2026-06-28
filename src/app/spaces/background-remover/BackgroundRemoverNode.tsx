@@ -7,7 +7,6 @@ import {
   Position,
   NodeProps,
   NodeResizer,
-  useNodeId,
   useNodes,
   useEdges,
   useReactFlow,
@@ -15,7 +14,6 @@ import {
   type Node,
 } from "@xyflow/react";
 import { Loader2, Zap } from "lucide-react";
-import { FOLDDER_FIT_VIEW_EASE } from "@/lib/fit-view-ease";
 import { runAiJobWithNotification } from "@/lib/ai-job-notifications";
 import { resolvePromptValueFromEdgeSource } from "../canvas-group-logic";
 import { FoldderDataHandle } from "../FoldderDataHandle";
@@ -45,7 +43,6 @@ type BackgroundRemoverNodeData = {
 
 type MattePreviewMode = "original" | "mask" | "cutout";
 
-const NODE_RESIZE_END_FIT_PADDING = 0.8;
 const STUDIO_NODE_MAX_HEIGHT = 2200;
 
 function createNodeFrameSnapshot(
@@ -140,28 +137,7 @@ function syncAspectLockedFrameForNode(
 }
 
 function FoldderNodeResizer(props: ComponentProps<typeof NodeResizer>) {
-  const nodeId = useNodeId();
-  const { fitView } = useReactFlow();
-  const { onResizeEnd, ...rest } = props;
-  return (
-    <NodeResizer
-      {...rest}
-      onResizeEnd={(event, params) => {
-        onResizeEnd?.(event, params);
-        if (nodeId) {
-          requestAnimationFrame(() => {
-            void fitView({
-              nodes: [{ id: nodeId }],
-              padding: NODE_RESIZE_END_FIT_PADDING,
-              duration: 560,
-              interpolate: "smooth",
-              ...FOLDDER_FIT_VIEW_EASE,
-            });
-          });
-        }
-      }}
-    />
-  );
+  return <NodeResizer {...props} />;
 }
 
 export const BackgroundRemoverNode = memo(function BackgroundRemoverNode({

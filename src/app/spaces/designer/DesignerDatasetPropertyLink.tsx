@@ -19,12 +19,14 @@ export function DesignerDatasetPropertyLink({
   onBind,
 }: DesignerDatasetPropertyLinkProps) {
   const [open, setOpen] = useState(false);
-  const [source, setSource] = useState<"list" | "constant">(binding?.source ?? "list");
+  // Los campos de BrandKit (`source: "node"`) se exponen como constantes fusionadas, así que en
+  // este selector se tratan en la pestaña "Compartido".
+  const [source, setSource] = useState<"list" | "constant">(binding?.source === "list" ? "list" : "constant");
   const [listId, setListId] = useState(binding?.listId ?? "");
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    setSource(binding?.source ?? "list");
+    setSource(binding?.source === "list" ? "list" : "constant");
     setListId(binding?.listId ?? "");
   }, [binding?.source, binding?.listId, binding?.fieldId]);
 

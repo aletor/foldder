@@ -7,7 +7,7 @@
 import { enhancePromptForPopulate } from "../transports/populate-enhance";
 import {
   bindableVarsForNodeType,
-  portText,
+  collectTextFromPromptSlots,
   type NodeExecutor,
 } from "../node-executor";
 
@@ -20,9 +20,10 @@ export const enhancerExecutor: NodeExecutor = {
   },
 
   async execute({ node, inputs, overrides }) {
-    const prompt = String(
-      overrides.prompt ?? portText(inputs) ?? node.data?.value ?? "",
-    ).trim();
+    const prompt =
+      String(overrides.prompt ?? "").trim() ||
+      collectTextFromPromptSlots(inputs, "\n\n", overrides) ||
+      String(node.data?.value ?? "").trim();
     if (!prompt) {
       throw new Error("Prompt Enhancer: no hay prompt de entrada para mejorar.");
     }

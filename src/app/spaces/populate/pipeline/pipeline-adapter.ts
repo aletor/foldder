@@ -14,7 +14,13 @@ import {
 } from "./pipeline-bindings";
 import type { PopulateInputBinding } from "../populate-types";
 import { creativeInputKindFromHandleType } from "../populate-types";
-import type { ExecutorNode, NodeOutputKind, PortInputValue } from "./node-executor";
+import {
+  NUMBERED_PROMPT_NODE_TYPES,
+  PROMPT_SLOT_HANDLES,
+  type ExecutorNode,
+  type NodeOutputKind,
+  type PortInputValue,
+} from "./node-executor";
 import {
   resolveNodeInputs,
   type NodeInputResolution,
@@ -36,11 +42,16 @@ export interface PipelineAdapterContext {
   templatePrompt?: string;
   /** Plantillas con tokens por nodo de la tubería (`img1` → "foto de {nombre}"). */
   promptTemplatesByNodeId?: Record<string, string>;
+  /** Tokens del prompt marcados como manuales (clave de token → valor constante para todas las filas). */
+  manualTokenValues?: Record<string, string>;
   /** Resuelve valor fijo de un nodo externo conectado (mediaInput, promptInput…). */
   resolveFixedExternal?: (edge: PipelineEdge) => PortInputValue | undefined;
 }
 
 export function inputHandlesForNodeType(nodeType: string): Array<{ id: string; kind: NodeOutputKind }> {
+  if (NUMBERED_PROMPT_NODE_TYPES.has(nodeType)) {
+    return PROMPT_SLOT_HANDLES.map((id) => ({ id, kind: "text" as NodeOutputKind }));
+  }
   const meta = NODE_REGISTRY[nodeType];
   if (!meta) return [];
   return (meta.inputs ?? [])
@@ -79,17 +90,20 @@ export function resolveNodeInputsForPipeline(
         inputKey,
         ctx.sinkNodeId ?? undefined,
       );
-      const promptTemplate =
-        inputKey === "prompt"
-          ? (ctx.promptTemplatesByNodeId?.[nodeId] ??
-            (nodeId === ctx.sinkNodeId ? ctx.templatePrompt : undefined))
-          : undefined;
+      const usesPromptTemplate =
+        inputKey === "prompt" ||
+        (NUMBERED_PROMPT_NODE_TYPES.has(args.node.type) && inputKey === "p0");
+      const promptTemplate = usesPromptTemplate
+        ? (ctx.promptTemplatesByNodeId?.[nodeId] ??
+          (nodeId === ctx.sinkNodeId ? ctx.templatePrompt : undefined))
+        : undefined;
       return columnOverrideForRow({
         binding,
         dataset: ctx.dataset,
         listId: ctx.listId,
         rowIndex: args.rowIndex,
         promptTemplate,
+        manualTokenValues: usesPromptTemplate ? ctx.manualTokenValues : undefined,
         inputKind: handle.kind,
       });
     },

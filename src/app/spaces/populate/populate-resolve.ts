@@ -20,15 +20,24 @@ import type { PopulateBindings, PopulateInputBinding } from "./populate-types";
 /**
  * Resuelve el prompt de una fila: sustituye `{fieldKey}` por el valor de la fila
  * en el listado indicado; si la clave no está en el listado, prueba en constantes.
+ *
+ * `manualValues` (opcional): tokens marcados como "manuales" en Populate. Tienen
+ * MÁXIMA prioridad y son constantes para todas las filas (se rellenan una vez en
+ * "Rellenar antes de generar"). Un valor manual vacío se ignora (cae a columna/constante).
  */
 export function resolvePromptForRow(
   template: string,
   dataset: Dataset,
   listId: string,
   rowIndex: number,
+  manualValues?: Record<string, string>,
 ): string {
   const list = dataset.lists.find((row) => row.id === listId) ?? null;
   return substitutePromptTokens(template, (fieldKey) => {
+    if (manualValues) {
+      const manual = manualValues[fieldKey];
+      if (typeof manual === "string" && manual.trim() !== "") return manual;
+    }
     if (list) {
       const field = list.schema.find((f) => f.key === fieldKey);
       if (field) {

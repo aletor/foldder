@@ -158,11 +158,23 @@ export interface DatasetPreview {
  *   con su `kind` y una `slotLabel`, pero SIN columna (`listId`/`fieldId` vacíos). Populate asigna
  *   la columna después en su UI de mapeo y, al congelar, rellena el hueco.
  */
+/**
+ * Origen del contenido de un binding de campo del Designer:
+ * - `list` (defecto): columna de un listado, se resuelve por fila.
+ * - `constant`: constante compartida del Dataset (igual en todas las filas).
+ * - `node`: output de un nodo standalone (p. ej. BrandKit), referencia VIVA por `nodeId`.
+ */
+export type DesignerDatasetFieldSource = "list" | "constant" | "node";
+
 export interface DesignerDatasetFieldBinding {
   listId: string;
   listKey: string;
   fieldId: string;
   fieldKey: string;
+  /** Origen del contenido. Ausente o `list` = comportamiento histórico (columna de listado). */
+  source?: DesignerDatasetFieldSource;
+  /** Id del nodo standalone referenciado cuando `source === "node"` (BrandKit). */
+  nodeId?: string;
   /** Tipo del hueco dinámico. Imprescindible en estado PENDIENTE (sin columna que lo infiera). */
   kind?: "text" | "image";
   /** Etiqueta legible del hueco (identidad para el mapeo en Populate, estilo token de prompt). */
@@ -172,14 +184,16 @@ export interface DesignerDatasetFieldBinding {
 /** @deprecated Usar `DesignerDatasetFieldBinding`. */
 export type DesignerDatasetTextBinding = DesignerDatasetFieldBinding;
 
-export type DesignerDatasetPropertySource = "list" | "constant";
+export type DesignerDatasetPropertySource = "list" | "constant" | "node";
 
-/** Enlace de una propiedad concreta del objeto (x, fill, etc.) al Dataset. */
+/** Enlace de una propiedad concreta del objeto (x, fill, etc.) al Dataset o a un nodo (BrandKit). */
 export interface DesignerDatasetPropertyBinding {
   propertyKey: string;
   source: DesignerDatasetPropertySource;
   listId?: string;
   listKey?: string;
+  /** Id del nodo standalone referenciado cuando `source === "node"` (BrandKit). */
+  nodeId?: string;
   fieldId: string;
   fieldKey: string;
 }

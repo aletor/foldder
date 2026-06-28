@@ -2,11 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   buildGeneratedSubgraph,
   buildMediaListOutput,
+  buildMultiChannelGeneratedSubgraph,
+  buildMultiChannelMediaListOutput,
   buildPipelineGeneratedSubgraph,
   buildPipelineRowSubgraph,
   buildRowSubgraph,
   isGeneratedNodeIdFor,
   isPersistableImageUrl,
+  type MaterializedChannel,
   type MaterializedRow,
 } from "./populate-materialize";
 
@@ -127,5 +130,57 @@ describe("populate-materialize", () => {
       [{ nodeType: "nanoBanana", output: "https://cdn/out.png" }],
     ]);
     expect(nodes.some((n) => n.type === "nanoBanana")).toBe(true);
+  });
+
+  function channels(): MaterializedChannel[] {
+    return [
+      {
+        channelId: "imgA",
+        label: "Fondo",
+        templateType: "nanoBanana",
+        model,
+        rows: [
+          { rowIndex: 0, cardId: "card_a", prompt: "p0", refs: [], output: "https://cdn/a0.png" },
+          { rowIndex: 1, cardId: "card_b", prompt: "p1", refs: [], output: "https://cdn/a1.png" },
+        ],
+      },
+      {
+        channelId: "imgB",
+        label: "Producto",
+        templateType: "nanoBanana",
+        model,
+        rows: [
+          { rowIndex: 0, cardId: "card_a", prompt: "p0", refs: [], output: "https://cdn/b0.png" },
+          { rowIndex: 1, cardId: "card_b", prompt: "p1", refs: [], output: "https://cdn/b1.png" },
+        ],
+      },
+    ];
+  }
+
+  it("multi-canal: dispone carriles por canal con IDs únicos y reconocibles", () => {
+    const { nodes } = buildMultiChannelGeneratedSubgraph("pop1", channels());
+    const nano = nodes.filter((n) => n.type === "nanoBanana");
+    // 2 canales × 2 filas = 4 sinks, todos con IDs únicos.
+    expect(nano).toHaveLength(4);
+    const ids = new Set(nano.map((n) => n.id));
+    expect(ids.size).toBe(4);
+    // IDs reconocibles por el reconciliador del nested space (prefijo pop_<id>_r).
+    expect(nano.every((n) => isGeneratedNodeIdFor("pop1", n.id))).toBe(true);
+    // El canal 0 está a la izquierda del canal 1 (carriles separados en X).
+    const c0 = nodes.find((n) => n.id === "pop_pop1_r0_c0_nano")!;
+    const c1 = nodes.find((n) => n.id === "pop_pop1_r0_c1_nano")!;
+    expect(c0.position.x).toBeLessThan(c1.position.x);
+    // Misma fila → misma altura entre canales.
+    expect(c0.position.y).toBe(c1.position.y);
+  });
+
+  it("multi-canal: MediaListOutput concatena todos los canales con títulos por canal", () => {
+    const ml = buildMultiChannelMediaListOutput("pop1", "Campaña", channels());
+    expect(ml.items).toHaveLength(4);
+    const ids = new Set(ml.items.map((i) => i.id));
+    expect(ids.size).toBe(4);
+    expect(ml.items[0]?.title).toContain("Fondo");
+    expect(ml.items.some((i) => i.title.includes("Producto"))).toBe(true);
+    expect(ml.status).toBe("frames_ready");
   });
 });

@@ -12,10 +12,23 @@ import type { HandleType } from "@/app/spaces/nodeRegistry";
 /** Clave en node.data de un nodo creativo donde viven los bindings por input. */
 export const POPULATE_BINDINGS_KEY = "_populateBindings" as const;
 
-/** Origen de un input: valor fijo (intacto) o tomado de una columna del Dataset. */
-export type PopulateInputSource = "fixed" | "column";
+/**
+ * Origen de un input de un nodo creativo gobernado por Populate:
+ * - `fixed`: valor fijo (edge o inline del nodo), comportamiento histórico.
+ * - `column`: columna del Dataset, se resuelve por fila (itera).
+ * - `manual`: el usuario lo teclea/elige en el panel de Populate antes de generar
+ *   (formulario). Igual para todas las filas. Si `optionsFrom`, combobox con
+ *   sugerencias del Dataset + texto libre.
+ */
+export type PopulateInputSource = "fixed" | "column" | "manual";
 
-/** Enlace de un input concreto de un nodo creativo a una columna del Dataset. */
+/** Combobox de sugerencias para un campo manual (valores distintos de una columna). */
+export interface PopulateManualOptionsFrom {
+  listId: string;
+  fieldId: string;
+}
+
+/** Enlace de un input concreto de un nodo creativo a una columna del Dataset o a entrada manual. */
 export interface PopulateInputBinding {
   /** Id del handle de input (p. ej. "image", "image2"). */
   inputId: string;
@@ -24,6 +37,16 @@ export interface PopulateInputBinding {
   listKey?: string;
   fieldId?: string;
   fieldKey?: string;
+  /** Solo `source === "manual"`: etiqueta y placeholder del campo en el formulario. */
+  manualLabel?: string;
+  manualPlaceholder?: string;
+  /**
+   * Solo `source === "manual"`: valor introducido por el usuario en "Rellenar antes de generar".
+   * Es constante para todas las filas (el formulario se rellena una vez antes de generar).
+   */
+  manualValue?: string;
+  /** Solo `source === "manual"`: sugerencias de una columna del Dataset (combobox + texto libre). */
+  optionsFrom?: PopulateManualOptionsFrom;
 }
 
 /** Mapa inputId → binding, guardado en node.data[POPULATE_BINDINGS_KEY]. */
@@ -40,7 +63,7 @@ export interface CreativeInputDescriptor {
 }
 
 /** Estado de una ejecución de Populate (preview o lote). */
-export type PopulateRunStatus = "idle" | "preview" | "running" | "done" | "error";
+export type PopulateRunStatus = "idle" | "preview" | "running" | "done" | "partial" | "error";
 
 export interface PopulateNodeData {
   label?: string;
@@ -56,6 +79,12 @@ export interface PopulateNodeData {
   templatePrompt?: string;
   /** Bindings por input (fijo / columna del Dataset), gobernados por Populate. */
   templateBindings?: PopulateBindings;
+  /**
+   * Tokens del prompt marcados como "manuales" (clave de token → valor constante).
+   * En lote se rellenan una vez antes de generar y son iguales para todas las filas;
+   * tienen prioridad sobre la columna/constante del Dataset.
+   */
+  templateManualTokens?: Record<string, string>;
   /** Modo de ejecución: lote por Dataset o formulario (un resultado manual). */
   mode?: "batch" | "form";
   /** Modo formulario: valores tecleados/elegidos por token. */
@@ -76,8 +105,26 @@ export interface PopulateNodeData {
   mediaListOutput?: unknown;
   /** URLs de la última ejecución (thumbnails en Studio). */
   lastRunOutputs?: string[];
-  /** Escribir resultados de vuelta al Dataset conectado. */
+  /** Filas que fallaron en la última ejecución (índice + mensaje). */
+  lastRunFailures?: Array<{ rowIndex: number; error: string }>;
+  /** Contadores de la última ejecución por lote. */
+  lastRunOkCount?: number;
+  lastRunFailedCount?: number;
+  /** Escribir resultados de vuelta al Dataset conectado (canal primario / legacy de 1 sink). */
   datasetOutput?: PopulateDatasetOutputSettings;
+  /**
+   * Multi-canal: ajustes de salida al Dataset por canal (sink), clave = `sinkId`.
+   * Cada canal (creador conectado a la plantilla) escribe en su propia columna.
+   * Si está vacío/ausente se usa `datasetOutput` (compatibilidad con 1 sink).
+   */
+  datasetOutputsByChannel?: Record<string, PopulateDatasetOutputSettings>;
+  /** Etiquetas legibles por canal (sinkId → nombre mostrado), para la UI de columnas. */
+  channelLabels?: Record<string, string>;
+  /**
+   * Multi-canal: delta de prompt fijo por canal (sinkId → texto), concatenado tras el prompt
+   * del nodo Image Creator. Sin tokens; idéntico para todas las filas (p. ej. pose).
+   */
+  channelPrompts?: Record<string, string>;
   /** Resumen de la última escritura al Dataset. */
   lastDatasetWriteSummary?: string;
   /**

@@ -1,6 +1,12 @@
 import type { FreehandObject } from "../FreehandStudio";
-import { getListFieldImageAtRow, getListFieldTextAtRow } from "@/app/spaces/dataset/dataset-logic";
-import type { Dataset } from "@/app/spaces/dataset/dataset-types";
+import {
+  fieldValueAsText,
+  getConstantFieldValue,
+  getListFieldImageAtRow,
+  getListFieldTextAtRow,
+} from "@/app/spaces/dataset/dataset-logic";
+import type { Dataset, FieldValue } from "@/app/spaces/dataset/dataset-types";
+import { brandKitConstantId } from "@/app/spaces/brandkit/brandkit-logic";
 import { applyDesignerDatasetPropertyBindings } from "./designer-dataset-property";
 import { computeFittingLayout } from "../indesign/image-frame-layout";
 import { patchStoryContentPlain } from "../indesign/text-threading";
@@ -47,36 +53,76 @@ export function nextDatasetRowIndex(
   return Math.min(next, rowCount - 1);
 }
 
+/** Tipo de imagen resuelto para aplicar a un objeto (url + dimensiones). */
+type ResolvedBindingImage = { url: string; w?: number; h?: number };
+
+/**
+ * Resuelve el contenido (texto/imagen) de un binding de campo según su origen:
+ * `list` (columna por fila), `constant` (constante del Dataset) o `node` (BrandKit, constante
+ * namespaced). Devuelve `null` si el binding no resuelve a nada utilizable.
+ */
+function resolveFieldBindingContent(
+  obj: FreehandObject,
+  dataset: Dataset,
+  rowIndex: number,
+): { kind: "text"; text: string } | { kind: "image"; image: ResolvedBindingImage } | null {
+  const binding = obj._designerDatasetBinding;
+  if (!binding) return null;
+  const source = binding.source ?? "list";
+
+  if (source === "constant" || source === "node") {
+    const constantId =
+      source === "node"
+        ? brandKitConstantId(binding.nodeId ?? "", binding.fieldId)
+        : binding.fieldId;
+    const value: FieldValue | null = getConstantFieldValue(dataset, constantId);
+    if (!value) return null;
+    if (value.type === "image") {
+      const url = value.url?.trim() ?? "";
+      return url ? { kind: "image", image: { url, w: value.w, h: value.h } } : null;
+    }
+    return { kind: "text", text: fieldValueAsText(value) };
+  }
+
+  // source === "list": columna del listado, resuelta por fila.
+  const list = dataset.lists.find((row) => row.id === binding.listId);
+  const field = list?.schema.find((row) => row.id === binding.fieldId);
+  if (!list || !field) return null;
+  if (field.type === "text") {
+    const text = getListFieldTextAtRow(dataset, binding.listId, binding.fieldId, rowIndex) ?? "";
+    return { kind: "text", text };
+  }
+  if (field.type === "image") {
+    const imageValue = getListFieldImageAtRow(dataset, binding.listId, binding.fieldId, rowIndex);
+    const url = imageValue?.url.trim() ?? "";
+    return url ? { kind: "image", image: { url, w: imageValue?.w, h: imageValue?.h } } : null;
+  }
+  return null;
+}
+
 function applyDatasetBindingToObject(
   obj: FreehandObject,
   dataset: Dataset,
   rowIndex: number,
 ): FreehandObject {
-  const binding = obj._designerDatasetBinding;
-  if (!binding) return obj;
+  const content = resolveFieldBindingContent(obj, dataset, rowIndex);
+  if (!content) return obj;
 
-  const list = dataset.lists.find((row) => row.id === binding.listId);
-  const field = list?.schema.find((row) => row.id === binding.fieldId);
-  if (!list || !field) return obj;
-
-  if (field.type === "text" && (obj.type === "text" || obj.type === "textOnPath")) {
-    const text = getListFieldTextAtRow(dataset, binding.listId, binding.fieldId, rowIndex) ?? "";
+  if (content.kind === "text" && (obj.type === "text" || obj.type === "textOnPath")) {
     return {
       ...obj,
-      text,
+      text: content.text,
       ...(obj.type === "text" && obj.isTextFrame
         ? { _designerRichSpans: undefined, _designerOverflow: false }
         : {}),
     } as FreehandObject;
   }
 
-  if (field.type === "image") {
-    const imageValue = getListFieldImageAtRow(dataset, binding.listId, binding.fieldId, rowIndex);
-    const src = imageValue?.url.trim() ?? "";
+  if (content.kind === "image") {
+    const src = content.image.url;
     if (!src) return obj;
-
-    const iw = Math.max(1, imageValue?.w ?? 100);
-    const ih = Math.max(1, imageValue?.h ?? 100);
+    const iw = Math.max(1, content.image.w ?? 100);
+    const ih = Math.max(1, content.image.h ?? 100);
 
     if (obj.type === "image") {
       return {

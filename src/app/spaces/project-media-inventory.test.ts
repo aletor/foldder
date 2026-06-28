@@ -126,4 +126,35 @@ describe("collectProjectMedia", () => {
     const { imported } = collectProjectMedia(nodes);
     expect(imported).toHaveLength(0);
   });
+
+  it("Populate: recoge todas las imágenes de lastRunOutputs y mediaListOutput", () => {
+    const keyA = "knowledge-files/proj/pop-a.png";
+    const keyB = "knowledge-files/proj/pop-b.png";
+    const urlA = `/api/spaces/s3-file?key=${encodeURIComponent(keyA)}`;
+    const urlB = `/api/spaces/s3-file?key=${encodeURIComponent(keyB)}`;
+    const nodes: Node[] = [
+      {
+        id: "pop1",
+        type: "populate",
+        position: { x: 0, y: 0 },
+        data: {
+          value: urlA,
+          lastRunOutputs: [urlA, urlB],
+          mediaListOutput: {
+            kind: "media_list",
+            items: [
+              { id: "i1", order: 0, title: "Fila 1", mediaType: "image", url: urlA, s3Key: keyA, status: "generated" },
+              { id: "i2", order: 1, title: "Fila 2", mediaType: "image", url: urlB, s3Key: keyB, status: "generated" },
+              { id: "i3", order: 2, title: "Pendiente", mediaType: "image", status: "pending" },
+            ],
+          },
+        },
+      },
+    ];
+    const { generated } = collectProjectMedia(nodes);
+    expect(generated).toHaveLength(2);
+    expect(generated.every((g) => g.sourceLabel === "Populate")).toBe(true);
+    expect(generated.some((g) => g.url.includes(encodeURIComponent(keyA)))).toBe(true);
+    expect(generated.some((g) => g.url.includes(encodeURIComponent(keyB)))).toBe(true);
+  });
 });

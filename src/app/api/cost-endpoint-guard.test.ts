@@ -32,6 +32,8 @@ const COST_ENDPOINTS: CostEndpointGuard[] = [
   { route: "src/app/api/spaces/brain/visual/mosaic-intelligence/route.ts", services: ["GEMINI_VISION_ANALYSIS_SERVICE_ID"] },
   { route: "src/app/api/spaces/brain/visual/reanalyze/route.ts", services: ['"openai-vision-analysis"', '"gemini-vision-analysis"'] },
   { route: "src/app/api/spaces/cine/analyze/route.ts", services: ['"openai-cine-analyze"'] },
+  { route: "src/app/api/spaces/datasets/assistant/route.ts", services: ['"openai-dataset-assistant"'] },
+  { route: "src/app/api/spaces/datasets/assistant/enrich/route.ts", services: ['"openai-dataset-assistant"'] },
   { route: "src/app/api/spaces/describe/route.ts", services: ['"openai-describe"'] },
   { route: "src/app/api/spaces/guionista/route.ts", services: ['"openai-brain-content"'] },
   { route: "src/app/api/spaces/matte/route.ts", services: ['"replicate-bg"'] },

@@ -2,12 +2,11 @@
 
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { NodeResizer, Position, useNodeId, useReactFlow, useStore, useUpdateNodeInternals, type Edge, type Node, type NodeProps, type ReactFlowState } from "@xyflow/react";
+import { NodeResizer, Position, useReactFlow, useStore, useUpdateNodeInternals, type Edge, type Node, type NodeProps, type ReactFlowState } from "@xyflow/react";
 import { shallow } from "zustand/shallow";
 import { AlertTriangle, Captions, CheckCircle2, Clock, Copy, Download, Eye, EyeOff, File, Film, ImageIcon, Layers, Lock, Music, Pause, Play, Plus, Redo2, RefreshCw, Scissors, SkipBack, SkipForward, StepBack, StepForward, Trash2, Type, Undo2, Unlock, Video, Volume2, VolumeX, X } from "lucide-react";
 
 import { downloadS3Object, forceDownloadUrl } from "@/lib/browser-download";
-import { FOLDDER_FIT_VIEW_EASE } from "@/lib/fit-view-ease";
 import { readPaymentWarningsEnabled } from "@/lib/wallet-payment-warnings-preference";
 import { tryExtractKnowledgeFilesKeyFromUrl } from "@/lib/s3-media-hydrate";
 import { ScrubNumberInput } from "../ScrubNumberInput";
@@ -148,31 +147,8 @@ const VIDEO_EDITOR_MIN_HEIGHT = Math.max(
   120,
   Math.round(VIDEO_EDITOR_MIN_WIDTH / (VIDEO_EDITOR_DEFAULT_ASPECT.width / VIDEO_EDITOR_DEFAULT_ASPECT.height)),
 );
-const NODE_RESIZE_END_FIT_PADDING = 0.8;
-
 function VideoEditorNodeResizer(props: React.ComponentProps<typeof NodeResizer>) {
-  const nodeId = useNodeId();
-  const { fitView } = useReactFlow();
-  const { onResizeEnd, ...rest } = props;
-  return (
-    <NodeResizer
-      {...rest}
-      onResizeEnd={(event, params) => {
-        onResizeEnd?.(event, params);
-        if (nodeId) {
-          requestAnimationFrame(() => {
-            void fitView({
-              nodes: [{ id: nodeId }],
-              padding: NODE_RESIZE_END_FIT_PADDING,
-              duration: 560,
-              interpolate: "smooth",
-              ...FOLDDER_FIT_VIEW_EASE,
-            });
-          });
-        }
-      }}
-    />
-  );
+  return <NodeResizer {...props} />;
 }
 
 function cx(...parts: Array<string | false | null | undefined>) {

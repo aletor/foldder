@@ -1,4 +1,5 @@
 import type { Edge, Node } from "@xyflow/react";
+import { foldderGridFrame, getNodeGridFrameForType, promptGridRows } from "./canvas-grid-layout";
 import { normalizeDatasetNodesForPersistence } from "./dataset/dataset-project";
 import { NODE_REGISTRY } from "./nodeRegistry";
 import { stripEphemeralNodeClassNames, stripFoldderCanvasIntroFromNodeData } from "./spaces-canvas-intro";
@@ -14,9 +15,32 @@ function parseStylePx(v: unknown): number | undefined {
   return undefined;
 }
 
+function layoutFloorFromContent(n: Node): { w: number; h: number } {
+  const grid = getNodeGridFrameForType(n.type, n.data);
+  let w = grid?.width ?? 0;
+  let h = grid?.height ?? 0;
+  const t = n.type ?? "";
+  if (t === "enhancer" || t === "concatenator" || t === "listado" || t === "notes") {
+    const text = String((n.data as { value?: string })?.value ?? "").trim();
+    if (text) {
+      const rows = Math.max(3, promptGridRows(text) + 1);
+      const frame = foldderGridFrame(t === "notes" ? 3 : 4, Math.min(rows, 6));
+      w = Math.max(w, frame.width);
+      h = Math.max(h, frame.height);
+    }
+  }
+  if (t === "dataset") {
+    const frame = foldderGridFrame(4, 3);
+    w = Math.max(w, frame.width);
+    h = Math.max(h, frame.height);
+  }
+  return { w, h };
+}
+
 /**
- * Alineado con `getNodeLayoutDimensions` en page.tsx: measured, style (resize), y defaults por tipo.
- * Necesario para que el marco del grupo encoja al mover nodos (evita quedarse con 300×240 genéricos).
+ * Alineado con `getNodeLayoutDimensions` en page.tsx: measured, style (resize), grid y defaults por tipo.
+ * Usa el máximo entre medido, style, preset de grid y heurística de contenido para evitar solapes
+ * cuando React Flow aún no ha medido el DOM real (prompts largos, enhancer, mediaInput, etc.).
  */
 function layoutDimsForBounds(n: Node): { w: number; h: number } {
   const style = n.style as { width?: number | string; height?: number | string } | undefined;
@@ -51,6 +75,9 @@ function layoutDimsForBounds(n: Node): { w: number; h: number } {
       if (!hasH) h = sh ?? h;
     }
   }
+  const floor = layoutFloorFromContent(n);
+  w = Math.max(w, sw ?? 0, floor.w);
+  h = Math.max(h, sh ?? 0, floor.h);
   return { w: Math.max(96, w), h: Math.max(72, h) };
 }
 

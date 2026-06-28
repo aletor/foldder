@@ -134,3 +134,61 @@ export function applyPopulateResultsToDataset(args: {
     createdColumn,
   };
 }
+
+/** Un canal de salida (un creador conectado a la plantilla) y sus filas materializadas. */
+export interface PopulateChannelOutput {
+  /** Id estable del canal (normalmente el `sinkId` del nodo creativo). */
+  channelId: string;
+  settings: PopulateDatasetOutputSettings;
+  rows: MaterializedRow[];
+}
+
+export interface ApplyPopulateChannelResult extends ApplyPopulateDatasetOutputResult {
+  channelId: string;
+}
+
+export interface ApplyPopulateChannelsResult {
+  dataset: Dataset;
+  channels: ApplyPopulateChannelResult[];
+  totalWritten: number;
+  totalSkipped: number;
+  createdColumns: number;
+}
+
+/**
+ * Escribe varios canales de salida al Dataset, cada uno en su propia columna.
+ *
+ * Encadena el Dataset entre canales (cada `applyPopulateResultsToDataset` parte del resultado
+ * del anterior) para que las columnas creadas se acumulen sin pisarse. Solo procesa los canales
+ * con `settings.enabled` activo. Las filas comparten el mapeo fila→cardId, así que esto es,
+ * en esencia, repetir el escritor de un canal una vez por canal.
+ */
+export function applyPopulateChannelsToDataset(args: {
+  dataset: Dataset;
+  listId: string;
+  channels: PopulateChannelOutput[];
+}): ApplyPopulateChannelsResult {
+  const { listId } = args;
+  let dataset = args.dataset;
+  const channels: ApplyPopulateChannelResult[] = [];
+  let totalWritten = 0;
+  let totalSkipped = 0;
+  let createdColumns = 0;
+
+  for (const ch of args.channels) {
+    if (!ch.settings.enabled) continue;
+    const res = applyPopulateResultsToDataset({
+      dataset,
+      listId,
+      rows: ch.rows,
+      settings: ch.settings,
+    });
+    dataset = res.dataset;
+    channels.push({ channelId: ch.channelId, ...res });
+    totalWritten += res.writtenCount;
+    totalSkipped += res.skippedCount;
+    if (res.createdColumn) createdColumns += 1;
+  }
+
+  return { dataset, channels, totalWritten, totalSkipped, createdColumns };
+}

@@ -355,7 +355,7 @@ function BrainPill({
       }`}
     >
       <Brain className="h-3.5 w-3.5" strokeWidth={1.6} />
-      {brainConnected ? "Usando ADN del proyecto" : "Sin Brain"}
+      {brainConnected ? "Usando ADN del proyecto" : "Sin BrandKit"}
     </button>
   );
 }
@@ -822,7 +822,7 @@ function DetailDrawer({
           { id: "review" as const, label: "Revisión", icon: <MessageSquare className="h-3.5 w-3.5" /> },
         ]
       : []),
-    ...(brainConnected ? [{ id: "brain" as const, label: "Brain", icon: <Brain className="h-3.5 w-3.5" /> }] : []),
+    ...(brainConnected ? [{ id: "brain" as const, label: "BrandKit", icon: <Brain className="h-3.5 w-3.5" /> }] : []),
   ];
 
   return (
@@ -950,7 +950,7 @@ function DetailDrawer({
               ))}
             </div>
           ) : (
-            <p>Sin Brain conectado. Usará solo tu briefing y los ajustes de escritura.</p>
+            <p>Sin BrandKit conectado. Usará solo tu briefing y los ajustes de escritura.</p>
           )}
         </section>
       )}
@@ -1675,7 +1675,7 @@ export function GuionistaStudio({
               disabled={!brainConnected}
               className={foldderStudioHeaderActionClassName()}
             >
-              Brain
+              BrandKit
             </button>
             {current ? (
               <button type="button" onClick={saveActiveAsset} className={foldderStudioHeaderActionClassName()}>

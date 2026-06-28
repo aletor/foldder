@@ -1,7 +1,7 @@
 "use client";
 
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps } from "react";
-import { NodeResizer, NodeProps, useNodeId, useReactFlow, useStore, useUpdateNodeInternals, type Edge, type Node, type ReactFlowState } from "@xyflow/react";
+import { NodeResizer, NodeProps, useReactFlow, useStore, useUpdateNodeInternals, type Edge, type Node, type ReactFlowState } from "@xyflow/react";
 import { shallow } from "zustand/shallow";
 import { Brain, Clapperboard, Film, FileText, Frame, ImageIcon, Users } from "lucide-react";
 import { FOLDDER_FIT_VIEW_EASE } from "@/lib/fit-view-ease";
@@ -55,31 +55,9 @@ import {
 } from "../studio-node-aspect";
 
 const CINE_NODE_MAX_HEIGHT = 2200;
-const NODE_RESIZE_END_FIT_PADDING = 0.8;
 
 function FoldderNodeResizer(props: ComponentProps<typeof NodeResizer>) {
-  const nodeId = useNodeId();
-  const { fitView } = useReactFlow();
-  const { onResizeEnd, ...rest } = props;
-  return (
-    <NodeResizer
-      {...rest}
-      onResizeEnd={(event, params) => {
-        onResizeEnd?.(event, params);
-        if (nodeId) {
-          requestAnimationFrame(() => {
-            void fitView({
-              nodes: [{ id: nodeId }],
-              padding: NODE_RESIZE_END_FIT_PADDING,
-              duration: 560,
-              interpolate: "smooth",
-              ...FOLDDER_FIT_VIEW_EASE,
-            });
-          });
-        }
-      }}
-    />
-  );
+  return <NodeResizer {...props} />;
 }
 
 type CineInputSnapshot = {
@@ -209,7 +187,7 @@ function useCineNodeResolvedImageUrl(src?: string, s3Key?: string): { url?: stri
 const CINE_NODE_HANDLES: StudioCanvasNodeHandleSpec[] = [
   { side: "left", top: "30%", type: "target", id: "prompt", dataType: "prompt", label: "Guion" },
   { side: "left", top: "54%", type: "target", id: "text", dataType: "txt", label: "Text" },
-  { side: "left", top: "78%", type: "target", id: "brain", dataType: "brain", label: "Brain" },
+  { side: "left", top: "78%", type: "target", id: "brain", dataType: "brain", label: "BrandKit" },
   { side: "right", top: "52%", type: "source", id: "media_list", dataType: "generic", label: "Media List" },
 ];
 
@@ -513,7 +491,7 @@ export const CineNode = memo(function CineNode({ id, data, selected }: NodeProps
                 <CineNodeMediaMetric icon={<Frame size={11} strokeWidth={2.2} />} value={`${framesPrepared}/${framesTotal || 0}`} title="Frames" />
               </div>
               <div className="cine-node-media-signals mt-1 flex items-center gap-2.5">
-                <span className="inline-flex items-center gap-1" title={brainConnected ? "Brain conectado" : "Sin Brain"}>
+                <span className="inline-flex items-center gap-1" title={brainConnected ? "BrandKit conectado" : "Sin BrandKit"}>
                   <Brain size={11} strokeWidth={2.2} className={brainConnected ? "text-white/92" : "text-white/28"} />
                 </span>
                 <span className="inline-flex items-center gap-1" title={sourceScriptText ? "Guionista conectado" : "Guion manual"}>
@@ -573,7 +551,7 @@ export const CineNode = memo(function CineNode({ id, data, selected }: NodeProps
           </div>
           <div className="mt-3 flex flex-wrap gap-1.5">
             <StudioCanvasPill active={brainConnected} activeClassName="border-cyan-400/25 bg-cyan-400/10 text-cyan-700">
-              {brainConnected ? "Brain conectado" : "Sin Brain"}
+              {brainConnected ? "BrandKit conectado" : "Sin BrandKit"}
             </StudioCanvasPill>
             <StudioCanvasPill active={Boolean(sourceScriptText)} activeClassName="border-amber-400/25 bg-amber-400/10 text-amber-700">
               {sourceScriptText ? "Guionista conectado" : "Guion manual"}

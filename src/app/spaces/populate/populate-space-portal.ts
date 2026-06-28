@@ -14,6 +14,7 @@ import {
   getNodeGridFrameForType,
   snapPositionToGrid,
 } from "../canvas-grid-layout";
+import { normalizeSpaceNodeForRuntime } from "../space-node-drag";
 
 function parseStyleDimension(value: unknown): number | undefined {
   if (typeof value === "number" && Number.isFinite(value) && value > 0) return value;
@@ -83,18 +84,20 @@ export function buildPopulateSpacePortalNode(args: {
   populateNode: Node;
   internalCategories: string[];
 }): Node {
-  return applyNodeGridPreset({
-    id: args.portalNodeId,
-    type: "space",
-    position: computeSpacePortalPositionBeside(args.populateNode),
-    data: {
-      spaceId: args.spaceId,
-      label: args.spaceName,
-      hasInput: true,
-      hasOutput: true,
-      internalCategories: args.internalCategories,
-    },
-  });
+  return normalizeSpaceNodeForRuntime(
+    applyNodeGridPreset({
+      id: args.portalNodeId,
+      type: "space",
+      position: computeSpacePortalPositionBeside(args.populateNode),
+      data: {
+        spaceId: args.spaceId,
+        label: args.spaceName,
+        hasInput: true,
+        hasOutput: true,
+        internalCategories: args.internalCategories,
+      },
+    }),
+  );
 }
 
 export function buildPopulateToSpaceEdge(populateNodeId: string, spacePortalNodeId: string): Edge {

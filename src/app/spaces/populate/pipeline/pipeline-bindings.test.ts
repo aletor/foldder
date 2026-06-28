@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  columnOverrideForRow,
   datasetBoundNodeIdsFromBindings,
   isValidPopulateSinkEdge,
   namespacedBindingKey,
@@ -7,6 +8,18 @@ import {
   primarySinkSourceHandle,
 } from "./pipeline-bindings";
 import type { PopulateInputBinding } from "../populate-types";
+import type { Dataset } from "@/app/spaces/dataset/dataset-types";
+
+const emptyDataset: Dataset = {
+  id: "d",
+  name: "D",
+  scope: "local",
+  lists: [{ id: "l1", name: "L", key: "l", schema: [], cards: [] }],
+  constants: { fields: [], values: {} },
+  createdAt: "",
+  updatedAt: "",
+  version: 1,
+};
 
 describe("pipeline-bindings — sink y namespace", () => {
   it("primarySinkSourceHandle por tipo", () => {
@@ -62,5 +75,55 @@ describe("pipeline-bindings — sink y namespace", () => {
     expect(datasetBoundNodeIdsFromBindings(bindings, "img0")).toEqual(
       new Set(["img1", "img0"]),
     );
+  });
+
+  it("manual: no cuenta como nodo bound al Dataset (no itera)", () => {
+    const bindings: Record<string, PopulateInputBinding> = {
+      "img1.prompt": { inputId: "prompt", source: "manual", manualValue: "equipo X" },
+    };
+    expect(datasetBoundNodeIdsFromBindings(bindings)).toEqual(new Set());
+  });
+
+  it("columnOverrideForRow: manual texto devuelve valor constante", () => {
+    const binding: PopulateInputBinding = { inputId: "prompt", source: "manual", manualValue: "  hola  " };
+    const out = columnOverrideForRow({ binding, dataset: emptyDataset, listId: "l1", rowIndex: 3, inputKind: "text" });
+    expect(out).toEqual({ kind: "text", text: "hola" });
+  });
+
+  it("columnOverrideForRow: manual imagen usa la URL tecleada", () => {
+    const binding: PopulateInputBinding = { inputId: "image", source: "manual", manualValue: "https://x/y.png" };
+    const out = columnOverrideForRow({ binding, dataset: emptyDataset, listId: "l1", rowIndex: 0, inputKind: "image" });
+    expect(out).toEqual({ kind: "image", url: "https://x/y.png" });
+  });
+
+  it("columnOverrideForRow: manual vacío no aporta valor", () => {
+    const binding: PopulateInputBinding = { inputId: "prompt", source: "manual", manualValue: "   " };
+    expect(columnOverrideForRow({ binding, dataset: emptyDataset, listId: "l1", rowIndex: 0, inputKind: "text" })).toBeUndefined();
+  });
+
+  it("columnOverrideForRow: tokens manuales se sustituyen en el prompt (constante por fila)", () => {
+    const binding: PopulateInputBinding = { inputId: "prompt", source: "column", listId: "l1", fieldId: "f1" };
+    const out = columnOverrideForRow({
+      binding,
+      dataset: emptyDataset,
+      listId: "l1",
+      rowIndex: 0,
+      promptTemplate: "logo de {equipo}",
+      manualTokenValues: { equipo: "Halcones" },
+      inputKind: "text",
+    });
+    expect(out).toEqual({ kind: "text", text: "logo de Halcones" });
+  });
+
+  it("columnOverrideForRow: texto fijo sin binding usa promptTemplate", () => {
+    const out = columnOverrideForRow({
+      binding: undefined,
+      dataset: emptyDataset,
+      listId: "l1",
+      rowIndex: 0,
+      promptTemplate: "foto de jugador de voleibol",
+      inputKind: "text",
+    });
+    expect(out).toEqual({ kind: "text", text: "foto de jugador de voleibol" });
   });
 });

@@ -718,10 +718,10 @@ export function FreehandColorPalette({
       />
 
       <div>
-        <div className="mb-1 text-[8px] font-bold uppercase tracking-wider text-zinc-600">Brain</div>
+        <div className="mb-1 text-[8px] font-bold uppercase tracking-wider text-zinc-600">BrandKit</div>
         <div className="flex flex-wrap gap-1">
           {brainColors.length === 0 ? (
-            <p className="text-[9px] text-zinc-600">Sin colores de Brain conectados.</p>
+            <p className="text-[9px] text-zinc-600">Sin colores de BrandKit conectados.</p>
           ) : (
             brainColors.map((hex) => (
               <button

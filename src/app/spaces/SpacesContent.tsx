@@ -170,6 +170,8 @@ import {
   buildMediaSinkToSpaceOutputEdges,
   collectMediaSinkInfos,
   detectSpaceOutputMode,
+  reconcileSpacePortalNode,
+  reconcileSpacePortalsInNodes,
   type SpaceStructureAnalysis,
 } from "./space-media-list";
 import {
@@ -261,9 +263,11 @@ import {
   undirectedLayoutComponents,
   runKahnColumnLayout,
   alignMultiInputTargetsToSources,
+  resolveVerticalOverlapsInColumns,
 } from "./spaces-graph-layout";
 import { getReactFlowNodeIdAtClientPoint } from "./spaces-flow-hit-test";
-import { sortNodesCardsOrder, mergeNodeOutputBorderStyle } from "./spaces-node-style";
+import { normalizeSpaceNodeForRuntime } from "./space-node-drag";
+import { mergeNodeOutputBorderStyle, sortNodesCardsOrder } from "./spaces-node-style";
 import {
   useFoldderCanvasIntro,
   useSpacesBrowserFullscreen,
@@ -475,7 +479,8 @@ function defaultCanvasNodeStyleForType(type: string): React.CSSProperties | unde
 }
 
 function defaultCanvasNodeDragHandle(type: string): string | undefined {
-  return type === "notes" ? ".notes-drag-surface" : undefined;
+  if (type === "notes") return ".notes-drag-surface";
+  return undefined;
 }
 
 function normalizeNotesNodeForRuntime<T extends Node>(node: T): T {
@@ -509,7 +514,9 @@ function normalizeNotesNodeForRuntime<T extends Node>(node: T): T {
 }
 
 function prepareCanvasNodeForCreate<T extends Node | Record<string, unknown>>(node: T): T {
-  return normalizeNotesNodeForRuntime(applyNodeGridPreset(node as Node) as Node) as T;
+  return normalizeSpaceNodeForRuntime(
+    normalizeNotesNodeForRuntime(applyNodeGridPreset(node as Node) as Node),
+  ) as T;
 }
 
 /** Etiqueta por defecto al crear un nodo: nombre amigable del registro, no "<type> node". */
@@ -853,6 +860,7 @@ export function SpacesContent() {
   const fileDragPreviewRafRef = useRef<number | null>(null);
   /** Arrastre de archivo activo (aunque el preview se oculte fuera del lienzo). */
   const [fileDragActive, setFileDragActive] = useState(false);
+  const fileDragActiveRef = useRef(false);
 
   /** Arrastre desde un conector de nodo: preview que sigue al cursor (igual que el sidebar). */
   const [connectDragActive, setConnectDragActive] = useState(false);
@@ -1069,6 +1077,7 @@ export function SpacesContent() {
 
   const projectAssetsCanvasValue = useMemo(
     () => ({
+      flowNodes: nodes as Node[],
       librarySummary: projectAssetsLibrarySummary,
       assetsMetadata: metadata.assets,
       projectFiles,
@@ -1079,6 +1088,7 @@ export function SpacesContent() {
       openGuionistaTextAsset,
     }),
     [
+      nodes,
       projectAssetsLibrarySummary,
       metadata.assets,
       projectFiles,
@@ -1148,6 +1158,10 @@ export function SpacesContent() {
 
   const handleLibraryDragEnd = useCallback(() => {
     setPaletteDragActive(false);
+    if (libraryDragPreviewRafRef.current != null) {
+      window.cancelAnimationFrame(libraryDragPreviewRafRef.current);
+      libraryDragPreviewRafRef.current = null;
+    }
     setLibraryDragPreview(null);
     libraryDragPointerRef.current = null;
     const saved = libraryDragViewportRef.current;
@@ -2360,6 +2374,7 @@ export function SpacesContent() {
         const subset = comp.map((id) => nodeById.get(id)!);
         const local = runKahnColumnLayout(subset, edges, getNodeLayoutDimensions, GAP);
         alignMultiInputTargetsToSources(local, subset, edges, getNodeLayoutDimensions);
+        resolveVerticalOverlapsInColumns(local, subset, getNodeLayoutDimensions, GAP);
         let minX = Infinity;
         let maxX = -Infinity;
         let minY = Infinity;
@@ -3235,7 +3250,7 @@ export function SpacesContent() {
     const rootSpace = updatedSpacesMap['root'];
     if (!rootSpace) return;
     setSpacesMap(updatedSpacesMap);
-    const nextRootNodes = [...rootSpace.nodes];
+    const nextRootNodes = reconcileSpacePortalsInNodes([...rootSpace.nodes], updatedSpacesMap);
     setNodes(nextRootNodes);
     markCanvasNodesIntroCompleted(nextRootNodes.map((n: Node) => n.id));
     setEdges([...(rootSpace.edges || [])]);
@@ -3258,7 +3273,7 @@ export function SpacesContent() {
     const parentSpace = updatedSpacesMap[parentId];
     if (!parentSpace?.nodes) return;
     setSpacesMap(updatedSpacesMap);
-    const nextNodes = [...parentSpace.nodes];
+    const nextNodes = reconcileSpacePortalsInNodes([...parentSpace.nodes], updatedSpacesMap);
     setNodes(nextNodes);
     markCanvasNodesIntroCompleted(nextNodes.map((n: Node) => n.id));
     setEdges([...(parentSpace.edges || [])]);
@@ -4398,10 +4413,12 @@ export function SpacesContent() {
 
       const nextNodes = stripLegacyFinal([...(targetSpace?.nodes || [])]).map((n: any) => {
         if (!n.data || typeof n.data !== 'object') {
-          return normalizeNotesNodeForRuntime(applyNodeGridPreset(n as Node) as Node);
+          return normalizeSpaceNodeForRuntime(normalizeNotesNodeForRuntime(applyNodeGridPreset(n as Node) as Node));
         }
         const { _foldderCanvasIntro: _i, ...rest } = n.data as Record<string, unknown>;
-        return normalizeNotesNodeForRuntime(applyNodeGridPreset({ ...n, data: rest } as Node) as Node);
+        return normalizeSpaceNodeForRuntime(
+          normalizeNotesNodeForRuntime(applyNodeGridPreset({ ...n, data: rest } as Node) as Node),
+        );
       });
       const nextEdges = stripEdgesToFinal([...(targetSpace?.edges || [])]);
       const sanitizedActiveGraph = sanitizeLegacyRemovedNodesFromGraph(nextNodes as Node[], nextEdges as Edge[]);
@@ -4410,7 +4427,7 @@ export function SpacesContent() {
       // Legacy: proyectos guardados en Vista Estándar abren con sidebar desbloqueado.
       const loadedFromStandardView = ui?.workspaceViewMode === 'standard';
       markCanvasNodesIntroCompleted(sanitizedActiveGraph.nodes.map((n: Node) => n.id));
-      setNodes(sanitizedActiveGraph.nodes);
+      setNodes(reconcileSpacePortalsInNodes(sanitizedActiveGraph.nodes, spaces as Record<string, any>));
       setEdges(sanitizedActiveGraph.edges);
       scheduleNodeInternalsRefresh(sanitizedActiveGraph.nodes.map((n: any) => String(n.id)));
       scheduleEdgeGeometryRefresh();
@@ -4848,8 +4865,19 @@ export function SpacesContent() {
     }
   }, [beginCanvasPerformanceInteraction, takeSnapshot]);
 
+  const resetConnectDrag = useCallback(() => {
+    connectDragPlanRef.current = null;
+    setConnectDragActive(false);
+    setConnectDragPreview(null);
+    if (connectDragRafRef.current != null) {
+      window.cancelAnimationFrame(connectDragRafRef.current);
+      connectDragRafRef.current = null;
+    }
+  }, []);
+
   const onConnect: OnConnect = useCallback(
     (params) => {
+      resetConnectDrag();
       const designerConflict = designerModeConflictReason(
         params,
         liveNodesRef.current,
@@ -4907,7 +4935,7 @@ export function SpacesContent() {
       }, 50);
       fitViewToNodeIds([params.target], 600);
     },
-    [setEdges, takeSnapshot, fitViewToNodeIds, updateNodeInternals, liveNodesRef]
+    [setEdges, takeSnapshot, fitViewToNodeIds, updateNodeInternals, liveNodesRef, resetConnectDrag]
   );
 
   useEffect(() => {
@@ -4937,16 +4965,6 @@ export function SpacesContent() {
   // Requiere connectionMode={ConnectionMode.Loose} para poder arrastrar desde entradas (target).
   // El nodo se previsualiza siguiendo el cursor (igual que arrastrar desde el sidebar) y se
   // deposita exactamente donde se suelta el conector.
-
-  const resetConnectDrag = useCallback(() => {
-    connectDragPlanRef.current = null;
-    setConnectDragActive(false);
-    setConnectDragPreview(null);
-    if (connectDragRafRef.current != null) {
-      window.cancelAnimationFrame(connectDragRafRef.current);
-      connectDragRafRef.current = null;
-    }
-  }, []);
 
   const onConnectStart = useCallback(
     (
@@ -5188,6 +5206,25 @@ export function SpacesContent() {
       return;
     }
 
+    // Bloqueo duro: no se puede encapsular en un Space una selección que alimenta la plantilla
+    // de un Populate. Un space como plantilla rompe el binding dinámico por fila y el multi-canal.
+    const selectedIds = new Set(selectedNodes.map((n) => n.id));
+    const feedsPopulateTemplate = edges.some(
+      (e) =>
+        selectedIds.has(e.source) &&
+        !selectedIds.has(e.target) &&
+        e.targetHandle === "template" &&
+        nodes.find((n) => n.id === e.target)?.type === "populate",
+    );
+    if (feedsPopulateTemplate) {
+      window.alert(
+        "No puedes encapsular en un Space nodos conectados a la plantilla de un Populate. " +
+          "Conecta los creadores directamente al Populate (multi-canal) o desconéctalos del Populate antes de agrupar.",
+      );
+      setContextMenu(null);
+      return;
+    }
+
     takeSnapshot();
 
     const minX = Math.min(...selectedNodes.map((n) => n.position.x));
@@ -5321,8 +5358,14 @@ export function SpacesContent() {
             const dimensions = resizedById.get(node.id);
             if (!dimensions) return node;
             const style = (node.style ?? {}) as React.CSSProperties;
+            const userResizedMediaInput = node.type === "mediaInput";
             return {
               ...node,
+              width: dimensions.width,
+              height: dimensions.height,
+              ...(userResizedMediaInput
+                ? { data: { ...(node.data ?? {}), _foldderUserResized: true } }
+                : {}),
               style: {
                 ...style,
                 width: dimensions.width,
@@ -5531,8 +5574,12 @@ export function SpacesContent() {
       ]
         .filter(Boolean)
         .join(' ');
+      const runtimeNode =
+        n.type === "space"
+          ? normalizeSpaceNodeForRuntime(reconcileSpacePortalNode(n, spacesMap))
+          : n;
       return withAiExecutionStyle(n, {
-        ...n,
+        ...runtimeNode,
         className: cls || undefined,
         style: mergeNodeOutputBorderStyle(n),
       });
@@ -5551,6 +5598,7 @@ export function SpacesContent() {
     overviewHoverHighlightId,
     touchConnectSourceId,
     activeAiNodeIdsVersion,
+    spacesMap,
   ]);
 
   const renderCanvasDragPreview = useCallback(
@@ -5646,10 +5694,15 @@ export function SpacesContent() {
   );
 
   const isValidConnection = useCallback((connection: any) => {
-    const sourceNode = nodes.find((n) => n.id === connection.source);
-    const targetNode = nodes.find((n) => n.id === connection.target);
+    const resolveNode = (id: string) => {
+      const node = nodes.find((n) => n.id === id);
+      if (!node) return undefined;
+      return node.type === "space" ? reconcileSpacePortalNode(node, spacesMap) : node;
+    };
+    const sourceNode = resolveNode(connection.source);
+    const targetNode = resolveNode(connection.target);
     if (!sourceNode || !targetNode) return false;
-    if (!areNodesConnectable(sourceNode, targetNode, connection, nodes)) return false;
+    if (!areNodesConnectable(sourceNode, targetNode, connection, nodes, { spacesMap })) return false;
     if (targetNode.type === "export_multimedia" || targetNode.type === "exportMultiple") {
       if (isExportMultimediaDatasetTargetHandle(connection.targetHandle)) {
         return !isExportMultimediaDatasetTaken(targetNode.id, edges);
@@ -5664,7 +5717,7 @@ export function SpacesContent() {
       );
     }
     return true;
-  }, [nodes, edges]);
+  }, [nodes, edges, spacesMap]);
 
   const syncLibraryDragPreviewAtClientPoint = useCallback(
     (clientX: number, clientY: number) => {
@@ -5711,13 +5764,19 @@ export function SpacesContent() {
   );
 
   const clearFileDragPreview = useCallback(() => {
+    fileDragActiveRef.current = false;
     fileDragPointerRef.current = null;
+    if (fileDragPreviewRafRef.current != null) {
+      window.cancelAnimationFrame(fileDragPreviewRafRef.current);
+      fileDragPreviewRafRef.current = null;
+    }
     setFileDragActive(false);
     setFileDragPreview(null);
   }, []);
 
   const syncFileDragPreviewAtClientPoint = useCallback(
     (clientX: number, clientY: number) => {
+      if (!fileDragActiveRef.current) return;
       if (libraryDragTypeRef.current) {
         clearFileDragPreview();
         return;
@@ -5774,6 +5833,7 @@ export function SpacesContent() {
 
       if (isExternalFileDataTransfer(event.dataTransfer)) {
         event.dataTransfer.dropEffect = "copy";
+        fileDragActiveRef.current = true;
         setFileDragActive(true);
         syncFileDragPreviewAtClientPoint(event.clientX, event.clientY);
         return;
@@ -5796,6 +5856,7 @@ export function SpacesContent() {
       if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
 
       const { clientX, clientY } = event;
+      fileDragActiveRef.current = true;
       setFileDragActive(true);
       if (fileDragPreviewRafRef.current != null) return;
       fileDragPreviewRafRef.current = window.requestAnimationFrame(() => {
@@ -5929,6 +5990,10 @@ export function SpacesContent() {
       libraryDropTargetIdRef.current = null;
       setLibraryDropTargetId(null);
       setLibraryCompatibleIds([]);
+      if (libraryDragPreviewRafRef.current != null) {
+        window.cancelAnimationFrame(libraryDragPreviewRafRef.current);
+        libraryDragPreviewRafRef.current = null;
+      }
       setLibraryDragPreview(null);
       clearFileDragPreview();
 
@@ -6263,7 +6328,7 @@ export function SpacesContent() {
           edgesFocusable={!isTouchUI}
           elevateEdgesOnSelect={!isTouchUI}
           elevateNodesOnSelect={!isTouchUI}
-          onlyRenderVisibleElements={isTouchUI}
+          onlyRenderVisibleElements
 
           nodeTypes={nodeTypes}
           edgeTypes={isTouchUI ? touchCanvasEdgeTypes : edgeTypes}

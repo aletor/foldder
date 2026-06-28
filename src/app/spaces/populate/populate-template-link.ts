@@ -28,6 +28,10 @@ export function isPopulateTemplateLinkEdge(
   if (edge.target !== populateId || edge.targetHandle !== POPULATE_TEMPLATE_TARGET_HANDLE) {
     return false;
   }
+  if (sourceNodeType === "space") {
+    const sourceHandle = edge.sourceHandle ?? "media_list";
+    return sourceHandle === "media_list" || sourceHandle === "out";
+  }
   if (sourceNodeType != null && !isPipelineSinkType(sourceNodeType)) {
     return false;
   }
@@ -40,10 +44,14 @@ export function findPopulateTemplateLinkEdge(
   nodes: { id: string; type?: string }[],
   edges: Edge[],
 ): Edge | undefined {
-  const sinkIds = new Set(
-    nodes.filter((n) => isPipelineSinkType(n.type)).map((n) => n.id),
+  const templateSourceIds = new Set(
+    nodes
+      .filter((n) => isPipelineSinkType(n.type) || n.type === "space")
+      .map((n) => n.id),
   );
-  return edges.find(
-    (e) => isPopulateTemplateLinkEdge(e, populateId) && sinkIds.has(e.source),
-  );
+  return edges.find((e) => {
+    if (!templateSourceIds.has(e.source)) return false;
+    const sourceType = nodes.find((n) => n.id === e.source)?.type;
+    return isPopulateTemplateLinkEdge(e, populateId, sourceType);
+  });
 }

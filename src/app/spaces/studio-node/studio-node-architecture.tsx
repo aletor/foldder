@@ -85,7 +85,7 @@ export const STUDIO_NODE_MANIFESTS = {
   projectBrain: {
     nodeType: "projectBrain",
     appId: "brain",
-    label: "Brain",
+    label: "BrandKit",
     chrome: "brain",
     modulePath: "src/app/spaces/ProjectBrainFullscreen.tsx",
     ownsPortal: true,

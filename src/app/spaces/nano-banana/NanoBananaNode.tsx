@@ -82,8 +82,6 @@ function captureCurrentOutput(
   return [...prev, entry];
 }
 
-/** Tras soltar el resize: encuadra solo este nodo (mismo criterio que foco tras crear nodo). */
-const NODE_RESIZE_END_FIT_PADDING = 0.8;
 const STUDIO_NODE_MAX_HEIGHT = 2200;
 const NANO_BANANA_EMPTY_BACKGROUND_SRC = "/assets/nodes/nano-banana-empty-pink.png";
 
@@ -161,28 +159,7 @@ function NanoBananaProviderSwitch({
 }
 
 function FoldderNodeResizer(props: ComponentProps<typeof NodeResizer>) {
-  const nodeId = useNodeId();
-  const { fitView } = useReactFlow();
-  const { onResizeEnd, ...rest } = props;
-  return (
-    <NodeResizer
-      {...rest}
-      onResizeEnd={(event, params) => {
-        onResizeEnd?.(event, params);
-        if (nodeId) {
-          requestAnimationFrame(() => {
-            void fitView({
-              nodes: [{ id: nodeId }],
-              padding: NODE_RESIZE_END_FIT_PADDING,
-              duration: 560,
-              interpolate: "smooth",
-              ...FOLDDER_FIT_VIEW_EASE,
-            });
-          });
-        }
-      }}
-    />
-  );
+  return <NodeResizer {...props} />;
 }
 
 const NB_MODELS = [
@@ -2917,7 +2894,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
             color: brainConnected ? "#a78bfa" : undefined,
           }}
         >
-          {brainConnected ? "✓ Brain" : "Brain"}
+          {brainConnected ? "✓ BrandKit" : "BrandKit"}
         </span>
       </div>
       {REF_SLOTS.map((slot, i) => (
@@ -3099,7 +3076,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
             }}
             className="text-left text-[8px] font-black uppercase tracking-wider text-violet-200/90 hover:text-violet-100"
           >
-            {showBrainWhy ? "Ocultar por qué" : "Ver por qué · Brain"}
+            {showBrainWhy ? "Ocultar por qué" : "Ver por qué · BrandKit"}
           </button>
           {showBrainWhy &&
             (brainImageDiag ? (
@@ -3139,7 +3116,7 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
               </div>
             ) : (
               <p className="text-[7px] text-zinc-500">
-                Genera desde el botón o Studio para ver el prompt enviado y las señales Brain.
+                Genera desde el botón o Studio para ver el prompt enviado y las señales del BrandKit.
               </p>
             ))}
         </div>

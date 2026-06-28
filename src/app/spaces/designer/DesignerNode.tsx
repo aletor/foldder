@@ -1,6 +1,6 @@
 "use client";
 
-import React, { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   NodeResizer,
   useReactFlow,
@@ -12,7 +12,6 @@ import {
   type ReactFlowState,
 } from "@xyflow/react";
 import { shallow } from "zustand/shallow";
-import { FOLDDER_FIT_VIEW_EASE } from "@/lib/fit-view-ease";
 import { FoldderStudioModeCenterButton } from "../foldder-node-ui";
 import type { IndesignPageFormatId } from "../indesign/page-formats";
 import { DEFAULT_DESIGNER_PAGE_FORMAT, getPageDimensions } from "../indesign/page-formats";
@@ -42,6 +41,12 @@ import { useCanvasNodeMediaPreviewUrl } from "../hooks/use-authed-media-preview-
 import { useNodeViewportVisibility } from "../use-node-viewport-visibility";
 import { useDesignerConnectedDataset } from "./use-designer-connected-dataset";
 import {
+  brainBrandSignature,
+  mergeBrainBrandIntoConstants,
+} from "@/app/spaces/brandkit/brandkit-logic";
+import { useProjectBrainCanvas } from "../project-brain-canvas-context";
+import { normalizeProjectAssets } from "../project-assets-metadata";
+import {
   applyDatasetToAllPages,
   collectDatasetLoopListId,
   reconcileDatasetLoopPages,
@@ -53,9 +58,9 @@ const DESIGNER_NODE_MAX_HEIGHT = 2200;
 const DESIGNER_EMPTY_BACKGROUND_SRC = "/assets/nodes/designer-empty-lime.png";
 
 const DESIGNER_NODE_HANDLES: StudioCanvasNodeHandleSpec[] = [
-  { side: "left", top: "25%", style: { transform: "translateY(-50%)" }, type: "target", id: "brain", dataType: "brain", label: "Brain" },
-  { side: "left", top: "50%", style: { transform: "translateY(-50%)" }, type: "target", id: "dataset", dataType: "dataset", label: "Dataset" },
-  { side: "left", top: "75%", style: { transform: "translateY(-50%)" }, type: "target", id: "layout", dataType: "generic", label: "Image Layout" },
+  { side: "left", top: "20%", style: { transform: "translateY(-50%)" }, type: "target", id: "brain", dataType: "brain", label: "BrandKit" },
+  { side: "left", top: "40%", style: { transform: "translateY(-50%)" }, type: "target", id: "dataset", dataType: "dataset", label: "Dataset" },
+  { side: "left", top: "80%", style: { transform: "translateY(-50%)" }, type: "target", id: "layout", dataType: "generic", label: "Image Layout" },
   { side: "right", top: "30%", style: { transform: "translateY(-50%)" }, type: "source", id: "image", dataType: "image", label: "Image" },
   { side: "right", top: "52%", style: { transform: "translateY(-50%)" }, type: "source", id: "document", dataType: "generic", label: "Document" },
   { side: "right", top: "74%", style: { transform: "translateY(-50%)" }, type: "source", id: "media_list", dataType: "generic", label: "Export Multimedia" },
@@ -114,19 +119,7 @@ export type DesignerNodeData = {
 };
 
 function DesignerNodeResizer(props: React.ComponentProps<typeof NodeResizer>) {
-  const { fitView } = useReactFlow();
-  const { onResizeEnd, ...rest } = props;
-  return (
-    <NodeResizer
-      {...rest}
-      onResizeEnd={(e, p) => {
-        onResizeEnd?.(e, p);
-        requestAnimationFrame(() => {
-          void fitView({ padding: 0.75, duration: 400, interpolate: "smooth", ...FOLDDER_FIT_VIEW_EASE });
-        });
-      }}
-    />
-  );
+  return <NodeResizer {...props} />;
 }
 
 export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
@@ -139,13 +132,36 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
     nodeId: id,
     nodeType: "designer",
   });
-  const brainConnected = useStore(
+  const brainNodeId = useStore(
     useCallback(
-      (state: ReactFlowState<Node, Edge>) => state.edges.some((edge) => edge.target === id && edge.targetHandle === "brain"),
+      (state: ReactFlowState<Node, Edge>) =>
+        state.edges.find((edge) => edge.target === id && edge.targetHandle === "brain")?.source ?? null,
       [id],
     ),
   );
+  const brainConnected = !!brainNodeId;
+  const brainCanvasCtx = useProjectBrainCanvas();
+  const brainBrand = useMemo(
+    () => (brainNodeId ? normalizeProjectAssets(brainCanvasCtx?.assetsMetadata).brand : null),
+    [brainNodeId, brainCanvasCtx?.assetsMetadata],
+  );
+  const brainBrandSig = useMemo(() => brainBrandSignature(brainNodeId, brainBrand), [brainNodeId, brainBrand]);
   const { datasetConnected, connectedDataset, datasetLoading } = useDesignerConnectedDataset(id);
+  /**
+   * Dataset efectivo: el conectado + la marca del BrandKit (Brain) conectado —logo/colores—
+   * inyectados como constantes namespaced. Es lo que se aplica a las páginas y se pasa al estudio,
+   * de modo que los bindings `source: "node"`/`"constant"` resuelven por la vía de constantes ya
+   * existente.
+   */
+  const effectiveDataset = useMemo(
+    () => {
+      if (brainNodeId && brainBrand) return mergeBrainBrandIntoConstants(connectedDataset, brainNodeId, brainBrand);
+      return connectedDataset;
+    },
+    // brainBrandSig captura el cambio de contenido sin re-fusionar en cada tick.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [connectedDataset, brainBrandSig],
+  );
   const currentNodeFrameSnapshot = useStore(
     useCallback((state: ReactFlowState<Node, Edge>) => selectNodeFrameSnapshot(state, id), [id]),
     shallow,
@@ -345,12 +361,13 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
    */
   const lastNodeDatasetSyncRef = useRef<string | null>(null);
   useEffect(() => {
-    const ds = connectedDataset;
+    const ds = effectiveDataset;
     if (!ds) {
       lastNodeDatasetSyncRef.current = null;
       return;
     }
-    const syncKey = `${ds.id}:${ds.version}`;
+    // La firma de la marca (Brain) entra en la clave: editar el BrandKit re-aplica aunque el Dataset no cambie.
+    const syncKey = `${ds.id}:${ds.version}:${brainBrandSig}`;
     // Con el estudio abierto manda el estudio; solo marcamos para no duplicar al cerrar.
     if (isStudioOpen) {
       lastNodeDatasetSyncRef.current = syncKey;
@@ -363,7 +380,7 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
     if (current.length === 0) return;
 
     const loopListId = collectDatasetLoopListId(current);
-    const loopActive = !!loopListId && ds.lists.some((l) => l.id === loopListId);
+    const loopActive = !!loopListId && ds.lists.some((l: { id: string }) => l.id === loopListId);
     const next = loopActive
       ? reconcileDatasetLoopPages(current, ds, loopListId!, activeIdx, duplicateDesignerPageState)
       : applyDatasetToAllPages(current, ds);
@@ -383,7 +400,7 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
           : n,
       ),
     );
-  }, [connectedDataset, isStudioOpen, id, setNodes, nodeData.pages, activeIdx]);
+  }, [effectiveDataset, brainBrandSig, isStudioOpen, id, setNodes, nodeData.pages, activeIdx]);
 
   /**
    * Layerizer → Designer: al conectar un Image Layout, abrir un documento nuevo del tamaño
@@ -537,8 +554,8 @@ export const DesignerNode = memo(({ id, data, selected }: NodeProps<any>) => {
             initialPageThumbnails={nodeData.pageThumbnails ?? {}}
             designerCanvasInstanceKey={id}
             brainConnected={brainConnected}
-            datasetConnected={datasetConnected}
-            designerConnectedDataset={connectedDataset}
+            datasetConnected={datasetConnected || !!(effectiveDataset && effectiveDataset !== connectedDataset)}
+            designerConnectedDataset={effectiveDataset}
             designerConnectedDatasetLoading={datasetLoading}
             onClose={() => {
               commitLiveDesignerPatch();

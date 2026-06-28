@@ -29,13 +29,31 @@ export function isLayerMaskVisible(o: { layerMask?: LayerMaskData | null }): boo
   return hasLayerMaskBlock(o) && (o.layerMask?.enabled !== false);
 }
 
-/** Mismas capas que Layer Styles: imagen o grupo booleano con caché raster. */
+/** Capas con bitmap raster propio: la máscara puede pintarse sobre/aplanarse en sus píxeles. */
 export function isLayerMaskRasterEligible(o: { type: string; cachedResult?: string | null }): boolean {
   if (o.type === "image") return true;
   if (o.type === "booleanGroup") {
     const s = o.cachedResult;
     return typeof s === "string" && s.trim().length > 0;
   }
+  return false;
+}
+
+/**
+ * Capas que pueden llevar máscara de capa (no destructiva, vía `<mask>` SVG sobre el render):
+ * raster (imagen/boolean), formas vectoriales y texto. La pintura del pincel se hace siempre
+ * sobre el lienzo de la máscara, por lo que no requiere bitmap propio del objeto.
+ */
+export function isLayerMaskEligible(o: {
+  type: string;
+  cachedResult?: string | null;
+  isImageFrame?: boolean;
+}): boolean {
+  if (isLayerMaskRasterEligible(o)) return true;
+  if (o.type === "rect") return o.isImageFrame !== true;
+  if (o.type === "ellipse" || o.type === "path" || o.type === "text") return true;
+  // Carpeta: la máscara envuelve el grupo y afecta a todo su contenido.
+  if (o.type === "groupContainer") return true;
   return false;
 }
 

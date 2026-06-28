@@ -109,7 +109,7 @@ export const ProjectBrainNode = memo(({ id, data, selected }: NodeProps<any>) =>
     totalActives + visualRefCount + totalLooks + (hasVoice ? 1 : 0) + (hasPalette ? 1 : 0) + (hasLogo ? 1 : 0);
   const headerTitle = nodeData.label?.trim() && !/\.(jpg|jpeg|png|webp|mp4)$/i.test(nodeData.label.trim())
     ? nodeData.label.trim()
-    : "Brain";
+    : "BrandKit";
   const hasPreview = Boolean(atmosphereImage);
   const nodesLabel = brainClients.length === 1 ? "nodo" : "nodos";
 
@@ -133,7 +133,7 @@ export const ProjectBrainNode = memo(({ id, data, selected }: NodeProps<any>) =>
       {hasFoldderStudioTouched(nodeData as Record<string, unknown>) ? (
         <FoldderStudioTouchedMark nodeType="projectBrain" />
       ) : null}
-      <NodeLabel id={id} label={nodeData.label} defaultLabel="Brain" />
+      <NodeLabel id={id} label={nodeData.label} defaultLabel="BrandKit" />
 
       <div className="node-content project-brain-node-content relative min-h-0 flex-1 overflow-hidden">
         {hasPreview ? (
@@ -202,14 +202,14 @@ export const ProjectBrainNode = memo(({ id, data, selected }: NodeProps<any>) =>
               }}
               className="project-brain-node-open-btn foldder-node-footer-button nodrag inline-flex shrink-0 items-center gap-1.5 rounded-none border-0 bg-white px-2.5 py-1.5 text-[10px] font-semibold text-black shadow-none transition hover:bg-[#f7f7f4]"
             >
-              Abrir Brain
+              Abrir BrandKit
             </button>
           </div>
         </div>
       </div>
 
       <div className="handle-wrapper handle-right" style={{ top: "50%" }}>
-        <span className="handle-label">Brain out</span>
+        <span className="handle-label">BrandKit out</span>
         <FoldderDataHandle type="source" position={Position.Right} id="brain" dataType="brain" />
       </div>
     </div>

@@ -4,7 +4,6 @@ import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, 
 import {
   NodeResizer,
   Position,
-  useNodeId,
   useReactFlow,
   useStore,
   useUpdateNodeInternals,
@@ -15,7 +14,6 @@ import {
 } from "@xyflow/react";
 import { shallow } from "zustand/shallow";
 import { Video } from "lucide-react";
-import { FOLDDER_FIT_VIEW_EASE } from "@/lib/fit-view-ease";
 import { FoldderDataHandle } from "./FoldderDataHandle";
 import { NodeIcon } from "./foldder-icons";
 import { resolveFoldderNodeState } from "./foldder-icons";
@@ -43,32 +41,10 @@ import { nodeFrameFromSnapshot, selectNodeFrameSnapshot } from "./react-flow-sel
 import { useFoldderRenderMetric } from "./use-performance-metrics";
 import { useNodeViewportVisibility } from "./use-node-viewport-visibility";
 
-const NODE_RESIZE_END_FIT_PADDING = 0.8;
 const VFX_STUDIO_NODE_MAX_HEIGHT = 2200;
 
 function FoldderNodeResizerLocal(props: React.ComponentProps<typeof NodeResizer>) {
-  const nodeId = useNodeId();
-  const { fitView } = useReactFlow();
-  const { onResizeEnd, ...rest } = props;
-  return (
-    <NodeResizer
-      {...rest}
-      onResizeEnd={(event, params) => {
-        onResizeEnd?.(event, params);
-        if (nodeId) {
-          requestAnimationFrame(() => {
-            void fitView({
-              nodes: [{ id: nodeId }],
-              padding: NODE_RESIZE_END_FIT_PADDING,
-              duration: 560,
-              interpolate: "smooth",
-              ...FOLDDER_FIT_VIEW_EASE,
-            });
-          });
-        }
-      }}
-    />
-  );
+  return <NodeResizer {...props} />;
 }
 
 type BaseNodeData = { label?: string; value?: string; type?: string };

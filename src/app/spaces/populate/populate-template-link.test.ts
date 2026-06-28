@@ -61,4 +61,20 @@ describe("populate-template-link", () => {
     ];
     expect(findPopulateTemplateLinkEdge("pop1", nodesWithBg, [edge as any])?.id).toBe("e4");
   });
+
+  it("accepts nested space media_list → populate template", () => {
+    const edge = {
+      id: "e5",
+      source: "space1",
+      target: "pop1",
+      sourceHandle: "media_list",
+      targetHandle: "template",
+    };
+    expect(isPopulateTemplateLinkEdge(edge, "pop1", "space")).toBe(true);
+    const nodesWithSpace = [
+      ...nodes,
+      { id: "space1", type: "space" },
+    ];
+    expect(findPopulateTemplateLinkEdge("pop1", nodesWithSpace, [edge as any])?.id).toBe("e5");
+  });
 });

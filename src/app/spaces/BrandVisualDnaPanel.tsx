@@ -152,14 +152,14 @@ export function BrandVisualDnaPanel({
             className="inline-flex items-center gap-2 rounded-[5px] border border-zinc-900 bg-zinc-900 px-3 py-1.5 text-[10px] font-black uppercase tracking-wide text-white disabled:opacity-40"
           >
             <Send className="h-3.5 w-3.5" aria-hidden />
-            Enviar a Brain
+            Enviar al BrandKit
           </button>
         </div>
       </div>
 
       {previewBundle ? (
         <p className="rounded-[5px] border border-sky-300 bg-sky-50 px-3 py-2 text-[10px] text-sky-950">
-          Hay un resultado nuevo en vista previa. Pulsa <span className="font-bold">Enviar a Brain</span> para persistirlo
+          Hay un resultado nuevo en vista previa. Pulsa <span className="font-bold">Enviar al BrandKit</span> para persistirlo
           en el proyecto (o vuelve a analizar).
         </p>
       ) : null}
@@ -267,7 +267,7 @@ export function BrandVisualDnaPanel({
                   <p className="text-zinc-700">Colores: {selectedCluster.visual_rules.colors.join("; ") || "—"}</p>
                   <p>Luz: {selectedCluster.visual_rules.lighting.join("; ") || "—"}</p>
                   <p>Composición: {selectedCluster.visual_rules.composition.join("; ") || "—"}</p>
-                  <p>Reglas seguras (global Brain):</p>
+                  <p>Reglas seguras (global BrandKit):</p>
                   <ul className="list-disc pl-4 text-[10px] text-zinc-600">
                     {(d?.global_visual_rules.safe_generation_rules ?? []).map((x) => (
                       <li key={x}>{x}</li>

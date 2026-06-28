@@ -340,6 +340,52 @@ export function buildGeneratedSubgraph(
   return { nodes, edges };
 }
 
+/** Separación horizontal entre carriles de canal en el nested space multi-canal. */
+const CHANNEL_LANE_GAP_X = 1200;
+
+/** Un canal de salida materializado (un creador conectado a la plantilla) y sus filas. */
+export interface MaterializedChannel {
+  /** Id estable del canal (normalmente el `sinkId`). */
+  channelId: string;
+  label?: string;
+  /** Tipo de nodo del sink (por defecto Image Creation). */
+  templateType: string;
+  model: MaterializeTemplateModel;
+  rows: MaterializedRow[];
+}
+
+/**
+ * Nested space multi-canal: cada canal ocupa un carril horizontal (eje X) y dentro de él las filas
+ * del Dataset se apilan verticalmente (eje Y). Así las variantes de una misma fila quedan alineadas
+ * a la misma altura, una por carril. Las IDs incluyen el índice de canal para no colisionar.
+ */
+export function buildMultiChannelGeneratedSubgraph(
+  populateId: string,
+  channels: MaterializedChannel[],
+): { nodes: Node[]; edges: Edge[] } {
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  channels.forEach((channel, ci) => {
+    const laneX = ci * CHANNEL_LANE_GAP_X;
+    channel.rows.forEach((row, ri) => {
+      const sub = buildRowSubgraph(
+        populateId,
+        row,
+        channel.model,
+        80 + ri * ROW_GAP_Y,
+        channel.templateType,
+        `r${row.rowIndex}_c${ci}`,
+      );
+      for (const n of sub.nodes) {
+        n.position = { ...n.position, x: n.position.x + laneX };
+      }
+      nodes.push(...sub.nodes);
+      edges.push(...sub.edges);
+    });
+  });
+  return { nodes, edges };
+}
+
 /** MediaListOutput agregado a partir de las filas generadas (para Export Multimedia). */
 export function buildMediaListOutput(
   populateId: string,
@@ -377,6 +423,62 @@ export function buildMediaListOutput(
     metadata: {
       cineNodeId: populateId,
       totalFrames: rows.length,
+      generatedAt: new Date().toISOString(),
+    },
+  };
+}
+
+/**
+ * MediaListOutput multi-canal: concatena los items de todos los canales con IDs/títulos únicos por
+ * canal (para que Export Multimedia reciba todas las variantes sin colisiones).
+ */
+export function buildMultiChannelMediaListOutput(
+  populateId: string,
+  label: string,
+  channels: MaterializedChannel[],
+): MediaListOutput {
+  const items: MediaListOutput["items"] = [];
+  let totalReady = 0;
+  let totalRows = 0;
+  let order = 0;
+  channels.forEach((channel, ci) => {
+    const chLabel = channel.label || `Canal ${ci + 1}`;
+    channel.rows.forEach((row) => {
+      totalRows += 1;
+      if (row.output) totalReady += 1;
+      items.push({
+        id: rowNodeId(populateId, `r${row.rowIndex}_c${ci}`, "nano"),
+        order: order++,
+        title: `${chLabel} · Fila ${row.rowIndex + 1}`,
+        mediaType: "image",
+        url: row.output || undefined,
+        ...(row.s3Key ? { s3Key: row.s3Key } : {}),
+        ...(row.output || row.s3Key
+          ? { mimeType: inferMediaListImageMimeType({
+              id: "",
+              order: 0,
+              title: "",
+              mediaType: "image",
+              status: "generated",
+              url: row.output,
+              s3Key: row.s3Key,
+            }) }
+          : {}),
+        status: row.output ? "generated" : "pending",
+        metadata: { prompt: row.prompt },
+      });
+    });
+  });
+  return {
+    kind: "media_list",
+    sourceNodeId: populateId,
+    sourceNodeType: "populate",
+    title: label || "Populate",
+    status: totalReady === 0 ? "empty" : totalReady === totalRows ? "frames_ready" : "frames_partial",
+    items,
+    metadata: {
+      cineNodeId: populateId,
+      totalFrames: totalRows,
       generatedAt: new Date().toISOString(),
     },
   };

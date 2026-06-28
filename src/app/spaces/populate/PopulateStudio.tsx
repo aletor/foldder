@@ -19,6 +19,7 @@ import {
   Type,
 } from "lucide-react";
 import type { Dataset, FieldDef } from "@/app/spaces/dataset/dataset-types";
+import { fieldValueAsText, getListFieldValueAtRow } from "@/app/spaces/dataset/dataset-logic";
 import { FoldderStudioHeader } from "../FoldderStudioHeader";
 import type { ActiveImageRef } from "./populate-active-refs";
 import { PopulateFormPanel } from "./PopulateFormPanel";
@@ -34,6 +35,7 @@ import {
   type PopulateStudioSlot,
   type PopulateStudioSummary,
 } from "./populate-studio-summary";
+import { formatPopulateRunErrorMessage } from "./populate-batch-finalize";
 import { sampleColumnImageUrls } from "./populate-studio-images";
 import { PopulateDatasetOutputPanel } from "./PopulateDatasetOutputPanel";
 import {
@@ -41,9 +43,21 @@ import {
   type PopulateBindings,
   type PopulateDatasetOutputSettings,
   type PopulateInputBinding,
+  type PopulateRunStatus,
 } from "./populate-types";
 
 const POPULATE_ACCENT = "#FD52EB";
+
+/** Un canal de salida (creador conectado a la plantilla) con su columna destino. */
+export interface PopulateStudioChannelOutput {
+  channelId: string;
+  label: string;
+  /** Prompt del nodo Image Creator (identidad compartida; solo lectura en UI). */
+  nodePrompt: string;
+  /** Delta fijo de pose/variante, concatenado tras `nodePrompt`. */
+  channelPrompt: string;
+  settings: PopulateDatasetOutputSettings;
+}
 
 export interface PopulateStudioProps {
   nodeId: string;
@@ -60,6 +74,11 @@ export interface PopulateStudioProps {
   model: PopulateTemplateModel;
   onChangePrompt: (next: string) => void;
   onChangeBinding: (inputId: string, binding: PopulateInputBinding) => void;
+
+  /** Tokens del prompt marcados como manuales (clave de token → valor constante). */
+  manualTokens?: Record<string, string>;
+  /** Marca/edita un token manual; `value === null` lo devuelve a columna/constante. */
+  onChangeManualToken?: (tokenKey: string, value: string | null) => void;
 
   schema: FieldDef[];
   constantFields: FieldDef[];
@@ -83,6 +102,10 @@ export interface PopulateStudioProps {
   busy: boolean;
   progress: { done: number; total: number } | null;
   lastRunOutputs: string[];
+  lastRunFailures?: Array<{ rowIndex: number; error: string }>;
+  lastRunOkCount?: number;
+  lastRunFailedCount?: number;
+  runStatus?: PopulateRunStatus;
   previewRowIndex: number;
   onPreviewRowChange: (rowIndex: number) => void;
   previewUrl: string | null;
@@ -101,6 +124,13 @@ export interface PopulateStudioProps {
 
   datasetOutput: PopulateDatasetOutputSettings;
   onChangeDatasetOutput: (next: PopulateDatasetOutputSettings) => void;
+  /**
+   * Multi-canal: cuando hay 2+ creadores conectados a la plantilla, una columna destino por canal.
+   * Si tiene ≥2 entradas sustituye al panel de salida único.
+   */
+  channels?: PopulateStudioChannelOutput[];
+  onChangeChannelOutput?: (channelId: string, next: PopulateDatasetOutputSettings) => void;
+  onChangeChannelPrompt?: (channelId: string, next: string) => void;
   lastDatasetWriteSummary?: string | null;
 
   /**
@@ -401,6 +431,8 @@ export function PopulateStudio(props: PopulateStudioProps) {
     model,
     onChangePrompt,
     onChangeBinding,
+    manualTokens,
+    onChangeManualToken,
     schema,
     constantFields,
     listId,
@@ -420,6 +452,10 @@ export function PopulateStudio(props: PopulateStudioProps) {
     busy,
     progress,
     lastRunOutputs,
+    lastRunFailures,
+    lastRunOkCount,
+    lastRunFailedCount,
+    runStatus,
     previewRowIndex,
     onPreviewRowChange,
     previewUrl,
@@ -435,6 +471,9 @@ export function PopulateStudio(props: PopulateStudioProps) {
     error,
     datasetOutput,
     onChangeDatasetOutput,
+    channels,
+    onChangeChannelOutput,
+    onChangeChannelPrompt,
     lastDatasetWriteSummary,
     isDesignerTemplate = false,
     designerFields,
@@ -740,18 +779,91 @@ export function PopulateStudio(props: PopulateStudioProps) {
     }
 
     if (selected.kind === "token" && selected.fieldKey) {
+      const tokenKey = selected.fieldKey;
+      const isManual = !!manualTokens && tokenKey in manualTokens;
+      const manualValue = manualTokens?.[tokenKey] ?? "";
+      const matchField = schema.find((f) => f.key === tokenKey);
+      const suggestions =
+        matchField && dataset && listId && rowCount > 0
+          ? (() => {
+              const seen = new Set<string>();
+              const out: string[] = [];
+              for (let i = 0; i < rowCount; i += 1) {
+                const text = fieldValueAsText(
+                  getListFieldValueAtRow(dataset, listId, matchField.id, i) ?? undefined,
+                ).trim();
+                if (text && !seen.has(text)) {
+                  seen.add(text);
+                  out.push(text);
+                }
+                if (out.length >= 50) break;
+              }
+              return out;
+            })()
+          : [];
+      const datalistId = `populate-token-suggest-${tokenKey}`;
       return (
         <div className="populate-studio-center-panel">
           <p className="populate-studio-center__lead">
-            Variable <span className="populate-studio-center__name">{selected.label}</span> — elige la
-            columna del Dataset que alimenta este campo en cada fila.
+            Variable <span className="populate-studio-center__name">{selected.label}</span> —{" "}
+            {isManual
+              ? "se rellena a mano antes de generar (igual para todas las filas)."
+              : "elige la columna del Dataset que alimenta este campo en cada fila."}
           </p>
-          <FieldPicker
-            fields={textFields}
-            activeKey={selected.fieldKey}
-            onPick={(f) => replaceTokenKey(selected.fieldKey!, f.key)}
-            emptyHint="No hay columnas de texto en el listado activo."
-          />
+          {onChangeManualToken ? (
+            <ul className="populate-studio-source-toggle">
+              <li>
+                <button
+                  type="button"
+                  className={`populate-studio-source-toggle__btn${!isManual ? " is-active" : ""}`}
+                  onClick={() => onChangeManualToken(tokenKey, null)}
+                >
+                  <Table2 size={13} strokeWidth={1.9} aria-hidden /> Columna del Dataset
+                </button>
+              </li>
+              <li>
+                <button
+                  type="button"
+                  className={`populate-studio-source-toggle__btn${isManual ? " is-active" : ""}`}
+                  onClick={() => onChangeManualToken(tokenKey, manualValue)}
+                  title="Rellenar antes de generar; constante en todas las filas"
+                >
+                  <Type size={13} strokeWidth={1.9} aria-hidden /> Manual
+                </button>
+              </li>
+            </ul>
+          ) : null}
+          {isManual && onChangeManualToken ? (
+            <div className="populate-studio-manual-field">
+              <input
+                type="text"
+                className="populate-studio-manual-input nodrag"
+                value={manualValue}
+                list={suggestions.length > 0 ? datalistId : undefined}
+                placeholder={`${selected.label}…`}
+                onChange={(e) => onChangeManualToken(tokenKey, e.target.value)}
+                onPointerDown={(e) => e.stopPropagation()}
+                onKeyDown={(e) => e.stopPropagation()}
+              />
+              {suggestions.length > 0 ? (
+                <datalist id={datalistId}>
+                  {suggestions.map((s) => (
+                    <option key={s} value={s} />
+                  ))}
+                </datalist>
+              ) : null}
+              <span className="populate-studio-manual-field__hint">
+                Se usará este valor en todas las filas. Déjalo vacío para volver a la columna.
+              </span>
+            </div>
+          ) : (
+            <FieldPicker
+              fields={textFields}
+              activeKey={tokenKey}
+              onPick={(f) => replaceTokenKey(tokenKey, f.key)}
+              emptyHint="No hay columnas de texto en el listado activo."
+            />
+          )}
         </div>
       );
     }
@@ -809,7 +921,45 @@ export function PopulateStudio(props: PopulateStudioProps) {
                 ) : null}
               </button>
             </li>
+            <li>
+              <button
+                type="button"
+                className={`populate-studio-field populate-studio-field--image${binding?.source === "manual" ? " is-active" : ""}`}
+                onClick={() =>
+                  onChangeBinding(selected.inputId!, {
+                    inputId: selected.inputId!,
+                    source: "manual",
+                    manualValue: binding?.manualValue ?? "",
+                  })
+                }
+              >
+                <Pin size={15} strokeWidth={1.75} className="populate-studio-field__icon" aria-hidden />
+                <span className="populate-studio-field__body">
+                  <span className="populate-studio-field__label">Manual</span>
+                  <span className="populate-studio-field__key">Rellenar antes de generar (URL de imagen)</span>
+                </span>
+                {binding?.source === "manual" ? (
+                  <Check size={14} strokeWidth={2} className="populate-studio-field__check" aria-hidden />
+                ) : null}
+              </button>
+            </li>
           </ul>
+          {binding?.source === "manual" ? (
+            <input
+              type="text"
+              className="populate-studio-manual-input nodrag"
+              value={binding.manualValue ?? ""}
+              placeholder="Pega una URL de imagen…"
+              onChange={(e) =>
+                onChangeBinding(selected.inputId!, {
+                  inputId: selected.inputId!,
+                  source: "manual",
+                  manualValue: e.target.value,
+                })
+              }
+              onPointerDown={(e) => e.stopPropagation()}
+            />
+          ) : null}
           <ImageFieldPicker
             fields={imageFields.map((f) => ({ id: f.id, key: f.key, label: f.label }))}
             activeKey={
@@ -837,9 +987,39 @@ export function PopulateStudio(props: PopulateStudioProps) {
   };
 
   const handleGenerateBatch = () => {
-    onClose();
     onGenerateBatch();
   };
+
+  const okCount = lastRunOkCount ?? lastRunOutputs.length;
+  const failedCount = lastRunFailedCount ?? lastRunFailures?.length ?? 0;
+  const hasRunReport =
+    busy ||
+    runStatus === "partial" ||
+    runStatus === "error" ||
+    failedCount > 0 ||
+    (runStatus === "done" && okCount > 0);
+
+  const runSummaryMessage = useMemo(() => {
+    if (error?.trim()) return error.trim();
+    if (failedCount > 0 || runStatus === "partial" || runStatus === "error") {
+      return formatPopulateRunErrorMessage({
+        okCount,
+        failedCount,
+        totalRows: rowCount,
+        failures: lastRunFailures ?? [],
+      });
+    }
+    return null;
+  }, [error, failedCount, okCount, rowCount, lastRunFailures, runStatus]);
+
+  const runReportTitle =
+    runStatus === "error" && okCount === 0
+      ? "Error en el lote"
+      : failedCount > 0 || runStatus === "partial"
+        ? "Ejecución parcial"
+        : busy
+          ? "Generando lote"
+          : "Última ejecución";
 
   const canGenerate = isDesignerTemplate
     ? Boolean(templateLabel) && datasetConnected && rowCount > 0
@@ -880,6 +1060,16 @@ export function PopulateStudio(props: PopulateStudioProps) {
           </div>
         }
       />
+
+      {runSummaryMessage && (failedCount > 0 || runStatus === "error" || runStatus === "partial") ? (
+        <div className="populate-studio-run-alert" role="alert">
+          <AlertTriangle size={16} strokeWidth={2} aria-hidden />
+          <div className="populate-studio-run-alert__body">
+            <strong className="populate-studio-run-alert__title">{runReportTitle}</strong>
+            <p className="populate-studio-run-alert__text">{runSummaryMessage}</p>
+          </div>
+        </div>
+      ) : null}
 
       <div className="populate-studio-body">
         {mode === "batch" ? (
@@ -957,7 +1147,9 @@ export function PopulateStudio(props: PopulateStudioProps) {
               <div className="populate-studio-col__scroll">
                 <div className="populate-studio-col__head">
                   <span className="populate-studio-col__title">Resumen</span>
-                  <span className="populate-studio-col__hint">antes de generar</span>
+                  <span className="populate-studio-col__hint">
+                    {busy ? "en curso" : hasRunReport && okCount > 0 ? "última ejecución" : "antes de generar"}
+                  </span>
                 </div>
                 <div className="populate-studio-summary">
                   {isDesignerTemplate ? (
@@ -996,14 +1188,60 @@ export function PopulateStudio(props: PopulateStudioProps) {
                   </ul>
                 ) : null}
                 {datasetConnected && listId ? (
-                  <PopulateDatasetOutputPanel
-                    settings={datasetOutput}
-                    schema={schema}
-                    templateLabel={templateLabel}
-                    lastWriteSummary={lastDatasetWriteSummary}
-                    onChange={onChangeDatasetOutput}
-                    variant={isDesignerTemplate ? "designer" : "image"}
-                  />
+                  channels && channels.length > 1 && !isDesignerTemplate ? (
+                    <div className="populate-studio-channels">
+                      <p className="populate-studio-channels__hint">
+                        {channels.length} canales conectados. Cada creador genera su imagen y la
+                        vuelca a su propia columna del Dataset.
+                      </p>
+                      {channels.map((ch) => (
+                        <div key={ch.channelId} className="populate-studio-channels__item">
+                          <p className="populate-studio-channels__label">{ch.label}</p>
+                          <label className="populate-studio-channels__prompt">
+                            <span>Prompt del canal (pose / variante)</span>
+                            {ch.nodePrompt.trim() ? (
+                              <span className="populate-studio-channels__prompt-hint">
+                                Se concatena al prompt del Image Creator: «
+                                {ch.nodePrompt.length > 72
+                                  ? `${ch.nodePrompt.slice(0, 72)}…`
+                                  : ch.nodePrompt}
+                                »
+                              </span>
+                            ) : null}
+                            <textarea
+                              className="populate-studio-channels__prompt-input nodrag"
+                              rows={3}
+                              placeholder="p. ej. de perfil, brazos cruzados, mirando a cámara…"
+                              value={ch.channelPrompt}
+                              onChange={(e) => onChangeChannelPrompt?.(ch.channelId, e.target.value)}
+                              onPointerDown={(e) => e.stopPropagation()}
+                            />
+                          </label>
+                          <PopulateDatasetOutputPanel
+                            settings={ch.settings}
+                            schema={schema}
+                            templateLabel={ch.label}
+                            onChange={(next) => onChangeChannelOutput?.(ch.channelId, next)}
+                            variant="image"
+                          />
+                        </div>
+                      ))}
+                      {lastDatasetWriteSummary ? (
+                        <p className="populate-studio-dataset-output__summary">
+                          {lastDatasetWriteSummary}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <PopulateDatasetOutputPanel
+                      settings={datasetOutput}
+                      schema={schema}
+                      templateLabel={templateLabel}
+                      lastWriteSummary={lastDatasetWriteSummary}
+                      onChange={onChangeDatasetOutput}
+                      variant={isDesignerTemplate ? "designer" : "image"}
+                    />
+                  )
                 ) : null}
                 {!isDesignerTemplate && rowCount > 0 ? (
                   <label className="populate-studio-preview-row">
@@ -1055,6 +1293,58 @@ export function PopulateStudio(props: PopulateStudioProps) {
                       className="populate-studio-progress__bar"
                       style={{ width: `${progressPct}%` }}
                     />
+                  </div>
+                ) : null}
+                {hasRunReport ? (
+                  <div className="populate-studio-run-report">
+                    <div className="populate-studio-run-report__head">
+                      <span className="populate-studio-run-report__title">{runReportTitle}</span>
+                      {busy && progress ? (
+                        <span className="populate-studio-run-report__badge">
+                          <Loader2 size={11} className="animate-spin" aria-hidden />
+                          Fila {Math.min(progress.done, rowCount)}/{rowCount}
+                        </span>
+                      ) : runStatus === "partial" ? (
+                        <span className="populate-studio-run-report__badge populate-studio-run-report__badge--warn">
+                          Parcial
+                        </span>
+                      ) : runStatus === "error" ? (
+                        <span className="populate-studio-run-report__badge populate-studio-run-report__badge--error">
+                          Error
+                        </span>
+                      ) : null}
+                    </div>
+                    <ul className="populate-studio-run-report__stats">
+                      <li>
+                        <Check size={13} strokeWidth={2.2} aria-hidden />
+                        {okCount} generada{okCount === 1 ? "" : "s"} correctamente
+                      </li>
+                      {failedCount > 0 ? (
+                        <li className="populate-studio-run-report__stats--fail">
+                          <AlertTriangle size={13} strokeWidth={2.2} aria-hidden />
+                          {failedCount} fila{failedCount === 1 ? "" : "s"} con error
+                        </li>
+                      ) : null}
+                      {!busy && rowCount > 0 ? (
+                        <li>
+                          <Repeat size={13} strokeWidth={2.2} aria-hidden />
+                          {rowCount} fila{rowCount === 1 ? "" : "s"} en total
+                        </li>
+                      ) : null}
+                    </ul>
+                    {runSummaryMessage && failedCount > 0 ? (
+                      <p className="populate-studio-run-report__summary">{runSummaryMessage}</p>
+                    ) : null}
+                    {lastRunFailures && lastRunFailures.length > 0 ? (
+                      <ul className="populate-studio-run-report__failures">
+                        {lastRunFailures.map((f) => (
+                          <li key={`run-fail-${f.rowIndex}`}>
+                            <strong>Fila {f.rowIndex + 1}</strong>
+                            <span>{f.error}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
                   </div>
                 ) : null}
               </div>
@@ -1157,7 +1447,7 @@ export function PopulateStudio(props: PopulateStudioProps) {
         )}
       </div>
 
-      {error ? (
+      {error && !(failedCount > 0 || runStatus === "partial" || runStatus === "error") ? (
         <div className="populate-studio-toast">
           <span className="populate-studio-toast__error">
             <AlertTriangle size={12} /> {error}
@@ -1165,23 +1455,37 @@ export function PopulateStudio(props: PopulateStudioProps) {
         </div>
       ) : null}
 
-      {lastRunOutputs.length > 0 ? (
+      {lastRunOutputs.length > 0 || (lastRunFailures?.length ?? 0) > 0 ? (
         <footer className="populate-studio-results">
           <div className="populate-studio-results__head">
             <Sparkles size={13} />
             <span>
-              {lastRunOutputs.length} imagen{lastRunOutputs.length === 1 ? "" : "es"} generada
-              {lastRunOutputs.length === 1 ? "" : "s"}
+              {okCount > 0
+                ? `${okCount} imagen${okCount === 1 ? "" : "es"} generada${okCount === 1 ? "" : "s"}`
+                : "Sin imágenes generadas"}
+              {failedCount > 0 ? ` · ${failedCount} fila${failedCount === 1 ? "" : "s"} falló` : ""}
+              {runStatus === "partial" ? " · ejecución parcial" : ""}
             </span>
           </div>
-          <div className="populate-studio-results__grid">
-            {lastRunOutputs.map((url, i) => (
-              // eslint-disable-next-line @next/next/no-img-element
-              <a key={`${url}-${i}`} href={url} target="_blank" rel="noreferrer" className="populate-studio-results__thumb">
-                <img src={url} alt={`Resultado ${i + 1}`} draggable={false} />
-              </a>
-            ))}
-          </div>
+          {lastRunFailures && lastRunFailures.length > 0 ? (
+            <ul className="populate-studio-results__failures">
+              {lastRunFailures.map((f) => (
+                <li key={`fail-${f.rowIndex}`}>
+                  <strong>Fila {f.rowIndex + 1}:</strong> {f.error}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {lastRunOutputs.length > 0 ? (
+            <div className="populate-studio-results__grid">
+              {lastRunOutputs.map((url, i) => (
+                // eslint-disable-next-line @next/next/no-img-element
+                <a key={`${url}-${i}`} href={url} target="_blank" rel="noreferrer" className="populate-studio-results__thumb">
+                  <img src={url} alt={`Resultado ${i + 1}`} draggable={false} />
+                </a>
+              ))}
+            </div>
+          ) : null}
         </footer>
       ) : null}
     </div>

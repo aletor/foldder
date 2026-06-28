@@ -5,6 +5,7 @@ import {
   buildMediaSinkToSpaceOutputEdges,
   collectMediaSinkInfos,
   detectSpaceOutputMode,
+  reconcileSpacePortalNode,
 } from "./space-media-list";
 
 function nano(id: string, x: number, y: number, value?: string): Node {
@@ -105,5 +106,36 @@ describe("space-media-list", () => {
     expect(structure.mediaListOutput?.items[0]?.url).toBe(png);
     expect(structure.mediaListOutput?.items[0]?.mimeType).toBe("image/png");
     expect(structure.mediaListOutput?.items[2]?.s3Key).toBe("knowledge-files/user/matte/x.png");
+  });
+
+  it("reconciles stale parent portal from inner collection space", () => {
+    const png = "https://cdn/a.png";
+    const innerNodes: Node[] = [
+      bgRemover("bg1", 0, png),
+      bgRemover("bg2", 200, png),
+      bgRemover("bg3", 400, png),
+      { id: "out", type: "spaceOutput", position: { x: 800, y: 0 }, data: {} },
+    ];
+    const spacesMap = {
+      space_batch: {
+        nodes: innerNodes,
+        edges: [],
+        name: "Medium Space",
+      },
+    };
+    const stalePortal: Node = {
+      id: "portal1",
+      type: "space",
+      position: { x: 0, y: 0 },
+      data: {
+        spaceId: "space_batch",
+        label: "Medium Space",
+        outputType: "url",
+        hasOutput: true,
+      },
+    };
+    const reconciled = reconcileSpacePortalNode(stalePortal, spacesMap);
+    expect((reconciled.data as { outputType?: string }).outputType).toBe("media_list");
+    expect((reconciled.data as { mediaListOutput?: { items?: unknown[] } }).mediaListOutput?.items).toHaveLength(3);
   });
 });

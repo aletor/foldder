@@ -18,8 +18,13 @@ import type { NodeInputResolution, PipelineScope } from "./resolve-node-inputs";
 export interface RowResult {
   rowIndex: number;
   status: "ok" | "failed";
-  /** Output del sink de la tubería para esta fila. */
+  /** Output del sink primario de la tubería para esta fila (camino legacy de 1 canal). */
   final?: NodeOutput;
+  /**
+   * Output de CADA sink (canal de salida) para esta fila, mapeado por `sinkId`.
+   * Con un único sink contiene una sola entrada (≡ `final`).
+   */
+  finals?: Record<string, NodeOutput | undefined>;
   /** Outputs de TODOS los nodos de la pasada (incluye intermedios; útil para expand). */
   intermediates: PipelineScope;
   error?: string;
@@ -46,7 +51,10 @@ export interface RunPipelineInput {
   order: readonly string[];
   iterated: ReadonlySet<string>;
   constant: ReadonlySet<string>;
+  /** Sink primario (camino legacy de 1 canal). */
   sinkId: string | null;
+  /** Todos los sinks (canales de salida). Si se omite, se usa `[sinkId]`. */
+  sinkIds?: readonly string[];
   rowCount: number;
   onProgress?: (done: number, total: number) => void;
   onRowResult?: (result: RowResult) => void;
@@ -160,8 +168,17 @@ export async function runPipeline(
       for (let k = 0; k < remaining; k++) tick();
     }
 
-    const final = input.sinkId ? scope[input.sinkId] : undefined;
-    const result: RowResult = { rowIndex: r, status, final, intermediates: scope, error };
+    const sinkIds =
+      input.sinkIds && input.sinkIds.length > 0
+        ? input.sinkIds
+        : input.sinkId
+          ? [input.sinkId]
+          : [];
+    const finals: Record<string, NodeOutput | undefined> = {};
+    for (const sid of sinkIds) finals[sid] = scope[sid];
+    // `final` (legacy): sink primario si existe; si no, el primer canal.
+    const final = input.sinkId ? scope[input.sinkId] : sinkIds.length > 0 ? scope[sinkIds[0]!] : undefined;
+    const result: RowResult = { rowIndex: r, status, final, finals, intermediates: scope, error };
     rows.push(result);
     input.onRowResult?.(result);
     if (status === "ok") okCount += 1;

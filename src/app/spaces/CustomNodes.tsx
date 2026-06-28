@@ -6,6 +6,8 @@ import React, { memo, useState, useEffect, useLayoutEffect, useMemo, useCallback
 import { createPortal } from 'react-dom';
 import { Position, NodeProps, BaseEdge, getSmoothStepPath, EdgeProps, useReactFlow, useStore, useUpdateNodeInternals, useNodes, useEdges, NodeResizer, useNodeId, type Node, type Edge, type ReactFlowState, type ConnectionLineComponentProps } from '@xyflow/react';
 import { getSmartOrthogonalPath, type SmartEdgeRect } from './smart-edge-routing';
+import { useCanvasPerformanceMode } from './use-canvas-performance-mode';
+import { useCanvasAnimatedEdgesEnabled } from './canvas-animated-edges-preference';
 import {
   Video, 
   Play, 
@@ -99,7 +101,6 @@ import {
   getOrigWindowFetch,
   runWalletFetchPreflight,
 } from '@/lib/wallet-fetch-preflight';
-import { isFoldderMediaPreviewAutoFitSuppressed } from '@/lib/media-preview-fit-suppress';
 import { fetchBlobViaSpacesProxy } from '@/lib/spaces-proxy-fetch';
 import { NODE_REGISTRY } from './nodeRegistry';
 import { useRegisterAssistantNodeRun } from './use-assistant-node-run';
@@ -115,6 +116,7 @@ import {
   type FoldderIconKey,
 } from './foldder-icons';
 import { NodeLabel, FoldderNodeHeaderTitle, FoldderStudioModeCenterButton } from "./foldder-node-ui";
+import { SPACE_NODE_GHOST_STACK_PX } from "./space-node-drag";
 import { hasFoldderStudioTouched, hasGeminiVideoStudioTouched, touchStudioNodeData } from "./studio-node/foldder-studio-touched";
 import { FoldderStudioTouchedMark } from "./studio-node/foldder-studio-touched-mark";
 import { DescriberNodeAnalysisOverlay, DESCRIBER_ICON_REVEAL_MS } from "./describer-node-analysis-grid";
@@ -497,11 +499,15 @@ export const ButtonEdge = ({
   style = {},
   markerEnd,
 }: EdgeProps) => {
+  const performanceMode = useCanvasPerformanceMode();
+  const animatedEdgesEnabled = useCanvasAnimatedEdgesEnabled();
+  const useLiteEdge = performanceMode || !animatedEdgesEnabled;
   const nodes = useNodes();
   const edges = useEdges();
-  const rectsSig = useStore(nodeRectsSignature);
+  const rectsSig = useStore((state) => (useLiteEdge ? "" : nodeRectsSignature(state)));
 
   const smartPath = useMemo(() => {
+    if (useLiteEdge) return null;
     const obstacles: SmartEdgeRect[] = [];
     if (rectsSig) {
       for (const part of rectsSig.split(";")) {
@@ -522,7 +528,7 @@ export const ButtonEdge = ({
       target: { x: targetX, y: targetY, position: targetPosition },
       obstacles,
     });
-  }, [rectsSig, source, target, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition]);
+  }, [useLiteEdge, rectsSig, source, target, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition]);
 
   let edgePath: string;
   if (smartPath) {
@@ -535,7 +541,7 @@ export const ButtonEdge = ({
       targetX,
       targetY,
       targetPosition,
-      borderRadius: 10,
+      borderRadius: useLiteEdge ? 4 : 10,
     });
   }
 
@@ -551,11 +557,14 @@ export const ButtonEdge = ({
 
   const gradientId = `foldder-edge-grad-${id}`;
 
-  // Muestrea el trazado en puntos equiespaciados para dibujar los "puntos" del tubo.
   const measureRef = useRef<SVGPathElement>(null);
   const [dots, setDots] = useState<{ x: number; y: number; t: number }[]>([]);
 
   useLayoutEffect(() => {
+    if (useLiteEdge) {
+      setDots([]);
+      return;
+    }
     const el = measureRef.current;
     if (!el) return;
     let len = 0;
@@ -577,7 +586,37 @@ export const ButtonEdge = ({
       next.push({ x: p.x, y: p.y, t: d / len });
     }
     setDots(next);
-  }, [edgePath]);
+  }, [edgePath, useLiteEdge]);
+
+  if (useLiteEdge) {
+    return (
+      <>
+        <defs>
+          <linearGradient
+            id={gradientId}
+            gradientUnits="userSpaceOnUse"
+            x1={sourceX}
+            y1={sourceY}
+            x2={targetX}
+            y2={targetY}
+          >
+            <stop offset="0%" stopColor={sourceColor} />
+            <stop offset="100%" stopColor={targetColor} />
+          </linearGradient>
+        </defs>
+        <BaseEdge
+          path={edgePath}
+          markerEnd={markerEnd}
+          style={{
+            ...style,
+            stroke: `url(#${gradientId})`,
+            strokeWidth: animatedEdgesEnabled ? 1.5 : 2,
+            opacity: performanceMode ? 0.55 : 0.92,
+          }}
+        />
+      </>
+    );
+  }
 
   return (
     <>
@@ -686,33 +725,10 @@ export function FoldderConnectionLine({
   );
 }
 
-/** Tras soltar el resize: encuadra solo este nodo (mismo criterio que foco tras crear nodo). */
-const NODE_RESIZE_END_FIT_PADDING = 0.8;
 const STUDIO_NODE_MAX_HEIGHT = 2200;
 
 function FoldderNodeResizer(props: ComponentProps<typeof NodeResizer>) {
-  const nodeId = useNodeId();
-  const { fitView } = useReactFlow();
-  const { onResizeEnd, ...rest } = props;
-  return (
-    <NodeResizer
-      {...rest}
-      onResizeEnd={(event, params) => {
-        onResizeEnd?.(event, params);
-        if (nodeId) {
-          requestAnimationFrame(() => {
-            void fitView({
-              nodes: [{ id: nodeId }],
-              padding: NODE_RESIZE_END_FIT_PADDING,
-              duration: 560,
-              interpolate: 'smooth',
-              ...FOLDDER_FIT_VIEW_EASE,
-            });
-          });
-        }
-      }}
-    />
-  );
+  return <NodeResizer {...props} />;
 }
 
 // --- CORE INPUT NODES ---
@@ -2183,35 +2199,32 @@ export const MediaInputNode = memo(function MediaInputNode({ id, data, selected 
   const [isPlaying, setIsPlaying] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const mediaFitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const frameSyncKeyRef = useRef<string | null>(null);
+  const userManuallyResizedRef = useRef(false);
   const frameRef = useRef<HTMLDivElement | null>(null);
   const previewRef = useRef<HTMLDivElement | null>(null);
   const [mediaSize, setMediaSize] = useState<{ url: string; width: number; height: number } | null>(null);
   const isUploading = isUploadingLocal || nodeData.loading;
   const currentNode = nodes.find((node) => node.id === id);
   const currentFrameNode = useCurrentNodeFrameSnapshot(currentNode);
+  const userFramed = Boolean(
+    (nodeData as { _foldderUserResized?: boolean })._foldderUserResized,
+  );
 
-  /** Tras cargar imagen/vídeo el nodo cambia de alto (p. ej. a aspect-video): encuadrar; duración alineada con `fitAnim` (nominal/2) en page. */
-  const scheduleFitViewportToThisNode = useCallback((opts?: { force?: boolean }) => {
-    if (!opts?.force && isFoldderMediaPreviewAutoFitSuppressed()) return;
-    if (mediaFitTimerRef.current) clearTimeout(mediaFitTimerRef.current);
-    mediaFitTimerRef.current = setTimeout(() => {
-      mediaFitTimerRef.current = null;
-      if (!opts?.force && isFoldderMediaPreviewAutoFitSuppressed()) return;
-      void fitView({
-        nodes: [{ id }] as Node[],
-        padding: 0.8,
-        duration: Math.max(40, Math.round(650 / 2)),
-        interpolate: 'smooth',
-        ...FOLDDER_FIT_VIEW_EASE,
-      });
-    }, 100);
+  useEffect(() => {
+    userManuallyResizedRef.current = userFramed;
+  }, [userFramed]);
+
+  /** Solo al subir media nueva: encuadrar una vez (no al remontar preview ni al sync de aspect ratio). */
+  const fitViewportAfterUpload = useCallback(() => {
+    void fitView({
+      nodes: [{ id }] as Node[],
+      padding: 0.8,
+      duration: Math.max(40, Math.round(650 / 2)),
+      interpolate: 'smooth',
+      ...FOLDDER_FIT_VIEW_EASE,
+    });
   }, [fitView, id]);
-
-  useEffect(() => () => {
-    if (mediaFitTimerRef.current) clearTimeout(mediaFitTimerRef.current);
-  }, []);
 
   const updateNodeData = (updates: Record<string, unknown>) => {
     setNodes((nds) => nds.map((n) => (n.id === id ? { ...n, data: { ...n.data, ...updates } } : n)));
@@ -2248,8 +2261,11 @@ export const MediaInputNode = memo(function MediaInputNode({ id, data, selected 
         s3Key: uploaded.s3Key,
         error: false,
         uploadError: undefined,
+        _foldderUserResized: false,
       });
-      if (type === 'image' || type === 'video') scheduleFitViewportToThisNode({ force: true });
+      userManuallyResizedRef.current = false;
+      frameSyncKeyRef.current = null;
+      if (type === 'image' || type === 'video') fitViewportAfterUpload();
     } catch (err) {
       console.error('Upload error:', err);
       updateNodeData({
@@ -2330,6 +2346,7 @@ export const MediaInputNode = memo(function MediaInputNode({ id, data, selected 
   }, [hasMedia, isVisual, nodeData.type, nodeData.value]);
 
   useLayoutEffect(() => {
+    if (userManuallyResizedRef.current || userFramed) return;
     if (!hasSizedVisualMedia || visualMediaWidth == null || visualMediaHeight == null) return;
     const frameSyncKey = `${nodeData.value ?? "empty"}:${visualMediaWidth}x${visualMediaHeight}`;
     if (frameSyncKeyRef.current === frameSyncKey) return;
@@ -2348,16 +2365,14 @@ export const MediaInputNode = memo(function MediaInputNode({ id, data, selected 
     setNodes((nds) => syncAspectLockedFrameForNode(nds as Node[], id, nextFrame, visualMediaWidth / visualMediaHeight));
     requestAnimationFrame(() => {
       updateNodeInternals(id);
-      scheduleFitViewportToThisNode();
     });
   }, [
-    currentFrameNode,
+    userFramed,
     hasMedia,
     hasSizedVisualMedia,
     id,
     isVisual,
     nodeData.value,
-    scheduleFitViewportToThisNode,
     setNodes,
     updateNodeInternals,
     visualMediaHeight,
@@ -2383,6 +2398,17 @@ export const MediaInputNode = memo(function MediaInputNode({ id, data, selected 
         maxHeight={hasMedia && isVisual ? STUDIO_NODE_MAX_HEIGHT : undefined}
         keepAspectRatio={hasSizedVisualMedia}
         isVisible={selected}
+        onResizeEnd={() => {
+          userManuallyResizedRef.current = true;
+          frameSyncKeyRef.current = `${nodeData.value ?? "empty"}:${visualMediaWidth ?? 0}x${visualMediaHeight ?? 0}`;
+          setNodes((nds) =>
+            nds.map((n) =>
+              n.id === id
+                ? { ...n, data: { ...(n.data ?? {}), _foldderUserResized: true } }
+                : n,
+            ),
+          );
+        }}
       />
       <NodeLabel id={id} label={nodeData.label} defaultLabel={nodeData.type ? `${nodeData.type.charAt(0).toUpperCase() + nodeData.type.slice(1)} Input` : 'Media Input'} />
 
@@ -2461,7 +2487,6 @@ export const MediaInputNode = memo(function MediaInputNode({ id, data, selected 
               className="w-full h-full object-contain"
               muted
               loop
-              onLoadedData={() => scheduleFitViewportToThisNode()}
               onPlay={() => setIsPlaying(true)}
               onPause={() => setIsPlaying(false)}
               onEnded={() => setIsPlaying(false)}
@@ -2505,7 +2530,6 @@ export const MediaInputNode = memo(function MediaInputNode({ id, data, selected 
             src={nodeData.value}
             className="mx-auto block h-full w-full object-contain"
             alt="Preview"
-            onLoad={() => scheduleFitViewportToThisNode()}
           />
         ) : hasMedia && nodeData.type === 'audio' ? (
           <div className="media-input-empty-state flex flex-col items-center gap-3 text-purple-400">
@@ -3626,101 +3650,116 @@ export const SpaceNode = memo(function SpaceNode({ id, data, selected }: NodePro
   );
 
   return (
-    <div className="relative" style={{ isolation: 'isolate' }}>
-      {/* Ghost card stack (nested-space identity) — capas con colores Designer / Presenter */}
-      <div className="absolute inset-0 rounded-none border border-white/20"
-        style={{
-          transform: 'translate(20px, 20px) rotate(3deg)',
-          background: '#f5b91b',
-          zIndex: -3,
-        }}
-      />
-      <div className="absolute inset-0 rounded-none border border-white/20"
-        style={{
-          transform: 'translate(13px, 13px) rotate(2deg)',
-          background: '#abbc14',
-          zIndex: -2,
-        }}
-      />
-      <div className="absolute inset-0 rounded-none border border-white/20"
-        style={{
-          transform: 'translate(6px, 6px) rotate(1deg)',
-          background: '#71449f',
-          zIndex: -1,
-        }}
-      />
+    <div
+      className="space-node-root relative cursor-grab active:cursor-grabbing"
+      style={{
+        isolation: "isolate",
+        paddingRight: SPACE_NODE_GHOST_STACK_PX,
+        paddingBottom: SPACE_NODE_GHOST_STACK_PX,
+      }}
+    >
+      <div className="relative z-[2] pointer-events-none">
+        {/* Capas fantasma — solo decoración; no capturan puntero */}
+        <div
+          className="pointer-events-none absolute inset-0 rounded-none border border-white/20"
+          aria-hidden
+          style={{
+            transform: "translate(20px, 20px) rotate(3deg)",
+            background: "#f5b91b",
+            zIndex: 0,
+          }}
+        />
+        <div
+          className="pointer-events-none absolute inset-0 rounded-none border border-white/20"
+          aria-hidden
+          style={{
+            transform: "translate(13px, 13px) rotate(2deg)",
+            background: "#abbc14",
+            zIndex: 1,
+          }}
+        />
+        <div
+          className="pointer-events-none absolute inset-0 rounded-none border border-white/20"
+          aria-hidden
+          style={{
+            transform: "translate(6px, 6px) rotate(1deg)",
+            background: "#71449f",
+            zIndex: 2,
+          }}
+        />
 
-      {/* Main node card — patrón canónico frameless media (como Inspiration/NanoBanana) */}
-      <div
-        className={`custom-node space-node foldder-node--frameless node--media group/node ${hasMediaPreview ? 'space-node--has-preview' : 'space-node--empty'}`}
-        style={{ position: 'relative', zIndex: 0, '--foldder-frameless-accent': '#8A5755' } as React.CSSProperties}
-      >
-        <FoldderNodeResizer minWidth={280} minHeight={180} isVisible={selected} />
-        <NodeLabel id={id} label={nodeData.label} defaultLabel="Space" />
+        {/* Main node card — patrón canónico frameless media (como Inspiration/NanoBanana) */}
+        <div
+          className={`custom-node space-node foldder-node--frameless node--media group/node pointer-events-none relative z-[4] ${hasMediaPreview ? "space-node--has-preview" : "space-node--empty"}`}
+          style={{ "--foldder-frameless-accent": "#8A5755" } as React.CSSProperties}
+        >
+          <FoldderNodeResizer minWidth={280} minHeight={180} isVisible={selected} />
+          <NodeLabel id={id} label={nodeData.label} defaultLabel="Space" />
 
-        {/* Input handle only if space has an internal InputNode */}
-        {nodeData.hasInput !== false && (
-          <div className="handle-wrapper handle-left">
-            <FoldderDataHandle type="target" position={Position.Left} id="in" dataType={foldderDataTypeFromHandleClass(getInputHandleClass())} />
-            <span className="handle-label">Data In</span>
+          {/* Input handle only if space has an internal InputNode */}
+          {nodeData.hasInput !== false && (
+            <div className="handle-wrapper handle-left pointer-events-auto">
+              <FoldderDataHandle type="target" position={Position.Left} id="in" dataType={foldderDataTypeFromHandleClass(getInputHandleClass())} />
+              <span className="handle-label">Data In</span>
+            </div>
+          )}
+
+          <div className="node-content foldder-frameless-main pointer-events-none">
+            {/* Media a sangre (ocupa todo el nodo) */}
+            {hasMediaPreview ? (
+              isMediaListOutput && previewThumb ? (
+                <>
+                  <img src={previewThumb} className="pointer-events-none absolute inset-0 h-full w-full object-cover" alt="Space collection" draggable={false} />
+                  {mediaListItems.length > 1 ? (
+                    <div className="pointer-events-none absolute top-3 right-3 z-[9] rounded-full bg-black/55 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-white">
+                      {mediaListItems.length} items
+                    </div>
+                  ) : null}
+                </>
+              ) : nodeData.outputType === "video" ? (
+                <video src={nodeData.value as string} className="pointer-events-none absolute inset-0 h-full w-full object-cover" muted playsInline draggable={false} />
+              ) : (
+                <img src={nodeData.value as string} className="pointer-events-none absolute inset-0 h-full w-full object-cover" alt="Space output" draggable={false} />
+              )
+            ) : null}
+
+            {/* Chip de blueprint interno (overlay abajo-izquierda) */}
+            <div className="pointer-events-auto absolute bottom-3 left-3.5 z-[9] flex items-center gap-2 bg-black/45 px-2 py-1 text-white nodrag">
+              <span className="text-[7px] font-black uppercase tracking-[0.18em] text-white/55">Blueprint</span>
+              <div className="flex items-center gap-2.5 [&_svg]:text-white">
+                {nodeData.internalCategories && nodeData.internalCategories.length > 0 ? (
+                  nodeData.internalCategories.map((cat) => renderInternalIcon(cat))
+                ) : (
+                  <NodeIcon type="space" iconKey="layout" size={12} />
+                )}
+              </div>
+            </div>
+
+            {/* Botón "Enter Space" — chip blanco cuadrado abajo-derecha (CTA canónico) */}
+            <button
+              onClick={onEnterSpace}
+              className="execute-btn pointer-events-auto nodrag"
+              type="button"
+            >
+              <Maximize2 size={13} /> Enter Space
+            </button>
           </div>
-        )}
 
-        <div className="node-content foldder-frameless-main">
-          {/* Media a sangre (ocupa todo el nodo) */}
-          {hasMediaPreview ? (
-            isMediaListOutput && previewThumb ? (
-              <>
-                <img src={previewThumb} className="absolute inset-0 h-full w-full object-cover" alt="Space collection" />
-                {mediaListItems.length > 1 ? (
-                  <div className="absolute top-3 right-3 z-[9] rounded-full bg-black/55 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-white">
-                    {mediaListItems.length} items
-                  </div>
-                ) : null}
-              </>
-            ) : nodeData.outputType === 'video' ? (
-              <video src={nodeData.value as string} className="absolute inset-0 h-full w-full object-cover" muted />
+          {/* Output handle only if space has an internal OutputNode */}
+          {nodeData.hasOutput !== false ? (
+            isMediaListOutput ? (
+              <div className="handle-wrapper handle-right pointer-events-auto" style={{ top: "50%" }}>
+                <span className="handle-label">Media List</span>
+                <FoldderDataHandle type="source" position={Position.Right} id="media_list" dataType="generic" />
+              </div>
             ) : (
-              <img src={nodeData.value as string} className="absolute inset-0 h-full w-full object-cover" alt="Space output" />
+              <div className="handle-wrapper handle-right pointer-events-auto">
+                <span className="handle-label">Result Out</span>
+                <FoldderDataHandle type="source" position={Position.Right} id="out" dataType={foldderDataTypeFromHandleClass(getHandleClass())} />
+              </div>
             )
           ) : null}
-
-          {/* Chip de blueprint interno (overlay abajo-izquierda) */}
-          <div className="absolute bottom-3 left-3.5 z-[9] flex items-center gap-2 bg-black/45 px-2 py-1 text-white nodrag">
-            <span className="text-[7px] font-black uppercase tracking-[0.18em] text-white/55">Blueprint</span>
-            <div className="flex items-center gap-2.5 [&_svg]:text-white">
-              {nodeData.internalCategories && nodeData.internalCategories.length > 0 ? (
-                nodeData.internalCategories.map(cat => renderInternalIcon(cat))
-              ) : (
-                <NodeIcon type="space" iconKey="layout" size={12} />
-              )}
-            </div>
-          </div>
-
-          {/* Botón "Enter Space" — chip blanco cuadrado abajo-derecha (CTA canónico) */}
-          <button
-            onClick={onEnterSpace}
-            className="execute-btn nodrag"
-            type="button"
-          >
-            <Maximize2 size={13} /> Enter Space
-          </button>
         </div>
-
-        {/* Output handle only if space has an internal OutputNode */}
-        {nodeData.hasOutput !== false && (
-          isMediaListOutput ? (
-            <div className="handle-wrapper handle-right" style={{ top: '50%' }}>
-              <span className="handle-label">Media List</span>
-              <FoldderDataHandle type="source" position={Position.Right} id="media_list" dataType="generic" />
-            </div>
-          ) : (
-            <div className="handle-wrapper handle-right">
-              <span className="handle-label">Result Out</span>
-              <FoldderDataHandle type="source" position={Position.Right} id="out" dataType={foldderDataTypeFromHandleClass(getHandleClass())} />
-            </div>
-          )
-        )}
       </div>
     </div>
   );

@@ -94,19 +94,7 @@ function useDesignerDocumentPages(presenterId: string): {
 }
 
 function PresenterNodeResizer(props: React.ComponentProps<typeof NodeResizer>) {
-  const { fitView } = useReactFlow();
-  const { onResizeEnd, ...rest } = props;
-  return (
-    <NodeResizer
-      {...rest}
-      onResizeEnd={(e, p) => {
-        onResizeEnd?.(e, p);
-        requestAnimationFrame(() => {
-          void fitView({ padding: 0.75, duration: 400, interpolate: "smooth", ...FOLDDER_FIT_VIEW_EASE });
-        });
-      }}
-    />
-  );
+  return <NodeResizer {...props} />;
 }
 
 export const PresenterNode = memo(({ id, data, selected }: NodeProps<any>) => {

@@ -73,11 +73,16 @@ export async function ensureMaterializedRowsHaveStableUrls(
       out.push(row);
       continue;
     }
-    const uploaded = await uploadPopulateImageOutput(row.output, {
-      projectId,
-      mediaId: `pop_${populateId}_r${row.rowIndex}`,
-    });
-    out.push(uploaded ? { ...row, output: uploaded.url, s3Key: uploaded.s3Key } : row);
+    try {
+      const uploaded = await uploadPopulateImageOutput(row.output, {
+        projectId,
+        mediaId: `pop_${populateId}_r${row.rowIndex}`,
+      });
+      out.push(uploaded ? { ...row, output: uploaded.url, s3Key: uploaded.s3Key } : row);
+    } catch (err) {
+      console.warn("[Populate] upload row image failed", row.rowIndex, err);
+      out.push(row);
+    }
   }
   return out;
 }

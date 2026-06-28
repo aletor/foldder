@@ -1077,7 +1077,7 @@ async function uploadBrainKnowledgeFiles(
     }
 
     if (registeredItems.length) {
-      onProgress("Registrando archivos subidos en Brain…");
+      onProgress("Registrando archivos subidos en BrandKit…");
       const registerResponse = await fetch("/api/spaces/brain/knowledge/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1733,7 +1733,7 @@ export function ProjectBrainFullscreen({
       id: "brain-chat-welcome",
       role: "assistant",
       text:
-        "Soy Brain Copilot. Preguntame sobre el contenido que hayas subido y analizado. Si falta contexto, te sugerire que documentos o URLs subir.",
+        "Soy BrandKit Copilot. Preguntame sobre el contenido que hayas subido y analizado. Si falta contexto, te sugerire que documentos o URLs subir.",
     },
   ]);
 
@@ -1997,7 +1997,7 @@ export function ProjectBrainFullscreen({
   const handleBrainRestudy = useCallback(async () => {
     const pid = projectId?.trim();
     if (!pid) {
-      showToast("Guarda el proyecto con sesión para re-estudiar Brain.", "error");
+        showToast("Guarda el proyecto con sesión para re-estudiar el BrandKit.", "error");
       return;
     }
     setRestudyBusy(true);
@@ -2128,11 +2128,11 @@ export function ProjectBrainFullscreen({
       }
       await loadPendingLearningsStable();
       showToast(
-        json.ok ? "Re-estudio Brain completado. Revisa el panel de diagnóstico." : "Re-estudio con advertencias.",
+        json.ok ? "Re-estudio del BrandKit completado. Revisa el panel de diagnóstico." : "Re-estudio con advertencias.",
         json.ok ? "success" : "info",
       );
     } catch {
-      showToast("Error de red al re-estudiar Brain.", "error");
+      showToast("Error de red al re-estudiar el BrandKit.", "error");
     } finally {
       setRestudyBusy(false);
     }
@@ -3882,14 +3882,14 @@ export function ProjectBrainFullscreen({
   }, [assets.knowledge.documents, enqueueKnowledgeAnalyzeJob, guardBrandWrite, setKnowledge, showToast]);
 
   const handleResetBrainCompletely = useCallback(() => {
-    if (!guardBrandWrite("No se puede reiniciar Brain completo mientras Marca esté bloqueada.")) return;
+    if (!guardBrandWrite("No se puede reiniciar el BrandKit completo mientras Marca esté bloqueada.")) return;
     if (knowledgeIngestLocked) {
       showToast("Espera a que termine la cola de ingesta antes de reiniciar.", "info");
       return;
     }
     if (
       !confirm(
-        "Esto reiniciará marca, documentos, referencias visuales, estrategia y chat local del Brain. Los aprendizajes pendientes asociados al proyecto pueden seguir existiendo en el servidor hasta que se revisen o eliminen desde «Aprendizajes». Los archivos subidos se conservan hasta borrar el proyecto completo o limpiarlos desde administración. No hay deshacer. ¿Continuar?",
+        "Esto reiniciará marca, documentos, referencias visuales, estrategia y chat local del BrandKit. Los aprendizajes pendientes asociados al proyecto pueden seguir existiendo en el servidor hasta que se revisen o eliminen desde «Aprendizajes». Los archivos subidos se conservan hasta borrar el proyecto completo o limpiarlos desde administración. No hay deshacer. ¿Continuar?",
       )
     ) {
       return;
@@ -3910,14 +3910,14 @@ export function ProjectBrainFullscreen({
         id: "brain-chat-welcome",
         role: "assistant",
         text:
-          "Soy Brain Copilot. Preguntame sobre el contenido que hayas subido y analizado. Si falta contexto, te sugerire que documentos o URLs subir.",
+          "Soy BrandKit Copilot. Preguntame sobre el contenido que hayas subido y analizado. Si falta contexto, te sugerire que documentos o URLs subir.",
       },
     ]);
     setExpandedDocs(new Set());
     setEditingDocId(null);
     setVisualReanalyzeDiagnostics([]);
     setMessage({ text: "", type: "" });
-    showToast("Brain reiniciado en memoria. Guarda el proyecto en el espacio para persistir.", "success");
+    showToast("BrandKit reiniciado en memoria. Guarda el proyecto en el espacio para persistir.", "success");
   }, [
     guardBrandWrite,
     knowledgeIngestLocked,
@@ -4541,7 +4541,7 @@ export function ProjectBrainFullscreen({
         {pendingTrace ? (
           <details className="rounded-[5px] border border-sky-200/80 bg-sky-50/60 px-3 py-2">
             <summary className="cursor-pointer text-[11px] font-semibold text-sky-900">
-              Por qué Brain propone esto
+              Por qué el BrandKit propone esto
             </summary>
             <div className="mt-2 space-y-2 text-[11px] leading-snug text-zinc-700">
               <p>
@@ -5062,7 +5062,7 @@ export function ProjectBrainFullscreen({
       <div>
         <h2 className="text-sm font-black uppercase tracking-[0.12em] text-zinc-900">Decision Trace</h2>
         <p className="mt-1 max-w-2xl text-[12px] leading-relaxed text-zinc-600">
-          Por qué Brain decidió esto (diagnóstico avanzado). Se guardan las trazas más recientes con resumen ligero.
+          Por qué el BrandKit decidió esto (diagnóstico avanzado). Se guardan las trazas más recientes con resumen ligero.
         </p>
       </div>
       {decisionTraces.length > 0 ? (
@@ -5146,12 +5146,12 @@ export function ProjectBrainFullscreen({
       data-foldder-brain-studio
       role="dialog"
       aria-modal="true"
-      aria-label="Brain studio"
+      aria-label="BrandKit studio"
       style={{ ["--foldder-studio-accent" as string]: "#5E8E70" }}
     >
       <FoldderStudioHeader
         nodeType="projectBrain"
-        nodeLabel="Brain"
+        nodeLabel="BrandKit"
         subtitle={projectDisplayName}
         onClose={onClose}
         actions={
@@ -5179,7 +5179,7 @@ export function ProjectBrainFullscreen({
                 knowledgeIngestLocked
                   ? "Espera a que termine la ingesta"
                   : brandLocked
-                    ? "Marca bloqueada: desbloquéala antes de reiniciar Brain"
+                    ? "Marca bloqueada: desbloquéala antes de reiniciar el BrandKit"
                     : "Borra marca, pozo, estrategia y todo análisis (memoria local hasta guardar)"
               }
               className={`${foldderStudioHeaderActionClassName()} text-rose-300 hover:text-rose-100`}
@@ -5884,7 +5884,7 @@ export function ProjectBrainFullscreen({
                 <section className="rounded-[5px] border border-zinc-200 bg-zinc-50/80 p-4">
                   <p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">Estado técnico</p>
                   <ul className="mt-2 space-y-1 text-[11px] text-zinc-700">
-                    <li>Brain version: {getBrainVersion(assets.brainMeta)}</li>
+                    <li>BrandKit version: {getBrainVersion(assets.brainMeta)}</li>
                     <li>{getBrainFreshnessSummary(assets.brainMeta)}</li>
                     <li>Fuentes: {assets.knowledge.documents.length} documentos · {assets.knowledge.urls.length} URLs</li>
                     <li>Cápsulas visuales: {visualCapsules.length}</li>
@@ -5966,7 +5966,7 @@ export function ProjectBrainFullscreen({
 
                 <div className="min-h-[120px] rounded-[5px] border border-zinc-200 bg-white p-5 shadow-sm">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">Brain resume así tu marca</p>
+                    <p className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">El BrandKit resume así tu marca</p>
                     <div className="flex flex-wrap items-center gap-2">
                       <button
                         type="button"
@@ -6377,7 +6377,7 @@ export function ProjectBrainFullscreen({
                             <button
                               type="button"
                               onClick={() =>
-                                showToast("Desconecta el cable Brain en el lienzo para dejar de recibir señales.", "info")
+                                showToast("Desconecta el cable de BrandKit en el lienzo para dejar de recibir señales.", "info")
                               }
                               className="rounded-[5px] border border-rose-200 bg-rose-50 px-3 py-2 text-[10px] font-black uppercase tracking-wide text-rose-800 hover:bg-rose-100"
                             >
@@ -6599,7 +6599,7 @@ export function ProjectBrainFullscreen({
                         onClick={() => void handleBrainRestudy()}
                         className="rounded-[5px] border border-emerald-500 bg-emerald-600 px-3 py-1.5 text-[9px] font-black uppercase tracking-wide text-white hover:bg-emerald-700 disabled:opacity-50"
                       >
-                        {restudyBusy ? "Re-estudiando…" : "Reestudiar Brain completo"}
+                        {restudyBusy ? "Re-estudiando…" : "Reestudiar el BrandKit completo"}
                       </button>
                     </div>
                     {restudyLast ? (
@@ -6693,7 +6693,7 @@ export function ProjectBrainFullscreen({
                   >
                     <p className="text-[10px] font-black uppercase tracking-[0.12em] text-zinc-500">Referencias totales</p>
                     <p className="mt-1 text-2xl font-black text-violet-800">{visualImageRefCount}</p>
-                    <p className="mt-1 text-[10px] text-zinc-500">Inventario en Brain</p>
+                    <p className="mt-1 text-[10px] text-zinc-500">Inventario en BrandKit</p>
                   </div>
                   <div
                     className="rounded-[5px] border border-emerald-200 bg-emerald-50/40 p-4 shadow-sm"
@@ -7243,7 +7243,7 @@ export function ProjectBrainFullscreen({
                   <div className="mb-3 flex items-start gap-2">
                     <span className="mt-0.5 rounded-[5px] border border-zinc-200 bg-zinc-50 p-1.5 text-zinc-600"><MessageSquareText className="h-4 w-4" /></span>
                     <div>
-                      <h3 className="text-[12px] font-black uppercase tracking-[0.12em] text-zinc-900">Conversar con Brain</h3>
+                      <h3 className="text-[12px] font-black uppercase tracking-[0.12em] text-zinc-900">Conversar con BrandKit</h3>
                       <p className="mt-1 text-[11px] text-zinc-600">Responde solo con contenido subido y analizado.</p>
                     </div>
                   </div>
@@ -7251,17 +7251,17 @@ export function ProjectBrainFullscreen({
                   <div className="max-h-[300px] space-y-2 overflow-auto rounded-[5px] border border-zinc-200 bg-zinc-50 p-3">
                     {chatMessages.map((m) => (
                       <article key={m.id} className={`rounded-[5px] border px-3 py-2 ${m.role === "user" ? "ml-8 border-sky-200 bg-sky-50" : "mr-8 border-zinc-200 bg-white"}`}>
-                        <p className="text-[11px] font-black uppercase tracking-wide text-zinc-500">{m.role === "user" ? "Tú" : "Brain"}</p>
+                        <p className="text-[11px] font-black uppercase tracking-wide text-zinc-500">{m.role === "user" ? "Tú" : "BrandKit"}</p>
                         <p className="mt-1 whitespace-pre-wrap text-[12px] leading-relaxed text-zinc-800">{m.text}</p>
                         {m.sources && m.sources.length > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{m.sources.map((s) => <span key={`${m.id}-${s.id}`} className="rounded-[5px] border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[9px] font-semibold text-zinc-600">{s.name}</span>)}</div>}
                         {m.suggestedUploads && m.suggestedUploads.length > 0 && <div className="mt-2"><p className="text-[10px] font-black uppercase tracking-wide text-zinc-500">Ideas para subir más</p><div className="mt-1 flex flex-wrap gap-1.5">{m.suggestedUploads.map((s, idx) => <span key={`${m.id}-${idx}`} className="rounded-[5px] border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[9px] font-semibold text-amber-700">{s}</span>)}</div></div>}
                       </article>
                     ))}
-                    {chatLoading && <article className="mr-8 rounded-[5px] border border-zinc-200 bg-white px-3 py-2"><p className="text-[11px] font-black uppercase tracking-wide text-zinc-500">Brain</p><p className="mt-1 inline-flex items-center gap-2 text-[12px] text-zinc-700"><RefreshCw className="h-3.5 w-3.5 animate-spin" />Pensando...</p></article>}
+                    {chatLoading && <article className="mr-8 rounded-[5px] border border-zinc-200 bg-white px-3 py-2"><p className="text-[11px] font-black uppercase tracking-wide text-zinc-500">BrandKit</p><p className="mt-1 inline-flex items-center gap-2 text-[12px] text-zinc-700"><RefreshCw className="h-3.5 w-3.5 animate-spin" />Pensando...</p></article>}
                   </div>
 
                   <div className="mt-3 flex gap-2">
-                    <input type="text" value={chatInput} onChange={(e) => setChatInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), void submitChatQuestion())} placeholder="Pregunta sobre el contenido de Brain..." className="min-w-0 flex-1 rounded-[5px] border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-[13px]" />
+                    <input type="text" value={chatInput} onChange={(e) => setChatInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), void submitChatQuestion())} placeholder="Pregunta sobre el contenido del BrandKit..." className="min-w-0 flex-1 rounded-[5px] border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-[13px]" />
                     <button onClick={() => void submitChatQuestion()} disabled={chatLoading || !chatInput.trim()} className="inline-flex items-center gap-1.5 rounded-[5px] border border-zinc-800 bg-zinc-900 px-3 py-2 text-[11px] font-black uppercase tracking-wide text-white disabled:opacity-50"><Send className="h-3.5 w-3.5" />Enviar</button>
                   </div>
                 </section>

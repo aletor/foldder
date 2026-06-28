@@ -22,12 +22,25 @@ import { estimatePipelineCost } from "./pipeline/estimate-pipeline-cost";
 import { executorNodeMap } from "./pipeline/pipeline-adapter";
 import {
   datasetBoundNodeIdsFromBindings,
-  namespacedBindingKey,
 } from "./pipeline/pipeline-bindings";
 import { defaultExecutorRegistry } from "./pipeline/executor-registry";
 import { registerDefaultPopulateExecutors } from "./pipeline/register-default-executors";
 import type { ExecutorNode, NodeOutput, PortInputValue } from "./pipeline/node-executor";
 import { POPULATE_PIPELINE_EXECUTABLE_TYPES } from "./pipeline/populate-pipeline-sink-types";
+import { expandSpacePortalTemplateForPipeline } from "../space-portal-populate-link";
+import {
+  adaptPopulateBindingsForPipeline,
+  buildMultiChannelPipelinePromptTemplates,
+  buildPromptTemplatesByNodeId,
+  findPromptTemplateTargetNodeId,
+} from "./populate-pipeline-prompt-target";
+
+export {
+  adaptPopulateBindingsForPipeline,
+  buildMultiChannelPipelinePromptTemplates,
+  buildPromptTemplatesByNodeId,
+  findPromptTemplateTargetNodeId,
+};
 
 import type { RowResult } from "./pipeline/run-pipeline";
 
@@ -46,77 +59,37 @@ export function findPopulateCreativeTemplateNodeId(
   edges: Edge[],
   bindings?: Record<string, PopulateInputBinding>,
 ): string | null {
-  const link = edges.find(
+  const expanded = expandSpacePortalTemplateForPipeline(nodes as Node[], edges as Edge[]);
+  const link = expanded.edges.find(
     (e) =>
       e.target === populateId &&
       e.targetHandle === "template" &&
       POPULATE_PIPELINE_EXECUTABLE_TYPES.has(
-        nodes.find((n) => n.id === e.source)?.type ?? "",
+        expanded.nodes.find((n) => n.id === e.source)?.type ?? "",
       ),
   );
   if (!link) return null;
 
   const pre = analyzePipeline({
     populateId,
-    nodes,
-    edges,
+    nodes: expanded.nodes,
+    edges: expanded.edges,
     datasetBoundNodeIds: datasetBoundNodeIdsFromBindings(bindings),
   });
   const analysis = analyzePipeline({
     populateId,
-    nodes,
-    edges,
+    nodes: expanded.nodes,
+    edges: expanded.edges,
     datasetBoundNodeIds: datasetBoundNodeIdsFromBindings(bindings, pre.sinkId ?? undefined),
   });
 
   const primary =
     analysis.order.find((id) => {
-      const t = nodes.find((n) => n.id === id)?.type;
+      const t = expanded.nodes.find((n) => n.id === id)?.type;
       return t === "nanoBanana" || t === "enhancer";
     }) ?? analysis.sinkId;
 
   return primary ?? link.source;
-}
-
-export function adaptPopulateBindingsForPipeline(
-  bindings: Record<string, PopulateInputBinding> | undefined,
-  analysis: PipelineAnalysis,
-  nodeById: Map<string, ExecutorNode>,
-): Record<string, PopulateInputBinding> {
-  if (!bindings) return {};
-  const out: Record<string, PopulateInputBinding> = { ...bindings };
-  const primaryId =
-    analysis.order.find((id) => {
-      const t = nodeById.get(id)?.type;
-      return t === "nanoBanana" || t === "enhancer";
-    }) ?? analysis.sinkId;
-
-  if (!primaryId || primaryId === analysis.sinkId) return out;
-
-  for (const [key, binding] of Object.entries(bindings)) {
-    if (key.includes(".")) continue;
-    const ns = namespacedBindingKey(primaryId, key);
-    if (!(ns in out)) out[ns] = binding;
-  }
-  return out;
-}
-
-export function buildPromptTemplatesByNodeId(args: {
-  analysis: PipelineAnalysis;
-  templatePrompt?: string;
-  nodeById: Map<string, ExecutorNode>;
-}): Record<string, string> | undefined {
-  const trimmed = args.templatePrompt?.trim();
-  if (!trimmed) return undefined;
-
-  const primaryId =
-    args.analysis.order.find((id) => {
-      const t = args.nodeById.get(id)?.type;
-      return t === "nanoBanana" || t === "enhancer";
-    }) ?? args.analysis.sinkId;
-
-  if (!primaryId) return undefined;
-  return { [primaryId]: trimmed };
 }
 
 export function createResolveFixedExternal(
@@ -164,6 +137,12 @@ export function materializedRowsFromPipeline(args: {
   activeImageRefs: ActiveImageRef[];
   fixedRefUrls: Record<string, string>;
   cardIdsByRow: (string | undefined)[];
+  manualTokenValues?: Record<string, string>;
+  /**
+   * Multi-canal: si se indica, toma el output de ESE sink (`row.finals[sinkId]`) en vez del
+   * sink primario (`row.final`). Sin él, comportamiento legacy de 1 canal.
+   */
+  sinkId?: string;
 }): MaterializedRow[] {
   const {
     rows,
@@ -174,6 +153,8 @@ export function materializedRowsFromPipeline(args: {
     activeImageRefs,
     fixedRefUrls,
     cardIdsByRow,
+    manualTokenValues,
+    sinkId,
   } = args;
 
   return rows.map((row) => {
@@ -191,21 +172,23 @@ export function materializedRowsFromPipeline(args: {
       if (url) refs.push({ inputId: slot.inputId, url, label });
     }
 
+    const finalOutput = sinkId ? row.finals?.[sinkId] : row.final;
+
     let output: string | undefined;
     let s3Key: string | undefined;
-    if (row.status === "ok" && row.final) {
-      if (row.final.kind === "image") {
-        output = row.final.url;
-        s3Key = row.final.s3Key;
-      } else if (row.final.kind === "text") {
-        output = row.final.text;
+    if (row.status === "ok" && finalOutput) {
+      if (finalOutput.kind === "image") {
+        output = finalOutput.url;
+        s3Key = finalOutput.s3Key;
+      } else if (finalOutput.kind === "text") {
+        output = finalOutput.text;
       }
     }
 
     return {
       rowIndex: row.rowIndex,
       cardId: cardIdsByRow[row.rowIndex],
-      prompt: resolvePromptForRow(templatePrompt, dataset, listId, row.rowIndex),
+      prompt: resolvePromptForRow(templatePrompt, dataset, listId, row.rowIndex, manualTokenValues),
       refs,
       output,
       s3Key,
@@ -260,16 +243,20 @@ export function analyzePopulatePipeline(
   bindings?: Record<string, PopulateInputBinding>,
 ): PipelineAnalysis {
   ensurePopulatePipelineExecutors();
+  const expanded = expandSpacePortalTemplateForPipeline(
+    nodes as Node[],
+    edges as Edge[],
+  );
   const pre = analyzePipeline({
     populateId,
-    nodes,
-    edges,
+    nodes: expanded.nodes,
+    edges: expanded.edges,
     datasetBoundNodeIds: datasetBoundNodeIdsFromBindings(bindings),
   });
   return analyzePipeline({
     populateId,
-    nodes,
-    edges,
+    nodes: expanded.nodes,
+    edges: expanded.edges,
     datasetBoundNodeIds: datasetBoundNodeIdsFromBindings(bindings, pre.sinkId ?? undefined),
   });
 }

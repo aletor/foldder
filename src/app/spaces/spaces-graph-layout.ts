@@ -114,6 +114,39 @@ export function runKahnColumnLayout(
 }
 
 /**
+ * Tras centrar destinos multi-entrada (`alignMultiInputTargetsToSources`), empuja nodos hacia abajo
+ * dentro de cada columna para eliminar solapes verticales.
+ */
+export function resolveVerticalOverlapsInColumns(
+  positioned: Record<string, { x: number; y: number }>,
+  nodes: Node[],
+  getDim: (n: Node) => { w: number; h: number },
+  gap: number,
+): void {
+  const buckets = new Map<number, Node[]>();
+  for (const n of nodes) {
+    const p = positioned[n.id];
+    if (!p) continue;
+    const key = Math.round(p.x);
+    const list = buckets.get(key) ?? [];
+    list.push(n);
+    buckets.set(key, list);
+  }
+  for (const list of buckets.values()) {
+    list.sort((a, b) => positioned[a.id]!.y - positioned[b.id]!.y);
+    for (let i = 1; i < list.length; i++) {
+      const prev = list[i - 1];
+      const cur = list[i];
+      const prevBottom = positioned[prev.id]!.y + getDim(prev).h;
+      const minY = prevBottom + gap;
+      if (positioned[cur.id]!.y < minY) {
+        positioned[cur.id] = { x: positioned[cur.id]!.x, y: minY };
+      }
+    }
+  }
+}
+
+/**
  * Si un nodo tiene **varias** entradas desde el mismo subconjunto (p. ej. prompts → concatenador / listado),
  * desplaza su `y` para que su centro vertical coincida con el centro del bloque formado por los orígenes.
  */

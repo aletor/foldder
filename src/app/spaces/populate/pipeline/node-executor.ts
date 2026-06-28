@@ -148,6 +148,37 @@ export function portText(inputs: PortInputs, handle?: string): string {
   return value && value.kind === "text" ? value.text : "";
 }
 
+/** Ranuras p0…p7 de Concatenator / Enhancer / Listado en el lienzo. */
+export const PROMPT_SLOT_HANDLES = [
+  "p0",
+  "p1",
+  "p2",
+  "p3",
+  "p4",
+  "p5",
+  "p6",
+  "p7",
+] as const;
+
+export const NUMBERED_PROMPT_NODE_TYPES = new Set(["concatenator", "enhancer", "listado"]);
+
+/** Concatena textos de p0…p7 en orden (overrides de fila tienen prioridad por ranura). */
+export function collectTextFromPromptSlots(
+  inputs: PortInputs,
+  separator: string,
+  overrides: VarOverrides = {},
+): string {
+  const parts: string[] = [];
+  for (const h of PROMPT_SLOT_HANDLES) {
+    const overrideText =
+      typeof overrides[h] === "string" ? String(overrides[h]).trim() : "";
+    const val = inputs.byHandle[h];
+    const text = overrideText || (val?.kind === "text" ? val.text.trim() : "");
+    if (text) parts.push(text);
+  }
+  return parts.join(separator).trim();
+}
+
 /**
  * Refs de imagen en orden: primero los handles indicados (p. ej. image, image2…), y luego
  * cualquier otro handle de imagen presente, para no perder refs no previstas.

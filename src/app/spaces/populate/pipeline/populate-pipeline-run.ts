@@ -29,6 +29,8 @@ export interface RunPopulatePipelineInput {
   bindings?: Record<string, PopulateInputBinding>;
   templatePrompt?: string;
   promptTemplatesByNodeId?: Record<string, string>;
+  /** Tokens del prompt marcados como manuales (clave de token → valor constante). */
+  manualTokenValues?: Record<string, string>;
   registry: ExecutorRegistry;
   ownerEmail: string;
   capabilities?: ExecCapabilities;
@@ -73,7 +75,13 @@ export async function runPopulatePipeline(
   }
 
   const list = input.dataset.lists.find((l) => l.id === input.listId);
-  const rowCount = list?.cards.length ?? 0;
+  const listRowCount = list?.cards.length ?? 0;
+  // Regla de filas: si no hay lista que iterar pero hay campos manuales rellenos, una sola pasada
+  // (modo formulario). Los valores manuales son constantes para esa única generación.
+  const hasFilledManual = Object.values(input.bindings ?? {}).some(
+    (b) => b.source === "manual" && (b.manualValue ?? "").trim() !== "",
+  );
+  const rowCount = listRowCount > 0 ? listRowCount : hasFilledManual ? 1 : 0;
 
   const nodeById = executorNodeMap(input.nodes);
   const adapterCtx: PipelineAdapterContext = {
@@ -86,6 +94,7 @@ export async function runPopulatePipeline(
     sinkNodeId: analysis.sinkId,
     templatePrompt: input.templatePrompt,
     promptTemplatesByNodeId: input.promptTemplatesByNodeId,
+    manualTokenValues: input.manualTokenValues,
     resolveFixedExternal: input.resolveFixedExternal,
   };
 
@@ -113,6 +122,7 @@ export async function runPopulatePipeline(
       iterated: analysis.iterated,
       constant: analysis.constant,
       sinkId: analysis.sinkId,
+      sinkIds: analysis.sinkIds,
       rowCount,
       onProgress: input.onProgress,
       onRowResult: input.onRowResult,

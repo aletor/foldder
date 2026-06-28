@@ -91,6 +91,9 @@ import {
   Sparkles,
   Blend,
   Contrast,
+  Folder,
+  FolderOpen,
+  FolderPlus,
 } from "lucide-react";
 import { ScrubNumberInput } from "./ScrubNumberInput";
 import { FreehandExportModal, type ProfessionalExportOptions } from "./freehand/FreehandExportModal";
@@ -588,10 +591,11 @@ import {
   unionRects,
 } from "./freehand/artboard";
 import type { DesignerEmbedProps } from "./freehand/designer-embed-props";
-import { getListFieldImageAtRow, getListFieldTextAtRow } from "@/app/spaces/dataset/dataset-logic";
+import { fieldValueAsText, getConstantFieldValue, getListFieldImageAtRow, getListFieldTextAtRow } from "@/app/spaces/dataset/dataset-logic";
 import type { DesignerDatasetFieldBinding, DesignerDatasetPropertyBinding } from "@/app/spaces/dataset/dataset-types";
 import { DesignerDatasetPropertyLink } from "./designer/DesignerDatasetPropertyLink";
 import { makePendingDesignerBinding } from "./designer/designer-dataset-binding";
+import { isBrandKitConstantId } from "./brandkit/brandkit-logic";
 import {
   applyDesignerDatasetPropertyBindings,
   dragGestureDatasetPropertyKeys,
@@ -604,21 +608,54 @@ import {
   resolveStudioCapabilities,
   type FreehandStudioCapabilities,
 } from "./freehand/studio-capabilities";
-import type { LayerEffects, LayerGradientConfig } from "./freehand/layer-effects-types";
+import type {
+  LayerEffects,
+  LayerGradientConfig,
+  PhotoFilterEffect,
+  PhotoFilterPreset,
+} from "./freehand/layer-effects-types";
 import {
   cloneLayerEffectsForEdit,
   defaultLayerEffects,
+  defaultPhotoFilter,
   hasActiveLayerEffects,
+  hasActivePhotoFilter,
   isLayerStylesEligible,
+  isSvgPhotoFilterPreset,
+  photoFilterCssString,
+  photoFilterGrainBaseFrequency,
+  PHOTO_FILTER_PRESETS,
 } from "./freehand/layer-effects-types";
+import { PhotoFilterSvgFilter } from "./freehand/PhotoFilterSvg";
 import {
   type LayerMaskData,
   defaultLayerMask,
   hasLayerMaskBlock,
   isLayerMaskVisible,
+  isLayerMaskEligible,
   isLayerMaskRasterEligible,
 } from "./freehand/layer-mask-types";
 import { bakeLayerMaskIntoRasterDataUrl } from "./freehand/layer-mask-apply";
+import {
+  ALPHA_HIT_THRESHOLD,
+  getImageAlphaEntry,
+  prewarmImageAlpha,
+  sampleAlphaAtNaturalPixel,
+  subscribeImageAlpha,
+} from "./freehand/image-alpha-hit";
+import {
+  collectTreeIds,
+  findInTree,
+  flattenTreeForPanel,
+  insertNodesIntoTree,
+  isSelfOrDescendant,
+  mapTree,
+  removeNodesFromTree,
+  ungroupContainer,
+  wrapSelectionInGroup,
+  type InsertTarget,
+  type PanelRow,
+} from "./freehand/group-container";
 import {
   applyLinearGradientToImageData,
   applyRadialGradientToImageData,
@@ -1359,6 +1396,22 @@ export interface ClippingContainerObject extends FreehandObjectBase {
   content: FreehandObject[];
 }
 
+/**
+ * Carpeta no destructiva: contenedor vivo de capas (estilo Photoshop/Figma).
+ * - Anidable: un `groupContainer` puede contener otros `groupContainer`.
+ * - Cascada: visibilidad/bloqueo/opacidad/blend de la carpeta se aplican a los hijos en el render.
+ * - Máscara opcional: hereda `layerMask` de la base; recorta el composite de los hijos.
+ * A diferencia de `booleanGroup` (rasteriza) los hijos siguen editables. Comparte la maquinaria
+ * recursiva de `clippingContainer` (clone/bounds/transform/render); el accessor de hijos vive en
+ * `freehand/group-container.ts`.
+ */
+export interface GroupContainerObject extends FreehandObjectBase {
+  type: "groupContainer";
+  children: FreehandObject[];
+  /** Plegado en el panel de capas (solo UI; no afecta al render). */
+  collapsed?: boolean;
+}
+
 /** Capa de ajuste no destructiva (brillo/contraste/niveles); afecta capas inferiores en el stack. */
 export interface AdjustmentLayerObject extends FreehandObjectBase {
   type: "adjustmentLayer";
@@ -1375,6 +1428,7 @@ export type FreehandObject =
   | TextOnPathObject
   | BooleanGroupObject
   | ClippingContainerObject
+  | GroupContainerObject
   | AdjustmentLayerObject;
 
 export interface FreehandStudioProps extends DesignerEmbedProps {
@@ -1472,6 +1526,14 @@ type IsolationFrame =
     }
   | {
       kind: "vectorGroup";
+      groupId: string;
+      parentObjects: FreehandObject[];
+      parentSelectedIds: Set<string>;
+      parentHistory: { objects: FreehandObject[]; sel: string[] }[];
+      parentHistoryIdx: number;
+    }
+  | {
+      kind: "group";
       groupId: string;
       parentObjects: FreehandObject[];
       parentSelectedIds: Set<string>;
@@ -2305,7 +2367,7 @@ function applyGlobalAnchoredSelectionSkew(
 
 function supportsGradientFill(o: FreehandObject): boolean {
   if (!o.visible || o.locked) return false;
-  if (o.type === "image" || o.type === "booleanGroup" || o.type === "clippingContainer") return false;
+  if (o.type === "image" || o.type === "booleanGroup" || o.type === "clippingContainer" || o.type === "groupContainer") return false;
   if (o.type === "textOnPath") return false;
   if (o.type === "path" && !(o as PathObject).closed) return false;
   return true;
@@ -3181,7 +3243,7 @@ function pickTopRasterForPhotoGradient(
       mo &&
       mo.visible &&
       !mo.locked &&
-      isLayerMaskRasterEligible(mo) &&
+      isLayerMaskEligible(mo) &&
       hasLayerMaskBlock(mo) &&
       hitTestObject(pos, mo, 0, objects)
     ) {
@@ -3191,7 +3253,7 @@ function pickTopRasterForPhotoGradient(
   for (let i = objects.length - 1; i >= 0; i--) {
     const o = objects[i];
     if (!o.visible || o.locked) continue;
-    if (!isLayerMaskRasterEligible(o) || !hasLayerMaskBlock(o)) continue;
+    if (!isLayerMaskEligible(o) || !hasLayerMaskBlock(o)) continue;
     if (o.type === "image" && (o as ImageObject).photoRoomInputSlot) continue;
     if (hitTestObject(pos, o, 0, objects)) return o;
   }
@@ -3617,11 +3679,37 @@ function colorDropPreferStroke(pos: Point, obj: FreehandObject, allObjects: Free
   }
 }
 
+/**
+ * Hit-test de selección consciente del alfa para imágenes: clicar sobre el píxel transparente de una
+ * imagen NO la selecciona (cae a través). Cae al bounding box mientras el alfa se decodifica o si no
+ * se puede leer (CORS). Solo aplica a capas de tipo imagen.
+ */
+function imageAlphaHitTest(pos: Point, img: ImageObject): boolean {
+  if (!pointInRotatedRect(pos.x, pos.y, img)) return false;
+  const entry = getImageAlphaEntry(img.src);
+  if (!entry || entry.status !== "ready") return true; // fallback bbox: nunca bloquea la selección
+  const par = img.imagePreserveAspectRatio ?? "xMidYMid meet";
+  let px: { ix: number; iy: number } | null;
+  if (par === "none") {
+    const lp = worldPointToObjLocal(pos, img);
+    if (lp.x < 0 || lp.y < 0 || lp.x > img.width || lp.y > img.height) return false;
+    px = {
+      ix: (lp.x / Math.max(img.width, 1e-9)) * entry.natW,
+      iy: (lp.y / Math.max(img.height, 1e-9)) * entry.natH,
+    };
+  } else {
+    px = worldPointToImagePixelFloat(img, entry.natW, entry.natH, pos);
+  }
+  if (!px) return false;
+  return sampleAlphaAtNaturalPixel(entry, px.ix, px.iy) > ALPHA_HIT_THRESHOLD;
+}
+
 function hitTestObject(
   pos: Point,
   obj: FreehandObject,
   threshold: number,
   allObjects?: FreehandObject[],
+  opts?: { imageAlpha?: boolean },
 ): boolean {
   if (!obj.visible || obj.locked) return false;
   if (obj.isClipMask) return false;
@@ -3662,7 +3750,13 @@ function hitTestObject(
       return distToPathSegments(hp, pathObj).dist < threshold;
     }
     case "booleanGroup":
+      return pointInRotatedRect(pos.x, pos.y, obj);
+    case "groupContainer": {
+      const b = getVisualAABB(obj, allObjects);
+      return pos.x >= b.x && pos.x <= b.x + b.w && pos.y >= b.y && pos.y <= b.y + b.h;
+    }
     case "image":
+      if (opts?.imageAlpha) return imageAlphaHitTest(pos, obj as ImageObject);
       return pointInRotatedRect(pos.x, pos.y, obj);
     case "adjustmentLayer":
       return false;
@@ -3999,6 +4093,11 @@ export function getVisualAABB(o: FreehandObject, allObjects?: FreehandObject[]):
     }
     case "clippingContainer":
       return clippingContainerMaskWorldBoundsAabb(o as ClippingContainerObject);
+    case "groupContainer": {
+      const gc = o as GroupContainerObject;
+      if (gc.children.length === 0) return { x: o.x, y: o.y, w: o.width, h: o.height };
+      return getGroupBounds(gc.children);
+    }
     case "text": {
       const t = o as TextObject;
       const v = textVisualRectLike(t);
@@ -4102,6 +4201,15 @@ function offsetObjectWorldToLocal(o: FreehandObject, ox: number, oy: number): Fr
   }
   if (o.type === "booleanGroup") {
     return { ...o, children: o.children.map((ch) => offsetObjectWorldToLocal(ch, ox, oy)) };
+  }
+  if (o.type === "groupContainer") {
+    const g = o as GroupContainerObject;
+    return {
+      ...g,
+      x: g.x - ox,
+      y: g.y - oy,
+      children: g.children.map((ch) => offsetObjectWorldToLocal(ch, ox, oy)),
+    };
   }
   if (o.type === "path") {
     const p = o as PathObject;
@@ -4328,6 +4436,14 @@ function translateFreehandObject(o: FreehandObject, dx: number, dy: number): Fre
       children: o.children.map((ch) => translateFreehandObject(ch, dx, dy)),
     };
   }
+  if (o.type === "groupContainer") {
+    return {
+      ...o,
+      x: o.x + dx,
+      y: o.y + dy,
+      children: o.children.map((ch) => translateFreehandObject(ch, dx, dy)),
+    };
+  }
   if (o.type === "path") {
     const p = o as PathObject;
     if (p.svgPathD && (!p.points || p.points.length < 2)) {
@@ -4385,6 +4501,14 @@ function deepCloneFreehandObject(o: FreehandObject, newId: () => string): Freeha
       id,
       children: g.children.map((ch) => deepCloneFreehandObject(ch, newId)),
       cachedResult: g.cachedResult,
+    };
+  }
+  if (o.type === "groupContainer") {
+    const g = o as GroupContainerObject;
+    return {
+      ...g,
+      id,
+      children: g.children.map((ch) => deepCloneFreehandObject(ch, newId)),
     };
   }
   if (o.type === "clippingContainer") {
@@ -4450,6 +4574,7 @@ export function flattenObjectsForGradientDefs(list: FreehandObject[]): FreehandO
       out.push(...flattenObjectsForGradientDefs(c.content));
     }
     if (o.type === "booleanGroup") out.push(...flattenObjectsForGradientDefs((o as BooleanGroupObject).children));
+    if (o.type === "groupContainer") out.push(...flattenObjectsForGradientDefs((o as GroupContainerObject).children));
   }
   return out;
 }
@@ -4549,6 +4674,12 @@ function mapObjectPointsWithWorld(
       ...o,
       children: o.children.map((ch) => mapObjectPointsWithWorld(ch, mapWorld)),
     };
+  }
+  if (o.type === "groupContainer") {
+    const g = o as GroupContainerObject;
+    const children = g.children.map((ch) => mapObjectPointsWithWorld(ch, mapWorld));
+    const b = children.length ? getGroupBounds(children) : { x: g.x, y: g.y, w: g.width, h: g.height };
+    return { ...g, x: b.x, y: b.y, width: b.w, height: b.h, children };
   }
   if (o.type === "path") {
     const p = o as PathObject;
@@ -4943,7 +5074,7 @@ function pickTopVisibleObjectForCursor(pos: Point, objs: FreehandObject[], thres
     const obj = objs[i];
     if (!obj.visible || obj.locked) continue;
     if (obj.isClipMask || obj.clipMaskId) continue;
-    if (hitTestObject(pos, obj, threshold, objs)) return obj;
+    if (hitTestObject(pos, obj, threshold, objs, { imageAlpha: true })) return obj;
   }
   return null;
 }
@@ -6076,6 +6207,29 @@ function fhFxSanitizeId(id: string): string {
   return id.replace(/[^a-zA-Z0-9_-]/g, "_");
 }
 
+/**
+ * Resuelve el `filter` CSS de un photoFilter. Presets de color simple → cadena `filter` CSS.
+ * Presets de mapeo tonal (duotono/teal&orange/split-tone) → `url(#id)` + el `<defs>` del filtro SVG.
+ */
+function resolvePhotoFilterStyle(
+  objId: string,
+  pf: PhotoFilterEffect | undefined,
+): { css: string | undefined; defs: React.ReactNode } {
+  if (!pf?.enabled) return { css: undefined, defs: null };
+  if (isSvgPhotoFilterPreset(pf.preset)) {
+    const id = `fh-pf-svg-${fhFxSanitizeId(objId)}`;
+    return {
+      css: `url(#${id})`,
+      defs: (
+        <defs>
+          <PhotoFilterSvgFilter id={id} preset={pf.preset} intensity={pf.intensity} />
+        </defs>
+      ),
+    };
+  }
+  return { css: photoFilterCssString(pf.preset, pf.intensity), defs: null };
+}
+
 function fhLayerGradientDefinition(
   gradId: string,
   x: number,
@@ -6265,20 +6419,30 @@ function VectorShapeWithLayerEffects(props: {
   alphaSource: React.ReactNode;
   children: React.ReactNode;
 }): React.ReactNode {
-  const { objId, x, y, w, h, effects, alphaSource, children } = props;
+  const { objId, x, y, w, h, effects, alphaSource, children: rawChildren } = props;
   const og = effects?.outerGlow;
   const ogOn = !!og?.enabled;
+  const pf = effects?.photoFilter;
+  const pfOn = !!pf?.enabled;
+  const { css: pfCss, defs: pfDefs } = resolvePhotoFilterStyle(objId, pf);
+  const children = pfCss ? <g style={{ filter: pfCss }}>{rawChildren}</g> : rawChildren;
 
   const overlays = (
-    <VectorLayerEffectOverlays
-      objId={objId}
-      x={x}
-      y={y}
-      w={w}
-      h={h}
-      effects={effects}
-      maskShape={alphaSource}
-    />
+    <>
+      {pfDefs}
+      <VectorLayerEffectOverlays
+        objId={objId}
+        x={x}
+        y={y}
+        w={w}
+        h={h}
+        effects={effects}
+        maskShape={alphaSource}
+      />
+      {pfOn ? (
+        <PhotoFilterOverlays objId={objId} x={x} y={y} w={w} h={h} pf={pf!} maskShape={alphaSource} />
+      ) : null}
+    </>
   );
 
   if (!ogOn || !og) {
@@ -6393,22 +6557,48 @@ function RasterBitmapWithLayerEffects(props: {
   const { objId, x, y, w, h, href, preserveAspectRatio, effects } = props;
   const og = effects?.outerGlow;
   const ogOn = !!og?.enabled;
+  const pf = effects?.photoFilter;
+  const pfOn = !!pf?.enabled;
+  const { css: pfCss, defs: pfDefs } = resolvePhotoFilterStyle(objId, pf);
 
   const imageEl = (
-    <image href={href} x={x} y={y} width={w} height={h} preserveAspectRatio={preserveAspectRatio} />
+    <image
+      href={href}
+      x={x}
+      y={y}
+      width={w}
+      height={h}
+      preserveAspectRatio={preserveAspectRatio}
+      style={pfCss ? { filter: pfCss } : undefined}
+    />
   );
 
   const overlays = (
-    <RasterLayerEffectOverlays
-      objId={objId}
-      x={x}
-      y={y}
-      w={w}
-      h={h}
-      href={href}
-      preserveAspectRatio={preserveAspectRatio}
-      effects={effects}
-    />
+    <>
+      {pfDefs}
+      <RasterLayerEffectOverlays
+        objId={objId}
+        x={x}
+        y={y}
+        w={w}
+        h={h}
+        href={href}
+        preserveAspectRatio={preserveAspectRatio}
+        effects={effects}
+      />
+      {pfOn ? (
+        <PhotoFilterOverlays
+          objId={objId}
+          x={x}
+          y={y}
+          w={w}
+          h={h}
+          pf={pf!}
+          href={href}
+          preserveAspectRatio={preserveAspectRatio}
+        />
+      ) : null}
+    </>
   );
 
   if (!ogOn || !og) {
@@ -6568,6 +6758,100 @@ function resolveLayerEffectsForRender(obj: FreehandObject, opts?: RenderObjOpts)
   return (obj as FreehandObjectBase).layerEffects;
 }
 
+/**
+ * Overlays del filtro fotográfico: grano (ruido analógico) y viñeta, recortados a la silueta del
+ * objeto (raster vía `href`, o vector vía `maskShape`). El look de color se aplica aparte con `filter` CSS.
+ */
+function PhotoFilterOverlays(props: {
+  objId: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  pf: PhotoFilterEffect;
+  href?: string;
+  preserveAspectRatio?: string;
+  maskShape?: React.ReactNode;
+}): React.ReactNode {
+  const { objId, x, y, w, h, pf, href, preserveAspectRatio, maskShape } = props;
+  const grain = clamp(pf.grain ?? 0, 0, 1);
+  const vignette = clamp(pf.vignette ?? 0, 0, 1);
+  if (grain <= 0.001 && vignette <= 0.001) return null;
+  const sid = fhFxSanitizeId(objId);
+  const maskId = `fh-pf-mask-${sid}`;
+  const grainId = `fh-pf-grain-${sid}`;
+  const vigId = `fh-pf-vig-${sid}`;
+  const maskContent = href ? (
+    <image href={href} x={x} y={y} width={w} height={h} preserveAspectRatio={preserveAspectRatio} />
+  ) : (
+    maskShape
+  );
+  // baseFrequency en unidades de usuario: grano fino (alto) o grueso (bajo) según `grainSize`.
+  const baseFreq = photoFilterGrainBaseFrequency(pf.grainSize);
+  return (
+    <>
+      <defs>
+        <mask
+          id={maskId}
+          maskUnits="userSpaceOnUse"
+          x={x}
+          y={y}
+          width={w}
+          height={h}
+          style={{ maskType: "alpha" }}
+        >
+          {maskContent}
+        </mask>
+        {grain > 0.001 ? (
+          <filter
+            id={grainId}
+            x={x}
+            y={y}
+            width={w}
+            height={h}
+            filterUnits="userSpaceOnUse"
+            primitiveUnits="userSpaceOnUse"
+            colorInterpolationFilters="sRGB"
+          >
+            <feTurbulence type="fractalNoise" baseFrequency={baseFreq} numOctaves={2} stitchTiles="stitch" result="noise" />
+            <feColorMatrix in="noise" type="saturate" values="0" result="mono" />
+            <feComponentTransfer in="mono" result="grainA">
+              <feFuncA type="linear" slope={0.9 * grain} intercept={0} />
+            </feComponentTransfer>
+            <feComponentTransfer in="grainA">
+              <feFuncR type="linear" slope={1} intercept={0} />
+              <feFuncG type="linear" slope={1} intercept={0} />
+              <feFuncB type="linear" slope={1} intercept={0} />
+            </feComponentTransfer>
+          </filter>
+        ) : null}
+        {vignette > 0.001 ? (
+          <radialGradient id={vigId} cx="50%" cy="50%" r="72%">
+            <stop offset="50%" stopColor="#000000" stopOpacity={0} />
+            <stop offset="100%" stopColor="#000000" stopOpacity={clamp(vignette * 0.9, 0, 1)} />
+          </radialGradient>
+        ) : null}
+      </defs>
+      <g mask={`url(#${maskId})`}>
+        {grain > 0.001 ? (
+          <rect
+            x={x}
+            y={y}
+            width={w}
+            height={h}
+            fill="#808080"
+            filter={`url(#${grainId})`}
+            style={{ mixBlendMode: "overlay" }}
+          />
+        ) : null}
+        {vignette > 0.001 ? (
+          <rect x={x} y={y} width={w} height={h} fill={`url(#${vigId})`} style={{ mixBlendMode: "multiply" }} />
+        ) : null}
+      </g>
+    </>
+  );
+}
+
 function RasterLayerEffectOverlays(props: {
   objId: string;
   x: number;
@@ -6722,25 +7006,37 @@ export function renderObj(
           }
         />
       );
-      if (fxRect) {
+      const lmaskRect = (rObj as FreehandObjectBase).layerMask;
+      const hasMaskRect = isLayerMaskVisible({ layerMask: lmaskRect });
+      if (fxRect || hasMaskRect) {
+        const rectContent = (
+          <path
+            d={rectPathD}
+            fill={suppressPresenterRectFill ? "none" : fillAttr}
+            {...strokePaint}
+            {...(suppressPresenterRectFill ? { pointerEvents: "all" as const } : {})}
+          />
+        );
+        const rectPainted = fxRect ? (
+          <VectorShapeWithLayerEffects
+            objId={rObj.id}
+            x={rObj.x}
+            y={rObj.y}
+            w={rObj.width}
+            h={rObj.height}
+            effects={leRect}
+            alphaSource={silhouetteRect}
+          >
+            {rectContent}
+          </VectorShapeWithLayerEffects>
+        ) : (
+          rectContent
+        );
         return (
           <g key={rObj.id} transform={transform} opacity={rObj.opacity}>
-            <VectorShapeWithLayerEffects
-              objId={rObj.id}
-              x={rObj.x}
-              y={rObj.y}
-              w={rObj.width}
-              h={rObj.height}
-              effects={leRect}
-              alphaSource={silhouetteRect}
-            >
-              <path
-                d={rectPathD}
-                fill={suppressPresenterRectFill ? "none" : fillAttr}
-                {...strokePaint}
-                {...(suppressPresenterRectFill ? { pointerEvents: "all" as const } : {})}
-              />
-            </VectorShapeWithLayerEffects>
+            {hasMaskRect
+              ? wrapRasterChildrenWithLayerMask(rObj.id, rObj.x, rObj.y, rObj.width, rObj.height, "none", lmaskRect, rectPainted)
+              : rectPainted}
           </g>
         );
       }
@@ -6788,28 +7084,40 @@ export function renderObj(
           }
         />
       );
-      if (fxEl) {
+      const lmaskEl = (eObj as FreehandObjectBase).layerMask;
+      const hasMaskEl = isLayerMaskVisible({ layerMask: lmaskEl });
+      if (fxEl || hasMaskEl) {
+        const ellipseContent = (
+          <ellipse
+            cx={cx}
+            cy={cy}
+            rx={rx}
+            ry={ry}
+            fill={suppressPresenterEllipseFill ? "none" : fillAttr}
+            {...strokePaint}
+            {...(suppressPresenterEllipseFill ? { pointerEvents: "all" as const } : {})}
+          />
+        );
+        const ellipsePainted = fxEl ? (
+          <VectorShapeWithLayerEffects
+            objId={eObj.id}
+            x={eObj.x}
+            y={eObj.y}
+            w={eObj.width}
+            h={eObj.height}
+            effects={leEl}
+            alphaSource={silhouetteEllipse}
+          >
+            {ellipseContent}
+          </VectorShapeWithLayerEffects>
+        ) : (
+          ellipseContent
+        );
         return (
           <g key={eObj.id} transform={transform} opacity={eObj.opacity}>
-            <VectorShapeWithLayerEffects
-              objId={eObj.id}
-              x={eObj.x}
-              y={eObj.y}
-              w={eObj.width}
-              h={eObj.height}
-              effects={leEl}
-              alphaSource={silhouetteEllipse}
-            >
-              <ellipse
-                cx={cx}
-                cy={cy}
-                rx={rx}
-                ry={ry}
-                fill={suppressPresenterEllipseFill ? "none" : fillAttr}
-                {...strokePaint}
-                {...(suppressPresenterEllipseFill ? { pointerEvents: "all" as const } : {})}
-              />
-            </VectorShapeWithLayerEffects>
+            {hasMaskEl
+              ? wrapRasterChildrenWithLayerMask(eObj.id, eObj.x, eObj.y, eObj.width, eObj.height, "none", lmaskEl, ellipsePainted)
+              : ellipsePainted}
           </g>
         );
       }
@@ -6865,6 +7173,12 @@ export function renderObj(
           {...(mlP != null && p.strokeLinejoin === "miter" ? { strokeMiterlimit: mlP } : {})}
         />
       );
+      const lmaskPath = (p as FreehandObjectBase).layerMask;
+      const hasMaskPath = isLayerMaskVisible({ layerMask: lmaskPath });
+      const wrapPathMask = (node: React.ReactNode): React.ReactNode =>
+        hasMaskPath
+          ? wrapRasterChildrenWithLayerMask(p.id, p.x, p.y, p.width, p.height, "none", lmaskPath, node)
+          : node;
       const hasIntrinsic =
         p.svgPathIntrinsicW != null &&
         p.svgPathIntrinsicH != null &&
@@ -6886,23 +7200,25 @@ export function renderObj(
         if (fxP) {
           return (
             <g key={p.id} transform={transform} opacity={p.opacity}>
-              <VectorShapeWithLayerEffects
-                objId={p.id}
-                x={p.x}
-                y={p.y}
-                w={p.width}
-                h={p.height}
-                effects={leP}
-                alphaSource={alphaSource}
-              >
-                {body}
-              </VectorShapeWithLayerEffects>
+              {wrapPathMask(
+                <VectorShapeWithLayerEffects
+                  objId={p.id}
+                  x={p.x}
+                  y={p.y}
+                  w={p.width}
+                  h={p.height}
+                  effects={leP}
+                  alphaSource={alphaSource}
+                >
+                  {body}
+                </VectorShapeWithLayerEffects>,
+              )}
             </g>
           );
         }
         return (
           <g key={obj.id} transform={transform}>
-            {body}
+            {wrapPathMask(body)}
           </g>
         );
       }
@@ -6921,23 +7237,25 @@ export function renderObj(
         if (fxP) {
           return (
             <g key={p.id} transform={transform} opacity={p.opacity}>
-              <VectorShapeWithLayerEffects
-                objId={p.id}
-                x={p.x}
-                y={p.y}
-                w={p.width}
-                h={p.height}
-                effects={leP}
-                alphaSource={alphaSource}
-              >
-                {body}
-              </VectorShapeWithLayerEffects>
+              {wrapPathMask(
+                <VectorShapeWithLayerEffects
+                  objId={p.id}
+                  x={p.x}
+                  y={p.y}
+                  w={p.width}
+                  h={p.height}
+                  effects={leP}
+                  alphaSource={alphaSource}
+                >
+                  {body}
+                </VectorShapeWithLayerEffects>,
+              )}
             </g>
           );
         }
         return (
           <g key={obj.id} transform={transform}>
-            {body}
+            {wrapPathMask(body)}
           </g>
         );
       }
@@ -6951,40 +7269,49 @@ export function renderObj(
         if (fxP) {
           return (
             <g key={p.id} transform={transform} opacity={p.opacity}>
-              <VectorShapeWithLayerEffects
-                objId={p.id}
-                x={p.x}
-                y={p.y}
-                w={p.width}
-                h={p.height}
-                effects={leP}
-                alphaSource={silPathEl}
-              >
-                <g>{body}</g>
-              </VectorShapeWithLayerEffects>
+              {wrapPathMask(
+                <VectorShapeWithLayerEffects
+                  objId={p.id}
+                  x={p.x}
+                  y={p.y}
+                  w={p.width}
+                  h={p.height}
+                  effects={leP}
+                  alphaSource={silPathEl}
+                >
+                  <g>{body}</g>
+                </VectorShapeWithLayerEffects>,
+              )}
             </g>
           );
         }
         return (
           <g key={obj.id} transform={transform}>
-            {body}
+            {wrapPathMask(body)}
           </g>
         );
       }
-      if (fxP) {
+      if (fxP || hasMaskPath) {
+        const plainPathEl = <path d={d} fill={fp} {...pathProps} {...peHit} />;
         return (
           <g key={p.id} transform={transform} opacity={p.opacity}>
-            <VectorShapeWithLayerEffects
-              objId={p.id}
-              x={p.x}
-              y={p.y}
-              w={p.width}
-              h={p.height}
-              effects={leP}
-              alphaSource={silPathEl}
-            >
-              <path d={d} fill={fp} {...pathProps} {...peHit} />
-            </VectorShapeWithLayerEffects>
+            {wrapPathMask(
+              fxP ? (
+                <VectorShapeWithLayerEffects
+                  objId={p.id}
+                  x={p.x}
+                  y={p.y}
+                  w={p.width}
+                  h={p.height}
+                  effects={leP}
+                  alphaSource={silPathEl}
+                >
+                  {plainPathEl}
+                </VectorShapeWithLayerEffects>
+              ) : (
+                plainPathEl
+              ),
+            )}
           </g>
         );
       }
@@ -7131,8 +7458,29 @@ export function renderObj(
       }
       const textT = textSvgTransform(t);
       const hideSvgTextWhileEditing = opts?.textEditingId === t.id;
+      const leText = resolveLayerEffectsForRender(t, opts);
+      const { css: pfTextCss, defs: pfTextDefs } = resolvePhotoFilterStyle(t.id, leText?.photoFilter);
+      const lmaskText = (t as FreehandObjectBase).layerMask;
+      const hasMaskText = isLayerMaskVisible({ layerMask: lmaskText });
+      const textForeign = (
+        <foreignObject
+          x={t.x}
+          y={t.y}
+          width={foW}
+          height={foH}
+          style={{
+            overflow: textClipsOverflow(t) ? "hidden" : "visible",
+            opacity: hideSvgTextWhileEditing ? 0 : 1,
+            pointerEvents: hideSvgTextWhileEditing ? "none" : undefined,
+            ...(pfTextCss ? { filter: pfTextCss } : {}),
+          }}
+        >
+          {inner}
+        </foreignObject>
+      );
       return (
         <g key={obj.id} data-fh-text={t.id} transform={textT}>
+          {pfTextDefs}
           {t.isTextFrame && !opts?.canvasZenMode && (
             <rect
               x={t.x} y={t.y} width={foW} height={foH}
@@ -7141,19 +7489,20 @@ export function renderObj(
               pointerEvents="none"
             />
           )}
-          <foreignObject
-            x={t.x}
-            y={t.y}
-            width={foW}
-            height={foH}
-            style={{
-              overflow: textClipsOverflow(t) ? "hidden" : "visible",
-              opacity: hideSvgTextWhileEditing ? 0 : 1,
-              pointerEvents: hideSvgTextWhileEditing ? "none" : undefined,
-            }}
-          >
-            {inner}
-          </foreignObject>
+          {hasMaskText
+            ? wrapRasterChildrenWithLayerMask(t.id, t.x, t.y, foW, foH, "none", lmaskText, textForeign)
+            : textForeign}
+          {leText?.photoFilter?.enabled ? (
+            <PhotoFilterOverlays
+              objId={t.id}
+              x={t.x}
+              y={t.y}
+              w={foW}
+              h={foH}
+              pf={leText.photoFilter}
+              maskShape={<rect x={t.x} y={t.y} width={foW} height={foH} fill="white" />}
+            />
+          ) : null}
           {/* Text frame ports rendered in overlay layer above selection box */}
         </g>
       );
@@ -7281,6 +7630,57 @@ export function renderObj(
               ))}
             </g>
           </g>
+        </g>
+      );
+    }
+    case "groupContainer": {
+      const gc = obj as GroupContainerObject;
+      const blendStyle = layerMixBlendStyle(gc.blendMode as LayerBlendMode);
+      const leGc = resolveLayerEffectsForRender(gc, opts);
+      const pfGc = leGc?.photoFilter;
+      const pfGcOn = !!pfGc?.enabled;
+      const { css: pfGcCss, defs: pfGcDefs } = resolvePhotoFilterStyle(gc.id, pfGc);
+      const lmaskGc = (gc as FreehandObjectBase).layerMask;
+      const hasMaskGc = isLayerMaskVisible({ layerMask: lmaskGc });
+      const childrenNode = (
+        <>
+          {gc.children.map((ch, idx) => (
+            <g key={`${gc.id}-gc-${idx}-${ch.id}`}>{renderObj(ch, allObjects, selectedIds, opts)}</g>
+          ))}
+        </>
+      );
+      // El filtro de color tiñe los hijos; el grano/viñeta van fuera del filtro para no teñirse.
+      const filteredChildren = pfGcCss ? (
+        <g style={{ filter: pfGcCss, isolation: "isolate" }}>{childrenNode}</g>
+      ) : (
+        childrenNode
+      );
+      const groupInner = (
+        <>
+          {pfGcDefs}
+          {filteredChildren}
+          {pfGcOn ? (
+            <PhotoFilterOverlays
+              objId={gc.id}
+              x={gc.x}
+              y={gc.y}
+              w={gc.width}
+              h={gc.height}
+              pf={pfGc!}
+              maskShape={<rect x={gc.x} y={gc.y} width={gc.width} height={gc.height} fill="white" />}
+            />
+          ) : null}
+        </>
+      );
+      return (
+        <g
+          key={gc.id}
+          opacity={gc.opacity}
+          style={blendStyle ? { ...blendStyle, isolation: "isolate" } : undefined}
+        >
+          {hasMaskGc
+            ? wrapRasterChildrenWithLayerMask(gc.id, gc.x, gc.y, gc.width, gc.height, "none", lmaskGc, groupInner)
+            : groupInner}
         </g>
       );
     }
@@ -8475,7 +8875,7 @@ function CtxMenu({ x, y, items, onClose }: { x: number; y: number; items: Contex
       style={{ ...style, position: "fixed", zIndex: 100001 }}
       onMouseDown={(e) => e.stopPropagation()}
     >
-      <div className="mb-1 shrink-0 border-b border-white/5 px-3 py-2 text-[8px] font-black uppercase tracking-widest text-white/30">
+      <div className="mb-0.5 shrink-0 border-b border-white/5 px-2.5 py-1 text-[8px] font-black uppercase tracking-widest text-white/30">
         Acciones
       </div>
       {items.map((item, i) => {
@@ -8535,6 +8935,10 @@ function layerRowIcon(o: FreehandObject) {
     }
     case "image": return <ImageIconLucide size={12} className={cls} />;
     case "booleanGroup": return <Layers size={12} className={cls} />;
+    case "groupContainer":
+      return (o as GroupContainerObject).collapsed
+        ? <Folder size={12} className={`${cls} text-amber-400/80`} />
+        : <FolderOpen size={12} className={`${cls} text-amber-400/80`} />;
     case "clippingContainer": return <Crop size={12} className={cls} />;
     case "adjustmentLayer":
       return <Contrast size={12} className={`${cls} text-sky-400/80`} strokeWidth={2} />;
@@ -8576,7 +8980,7 @@ function creationStyleSnapshotFromObject(o: FreehandObject): {
   strokeLinejoin: FreehandObjectBase["strokeLinejoin"];
   strokeDasharray: string;
 } | null {
-  if (o.type === "image" || o.type === "booleanGroup" || o.type === "clippingContainer") return null;
+  if (o.type === "image" || o.type === "booleanGroup" || o.type === "clippingContainer" || o.type === "groupContainer") return null;
 
   let fillForCreation = "#6366f1";
   if (o.type === "textOnPath") {
@@ -9231,7 +9635,7 @@ export function FreehandStudioCanvas({
         id: `brain-cache-${src.slice(0, 24)}`,
         url: src,
         kind: "image",
-        sourceLabel: "Brain · Generado IA",
+        sourceLabel: "BrandKit · Generado IA",
         nodeId: nodeId || "canvas",
       });
     }
@@ -9705,6 +10109,8 @@ export function FreehandStudioCanvas({
   // Layer drag reorder
   const [layerDragId, setLayerDragId] = useState<string | null>(null);
   const [layerDropTarget, setLayerDropTarget] = useState<string | null>(null);
+  /** Intención de soltar en una fila del árbol (visual): encima / debajo / dentro (carpeta). */
+  const [layerDrop, setLayerDrop] = useState<{ id: string; mode: "above" | "below" | "into" } | null>(null);
 
   /** Multi-select: object that gets primary handles / full opacity. */
   const [primarySelectedId, setPrimarySelectedId] = useState<string | null>(null);
@@ -10582,6 +10988,16 @@ export function FreehandStudioCanvas({
   selectedPointsRef.current = selectedPoints;
   const objectsRef = useRef(objects);
   objectsRef.current = objects;
+  // Pre-decodifica el alfa de las imágenes para que el hit-test por opacidad sea preciso ya en el
+  // primer clic; sin esto, el primer clic caería al bounding box mientras decodifica.
+  useEffect(() => {
+    for (const o of objects) {
+      if (o.type === "image" && (o as ImageObject).src) prewarmImageAlpha((o as ImageObject).src);
+    }
+  }, [objects]);
+  // Al completar un decodificado asíncrono, refresca el resaltado de hover aunque el ratón no se mueva.
+  const [, setImageAlphaTick] = useState(0);
+  useEffect(() => subscribeImageAlpha(() => setImageAlphaTick((t) => t + 1)), []);
   const activeToolRef = useRef(activeTool);
   activeToolRef.current = activeTool;
   const brushSizeRef = useRef(brushSize);
@@ -11095,7 +11511,7 @@ export function FreehandStudioCanvas({
     const stack = isolationStackRef.current;
     if (stack.length === 0) return;
     const frame = stack[stack.length - 1];
-    if (frame.kind === "clipping" || frame.kind === "vectorGroup") {
+    if (frame.kind === "clipping" || frame.kind === "vectorGroup" || frame.kind === "group") {
       if (livePreviewRef.current != null) setLivePreview(null);
       return;
     }
@@ -11564,7 +11980,7 @@ export function FreehandStudioCanvas({
         `${claim}. Sin ruido, sin vueltas.`,
         `${claimB}. Con datos y criterio.`,
         `${metric}. Mensajes claros para actuar.`,
-        "Usa Brain para decidir mejor y publicar antes.",
+        "Usa el BrandKit para decidir mejor y publicar antes.",
       ],
       Párrafo: [
         `${claim}. ${proof}. Usa las señales clave y convierte cada pieza en una decisión clara.`,
@@ -11575,7 +11991,7 @@ export function FreehandStudioCanvas({
         "Pide una demo",
         "Empieza ahora",
         "Ver ejemplos",
-        "Generar con Brain",
+        "Generar con BrandKit",
       ],
       Quote: [
         `“${claim}.”`,
@@ -11598,7 +12014,7 @@ export function FreehandStudioCanvas({
         `${proof}. Una capa de criterio para que cada pieza respire el mismo relato.`,
       ],
       Párrafo: [
-        `${claim}. ${proof}. Brain convierte señales dispersas en una memoria creativa capaz de guiar tono, argumento y composición sin perder contexto.`,
+        `${claim}. ${proof}. El BrandKit convierte señales dispersas en una memoria creativa capaz de guiar tono, argumento y composición sin perder contexto.`,
         `${claimB}. La marca conserva su hilo conductor mientras cada proyecto encuentra su propio matiz narrativo.`,
         `Cada pieza parte de una base reconocible: hechos, audiencia y dirección creativa. Así el contenido deja de sonar genérico y empieza a tener intención.`,
       ],
@@ -11648,7 +12064,7 @@ export function FreehandStudioCanvas({
           `${claim}. ${proof}.`,
           `${claimB}. ${metric}. Mantén coherencia entre marca, proyecto y canal.`,
           `El sistema convierte señales dispersas en mensajes claros, útiles y conectados a evidencia.`,
-          `Brain ayuda a transformar contexto real en contenido accionable, sin perder tono ni dirección creativa.`,
+          `El BrandKit ayuda a transformar contexto real en contenido accionable, sin perder tono ni dirección creativa.`,
         ],
       },
       Párrafo: {
@@ -11661,10 +12077,10 @@ export function FreehandStudioCanvas({
         ],
         medio: byKind.Párrafo,
         largo: [
-          `${claim}. ${proof}. Además, Brain ordena señales de marca, proyecto, audiencia y evidencia para que cada pieza tenga una dirección clara desde el primer borrador. Así el contenido mantiene coherencia, pero puede adaptarse a distintos canales sin sonar repetido.`,
+          `${claim}. ${proof}. Además, el BrandKit ordena señales de marca, proyecto, audiencia y evidencia para que cada pieza tenga una dirección clara desde el primer borrador. Así el contenido mantiene coherencia, pero puede adaptarse a distintos canales sin sonar repetido.`,
           `${claimB}. El sistema separa lo que pertenece a la marca de lo que pertenece al proyecto, y usa esa memoria para construir mensajes más consistentes. Con métricas como ${metric}, cada texto puede apoyarse en contexto real y no solo en intuición creativa.`,
           `El contenido nace de hechos verificables, aprendizajes y señales de audiencia. ${proof}. Esa base permite escribir piezas más útiles, más específicas y más conectadas con la intención de la campaña, manteniendo un tono reconocible en todo el recorrido.`,
-          `Brain funciona como una memoria creativa activa: recoge lo que la marca sabe, lo que el proyecto necesita y lo que cada pieza debe comunicar. El resultado es un texto con más contexto, mejor foco y menos ruido operativo.`,
+          `El BrandKit funciona como una memoria creativa activa: recoge lo que la marca sabe, lo que el proyecto necesita y lo que cada pieza debe comunicar. El resultado es un texto con más contexto, mejor foco y menos ruido operativo.`,
         ],
       },
       CTA: {
@@ -11675,7 +12091,7 @@ export function FreehandStudioCanvas({
           `${byKind.CTA[0] ?? "Solicita una demo"} y descubre el flujo completo`,
           `${byKind.CTA[1] ?? "Empieza ahora"} con contexto de marca conectado`,
           `${byKind.CTA[2] ?? "Ver ejemplos"} creados con memoria de proyecto`,
-          `${byKind.CTA[3] ?? "Generar con Brain"} y revisa la primera propuesta`,
+          `${byKind.CTA[3] ?? "Generar con BrandKit"} y revisa la primera propuesta`,
         ],
       },
       Quote: {
@@ -11686,7 +12102,7 @@ export function FreehandStudioCanvas({
           `“${claim}. Lo importante no es generar más, sino crear con memoria y criterio.”`,
           `“${claimB}. La coherencia aparece cuando cada pieza entiende de dónde viene.”`,
           `“${proof}. La creatividad funciona mejor cuando tiene evidencia, tono y contexto.”`,
-          `“${metric}. Una buena señal puede convertirse en una campaña completa si Brain conserva el hilo.”`,
+          `“${metric}. Una buena señal puede convertirse en una campaña completa si el BrandKit conserva el hilo.”`,
         ],
       },
     };
@@ -11790,7 +12206,7 @@ export function FreehandStudioCanvas({
     const txt = brainKnowledgeLongText.toLowerCase();
     const catalog: Array<{ key: string; label: string }> = [
       { key: "canvas", label: "Canvas visual nodal" },
-      { key: "brain", label: "Brain de conocimiento e ingesta" },
+      { key: "brain", label: "BrandKit de conocimiento e ingesta" },
       { key: "designer", label: "Designer multipágina editorial" },
       { key: "presenter", label: "Presenter para slides y publicación" },
       { key: "s3", label: "Assets en S3 + DynamoDB" },
@@ -12701,6 +13117,101 @@ export function FreehandStudioCanvas({
   );
 
   /**
+   * BrandKit: vincula el contenido del objeto (texto/imagen) a un campo de un BrandKit conectado.
+   * El BrandKit aporta sus campos como constantes namespaced (`bk:<nodeId>:<fieldId>`) en el
+   * dataset efectivo; aquí parseamos ese id, fijamos `source: "node"` y aplicamos el valor actual.
+   */
+  const applyDesignerBrandKitContentBinding = useCallback(
+    async (constantId: string) => {
+      if (!designerConnectedDataset || !singleSelected) return;
+      const parts = constantId.split(":");
+      if (parts.length < 3 || parts[0] !== "bk") return;
+      const nodeId = parts[1]!;
+      const fieldId = parts.slice(2).join(":");
+      const value = getConstantFieldValue(designerConnectedDataset, constantId);
+      if (!value) return;
+      const targetId = singleSelected.id;
+
+      if (value.type === "image") {
+        const isImageLayer = singleSelected.type === "image";
+        const isImageFrame = singleSelected.type === "rect" && singleSelected.isImageFrame;
+        if (!isImageLayer && !isImageFrame) return;
+        const src = (value.url ?? "").trim();
+        if (!src) return;
+        const natural = value.w && value.h ? { w: value.w, h: value.h } : await loadImageNaturalSize(src);
+        const binding: DesignerDatasetFieldBinding = {
+          source: "node",
+          nodeId,
+          listId: "",
+          listKey: "",
+          fieldId,
+          fieldKey: fieldId,
+          kind: "image",
+        };
+        setObjects((prev) => {
+          const next = prev.map((o) => {
+            if (o.id !== targetId) return o;
+            if (o.type === "image") {
+              return { ...(o as ImageObject), src, intrinsicRatio: natural.w / Math.max(1, natural.h), _designerDatasetBinding: binding } as FreehandObject;
+            }
+            if (o.type === "rect" && o.isImageFrame) {
+              const layout = computeFittingLayout(o.width, o.height, natural.w, natural.h, "fill-proportional");
+              return {
+                ...(o as RectObject),
+                imageFrameContent: { src, originalWidth: natural.w, originalHeight: natural.h, ...layout, fittingMode: "fill-proportional" },
+                imageFrameAutoFit: true,
+                _designerDatasetBinding: binding,
+              } as RectObject;
+            }
+            return o;
+          });
+          pushHistory(next, new Set([targetId]));
+          return next;
+        });
+        setSelectedIds(new Set([targetId]));
+        return;
+      }
+
+      // Texto (handle u otro campo de texto del BrandKit).
+      if (singleSelected.type !== "text" && singleSelected.type !== "textOnPath") return;
+      const nextText = fieldValueAsText(value);
+      const binding: DesignerDatasetFieldBinding = {
+        source: "node",
+        nodeId,
+        listId: "",
+        listKey: "",
+        fieldId,
+        fieldKey: fieldId,
+        kind: "text",
+      };
+      const selectedText = singleSelected.type === "text" ? (singleSelected as TextObject) : null;
+      const textFrameStoryId = selectedText?.isTextFrame ? selectedText.storyId : undefined;
+      setObjects((prev) => {
+        const next = prev.map((o) =>
+          o.id === targetId
+            ? ({
+                ...o,
+                text: nextText,
+                _designerDatasetBinding: binding,
+                ...(o.type === "text" && (o as TextObject).isTextFrame ? { _designerRichSpans: undefined, _designerOverflow: false } : {}),
+              } as FreehandObject)
+            : o,
+        );
+        pushHistory(next, new Set([targetId]));
+        return next;
+      });
+      if (designerMode && textFrameStoryId && onDesignerTextFrameEdit) {
+        onDesignerTextFrameEdit(targetId, textFrameStoryId, nextText);
+        if (inlineFrameEditorObjectIdRef.current === targetId && inlineFrameEditorRef.current) {
+          inlineFrameEditorRef.current.innerHTML = richSpansToInlineHtml(undefined, nextText);
+        }
+      }
+      setSelectedIds(new Set([targetId]));
+    },
+    [designerConnectedDataset, designerMode, loadImageNaturalSize, onDesignerTextFrameEdit, pushHistory, singleSelected],
+  );
+
+  /**
    * Modo 2: marca el objeto como campo dinámico SIN Dataset conectado (hueco + tipo + etiqueta).
    * La columna la asigna Populate después. No cambia el contenido del objeto (texto/imagen de diseño).
    */
@@ -13036,28 +13547,42 @@ export function FreehandStudioCanvas({
         explicitTarget ??
         (primarySelectedId ? objects.find((o) => o.id === primarySelectedId) : null) ??
         firstSelected;
-      if (!target || !isLayerMaskRasterEligible(target)) {
-        setToast("Selecciona una capa de imagen o bitmap con caché para añadir máscara.");
+      if (!target || !isLayerMaskEligible(target)) {
+        setToast("Selecciona una imagen, bitmap, forma o texto para añadir máscara.");
         window.setTimeout(() => setToast(null), 3200);
         return;
       }
       const o = target as FreehandObject;
-      const dataSrc =
-        o.type === "image" ? (o as ImageObject).src : (o as BooleanGroupObject).cachedResult!;
-      void loadImageToBrushCanvas(dataSrc, o.width, o.height).then(({ canvas }) => {
-        const cw = canvas.width, ch = canvas.height;
+      const finishWithDims = (
+        cw: number,
+        ch: number,
+        rectOverride?: { x: number; y: number; w: number; h: number },
+      ) => {
+        const pw = Math.max(1, Math.round(cw));
+        const ph = Math.max(1, Math.round(ch));
         const maskCanvas = document.createElement("canvas");
-        maskCanvas.width = Math.max(1, cw);
-        maskCanvas.height = Math.max(1, ch);
+        maskCanvas.width = pw;
+        maskCanvas.height = ph;
         const maskCtx = maskCanvas.getContext("2d");
         if (maskCtx) {
           maskCtx.fillStyle = "#ffffff";
-          maskCtx.fillRect(0, 0, cw, ch);
+          maskCtx.fillRect(0, 0, pw, ph);
         }
         const dataUrl = maskCanvas.toDataURL("image/png");
-        const nm = defaultLayerMask({ src: dataUrl, pixelW: cw, pixelH: ch });
+        const nm = defaultLayerMask({ src: dataUrl, pixelW: pw, pixelH: ph });
         setObjects((prev) => {
-          const next = prev.map((p) => (p.id === o.id ? ({ ...p, layerMask: nm } as FreehandObject) : p));
+          // tree-aware: la capa puede estar anidada dentro de una carpeta.
+          const next = mapTree(prev, (p) =>
+            p.id === o.id
+              ? ({
+                  ...p,
+                  ...(rectOverride
+                    ? { x: rectOverride.x, y: rectOverride.y, width: rectOverride.w, height: rectOverride.h }
+                    : {}),
+                  layerMask: nm,
+                } as FreehandObject)
+              : p,
+          );
           pushHistory(next, new Set([o.id]));
           return next;
         });
@@ -13074,7 +13599,29 @@ export function FreehandStudioCanvas({
             maskId: `layer-mask:${o.id}`,
           });
         }
-      });
+      };
+      if (isLayerMaskRasterEligible(o)) {
+        const dataSrc =
+          o.type === "image" ? (o as ImageObject).src : (o as BooleanGroupObject).cachedResult!;
+        void loadImageToBrushCanvas(dataSrc, o.width, o.height).then(({ canvas }) =>
+          finishWithDims(canvas.width, canvas.height),
+        );
+      } else if (o.type === "groupContainer") {
+        // Carpeta: lienzo de máscara dimensionado al bbox actual del grupo (y rect sincronizado).
+        const b = getGroupBounds((o as GroupContainerObject).children);
+        const w = b.w > 0 ? b.w : o.width;
+        const h = b.h > 0 ? b.h : o.height;
+        const maxDim = Math.max(w, h, 1);
+        const scale = Math.min(2, 2048 / maxDim);
+        finishWithDims(w * scale, h * scale, b.w > 0 ? { x: b.x, y: b.y, w, h } : undefined);
+      } else {
+        // Formas vectoriales y texto: lienzo de máscara dimensionado al bbox (≈2 px/unidad, máx. 2048).
+        const baseW = o.type === "text" ? textLayoutDims(o as TextObject).w : o.width;
+        const baseH = o.type === "text" ? textLayoutDims(o as TextObject).h : o.height;
+        const maxDim = Math.max(baseW, baseH, 1);
+        const scale = Math.min(2, 2048 / maxDim);
+        finishWithDims(baseW * scale, baseH * scale);
+      }
     },
     [studioCaps.layerMask, primarySelectedId, objects, firstSelected, pushHistory, enterLayerMaskEdit],
   );
@@ -13199,6 +13746,120 @@ export function FreehandStudioCanvas({
     },
     [pushHistory],
   );
+
+  // ── Carpetas (groupContainer) en el panel de capas ──────────────────
+  /** Modifica un objeto por id en cualquier nivel del árbol (sin historial; para toggles del panel). */
+  const patchObjectInTree = useCallback((id: string, fn: (o: FreehandObject) => FreehandObject) => {
+    setObjects((prev) => mapTree(prev, (o) => (o.id === id ? fn(o) : o)));
+  }, []);
+
+  const toggleFolderCollapsed = useCallback((id: string) => {
+    setObjects((prev) =>
+      mapTree(prev, (o) =>
+        o.id === id && o.type === "groupContainer"
+          ? { ...(o as GroupContainerObject), collapsed: !(o as GroupContainerObject).collapsed }
+          : o,
+      ),
+    );
+  }, []);
+
+  /** Mueve un nodo (y su subárbol) a un destino del árbol (antes/después/dentro). */
+  const moveLayerInTree = useCallback(
+    (dragId: string, target: InsertTarget) => {
+      setObjects((prev) => {
+        const dragLoc = findInTree(prev, dragId);
+        if (!dragLoc) return prev;
+        // No permitir soltar una carpeta dentro de sí misma o de un descendiente.
+        if (target.mode === "into" && isSelfOrDescendant(prev, dragId, target.containerId)) return prev;
+        if (
+          (target.mode === "before" || target.mode === "after") &&
+          isSelfOrDescendant(prev, dragId, target.refId)
+        ) {
+          return prev;
+        }
+        // Las entradas PhotoRoom no se reorganizan salvo en el embed dedicado.
+        if (dragLoc.node.photoRoomInputSlot && !isPhotoRoomStudioEmbed) return prev;
+        const { tree, removed } = removeNodesFromTree(prev, new Set([dragId]));
+        if (removed.length === 0) return prev;
+        const next = insertNodesIntoTree(tree, removed, target);
+        pushHistory(next, new Set([dragId]));
+        return next;
+      });
+    },
+    [pushHistory, isPhotoRoomStudioEmbed],
+  );
+
+  const createFolder = useCallback(() => {
+    const sel = selectedIdsRef.current;
+    let folderId: string | null = null;
+    const makeFolder = (children: FreehandObject[]): GroupContainerObject => {
+      const b = children.length ? getGroupBounds(children) : { x: 0, y: 0, w: 0, h: 0 };
+      return {
+        ...defaultObj({ name: "", x: b.x, y: b.y, width: b.w, height: b.h }),
+        type: "groupContainer",
+        children,
+        collapsed: false,
+        fill: solidFill("none"),
+        stroke: "none",
+        strokeWidth: 0,
+      } as GroupContainerObject;
+    };
+    setObjects((prev) => {
+      const folderCount = collectTreeIds(prev).filter((id) => {
+        const loc = findInTree(prev, id);
+        return loc?.node.type === "groupContainer";
+      }).length;
+      const name = `Carpeta ${folderCount + 1}`;
+      if (sel.size > 0) {
+        const res = wrapSelectionInGroup(prev, sel, (children) => ({
+          ...makeFolder(children),
+          name,
+        }));
+        if (!res) return prev;
+        folderId = res.folder.id;
+        pushHistory(res.tree, new Set([res.folder.id]));
+        return res.tree;
+      }
+      const folder = { ...makeFolder([]), name };
+      folderId = folder.id;
+      const next = [...prev, folder];
+      pushHistory(next, new Set([folder.id]));
+      return next;
+    });
+    if (folderId) {
+      setSelectedIds(new Set([folderId]));
+      setPrimarySelectedId(folderId);
+    }
+  }, [pushHistory]);
+
+  /** Disuelve la(s) carpeta(s) seleccionada(s), devolviendo sus hijos al nivel del contenedor. */
+  const ungroupSelectedFolder = useCallback(() => {
+    const sel = selectedIdsRef.current;
+    if (sel.size === 0) return;
+    let promotedOut: Set<string> | null = null;
+    setObjects((prev) => {
+      let tree = prev;
+      const promoted = new Set<string>();
+      let changed = false;
+      for (const id of sel) {
+        const loc = findInTree(tree, id);
+        if (!loc || loc.node.type !== "groupContainer") continue;
+        const res = ungroupContainer(tree, id);
+        if (!res) continue;
+        tree = res.tree;
+        res.childIds.forEach((cid) => promoted.add(cid));
+        changed = true;
+      }
+      if (!changed) return prev;
+      promotedOut = promoted;
+      pushHistory(tree, promoted);
+      return tree;
+    });
+    if (promotedOut) {
+      setSelectedIds(promotedOut);
+      setPrimarySelectedId(null);
+    }
+  }, [pushHistory]);
 
   /** Vista previa de relleno/trazo en los muestreos de la barra izquierda (estilo Illustrator). */
   const leftToolbarSwatchPreview = useMemo(() => {
@@ -14542,10 +15203,10 @@ export function FreehandStudioCanvas({
       const recordHistory = opts?.recordHistory !== false;
       const gen = ++photoGradientApplyGenRef.current;
       const o = objectsRef.current.find((x) => x.id === sess.objectId);
-      if (!o || !isLayerMaskRasterEligible(o)) return;
+      if (!o) return;
       if (sess.surface === "mask") {
-        if (!hasLayerMaskBlock(o)) return;
-      } else if (o.type !== "image" || (o as ImageObject).photoRoomInputSlot) {
+        if (!isLayerMaskEligible(o) || !hasLayerMaskBlock(o)) return;
+      } else if (!isLayerMaskRasterEligible(o) || o.type !== "image" || (o as ImageObject).photoRoomInputSlot) {
         return;
       }
       try {
@@ -16055,13 +16716,16 @@ export function FreehandStudioCanvas({
     const sel = selectedIdsRef.current;
     if (sel.size === 0) return;
     setObjects((prev) => {
-      const next = prev.filter((o) => {
-        if (!sel.has(o.id)) return true;
-        if (o.photoRoomInputSlot) return true;
-        return false;
-      });
-      pushHistory(next, new Set());
-      return next;
+      const toRemove = new Set<string>();
+      for (const id of sel) {
+        const loc = findInTree(prev, id);
+        if (loc && loc.node.photoRoomInputSlot) continue; // entradas PhotoRoom protegidas
+        toRemove.add(id);
+      }
+      if (toRemove.size === 0) return prev;
+      const { tree } = removeNodesFromTree(prev, toRemove);
+      pushHistory(tree, new Set());
+      return tree;
     });
     setSelectedIds(new Set());
   }, [pushHistory]);
@@ -16474,6 +17138,28 @@ export function FreehandStudioCanvas({
     setIsolationDepth((d) => d + 1);
   }, []);
 
+  const enterGroupIsolation = useCallback((containerId: string) => {
+    const objs = objectsRef.current;
+    const group = objs.find((o) => o.id === containerId && o.type === "groupContainer") as
+      | GroupContainerObject
+      | undefined;
+    if (!group) return;
+    isolationStackRef.current.push({
+      kind: "group",
+      groupId: containerId,
+      parentObjects: objs.map((o) => ({ ...o })),
+      parentSelectedIds: new Set(selectedIdsRef.current),
+      parentHistory: [...historyRef.current],
+      parentHistoryIdx: historyIdxRef.current,
+    });
+    const children = group.children.map((c) => ({ ...c }));
+    setObjects(children);
+    setSelectedIds(new Set());
+    historyRef.current = [{ objects: [...children], sel: [] }];
+    historyIdxRef.current = 0;
+    setIsolationDepth((d) => d + 1);
+  }, []);
+
   const enterVectorGroupIsolation = useCallback((groupId: string) => {
     const objs = objectsRef.current;
     const members = objs.filter((o) => o.groupId === groupId);
@@ -16604,6 +17290,33 @@ export function FreehandStudioCanvas({
       objectsRef.current = restoredObjects;
       setObjects(restoredObjects);
       setSelectedIds(new Set([...frame.parentSelectedIds].filter((id) => restoredObjects.some((o) => o.id === id))));
+      historyRef.current = frame.parentHistory;
+      historyIdxRef.current = frame.parentHistoryIdx;
+      setIsolationDepth((d) => d - 1);
+      setLivePreview(null);
+      return;
+    }
+    if (frame.kind === "group") {
+      const currentChildren = objectsRef.current.map((c) => ({ ...c }));
+      const parentGroup = frame.parentObjects.find((o) => o.id === frame.groupId) as
+        | GroupContainerObject
+        | undefined;
+      if (!parentGroup) return;
+      const b = currentChildren.length
+        ? getGroupBounds(currentChildren)
+        : { x: parentGroup.x, y: parentGroup.y, w: parentGroup.width, h: parentGroup.height };
+      const updated: GroupContainerObject = {
+        ...parentGroup,
+        children: currentChildren,
+        x: b.x,
+        y: b.y,
+        width: b.w,
+        height: b.h,
+      };
+      const restoredObjects = frame.parentObjects.map((o) => (o.id === frame.groupId ? updated : o));
+      objectsRef.current = restoredObjects;
+      setObjects(restoredObjects);
+      setSelectedIds(new Set([frame.groupId]));
       historyRef.current = frame.parentHistory;
       historyIdxRef.current = frame.parentHistoryIdx;
       setIsolationDepth((d) => d - 1);
@@ -18251,7 +18964,7 @@ export function FreehandStudioCanvas({
       // If right-clicking an object, select it first
       for (let i = objects.length - 1; i >= 0; i--) {
         const obj = objects[i];
-        if (hitTestObject(pos, obj, 8 / viewport.zoom, objects)) {
+        if (hitTestObject(pos, obj, 8 / viewport.zoom, objects, { imageAlpha: true })) {
           if (!selectedIds.has(obj.id)) setSelectedIds(resolveSelection(obj.id, false));
           break;
         }
@@ -18728,7 +19441,7 @@ export function FreehandStudioCanvas({
           mo &&
           mo.visible &&
           !mo.locked &&
-          isLayerMaskRasterEligible(mo) &&
+          isLayerMaskEligible(mo) &&
           hasLayerMaskBlock(mo) &&
           hitTestObject(pos, mo, 0, objects)
         ) {
@@ -19953,10 +20666,13 @@ export function FreehandStudioCanvas({
     }
 
     // Todos los objetos bajo el cursor (frente → fondo). Con solape + Mayús, elegir uno que aún no esté entero en la selección.
+    // Imágenes: solo se seleccionan clicando píxel opaco (alfa). Pero una imagen YA seleccionada se
+    // agarra por su rectángulo para poder moverla aunque pinches sobre su zona transparente.
     const hits: FreehandObject[] = [];
     for (let i = objects.length - 1; i >= 0; i--) {
       const o = objects[i];
-      if (hitTestObject(pos, o, threshold, objects)) hits.push(o);
+      const alphaAware = !(o.type === "image" && selectedIdsRef.current.has(o.id));
+      if (hitTestObject(pos, o, threshold, objects, { imageAlpha: alphaAware })) hits.push(o);
     }
 
     if (hits.length > 0) {
@@ -20131,6 +20847,9 @@ export function FreehandStudioCanvas({
         if (moveSrc?.type === "textOnPath") {
           return translateFreehandObject(moveSrc, mdx, mdy);
         }
+        if (moveSrc?.type === "groupContainer" || o.type === "groupContainer") {
+          return translateFreehandObject(moveSrc ?? o, mdx, mdy);
+        }
         if (
           o.type === "path" &&
           dragState.pathPointsMap?.has(o.id) &&
@@ -20270,6 +20989,9 @@ export function FreehandStudioCanvas({
         }
         if (src.type === "clippingContainer") {
           return mapObjectPointsWithWorld(src, mapWorld) as ClippingContainerObject;
+        }
+        if (src.type === "groupContainer") {
+          return mapObjectPointsWithWorld(src, mapWorld) as GroupContainerObject;
         }
         if (src.type === "textOnPath") {
           const fontScale = (Math.abs(sx) + Math.abs(sy)) / 2;
@@ -20470,6 +21192,9 @@ export function FreehandStudioCanvas({
         }
         if (src.type === "clippingContainer") {
           return mapObjectPointsWithWorld(src, mapWorld) as ClippingContainerObject;
+        }
+        if (src.type === "groupContainer") {
+          return mapObjectPointsWithWorld(src, mapWorld) as GroupContainerObject;
         }
         if (src.type === "textOnPath") {
           const fontScale = (Math.abs(sx) + Math.abs(sy)) / 2;
@@ -20848,7 +21573,7 @@ export function FreehandStudioCanvas({
           const obj = objects[i];
           if (!obj.visible || obj.locked) continue;
           if (obj.isClipMask || obj.clipMaskId) continue;
-          if (hitTestObject(pos, obj, threshold, objects)) {
+          if (hitTestObject(pos, obj, threshold, objects, { imageAlpha: true })) {
             found = obj.id;
             break;
           }
@@ -21847,9 +22572,9 @@ export function FreehandStudioCanvas({
       const o = objectsRef.current.find((x) => x.id === oid);
       if (
         !o ||
-        !isLayerMaskRasterEligible(o) ||
-        (tgt === "mask" && !hasLayerMaskBlock(o)) ||
-        (tgt === "layer" && (o.type !== "image" || (o as ImageObject).photoRoomInputSlot))
+        (tgt === "mask" && (!isLayerMaskEligible(o) || !hasLayerMaskBlock(o))) ||
+        (tgt === "layer" &&
+          (!isLayerMaskRasterEligible(o) || o.type !== "image" || (o as ImageObject).photoRoomInputSlot))
       ) {
         dragStateRef.current = null;
         setDragState(null);
@@ -22627,7 +23352,7 @@ export function FreehandStudioCanvas({
     const pos = screenToCanvas(e.clientX, e.clientY);
     for (let i = objects.length - 1; i >= 0; i--) {
       const obj = objects[i];
-      if (hitTestObject(pos, obj, 8 / viewport.zoom, objects)) {
+      if (hitTestObject(pos, obj, 8 / viewport.zoom, objects, { imageAlpha: true })) {
         if (!selectedIds.has(obj.id)) setSelectedIds(resolveSelection(obj.id, false));
         break;
       }
@@ -24084,10 +24809,10 @@ export function FreehandStudioCanvas({
 
               <div className="my-2.5 h-px bg-white/[0.08]" />
 
-              <div className="mb-1 text-[8px] font-bold uppercase tracking-wider text-zinc-600">Brain</div>
+              <div className="mb-1 text-[8px] font-bold uppercase tracking-wider text-zinc-600">BrandKit</div>
               <div className="flex flex-wrap gap-1">
                 {!brainConnected || brainPaletteColors.length === 0 ? (
-                  <p className="text-[9px] text-zinc-600">Sin colores de Brain conectados.</p>
+                  <p className="text-[9px] text-zinc-600">Sin colores de BrandKit conectados.</p>
                 ) : (
                   brainPaletteColors.map((hex) => (
                     <button
@@ -24216,7 +24941,9 @@ export function FreehandStudioCanvas({
                 ? (frame.parentObjects.find((o) => o.id === frame.containerId)?.name ?? "Clip container")
                 : frame.kind === "vectorGroup"
                   ? "Vector group"
-                  : (frame.parentObjects.find((o) => o.id === frame.groupId)?.name ?? "Boolean Group");
+                  : frame.kind === "group"
+                    ? (frame.parentObjects.find((o) => o.id === frame.groupId)?.name ?? "Carpeta")
+                    : (frame.parentObjects.find((o) => o.id === frame.groupId)?.name ?? "Boolean Group");
               const sub = frame.kind === "clipping" && frame.editMode === "mask" ? " · mask" : "";
               return (
                 <React.Fragment key={id}>
@@ -24287,7 +25014,7 @@ export function FreehandStudioCanvas({
             for (let i = objects.length - 1; i >= 0; i--) {
               const obj = objects[i];
               if (!obj.visible || obj.locked) continue;
-              if (hitTestObject(pos, obj, threshold, objects)) {
+              if (hitTestObject(pos, obj, threshold, objects, { imageAlpha: true })) {
                 setSelectedIds(new Set([obj.id]));
                 setPrimarySelectedId(obj.id);
                 setClipContentEditId(obj.id);
@@ -24349,6 +25076,10 @@ export function FreehandStudioCanvas({
               enterIsolation(obj.id);
               return;
             }
+            if (obj.type === "groupContainer" && hitTestObject(pos, obj, threshold, objects)) {
+              enterGroupIsolation(obj.id);
+              return;
+            }
             if (obj.type === "clippingContainer" && hitTestObject(pos, obj, threshold, objects)) {
               enterClippingIsolation(obj.id, "content");
               return;
@@ -24365,7 +25096,7 @@ export function FreehandStudioCanvas({
             const obj = objects[i];
             if (!obj.visible || obj.locked) continue;
             if (obj.isClipMask || obj.clipMaskId) continue;
-            if (hitTestObject(pos, obj, threshold, objects)) {
+            if (hitTestObject(pos, obj, threshold, objects, { imageAlpha: true })) {
               setSelectedIds(new Set([obj.id]));
               setPrimarySelectedId(obj.id);
               setQuickEditMode(e.altKey ? "stroke" : "fill");
@@ -26779,6 +27510,50 @@ export function FreehandStudioCanvas({
                 </div>
               </div>
             )}
+            {designerMode && designerDatasetFieldKind !== null && (() => {
+              const brandKitContentFields = (designerConnectedDataset?.constants.fields ?? []).filter(
+                (f) =>
+                  isBrandKitConstantId(f.id) &&
+                  (designerDatasetFieldKind === "image" ? f.type === "image" : f.type === "text"),
+              );
+              if (brandKitContentFields.length === 0) return null;
+              const activeNodeBinding =
+                designerDatasetBinding?.source === "node" ? designerDatasetBinding : null;
+              const activeConstantId = activeNodeBinding
+                ? `bk:${activeNodeBinding.nodeId ?? ""}:${activeNodeBinding.fieldId}`
+                : "";
+              return (
+                <div className="border-b border-white/[0.08] px-[14px] py-3">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">BrandKit</div>
+                    <Link2 size={12} className="text-teal-300/80" />
+                  </div>
+                  <select
+                    value={activeConstantId}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onChange={(e) => {
+                      const id = e.target.value;
+                      if (!id) {
+                        removeDesignerDatasetBinding();
+                        return;
+                      }
+                      void applyDesignerBrandKitContentBinding(id);
+                    }}
+                    className="nodrag w-full rounded-[5px] border border-white/[0.1] bg-[#1a1e26] px-2 py-1.5 text-[11px] text-zinc-100 outline-none focus:border-teal-400/45"
+                  >
+                    <option value="">Sin vincular…</option>
+                    {brandKitContentFields.map((f) => (
+                      <option key={f.id} value={f.id}>
+                        {f.label}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1.5 text-[10px] leading-snug text-zinc-500">
+                    Vincula {designerDatasetFieldKind === "image" ? "esta imagen" : "este texto"} a un campo del BrandKit. Al editar el BrandKit, cambia en todos los Designers.
+                  </p>
+                </div>
+              );
+            })()}
             {designerMode && (
               <div className="border-b border-white/[0.08] px-[14px] py-3">
                 <div className="mb-2 flex items-center justify-between gap-2">
@@ -27368,7 +28143,7 @@ export function FreehandStudioCanvas({
                               >
                                 <img
                                   src={it.src}
-                                  alt={it.label || "Sugerencia Brain"}
+                                  alt={it.label || "Sugerencia BrandKit"}
                                   className="h-[104px] w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
                                 />
                                 <span className="pointer-events-none absolute bottom-1.5 right-1.5 rounded-full border border-black/20 bg-black/55 px-2 py-0.5 text-[8px] font-semibold uppercase tracking-wide text-white opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100">
@@ -28798,16 +29573,21 @@ export function FreehandStudioCanvas({
                 <div className="flex min-h-0 flex-1 flex-col">
                   <div ref={layersPanelScrollRef} className="min-h-0 flex-1 overflow-y-auto p-3">
                     <div className="space-y-0.5">
-                    {[...objects].reverse().map((obj) => {
+                    {flattenTreeForPanel(objects).map((row: PanelRow) => {
+                      const obj = row.obj;
+                      const isContainer = row.isContainer;
                       const isSel = selectedIds.has(obj.id);
-                      const isDropTarget = layerDropTarget === obj.id;
                       const isPrInput = !!obj.photoRoomInputSlot;
                       const layerRowDraggable = !isPrInput || isPhotoRoomStudioEmbed;
+                      const dropAbove = layerDrop?.id === obj.id && layerDrop.mode === "above";
+                      const dropBelow = layerDrop?.id === obj.id && layerDrop.mode === "below";
+                      const dropInto = layerDrop?.id === obj.id && layerDrop.mode === "into";
                       return (
                         <div
                           key={obj.id}
                           data-fh-layer-row={obj.id}
                           draggable={layerRowDraggable}
+                          style={{ paddingLeft: 8 + row.depth * 14 }}
                           onDragStart={(e) => {
                             if (!layerRowDraggable) return;
                             e.dataTransfer.effectAllowed = "copyMove";
@@ -28815,46 +29595,47 @@ export function FreehandStudioCanvas({
                           }}
                           onDragOver={(e) => {
                             e.preventDefault();
+                            if (!layerDragId || layerDragId === obj.id) return;
                             e.dataTransfer.dropEffect = "move";
-                            if (layerDragId && layerDragId !== obj.id) setLayerDropTarget(obj.id);
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            const rel = (e.clientY - rect.top) / Math.max(1, rect.height);
+                            const mode: "above" | "below" | "into" =
+                              isContainer && rel > 0.28 && rel < 0.72
+                                ? "into"
+                                : rel < 0.5
+                                  ? "above"
+                                  : "below";
+                            setLayerDrop((d) =>
+                              d && d.id === obj.id && d.mode === mode ? d : { id: obj.id, mode },
+                            );
                           }}
                           onDragLeave={() => {
-                            if (layerDropTarget === obj.id) setLayerDropTarget(null);
+                            setLayerDrop((d) => (d && d.id === obj.id ? null : d));
                           }}
                           onDrop={(e) => {
                             e.preventDefault();
-                            if (layerDragId && layerDragId !== obj.id) {
-                              setObjects((prev) => {
-                                const fromObj = prev.find((o) => o.id === layerDragId);
-                                const toObj = prev.find((o) => o.id === obj.id);
-                                if (
-                                  (fromObj?.photoRoomInputSlot || toObj?.photoRoomInputSlot) &&
-                                  !isPhotoRoomStudioEmbed
-                                ) {
-                                  return prev;
-                                }
-                                const fromIdx = prev.findIndex((o) => o.id === layerDragId);
-                                const toIdx = prev.findIndex((o) => o.id === obj.id);
-                                if (fromIdx < 0 || toIdx < 0) return prev;
-                                const n = [...prev];
-                                const [moved] = n.splice(fromIdx, 1);
-                                n.splice(toIdx, 0, moved);
-                                pushHistory(n, selectedIds);
-                                return n;
-                              });
-                            }
+                            const dragId = layerDragId;
+                            const drop = layerDrop;
                             setLayerDragId(null);
-                            setLayerDropTarget(null);
+                            setLayerDrop(null);
+                            if (!dragId || dragId === obj.id || !drop || drop.id !== obj.id) return;
+                            const target: InsertTarget =
+                              drop.mode === "into"
+                                ? { mode: "into", containerId: obj.id }
+                                : drop.mode === "above"
+                                  ? { mode: "after", refId: obj.id }
+                                  : { mode: "before", refId: obj.id };
+                            moveLayerInTree(dragId, target);
                           }}
                           onDragEnd={() => {
                             setLayerDragId(null);
-                            setLayerDropTarget(null);
+                            setLayerDrop(null);
                           }}
                           onMouseEnter={() => setLayerHoverId(obj.id)}
                           onMouseLeave={() => setLayerHoverId((h) => (h === obj.id ? null : h))}
                           className={`flex ${layerRowDraggable ? "cursor-grab" : "cursor-default"} items-center gap-1.5 rounded-md border border-transparent px-2 py-1.5 text-[10px] transition-colors ${
                             isSel ? "border-violet-500/25 bg-violet-600/30 text-white" : "text-zinc-400 hover:bg-white/5"
-                          } ${obj.isClipMask ? "italic opacity-50" : ""} ${isDropTarget ? "ring-1 ring-violet-400" : ""} ${layerDragId === obj.id ? "opacity-40" : ""} ${
+                          } ${obj.isClipMask ? "italic opacity-50" : ""} ${dropInto ? "ring-1 ring-violet-400 bg-violet-500/10" : ""} ${dropAbove ? "shadow-[inset_0_2px_0_0_#a78bfa]" : ""} ${dropBelow ? "shadow-[inset_0_-2px_0_0_#a78bfa]" : ""} ${layerDragId === obj.id ? "opacity-40" : ""} ${
                             (hoverCanvasId === obj.id || layerHoverId === obj.id) && !isSel ? "bg-sky-500/10 ring-1 ring-sky-500/50" : ""
                           }`}
                           onClick={(e) => {
@@ -28872,13 +29653,28 @@ export function FreehandStudioCanvas({
                             }
                           }}
                         >
+                          {isContainer ? (
+                            <button
+                              type="button"
+                              title={row.collapsed ? "Desplegar carpeta" : "Plegar carpeta"}
+                              className="shrink-0 text-zinc-500 hover:text-white"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleFolderCollapsed(obj.id);
+                              }}
+                            >
+                              {row.collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+                            </button>
+                          ) : (
+                            <span className="inline-flex w-3 shrink-0" aria-hidden />
+                          )}
                           <button
                             type="button"
                             title="Toggle visibility"
                             className="shrink-0 hover:text-white"
                             onClick={(e) => {
                               e.stopPropagation();
-                              setObjects((p) => p.map((o) => (o.id === obj.id ? { ...o, visible: !o.visible } : o)));
+                              patchObjectInTree(obj.id, (o) => ({ ...o, visible: !o.visible }));
                             }}
                           >
                             {obj.visible ? <Eye size={12} /> : <EyeOff size={12} className="opacity-40" />}
@@ -28889,7 +29685,7 @@ export function FreehandStudioCanvas({
                             className="shrink-0 hover:text-white"
                             onClick={(e) => {
                               e.stopPropagation();
-                              setObjects((p) => p.map((o) => (o.id === obj.id ? { ...o, locked: !o.locked } : o)));
+                              patchObjectInTree(obj.id, (o) => ({ ...o, locked: !o.locked }));
                             }}
                           >
                             {obj.locked ? <Lock size={12} className="text-amber-400" /> : <Unlock size={12} className="opacity-40" />}
@@ -28899,8 +29695,7 @@ export function FreehandStudioCanvas({
                             const showMaskThumbs =
                               studioCaps.layerMask &&
                               hasLayerMaskBlock(obj) &&
-                              isLayerMaskRasterEligible(obj) &&
-                              layerThumbSrc;
+                              isLayerMaskEligible(obj);
                             if (!showMaskThumbs) return layerRowIcon(obj);
                             const maskSrc = (obj as FreehandObjectBase).layerMask!.src;
                             const maskSelected = maskEditObjectId === obj.id;
@@ -28921,16 +29716,22 @@ export function FreehandStudioCanvas({
                                   type="button"
                                   title="Contenido de capa"
                                   className={layerPanelThumbFrameClass(layerThumbSelected)}
-                                  style={{ background: LAYER_PANEL_THUMB_CHECKER }}
+                                  style={{ background: layerThumbSrc ? LAYER_PANEL_THUMB_CHECKER : "#18181b" }}
                                   onClick={selectLayerContent}
                                 >
-                                  {/** eslint-disable-next-line @next/next/no-img-element */}
-                                  <img
-                                    src={layerThumbSrc}
-                                    alt=""
-                                    className="block h-full w-full object-cover"
-                                    draggable={false}
-                                  />
+                                  {layerThumbSrc ? (
+                                    /** eslint-disable-next-line @next/next/no-img-element */
+                                    <img
+                                      src={layerThumbSrc}
+                                      alt=""
+                                      className="block h-full w-full object-cover"
+                                      draggable={false}
+                                    />
+                                  ) : (
+                                    <span className="flex h-full w-full items-center justify-center">
+                                      {layerRowIcon(obj)}
+                                    </span>
+                                  )}
                                 </button>
                                 <Link2
                                   size={9}
@@ -28983,6 +29784,10 @@ export function FreehandStudioCanvas({
                                 e.stopPropagation();
                                 enterIsolation(obj.id);
                               }
+                              if (obj.type === "groupContainer") {
+                                e.stopPropagation();
+                                enterGroupIsolation(obj.id);
+                              }
                               if (obj.type === "clippingContainer") {
                                 e.stopPropagation();
                                 enterClippingIsolation(obj.id, "content");
@@ -29002,6 +29807,11 @@ export function FreehandStudioCanvas({
                             {obj.type === "booleanGroup" && (
                               <span className="ml-1 text-[8px] text-violet-400">
                                 ◇{(obj as BooleanGroupObject).operation} ({(obj as BooleanGroupObject).children.length})
+                              </span>
+                            )}
+                            {obj.type === "groupContainer" && (
+                              <span className="ml-1 text-[8px] text-amber-400/80">
+                                ▤ ({(obj as GroupContainerObject).children.length})
                               </span>
                             )}
                             {obj.type === "clippingContainer" && (
@@ -29048,7 +29858,7 @@ export function FreehandStudioCanvas({
                     {(() => {
                       const tgt = layerPanelTarget;
                       const canFx = !!(tgt && studioCaps.layerStyles && isLayerStylesEligible(tgt));
-                      const canMask = !!(tgt && studioCaps.layerMask && isLayerMaskRasterEligible(tgt));
+                      const canMask = !!(tgt && studioCaps.layerMask && isLayerMaskEligible(tgt));
                       const maskActive = !!(tgt && maskEditObjectId === tgt.id);
                       const adjSelected = tgt?.type === "adjustmentLayer";
                       const btnClass = (on: boolean, disabled?: boolean) =>
@@ -29123,6 +29933,18 @@ export function FreehandStudioCanvas({
                             <button
                               type="button"
                               className={btnClass(false)}
+                              title={
+                                selectedIds.size > 0
+                                  ? "Nueva carpeta con la selección dentro (Cmd/Ctrl+G)"
+                                  : "Nueva carpeta vacía (Cmd/Ctrl+G)"
+                              }
+                              onClick={() => createFolder()}
+                            >
+                              <FolderPlus size={16} strokeWidth={2} />
+                            </button>
+                            <button
+                              type="button"
+                              className={btnClass(false)}
                               title="Nueva capa vacía (arriba). Arrastra una capa aquí para duplicarla."
                               onClick={() => createEmptyLayerOnTop()}
                             >
@@ -29194,14 +30016,42 @@ export function FreehandStudioCanvas({
           y={layerMaskCtxMenu.y}
           items={[
             {
-              label: "Eliminar máscara de capa",
-              action: () => deleteLayerMaskForObject(layerMaskCtxMenu.layerId),
+              label: "Invertir máscara",
+              action: () => {
+                const id = layerMaskCtxMenu.layerId;
+                setObjects((prev) => {
+                  const next = prev.map((o) =>
+                    o.id === id && (o as FreehandObjectBase).layerMask
+                      ? ({
+                          ...o,
+                          layerMask: {
+                            ...(o as FreehandObjectBase).layerMask!,
+                            inverted: !(o as FreehandObjectBase).layerMask!.inverted,
+                          },
+                        } as FreehandObject)
+                      : o,
+                  );
+                  pushHistory(next, new Set([id]));
+                  return next;
+                });
+              },
             },
             {
-              label: "Aplicar máscara de capa",
-              action: () => applyLayerMaskForObject(layerMaskCtxMenu.layerId),
+              label: "Eliminar máscara de capa",
+              action: () => deleteLayerMaskForObject(layerMaskCtxMenu.layerId),
               separator: true,
             },
+            ...(isLayerMaskRasterEligible(
+              objects.find((o) => o.id === layerMaskCtxMenu.layerId) ?? { type: "" },
+            )
+              ? [
+                  {
+                    label: "Aplicar máscara de capa",
+                    action: () => applyLayerMaskForObject(layerMaskCtxMenu.layerId),
+                    separator: true,
+                  },
+                ]
+              : []),
           ]}
           onClose={() => setLayerMaskCtxMenu(null)}
         />
@@ -29437,6 +30287,7 @@ export function FreehandStudioCanvas({
       {layerStylesUi.open && layerStylesUi.draft ? (
         <LayerStylesModal
           open
+          targetType={objects.find((o) => o.id === layerStylesUi.targetId)?.type}
           draft={layerStylesUi.draft}
           onDraftChange={(next) =>
             setLayerStylesUi((s) => (s.draft != null ? { ...s, draft: next } : s))

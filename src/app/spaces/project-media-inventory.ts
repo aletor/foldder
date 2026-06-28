@@ -40,6 +40,7 @@ const GENERATOR_NODE_TYPES = new Set([
   "imageCreationAdvanced",
   "painter",
   "cine",
+  "populate",
 ]);
 
 const IMPORT_NODE_TYPES = new Set(["mediaInput", "urlImage", "spaceInput", "inspiration"]);
@@ -107,6 +108,28 @@ function nodeLooksGenerated(nodeType: string, data: Record<string, unknown>): bo
   return false;
 }
 
+function extractMediaListOutputUrls(data: Record<string, unknown>, into: string[]) {
+  const raw = data.mediaListOutput ?? data.media_list;
+  if (!raw || typeof raw !== "object") return;
+  const items = (raw as { items?: unknown }).items;
+  if (!Array.isArray(items)) return;
+  for (const item of items) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as {
+      url?: string;
+      s3Key?: string;
+      mediaType?: string;
+      status?: string;
+    };
+    if (row.mediaType && row.mediaType !== "image") continue;
+    if (row.status === "pending" || row.status === "missing" || row.status === "error") continue;
+    const fromUrl = typeof row.url === "string" ? normalizeMediaRef(row.url) : null;
+    const fromKey = typeof row.s3Key === "string" ? normalizeMediaRef(row.s3Key) : null;
+    const resolved = fromUrl ?? fromKey;
+    if (resolved) into.push(resolved);
+  }
+}
+
 function extractFromNodeData(data: Record<string, unknown>, into: string[]) {
   const fields = [data.value, data.lastGenerated, data.s3Key, data.previewUrl, data.outputUrl];
   for (const raw of fields) {
@@ -125,6 +148,18 @@ function extractFromNodeData(data: Record<string, unknown>, into: string[]) {
       }
     }
   }
+
+  const lastRunOutputs = data.lastRunOutputs;
+  if (Array.isArray(lastRunOutputs)) {
+    for (const u of lastRunOutputs) {
+      if (typeof u === "string") {
+        const normalized = normalizeMediaRef(u);
+        if (normalized) into.push(normalized);
+      }
+    }
+  }
+
+  extractMediaListOutputUrls(data, into);
 
   const gh = data.generationHistory;
   if (Array.isArray(gh)) {
@@ -279,6 +314,8 @@ function labelForNodeType(nodeType: string): string {
       return "Nano Banana";
     case "cine":
       return "Cine";
+    case "populate":
+      return "Populate";
     case "inspiration":
       return "Inspiration";
     case "imageExport":

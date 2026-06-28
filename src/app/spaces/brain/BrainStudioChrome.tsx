@@ -44,7 +44,7 @@ export function BrainStudioTabBar({
   return (
     <nav
       className="flex h-10 shrink-0 divide-x divide-white/10 border-b border-white/10 bg-white/[0.06]"
-      aria-label="Secciones de Brain"
+      aria-label="Secciones de BrandKit"
     >
       {tabs.map((tab) => {
         const active = activeTab === tab.id;

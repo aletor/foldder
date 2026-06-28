@@ -7,6 +7,7 @@ export const POPULATE_PIPELINE_EXECUTABLE_TYPES = new Set<string>([
   "nanoBanana",
   "mediaDescriber",
   "enhancer",
+  "concatenator",
   "designer",
   "backgroundRemover",
 ]);

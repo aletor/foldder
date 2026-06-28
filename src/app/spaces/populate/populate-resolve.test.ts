@@ -95,6 +95,36 @@ describe("populate-resolve", () => {
     );
   });
 
+  it("manual token values override list/constant and are constant per row", () => {
+    const ds = makeDataset();
+    const manual = { descripcion: "un robot dorado" };
+    // El token manual gana sobre la columna, en cualquier fila.
+    expect(
+      resolvePromptForRow("{marca}: el protagonista es {descripcion}", ds, "l1", 0, manual),
+    ).toBe("ACME: el protagonista es un robot dorado");
+    expect(
+      resolvePromptForRow("{marca}: el protagonista es {descripcion}", ds, "l1", 1, manual),
+    ).toBe("ACME: el protagonista es un robot dorado");
+  });
+
+  it("empty manual token falls back to the dataset column", () => {
+    const ds = makeDataset();
+    expect(
+      resolvePromptForRow("el protagonista es {descripcion}", ds, "l1", 1, { descripcion: "   " }),
+    ).toBe("el protagonista es un pirata");
+    // Token manual no presente ⇒ comportamiento normal (columna).
+    expect(
+      resolvePromptForRow("el protagonista es {descripcion}", ds, "l1", 0, { otro: "x" }),
+    ).toBe("el protagonista es una astronauta");
+  });
+
+  it("manual token can fill a key that is not a dataset column", () => {
+    const ds = makeDataset();
+    expect(resolvePromptForRow("estilo {estilo}", ds, "l1", 0, { estilo: "acuarela" })).toBe(
+      "estilo acuarela",
+    );
+  });
+
   it("resolves a column image binding per row", () => {
     const ds = makeDataset();
     const binding = {

@@ -1,13 +1,122 @@
 "use client";
 
-import React, { useCallback, useContext, useMemo, useRef, useState } from "react";
-import { History, ImageIcon, X } from "lucide-react";
+import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { History, ImageIcon, Pencil, X } from "lucide-react";
 import { restoreImageCellFromHistory } from "./dataset-image-history";
 import { uploadProjectMediaFile } from "../project-media-s3-save";
 import type { FieldValue } from "./dataset-types";
 
 /** Tamaño fijo de miniatura en todas las celdas imagen del Dataset. */
 export const DATASET_IMAGE_THUMB_PX = 48;
+
+const DATASET_MEDIA_PREVIEW_MAX_PX = 360;
+
+function DatasetMediaHoverPreview({
+  url,
+  mediaType,
+  children,
+}: {
+  url: string;
+  mediaType: "image" | "video";
+  children: React.ReactNode;
+}) {
+  const anchorRef = useRef<HTMLDivElement>(null);
+  const hideTimerRef = useRef<number | null>(null);
+  const [visible, setVisible] = useState(false);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+
+  const clearHideTimer = useCallback(() => {
+    if (hideTimerRef.current != null) {
+      window.clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
+    }
+  }, []);
+
+  const updatePos = useCallback(() => {
+    const el = anchorRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const max = DATASET_MEDIA_PREVIEW_MAX_PX;
+    let left = rect.right + 10;
+    let top = rect.top + rect.height / 2 - max / 2;
+    if (left + max > window.innerWidth - 12) {
+      left = rect.left - max - 10;
+    }
+    top = Math.max(12, Math.min(top, window.innerHeight - max - 12));
+    setPos({ left, top });
+  }, []);
+
+  const show = useCallback(() => {
+    clearHideTimer();
+    updatePos();
+    setVisible(true);
+  }, [clearHideTimer, updatePos]);
+
+  const scheduleHide = useCallback(() => {
+    clearHideTimer();
+    hideTimerRef.current = window.setTimeout(() => setVisible(false), 120);
+  }, [clearHideTimer]);
+
+  useEffect(() => {
+    if (!visible) return undefined;
+    const onReflow = () => updatePos();
+    window.addEventListener("scroll", onReflow, true);
+    window.addEventListener("resize", onReflow);
+    return () => {
+      window.removeEventListener("scroll", onReflow, true);
+      window.removeEventListener("resize", onReflow);
+    };
+  }, [updatePos, visible]);
+
+  useEffect(() => () => clearHideTimer(), [clearHideTimer]);
+
+  return (
+    <>
+      <div
+        ref={anchorRef}
+        className="relative"
+        onMouseEnter={show}
+        onMouseLeave={scheduleHide}
+        onFocus={show}
+        onBlur={scheduleHide}
+      >
+        {children}
+      </div>
+      {visible && pos && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              className="pointer-events-auto fixed z-[100100] overflow-hidden border border-white/15 bg-[#0b0f14] shadow-2xl shadow-black/60"
+              style={{ left: pos.left, top: pos.top, width: DATASET_MEDIA_PREVIEW_MAX_PX, maxHeight: DATASET_MEDIA_PREVIEW_MAX_PX }}
+              onMouseEnter={show}
+              onMouseLeave={scheduleHide}
+            >
+              {mediaType === "image" ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={url}
+                  alt=""
+                  className="block h-auto max-h-[360px] w-full object-contain"
+                  draggable={false}
+                />
+              ) : (
+                <video
+                  src={url}
+                  className="block h-auto max-h-[360px] w-full object-contain"
+                  controls
+                  autoPlay
+                  muted
+                  playsInline
+                  preload="metadata"
+                />
+              )}
+            </div>,
+            document.body,
+          )
+        : null}
+    </>
+  );
+}
 
 /**
  * Contexto con el `projectId` del Studio para subir las imágenes del Dataset a S3 al añadirlas.
@@ -196,75 +305,77 @@ export function DatasetImageCell({ value, onChange, compact }: DatasetImageCellP
       />
 
       {hasImage ? (
-        <div className="relative" style={{ width: thumbSize, height: thumbSize }}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={url}
-            alt=""
-            className={`h-full w-full border border-white/10 object-cover transition-opacity ${uploading ? "opacity-50" : ""}`}
-            style={{ width: thumbSize, height: thumbSize }}
-            draggable={false}
-          />
-          {uploading ? (
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/35">
-              <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white/90" />
-            </div>
-          ) : null}
-          {history.length > 0 ? (
-            <div className="absolute -left-1.5 -top-1.5">
-              <button
-                type="button"
-                title={`${history.length} versión${history.length === 1 ? "" : "es"} anterior${history.length === 1 ? "" : "es"}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setHistoryOpen((open) => !open);
-                }}
-                className="flex h-5 w-5 items-center justify-center border border-white/20 bg-[#0b0f14] text-white/75 transition hover:border-[var(--foldder-studio-accent,#14b8a6)]/50 hover:text-[var(--foldder-studio-accent,#14b8a6)]"
-              >
-                <History size={10} strokeWidth={2.2} />
-              </button>
-              {historyOpen ? (
-                <div
-                  className="absolute left-0 top-6 z-30 min-w-[140px] border border-white/15 bg-[#0b0f14] p-1 shadow-lg"
-                  onClick={(e) => e.stopPropagation()}
+        <DatasetMediaHoverPreview url={url} mediaType="image">
+          <div className="relative" style={{ width: thumbSize, height: thumbSize }}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={url}
+              alt=""
+              className={`h-full w-full cursor-zoom-in border border-white/10 object-cover transition-opacity ${uploading ? "opacity-50" : ""}`}
+              style={{ width: thumbSize, height: thumbSize }}
+              draggable={false}
+            />
+            {uploading ? (
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/35">
+                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white/90" />
+              </div>
+            ) : null}
+            {history.length > 0 ? (
+              <div className="absolute -left-1.5 -top-1.5">
+                <button
+                  type="button"
+                  title={`${history.length} versión${history.length === 1 ? "" : "es"} anterior${history.length === 1 ? "" : "es"}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setHistoryOpen((open) => !open);
+                  }}
+                  className="flex h-5 w-5 items-center justify-center border border-white/20 bg-[#0b0f14] text-white/75 transition hover:border-[var(--foldder-studio-accent,#14b8a6)]/50 hover:text-[var(--foldder-studio-accent,#14b8a6)]"
                 >
-                  {history.map((entry, index) => (
-                    <button
-                      key={`${entry.assetId}-${entry.savedAt}`}
-                      type="button"
-                      className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-[11px] text-white/75 transition hover:bg-white/5 hover:text-white"
-                      onClick={() => {
-                        if (value.type !== "image") return;
-                        onChange(restoreImageCellFromHistory(value, index));
-                        setHistoryOpen(false);
-                      }}
-                    >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={entry.url}
-                        alt=""
-                        className="h-8 w-8 shrink-0 border border-white/10 object-cover"
-                        draggable={false}
-                      />
-                      <span>Restaurar v{history.length - index}</span>
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-          <button
-            type="button"
-            title="Quitar imagen"
-            onClick={(e) => {
-              e.stopPropagation();
-              onChange({ type: "image", assetId: "", url: "" });
-            }}
-            className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center border border-white/20 bg-[#0b0f14] text-white/65 opacity-0 transition hover:bg-rose-500/90 hover:text-white group-hover/cell:opacity-100"
-          >
-            <X size={11} strokeWidth={2.5} />
-          </button>
-        </div>
+                  <History size={10} strokeWidth={2.2} />
+                </button>
+                {historyOpen ? (
+                  <div
+                    className="absolute left-0 top-6 z-30 min-w-[140px] border border-white/15 bg-[#0b0f14] p-1 shadow-lg"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {history.map((entry, index) => (
+                      <button
+                        key={`${entry.assetId}-${entry.savedAt}`}
+                        type="button"
+                        className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-[11px] text-white/75 transition hover:bg-white/5 hover:text-white"
+                        onClick={() => {
+                          if (value.type !== "image") return;
+                          onChange(restoreImageCellFromHistory(value, index));
+                          setHistoryOpen(false);
+                        }}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={entry.url}
+                          alt=""
+                          className="h-8 w-8 shrink-0 border border-white/10 object-cover"
+                          draggable={false}
+                        />
+                        <span>Restaurar v{history.length - index}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            <button
+              type="button"
+              title="Quitar imagen"
+              onClick={(e) => {
+                e.stopPropagation();
+                onChange({ type: "image", assetId: "", url: "" });
+              }}
+              className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center border border-white/20 bg-[#0b0f14] text-white/65 opacity-0 transition hover:bg-rose-500/90 hover:text-white group-hover/cell:opacity-100"
+            >
+              <X size={11} strokeWidth={2.5} />
+            </button>
+          </div>
+        </DatasetMediaHoverPreview>
       ) : (
         <button
           type="button"
@@ -284,22 +395,89 @@ export function DatasetImageCell({ value, onChange, compact }: DatasetImageCellP
 export function DatasetVideoCell({
   value,
   onChange,
+  compact,
 }: {
   value: FieldValue;
   onChange: (value: FieldValue) => void;
+  compact?: boolean;
 }) {
   const url = value.type === "video" ? value.url : "";
   const assetId = value.type === "video" ? value.assetId : "";
+  const hasVideo = Boolean(url?.trim());
+  const [editOpen, setEditOpen] = useState(false);
+  const thumbSize = compact ? 40 : DATASET_IMAGE_THUMB_PX;
+
+  if (editOpen) {
+    return (
+      <div className="flex min-w-[180px] items-center gap-1 p-1">
+        <input
+          autoFocus
+          value={url}
+          onChange={(e) => {
+            const next = e.target.value;
+            onChange({ type: "video", assetId: assetId || next, url: next });
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === "Escape") setEditOpen(false);
+          }}
+          onBlur={() => setEditOpen(false)}
+          className="min-w-0 flex-1 border border-white/10 bg-black/30 px-2 py-1.5 text-[11px] text-white/85 outline-none focus:border-[var(--foldder-studio-accent,#14b8a6)]/45"
+          placeholder="URL del vídeo"
+        />
+      </div>
+    );
+  }
+
+  if (!hasVideo) {
+    return (
+      <button
+        type="button"
+        onClick={() => setEditOpen(true)}
+        className="flex w-full flex-col items-center justify-center gap-1 border border-dashed border-white/15 p-2 text-white/45 transition hover:border-[var(--foldder-studio-accent,#14b8a6)]/40 hover:text-[var(--foldder-studio-accent,#14b8a6)]"
+        style={{ minHeight: thumbSize }}
+        title="Pegar URL del vídeo"
+      >
+        <span className="text-[9px] leading-none">URL vídeo</span>
+      </button>
+    );
+  }
 
   return (
-    <input
-      value={url}
-      onChange={(e) => {
-        const next = e.target.value;
-        onChange({ type: "video", assetId: assetId || next, url: next });
-      }}
-      className="w-full border border-transparent bg-transparent px-2 py-1.5 text-[12px] text-white/85 outline-none hover:border-white/10 focus:border-[var(--foldder-studio-accent,#14b8a6)]/45"
-      placeholder="URL del vídeo"
-    />
+    <div className="group/cell relative flex items-center justify-center p-1 hover:bg-white/[0.03]">
+      <DatasetMediaHoverPreview url={url} mediaType="video">
+        <div className="relative" style={{ width: thumbSize, height: thumbSize }}>
+          <video
+            src={url}
+            className="h-full w-full cursor-zoom-in border border-white/10 object-cover"
+            style={{ width: thumbSize, height: thumbSize }}
+            muted
+            playsInline
+            preload="metadata"
+          />
+          <button
+            type="button"
+            title="Editar URL"
+            onClick={(e) => {
+              e.stopPropagation();
+              setEditOpen(true);
+            }}
+            className="absolute -left-1.5 -top-1.5 flex h-5 w-5 items-center justify-center border border-white/20 bg-[#0b0f14] text-white/65 opacity-0 transition hover:border-[var(--foldder-studio-accent,#14b8a6)]/50 hover:text-[var(--foldder-studio-accent,#14b8a6)] group-hover/cell:opacity-100"
+          >
+            <Pencil size={10} strokeWidth={2.2} />
+          </button>
+          <button
+            type="button"
+            title="Quitar vídeo"
+            onClick={(e) => {
+              e.stopPropagation();
+              onChange({ type: "video", assetId: "", url: "" });
+            }}
+            className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center border border-white/20 bg-[#0b0f14] text-white/65 opacity-0 transition hover:bg-rose-500/90 hover:text-white group-hover/cell:opacity-100"
+          >
+            <X size={11} strokeWidth={2.5} />
+          </button>
+        </div>
+      </DatasetMediaHoverPreview>
+    </div>
   );
 }

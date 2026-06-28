@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Link2, MoreHorizontal, Plus, X } from "lucide-react";
+import { Link2, MoreHorizontal, Plus, Sparkles, X } from "lucide-react";
 import type { Dataset, DatasetList, FieldDef, FieldValue, Gap } from "./dataset-types";
 import {
   addCard,
@@ -48,6 +48,7 @@ import {
   datasetScopeSuccessNotice,
 } from "./dataset-scope-copy";
 import { exportDatasetFolddataFile, FOLDDER_FOLDDATA_EXTENSION } from "./dataset-folddata";
+import { DatasetAssistantPanel } from "./DatasetAssistantPanel";
 
 export const SHARED_SHEET_ID = "__shared__";
 
@@ -88,6 +89,9 @@ export function DatasetStudio({
   const dataset = useMemo(() => normalizeDataset(rawDataset), [rawDataset]);
   const [activeSheetId, setActiveSheetId] = useState(dataset.lists[0]?.id ?? SHARED_SHEET_ID);
   const [columnsOpen, setColumnsOpen] = useState(false);
+  const [assistantOpen, setAssistantOpen] = useState(true);
+  const [assistantUndo, setAssistantUndo] = useState<Dataset | null>(null);
+  const [assistantNotice, setAssistantNotice] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
   const [addingTab, setAddingTab] = useState(false);
@@ -121,6 +125,28 @@ export function DatasetStudio({
 
   const apply = useCallback((next: Dataset) => onChange(next), [onChange]);
   const versionStale = remoteVersion != null && remoteVersion > dataset.version;
+
+  const handleAssistantApply = useCallback(
+    (next: Dataset, summary: string, snapshot: Dataset, targetListId: string) => {
+      setAssistantUndo(snapshot);
+      setAssistantNotice(summary);
+      apply(next);
+      if (targetListId && next.lists.some((l) => l.id === targetListId)) {
+        setActiveSheetId(targetListId);
+      }
+      window.setTimeout(() => {
+        setAssistantUndo(null);
+        setAssistantNotice(null);
+      }, 12000);
+    },
+    [apply],
+  );
+
+  const undoAssistant = useCallback(() => {
+    if (assistantUndo) apply(assistantUndo);
+    setAssistantUndo(null);
+    setAssistantNotice(null);
+  }, [apply, assistantUndo]);
 
   const showScopeNotice = useCallback((message: string, kind: "success" | "error") => {
     setScopeNoticeKind(kind);
@@ -233,6 +259,26 @@ export function DatasetStudio({
     setActiveSheetId(next.lists[next.lists.length - 1]?.id ?? "");
   }, [apply, dataset, newTabName]);
 
+  const deleteListById = useCallback(
+    (listId: string) => {
+      if (dataset.lists.length <= 1) return;
+      const list = dataset.lists.find((l) => l.id === listId);
+      if (!list) return;
+      const rowCount = list.cards.length;
+      const message =
+        rowCount > 0
+          ? `¿Eliminar la pestaña «${list.name}» y sus ${rowCount} fila${rowCount === 1 ? "" : "s"}?`
+          : `¿Eliminar la pestaña «${list.name}»?`;
+      if (!window.confirm(message)) return;
+      const next = removeList(dataset, listId);
+      apply(next);
+      if (activeSheetId === listId) {
+        setActiveSheetId(next.lists[0]?.id ?? SHARED_SHEET_ID);
+      }
+    },
+    [activeSheetId, apply, dataset],
+  );
+
   const totalRows = dataset.lists.reduce((s, l) => s + l.cards.length, 0);
   const scopeLabel = datasetScopeMetricLabel(dataset.scope);
 
@@ -272,6 +318,17 @@ export function DatasetStudio({
         }
         actions={
           <>
+            <button
+              type="button"
+              onClick={() => setAssistantOpen((v) => !v)}
+              className={foldderStudioHeaderActionClassName(
+                assistantOpen ? "text-[var(--foldder-studio-accent,#14b8a6)]" : "",
+              )}
+              aria-pressed={assistantOpen}
+            >
+              <Sparkles size={14} strokeWidth={2.25} />
+              Copilot
+            </button>
             <DatasetColumnsToggle active={columnsOpen} onClick={() => setColumnsOpen((v) => !v)} />
             <button
               type="button"
@@ -393,6 +450,9 @@ export function DatasetStudio({
           setAddingTab(false);
           setNewTabName("");
         }}
+        canDeleteLists={dataset.lists.length > 1}
+        onDeleteList={deleteListById}
+        onRenameList={(listId, name) => apply(renameList(dataset, listId, name))}
         sharedFieldCount={dataset.constants.fields.length}
       />
 
@@ -411,6 +471,20 @@ export function DatasetStudio({
           {scopeNotice}
         </DatasetStudioNoticeBar>
       ) : null}
+      {assistantUndo && assistantNotice ? (
+        <DatasetStudioNoticeBar tone="accent">
+          <span className="flex items-center justify-between gap-3">
+            <span>{assistantNotice}</span>
+            <button
+              type="button"
+              onClick={undoAssistant}
+              className="shrink-0 underline decoration-white/40 underline-offset-2 hover:text-white"
+            >
+              Deshacer
+            </button>
+          </span>
+        </DatasetStudioNoticeBar>
+      ) : null}
       {saveError ? <DatasetStudioNoticeBar tone="error">{saveError}</DatasetStudioNoticeBar> : null}
       {versionStale ? (
         <DatasetStudioNoticeBar tone="warn">
@@ -419,6 +493,16 @@ export function DatasetStudio({
       ) : null}
 
       <div className="relative flex min-h-0 flex-1">
+        {assistantOpen ? (
+          <DatasetAssistantPanel
+            dataset={dataset}
+            activeListId={isShared ? null : activeList?.id ?? null}
+            projectId={projectScopeId}
+            onApply={handleAssistantApply}
+            onClose={() => setAssistantOpen(false)}
+          />
+        ) : null}
+
         <main className="custom-scrollbar min-w-0 flex-1 overflow-auto px-4 py-4 md:px-6 md:py-5">
           {isShared ? (
             <SharedSheet dataset={dataset} gaps={gaps} apply={apply} />
@@ -448,11 +532,7 @@ export function DatasetStudio({
             onClose={() => setColumnsOpen(false)}
             onRemoveList={
               !isShared && activeList && dataset.lists.length > 1
-                ? () => {
-                    const next = removeList(dataset, activeList.id);
-                    apply(next);
-                    setActiveSheetId(next.lists[0]?.id ?? SHARED_SHEET_ID);
-                  }
+                ? () => deleteListById(activeList.id)
                 : undefined
             }
             onRenameList={
@@ -574,10 +654,11 @@ function DataTable({
                 </td>
                 {list.schema.map((field) => {
                   const gap = cellHasGap(gaps, list.id, card.id, field.id);
+                  const isMediaField = field.type === "image" || field.type === "video";
                   return (
                     <td
                       key={field.id}
-                      className={`px-1 py-1 ${gap ? "bg-amber-400/[0.04] ring-1 ring-inset ring-amber-400/25" : ""}`}
+                      className={`relative px-1 py-1 ${isMediaField ? "overflow-visible" : ""} ${gap ? "bg-amber-400/[0.04] ring-1 ring-inset ring-amber-400/25" : ""}`}
                     >
                       <CellEditor
                         field={field}
@@ -880,7 +961,7 @@ function CellEditor({
     case "image":
       return <DatasetImageCell value={value} onChange={onChange} compact={imageCompact} />;
     case "video":
-      return <DatasetVideoCell value={value} onChange={onChange} />;
+      return <DatasetVideoCell value={value} onChange={onChange} compact={imageCompact} />;
     case "text":
     default:
       return (

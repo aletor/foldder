@@ -7,6 +7,11 @@ import { NODE_REGISTRY, type HandleType } from "./nodeRegistry";
 import { inferMediaListImageMimeType } from "./media-list-download";
 import type { MediaListItem, MediaListOutput } from "./media-list-output";
 import { isMediaListOutput } from "./media-list-output";
+import {
+  resolveSpacePortalInnerTemplate,
+  spacePortalTemplateDataPatch,
+  type SpaceMapEntryLike,
+} from "./space-portal-populate-link";
 
 const PORTAL_NODE_TYPES = new Set(["spaceInput", "spaceOutput"]);
 
@@ -387,6 +392,68 @@ export function analyzeNestedSpaceStructure(
     label: mapped.label,
     value,
   };
+}
+
+/**
+ * Refresca un nodo portal Space en el lienzo padre a partir del subgrafo guardado en spacesMap.
+ * Evita portales obsoletos (p. ej. outputType url cuando dentro hay media_list · 3).
+ */
+export function reconcileSpacePortalNode(
+  portalNode: Node,
+  spacesMap: Record<string, SpaceMapEntryLike | undefined>,
+): Node {
+  if (portalNode.type !== "space") return portalNode;
+  const spaceId = (portalNode.data as { spaceId?: string } | undefined)?.spaceId;
+  if (!spaceId) return portalNode;
+  const entry = spacesMap[spaceId];
+  if (!entry?.nodes?.length) return portalNode;
+
+  const structure = analyzeNestedSpaceStructure(entry.nodes, entry.edges ?? [], {
+    spaceId,
+    spaceName: entry.name ?? "Space",
+  });
+
+  const prev = (portalNode.data ?? {}) as Record<string, unknown>;
+  const keepLabel =
+    prev.label != null && String(prev.label).trim() !== "" ? prev.label : structure.label;
+  const innerTemplate = resolveSpacePortalInnerTemplate(
+    { data: { ...prev, spaceId, outputType: structure.type } },
+    spacesMap as Record<string, SpaceMapEntryLike | undefined>,
+  );
+  const innerNodes = (entry.nodes ?? []).filter(
+    (n) => n.type !== "spaceInput" && n.type !== "spaceOutput",
+  );
+  const innerEdges = (entry.edges ?? []).filter((e) => e.target !== "out" && e.source !== "in");
+
+  return {
+    ...portalNode,
+    data: {
+      ...prev,
+      label: keepLabel,
+      outputType: structure.type,
+      outputMode: structure.outputMode,
+      value: structure.value,
+      mediaListOutput: structure.mediaListOutput ?? undefined,
+      ...(structure.mediaListOutput
+        ? { media_list: structure.mediaListOutput }
+        : {}),
+      hasInput: structure.hasInput,
+      hasOutput: structure.hasOutput,
+      internalCategories: structure.internalCategories,
+      ...spacePortalTemplateDataPatch(innerTemplate),
+      _foldderSpaceInnerNodes: innerNodes,
+      _foldderSpaceInnerEdges: innerEdges,
+    },
+  };
+}
+
+export function reconcileSpacePortalsInNodes(
+  graphNodes: Node[],
+  spacesMap: Record<string, SpaceMapEntryLike | undefined>,
+): Node[] {
+  return graphNodes.map((n) =>
+    n.type === "space" ? reconcileSpacePortalNode(n, spacesMap) : n,
+  );
 }
 
 /** Aristas de sinks multimedia → spaceOutput (varias en paralelo). */

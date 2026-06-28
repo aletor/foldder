@@ -10,6 +10,10 @@ import {
   primarySinkSourceHandle,
 } from './populate/pipeline/pipeline-bindings';
 import { POPULATE_PIPELINE_EXECUTABLE_TYPES } from './populate/pipeline/populate-pipeline-sink-types';
+import {
+  isPopulateSpacePortalConnection,
+  type SpaceMapEntryLike,
+} from './space-portal-populate-link';
 
 /**
  * Tipos de nodo creativo que Populate puede orquestar (plantilla).
@@ -90,11 +94,16 @@ export function designerModeConflictReason(
 /**
  * Same rules as the canvas `isValidConnection` in page.tsx — kept pure for library-drop preview.
  */
+export type AreNodesConnectableOptions = {
+  spacesMap?: Record<string, SpaceMapEntryLike | undefined>;
+};
+
 export function areNodesConnectable(
   sourceNode: Node,
   targetNode: Node,
   connection: { sourceHandle?: string | null; targetHandle?: string | null },
-  allNodes?: Node[]
+  allNodes?: Node[],
+  options?: AreNodesConnectableOptions,
 ): boolean {
   if (
     targetNode.type === 'canvasGroup' &&
@@ -109,7 +118,8 @@ export function areNodesConnectable(
       sourceNode,
       inner,
       { ...connection, targetHandle: p.handleId },
-      allNodes
+      allNodes,
+      options,
     );
   }
   if (
@@ -125,7 +135,8 @@ export function areNodesConnectable(
       inner,
       targetNode,
       { ...connection, sourceHandle: p.handleId },
-      allNodes
+      allNodes,
+      options,
     );
   }
 
@@ -182,6 +193,22 @@ export function areNodesConnectable(
   // Dataset handle only connects dataset output → dataset input.
   if (connection.sourceHandle === 'dataset' || connection.targetHandle === 'dataset') {
     return sourceHandleType === 'dataset' && targetHandleType === 'dataset';
+  }
+
+  // Bloqueo duro: un nested Space NO puede actuar como plantilla de Populate.
+  // Rompe el binding dinámico por fila y el multi-canal (varios creadores internos → 1 solo
+  // sink resoluble). Para multi-canal, conecta los creadores directamente al Populate.
+  if (
+    targetNode.type === 'populate' &&
+    connection.targetHandle === 'template' &&
+    sourceNode.type === 'space'
+  ) {
+    return false;
+  }
+
+  // Populate ↔ Space portal (destino de resultados; admite cable en ambos sentidos).
+  if (isPopulateSpacePortalConnection(sourceNode, targetNode, connection)) {
+    return true;
   }
 
   // Populate plantilla: salida primaria de un nodo con executor de tubería → input template.

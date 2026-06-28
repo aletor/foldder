@@ -502,12 +502,12 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
   },
   projectBrain: {
     type: 'projectBrain',
-    label: 'Brain',
+    label: 'BrandKit',
     description:
-      'Project identity and knowledge (brand kit + PDFs/links). Canvas card shows counts; full editing is in Brain studio mode (same as the Brain bottom-bar panel).',
+      'Identidad y conocimiento del proyecto: logo, colores de marca y documentos/links, editables en un único punto. Conéctalo a un Designer para enlazar en vivo el logo y los colores de marca a cualquier objeto; al editarlo cambian todos los Designers que lo usan.',
     inputs: [],
     outputs: [
-      { id: 'brain', label: 'Brain out', type: 'brain' as HandleType },
+      { id: 'brain', label: 'BrandKit out', type: 'brain' as HandleType },
     ],
     dataSchema: {
       label: 'string (optional title on the card)',
@@ -547,7 +547,7 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
     description:
       'Full design studio: vector tools (pen, shapes, text) + page-based layout + threaded text frames + image frames. Combines Freehand vector editing with InDesign-style page management. Accepts an Image Layout from Layerizer: layers arrive pre-mounted at their original positions for drag-reordering.',
     inputs: [
-      { id: 'brain', label: 'Brain', type: 'brain' as HandleType },
+      { id: 'brain', label: 'BrandKit', type: 'brain' as HandleType },
       { id: 'dataset', label: 'Dataset', type: 'dataset' as HandleType },
       { id: 'layout', label: 'Image Layout', type: 'image_layout' as HandleType },
     ],

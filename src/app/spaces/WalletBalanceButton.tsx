@@ -29,6 +29,11 @@ import {
   writePaymentWarningsEnabled,
 } from "@/lib/wallet-payment-warnings-preference";
 import {
+  getCanvasAnimatedEdgesEnabledSnapshot,
+  subscribeCanvasAnimatedEdgesPreference,
+  writeCanvasAnimatedEdgesEnabled,
+} from "./canvas-animated-edges-preference";
+import {
   describeWalletLedgerEntry,
   groupWalletActivityRows,
   visibleSpentMicros,
@@ -186,6 +191,11 @@ export function WalletBalanceButton({
   const paymentWarningsEnabled = useSyncExternalStore(
     subscribePaymentWarningsPreference,
     getPaymentWarningsEnabledSnapshot,
+    () => true,
+  );
+  const animatedEdgesEnabled = useSyncExternalStore(
+    subscribeCanvasAnimatedEdgesPreference,
+    getCanvasAnimatedEdgesEnabledSnapshot,
     () => true,
   );
   const [open, setOpen] = useState(false);
@@ -428,6 +438,45 @@ export function WalletBalanceButton({
             onClick={() => writePaymentWarningsEnabled(false)}
             className={`min-w-[3rem] border-l border-white/10 px-2.5 text-[10px] font-black uppercase tracking-[0.1em] transition ${
               !paymentWarningsEnabled
+                ? "bg-white text-slate-950"
+                : "bg-transparent text-white/45 hover:bg-white/[0.08] hover:text-white"
+            }`}
+          >
+            {language === "es" ? "No" : "No"}
+          </button>
+        </div>
+      </div>
+
+      <div className="flex h-10 items-stretch divide-x divide-white/10 bg-white/[0.06]">
+        <div className="flex min-w-0 flex-1 flex-col justify-center px-2.5">
+          <p className="text-[9px] font-black uppercase tracking-[0.12em] text-white/55">
+            {language === "es" ? "Líneas animadas" : "Animated lines"}
+          </p>
+          <p className="text-[9px] font-medium leading-snug text-white/38">
+            {language === "es"
+              ? "Puntos animados en las conexiones"
+              : "Animated dots on connections"}
+          </p>
+        </div>
+        <div className="flex shrink-0 items-stretch">
+          <button
+            type="button"
+            aria-pressed={animatedEdgesEnabled}
+            onClick={() => writeCanvasAnimatedEdgesEnabled(true)}
+            className={`min-w-[3rem] px-2.5 text-[10px] font-black uppercase tracking-[0.1em] transition ${
+              animatedEdgesEnabled
+                ? "bg-white text-slate-950"
+                : "bg-transparent text-white/45 hover:bg-white/[0.08] hover:text-white"
+            }`}
+          >
+            {language === "es" ? "Sí" : "Yes"}
+          </button>
+          <button
+            type="button"
+            aria-pressed={!animatedEdgesEnabled}
+            onClick={() => writeCanvasAnimatedEdgesEnabled(false)}
+            className={`min-w-[3rem] border-l border-white/10 px-2.5 text-[10px] font-black uppercase tracking-[0.1em] transition ${
+              !animatedEdgesEnabled
                 ? "bg-white text-slate-950"
                 : "bg-transparent text-white/45 hover:bg-white/[0.08] hover:text-white"
             }`}

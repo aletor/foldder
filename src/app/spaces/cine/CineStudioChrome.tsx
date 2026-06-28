@@ -394,7 +394,7 @@ export function CineStudioMetricsBar({
           brainConnected ? "text-[var(--foldder-studio-accent,#de323f)]" : "text-white/38",
         )}
       >
-        {brainConnected ? "Brain" : "Sin Brain"}
+        {brainConnected ? "BrandKit" : "Sin BrandKit"}
       </span>
     </div>
   );
