@@ -1,7 +1,9 @@
 "use client";
 
 import React from "react";
+import { createPortal } from "react-dom";
 import { Trash2, X } from "lucide-react";
+import { STUDIO_BODY_PORTAL_Z, studioOverlayPointerGuards } from "../freehand/studio-modal-shell";
 
 type Props = {
   pageNumbers: number[];
@@ -21,13 +23,16 @@ export function DesignerDeletePagesModal({ pageNumbers, totalPages, onCancel, on
         ? `las páginas ${sorted.join(", ")}`
         : `${count} páginas (${sorted.slice(0, 3).join(", ")}…)`;
 
-  return (
+  const dialog = (
     <div
-      className="fixed inset-0 z-[10065] flex items-center justify-center bg-black/55 p-4"
+      className="fixed inset-0 flex items-center justify-center bg-black/55 p-4"
+      style={{ zIndex: STUDIO_BODY_PORTAL_Z }}
       role="dialog"
       aria-modal="true"
       aria-labelledby="designer-delete-pages-title"
       data-foldder-studio-flush=""
+      data-foldder-studio-panel
+      {...studioOverlayPointerGuards}
       onClick={onCancel}
     >
       <div
@@ -79,4 +84,7 @@ export function DesignerDeletePagesModal({ pageNumbers, totalPages, onCancel, on
       </div>
     </div>
   );
+
+  if (typeof document === "undefined") return null;
+  return createPortal(dialog, document.body);
 }

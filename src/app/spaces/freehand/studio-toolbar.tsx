@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState, useId } from "react";
 import { createPortal } from "react-dom";
 import { ChevronRight } from "lucide-react";
+import { STUDIO_TOOLBAR_POPOVER_Z } from "./studio-modal-shell";
 
 export const TOOLBAR_ICON_STROKE = 1.75 as const;
 /** Pulsación mantenida sobre el icono del grupo para abrir el submenú (rollout). */
@@ -170,9 +171,15 @@ export function ToolFlyoutGroup({
       const hitBtn = (el as HTMLElement).closest("button") as HTMLButtonElement | null;
       if (hitBtn && panel.contains(hitBtn)) {
         queueMicrotask(() => hitBtn.click());
-      } else {
-        setFlyoutOpen(null);
+        rolloutFromMainHoldRef.current = false;
+        return;
       }
+      const mainBtn = mainBtnRef.current;
+      if (mainBtn && (mainBtn === el || mainBtn.contains(el))) {
+        rolloutFromMainHoldRef.current = false;
+        return;
+      }
+      setFlyoutOpen(null);
       rolloutFromMainHoldRef.current = false;
     };
 
@@ -248,8 +255,8 @@ export function ToolFlyoutGroup({
         createPortal(
           <div
             ref={flyoutPanelRef}
-            className="left-toolbar-flyout-panel fixed z-[100045] flex min-w-[44px] flex-col gap-1 rounded-[2px] border border-white/[0.09] bg-[#15181f] p-1.5 shadow-[0_8px_28px_rgba(0,0,0,0.55)]"
-            style={{ left: flyoutFixedPos.left, top: flyoutFixedPos.top }}
+            className="left-toolbar-flyout-panel fixed flex min-w-[44px] flex-col gap-1 rounded-[2px] border border-white/[0.09] bg-[#15181f] p-1.5 shadow-[0_8px_28px_rgba(0,0,0,0.55)]"
+            style={{ left: flyoutFixedPos.left, top: flyoutFixedPos.top, zIndex: STUDIO_TOOLBAR_POPOVER_Z }}
             data-tool-flyout-panel
           >
             {children}

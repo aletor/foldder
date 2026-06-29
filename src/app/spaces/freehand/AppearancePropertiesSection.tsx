@@ -26,6 +26,7 @@ import {
   normalizeCornerRadius,
   type RectangleCornerRadius,
 } from "./rectangle-corners";
+import { STUDIO_BODY_PORTAL_Z } from "./studio-modal-shell";
 
 /** Subconjunto mínimo del objeto seleccionado para el panel Appearance. */
 export type AppearanceObject = {
@@ -202,8 +203,8 @@ function CompactPopover({
   return createPortal(
     <div
       data-fh-appearance-popover
-      className="fixed z-[100040] overflow-hidden rounded-[6px] border border-white/[0.12] bg-[#151820] shadow-[0_16px_48px_rgba(0,0,0,0.55)]"
-      style={{ top: pos.top, left: pos.left, width }}
+      className="fixed overflow-hidden rounded-[6px] border border-white/[0.12] bg-[#151820] shadow-[0_16px_48px_rgba(0,0,0,0.55)]"
+      style={{ top: pos.top, left: pos.left, width, zIndex: STUDIO_BODY_PORTAL_Z }}
       role="dialog"
       aria-modal="true"
     >

@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { ScrubNumberInput } from "../ScrubNumberInput";
+import { stopStudioModalPointerPropagation } from "./studio-modal-shell";
 import {
   defaultLayerEffects,
   defaultPhotoFilter,
@@ -16,6 +17,10 @@ import {
   type PhotoFilterPreset,
 } from "./layer-effects-types";
 import { PhotoFilterSvgFilter } from "./PhotoFilterSvg";
+import {
+  STUDIO_LAYER_MODAL_Z,
+  studioModalBackdropHandlers,
+} from "./studio-modal-shell";
 
 const PROP_PANEL_SCRUB_CLASS =
   "cursor-ew-resize rounded-none border border-white/10 bg-black/30 px-2 py-1 font-mono text-[11px] tabular-nums text-white outline-none focus:border-[#71449f] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none";
@@ -44,22 +49,39 @@ const BLEND_OPTIONS: { value: LayerEffectBlendMode; label: string }[] = [
 
 type EffectTab = "colorOverlay" | "gradientOverlay" | "outerGlow" | "photoFilter";
 
+export type LayerStylesFxSection = "look" | "overlays" | "all";
+export type LayerStylesApplyTarget = "selectedLayer" | "adjustmentLayer";
+
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
 }
 
 export function LayerStylesModal({
   open,
+  embedded = false,
+  compact = false,
+  fxSection = "all",
+  hideApplyTargetChoice = false,
   targetType,
   draft,
+  showApplyTargetChoice,
+  applyTarget,
+  onApplyTargetChange,
   onDraftChange,
   onOk,
   onCancel,
   onReset,
 }: {
   open: boolean;
+  embedded?: boolean;
+  compact?: boolean;
+  fxSection?: LayerStylesFxSection;
+  hideApplyTargetChoice?: boolean;
   targetType?: string;
   draft: LayerEffects;
+  showApplyTargetChoice?: boolean;
+  applyTarget?: LayerStylesApplyTarget;
+  onApplyTargetChange?: (target: LayerStylesApplyTarget) => void;
   onDraftChange: (next: LayerEffects) => void;
   onOk: () => void;
   onCancel: () => void;
@@ -70,7 +92,9 @@ export function LayerStylesModal({
    * fotográfico (filter CSS); los overlays color/degradado/glow requieren una silueta raster propia.
    */
   const overlaysSupported = targetType !== "text" && targetType !== "groupContainer";
-  const [tab, setTab] = useState<EffectTab>(overlaysSupported ? "colorOverlay" : "photoFilter");
+  const defaultTab: EffectTab =
+    fxSection === "look" ? "photoFilter" : overlaysSupported ? "colorOverlay" : "photoFilter";
+  const [tab, setTab] = useState<EffectTab>(defaultTab);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const dragSessionRef = useRef<{
     pointerId: number;
@@ -82,10 +106,10 @@ export function LayerStylesModal({
 
   useEffect(() => {
     if (open) {
-      setTab(overlaysSupported ? "colorOverlay" : "photoFilter");
-      setDragOffset({ x: 0, y: 0 });
+      setTab(defaultTab);
+      if (!embedded) setDragOffset({ x: 0, y: 0 });
     }
-  }, [open, overlaysSupported]);
+  }, [open, overlaysSupported, defaultTab, embedded]);
 
   const co = draft.colorOverlay!;
   const go = draft.gradientOverlay!;
@@ -104,7 +128,7 @@ export function LayerStylesModal({
     enabled: boolean;
     onToggle: (checked: boolean) => void;
   }[] = [
-    ...(overlaysSupported
+    ...(overlaysSupported && (fxSection === "all" || fxSection === "overlays")
       ? [
           {
             id: "colorOverlay" as EffectTab,
@@ -126,15 +150,25 @@ export function LayerStylesModal({
           },
         ]
       : []),
-    {
-      id: "photoFilter",
-      label: "Filtro de foto",
-      enabled: pfEnabled,
-      onToggle: (c) => onDraftChange({ ...draft, photoFilter: { ...pf, enabled: c } }),
-    },
+    ...(fxSection === "all" || fxSection === "look"
+      ? [
+          {
+            id: "photoFilter" as EffectTab,
+            label: "Filtro de foto",
+            enabled: pfEnabled,
+            onToggle: (c: boolean) => onDraftChange({ ...draft, photoFilter: { ...pf, enabled: c } }),
+          },
+        ]
+      : []),
   ];
 
-  const sidebar = (
+  useEffect(() => {
+    if (!tabItems.some((t) => t.id === tab) && tabItems[0]) setTab(tabItems[0].id);
+  }, [tabItems, tab]);
+
+  const panelClass = compact ? "space-y-1.5 p-2" : "space-y-2.5 p-3";
+
+  const sidebar = compact ? null : (
     <div
       className="flex w-[150px] shrink-0 flex-col border-r border-white/10 bg-white/[0.03]"
       role="tablist"
@@ -186,44 +220,83 @@ export function LayerStylesModal({
     </div>
   );
 
-  if (!open || typeof document === "undefined") return null;
+  const compactEffectNav =
+    compact && tabItems.length > 0 ? (
+      <div
+        className="flex shrink-0 items-center gap-0.5 overflow-x-auto border-b border-white/10 bg-white/[0.02] px-1 py-0.5"
+        role="tablist"
+        aria-label="Efectos de capa"
+      >
+        {tabItems.map((t) => {
+          const active = tab === t.id;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              title={t.label}
+              className={`flex shrink-0 items-center gap-1 rounded-none px-1.5 py-0.5 text-[8px] transition ${
+                active
+                  ? "bg-[#71449f]/35 font-semibold text-white"
+                  : "text-white/45 hover:bg-white/[0.05] hover:text-white/80"
+              }`}
+              onClick={() => setTab(t.id)}
+            >
+              <input
+                type="checkbox"
+                checked={t.enabled}
+                onClick={(e) => e.stopPropagation()}
+                onChange={(e) => t.onToggle(e.target.checked)}
+                className="h-2.5 w-2.5 shrink-0 accent-[#71449f]"
+                aria-label={`Activar ${t.label}`}
+              />
+              <span className="max-w-[72px] truncate">{t.label}</span>
+            </button>
+          );
+        })}
+      </div>
+    ) : null;
 
-  const onDragHandlePointerDown = (e: React.PointerEvent) => {
-    if (e.button !== 0) return;
-    e.preventDefault();
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    dragSessionRef.current = {
-      pointerId: e.pointerId,
-      startX: e.clientX,
-      startY: e.clientY,
-      origX: dragOffset.x,
-      origY: dragOffset.y,
-    };
-  };
-
-  const onDragHandlePointerMove = (e: React.PointerEvent) => {
-    const s = dragSessionRef.current;
-    if (!s || e.pointerId !== s.pointerId) return;
-    setDragOffset({
-      x: s.origX + (e.clientX - s.startX),
-      y: s.origY + (e.clientY - s.startY),
-    });
-  };
-
-  const endDrag = (e: React.PointerEvent) => {
-    const s = dragSessionRef.current;
-    if (!s || e.pointerId !== s.pointerId) return;
-    dragSessionRef.current = null;
-    try {
-      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
-    } catch {
-      /* ignore */
-    }
-  };
+  const compactFxSlider = (
+    label: string,
+    value: number,
+    onCommit: (n: number) => void,
+    opts: { min: number; max: number; step: number; round: (n: number) => number },
+  ) => (
+    <div className="flex items-center gap-1.5">
+      <span className="w-14 shrink-0 truncate text-[7px] font-black uppercase tracking-[0.06em] text-white/40">
+        {label}
+      </span>
+      <input
+        type="range"
+        min={opts.min}
+        max={opts.max}
+        step={opts.step}
+        value={value}
+        onChange={(e) => onCommit(opts.round(Number(e.target.value)))}
+        onPointerDown={stopStudioModalPointerPropagation}
+        onMouseDown={stopStudioModalPointerPropagation}
+        className="min-w-0 flex-1 accent-[#71449f]"
+      />
+      <ScrubNumberInput
+        value={value}
+        onKeyboardCommit={(n) => onCommit(opts.round(n))}
+        onScrubLive={(n) => onCommit(opts.round(n))}
+        onScrubEnd={() => {}}
+        step={opts.step}
+        roundFn={opts.round}
+        min={opts.min}
+        max={opts.max}
+        title={PROP_PANEL_SCRUB_HINT}
+        className={`w-9 shrink-0 px-0.5 py-0.5 text-center text-[10px] ${PROP_PANEL_SCRUB_CLASS}`}
+      />
+    </div>
+  );
 
   const panel =
     tab === "colorOverlay" ? (
-      <div className="space-y-2.5 p-3">
+      <div className={panelClass}>
         <div className="space-y-1">
           <span className="text-[8px] font-black uppercase tracking-[0.12em] text-white/40">Fusión</span>
           <select
@@ -312,7 +385,7 @@ export function LayerStylesModal({
         </div>
       </div>
     ) : tab === "gradientOverlay" ? (
-      <div className="space-y-2.5 p-3">
+      <div className={panelClass}>
         <div className="space-y-1">
           <span className="text-[8px] font-black uppercase tracking-[0.12em] text-white/40">Fusión</span>
           <select
@@ -543,7 +616,7 @@ export function LayerStylesModal({
         </div>
       </div>
     ) : tab === "outerGlow" ? (
-      <div className="space-y-2.5 p-3">
+      <div className={panelClass}>
         <div className="space-y-1">
           <span className="text-[8px] font-black uppercase tracking-[0.12em] text-white/40">Fusión</span>
           <select
@@ -961,6 +1034,109 @@ export function LayerStylesModal({
           </div>
         </div>
       </div>
+    ) : compact ? (
+      <div className="flex h-full flex-col space-y-2 p-2">
+        <svg width={0} height={0} aria-hidden style={{ position: "absolute" }}>
+          <defs>
+            {PHOTO_FILTER_PRESETS.filter((p) => isSvgPhotoFilterPreset(p.id)).map((p) => (
+              <PhotoFilterSvgFilter
+                key={p.id}
+                id={`fh-pf-prev-${p.id}`}
+                preset={p.id}
+                intensity={1}
+              />
+            ))}
+          </defs>
+        </svg>
+        <div className="shrink-0 space-y-1">
+          <span className="text-[7px] font-black uppercase tracking-[0.08em] text-white/40">Preajuste</span>
+          <div className="custom-scrollbar flex gap-1 overflow-x-auto pb-0.5">
+            {PHOTO_FILTER_PRESETS.map((p) => {
+              const active = pf.preset === p.id;
+              const previewFilter = isSvgPhotoFilterPreset(p.id)
+                ? `url(#fh-pf-prev-${p.id})`
+                : photoFilterCssString(p.id, 1);
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  title={p.label}
+                  onClick={() =>
+                    onDraftChange({
+                      ...draft,
+                      photoFilter: { ...pf, enabled: true, preset: p.id as PhotoFilterPreset },
+                    })
+                  }
+                  className={`flex w-11 shrink-0 flex-col gap-0.5 border p-0.5 transition ${
+                    active
+                      ? "border-[#71449f] bg-[#71449f]/25"
+                      : "border-white/10 hover:border-white/25"
+                  }`}
+                >
+                  <span
+                    className="h-5 w-full"
+                    style={{
+                      backgroundImage:
+                        "linear-gradient(135deg, #6b5b3a 0%, #c98f5a 35%, #e8cba0 60%, #4a6b7a 100%)",
+                      filter: previewFilter,
+                    }}
+                    aria-hidden
+                  />
+                  <span
+                    className={`truncate px-0.5 text-center text-[7px] leading-tight ${
+                      active ? "font-semibold text-white" : "text-white/50"
+                    }`}
+                  >
+                    {p.label}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <div className="min-h-0 flex-1 space-y-1 overflow-y-auto">
+          {compactFxSlider(
+            "Intens.",
+            Math.round(pf.intensity * 100),
+            (n) =>
+              onDraftChange({
+                ...draft,
+                photoFilter: { ...pf, intensity: clamp(n, 0, 100) / 100 },
+              }),
+            { min: 0, max: 100, step: 1, round: (n) => clamp(Math.round(n), 0, 100) },
+          )}
+          {compactFxSlider(
+            "Grano",
+            Math.round(pf.grain * 100),
+            (n) =>
+              onDraftChange({
+                ...draft,
+                photoFilter: { ...pf, grain: clamp(n, 0, 100) / 100 },
+              }),
+            { min: 0, max: 100, step: 1, round: (n) => clamp(Math.round(n), 0, 100) },
+          )}
+          {compactFxSlider(
+            "Tam. gr.",
+            Math.round((pf.grainSize ?? 0.5) * 100),
+            (n) =>
+              onDraftChange({
+                ...draft,
+                photoFilter: { ...pf, grainSize: clamp(n, 0, 100) / 100 },
+              }),
+            { min: 0, max: 100, step: 1, round: (n) => clamp(Math.round(n), 0, 100) },
+          )}
+          {compactFxSlider(
+            "Viñeta",
+            Math.round(pf.vignette * 100),
+            (n) =>
+              onDraftChange({
+                ...draft,
+                photoFilter: { ...pf, vignette: clamp(n, 0, 100) / 100 },
+              }),
+            { min: 0, max: 100, step: 1, round: (n) => clamp(Math.round(n), 0, 100) },
+          )}
+        </div>
+      </div>
     ) : (
       <div className="space-y-3 p-3">
         {/* defs SVG ocultos para el preview de presets de mapeo tonal (duotono/teal&orange/split-tone). */}
@@ -1048,6 +1224,8 @@ export function LayerStylesModal({
             onChange={(e) =>
               onDraftChange({ ...draft, photoFilter: { ...pf, intensity: Number(e.target.value) / 100 } })
             }
+            onPointerDown={stopStudioModalPointerPropagation}
+            onMouseDown={stopStudioModalPointerPropagation}
             className="w-full accent-[#71449f]"
           />
         </div>
@@ -1079,6 +1257,8 @@ export function LayerStylesModal({
             onChange={(e) =>
               onDraftChange({ ...draft, photoFilter: { ...pf, grain: Number(e.target.value) / 100 } })
             }
+            onPointerDown={stopStudioModalPointerPropagation}
+            onMouseDown={stopStudioModalPointerPropagation}
             className="w-full accent-[#71449f]"
           />
         </div>
@@ -1110,6 +1290,8 @@ export function LayerStylesModal({
             onChange={(e) =>
               onDraftChange({ ...draft, photoFilter: { ...pf, grainSize: Number(e.target.value) / 100 } })
             }
+            onPointerDown={stopStudioModalPointerPropagation}
+            onMouseDown={stopStudioModalPointerPropagation}
             className="w-full accent-[#71449f]"
           />
         </div>
@@ -1141,6 +1323,8 @@ export function LayerStylesModal({
             onChange={(e) =>
               onDraftChange({ ...draft, photoFilter: { ...pf, vignette: Number(e.target.value) / 100 } })
             }
+            onPointerDown={stopStudioModalPointerPropagation}
+            onMouseDown={stopStudioModalPointerPropagation}
             className="w-full accent-[#71449f]"
           />
         </div>
@@ -1151,13 +1335,109 @@ export function LayerStylesModal({
       </div>
     );
 
+  const fxBody = compact ? (
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      {compactEffectNav}
+      <div
+        key={tab}
+        className="custom-scrollbar min-h-0 flex-1 overflow-y-auto"
+        role="tabpanel"
+        id={`fh-layer-style-panel-${tab}`}
+        aria-labelledby={`fh-layer-style-tab-${tab}`}
+      >
+        {panel}
+      </div>
+    </div>
+  ) : (
+    <div className="flex min-h-0 flex-1 overflow-hidden">
+      {sidebar}
+      <div
+        key={tab}
+        className="custom-scrollbar flex min-h-0 flex-1 flex-col overflow-y-auto"
+        role="tabpanel"
+        id={`fh-layer-style-panel-${tab}`}
+        aria-labelledby={`fh-layer-style-tab-${tab}`}
+      >
+        <div className="min-h-0 flex-1">{panel}</div>
+        {!hideApplyTargetChoice && showApplyTargetChoice ? (
+          <div className="shrink-0 space-y-2 border-t border-white/10 px-3 py-3">
+            <span className="text-[8px] font-black uppercase tracking-[0.12em] text-white/40">
+              Aplicar como
+            </span>
+            <label className="flex cursor-pointer items-start gap-2 text-[10px] leading-snug text-zinc-200">
+              <input
+                type="radio"
+                name="fh-layer-style-apply-target"
+                checked={applyTarget === "selectedLayer"}
+                onChange={() => onApplyTargetChange?.("selectedLayer")}
+                className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-[#71449f]"
+              />
+              <span>Aplicar en capa actual</span>
+            </label>
+            <label className="flex cursor-pointer items-start gap-2 text-[10px] leading-snug text-zinc-200">
+              <input
+                type="radio"
+                name="fh-layer-style-apply-target"
+                checked={applyTarget === "adjustmentLayer"}
+                onChange={() => onApplyTargetChange?.("adjustmentLayer")}
+                className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-[#71449f]"
+              />
+              <span>Generar como capa de efecto (afecta todo lo inferior)</span>
+            </label>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+
+  if (embedded) {
+    if (!open) return null;
+    return compact ? <div className="h-full min-h-0">{fxBody}</div> : fxBody;
+  }
+
+  if (!open || typeof document === "undefined") return null;
+
+  const onDragHandlePointerDown = (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    dragSessionRef.current = {
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      origX: dragOffset.x,
+      origY: dragOffset.y,
+    };
+  };
+
+  const onDragHandlePointerMove = (e: React.PointerEvent) => {
+    const s = dragSessionRef.current;
+    if (!s || e.pointerId !== s.pointerId) return;
+    setDragOffset({
+      x: s.origX + (e.clientX - s.startX),
+      y: s.origY + (e.clientY - s.startY),
+    });
+  };
+
+  const endDrag = (e: React.PointerEvent) => {
+    const s = dragSessionRef.current;
+    if (!s || e.pointerId !== s.pointerId) return;
+    dragSessionRef.current = null;
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+  };
+
   return createPortal(
     <div
-      className="fixed inset-0 z-[100200] flex items-center justify-center p-4"
+      className="fixed inset-0 flex items-center justify-center bg-black/45 p-4"
+      style={{ zIndex: STUDIO_LAYER_MODAL_Z }}
       role="dialog"
       aria-modal="true"
       aria-labelledby="fh-layer-style-title"
-      onClick={onCancel}
+      {...studioModalBackdropHandlers(onCancel)}
     >
       <div
         data-foldder-layer-style-panel
@@ -1191,18 +1471,7 @@ export function LayerStylesModal({
             <X size={15} strokeWidth={2} />
           </button>
         </header>
-        <div className="flex min-h-0 flex-1 overflow-hidden">
-          {sidebar}
-          <div
-            key={tab}
-            className="custom-scrollbar min-h-0 flex-1 overflow-y-auto"
-            role="tabpanel"
-            id={`fh-layer-style-panel-${tab}`}
-            aria-labelledby={`fh-layer-style-tab-${tab}`}
-          >
-            {panel}
-          </div>
-        </div>
+        {fxBody}
         <footer className="flex h-10 shrink-0 items-stretch justify-end divide-x divide-white/10 border-t border-white/10 bg-white/[0.04]">
           <button
             type="button"

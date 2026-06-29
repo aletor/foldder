@@ -35,6 +35,7 @@ export function ScrubNumberInput({
   } | null>(null);
 
   const onPointerDown = (e: React.PointerEvent<HTMLInputElement>) => {
+    e.stopPropagation();
     if (e.button !== 0) return;
     if (e.currentTarget.disabled) return;
     const el = e.currentTarget;

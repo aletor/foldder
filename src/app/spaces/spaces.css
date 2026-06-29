@@ -6527,6 +6527,11 @@ body.nb-studio-open [data-foldder-sidebar] {
   opacity: 0 !important;
 }
 
+/* El grafo React Flow queda bajo el studio: sin hover ni clics en el lienzo de fondo */
+body.nb-studio-open .spaces-canvas {
+  pointer-events: none !important;
+}
+
 /* Designer / otros studios fullscreen: launcher Foldder del grafo (z alto) queda encima del lienzo */
 [data-foldder-canvas-launcher] {
   position: fixed;

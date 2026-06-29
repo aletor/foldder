@@ -1,6 +1,11 @@
 "use client";
 
 import React, { useCallback, useLayoutEffect, useMemo, useState, type ComponentProps } from "react";
+import { createPortal } from "react-dom";
+import {
+  STUDIO_BODY_PORTAL_Z,
+  studioOverlayPointerGuards,
+} from "../freehand/studio-modal-shell";
 import type { NewDocumentConfig } from "./studio-canvas-document-model";
 import { StudioCanvasMeasuresControls } from "./StudioCanvasMeasuresControls";
 
@@ -392,13 +397,16 @@ export function StudioCanvasPresetPanel({
 
   const titleId = isResize ? "studio-canvas-resize-title" : "studio-canvas-newdoc-title";
 
-  return (
+  const dialog = (
     <div
-      className="fixed inset-0 z-[10100] flex items-center justify-center p-3 sm:p-5"
+      className="fixed inset-0 flex items-center justify-center p-3 sm:p-5"
+      style={{ zIndex: STUDIO_BODY_PORTAL_Z }}
       role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}
       data-foldder-studio-newdoc
+      data-foldder-studio-panel
+      {...studioOverlayPointerGuards}
     >
       <button
         type="button"
@@ -542,4 +550,7 @@ export function StudioCanvasPresetPanel({
       </div>
     </div>
   );
+
+  if (typeof document === "undefined") return null;
+  return createPortal(dialog, document.body);
 }

@@ -17,6 +17,7 @@ import type {
   TextOnPathObject,
 } from "../FreehandStudio";
 import { cloneFill, migrateFill } from "./fill";
+import { cloneLayerEffectsForEdit } from "./layer-effects-types";
 
 /**
  * Clona en profundidad un objeto y todo su subárbol. `newId` se invoca UNA vez por nodo (raíz + cada
@@ -82,6 +83,8 @@ export function deepCloneFreehandObject(
       ...a,
       id,
       adjustment: { ...a.adjustment, levels: { ...a.adjustment.levels } },
+      ...(a.layerEffects ? { layerEffects: cloneLayerEffectsForEdit(a.layerEffects) } : {}),
+      ...(a.effectScope ? { effectScope: a.effectScope } : {}),
     };
   }
   return { ...o, id, fill: cloneFill(migrateFill(o.fill)) };

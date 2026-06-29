@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ChevronDown } from "lucide-react";
 import type { GoogleFontCatalogEntry } from "./google-fonts";
 import {
@@ -95,6 +96,9 @@ export function buildDesignerFontPickerGroups(input: {
 /** Prefijo de valor del picker para familias Helvetica del sistema (debe coincidir con FreehandStudio). */
 export const DESIGNER_SYSTEM_FONT_FAMILY_VALUE_PREFIX = "__system-family:";
 
+const DEFAULT_BUTTON_CLASS =
+  "flex h-7 min-h-0 w-full min-w-0 items-center justify-between gap-1.5 rounded-[6px] border border-[#2d2f34] bg-[#1e2024] px-2 py-0 text-left text-[10px] text-zinc-100 transition hover:border-[#3f4249]";
+
 export type DesignerFontFamilyPickerProps = {
   value: string;
   onChange: (value: string) => void;
@@ -103,6 +107,8 @@ export type DesignerFontFamilyPickerProps = {
   className?: string;
   menuClassName?: string;
   buttonClassName?: string;
+  /** Portal al body para que el menú no quede recortado por overflow del panel. */
+  usePortal?: boolean;
 };
 
 function FontPreviewLabel({
@@ -110,17 +116,19 @@ function FontPreviewLabel({
   previewFamily,
   metaLabel,
   className = "",
+  compact = false,
 }: {
   previewText: string;
   previewFamily: string;
   metaLabel?: string;
   className?: string;
+  compact?: boolean;
 }) {
   return (
     <span className={`min-w-0 ${className}`}>
       <span
         data-designer-font-picker-label
-        className="block truncate leading-tight"
+        className={`block truncate leading-tight ${compact ? "text-[11px]" : ""}`}
         style={
           {
             fontFamily: previewFamily,
@@ -131,10 +139,39 @@ function FontPreviewLabel({
         {previewText}
       </span>
       {metaLabel ? (
-        <span className="mt-0.5 block truncate text-[10px] uppercase tracking-wide text-zinc-500">{metaLabel}</span>
+        <span
+          className={`mt-px block truncate uppercase tracking-wide text-zinc-500 ${
+            compact ? "text-[9px]" : "text-[10px]"
+          }`}
+        >
+          {metaLabel}
+        </span>
       ) : null}
     </span>
   );
+}
+
+type MenuLayout = {
+  top: number;
+  left: number;
+  width: number;
+  maxHeight: number;
+};
+
+function computeMenuLayout(trigger: HTMLElement): MenuLayout {
+  const rect = trigger.getBoundingClientRect();
+  const margin = 8;
+  const gap = 4;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const width = Math.min(Math.max(rect.width, 200), vw - margin * 2);
+  const left = Math.min(Math.max(rect.left, margin), vw - width - margin);
+  const spaceBelow = vh - rect.bottom - gap - margin;
+  const spaceAbove = rect.top - gap - margin;
+  const openBelow = spaceBelow >= 120 || spaceBelow >= spaceAbove;
+  const maxHeight = Math.max(120, openBelow ? spaceBelow : spaceAbove);
+  const top = openBelow ? rect.bottom + gap : rect.top - gap - maxHeight;
+  return { top, left, width, maxHeight };
 }
 
 export function DesignerFontFamilyPicker({
@@ -145,10 +182,14 @@ export function DesignerFontFamilyPicker({
   className = "",
   menuClassName = "",
   buttonClassName,
+  usePortal = true,
 }: DesignerFontFamilyPickerProps) {
   const [open, setOpen] = useState(false);
   const [previewReadyTick, setPreviewReadyTick] = useState(0);
+  const [menuLayout, setMenuLayout] = useState<MenuLayout | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
 
   const flatOptions = useMemo(() => groups.flatMap((g) => g.options), [groups]);
   const selected = flatOptions.find((o) => o.value === value) ?? null;
@@ -160,6 +201,12 @@ export function DesignerFontFamilyPicker({
       ),
     [flatOptions],
   );
+
+  const updateMenuLayout = useCallback(() => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    setMenuLayout(computeMenuLayout(trigger));
+  }, []);
 
   useEffect(() => {
     if (googlePreloadFamilies.length === 0) return;
@@ -181,24 +228,122 @@ export function DesignerFontFamilyPicker({
     return () => document.fonts.removeEventListener("loadingdone", bump);
   }, [open]);
 
+  useLayoutEffect(() => {
+    if (!open) {
+      setMenuLayout(null);
+      return;
+    }
+    updateMenuLayout();
+  }, [open, updateMenuLayout, groups.length]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onReposition = () => updateMenuLayout();
+    window.addEventListener("resize", onReposition);
+    window.addEventListener("scroll", onReposition, true);
+    return () => {
+      window.removeEventListener("resize", onReposition);
+      window.removeEventListener("scroll", onReposition, true);
+    };
+  }, [open, updateMenuLayout]);
+
   useEffect(() => {
     if (!open) return;
     const onDocDown = (e: MouseEvent) => {
-      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (wrapRef.current?.contains(t) || menuRef.current?.contains(t)) return;
+      setOpen(false);
     };
     document.addEventListener("mousedown", onDocDown);
     return () => document.removeEventListener("mousedown", onDocDown);
   }, [open]);
 
+  const menuContent = open ? (
+    <div
+      ref={menuRef}
+      key={previewReadyTick}
+      className={`overflow-y-auto rounded-[8px] border border-white/[0.12] bg-[#1a1d26]/98 py-0.5 shadow-[0_12px_40px_rgba(0,0,0,0.55)] backdrop-blur-sm ${menuClassName}`}
+      style={
+        usePortal && menuLayout
+          ? {
+              position: "fixed",
+              top: menuLayout.top,
+              left: menuLayout.left,
+              width: menuLayout.width,
+              maxHeight: menuLayout.maxHeight,
+              zIndex: 100150,
+            }
+          : {
+              maxHeight: "min(280px, 42vh)",
+            }
+      }
+      role="listbox"
+      aria-label="Elegir fuente"
+    >
+      <button
+        type="button"
+        role="option"
+        aria-selected={!value}
+        className={`flex w-full px-2 py-1 text-left text-[10px] text-zinc-400 transition hover:bg-white/[0.07] ${!value ? "bg-white/[0.06]" : ""}`}
+        onClick={() => {
+          onChange("");
+          setOpen(false);
+        }}
+      >
+        {placeholder}
+      </button>
+      {groups.map((group) => (
+        <div key={group.label}>
+          <div className="px-2 pb-px pt-1.5 text-[8px] font-bold uppercase tracking-widest text-zinc-500">
+            {group.label}
+          </div>
+          {group.options.map((opt) => {
+            const active = value === opt.value;
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                role="option"
+                aria-selected={active}
+                className={`flex w-full px-2 py-1 text-left transition ${
+                  active ? "bg-violet-600/25 text-violet-50" : "text-zinc-100 hover:bg-white/[0.07]"
+                }`}
+                onClick={() => {
+                  onChange(opt.value);
+                  setOpen(false);
+                }}
+              >
+                <FontPreviewLabel
+                  previewText={opt.previewText}
+                  previewFamily={opt.previewFamily}
+                  metaLabel={opt.metaLabel}
+                  compact
+                  className="text-[12px]"
+                />
+              </button>
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  ) : null;
+
   return (
     <div ref={wrapRef} className={`relative min-w-0 flex-1 ${className}`}>
       <button
+        ref={triggerRef}
         type="button"
-        onClick={() => setOpen((o) => !o)}
-        className={
-          buttonClassName ??
-          "flex h-8 min-h-0 w-full min-w-0 items-center justify-between gap-2 rounded-[6px] border border-[#2d2f34] bg-[#1e2024] px-2 py-0 text-left text-[11px] text-zinc-100 transition hover:border-[#3f4249]"
-        }
+        onClick={() => {
+          setOpen((wasOpen) => {
+            const next = !wasOpen;
+            if (next && triggerRef.current) {
+              setMenuLayout(computeMenuLayout(triggerRef.current));
+            }
+            if (!next) setMenuLayout(null);
+            return next;
+          });
+        }}
+        className={buttonClassName ?? DEFAULT_BUTTON_CLASS}
         aria-haspopup="listbox"
         aria-expanded={open}
       >
@@ -207,66 +352,21 @@ export function DesignerFontFamilyPicker({
             previewText={selected.previewText}
             previewFamily={selected.previewFamily}
             metaLabel={selected.metaLabel}
-            className="flex-1 text-[11px] text-zinc-100"
+            compact
+            className="flex-1 text-[10px] text-zinc-100"
           />
         ) : (
           <span className="min-w-0 truncate text-zinc-400">{placeholder}</span>
         )}
-        <ChevronDown size={12} className="shrink-0 text-zinc-500" strokeWidth={2.25} aria-hidden />
+        <ChevronDown size={11} className="shrink-0 text-zinc-500" strokeWidth={2.25} aria-hidden />
       </button>
-      {open ? (
-        <div
-          key={previewReadyTick}
-          className={`absolute left-0 right-0 top-[calc(100%+4px)] z-[180] max-h-[min(280px,42vh)] overflow-y-auto rounded-[8px] border border-white/[0.12] bg-[#1a1d26]/98 py-1 shadow-[0_12px_40px_rgba(0,0,0,0.55)] backdrop-blur-sm ${menuClassName}`}
-          role="listbox"
-          aria-label="Elegir fuente"
-        >
-          <button
-            type="button"
-            role="option"
-            aria-selected={!value}
-            className={`flex w-full px-2.5 py-1.5 text-left text-[11px] text-zinc-400 transition hover:bg-white/[0.07] ${!value ? "bg-white/[0.06]" : ""}`}
-            onClick={() => {
-              onChange("");
-              setOpen(false);
-            }}
-          >
-            {placeholder}
-          </button>
-          {groups.map((group) => (
-            <div key={group.label}>
-              <div className="px-2.5 pb-0.5 pt-2 text-[9px] font-bold uppercase tracking-widest text-zinc-500">
-                {group.label}
-              </div>
-              {group.options.map((opt) => {
-                const active = value === opt.value;
-                return (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    role="option"
-                    aria-selected={active}
-                    className={`flex w-full px-2.5 py-1.5 text-left transition ${
-                      active ? "bg-violet-600/25 text-violet-50" : "text-zinc-100 hover:bg-white/[0.07]"
-                    }`}
-                    onClick={() => {
-                      onChange(opt.value);
-                      setOpen(false);
-                    }}
-                  >
-                    <FontPreviewLabel
-                      previewText={opt.previewText}
-                      previewFamily={opt.previewFamily}
-                      metaLabel={opt.metaLabel}
-                      className="text-[13px]"
-                    />
-                  </button>
-                );
-              })}
-            </div>
-          ))}
-        </div>
-      ) : null}
+      {menuContent && (!usePortal || menuLayout)
+        ? usePortal && typeof document !== "undefined"
+          ? createPortal(menuContent, document.body)
+          : (
+            <div className="absolute left-0 right-0 top-[calc(100%+4px)] z-[180]">{menuContent}</div>
+          )
+        : null}
     </div>
   );
 }

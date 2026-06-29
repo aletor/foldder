@@ -6,6 +6,7 @@ import { Pipette } from "lucide-react";
 import type { DocumentColorStat } from "./extract-document-colors";
 import { normalizeHexColor } from "./extract-document-colors";
 import { setColorDragData } from "./color-drag";
+import { STUDIO_BODY_PORTAL_Z } from "./studio-modal-shell";
 
 export const PALETTE_LS_KEY = "foldder-freehand-palette-saved-v1";
 
@@ -396,7 +397,8 @@ export function ColorPickerModal({
     <>
       {/* Sin oscurecer el lienzo: el cuenta gotas debe muestrear el color real bajo el cursor. */}
       <div
-        className="fixed inset-0 z-[100025] bg-transparent"
+        className="fixed inset-0 bg-transparent"
+        style={{ zIndex: STUDIO_BODY_PORTAL_Z }}
         role="presentation"
         data-fh-color-picker-modal
         onMouseDown={(e) => {
@@ -405,10 +407,10 @@ export function ColorPickerModal({
       />
       <div
         data-fh-color-picker-modal
-        className={`fixed z-[100026] w-[min(320px,calc(100vw-16px))] border border-white/[0.12] p-4 ${
+        className={`fixed w-[min(320px,calc(100vw-16px))] border border-white/[0.12] p-4 ${
           flush ? "bg-[#0b0f14] shadow-[0_24px_70px_rgba(0,0,0,0.55)]" : "rounded-xl bg-[#151820] shadow-2xl"
         }`}
-        style={{ left: panelPos.left, top: panelPos.top }}
+        style={{ left: panelPos.left, top: panelPos.top, zIndex: STUDIO_BODY_PORTAL_Z + 1 }}
         role="dialog"
         aria-modal="true"
         aria-labelledby="fh-color-modal-title"
@@ -886,8 +888,8 @@ export function FreehandColorPalette({
 
       {ctx && (
         <div
-          className="fixed z-[100020] min-w-[11rem] rounded-lg border border-white/[0.12] bg-[#1a1f28] py-1 text-[11px] shadow-xl"
-          style={{ left: ctx.x, top: ctx.y }}
+          className="fixed min-w-[11rem] rounded-lg border border-white/[0.12] bg-[#1a1f28] py-1 text-[11px] shadow-xl"
+          style={{ left: ctx.x, top: ctx.y, zIndex: STUDIO_BODY_PORTAL_Z + 2 }}
           onMouseDown={(e) => e.stopPropagation()}
         >
           {ctx.section === "inuse" && (

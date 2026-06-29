@@ -272,6 +272,7 @@ import {
   type InsertTarget,
   type PanelRow,
 } from "./freehand/group-container";
+import { freehandHistoryEntriesEqual } from "./freehand/freehand-history-utils";
 import { deepCloneFreehandObject, deepCloneFreehandObjectKeepIds } from "./freehand/clone-object";
 import {
   applyPenCreationHandleDrag,
@@ -301,21 +302,37 @@ import {
   type PhotoAdjSelection,
   type PhotoImageAdjustments,
 } from "./freehand/photo-image-adjustments";
-import { PhotoImageAdjustmentsModal } from "./freehand/PhotoImageAdjustmentsModal";
-import { LayerStylesModal } from "./freehand/LayerStylesModal";
+import {
+  EffectLayerModal,
+  type EffectLayerApplyMode,
+  type EffectLayerTab,
+} from "./freehand/EffectLayerModal";
+import { GoogleFontInstallModal } from "./freehand/GoogleFontInstallModal";
+import { FOLDDER_STUDIO_PORTAL_Z } from "./studio-node/studio-node-architecture";
+import { STUDIO_BODY_PORTAL_Z } from "./freehand/studio-modal-shell";
+import {
+  insertIndexForEffectLayer,
+  resolveEffectLayerFxBounds,
+  selectedIndexInRootStack,
+  type EffectLayerScope,
+} from "./freehand/effect-layer-utils";
 import {
   adjustmentLayerDisplayName,
   adjustmentLayerFilterId,
   defaultAdjustmentLayerSettings,
   isAdjustmentLayerObject,
   isAdjustmentLayerSettingsNeutral,
-  type AdjustmentLayerKind,
+  isAdjustmentLayerStylesNeutral,
+  isEffectLayerActive,
+  normalizeEffectLayerObject,
   type AdjustmentLayerSettings,
 } from "./freehand/adjustment-layer-types";
 import {
   AdjustmentLayerFilterDef,
   buildLayerStackRenderSegments,
   collectAdjustmentLayers,
+  filterRootStackObjects,
+  renderSegmentStackChildren,
 } from "./freehand/adjustment-layer-render";
 import {
   buildPhotoMarqueePolyBase,
@@ -397,7 +414,6 @@ import {
   GOOGLE_FONTS_POPULAR,
   googleFontStylesheetHref,
 } from "./freehand/google-fonts";
-import { GoogleFontInstallModal } from "./freehand/GoogleFontInstallModal";
 import {
   buildDesignerFontPickerGroups,
   DesignerFontFamilyPicker,
@@ -998,11 +1014,12 @@ export interface GroupContainerObject extends FreehandObjectBase {
   collapsed?: boolean;
 }
 
-/** Capa de ajuste no destructiva (brillo/contraste/niveles); afecta capas inferiores en el stack. */
+/** Capa de efecto no destructiva (tono + look); afecta capas inferiores en el stack. */
 export interface AdjustmentLayerObject extends FreehandObjectBase {
   type: "adjustmentLayer";
-  adjustmentKind: AdjustmentLayerKind;
   adjustment: AdjustmentLayerSettings;
+  layerEffects?: LayerEffects;
+  effectScope?: EffectLayerScope;
 }
 
 export type FreehandObject =
@@ -2035,9 +2052,10 @@ function paintBrushStrokeSegment(
   opacity01: number,
   flow01: number,
   rgb: { r: number; g: number; b: number },
+  stepScale = 1,
 ) {
   const dist = Math.hypot(to.x - from.x, to.y - from.y);
-  const step = Math.max(radiusPx * 0.45, 0.75);
+  const step = Math.max(radiusPx * 0.45 * stepScale, 0.75);
   const n = Math.max(1, Math.ceil(dist / step));
   for (let i = 0; i <= n; i++) {
     const t = n === 0 ? 0 : i / n;
@@ -2057,10 +2075,76 @@ function paintMaskBrushStrokeSegment(
   opacity01: number,
   flow01: number,
   rgb: { r: number; g: number; b: number },
+  stepScale = 1,
 ) {
   const L = Math.round(0.299 * rgb.r + 0.587 * rgb.g + 0.114 * rgb.b);
   const g = { r: L, g: L, b: L };
-  paintBrushStrokeSegment(ctx, from, to, radiusPx, hardness01, opacity01, flow01, g);
+  paintBrushStrokeSegment(ctx, from, to, radiusPx, hardness01, opacity01, flow01, g, stepScale);
+}
+
+/** Variantes de pincel raster (round / hard / soft / airbrush). */
+export type BrushKind = "round" | "hard" | "soft" | "airbrush";
+
+function effectiveBrushStampParams(
+  kind: BrushKind,
+  hardnessPct: number,
+  opacityPct: number,
+  flowPct: number,
+): { hardness01: number; opacity01: number; flow01: number; stepScale: number } {
+  const h = hardnessPct / 100;
+  const o = opacityPct / 100;
+  const f = flowPct / 100;
+  switch (kind) {
+    case "hard":
+      return { hardness01: 1, opacity01: o, flow01: f, stepScale: 1 };
+    case "soft":
+      return { hardness01: Math.min(h, 0.42), opacity01: o * 0.92, flow01: f * 0.88, stepScale: 0.72 };
+    case "airbrush":
+      return { hardness01: Math.min(h, 0.18), opacity01: o * 0.55, flow01: f * 0.38, stepScale: 0.55 };
+    default:
+      return { hardness01: h, opacity01: o, flow01: f, stepScale: 1 };
+  }
+}
+
+/** Relleno por defecto al crear texto si relleno y trazo están vacíos. */
+const TEXT_CREATION_DEFAULT_FILL = "#333333";
+
+/** Zoom por rueda: ~1.6 % por línea de scroll (antes 8 % fijo por evento). */
+const WHEEL_ZOOM_PER_LINE = 1.024;
+const WHEEL_ZOOM_MAX_LINES_PER_EVENT = 2.5;
+/** Ctrl+rueda sobre pincel: cambio de tamaño proporcional al scroll. */
+const WHEEL_BRUSH_SIZE_PER_LINE = 1.035;
+/** Designer: ventana en la que un gesto de rueda bloquea iniciar pan (y viceversa). */
+const DESIGNER_VIEWPORT_WHEEL_GESTURE_MS = 160;
+
+type DesignerViewportGesture = "none" | "pan" | "zoom";
+
+function normalizeWheelDeltaLines(deltaY: number, deltaMode: number): number {
+  if (deltaMode === WheelEvent.DOM_DELTA_LINE) return deltaY;
+  if (deltaMode === WheelEvent.DOM_DELTA_PAGE) return deltaY * 24;
+  return deltaY / 16;
+}
+
+function wheelZoomFactorFromDelta(deltaY: number, deltaMode: number): number {
+  const lines = clamp(
+    normalizeWheelDeltaLines(deltaY, deltaMode),
+    -WHEEL_ZOOM_MAX_LINES_PER_EVENT,
+    WHEEL_ZOOM_MAX_LINES_PER_EVENT,
+  );
+  return Math.pow(WHEEL_ZOOM_PER_LINE, -lines);
+}
+
+function wheelBrushSizeFactorFromDelta(deltaY: number, deltaMode: number): number {
+  const lines = clamp(normalizeWheelDeltaLines(deltaY, deltaMode), -4, 4);
+  return Math.pow(WHEEL_BRUSH_SIZE_PER_LINE, -lines);
+}
+
+function resolveTextCreationFillHex(fillColor: string, strokeColor: string, strokeWidth: number): string {
+  const fillNone = fillColor === "none";
+  const strokeNone = strokeColor === "none" || strokeWidth <= 0;
+  if (fillNone && strokeNone) return TEXT_CREATION_DEFAULT_FILL;
+  if (fillNone) return strokeColor === "none" ? TEXT_CREATION_DEFAULT_FILL : strokeColor;
+  return fillColor;
 }
 
 
@@ -5633,8 +5717,33 @@ function VectorShapeWithLayerEffects(props: {
   );
 }
 
-/**
- * Imagen raster + overlays + outer glow.
+/** Estilos de capa (fx) aplicados al composite de un segmento del stack (capa de ajuste). */
+function StackSegmentWithLayerEffects(props: {
+  layerId: string;
+  bounds: Rect;
+  effects: LayerEffects;
+  children: React.ReactNode;
+}): React.ReactNode {
+  const { layerId, bounds, effects, children } = props;
+  const { x, y, w, h } = bounds;
+  if (w < 1 || h < 1) return <>{children}</>;
+  const maskShape = <rect x={x} y={y} width={w} height={h} fill="white" />;
+  return (
+    <VectorShapeWithLayerEffects
+      objId={layerId}
+      x={x}
+      y={y}
+      w={w}
+      h={h}
+      effects={effects}
+      alphaSource={maskShape}
+    >
+      {children}
+    </VectorShapeWithLayerEffects>
+  );
+}
+
+/** Imagen raster + overlays + outer glow.
  * Color: `feMerge` solo del halo sobre una copia de la imagen (Chromium suele ignorar filtros dentro de `<mask>`).
  * Gradiente: rect enmascarado (misma cadena de filtro → blanco en alfa).
  */
@@ -7881,6 +7990,11 @@ function migrateDesignerPageObjects(raw: FreehandObject[]): FreehandObject[] {
     if (withBase.type === "rect") {
       return rectObjectWithNormalizedCorners(withBase as RectObject);
     }
+    if (withBase.type === "adjustmentLayer") {
+      return normalizeEffectLayerObject(
+        withBase as AdjustmentLayerObject & Record<string, unknown>,
+      ) as FreehandObject;
+    }
     return withBase;
   });
   return dedupeTreeById(migrated);
@@ -8468,6 +8582,32 @@ export function FreehandStudioCanvas({
     return unionRects(artboards.map(artboardToRect));
   }, [artboards]);
 
+  /** Mantener capas fx de composición global alineadas con el artboard tras redimensionar el lienzo. */
+  useEffect(() => {
+    const ab = pickPrimaryArtboard(artboards, null);
+    if (!ab) return;
+    const ar = artboardToRect(ab);
+    setObjects((prev) => {
+      let changed = false;
+      const next = prev.map((o) => {
+        if (o.type !== "adjustmentLayer") return o;
+        const adj = o as AdjustmentLayerObject;
+        if ((adj.effectScope ?? "wholeStack") !== "wholeStack") return o;
+        if (
+          o.x === ar.x &&
+          o.y === ar.y &&
+          o.width === ar.w &&
+          o.height === ar.h
+        ) {
+          return o;
+        }
+        changed = true;
+        return { ...o, x: ar.x, y: ar.y, width: ar.w, height: ar.h };
+      });
+      return changed ? next : prev;
+    });
+  }, [artboards]);
+
   const onUpdateObjectsRef = useRef(onUpdateObjects);
   onUpdateObjectsRef.current = onUpdateObjects;
 
@@ -8831,6 +8971,53 @@ export function FreehandStudioCanvas({
   dragStateRef.current = dragState;
   const viewportRef = useRef(viewport);
   viewportRef.current = viewport;
+  /** Designer: mutex pan (drag) ↔ zoom (rueda). */
+  const designerViewportGestureRef = useRef<DesignerViewportGesture>("none");
+  const designerViewportWheelGestureTimerRef = useRef<number | null>(null);
+
+  const clearDesignerViewportWheelGesture = useCallback(() => {
+    if (designerViewportWheelGestureTimerRef.current != null) {
+      window.clearTimeout(designerViewportWheelGestureTimerRef.current);
+      designerViewportWheelGestureTimerRef.current = null;
+    }
+    if (designerViewportGestureRef.current === "zoom") {
+      designerViewportGestureRef.current = "none";
+    }
+  }, []);
+
+  const armDesignerViewportWheelGesture = useCallback(() => {
+    if (!designerMode) return;
+    designerViewportGestureRef.current = "zoom";
+    if (designerViewportWheelGestureTimerRef.current != null) {
+      window.clearTimeout(designerViewportWheelGestureTimerRef.current);
+    }
+    designerViewportWheelGestureTimerRef.current = window.setTimeout(() => {
+      designerViewportWheelGestureTimerRef.current = null;
+      if (designerViewportGestureRef.current === "zoom") {
+        designerViewportGestureRef.current = "none";
+      }
+    }, DESIGNER_VIEWPORT_WHEEL_GESTURE_MS);
+  }, [designerMode]);
+
+  useEffect(() => {
+    if (!designerMode) return;
+    if (dragState?.type === "pan") {
+      clearDesignerViewportWheelGesture();
+      designerViewportGestureRef.current = "pan";
+      return;
+    }
+    if (designerViewportGestureRef.current === "pan") {
+      designerViewportGestureRef.current = "none";
+    }
+  }, [designerMode, dragState?.type, clearDesignerViewportWheelGesture]);
+
+  useEffect(() => {
+    return () => {
+      if (designerViewportWheelGestureTimerRef.current != null) {
+        window.clearTimeout(designerViewportWheelGestureTimerRef.current);
+      }
+    };
+  }, []);
 
   /** Gesto de guía activo (refs síncronos; no depender de que React haya hecho commit de dragState). */
   type GuideGestureRefState =
@@ -8927,6 +9114,7 @@ export function FreehandStudioCanvas({
   const [brushHardnessPct, setBrushHardnessPct] = useState(78);
   const [brushOpacityPct, setBrushOpacityPct] = useState(100);
   const [brushFlowPct, setBrushFlowPct] = useState(72);
+  const [brushKind, setBrushKind] = useState<BrushKind>("round");
   /** Si true, el pincel usa el color de relleno de la paleta; si false, `brushCustomHex`. */
   const [brushColorFromFill, setBrushColorFromFill] = useState(true);
   const [brushCustomHex, setBrushCustomHex] = useState("#000000");
@@ -9156,12 +9344,58 @@ export function FreehandStudioCanvas({
     photoEllipseMarqueeSelection.length,
   ]);
 
-  /** Modal Layer Styles (PhotoRoom): borrador + preview en lienzo hasta OK. */
-  const [layerStylesUi, setLayerStylesUi] = useState<{
+  /** Modal unificado Capa de efecto (Tono / Look / Overlays). */
+  type EffectLayerSource =
+    | {
+        kind: "image";
+        baseSnapshotUrl: string;
+        openSrc: string;
+        openToneMeta: PhotoImageAdjustments | null;
+        selection: PhotoAdjSelection | null;
+      }
+    | {
+        kind: "regular";
+        openLayerEffects: LayerEffects | null;
+      }
+    | {
+        kind: "effectLayer";
+        openToneMeta: AdjustmentLayerSettings;
+        openLayerEffects: LayerEffects | null;
+      };
+
+  type EffectLayerUi = {
     open: boolean;
     targetId: string | null;
-    draft: LayerEffects | null;
-  }>({ open: false, targetId: null, draft: null });
+    tab: EffectLayerTab;
+    source: EffectLayerSource;
+    brightness: number;
+    contrast: number;
+    saturation: number;
+    levels: PhotoImageAdjustments["levels"];
+    stylesDraft: LayerEffects;
+    histogram: number[] | null;
+    showApplyTargetChoice?: boolean;
+    applyMode?: EffectLayerApplyMode;
+  };
+
+  const closedEffectLayerUi = (): EffectLayerUi => ({
+    open: false,
+    targetId: null,
+    tab: "tone",
+    source: { kind: "regular", openLayerEffects: null },
+    brightness: 0,
+    contrast: 0,
+    saturation: 0,
+    levels: { ...defaultAdjustmentLayerSettings().levels },
+    stylesDraft: defaultLayerEffects(),
+    histogram: null,
+  });
+
+  const [effectLayerUi, setEffectLayerUi] = useState<EffectLayerUi>(closedEffectLayerUi);
+  const effectLayerUiRef = useRef(effectLayerUi);
+  effectLayerUiRef.current = effectLayerUi;
+  const photoAdjustmentsApplyGenRef = useRef(0);
+  const photoAdjustmentsScrubApplyRef = useRef<Promise<void> | null>(null);
   /** Edición de máscara de capa con el pincel (id de la capa raster). */
   const [maskEditObjectId, setMaskEditObjectId] = useState<string | null>(null);
   const maskEditObjectIdRef = useRef<string | null>(null);
@@ -9173,6 +9407,9 @@ export function FreehandStudioCanvas({
   const enterLayerMaskEdit = useCallback(
     (layerId: string) => {
       setMaskEditObjectId(layerId);
+      setFillColor("#000000");
+      setStrokeColor("none");
+      setBrushColorFromFill(true);
       if (studioCaps.toolBrush) setActiveTool("brush");
     },
     [studioCaps.toolBrush],
@@ -9189,30 +9426,6 @@ export function FreehandStudioCanvas({
   /** Última aplicación async durante scrub numérico (panel degradado). */
   const photoRasterGradientScrubApplyRef = useRef<Promise<void> | null>(null);
 
-  /** Ajustes: sesión activa mientras el modal está abierto (capa imagen legacy o capa de ajuste). */
-  type PhotoAdjustmentsSession =
-    | (PhotoImageAdjustments & {
-        mode: "image";
-        objectId: string;
-        openSrc: string;
-        openMeta: PhotoImageAdjustments | null;
-      })
-    | ({
-        mode: "adjustmentLayer";
-        objectId: string;
-        brightness: number;
-        contrast: number;
-        saturation: number;
-        levels: PhotoImageAdjustments["levels"];
-        openMeta: AdjustmentLayerObject["adjustment"];
-      });
-  const [photoAdjustmentsSession, setPhotoAdjustmentsSession] = useState<PhotoAdjustmentsSession | null>(null);
-  const photoAdjustmentsSessionRef = useRef(photoAdjustmentsSession);
-  photoAdjustmentsSessionRef.current = photoAdjustmentsSession;
-  const photoAdjustmentsApplyGenRef = useRef(0);
-  const photoAdjustmentsScrubApplyRef = useRef<Promise<void> | null>(null);
-  /** Histograma de luminancia de la base (con selección), recalculado al abrir el modal. */
-  const [photoAdjustmentsHistogram, setPhotoAdjustmentsHistogram] = useState<number[] | null>(null);
 
   useEffect(() => {
     if (activeTool !== "photoGradient") {
@@ -9223,9 +9436,90 @@ export function FreehandStudioCanvas({
   }, [activeTool]);
 
   const previewLayerEffectsById = useMemo(() => {
-    if (!layerStylesUi.open || !layerStylesUi.targetId || !layerStylesUi.draft) return undefined;
-    return new Map<string, LayerEffects>([[layerStylesUi.targetId, layerStylesUi.draft]]);
-  }, [layerStylesUi.open, layerStylesUi.targetId, layerStylesUi.draft]);
+    if (!effectLayerUi.open || !effectLayerUi.targetId) return undefined;
+    if (effectLayerUi.applyMode !== "embedded") return undefined;
+    if (effectLayerUi.source.kind === "effectLayer") return undefined;
+    return new Map<string, LayerEffects>([[effectLayerUi.targetId, effectLayerUi.stylesDraft]]);
+  }, [
+    effectLayerUi.open,
+    effectLayerUi.targetId,
+    effectLayerUi.stylesDraft,
+    effectLayerUi.applyMode,
+    effectLayerUi.source.kind,
+  ]);
+
+  /** Previsualización en vivo: look/overlays (y tono) como capa de efecto sobre el stack inferior. */
+  const layerStylesAdjustmentPreview = useMemo(() => {
+    if (!effectLayerUi.open || !effectLayerUi.targetId) return null;
+    if (effectLayerUi.source.kind === "effectLayer") return null;
+    if (effectLayerUi.applyMode === "embedded") return null;
+
+    const tonePatch = {
+      brightness: effectLayerUi.brightness,
+      contrast: effectLayerUi.contrast,
+      saturation: effectLayerUi.saturation,
+      levels: { ...effectLayerUi.levels },
+    };
+    const toneActive = !isAdjustmentLayerSettingsNeutral(tonePatch);
+    const pf = effectLayerUi.stylesDraft.photoFilter;
+    const stylesForPreview =
+      pf && !pf.enabled && (pf.intensity > 0 || pf.grain > 0 || (pf.vignette ?? 0) > 0)
+        ? {
+            ...effectLayerUi.stylesDraft,
+            photoFilter: { ...pf, enabled: true },
+          }
+        : effectLayerUi.stylesDraft;
+    const fxActive = hasActiveLayerEffects(stylesForPreview);
+    if (!toneActive && !fxActive) return null;
+
+    const stack = filterRootStackObjects(objects);
+    const scope: EffectLayerScope =
+      effectLayerUi.applyMode === "belowSelection" ? "belowSelection" : "wholeStack";
+    const previewAdjId = "__layer-styles-preview__";
+    const ab = pickPrimaryArtboard(artboards, null);
+    const ar = ab ? artboardToRect(ab) : { x: 0, y: 0, w: 1920, h: 1080 };
+    const fakeAdj: AdjustmentLayerObject = {
+      ...defaultObj({ name: "", x: ar.x, y: ar.y, width: ar.w, height: ar.h }),
+      id: previewAdjId,
+      type: "adjustmentLayer",
+      adjustment: tonePatch,
+      layerEffects: stylesForPreview,
+      effectScope: scope,
+      visible: true,
+      fill: solidFill("none"),
+      stroke: "none",
+      strokeWidth: 0,
+    } as AdjustmentLayerObject;
+
+    const insertAt = insertIndexForEffectLayer(
+      stack.length,
+      scope,
+      selectedIndexInRootStack(stack, effectLayerUi.targetId),
+    );
+    const fakeStack = [...stack];
+    fakeStack.splice(insertAt, 0, fakeAdj);
+    const segments = buildLayerStackRenderSegments(fakeStack);
+    const previewSeg = segments.find(
+      (s) => s.kind === "filtered" && s.layer.id === previewAdjId,
+    );
+    if (!previewSeg || previewSeg.kind !== "filtered") return null;
+    const contentBounds = getGroupBounds(previewSeg.children);
+    const bounds = resolveEffectLayerFxBounds(fakeAdj, contentBounds, artboards);
+    const previewFilterId = `preview-${effectLayerUi.targetId}`;
+    return {
+      targetId: effectLayerUi.targetId,
+      previewFilterId,
+      children: previewSeg.children,
+      bounds,
+      effects: stylesForPreview,
+      tone: toneActive ? tonePatch : null,
+    };
+  }, [effectLayerUi, objects, artboards]);
+
+  const layerStylesPreviewChildIds = useMemo(() => {
+    if (!layerStylesAdjustmentPreview) return null;
+    return new Set(layerStylesAdjustmentPreview.children.map((c) => c.id));
+  }, [layerStylesAdjustmentPreview]);
   /** Sugerencias Brain: variantes para el objeto seleccionado (sin auto-aplicar). */
   const [brainSuggestionsTick, setBrainSuggestionsTick] = useState(0);
   const [brainManualTextKind, setBrainManualTextKind] = useState<BrainTextBlockKind | "">("");
@@ -9710,6 +10004,15 @@ export function FreehandStudioCanvas({
   const [showLayoutGuides, setShowLayoutGuides] = useState(true);
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportModalScope, setExportModalScope] = useState<"selection" | "full">("selection");
+  /** Bloquea hover del lienzo y eventos al grafo/sidebar mientras hay modales o menús del panel de capas. */
+  const studioLayerPointerBlocked =
+    effectLayerUi.open ||
+    layerBlendMenuOpen ||
+    showExportModal ||
+    !!layerMaskCtxMenu;
+  const studioLayerPointerBlockedRef = useRef(false);
+  studioLayerPointerBlockedRef.current = studioLayerPointerBlocked;
+
   const [toast, setToast] = useState<string | null>(null);
   const [textContentBusy, setTextContentBusy] = useState<"correct" | `translate:${TextContentTargetLanguage}` | null>(null);
   /** Combinar capas → raster (panel Propiedades). */
@@ -9864,6 +10167,7 @@ export function FreehandStudioCanvas({
   }, [objects]);
 
   const brushPaintRgb = useMemo(() => {
+    if (maskEditObjectIdRef.current) return { r: 0, g: 0, b: 0 };
     const hex = brushColorFromFill
       ? fillColor === "none"
         ? "#000000"
@@ -9872,7 +10176,11 @@ export function FreehandStudioCanvas({
         ? brushCustomHex
         : "#000000";
     return parseFillColorHexToRgb(hex);
-  }, [brushColorFromFill, fillColor, brushCustomHex]);
+  }, [brushColorFromFill, fillColor, brushCustomHex, maskEditObjectId]);
+  const effectiveBrushStamp = useMemo(
+    () => effectiveBrushStampParams(brushKind, brushHardnessPct, brushOpacityPct, brushFlowPct),
+    [brushKind, brushHardnessPct, brushOpacityPct, brushFlowPct],
+  );
   const cloneSourceRef = useRef(cloneSource);
   cloneSourceRef.current = cloneSource;
   const artboardsRef = useRef(artboards);
@@ -9934,6 +10242,17 @@ export function FreehandStudioCanvas({
   const selectionGestureProxySessionRef = useRef(0);
   const flushSelectionGeometryGestureRef = useRef<(() => void) | null>(null);
 
+  useEffect(() => {
+    if (!effectLayerUi.open) return;
+    dragStateRef.current = null;
+    setDragState(null);
+    selectionPointerTailRef.current = null;
+    if (selectionGestureRafRef.current != null) {
+      cancelAnimationFrame(selectionGestureRafRef.current);
+      selectionGestureRafRef.current = null;
+    }
+  }, [effectLayerUi.open]);
+
   /** Props de la página activa (Designer); se lee al cambiar `designerActivePageId` sin depender de la referencia del array. */
   const designerPagePropsRef = useRef({ objects: initialObjects, layoutGuides: initialLayoutGuides ?? [] });
   designerPagePropsRef.current = { objects: initialObjects, layoutGuides: initialLayoutGuides ?? [] };
@@ -9944,6 +10263,14 @@ export function FreehandStudioCanvas({
     (newObjects: FreehandObject[], newSel: Set<string>) => {
       const h = historyRef.current;
       const idx = historyIdxRef.current;
+      const sel = Array.from(newSel);
+      const current = h[idx];
+      if (
+        current &&
+        freehandHistoryEntriesEqual({ objects: current.objects, sel: current.sel }, { objects: newObjects, sel })
+      ) {
+        return;
+      }
       let designerSnap: unknown = undefined;
       if (designerHistoryBridge) {
         try {
@@ -9954,7 +10281,7 @@ export function FreehandStudioCanvas({
       }
       historyRef.current = [
         ...h.slice(0, idx + 1),
-        { objects: [...newObjects], sel: Array.from(newSel), designerSnap },
+        { objects: [...newObjects], sel, designerSnap },
       ];
       historyIdxRef.current = idx + 1;
     },
@@ -10020,7 +10347,14 @@ export function FreehandStudioCanvas({
 
   const undo = useCallback(() => {
     if (historyIdxRef.current <= 0) return;
-    historyIdxRef.current -= 1;
+    let idx = historyIdxRef.current - 1;
+    while (
+      idx > 0 &&
+      freehandHistoryEntriesEqual(historyRef.current[idx + 1]!, historyRef.current[idx]!)
+    ) {
+      idx -= 1;
+    }
+    historyIdxRef.current = idx;
     const entry = historyRef.current[historyIdxRef.current]!;
     if (entry.designerSnap != null && designerHistoryBridge) {
       designerHistoryBridge.restore(entry.designerSnap);
@@ -10505,23 +10839,28 @@ export function FreehandStudioCanvas({
   const selectedIdsKey = useMemo(() => Array.from(selectedIds).sort().join(","), [selectedIds]);
   const firstSelected = selectedObjects[0] ?? null;
   const singleSelected = selectedObjects.length === 1 ? selectedObjects[0] ?? null : null;
+  const isMaskBrushMode = !!(maskEditObjectId && activeTool === "brush");
 
   const propertiesMainTabOptions = useMemo((): Array<"color" | "appearance" | "info" | "text" | "transform"> => {
+    if (isMaskBrushMode) return [];
     const tabs: Array<"color" | "appearance" | "info" | "text" | "transform"> = ["color", "appearance"];
     tabs.push(firstSelected?.type === "text" ? "text" : "info");
     tabs.push("transform");
     return tabs;
-  }, [firstSelected?.type]);
+  }, [firstSelected?.type, isMaskBrushMode]);
 
   useEffect(() => {
-    if (!propertiesMainTabOptions.includes(propertiesMainTab)) {
-      setPropertiesMainTab(firstSelected?.type === "text" ? "text" : "color");
+    const isText =
+      firstSelected?.type === "text" || (textEditingId != null && objects.some((o) => o.id === textEditingId && o.type === "text"));
+    if (isText && !isMaskBrushMode) {
+      setPropertiesMainTab("text");
+      setPropertiesPanelCollapsed(false);
       return;
     }
-    if (firstSelected?.type === "text" && propertiesMainTab === "info") {
-      setPropertiesMainTab("text");
+    if (!propertiesMainTabOptions.includes(propertiesMainTab)) {
+      setPropertiesMainTab(firstSelected?.type === "text" ? "text" : "color");
     }
-  }, [propertiesMainTabOptions, propertiesMainTab, firstSelected?.type]);
+  }, [propertiesMainTabOptions, propertiesMainTab, firstSelected?.type, textEditingId, objects, isMaskBrushMode]);
 
   const hasPhotoMarqueeSelection =
     photoRectMarqueeSelection.length > 0 ||
@@ -12326,46 +12665,255 @@ export function FreehandStudioCanvas({
     [objects, layerPanelTargetId],
   );
 
-  const openLayerStylesModal = useCallback(
-    (explicitTarget?: FreehandObject) => {
-      if (!studioCaps.layerStyles) return;
+  const openEffectLayerModal = useCallback(
+    (
+      explicitTarget?: FreehandObject,
+      opts?: {
+        tab?: EffectLayerTab;
+        showApplyTargetChoice?: boolean;
+        applyMode?: EffectLayerApplyMode;
+      },
+    ) => {
+      const tab = opts?.tab ?? "tone";
       const target =
         explicitTarget ??
         (primarySelectedId ? objects.find((o) => o.id === primarySelectedId) : null) ??
         firstSelected;
-      if (!target || !isLayerStylesEligible(target)) {
-        setToast("Selecciona una imagen, bitmap o forma (rectángulo, elipse, trazado) para Layer Styles.");
-        window.setTimeout(() => setToast(null), 3200);
+      if (!target) return;
+
+      if (target.type === "adjustmentLayer") {
+        const adj = target as AdjustmentLayerObject;
+        const legacyTab =
+          tab !== "tone"
+            ? tab
+            : !isAdjustmentLayerSettingsNeutral(adj.adjustment)
+              ? "tone"
+              : !isAdjustmentLayerStylesNeutral(adj.layerEffects)
+                ? "look"
+                : "tone";
+        setEffectLayerUi({
+          open: true,
+          targetId: adj.id,
+          tab: legacyTab,
+          source: {
+            kind: "effectLayer",
+            openToneMeta: {
+              brightness: adj.adjustment.brightness,
+              contrast: adj.adjustment.contrast,
+              saturation: adj.adjustment.saturation,
+              levels: { ...adj.adjustment.levels },
+            },
+            openLayerEffects: adj.layerEffects
+              ? cloneLayerEffectsForEdit(adj.layerEffects)
+              : null,
+          },
+          brightness: adj.adjustment.brightness,
+          contrast: adj.adjustment.contrast,
+          saturation: adj.adjustment.saturation,
+          levels: { ...adj.adjustment.levels },
+          stylesDraft: cloneLayerEffectsForEdit(adj.layerEffects),
+          histogram: new Array<number>(256).fill(0),
+          showApplyTargetChoice: false,
+          applyMode: adj.effectScope === "belowSelection" ? "belowSelection" : "wholeStack",
+        });
         return;
       }
-      setLayerStylesUi({
-        open: true,
-        targetId: target.id,
-        draft: cloneLayerEffectsForEdit((target as FreehandObjectBase).layerEffects),
-      });
+
+      if (tab === "look" || tab === "overlays") {
+        if (!studioCaps.layerStyles) return;
+        if (!isLayerStylesEligible(target)) {
+          setToast(
+            "Selecciona una imagen, bitmap o forma (rectángulo, elipse, trazado) para efectos.",
+          );
+          window.setTimeout(() => setToast(null), 3200);
+          return;
+        }
+        const openFx = (target as FreehandObjectBase).layerEffects
+          ? cloneLayerEffectsForEdit((target as FreehandObjectBase).layerEffects)
+          : null;
+        setEffectLayerUi({
+          open: true,
+          targetId: target.id,
+          tab,
+          source: { kind: "regular", openLayerEffects: openFx },
+          brightness: 0,
+          contrast: 0,
+          saturation: 0,
+          levels: { ...defaultAdjustmentLayerSettings().levels },
+          stylesDraft: cloneLayerEffectsForEdit((target as FreehandObjectBase).layerEffects),
+          histogram: new Array<number>(256).fill(0),
+          showApplyTargetChoice: opts?.showApplyTargetChoice ?? !!designerMode,
+          applyMode: opts?.applyMode ?? "embedded",
+        });
+      }
     },
-    [studioCaps.layerStyles, primarySelectedId, objects, firstSelected],
+    [studioCaps.layerStyles, primarySelectedId, objects, firstSelected, designerMode],
   );
 
-  const commitLayerStylesModal = useCallback(() => {
-    const { targetId, draft } = layerStylesUi;
-    if (!targetId || !draft) return;
+  const openLayerStylesModal = useCallback(
+    (explicitTarget?: FreehandObject) => {
+      openEffectLayerModal(explicitTarget, { tab: "look" });
+    },
+    [openEffectLayerModal],
+  );
+
+  const setEffectLayerApplyMode = useCallback((mode: EffectLayerApplyMode) => {
+    setEffectLayerUi((s) => (s.open ? { ...s, applyMode: mode } : s));
+  }, []);
+
+  const commitEffectLayerModal = useCallback(async () => {
+    const ui = effectLayerUiRef.current;
+    if (!ui.open || !ui.targetId) return;
+    const { targetId, stylesDraft, applyMode, source } = ui;
+    const tonePatch = {
+      brightness: ui.brightness,
+      contrast: ui.contrast,
+      saturation: ui.saturation,
+      levels: { ...ui.levels },
+    };
+
+    try {
+      await photoAdjustmentsScrubApplyRef.current;
+    } catch {
+      /* noop */
+    }
+
+    if (source.kind === "effectLayer") {
+      setObjects((prev) => {
+        const next = prev.map((o) =>
+          o.id === targetId && o.type === "adjustmentLayer"
+            ? ({
+                ...o,
+                adjustment: tonePatch,
+                layerEffects: stylesDraft,
+              } as AdjustmentLayerObject)
+            : o,
+        );
+        pushHistory(next, new Set([targetId]));
+        return next;
+      });
+      setEffectLayerUi(closedEffectLayerUi());
+      return;
+    }
+
+    if (applyMode !== "embedded" && designerMode) {
+      const newAdjId = uid();
+      const scope: EffectLayerScope =
+        applyMode === "belowSelection" ? "belowSelection" : "wholeStack";
+      setObjects((prev) => {
+        const next = prev.map((o) => {
+          if (o.id !== targetId) return o;
+          const base = { ...o } as FreehandObjectBase;
+          if (source.kind === "regular") {
+            if (source.openLayerEffects && hasActiveLayerEffects(source.openLayerEffects)) {
+              base.layerEffects = source.openLayerEffects;
+            } else {
+              delete base.layerEffects;
+            }
+          } else if (source.kind === "image") {
+            const rest = { ...o } as ImageObject;
+            if (source.openToneMeta) rest.photoImageAdjustments = source.openToneMeta;
+            else delete rest.photoImageAdjustments;
+            return { ...rest, src: source.openSrc } as FreehandObject;
+          }
+          return base as FreehandObject;
+        });
+        const ab = pickPrimaryArtboard(artboardsRef.current, null);
+        const r = ab ? artboardToRect(ab) : { x: 0, y: 0, w: 1920, h: 1080 };
+        const adj: AdjustmentLayerObject = {
+          ...defaultObj({
+            name: adjustmentLayerDisplayName({ adjustment: tonePatch, layerEffects: stylesDraft }),
+            x: r.x,
+            y: r.y,
+            width: r.w,
+            height: r.h,
+          }),
+          id: newAdjId,
+          type: "adjustmentLayer",
+          adjustment: tonePatch,
+          layerEffects: hasActiveLayerEffects(stylesDraft) ? stylesDraft : undefined,
+          effectScope: scope,
+          fill: solidFill("none"),
+          stroke: "none",
+          strokeWidth: 0,
+        };
+        const insertAt = insertIndexForEffectLayer(
+          next.length,
+          scope,
+          selectedIndexInRootStack(next, targetId),
+        );
+        next.splice(insertAt, 0, adj);
+        pushHistory(next, new Set([newAdjId]));
+        return next;
+      });
+      setSelectedIds(new Set([newAdjId]));
+      setPrimarySelectedId(newAdjId);
+      setEffectLayerUi(closedEffectLayerUi());
+      return;
+    }
+
+    if (source.kind === "image") {
+      setObjects((prev) => {
+        let next = prev;
+        if (hasActiveLayerEffects(stylesDraft)) {
+          next = prev.map((o) =>
+            o.id === targetId ? ({ ...o, layerEffects: stylesDraft } as FreehandObject) : o,
+          );
+        }
+        const cur = next.find((o) => o.id === targetId) as ImageObject | undefined;
+        if (cur && cur.src !== source.openSrc) pushHistory(next, new Set([targetId]));
+        else if (hasActiveLayerEffects(stylesDraft)) pushHistory(next, new Set([targetId]));
+        return next;
+      });
+      setEffectLayerUi(closedEffectLayerUi());
+      return;
+    }
+
     setObjects((prev) => {
       const next = prev.map((o) =>
-        o.id === targetId ? ({ ...o, layerEffects: draft } as FreehandObject) : o,
+        o.id === targetId ? ({ ...o, layerEffects: stylesDraft } as FreehandObject) : o,
       );
       pushHistory(next, new Set([targetId]));
       return next;
     });
-    setLayerStylesUi({ open: false, targetId: null, draft: null });
+    setEffectLayerUi(closedEffectLayerUi());
     const api = designerBrainTelemetryRef.current;
     if (photoRoomStudioEmbedRef.current && api?.nodeType === "PHOTOROOM") {
       trackPhotoroomStyleApplied(api.track, { canvasObjectId: targetId, layerId: targetId });
     }
-  }, [layerStylesUi, pushHistory]);
+  }, [pushHistory, designerMode]);
 
-  const cancelLayerStylesModal = useCallback(() => {
-    setLayerStylesUi({ open: false, targetId: null, draft: null });
+  const cancelEffectLayerModal = useCallback(() => {
+    const ui = effectLayerUiRef.current;
+    ++photoAdjustmentsApplyGenRef.current;
+    if (ui.open && ui.targetId) {
+      const oid = ui.targetId;
+      const source = ui.source;
+      if (source.kind === "effectLayer") {
+        setObjects((prev) =>
+          prev.map((obj) =>
+            obj.id === oid && obj.type === "adjustmentLayer"
+              ? ({
+                  ...obj,
+                  adjustment: { ...source.openToneMeta, levels: { ...source.openToneMeta.levels } },
+                  layerEffects: source.openLayerEffects ?? undefined,
+                } as AdjustmentLayerObject)
+              : obj,
+          ),
+        );
+      } else if (source.kind === "image") {
+        setObjects((prev) =>
+          prev.map((obj) => {
+            if (obj.id !== oid || obj.type !== "image") return obj;
+            const rest = { ...obj } as ImageObject & { photoImageAdjustments?: unknown };
+            if (source.openToneMeta) rest.photoImageAdjustments = source.openToneMeta;
+            else delete rest.photoImageAdjustments;
+            return { ...rest, src: source.openSrc } as ImageObject;
+          }),
+        );
+      }
+    }
+    setEffectLayerUi(closedEffectLayerUi());
   }, []);
 
   const addLayerMaskToSelection = useCallback(
@@ -14162,6 +14710,67 @@ export function FreehandStudioCanvas({
     void applyPhotoRasterGradientSession(photoGradientSessionRef.current, {});
   }, [strokeColor, fillColor, activeTool, applyPhotoRasterGradientSession]);
 
+  /** Sesión interna para preview en vivo de tono sobre imagen / capa de efecto. */
+  type PhotoAdjustmentsSession =
+    | (PhotoImageAdjustments & {
+        mode: "image";
+        objectId: string;
+        openSrc: string;
+        openMeta: PhotoImageAdjustments | null;
+        showApplyTargetChoice?: boolean;
+        applyMode?: EffectLayerApplyMode;
+      })
+    | {
+        mode: "adjustmentLayer";
+        objectId: string;
+        brightness: number;
+        contrast: number;
+        saturation: number;
+        levels: PhotoImageAdjustments["levels"];
+        openMeta: AdjustmentLayerSettings;
+        showApplyTargetChoice?: boolean;
+        applyMode?: EffectLayerApplyMode;
+      };
+
+  const effectLayerUiToPhotoSession = (ui: EffectLayerUi): PhotoAdjustmentsSession | null => {
+    if (!ui.open || !ui.targetId) return null;
+    if (ui.source.kind === "effectLayer") {
+      return {
+        mode: "adjustmentLayer",
+        objectId: ui.targetId,
+        brightness: ui.brightness,
+        contrast: ui.contrast,
+        saturation: ui.saturation,
+        levels: { ...ui.levels },
+        openMeta: {
+          brightness: ui.source.openToneMeta.brightness,
+          contrast: ui.source.openToneMeta.contrast,
+          saturation: ui.source.openToneMeta.saturation,
+          levels: { ...ui.source.openToneMeta.levels },
+        },
+        showApplyTargetChoice: ui.showApplyTargetChoice,
+        applyMode: ui.applyMode,
+      };
+    }
+    if (ui.source.kind === "image") {
+      return {
+        mode: "image",
+        objectId: ui.targetId,
+        baseSnapshotUrl: ui.source.baseSnapshotUrl,
+        brightness: ui.brightness,
+        contrast: ui.contrast,
+        saturation: ui.saturation,
+        levels: { ...ui.levels },
+        selection: ui.source.selection,
+        openSrc: ui.source.openSrc,
+        openMeta: ui.source.openToneMeta,
+        showApplyTargetChoice: ui.showApplyTargetChoice,
+        applyMode: ui.applyMode,
+      };
+    }
+    return null;
+  };
+
   /** PhotoRoom: rehornea los ajustes de imagen desde la instantánea base hacia `ImageObject.src`. */
   const applyPhotoImageAdjustmentsSession = useCallback(
     async (sess: PhotoAdjustmentsSession, opts?: { recordHistory?: boolean }) => {
@@ -14250,7 +14859,10 @@ export function FreehandStudioCanvas({
 
   /** PhotoRoom: abre el modal de ajustes capturando base, selección activa e histograma. */
   const openPhotoImageAdjustments = useCallback(
-    async (obj: ImageObject) => {
+    async (
+      obj: ImageObject,
+      opts?: { showApplyTargetChoice?: boolean; applyMode?: EffectLayerApplyMode },
+    ) => {
       if (obj.type !== "image" || obj.photoRoomInputSlot) return;
       const meta = obj.photoImageAdjustments ?? null;
       const baseSnapshotUrl = meta?.baseSnapshotUrl ?? obj.src;
@@ -14278,194 +14890,126 @@ export function FreehandStudioCanvas({
         /* mantener histograma vacío */
       }
       const base = meta ?? defaultPhotoImageAdjustments(baseSnapshotUrl);
-      const session: PhotoAdjustmentsSession = {
-        mode: "image",
-        baseSnapshotUrl,
+      ++photoAdjustmentsApplyGenRef.current;
+      setEffectLayerUi({
+        open: true,
+        targetId: obj.id,
+        tab: "tone",
+        source: {
+          kind: "image",
+          baseSnapshotUrl,
+          openSrc: obj.src,
+          openToneMeta: meta,
+          selection,
+        },
         brightness: base.brightness,
         contrast: base.contrast,
         saturation: base.saturation,
         levels: { ...base.levels },
-        selection,
-        objectId: obj.id,
-        openSrc: obj.src,
-        openMeta: meta,
-      };
-      ++photoAdjustmentsApplyGenRef.current;
-      setPhotoAdjustmentsHistogram(histogram);
-      setPhotoAdjustmentsSession(session);
-      photoAdjustmentsSessionRef.current = session;
+        stylesDraft: defaultLayerEffects(),
+        histogram,
+        showApplyTargetChoice: opts?.showApplyTargetChoice ?? false,
+        applyMode: opts?.applyMode ?? "embedded",
+      });
     },
     [],
   );
 
-  const openAdjustmentLayerEditor = useCallback((adj: AdjustmentLayerObject) => {
-    const session: PhotoAdjustmentsSession = {
-      mode: "adjustmentLayer",
-      objectId: adj.id,
-      brightness: adj.adjustment.brightness,
-      contrast: adj.adjustment.contrast,
-      saturation: adj.adjustment.saturation,
-      levels: { ...adj.adjustment.levels },
-      openMeta: {
-        brightness: adj.adjustment.brightness,
-        contrast: adj.adjustment.contrast,
-        saturation: adj.adjustment.saturation,
-        levels: { ...adj.adjustment.levels },
+  const openAdjustmentLayerEditor = useCallback(
+    (adj: AdjustmentLayerObject) => {
+      openEffectLayerModal(adj, { tab: "tone" });
+    },
+    [openEffectLayerModal],
+  );
+
+  const updateEffectLayerTone = useCallback(
+    (
+      values: {
+        brightness: number;
+        contrast: number;
+        saturation: number;
+        levels: PhotoImageAdjustments["levels"];
       },
-    };
-    ++photoAdjustmentsApplyGenRef.current;
-    setPhotoAdjustmentsHistogram(new Array<number>(256).fill(0));
-    setPhotoAdjustmentsSession(session);
-    photoAdjustmentsSessionRef.current = session;
-  }, []);
+      recordHistory: boolean,
+    ) => {
+      setEffectLayerUi((ui) => {
+        if (!ui.open) return ui;
+        const next: EffectLayerUi = {
+          ...ui,
+          brightness: values.brightness,
+          contrast: values.contrast,
+          saturation: values.saturation,
+          levels: { ...values.levels },
+        };
+        effectLayerUiRef.current = next;
+        const sess = effectLayerUiToPhotoSession(next);
+        if (sess) {
+          const p = applyPhotoImageAdjustmentsSession(sess, { recordHistory });
+          photoAdjustmentsScrubApplyRef.current = p;
+        }
+        return next;
+      });
+    },
+    [applyPhotoImageAdjustmentsSession],
+  );
+
+  const resetEffectLayerModal = useCallback(() => {
+    setEffectLayerUi((ui) => {
+      if (!ui.open) return ui;
+      if (ui.tab === "tone") {
+        const neutralLevels =
+          ui.source.kind === "image"
+            ? defaultPhotoImageAdjustments(ui.source.baseSnapshotUrl).levels
+            : defaultAdjustmentLayerSettings().levels;
+        const next: EffectLayerUi = {
+          ...ui,
+          brightness: 0,
+          contrast: 0,
+          saturation: 0,
+          levels: { ...neutralLevels },
+        };
+        effectLayerUiRef.current = next;
+        const sess = effectLayerUiToPhotoSession(next);
+        if (sess) {
+          const p = applyPhotoImageAdjustmentsSession(sess, { recordHistory: false });
+          photoAdjustmentsScrubApplyRef.current = p;
+        }
+        return next;
+      }
+      return { ...ui, stylesDraft: defaultLayerEffects() };
+    });
+  }, [applyPhotoImageAdjustmentsSession]);
 
   const createAdjustmentLayer = useCallback(() => {
-    const selId =
-      primarySelectedId ?? (selectedIds.size === 1 ? Array.from(selectedIds)[0] : null);
     const ab = pickPrimaryArtboard(artboards, null);
     const r = ab ? artboardToRect(ab) : { x: 0, y: 0, w: 1920, h: 1080 };
+    const newId = uid();
     const adj: AdjustmentLayerObject = {
       ...defaultObj({
-        name: adjustmentLayerDisplayName("levels"),
+        name: adjustmentLayerDisplayName({ adjustment: defaultAdjustmentLayerSettings() }),
         x: r.x,
         y: r.y,
         width: r.w,
         height: r.h,
       }),
+      id: newId,
       type: "adjustmentLayer",
-      adjustmentKind: "levels",
       adjustment: defaultAdjustmentLayerSettings(),
+      effectScope: "wholeStack",
       fill: solidFill("none"),
       stroke: "none",
       strokeWidth: 0,
     };
     setObjects((prev) => {
-      const insertAfter = selId ? prev.findIndex((o) => o.id === selId) : prev.length - 1;
-      const idx = Math.max(-1, insertAfter);
       const next = [...prev];
-      next.splice(idx + 1, 0, adj);
-      pushHistory(next, new Set([adj.id]));
+      next.splice(next.length, 0, adj);
+      pushHistory(next, new Set([newId]));
       return next;
     });
-    setSelectedIds(new Set([adj.id]));
-    setPrimarySelectedId(adj.id);
+    setSelectedIds(new Set([newId]));
+    setPrimarySelectedId(newId);
     openAdjustmentLayerEditor(adj);
-  }, [artboards, openAdjustmentLayerEditor, primarySelectedId, pushHistory, selectedIds]);
-
-  /** Aplica cambios en vivo del modal (sin registrar historial hasta aceptar). */
-  const updatePhotoImageAdjustments = useCallback(
-    (values: {
-      brightness: number;
-      contrast: number;
-      saturation: number;
-      levels: PhotoImageAdjustments["levels"];
-    }) => {
-      const sess = photoAdjustmentsSessionRef.current;
-      if (!sess) return;
-      const merged: PhotoAdjustmentsSession =
-        sess.mode === "adjustmentLayer"
-          ? {
-              ...sess,
-              brightness: values.brightness,
-              contrast: values.contrast,
-              saturation: values.saturation,
-              levels: { ...values.levels },
-            }
-          : {
-              ...sess,
-              brightness: values.brightness,
-              contrast: values.contrast,
-              saturation: values.saturation,
-              levels: { ...values.levels },
-            };
-      setPhotoAdjustmentsSession(merged);
-      photoAdjustmentsSessionRef.current = merged;
-      const p = applyPhotoImageAdjustmentsSession(merged, { recordHistory: false });
-      photoAdjustmentsScrubApplyRef.current = p;
-    },
-    [applyPhotoImageAdjustmentsSession],
-  );
-
-  const resetPhotoImageAdjustmentsModal = useCallback(() => {
-    const sess = photoAdjustmentsSessionRef.current;
-    if (!sess) return;
-    const neutralLevels = defaultAdjustmentLayerSettings().levels;
-    const merged: PhotoAdjustmentsSession =
-      sess.mode === "adjustmentLayer"
-        ? {
-            ...sess,
-            brightness: 0,
-            contrast: 0,
-            saturation: 0,
-            levels: { ...neutralLevels },
-          }
-        : {
-            ...sess,
-            brightness: 0,
-            contrast: 0,
-            saturation: 0,
-            levels: { ...defaultPhotoImageAdjustments(sess.baseSnapshotUrl).levels },
-          };
-    setPhotoAdjustmentsSession(merged);
-    photoAdjustmentsSessionRef.current = merged;
-    const p = applyPhotoImageAdjustmentsSession(merged, { recordHistory: false });
-    photoAdjustmentsScrubApplyRef.current = p;
-  }, [applyPhotoImageAdjustmentsSession]);
-
-  const cancelPhotoImageAdjustments = useCallback(() => {
-    const sess = photoAdjustmentsSessionRef.current;
-    ++photoAdjustmentsApplyGenRef.current;
-    if (sess) {
-      const oid = sess.objectId;
-      if (sess.mode === "adjustmentLayer") {
-        setObjects((prev) =>
-          prev.map((obj) =>
-            obj.id === oid && obj.type === "adjustmentLayer"
-              ? ({ ...obj, adjustment: { ...sess.openMeta, levels: { ...sess.openMeta.levels } } } as AdjustmentLayerObject)
-              : obj,
-          ),
-        );
-      } else {
-        setObjects((prev) =>
-          prev.map((obj) => {
-            if (obj.id !== oid || obj.type !== "image") return obj;
-            const rest = { ...obj } as ImageObject & { photoImageAdjustments?: unknown };
-            if (sess.openMeta) rest.photoImageAdjustments = sess.openMeta;
-            else delete rest.photoImageAdjustments;
-            return { ...rest, src: sess.openSrc } as ImageObject;
-          }),
-        );
-      }
-    }
-    setPhotoAdjustmentsSession(null);
-    photoAdjustmentsSessionRef.current = null;
-    setPhotoAdjustmentsHistogram(null);
-  }, []);
-
-  const commitPhotoImageAdjustments = useCallback(async () => {
-    const sess = photoAdjustmentsSessionRef.current;
-    try {
-      await photoAdjustmentsScrubApplyRef.current;
-    } catch {
-      /* noop */
-    }
-    if (sess) {
-      const oid = sess.objectId;
-      setObjects((prev) => {
-        if (sess.mode === "adjustmentLayer") {
-          pushHistory(prev, new Set([oid]));
-          return prev;
-        }
-        const cur = prev.find((o) => o.id === oid) as ImageObject | undefined;
-        if (cur && cur.src !== sess.openSrc) pushHistory(prev, new Set([oid]));
-        return prev;
-      });
-    }
-    ++photoAdjustmentsApplyGenRef.current;
-    setPhotoAdjustmentsSession(null);
-    photoAdjustmentsSessionRef.current = null;
-    setPhotoAdjustmentsHistogram(null);
-  }, [pushHistory]);
+  }, [artboards, openAdjustmentLayerEditor, pushHistory]);
 
   useEffect(() => {
     if (dragState?.type === "brushPaint" && dragState.brushLastPixel != null) {
@@ -17850,9 +18394,13 @@ export function FreehandStudioCanvas({
     if (_fhTgt?.closest?.("[data-fh-text-editor]")) {
       return;
     }
+    if (_fhTgt?.closest?.("[data-foldder-effect-layer-panel]")) {
+      return;
+    }
 
     // Pan: middle click, space+drag, or hand tool
     if (e.button === 1 || spaceHeld || (activeTool === "handTool" && e.button === 0)) {
+      if (designerMode && designerViewportGestureRef.current === "zoom") return;
       setDragState({ type: "pan", startX: e.clientX, startY: e.clientY, svpX: viewport.x, svpY: viewport.y });
       return;
     }
@@ -18304,9 +18852,7 @@ export function FreehandStudioCanvas({
       e.preventDefault();
       setSelectedPoints(new Map());
       const rgb = brushPaintRgb;
-      const h01 = brushHardnessPct / 100;
-      const o01 = brushOpacityPct / 100;
-      const f01 = brushFlowPct / 100;
+      const { hardness01: h01, opacity01: o01, flow01: f01, stepScale: brushStepScale } = effectiveBrushStamp;
       if (studioCaps.layerMask && maskEditObjectIdRef.current) {
         const mo = objects.find((x) => x.id === maskEditObjectIdRef.current);
         if (
@@ -18330,7 +18876,7 @@ export function FreehandStudioCanvas({
               ctx,
               raster: mo,
             };
-            paintMaskBrushStrokeSegment(ctx, lp, lp, radiusPx, h01, o01, f01, rgb);
+            paintMaskBrushStrokeSegment(ctx, lp, lp, radiusPx, h01, o01, f01, rgb, brushStepScale);
             const nextBrushDrag = {
               type: "brushPaint" as const,
               startX: e.clientX,
@@ -18670,7 +19216,8 @@ export function FreehandStudioCanvas({
         window.setTimeout(() => setToast(null), 2600);
         return;
       }
-      const newObj = createTextOnPathObjectForGuide(hitPath, "", creationTextTypography, solidFill(fillColor), objects.length + 1);
+      const textFillHex = resolveTextCreationFillHex(fillColor, strokeColor, strokeWidth);
+      const newObj = createTextOnPathObjectForGuide(hitPath, "", creationTextTypography, solidFill(textFillHex), objects.length + 1);
       const next = [...objects.filter((o) => o.id !== hitPath.id), newObj];
       const ns = new Set([newObj.id]);
       setObjects(next);
@@ -19683,6 +20230,7 @@ export function FreehandStudioCanvas({
       cloneSource, setToast, studioCaps, transformHandlesArmed, selectionRotationPivots]);
 
   const flushSelectionGeometryGesture = useCallback(() => {
+    if (studioLayerPointerBlockedRef.current) return;
     const dragState = dragStateRef.current;
     const tail = selectionPointerTailRef.current;
     if (!dragState || !tail) return;
@@ -20351,6 +20899,7 @@ export function FreehandStudioCanvas({
 
 
   const handleMouseMove = useCallback((e: ReactMouseEvent) => {
+    if (studioLayerPointerBlockedRef.current) return;
     /** Ref sincrónico; el state de React puede no haber hecho commit tras mousedown/setDragState. */
     const dragState = dragStateRef.current;
     const prPending = photoRectMarqueePendingRef.current;
@@ -20889,9 +21438,7 @@ export function FreehandStudioCanvas({
       const prevPixel = dragState.brushLastPixel;
       if (!s) return;
       const pos = screenToCanvas(e.clientX, e.clientY);
-      const h01 = brushHardnessPct / 100;
-      const o01 = brushOpacityPct / 100;
-      const f01 = brushFlowPct / 100;
+      const { hardness01: h01, opacity01: o01, flow01: f01, stepScale: brushStepScale } = effectiveBrushStamp;
       if (s.cloneSourcePixel != null && s.cloneStrokeOriginPixel != null) {
         let session: BrushRasterSession = s;
         let prevAdj = prevPixel;
@@ -20939,9 +21486,9 @@ export function FreehandStudioCanvas({
       const radiusPx = brushRadiusInImagePixels(brushSize, s.canvas.width, rast.width);
       const rgb = brushPaintRgb;
       if (s.target === "mask") {
-        paintMaskBrushStrokeSegment(s.ctx, prevPixel, cur, radiusPx, h01, o01, f01, rgb);
+        paintMaskBrushStrokeSegment(s.ctx, prevPixel, cur, radiusPx, h01, o01, f01, rgb, brushStepScale);
       } else {
-        paintBrushStrokeSegment(s.ctx, prevPixel, cur, radiusPx, h01, o01, f01, rgb);
+        paintBrushStrokeSegment(s.ctx, prevPixel, cur, radiusPx, h01, o01, f01, rgb, brushStepScale);
       }
       const nextDrag = { ...dragState, brushLastPixel: cur };
       dragStateRef.current = nextDrag;
@@ -21363,6 +21910,10 @@ export function FreehandStudioCanvas({
   ]);
 
   const handleMouseUp = useCallback((e: ReactMouseEvent) => {
+    const upTgt = e.target as HTMLElement | null;
+    if (upTgt?.closest?.("[data-foldder-effect-layer-panel]")) {
+      return;
+    }
     const dsUp = dragStateRef.current;
     if (guideGestureRef.current || dsUp?.type === "guidePull" || dsUp?.type === "guideMove") {
       finishGuideGesture(e.clientX, e.clientY);
@@ -21856,6 +22407,7 @@ export function FreehandStudioCanvas({
       const dragLen = Math.hypot(dx, dy);
       const pointClick = dragLen * viewport.zoom < 6;
       if (pointClick) {
+        const textFillHex = resolveTextCreationFillHex(fillColor, strokeColor, strokeWidth);
         const newObj = {
           ...defaultObj({ name: `Text ${objects.length + 1}` }),
           type: "text" as const,
@@ -21879,7 +22431,7 @@ export function FreehandStudioCanvas({
           fontVariantCaps: tc.fontVariantCaps,
           textUnderline: tc.textUnderline,
           textStrikethrough: tc.textStrikethrough,
-          fill: solidFill(fillColor),
+          fill: solidFill(textFillHex),
           stroke: "none",
           strokeWidth: 0,
           strokePosition: "over",
@@ -21897,6 +22449,7 @@ export function FreehandStudioCanvas({
       } else {
         const x = Math.min(o.x, c.x), y = Math.min(o.y, c.y);
         const w = Math.max(Math.abs(c.x - o.x), 40), h = Math.max(Math.abs(c.y - o.y), 32);
+        const textFillHex = resolveTextCreationFillHex(fillColor, strokeColor, strokeWidth);
         const newObj = {
           ...defaultObj({ name: `Text ${objects.length + 1}` }),
           type: "text" as const,
@@ -21919,7 +22472,7 @@ export function FreehandStudioCanvas({
           fontVariantCaps: tc.fontVariantCaps,
           textUnderline: tc.textUnderline,
           textStrikethrough: tc.textStrikethrough,
-          fill: solidFill(fillColor),
+          fill: solidFill(textFillHex),
           stroke: "none",
           strokeWidth: 0,
           strokePosition: "over",
@@ -21968,7 +22521,7 @@ export function FreehandStudioCanvas({
         fontVariantCaps: tc.fontVariantCaps,
         textUnderline: tc.textUnderline,
         textStrikethrough: tc.textStrikethrough,
-        fill: solidFill("#000000"),
+        fill: solidFill(resolveTextCreationFillHex(fillColor, strokeColor, strokeWidth)),
         stroke: "none",
         strokeWidth: 0,
         strokePosition: "over",
@@ -22199,6 +22752,7 @@ export function FreehandStudioCanvas({
 
   const clearCanvasHoverState = useCallback(() => {
     setHoverCanvasId(null);
+    setLayerHoverId(null);
     penCloseEndpointHoverRef.current = null;
     setPenCloseEndpointHover(null);
     scissorsCutHoverRef.current = null;
@@ -22210,6 +22764,11 @@ export function FreehandStudioCanvas({
     brushPreviewLastWorldRef.current = null;
     setBrushPreviewRings(null);
   }, [cancelBrushCursorOverlayRaf]);
+
+  useEffect(() => {
+    if (!studioLayerPointerBlocked) return;
+    clearCanvasHoverState();
+  }, [studioLayerPointerBlocked, clearCanvasHoverState]);
 
   const cancelStudioTouchGesture = useCallback(() => {
     dragStateRef.current = null;
@@ -22234,23 +22793,35 @@ export function FreehandStudioCanvas({
         return;
       }
       if (
+        designerMode &&
+        (dragStateRef.current?.type === "pan" || designerViewportGestureRef.current === "pan")
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      if (
         (activeTool === "brush" || activeTool === "cloneStamp") &&
         e.ctrlKey &&
         !e.shiftKey &&
         !e.altKey
       ) {
         e.preventDefault();
+        const factor = wheelBrushSizeFactorFromDelta(e.deltaY, e.deltaMode);
         setBrushSize((s) => {
-          const factor = e.deltaY < 0 ? 1.08 : 1 / 1.08;
           const next = Math.round(s * factor);
           return clamp(next, 1, 400);
         });
+        if (designerMode) {
+          armDesignerViewportWheelGesture();
+          e.stopPropagation();
+        }
         return;
       }
       e.preventDefault();
       const r = containerRef.current?.getBoundingClientRect();
       if (!r) return;
-      const factor = e.deltaY < 0 ? 1.08 : 1 / 1.08;
+      const factor = wheelZoomFactorFromDelta(e.deltaY, e.deltaMode);
       const mx = e.clientX - r.left,
         my = e.clientY - r.top;
       setViewport((v) => {
@@ -22258,8 +22829,12 @@ export function FreehandStudioCanvas({
         const ratio = nz / v.zoom;
         return { zoom: nz, x: mx - (mx - v.x) * ratio, y: my - (my - v.y) * ratio };
       });
+      if (designerMode) {
+        armDesignerViewportWheelGesture();
+        e.stopPropagation();
+      }
     },
-    [activeTool],
+    [activeTool, designerMode, armDesignerViewportWheelGesture],
   );
 
   const handleContextMenu = useCallback((e: ReactMouseEvent) => {
@@ -22832,18 +23407,45 @@ export function FreehandStudioCanvas({
 
   const gradientDefObjects = useMemo(() => flattenObjectsForGradientDefs(objects), [objects]);
   const clipObjects = useMemo(() => objects.filter((o) => o.isClipMask), [objects]);
-  const clippedGroups = useMemo(() => {
-    const map = new Map<string, FreehandObject[]>();
-    for (const o of objects) {
-      if (o.clipMaskId) {
-        const arr = map.get(o.clipMaskId) || [];
-        arr.push(o);
-        map.set(o.clipMaskId, arr);
-      }
+
+  /** Previsualización en vivo al editar una capa de efecto existente (sin tocar el estado hasta OK). */
+  const stackObjectsForRender = useMemo(() => {
+    if (
+      !effectLayerUi.open ||
+      effectLayerUi.source.kind !== "effectLayer" ||
+      !effectLayerUi.targetId
+    ) {
+      return objects;
     }
-    return map;
-  }, [objects]);
-  const layerStackRenderSegments = useMemo(() => buildLayerStackRenderSegments(objects), [objects]);
+    const tonePatch = {
+      brightness: effectLayerUi.brightness,
+      contrast: effectLayerUi.contrast,
+      saturation: effectLayerUi.saturation,
+      levels: { ...effectLayerUi.levels },
+    };
+    const pf = effectLayerUi.stylesDraft.photoFilter;
+    const stylesForPreview =
+      pf && !pf.enabled && (pf.intensity > 0 || pf.grain > 0 || (pf.vignette ?? 0) > 0)
+        ? {
+            ...effectLayerUi.stylesDraft,
+            photoFilter: { ...pf, enabled: true },
+          }
+        : effectLayerUi.stylesDraft;
+    return objects.map((o) =>
+      o.id === effectLayerUi.targetId && o.type === "adjustmentLayer"
+        ? ({
+            ...o,
+            adjustment: tonePatch,
+            layerEffects: stylesForPreview,
+          } as AdjustmentLayerObject)
+        : o,
+    );
+  }, [objects, effectLayerUi]);
+
+  const layerStackRenderSegments = useMemo(
+    () => buildLayerStackRenderSegments(stackObjectsForRender),
+    [stackObjectsForRender],
+  );
 
   const imageFrameOptimizeShowFrameId =
     designerMode && designerOptimizeProgress?.visible && designerOptimizeProgress.activeFrameId
@@ -22885,8 +23487,9 @@ export function FreehandStudioCanvas({
     <div
       ref={studioShellRef}
       data-foldder-studio-canvas
-      className="fixed inset-0 z-[9999] flex min-h-0 flex-col bg-[#0b0d10] text-zinc-200"
+      className="fixed inset-0 flex min-h-0 flex-col bg-[#0b0d10] text-zinc-200"
       style={{
+        zIndex: FOLDDER_STUDIO_PORTAL_Z,
         fontFamily: '"Passion One", ui-sans-serif, system-ui, sans-serif',
         ...(flushChrome ? ({ "--foldder-studio-accent": flushAccentHex } as React.CSSProperties) : {}),
       }}
@@ -23303,9 +23906,20 @@ export function FreehandStudioCanvas({
               return f.type === "solid" ? null : renderFillDef(f, gradientDefId(o.id));
             })}
             {clipObjects.map((co) => renderClipDef(co))}
-            {collectAdjustmentLayers(objects).map((layer) => (
+            {collectAdjustmentLayers(stackObjectsForRender).map((layer) => (
               <AdjustmentLayerFilterDef key={layer.id} layer={layer} />
             ))}
+            {layerStylesAdjustmentPreview?.tone ? (
+              <AdjustmentLayerFilterDef
+                key="fh-layer-styles-live-preview-tone"
+                layer={{
+                  id: layerStylesAdjustmentPreview.previewFilterId,
+                  type: "adjustmentLayer",
+                  adjustment: layerStylesAdjustmentPreview.tone,
+                  visible: true,
+                } as AdjustmentLayerObject}
+              />
+            ) : null}
             {pageContentClipRect && (
               <clipPath id="fh-page-content-clip" clipPathUnits="userSpaceOnUse">
                 <rect
@@ -23405,7 +24019,7 @@ export function FreehandStudioCanvas({
             >
               {/* Render objects (capas de ajuste envuelven el stack inferior, estilo Photoshop) */}
               {layerStackRenderSegments.map((seg, segIdx) => {
-                const renderStackObject = (obj: FreehandObject) => (
+                const renderStackObjectInner = (obj: FreehandObject) => (
                   <g
                     key={obj.id}
                     data-fh-obj={obj.id}
@@ -23420,45 +24034,108 @@ export function FreehandStudioCanvas({
                     })}
                   </g>
                 );
+                const renderStackObject = (obj: FreehandObject) => {
+                  if (layerStylesPreviewChildIds?.has(obj.id)) return null;
+                  return renderStackObjectInner(obj);
+                };
+                const renderSegmentChildren = (children: FreehandObject[], clipRendered: Set<string>) => {
+                  const nodes: React.ReactNode[] = [];
+                  let previewBatch: FreehandObject[] = [];
+                  const flushPreview = () => {
+                    if (previewBatch.length === 0 || !layerStylesAdjustmentPreview) return;
+                    let batch = (
+                      <StackSegmentWithLayerEffects
+                        key="adj-styles-live-preview"
+                        layerId={layerStylesAdjustmentPreview.previewFilterId}
+                        bounds={layerStylesAdjustmentPreview.bounds}
+                        effects={layerStylesAdjustmentPreview.effects}
+                      >
+                        {renderSegmentStackChildren(previewBatch, renderStackObjectInner, new Set())}
+                      </StackSegmentWithLayerEffects>
+                    );
+                    if (layerStylesAdjustmentPreview.tone) {
+                      batch = (
+                        <g
+                          key="adj-styles-live-preview-tone"
+                          filter={`url(#${adjustmentLayerFilterId(layerStylesAdjustmentPreview.previewFilterId)})`}
+                        >
+                          {batch}
+                        </g>
+                      );
+                    }
+                    nodes.push(batch);
+                    previewBatch = [];
+                  };
+                  for (const obj of children) {
+                    if (layerStylesPreviewChildIds?.has(obj.id)) {
+                      previewBatch.push(obj);
+                      continue;
+                    }
+                    flushPreview();
+                    const clipId = obj.clipMaskId;
+                    if (clipId) {
+                      if (clipRendered.has(clipId)) continue;
+                      clipRendered.add(clipId);
+                      const members = children.filter((c) => c.clipMaskId === clipId);
+                      nodes.push(
+                        <g
+                          key={`clip-${clipId}`}
+                          data-fh-clip-root={clipId}
+                          clipPath={`url(#clip-${clipId})`}
+                        >
+                          {members.map((m) => renderStackObjectInner(m))}
+                        </g>,
+                      );
+                      continue;
+                    }
+                    const node = renderStackObjectInner(obj);
+                    if (node) nodes.push(node);
+                  }
+                  flushPreview();
+                  return nodes;
+                };
                 if (seg.kind === "filtered") {
-                  return (
-                    <g
-                      key={`adj-seg-${seg.layer.id}`}
-                      filter={`url(#${adjustmentLayerFilterId(seg.layer.id)})`}
-                    >
-                      {seg.children.map(renderStackObject)}
-                    </g>
+                  const clipRendered = new Set<string>();
+                  let inner: React.ReactNode = (
+                    <React.Fragment key={`seg-inner-${seg.layer.id}`}>
+                      {renderSegmentChildren(seg.children, clipRendered)}
+                    </React.Fragment>
                   );
+                  if (seg.effectsActive && seg.layer.layerEffects) {
+                    const contentBounds = getGroupBounds(seg.children);
+                    const bounds = resolveEffectLayerFxBounds(
+                      seg.layer as AdjustmentLayerObject,
+                      contentBounds,
+                      artboards,
+                    );
+                    inner = (
+                      <StackSegmentWithLayerEffects
+                        key={`adj-fx-${seg.layer.id}`}
+                        layerId={seg.layer.id}
+                        bounds={bounds}
+                        effects={seg.layer.layerEffects}
+                      >
+                        {inner}
+                      </StackSegmentWithLayerEffects>
+                    );
+                  }
+                  if (seg.toneActive) {
+                    inner = (
+                      <g key={`adj-tone-${seg.layer.id}`} filter={`url(#${adjustmentLayerFilterId(seg.layer.id)})`}>
+                        {inner}
+                      </g>
+                    );
+                  }
+                  return <React.Fragment key={`adj-seg-${seg.layer.id}`}>{inner}</React.Fragment>;
                 }
                 return (
                   <React.Fragment key={`plain-seg-${segIdx}`}>
-                    {seg.children.map(renderStackObject)}
+                    {renderSegmentChildren(seg.children, new Set())}
                   </React.Fragment>
                 );
               })}
 
-              {/* Render clipped groups */}
-              {Array.from(clippedGroups.entries()).map(([clipId, members]) => (
-                <g key={`cg-${clipId}`} data-fh-clip-root={clipId} clipPath={`url(#clip-${clipId})`}>
-                  {members.map((m) => {
-                    return (
-                      <g
-                        key={m.id}
-                        data-fh-obj={m.id}
-                        style={layerMixBlendStyle((m as FreehandObjectBase).blendMode)}
-                      >
-                        {renderObj(m, objects, selectedIds, {
-                        canvasZenMode,
-                        designerMode,
-                        textEditingId,
-                        imageFrameOptimizeShowFrameId,
-                        previewLayerEffectsById,
-                      })}
-                      </g>
-                    );
-                  })}
-                </g>
-              ))}
+              {/* clipped groups: integrados en segmentos vía renderSegmentStackChildren */}
             </g>
 
             {/* Guías de diseño encima del contenido (no exportan; data-ui se filtra al exportar) */}
@@ -25144,6 +25821,49 @@ export function FreehandStudioCanvas({
             </svg>
           </div>
         )}
+
+        {effectLayerUi.open && effectLayerUi.histogram ? (
+          <EffectLayerModal
+            dock
+            open
+            tab={effectLayerUi.tab}
+            onTabChange={(tab) => setEffectLayerUi((s) => (s.open ? { ...s, tab } : s))}
+            title={
+              effectLayerUi.source.kind === "effectLayer"
+                ? "Capa de efecto"
+                : effectLayerUi.tab === "tone"
+                  ? "Ajustes de imagen"
+                  : "Capa de efecto"
+            }
+            hasSelection={
+              effectLayerUi.source.kind === "image" && !!effectLayerUi.source.selection
+            }
+            targetType={
+              effectLayerUi.targetId
+                ? objects.find((o) => o.id === effectLayerUi.targetId)?.type
+                : undefined
+            }
+            histogram={effectLayerUi.histogram}
+            tone={{
+              brightness: effectLayerUi.brightness,
+              contrast: effectLayerUi.contrast,
+              saturation: effectLayerUi.saturation,
+              levels: effectLayerUi.levels,
+            }}
+            onToneChange={(next, recordHistory) => updateEffectLayerTone(next, recordHistory)}
+            onToneScrubEnd={commitHistoryAfterScrub}
+            stylesDraft={effectLayerUi.stylesDraft}
+            onStylesDraftChange={(next) =>
+              setEffectLayerUi((s) => (s.open ? { ...s, stylesDraft: next } : s))
+            }
+            showApplyTargetChoice={!!effectLayerUi.showApplyTargetChoice}
+            applyMode={effectLayerUi.applyMode ?? "embedded"}
+            onApplyModeChange={setEffectLayerApplyMode}
+            onReset={resetEffectLayerModal}
+            onCancel={cancelEffectLayerModal}
+            onOk={() => void commitEffectLayerModal()}
+          />
+        ) : null}
           </div>
         </div>
       </div>
@@ -25291,7 +26011,7 @@ export function FreehandStudioCanvas({
                     />
                     <span className="shrink-0 text-[10px] text-zinc-500">%</span>
                   </div>
-                  {activeTool === "brush" ? (
+                  {activeTool === "brush" && !isMaskBrushMode ? (
                     <div className="space-y-2 border-t border-white/[0.06] pt-2.5">
                       <div className="text-[10px] font-medium uppercase tracking-wider text-zinc-500">Color</div>
                       <div className="flex flex-col gap-2">
@@ -25343,10 +26063,42 @@ export function FreehandStudioCanvas({
                       </div>
                     </div>
                   ) : null}
+                  {activeTool === "brush" ? (
+                    <div className="space-y-2 border-t border-white/[0.06] pt-2.5">
+                      <div className="text-[10px] font-medium uppercase tracking-wider text-zinc-500">Tipo de pincel</div>
+                      <div className="grid grid-cols-4 gap-1">
+                        {([
+                          { id: "round" as BrushKind, label: "Redondo" },
+                          { id: "hard" as BrushKind, label: "Duro" },
+                          { id: "soft" as BrushKind, label: "Suave" },
+                          { id: "airbrush" as BrushKind, label: "Aero" },
+                        ]).map(({ id, label }) => (
+                          <button
+                            key={id}
+                            type="button"
+                            title={label}
+                            onClick={() => setBrushKind(id)}
+                            className={`rounded-[5px] border px-1 py-1.5 text-[8px] font-semibold uppercase tracking-wide transition-colors ${
+                              brushKind === id
+                                ? "border-violet-400/55 bg-violet-500/20 text-violet-100"
+                                : "border-white/[0.08] bg-white/[0.04] text-zinc-400 hover:border-white/15 hover:text-zinc-200"
+                            }`}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  {isMaskBrushMode ? (
+                    <p className="border-t border-white/[0.06] pt-2.5 text-[10px] leading-snug text-zinc-500">
+                      Pintando en máscara: negro oculta, blanco revela. Sin color ni trazo.
+                    </p>
+                  ) : null}
                 </div>
               </div>
             )}
-            {studioCaps.toolGenerativeFill &&
+            {!isMaskBrushMode && studioCaps.toolGenerativeFill &&
               activeTool === "generativeFillSelect" &&
               studioGenerativeFillPanel != null && (
                 <div className="border-b border-white/[0.08] px-[14px] py-3">
@@ -25356,7 +26108,7 @@ export function FreehandStudioCanvas({
                   {studioGenerativeFillPanel}
                 </div>
               )}
-            {studioCanvasPanel != null &&
+            {!isMaskBrushMode && studioCanvasPanel != null &&
               selectedObjects.length === 0 &&
               activeTool !== "generativeFillSelect" &&
               (designerMode || photoRoomConnectedInputs !== undefined) && (
@@ -25367,7 +26119,7 @@ export function FreehandStudioCanvas({
                   {studioCanvasPanel}
                 </div>
               )}
-            {isPhotoRoomStudioEmbed &&
+            {!isMaskBrushMode && isPhotoRoomStudioEmbed &&
               studioCaps.photoRoomGraphActions &&
               photoRoomOnModificarImagenIA &&
               selectedObjects.length === 1 &&
@@ -25396,7 +26148,7 @@ export function FreehandStudioCanvas({
                   </button>
                 </div>
               )}
-            {isPhotoRoomStudioEmbed &&
+            {!isMaskBrushMode && isPhotoRoomStudioEmbed &&
               studioCaps.photoRoomGraphActions &&
               photoRoomOnRasterizeInputImage &&
               selectedObjects.length === 1 &&
@@ -25632,7 +26384,7 @@ export function FreehandStudioCanvas({
                 </div>
               );
             })()}
-            {designerMode && (
+            {!isMaskBrushMode && designerMode && (
               <div className="border-b border-white/[0.08] px-[14px] py-3">
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Dataset</div>
@@ -25817,7 +26569,7 @@ export function FreehandStudioCanvas({
                 )}
               </div>
             )}
-            {brainConnected && (
+            {!isMaskBrushMode && brainConnected && (
             <div className="border-b border-white/[0.08] px-[14px] py-3">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">SUGERENCIAS BRAIN</div>
@@ -26249,7 +27001,7 @@ export function FreehandStudioCanvas({
               )}
             </div>
             )}
-            {firstSelected?.type === "image" && (
+            {!isMaskBrushMode && firstSelected?.type === "image" && (
               <div className="border-b border-white/[0.08] px-[14px] py-3">
                 <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
                   Imagen
@@ -26263,7 +27015,7 @@ export function FreehandStudioCanvas({
                 </button>
               </div>
             )}
-            {/* Color · Appearance · Info/Text · Transform (pestañas) */}
+            {!isMaskBrushMode && (
             <div className="border-b border-white/[0.08]">
               <div className="flex shrink-0 gap-0.5 border-b border-white/[0.08] bg-[#151820] px-2 pt-2">
                 {propertiesMainTabOptions.map((tab) => (
@@ -26359,17 +27111,33 @@ export function FreehandStudioCanvas({
                   <p className="px-[14px] py-4 text-[11px] italic text-zinc-500">No object selected</p>
                 )}
             </div>
+            )}
 
             {firstSelected ? (
               <>
                 {studioCaps.toolPhotoGradient &&
+                  maskEditObjectId === firstSelected.id &&
                   (() => {
-                    const isMaskCtx =
-                      !!studioCaps.layerMask && maskEditObjectId === firstSelected.id;
-                    const meta = isMaskCtx
-                      ? (firstSelected as FreehandObjectBase).photoRasterGradientMask
-                      : (firstSelected as FreehandObjectBase).photoRasterGradientLayer;
-                    if (!meta) return null;
+                    const meta = (firstSelected as FreehandObjectBase).photoRasterGradientMask;
+                    if (!meta) {
+                      return (
+                        <div className="border-b border-white/[0.08] px-[14px] py-3">
+                          <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                            Degradado en máscara
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setActiveTool("photoGradient")}
+                            className="flex h-8 w-full items-center justify-center rounded-[6px] border border-violet-400/35 bg-violet-500/15 text-[11px] font-semibold text-violet-100 transition hover:bg-violet-500/25"
+                          >
+                            Dibujar degradado
+                          </button>
+                          <p className="mt-2 text-[10px] leading-snug text-zinc-500">
+                            Activa el modo degradado y arrastra sobre la capa para definir la transición en la máscara.
+                          </p>
+                        </div>
+                      );
+                    }
                     const fromObject: PhotoGradientRuntimeSession = {
                       ...meta,
                       objectId: firstSelected.id,
@@ -26401,7 +27169,7 @@ export function FreehandStudioCanvas({
                     return (
                       <div className="border-b border-white/[0.08] px-[14px] py-3">
                         <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
-                          Degradado raster
+                          Degradado en máscara
                         </div>
                         <div className="space-y-2">
                           <div className="flex items-center justify-between gap-2">
@@ -26493,7 +27261,7 @@ export function FreehandStudioCanvas({
                       </div>
                     );
                   })()}
-                {propertiesMainTab === "transform" && (
+                {!isMaskBrushMode && propertiesMainTab === "transform" && (
                 <>
                 <div className="border-b border-white/[0.08] px-[14px] py-3">
                     <div className="space-y-2">
@@ -26712,22 +27480,21 @@ export function FreehandStudioCanvas({
                 </>
                 )}
 
-            {propertiesMainTab === "text" && firstSelected.type === "text" && (
-              <div className="max-h-[min(52vh,520px)] overflow-y-auto border-b border-white/[0.08]">
+            {!isMaskBrushMode && propertiesMainTab === "text" && firstSelected.type === "text" && (
+              <div className="border-b border-white/[0.08]">
                 {(() => {
                   const tx = firstSelected as TextObject;
-                  /** Misma línea visual que el bloque Transform (#121417 panel / inputs #1e2024), compacto en altura. */
                   const tfInp =
-                    "h-7 min-h-0 w-full cursor-ew-resize rounded-[6px] border border-[#2d2f34] bg-[#1e2024] px-2 py-0 font-mono text-[11px] leading-none text-zinc-100";
-                  const tfLbl = "text-[9px] text-[#71717a] uppercase tracking-wider leading-none";
-                  const tfSec = "text-[9px] text-[#71717a] uppercase tracking-wider leading-none";
+                    "h-6 min-h-0 w-full cursor-ew-resize rounded-[5px] border border-[#2d2f34] bg-[#1e2024] px-1.5 py-0 font-mono text-[10px] leading-none text-zinc-100";
+                  const tfLbl = "text-[8px] text-[#71717a] uppercase tracking-wider leading-none";
+                  const tfSec = "text-[8px] text-[#71717a] uppercase tracking-wider leading-none";
                   const tfField = "space-y-0.5";
                   const tfIconMuted = "text-[#71717a]";
                   const pillOn = "border-[#534AB7] bg-[#534AB7] text-white";
                   const pillOff =
                     "border-[#2d2f34] bg-[#1e2024] text-[#71717a] hover:border-[#3f4249] hover:text-zinc-200";
-                  const iconToolBtn = `inline-flex h-7 min-w-0 flex-1 items-center justify-center rounded-[6px] border text-[#a1a1aa] transition-colors ${pillOff}`;
-                  const iconToolBtnOn = `inline-flex h-7 min-w-0 flex-1 items-center justify-center rounded-[6px] border text-white transition-colors ${pillOn}`;
+                  const iconToolBtn = `inline-flex h-6 min-w-0 flex-1 items-center justify-center rounded-[5px] border text-[#a1a1aa] transition-colors ${pillOff}`;
+                  const iconToolBtnOn = `inline-flex h-6 min-w-0 flex-1 items-center justify-center rounded-[5px] border text-white transition-colors ${pillOn}`;
                   const fontSelectValue = designerFontControlValue(tx.fontFamily, tx.fontWeight);
                   const systemFamilyName = fontSelectValue.startsWith(DESIGNER_SYSTEM_FONT_FAMILY_VALUE_PREFIX)
                     ? fontSelectValue.slice(DESIGNER_SYSTEM_FONT_FAMILY_VALUE_PREFIX.length)
@@ -26792,10 +27559,10 @@ export function FreehandStudioCanvas({
                     else updateSelectedProp("letterSpacing", next);
                   };
                   return (
-                    <div className="-mx-[14px] space-y-2.5 border-b border-white/[0.08] px-[14px] py-2">
+                    <div className="space-y-2 px-[14px] py-2">
                       <div className={tfSec}>Typography</div>
 
-                      <div className="flex gap-2">
+                      <div className="flex gap-1.5">
                         <DesignerFontFamilyPicker
                           value={fontSelectValue}
                           onChange={applyDesignerFontDropdown}
@@ -26820,9 +27587,9 @@ export function FreehandStudioCanvas({
                           type="button"
                           title="Importar .ttf · .otf · woff"
                           onClick={() => customFontInputRef.current?.click()}
-                          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] border border-[#2d2f34] bg-[#1e2024] text-[#71717a] transition hover:border-[#3f4249] hover:text-zinc-200"
+                          className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-[5px] border border-[#2d2f34] bg-[#1e2024] text-[#71717a] transition hover:border-[#3f4249] hover:text-zinc-200"
                         >
-                          <Upload size={14} strokeWidth={2} aria-hidden />
+                          <Upload size={12} strokeWidth={2} aria-hidden />
                         </button>
                         <input
                           ref={customFontInputRef}
@@ -26835,11 +27602,11 @@ export function FreehandStudioCanvas({
                         />
                       </div>
 
-                      <div className="grid grid-cols-2 gap-2">
+                      <div className="grid grid-cols-2 gap-1.5">
                         <div className={tfField}>
                           <label className={`flex items-center justify-between gap-1 ${tfLbl}`} title="Size (px)">
-                            <span className="flex items-center gap-1.5">
-                              <Type size={10} strokeWidth={2} className={tfIconMuted} aria-hidden />
+                            <span className="flex items-center gap-1">
+                              <Type size={9} strokeWidth={2} className={tfIconMuted} aria-hidden />
                               Size
                             </span>
                             {renderDatasetPropertyLink("fontSize")}
@@ -26859,8 +27626,8 @@ export function FreehandStudioCanvas({
                         </div>
                         <div className={tfField}>
                           <label className={`flex items-center justify-between gap-1 ${tfLbl}`} title="Weight">
-                            <span className="flex items-center gap-1.5">
-                              <Weight size={10} strokeWidth={2} className={tfIconMuted} aria-hidden />
+                            <span className="flex items-center gap-1">
+                              <Weight size={9} strokeWidth={2} className={tfIconMuted} aria-hidden />
                               Wgt
                             </span>
                             {renderDatasetPropertyLink("fontWeight")}
@@ -26894,8 +27661,8 @@ export function FreehandStudioCanvas({
                           )}
                         </div>
                         <div className={tfField}>
-                          <label className={`flex items-center gap-1.5 ${tfLbl}`} title="Line height">
-                            <BetweenVerticalStart size={10} strokeWidth={2} className={tfIconMuted} aria-hidden />
+                          <label className={`flex items-center gap-1 ${tfLbl}`} title="Line height">
+                            <BetweenVerticalStart size={9} strokeWidth={2} className={tfIconMuted} aria-hidden />
                             Lead
                           </label>
                           <ScrubNumberInput
@@ -26912,8 +27679,8 @@ export function FreehandStudioCanvas({
                           />
                         </div>
                         <div className={tfField}>
-                          <label className={`flex items-center gap-1.5 ${tfLbl}`} title="Letter-spacing (px)">
-                            <BetweenHorizontalStart size={10} strokeWidth={2} className={tfIconMuted} aria-hidden />
+                          <label className={`flex items-center gap-1 ${tfLbl}`} title="Letter-spacing (px)">
+                            <BetweenHorizontalStart size={9} strokeWidth={2} className={tfIconMuted} aria-hidden />
                             Trk
                           </label>
                           <ScrubNumberInput
@@ -26931,19 +27698,19 @@ export function FreehandStudioCanvas({
                           <button
                             type="button"
                             onClick={openGoogleFontInstallModal}
-                            className="inline-flex h-8 w-full items-center justify-center rounded-[6px] border border-[#2d2f34] bg-[#1e2024] px-2 text-[11px] font-medium text-zinc-100 transition hover:border-[#3f4249] hover:bg-[#252830]"
+                            className="inline-flex h-6 w-full items-center justify-center rounded-[5px] border border-[#2d2f34] bg-[#1e2024] px-2 text-[10px] font-medium text-zinc-100 transition hover:border-[#3f4249] hover:bg-[#252830]"
                           >
-                            Instalar google font
+                            Ver todas las tipografías
                           </button>
                         </div>
                       </div>
 
-                      <div className="space-y-1.5">
-                        <div className={`flex items-center gap-1.5 ${tfLbl}`}>
-                          <AlignStartHorizontal size={10} strokeWidth={2} className={tfIconMuted} aria-hidden />
+                      <div className="space-y-1">
+                        <div className={`flex items-center gap-1 ${tfLbl}`}>
+                          <AlignStartHorizontal size={9} strokeWidth={2} className={tfIconMuted} aria-hidden />
                           Align
                         </div>
-                        <div className="grid grid-cols-4 gap-1.5">
+                        <div className="grid grid-cols-4 gap-1">
                           {(
                             [
                               ["left", AlignLeft, "Left"],
@@ -26959,18 +27726,18 @@ export function FreehandStudioCanvas({
                               onClick={() => updateSelectedProp("textAlign", al)}
                               className={tx.textAlign === al ? iconToolBtnOn : iconToolBtn}
                             >
-                              <Icon size={14} strokeWidth={2} aria-hidden />
+                              <Icon size={12} strokeWidth={2} aria-hidden />
                             </button>
                           ))}
                         </div>
                       </div>
 
-                      <div className="space-y-1.5">
-                        <div className={`flex items-center gap-1.5 ${tfLbl}`}>
-                          <Type size={10} strokeWidth={2} className={tfIconMuted} aria-hidden />
+                      <div className="space-y-1">
+                        <div className={`flex items-center gap-1 ${tfLbl}`}>
+                          <Type size={9} strokeWidth={2} className={tfIconMuted} aria-hidden />
                           Style
                         </div>
-                        <div className="grid grid-cols-7 gap-1.5">
+                        <div className="grid grid-cols-7 gap-1">
                           <button
                             type="button"
                             title="Small caps"
@@ -26980,7 +27747,7 @@ export function FreehandStudioCanvas({
                             }
                             className={tx.fontVariantCaps === "small-caps" ? iconToolBtnOn : iconToolBtn}
                           >
-                            <CaseSensitive size={14} strokeWidth={2} aria-hidden />
+                            <CaseSensitive size={12} strokeWidth={2} aria-hidden />
                           </button>
                           <button
                             type="button"
@@ -26993,7 +27760,7 @@ export function FreehandStudioCanvas({
                             }
                             className={tx.fontWeight >= 600 ? iconToolBtnOn : iconToolBtn}
                           >
-                            <Bold size={14} strokeWidth={2} aria-hidden />
+                            <Bold size={12} strokeWidth={2} aria-hidden />
                           </button>
                           <button
                             type="button"
@@ -27006,7 +27773,7 @@ export function FreehandStudioCanvas({
                             }
                             className={tx.fontStyle === "italic" ? iconToolBtnOn : iconToolBtn}
                           >
-                            <Italic size={14} strokeWidth={2} aria-hidden />
+                            <Italic size={12} strokeWidth={2} aria-hidden />
                           </button>
                           <button
                             type="button"
@@ -27019,7 +27786,7 @@ export function FreehandStudioCanvas({
                             }
                             className={tx.textUnderline ? iconToolBtnOn : iconToolBtn}
                           >
-                            <Underline size={14} strokeWidth={2} aria-hidden />
+                            <Underline size={12} strokeWidth={2} aria-hidden />
                           </button>
                           <button
                             type="button"
@@ -27032,7 +27799,7 @@ export function FreehandStudioCanvas({
                             }
                             className={tx.textStrikethrough ? iconToolBtnOn : iconToolBtn}
                           >
-                            <Strikethrough size={14} strokeWidth={2} aria-hidden />
+                            <Strikethrough size={12} strokeWidth={2} aria-hidden />
                           </button>
                           <button
                             type="button"
@@ -27041,7 +27808,7 @@ export function FreehandStudioCanvas({
                             onClick={() => applyTextStyleCommand("insertUnorderedList", () => undefined)}
                             className={iconToolBtn}
                           >
-                            <List size={14} strokeWidth={2} aria-hidden />
+                            <List size={12} strokeWidth={2} aria-hidden />
                           </button>
                           <button
                             type="button"
@@ -27050,7 +27817,7 @@ export function FreehandStudioCanvas({
                             onClick={() => applyTextStyleCommand("insertOrderedList", () => undefined)}
                             className={iconToolBtn}
                           >
-                            <ListOrdered size={14} strokeWidth={2} aria-hidden />
+                            <ListOrdered size={12} strokeWidth={2} aria-hidden />
                           </button>
                         </div>
                       </div>
@@ -27060,20 +27827,20 @@ export function FreehandStudioCanvas({
                         onClick={() => {
                           if (window.confirm("Convert to outlines will make text non-editable. Continue?")) void convertTextToOutlines();
                         }}
-                        className="w-full rounded-[6px] border border-[#2d2f34] bg-[#1e2024] py-1.5 text-[11px] font-medium text-zinc-100 transition hover:border-[#3f4249] hover:bg-[#252830]"
+                        className="inline-flex h-6 w-full items-center justify-center rounded-[5px] border border-[#2d2f34] bg-[#1e2024] text-[10px] font-medium text-zinc-100 transition hover:border-[#3f4249] hover:bg-[#252830]"
                       >
                         Convert to outlines
                       </button>
 
-                      <div className="space-y-2 border-t border-white/[0.08] pt-2">
+                      <div className="space-y-1.5 border-t border-white/[0.08] pt-1.5">
                         <div className={tfSec}>CONTENT</div>
                         <button
                           type="button"
                           disabled={textContentBusy != null}
                           onClick={() => void applyTextContentTransform("correct")}
-                          className="inline-flex h-8 w-full items-center justify-center gap-2 rounded-[6px] border border-[#2d2f34] bg-[#1e2024] px-2 text-[11px] font-medium text-zinc-100 transition hover:border-[#3f4249] hover:bg-[#252830] disabled:cursor-wait disabled:opacity-60"
+                          className="inline-flex h-6 w-full items-center justify-center gap-1.5 rounded-[5px] border border-[#2d2f34] bg-[#1e2024] px-2 text-[10px] font-medium text-zinc-100 transition hover:border-[#3f4249] hover:bg-[#252830] disabled:cursor-wait disabled:opacity-60"
                         >
-                          {textContentBusy === "correct" ? <Loader2 size={13} className="animate-spin" aria-hidden /> : <Sparkles size={13} aria-hidden />}
+                          {textContentBusy === "correct" ? <Loader2 size={11} className="animate-spin" aria-hidden /> : <Sparkles size={11} aria-hidden />}
                           Corregir texto
                         </button>
                         <select
@@ -27083,7 +27850,7 @@ export function FreehandStudioCanvas({
                             const lang = e.target.value as TextContentTargetLanguage;
                             if (lang) void applyTextContentTransform("translate", lang);
                           }}
-                          className="h-8 min-h-0 w-full rounded-[6px] border border-[#2d2f34] bg-[#1e2024] px-2 py-0 text-[11px] text-zinc-100 disabled:cursor-wait disabled:opacity-60"
+                          className="h-6 min-h-0 w-full rounded-[5px] border border-[#2d2f34] bg-[#1e2024] px-1.5 py-0 text-[10px] text-zinc-100 disabled:cursor-wait disabled:opacity-60"
                         >
                           <option value="">
                             {textContentBusy?.startsWith("translate:") ? "Traduciendo..." : "Traducir a..."}
@@ -27161,7 +27928,7 @@ export function FreehandStudioCanvas({
                           value={fontSelectValue}
                           onChange={applyDesignerFontDropdown}
                           placeholder="— Elegir fuente —"
-                          buttonClassName="flex w-full items-center justify-between gap-2 rounded border border-white/10 bg-white/5 px-2 py-1.5 text-left text-[10px] text-white transition hover:border-white/20"
+                          buttonClassName="flex h-6 w-full items-center justify-between gap-1.5 rounded-[5px] border border-white/10 bg-white/5 px-1.5 py-0 text-left text-[10px] text-white transition hover:border-white/20"
                           groups={buildDesignerFontPickerGroups({
                             currentFont: showCurrentFontOption
                               ? {
@@ -27182,10 +27949,10 @@ export function FreehandStudioCanvas({
                         <div className="flex gap-1">
                           <button
                             type="button"
-                            className="flex-1 rounded border border-white/10 bg-white/5 py-1 text-[8px] font-bold uppercase text-zinc-300 hover:bg-white/10"
+                            className="flex-1 rounded border border-white/10 bg-white/5 py-0.5 text-[8px] font-bold uppercase text-zinc-300 hover:bg-white/10"
                             onClick={openGoogleFontInstallModal}
                           >
-                            Instalar google font
+                            Ver todas
                           </button>
                           <button
                             type="button"
@@ -27567,7 +28334,7 @@ export function FreehandStudioCanvas({
                   </button>
                   {layerBlendMenuOpen && layerPanelTarget && (
                     <div
-                      className="absolute left-0 top-full z-[140] mt-1 max-h-[min(340px,55vh)] w-[min(100%,220px)] overflow-y-auto rounded-[8px] border border-white/[0.1] bg-[#1a1d26]/98 py-1 shadow-[0_12px_40px_rgba(0,0,0,0.55)] backdrop-blur-sm"
+                      className="absolute left-0 top-full z-[100100] mt-1 max-h-[min(340px,55vh)] w-[min(100%,220px)] overflow-y-auto rounded-[8px] border border-white/[0.1] bg-[#1a1d26]/98 py-1 shadow-[0_12px_40px_rgba(0,0,0,0.55)] backdrop-blur-sm"
                       role="listbox"
                       aria-label="Modo de fusión"
                     >
@@ -27660,9 +28427,32 @@ export function FreehandStudioCanvas({
                       const dropAbove = layerDrop?.id === obj.id && layerDrop.mode === "above";
                       const dropBelow = layerDrop?.id === obj.id && layerDrop.mode === "below";
                       const dropInto = layerDrop?.id === obj.id && layerDrop.mode === "into";
+                      const inlineImageAdj =
+                        obj.type === "image" &&
+                        obj.photoImageAdjustments &&
+                        !isPhotoImageAdjustmentsNeutral(obj.photoImageAdjustments);
                       return (
+                        <React.Fragment key={obj.id}>
+                          {inlineImageAdj ? (
+                            <div
+                              style={{ paddingLeft: 8 + row.depth * 14 }}
+                              className="mb-0.5 flex items-center gap-1.5 rounded-md border border-sky-500/20 bg-sky-500/10 px-2 py-1"
+                            >
+                              <button
+                                type="button"
+                                title="Editar ajustes de imagen (brillo, contraste, niveles…)"
+                                className="flex min-w-0 flex-1 items-center gap-1.5 text-[9px] font-semibold uppercase tracking-wide text-sky-200 transition hover:text-sky-50"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void openPhotoImageAdjustments(obj as ImageObject);
+                                }}
+                              >
+                                <Contrast size={12} strokeWidth={2} />
+                                Ajuste de imagen
+                              </button>
+                            </div>
+                          ) : null}
                         <div
-                          key={obj.id}
                           data-fh-layer-row={obj.id}
                           draggable={layerRowDraggable}
                           style={{ paddingLeft: 8 + row.depth * 14 }}
@@ -27855,7 +28645,7 @@ export function FreehandStudioCanvas({
                             onDoubleClick={(e) => {
                               if (obj.type === "adjustmentLayer") {
                                 e.stopPropagation();
-                                openAdjustmentLayerEditor(obj as AdjustmentLayerObject);
+                                openEffectLayerModal(obj);
                                 return;
                               }
                               if (obj.type === "booleanGroup") {
@@ -27904,11 +28694,16 @@ export function FreehandStudioCanvas({
                             !isAdjustmentLayerSettingsNeutral((obj as AdjustmentLayerObject).adjustment) ? (
                               <span className="ml-1 text-[8px] text-sky-400/90">●</span>
                             ) : null}
+                            {obj.type === "adjustmentLayer" &&
+                            !isAdjustmentLayerStylesNeutral((obj as AdjustmentLayerObject).layerEffects) ? (
+                              <span className="ml-1 text-[8px] text-violet-400/90">fx</span>
+                            ) : null}
                           </span>
                           {isPrInput ? (
                             <span className="inline-flex w-3 shrink-0" aria-hidden />
                           ) : null}
                         </div>
+                        </React.Fragment>
                       );
                     })}
                     </div>
@@ -27938,7 +28733,6 @@ export function FreehandStudioCanvas({
                   >
                     {(() => {
                       const tgt = layerPanelTarget;
-                      const canFx = !!(tgt && studioCaps.layerStyles && isLayerStylesEligible(tgt));
                       const canMask = !!(tgt && studioCaps.layerMask && isLayerMaskEligible(tgt));
                       const maskActive = !!(tgt && maskEditObjectId === tgt.id);
                       const adjSelected = tgt?.type === "adjustmentLayer";
@@ -27953,15 +28747,6 @@ export function FreehandStudioCanvas({
                       return (
                         <>
                           <div className="flex min-w-0 flex-1 items-center gap-0.5">
-                            <button
-                              type="button"
-                              disabled={!canFx}
-                              title="Estilos de capa (fx) — superposición de color, degradado, resplandor…"
-                              className={btnClass(!!(tgt && hasActiveLayerEffects((tgt as FreehandObjectBase).layerEffects)))}
-                              onClick={() => tgt && openLayerStylesModal(tgt)}
-                            >
-                              <span className="font-serif text-[11px] font-bold leading-none">fx</span>
-                            </button>
                             <button
                               type="button"
                               disabled={!canMask}
@@ -27990,18 +28775,24 @@ export function FreehandStudioCanvas({
                               type="button"
                               title={
                                 adjSelected
-                                  ? "Editar capa de ajuste (brillo, contraste, niveles…)"
-                                  : "Nueva capa de ajuste sobre la selección"
+                                  ? "Editar capa de efecto (tono, look, overlays…)"
+                                  : "Nueva capa de efecto sobre la composición"
                               }
                               className={btnClass(
                                 !!(adjSelected &&
-                                  !isAdjustmentLayerSettingsNeutral(
-                                    (tgt as AdjustmentLayerObject).adjustment,
-                                  )),
+                                  isEffectLayerActive(tgt as AdjustmentLayerObject)),
                               )}
                               onClick={() => {
                                 if (adjSelected && tgt?.type === "adjustmentLayer") {
-                                  openAdjustmentLayerEditor(tgt as AdjustmentLayerObject);
+                                  openEffectLayerModal(tgt, { tab: "tone" });
+                                } else if (
+                                  tgt?.type === "image" &&
+                                  !(tgt as ImageObject).photoRoomInputSlot
+                                ) {
+                                  void openPhotoImageAdjustments(tgt as ImageObject, {
+                                    showApplyTargetChoice: true,
+                                    applyMode: "wholeStack",
+                                  });
                                 } else {
                                   createAdjustmentLayer();
                                 }
@@ -28153,7 +28944,11 @@ export function FreehandStudioCanvas({
       {foldderImagePickerOpen &&
         typeof document !== "undefined" &&
         createPortal(
-          <div className="fixed inset-0 z-[100070] flex items-center justify-center p-4">
+          <div
+            className="fixed inset-0 flex items-center justify-center p-4"
+            style={{ zIndex: STUDIO_BODY_PORTAL_Z }}
+            data-foldder-studio-panel
+          >
             <div
               className="absolute inset-0 bg-black/65 backdrop-blur-[2px]"
               onClick={() => setFoldderImagePickerOpen(false)}
@@ -28167,6 +28962,8 @@ export function FreehandStudioCanvas({
               role="dialog"
               aria-modal="true"
               aria-labelledby="foldder-image-picker-title"
+              onMouseDown={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
             >
               <header className="flex items-center justify-between gap-3 border-b border-white/[0.08] px-4 py-3">
                 <div>
@@ -28287,7 +29084,9 @@ export function FreehandStudioCanvas({
       {designerMultipageVectorPdfExport?.busy &&
         createPortal(
           <div
-            className="fixed inset-0 z-[100050] flex items-center justify-center bg-[#07090c]/85 backdrop-blur-[3px]"
+            className="fixed inset-0 flex items-center justify-center bg-[#07090c]/85 backdrop-blur-[3px]"
+            style={{ zIndex: STUDIO_BODY_PORTAL_Z }}
+            data-foldder-studio-panel
             role="progressbar"
             aria-busy="true"
             aria-valuetext="Generando PDF del documento"
@@ -28355,43 +29154,6 @@ export function FreehandStudioCanvas({
               });
             }
           }}
-        />
-      ) : null}
-
-      {layerStylesUi.open && layerStylesUi.draft ? (
-        <LayerStylesModal
-          open
-          targetType={objects.find((o) => o.id === layerStylesUi.targetId)?.type}
-          draft={layerStylesUi.draft}
-          onDraftChange={(next) =>
-            setLayerStylesUi((s) => (s.draft != null ? { ...s, draft: next } : s))
-          }
-          onOk={commitLayerStylesModal}
-          onCancel={cancelLayerStylesModal}
-          onReset={() =>
-            setLayerStylesUi((s) => (s.draft != null ? { ...s, draft: defaultLayerEffects() } : s))
-          }
-        />
-      ) : null}
-
-      {photoAdjustmentsSession && photoAdjustmentsHistogram ? (
-        <PhotoImageAdjustmentsModal
-          open
-          histogram={photoAdjustmentsHistogram}
-          hasSelection={
-            photoAdjustmentsSession.mode === "image" && !!photoAdjustmentsSession.selection
-          }
-          values={{
-            brightness: photoAdjustmentsSession.brightness,
-            contrast: photoAdjustmentsSession.contrast,
-            saturation: photoAdjustmentsSession.saturation,
-            levels: photoAdjustmentsSession.levels,
-          }}
-          onChange={(next) => updatePhotoImageAdjustments(next)}
-          onScrubEnd={() => {}}
-          onReset={resetPhotoImageAdjustmentsModal}
-          onCancel={cancelPhotoImageAdjustments}
-          onApply={() => void commitPhotoImageAdjustments()}
         />
       ) : null}
 

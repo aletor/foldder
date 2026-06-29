@@ -36,11 +36,11 @@ import {
   TOOLBAR_ICON_STROKE,
   PhotoBrushToolIcon,
   PhotoCloneStampToolIcon,
-  PhotoGradientToolIcon,
   TextPathToolIcon,
   ToolBtn,
   ToolFlyoutGroup,
 } from "./studio-toolbar";
+import { STUDIO_TOOLBAR_POPOVER_Z } from "./studio-modal-shell";
 
 /** Props for the left tool column — grouped to keep the canvas parent readable. */
 export type FreehandStudioLeftToolbarProps = {
@@ -468,15 +468,6 @@ export function FreehandStudioLeftToolbar(p: FreehandStudioLeftToolbarProps) {
                 <PhotoBrushToolIcon size={19} />
               </ToolBtn>
             ) : null}
-            {studioCaps.toolPhotoGradient ? (
-              <ToolBtn
-                active={activeTool === "photoGradient"}
-                onClick={() => setActiveTool("photoGradient")}
-                title="Degradado (⇧G) — arrastra en capa o máscara (modo máscara = destino máscara); ajustes en Propiedades; doble clic en vértice = color"
-              >
-                <PhotoGradientToolIcon size={19} />
-              </ToolBtn>
-            ) : null}
             <ToolFlyoutGroup
               groupId="tf-text"
               flyoutOpen={leftToolbarToolFlyout}
@@ -726,10 +717,10 @@ export function FreehandStudioLeftToolbar(p: FreehandStudioLeftToolbarProps) {
               ref={leftToolbarColorPopoverRef}
               data-left-toolbar-color-popover
               data-foldder-studio-flush={flushAttr}
-              className={`fixed z-[100050] max-h-[min(420px,calc(100vh-24px))] w-[232px] overflow-y-auto border border-white/[0.08] p-3.5 ${
+              className={`fixed max-h-[min(420px,calc(100vh-24px))] w-[232px] overflow-y-auto border border-white/[0.08] p-3.5 ${
                 flushChrome ? "bg-[#0b0f14]" : "rounded-[6px] bg-[#12151a] shadow-xl"
               }`}
-              style={{ top: leftToolbarColorPos.top, left: leftToolbarColorPos.left }}
+              style={{ top: leftToolbarColorPos.top, left: leftToolbarColorPos.left, zIndex: STUDIO_TOOLBAR_POPOVER_Z }}
               onMouseDown={(e) => e.stopPropagation()}
               onMouseEnter={() => {
                 leftToolbarEyeAbortRef.current?.abort();

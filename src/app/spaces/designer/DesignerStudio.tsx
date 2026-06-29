@@ -2364,7 +2364,7 @@ export default function DesignerStudio({
       className={
         headlessPdfExport || headlessImageExport
           ? "pointer-events-none fixed left-[-10000px] top-0 h-[900px] w-[1400px] overflow-hidden opacity-0"
-          : "fixed inset-0 z-[9999] flex flex-col bg-[#0b0d10]"
+          : "fixed inset-0 z-[100090] flex flex-col bg-[#0b0d10]"
       }
     >
       <FreehandStudio

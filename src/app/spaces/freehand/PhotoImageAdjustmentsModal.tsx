@@ -4,6 +4,11 @@ import React, { useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { ScrubNumberInput } from "../ScrubNumberInput";
+import { stopStudioModalPointerPropagation } from "./studio-modal-shell";
+import {
+  STUDIO_LAYER_MODAL_Z,
+  studioModalBackdropHandlers,
+} from "./studio-modal-shell";
 import {
   gammaToMidPos,
   midPosToGamma,
@@ -56,11 +61,13 @@ function LevelsHistogram({
   levels,
   onChange,
   onScrubEnd,
+  compact = false,
 }: {
   histogram: number[];
   levels: PhotoLevels;
   onChange: (next: PhotoLevels, recordHistory: boolean) => void;
   onScrubEnd: () => void;
+  compact?: boolean;
 }) {
   const max = Math.max(1, ...histogram);
   // Escala con raíz para que los detalles bajos sean visibles (como Photoshop con clip suave).
@@ -107,9 +114,11 @@ function LevelsHistogram({
   const outHandleRef = useRef<null | "black" | "white">(null);
 
   return (
-    <div className="space-y-1.5">
+    <div className={compact ? "space-y-1" : "space-y-1.5"}>
       {/* Histograma */}
-      <div className="relative h-[92px] w-full border border-white/10 bg-black/40">
+      <div
+        className={`relative w-full border border-white/10 bg-black/40 ${compact ? "h-11" : "h-[92px]"}`}
+      >
         <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 h-full w-full">
           <polyline points={`0,100 ${barPoints} 100,100`} fill="rgba(255,255,255,0.45)" stroke="none" />
         </svg>
@@ -119,6 +128,8 @@ function LevelsHistogram({
       <div
         ref={inputTrackRef}
         className="relative h-3 w-full select-none"
+        onPointerDown={stopStudioModalPointerPropagation}
+        onMouseDown={stopStudioModalPointerPropagation}
         onPointerMove={(e) => {
           if (!handleRef.current) return;
           const r = inputTrackRef.current!.getBoundingClientRect();
@@ -144,6 +155,8 @@ function LevelsHistogram({
       <div
         ref={outputTrackRef}
         className="relative mt-1 h-3 w-full select-none"
+        onPointerDown={stopStudioModalPointerPropagation}
+        onMouseDown={stopStudioModalPointerPropagation}
         onPointerMove={(e) => {
           if (!outHandleRef.current) return;
           const r = outputTrackRef.current!.getBoundingClientRect();
@@ -172,15 +185,17 @@ function ToneRow({
   value,
   onChange,
   onScrubEnd,
+  compact = false,
 }: {
   label: string;
   value: number;
   onChange: (n: number, recordHistory: boolean) => void;
   onScrubEnd: () => void;
+  compact?: boolean;
 }) {
   return (
-    <div className="flex items-center gap-2">
-      <span className={`w-[68px] shrink-0 ${LABEL_CLASS}`}>{label}</span>
+    <div className={`flex items-center ${compact ? "gap-1.5" : "gap-2"}`}>
+      <span className={`shrink-0 ${LABEL_CLASS} ${compact ? "w-12 text-[7px]" : "w-[68px]"}`}>{label}</span>
       <input
         type="range"
         min={-100}
@@ -189,6 +204,8 @@ function ToneRow({
         onChange={(e) => onChange(Number(e.target.value), false)}
         onPointerUp={onScrubEnd}
         onKeyUp={onScrubEnd}
+        onPointerDown={stopStudioModalPointerPropagation}
+        onMouseDown={stopStudioModalPointerPropagation}
         className="min-w-0 flex-1 accent-[#71449f]"
       />
       <ScrubNumberInput
@@ -201,8 +218,81 @@ function ToneRow({
         min={-100}
         max={100}
         title="Arrastra horizontalmente · Mayús = ×10"
-        className={`w-12 shrink-0 ${SCRUB_CLASS}`}
+        className={`shrink-0 ${SCRUB_CLASS} ${compact ? "w-10 px-1 py-0.5 text-[10px]" : "w-12"}`}
       />
+    </div>
+  );
+}
+
+export type PhotoAdjustmentsApplyTarget = "selectedLayer" | "adjustmentLayer";
+
+export function PhotoToneAdjustmentsPanel({
+  histogram,
+  values,
+  onChange,
+  onScrubEnd,
+  compact = false,
+}: {
+  histogram: number[];
+  values: PhotoImageAdjustmentsValues;
+  onChange: (next: PhotoImageAdjustmentsValues, recordHistory: boolean) => void;
+  onScrubEnd: () => void;
+  compact?: boolean;
+}) {
+  const L = values.levels;
+  const setLevels = (next: PhotoLevels, recordHistory: boolean) =>
+    onChange({ ...values, levels: next }, recordHistory);
+  const levelScrub = (
+    value: number,
+    set: (n: number) => void,
+    min: number,
+    max: number,
+    step: number,
+    round: (n: number) => number,
+    title: string,
+  ) => (
+    <ScrubNumberInput
+      value={value}
+      onKeyboardCommit={(n) => set(round(clamp(n, min, max)))}
+      onScrubLive={(n) => set(round(clamp(n, min, max)))}
+      onScrubEnd={onScrubEnd}
+      step={step}
+      roundFn={round}
+      min={min}
+      max={max}
+      title={title}
+      className={SCRUB_CLASS}
+    />
+  );
+
+  return (
+    <div
+      className={`custom-scrollbar h-full overflow-y-auto ${compact ? "space-y-2 px-2 py-2" : "space-y-3 px-3 py-3"}`}
+    >
+      <div className={compact ? "space-y-1.5" : "space-y-2.5"}>
+        <ToneRow compact={compact} label="Brillo" value={values.brightness} onChange={(n, r) => onChange({ ...values, brightness: n }, r)} onScrubEnd={onScrubEnd} />
+        <ToneRow compact={compact} label="Contraste" value={values.contrast} onChange={(n, r) => onChange({ ...values, contrast: n }, r)} onScrubEnd={onScrubEnd} />
+        <ToneRow compact={compact} label="Satur." value={values.saturation} onChange={(n, r) => onChange({ ...values, saturation: n }, r)} onScrubEnd={onScrubEnd} />
+      </div>
+      <div className={`space-y-1.5 border-t border-white/10 ${compact ? "pt-2" : "space-y-2 pt-3"}`}>
+        <span className={`${LABEL_CLASS} ${compact ? "text-[7px]" : ""}`}>Niveles</span>
+        <LevelsHistogram compact={compact} histogram={histogram} levels={L} onChange={setLevels} onScrubEnd={onScrubEnd} />
+        <div className="flex items-center gap-2">
+          <span className={`shrink-0 text-[8px] font-black uppercase tracking-[0.1em] text-white/35 ${compact ? "w-10 text-[7px]" : "w-[52px]"}`}>Entrada</span>
+          <div className="grid min-w-0 flex-1 grid-cols-3 gap-1">
+            {levelScrub(L.inBlack, (n) => setLevels({ ...L, inBlack: Math.min(n, L.inWhite - 1) }, true), 0, 254, 1, (n) => Math.round(n), "Punto negro de entrada")}
+            {levelScrub(Math.round(L.gamma * 100) / 100, (n) => setLevels({ ...L, gamma: n }, true), 0.1, 9.99, 0.01, (n) => Math.round(n * 100) / 100, "Gamma (medios tonos)")}
+            {levelScrub(L.inWhite, (n) => setLevels({ ...L, inWhite: Math.max(n, L.inBlack + 1) }, true), 1, 255, 1, (n) => Math.round(n), "Punto blanco de entrada")}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className={`shrink-0 text-[8px] font-black uppercase tracking-[0.1em] text-white/35 ${compact ? "w-10 text-[7px]" : "w-[52px]"}`}>Salida</span>
+          <div className="grid min-w-0 flex-1 grid-cols-2 gap-1">
+            {levelScrub(L.outBlack, (n) => setLevels({ ...L, outBlack: Math.min(n, L.outWhite) }, true), 0, 255, 1, (n) => Math.round(n), "Punto negro de salida")}
+            {levelScrub(L.outWhite, (n) => setLevels({ ...L, outWhite: Math.max(n, L.outBlack) }, true), 0, 255, 1, (n) => Math.round(n), "Punto blanco de salida")}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -212,6 +302,9 @@ export function PhotoImageAdjustmentsModal({
   histogram,
   hasSelection,
   values,
+  showApplyTargetChoice,
+  applyTarget,
+  onApplyTargetChange,
   onChange,
   onScrubEnd,
   onReset,
@@ -222,6 +315,9 @@ export function PhotoImageAdjustmentsModal({
   histogram: number[];
   hasSelection: boolean;
   values: PhotoImageAdjustmentsValues;
+  showApplyTargetChoice?: boolean;
+  applyTarget?: PhotoAdjustmentsApplyTarget;
+  onApplyTargetChange?: (target: PhotoAdjustmentsApplyTarget) => void;
   onChange: (next: PhotoImageAdjustmentsValues, recordHistory: boolean) => void;
   onScrubEnd: () => void;
   onReset: () => void;
@@ -254,39 +350,14 @@ export function PhotoImageAdjustmentsModal({
 
   if (!open || typeof document === "undefined") return null;
 
-  const L = values.levels;
-  const setLevels = (next: PhotoLevels, recordHistory: boolean) =>
-    onChange({ ...values, levels: next }, recordHistory);
-  const levelScrub = (
-    value: number,
-    set: (n: number) => void,
-    min: number,
-    max: number,
-    step: number,
-    round: (n: number) => number,
-    title: string,
-  ) => (
-    <ScrubNumberInput
-      value={value}
-      onKeyboardCommit={(n) => set(round(clamp(n, min, max)))}
-      onScrubLive={(n) => set(round(clamp(n, min, max)))}
-      onScrubEnd={onScrubEnd}
-      step={step}
-      roundFn={round}
-      min={min}
-      max={max}
-      title={title}
-      className={SCRUB_CLASS}
-    />
-  );
-
   return createPortal(
     <div
-      className="fixed inset-0 z-[100210] flex items-center justify-center p-4"
+      className="fixed inset-0 flex items-center justify-center bg-black/45 p-4"
+      style={{ zIndex: STUDIO_LAYER_MODAL_Z + 10 }}
       role="dialog"
       aria-modal="true"
       aria-labelledby="photoroom-adjustments-title"
-      onClick={onCancel}
+      {...studioModalBackdropHandlers(onCancel)}
     >
       <div
         className="flex w-[min(94vw,380px)] flex-col overflow-hidden rounded-none border border-white/10 bg-[#0b0f14] shadow-[0_24px_70px_rgba(0,0,0,0.55)]"
@@ -322,34 +393,38 @@ export function PhotoImageAdjustmentsModal({
           </button>
         </header>
 
-        <div className="space-y-3 px-3 py-3">
-          <div className="space-y-2.5">
-            <ToneRow label="Brillo" value={values.brightness} onChange={(n, r) => onChange({ ...values, brightness: n }, r)} onScrubEnd={onScrubEnd} />
-            <ToneRow label="Contraste" value={values.contrast} onChange={(n, r) => onChange({ ...values, contrast: n }, r)} onScrubEnd={onScrubEnd} />
-            <ToneRow label="Saturación" value={values.saturation} onChange={(n, r) => onChange({ ...values, saturation: n }, r)} onScrubEnd={onScrubEnd} />
-          </div>
+        <PhotoToneAdjustmentsPanel
+          histogram={histogram}
+          values={values}
+          onChange={onChange}
+          onScrubEnd={onScrubEnd}
+        />
 
-          <div className="space-y-2 border-t border-white/10 pt-3">
-            <span className={LABEL_CLASS}>Niveles</span>
-            <LevelsHistogram histogram={histogram} levels={L} onChange={setLevels} onScrubEnd={onScrubEnd} />
-
-            <div className="flex items-center gap-2">
-              <span className="w-[52px] shrink-0 text-[8px] font-black uppercase tracking-[0.1em] text-white/35">Entrada</span>
-              <div className="grid min-w-0 flex-1 grid-cols-3 gap-1">
-                {levelScrub(L.inBlack, (n) => setLevels({ ...L, inBlack: Math.min(n, L.inWhite - 1) }, true), 0, 254, 1, (n) => Math.round(n), "Punto negro de entrada")}
-                {levelScrub(Math.round(L.gamma * 100) / 100, (n) => setLevels({ ...L, gamma: n }, true), 0.1, 9.99, 0.01, (n) => Math.round(n * 100) / 100, "Gamma (medios tonos)")}
-                {levelScrub(L.inWhite, (n) => setLevels({ ...L, inWhite: Math.max(n, L.inBlack + 1) }, true), 1, 255, 1, (n) => Math.round(n), "Punto blanco de entrada")}
-              </div>
+        {showApplyTargetChoice ? (
+            <div className="space-y-2 border-t border-white/10 pt-3">
+              <span className={LABEL_CLASS}>Aplicar como</span>
+              <label className="flex cursor-pointer items-start gap-2 text-[10px] leading-snug text-zinc-200">
+                <input
+                  type="radio"
+                  name="ph-adj-apply-target"
+                  checked={applyTarget === "selectedLayer"}
+                  onChange={() => onApplyTargetChange?.("selectedLayer")}
+                  className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-[#71449f]"
+                />
+                <span>Aplicar solo en capa seleccionada</span>
+              </label>
+              <label className="flex cursor-pointer items-start gap-2 text-[10px] leading-snug text-zinc-200">
+                <input
+                  type="radio"
+                  name="ph-adj-apply-target"
+                  checked={applyTarget === "adjustmentLayer"}
+                  onChange={() => onApplyTargetChange?.("adjustmentLayer")}
+                  className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-[#71449f]"
+                />
+                <span>Generar como capa de ajuste</span>
+              </label>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="w-[52px] shrink-0 text-[8px] font-black uppercase tracking-[0.1em] text-white/35">Salida</span>
-              <div className="grid min-w-0 flex-1 grid-cols-2 gap-1">
-                {levelScrub(L.outBlack, (n) => setLevels({ ...L, outBlack: Math.min(n, L.outWhite) }, true), 0, 255, 1, (n) => Math.round(n), "Punto negro de salida")}
-                {levelScrub(L.outWhite, (n) => setLevels({ ...L, outWhite: Math.max(n, L.outBlack) }, true), 0, 255, 1, (n) => Math.round(n), "Punto blanco de salida")}
-              </div>
-            </div>
-          </div>
-        </div>
+          ) : null}
 
         <footer className="flex h-10 shrink-0 items-stretch justify-end divide-x divide-white/10 border-t border-white/10 bg-white/[0.04]">
           <button

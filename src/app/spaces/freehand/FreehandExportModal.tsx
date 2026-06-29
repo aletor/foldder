@@ -2,6 +2,10 @@
 
 import React, { useMemo, useState } from "react";
 import { BookmarkPlus, Check, Loader2, X } from "lucide-react";
+import {
+  STUDIO_LAYER_MODAL_Z,
+  studioModalBackdropHandlers,
+} from "./studio-modal-shell";
 import type { Rect } from "./freehand-export";
 import type { VectorPdfExportOptions } from "./text-outline";
 
@@ -125,9 +129,10 @@ export function FreehandExportModal({
 
   return (
     <div
-      className="fixed inset-0 z-[100000] flex items-center justify-center bg-black/70 backdrop-blur-sm transition-opacity duration-150"
-      onClick={onClose}
+      className="fixed inset-0 flex items-center justify-center bg-black/70 backdrop-blur-sm transition-opacity duration-150"
+      style={{ zIndex: STUDIO_LAYER_MODAL_Z }}
       role="presentation"
+      {...studioModalBackdropHandlers(onClose)}
     >
       <div
         data-foldder-studio-flush={flush ? "" : undefined}

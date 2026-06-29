@@ -2793,6 +2793,10 @@ export function SpacesContent() {
     const onWheelCapture = (e: WheelEvent) => {
       if (canvasViewModeRef.current === 'cards') return;
 
+      if (e.target instanceof Element && e.target.closest('[data-foldder-studio-canvas]')) {
+        return;
+      }
+
       const flowDom = document.querySelector('.react-flow');
       if (!flowDom || !(e.target instanceof Element) || !flowDom.contains(e.target)) return;
 

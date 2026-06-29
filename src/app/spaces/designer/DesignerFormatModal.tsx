@@ -1,6 +1,8 @@
 "use client";
 
 import React from "react";
+import { createPortal } from "react-dom";
+import { STUDIO_BODY_PORTAL_Z, studioOverlayPointerGuards } from "../freehand/studio-modal-shell";
 import { INDESIGN_PAGE_FORMATS, type IndesignPageFormatId } from "../indesign/page-formats";
 
 export type DesignerFormatModalState =
@@ -27,12 +29,15 @@ export function DesignerFormatModal({
 }: Props) {
   if (!formatModal) return null;
 
-  return (
+  const dialog = (
     <div
-      className="fixed inset-0 z-[10060] flex items-center justify-center bg-black/55 p-4"
+      className="fixed inset-0 flex items-center justify-center bg-black/55 p-4"
+      style={{ zIndex: STUDIO_BODY_PORTAL_Z }}
       role="dialog"
       aria-modal="true"
       data-foldder-studio-flush=""
+      data-foldder-studio-panel
+      {...studioOverlayPointerGuards}
     >
       <div className="w-full max-w-sm border border-white/10 bg-[#0b0f14]">
         <div className="border-b border-white/10 px-4 py-3">
@@ -92,4 +97,7 @@ export function DesignerFormatModal({
       </div>
     </div>
   );
+
+  if (typeof document === "undefined") return null;
+  return createPortal(dialog, document.body);
 }

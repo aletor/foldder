@@ -601,7 +601,7 @@ function DesignerStudioLazy(props: {
   }, []);
   if (!Studio) {
     return (
-      <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-[#0b0d10]">
+      <div className="fixed inset-0 z-[100090] flex items-center justify-center bg-[#0b0d10]">
         <span className="animate-pulse text-sm text-zinc-500">Loading Designer Studio…</span>
       </div>
     );

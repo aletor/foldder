@@ -93,6 +93,7 @@ export function useFreehandStudioTouchCanvasHandlers(options: {
       if (e.pointerType === "mouse") return;
       const tgt = e.target as HTMLElement | null;
       if (tgt?.closest?.("[data-fh-text-editor]")) return;
+      if (tgt?.closest?.("[data-foldder-effect-layer-panel]")) return;
 
       e.preventDefault();
       pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
