@@ -6070,7 +6070,7 @@ function wrapWithSelectedLayerEffect(
     contentBounds,
     undefined,
   );
-  let wrapped = node;
+  let wrapped: React.ReactNode = node;
   if (effectsActive && layerFx.layerEffects) {
     if (obj.type === "clippingContainer") {
       wrapped = wrapClippingContainerWithLayerEffects(
@@ -14071,7 +14071,7 @@ export function FreehandStudioCanvas({
   const deleteFolderWithContent = useCallback(
     (folderId: string): boolean => {
       const loc = findInTree(objectsRef.current, folderId);
-      if (!loc || loc.node.type !== "groupContainer") return;
+      if (!loc || loc.node.type !== "groupContainer") return false;
       const gc = loc.node as GroupContainerObject;
       const childCount = countFolderDescendants(gc);
       const label = gc.name?.trim() || "Carpeta";

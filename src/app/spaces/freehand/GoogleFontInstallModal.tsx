@@ -94,7 +94,6 @@ export function GoogleFontInstallModal({
     <div
       className="fixed inset-0 flex items-stretch justify-center p-2 sm:p-3"
       style={{ zIndex: STUDIO_BODY_PORTAL_Z }}
-      data-foldder-studio-panel
       {...studioModalBackdropHandlers(() => {
         if (busy) return;
         onClose();
