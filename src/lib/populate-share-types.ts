@@ -1,6 +1,6 @@
 import type { CreativeInputDescriptor } from "@/app/spaces/populate/populate-types";
 import type { PopulateFormModel } from "@/app/spaces/populate/populate-form";
-import type { DesignerFormField } from "@/app/spaces/populate/populate-designer-form";
+import type { DesignerFormField, DesignerFormRow } from "@/app/spaces/populate/populate-designer-form";
 import type { DesignerPageState } from "@/app/spaces/designer/DesignerNode";
 
 /**
@@ -12,6 +12,8 @@ import type { DesignerPageState } from "@/app/spaces/designer/DesignerNode";
 export type PopulateShareDesignerPayload = {
   pages: DesignerPageState[];
   formFields: DesignerFormField[];
+  /** Filas del listado con etiquetas legibles (y valores para autorelleno en el público). */
+  rows?: DesignerFormRow[];
   slideCount: number;
 };
 

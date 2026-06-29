@@ -3,6 +3,7 @@
 import React from "react";
 import { Copy, Download, Image as ImageIcon, Link2, Loader2, Sparkles } from "lucide-react";
 import type { DesignerFormModel } from "./populate-designer-form";
+import { DesignerFormImagePicker } from "./DesignerFormImagePicker";
 
 export interface DesignerFormPanelProps {
   model: DesignerFormModel;
@@ -14,6 +15,7 @@ export interface DesignerFormPanelProps {
   results: string[];
   canGenerate: boolean;
   onChangeValue: (slotKey: string, value: string) => void;
+  onAutofill?: (rowIndex: number) => void;
   onGenerate: () => void;
   shareToken?: string | null;
   shareBusy?: boolean;
@@ -43,6 +45,7 @@ export function DesignerFormPanel({
   results,
   canGenerate,
   onChangeValue,
+  onAutofill,
   onGenerate,
   shareToken,
   shareBusy = false,
@@ -104,32 +107,42 @@ export function DesignerFormPanel({
         {shareError ? <span className="populate-form-share__error">{shareError}</span> : null}
       </div>
 
+      {model.rows.length > 0 && onAutofill ? (
+        <label className="populate-form-panel__autofill">
+          <span className="populate-template-panel__ref-label">Autorellenar</span>
+          <select
+            className="populate-template-panel__select nodrag"
+            value=""
+            onChange={(e) => {
+              const idx = Number(e.target.value);
+              if (Number.isInteger(idx)) onAutofill(idx);
+              e.target.value = "";
+            }}
+            onPointerDown={(e) => e.stopPropagation()}
+            title="Rellenar el formulario desde una fila del Dataset"
+          >
+            <option value="">Desde un jugador ▾</option>
+            {model.rows.map((r) => (
+              <option key={r.rowIndex} value={r.rowIndex}>
+                {r.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+
       <div className="populate-form-panel__fields">
         {model.fields.map((field) => {
           if (field.kind === "image") {
             return (
-              <label key={field.slotKey} className="populate-form-panel__field">
-                <span className="populate-form-panel__label">{field.label}</span>
-                {field.imageOptions.length > 0 ? (
-                  <select
-                    className="populate-template-panel__select nodrag"
-                    value={values[field.slotKey] ?? ""}
-                    onChange={(e) => onChangeValue(field.slotKey, e.target.value)}
-                    onPointerDown={(e) => e.stopPropagation()}
-                  >
-                    <option value="">Elegir imagen ▾</option>
-                    {field.imageOptions.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <span className="populate-form-panel__constant" title="Mapea una columna de imagen en el Studio">
-                    Sin opciones — mapea una columna de imagen
-                  </span>
-                )}
-              </label>
+              <DesignerFormImagePicker
+                key={field.slotKey}
+                label={field.label}
+                options={field.imageOptions}
+                value={values[field.slotKey] ?? ""}
+                onChange={(v) => onChangeValue(field.slotKey, v)}
+                variant="studio"
+              />
             );
           }
           const listId = field.suggestions.length > 0 ? `${datalistId}-${field.slotKey}` : undefined;

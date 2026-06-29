@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  autofillDesignerFormFromRow,
+  autofillDesignerFormFromRowIndex,
   deriveDesignerForm,
   freezeDesignerPagesForForm,
   resolveDesignerSlotValues,
@@ -21,11 +23,32 @@ function dataset(): Dataset {
         id: "l1",
         name: "Jugadores",
         key: "jugadores",
-        schema: [{ id: "f_nombre", key: "nombre", label: "Nombre", type: "text", required: false }],
+        schema: [
+          { id: "f_nombre", key: "nombre", label: "Nombre", type: "text", required: false },
+          { id: "f_foto", key: "foto", label: "Foto", type: "image", required: false },
+        ],
         cards: [
-          { id: "c1", values: { f_nombre: { type: "text", value: "Messi" } } },
-          { id: "c2", values: { f_nombre: { type: "text", value: "Cristiano" } } },
-          { id: "c3", values: { f_nombre: { type: "text", value: "Messi" } } },
+          {
+            id: "c1",
+            values: {
+              f_nombre: { type: "text", value: "Messi" },
+              f_foto: { type: "image", assetId: "a1", url: "https://x/messi.png", w: 100, h: 100 },
+            },
+          },
+          {
+            id: "c2",
+            values: {
+              f_nombre: { type: "text", value: "Cristiano" },
+              f_foto: { type: "image", assetId: "b1", url: "https://x/cr7.png", w: 80, h: 80 },
+            },
+          },
+          {
+            id: "c3",
+            values: {
+              f_nombre: { type: "text", value: "Messi" },
+              f_foto: { type: "image", assetId: "a2", url: "https://x/messi2.png", w: 100, h: 100 },
+            },
+          },
         ],
       },
     ],
@@ -56,6 +79,7 @@ describe("deriveDesignerForm", () => {
     ];
     const model = deriveDesignerForm({ dynamicFields: fields, slideCount: 3 });
     expect(model.fields).toHaveLength(2);
+    expect(model.rows).toEqual([]);
     expect(model.slideCount).toBe(3);
     expect(model.empty).toBe(false);
     expect(model.fields[0]!.kind).toBe("text");
@@ -75,6 +99,23 @@ describe("deriveDesignerForm", () => {
     expect(model.fields[0]!.suggestions).toEqual(["Messi", "Cristiano"]);
   });
 
+  it("expone filas con etiquetas legibles y opciones de imagen con nombre de jugador", () => {
+    const ds = dataset();
+    const model = deriveDesignerForm({
+      dynamicFields: [pendingField("Foto", "image")],
+      slotBindings: {
+        "slot::foto": { listId: "l1", listKey: "jugadores", fieldId: "f_foto", fieldKey: "foto" },
+      },
+      dataset: ds,
+      listId: "l1",
+      slideCount: 1,
+    });
+    expect(model.rows).toHaveLength(3);
+    expect(model.rows[0]!.label).toBe("Messi");
+    expect(model.fields[0]!.imageOptions[0]!.label).toBe("Messi");
+    expect(model.fields[0]!.imageOptions[0]!.value).toBe("row:0");
+  });
+
   it("marca empty cuando no hay huecos pendientes", () => {
     const model = deriveDesignerForm({ dynamicFields: [], slideCount: 2 });
     expect(model.empty).toBe(true);
@@ -86,6 +127,7 @@ describe("resolveDesignerSlotValues", () => {
     const model: DesignerFormModel = {
       slideCount: 1,
       empty: false,
+      rows: [],
       fields: [
         { slotKey: "slot::nombre", kind: "text", label: "Nombre", suggestions: [], imageOptions: [] },
         {
@@ -94,8 +136,8 @@ describe("resolveDesignerSlotValues", () => {
           label: "Foto",
           suggestions: [],
           imageOptions: [
-            { value: "row:0", label: "Fila 1", url: "https://x/a.png", w: 200, h: 100 },
-            { value: "row:1", label: "Fila 2", url: "https://x/b.png" },
+            { value: "row:0", rowIndex: 0, label: "Messi", url: "https://x/a.png", w: 200, h: 100 },
+            { value: "row:1", rowIndex: 1, label: "Cristiano", url: "https://x/b.png" },
           ],
         },
       ],
@@ -113,12 +155,66 @@ describe("resolveDesignerSlotValues", () => {
     const model: DesignerFormModel = {
       slideCount: 1,
       empty: false,
+      rows: [],
       fields: [
         { slotKey: "slot::nombre", kind: "text", label: "Nombre", suggestions: [], imageOptions: [] },
       ],
     };
     const out = resolveDesignerSlotValues({ model, textValues: { "slot::nombre": "" }, imageSelections: {} });
     expect(Object.keys(out)).toHaveLength(0);
+  });
+});
+
+describe("autofillDesignerFormFromRow", () => {
+  it("rellena texto e imagen desde una fila del Dataset", () => {
+    const ds = dataset();
+    const model = deriveDesignerForm({
+      dynamicFields: [pendingField("Nombre", "text"), pendingField("Foto", "image")],
+      slotBindings: {
+        "slot::nombre": { listId: "l1", listKey: "jugadores", fieldId: "f_nombre", fieldKey: "nombre" },
+        "slot::foto": { listId: "l1", listKey: "jugadores", fieldId: "f_foto", fieldKey: "foto" },
+      },
+      dataset: ds,
+      listId: "l1",
+      slideCount: 1,
+    });
+    const values = autofillDesignerFormFromRow(model, ds, "l1", 1);
+    expect(values["slot::nombre"]).toBe("Cristiano");
+    expect(values["slot::foto"]).toBe("row:1");
+  });
+});
+
+describe("autofillDesignerFormFromRowIndex", () => {
+  it("usa slotValues de la fila cuando están en la instantánea pública", () => {
+    const model: DesignerFormModel = {
+      slideCount: 1,
+      empty: false,
+      rows: [{ rowIndex: 0, label: "Messi", slotValues: { "slot::nombre": "Lionel" } }],
+      fields: [
+        { slotKey: "slot::nombre", kind: "text", label: "Nombre", suggestions: [], imageOptions: [] },
+      ],
+    };
+    expect(autofillDesignerFormFromRowIndex(model, 0)).toEqual({ "slot::nombre": "Lionel" });
+  });
+
+  it("rellena imágenes por rowIndex si no hay slotValues", () => {
+    const model: DesignerFormModel = {
+      slideCount: 1,
+      empty: false,
+      rows: [{ rowIndex: 1, label: "Cristiano" }],
+      fields: [
+        {
+          slotKey: "slot::foto",
+          kind: "image",
+          label: "Foto",
+          suggestions: [],
+          imageOptions: [
+            { value: "row:1", rowIndex: 1, label: "Cristiano", url: "https://x/cr7.png" },
+          ],
+        },
+      ],
+    };
+    expect(autofillDesignerFormFromRowIndex(model, 1)).toEqual({ "slot::foto": "row:1" });
   });
 });
 

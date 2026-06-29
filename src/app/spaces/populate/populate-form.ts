@@ -20,6 +20,7 @@ import {
 } from "@/app/spaces/dataset/dataset-logic";
 import { extractPromptTokens, substitutePromptTokens } from "./populate-tokens";
 import type { CreativeInputDescriptor, PopulateBindings } from "./populate-types";
+import { datasetListRowLabel } from "./populate-row-label";
 
 export interface PopulateFormTextField {
   kind: "text" | "constant";
@@ -57,23 +58,6 @@ export interface PopulateFormModel {
   rows: PopulateFormRow[];
   /** No hay ninguna variable que rellenar. */
   empty: boolean;
-}
-
-const TEXTUAL_TYPES = new Set(["text", "number", "select", "url", "color", "boolean"]);
-
-function rowLabel(
-  dataset: Dataset,
-  listId: string,
-  schema: FieldDef[],
-  rowIndex: number,
-): string {
-  const primary = schema.find((f) => f.type === "text") ?? schema.find((f) => TEXTUAL_TYPES.has(f.type));
-  if (primary) {
-    const value = getListFieldValueAtRow(dataset, listId, primary.id, rowIndex);
-    const text = fieldValueAsText(value ?? undefined).trim();
-    if (text) return text;
-  }
-  return `Fila ${rowIndex + 1}`;
 }
 
 function distinctColumnValues(
@@ -156,7 +140,7 @@ export function derivePopulateForm(args: {
       const image = getListFieldImageAtRow(dataset, listId, fieldId, i);
       const url = image?.url?.trim();
       if (!url) continue;
-      options.push({ rowIndex: i, label: rowLabel(dataset, listId, schema, i), url });
+      options.push({ rowIndex: i, label: datasetListRowLabel(dataset, listId, schema, i), url });
     }
     const fieldLabel = schema.find((f) => f.id === fieldId)?.label ?? slot.label;
     imageFields.push({ inputId: slot.inputId, label: fieldLabel, listId, fieldId, options });
@@ -164,7 +148,7 @@ export function derivePopulateForm(args: {
 
   const rows: PopulateFormRow[] = [];
   for (let i = 0; i < rowCount; i += 1) {
-    rows.push({ rowIndex: i, label: rowLabel(dataset, listId, schema, i) });
+    rows.push({ rowIndex: i, label: datasetListRowLabel(dataset, listId, schema, i) });
   }
 
   return {

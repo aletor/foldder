@@ -4,10 +4,12 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Download, Loader2, Sparkles } from "lucide-react";
 import type { PublicPopulateShareRecord } from "@/lib/populate-share-types";
 import {
+  autofillDesignerFormFromRowIndex,
   freezeDesignerPagesForForm,
   resolveDesignerSlotValues,
   type DesignerFormModel,
 } from "@/app/spaces/populate/populate-designer-form";
+import { DesignerFormImagePicker } from "@/app/spaces/populate/DesignerFormImagePicker";
 import {
   DesignerHeadlessRasterPortal,
   type DesignerHeadlessRasterRequest,
@@ -26,7 +28,12 @@ export function PublicDesignerFormClient({ initial }: Props) {
   const { payload } = initial;
   const designer = payload.designer!;
   const model: DesignerFormModel = useMemo(
-    () => ({ fields: designer.formFields, slideCount: designer.slideCount, empty: designer.formFields.length === 0 }),
+    () => ({
+      fields: designer.formFields,
+      rows: designer.rows ?? [],
+      slideCount: designer.slideCount,
+      empty: designer.formFields.length === 0,
+    }),
     [designer],
   );
 
@@ -69,6 +76,14 @@ export function PublicDesignerFormClient({ initial }: Props) {
   );
 
   const canGenerate = !model.empty;
+
+  const onAutofill = useCallback(
+    (rowIndex: number) => {
+      const next = autofillDesignerFormFromRowIndex(model, rowIndex);
+      setValues((prev) => ({ ...prev, ...next }));
+    },
+    [model],
+  );
 
   const onGenerate = useCallback(async () => {
     setError(null);
@@ -132,30 +147,42 @@ export function PublicDesignerFormClient({ initial }: Props) {
               void onGenerate();
             }}
           >
+            {model.rows.length > 0 ? (
+              <label className="flex flex-col gap-1">
+                <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#fd52eb]/85">
+                  Autorellenar
+                </span>
+                <select
+                  className="rounded-lg border border-[#fd52eb]/30 bg-black/50 px-3 py-2.5 text-sm text-white outline-none focus:border-[#fd52eb]/70 focus:ring-2 focus:ring-[#fd52eb]/20"
+                  value=""
+                  onChange={(e) => {
+                    const idx = Number(e.target.value);
+                    if (Number.isInteger(idx)) onAutofill(idx);
+                    e.target.value = "";
+                  }}
+                >
+                  <option value="">Desde un jugador ▾</option>
+                  {model.rows.map((r) => (
+                    <option key={r.rowIndex} value={r.rowIndex}>
+                      {r.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+
             {model.fields.map((field) => {
               if (field.kind === "image") {
                 return (
-                  <label key={field.slotKey} className="flex flex-col gap-1">
-                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#fd52eb]/85">
-                      {field.label}
-                    </span>
-                    {field.imageOptions.length > 0 ? (
-                      <select
-                        className="rounded-lg border border-[#fd52eb]/30 bg-black/50 px-3 py-2.5 text-sm text-white outline-none focus:border-[#fd52eb]/70 focus:ring-2 focus:ring-[#fd52eb]/20"
-                        value={values[field.slotKey] ?? ""}
-                        onChange={(e) => setValues((p) => ({ ...p, [field.slotKey]: e.target.value }))}
-                      >
-                        <option value="">Elegir…</option>
-                        {field.imageOptions.map((o) => (
-                          <option key={o.value} value={o.value}>
-                            {o.label}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <span className="text-sm italic text-white/45">Sin opciones disponibles</span>
-                    )}
-                  </label>
+                  <DesignerFormImagePicker
+                    key={field.slotKey}
+                    label={field.label}
+                    options={field.imageOptions}
+                    value={values[field.slotKey] ?? ""}
+                    onChange={(v) => setValues((p) => ({ ...p, [field.slotKey]: v }))}
+                    variant="public"
+                    emptyHint="Sin opciones disponibles"
+                  />
                 );
               }
               const listId = field.suggestions.length > 0 ? `${datalistPrefix}-${field.slotKey}` : undefined;

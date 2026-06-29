@@ -152,6 +152,7 @@ export interface PopulateStudioProps {
   designerFormValues?: Record<string, string>;
   designerFormResults?: string[];
   onChangeDesignerFormValue?: (slotKey: string, value: string) => void;
+  onAutofillDesignerForm?: (rowIndex: number) => void;
   onGenerateDesignerForm?: () => void;
 }
 
@@ -484,6 +485,7 @@ export function PopulateStudio(props: PopulateStudioProps) {
     designerFormValues,
     designerFormResults,
     onChangeDesignerFormValue,
+    onAutofillDesignerForm,
     onGenerateDesignerForm,
   } = props;
 
@@ -723,6 +725,7 @@ export function PopulateStudio(props: PopulateStudioProps) {
             results={designerFormResults ?? []}
             canGenerate={!designerFormModel.empty}
             onChangeValue={onChangeDesignerFormValue}
+            onAutofill={onAutofillDesignerForm}
             onGenerate={() => {
               onGenerateDesignerForm();
             }}

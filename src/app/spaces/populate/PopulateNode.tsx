@@ -87,6 +87,7 @@ import {
 } from "./populate-designer-materialize";
 import { rasterizeAndUploadDesignerRows, uploadDesignerSlideRaster } from "./populate-designer-raster";
 import {
+  autofillDesignerFormFromRow,
   deriveDesignerForm,
   freezeDesignerPagesForForm,
   resolveDesignerSlotValues,
@@ -1195,6 +1196,32 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
     [connectedDataset, listId, formModel, id, setNodes],
   );
 
+  const onAutofillDesignerForm = useCallback(
+    (rowIndex: number) => {
+      if (!connectedDataset || !listId) return;
+      const values = autofillDesignerFormFromRow(
+        designerFormModel,
+        connectedDataset,
+        listId,
+        rowIndex,
+      );
+      setNodes((nds) =>
+        nds.map((n) => {
+          if (n.id !== id) return n;
+          const d = (n.data ?? {}) as PopulateNodeData;
+          return {
+            ...n,
+            data: {
+              ...n.data,
+              formValues: { ...(d.formValues ?? {}), ...values },
+            },
+          };
+        }),
+      );
+    },
+    [connectedDataset, listId, designerFormModel, id, setNodes],
+  );
+
   const onGenerateForm = useCallback(async () => {
     setError(null);
     const tpl = getTemplate();
@@ -1281,6 +1308,19 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
         designer: {
           pages: cfg.pages,
           formFields: designerFormModel.fields,
+          rows: designerFormModel.rows.map((row) => ({
+            ...row,
+            ...(connectedDataset && listId
+              ? {
+                  slotValues: autofillDesignerFormFromRow(
+                    designerFormModel,
+                    connectedDataset,
+                    listId,
+                    row.rowIndex,
+                  ),
+                }
+              : {}),
+          })),
           slideCount: cfg.pages.length,
         },
       };
@@ -1301,6 +1341,8 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
     getNodes,
     getEdges,
     designerFormModel,
+    connectedDataset,
+    listId,
     getTemplate,
     nodeData.label,
     formModel,
@@ -1674,6 +1716,7 @@ function PopulateNodeImpl({ id, data, selected }: NodeProps) {
           designerFormValues={formValues}
           designerFormResults={designerFormResults}
           onChangeDesignerFormValue={onChangeFormText}
+          onAutofillDesignerForm={onAutofillDesignerForm}
           onGenerateDesignerForm={() => void onGenerateDesignerForm()}
         />
       ) : null}

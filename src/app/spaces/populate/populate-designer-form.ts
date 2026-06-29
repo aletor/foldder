@@ -13,8 +13,13 @@
 
 import type { DesignerPageState } from "@/app/spaces/designer/DesignerNode";
 import type { FreehandObject } from "@/app/spaces/FreehandStudio";
-import type { Dataset } from "@/app/spaces/dataset/dataset-types";
-import { fieldValueAsText, getListFieldImageAtRow, getListFieldValueAtRow } from "@/app/spaces/dataset/dataset-logic";
+import type { Dataset, FieldDef } from "@/app/spaces/dataset/dataset-types";
+import {
+  fieldValueAsText,
+  getListFieldImageAtRow,
+  getListFieldTextAtRow,
+  getListFieldValueAtRow,
+} from "@/app/spaces/dataset/dataset-logic";
 import {
   designerSlotKey,
   isPendingDesignerBinding,
@@ -25,14 +30,25 @@ import { computeFittingLayout } from "@/app/spaces/indesign/image-frame-layout";
 import { stripDatasetBindingsFromObject } from "./populate-designer-materialize";
 import type { DesignerDynamicField } from "./populate-designer-fields";
 import type { DesignerSlotColumnRef } from "./populate-designer-materialize";
+import { datasetListRowLabel } from "./populate-row-label";
 
 export interface DesignerFormImageOption {
-  /** Valor estable que el formulario guarda como selección (usamos `row:<i>` o la URL). */
+  /** Valor estable que el formulario guarda como selección (`row:<i>`). */
   value: string;
+  rowIndex: number;
   label: string;
   url: string;
   w?: number;
   h?: number;
+}
+
+export interface DesignerFormRow {
+  rowIndex: number;
+  label: string;
+  /** Miniatura de la primera columna de imagen mapeada en el formulario (si la hay). */
+  previewUrl?: string;
+  /** Valores por hueco para autorelleno en el formulario público (instantánea al compartir). */
+  slotValues?: Record<string, string>;
 }
 
 export interface DesignerFormField {
@@ -40,6 +56,8 @@ export interface DesignerFormField {
   slotKey: string;
   kind: "text" | "image";
   label: string;
+  /** Columna del Dataset asignada en Populate Studio (para autorelleno). */
+  mappedColumn?: DesignerSlotColumnRef | null;
   /** Sugerencias para campos de texto (valores distintos de la columna mapeada, si la hay). */
   suggestions: string[];
   /** Opciones para campos de imagen (filas de la columna mapeada con su URL). */
@@ -48,6 +66,8 @@ export interface DesignerFormField {
 
 export interface DesignerFormModel {
   fields: DesignerFormField[];
+  /** Filas del listado activo (para autorellenar desde un jugador/fila). */
+  rows: DesignerFormRow[];
   /** Nº de slides (páginas) de la plantilla → nº de imágenes que devolverá. */
   slideCount: number;
   empty: boolean;
@@ -82,16 +102,51 @@ function distinctColumnValues(
 function columnImageOptions(
   dataset: Dataset,
   col: DesignerSlotColumnRef,
+  schema: FieldDef[],
   rowCount: number,
 ): DesignerFormImageOption[] {
+  const list = dataset.lists.find((l) => l.id === col.listId);
+  const listSchema = list?.schema ?? schema;
   const out: DesignerFormImageOption[] = [];
   for (let i = 0; i < rowCount; i += 1) {
     const image = getListFieldImageAtRow(dataset, col.listId, col.fieldId, i);
     const url = image?.url?.trim();
     if (!url) continue;
-    out.push({ value: `row:${i}`, label: `Fila ${i + 1}`, url, w: image?.w, h: image?.h });
+    out.push({
+      value: `row:${i}`,
+      rowIndex: i,
+      label: datasetListRowLabel(dataset, col.listId, listSchema, i),
+      url,
+      w: image?.w,
+      h: image?.h,
+    });
   }
   return out;
+}
+
+function buildDesignerFormRows(
+  dataset: Dataset,
+  listId: string,
+  rowCount: number,
+  imageFields: DesignerFormField[],
+): DesignerFormRow[] {
+  const list = dataset.lists.find((l) => l.id === listId);
+  if (!list) return [];
+  const previewByRow = new Map<number, string>();
+  for (const field of imageFields) {
+    for (const opt of field.imageOptions) {
+      if (!previewByRow.has(opt.rowIndex)) previewByRow.set(opt.rowIndex, opt.url);
+    }
+  }
+  const rows: DesignerFormRow[] = [];
+  for (let i = 0; i < rowCount; i += 1) {
+    rows.push({
+      rowIndex: i,
+      label: datasetListRowLabel(dataset, listId, list.schema, i),
+      previewUrl: previewByRow.get(i),
+    });
+  }
+  return rows;
 }
 
 /**
@@ -108,23 +163,104 @@ export function deriveDesignerForm(args: {
   const { dynamicFields, slotBindings, dataset, listId, slideCount } = args;
   const list = dataset && listId ? dataset.lists.find((l) => l.id === listId) : undefined;
   const rowCount = list?.cards.length ?? 0;
+  const schema = list?.schema ?? [];
 
   const fields: DesignerFormField[] = [];
   for (const f of dynamicFields) {
     if (f.status !== "pending") continue;
-    const col = slotBindings?.[f.key];
+    const col = slotBindings?.[f.key] ?? null;
     if (f.kind === "image") {
       const imageOptions =
-        col && dataset && rowCount > 0 ? columnImageOptions(dataset, col, rowCount) : [];
-      fields.push({ slotKey: f.key, kind: "image", label: f.label, suggestions: [], imageOptions });
+        col && dataset && rowCount > 0 ? columnImageOptions(dataset, col, schema, rowCount) : [];
+      fields.push({
+        slotKey: f.key,
+        kind: "image",
+        label: f.label,
+        mappedColumn: col,
+        suggestions: [],
+        imageOptions,
+      });
     } else {
       const suggestions =
         col && dataset && rowCount > 0 ? distinctColumnValues(dataset, col, rowCount) : [];
-      fields.push({ slotKey: f.key, kind: "text", label: f.label, suggestions, imageOptions: [] });
+      fields.push({
+        slotKey: f.key,
+        kind: "text",
+        label: f.label,
+        mappedColumn: col,
+        suggestions,
+        imageOptions: [],
+      });
     }
   }
 
-  return { fields, slideCount, empty: fields.length === 0 };
+  const rows =
+    dataset && listId && rowCount > 0
+      ? buildDesignerFormRows(
+          dataset,
+          listId,
+          rowCount,
+          fields.filter((field) => field.kind === "image"),
+        )
+      : [];
+
+  return { fields, rows, slideCount, empty: fields.length === 0 };
+}
+
+/**
+ * Autorellena el formulario Designer desde una fila del listado (texto + imágenes mapeadas).
+ * Devuelve un único mapa de valores listo para `formValues` del nodo Populate.
+ */
+export function autofillDesignerFormFromRow(
+  model: DesignerFormModel,
+  dataset: Dataset,
+  listId: string,
+  rowIndex: number,
+): Record<string, string> {
+  const values: Record<string, string> = {};
+  const list = dataset.lists.find((l) => l.id === listId);
+  if (!list) return values;
+
+  for (const field of model.fields) {
+    if (field.kind === "text" && field.mappedColumn) {
+      const col = field.mappedColumn;
+      const listField = list.schema.find((f) => f.id === col.fieldId);
+      if (!listField) continue;
+      const text =
+        getListFieldTextAtRow(dataset, col.listId, col.fieldId, rowIndex) ??
+        fieldValueAsText(getListFieldValueAtRow(dataset, col.listId, col.fieldId, rowIndex) ?? undefined);
+      if (text) values[field.slotKey] = text;
+      continue;
+    }
+    if (field.kind === "image") {
+      const option = field.imageOptions.find((o) => o.rowIndex === rowIndex);
+      if (option) values[field.slotKey] = option.value;
+    }
+  }
+  return values;
+}
+
+/**
+ * Autorellena desde un índice de fila usando el modelo materializado (formulario público o imágenes
+ * sin Dataset). Si la fila trae `slotValues` (instantánea al compartir), los usa; si no, rellena
+ * solo los campos de imagen cuya opción coincide con la fila.
+ */
+export function autofillDesignerFormFromRowIndex(
+  model: DesignerFormModel,
+  rowIndex: number,
+): Record<string, string> {
+  const row = model.rows.find((r) => r.rowIndex === rowIndex);
+  if (row?.slotValues && Object.keys(row.slotValues).length > 0) {
+    return { ...row.slotValues };
+  }
+  const values: Record<string, string> = {};
+  for (const field of model.fields) {
+    if (field.kind === "image") {
+      const option = field.imageOptions.find((o) => o.rowIndex === rowIndex);
+      if (option) values[field.slotKey] = option.value;
+    }
+  }
+  return values;
 }
 
 /**
