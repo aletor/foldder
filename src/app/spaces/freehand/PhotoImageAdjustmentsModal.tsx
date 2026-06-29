@@ -4,7 +4,7 @@ import React, { useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { ScrubNumberInput } from "../ScrubNumberInput";
-import { stopStudioModalPointerPropagation } from "./studio-modal-shell";
+import { stopStudioModalPointerPropagation, stopStudioModalWheelPropagation } from "./studio-modal-shell";
 import {
   STUDIO_LAYER_MODAL_Z,
   studioModalBackdropHandlers,
@@ -268,6 +268,7 @@ export function PhotoToneAdjustmentsPanel({
   return (
     <div
       className={`custom-scrollbar h-full overflow-y-auto ${compact ? "space-y-2 px-2 py-2" : "space-y-3 px-3 py-3"}`}
+      onWheel={stopStudioModalWheelPropagation}
     >
       <div className={compact ? "space-y-1.5" : "space-y-2.5"}>
         <ToneRow compact={compact} label="Brillo" value={values.brightness} onChange={(n, r) => onChange({ ...values, brightness: n }, r)} onScrubEnd={onScrubEnd} />

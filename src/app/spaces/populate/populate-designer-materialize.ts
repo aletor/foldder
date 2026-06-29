@@ -57,7 +57,7 @@ function resolvePendingBindingForObject(
       } as FreehandObject;
     }
   }
-  if (next.type === "booleanGroup") {
+  if (next.type === "booleanGroup" || next.type === "groupContainer") {
     next = { ...next, children: next.children.map((c) => resolvePendingBindingForObject(c, slotMap)) };
   } else if (next.type === "clippingContainer") {
     next = {
@@ -78,7 +78,7 @@ export function stripDatasetBindingsFromObject(obj: FreehandObject): FreehandObj
     delete copy._designerDatasetPropertyBindings;
     next = copy;
   }
-  if (next.type === "booleanGroup") {
+  if (next.type === "booleanGroup" || next.type === "groupContainer") {
     next = { ...next, children: next.children.map(stripDatasetBindingsFromObject) };
   } else if (next.type === "clippingContainer") {
     next = {

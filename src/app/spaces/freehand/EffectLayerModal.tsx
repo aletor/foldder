@@ -12,7 +12,12 @@ import type { LayerEffects } from "./layer-effects-types";
 import { STUDIO_LAYER_MODAL_Z, studioOverlayPointerGuards } from "./studio-modal-shell";
 
 export type EffectLayerTab = "tone" | "look" | "overlays";
-export type EffectLayerApplyMode = "embedded" | "wholeStack" | "belowSelection";
+export type EffectLayerApplyMode =
+  | "embedded"
+  | "wholeStack"
+  | "belowSelection"
+  | "selectedFolder"
+  | "selectedLayer";
 /** @deprecated Usar EffectLayerApplyMode */
 export type EffectLayerApplyTarget = "selectedLayer" | "adjustmentLayer";
 
@@ -28,6 +33,8 @@ const PANEL_W_PX = 352;
 
 const APPLY_MODE_OPTIONS: { value: EffectLayerApplyMode; label: string }[] = [
   { value: "embedded", label: "En capa actual" },
+  { value: "selectedLayer", label: "Capa fx · capa seleccionada" },
+  { value: "selectedFolder", label: "Capa fx · carpeta seleccionada" },
   { value: "wholeStack", label: "Capa fx · composición inferior" },
   { value: "belowSelection", label: "Capa fx · bajo selección" },
 ];
@@ -40,6 +47,7 @@ export function EffectLayerModal({
   title = "Capa de efecto",
   hasSelection,
   targetType,
+  targetInsideFolder,
   histogram,
   tone,
   onToneChange,
@@ -61,6 +69,8 @@ export function EffectLayerModal({
   title?: string;
   hasSelection?: boolean;
   targetType?: string;
+  /** Capa seleccionada es hija directa o anidada de una carpeta. */
+  targetInsideFolder?: boolean;
   histogram: number[];
   tone: PhotoImageAdjustmentsValues;
   onToneChange: (next: PhotoImageAdjustmentsValues, recordHistory: boolean) => void;
@@ -219,7 +229,11 @@ export function EffectLayerModal({
             onChange={(e) => onApplyModeChange?.(e.target.value as EffectLayerApplyMode)}
             className="min-w-0 flex-1 truncate rounded-none border border-white/10 bg-black/40 px-1.5 py-0.5 text-[10px] text-zinc-100 outline-none focus:border-[#71449f]/60"
           >
-            {APPLY_MODE_OPTIONS.map((o) => (
+            {APPLY_MODE_OPTIONS.filter((o) => {
+              if (o.value === "selectedFolder") return targetType === "groupContainer";
+              if (o.value === "selectedLayer") return !!targetInsideFolder;
+              return true;
+            }).map((o) => (
               <option key={o.value} value={o.value}>
                 {o.label}
               </option>

@@ -13,7 +13,11 @@ import { hasActiveLayerEffects, type LayerEffects } from "./layer-effects-types"
 export type AdjustmentLayerKind = "levels" | "layerStyles";
 
 /** Dónde se inserta / qué afecta la capa de efecto. */
-export type EffectLayerScope = "wholeStack" | "belowSelection";
+export type EffectLayerScope =
+  | "wholeStack"
+  | "belowSelection"
+  | "selectedFolder"
+  | "selectedLayer";
 
 /** Parámetros de tono (brillo/contraste/niveles). */
 export type AdjustmentLayerSettings = {
@@ -31,8 +35,12 @@ export type AdjustmentLayerFields = {
   adjustment: AdjustmentLayerSettings;
   /** Look + overlays (color, degradado, glow, filtro de foto). */
   layerEffects?: LayerEffects;
-  /** wholeStack = tope del stack + bounds artboard; belowSelection = encima de la selección. */
+  /** wholeStack = tope del stack + bounds artboard; belowSelection = encima de la selección; selectedFolder = solo hijos de una carpeta; selectedLayer = solo una capa (p. ej. dentro de carpeta). */
   effectScope?: EffectLayerScope;
+  /** Carpeta objetivo cuando `effectScope === "selectedFolder"`. */
+  effectTargetFolderId?: string;
+  /** Capa objetivo cuando `effectScope === "selectedLayer"`. */
+  effectTargetLayerId?: string;
 };
 
 /** Referencia mínima para filtros SVG (sin importar FreehandStudio). */
@@ -107,5 +115,7 @@ export function normalizeEffectLayerObject(
     adjustment: layer.adjustment ?? defaultAdjustmentLayerSettings(),
     ...(layer.layerEffects ? { layerEffects: layer.layerEffects } : {}),
     effectScope: layer.effectScope ?? "wholeStack",
+    ...(layer.effectTargetFolderId ? { effectTargetFolderId: layer.effectTargetFolderId } : {}),
+    ...(layer.effectTargetLayerId ? { effectTargetLayerId: layer.effectTargetLayerId } : {}),
   };
 }

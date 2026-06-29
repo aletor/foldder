@@ -21,6 +21,20 @@ export function insertIndexForEffectLayer(
   return selectedIndex + 1;
 }
 
+export function isFolderScopedEffectLayer(layer: {
+  effectScope?: EffectLayerScope;
+  effectTargetFolderId?: string;
+}): boolean {
+  return layer.effectScope === "selectedFolder" && !!layer.effectTargetFolderId;
+}
+
+export function isLayerScopedEffectLayer(layer: {
+  effectScope?: EffectLayerScope;
+  effectTargetLayerId?: string;
+}): boolean {
+  return layer.effectScope === "selectedLayer" && !!layer.effectTargetLayerId;
+}
+
 export function selectedIndexInRootStack(
   objects: { id: string }[],
   selectedId: string | null,
@@ -32,7 +46,7 @@ export function selectedIndexInRootStack(
 /**
  * Bounds de render para fx en capa de efecto global.
  * wholeStack: siempre el artboard actual (aunque la capa guarde tamaño antiguo tras redimensionar el lienzo).
- * belowSelection: bounds del contenido afectado debajo.
+ * belowSelection / selectedFolder / selectedLayer: bounds del contenido afectado.
  */
 export function resolveEffectLayerFxBounds(
   layer: AdjustmentLayerLike & { x: number; y: number; width: number; height: number },

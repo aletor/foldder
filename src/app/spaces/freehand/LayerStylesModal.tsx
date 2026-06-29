@@ -4,17 +4,19 @@ import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { ScrubNumberInput } from "../ScrubNumberInput";
-import { stopStudioModalPointerPropagation } from "./studio-modal-shell";
+import { stopStudioModalPointerPropagation, stopStudioModalWheelPropagation } from "./studio-modal-shell";
 import {
+  applyPhotoFilterPresetChoice,
   defaultLayerEffects,
   defaultPhotoFilter,
+  isPhotoFilterPresetActive,
   isSvgPhotoFilterPreset,
   PHOTO_FILTER_PRESETS,
   photoFilterCssString,
+  setPhotoFilterEnabled,
   type LayerEffectBlendMode,
   type LayerEffects,
   type OuterGlowTechnique,
-  type PhotoFilterPreset,
 } from "./layer-effects-types";
 import { PhotoFilterSvgFilter } from "./PhotoFilterSvg";
 import {
@@ -156,7 +158,8 @@ export function LayerStylesModal({
             id: "photoFilter" as EffectTab,
             label: "Filtro de foto",
             enabled: pfEnabled,
-            onToggle: (c: boolean) => onDraftChange({ ...draft, photoFilter: { ...pf, enabled: c } }),
+            onToggle: (c: boolean) =>
+              onDraftChange({ ...draft, photoFilter: setPhotoFilterEnabled(pf, c) }),
           },
         ]
       : []),
@@ -1038,7 +1041,7 @@ export function LayerStylesModal({
       <div className="flex h-full flex-col space-y-2 p-2">
         <svg width={0} height={0} aria-hidden style={{ position: "absolute" }}>
           <defs>
-            {PHOTO_FILTER_PRESETS.filter((p) => isSvgPhotoFilterPreset(p.id)).map((p) => (
+            {PHOTO_FILTER_PRESETS.filter((p) => p.id !== "none" && isSvgPhotoFilterPreset(p.id)).map((p) => (
               <PhotoFilterSvgFilter
                 key={p.id}
                 id={`fh-pf-prev-${p.id}`}
@@ -1052,10 +1055,13 @@ export function LayerStylesModal({
           <span className="text-[7px] font-black uppercase tracking-[0.08em] text-white/40">Preajuste</span>
           <div className="custom-scrollbar flex gap-1 overflow-x-auto pb-0.5">
             {PHOTO_FILTER_PRESETS.map((p) => {
-              const active = pf.preset === p.id;
-              const previewFilter = isSvgPhotoFilterPreset(p.id)
-                ? `url(#fh-pf-prev-${p.id})`
-                : photoFilterCssString(p.id, 1);
+              const active = isPhotoFilterPresetActive(pf, p.id);
+              const previewFilter =
+                p.id === "none"
+                  ? undefined
+                  : isSvgPhotoFilterPreset(p.id)
+                    ? `url(#fh-pf-prev-${p.id})`
+                    : photoFilterCssString(p.id, 1);
               return (
                 <button
                   key={p.id}
@@ -1064,7 +1070,7 @@ export function LayerStylesModal({
                   onClick={() =>
                     onDraftChange({
                       ...draft,
-                      photoFilter: { ...pf, enabled: true, preset: p.id as PhotoFilterPreset },
+                      photoFilter: applyPhotoFilterPresetChoice(pf, p.id),
                     })
                   }
                   className={`flex w-11 shrink-0 flex-col gap-0.5 border p-0.5 transition ${
@@ -1074,14 +1080,21 @@ export function LayerStylesModal({
                   }`}
                 >
                   <span
-                    className="h-5 w-full"
+                    className="relative flex h-5 w-full items-center justify-center"
                     style={{
                       backgroundImage:
-                        "linear-gradient(135deg, #6b5b3a 0%, #c98f5a 35%, #e8cba0 60%, #4a6b7a 100%)",
+                        p.id === "none"
+                          ? undefined
+                          : "linear-gradient(135deg, #6b5b3a 0%, #c98f5a 35%, #e8cba0 60%, #4a6b7a 100%)",
+                      backgroundColor: p.id === "none" ? "#2a2d33" : undefined,
                       filter: previewFilter,
                     }}
                     aria-hidden
-                  />
+                  >
+                    {p.id === "none" ? (
+                      <span className="text-[9px] font-bold text-white/35">—</span>
+                    ) : null}
+                  </span>
                   <span
                     className={`truncate px-0.5 text-center text-[7px] leading-tight ${
                       active ? "font-semibold text-white" : "text-white/50"
@@ -1142,7 +1155,7 @@ export function LayerStylesModal({
         {/* defs SVG ocultos para el preview de presets de mapeo tonal (duotono/teal&orange/split-tone). */}
         <svg width={0} height={0} aria-hidden style={{ position: "absolute" }}>
           <defs>
-            {PHOTO_FILTER_PRESETS.filter((p) => isSvgPhotoFilterPreset(p.id)).map((p) => (
+            {PHOTO_FILTER_PRESETS.filter((p) => p.id !== "none" && isSvgPhotoFilterPreset(p.id)).map((p) => (
               <PhotoFilterSvgFilter
                 key={p.id}
                 id={`fh-pf-prev-${p.id}`}
@@ -1156,10 +1169,13 @@ export function LayerStylesModal({
           <span className="text-[8px] font-black uppercase tracking-[0.12em] text-white/40">Preajuste</span>
           <div className="grid grid-cols-3 gap-1.5">
             {PHOTO_FILTER_PRESETS.map((p) => {
-              const active = pf.preset === p.id;
-              const previewFilter = isSvgPhotoFilterPreset(p.id)
-                ? `url(#fh-pf-prev-${p.id})`
-                : photoFilterCssString(p.id, 1);
+              const active = isPhotoFilterPresetActive(pf, p.id);
+              const previewFilter =
+                p.id === "none"
+                  ? undefined
+                  : isSvgPhotoFilterPreset(p.id)
+                    ? `url(#fh-pf-prev-${p.id})`
+                    : photoFilterCssString(p.id, 1);
               return (
                 <button
                   key={p.id}
@@ -1167,7 +1183,7 @@ export function LayerStylesModal({
                   onClick={() =>
                     onDraftChange({
                       ...draft,
-                      photoFilter: { ...pf, enabled: true, preset: p.id as PhotoFilterPreset },
+                      photoFilter: applyPhotoFilterPresetChoice(pf, p.id),
                     })
                   }
                   className={`flex flex-col items-stretch gap-1 rounded-none border p-1 text-left transition ${
@@ -1178,14 +1194,21 @@ export function LayerStylesModal({
                   title={p.label}
                 >
                   <span
-                    className="h-9 w-full"
+                    className="relative flex h-9 w-full items-center justify-center"
                     style={{
                       backgroundImage:
-                        "linear-gradient(135deg, #6b5b3a 0%, #c98f5a 35%, #e8cba0 60%, #4a6b7a 100%)",
+                        p.id === "none"
+                          ? undefined
+                          : "linear-gradient(135deg, #6b5b3a 0%, #c98f5a 35%, #e8cba0 60%, #4a6b7a 100%)",
+                      backgroundColor: p.id === "none" ? "#2a2d33" : undefined,
                       filter: previewFilter,
                     }}
                     aria-hidden
-                  />
+                  >
+                    {p.id === "none" ? (
+                      <span className="text-[11px] font-bold text-white/35">—</span>
+                    ) : null}
+                  </span>
                   <span
                     className={`truncate text-[9px] ${active ? "font-semibold text-white" : "text-white/55"}`}
                   >
@@ -1329,8 +1352,8 @@ export function LayerStylesModal({
           />
         </div>
         <p className="text-[9px] leading-relaxed text-white/35">
-          El filtro tiñe el contenido de la capa (imagen, forma o texto). El grano y la viñeta se recortan a
-          la silueta. Para activarlo, marca la casilla «Filtro de foto».
+          Elige «Ninguno» o desmarca la casilla para quitar el filtro. El grano y la viñeta se recortan a la
+          silueta cuando el filtro está activo.
         </p>
       </div>
     );
@@ -1344,6 +1367,7 @@ export function LayerStylesModal({
         role="tabpanel"
         id={`fh-layer-style-panel-${tab}`}
         aria-labelledby={`fh-layer-style-tab-${tab}`}
+        onWheel={stopStudioModalWheelPropagation}
       >
         {panel}
       </div>
@@ -1357,6 +1381,7 @@ export function LayerStylesModal({
         role="tabpanel"
         id={`fh-layer-style-panel-${tab}`}
         aria-labelledby={`fh-layer-style-tab-${tab}`}
+        onWheel={stopStudioModalWheelPropagation}
       >
         <div className="min-h-0 flex-1">{panel}</div>
         {!hideApplyTargetChoice && showApplyTargetChoice ? (

@@ -44,13 +44,14 @@ export interface DesignerDynamicField {
 
 /**
  * Recorre el árbol de objetos en profundidad, incluidos los anidados dentro de `booleanGroup`
- * (children) y `clippingContainer` (mask + content, el "pegar dentro"). Debe ir en sincronía con la
- * resolución congelada (`transformDesignerPageObjectsDeep`), que recorre exactamente igual.
+ * (children), `groupContainer` (carpetas) y `clippingContainer` (mask + content, el "pegar dentro").
+ * Debe ir en sincronía con la resolución congelada (`transformDesignerPageObjectsDeep`), que recorre
+ * exactamente igual.
  */
 function visitObjects(objects: FreehandObject[] | undefined, visit: (o: FreehandObject) => void): void {
   for (const o of objects ?? []) {
     visit(o);
-    if (o.type === "booleanGroup") {
+    if (o.type === "booleanGroup" || o.type === "groupContainer") {
       visitObjects(o.children, visit);
     } else if (o.type === "clippingContainer") {
       visit(o.mask as unknown as FreehandObject);

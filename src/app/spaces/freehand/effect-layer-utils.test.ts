@@ -39,4 +39,40 @@ describe("resolveEffectLayerFxBounds", () => {
     );
     expect(bounds).toEqual(content);
   });
+
+  it("selectedFolder usa contentBounds de la carpeta", () => {
+    const content = { x: 40, y: 60, w: 320, h: 200 };
+    const bounds = resolveEffectLayerFxBounds(
+      {
+        x: 10,
+        y: 20,
+        width: 400,
+        height: 300,
+        effectScope: "selectedFolder",
+        effectTargetFolderId: "folder-1",
+        adjustment: { brightness: 0, contrast: 0, saturation: 0, levels: { black: 0, white: 255, gamma: 1 } },
+      },
+      content,
+      artboards,
+    );
+    expect(bounds).toEqual(content);
+  });
+
+  it("selectedLayer usa contentBounds de la capa", () => {
+    const content = { x: 12, y: 34, w: 88, h: 44 };
+    const bounds = resolveEffectLayerFxBounds(
+      {
+        x: 0,
+        y: 0,
+        width: 800,
+        height: 600,
+        effectScope: "selectedLayer",
+        effectTargetLayerId: "layer-1",
+        adjustment: { brightness: 0, contrast: 0, saturation: 0, levels: { black: 0, white: 255, gamma: 1 } },
+      },
+      content,
+      artboards,
+    );
+    expect(bounds).toEqual(content);
+  });
 });

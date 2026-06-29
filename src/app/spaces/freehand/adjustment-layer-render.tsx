@@ -40,6 +40,9 @@ export function buildLayerStackRenderSegments(objects: FreehandObject[]): LayerS
   for (const obj of stack) {
     if (isAdjustmentLayerObject(obj)) {
       const layer = obj as AdjustmentLayerLike;
+      if (layer.effectScope === "selectedFolder" || layer.effectScope === "selectedLayer") {
+        continue;
+      }
       const toneActive = !isAdjustmentLayerSettingsNeutral(layer.adjustment);
       const effectsActive = !isAdjustmentLayerStylesNeutral(layer.layerEffects);
       if (layer.visible && isEffectLayerActive(layer)) {

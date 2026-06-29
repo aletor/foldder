@@ -76,6 +76,7 @@ export type OuterGlowEffect = {
  * boolean y texto) + overlays opcionales de grano (ruido) y viñeta.
  */
 export type PhotoFilterPreset =
+  | "none"
   | "sepia"
   | "vintage"
   | "bw"
@@ -104,6 +105,7 @@ export type PhotoFilterEffect = {
 };
 
 export const PHOTO_FILTER_PRESETS: { id: PhotoFilterPreset; label: string }[] = [
+  { id: "none", label: "Ninguno" },
   { id: "sepia", label: "Sepia" },
   { id: "vintage", label: "Vintage" },
   { id: "bw", label: "Blanco y negro" },
@@ -138,7 +140,26 @@ export type LayerEffects = {
 };
 
 export function defaultPhotoFilter(): PhotoFilterEffect {
-  return { enabled: false, preset: "vintage", intensity: 0.85, grain: 0.18, vignette: 0.25, grainSize: 0.5 };
+  return { enabled: false, preset: "none", intensity: 0.85, grain: 0.18, vignette: 0.25, grainSize: 0.5 };
+}
+
+export function isPhotoFilterPresetActive(pf: PhotoFilterEffect, presetId: PhotoFilterPreset): boolean {
+  if (presetId === "none") return !pf.enabled;
+  return pf.enabled && pf.preset === presetId;
+}
+
+export function applyPhotoFilterPresetChoice(
+  pf: PhotoFilterEffect,
+  presetId: PhotoFilterPreset,
+): PhotoFilterEffect {
+  if (presetId === "none") return { ...pf, enabled: false, preset: "none" };
+  return { ...pf, enabled: true, preset: presetId };
+}
+
+export function setPhotoFilterEnabled(pf: PhotoFilterEffect, enabled: boolean): PhotoFilterEffect {
+  if (!enabled) return { ...pf, enabled: false, preset: "none" };
+  const preset = pf.preset === "none" ? "vintage" : pf.preset;
+  return { ...pf, enabled: true, preset };
 }
 
 function lerp(a: number, b: number, t: number): number {
@@ -151,6 +172,7 @@ function roundN(v: number): number {
 
 /** Especificación de cada preset: [funcCSS, valorIdentidad, valorObjetivo, unidad?]. */
 const PHOTO_FILTER_SPECS: Record<PhotoFilterPreset, [string, number, number, string?][]> = {
+  none: [],
   sepia: [["sepia", 0, 1], ["contrast", 1, 1.05], ["saturate", 1, 1.1], ["brightness", 1, 1.02]],
   vintage: [["sepia", 0, 0.45], ["contrast", 1, 0.95], ["saturate", 1, 1.25], ["brightness", 1, 1.06], ["hue-rotate", 0, -12, "deg"]],
   bw: [["grayscale", 0, 1], ["contrast", 1, 1.05]],

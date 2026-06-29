@@ -164,9 +164,9 @@ export function applyDatasetRowToDesignerObject(
 
 /**
  * Recorre el árbol de objetos de una página aplicando `transformOne` a CADA objeto, incluidos los
- * anidados dentro de `booleanGroup` (children) y `clippingContainer` (mask + content, es decir el
- * "pegar dentro"). Parchea las stories de los marcos de texto que cambien. Devuelve la misma página
- * (misma referencia) si nada cambia, para no provocar renders innecesarios.
+ * anidados dentro de `booleanGroup` (children), `groupContainer` (carpetas) y `clippingContainer`
+ * (mask + content, es decir el "pegar dentro"). Parchea las stories de los marcos de texto que cambien.
+ * Devuelve la misma página (misma referencia) si nada cambia, para no provocar renders innecesarios.
  */
 export function transformDesignerPageObjectsDeep(
   page: DesignerPageState,
@@ -181,7 +181,7 @@ export function transformDesignerPageObjectsDeep(
     if (changed && next.type === "text" && next.isTextFrame && typeof next.storyId === "string" && next.storyId) {
       stories = patchStoryContentPlain(stories, next.storyId, next.text ?? "");
     }
-    if (next.type === "booleanGroup") {
+    if (next.type === "booleanGroup" || next.type === "groupContainer") {
       const grp = next;
       const children = grp.children.map(walk);
       if (children.some((c, i) => c !== grp.children[i])) {
@@ -227,7 +227,7 @@ function objectHasDatasetBindings(o: FreehandObject): boolean {
   ) {
     return true;
   }
-  if (o.type === "booleanGroup") {
+  if (o.type === "booleanGroup" || o.type === "groupContainer") {
     return o.children.some(objectHasDatasetBindings);
   }
   if (o.type === "clippingContainer") {

@@ -273,6 +273,13 @@ import {
   type PanelRow,
 } from "./freehand/group-container";
 import { freehandHistoryEntriesEqual } from "./freehand/freehand-history-utils";
+import {
+  resolvePenClosedFillHex,
+  resolveShapeCreationFillHex,
+  resolveStrokeOnlyCreationHex,
+  resolveStrokeOnlyCreationWidth,
+  resolveTextCreationFillHex,
+} from "./freehand/shape-creation-colors";
 import { deepCloneFreehandObject, deepCloneFreehandObjectKeepIds } from "./freehand/clone-object";
 import {
   applyPenCreationHandleDrag,
@@ -309,9 +316,10 @@ import {
 } from "./freehand/EffectLayerModal";
 import { GoogleFontInstallModal } from "./freehand/GoogleFontInstallModal";
 import { FOLDDER_STUDIO_PORTAL_Z } from "./studio-node/studio-node-architecture";
-import { STUDIO_BODY_PORTAL_Z } from "./freehand/studio-modal-shell";
+import { isInsideFoldderEffectLayerPanel, STUDIO_BODY_PORTAL_Z } from "./freehand/studio-modal-shell";
 import {
   insertIndexForEffectLayer,
+  isFolderScopedEffectLayer,
   resolveEffectLayerFxBounds,
   selectedIndexInRootStack,
   type EffectLayerScope,
@@ -325,6 +333,7 @@ import {
   isAdjustmentLayerStylesNeutral,
   isEffectLayerActive,
   normalizeEffectLayerObject,
+  type AdjustmentLayerLike,
   type AdjustmentLayerSettings,
 } from "./freehand/adjustment-layer-types";
 import {
@@ -1020,6 +1029,8 @@ export interface AdjustmentLayerObject extends FreehandObjectBase {
   adjustment: AdjustmentLayerSettings;
   layerEffects?: LayerEffects;
   effectScope?: EffectLayerScope;
+  effectTargetFolderId?: string;
+  effectTargetLayerId?: string;
 }
 
 export type FreehandObject =
@@ -2106,9 +2117,6 @@ function effectiveBrushStampParams(
   }
 }
 
-/** Relleno por defecto al crear texto si relleno y trazo están vacíos. */
-const TEXT_CREATION_DEFAULT_FILL = "#333333";
-
 /** Zoom por rueda: ~1.6 % por línea de scroll (antes 8 % fijo por evento). */
 const WHEEL_ZOOM_PER_LINE = 1.024;
 const WHEEL_ZOOM_MAX_LINES_PER_EVENT = 2.5;
@@ -2138,15 +2146,6 @@ function wheelBrushSizeFactorFromDelta(deltaY: number, deltaMode: number): numbe
   const lines = clamp(normalizeWheelDeltaLines(deltaY, deltaMode), -4, 4);
   return Math.pow(WHEEL_BRUSH_SIZE_PER_LINE, -lines);
 }
-
-function resolveTextCreationFillHex(fillColor: string, strokeColor: string, strokeWidth: number): string {
-  const fillNone = fillColor === "none";
-  const strokeNone = strokeColor === "none" || strokeWidth <= 0;
-  if (fillNone && strokeNone) return TEXT_CREATION_DEFAULT_FILL;
-  if (fillNone) return strokeColor === "none" ? TEXT_CREATION_DEFAULT_FILL : strokeColor;
-  return fillColor;
-}
-
 
 /** `brushSize` en unidades mundo → radio en píxeles del canvas del bitmap de la capa. */
 function brushRadiusInImagePixels(brushSizeWorld: number, canvasPixelWidth: number, imageObjectWidth: number): number {
@@ -3024,6 +3023,92 @@ function frontmostLeafAtPoint(
   return null;
 }
 
+/** Carpeta más interna bajo el cursor (soporta carpetas anidadas). */
+function groupContainerAtPoint(
+  list: FreehandObject[],
+  pos: Point,
+  threshold: number,
+  allObjects: FreehandObject[],
+): GroupContainerObject | null {
+  for (let i = list.length - 1; i >= 0; i--) {
+    const o = list[i]!;
+    if (!o.visible || o.locked) continue;
+    if (!isGroupContainer(o)) continue;
+    const g = o as GroupContainerObject;
+    if (!hitTestObject(pos, g, threshold, allObjects)) continue;
+    const nested = groupContainerAtPoint(g.children, pos, threshold, allObjects);
+    return nested ?? g;
+  }
+  return null;
+}
+
+/**
+ * Capa interactiva bajo el cursor (incluye clips y contenedores de recorte).
+ * Usado en modo carpeta para doble clic / drill-down.
+ */
+function frontmostInteractiveAtPoint(
+  list: FreehandObject[],
+  pos: Point,
+  threshold: number,
+  allObjects: FreehandObject[],
+  selectedIdsForAlpha: ReadonlySet<string>,
+): FreehandObject | null {
+  for (let i = list.length - 1; i >= 0; i--) {
+    const o = list[i]!;
+    if (!o.visible || o.locked) continue;
+    if (o.isClipMask) continue;
+    if (isGroupContainer(o)) {
+      const child = frontmostInteractiveAtPoint(o.children, pos, threshold, allObjects, selectedIdsForAlpha);
+      if (child) return child;
+      continue;
+    }
+    if (o.type === "clippingContainer") {
+      if (hitTestObject(pos, o, threshold, allObjects, { imageAlpha: true })) return o;
+      continue;
+    }
+    if (o.clipMaskId) {
+      const alphaAware = !(o.type === "image" && selectedIdsForAlpha.has(o.id));
+      if (hitTestObject(pos, o, threshold, allObjects, { imageAlpha: alphaAware })) return o;
+      continue;
+    }
+    const alphaAware = !(o.type === "image" && selectedIdsForAlpha.has(o.id));
+    if (hitTestObject(pos, o, threshold, allObjects, { imageAlpha: alphaAware })) return o;
+  }
+  return null;
+}
+
+function clippingContainerFromTree(
+  objects: FreehandObject[],
+  containerId: string,
+): ClippingContainerObject | null {
+  const loc = findInTree(objects, containerId);
+  if (!loc || loc.node.type !== "clippingContainer") return null;
+  return loc.node as ClippingContainerObject;
+}
+
+function replaceClippingContainerInTree(
+  objects: FreehandObject[],
+  containerId: string,
+  updated: ClippingContainerObject,
+): FreehandObject[] {
+  return mapTree(objects, (o) => (o.id === containerId ? updated : o));
+}
+
+/** Contenedor de recorte que incluye `memberId` en su contenido (cualquier nivel del árbol). */
+function clippingContainerOwningMember(
+  objects: FreehandObject[],
+  memberId: string,
+): ClippingContainerObject | null {
+  let found: ClippingContainerObject | null = null;
+  forEachTree(objects, (o) => {
+    if (found) return;
+    if (o.type !== "clippingContainer") return;
+    const cc = o as ClippingContainerObject;
+    if (cc.content.some((c) => c.id === memberId)) found = cc;
+  });
+  return found;
+}
+
 /** En aislamiento de grupo vectorial, no expandir selección a todos los miembros con el mismo `groupId`. */
 function vectorIsolationGroupId(stack: IsolationFrame[]): string | undefined {
   const top = stack[stack.length - 1];
@@ -3201,7 +3286,7 @@ function restoreRasterGestureProxiesInObjects(
   objs: FreehandObject[],
   proxyMap: Map<string, { originalSrc: string; proxySrc: string }>,
 ): FreehandObject[] {
-  return objs.map((o) => {
+  return mapTree(objs, (o) => {
     const p = proxyMap.get(o.id);
     if (!p) return o;
     if (o.type === "image") {
@@ -4245,6 +4330,26 @@ function recomputeContainerBoundsTree(objects: FreehandObject[]): FreehandObject
   return changed ? next : objects;
 }
 
+/** Parchea objetos seleccionados en cualquier nivel del árbol (incl. dentro de carpetas). */
+function patchSelectedInTree(
+  objects: FreehandObject[],
+  sel: ReadonlySet<string>,
+  patch: (o: FreehandObject) => FreehandObject,
+  recomputeFolderBounds = false,
+): FreehandObject[] {
+  const next = mapTree(objects, (o) => (sel.has(o.id) ? patch(o) : o));
+  return recomputeFolderBounds ? recomputeContainerBoundsTree(next) : next;
+}
+
+function patchObjectByIdInTree(
+  objects: FreehandObject[],
+  id: string,
+  patch: (o: FreehandObject) => FreehandObject,
+  recomputeFolderBounds = false,
+): FreehandObject[] {
+  const next = mapTree(objects, (o) => (o.id === id ? patch(o) : o));
+  return recomputeFolderBounds ? recomputeContainerBoundsTree(next) : next;
+}
 
 
 function pickTopVisibleObjectForCursor(pos: Point, objs: FreehandObject[], threshold: number): FreehandObject | null {
@@ -5379,6 +5484,10 @@ export type RenderObjOpts = {
   presenterSuppressBitmapObjectIds?: ReadonlySet<string>;
   /** Preview de `layerEffects` mientras el modal Layer Styles está abierto (id → borrador). */
   previewLayerEffectsById?: ReadonlyMap<string, LayerEffects>;
+  /** Capas fx con alcance `selectedFolder` (carpeta id → capa de ajuste activa). */
+  folderEffectLayerByFolderId?: ReadonlyMap<string, AdjustmentLayerLike>;
+  /** Capas fx con alcance `selectedLayer` (capa id → capa de ajuste activa). */
+  layerEffectLayerByLayerId?: ReadonlyMap<string, AdjustmentLayerLike>;
 };
 
 function fhFxSanitizeId(id: string): string {
@@ -5741,6 +5850,48 @@ function StackSegmentWithLayerEffects(props: {
       {children}
     </VectorShapeWithLayerEffects>
   );
+}
+
+/** Capa fx con alcance `selectedLayer`: envuelve el render de una sola capa. */
+function wrapWithSelectedLayerEffect(
+  node: React.ReactNode,
+  obj: FreehandObject,
+  opts?: RenderObjOpts,
+): React.ReactNode {
+  if (!node) return node;
+  const layerFx = opts?.layerEffectLayerByLayerId?.get(obj.id);
+  if (!layerFx || !isEffectLayerActive(layerFx)) return node;
+  const toneActive = !isAdjustmentLayerSettingsNeutral(layerFx.adjustment);
+  const effectsActive = !isAdjustmentLayerStylesNeutral(layerFx.layerEffects);
+  const base = obj as FreehandObjectBase;
+  const contentBounds = getGroupBounds([obj]);
+  const bounds = resolveEffectLayerFxBounds(
+    {
+      ...layerFx,
+      x: base.x,
+      y: base.y,
+      width: base.width,
+      height: base.height,
+    },
+    contentBounds,
+    undefined,
+  );
+  let wrapped = node;
+  if (effectsActive && layerFx.layerEffects) {
+    wrapped = (
+      <StackSegmentWithLayerEffects
+        layerId={layerFx.id}
+        bounds={bounds}
+        effects={layerFx.layerEffects}
+      >
+        {wrapped}
+      </StackSegmentWithLayerEffects>
+    );
+  }
+  if (toneActive) {
+    wrapped = <g filter={`url(#${adjustmentLayerFilterId(layerFx.id)}`}>{wrapped}</g>;
+  }
+  return wrapped;
 }
 
 /** Imagen raster + overlays + outer glow.
@@ -6829,7 +6980,13 @@ export function renderObj(
             </clipPath>
             <g clipPath={`url(#${cid})`}>
               {cc.content.map((ch, idx) => (
-                <g key={`${cc.id}-clipc-${idx}-${ch.id}`}>{renderObj(ch, allObjects, selectedIds, opts)}</g>
+                <g key={`${cc.id}-clipc-${idx}-${ch.id}`}>
+                  {wrapWithSelectedLayerEffect(
+                    renderObj(ch, allObjects, selectedIds, opts),
+                    ch,
+                    opts,
+                  )}
+                </g>
               ))}
             </g>
           </g>
@@ -6848,7 +7005,13 @@ export function renderObj(
       const childrenNode = (
         <>
           {gc.children.map((ch, idx) => (
-            <g key={`${gc.id}-gc-${idx}-${ch.id}`}>{renderObj(ch, allObjects, selectedIds, opts)}</g>
+            <g key={`${gc.id}-gc-${idx}-${ch.id}`}>
+              {wrapWithSelectedLayerEffect(
+                renderObj(ch, allObjects, selectedIds, opts),
+                ch,
+                opts,
+              )}
+            </g>
           ))}
         </>
       );
@@ -6858,10 +7021,44 @@ export function renderObj(
       ) : (
         childrenNode
       );
+      let compositeChildren: React.ReactNode = filteredChildren;
+      const folderFx = opts?.folderEffectLayerByFolderId?.get(gc.id);
+      if (folderFx && isEffectLayerActive(folderFx)) {
+        const toneActive = !isAdjustmentLayerSettingsNeutral(folderFx.adjustment);
+        const effectsActive = !isAdjustmentLayerStylesNeutral(folderFx.layerEffects);
+        const contentBounds = getGroupBounds(gc.children);
+        const bounds = resolveEffectLayerFxBounds(
+          {
+            ...folderFx,
+            x: gc.x,
+            y: gc.y,
+            width: gc.width,
+            height: gc.height,
+          },
+          contentBounds,
+          undefined,
+        );
+        if (effectsActive && folderFx.layerEffects) {
+          compositeChildren = (
+            <StackSegmentWithLayerEffects
+              layerId={folderFx.id}
+              bounds={bounds}
+              effects={folderFx.layerEffects}
+            >
+              {compositeChildren}
+            </StackSegmentWithLayerEffects>
+          );
+        }
+        if (toneActive) {
+          compositeChildren = (
+            <g filter={`url(#${adjustmentLayerFilterId(folderFx.id)}`}>{compositeChildren}</g>
+          );
+        }
+      }
       const groupInner = (
         <>
           {pfGcDefs}
-          {filteredChildren}
+          {compositeChildren}
           {pfGcOn ? (
             <PhotoFilterOverlays
               objId={gc.id}
@@ -9158,6 +9355,8 @@ export function FreehandStudioCanvas({
   const [propertiesMainTab, setPropertiesMainTab] = useState<
     "color" | "appearance" | "info" | "text" | "transform"
   >("color");
+  /** Evita re-forzar el tab Text si el usuario ya eligió otro con la misma selección. */
+  const propertiesTextTabAutoKeyRef = useRef<string | null>(null);
   /** Selección raster (hormigas): rectángulos, polígonos y elipses en coordenadas de mundo. */
   const [photoRectMarqueeSelection, setPhotoRectMarqueeSelection] = useState<Rect[]>([]);
   const [photoPolygonMarqueeSelection, setPhotoPolygonMarqueeSelection] = useState<Point[][]>([]);
@@ -9448,11 +9647,77 @@ export function FreehandStudioCanvas({
     effectLayerUi.source.kind,
   ]);
 
+  const folderEffectPreviewByFolderId = useMemo(() => {
+    if (!effectLayerUi.open || !effectLayerUi.targetId) return undefined;
+    if (effectLayerUi.applyMode !== "selectedFolder") return undefined;
+    if (effectLayerUi.source.kind === "effectLayer") return undefined;
+    const tonePatch = {
+      brightness: effectLayerUi.brightness,
+      contrast: effectLayerUi.contrast,
+      saturation: effectLayerUi.saturation,
+      levels: { ...effectLayerUi.levels },
+    };
+    const previewAdj: AdjustmentLayerLike = {
+      id: `__folder-fx-preview-${effectLayerUi.targetId}`,
+      visible: true,
+      type: "adjustmentLayer",
+      adjustment: tonePatch,
+      layerEffects: effectLayerUi.stylesDraft,
+      effectScope: "selectedFolder",
+      effectTargetFolderId: effectLayerUi.targetId,
+    };
+    return new Map<string, AdjustmentLayerLike>([[effectLayerUi.targetId, previewAdj]]);
+  }, [
+    effectLayerUi.open,
+    effectLayerUi.targetId,
+    effectLayerUi.applyMode,
+    effectLayerUi.source.kind,
+    effectLayerUi.brightness,
+    effectLayerUi.contrast,
+    effectLayerUi.saturation,
+    effectLayerUi.levels,
+    effectLayerUi.stylesDraft,
+  ]);
+
+  const layerEffectPreviewByLayerId = useMemo(() => {
+    if (!effectLayerUi.open || !effectLayerUi.targetId) return undefined;
+    if (effectLayerUi.applyMode !== "selectedLayer") return undefined;
+    if (effectLayerUi.source.kind === "effectLayer") return undefined;
+    const tonePatch = {
+      brightness: effectLayerUi.brightness,
+      contrast: effectLayerUi.contrast,
+      saturation: effectLayerUi.saturation,
+      levels: { ...effectLayerUi.levels },
+    };
+    const previewAdj: AdjustmentLayerLike = {
+      id: `__layer-fx-preview-${effectLayerUi.targetId}`,
+      visible: true,
+      type: "adjustmentLayer",
+      adjustment: tonePatch,
+      layerEffects: effectLayerUi.stylesDraft,
+      effectScope: "selectedLayer",
+      effectTargetLayerId: effectLayerUi.targetId,
+    };
+    return new Map<string, AdjustmentLayerLike>([[effectLayerUi.targetId, previewAdj]]);
+  }, [
+    effectLayerUi.open,
+    effectLayerUi.targetId,
+    effectLayerUi.applyMode,
+    effectLayerUi.source.kind,
+    effectLayerUi.brightness,
+    effectLayerUi.contrast,
+    effectLayerUi.saturation,
+    effectLayerUi.levels,
+    effectLayerUi.stylesDraft,
+  ]);
+
   /** Previsualización en vivo: look/overlays (y tono) como capa de efecto sobre el stack inferior. */
   const layerStylesAdjustmentPreview = useMemo(() => {
     if (!effectLayerUi.open || !effectLayerUi.targetId) return null;
     if (effectLayerUi.source.kind === "effectLayer") return null;
     if (effectLayerUi.applyMode === "embedded") return null;
+    if (effectLayerUi.applyMode === "selectedFolder") return null;
+    if (effectLayerUi.applyMode === "selectedLayer") return null;
 
     const tonePatch = {
       brightness: effectLayerUi.brightness,
@@ -9461,14 +9726,7 @@ export function FreehandStudioCanvas({
       levels: { ...effectLayerUi.levels },
     };
     const toneActive = !isAdjustmentLayerSettingsNeutral(tonePatch);
-    const pf = effectLayerUi.stylesDraft.photoFilter;
-    const stylesForPreview =
-      pf && !pf.enabled && (pf.intensity > 0 || pf.grain > 0 || (pf.vignette ?? 0) > 0)
-        ? {
-            ...effectLayerUi.stylesDraft,
-            photoFilter: { ...pf, enabled: true },
-          }
-        : effectLayerUi.stylesDraft;
+    const stylesForPreview = effectLayerUi.stylesDraft;
     const fxActive = hasActiveLayerEffects(stylesForPreview);
     if (!toneActive && !fxActive) return null;
 
@@ -9624,11 +9882,18 @@ export function FreehandStudioCanvas({
   const [fillColor, setFillColor] = useState("#6366f1");
   const [strokeColor, setStrokeColor] = useState("#ffffff");
   const [strokeWidth, setStrokeWidth] = useState(2);
-  const ensureVisibleDrawStroke = useCallback(() => {
-    if (strokeColor !== "none") return;
-    setStrokeColor("#000000");
-    setStrokeWidth(2);
-  }, [strokeColor]);
+  const shapeCreationFillHex = useMemo(
+    () => resolveShapeCreationFillHex(fillColor, strokeColor, strokeWidth),
+    [fillColor, strokeColor, strokeWidth],
+  );
+  const strokeOnlyCreationHex = useMemo(
+    () => resolveStrokeOnlyCreationHex(fillColor, strokeColor, strokeWidth),
+    [fillColor, strokeColor, strokeWidth],
+  );
+  const strokeOnlyCreationWidth = useMemo(
+    () => resolveStrokeOnlyCreationWidth(strokeColor, strokeWidth),
+    [strokeColor, strokeWidth],
+  );
   const [strokeLinecap, setStrokeLinecap] = useState<"butt" | "round" | "square">("round");
   const [strokeLinejoin, setStrokeLinejoin] = useState<"miter" | "round" | "bevel">("round");
   const [strokeDasharray, setStrokeDasharray] = useState("");
@@ -10022,6 +10287,11 @@ export function FreehandStudioCanvas({
   const snapEnabledRef = useRef(snapEnabled);
   snapEnabledRef.current = snapEnabled;
   const [snapGuides, setSnapGuides] = useState<SnapVisual[]>([]);
+  const isSelectionSnapDrag = dragState?.type === "move" || dragState?.type === "resize";
+  useEffect(() => {
+    if (isSelectionSnapDrag) return;
+    setSnapGuides([]);
+  }, [isSelectionSnapDrag]);
   /** Popover de color en la barra de herramientas izquierda (fill / stroke). */
   const [leftToolbarColorTarget, setLeftToolbarColorTarget] = useState<null | "fill" | "stroke">(null);
   const [leftToolbarColorPos, setLeftToolbarColorPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
@@ -10048,6 +10318,15 @@ export function FreehandStudioCanvas({
     if (typeof window !== "undefined") {
       window.localStorage.setItem("foldder.pointerSelectMode", pointerSelectMode);
     }
+  }, [pointerSelectMode]);
+  /** Modo carpeta (V): tras doble clic en un hijo, la selección opera dentro de esa carpeta. */
+  const [folderDrillFolderId, setFolderDrillFolderId] = useState<string | null>(null);
+  const folderDrillFolderIdRef = useRef(folderDrillFolderId);
+  folderDrillFolderIdRef.current = folderDrillFolderId;
+  const folderDrillChildIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (pointerSelectMode === "layer") setFolderDrillFolderId(null);
+    if (pointerSelectMode === "layer") folderDrillChildIdRef.current = null;
   }, [pointerSelectMode]);
 
   /** Activa la herramienta puntero (V) y, si hay carpetas, abre el selector capa/carpeta ("me pregunta"). */
@@ -10306,7 +10585,7 @@ export function FreehandStudioCanvas({
     void Promise.all([import("./freehand/svg-path-bake-paper"), import("./freehand/primitive-shape-bake-paper")]).then(
       ([{ bakeSvgPathObjectToBezier }, { bakeRectToPath, bakeEllipseToPath }]) => {
         setObjects((prev) => {
-          const next = prev.map((o) => {
+          const next = mapTree(prev, (o) => {
             if (!sel.has(o.id)) return o;
             if (o.type === "path") {
               const po = o as PathObject;
@@ -10616,7 +10895,7 @@ export function FreehandStudioCanvas({
       for (let i = isolationStackRef.current.length - 1; i >= 0; i--) {
         const frame = isolationStackRef.current[i];
         if (frame.kind === "clipping") {
-          const parentC = frame.parentObjects.find((o) => o.id === frame.containerId) as ClippingContainerObject | undefined;
+          const parentC = clippingContainerFromTree(frame.parentObjects, frame.containerId);
           if (!parentC) continue;
           let mask = parentC.mask;
           let contentLayers = fullObjects;
@@ -10633,9 +10912,7 @@ export function FreehandStudioCanvas({
             mask: offsetShapeWorldToLocal(mask, ub.x, ub.y),
             content: contentLayers.map((c) => offsetObjectWorldToLocal(c, ub.x, ub.y)),
           };
-          fullObjects = frame.parentObjects.map((o) =>
-            o.id === frame.containerId ? merged : o
-          );
+          fullObjects = replaceClippingContainerInTree(frame.parentObjects, frame.containerId, merged);
         } else if (frame.kind === "vectorGroup") {
           fullObjects = frame.parentObjects.map((o) => {
             const u = fullObjects.find((c) => c.id === o.id);
@@ -10850,17 +11127,38 @@ export function FreehandStudioCanvas({
   }, [firstSelected?.type, isMaskBrushMode]);
 
   useEffect(() => {
+    if (isMaskBrushMode) return;
+
     const isText =
-      firstSelected?.type === "text" || (textEditingId != null && objects.some((o) => o.id === textEditingId && o.type === "text"));
-    if (isText && !isMaskBrushMode) {
-      setPropertiesMainTab("text");
-      setPropertiesPanelCollapsed(false);
+      firstSelected?.type === "text" ||
+      (textEditingId != null && objects.some((o) => o.id === textEditingId && o.type === "text"));
+
+    if (!propertiesMainTabOptions.includes(propertiesMainTab)) {
+      propertiesTextTabAutoKeyRef.current = null;
+      setPropertiesMainTab(firstSelected?.type === "text" ? "text" : "color");
       return;
     }
-    if (!propertiesMainTabOptions.includes(propertiesMainTab)) {
-      setPropertiesMainTab(firstSelected?.type === "text" ? "text" : "color");
+
+    if (!isText) {
+      propertiesTextTabAutoKeyRef.current = null;
+      return;
     }
-  }, [propertiesMainTabOptions, propertiesMainTab, firstSelected?.type, textEditingId, objects, isMaskBrushMode]);
+
+    const autoKey = textEditingId ?? firstSelected?.id ?? null;
+    if (!autoKey || propertiesTextTabAutoKeyRef.current === autoKey) return;
+
+    propertiesTextTabAutoKeyRef.current = autoKey;
+    setPropertiesMainTab("text");
+    setPropertiesPanelCollapsed(false);
+  }, [
+    propertiesMainTabOptions,
+    propertiesMainTab,
+    firstSelected?.id,
+    firstSelected?.type,
+    textEditingId,
+    objects,
+    isMaskBrushMode,
+  ]);
 
   const hasPhotoMarqueeSelection =
     photoRectMarqueeSelection.length > 0 ||
@@ -12184,17 +12482,15 @@ export function FreehandStudioCanvas({
       const targetId = singleSelected.id;
 
       setObjects((prev) => {
-        const next = prev.map((o) =>
-          o.id === targetId
-            ? ({
-                ...o,
-                text: nextText,
-                _designerDatasetBinding: binding,
-                ...(o.type === "text" && (o as TextObject).isTextFrame
-                  ? { _designerRichSpans: undefined, _designerOverflow: false }
-                  : {}),
-              } as FreehandObject)
-            : o,
+        const next = patchObjectByIdInTree(prev, targetId, (o) =>
+          ({
+            ...o,
+            text: nextText,
+            _designerDatasetBinding: binding,
+            ...(o.type === "text" && (o as TextObject).isTextFrame
+              ? { _designerRichSpans: undefined, _designerOverflow: false }
+              : {}),
+          }) as FreehandObject,
         );
         pushHistory(next, new Set([targetId]));
         return next;
@@ -12245,8 +12541,7 @@ export function FreehandStudioCanvas({
       const targetId = singleSelected.id;
 
       setObjects((prev) => {
-        const next = prev.map((o) => {
-          if (o.id !== targetId) return o;
+        const next = patchObjectByIdInTree(prev, targetId, (o) => {
           if (o.type === "image") {
             const img = o as ImageObject;
             return {
@@ -12316,8 +12611,7 @@ export function FreehandStudioCanvas({
           kind: "image",
         };
         setObjects((prev) => {
-          const next = prev.map((o) => {
-            if (o.id !== targetId) return o;
+          const next = patchObjectByIdInTree(prev, targetId, (o) => {
             if (o.type === "image") {
               return { ...(o as ImageObject), src, intrinsicRatio: natural.w / Math.max(1, natural.h), _designerDatasetBinding: binding } as FreehandObject;
             }
@@ -12354,15 +12648,13 @@ export function FreehandStudioCanvas({
       const selectedText = singleSelected.type === "text" ? (singleSelected as TextObject) : null;
       const textFrameStoryId = selectedText?.isTextFrame ? selectedText.storyId : undefined;
       setObjects((prev) => {
-        const next = prev.map((o) =>
-          o.id === targetId
-            ? ({
-                ...o,
-                text: nextText,
-                _designerDatasetBinding: binding,
-                ...(o.type === "text" && (o as TextObject).isTextFrame ? { _designerRichSpans: undefined, _designerOverflow: false } : {}),
-              } as FreehandObject)
-            : o,
+        const next = patchObjectByIdInTree(prev, targetId, (o) =>
+          ({
+            ...o,
+            text: nextText,
+            _designerDatasetBinding: binding,
+            ...(o.type === "text" && (o as TextObject).isTextFrame ? { _designerRichSpans: undefined, _designerOverflow: false } : {}),
+          }) as FreehandObject,
         );
         pushHistory(next, new Set([targetId]));
         return next;
@@ -12390,9 +12682,7 @@ export function FreehandStudioCanvas({
       const targetId = singleSelected.id;
       const binding = makePendingDesignerBinding(kind, label);
       setObjects((prev) => {
-        const next = prev.map((o) =>
-          o.id === targetId ? ({ ...o, _designerDatasetBinding: binding } as FreehandObject) : o,
-        );
+        const next = patchObjectByIdInTree(prev, targetId, (o) => ({ ...o, _designerDatasetBinding: binding } as FreehandObject));
         pushHistory(next, new Set([targetId]));
         return next;
       });
@@ -12407,8 +12697,7 @@ export function FreehandStudioCanvas({
       if (!singleSelected) return;
       const targetId = singleSelected.id;
       setObjects((prev) => {
-        const next = prev.map((o) => {
-          if (o.id !== targetId) return o;
+        const next = patchObjectByIdInTree(prev, targetId, (o) => {
           const b = o._designerDatasetBinding;
           if (!b) return o;
           return { ...o, _designerDatasetBinding: { ...b, slotLabel: label } } as FreehandObject;
@@ -12425,8 +12714,8 @@ export function FreehandStudioCanvas({
     if (!singleSelected) return;
     const targetId = singleSelected.id;
     setObjects((prev) => {
-      const next = prev.map((o) => {
-        if (o.id !== targetId || !o._designerDatasetBinding) return o;
+      const next = patchObjectByIdInTree(prev, targetId, (o) => {
+        if (!o._designerDatasetBinding) return o;
         const rest = { ...o };
         delete (rest as { _designerDatasetBinding?: unknown })._designerDatasetBinding;
         return rest as FreehandObject;
@@ -12441,8 +12730,7 @@ export function FreehandStudioCanvas({
       if (!designerConnectedDataset || !singleSelected) return;
       const targetId = singleSelected.id;
       setObjects((prev) => {
-        const next = prev.map((o) => {
-          if (o.id !== targetId) return o;
+        const next = patchObjectByIdInTree(prev, targetId, (o) => {
           if (!binding) return stripDatasetPropertyBindings(o, [propertyKey]);
           const withBinding = setDesignerDatasetPropertyBinding(o, propertyKey, binding);
           return applyDesignerDatasetPropertyBindings(
@@ -12661,7 +12949,7 @@ export function FreehandStudioCanvas({
   }, [selectedObjects, primarySelectedId]);
 
   const layerPanelTarget = useMemo(
-    () => (layerPanelTargetId ? objects.find((o) => o.id === layerPanelTargetId) ?? null : null),
+    () => (layerPanelTargetId ? findInTree(objects, layerPanelTargetId)?.node ?? null : null),
     [objects, layerPanelTargetId],
   );
 
@@ -12677,7 +12965,7 @@ export function FreehandStudioCanvas({
       const tab = opts?.tab ?? "tone";
       const target =
         explicitTarget ??
-        (primarySelectedId ? objects.find((o) => o.id === primarySelectedId) : null) ??
+        (primarySelectedId ? findInTree(objects, primarySelectedId)?.node : null) ??
         firstSelected;
       if (!target) return;
 
@@ -12714,7 +13002,14 @@ export function FreehandStudioCanvas({
           stylesDraft: cloneLayerEffectsForEdit(adj.layerEffects),
           histogram: new Array<number>(256).fill(0),
           showApplyTargetChoice: false,
-          applyMode: adj.effectScope === "belowSelection" ? "belowSelection" : "wholeStack",
+          applyMode:
+            adj.effectScope === "selectedFolder"
+              ? "selectedFolder"
+              : adj.effectScope === "selectedLayer"
+                ? "selectedLayer"
+                : adj.effectScope === "belowSelection"
+                  ? "belowSelection"
+                  : "wholeStack",
         });
         return;
       }
@@ -12731,6 +13026,8 @@ export function FreehandStudioCanvas({
         const openFx = (target as FreehandObjectBase).layerEffects
           ? cloneLayerEffectsForEdit((target as FreehandObjectBase).layerEffects)
           : null;
+        const targetLoc = findInTree(objects, target.id);
+        const insideFolder = targetLoc?.parent?.type === "groupContainer";
         setEffectLayerUi({
           open: true,
           targetId: target.id,
@@ -12743,7 +13040,13 @@ export function FreehandStudioCanvas({
           stylesDraft: cloneLayerEffectsForEdit((target as FreehandObjectBase).layerEffects),
           histogram: new Array<number>(256).fill(0),
           showApplyTargetChoice: opts?.showApplyTargetChoice ?? !!designerMode,
-          applyMode: opts?.applyMode ?? "embedded",
+          applyMode:
+            opts?.applyMode ??
+            (target.type === "groupContainer" && designerMode
+              ? "selectedFolder"
+              : insideFolder && designerMode
+                ? "selectedLayer"
+                : "embedded"),
         });
       }
     },
@@ -12779,16 +13082,29 @@ export function FreehandStudioCanvas({
     }
 
     if (source.kind === "effectLayer") {
+      const scope: EffectLayerScope =
+        applyMode === "belowSelection"
+          ? "belowSelection"
+          : applyMode === "selectedFolder"
+            ? "selectedFolder"
+            : applyMode === "selectedLayer"
+              ? "selectedLayer"
+              : "wholeStack";
       setObjects((prev) => {
-        const next = prev.map((o) =>
-          o.id === targetId && o.type === "adjustmentLayer"
-            ? ({
-                ...o,
-                adjustment: tonePatch,
-                layerEffects: stylesDraft,
-              } as AdjustmentLayerObject)
-            : o,
-        );
+        const next = prev.map((o) => {
+          if (o.id !== targetId || o.type !== "adjustmentLayer") return o;
+          const prevAdj = o as AdjustmentLayerObject;
+          return {
+            ...prevAdj,
+            adjustment: tonePatch,
+            layerEffects: stylesDraft,
+            effectScope: scope,
+            effectTargetFolderId:
+              applyMode === "selectedFolder" ? prevAdj.effectTargetFolderId : undefined,
+            effectTargetLayerId:
+              applyMode === "selectedLayer" ? prevAdj.effectTargetLayerId : undefined,
+          } as AdjustmentLayerObject;
+        });
         pushHistory(next, new Set([targetId]));
         return next;
       });
@@ -12799,7 +13115,15 @@ export function FreehandStudioCanvas({
     if (applyMode !== "embedded" && designerMode) {
       const newAdjId = uid();
       const scope: EffectLayerScope =
-        applyMode === "belowSelection" ? "belowSelection" : "wholeStack";
+        applyMode === "belowSelection"
+          ? "belowSelection"
+          : applyMode === "selectedFolder"
+            ? "selectedFolder"
+            : applyMode === "selectedLayer"
+              ? "selectedLayer"
+              : "wholeStack";
+      const folderTargetId = applyMode === "selectedFolder" ? targetId : undefined;
+      const layerTargetId = applyMode === "selectedLayer" ? targetId : undefined;
       setObjects((prev) => {
         const next = prev.map((o) => {
           if (o.id !== targetId) return o;
@@ -12819,7 +13143,20 @@ export function FreehandStudioCanvas({
           return base as FreehandObject;
         });
         const ab = pickPrimaryArtboard(artboardsRef.current, null);
-        const r = ab ? artboardToRect(ab) : { x: 0, y: 0, w: 1920, h: 1080 };
+        const folderObj =
+          folderTargetId != null
+            ? (next.find((o) => o.id === folderTargetId) as GroupContainerObject | undefined)
+            : undefined;
+        const layerLoc = layerTargetId != null ? findInTree(next, layerTargetId) : null;
+        const layerObj = layerLoc?.node;
+        const r =
+          folderObj?.type === "groupContainer"
+            ? { x: folderObj.x, y: folderObj.y, w: folderObj.width, h: folderObj.height }
+            : layerObj
+              ? { x: layerObj.x, y: layerObj.y, w: layerObj.width, h: layerObj.height }
+              : ab
+                ? artboardToRect(ab)
+                : { x: 0, y: 0, w: 1920, h: 1080 };
         const adj: AdjustmentLayerObject = {
           ...defaultObj({
             name: adjustmentLayerDisplayName({ adjustment: tonePatch, layerEffects: stylesDraft }),
@@ -12833,6 +13170,8 @@ export function FreehandStudioCanvas({
           adjustment: tonePatch,
           layerEffects: hasActiveLayerEffects(stylesDraft) ? stylesDraft : undefined,
           effectScope: scope,
+          ...(folderTargetId ? { effectTargetFolderId: folderTargetId } : {}),
+          ...(layerTargetId ? { effectTargetLayerId: layerTargetId } : {}),
           fill: solidFill("none"),
           stroke: "none",
           strokeWidth: 0,
@@ -12921,7 +13260,7 @@ export function FreehandStudioCanvas({
       if (!studioCaps.layerMask) return;
       const target =
         explicitTarget ??
-        (primarySelectedId ? objects.find((o) => o.id === primarySelectedId) : null) ??
+        (primarySelectedId ? findInTree(objects, primarySelectedId)?.node : null) ??
         firstSelected;
       if (!target || !isLayerMaskEligible(target)) {
         setToast("Selecciona una imagen, bitmap, forma o texto para añadir máscara.");
@@ -14228,13 +14567,13 @@ export function FreehandStudioCanvas({
     setPenHoverCanvasRaw(null);
     if (penPoints.length < 2) { setPenPoints([]); setIsPenDrawing(false); return; }
     const bounds = getPathBoundsFromPoints(penPoints);
-    const effectiveStrokeColor = strokeColor === "none" ? "#000000" : strokeColor;
-    const effectiveStrokeWidth = strokeColor === "none" ? 2 : strokeWidth;
+    const effectiveStrokeColor = strokeOnlyCreationHex;
+    const effectiveStrokeWidth = strokeOnlyCreationWidth;
     const pathObj: PathObject = {
       ...defaultObj({ name: `Path ${objects.length + 1}` }),
       type: "path",
       x: bounds.x, y: bounds.y, width: bounds.w, height: bounds.h,
-      fill: closed ? solidFill(fillColor) : solidFill("none"),
+      fill: closed ? solidFill(resolvePenClosedFillHex(fillColor)) : solidFill("none"),
       stroke: effectiveStrokeColor, strokeWidth: effectiveStrokeWidth,
       strokeLinecap, strokeLinejoin, strokeDasharray,
       points: penPoints.map((p) => ({ ...p, vertexMode: p.vertexMode ?? "smooth" })),
@@ -14246,7 +14585,7 @@ export function FreehandStudioCanvas({
     setPenPoints([]); setIsPenDrawing(false);
     if (closed) setActiveTool("select");
     pushHistory(next, new Set([pathObj.id]));
-  }, [penPoints, objects, fillColor, strokeColor, strokeWidth, strokeLinecap, strokeLinejoin, strokeDasharray, pushHistory, setActiveTool]);
+  }, [penPoints, objects, fillColor, strokeOnlyCreationHex, strokeOnlyCreationWidth, strokeLinecap, strokeLinejoin, strokeDasharray, pushHistory, setActiveTool]);
 
   // ── Object mutations ──────────────────────────────────────────────
 
@@ -15117,8 +15456,7 @@ export function FreehandStudioCanvas({
         return;
       }
       setObjects((prev) => {
-        const next = prev.map((o) => {
-          if (!sel.has(o.id)) return o;
+        const next = patchSelectedInTree(prev, sel, (o) => {
           const w = o.strokeWidth ?? 0;
           const patched = { ...o, stroke: hex, strokeWidth: w <= 0 ? 2 : w } as FreehandObject;
           return stripDatasetPropertyBindings(patched, ["stroke"]);
@@ -15168,8 +15506,8 @@ export function FreehandStudioCanvas({
         if (selectedIdsRef.current.size > 0) {
           const sel = selectedIdsRef.current;
           setObjects((prev) => {
-            const next = prev.map((o) =>
-              sel.has(o.id) && (o.type === "text" || o.type === "textOnPath")
+            const next = patchSelectedInTree(prev, sel, (o) =>
+              o.type === "text" || o.type === "textOnPath"
                 ? { ...o, fontFamily: selectedStyle.family, fontWeight: selectedStyle.weight }
                 : o,
             );
@@ -15191,10 +15529,10 @@ export function FreehandStudioCanvas({
         if (!p) return;
         setObjects((prev) => {
           const sel = selectedIdsRef.current;
-          const next = prev.map((o) =>
-            sel.has(o.id) && (o.type === "text" || o.type === "textOnPath")
+          const next = patchSelectedInTree(prev, sel, (o) =>
+            o.type === "text" || o.type === "textOnPath"
               ? { ...o, fontFamily: p.family, fontWeight: p.weight }
-              : o
+              : o,
           );
           pushHistory(next, sel);
           return next;
@@ -15215,8 +15553,8 @@ export function FreehandStudioCanvas({
         if (selectedIdsRef.current.size > 0) {
           const sel = selectedIdsRef.current;
           setObjects((prev) => {
-            const next = prev.map((o) =>
-              sel.has(o.id) && (o.type === "text" || o.type === "textOnPath")
+            const next = patchSelectedInTree(prev, sel, (o) =>
+              o.type === "text" || o.type === "textOnPath"
                 ? { ...o, fontFamily: cssFamily, fontWeight: selectedStyle.weight }
                 : o,
             );
@@ -15280,8 +15618,8 @@ export function FreehandStudioCanvas({
         if (selectedIdsRef.current.size > 0) {
           const sel = selectedIdsRef.current;
           setObjects((prev) => {
-            const next = prev.map((o) =>
-              sel.has(o.id) && (o.type === "text" || o.type === "textOnPath")
+            const next = patchSelectedInTree(prev, sel, (o) =>
+              o.type === "text" || o.type === "textOnPath"
                 ? { ...o, fontFamily: cssFamily, fontWeight: parsedFont.weight }
                 : o,
             );
@@ -15508,8 +15846,7 @@ export function FreehandStudioCanvas({
       const mag = Math.max(TRANSFORM_DIM_MIN, Math.abs(raw));
       const neg = raw < 0;
       setObjects((prev) => {
-        const next = prev.map((o) => {
-          if (!sel.has(o.id)) return o;
+        const next = patchSelectedInTree(prev, sel, (o) => {
           let patched: FreehandObject;
           if (o.type === "text") {
             const t = o as TextObject;
@@ -15528,7 +15865,7 @@ export function FreehandStudioCanvas({
             patched = { ...o, height: mag, flipY: neg };
           }
           return stripDatasetPropertyBindings(patched, [dim]);
-        });
+        }, true);
         if (!silent) pushHistory(next, sel);
         return next;
       });
@@ -15558,8 +15895,7 @@ export function FreehandStudioCanvas({
       }
       setFillColor(hex);
       setObjects((prev) => {
-        const next = prev.map((o) => {
-          if (!sel.has(o.id)) return o;
+        const next = patchSelectedInTree(prev, sel, (o) => {
           if (o.type === "textOnPath") {
             return stripDatasetPropertyBindings({ ...o, fill: hex }, ["fill"]);
           }
@@ -15584,8 +15920,7 @@ export function FreehandStudioCanvas({
       if (v === "none") {
         setFillColor("none");
         setObjects((prev) => {
-          const next = prev.map((o) => {
-            if (!sel.has(o.id)) return o;
+          const next = patchSelectedInTree(prev, sel, (o) => {
             if (o.type === "textOnPath") {
               return stripDatasetPropertyBindings({ ...o, fill: "none" }, ["fill"]);
             }
@@ -15599,8 +15934,7 @@ export function FreehandStudioCanvas({
       }
       setFillColor(v);
       setObjects((prev) => {
-        const next = prev.map((o) => {
-          if (!sel.has(o.id)) return o;
+        const next = patchSelectedInTree(prev, sel, (o) => {
           if (o.type === "textOnPath") {
             return stripDatasetPropertyBindings({ ...o, fill: v }, ["fill"]);
           }
@@ -15651,8 +15985,7 @@ export function FreehandStudioCanvas({
     if (sel.size === 0) return;
 
     setObjects((prev) => {
-      const next = prev.map((o) => {
-        if (!sel.has(o.id)) return o;
+      const next = patchSelectedInTree(prev, sel, (o) => {
         if (o.type === "booleanGroup" || o.type === "image") return o;
         const strokeWidthPatch = nextStroke !== "none" && (o.strokeWidth ?? 0) <= 0 ? { strokeWidth: 2 } : {};
         if (o.type === "textOnPath") {
@@ -16599,7 +16932,7 @@ export function FreehandStudioCanvas({
   const enterClippingIsolation = useCallback((containerId: string, mode: "content" | "mask" = "content") => {
     setClipContentEditId(null);
     const objs = objectsRef.current;
-    const container = objs.find((o) => o.id === containerId && o.type === "clippingContainer") as ClippingContainerObject | undefined;
+    const container = clippingContainerFromTree(objs, containerId);
     if (!container) return;
     const root = (p: Point) => localPointToWorld(container, p);
     const entry: IsolationFrame = {
@@ -16633,7 +16966,7 @@ export function FreehandStudioCanvas({
     setClipContentEditId(null);
     const top = isolationStackRef.current[isolationStackRef.current.length - 1];
     if (!top || top.kind !== "clipping") return;
-    const parentC = top.parentObjects.find((o) => o.id === top.containerId) as ClippingContainerObject | undefined;
+    const parentC = clippingContainerFromTree(top.parentObjects, top.containerId);
     if (!parentC) return;
     if (top.editMode === target) return;
     if (target === "mask") {
@@ -16665,7 +16998,7 @@ export function FreehandStudioCanvas({
     if (frame.kind === "clipping") {
       setClipContentEditId(null);
       const current = objectsRef.current;
-      const parentC = frame.parentObjects.find((o) => o.id === frame.containerId) as ClippingContainerObject | undefined;
+      const parentC = clippingContainerFromTree(frame.parentObjects, frame.containerId);
       if (!parentC) return;
       let mask: ClipMaskShape = parentC.mask;
       let content: FreehandObject[];
@@ -16685,9 +17018,7 @@ export function FreehandStudioCanvas({
         mask: offsetShapeWorldToLocal(mask, ub.x, ub.y),
         content: content.map((c) => offsetObjectWorldToLocal(c, ub.x, ub.y)),
       };
-      const restoredObjects = frame.parentObjects.map((o) =>
-        o.id === frame.containerId ? updated : o
-      );
+      const restoredObjects = replaceClippingContainerInTree(frame.parentObjects, frame.containerId, updated);
       objectsRef.current = restoredObjects;
       setObjects(restoredObjects);
       setSelectedIds(new Set([frame.containerId]));
@@ -16778,7 +17109,7 @@ export function FreehandStudioCanvas({
   const alignObjects = useCallback((mode: string) => {
     const sel = selectedIdsRef.current;
     setObjects((prev) => {
-      const selObjs = prev.filter((o) => sel.has(o.id));
+      const selObjs = collectNodesByIds(prev, sel);
       if (selObjs.length < 2) return prev;
 
       // Trabaja siempre con el bounding box VISUAL (rotación, trazo, paths, texto…)
@@ -16832,14 +17163,13 @@ export function FreehandStudioCanvas({
       }
 
       let changed = false;
-      const next = prev.map((o) => {
-        if (!sel.has(o.id)) return o;
+      const next = patchSelectedInTree(prev, sel, (o) => {
         const dx = dxById.get(o.id) ?? 0;
         const dy = dyById.get(o.id) ?? 0;
         if (Math.abs(dx) < 1e-6 && Math.abs(dy) < 1e-6) return o;
         changed = true;
         return translateFreehandObject(o, dx, dy);
-      });
+      }, true);
       if (!changed) return prev;
       pushHistory(next, sel);
       return next;
@@ -17167,7 +17497,7 @@ export function FreehandStudioCanvas({
     const sel = selectedIdsRef.current;
     const sp = selectedPointsRef.current;
     setObjects((prev) => {
-      const next = prev.map((o) => {
+      const next = recomputeContainerBoundsTree(mapTree(prev, (o) => {
         if (o.type === "clippingContainer" && sel.has(o.id)) {
           const c = o as ClippingContainerObject;
           if (c.mask.type !== "path") return o;
@@ -17204,7 +17534,7 @@ export function FreehandStudioCanvas({
         });
         const pb = getPathBoundsFromPoints(pts);
         return { ...p, points: pts, x: pb.x, y: pb.y, width: pb.w, height: pb.h };
-      });
+      }));
       pushHistory(next, sel);
       return next;
     });
@@ -18166,7 +18496,7 @@ export function FreehandStudioCanvas({
         if (activeTool === "directSelect" && sp.size > 0) {
           e.preventDefault();
           setObjects((prev) => {
-            const next = prev.map((o) => {
+            const next = recomputeContainerBoundsTree(mapTree(prev, (o) => {
               if (o.type === "clippingContainer" && sel.has(o.id)) {
                 const c = o as ClippingContainerObject;
                 if (c.mask.type !== "path") return o;
@@ -18200,7 +18530,7 @@ export function FreehandStudioCanvas({
               });
               const pb = getPathBoundsFromPoints(newPts);
               return { ...p, points: newPts, x: pb.x, y: pb.y, width: pb.w, height: pb.h };
-            });
+            }));
             pushHistory(next, sel);
             return next;
           });
@@ -18210,7 +18540,7 @@ export function FreehandStudioCanvas({
         if (sel.size > 0) {
           e.preventDefault();
           setObjects((prev) => {
-            const next = prev.map((o) => (sel.has(o.id) ? translateFreehandObject(o, mdx, mdy) : o));
+            const next = patchSelectedInTree(prev, sel, (o) => translateFreehandObject(o, mdx, mdy), true);
             pushHistory(next, sel);
             return next;
           });
@@ -19134,7 +19464,6 @@ export function FreehandStudioCanvas({
 
     // ── Pen tool ──────────────────────────────────────────────────
     if (activeTool === "pen") {
-      ensureVisibleDrawStroke();
       if (e.button === 0) e.preventDefault();
 
       if (!isPenDrawing) {
@@ -19191,7 +19520,6 @@ export function FreehandStudioCanvas({
 
     // ── Create shapes ─────────────────────────────────────────────
     if (activeTool === "rect" || activeTool === "line" || activeTool === "ellipse") {
-      if (activeTool === "line") ensureVisibleDrawStroke();
       setDragState({ type: "create", startX: e.clientX, startY: e.clientY, createType: activeTool, createOrigin: pos, currentCanvas: pos });
       return;
     }
@@ -20094,6 +20422,36 @@ export function FreehandStudioCanvas({
       if (hitTestObject(pos, o, threshold, objects, { imageAlpha: alphaAware })) hits.push(o);
     }
 
+    // Modo carpeta + drill: clic sobre hijos de la carpeta activa; vacío → deseleccionar y salir del drill.
+    let folderDrillEmptyClick = false;
+    if (
+      activeTool === "select" &&
+      pointerSelectModeRef.current === "folder" &&
+      folderDrillFolderIdRef.current
+    ) {
+      const folderLoc = findInTree(objects, folderDrillFolderIdRef.current);
+      const folder = folderLoc?.node;
+      if (folder && isGroupContainer(folder)) {
+        const child = frontmostInteractiveAtPoint(
+          folder.children,
+          pos,
+          threshold,
+          objects,
+          selectedIdsRef.current,
+        );
+        if (child) {
+          hits.length = 0;
+          hits.push(child);
+        } else {
+          folderDrillEmptyClick = true;
+          hits.length = 0;
+        }
+      } else {
+        setFolderDrillFolderId(null);
+        folderDrillChildIdRef.current = null;
+      }
+    }
+
     if (hits.length > 0) {
       const vecIsoGid = vectorIsolationGroupId(isolationStackRef.current);
       let obj = pickHitForExtendSelection(hits, extendSel, selectedIdsRef.current, objects, vecIsoGid) ?? hits[0];
@@ -20117,6 +20475,17 @@ export function FreehandStudioCanvas({
           return;
         }
         obj = leaf;
+      }
+
+      if (
+        activeTool === "select" &&
+        pointerSelectModeRef.current === "folder" &&
+        obj.type === "groupContainer"
+      ) {
+        setFolderDrillFolderId(null);
+        folderDrillChildIdRef.current = null;
+        setClipContentEditId(null);
+        if (designerMode) setImageFrameContentEditId(null);
       }
 
       // Alt/Option + drag → duplicate then drag the clones
@@ -20217,8 +20586,14 @@ export function FreehandStudioCanvas({
     // Empty click → start marquee
     if (!extendSel) {
       setSelectedIds(new Set());
+      setFolderDrillFolderId(null);
+      folderDrillChildIdRef.current = null;
       if (designerMode) setImageFrameContentEditId(null);
       setClipContentEditId(null);
+    }
+    if (folderDrillEmptyClick) {
+      setFolderDrillFolderId(null);
+      folderDrillChildIdRef.current = null;
     }
     setDragState({ type: "marquee", startX: e.clientX, startY: e.clientY, marqueeOrigin: pos, currentCanvas: pos, shiftKey: extendSel });
   }, [activeTool, viewport, spaceHeld, objects, artboards, selectedIds, selectedIdsKey, selectedObjects, groupBounds, selectionFrame,
@@ -20877,22 +21252,26 @@ export function FreehandStudioCanvas({
     const ds = dragState;
     if (!ds) return;
     if (ds.type === "move" && ds.positions && ds.positions.size > 0) {
-      queueRasterProxiesForSelectionTargets(objectsRef.current.filter((o) => ds.positions!.has(o.id)));
+      queueRasterProxiesForSelectionTargets(
+        collectNodesByIds(objectsRef.current, new Set(ds.positions.keys())),
+      );
       return;
     }
     if (ds.type === "rotate" && ds.rotateInitialSnapshots && ds.rotateInitialSnapshots.size > 0) {
       queueRasterProxiesForSelectionTargets(
-        objectsRef.current.filter((o) => ds.rotateInitialSnapshots!.has(o.id)),
+        collectNodesByIds(objectsRef.current, new Set(ds.rotateInitialSnapshots.keys())),
       );
       return;
     }
     if (ds.type === "resize" && ds.allBounds && ds.allBounds.size > 0) {
-      queueRasterProxiesForSelectionTargets(objectsRef.current.filter((o) => ds.allBounds!.has(o.id)));
+      queueRasterProxiesForSelectionTargets(
+        collectNodesByIds(objectsRef.current, new Set(ds.allBounds.keys())),
+      );
       return;
     }
     if (ds.type === "skew" && ds.skewInitialSnapshots && ds.skewInitialSnapshots.size > 0) {
       queueRasterProxiesForSelectionTargets(
-        objectsRef.current.filter((o) => ds.skewInitialSnapshots!.has(o.id)),
+        collectNodesByIds(objectsRef.current, new Set(ds.skewInitialSnapshots.keys())),
       );
     }
   }, [dragState, queueRasterProxiesForSelectionTargets]);
@@ -21234,8 +21613,7 @@ export function FreehandStudioCanvas({
     if (dragState.type === "rotationPivot" && dragState.rotationPivotObjectId) {
       const pos = screenToCanvas(e.clientX, e.clientY);
       setObjects((prev) =>
-        prev.map((o) => {
-          if (o.id !== dragState.rotationPivotObjectId) return o;
+        patchObjectByIdInTree(prev, dragState.rotationPivotObjectId!, (o) => {
           const p = worldToLocalBox(o, pos);
           return {
             ...o,
@@ -21288,14 +21666,14 @@ export function FreehandStudioCanvas({
       const sign = edge === "n" || edge === "w" ? -1 : 1;
       const skewDelta = (Math.atan(delta / span) * 180 / Math.PI) * sign;
       setObjects((prev) =>
-        prev.map((o) => {
+        recomputeContainerBoundsTree(mapTree(prev, (o) => {
           const src = dragState.skewInitialSnapshots?.get(o.id);
           if (!src) return o;
           if ((dragState.skewInitialSnapshots?.size ?? 0) > 1) {
             return applyGlobalAnchoredSelectionSkew(src, f0, edge, dragState.skewAxis!, skewDelta);
           }
           return applyAnchoredObjectSkew(src, edge, dragState.skewAxis!, skewDelta);
-        }),
+        })),
       );
       return;
     }
@@ -21609,7 +21987,7 @@ export function FreehandStudioCanvas({
 
     if (dragState.type === "gradient" && dragState.gradientPrimaryId && dragState.gradientHandle) {
       const pos = screenToCanvas(e.clientX, e.clientY);
-      const primary = objects.find((o) => o.id === dragState.gradientPrimaryId);
+      const primary = findInTree(objects, dragState.gradientPrimaryId)?.node;
       if (!primary) return;
       const f0 = migrateFill(primary.fill);
 
@@ -21626,9 +22004,8 @@ export function FreehandStudioCanvas({
         const si = dragState.gradientStopIndex;
         const sel = selectedIdsRef.current;
         setObjects((prev) =>
-          prev.map((o) => {
-            if (o.id !== dragState.gradientPrimaryId || !sel.has(o.id)) return o;
-            if (o.type === "textOnPath") return o;
+          patchObjectByIdInTree(prev, dragState.gradientPrimaryId!, (o) => {
+            if (!sel.has(o.id) || o.type === "textOnPath") return o;
             const mf = migrateFill(o.fill);
             if (mf.type !== "gradient-linear") return o;
             const stops = mf.stops.map((s, i) => (i === si ? { ...s, position: posPct } : { ...s }));
@@ -21644,9 +22021,8 @@ export function FreehandStudioCanvas({
       const ly = clamp(loc.ly, 0, 1);
       const sel = selectedIdsRef.current;
       setObjects((prev) =>
-        prev.map((o) => {
-          if (!sel.has(o.id) || !supportsGradientFill(o)) return o;
-          if (o.type === "textOnPath") return o;
+        patchSelectedInTree(prev, sel, (o) => {
+          if (!supportsGradientFill(o) || o.type === "textOnPath") return o;
           const f = migrateFill(o.fill);
           if (f.type === "gradient-linear") {
             let nf = { ...f, stops: f.stops.map((s) => ({ ...s })) };
@@ -22598,8 +22974,8 @@ export function FreehandStudioCanvas({
       const lineDy = c.y - o.y;
       const lineLen = Math.hypot(lineDx, lineDy);
       const lineEnd = lineLen < 0.5 ? { x: o.x + 48, y: o.y } : c;
-      const effectiveLineStrokeColor = strokeColor === "none" ? "#000000" : strokeColor;
-      const effectiveLineStrokeWidth = strokeColor === "none" ? 2 : strokeWidth;
+      const effectiveLineStrokeColor = strokeOnlyCreationHex;
+      const effectiveLineStrokeWidth = strokeOnlyCreationWidth;
 
       const newObj: FreehandObject = ds.createType === "line"
         ? ({
@@ -22628,7 +23004,7 @@ export function FreehandStudioCanvas({
             ],
           } as PathObject)
         : ds.createType === "ellipse"
-        ? { ...defaultObj({ name: `Ellipse ${objects.length + 1}` }), type: "ellipse", x, y, width: w, height: h, fill: solidFill(fillColor), stroke: strokeColor, strokeWidth, strokeLinecap, strokeLinejoin, strokeDasharray } as EllipseObject
+        ? { ...defaultObj({ name: `Ellipse ${objects.length + 1}` }), type: "ellipse", x, y, width: w, height: h, fill: solidFill(shapeCreationFillHex), stroke: strokeColor, strokeWidth, strokeLinecap, strokeLinejoin, strokeDasharray } as EllipseObject
         : {
             ...defaultObj({ name: `Rect ${objects.length + 1}` }),
             type: "rect",
@@ -22636,7 +23012,7 @@ export function FreehandStudioCanvas({
             y,
             width: w,
             height: h,
-            fill: solidFill(fillColor),
+            fill: solidFill(shapeCreationFillHex),
             stroke: strokeColor,
             strokeWidth,
             strokeLinecap,
@@ -22656,6 +23032,7 @@ export function FreehandStudioCanvas({
     }
 
     if (ds.type === "move" && !moveDragCommitted) {
+      setSnapGuides([]);
       setDragState(null);
       return;
     }
@@ -22705,7 +23082,7 @@ export function FreehandStudioCanvas({
       let snapshot = objectsRef.current;
       const gestureStripKeys = dragGestureDatasetPropertyKeys(ds.type);
       if (gestureStripKeys.length > 0) {
-        snapshot = snapshot.map((o) =>
+        snapshot = mapTree(snapshot, (o) =>
           selectedIds.has(o.id) ? stripDatasetPropertyBindings(o, gestureStripKeys) : o,
         );
       }
@@ -22723,6 +23100,7 @@ export function FreehandStudioCanvas({
       pushHistory(snapshot, selectedIds);
     }
 
+    setSnapGuides([]);
     setDragState(null);
   }, [
     dragState,
@@ -22790,6 +23168,10 @@ export function FreehandStudioCanvas({
   const handleWheel = useCallback(
     (e: ReactWheelEvent) => {
       if ((e.target as HTMLElement).closest?.("[data-fh-text-editor]")) {
+        return;
+      }
+      if (isInsideFoldderEffectLayerPanel(e.target)) {
+        e.stopPropagation();
         return;
       }
       if (
@@ -23423,14 +23805,7 @@ export function FreehandStudioCanvas({
       saturation: effectLayerUi.saturation,
       levels: { ...effectLayerUi.levels },
     };
-    const pf = effectLayerUi.stylesDraft.photoFilter;
-    const stylesForPreview =
-      pf && !pf.enabled && (pf.intensity > 0 || pf.grain > 0 || (pf.vignette ?? 0) > 0)
-        ? {
-            ...effectLayerUi.stylesDraft,
-            photoFilter: { ...pf, enabled: true },
-          }
-        : effectLayerUi.stylesDraft;
+    const stylesForPreview = effectLayerUi.stylesDraft;
     return objects.map((o) =>
       o.id === effectLayerUi.targetId && o.type === "adjustmentLayer"
         ? ({
@@ -23446,6 +23821,42 @@ export function FreehandStudioCanvas({
     () => buildLayerStackRenderSegments(stackObjectsForRender),
     [stackObjectsForRender],
   );
+
+  const folderEffectLayerByFolderId = useMemo(() => {
+    const map = new Map<string, AdjustmentLayerLike>();
+    for (const o of stackObjectsForRender) {
+      if (!isAdjustmentLayerObject(o)) continue;
+      const adj = o as AdjustmentLayerObject;
+      if (!adj.visible || !isEffectLayerActive(adj)) continue;
+      if (adj.effectScope === "selectedFolder" && adj.effectTargetFolderId) {
+        map.set(adj.effectTargetFolderId, adj);
+      }
+    }
+    if (folderEffectPreviewByFolderId) {
+      for (const [folderId, preview] of folderEffectPreviewByFolderId) {
+        map.set(folderId, preview);
+      }
+    }
+    return map.size > 0 ? map : undefined;
+  }, [stackObjectsForRender, folderEffectPreviewByFolderId]);
+
+  const layerEffectLayerByLayerId = useMemo(() => {
+    const map = new Map<string, AdjustmentLayerLike>();
+    for (const o of stackObjectsForRender) {
+      if (!isAdjustmentLayerObject(o)) continue;
+      const adj = o as AdjustmentLayerObject;
+      if (!adj.visible || !isEffectLayerActive(adj)) continue;
+      if (adj.effectScope === "selectedLayer" && adj.effectTargetLayerId) {
+        map.set(adj.effectTargetLayerId, adj);
+      }
+    }
+    if (layerEffectPreviewByLayerId) {
+      for (const [layerId, preview] of layerEffectPreviewByLayerId) {
+        map.set(layerId, preview);
+      }
+    }
+    return map.size > 0 ? map : undefined;
+  }, [stackObjectsForRender, layerEffectPreviewByLayerId]);
 
   const imageFrameOptimizeShowFrameId =
     designerMode && designerOptimizeProgress?.visible && designerOptimizeProgress.activeFrameId
@@ -23751,9 +24162,72 @@ export function FreehandStudioCanvas({
               return;
             }
             if (obj.type === "groupContainer" && hitTestObject(pos, obj, threshold, objects)) {
-              // Carpeta = grupo tipo Photoshop: el doble clic NO abre otra vista ni aísla. Selecciona
-              // DIRECTAMENTE la capa real bajo el cursor (atraviesa carpetas anidadas). Útil sobre todo en
-              // modo "carpeta", donde el clic simple elige la carpeta y el doble clic baja a la capa.
+              const folder =
+                groupContainerAtPoint(objects, pos, threshold, objects) ?? (obj as GroupContainerObject);
+
+              if (pointerSelectModeRef.current === "folder") {
+                const child = frontmostInteractiveAtPoint(
+                  folder.children,
+                  pos,
+                  threshold,
+                  objects,
+                  selectedIdsRef.current,
+                );
+                if (!child) return;
+
+                const alreadyDrilled =
+                  folderDrillFolderIdRef.current === folder.id &&
+                  folderDrillChildIdRef.current === child.id &&
+                  (selectedIdsRef.current.has(child.id) || selectedIdsRef.current.size <= 1);
+
+                if (alreadyDrilled && child.type === "clippingContainer") {
+                  const cc = child as ClippingContainerObject;
+                  const root = (p: Point) => localPointToWorld(cc, p);
+                  const worldChildren = cc.content.map((ch) => mapChildToWorldWithChain(root, ch));
+                  let hitContent: FreehandObject | undefined;
+                  for (let ci = worldChildren.length - 1; ci >= 0; ci--) {
+                    const piece = worldChildren[ci]!;
+                    if (!piece.visible || piece.locked) continue;
+                    if (hitTestObject(pos, piece, threshold, worldChildren, { imageAlpha: true })) {
+                      hitContent = piece;
+                      break;
+                    }
+                  }
+                  folderDrillChildIdRef.current = null;
+                  setFolderDrillFolderId(null);
+                  enterClippingIsolation(child.id, "content");
+                  if (hitContent) {
+                    const contentSel = new Set([hitContent.id]);
+                    selectedIdsRef.current = contentSel;
+                    setSelectedIds(contentSel);
+                    setPrimarySelectedId(hitContent.id);
+                    setClipContentEditId(hitContent.id);
+                  }
+                  return;
+                }
+                if (alreadyDrilled && child.clipMaskId) {
+                  const owningCc = clippingContainerOwningMember(objects, child.id);
+                  if (owningCc) {
+                    folderDrillChildIdRef.current = null;
+                    setFolderDrillFolderId(null);
+                    enterClippingIsolation(owningCc.id, "content");
+                    return;
+                  }
+                }
+
+                folderDrillChildIdRef.current = child.id;
+                setFolderDrillFolderId(folder.id);
+                folderDrillFolderIdRef.current = folder.id;
+                const childSel = new Set([child.id]);
+                selectedIdsRef.current = childSel;
+                setSelectedIds(childSel);
+                setPrimarySelectedId(child.id);
+                setClipContentEditId(null);
+                setImageFrameContentEditId(null);
+                return;
+              }
+
+              // Modo capa: doble clic atraviesa carpetas y selecciona la hoja bajo el cursor.
               const leaf = frontmostLeafAtPoint(objects, pos, threshold, objects, selectedIdsRef.current);
               if (leaf) {
                 setSelectedIds(new Set([leaf.id]));
@@ -23920,6 +24394,26 @@ export function FreehandStudioCanvas({
                 } as AdjustmentLayerObject}
               />
             ) : null}
+            {folderEffectPreviewByFolderId
+              ? Array.from(folderEffectPreviewByFolderId.values())
+                  .filter((layer) => !isAdjustmentLayerSettingsNeutral(layer.adjustment))
+                  .map((layer) => (
+                    <AdjustmentLayerFilterDef
+                      key={layer.id}
+                      layer={layer as AdjustmentLayerObject}
+                    />
+                  ))
+              : null}
+            {layerEffectPreviewByLayerId
+              ? Array.from(layerEffectPreviewByLayerId.values())
+                  .filter((layer) => !isAdjustmentLayerSettingsNeutral(layer.adjustment))
+                  .map((layer) => (
+                    <AdjustmentLayerFilterDef
+                      key={layer.id}
+                      layer={layer as AdjustmentLayerObject}
+                    />
+                  ))
+              : null}
             {pageContentClipRect && (
               <clipPath id="fh-page-content-clip" clipPathUnits="userSpaceOnUse">
                 <rect
@@ -24025,13 +24519,27 @@ export function FreehandStudioCanvas({
                     data-fh-obj={obj.id}
                     style={layerMixBlendStyle((obj as FreehandObjectBase).blendMode)}
                   >
-                    {renderObj(obj, objects, selectedIds, {
-                      canvasZenMode,
-                      designerMode,
-                      textEditingId,
-                      imageFrameOptimizeShowFrameId,
-                      previewLayerEffectsById,
-                    })}
+                    {wrapWithSelectedLayerEffect(
+                      renderObj(obj, objects, selectedIds, {
+                        canvasZenMode,
+                        designerMode,
+                        textEditingId,
+                        imageFrameOptimizeShowFrameId,
+                        previewLayerEffectsById,
+                        folderEffectLayerByFolderId,
+                        layerEffectLayerByLayerId,
+                      }),
+                      obj,
+                      {
+                        canvasZenMode,
+                        designerMode,
+                        textEditingId,
+                        imageFrameOptimizeShowFrameId,
+                        previewLayerEffectsById,
+                        folderEffectLayerByFolderId,
+                        layerEffectLayerByLayerId,
+                      },
+                    )}
                   </g>
                 );
                 const renderStackObject = (obj: FreehandObject) => {
@@ -24456,8 +24964,8 @@ export function FreehandStudioCanvas({
                 <path
                   d={bezierToSvgD(penPoints, false)}
                   fill="none"
-                  stroke={strokeColor}
-                  strokeWidth={strokeWidth}
+                  stroke={strokeOnlyCreationHex}
+                  strokeWidth={strokeOnlyCreationWidth}
                   strokeDasharray="4 2"
                   opacity={0.7}
                   pointerEvents="none"
@@ -24509,9 +25017,9 @@ export function FreehandStudioCanvas({
               createPreviewRect.type === "ellipse"
                 ? <ellipse cx={createPreviewRect.x + createPreviewRect.w / 2} cy={createPreviewRect.y + createPreviewRect.h / 2}
                     rx={createPreviewRect.w / 2} ry={createPreviewRect.h / 2}
-                    fill={fillColor} stroke={strokeColor} strokeWidth={strokeWidth} opacity={0.5} data-ui="preview" />
+                    fill={shapeCreationFillHex} stroke={strokeColor} strokeWidth={strokeWidth} opacity={0.5} data-ui="preview" />
                 : <rect x={createPreviewRect.x} y={createPreviewRect.y} width={createPreviewRect.w} height={createPreviewRect.h}
-                    fill={fillColor} stroke={strokeColor} strokeWidth={strokeWidth} opacity={0.5} data-ui="preview" />
+                    fill={shapeCreationFillHex} stroke={strokeColor} strokeWidth={strokeWidth} opacity={0.5} data-ui="preview" />
             )}
             {createPreviewLine && (
               <line
@@ -24520,8 +25028,8 @@ export function FreehandStudioCanvas({
                 x2={createPreviewLine.b.x}
                 y2={createPreviewLine.b.y}
                 fill="none"
-                stroke={strokeColor}
-                strokeWidth={strokeWidth}
+                stroke={strokeOnlyCreationHex}
+                strokeWidth={strokeOnlyCreationWidth}
                 opacity={0.8}
                 data-ui="preview-line"
               />
@@ -25156,7 +25664,7 @@ export function FreehandStudioCanvas({
             {!canvasZenMode && suppressSelectionForClipContentEdit && clipContentEditId && (() => {
               const top = isolationStackRef.current[isolationStackRef.current.length - 1];
               if (!top || top.kind !== "clipping" || top.editMode !== "content") return null;
-              const container = top.parentObjects.find((o) => o.id === top.containerId) as ClippingContainerObject | undefined;
+              const container = clippingContainerFromTree(top.parentObjects, top.containerId);
               if (!container) return null;
               const mb = clippingContainerMaskWorldBoundsAabb(container);
               const ed = objects.find((x) => x.id === clipContentEditId);
@@ -25440,8 +25948,9 @@ export function FreehandStudioCanvas({
                 });
               })()}
 
-            {/* Snap guides */}
-            {snapGuides.map((g, i) => {
+            {/* Snap guides (solo mientras se arrastra move/resize) */}
+            {isSelectionSnapDrag &&
+              snapGuides.map((g, i) => {
               if (g.type === "anchor") {
                 return (
                   <circle key={`sg-${i}`} cx={g.x} cy={g.y} r={4 / viewport.zoom} fill="none" stroke="#38bdf8" strokeWidth={1.5 / viewport.zoom} data-ui="snap" />
@@ -25795,6 +26304,8 @@ export function FreehandStudioCanvas({
                           textEditingId,
                           imageFrameOptimizeShowFrameId,
                           previewLayerEffectsById,
+                          folderEffectLayerByFolderId,
+                          layerEffectLayerByLayerId,
                         })}
                       </g>
                     ));
@@ -25840,8 +26351,13 @@ export function FreehandStudioCanvas({
             }
             targetType={
               effectLayerUi.targetId
-                ? objects.find((o) => o.id === effectLayerUi.targetId)?.type
+                ? findInTree(objects, effectLayerUi.targetId)?.node?.type
                 : undefined
+            }
+            targetInsideFolder={
+              effectLayerUi.targetId
+                ? findInTree(objects, effectLayerUi.targetId)?.parent?.type === "groupContainer"
+                : false
             }
             histogram={effectLayerUi.histogram}
             tone={{

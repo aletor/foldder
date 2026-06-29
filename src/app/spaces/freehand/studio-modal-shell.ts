@@ -1,4 +1,8 @@
-import type { PointerEvent as ReactPointerEvent, MouseEvent as ReactMouseEvent } from "react";
+import type {
+  PointerEvent as ReactPointerEvent,
+  MouseEvent as ReactMouseEvent,
+  WheelEvent as ReactWheelEvent,
+} from "react";
 
 /** Shell fullscreen del studio (grafo debajo). */
 export const STUDIO_SHELL_Z = 100090;
@@ -19,6 +23,10 @@ export function stopStudioModalPointerPropagation(e: ReactPointerEvent | ReactMo
   e.stopPropagation();
 }
 
+export function stopStudioModalWheelPropagation(e: ReactWheelEvent) {
+  e.stopPropagation();
+}
+
 export const FOLDDER_EFFECT_LAYER_PANEL_SELECTOR = "[data-foldder-effect-layer-panel]";
 
 export function isInsideFoldderEffectLayerPanel(el: EventTarget | null): boolean {
@@ -34,6 +42,7 @@ export const studioOverlayPointerGuards = {
   onPointerMove: stopStudioModalPointerPropagation,
   onPointerUp: stopStudioModalPointerPropagation,
   onClick: stopStudioModalPointerPropagation,
+  onWheel: stopStudioModalWheelPropagation,
 } as const;
 
 /** Atributos compartidos del backdrop de modales dentro de un studio fullscreen. */
