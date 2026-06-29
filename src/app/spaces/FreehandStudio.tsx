@@ -204,7 +204,7 @@ import type { DesignerEmbedProps } from "./freehand/designer-embed-props";
 import { fieldValueAsText, getConstantFieldValue, getListFieldImageAtRow, getListFieldTextAtRow } from "@/app/spaces/dataset/dataset-logic";
 import type { DesignerDatasetFieldBinding, DesignerDatasetPropertyBinding } from "@/app/spaces/dataset/dataset-types";
 import { DesignerDatasetPropertyLink } from "./designer/DesignerDatasetPropertyLink";
-import { makePendingDesignerBinding } from "./designer/designer-dataset-binding";
+import { isPendingDesignerBinding, makePendingDesignerBinding } from "./designer/designer-dataset-binding";
 import { isBrandKitConstantId } from "./brandkit/brandkit-logic";
 import {
   applyDesignerDatasetPropertyBindings,
@@ -277,7 +277,8 @@ import {
   type InsertTarget,
   type PanelRow,
 } from "./freehand/group-container";
-import { layerPanelDisplayName } from "./freehand/layer-panel-label";
+import { layerPanelDisplayName, canRenameLayerInPanel } from "./freehand/layer-panel-label";
+import { DesignerDatasetFieldPanel } from "./freehand/DesignerDatasetFieldPanel";
 import { FolderPanelContextMenu } from "./freehand/FolderPanelContextMenu";
 import { folderPanelColorOption, type FolderPanelColorId } from "./freehand/folder-panel-colors";
 import { freehandHistoryEntriesEqual } from "./freehand/freehand-history-utils";
@@ -9538,6 +9539,8 @@ export function FreehandStudioCanvas({
   // Layer drag reorder
   const [layerDragId, setLayerDragId] = useState<string | null>(null);
   const [layerDropTarget, setLayerDropTarget] = useState<string | null>(null);
+  const [layerPanelRename, setLayerPanelRename] = useState<{ id: string; draft: string } | null>(null);
+  const layerPanelRenameInputRef = useRef<HTMLInputElement | null>(null);
   /** Intención de soltar en una fila del árbol (visual): encima / debajo / dentro (carpeta). */
   const [layerDrop, setLayerDrop] = useState<{ id: string; mode: "above" | "below" | "into" } | null>(null);
 
@@ -11036,9 +11039,9 @@ export function FreehandStudioCanvas({
       patchObject: (id, patch) => {
         queueMicrotask(() => {
           setObjects((prev) => {
-            const idx = prev.findIndex((o) => o.id === id);
-            if (idx < 0) return prev;
-            const obj = prev[idx]!;
+            const loc = findInTree(prev, id);
+            if (!loc) return prev;
+            const obj = loc.node;
             let changed = false;
             for (const k of Object.keys(patch)) {
               if ((obj as any)[k] !== (patch as any)[k]) {
@@ -11047,9 +11050,7 @@ export function FreehandStudioCanvas({
               }
             }
             if (!changed) return prev;
-            const next = [...prev];
-            next[idx] = { ...obj, ...patch } as FreehandObject;
-            return next;
+            return patchObjectByIdInTree(prev, id, (o) => ({ ...o, ...patch }) as FreehandObject);
           });
         });
       },
@@ -11527,10 +11528,16 @@ export function FreehandStudioCanvas({
 
   const selectedTextValue = useMemo(() => {
     if (!singleSelected) return "";
-    if (singleSelected.type === "text") return (singleSelected as TextObject).text ?? "";
+    if (singleSelected.type === "text") {
+      const tx = singleSelected as TextObject;
+      if (tx.isTextFrame && tx.storyId && designerStoryMap?.get(tx.storyId)) {
+        return designerStoryMap.get(tx.storyId)!;
+      }
+      return tx.text ?? "";
+    }
     if (singleSelected.type === "textOnPath") return (singleSelected as TextOnPathObject).text ?? "";
     return "";
-  }, [singleSelected]);
+  }, [singleSelected, designerStoryMap]);
 
   const autoDetectedTextKind = useMemo(() => {
     if (!singleSelected) return null;
@@ -12694,24 +12701,39 @@ export function FreehandStudioCanvas({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- no resetear borrador al re-renderizar el Dataset
   }, [singleSelected?.id]);
 
+  /**
+   * Re-hidrata listado/campo cuando llega el Dataset o cambia su versión. No pisa el borrador local
+   * mientras el usuario elige listado/campo (binding pendiente o selección distinta al binding guardado).
+   */
   useEffect(() => {
     const binding = singleSelected?._designerDatasetBinding;
     if (!binding || !designerConnectedDataset) return;
-    const list = designerConnectedDataset.lists.find((row) => row.id === binding.listId);
-    const field = list?.schema.find((row) => row.id === binding.fieldId);
+    if (isPendingDesignerBinding(binding)) return;
+
+    const boundListId = binding.listId ?? "";
+    const boundFieldId = binding.fieldId ?? "";
+    const localDraftDiffers =
+      (designerDatasetListId !== "" && designerDatasetListId !== boundListId) ||
+      (designerDatasetFieldId !== "" && designerDatasetFieldId !== boundFieldId);
+    if (localDraftDiffers) return;
+
+    const list = designerConnectedDataset.lists.find((row) => row.id === boundListId);
+    const field = list?.schema.find((row) => row.id === boundFieldId);
     const kind = designerDatasetFieldKind;
     if (!field || !kind || field.type !== kind) {
-      setDesignerDatasetListId(binding.listId);
+      setDesignerDatasetListId(boundListId);
       setDesignerDatasetFieldId("");
       return;
     }
-    setDesignerDatasetListId(binding.listId);
-    setDesignerDatasetFieldId(binding.fieldId);
+    setDesignerDatasetListId(boundListId);
+    setDesignerDatasetFieldId(boundFieldId);
   }, [
     designerConnectedDataset,
     designerConnectedDataset?.id,
     designerConnectedDataset?.version,
+    designerDatasetFieldId,
     designerDatasetFieldKind,
+    designerDatasetListId,
     singleSelected?._designerDatasetBinding,
     singleSelected?.id,
   ]);
@@ -12992,6 +13014,121 @@ export function FreehandStudioCanvas({
       return next;
     });
   }, [pushHistory, singleSelected]);
+
+  const designerDatasetBrandKitFields = useMemo(() => {
+    if (!designerConnectedDataset || designerDatasetFieldKind === null) return [];
+    return (designerConnectedDataset.constants.fields ?? []).filter(
+      (f) =>
+        isBrandKitConstantId(f.id) &&
+        (designerDatasetFieldKind === "image" ? f.type === "image" : f.type === "text"),
+    );
+  }, [designerConnectedDataset, designerDatasetFieldKind]);
+
+  const designerActiveBrandKitConstantId = useMemo(() => {
+    const activeNodeBinding =
+      designerDatasetBinding?.source === "node" ? designerDatasetBinding : null;
+    return activeNodeBinding ? `bk:${activeNodeBinding.nodeId ?? ""}:${activeNodeBinding.fieldId}` : "";
+  }, [designerDatasetBinding]);
+
+  const applyPanelTextBodyChange = useCallback(
+    (nextText: string, commit: boolean) => {
+      if (!singleSelected || singleSelected.type !== "text") return;
+      const tx = singleSelected as TextObject;
+      const targetId = tx.id;
+      const storyId = tx.isTextFrame ? tx.storyId : undefined;
+
+      const patchObjects = (prev: FreehandObject[]) =>
+        patchObjectByIdInTree(prev, targetId, (o) =>
+          o.type === "text"
+            ? ({
+                ...o,
+                text: nextText,
+                _designerRichSpans: undefined,
+                ...(tx.isTextFrame ? { _designerOverflow: false } : {}),
+              } as FreehandObject)
+            : o,
+        );
+
+      if (designerMode && storyId && onDesignerStoryTextChange) {
+        onDesignerStoryTextChange(storyId, nextText);
+      } else if (designerMode && storyId && onDesignerTextFrameEdit) {
+        onDesignerTextFrameEdit(targetId, storyId, nextText);
+      }
+
+      if (commit) {
+        setObjects((prev) => {
+          const next = patchObjects(prev);
+          pushHistory(next, new Set([targetId]));
+          return next;
+        });
+      } else {
+        setObjects((prev) => patchObjects(prev));
+      }
+
+      if (inlineFrameEditorObjectIdRef.current === targetId && inlineFrameEditorRef.current) {
+        inlineFrameEditorRef.current.innerHTML = richSpansToInlineHtml(undefined, nextText);
+      }
+      if (textEditingId === targetId) {
+        const simpleEditor = getSimpleTextEditorForInlineStyle();
+        if (simpleEditor) simpleEditor.textContent = nextText;
+      }
+    },
+    [
+      designerMode,
+      getSimpleTextEditorForInlineStyle,
+      onDesignerStoryTextChange,
+      onDesignerTextFrameEdit,
+      pushHistory,
+      singleSelected,
+      textEditingId,
+    ],
+  );
+
+  const designerDatasetPanelProps = useMemo(
+    () => ({
+      dataset: designerConnectedDataset,
+      datasetLoading: designerConnectedDatasetLoading,
+      binding: designerDatasetBinding,
+      listId: designerDatasetListId,
+      fieldId: designerDatasetFieldId,
+      schemaFields: designerDatasetSchemaFields,
+      defaultSlotLabel: designerDatasetDefaultSlotLabel,
+      activePageRowIndex: designerActivePageDatasetRowIndex,
+      brandKitFields: designerDatasetBrandKitFields,
+      activeBrandKitConstantId: designerActiveBrandKitConstantId,
+      onListIdChange: (nextListId: string) => {
+        setDesignerDatasetListId(nextListId);
+        setDesignerDatasetFieldId("");
+      },
+      onFieldIdChange: setDesignerDatasetFieldId,
+      onRemoveBinding: removeDesignerDatasetBinding,
+      onMarkDynamic: () => markDesignerDatasetDynamic(designerDatasetDefaultSlotLabel),
+      onSlotLabelChange: setDesignerDatasetSlotLabel,
+      onApplyTextBinding: applyDesignerDatasetTextBinding,
+      onApplyImageBinding: applyDesignerDatasetImageBinding,
+      onApplyBrandKitBinding: (id: string) => void applyDesignerBrandKitContentBinding(id),
+      onSetActivePageRowIndex: onDesignerSetActivePageRowIndex,
+    }),
+    [
+      applyDesignerBrandKitContentBinding,
+      applyDesignerDatasetImageBinding,
+      applyDesignerDatasetTextBinding,
+      designerActiveBrandKitConstantId,
+      designerActivePageDatasetRowIndex,
+      designerConnectedDataset,
+      designerConnectedDatasetLoading,
+      designerDatasetBinding,
+      designerDatasetBrandKitFields,
+      designerDatasetDefaultSlotLabel,
+      designerDatasetFieldId,
+      designerDatasetListId,
+      designerDatasetSchemaFields,
+      markDesignerDatasetDynamic,
+      onDesignerSetActivePageRowIndex,
+      removeDesignerDatasetBinding,
+      setDesignerDatasetSlotLabel,
+    ],
+  );
 
   const bindDatasetProperty = useCallback(
     (propertyKey: string, binding: DesignerDatasetPropertyBinding | null) => {
@@ -13784,6 +13921,44 @@ export function FreehandStudioCanvas({
   const patchObjectInTree = useCallback((id: string, fn: (o: FreehandObject) => FreehandObject) => {
     setObjects((prev) => mapTree(prev, (o) => (o.id === id ? fn(o) : o)));
   }, []);
+
+  const startLayerPanelRename = useCallback((id: string, currentName: string) => {
+    setLayerPanelRename({ id, draft: currentName });
+  }, []);
+
+  const cancelLayerPanelRename = useCallback(() => {
+    setLayerPanelRename(null);
+  }, []);
+
+  const commitLayerPanelRename = useCallback(() => {
+    setLayerPanelRename((edit) => {
+      if (!edit) return null;
+      const name = edit.draft.trim();
+      if (name) {
+        setObjects((prev) => {
+          const loc = findInTree(prev, edit.id);
+          const node = loc?.node;
+          if (!node || !canRenameLayerInPanel(node) || node.name === name) return prev;
+          const next = mapTree(prev, (o) => (o.id === edit.id ? { ...o, name } : o));
+          pushHistory(next, new Set([edit.id]));
+          return next;
+        });
+      }
+      return null;
+    });
+  }, [pushHistory]);
+
+  useLayoutEffect(() => {
+    if (!layerPanelRename) return;
+    layerPanelRenameInputRef.current?.focus();
+    layerPanelRenameInputRef.current?.select();
+  }, [layerPanelRename?.id]);
+
+  useEffect(() => {
+    if (!layerPanelRename) return;
+    const loc = findInTree(objects, layerPanelRename.id);
+    if (!loc?.node || !canRenameLayerInPanel(loc.node)) setLayerPanelRename(null);
+  }, [layerPanelRename, objects]);
 
   const toggleFolderCollapsed = useCallback((id: string) => {
     setObjects((prev) =>
@@ -23670,11 +23845,12 @@ export function FreehandStudioCanvas({
   const renameSelected = useCallback(() => {
     const sel = selectedIdsRef.current;
     if (sel.size !== 1) return;
-    const o = objectsRef.current.find((x) => sel.has(x.id));
-    if (!o) return;
-    const name = window.prompt("Layer name", o.name);
-    if (name != null && name.trim()) updateSelectedProp("name", name.trim());
-  }, [updateSelectedProp]);
+    const id = Array.from(sel)[0]!;
+    const loc = findInTree(objectsRef.current, id);
+    const o = loc?.node;
+    if (!o || !canRenameLayerInPanel(o)) return;
+    startLayerPanelRename(o.id, o.name);
+  }, [startLayerPanelRename]);
 
   // ── Context menu items ────────────────────────────────────────────
 
@@ -23927,7 +24103,7 @@ export function FreehandStudioCanvas({
       { label: "Duplicate", shortcut: "⌘D", action: duplicateSelected },
       { label: "Delete", action: deleteSelected, disabled: !hasDeletableSelection },
       { label: "Export selection", action: () => { setExportModalScope("selection"); setShowExportModal(true); }, separator: true },
-      { label: "Rename…", action: renameSelected, separator: true },
+      { label: "Rename…", action: renameSelected, disabled: !(single && canRenameLayerInPanel(single)), separator: true },
       { label: "Bring forward", shortcut: "⌘]", action: bringForward },
       { label: "Send backward", shortcut: "⌘[", action: sendBackward },
       { label: "Bring to front", action: bringToFront },
@@ -27293,256 +27469,6 @@ export function FreehandStudioCanvas({
                 </div>
               </div>
             )}
-            {designerMode && designerDatasetFieldKind !== null && (() => {
-              const brandKitContentFields = (designerConnectedDataset?.constants.fields ?? []).filter(
-                (f) =>
-                  isBrandKitConstantId(f.id) &&
-                  (designerDatasetFieldKind === "image" ? f.type === "image" : f.type === "text"),
-              );
-              if (brandKitContentFields.length === 0) return null;
-              const activeNodeBinding =
-                designerDatasetBinding?.source === "node" ? designerDatasetBinding : null;
-              const activeConstantId = activeNodeBinding
-                ? `bk:${activeNodeBinding.nodeId ?? ""}:${activeNodeBinding.fieldId}`
-                : "";
-              return (
-                <div className="border-b border-white/[0.08] px-[14px] py-3">
-                  <div className="mb-2 flex items-center justify-between gap-2">
-                    <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">BrandKit</div>
-                    <Link2 size={12} className="text-teal-300/80" />
-                  </div>
-                  <select
-                    value={activeConstantId}
-                    onMouseDown={(e) => e.stopPropagation()}
-                    onChange={(e) => {
-                      const id = e.target.value;
-                      if (!id) {
-                        removeDesignerDatasetBinding();
-                        return;
-                      }
-                      void applyDesignerBrandKitContentBinding(id);
-                    }}
-                    className="nodrag w-full rounded-[5px] border border-white/[0.1] bg-[#1a1e26] px-2 py-1.5 text-[11px] text-zinc-100 outline-none focus:border-teal-400/45"
-                  >
-                    <option value="">Sin vincular…</option>
-                    {brandKitContentFields.map((f) => (
-                      <option key={f.id} value={f.id}>
-                        {f.label}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="mt-1.5 text-[10px] leading-snug text-zinc-500">
-                    Vincula {designerDatasetFieldKind === "image" ? "esta imagen" : "este texto"} a un campo del BrandKit. Al editar el BrandKit, cambia en todos los Designers.
-                  </p>
-                </div>
-              );
-            })()}
-            {!isMaskBrushMode && designerMode && (
-              <div className="border-b border-white/[0.08] px-[14px] py-3">
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Dataset</div>
-                  <List size={12} className="text-teal-300/80" />
-                </div>
-
-                {designerDatasetFieldKind === null ? (
-                  <p className="text-[11px] leading-snug text-zinc-500">
-                    Selecciona un objeto de texto o un marco de imagen para marcarlo como campo dinámico.
-                  </p>
-                ) : designerConnectedDatasetLoading ? (
-                  <p className="text-[11px] leading-snug text-zinc-500">Cargando Dataset…</p>
-                ) : !designerConnectedDataset ? (
-                  designerDatasetBinding ? (
-                    <div className="space-y-2.5">
-                      <div className="flex items-center justify-between gap-2 rounded-[5px] border border-teal-400/25 bg-teal-500/10 px-2 py-1.5">
-                        <span className="text-[10px] font-semibold text-teal-200">
-                          Campo dinámico · {designerDatasetFieldKind === "image" ? "imagen" : "texto"}
-                        </span>
-                        <button
-                          type="button"
-                          onMouseDown={(e) => e.stopPropagation()}
-                          onClick={removeDesignerDatasetBinding}
-                          className="nodrag rounded-[4px] border border-white/[0.12] px-1.5 py-0.5 text-[10px] text-zinc-300 transition hover:bg-white/[0.08]"
-                        >
-                          Quitar
-                        </button>
-                      </div>
-                      <label className="block space-y-1">
-                        <span className="text-[9px] font-semibold uppercase tracking-wider text-zinc-500">Nombre del campo</span>
-                        <input
-                          type="text"
-                          value={designerDatasetBinding.slotLabel ?? ""}
-                          onMouseDown={(e) => e.stopPropagation()}
-                          onChange={(e) => setDesignerDatasetSlotLabel(e.target.value)}
-                          placeholder="p. ej. Nombre del jugador"
-                          className="nodrag w-full rounded-[5px] border border-white/[0.1] bg-[#1a1e26] px-2 py-1.5 text-[11px] text-zinc-100 outline-none focus:border-teal-400/45"
-                        />
-                      </label>
-                      <p className="text-[10px] leading-snug text-zinc-500">
-                        Sin Dataset conectado. Asignarás la columna en el nodo Populate (plantilla).
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      <p className="text-[11px] leading-snug text-zinc-500">
-                        Conéctale un Dataset para elegir columna, o márcalo como dinámico y asígnale la columna en Populate.
-                      </p>
-                      <button
-                        type="button"
-                        onMouseDown={(e) => e.stopPropagation()}
-                        onClick={() => markDesignerDatasetDynamic(designerDatasetDefaultSlotLabel)}
-                        className="nodrag w-full rounded-[5px] border border-teal-400/30 bg-teal-500/10 px-2 py-1.5 text-[11px] font-semibold text-teal-100 transition hover:bg-teal-500/20"
-                      >
-                        Marcar como campo dinámico
-                      </button>
-                    </div>
-                  )
-                ) : designerConnectedDataset.lists.length === 0 ? (
-                  <p className="text-[11px] leading-snug text-zinc-500">El Dataset conectado no tiene listados.</p>
-                ) : (
-                  <div className="space-y-2.5">
-                    {designerDatasetBinding ? (
-                      <div className="flex items-center justify-between gap-2 rounded-[5px] border border-teal-400/25 bg-teal-500/10 px-2 py-1.5">
-                        <span className="text-[10px] font-semibold text-teal-200">Campo dinámico enlazado</span>
-                        <button
-                          type="button"
-                          onMouseDown={(e) => e.stopPropagation()}
-                          onClick={removeDesignerDatasetBinding}
-                          className="nodrag rounded-[4px] border border-white/[0.12] px-1.5 py-0.5 text-[10px] text-zinc-300 transition hover:bg-white/[0.08]"
-                        >
-                          Desvincular
-                        </button>
-                      </div>
-                    ) : null}
-                    <label className="block space-y-1">
-                      <span className="text-[9px] font-semibold uppercase tracking-wider text-zinc-500">Listado</span>
-                      <select
-                        value={designerDatasetListId}
-                        onMouseDown={(e) => e.stopPropagation()}
-                        onChange={(e) => {
-                          const nextListId = e.target.value;
-                          if (!nextListId) {
-                            removeDesignerDatasetBinding();
-                            return;
-                          }
-                          setDesignerDatasetListId(nextListId);
-                          setDesignerDatasetFieldId("");
-                        }}
-                        className="nodrag w-full rounded-[5px] border border-white/[0.1] bg-[#1a1e26] px-2 py-1.5 text-[11px] text-zinc-100 outline-none focus:border-teal-400/45"
-                      >
-                        <option value="">Elegir listado…</option>
-                        {designerConnectedDataset.lists.map((list) => (
-                          <option key={list.id} value={list.id}>
-                            {list.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <label className="block space-y-1">
-                      <span className="text-[9px] font-semibold uppercase tracking-wider text-zinc-500">
-                        Campo ({designerDatasetFieldKind === "image" ? "imagen" : "texto"})
-                      </span>
-                      <select
-                        value={designerDatasetFieldId}
-                        disabled={!designerDatasetListId}
-                        onMouseDown={(e) => e.stopPropagation()}
-                        onChange={(e) => {
-                          const nextFieldId = e.target.value;
-                          if (!nextFieldId) {
-                            removeDesignerDatasetBinding();
-                            return;
-                          }
-                          setDesignerDatasetFieldId(nextFieldId);
-                          if (!designerDatasetListId) return;
-                          if (designerDatasetFieldKind === "image") {
-                            void applyDesignerDatasetImageBinding(designerDatasetListId, nextFieldId);
-                          } else {
-                            applyDesignerDatasetTextBinding(designerDatasetListId, nextFieldId);
-                          }
-                        }}
-                        className="nodrag w-full rounded-[5px] border border-white/[0.1] bg-[#1a1e26] px-2 py-1.5 text-[11px] text-zinc-100 outline-none focus:border-teal-400/45 disabled:cursor-not-allowed disabled:opacity-45"
-                      >
-                        <option value="">Elegir campo…</option>
-                        {designerDatasetSchemaFields.map((field) => (
-                          <option key={field.id} value={field.id}>
-                            {field.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
-                    {designerDatasetListId && designerDatasetSchemaFields.length === 0 ? (
-                      <p className="text-[10px] leading-snug text-zinc-500">
-                        Este listado no tiene campos de tipo {designerDatasetFieldKind === "image" ? "imagen" : "texto"}.
-                      </p>
-                    ) : null}
-
-                    {designerDatasetListId ? (() => {
-                      const rowCount =
-                        designerConnectedDataset.lists.find((l) => l.id === designerDatasetListId)?.cards.length ?? 0;
-                      const rowIdx = designerActivePageDatasetRowIndex;
-                      const outOfRange = rowCount > 0 && rowIdx > rowCount - 1;
-                      const canSet = !!onDesignerSetActivePageRowIndex && rowCount > 0;
-                      return (
-                        <div className="space-y-1">
-                          <span className="text-[9px] font-semibold uppercase tracking-wider text-zinc-500">
-                            Fila de esta página
-                          </span>
-                          <div className="flex items-center gap-1">
-                            <button
-                              type="button"
-                              title="Fila anterior"
-                              disabled={!canSet || rowIdx <= 0}
-                              onMouseDown={(e) => e.stopPropagation()}
-                              onClick={() => onDesignerSetActivePageRowIndex?.(Math.max(0, rowIdx - 1))}
-                              className="nodrag flex h-6 w-6 shrink-0 items-center justify-center rounded-[4px] border border-white/[0.1] bg-[#1a1e26] text-zinc-300 transition hover:border-teal-400/45 hover:text-teal-100 disabled:cursor-not-allowed disabled:opacity-35"
-                            >
-                              <ChevronLeft size={13} />
-                            </button>
-                            <div className="flex-1 rounded-[4px] border border-white/[0.1] bg-[#1a1e26] px-2 py-1 text-center text-[11px] tabular-nums text-zinc-100">
-                              {rowCount > 0 ? (
-                                <>Fila {Math.min(rowIdx, rowCount - 1) + 1} de {rowCount}</>
-                              ) : (
-                                "Listado sin filas"
-                              )}
-                            </div>
-                            <button
-                              type="button"
-                              title="Fila siguiente"
-                              disabled={!canSet || rowIdx >= rowCount - 1}
-                              onMouseDown={(e) => e.stopPropagation()}
-                              onClick={() => onDesignerSetActivePageRowIndex?.(Math.min(rowCount - 1, rowIdx + 1))}
-                              className="nodrag flex h-6 w-6 shrink-0 items-center justify-center rounded-[4px] border border-white/[0.1] bg-[#1a1e26] text-zinc-300 transition hover:border-teal-400/45 hover:text-teal-100 disabled:cursor-not-allowed disabled:opacity-35"
-                            >
-                              <ChevronRight size={13} />
-                            </button>
-                          </div>
-                          {outOfRange ? (
-                            <p className="text-[10px] leading-snug text-amber-400/90">
-                              Esta página apunta a la fila {rowIdx + 1}, que ya no existe.{" "}
-                              {canSet ? (
-                                <button
-                                  type="button"
-                                  onMouseDown={(e) => e.stopPropagation()}
-                                  onClick={() => onDesignerSetActivePageRowIndex?.(rowCount - 1)}
-                                  className="nodrag font-semibold text-teal-300 underline-offset-2 hover:underline"
-                                >
-                                  Usar la fila {rowCount}
-                                </button>
-                              ) : null}
-                            </p>
-                          ) : (
-                            <p className="text-[10px] leading-snug text-zinc-500">
-                              Los campos enlazados de esta página usan esta fila.
-                            </p>
-                          )}
-                        </div>
-                      );
-                    })() : null}
-                  </div>
-                )}
-              </div>
-            )}
             {!isMaskBrushMode && brainConnected && (
             <div className="border-b border-white/[0.08] px-[14px] py-3">
               <div className="mb-2 flex items-center justify-between gap-2">
@@ -28069,11 +27995,28 @@ export function FreehandStudioCanvas({
               )}
               {propertiesMainTab === "info" &&
                 (firstSelected?.type === "image" ? (
-                  <ImagePropertiesInfoSection
-                    image={firstSelected as ImageObject}
-                    expanded
-                    plain
-                  />
+                  <div className="space-y-0">
+                    <ImagePropertiesInfoSection
+                      image={firstSelected as ImageObject}
+                      expanded
+                      plain
+                    />
+                    {designerMode ? (
+                      <div className="px-[14px] pb-3">
+                        <DesignerDatasetFieldPanel fieldKind="image" plainTop {...designerDatasetPanelProps} />
+                      </div>
+                    ) : null}
+                  </div>
+                ) : firstSelected?.type === "rect" && firstSelected.isImageFrame ? (
+                  designerMode ? (
+                    <div className="px-[14px] py-3">
+                      <DesignerDatasetFieldPanel fieldKind="image" plainTop {...designerDatasetPanelProps} />
+                    </div>
+                  ) : (
+                    <p className="px-[14px] py-4 text-[11px] leading-snug text-zinc-500">
+                      Marco de imagen seleccionado.
+                    </p>
+                  )
                 ) : (
                   <p className="px-[14px] py-4 text-[11px] leading-snug text-zinc-500">
                     {firstSelected
@@ -28533,7 +28476,30 @@ export function FreehandStudioCanvas({
                     else updateSelectedProp("letterSpacing", next);
                   };
                   return (
-                    <div className="space-y-2 px-[14px] py-2">
+                    <div className="space-y-3 px-[14px] py-3">
+                      <section className="space-y-1.5">
+                        <div className={tfSec}>Contenido</div>
+                        <textarea
+                          value={selectedTextValue}
+                          rows={tx.isTextFrame ? 4 : 3}
+                          placeholder="Escribe el texto de la caja…"
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onChange={(e) => applyPanelTextBodyChange(e.target.value, false)}
+                          onBlur={() => commitHistoryAfterScrub()}
+                          className="nodrag min-h-[4.5rem] w-full resize-y rounded-[5px] border border-[#2d2f34] bg-[#1e2024] px-2 py-1.5 text-[11px] leading-snug text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-teal-400/45"
+                        />
+                        {tx.isTextFrame && designerMode ? (
+                          <p className="text-[10px] leading-snug text-zinc-500">
+                            Los cambios se aplican al marco de texto y a su historia enlazada.
+                          </p>
+                        ) : null}
+                      </section>
+
+                      {designerMode ? (
+                        <DesignerDatasetFieldPanel fieldKind="text" {...designerDatasetPanelProps} />
+                      ) : null}
+
+                      <section className="space-y-2 border-t border-white/[0.08] pt-2">
                       <div className={tfSec}>Typography</div>
 
                       <div className="flex gap-1.5">
@@ -28554,7 +28520,6 @@ export function FreehandStudioCanvas({
                             popularGoogleFonts: popularGoogleFontsDropdownOptions,
                             systemFamilyLabels: systemFontFamilyOptions,
                             systemPreviewFamilyByLabel,
-                            googleCategoryByFamily: googleFontCategoryByFamily,
                           })}
                         />
                         <button
@@ -28805,9 +28770,10 @@ export function FreehandStudioCanvas({
                       >
                         Convert to outlines
                       </button>
+                      </section>
 
-                      <div className="space-y-1.5 border-t border-white/[0.08] pt-1.5">
-                        <div className={tfSec}>CONTENT</div>
+                      <section className="space-y-1.5 border-t border-white/[0.08] pt-1.5">
+                        <div className={tfSec}>Asistente</div>
                         <button
                           type="button"
                           disabled={textContentBusy != null}
@@ -28835,7 +28801,7 @@ export function FreehandStudioCanvas({
                             </option>
                           ))}
                         </select>
-                      </div>
+                      </section>
                     </div>
                   );
                 })()}
@@ -28917,7 +28883,6 @@ export function FreehandStudioCanvas({
                             popularGoogleFonts: popularGoogleFontsDropdownOptions,
                             systemFamilyLabels: systemFontFamilyOptions,
                             systemPreviewFamilyByLabel,
-                            googleCategoryByFamily: googleFontCategoryByFamily,
                           })}
                         />
                         <div className="flex gap-1">
@@ -29667,7 +29632,15 @@ export function FreehandStudioCanvas({
                           })()}
                           <span
                             className="min-w-0 flex-1 truncate"
+                            title={
+                              canRenameLayerInPanel(obj) ? "Doble clic para renombrar" : undefined
+                            }
                             onDoubleClick={(e) => {
+                              if (canRenameLayerInPanel(obj)) {
+                                e.stopPropagation();
+                                startLayerPanelRename(obj.id, obj.name);
+                                return;
+                              }
                               if (obj.type === "adjustmentLayer") {
                                 e.stopPropagation();
                                 openEffectLayerModal(obj);
@@ -29676,13 +29649,6 @@ export function FreehandStudioCanvas({
                               if (obj.type === "booleanGroup") {
                                 e.stopPropagation();
                                 enterIsolation(obj.id);
-                              }
-                              if (obj.type === "groupContainer") {
-                                // Carpeta = grupo organizador en el MISMO documento: el doble clic en el
-                                // panel solo despliega/pliega (no "entra" en una vista aparte). Sus capas
-                                // siguen accesibles directamente en el árbol.
-                                e.stopPropagation();
-                                toggleFolderCollapsed(obj.id);
                               }
                               if (obj.type === "clippingContainer") {
                                 e.stopPropagation();
@@ -29697,7 +29663,34 @@ export function FreehandStudioCanvas({
                               }
                             }}
                           >
-                            {layerPanelDisplayName(obj, designerStoryMap)}
+                            {layerPanelRename?.id === obj.id ? (
+                              <input
+                                ref={layerPanelRenameInputRef}
+                                type="text"
+                                value={layerPanelRename.draft}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onClick={(e) => e.stopPropagation()}
+                                onChange={(e) =>
+                                  setLayerPanelRename((prev) =>
+                                    prev && prev.id === obj.id ? { ...prev, draft: e.target.value } : prev,
+                                  )
+                                }
+                                onBlur={() => commitLayerPanelRename()}
+                                onKeyDown={(e) => {
+                                  e.stopPropagation();
+                                  if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    commitLayerPanelRename();
+                                  } else if (e.key === "Escape") {
+                                    e.preventDefault();
+                                    cancelLayerPanelRename();
+                                  }
+                                }}
+                                className="nodrag w-full min-w-0 rounded-[3px] border border-violet-400/45 bg-[#0f1116] px-1 py-0 text-[10px] text-zinc-100 outline-none"
+                              />
+                            ) : (
+                              layerPanelDisplayName(obj, designerStoryMap)
+                            )}
                             {obj.groupId ? " ◆" : ""}
                             {obj.isClipMask ? " [clip]" : ""}
                             {obj.type === "booleanGroup" && (

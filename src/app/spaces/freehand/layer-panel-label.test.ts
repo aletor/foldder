@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { layerPanelDisplayName, textLayerNameSnippet } from "./layer-panel-label";
-import type { TextObject } from "../FreehandStudio";
+import { canRenameLayerInPanel, layerPanelDisplayName, textLayerNameSnippet } from "./layer-panel-label";
+import type { TextObject, FreehandObject } from "../FreehandStudio";
 
 describe("textLayerNameSnippet", () => {
   it("recorta a 4 caracteres con elipsis", () => {
@@ -35,5 +35,19 @@ describe("layerPanelDisplayName", () => {
       text: "",
     } as TextObject;
     expect(layerPanelDisplayName(obj)).toBe("Text 1");
+  });
+});
+
+describe("canRenameLayerInPanel", () => {
+  it("no permite renombrar capas de texto", () => {
+    expect(canRenameLayerInPanel({ id: "t", type: "text", name: "T" } as TextObject)).toBe(false);
+    expect(canRenameLayerInPanel({ id: "p", type: "textOnPath", name: "P" } as TextObject)).toBe(false);
+  });
+
+  it("permite renombrar carpetas e imágenes", () => {
+    expect(canRenameLayerInPanel({ id: "f", type: "groupContainer", name: "Carpeta" } as FreehandObject)).toBe(
+      true,
+    );
+    expect(canRenameLayerInPanel({ id: "i", type: "image", name: "Img" } as FreehandObject)).toBe(true);
   });
 });

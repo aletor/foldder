@@ -28,3 +28,9 @@ export function layerPanelDisplayName(
   }
   return o.name;
 }
+
+/** Las capas de texto muestran el contenido; el resto se puede renombrar en el panel. */
+export function canRenameLayerInPanel(o: FreehandObject): boolean {
+  if (o.photoRoomInputSlot) return false;
+  return o.type !== "text" && o.type !== "textOnPath";
+}

@@ -281,6 +281,63 @@ export function datasetBoundKeysForObject(obj: FreehandObject): string[] {
   return Array.from(keys);
 }
 
+/** Recorre el árbol de objetos de página (carpetas, clips, booleanGroup) en profundidad. */
+function forEachDesignerPageObjectDeep(
+  objects: FreehandObject[] | undefined,
+  visit: (obj: FreehandObject) => void,
+): void {
+  for (const obj of objects ?? []) {
+    visit(obj);
+    if (obj.type === "booleanGroup" || obj.type === "groupContainer") {
+      forEachDesignerPageObjectDeep(obj.children, visit);
+    } else if (obj.type === "clippingContainer") {
+      forEachDesignerPageObjectDeep([obj.mask as unknown as FreehandObject], visit);
+      forEachDesignerPageObjectDeep(obj.content, visit);
+    }
+  }
+}
+
+/** Índice id → objeto para todo el árbol de una página (incluye anidados en carpetas y clips). */
+export function indexDesignerPageObjectsById(
+  objects: FreehandObject[] | undefined,
+): Map<string, FreehandObject> {
+  const map = new Map<string, FreehandObject>();
+  forEachDesignerPageObjectDeep(objects, (obj) => {
+    map.set(obj.id, obj);
+  });
+  return map;
+}
+
+export interface DesignerLiveCanvasPatchApi {
+  getObjects: () => FreehandObject[];
+  patchObject: (id: string, patch: Record<string, unknown>) => void;
+}
+
+/**
+ * Parchea el lienzo vivo con los valores enlazados al Dataset de `pageObjects`, recorriendo
+ * también objetos anidados (carpetas, clips). Solo toca las claves que devuelve
+ * `datasetBoundKeysForObject`.
+ */
+export function patchLiveCanvasFromDatasetPageObjects(
+  api: DesignerLiveCanvasPatchApi,
+  pageObjects: FreehandObject[],
+): void {
+  const byId = indexDesignerPageObjectsById(pageObjects);
+  forEachDesignerPageObjectDeep(api.getObjects(), (liveObj) => {
+    const target = byId.get(liveObj.id);
+    if (!target) return;
+    const keys = datasetBoundKeysForObject(target);
+    if (keys.length === 0) return;
+    const liveRec = liveObj as unknown as Record<string, unknown>;
+    const targetRec = target as unknown as Record<string, unknown>;
+    const patch: Record<string, unknown> = {};
+    for (const k of keys) {
+      if (liveRec[k] !== targetRec[k]) patch[k] = targetRec[k];
+    }
+    if (Object.keys(patch).length > 0) api.patchObject(liveObj.id, patch);
+  });
+}
+
 /**
  * Re-aplica los bindings de Dataset a todas las páginas con enlaces (sincronización de datos).
  * Devuelve el mismo array si nada cambia (evita renders innecesarios).

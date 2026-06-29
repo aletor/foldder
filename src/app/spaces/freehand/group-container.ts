@@ -17,6 +17,43 @@ export function isGroupContainer(o: FreehandObject): o is GroupContainerObject {
   return o.type === "groupContainer";
 }
 
+function isBooleanGroup(o: FreehandObject): o is FreehandObject & { type: "booleanGroup"; children: FreehandObject[] } {
+  return o.type === "booleanGroup";
+}
+
+function isClippingContainer(
+  o: FreehandObject,
+): o is FreehandObject & { type: "clippingContainer"; mask: FreehandObject; content: FreehandObject[] } {
+  return o.type === "clippingContainer";
+}
+
+/** Hijos recursivos de un nodo contenedor (carpeta, booleanGroup, clip). */
+function nestedTreeChildLists(o: FreehandObject): FreehandObject[][] {
+  if (isGroupContainer(o) || isBooleanGroup(o)) return [o.children];
+  if (isClippingContainer(o)) {
+    return [[o.mask as unknown as FreehandObject], o.content];
+  }
+  return [];
+}
+
+function mapNestedObjectNode(
+  o: FreehandObject,
+  fn: (o: FreehandObject) => FreehandObject,
+): FreehandObject {
+  if (isGroupContainer(o)) {
+    return fn(withGroupChildren(o, mapTree(o.children, fn)));
+  }
+  if (isBooleanGroup(o)) {
+    return fn({ ...o, children: mapTree(o.children, fn) });
+  }
+  if (isClippingContainer(o)) {
+    const mask = mapNestedObjectNode(o.mask as unknown as FreehandObject, fn) as typeof o.mask;
+    const content = mapTree(o.content, fn);
+    return fn({ ...o, mask, content });
+  }
+  return fn(o);
+}
+
 /** Hijos de una carpeta, o `null` si el objeto no es una carpeta. */
 export function getGroupChildren(o: FreehandObject): FreehandObject[] | null {
   return isGroupContainer(o) ? o.children : null;
@@ -38,13 +75,7 @@ export function mapTree(
   objects: FreehandObject[],
   fn: (o: FreehandObject) => FreehandObject,
 ): FreehandObject[] {
-  return objects.map((o) => {
-    if (isGroupContainer(o)) {
-      const next = withGroupChildren(o, mapTree(o.children, fn));
-      return fn(next);
-    }
-    return fn(o);
-  });
+  return objects.map((o) => mapNestedObjectNode(o, fn));
 }
 
 /** Recorre en profundidad todos los nodos (raíz→hojas, padre antes que hijos). */
@@ -56,7 +87,9 @@ export function forEachTree(
 ): void {
   for (const o of objects) {
     fn(o, depth, parent);
-    if (isGroupContainer(o)) forEachTree(o.children, fn, depth + 1, o);
+    for (const childList of nestedTreeChildLists(o)) {
+      forEachTree(childList, fn, depth + 1, isGroupContainer(o) ? o : parent);
+    }
   }
 }
 
@@ -115,6 +148,18 @@ export function findInTree(
     if (isGroupContainer(o)) {
       const found = findInTree(o.children, id, o, [...path, o.id]);
       if (found) return found;
+      continue;
+    }
+    if (isBooleanGroup(o)) {
+      const found = findInTree(o.children, id, parent, path);
+      if (found) return found;
+      continue;
+    }
+    if (isClippingContainer(o)) {
+      const maskFound = findInTree([o.mask as unknown as FreehandObject], id, parent, path);
+      if (maskFound) return maskFound;
+      const contentFound = findInTree(o.content, id, parent, path);
+      if (contentFound) return contentFound;
     }
   }
   return null;

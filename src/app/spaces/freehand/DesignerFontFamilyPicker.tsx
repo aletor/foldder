@@ -15,7 +15,7 @@ export type DesignerFontPickerOption = {
   /** Texto renderizado con la tipografía de vista previa (p. ej. solo el nombre de familia). */
   previewText: string;
   previewFamily: string;
-  /** Subtítulo opcional (categoría, etc.) sin forzar la fuente de preview. */
+  /** Subtítulo opcional (reservado; no se muestra en el listado). */
   metaLabel?: string;
   /** Si true, se incluye en la precarga batch de Google Fonts. */
   googlePreview?: boolean;
@@ -33,7 +33,6 @@ export function buildDesignerFontPickerGroups(input: {
   popularGoogleFonts: GoogleFontCatalogEntry[];
   systemFamilyLabels: string[];
   systemPreviewFamilyByLabel: Map<string, string>;
-  googleCategoryByFamily: Map<string, string>;
 }): DesignerFontPickerGroup[] {
   const groups: DesignerFontPickerGroup[] = [];
   if (input.currentFont) {
@@ -53,17 +52,13 @@ export function buildDesignerFontPickerGroups(input: {
   if (input.installedGoogleFamilies.length > 0) {
     groups.push({
       label: "Google Fonts instaladas",
-      options: input.installedGoogleFamilies.map((family) => {
-        const category = input.googleCategoryByFamily.get(family) ?? "Google";
-        return {
-          value: family,
-          label: `${family} (${category})`,
-          previewText: family,
-          metaLabel: category,
-          previewFamily: cssFontFamilyForGooglePreview(family),
-          googlePreview: true,
-        };
-      }),
+      options: input.installedGoogleFamilies.map((family) => ({
+        value: family,
+        label: family,
+        previewText: family,
+        previewFamily: cssFontFamilyForGooglePreview(family),
+        googlePreview: true,
+      })),
     });
   }
   if (input.popularGoogleFonts.length > 0) {
@@ -71,9 +66,8 @@ export function buildDesignerFontPickerGroups(input: {
       label: "Google Fonts recomendadas",
       options: input.popularGoogleFonts.map((g) => ({
         value: g.family,
-        label: `${g.family} (${g.category})`,
+        label: g.family,
         previewText: g.family,
-        metaLabel: g.category,
         previewFamily: cssFontFamilyForGooglePreview(g.family),
         googlePreview: true,
       })),
@@ -114,13 +108,11 @@ export type DesignerFontFamilyPickerProps = {
 function FontPreviewLabel({
   previewText,
   previewFamily,
-  metaLabel,
   className = "",
   compact = false,
 }: {
   previewText: string;
   previewFamily: string;
-  metaLabel?: string;
   className?: string;
   compact?: boolean;
 }) {
@@ -138,15 +130,6 @@ function FontPreviewLabel({
       >
         {previewText}
       </span>
-      {metaLabel ? (
-        <span
-          className={`mt-px block truncate uppercase tracking-wide text-zinc-500 ${
-            compact ? "text-[9px]" : "text-[10px]"
-          }`}
-        >
-          {metaLabel}
-        </span>
-      ) : null}
     </span>
   );
 }
@@ -316,7 +299,6 @@ export function DesignerFontFamilyPicker({
                 <FontPreviewLabel
                   previewText={opt.previewText}
                   previewFamily={opt.previewFamily}
-                  metaLabel={opt.metaLabel}
                   compact
                   className="text-[12px]"
                 />
@@ -351,7 +333,6 @@ export function DesignerFontFamilyPicker({
           <FontPreviewLabel
             previewText={selected.previewText}
             previewFamily={selected.previewFamily}
-            metaLabel={selected.metaLabel}
             compact
             className="flex-1 text-[10px] text-zinc-100"
           />

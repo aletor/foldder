@@ -66,10 +66,10 @@ import {
   applyDatasetRowToDesignerPage,
   applyDatasetToAllPages,
   collectDatasetLoopListId,
-  datasetBoundKeysForObject,
   datasetListRowCount,
   datasetMaxRowCount,
   nextDatasetRowIndex,
+  patchLiveCanvasFromDatasetPageObjects,
   reconcileDatasetLoopPages,
   resolveDesignerPageDatasetRowIndex,
   stripDatasetLoopMarkers,
@@ -1253,20 +1253,7 @@ export default function DesignerStudio({
       const api = studioApiRef.current;
       if (api) {
         queueMicrotask(() => {
-          const live = api.getObjects();
-          for (const liveObj of live) {
-            const t = withRow.objects.find((o) => o.id === liveObj.id);
-            if (!t) continue;
-            const keys = datasetBoundKeysForObject(t);
-            if (keys.length === 0) continue;
-            const liveRec = liveObj as unknown as Record<string, unknown>;
-            const targetRec = t as unknown as Record<string, unknown>;
-            const patch: Record<string, unknown> = {};
-            for (const k of keys) {
-              if (liveRec[k] !== targetRec[k]) patch[k] = targetRec[k];
-            }
-            if (Object.keys(patch).length > 0) api.patchObject(liveObj.id, patch);
-          }
+          patchLiveCanvasFromDatasetPageObjects(api, withRow.objects ?? []);
           scheduleRailThumbRef.current();
         });
       }
@@ -1318,20 +1305,7 @@ export default function DesignerStudio({
       const api = studioApiRef.current;
       if (target && api) {
         queueMicrotask(() => {
-          const live = api.getObjects();
-          for (const liveObj of live) {
-            const t = target.objects.find((o) => o.id === liveObj.id);
-            if (!t) continue;
-            const keys = datasetBoundKeysForObject(t);
-            if (keys.length === 0) continue;
-            const liveRec = liveObj as unknown as Record<string, unknown>;
-            const targetRec = t as unknown as Record<string, unknown>;
-            const patch: Record<string, unknown> = {};
-            for (const k of keys) {
-              if (liveRec[k] !== targetRec[k]) patch[k] = targetRec[k];
-            }
-            if (Object.keys(patch).length > 0) api.patchObject(liveObj.id, patch);
-          }
+          patchLiveCanvasFromDatasetPageObjects(api, target.objects ?? []);
         });
       }
     }

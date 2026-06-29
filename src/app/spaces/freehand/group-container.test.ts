@@ -29,6 +29,18 @@ function makeFolder(children: FreehandObject[]): GroupContainerObject {
 }
 
 describe("group-container tree helpers", () => {
+  it("collectNodesByIds encuentra capas dentro de clippingContainer", () => {
+    const image = leaf("img", { type: "image" } as Partial<FreehandObject>);
+    const clip = {
+      id: "clip",
+      type: "clippingContainer",
+      mask: leaf("mask"),
+      content: [image],
+    } as unknown as FreehandObject;
+    const tree = [folder("F", [clip])];
+    expect(collectNodesByIds(tree, new Set(["img"])).map((o) => o.id)).toEqual(["img"]);
+  });
+
   it("findInTree localiza nodos anidados con padre/índice/path", () => {
     const tree = [leaf("a"), folder("F", [leaf("b"), leaf("c")])];
     const rootHit = findInTree(tree, "a")!;
