@@ -8114,6 +8114,7 @@ body.nb-studio-open [data-foldder-canvas-launcher] {
 .custom-node.image-export-node { --foldder-node-card-bg: #DDDE55; }
 .custom-node.gemini-video-node { --foldder-node-card-bg: #3239ba; }
 .custom-node.crop-node { --foldder-node-card-bg: #F0804D; }
+.custom-node.lightroom-node { --foldder-node-card-bg: #2E7D9A; }
 .custom-node.mask-node { --foldder-node-card-bg: #a6c85e; }
 .custom-node.layerizer-node { --foldder-node-card-bg: #8B5FBF; }
 .custom-node.vfx-generator-node { --foldder-node-card-bg: var(--foldder-palette-s); }
@@ -10043,4 +10044,1634 @@ body.foldder-studio-flush .left-toolbar-flyout-panel :is(button, span, div):not(
 
 [data-designer-font-picker-label] {
   font-family: var(--designer-font-preview-family, inherit) !important;
+}
+
+/* ── Lightroom node (Fase 1: RAW local decode) ── */
+.custom-node.lightroom-node { --foldder-node-card-bg: #2E7D9A; }
+.custom-node.lightroom-node { --foldder-studio-touched-color: #2E7D9A; }
+
+.lightroom-studio {
+  position: fixed;
+  inset: 0;
+  z-index: 100090;
+  display: flex;
+  flex-direction: column;
+  background: #0a0c10;
+  color: #e8eaed;
+}
+
+.lightroom-studio__body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr) 300px;
+  gap: 0;
+}
+
+.lightroom-studio__sidebar,
+.lightroom-studio__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 14px;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  overflow-y: auto;
+}
+
+.lightroom-studio__panel {
+  border-right: none;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.lightroom-studio__stage {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  background: #050608;
+}
+
+.lightroom-studio__preview {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.lightroom-studio__loading,
+.lightroom-studio__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 13px;
+}
+
+.lightroom-studio__empty-sub {
+  max-width: 320px;
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.lightroom-studio__eyebrow {
+  margin: 0;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.lightroom-studio__hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.lightroom-studio__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0;
+  background: rgba(255, 255, 255, 0.08);
+  color: #f3f4f6;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.lightroom-studio__btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.lightroom-studio__btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.lightroom-studio__btn--ghost {
+  background: transparent;
+}
+
+.lightroom-studio__btn--accent {
+  border-color: rgba(46, 125, 154, 0.65);
+  background: rgba(46, 125, 154, 0.35);
+}
+
+.lightroom-studio__btn--accent:hover:not(:disabled) {
+  background: rgba(46, 125, 154, 0.5);
+}
+
+.lightroom-studio__meta {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.lightroom-studio__meta div {
+  display: grid;
+  gap: 2px;
+}
+
+.lightroom-studio__meta dt {
+  margin: 0;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.38);
+}
+
+.lightroom-studio__meta dd {
+  margin: 0;
+  word-break: break-word;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.lightroom-studio__error {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.35);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+}
+
+.lightroom-studio__panel--develop {
+  overflow-y: auto;
+}
+
+.lightroom-studio__canvas {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  display: block;
+}
+
+.lightroom-develop-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lightroom-develop-controls__panel {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.lightroom-develop-controls__panel-head {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border: none;
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.lightroom-develop-controls__panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px 10px;
+}
+
+.lightroom-develop-controls__hsl-group {
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.lightroom-develop-controls__row {
+  display: grid;
+  grid-template-columns: minmax(52px, 58px) minmax(0, 1fr) 48px;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.lightroom-develop-controls__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lightroom-develop-controls__slider {
+  width: 100%;
+  accent-color: #2e7d9a;
+}
+
+.lightroom-develop-controls__value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.55);
+  cursor: ew-resize;
+}
+
+.lightroom-develop-controls__scrub {
+  width: 100%;
+  min-width: 0;
+  padding: 3px 4px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.35);
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  cursor: ew-resize;
+  outline: none;
+}
+
+.lightroom-develop-controls__scrub:focus {
+  border-color: rgba(46, 125, 154, 0.55);
+}
+
+.lightroom-develop-controls__scrub--text {
+  display: block;
+  user-select: none;
+  line-height: 1.35;
+}
+
+.lightroom-develop-controls__scrub::-webkit-outer-spin-button,
+.lightroom-develop-controls__scrub::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.lightroom-develop-controls__scrub[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.lightroom-viewport-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+}
+
+.lightroom-mask-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.lightroom-mask-overlay__svg {
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.lightroom-mask-overlay__line,
+.lightroom-mask-overlay__ellipse {
+  fill: none;
+  stroke: rgba(46, 125, 154, 0.95);
+  stroke-width: 0.004;
+  vector-effect: non-scaling-stroke;
+}
+
+.lightroom-mask-overlay__handle {
+  fill: #7dd3fc;
+  stroke: #0a0c10;
+  stroke-width: 0.002;
+}
+
+.lightroom-mask-overlay__brush-hint {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 10px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #e2e8f0;
+  pointer-events: none;
+}
+
+.lightroom-studio__tabs {
+  display: flex;
+  gap: 4px;
+  margin-top: 12px;
+}
+
+.lightroom-studio__tab {
+  flex: 1;
+  padding: 8px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.65);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.lightroom-studio__tab.is-active {
+  border-color: rgba(46, 125, 154, 0.65);
+  background: rgba(46, 125, 154, 0.25);
+  color: #f8fafc;
+}
+
+.lightroom-mask-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.lightroom-mask-panel__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.lightroom-mask-panel__icon-btn {
+  margin-left: auto;
+  display: inline-flex;
+  padding: 4px;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+}
+
+.lightroom-mask-panel__layers {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.lightroom-mask-panel__layer {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.lightroom-mask-panel__layer.is-active {
+  border-color: rgba(46, 125, 154, 0.55);
+}
+
+.lightroom-mask-panel__layer-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lightroom-mask-panel__tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.lightroom-mask-panel__tool {
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.25);
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 9px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.lightroom-mask-panel__tool.is-active {
+  border-color: rgba(46, 125, 154, 0.65);
+  color: #f8fafc;
+}
+
+.lightroom-mask-panel__select {
+  width: 100%;
+  padding: 4px 6px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #e2e8f0;
+  font-size: 10px;
+}
+
+.lightroom-mask-panel__swatch {
+  height: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.lightroom-mask-panel__primitive {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.lightroom-mask-panel__create-wrap {
+  position: relative;
+}
+
+.lightroom-mask-panel__create-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px dashed rgba(46, 125, 154, 0.45);
+  background: rgba(46, 125, 154, 0.08);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.lightroom-mask-panel__create-btn:hover {
+  border-color: rgba(46, 125, 154, 0.75);
+  background: rgba(46, 125, 154, 0.15);
+}
+
+.lightroom-mask-panel__type-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(15, 23, 42, 0.98);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.lightroom-mask-panel__type-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lightroom-mask-panel__type-menu-item:hover {
+  background: rgba(46, 125, 154, 0.2);
+}
+
+.lightroom-mask-panel__layer-block {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.lightroom-mask-panel__layer-block.is-active {
+  border-color: rgba(46, 125, 154, 0.55);
+}
+
+.lightroom-mask-panel__layer-icon {
+  display: inline-flex;
+  opacity: 0.65;
+}
+
+.lightroom-mask-panel__expanded {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.lightroom-mask-panel__subhead {
+  margin: 0;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.lightroom-mask-panel__components {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.lightroom-mask-panel__component {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.lightroom-mask-panel__component.is-active {
+  border-color: rgba(46, 125, 154, 0.5);
+}
+
+.lightroom-mask-panel__component-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lightroom-mask-panel__badge {
+  flex-shrink: 0;
+  padding: 2px 4px;
+  font-size: 7px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  border-radius: 2px;
+}
+
+.lightroom-mask-panel__badge--add {
+  background: rgba(34, 197, 94, 0.2);
+  color: #86efac;
+}
+
+.lightroom-mask-panel__badge--subtract {
+  background: rgba(239, 68, 68, 0.2);
+  color: #fca5a5;
+}
+
+.lightroom-mask-panel__component-type {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.lightroom-mask-panel__component-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.lightroom-mask-panel__action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.25);
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 9px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.lightroom-mask-panel__action-btn.is-active {
+  border-color: rgba(46, 125, 154, 0.65);
+  color: #f8fafc;
+}
+
+.lightroom-mask-panel__action-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.lightroom-mask-panel__preview-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+}
+
+.lightroom-mask-panel__preview-toggle input {
+  margin-left: auto;
+}
+
+.lightroom-mask-panel__divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+  margin: 4px 0;
+}
+
+/* —— Fase 4 UI components —— */
+
+.lr-slider-bidir__track-wrap,
+.lr-slider-grad__track-wrap {
+  position: relative;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.lr-slider-bidir__track,
+.lr-slider-grad__track {
+  position: absolute;
+  inset: 6px 0;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.lr-slider-grad__track {
+  inset: 5px 0;
+  height: 8px;
+  opacity: 0.95;
+}
+
+.lr-slider-bidir__center,
+.lr-slider-grad__center {
+  position: absolute;
+  left: 50%;
+  top: 4px;
+  bottom: 4px;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.35);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.lr-slider-bidir__fill,
+.lr-slider-grad__fill {
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.lr-slider-grad__fill {
+  background: rgba(255, 255, 255, 0.25);
+  top: 5px;
+  bottom: 5px;
+}
+
+.lr-slider-bidir__input {
+  position: relative;
+  width: 100%;
+  height: 22px;
+  margin: 0;
+  background: transparent;
+  accent-color: #2e7d9a;
+  z-index: 2;
+  cursor: ew-resize;
+}
+
+.lr-slider-bidir__input::-webkit-slider-thumb {
+  width: 12px;
+  height: 12px;
+}
+
+.lr-slider-bidir__input::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+}
+
+.lr-curve-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lr-curve-editor__channels {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.lr-curve-editor__ch,
+.lr-curve-editor__reset {
+  padding: 3px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.3);
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 9px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.lr-curve-editor__ch.is-active {
+  border-color: var(--ch-color, #2e7d9a);
+  color: var(--ch-color, #f8fafc);
+}
+
+.lr-curve-editor__svg {
+  width: 100%;
+  max-width: 200px;
+  aspect-ratio: 1;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.lr-curve-editor__point {
+  cursor: grab;
+}
+
+.lr-curve-editor__hint {
+  margin: 0;
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.lr-histogram {
+  margin-bottom: 8px;
+}
+
+.lr-histogram__svg {
+  width: 100%;
+  height: 56px;
+  display: block;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.lr-histogram--empty {
+  height: 56px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.lr-histogram__zone {
+  cursor: pointer;
+}
+
+.lr-profile-dd {
+  position: relative;
+  margin-bottom: 4px;
+}
+
+.lr-profile-dd__trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.3);
+  color: #e2e8f0;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.lr-profile-dd__thumb {
+  width: 28px;
+  height: 20px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.lr-profile-dd__menu {
+  position: absolute;
+  z-index: 20;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin: 4px 0 0;
+  padding: 4px;
+  list-style: none;
+  background: #1a1f28;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.lr-profile-dd__option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  background: transparent;
+  color: #e2e8f0;
+  font-size: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lr-profile-dd__option.is-active {
+  background: rgba(46, 125, 154, 0.25);
+}
+
+.lr-profile-dd__section {
+  padding: 6px 8px 2px;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.35);
+  list-style: none;
+}
+
+.lr-profile-dd__hint {
+  margin: 0 0 4px;
+  font-size: 9px;
+  line-height: 1.35;
+  color: rgba(251, 191, 36, 0.85);
+}
+
+.lr-profile-dd__warn {
+  margin: 4px 0 0;
+  font-size: 9px;
+  line-height: 1.35;
+  color: rgba(248, 113, 113, 0.9);
+}
+
+.lr-hsl-panel__swatches {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.lr-hsl-panel__swatch {
+  aspect-ratio: 1;
+  border: 2px solid transparent;
+  border-radius: 3px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.lr-hsl-panel__swatch.is-active {
+  border-color: #f8fafc;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+}
+
+.lr-presets__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.lr-presets__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.2);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.lr-presets__item:hover:not(:disabled) {
+  border-color: rgba(46, 125, 154, 0.45);
+}
+
+.lr-presets__thumb {
+  width: 24px;
+  height: 16px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.lr-wb-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.lr-wb-controls__dropper.is-active {
+  border-color: rgba(46, 125, 154, 0.75);
+  background: rgba(46, 125, 154, 0.2);
+}
+
+.lr-range-dual {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.lr-range-dual__track {
+  position: relative;
+  height: 52px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  touch-action: none;
+}
+
+.lr-range-dual__hist {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.lr-range-dual__selection {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(46, 125, 154, 0.35);
+  border-left: 1px solid rgba(125, 211, 252, 0.8);
+  border-right: 1px solid rgba(125, 211, 252, 0.8);
+  pointer-events: none;
+}
+
+.lr-range-dual__thumb {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 20px;
+  margin-left: -6px;
+  margin-top: -10px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 2px;
+  background: #7dd3fc;
+  cursor: ew-resize;
+  z-index: 2;
+}
+
+.lr-range-dual__values {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.lr-combine-btns {
+  display: flex;
+  gap: 4px;
+}
+
+.lr-combine-btns__btn {
+  flex: 1;
+  padding: 5px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.25);
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 9px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.lr-combine-btns__btn.is-active {
+  border-color: rgba(46, 125, 154, 0.65);
+  background: rgba(46, 125, 154, 0.25);
+  color: #f8fafc;
+}
+
+.lr-loupe__canvas {
+  width: 100%;
+  max-width: 96px;
+  aspect-ratio: 1;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  image-rendering: pixelated;
+  background: #000;
+}
+
+.lr-loupe__hint {
+  margin: 4px 0 0;
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.lr-compare {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.lr-compare__before {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  clip-path: inset(0 calc(100% - var(--split, 50%)) 0 0);
+}
+
+.lr-compare__divider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--split, 50%);
+  width: 2px;
+  margin-left: -1px;
+  background: #f8fafc;
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.6);
+}
+
+.lr-compare__label {
+  position: absolute;
+  top: 8px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 4px 8px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #e2e8f0;
+}
+
+.lr-compare__label--before {
+  left: 8px;
+}
+
+.lr-compare__label--after {
+  right: 8px;
+}
+
+.lr-compare-btn.is-active {
+  border-color: rgba(46, 125, 154, 0.65);
+  background: rgba(46, 125, 154, 0.2);
+}
+
+.lr-export-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lr-export-actions .lightroom-studio__btn {
+  width: 100%;
+  justify-content: center;
+}
+
+.lr-export-quality {
+  margin-top: 4px;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.72);
+  cursor: pointer;
+}
+
+.lr-export-quality input {
+  margin-right: 8px;
+}
+
+.lr-compare-split {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: auto;
+  cursor: ew-resize;
+}
+
+.lr-compare-split__handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 14px;
+  margin-left: -7px;
+  border: none;
+  background: transparent;
+  cursor: ew-resize;
+  padding: 0;
+}
+
+.lr-compare-split__handle::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  margin-left: -1px;
+  background: #f8fafc;
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.6);
+}
+
+.lr-crop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: auto;
+}
+
+.lr-crop-overlay__shade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  background: rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+}
+
+.lr-crop-overlay__shade--top {
+  top: 0;
+}
+
+.lr-crop-overlay__shade--bottom {
+  bottom: 0;
+  left: 0;
+  right: 0;
+}
+
+.lr-crop-overlay__rect {
+  position: absolute;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45);
+  cursor: move;
+  touch-action: none;
+}
+
+.lr-crop-overlay__handle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border: 1px solid #fff;
+  background: rgba(46, 125, 154, 0.85);
+}
+
+.lr-crop-overlay__handle--nw {
+  top: -5px;
+  left: -5px;
+  cursor: nwse-resize;
+}
+
+.lr-crop-overlay__handle--ne {
+  top: -5px;
+  right: -5px;
+  cursor: nesw-resize;
+}
+
+.lr-crop-overlay__handle--sw {
+  bottom: -5px;
+  left: -5px;
+  cursor: nesw-resize;
+}
+
+.lr-crop-overlay__handle--se {
+  bottom: -5px;
+  right: -5px;
+  cursor: nwse-resize;
+}
+
+.lr-crop-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lr-mask-preview {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.lr-float-banner {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  padding: 6px 12px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #fef3c7;
+  background: rgba(120, 53, 15, 0.85);
+  border: 1px solid rgba(251, 191, 36, 0.45);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.lightroom-studio__viewport-zoom {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform-origin: center center;
+  transition: transform 0.08s ease-out;
+}
+
+.lightroom-studio__history {
+  display: flex;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.lightroom-studio__history .lightroom-studio__btn {
+  flex: 1;
+  font-size: 10px;
+  padding: 6px 8px;
+}
+
+.lightroom-studio__zoom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.lightroom-studio__zoom .lightroom-studio__btn {
+  min-width: 28px;
+  padding: 4px 8px;
+}
+
+.lr-tat-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.lr-tat-btns__btn {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 6px;
+  font-size: 9px;
+  font-weight: 700;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.25);
+  color: rgba(255, 255, 255, 0.75);
+  cursor: pointer;
+}
+
+.lr-tat-btns__btn.is-active {
+  border-color: rgba(46, 125, 154, 0.65);
+  background: rgba(46, 125, 154, 0.25);
+  color: #f8fafc;
+}
+
+.lr-presets__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.lr-presets__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.lr-presets__groups {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.lr-presets__group-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 4px 2px;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.lr-presets__group-head:hover {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.lr-presets__group-count {
+  margin-left: auto;
+  font-weight: 500;
+  opacity: 0.65;
+}
+
+.lr-presets__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.lr-presets__menu-hit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.45;
+  padding: 2px;
+}
+
+.lr-presets__item:hover .lr-presets__menu-hit {
+  opacity: 0.9;
+}
+
+.lr-presets__context {
+  position: fixed;
+  z-index: 100250;
+  min-width: 200px;
+  padding: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: #0b0f14;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+}
+
+.lr-presets__context button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lr-presets__context button:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.lr-presets__context button.is-danger {
+  color: #f87171;
+}
+
+.lr-preset-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.lr-preset-modal-backdrop__dim {
+  position: absolute;
+  inset: 0;
+  border: none;
+  background: rgba(0, 0, 0, 0.62);
+  cursor: pointer;
+}
+
+.lr-preset-modal {
+  position: relative;
+  width: min(420px, 96vw);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: #0b0f14;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+}
+
+.lr-preset-modal__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.lr-preset-modal__title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #f8fafc;
+}
+
+.lr-preset-modal__sub {
+  margin: 4px 0 0;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.lr-preset-modal__close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+}
+
+.lr-preset-modal__body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+}
+
+.lr-preset-modal__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lr-preset-modal__field > span,
+.lr-preset-modal__includes legend {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.lr-preset-modal__field input,
+.lr-preset-modal__field select {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.35);
+  color: #f8fafc;
+  font-size: 12px;
+}
+
+.lr-preset-modal__includes {
+  margin: 0;
+  padding: 0;
+  border: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lr-preset-modal__check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.82);
+  cursor: pointer;
+}
+
+.lr-preset-modal__foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.lr-profile-dd__option--load {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lr-creative-lut {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lr-creative-lut__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.lr-creative-lut__item {
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  font-size: 10px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.25);
+  color: rgba(255, 255, 255, 0.75);
+  cursor: pointer;
+}
+
+.lr-creative-lut__item.is-active {
+  border-color: rgba(46, 125, 154, 0.65);
+  background: rgba(46, 125, 154, 0.25);
+  color: #f8fafc;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+}
+
+.lightroom-mask-overlay--dropper {
+  cursor: crosshair;
+}
+
+.lightroom-mask-overlay__feather {
+  stroke: rgba(125, 211, 252, 0.45);
+  stroke-width: 0.003;
+  stroke-dasharray: 0.008 0.008;
+  fill: none;
+  vector-effect: non-scaling-stroke;
+}
+
+.lightroom-mask-overlay__feather-ellipse {
+  fill: none;
+  stroke: rgba(125, 211, 252, 0.35);
+  stroke-width: 0.003;
+  stroke-dasharray: 0.008 0.008;
+  vector-effect: non-scaling-stroke;
+}
+
+.lightroom-mask-overlay__brush-cursor {
+  position: fixed;
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 10;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+}
+
+.lightroom-mask-overlay__dropper-hint {
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  font-size: 10px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #e2e8f0;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.lightroom-studio__btn.is-active {
+  border-color: rgba(46, 125, 154, 0.65);
+  background: rgba(46, 125, 154, 0.2);
+}
+
+@media (max-width: 900px) {
+  .lightroom-studio__body {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(240px, 1fr) auto;
+  }
+
+  .lightroom-studio__sidebar,
+  .lightroom-studio__panel {
+    border-right: none;
+    border-left: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
 }

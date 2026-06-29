@@ -21,6 +21,7 @@ export const NODE_SIDEBAR_TILE_BACKGROUND_SRC: Record<string, string> = {
   imageExport: "/nodes/image-export-mark.png",
   painter: "/nodes/painter-mark.png",
   crop: "/nodes/crop-mark.png",
+  lightroom: "/nodes/enhancer-mark.png",
 };
 
 /** ~180px JPEG para pintar mosaicos en sidebar (evita decodificar ~900px en iPad). */

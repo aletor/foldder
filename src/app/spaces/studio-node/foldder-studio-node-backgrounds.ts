@@ -23,6 +23,7 @@ export const FOLDDER_NODE_STUDIO_BACKGROUND_SRC: Record<string, string> = {
   urlImage: "/nodes/url-image-bg.png",
   painter: "/nodes/painter-bg.png",
   crop: "/nodes/crop-bg.png",
+  lightroom: "/nodes/enhancer-bg.png",
 };
 
 const NODE_TYPE_ALIASES: Record<string, string> = {

@@ -34,6 +34,7 @@ export type FoldderIconKey =
   | 'painter'
   | 'text'
   | 'crop'
+  | 'lightroom'
   | 'mask'
   | 'freehand'
   | 'brain'
@@ -569,6 +570,22 @@ export function FoldderCrop({ state, className, size }: GlyphProps) {
   );
 }
 
+export function FoldderLightroom({ state, className, size }: GlyphProps) {
+  return (
+    <FoldderIcon state={state} className={className} size={size}>
+      <circle cx="8" cy="8" r="2.6" />
+      <path d="M8 3.1 V4.6" />
+      <path d="M8 11.4 V12.9" />
+      <path d="M3.1 8 H4.6" />
+      <path d="M11.4 8 H12.9" />
+      <path d="M5.05 5.05 L6.1 6.1" />
+      <path d="M9.9 9.9 L10.95 10.95" />
+      <path d="M5.05 10.95 L6.1 9.9" />
+      <path d="M9.9 6.1 L10.95 5.05" />
+    </FoldderIcon>
+  );
+}
+
 export function FoldderNotes({ state, className, size }: GlyphProps) {
   return (
     <FoldderIcon state={state} className={className} size={size}>
@@ -726,6 +743,7 @@ export const FOLDDER_ICON_COLORS: Record<FoldderIconKey, string> = {
   painter: '#fcd34d',
   text: '#e9d5ff',
   crop: '#fde68a',
+  lightroom: '#7dd3fc',
   mask: '#99f6e4',
   freehand: '#22d3ee',
   brain: '#c084fc',
@@ -762,6 +780,7 @@ export const FOLDDER_NODE_ICONS: Record<FoldderIconKey, React.FC<GlyphProps>> = 
   painter: FoldderPainter,
   text: FoldderText,
   crop: FoldderCrop,
+  lightroom: FoldderLightroom,
   mask: FoldderMask,
   freehand: FoldderFreehand,
   brain: FoldderBrain,
@@ -799,6 +818,7 @@ export const NODE_TYPE_TO_FOLDDER_ICON: Record<string, FoldderIconKey> = {
   exportMultiple: 'export',
   painter: 'painter',
   crop: 'crop',
+  lightroom: 'lightroom',
   canvasGroup: 'layout',
   designer: 'freehand',
   presenter: 'presenter',

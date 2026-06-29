@@ -1,3 +1,4 @@
+import { EMPTY_DEVELOP_SETTINGS } from "@/app/spaces/lightroom/lightroom-develop-settings";
 import { NODE_REGISTRY } from "@/app/spaces/nodeRegistry";
 
 /**
@@ -236,6 +237,13 @@ export function defaultDataForCanvasDropNode(nodeType: string): Record<string, u
         promptValue: "",
         status: "draft",
         updatedAt: new Date().toISOString(),
+      };
+    case "lightroom":
+      return {
+        label: "Lightroom",
+        developSettings: structuredClone(EMPTY_DEVELOP_SETTINGS),
+        maskLayers: [],
+        decodeStatus: "idle",
       };
     case "cine":
       return {

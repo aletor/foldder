@@ -1,0 +1,12 @@
+Bundled camera profiles (DCP)
+=============================
+
+Source: Adobe Camera Raw — Adobe Standard profiles (Canon EOS bodies).
+
+IMPORTANT:
+- These are Adobe DCP profiles, not RawTherapee community profiles.
+- Before redistributing in a commercial SaaS product, verify Adobe license
+  terms for bundled Camera Raw profiles with your legal counsel.
+- Users may also load their own .dcp files locally in the Lightroom module.
+
+Alternative: generate DCamProf profiles for your priority camera bodies.

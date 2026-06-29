@@ -17,6 +17,7 @@ export const FOLDDER_NODE_CARD_BG: Record<string, string> = {
   imageExport: "#DDDE55",
   geminiVideo: "#3239ba",
   crop: "#F0804D",
+  lightroom: "#2E7D9A",
   backgroundRemover: "#a6c85e",
   layerizer: "#8B5FBF",
   dataset: "#37B7DF",

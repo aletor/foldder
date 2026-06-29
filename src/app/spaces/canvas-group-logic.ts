@@ -159,6 +159,18 @@ export function resolvePromptValueFromEdgeSourceMap(
   return resolvePromptValueFromEdgeSourceLookup(edge, (nodeId) => nodesById.get(nodeId));
 }
 
+function resolveNodeOutputValue(src: Node): string {
+  if (src.type === "lightroom") {
+    const d = src.data as { previewDataUrl?: unknown; value?: unknown };
+    const preview = typeof d.previewDataUrl === "string" ? d.previewDataUrl.trim() : "";
+    const exported = typeof d.value === "string" ? d.value.trim() : "";
+    /** Preview revelado en vivo; `value` solo se actualiza con «Exportar al nodo». */
+    return preview || exported;
+  }
+  const v = (src.data as { value?: unknown })?.value;
+  return typeof v === "string" ? v.trim() : "";
+}
+
 function resolvePromptValueFromEdgeSourceLookup(
   edge: Pick<Edge, "source" | "sourceHandle">,
   getNode: (nodeId: string) => Node | undefined,
@@ -170,11 +182,9 @@ function resolvePromptValueFromEdgeSourceLookup(
     if (!p) return "";
     const inner = getNode(p.memberId);
     if (!inner?.data) return "";
-    const v = (inner.data as { value?: unknown }).value;
-    return typeof v === "string" ? v : "";
+    return resolveNodeOutputValue(inner);
   }
-  const v = (src.data as { value?: unknown })?.value;
-  return typeof v === "string" ? v : "";
+  return resolveNodeOutputValue(src);
 }
 
 /**

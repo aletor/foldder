@@ -44,6 +44,10 @@ const nextConfig: NextConfig = {
         ...(config.resolve.fallback || {}),
         canvas: false,
       };
+      config.experiments = {
+        ...config.experiments,
+        asyncWebAssembly: true,
+      };
     }
     return config;
   },

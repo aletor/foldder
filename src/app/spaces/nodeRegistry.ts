@@ -524,6 +524,33 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
       label: 'string (optional title on the card)',
     },
   },
+  lightroom: {
+    type: 'lightroom',
+    label: 'Lightroom',
+    description:
+      'Local RAW develop (Phases 1–4): LibRaw-WASM decode, WebGL2 develop pipeline (float RGBA16F when supported), parametric tone curve, HSL/TAT, local masks (brush, linear, radial, color/luminance range), crop on export, undo/redo. Files stay on disk via File System Access; relink after reload.',
+    inputs: [],
+    outputs: [{ id: 'image', label: 'Image Out', type: 'image' as HandleType }],
+    dataSchema: {
+      label: 'string (optional title)',
+      source: 'LightroomLocalSource { fileName, fileSize, lastModified, extension, linked }',
+      developSettings: 'DevelopSettings (cameraProfileId, creativeLut, basic, toneCurve, hsl, detail)',
+      maskLayers: 'MaskAdjustmentLayer[]',
+      cropSettings: 'LightroomCropSettings (normalized crop, applied on export)',
+      previewDataUrl: 'string (developed preview data URL, session)',
+      decodedDataUrl: 'string (base decode without develop, session)',
+      decodeStatus: 'idle | decoding | ready | error | needs_relink',
+      decodeError: 'string (last decode error)',
+      cameraMake: 'string',
+      cameraModel: 'string',
+      iso: 'number',
+      width: 'number',
+      height: 'number',
+      value: 'string (exported developed image data URL for downstream nodes)',
+      type: 'image',
+      edited: 'boolean',
+    },
+  },
   layerizer: {
     type: 'layerizer',
     label: 'Layerizer',
@@ -666,6 +693,8 @@ export const ASSISTANT_NODE_DATA_HINTS: Record<string, string> = {
   spaceOutput: "label",
   painter: "bgColor, strokeColor, brushSize, value",
   crop: "aspectRatio, cropConfig, value",
+  lightroom:
+    "sin entrada; developSettings + maskLayers[] + cropSettings; decodedDataUrl/previewDataUrl; Studio WebGL (float/8-bit) + máscaras + recorte en export; undo/redo sesión",
   backgroundRemover: "threshold, expansion, feather",
   layerizer:
     "entrada image (master inmutable); detected (Gemini), selected (objetos + amodal opt-in), jobId/status (job async), output/value (LayerizerOutput: background clean_plate + layers extracted); salida layout (image_layout) conecta a designer. Extracción = recorte pixel-exacto (SAM 3 + matting), NUNCA generativo; fondo limpio = 1 llamada Nano Banana",

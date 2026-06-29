@@ -40,4 +40,12 @@ describe("canvas-connect-end-drop dataset input", () => {
       _datasetShowChooser: true,
     });
   });
+
+  it("seeds lightroom nodes with idle decode state", () => {
+    expect(defaultDataForCanvasDropNode("lightroom")).toMatchObject({
+      label: "Lightroom",
+      developSettings: {},
+      decodeStatus: "idle",
+    });
+  });
 });

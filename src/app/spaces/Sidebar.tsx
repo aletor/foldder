@@ -136,6 +136,7 @@ const TOOL_ITEMS: Array<{ type: string; label: string }> = [
   { type: 'imageCreationAdvanced', label: 'Image Advanced' },
   { type: 'painter', label: 'Painter' },
   { type: 'crop', label: 'Crop' },
+  { type: 'lightroom', label: 'Lightroom' },
 ];
 
 function toolFallbackBorderClass(type: string): string {
@@ -147,6 +148,9 @@ function toolFallbackBorderClass(type: string): string {
   }
   if (type === 'layerizer') {
     return 'border-white/25 group-hover/tile:border-purple-400/50';
+  }
+  if (type === 'lightroom') {
+    return 'border-white/25 group-hover/tile:border-sky-400/50';
   }
   if (type === 'concatenator') {
     return 'border-white/25 group-hover/tile:border-blue-400/50';

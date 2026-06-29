@@ -37,6 +37,7 @@ import { InspirationNode } from "./inspiration/InspirationNode";
 import { ImageCreationAdvancedNode } from "./image-creation-advanced/ImageCreationAdvancedNode";
 import { LayerizerNode } from "./layerizer/LayerizerNode";
 import { BackgroundRemoverNode } from "./background-remover/BackgroundRemoverNode";
+import { LightroomNode } from "./lightroom/LightroomNode";
 import { DatasetNode } from "./dataset/DatasetNode";
 import { PopulateNode } from "./populate/PopulateNode";
 
@@ -62,6 +63,7 @@ export const spacesNodeTypes: Record<string, ComponentType<any>> = {
   imageCreationAdvanced: ImageCreationAdvancedNode,
   backgroundRemover: BackgroundRemoverNode,
   layerizer: LayerizerNode,
+  lightroom: LightroomNode,
   dataset: DatasetNode,
   populate: PopulateNode,
   mediaDescriber: MediaDescriberNode,
