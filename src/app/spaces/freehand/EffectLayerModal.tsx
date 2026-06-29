@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import {
@@ -8,7 +8,7 @@ import {
   type PhotoImageAdjustmentsValues,
 } from "./PhotoImageAdjustmentsModal";
 import { LayerStylesModal } from "./LayerStylesModal";
-import type { LayerEffects } from "./layer-effects-types";
+import { isLayerOverlaysSupported, type LayerEffects } from "./layer-effects-types";
 import { STUDIO_LAYER_MODAL_Z, studioOverlayPointerGuards } from "./studio-modal-shell";
 
 export type EffectLayerTab = "tone" | "look" | "overlays";
@@ -93,7 +93,17 @@ export function EffectLayerModal({
     origY: number;
   } | null>(null);
 
+  const overlaysSupported = isLayerOverlaysSupported(targetType);
+
+  useEffect(() => {
+    if (!overlaysSupported && tab === "overlays") onTabChange("look");
+  }, [overlaysSupported, tab, onTabChange]);
+
   if (!open || (!dock && typeof document === "undefined")) return null;
+
+  const visibleTabs = MAIN_TABS.filter((t) => t.id !== "overlays" || overlaysSupported);
+  const stylesFxSection: "look" | "overlays" =
+    tab === "overlays" && overlaysSupported ? "overlays" : "look";
 
   const onHeaderPointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
@@ -162,7 +172,7 @@ export function EffectLayerModal({
           ) : null}
         </div>
         <div className="flex min-w-0 flex-1 items-stretch" role="tablist" aria-label="Secciones">
-          {MAIN_TABS.map((t) => {
+          {visibleTabs.map((t) => {
             const active = tab === t.id;
             return (
               <button
@@ -207,7 +217,7 @@ export function EffectLayerModal({
             embedded
             compact
             open
-            fxSection={tab === "look" ? "look" : "overlays"}
+            fxSection={stylesFxSection}
             hideApplyTargetChoice
             targetType={targetType}
             draft={stylesDraft}

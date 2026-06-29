@@ -11,6 +11,7 @@
  */
 
 import type { FreehandObject, GroupContainerObject } from "../FreehandStudio";
+import { folderPanelStripeColor, type FolderPanelColorId } from "./folder-panel-colors";
 
 export function isGroupContainer(o: FreehandObject): o is GroupContainerObject {
   return o.type === "groupContainer";
@@ -252,6 +253,20 @@ export interface PanelRow {
   isContainer: boolean;
   /** True si es carpeta plegada (sus hijos no se listan). */
   collapsed: boolean;
+  /** Color organizativo de esta fila si es carpeta (`panelColor`). */
+  folderPanelColor: FolderPanelColorId | null;
+  /** Barras verticales de carpetas ancestro (de fuera a dentro). */
+  ancestorPanelColors: readonly string[];
+}
+
+/** Cuenta todas las capas descendientes de una carpeta (no incluye la carpeta). */
+export function countFolderDescendants(folder: GroupContainerObject): number {
+  let n = 0;
+  for (const ch of folder.children) {
+    n++;
+    if (isGroupContainer(ch)) n += countFolderDescendants(ch);
+  }
+  return n;
 }
 
 /**
@@ -265,18 +280,38 @@ export function flattenTreeForPanel(objects: FreehandObject[]): PanelRow[] {
   // `key` de React. Dedupar aquí garantiza keys únicas ya en el PRIMER render, sin depender del
   // efecto asíncrono que sana el estado.
   const seen = new Set<string>();
-  const walk = (list: FreehandObject[], depth: number, parentId: string | null) => {
+  const walk = (
+    list: FreehandObject[],
+    depth: number,
+    parentId: string | null,
+    ancestorColors: readonly string[],
+  ) => {
     for (let i = list.length - 1; i >= 0; i--) {
       const o = list[i]!;
       if (seen.has(o.id)) continue;
       seen.add(o.id);
       const container = isGroupContainer(o);
       const collapsed = container ? !!o.collapsed : false;
-      rows.push({ obj: o, depth, parentId, isContainer: container, collapsed });
-      if (container && !collapsed) walk(o.children, depth + 1, o.id);
+      const folderPanelColor = container
+        ? ((o as GroupContainerObject).panelColor ?? null)
+        : null;
+      rows.push({
+        obj: o,
+        depth,
+        parentId,
+        isContainer: container,
+        collapsed,
+        folderPanelColor,
+        ancestorPanelColors: container ? [] : ancestorColors,
+      });
+      if (container && !collapsed) {
+        const stripe = folderPanelStripeColor(folderPanelColor);
+        const nextAncestors = stripe ? [...ancestorColors, stripe] : ancestorColors;
+        walk(o.children, depth + 1, o.id, nextAncestors);
+      }
     }
   };
-  walk(objects, 0, null);
+  walk(objects, 0, null, []);
   return rows;
 }
 

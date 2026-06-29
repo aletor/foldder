@@ -10,6 +10,7 @@ import {
   defaultLayerEffects,
   defaultPhotoFilter,
   isPhotoFilterPresetActive,
+  isLayerOverlaysSupported,
   isSvgPhotoFilterPreset,
   PHOTO_FILTER_PRESETS,
   photoFilterCssString,
@@ -93,7 +94,7 @@ export function LayerStylesModal({
    * Texto (`<foreignObject>`) y carpetas (grupo de capas) solo soportan de forma fiable el filtro
    * fotográfico (filter CSS); los overlays color/degradado/glow requieren una silueta raster propia.
    */
-  const overlaysSupported = targetType !== "text" && targetType !== "groupContainer";
+  const overlaysSupported = isLayerOverlaysSupported(targetType);
   const defaultTab: EffectTab =
     fxSection === "look" ? "photoFilter" : overlaysSupported ? "colorOverlay" : "photoFilter";
   const [tab, setTab] = useState<EffectTab>(defaultTab);

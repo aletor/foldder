@@ -251,7 +251,9 @@ import {
   getImageAlphaEntry,
   prewarmImageAlpha,
   sampleAlphaAtNaturalPixel,
+  setImageAlphaFromCanvas,
   subscribeImageAlpha,
+  trimCanvasToOpaqueBounds,
 } from "./freehand/image-alpha-hit";
 import {
   collectNodesByIds,
@@ -271,9 +273,13 @@ import {
   resolveTreeSelection,
   ungroupContainer,
   wrapSelectionInGroup,
+  countFolderDescendants,
   type InsertTarget,
   type PanelRow,
 } from "./freehand/group-container";
+import { layerPanelDisplayName } from "./freehand/layer-panel-label";
+import { FolderPanelContextMenu } from "./freehand/FolderPanelContextMenu";
+import { folderPanelColorOption, type FolderPanelColorId } from "./freehand/folder-panel-colors";
 import { freehandHistoryEntriesEqual } from "./freehand/freehand-history-utils";
 import {
   resolvePenClosedFillHex,
@@ -1022,6 +1028,8 @@ export interface GroupContainerObject extends FreehandObjectBase {
   children: FreehandObject[];
   /** Plegado en el panel de capas (solo UI; no afecta al render). */
   collapsed?: boolean;
+  /** Color organizativo en el panel de capas (solo UI; no afecta al lienzo). */
+  panelColor?: FolderPanelColorId | null;
 }
 
 /** Capa de efecto no destructiva (tono + look); afecta capas inferiores en el stack. */
@@ -2055,6 +2063,72 @@ function stampBrushCircle(
   ctx.restore();
 }
 
+/** Semilla determinista por posición de dab (textura estable al repintar). */
+function brushDabHash(px: number, py: number, salt = 0): number {
+  const n = Math.sin(px * 12.9898 + py * 78.233 + salt * 43.758) * 43758.5453;
+  return n - Math.floor(n);
+}
+
+/** Pincel con textura de cerdas: trazos finos radiales con ligera variación. */
+function stampBrushBristle(
+  ctx: CanvasRenderingContext2D,
+  px: number,
+  py: number,
+  radiusPx: number,
+  hardness01: number,
+  opacity01: number,
+  flow01: number,
+  rgb: { r: number; g: number; b: number },
+) {
+  const r = Math.max(0.5, radiusPx);
+  const baseAlpha = clamp(opacity01, 0, 1) * clamp(flow01, 0, 1);
+  const h = clamp(hardness01, 0, 1);
+  const bristleCount = clamp(Math.round(r * 0.9 + 7), 10, 32);
+  const angle0 = brushDabHash(px, py) * Math.PI * 2;
+
+  ctx.save();
+  stampBrushCircle(ctx, px, py, r * 0.42, Math.min(h, 0.28), opacity01 * 0.22, flow01 * 0.35, rgb);
+
+  for (let i = 0; i < bristleCount; i++) {
+    const jitterA = brushDabHash(px + i * 1.31, py - i * 0.87);
+    const jitterB = brushDabHash(px - i * 0.53, py + i * 1.19, 1);
+    const angle = angle0 + (i / bristleCount) * Math.PI * 2 + (jitterA - 0.5) * 1.1;
+    const dist = r * (0.08 + jitterB * 0.78);
+    const bx = px + Math.cos(angle) * dist;
+    const by = py + Math.sin(angle) * dist;
+    const bristleW = Math.max(0.4, r * (0.045 + jitterA * 0.07));
+    const halfLen = r * (0.22 + jitterB * 0.38);
+    const strokeAngle = angle + (jitterB - 0.5) * 0.65;
+    const alpha = baseAlpha * (0.28 + jitterA * 0.52);
+    ctx.strokeStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha})`;
+    ctx.lineWidth = bristleW * 2;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(bx - Math.cos(strokeAngle) * halfLen, by - Math.sin(strokeAngle) * halfLen);
+    ctx.lineTo(bx + Math.cos(strokeAngle) * halfLen, by + Math.sin(strokeAngle) * halfLen);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function stampBrush(
+  ctx: CanvasRenderingContext2D,
+  px: number,
+  py: number,
+  radiusPx: number,
+  hardness01: number,
+  opacity01: number,
+  flow01: number,
+  rgb: { r: number; g: number; b: number },
+  kind: BrushKind,
+) {
+  if (kind === "bristle") {
+    stampBrushBristle(ctx, px, py, radiusPx, hardness01, opacity01, flow01, rgb);
+  } else {
+    stampBrushCircle(ctx, px, py, radiusPx, hardness01, opacity01, flow01, rgb);
+  }
+}
+
 function paintBrushStrokeSegment(
   ctx: CanvasRenderingContext2D,
   from: Point,
@@ -2065,6 +2139,7 @@ function paintBrushStrokeSegment(
   flow01: number,
   rgb: { r: number; g: number; b: number },
   stepScale = 1,
+  kind: BrushKind = "round",
 ) {
   const dist = Math.hypot(to.x - from.x, to.y - from.y);
   const step = Math.max(radiusPx * 0.45 * stepScale, 0.75);
@@ -2073,7 +2148,7 @@ function paintBrushStrokeSegment(
     const t = n === 0 ? 0 : i / n;
     const x = from.x + (to.x - from.x) * t;
     const y = from.y + (to.y - from.y) * t;
-    stampBrushCircle(ctx, x, y, radiusPx, hardness01, opacity01, flow01, rgb);
+    stampBrush(ctx, x, y, radiusPx, hardness01, opacity01, flow01, rgb, kind);
   }
 }
 
@@ -2088,14 +2163,15 @@ function paintMaskBrushStrokeSegment(
   flow01: number,
   rgb: { r: number; g: number; b: number },
   stepScale = 1,
+  kind: BrushKind = "round",
 ) {
   const L = Math.round(0.299 * rgb.r + 0.587 * rgb.g + 0.114 * rgb.b);
   const g = { r: L, g: L, b: L };
-  paintBrushStrokeSegment(ctx, from, to, radiusPx, hardness01, opacity01, flow01, g, stepScale);
+  paintBrushStrokeSegment(ctx, from, to, radiusPx, hardness01, opacity01, flow01, g, stepScale, kind);
 }
 
-/** Variantes de pincel raster (round / hard / soft / airbrush). */
-export type BrushKind = "round" | "hard" | "soft" | "airbrush";
+/** Variantes de pincel raster (round / hard / soft / airbrush / bristle). */
+export type BrushKind = "round" | "hard" | "soft" | "airbrush" | "bristle";
 
 function effectiveBrushStampParams(
   kind: BrushKind,
@@ -2113,6 +2189,8 @@ function effectiveBrushStampParams(
       return { hardness01: Math.min(h, 0.42), opacity01: o * 0.92, flow01: f * 0.88, stepScale: 0.72 };
     case "airbrush":
       return { hardness01: Math.min(h, 0.18), opacity01: o * 0.55, flow01: f * 0.38, stepScale: 0.55 };
+    case "bristle":
+      return { hardness01: Math.min(h, 0.52), opacity01: o * 0.9, flow01: f * 0.68, stepScale: 0.62 };
     default:
       return { hardness01: h, opacity01: o, flow01: f, stepScale: 1 };
   }
@@ -2295,7 +2373,7 @@ function pickTopImageForBrush(pos: Point, objects: FreehandObject[]): ImageObjec
     const o = objects[i];
     if (o.type !== "image" || !o.visible || o.locked) continue;
     if (o.photoRoomInputSlot) continue;
-    if (hitTestObject(pos, o, 0, objects)) return o as ImageObject;
+    if (hitTestObject(pos, o, 0, objects, { imageAlpha: true })) return o as ImageObject;
   }
   return null;
 }
@@ -2418,6 +2496,46 @@ function applyBrushStrokeToObject(
   }
   if (kind !== "image" || o.type !== "image") return o;
   return { ...o, src: url, x: raster.x, y: raster.y, width: raster.width, height: raster.height } as ImageObject;
+}
+
+/** Recorta bitmap de pincel al contenido opaco y sincroniza geometría + caché de alfa. */
+function finalizeBrushRasterSession(s: {
+  canvas: HTMLCanvasElement;
+  raster: FreehandObject;
+  target: "pixels" | "mask";
+  kind: BrushRasterSession["kind"];
+}): {
+  url: string;
+  canvasW: number;
+  canvasH: number;
+  raster: FreehandObject;
+} {
+  if (s.target === "mask" || s.kind === "imageFrame") {
+    return {
+      url: s.canvas.toDataURL("image/png"),
+      canvasW: s.canvas.width,
+      canvasH: s.canvas.height,
+      raster: s.raster,
+    };
+  }
+  const trimmed = trimCanvasToOpaqueBounds(s.canvas);
+  if (!trimmed) {
+    const url = s.canvas.toDataURL("image/png");
+    setImageAlphaFromCanvas(url, s.canvas);
+    return { url, canvasW: s.canvas.width, canvasH: s.canvas.height, raster: s.raster };
+  }
+  const wxPerPx = s.raster.width / Math.max(s.canvas.width, 1e-9);
+  const hyPerPx = s.raster.height / Math.max(s.canvas.height, 1e-9);
+  const raster = {
+    ...s.raster,
+    x: s.raster.x + trimmed.x * wxPerPx,
+    y: s.raster.y + trimmed.y * hyPerPx,
+    width: trimmed.w * wxPerPx,
+    height: trimmed.h * hyPerPx,
+  } as FreehandObject;
+  const url = trimmed.canvas.toDataURL("image/png");
+  setImageAlphaFromCanvas(url, trimmed.canvas);
+  return { url, canvasW: trimmed.w, canvasH: trimmed.h, raster };
 }
 
 /** Capa imagen o máscara raster bajo el cursor (coherente con pincel / máscara). */
@@ -2880,7 +2998,9 @@ function colorDropPreferStroke(pos: Point, obj: FreehandObject, allObjects: Free
 function imageAlphaHitTest(pos: Point, img: ImageObject): boolean {
   if (!pointInRotatedRect(pos.x, pos.y, img)) return false;
   const entry = getImageAlphaEntry(img.src);
-  if (!entry || entry.status !== "ready") return true; // fallback bbox: nunca bloquea la selección
+  if (!entry) return false;
+  if (entry.status === "pending") return false;
+  if (entry.status === "failed") return true;
   const par = img.imagePreserveAspectRatio ?? "xMidYMid meet";
   let px: { ix: number; iy: number } | null;
   if (par === "none") {
@@ -3018,7 +3138,7 @@ function frontmostLeafAtPoint(
       if (child) return child;
       continue;
     }
-    const alphaAware = !(o.type === "image" && selectedIdsForAlpha.has(o.id));
+    const alphaAware = true;
     if (hitTestObject(pos, o, threshold, allObjects, { imageAlpha: alphaAware })) return o;
   }
   return null;
@@ -3068,11 +3188,10 @@ function frontmostInteractiveAtPoint(
       continue;
     }
     if (o.clipMaskId) {
-      const alphaAware = !(o.type === "image" && selectedIdsForAlpha.has(o.id));
-      if (hitTestObject(pos, o, threshold, allObjects, { imageAlpha: alphaAware })) return o;
+      if (hitTestObject(pos, o, threshold, allObjects, { imageAlpha: o.type === "image" })) return o;
       continue;
     }
-    const alphaAware = !(o.type === "image" && selectedIdsForAlpha.has(o.id));
+    const alphaAware = true;
     if (hitTestObject(pos, o, threshold, allObjects, { imageAlpha: alphaAware })) return o;
   }
   return null;
@@ -8132,6 +8251,21 @@ function clipMapFromObjects(objs: FreehandObject[]): Map<string, FreehandObject[
   return map;
 }
 
+/** Efectos embebidos en la capa (layerEffects o capa de ajuste activa). */
+function layerRowHasEmbeddedEffects(obj: FreehandObject): boolean {
+  if (obj.type === "adjustmentLayer") {
+    return isEffectLayerActive(obj as AdjustmentLayerObject);
+  }
+  return hasActiveLayerEffects((obj as FreehandObjectBase).layerEffects);
+}
+
+function layerRowHasActiveEffects(
+  obj: FreehandObject,
+  scopedFxByTargetId: ReadonlyMap<string, AdjustmentLayerObject>,
+): boolean {
+  return layerRowHasEmbeddedEffects(obj) || scopedFxByTargetId.has(obj.id);
+}
+
 function layerRowIcon(o: FreehandObject) {
   const cls = "shrink-0 text-zinc-500";
   switch (o.type) {
@@ -10219,6 +10353,7 @@ export function FreehandStudioCanvas({
   const [layerMaskCtxMenu, setLayerMaskCtxMenu] = useState<{ x: number; y: number; layerId: string } | null>(
     null,
   );
+  const [folderCtxMenu, setFolderCtxMenu] = useState<{ x: number; y: number; folderId: string } | null>(null);
   const [textEditingId, setTextEditingId] = useState<string | null>(null);
   const [textOnPathEditingId, setTextOnPathEditingId] = useState<string | null>(null);
   const [textOnPathEditorAnchor, setTextOnPathEditorAnchor] = useState<Point | null>(null);
@@ -10239,7 +10374,7 @@ export function FreehandStudioCanvas({
       return;
     }
     if (inlineFrameEditorFocusedForIdRef.current === textEditingId) return;
-    const o = objects.find((x) => x.id === textEditingId);
+    const o = findInTree(objects, textEditingId)?.node;
     if (!(o?.type === "text")) return;
     const el = inlineFrameEditorRef.current;
     if (!el) return;
@@ -10286,8 +10421,8 @@ export function FreehandStudioCanvas({
     if (!objectId) return;
     const payload = simpleTextRichPayloadFromHtml(editor.innerHTML);
     setObjects((prev) =>
-      prev.map((o) => {
-        if (o.id !== objectId || o.type !== "text") return o;
+      patchObjectByIdInTree(prev, objectId, (o) => {
+        if (o.type !== "text") return o;
         const tx = o as TextObject;
         return {
           ...tx,
@@ -10305,9 +10440,11 @@ export function FreehandStudioCanvas({
     const richHtml = normalizeInlineFrameRichHtml(editor.innerHTML);
     const plain = editor.innerText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
     setObjects((prev) =>
-      prev.map((o) => (o.id === objectId && o.type === "text" ? ({ ...o, text: plain } as FreehandObject) : o)),
+      patchObjectByIdInTree(prev, objectId, (o) =>
+        o.type === "text" ? ({ ...o, text: plain } as FreehandObject) : o,
+      ),
     );
-    const editedObj = objectsRef.current.find((o) => o.id === objectId) as TextObject | undefined;
+    const editedObj = findInTree(objectsRef.current, objectId)?.node as TextObject | undefined;
     if (editedObj?.isTextFrame && editedObj.storyId && onDesignerTextFrameEdit) {
       onDesignerTextFrameEdit(editedObj.id, editedObj.storyId, plain, richHtml, phase);
     }
@@ -10339,7 +10476,9 @@ export function FreehandStudioCanvas({
       const pending = pendingThreadedTextEditForFrame(frameId);
       if (pending) {
         setObjects((prev) =>
-          prev.map((o) => (o.id === frameId && o.type === "text" ? ({ ...o, text: pending.plain } as FreehandObject) : o)),
+          patchObjectByIdInTree(prev, frameId, (o) =>
+            o.type === "text" ? ({ ...o, text: pending.plain } as FreehandObject) : o,
+          ),
         );
         setTextEditingId((curr) => (curr === frameId ? null : curr));
       }
@@ -10401,7 +10540,8 @@ export function FreehandStudioCanvas({
     effectLayerUi.open ||
     layerBlendMenuOpen ||
     showExportModal ||
-    !!layerMaskCtxMenu;
+    !!layerMaskCtxMenu ||
+    !!folderCtxMenu;
   const studioLayerPointerBlockedRef = useRef(false);
   studioLayerPointerBlockedRef.current = studioLayerPointerBlocked;
 
@@ -11258,7 +11398,7 @@ export function FreehandStudioCanvas({
 
     const isText =
       firstSelected?.type === "text" ||
-      (textEditingId != null && objects.some((o) => o.id === textEditingId && o.type === "text"));
+      (textEditingId != null && findInTree(objects, textEditingId)?.node?.type === "text");
 
     if (!propertiesMainTabOptions.includes(propertiesMainTab)) {
       propertiesTextTabAutoKeyRef.current = null;
@@ -12556,7 +12696,7 @@ export function FreehandStudioCanvas({
 
   useEffect(() => {
     const binding = singleSelected?._designerDatasetBinding;
-    if (!binding || !designerConnectedDataset || designerDatasetListId) return;
+    if (!binding || !designerConnectedDataset) return;
     const list = designerConnectedDataset.lists.find((row) => row.id === binding.listId);
     const field = list?.schema.find((row) => row.id === binding.fieldId);
     const kind = designerDatasetFieldKind;
@@ -12572,7 +12712,6 @@ export function FreehandStudioCanvas({
     designerConnectedDataset?.id,
     designerConnectedDataset?.version,
     designerDatasetFieldKind,
-    designerDatasetListId,
     singleSelected?._designerDatasetBinding,
     singleSelected?.id,
   ]);
@@ -12840,6 +12979,8 @@ export function FreehandStudioCanvas({
   const removeDesignerDatasetBinding = useCallback(() => {
     if (!singleSelected) return;
     const targetId = singleSelected.id;
+    setDesignerDatasetListId("");
+    setDesignerDatasetFieldId("");
     setObjects((prev) => {
       const next = patchObjectByIdInTree(prev, targetId, (o) => {
         if (!o._designerDatasetBinding) return o;
@@ -13080,6 +13221,22 @@ export function FreehandStudioCanvas({
     [objects, layerPanelTargetId],
   );
 
+  /** Capas fx con alcance selectedLayer / selectedFolder (objetivo id → capa de ajuste). */
+  const layerPanelScopedEffectByTargetId = useMemo(() => {
+    const map = new Map<string, AdjustmentLayerObject>();
+    for (const o of collectAdjustmentLayersInTree(objects)) {
+      if (!isAdjustmentLayerObject(o)) continue;
+      const adj = o as AdjustmentLayerObject;
+      if (!adj.visible || !isEffectLayerActive(adj)) continue;
+      if (adj.effectScope === "selectedLayer" && adj.effectTargetLayerId) {
+        map.set(adj.effectTargetLayerId, adj);
+      } else if (adj.effectScope === "selectedFolder" && adj.effectTargetFolderId) {
+        map.set(adj.effectTargetFolderId, adj);
+      }
+    }
+    return map;
+  }, [objects]);
+
   const openEffectLayerModal = useCallback(
     (
       explicitTarget?: FreehandObject,
@@ -13184,6 +13341,27 @@ export function FreehandStudioCanvas({
       openEffectLayerModal(explicitTarget, { tab: "look" });
     },
     [openEffectLayerModal],
+  );
+
+  const openLayerEffectsFromPanelRow = useCallback(
+    (obj: FreehandObject) => {
+      layerPanelSelectionRef.current = true;
+      setSelectedIds(new Set([obj.id]));
+      setPrimarySelectedId(obj.id);
+      if (obj.type === "adjustmentLayer") {
+        openEffectLayerModal(obj as AdjustmentLayerObject, { tab: "tone" });
+        return;
+      }
+      const linked = layerPanelScopedEffectByTargetId.get(obj.id);
+      if (linked) {
+        openEffectLayerModal(linked, { tab: "tone" });
+        return;
+      }
+      if (studioCaps.layerStyles && isLayerStylesEligible(obj)) {
+        openEffectLayerModal(obj, { tab: "look" });
+      }
+    },
+    [openEffectLayerModal, layerPanelScopedEffectByTargetId, studioCaps.layerStyles],
   );
 
   const setEffectLayerApplyMode = useCallback((mode: EffectLayerApplyMode) => {
@@ -13714,6 +13892,66 @@ export function FreehandStudioCanvas({
       setPrimarySelectedId(null);
     }
   }, [pushHistory]);
+
+  const deleteFolderWithContent = useCallback(
+    (folderId: string): boolean => {
+      const loc = findInTree(objectsRef.current, folderId);
+      if (!loc || loc.node.type !== "groupContainer") return;
+      const gc = loc.node as GroupContainerObject;
+      const childCount = countFolderDescendants(gc);
+      const label = gc.name?.trim() || "Carpeta";
+      const msg =
+        childCount > 0
+          ? `¿Eliminar la carpeta «${label}» y las ${childCount} capas que contiene? Esta acción no se puede deshacer.`
+          : `¿Eliminar la carpeta vacía «${label}»? Esta acción no se puede deshacer.`;
+      if (!window.confirm(msg)) return false;
+      setObjects((prev) => {
+        const { tree } = removeNodesFromTree(prev, new Set([folderId]));
+        pushHistory(tree, new Set());
+        return tree;
+      });
+      setSelectedIds(new Set());
+      setPrimarySelectedId(null);
+      return true;
+    },
+    [pushHistory],
+  );
+
+  const ungroupFolderById = useCallback(
+    (folderId: string) => {
+      let promotedOut: Set<string> | null = null;
+      setObjects((prev) => {
+        const res = ungroupContainer(prev, folderId);
+        if (!res) return prev;
+        promotedOut = new Set(res.childIds);
+        pushHistory(res.tree, promotedOut);
+        return res.tree;
+      });
+      if (promotedOut) {
+        setSelectedIds(promotedOut);
+        setPrimarySelectedId(null);
+      }
+    },
+    [pushHistory],
+  );
+
+  const setFolderPanelColor = useCallback(
+    (folderId: string, colorId: FolderPanelColorId | null) => {
+      setObjects((prev) => {
+        const next = mapTree(prev, (o) =>
+          o.id === folderId && o.type === "groupContainer"
+            ? {
+                ...(o as GroupContainerObject),
+                panelColor: colorId ?? undefined,
+              }
+            : o,
+        );
+        pushHistory(next, new Set([folderId]));
+        return next;
+      });
+    },
+    [pushHistory],
+  );
 
   /** Vista previa de relleno/trazo en los muestreos de la barra izquierda (estilo Illustrator). */
   const leftToolbarSwatchPreview = useMemo(() => {
@@ -15009,7 +15247,6 @@ export function FreehandStudioCanvas({
     const oid = s?.objectId;
     if (s && oid) {
       const url = s.canvas.toDataURL("image/png");
-      const r = s.raster;
       const clonePx = s.cloneSourcePixel;
       if (s.cloneStrokeOriginPixel) {
         cloneStampAlignOriginD0Ref.current = { ...s.cloneStrokeOriginPixel };
@@ -15029,6 +15266,16 @@ export function FreehandStudioCanvas({
             : prev,
         );
       }
+      const finalized =
+        s.target === "mask"
+          ? { url, canvasW: s.canvas.width, canvasH: s.canvas.height, raster: s.raster }
+          : finalizeBrushRasterSession({
+              canvas: s.canvas,
+              raster: s.raster,
+              target: s.target,
+              kind: s.kind,
+            });
+      const { url: commitUrl, canvasW, canvasH, raster: r } = finalized;
       if (s.target === "mask") {
         setObjects((prev) => {
           const next = prev.map((o) => {
@@ -15037,7 +15284,7 @@ export function FreehandStudioCanvas({
             if (!lm0) return o;
             return {
               ...o,
-              layerMask: { ...lm0, src: url, pixelW: s.canvas.width, pixelH: s.canvas.height },
+              layerMask: { ...lm0, src: commitUrl, pixelW: canvasW, pixelH: canvasH },
             } as FreehandObject;
           });
           pushHistory(next, new Set([oid]));
@@ -15046,7 +15293,7 @@ export function FreehandStudioCanvas({
       } else {
         setObjects((prev) => {
           const next = prev.map((o) =>
-            applyBrushStrokeToObject(o, oid, s.kind, url, r, s.canvas.width, s.canvas.height),
+            applyBrushStrokeToObject(o, oid, s.kind, commitUrl, r, canvasW, canvasH),
           );
           pushHistory(next, new Set([oid]));
           return next;
@@ -19344,7 +19591,7 @@ export function FreehandStudioCanvas({
               ctx,
               raster: mo,
             };
-            paintMaskBrushStrokeSegment(ctx, lp, lp, radiusPx, h01, o01, f01, rgb, brushStepScale);
+            paintMaskBrushStrokeSegment(ctx, lp, lp, radiusPx, h01, o01, f01, rgb, brushStepScale, brushKind);
             const nextBrushDrag = {
               type: "brushPaint" as const,
               startX: e.clientX,
@@ -19365,23 +19612,38 @@ export function FreehandStudioCanvas({
         ctx: CanvasRenderingContext2D,
         lp: Point,
       ) => {
-        const proxy = brushRasterProxyFromTarget(target);
-        const brushKind = target.kind === "imageFrame" ? "imageFrame" : "image";
-        brushSessionRef.current = {
-          objectId: target.kind === "image" ? target.obj.id : target.obj.id,
+        const sessionRasterKind = target.kind === "imageFrame" ? "imageFrame" : "image";
+        let session: BrushRasterSession = {
+          objectId: target.obj.id,
           target: "pixels",
-          kind: brushKind,
+          kind: sessionRasterKind,
           canvas,
           ctx,
-          raster: proxy,
+          raster: brushRasterProxyFromTarget(target),
         };
-        const radiusPx = brushRadiusInImagePixels(brushSize, canvas.width, proxy.width);
-        stampBrushCircle(ctx, lp.x, lp.y, radiusPx, h01, o01, f01, rgb);
+        let pixel = lp;
+        if (session.kind === "image") {
+          for (let guard = 0; guard < 8; guard++) {
+            const radiusPx = brushRadiusInImagePixels(brushSize, session.canvas.width, session.raster.width);
+            const ex = expandBrushRasterSessionForPixelDisc(session, pixel.x, pixel.y, radiusPx);
+            session = ex.s;
+            if (ex.changed) {
+              const nextLp = worldToRasterBrushPixels(pos, target, session.canvas.width, session.canvas.height, true);
+              if (!nextLp) break;
+              pixel = nextLp;
+              continue;
+            }
+            break;
+          }
+        }
+        brushSessionRef.current = session;
+        const radiusPx = brushRadiusInImagePixels(brushSize, session.canvas.width, session.raster.width);
+        stampBrush(session.ctx, pixel.x, pixel.y, radiusPx, h01, o01, f01, rgb, brushKind);
         const nextBrushDrag = {
           type: "brushPaint" as const,
           startX: e.clientX,
           startY: e.clientY,
-          brushLastPixel: lp,
+          brushLastPixel: pixel,
         };
         dragStateRef.current = nextBrushDrag;
         setDragState(nextBrushDrag);
@@ -19396,23 +19658,28 @@ export function FreehandStudioCanvas({
         });
         return;
       }
-      const ab = pickPrimaryArtboard(artboards, null);
-      const r = ab ? artboardToRect(ab) : { x: 0, y: 0, w: 1920, h: 1080 };
-      const cw = Math.max(1, Math.ceil(r.w));
-      const ch = Math.max(1, Math.ceil(r.h));
+      const padWorld = Math.max(brushSize + 16, 32);
+      const cw = Math.max(8, Math.ceil(padWorld));
+      const ch = cw;
       const canvas = document.createElement("canvas");
       canvas.width = cw;
       canvas.height = ch;
       const ctx = canvas.getContext("2d")!;
       const src = canvas.toDataURL("image/png");
       const imgObj = {
-        ...defaultObj({ name: `Pincel ${objects.length + 1}`, x: r.x, y: r.y, width: r.w, height: r.h }),
+        ...defaultObj({
+          name: `Pincel ${objects.length + 1}`,
+          x: pos.x - padWorld / 2,
+          y: pos.y - padWorld / 2,
+          width: padWorld,
+          height: padWorld,
+        }),
         type: "image" as const,
         fill: solidFill("none"),
         stroke: "none",
         strokeWidth: 0,
         src,
-        intrinsicRatio: r.w / Math.max(r.h, 1),
+        intrinsicRatio: 1,
       } as ImageObject;
       const lp = worldToImageCanvasPixels(pos, imgObj, cw, ch);
       if (!lp) return;
@@ -20551,13 +20818,11 @@ export function FreehandStudioCanvas({
     }
 
     // Todos los objetos bajo el cursor (frente → fondo). Con solape + Mayús, elegir uno que aún no esté entero en la selección.
-    // Imágenes: solo se seleccionan clicando píxel opaco (alfa). Pero una imagen YA seleccionada se
-    // agarra por su rectángulo para poder moverla aunque pinches sobre su zona transparente.
+    // Imágenes: solo se seleccionan clicando píxel opaco (alfa); el clic atraviesa lo transparente.
     const hits: FreehandObject[] = [];
     for (let i = objects.length - 1; i >= 0; i--) {
       const o = objects[i];
-      const alphaAware = !(o.type === "image" && selectedIdsRef.current.has(o.id));
-      if (hitTestObject(pos, o, threshold, objects, { imageAlpha: alphaAware })) hits.push(o);
+      if (hitTestObject(pos, o, threshold, objects, { imageAlpha: o.type === "image" })) hits.push(o);
     }
 
     // Modo carpeta + drill: clic sobre hijos de la carpeta activa; vacío → deseleccionar y salir del drill.
@@ -20738,7 +21003,7 @@ export function FreehandStudioCanvas({
       screenToCanvas, isPenDrawing, penPoints, finishPenPath, resolveSelection, addPointOnSegment, cutPathOnSegment, closeOpenPathWithPen, pushHistory,
       layoutGuides, showLayoutGuides, designerMode, imageFrameContentEditId, setupGuideWindowListeners,
       isClipContentIsolation, clipContentEditId, isPhotoRoomStudioEmbed,
-      fillColor, brushPaintRgb, brushSize, brushHardnessPct, brushOpacityPct, brushFlowPct, scheduleBrushPreview,
+      fillColor, brushPaintRgb, brushSize, brushHardnessPct, brushOpacityPct, brushFlowPct, brushKind, scheduleBrushPreview,
       scheduleCloneAlignedBrushOverlay,
       cloneSource, setToast, studioCaps, transformHandlesArmed, selectionRotationPivots]);
 
@@ -21999,15 +22264,40 @@ export function FreehandStudioCanvas({
         }
         return;
       }
-      const rast = s.raster;
-      const cur = worldToImageCanvasPixels(pos, rast, s.canvas.width, s.canvas.height);
-      if (!cur) return;
-      const radiusPx = brushRadiusInImagePixels(brushSize, s.canvas.width, rast.width);
-      const rgb = brushPaintRgb;
-      if (s.target === "mask") {
-        paintMaskBrushStrokeSegment(s.ctx, prevPixel, cur, radiusPx, h01, o01, f01, rgb, brushStepScale);
+      let session: BrushRasterSession = s;
+      let prevAdj = prevPixel;
+      let cur: Point;
+      if (s.target === "mask" || s.kind !== "image") {
+        const hit = worldToImageCanvasPixels(pos, session.raster, session.canvas.width, session.canvas.height);
+        if (!hit) return;
+        cur = hit;
       } else {
-        paintBrushStrokeSegment(s.ctx, prevPixel, cur, radiusPx, h01, o01, f01, rgb, brushStepScale);
+        cur = worldToImageCanvasPixelsUnbounded(pos, session.raster, session.canvas.width, session.canvas.height);
+        for (let guard = 0; guard < 8; guard++) {
+          const radiusPx = brushRadiusInImagePixels(brushSize, session.canvas.width, session.raster.width);
+          const ex = expandBrushRasterSessionForPixelDisc(session, cur.x, cur.y, radiusPx);
+          session = ex.s;
+          if (ex.changed) {
+            brushSessionRef.current = session;
+            prevAdj = { x: prevAdj.x + ex.padL, y: prevAdj.y + ex.padT };
+            cur = worldToImageCanvasPixelsUnbounded(
+              pos,
+              session.raster,
+              session.canvas.width,
+              session.canvas.height,
+            );
+            continue;
+          }
+          break;
+        }
+      }
+      const rast = session.raster;
+      const radiusPx = brushRadiusInImagePixels(brushSize, session.canvas.width, rast.width);
+      const rgb = brushPaintRgb;
+      if (session.target === "mask") {
+        paintMaskBrushStrokeSegment(session.ctx, prevAdj, cur, radiusPx, h01, o01, f01, rgb, brushStepScale, brushKind);
+      } else {
+        paintBrushStrokeSegment(session.ctx, prevAdj, cur, radiusPx, h01, o01, f01, rgb, brushStepScale, brushKind);
       }
       const nextDrag = { ...dragState, brushLastPixel: cur };
       dragStateRef.current = nextDrag;
@@ -22419,6 +22709,7 @@ export function FreehandStudioCanvas({
     brushHardnessPct,
     brushOpacityPct,
     brushFlowPct,
+    brushKind,
     scheduleBrushPreview,
     scheduleCloneAlignedBrushOverlay,
     spaceHeld,
@@ -23361,6 +23652,7 @@ export function FreehandStudioCanvas({
   );
 
   const handleContextMenu = useCallback((e: ReactMouseEvent) => {
+    if (isInsideFoldderEffectLayerPanel(e.target)) return;
     e.preventDefault();
     setLayerMaskCtxMenu(null);
     // Same as right-button mousedown: some platforms deliver contextmenu without a reliable button-2 path
@@ -24207,6 +24499,7 @@ export function FreehandStudioCanvas({
         onContextMenu={handleContextMenu}
         onDoubleClick={(e) => {
           if ((e.target as HTMLElement).closest?.("[data-fh-text-editor]")) return;
+          if (isInsideFoldderEffectLayerPanel(e.target)) return;
           const pos = screenToCanvas(e.clientX, e.clientY);
           const dsTh = 8 / viewport.zoom;
           if (activeTool === "photoGradient" && studioCaps.toolPhotoGradient && photoGradientSession) {
@@ -24250,35 +24543,33 @@ export function FreehandStudioCanvas({
             }
           }
           if (activeTool === "select" || activeTool === "text" || activeTool === "imageFrame") {
-            for (let i = objects.length - 1; i >= 0; i--) {
-              const obj = objects[i];
-              if (obj.isImageFrame && hitTestObject(pos, obj, threshold, objects)) {
-                setSelectedIds(new Set([obj.id]));
-                setPrimarySelectedId(obj.id);
-                const hasImg = !!(obj as RectObject).imageFrameContent?.src;
-                if (!hasImg) {
-                  triggerImageFramePlacement(obj.id);
-                } else if (designerMode) {
-                  setImageFrameContentEditId(obj.id);
-                }
-                return;
+            const leaf = frontmostLeafAtPoint(objects, pos, threshold, objects, selectedIdsRef.current);
+            if (leaf?.isImageFrame) {
+              setSelectedIds(new Set([leaf.id]));
+              setPrimarySelectedId(leaf.id);
+              const hasImg = !!(leaf as RectObject).imageFrameContent?.src;
+              if (!hasImg) {
+                triggerImageFramePlacement(leaf.id);
+              } else if (designerMode) {
+                setImageFrameContentEditId(leaf.id);
               }
-              if (obj.type === "text" && hitTestObject(pos, obj, threshold, objects)) {
-                setSelectedIds(new Set([obj.id]));
-                setPrimarySelectedId(obj.id);
-                setTextOnPathEditingId(null);
-                setTextOnPathEditorAnchor(null);
-                setTextEditingId(obj.id);
-                return;
-              }
-              if (obj.type === "textOnPath" && hitTestObject(pos, obj, threshold, objects)) {
-                setSelectedIds(new Set([obj.id]));
-                setPrimarySelectedId(obj.id);
-                setTextEditingId(null);
-                setTextOnPathEditorAnchor(pos);
-                setTextOnPathEditingId(obj.id);
-                return;
-              }
+              return;
+            }
+            if (leaf?.type === "text") {
+              setSelectedIds(new Set([leaf.id]));
+              setPrimarySelectedId(leaf.id);
+              setTextOnPathEditingId(null);
+              setTextOnPathEditorAnchor(null);
+              setTextEditingId(leaf.id);
+              return;
+            }
+            if (leaf?.type === "textOnPath") {
+              setSelectedIds(new Set([leaf.id]));
+              setPrimarySelectedId(leaf.id);
+              setTextEditingId(null);
+              setTextOnPathEditorAnchor(pos);
+              setTextOnPathEditingId(leaf.id);
+              return;
             }
           }
           if (activeTool !== "select") return;
@@ -26158,8 +26449,8 @@ export function FreehandStudioCanvas({
         )}
 
         {textEditingId && (() => {
-          const to = objects.find((o) => o.id === textEditingId) as TextObject | undefined;
-          if (!to) return null;
+          const to = findInTree(objects, textEditingId)?.node as TextObject | undefined;
+          if (!to || to.type !== "text") return null;
           if (!containerRef.current) return null;
           const { w: foW, h: foH } = textLayoutDims(to);
           const rcx = to.x + foW / 2;
@@ -26302,17 +26593,19 @@ export function FreehandStudioCanvas({
                 const editor = ev.currentTarget;
                 const payload = simpleTextRichPayloadFromHtml(editor.innerHTML);
                 setObjects((prev) =>
-                  prev.map((o) => {
-                    if (o.id !== to.id || o.type !== "text") return o;
-                    const t = o as TextObject;
-                    let width = t.width;
-                    if (t.textMode === "point") {
-                      const lines = payload.plain.split("\n");
-                      const maxLen = lines.reduce((m, line) => Math.max(m, line.length), 0);
-                      width = Math.max(80, maxLen * t.fontSize * 0.52 + 24);
-                    }
-                    return { ...t, text: payload.plain, width, _designerRichSpans: payload.spans };
-                  }),
+                  recomputeContainerBoundsTree(
+                    patchObjectByIdInTree(prev, to.id, (o) => {
+                      if (o.type !== "text") return o;
+                      const t = o as TextObject;
+                      let width = t.width;
+                      if (t.textMode === "point") {
+                        const lines = payload.plain.split("\n");
+                        const maxLen = lines.reduce((m, line) => Math.max(m, line.length), 0);
+                        width = Math.max(80, maxLen * t.fontSize * 0.52 + 24);
+                      }
+                      return { ...t, text: payload.plain, width, _designerRichSpans: payload.spans };
+                    }),
+                  ),
                 );
                 captureSimpleTextSelection(editor);
               }}
@@ -26350,8 +26643,8 @@ export function FreehandStudioCanvas({
         })()}
 
         {textOnPathEditingId && (() => {
-          const tp = objects.find((o) => o.id === textOnPathEditingId && o.type === "textOnPath") as TextOnPathObject | undefined;
-          if (!tp) return null;
+          const tp = findInTree(objects, textOnPathEditingId)?.node as TextOnPathObject | undefined;
+          if (!tp || tp.type !== "textOnPath") return null;
           const fallbackBounds = getVisualAABB(tp, objects);
           const editorAnchor = textOnPathEditorAnchor ?? {
             x: fallbackBounds.x + fallbackBounds.w / 2,
@@ -26387,7 +26680,9 @@ export function FreehandStudioCanvas({
               onChange={(ev) => {
                 const nextText = ev.currentTarget.value.replace(/[\r\n]+/g, " ");
                 setObjects((prev) =>
-                  prev.map((o) => (o.id === tp.id && o.type === "textOnPath" ? { ...o, text: nextText } : o)),
+                  patchObjectByIdInTree(prev, tp.id, (o) =>
+                    o.type === "textOnPath" ? { ...o, text: nextText } : o,
+                  ),
                 );
               }}
               onKeyDown={(ev) => {
@@ -26723,12 +27018,13 @@ export function FreehandStudioCanvas({
                   {activeTool === "brush" ? (
                     <div className="space-y-2 border-t border-white/[0.06] pt-2.5">
                       <div className="text-[10px] font-medium uppercase tracking-wider text-zinc-500">Tipo de pincel</div>
-                      <div className="grid grid-cols-4 gap-1">
+                      <div className="grid grid-cols-5 gap-1">
                         {([
                           { id: "round" as BrushKind, label: "Redondo" },
                           { id: "hard" as BrushKind, label: "Duro" },
                           { id: "soft" as BrushKind, label: "Suave" },
                           { id: "airbrush" as BrushKind, label: "Aero" },
+                          { id: "bristle" as BrushKind, label: "Cerdas" },
                         ]).map(({ id, label }) => (
                           <button
                             key={id}
@@ -27104,6 +27400,19 @@ export function FreehandStudioCanvas({
                   <p className="text-[11px] leading-snug text-zinc-500">El Dataset conectado no tiene listados.</p>
                 ) : (
                   <div className="space-y-2.5">
+                    {designerDatasetBinding ? (
+                      <div className="flex items-center justify-between gap-2 rounded-[5px] border border-teal-400/25 bg-teal-500/10 px-2 py-1.5">
+                        <span className="text-[10px] font-semibold text-teal-200">Campo dinámico enlazado</span>
+                        <button
+                          type="button"
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onClick={removeDesignerDatasetBinding}
+                          className="nodrag rounded-[4px] border border-white/[0.12] px-1.5 py-0.5 text-[10px] text-zinc-300 transition hover:bg-white/[0.08]"
+                        >
+                          Desvincular
+                        </button>
+                      </div>
+                    ) : null}
                     <label className="block space-y-1">
                       <span className="text-[9px] font-semibold uppercase tracking-wider text-zinc-500">Listado</span>
                       <select
@@ -27111,6 +27420,10 @@ export function FreehandStudioCanvas({
                         onMouseDown={(e) => e.stopPropagation()}
                         onChange={(e) => {
                           const nextListId = e.target.value;
+                          if (!nextListId) {
+                            removeDesignerDatasetBinding();
+                            return;
+                          }
                           setDesignerDatasetListId(nextListId);
                           setDesignerDatasetFieldId("");
                         }}
@@ -27135,8 +27448,12 @@ export function FreehandStudioCanvas({
                         onMouseDown={(e) => e.stopPropagation()}
                         onChange={(e) => {
                           const nextFieldId = e.target.value;
+                          if (!nextFieldId) {
+                            removeDesignerDatasetBinding();
+                            return;
+                          }
                           setDesignerDatasetFieldId(nextFieldId);
-                          if (!nextFieldId || !designerDatasetListId) return;
+                          if (!designerDatasetListId) return;
                           if (designerDatasetFieldKind === "image") {
                             void applyDesignerDatasetImageBinding(designerDatasetListId, nextFieldId);
                           } else {
@@ -29088,6 +29405,9 @@ export function FreehandStudioCanvas({
                         obj.type === "image" &&
                         obj.photoImageAdjustments &&
                         !isPhotoImageAdjustmentsNeutral(obj.photoImageAdjustments);
+                      const folderColorOpt = row.folderPanelColor
+                        ? folderPanelColorOption(row.folderPanelColor)
+                        : null;
                       return (
                         <React.Fragment key={obj.id}>
                           {inlineImageAdj ? (
@@ -29109,10 +29429,18 @@ export function FreehandStudioCanvas({
                               </button>
                             </div>
                           ) : null}
+                        <div className="relative" style={{ paddingLeft: 8 + row.depth * 14 }}>
+                          {row.ancestorPanelColors.map((color, stripIdx) => (
+                            <span
+                              key={`${obj.id}-folder-strip-${stripIdx}`}
+                              aria-hidden
+                              className="pointer-events-none absolute top-1 bottom-1 w-[2px] rounded-full"
+                              style={{ left: 4 + stripIdx * 14, backgroundColor: color }}
+                            />
+                          ))}
                         <div
                           data-fh-layer-row={obj.id}
                           draggable={layerRowDraggable}
-                          style={{ paddingLeft: 8 + row.depth * 14 }}
                           onDragStart={(e) => {
                             if (!layerRowDraggable) return;
                             e.dataTransfer.effectAllowed = "copyMove";
@@ -29158,11 +29486,36 @@ export function FreehandStudioCanvas({
                           }}
                           onMouseEnter={() => setLayerHoverId(obj.id)}
                           onMouseLeave={() => setLayerHoverId((h) => (h === obj.id ? null : h))}
-                          className={`flex ${layerRowDraggable ? "cursor-grab" : "cursor-default"} items-center gap-1.5 rounded-md border border-transparent px-2 py-1.5 text-[10px] transition-colors ${
-                            isSel ? "border-violet-500/25 bg-violet-600/30 text-white" : "text-zinc-400 hover:bg-white/5"
+                          style={
+                            folderColorOpt
+                              ? {
+                                  backgroundColor: folderColorOpt.rowBg,
+                                  borderColor: isSel ? "rgba(139, 92, 246, 0.35)" : folderColorOpt.rowBorder,
+                                }
+                              : undefined
+                          }
+                          className={`flex ${layerRowDraggable ? "cursor-grab" : "cursor-default"} items-center gap-1.5 rounded-md border px-2 py-1.5 text-[10px] transition-colors ${
+                            isSel
+                              ? folderColorOpt
+                                ? "border-violet-500/35 text-white ring-1 ring-violet-500/20"
+                                : "border-violet-500/25 bg-violet-600/30 text-white"
+                              : folderColorOpt
+                                ? "text-zinc-300 hover:brightness-110"
+                                : "border-transparent text-zinc-400 hover:bg-white/5"
                           } ${obj.isClipMask ? "italic opacity-50" : ""} ${dropInto ? "ring-1 ring-violet-400 bg-violet-500/10" : ""} ${dropAbove ? "shadow-[inset_0_2px_0_0_#a78bfa]" : ""} ${dropBelow ? "shadow-[inset_0_-2px_0_0_#a78bfa]" : ""} ${layerDragId === obj.id ? "opacity-40" : ""} ${
-                            (hoverCanvasId === obj.id || layerHoverId === obj.id) && !isSel ? "bg-sky-500/10 ring-1 ring-sky-500/50" : ""
-                          }`}
+                            (hoverCanvasId === obj.id || layerHoverId === obj.id) && !isSel && !folderColorOpt ? "bg-sky-500/10 ring-1 ring-sky-500/50" : ""
+                          } ${(hoverCanvasId === obj.id || layerHoverId === obj.id) && !isSel && folderColorOpt ? "ring-1 ring-sky-500/35" : ""}`}
+                          onContextMenu={(e) => {
+                            if (obj.type !== "groupContainer") return;
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setCtxMenu(null);
+                            setLayerMaskCtxMenu(null);
+                            layerPanelSelectionRef.current = true;
+                            setSelectedIds(new Set([obj.id]));
+                            setPrimarySelectedId(obj.id);
+                            setFolderCtxMenu({ x: e.clientX, y: e.clientY, folderId: obj.id });
+                          }}
                           onClick={(e) => {
                             const extend =
                               e.shiftKey ||
@@ -29215,6 +29568,21 @@ export function FreehandStudioCanvas({
                           >
                             {obj.locked ? <Lock size={12} className="text-amber-400" /> : <Unlock size={12} className="opacity-40" />}
                           </button>
+                          {layerRowHasActiveEffects(obj, layerPanelScopedEffectByTargetId) ? (
+                            <button
+                              type="button"
+                              title="Editar efectos de capa"
+                              className="shrink-0 text-violet-400 transition-colors hover:text-violet-200"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openLayerEffectsFromPanelRow(obj);
+                              }}
+                            >
+                              <Sparkles size={12} strokeWidth={2} />
+                            </button>
+                          ) : (
+                            <span className="inline-flex w-3 shrink-0" aria-hidden />
+                          )}
                           {(() => {
                             const layerThumbSrc = layerPanelRasterThumbSrc(obj);
                             const showMaskThumbs =
@@ -29329,7 +29697,7 @@ export function FreehandStudioCanvas({
                               }
                             }}
                           >
-                            {obj.name}
+                            {layerPanelDisplayName(obj, designerStoryMap)}
                             {obj.groupId ? " ◆" : ""}
                             {obj.isClipMask ? " [clip]" : ""}
                             {obj.type === "booleanGroup" && (
@@ -29351,14 +29719,11 @@ export function FreehandStudioCanvas({
                             !isAdjustmentLayerSettingsNeutral((obj as AdjustmentLayerObject).adjustment) ? (
                               <span className="ml-1 text-[8px] text-sky-400/90">●</span>
                             ) : null}
-                            {obj.type === "adjustmentLayer" &&
-                            !isAdjustmentLayerStylesNeutral((obj as AdjustmentLayerObject).layerEffects) ? (
-                              <span className="ml-1 text-[8px] text-violet-400/90">fx</span>
-                            ) : null}
                           </span>
                           {isPrInput ? (
                             <span className="inline-flex w-3 shrink-0" aria-hidden />
                           ) : null}
+                        </div>
                         </div>
                         </React.Fragment>
                       );
@@ -29393,6 +29758,9 @@ export function FreehandStudioCanvas({
                       const canMask = !!(tgt && studioCaps.layerMask && isLayerMaskEligible(tgt));
                       const maskActive = !!(tgt && maskEditObjectId === tgt.id);
                       const adjSelected = tgt?.type === "adjustmentLayer";
+                      const tgtHasFx = !!(
+                        tgt && layerRowHasActiveEffects(tgt, layerPanelScopedEffectByTargetId)
+                      );
                       const btnClass = (on: boolean, disabled?: boolean) =>
                         `flex h-8 min-w-[2rem] items-center justify-center rounded-[4px] border px-1.5 text-[10px] transition-colors ${
                           disabled
@@ -29442,20 +29810,21 @@ export function FreehandStudioCanvas({
                                         : "Nueva capa de efecto sobre la composición"
                               }
                               className={btnClass(
-                                !!(adjSelected &&
-                                  isEffectLayerActive(tgt as AdjustmentLayerObject)),
+                                tgtHasFx ||
+                                  !!(adjSelected &&
+                                    isEffectLayerActive(tgt as AdjustmentLayerObject)),
                               )}
                               onClick={() => {
                                 if (!tgt) {
                                   createAdjustmentLayer();
                                   return;
                                 }
-                                if (tgt.type === "adjustmentLayer") {
-                                  openEffectLayerModal(tgt, { tab: "tone" });
-                                  return;
-                                }
-                                if (studioCaps.layerStyles && isLayerStylesEligible(tgt)) {
-                                  openEffectLayerModal(tgt, { tab: "look" });
+                                if (
+                                  tgt.type === "adjustmentLayer" ||
+                                  tgtHasFx ||
+                                  (studioCaps.layerStyles && isLayerStylesEligible(tgt))
+                                ) {
+                                  openLayerEffectsFromPanelRow(tgt);
                                   return;
                                 }
                                 if (
@@ -29596,6 +29965,23 @@ export function FreehandStudioCanvas({
           onClose={() => setLayerMaskCtxMenu(null)}
         />
       )}
+      {folderCtxMenu && (() => {
+        const folderNode = findInTree(objects, folderCtxMenu.folderId)?.node;
+        if (!folderNode || folderNode.type !== "groupContainer") return null;
+        const gc = folderNode as GroupContainerObject;
+        return (
+          <FolderPanelContextMenu
+            x={folderCtxMenu.x}
+            y={folderCtxMenu.y}
+            folderName={gc.name || "Carpeta"}
+            currentColorId={gc.panelColor ?? null}
+            onDeleteWithContent={() => deleteFolderWithContent(folderCtxMenu.folderId)}
+            onUngroup={() => ungroupFolderById(folderCtxMenu.folderId)}
+            onPickColor={(colorId) => setFolderPanelColor(folderCtxMenu.folderId, colorId)}
+            onClose={() => setFolderCtxMenu(null)}
+          />
+        );
+      })()}
 
       <GoogleFontInstallModal
         open={googleFontInstallModalOpen}

@@ -42,6 +42,8 @@ export const studioOverlayPointerGuards = {
   onPointerMove: stopStudioModalPointerPropagation,
   onPointerUp: stopStudioModalPointerPropagation,
   onClick: stopStudioModalPointerPropagation,
+  onDoubleClick: stopStudioModalPointerPropagation,
+  onContextMenu: stopStudioModalPointerPropagation,
   onWheel: stopStudioModalWheelPropagation,
 } as const;
 

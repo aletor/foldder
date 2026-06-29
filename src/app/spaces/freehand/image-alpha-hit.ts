@@ -123,3 +123,87 @@ export function __clearImageAlphaCacheForTests(): void {
   cache.clear();
   listeners.clear();
 }
+
+/** Recorta un canvas raster dejando solo el bounding box del contenido opaco (+ padding). */
+export function trimCanvasToOpaqueBounds(
+  canvas: HTMLCanvasElement,
+  padding = 2,
+): { canvas: HTMLCanvasElement; x: number; y: number; w: number; h: number } | null {
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return null;
+  const { width, height } = canvas;
+  if (width < 1 || height < 1) return null;
+  const data = ctx.getImageData(0, 0, width, height).data;
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (data[(y * width + x) * 4 + 3]! > ALPHA_HIT_THRESHOLD) {
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < 0) return null;
+  minX = Math.max(0, minX - padding);
+  minY = Math.max(0, minY - padding);
+  maxX = Math.min(width - 1, maxX + padding);
+  maxY = Math.min(height - 1, maxY + padding);
+  const w = maxX - minX + 1;
+  const h = maxY - minY + 1;
+  const out = document.createElement("canvas");
+  out.width = w;
+  out.height = h;
+  const octx = out.getContext("2d");
+  if (!octx) return null;
+  octx.drawImage(canvas, minX, minY, w, h, 0, 0, w, h);
+  return { canvas: out, x: minX, y: minY, w, h };
+}
+
+/** Actualiza la caché de alfa de forma síncrona (p. ej. tras pintar con pincel). */
+export function setImageAlphaFromCanvas(src: string, canvas: HTMLCanvasElement): void {
+  const key = src.trim();
+  if (!key) return;
+  const natW = canvas.width;
+  const natH = canvas.height;
+  if (natW < 1 || natH < 1) {
+    cache.set(key, { status: "failed" });
+    notify();
+    return;
+  }
+  const scale = Math.min(1, ALPHA_MAP_MAX_EDGE / Math.max(natW, natH));
+  const aw = Math.max(1, Math.round(natW * scale));
+  const ah = Math.max(1, Math.round(natH * scale));
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) {
+    cache.set(key, { status: "failed" });
+    notify();
+    return;
+  }
+  let alpha: Uint8Array;
+  if (aw === natW && ah === natH) {
+    const data = ctx.getImageData(0, 0, natW, natH).data;
+    alpha = new Uint8Array(natW * natH);
+    for (let i = 3, p = 0; p < alpha.length; i += 4, p++) alpha[p] = data[i]!;
+  } else {
+    const c = document.createElement("canvas");
+    c.width = aw;
+    c.height = ah;
+    const sctx = c.getContext("2d", { willReadFrequently: true });
+    if (!sctx) {
+      cache.set(key, { status: "failed" });
+      notify();
+      return;
+    }
+    sctx.drawImage(canvas, 0, 0, aw, ah);
+    const data = sctx.getImageData(0, 0, aw, ah).data;
+    alpha = new Uint8Array(aw * ah);
+    for (let i = 3, p = 0; p < alpha.length; i += 4, p++) alpha[p] = data[i]!;
+  }
+  cache.set(key, { status: "ready", natW, natH, aw, ah, alpha });
+  notify();
+}

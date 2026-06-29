@@ -332,3 +332,11 @@ export function isLayerStylesEligible(o: {
   if (o.type === "clippingContainer") return true;
   return false;
 }
+
+/**
+ * Overlays (color, degradado, outer glow) requieren silueta raster propia.
+ * Texto y carpetas solo admiten el filtro fotográfico (Look).
+ */
+export function isLayerOverlaysSupported(targetType?: string): boolean {
+  return !!targetType && targetType !== "text" && targetType !== "groupContainer";
+}

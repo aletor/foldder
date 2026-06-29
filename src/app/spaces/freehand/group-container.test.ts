@@ -107,6 +107,25 @@ describe("group-container tree helpers", () => {
     expect(flattenTreeForPanel(collapsed).map((r) => r.obj.id)).toEqual(["F", "a"]);
   });
 
+  it("flattenTreeForPanel propaga colores de carpeta a barras de ancestro", () => {
+    const outer = {
+      ...folder("F", []),
+      panelColor: "slate",
+      children: [
+        leaf("a"),
+        { ...folder("G", [leaf("b")]), panelColor: "sage" } as GroupContainerObject,
+      ],
+    } as GroupContainerObject;
+    const rows = flattenTreeForPanel([outer]);
+    const rowA = rows.find((r) => r.obj.id === "a")!;
+    const rowB = rows.find((r) => r.obj.id === "b")!;
+    const rowG = rows.find((r) => r.obj.id === "G")!;
+    expect(rowG.folderPanelColor).toBe("sage");
+    expect(rowG.ancestorPanelColors).toEqual([]);
+    expect(rowA.ancestorPanelColors).toHaveLength(1);
+    expect(rowB.ancestorPanelColors).toHaveLength(2);
+  });
+
   it("flattenTreeForPanel emite una sola fila por id aunque el árbol tenga ids duplicados", () => {
     // Documento corrupto: "dup" aparece en raíz y dentro de una carpeta → keys de React duplicadas.
     const tree = [leaf("dup"), folder("F", [leaf("dup"), leaf("b")])];

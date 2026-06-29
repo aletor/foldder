@@ -563,10 +563,7 @@ export const ButtonEdge = ({
   const [dots, setDots] = useState<{ x: number; y: number; t: number }[]>([]);
 
   useLayoutEffect(() => {
-    if (useLiteEdge) {
-      setDots([]);
-      return;
-    }
+    if (useLiteEdge) return;
     const el = measureRef.current;
     if (!el) return;
     let len = 0;
@@ -576,7 +573,7 @@ export const ButtonEdge = ({
       len = 0;
     }
     if (!len || !Number.isFinite(len)) {
-      setDots([]);
+      setDots((prev) => (prev.length === 0 ? prev : []));
       return;
     }
     const count = Math.min(EDGE_DOT_MAX, Math.max(2, Math.round(len / EDGE_DOT_SPACING)));
@@ -587,7 +584,15 @@ export const ButtonEdge = ({
       const p = el.getPointAtLength(d);
       next.push({ x: p.x, y: p.y, t: d / len });
     }
-    setDots(next);
+    setDots((prev) => {
+      if (
+        prev.length === next.length &&
+        prev.every((d, i) => d.x === next[i]!.x && d.y === next[i]!.y && d.t === next[i]!.t)
+      ) {
+        return prev;
+      }
+      return next;
+    });
   }, [edgePath, useLiteEdge]);
 
   // "none": no se dibuja nada (máximo rendimiento). La conexión sigue existiendo en el grafo.
