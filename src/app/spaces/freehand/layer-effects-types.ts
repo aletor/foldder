@@ -328,5 +328,7 @@ export function isLayerStylesEligible(o: {
   if (o.type === "text") return true;
   // Carpeta: el filtro fotográfico se propaga por CSS a todo su contenido.
   if (o.type === "groupContainer") return true;
+  // Contenedor «pegar dentro» (clip): efectos sobre el composite recortado, no sobre hijos sueltos.
+  if (o.type === "clippingContainer") return true;
   return false;
 }

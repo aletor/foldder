@@ -32,8 +32,8 @@ const BODY_H_PX = 248;
 const PANEL_W_PX = 352;
 
 const APPLY_MODE_OPTIONS: { value: EffectLayerApplyMode; label: string }[] = [
-  { value: "embedded", label: "En capa actual" },
-  { value: "selectedLayer", label: "Capa fx · capa seleccionada" },
+  { value: "embedded", label: "En esta capa" },
+  { value: "selectedLayer", label: "Capa fx · solo esta capa" },
   { value: "selectedFolder", label: "Capa fx · carpeta seleccionada" },
   { value: "wholeStack", label: "Capa fx · composición inferior" },
   { value: "belowSelection", label: "Capa fx · bajo selección" },
@@ -69,7 +69,7 @@ export function EffectLayerModal({
   title?: string;
   hasSelection?: boolean;
   targetType?: string;
-  /** Capa seleccionada es hija directa o anidada de una carpeta. */
+  /** Capa seleccionada está dentro de una carpeta (p. ej. un clip «pegar dentro» en carpeta). */
   targetInsideFolder?: boolean;
   histogram: number[];
   tone: PhotoImageAdjustmentsValues;
@@ -231,7 +231,12 @@ export function EffectLayerModal({
           >
             {APPLY_MODE_OPTIONS.filter((o) => {
               if (o.value === "selectedFolder") return targetType === "groupContainer";
-              if (o.value === "selectedLayer") return !!targetInsideFolder;
+              const scopedTarget =
+                !!targetInsideFolder || targetType === "clippingContainer";
+              if (o.value === "selectedLayer") return scopedTarget;
+              if (scopedTarget && (o.value === "wholeStack" || o.value === "belowSelection")) {
+                return false;
+              }
               return true;
             }).map((o) => (
               <option key={o.value} value={o.value}>

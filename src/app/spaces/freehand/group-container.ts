@@ -212,6 +212,39 @@ export function insertNodesIntoTree(
   return insertRelative(objects).list;
 }
 
+/**
+ * Inserta una capa de efecto con alcance `selectedLayer` encima del objetivo en su mismo nivel
+ * (dentro de la carpeta padre si aplica; si no, en el stack raíz).
+ */
+export function insertLayerScopedEffectLayer(
+  objects: FreehandObject[],
+  adj: FreehandObject,
+  targetLayerId: string,
+): FreehandObject[] {
+  const loc = findInTree(objects, targetLayerId);
+  if (!loc) return [...objects, adj];
+  if (loc.parent && isGroupContainer(loc.parent)) {
+    return insertNodesIntoTree(objects, [adj], {
+      mode: "into",
+      containerId: loc.parent.id,
+      index: loc.index + 1,
+    });
+  }
+  const next = [...objects];
+  const at = loc.index + 1;
+  next.splice(Math.max(0, Math.min(at, next.length)), 0, adj);
+  return next;
+}
+
+/** Todas las capas `adjustmentLayer` en el árbol (raíz y carpetas). */
+export function collectAdjustmentLayersInTree(objects: FreehandObject[]): FreehandObject[] {
+  const out: FreehandObject[] = [];
+  forEachTree(objects, (o) => {
+    if (o.type === "adjustmentLayer") out.push(o);
+  });
+  return out;
+}
+
 export interface PanelRow {
   obj: FreehandObject;
   depth: number;

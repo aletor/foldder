@@ -7,6 +7,7 @@ import {
   findInTree,
   flattenTreeForPanel,
   insertNodesIntoTree,
+  insertLayerScopedEffectLayer,
   isSelfOrDescendant,
   removeNodesFromTree,
   resolveTreeSelection,
@@ -201,5 +202,15 @@ describe("resolveTreeSelection — selección consciente del árbol", () => {
     const sel = resolveTreeSelection(tree, "zzz", cur, false);
     expect([...sel]).toEqual(["a"]);
     expect(sel).not.toBe(cur);
+  });
+
+  it("insertLayerScopedEffectLayer coloca la capa fx dentro de la carpeta padre", () => {
+    const target = leaf("img");
+    const tree = [folder("F", [leaf("bg"), target])];
+    const fx = { id: "fx-1", type: "adjustmentLayer", name: "fx" } as unknown as FreehandObject;
+    const next = insertLayerScopedEffectLayer(tree, fx, "img");
+    const folderNode = findInTree(next, "F")!.node as GroupContainerObject;
+    expect(folderNode.children.map((c) => c.id)).toEqual(["bg", "img", "fx-1"]);
+    expect(findInTree(next, "fx-1")?.parent?.id).toBe("F");
   });
 });

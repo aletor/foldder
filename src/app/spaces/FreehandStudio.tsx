@@ -261,6 +261,8 @@ import {
   findInTree,
   flattenTreeForPanel,
   forEachTree,
+  collectAdjustmentLayersInTree,
+  insertLayerScopedEffectLayer,
   insertNodesIntoTree,
   isGroupContainer,
   isSelfOrDescendant,
@@ -339,7 +341,6 @@ import {
 import {
   AdjustmentLayerFilterDef,
   buildLayerStackRenderSegments,
-  collectAdjustmentLayers,
   filterRootStackObjects,
   renderSegmentStackChildren,
 } from "./freehand/adjustment-layer-render";
@@ -5011,10 +5012,10 @@ function clipMaskFillRuleForPath(p: PathObject): "evenodd" | "nonzero" {
 }
 
 /** Misma jerarquía que `renderObj` → `path`: intrínseco, svgPathMatrix o trazo; si no, el clip no coincide con lo dibujado. */
-function renderPathClipMaskGeometry(p: PathObject): React.ReactNode {
+function renderPathClipMaskGeometry(p: PathObject, fill = "#000"): React.ReactNode {
   const d = pathObjToD(p);
   const fr = clipMaskFillRuleForPath(p);
-  const pathClipProps = { fill: "#000" as const, fillRule: fr };
+  const pathClipProps = { fill, fillRule: fr };
   const transform = buildObjTransform(p);
   const hasIntrinsic =
     p.svgPathIntrinsicW != null &&
@@ -5128,6 +5129,79 @@ function renderMaskShapeClipInner(m: ClipMaskShape): React.ReactNode {
     );
   }
   return renderPathClipMaskGeometry(m as PathObject);
+}
+
+/** Silueta blanca de la máscara del clip — fuente alfa para outer glow / overlays (misma geometría que el recorte). */
+function renderMaskShapeEffectAlpha(m: ClipMaskShape): React.ReactNode {
+  if (m.type === "image") {
+    const im = m as ImageObject;
+    const transform = buildObjTransform(im);
+    return (
+      <image
+        href={im.src}
+        x={im.x}
+        y={im.y}
+        width={im.width}
+        height={im.height}
+        preserveAspectRatio="xMidYMid meet"
+        transform={transform}
+      />
+    );
+  }
+  if (m.type === "rect") {
+    const r = m as RectObject;
+    const transform = buildObjTransform(r);
+    return <path d={roundedRectPathDataFromRectObject(r)} fill="#fff" transform={transform} />;
+  }
+  if (m.type === "ellipse") {
+    const e = m as EllipseObject;
+    const transform = buildObjTransform(e);
+    return (
+      <ellipse
+        cx={e.x + e.width / 2}
+        cy={e.y + e.height / 2}
+        rx={e.width / 2}
+        ry={e.height / 2}
+        fill="#fff"
+        transform={transform}
+      />
+    );
+  }
+  return renderPathClipMaskGeometry(m as PathObject, "#fff");
+}
+
+function clippingContainerInnerTransform(cc: ClippingContainerObject): string {
+  return `translate(${cc.x} ${cc.y}) rotate(${cc.rotation} ${cc.width / 2} ${cc.height / 2})`;
+}
+
+function clippingContainerEffectAlphaSource(cc: ClippingContainerObject): React.ReactNode {
+  return (
+    <g transform={clippingContainerInnerTransform(cc)}>{renderMaskShapeEffectAlpha(cc.mask)}</g>
+  );
+}
+
+/** Outer glow / overlays respetando la forma de la máscara «pegar dentro», no el bounding box del contenedor. */
+function wrapClippingContainerWithLayerEffects(
+  cc: ClippingContainerObject,
+  layerId: string,
+  effects: LayerEffects,
+  children: React.ReactNode,
+): React.ReactNode {
+  const { x, y, w, h } = clippingContainerMaskWorldBoundsAabb(cc);
+  if (w < 1 || h < 1) return children;
+  return (
+    <VectorShapeWithLayerEffects
+      objId={layerId}
+      x={x}
+      y={y}
+      w={w}
+      h={h}
+      effects={effects}
+      alphaSource={clippingContainerEffectAlphaSource(cc)}
+    >
+      {children}
+    </VectorShapeWithLayerEffects>
+  );
 }
 
 /** Silueta de la máscara en local del clip; se compone con el mismo `transform` que el contenedor. Solo guía visual. */
@@ -5878,15 +5952,24 @@ function wrapWithSelectedLayerEffect(
   );
   let wrapped = node;
   if (effectsActive && layerFx.layerEffects) {
-    wrapped = (
-      <StackSegmentWithLayerEffects
-        layerId={layerFx.id}
-        bounds={bounds}
-        effects={layerFx.layerEffects}
-      >
-        {wrapped}
-      </StackSegmentWithLayerEffects>
-    );
+    if (obj.type === "clippingContainer") {
+      wrapped = wrapClippingContainerWithLayerEffects(
+        obj as ClippingContainerObject,
+        layerFx.id,
+        layerFx.layerEffects,
+        wrapped,
+      );
+    } else {
+      wrapped = (
+        <StackSegmentWithLayerEffects
+          layerId={layerFx.id}
+          bounds={bounds}
+          effects={layerFx.layerEffects}
+        >
+          {wrapped}
+        </StackSegmentWithLayerEffects>
+      );
+    }
   }
   if (toneActive) {
     wrapped = <g filter={`url(#${adjustmentLayerFilterId(layerFx.id)}`}>{wrapped}</g>;
@@ -6969,27 +7052,71 @@ export function renderObj(
     }
     case "clippingContainer": {
       const cc = obj as ClippingContainerObject;
+      const blendStyle = layerMixBlendStyle(cc.blendMode as LayerBlendMode);
+      const leCc = resolveLayerEffectsForRender(cc, opts);
+      const pfCc = leCc?.photoFilter;
+      const pfCcOn = !!pfCc?.enabled;
+      const { css: pfCcCss, defs: pfCcDefs } = resolvePhotoFilterStyle(cc.id, pfCc);
+      const lmaskCc = (cc as FreehandObjectBase).layerMask;
+      const hasMaskCc = isLayerMaskVisible({ layerMask: lmaskCc });
       const cid = `clip-cc-${cc.id}`;
       const innerT = `translate(${cc.x} ${cc.y}) rotate(${cc.rotation} ${cc.width / 2} ${cc.height / 2})`;
-      return (
-        <g key={cc.id} opacity={cc.opacity}>
-          <g transform={innerT}>
-            {/* clipPath fuera de <defs>: dentro de <defs> bajo un <g transform> algunos motores aplican mal el sistema de coordenadas al recorte. */}
-            <clipPath id={cid} clipPathUnits="userSpaceOnUse">
-              {renderMaskShapeClipInner(cc.mask)}
-            </clipPath>
-            <g clipPath={`url(#${cid})`}>
-              {cc.content.map((ch, idx) => (
-                <g key={`${cc.id}-clipc-${idx}-${ch.id}`}>
-                  {wrapWithSelectedLayerEffect(
-                    renderObj(ch, allObjects, selectedIds, opts),
-                    ch,
-                    opts,
-                  )}
-                </g>
-              ))}
-            </g>
+      const clippedComposite = (
+        <g transform={innerT}>
+          {/* clipPath fuera de <defs>: dentro de <defs> bajo un <g transform> algunos motores aplican mal el sistema de coordenadas al recorte. */}
+          <clipPath id={cid} clipPathUnits="userSpaceOnUse">
+            {renderMaskShapeClipInner(cc.mask)}
+          </clipPath>
+          <g clipPath={`url(#${cid})`}>
+            {cc.content.map((ch, idx) => (
+              <g key={`${cc.id}-clipc-${idx}-${ch.id}`}>
+                {wrapWithSelectedLayerEffect(
+                  renderObj(ch, allObjects, selectedIds, opts),
+                  ch,
+                  opts,
+                )}
+              </g>
+            ))}
           </g>
+        </g>
+      );
+      const filteredComposite = pfCcCss ? (
+        <g style={{ filter: pfCcCss, isolation: "isolate" }}>{clippedComposite}</g>
+      ) : (
+        clippedComposite
+      );
+      let compositeChildren: React.ReactNode = filteredComposite;
+      const fxActive = hasActiveLayerEffects(leCc);
+      if (fxActive && leCc) {
+        compositeChildren = wrapClippingContainerWithLayerEffects(cc, cc.id, leCc, filteredComposite);
+      }
+      const maskEffectBounds = clippingContainerMaskWorldBoundsAabb(cc);
+      const clipInner = (
+        <>
+          {pfCcDefs}
+          {compositeChildren}
+          {pfCcOn ? (
+            <PhotoFilterOverlays
+              objId={cc.id}
+              x={maskEffectBounds.x}
+              y={maskEffectBounds.y}
+              w={maskEffectBounds.w}
+              h={maskEffectBounds.h}
+              pf={pfCc!}
+              maskShape={clippingContainerEffectAlphaSource(cc)}
+            />
+          ) : null}
+        </>
+      );
+      return (
+        <g
+          key={cc.id}
+          opacity={cc.opacity}
+          style={blendStyle ? { ...blendStyle, isolation: "isolate" } : undefined}
+        >
+          {hasMaskCc
+            ? wrapRasterChildrenWithLayerMask(cc.id, cc.x, cc.y, cc.width, cc.height, "none", lmaskCc, clipInner)
+            : clipInner}
         </g>
       );
     }
@@ -13018,7 +13145,7 @@ export function FreehandStudioCanvas({
         if (!studioCaps.layerStyles) return;
         if (!isLayerStylesEligible(target)) {
           setToast(
-            "Selecciona una imagen, bitmap o forma (rectángulo, elipse, trazado) para efectos.",
+            "Selecciona una imagen, forma, clip (pegar dentro) o carpeta para efectos.",
           );
           window.setTimeout(() => setToast(null), 3200);
           return;
@@ -13027,7 +13154,7 @@ export function FreehandStudioCanvas({
           ? cloneLayerEffectsForEdit((target as FreehandObjectBase).layerEffects)
           : null;
         const targetLoc = findInTree(objects, target.id);
-        const insideFolder = targetLoc?.parent?.type === "groupContainer";
+        const nestedInFolder = targetLoc?.parent?.type === "groupContainer";
         setEffectLayerUi({
           open: true,
           targetId: target.id,
@@ -13039,14 +13166,13 @@ export function FreehandStudioCanvas({
           levels: { ...defaultAdjustmentLayerSettings().levels },
           stylesDraft: cloneLayerEffectsForEdit((target as FreehandObjectBase).layerEffects),
           histogram: new Array<number>(256).fill(0),
-          showApplyTargetChoice: opts?.showApplyTargetChoice ?? !!designerMode,
+          showApplyTargetChoice:
+            opts?.showApplyTargetChoice ?? (designerMode || nestedInFolder || target.type === "clippingContainer"),
           applyMode:
             opts?.applyMode ??
             (target.type === "groupContainer" && designerMode
               ? "selectedFolder"
-              : insideFolder && designerMode
-                ? "selectedLayer"
-                : "embedded"),
+              : "embedded"),
         });
       }
     },
@@ -13091,7 +13217,7 @@ export function FreehandStudioCanvas({
               ? "selectedLayer"
               : "wholeStack";
       setObjects((prev) => {
-        const next = prev.map((o) => {
+        const next = mapTree(prev, (o) => {
           if (o.id !== targetId || o.type !== "adjustmentLayer") return o;
           const prevAdj = o as AdjustmentLayerObject;
           return {
@@ -13112,7 +13238,11 @@ export function FreehandStudioCanvas({
       return;
     }
 
-    if (applyMode !== "embedded" && designerMode) {
+    const canCreateEffectLayer =
+      applyMode !== "embedded" &&
+      (designerMode || applyMode === "selectedLayer" || applyMode === "selectedFolder");
+
+    if (canCreateEffectLayer) {
       const newAdjId = uid();
       const scope: EffectLayerScope =
         applyMode === "belowSelection"
@@ -13125,8 +13255,7 @@ export function FreehandStudioCanvas({
       const folderTargetId = applyMode === "selectedFolder" ? targetId : undefined;
       const layerTargetId = applyMode === "selectedLayer" ? targetId : undefined;
       setObjects((prev) => {
-        const next = prev.map((o) => {
-          if (o.id !== targetId) return o;
+        let next = patchObjectByIdInTree(prev, targetId, (o) => {
           const base = { ...o } as FreehandObjectBase;
           if (source.kind === "regular") {
             if (source.openLayerEffects && hasActiveLayerEffects(source.openLayerEffects)) {
@@ -13145,7 +13274,7 @@ export function FreehandStudioCanvas({
         const ab = pickPrimaryArtboard(artboardsRef.current, null);
         const folderObj =
           folderTargetId != null
-            ? (next.find((o) => o.id === folderTargetId) as GroupContainerObject | undefined)
+            ? (findInTree(next, folderTargetId)?.node as GroupContainerObject | undefined)
             : undefined;
         const layerLoc = layerTargetId != null ? findInTree(next, layerTargetId) : null;
         const layerObj = layerLoc?.node;
@@ -13176,12 +13305,19 @@ export function FreehandStudioCanvas({
           stroke: "none",
           strokeWidth: 0,
         };
-        const insertAt = insertIndexForEffectLayer(
-          next.length,
-          scope,
-          selectedIndexInRootStack(next, targetId),
-        );
-        next.splice(insertAt, 0, adj);
+        if (scope === "selectedLayer" && layerTargetId) {
+          next = recomputeContainerBoundsTree(
+            insertLayerScopedEffectLayer(next, adj, layerTargetId),
+          );
+        } else {
+          const insertAt = insertIndexForEffectLayer(
+            next.length,
+            scope,
+            selectedIndexInRootStack(next, targetId),
+          );
+          next = [...next];
+          next.splice(insertAt, 0, adj);
+        }
         pushHistory(next, new Set([newAdjId]));
         return next;
       });
@@ -13195,11 +13331,12 @@ export function FreehandStudioCanvas({
       setObjects((prev) => {
         let next = prev;
         if (hasActiveLayerEffects(stylesDraft)) {
-          next = prev.map((o) =>
-            o.id === targetId ? ({ ...o, layerEffects: stylesDraft } as FreehandObject) : o,
-          );
+          next = patchObjectByIdInTree(prev, targetId, (o) => ({
+            ...o,
+            layerEffects: stylesDraft,
+          })) as FreehandObject[];
         }
-        const cur = next.find((o) => o.id === targetId) as ImageObject | undefined;
+        const cur = findInTree(next, targetId)?.node as ImageObject | undefined;
         if (cur && cur.src !== source.openSrc) pushHistory(next, new Set([targetId]));
         else if (hasActiveLayerEffects(stylesDraft)) pushHistory(next, new Set([targetId]));
         return next;
@@ -13209,9 +13346,10 @@ export function FreehandStudioCanvas({
     }
 
     setObjects((prev) => {
-      const next = prev.map((o) =>
-        o.id === targetId ? ({ ...o, layerEffects: stylesDraft } as FreehandObject) : o,
-      );
+      const next = patchObjectByIdInTree(prev, targetId, (o) => ({
+        ...o,
+        layerEffects: stylesDraft,
+      })) as FreehandObject[];
       pushHistory(next, new Set([targetId]));
       return next;
     });
@@ -21143,19 +21281,22 @@ export function FreehandStudioCanvas({
       const nextCy = startCy + centerShiftLocalX * Math.sin(th) + centerShiftLocalY * Math.cos(th);
       const nx = nextCx - nw / 2;
       const ny = nextCy - nh / 2;
+      const textId = dragState.textBoxResizeObjectId;
       setObjects((prev) =>
-        prev.map((o) => {
-          if (o.id !== dragState.textBoxResizeObjectId || o.type !== "text") return o;
-          const tx = o as TextObject;
-          return {
-            ...tx,
-            textMode: "area",
-            x: nx,
-            y: ny,
-            width: nw,
-            height: nh,
-          };
-        }),
+        recomputeContainerBoundsTree(
+          patchObjectByIdInTree(prev, textId, (o) => {
+            if (o.type !== "text") return o;
+            const tx = o as TextObject;
+            return {
+              ...tx,
+              textMode: "area",
+              x: nx,
+              y: ny,
+              width: nw,
+              height: nh,
+            };
+          }),
+        ),
       );
       return;
     }
@@ -23806,7 +23947,7 @@ export function FreehandStudioCanvas({
       levels: { ...effectLayerUi.levels },
     };
     const stylesForPreview = effectLayerUi.stylesDraft;
-    return objects.map((o) =>
+    return mapTree(objects, (o) =>
       o.id === effectLayerUi.targetId && o.type === "adjustmentLayer"
         ? ({
             ...o,
@@ -23842,7 +23983,7 @@ export function FreehandStudioCanvas({
 
   const layerEffectLayerByLayerId = useMemo(() => {
     const map = new Map<string, AdjustmentLayerLike>();
-    for (const o of stackObjectsForRender) {
+    for (const o of collectAdjustmentLayersInTree(stackObjectsForRender)) {
       if (!isAdjustmentLayerObject(o)) continue;
       const adj = o as AdjustmentLayerObject;
       if (!adj.visible || !isEffectLayerActive(adj)) continue;
@@ -24380,8 +24521,8 @@ export function FreehandStudioCanvas({
               return f.type === "solid" ? null : renderFillDef(f, gradientDefId(o.id));
             })}
             {clipObjects.map((co) => renderClipDef(co))}
-            {collectAdjustmentLayers(stackObjectsForRender).map((layer) => (
-              <AdjustmentLayerFilterDef key={layer.id} layer={layer} />
+            {collectAdjustmentLayersInTree(stackObjectsForRender).map((layer) => (
+              <AdjustmentLayerFilterDef key={layer.id} layer={layer as AdjustmentLayerObject} />
             ))}
             {layerStylesAdjustmentPreview?.tone ? (
               <AdjustmentLayerFilterDef
@@ -29290,28 +29431,46 @@ export function FreehandStudioCanvas({
                             <button
                               type="button"
                               title={
-                                adjSelected
-                                  ? "Editar capa de efecto (tono, look, overlays…)"
-                                  : "Nueva capa de efecto sobre la composición"
+                                !tgt
+                                  ? "Nueva capa de efecto sobre la composición"
+                                  : adjSelected
+                                    ? "Editar capa de efecto (tono, look, overlays…)"
+                                    : isLayerStylesEligible(tgt)
+                                      ? "Efectos de capa (glow, look, overlays…)"
+                                      : tgt.type === "image"
+                                        ? "Ajustes de imagen"
+                                        : "Nueva capa de efecto sobre la composición"
                               }
                               className={btnClass(
                                 !!(adjSelected &&
                                   isEffectLayerActive(tgt as AdjustmentLayerObject)),
                               )}
                               onClick={() => {
-                                if (adjSelected && tgt?.type === "adjustmentLayer") {
+                                if (!tgt) {
+                                  createAdjustmentLayer();
+                                  return;
+                                }
+                                if (tgt.type === "adjustmentLayer") {
                                   openEffectLayerModal(tgt, { tab: "tone" });
-                                } else if (
-                                  tgt?.type === "image" &&
+                                  return;
+                                }
+                                if (studioCaps.layerStyles && isLayerStylesEligible(tgt)) {
+                                  openEffectLayerModal(tgt, { tab: "look" });
+                                  return;
+                                }
+                                if (
+                                  tgt.type === "image" &&
                                   !(tgt as ImageObject).photoRoomInputSlot
                                 ) {
+                                  const insideFolder =
+                                    findInTree(objects, tgt.id)?.parent?.type === "groupContainer";
                                   void openPhotoImageAdjustments(tgt as ImageObject, {
                                     showApplyTargetChoice: true,
-                                    applyMode: "wholeStack",
+                                    applyMode: insideFolder ? "embedded" : "wholeStack",
                                   });
-                                } else {
-                                  createAdjustmentLayer();
+                                  return;
                                 }
+                                createAdjustmentLayer();
                               }}
                             >
                               <Contrast size={15} strokeWidth={1.75} />
