@@ -1,32 +1,8 @@
-import type { CreativeInputDescriptor } from "@/app/spaces/populate/populate-types";
-import type { PopulateFormModel } from "@/app/spaces/populate/populate-form";
-import type { DesignerFormField, DesignerFormRow } from "@/app/spaces/populate/populate-designer-form";
 import type { DesignerPageState } from "@/app/spaces/designer/DesignerNode";
-
-/**
- * Variante Designer del enlace público: en lugar de generar 1 imagen por IA (server-side), el
- * cliente rasteriza la plantilla con los valores del formulario y devuelve tantas imágenes como
- * slides. No consume wallet (es render de plantilla, no generación). Lleva las páginas de la
- * plantilla (con huecos sin resolver) y los campos del formulario con sus opciones materializadas.
- */
-export type PopulateShareDesignerPayload = {
-  pages: DesignerPageState[];
-  formFields: DesignerFormField[];
-  /** Filas del listado con etiquetas legibles (y valores para autorelleno en el público). */
-  rows?: DesignerFormRow[];
-  slideCount: number;
-};
-
-export type PopulateShareTemplateModel = {
-  modelKey: string;
-  aspectRatio: string;
-  resolution?: string;
-  thinking?: boolean;
-  provider?: "gemini" | "openai";
-};
+import type { PopulateFormModel } from "@/app/spaces/populate/populate-designer-form";
+import type { PopulateTemplateBinding } from "@/app/spaces/populate/populate-types";
 
 export type PopulateShareOptions = {
-  /** Si false, el enlace deja de aceptar generaciones. */
   enabled: boolean;
   autoDisableAt: string | null;
 };
@@ -36,27 +12,45 @@ export const DEFAULT_POPULATE_SHARE_OPTIONS: PopulateShareOptions = {
   autoDisableAt: null,
 };
 
-/** Instantánea del formulario y plantilla en el momento de compartir. */
+export type PopulateShareTemplateEntry = {
+  templateNodeId: string;
+  templateLabel: string;
+  binding: PopulateTemplateBinding;
+  formModel: PopulateFormModel;
+  pages: DesignerPageState[];
+  slideCount: number;
+};
+
 export type PopulateSharePayload = {
   title: string;
-  promptTemplate: string;
-  formModel: PopulateFormModel;
-  templateModel: PopulateShareTemplateModel;
-  fixedRefUrls: Record<string, string>;
-  imageInputs: CreativeInputDescriptor[];
-  /** Presente solo en enlaces de plantilla Designer (rasterizado en cliente, N imágenes). */
-  designer?: PopulateShareDesignerPayload;
+  listId: string;
+  /** Instantánea de filas + valores para resolver en el formulario público sin Dataset vivo. */
+  rowsSnapshot: Array<{
+    cardId: string;
+    label: string;
+    values: Record<string, import("@/app/spaces/dataset/dataset-types").FieldValue>;
+  }>;
+  /** 1..8 plantillas conectadas al nodo Populate. */
+  templates: PopulateShareTemplateEntry[];
+  /** @deprecated Compat enlaces v1 — usar `templates`. */
+  binding?: PopulateTemplateBinding;
+  formModel?: PopulateFormModel;
+  pages?: DesignerPageState[];
+  slideCount?: number;
 };
 
 export type PopulateShareRecord = {
   id: string;
-  /** Segmento de URL público (opaco). */
   token: string;
-  /** Clave de agrupación (populateNodeId). */
   shareKey: string;
   populateNodeId: string;
-  /** Email del creador; se usa para facturar generaciones públicas. */
   ownerEmail: string;
+  /** Proyecto-temporada (projectScopeId al publicar). */
+  projectId?: string;
+  /** Agrupación de partido — estable, filtra galería pública. */
+  matchId?: string;
+  /** Etiqueta humana: "Partido 1 - Lakers vs Bulls". */
+  matchLabel?: string;
   name: string;
   slug: string;
   options: PopulateShareOptions;
@@ -70,6 +64,38 @@ export type PopulateShareRecord = {
 export type PublicPopulateShareRecord = Omit<PopulateShareRecord, "ownerEmail">;
 
 export function toPublicPopulateShareRecord(row: PopulateShareRecord): PublicPopulateShareRecord {
-  const { ownerEmail: _ownerEmail, ...rest } = row;
-  return rest;
+  const { ownerEmail: _o, ...rest } = row;
+  return normalizePopulateShareRecord(rest as PopulateShareRecord);
+}
+
+/** Rellena match/project en enlaces legacy. */
+export function normalizePopulateShareRecord(row: PopulateShareRecord): PopulateShareRecord {
+  return {
+    ...row,
+    projectId: row.projectId?.trim() || "",
+    matchId: row.matchId?.trim() || `legacy_${row.token.slice(0, 12)}`,
+    matchLabel: row.matchLabel?.trim() || row.name?.trim() || row.payload.title?.trim() || "Partido",
+  };
+}
+
+/** Normaliza payload legacy (un solo template) al formato multi-plantilla. */
+export function normalizePopulateShareTemplates(
+  payload: PopulateSharePayload,
+): PopulateShareTemplateEntry[] {
+  if (Array.isArray(payload.templates) && payload.templates.length > 0) {
+    return payload.templates;
+  }
+  if (payload.binding && payload.formModel && payload.pages) {
+    return [
+      {
+        templateNodeId: payload.binding.templateNodeId,
+        templateLabel: payload.binding.templateLabel,
+        binding: payload.binding,
+        formModel: payload.formModel,
+        pages: payload.pages,
+        slideCount: payload.slideCount ?? payload.pages.length,
+      },
+    ];
+  }
+  return [];
 }

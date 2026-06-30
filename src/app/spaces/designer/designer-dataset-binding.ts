@@ -3,7 +3,7 @@
  *
  * Soporta los dos estados del binding:
  * - RESUELTO (Modo 1): tiene `listId` + `fieldId` (columna real del Dataset conectado al Designer).
- * - PENDIENTE (Modo 2): marcado como dinámico con `kind` + `slotLabel`, sin columna. Populate le
+ * - PENDIENTE (Modo 2): marcado como dinámico con `kind` + `slotLabel`, sin columna. Loop le
  *   asignará una columna de SU Dataset y, al congelar, se rellenará el hueco.
  */
 
@@ -39,19 +39,51 @@ export function bindingKind(
   return obj ? datasetFieldKindForObject(obj) : null;
 }
 
+export function newDesignerSlotId(): string {
+  return `slot_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/** Identidad estable de entidad (Populate/Loop): el nombre del campo agrupa texto e imagen. */
+export function designerEntityId(binding: DesignerDatasetFieldBinding | undefined | null): string {
+  const label = (binding?.slotLabel ?? "").trim().toLowerCase();
+  if (label) return label;
+  if (binding?.slotId?.trim()) return binding.slotId.trim();
+  return "campo";
+}
+
 /**
- * Identidad del hueco para el mapeo en Populate (estilo token de prompt): se agrupan los objetos
- * con la misma `slotLabel` normalizada. Devuelve "" si no hay etiqueta utilizable.
+ * Clave del hueco para mapeo en Loop/Populate (estilo token).
+ * Mismo `slotLabel` → misma entidad; el tipo (texto/imagen) va en el sufijo `::kind`.
  */
 export function designerSlotKey(binding: DesignerDatasetFieldBinding | undefined | null): string {
   const label = (binding?.slotLabel ?? "").trim().toLowerCase();
-  return label ? `slot::${label}` : "";
+  if (label) return `slot::${label}`;
+  if (binding?.slotId?.trim()) return `slot::${binding.slotId.trim()}`;
+  return "";
 }
 
-/** Crea un binding PENDIENTE (Modo 2) con su tipo y etiqueta. */
+/** Crea un binding PENDIENTE (Modo 2) con su tipo, etiqueta e id estable. */
 export function makePendingDesignerBinding(
   kind: DesignerDatasetFieldKind,
   slotLabel: string,
+  slotId?: string,
 ): DesignerDatasetFieldBinding {
-  return { listId: "", listKey: "", fieldId: "", fieldKey: "", kind, slotLabel };
+  return {
+    listId: "",
+    listKey: "",
+    fieldId: "",
+    fieldKey: "",
+    kind,
+    slotLabel,
+    slotId: slotId?.trim() || newDesignerSlotId(),
+  };
+}
+
+/** Asegura que un binding pendiente tenga `slotId` (migración in-memory de documentos legacy). */
+export function ensureDesignerSlotId(
+  binding: DesignerDatasetFieldBinding,
+): DesignerDatasetFieldBinding {
+  if (binding.slotId?.trim()) return binding;
+  if (!isPendingDesignerBinding(binding)) return binding;
+  return { ...binding, slotId: newDesignerSlotId() };
 }

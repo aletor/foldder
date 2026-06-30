@@ -3,7 +3,7 @@ import type { Edge, Node } from "@xyflow/react";
 
 import {
   designerHasDirectDataset,
-  designerIsPopulateTemplate,
+  designerIsLoopTemplate,
   designerModeConflictReason,
 } from "./connection-utils";
 
@@ -14,7 +14,7 @@ function node(id: string, type: string): Node {
 const nodes: Node[] = [
   node("ds1", "dataset"),
   node("dz1", "designer"),
-  node("pop1", "populate"),
+  node("pop1", "loop"),
 ];
 
 function templateEdge(): Edge {
@@ -25,9 +25,9 @@ function datasetEdge(): Edge {
 }
 
 describe("designer Modo 1/2 detección", () => {
-  it("designerIsPopulateTemplate", () => {
-    expect(designerIsPopulateTemplate("dz1", [templateEdge()])).toBe(true);
-    expect(designerIsPopulateTemplate("dz1", [datasetEdge()])).toBe(false);
+  it("designerIsLoopTemplate", () => {
+    expect(designerIsLoopTemplate("dz1", [templateEdge()])).toBe(true);
+    expect(designerIsLoopTemplate("dz1", [datasetEdge()])).toBe(false);
   });
   it("designerHasDirectDataset", () => {
     expect(designerHasDirectDataset("dz1", [datasetEdge()])).toBe(true);
@@ -36,13 +36,13 @@ describe("designer Modo 1/2 detección", () => {
 });
 
 describe("designerModeConflictReason", () => {
-  it("bloquea Dataset → Designer que ya es plantilla de Populate (Caso A)", () => {
+  it("bloquea Dataset → Designer que ya es plantilla de Loop (Caso A)", () => {
     const conn = { source: "ds1", target: "dz1", sourceHandle: "dataset", targetHandle: "dataset" };
     const reason = designerModeConflictReason(conn, nodes, [templateEdge()]);
     expect(reason).toMatch(/ya es plantilla/i);
   });
 
-  it("bloquea Designer (con Dataset directo) → Plantilla de Populate (Caso B)", () => {
+  it("bloquea Designer (con Dataset directo) → Plantilla de Loop (Caso B)", () => {
     const conn = { source: "dz1", target: "pop1", sourceHandle: "document", targetHandle: "template" };
     const reason = designerModeConflictReason(conn, nodes, [datasetEdge()]);
     expect(reason).toMatch(/ya usa un Dataset directo/i);

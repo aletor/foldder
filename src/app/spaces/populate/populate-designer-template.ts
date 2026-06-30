@@ -1,21 +1,14 @@
-/**
- * Populate — resolución de una plantilla de tipo `node-clone` (Designer).
- *
- * A diferencia de `resolveTemplateConfig` (Image Creation: prompt + refs de imagen), aquí la
- * plantilla es el documento del Designer y sus campos dinámicos se descubren de los enlaces
- * internos de sus páginas (`_designerDatasetBinding`).
- */
-
 import type { Edge, Node } from "@xyflow/react";
 import type { DesignerPageState } from "@/app/spaces/designer/DesignerNode";
-import { getNodeOrchestrationDeclaration } from "./populate-declaration";
-import { findPopulateTemplateLinkEdge } from "./populate-template-link";
 import {
   extractDesignerDynamicFields,
   type DesignerDynamicField,
-} from "./populate-designer-fields";
+} from "@/app/spaces/loop/loop-designer-fields";
+import { isNodeCloneTemplateType } from "@/app/spaces/loop/loop-designer-template";
+import { POPULATE_MAX_TEMPLATES } from "./populate-types";
+import { findPopulateTemplateLinkEdges } from "./populate-template-link";
 
-export interface DesignerTemplateConfig {
+export interface PopulateDesignerTemplateConfig {
   templateNodeId: string;
   templateType: string;
   templateLabel: string;
@@ -23,22 +16,10 @@ export interface DesignerTemplateConfig {
   dynamicFields: DesignerDynamicField[];
 }
 
-/** ¿El tipo de nodo se orquesta clonándose entero por fila (Designer)? */
-export function isNodeCloneTemplateType(nodeType: string | undefined | null): boolean {
-  return getNodeOrchestrationDeclaration(nodeType).mode === "node-clone";
-}
-
-/**
- * Resuelve la plantilla Designer enlazada a un Populate. Devuelve null si no hay enlace o el nodo
- * enlazado no es de orquestación por clonado.
- */
-export function resolveDesignerTemplateConfig(
-  populateId: string,
+function configFromLinkEdge(
+  linkEdge: Edge,
   nodes: Node[],
-  edges: Edge[],
-): DesignerTemplateConfig | null {
-  const linkEdge = findPopulateTemplateLinkEdge(populateId, nodes, edges);
-  if (!linkEdge) return null;
+): PopulateDesignerTemplateConfig | null {
   const tpl = nodes.find((n) => n.id === linkEdge.source);
   if (!tpl || !isNodeCloneTemplateType(tpl.type)) return null;
 
@@ -52,4 +33,25 @@ export function resolveDesignerTemplateConfig(
     pages,
     dynamicFields: extractDesignerDynamicFields(pages),
   };
+}
+
+/** Todas las plantillas Designer enlazadas (máx. 8). */
+export function listPopulateDesignerTemplateConfigs(
+  populateId: string,
+  nodes: Node[],
+  edges: Edge[],
+): PopulateDesignerTemplateConfig[] {
+  return findPopulateTemplateLinkEdges(populateId, nodes, edges)
+    .slice(0, POPULATE_MAX_TEMPLATES)
+    .map((edge) => configFromLinkEdge(edge, nodes))
+    .filter((c): c is PopulateDesignerTemplateConfig => c != null);
+}
+
+/** Primera plantilla enlazada (compat). */
+export function resolvePopulateDesignerTemplateConfig(
+  populateId: string,
+  nodes: Node[],
+  edges: Edge[],
+): PopulateDesignerTemplateConfig | null {
+  return listPopulateDesignerTemplateConfigs(populateId, nodes, edges)[0] ?? null;
 }

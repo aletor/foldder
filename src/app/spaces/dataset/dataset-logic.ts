@@ -242,7 +242,7 @@ export function duplicateCard(dataset: Dataset, listId: string, cardId: string):
   return mapList(dataset, listId, (list) => {
     const idx = list.cards.findIndex((card) => card.id === cardId);
     if (idx === -1) return list;
-    const copy: Card = { id: genId("c"), values: { ...list.cards[idx].values } };
+    const copy: Card = { id: genId("c"), values: structuredClone(list.cards[idx]!.values) };
     return {
       ...list,
       cards: [...list.cards.slice(0, idx + 1), copy, ...list.cards.slice(idx + 1)],

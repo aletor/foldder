@@ -6,6 +6,8 @@ export const NODE_SIDEBAR_TILE_BACKGROUND_SRC: Record<string, string> = {
   designer: "/assets/nodes/designer-sidebar-bg.png",
   guionista: "/assets/nodes/guionista-sidebar-bg.png",
   dataset: "/assets/nodes/dataset-sidebar-bg.png",
+  loop: "/assets/nodes/dataset-sidebar-bg.png",
+  populate: "/assets/nodes/dataset-sidebar-bg.png",
   inspiration: "/assets/nodes/inspiration-sidebar-bg.png",
   geminiVideo: "/assets/nodes/gemini-video-sidebar-bg.png",
   nanoBanana: "/assets/nodes/nano-banana-sidebar-bg.png",

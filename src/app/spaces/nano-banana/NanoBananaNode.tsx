@@ -2337,8 +2337,8 @@ export const NanoBananaNode = memo(function NanoBananaNode({ id, data, selected 
     /** Persisted with the project (Studio + main-run versions). */
     generationHistory?: string[];
     /**
-     * Populate (legacy/semilla): prompt inline. La edición de plantilla vive ahora
-     * en el nodo Populate; esto solo sirve como semilla y prompt inline normal.
+     * Loop (legacy/semilla): prompt inline. La edición de plantilla vive ahora
+     * en el nodo Loop; esto solo sirve como semilla y prompt inline normal.
      */
     promptText?: string;
   };

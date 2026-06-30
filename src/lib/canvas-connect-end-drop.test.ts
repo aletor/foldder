@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { getNodeGridFrameForType } from "@/app/spaces/canvas-grid-layout";
 import {
   defaultDataForCanvasDropNode,
   pickNewNodeTypeForCanvasDrop,
@@ -6,8 +7,12 @@ import {
 } from "./canvas-connect-end-drop";
 
 describe("canvas-connect-end-drop dataset input", () => {
-  it("resolves dataset target handle on Designer and Populate", () => {
+  it("resolves dataset target handle on Designer, Loop and Populate", () => {
     expect(resolveHandleMetaForCanvasDrop("designer", "dataset", "target")).toMatchObject({
+      type: "dataset",
+      id: "dataset",
+    });
+    expect(resolveHandleMetaForCanvasDrop("loop", "dataset", "target")).toMatchObject({
       type: "dataset",
       id: "dataset",
     });
@@ -27,7 +32,7 @@ describe("canvas-connect-end-drop dataset input", () => {
     ).toBe("dataset");
     expect(
       pickNewNodeTypeForCanvasDrop("dataset:target", {
-        srcNodeType: "populate",
+        srcNodeType: "loop",
         fromHandleId: "dataset",
         fromFlow: "target",
       }),
@@ -47,5 +52,21 @@ describe("canvas-connect-end-drop dataset input", () => {
       developSettings: {},
       decodeStatus: "idle",
     });
+  });
+
+  it("seeds populate assign nodes with templateBindings and kind marker", () => {
+    expect(defaultDataForCanvasDropNode("populate")).toMatchObject({
+      label: "Populate",
+      templateBindings: [],
+      _populateKind: "assign",
+    });
+  });
+
+  it("assigns grid frame to populate like loop", () => {
+    const loop = getNodeGridFrameForType("loop");
+    const populate = getNodeGridFrameForType("populate");
+    expect(populate).toEqual(loop);
+    expect(populate?.width).toBeGreaterThan(0);
+    expect(populate?.height).toBeGreaterThan(0);
   });
 });

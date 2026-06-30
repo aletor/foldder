@@ -11,7 +11,7 @@ import {
   resolveSpacePortalInnerTemplate,
   spacePortalTemplateDataPatch,
   type SpaceMapEntryLike,
-} from "./space-portal-populate-link";
+} from "./space-portal-loop-link";
 
 const PORTAL_NODE_TYPES = new Set(["spaceInput", "spaceOutput"]);
 
@@ -143,7 +143,7 @@ export function getMediaSinkInfo(node: Node): MediaSinkInfo | null {
     url,
     s3Key,
     label,
-    // Incluir sinks aunque aún no tengan URL (Populate pendiente).
+    // Incluir sinks aunque aún no tengan URL (Loop pendiente).
   };
 }
 

@@ -127,7 +127,7 @@ describe("collectProjectMedia", () => {
     expect(imported).toHaveLength(0);
   });
 
-  it("Populate: recoge todas las imágenes de lastRunOutputs y mediaListOutput", () => {
+  it("Loop: recoge todas las imágenes de lastRunOutputs y mediaListOutput", () => {
     const keyA = "knowledge-files/proj/pop-a.png";
     const keyB = "knowledge-files/proj/pop-b.png";
     const urlA = `/api/spaces/s3-file?key=${encodeURIComponent(keyA)}`;
@@ -135,7 +135,7 @@ describe("collectProjectMedia", () => {
     const nodes: Node[] = [
       {
         id: "pop1",
-        type: "populate",
+        type: "loop",
         position: { x: 0, y: 0 },
         data: {
           value: urlA,
@@ -153,7 +153,7 @@ describe("collectProjectMedia", () => {
     ];
     const { generated } = collectProjectMedia(nodes);
     expect(generated).toHaveLength(2);
-    expect(generated.every((g) => g.sourceLabel === "Populate")).toBe(true);
+    expect(generated.every((g) => g.sourceLabel === "Loop")).toBe(true);
     expect(generated.some((g) => g.url.includes(encodeURIComponent(keyA)))).toBe(true);
     expect(generated.some((g) => g.url.includes(encodeURIComponent(keyB)))).toBe(true);
   });

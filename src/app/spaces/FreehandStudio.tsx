@@ -12960,7 +12960,7 @@ export function FreehandStudioCanvas({
 
   /**
    * Modo 2: marca el objeto como campo dinámico SIN Dataset conectado (hueco + tipo + etiqueta).
-   * La columna la asigna Populate después. No cambia el contenido del objeto (texto/imagen de diseño).
+   * La columna la asigna Loop después. No cambia el contenido del objeto (texto/imagen de diseño).
    */
   const markDesignerDatasetDynamic = useCallback(
     (label: string) => {
@@ -12979,7 +12979,7 @@ export function FreehandStudioCanvas({
     [designerDatasetFieldKind, pushHistory, singleSelected],
   );
 
-  /** Actualiza la etiqueta del hueco dinámico (identidad para el mapeo en Populate). */
+  /** Actualiza la etiqueta del hueco dinámico (identidad para el mapeo en Loop). */
   const setDesignerDatasetSlotLabel = useCallback(
     (label: string) => {
       if (!singleSelected) return;

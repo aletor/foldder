@@ -1,1499 +1,478 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { createPortal } from "react-dom";
-import {
-  AlertTriangle,
-  Braces,
-  Check,
-  CircleDollarSign,
-  Eye,
-  ImageIcon,
-  Layers,
-  Link2,
-  Loader2,
-  Pin,
-  Repeat,
-  Sparkles,
-  Table2,
-  Type,
-} from "lucide-react";
-import type { Dataset, FieldDef } from "@/app/spaces/dataset/dataset-types";
-import { fieldValueAsText, getListFieldValueAtRow } from "@/app/spaces/dataset/dataset-logic";
+import React, { useEffect, useMemo, useState } from "react";
+import { ChevronDown, Copy, ImageIcon, Sparkles, Type, Users } from "lucide-react";
 import { FoldderStudioHeader } from "../FoldderStudioHeader";
-import type { ActiveImageRef } from "./populate-active-refs";
-import { PopulateFormPanel } from "./PopulateFormPanel";
-import type { PopulateFormModel } from "./populate-form";
-import type { PopulateTemplateModel } from "./populate-generate";
-import { PopulatePromptEditor } from "./PopulatePromptEditor";
-import { DesignerFormPanel } from "./DesignerFormPanel";
-import type { DesignerDynamicField } from "./populate-designer-fields";
-import type { DesignerFormModel } from "./populate-designer-form";
+import type { Dataset } from "@/app/spaces/dataset/dataset-types";
+import type { PopulateDesignerTemplateConfig } from "./populate-designer-template";
+import { datasetListRowLabel } from "@/app/spaces/loop/loop-row-label";
 import {
-  buildPopulateStudioSlots,
-  buildPopulateStudioSummary,
-  type PopulateStudioSlot,
-  type PopulateStudioSummary,
-} from "./populate-studio-summary";
-import { formatPopulateRunErrorMessage } from "./populate-batch-finalize";
-import { sampleColumnImageUrls } from "./populate-studio-images";
-import { PopulateDatasetOutputPanel } from "./PopulateDatasetOutputPanel";
+  groupPendingFieldsIntoEntities,
+  imageColumnsInSchema,
+} from "./populate-entity-groups";
+import { patchEntityPoseColumn, setEntityManualMode } from "./populate-designer-binding";
+import type { PopulateTemplateBinding } from "./populate-types";
+import { derivePopulateForm } from "./populate-designer-form";
 import {
-  datasetFieldTypesForInputKind,
-  type PopulateBindings,
-  type PopulateDatasetOutputSettings,
-  type PopulateInputBinding,
-  type PopulateRunStatus,
-} from "./populate-types";
+  PopulatePoseGrid,
+  PopulateRecordGrid,
+} from "./PopulateEntityPickers";
+import { poseOptionsVisual, recordThumbFromValues } from "./populate-row-preview";
+import {
+  PopulateRasterizePagesFn,
+  PopulateStudioTemplatePreview,
+} from "./PopulateStudioTemplatePreview";
 
-const POPULATE_ACCENT = "#FD52EB";
-
-/** Un canal de salida (creador conectado a la plantilla) con su columna destino. */
-export interface PopulateStudioChannelOutput {
-  channelId: string;
-  label: string;
-  /** Prompt del nodo Image Creator (identidad compartida; solo lectura en UI). */
-  nodePrompt: string;
-  /** Delta fijo de pose/variante, concatenado tras `nodePrompt`. */
-  channelPrompt: string;
-  settings: PopulateDatasetOutputSettings;
-}
+const ACCENT = "#9B5DE5";
 
 export interface PopulateStudioProps {
-  nodeId: string;
   nodeLabel: string;
-  mode: "batch" | "form";
-  onModeChange: (mode: "batch" | "form") => void;
-  onClose: () => void;
-
-  templateLabel: string | null;
-  promptText: string;
-  promptLabel?: string;
-  bindings: PopulateBindings;
-  activeImageRefs: ActiveImageRef[];
-  model: PopulateTemplateModel;
-  onChangePrompt: (next: string) => void;
-  onChangeBinding: (inputId: string, binding: PopulateInputBinding) => void;
-
-  /** Tokens del prompt marcados como manuales (clave de token → valor constante). */
-  manualTokens?: Record<string, string>;
-  /** Marca/edita un token manual; `value === null` lo devuelve a columna/constante. */
-  onChangeManualToken?: (tokenKey: string, value: string | null) => void;
-
-  schema: FieldDef[];
-  constantFields: FieldDef[];
-  listId: string | null;
-  listName: string;
-  rowCount: number;
-  lists: { id: string; name: string; cards: unknown[] }[];
-  onSelectList: (listId: string) => void;
-  datasetConnected: boolean;
-  datasetLoading: boolean;
-
   dataset: Dataset | null;
-
-  formModel: PopulateFormModel;
-  formValues: Record<string, string>;
-  formImageRows: Record<string, number>;
-  onChangeFormText: (fieldKey: string, value: string) => void;
-  onChangeFormImageRow: (inputId: string, rowIndex: number) => void;
-  onAutofillForm: (rowIndex: number) => void;
-
-  busy: boolean;
-  progress: { done: number; total: number } | null;
-  lastRunOutputs: string[];
-  lastRunFailures?: Array<{ rowIndex: number; error: string }>;
-  lastRunOkCount?: number;
-  lastRunFailedCount?: number;
-  runStatus?: PopulateRunStatus;
-  previewRowIndex: number;
-  onPreviewRowChange: (rowIndex: number) => void;
-  previewUrl: string | null;
-  previewLoading: boolean;
-  onPreview: () => void;
-  onGenerateBatch: () => void;
-  onGenerateForm: () => void;
-
-  shareToken?: string | null;
+  listId: string;
+  templates: PopulateDesignerTemplateConfig[];
+  activeTemplate: PopulateDesignerTemplateConfig;
+  activeTemplateNodeId: string;
+  onSelectTemplate: (templateNodeId: string) => void;
+  binding: PopulateTemplateBinding;
+  onClose: () => void;
+  onChangeBinding: (next: PopulateTemplateBinding) => void;
+  rasterizePages: PopulateRasterizePagesFn;
+  onShare?: () => void;
   shareBusy?: boolean;
   shareError?: string | null;
-  onShare: () => void;
-  onCopyShareUrl: () => void;
-
-  error: string | null;
-
-  datasetOutput: PopulateDatasetOutputSettings;
-  onChangeDatasetOutput: (next: PopulateDatasetOutputSettings) => void;
-  /**
-   * Multi-canal: cuando hay 2+ creadores conectados a la plantilla, una columna destino por canal.
-   * Si tiene ≥2 entradas sustituye al panel de salida único.
-   */
-  channels?: PopulateStudioChannelOutput[];
-  onChangeChannelOutput?: (channelId: string, next: PopulateDatasetOutputSettings) => void;
-  onChangeChannelPrompt?: (channelId: string, next: string) => void;
-  lastDatasetWriteSummary?: string | null;
-
-  /**
-   * Plantilla Designer (modo node-clone). Cuando está activo, el Studio sustituye los slots de
-   * Image Creation (prompt / variables / refs) por los campos dinámicos del Designer y permite
-   * mapear cada hueco pendiente a una columna del Dataset de Populate.
-   */
-  isDesignerTemplate?: boolean;
-  designerFields?: DesignerDynamicField[];
-  designerSlideCount?: number;
-  designerSlotBindings?: Record<
-    string,
-    { listId: string; listKey: string; fieldId: string; fieldKey: string }
-  >;
-  onChangeDesignerSlotBinding?: (slotKey: string, fieldId: string) => void;
-
-  /** Formulario Designer (modo "una pieza"): tantas imágenes como slides. */
-  designerFormModel?: DesignerFormModel;
-  designerFormValues?: Record<string, string>;
-  designerFormResults?: string[];
-  onChangeDesignerFormValue?: (slotKey: string, value: string) => void;
-  onAutofillDesignerForm?: (rowIndex: number) => void;
-  onGenerateDesignerForm?: () => void;
+  shareUrl?: string | null;
+  onCopyShareUrl?: () => void;
+  shareMatchLabel?: string;
+  onShareMatchLabelChange?: (value: string) => void;
+  projectSaved?: boolean;
 }
 
-function slotIcon(slot: PopulateStudioSlot) {
-  if (slot.kind === "prompt") return <Type size={15} strokeWidth={1.75} />;
-  if (slot.kind === "token") return <Braces size={15} strokeWidth={1.75} />;
-  return <ImageIcon size={15} strokeWidth={1.75} />;
+function isEntityManual(
+  binding: PopulateTemplateBinding,
+  entityId: string,
+  facets: { slotKey: string }[],
+): boolean {
+  return facets.every((f) => binding.sources[f.slotKey]?.kind === "manual");
 }
 
-function StudioThumb({ url, alt, className }: { url: string; alt: string; className?: string }) {
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img src={url} alt={alt} className={className} draggable={false} />
-  );
-}
-
-function SummaryRow({
-  icon: Icon,
-  label,
-  value,
-}: {
-  icon: React.ComponentType<{ size?: number; strokeWidth?: number; className?: string }>;
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="populate-studio-summary-row">
-      <Icon size={15} strokeWidth={1.75} className="populate-studio-summary-row__icon" aria-hidden />
-      <div className="populate-studio-summary-row__body">
-        <span className="populate-studio-summary-row__label">{label}</span>
-        <span className="populate-studio-summary-row__value">{value}</span>
-      </div>
-    </div>
-  );
-}
-
-function StudioSummaryPanel({ summary }: { summary: PopulateStudioSummary }) {
-  const promptValue =
-    summary.tokenCount > 0
-      ? `${summary.tokenCount} variable${summary.tokenCount === 1 ? "" : "s"} del Dataset`
-      : "Texto fijo";
-
-  let refsValue = "Sin referencias conectadas";
-  if (summary.activeRefCount > 0) {
-    refsValue =
-      summary.dynamicRefCount > 0
-        ? `${summary.activeRefCount} conectada${summary.activeRefCount === 1 ? "" : "s"} · ${summary.dynamicRefCount} dinámica${summary.dynamicRefCount === 1 ? "" : "s"}`
-        : `${summary.activeRefCount} fija${summary.activeRefCount === 1 ? "" : "s"}`;
-  }
-
-  return (
-    <div className="populate-studio-summary">
-      <SummaryRow icon={Sparkles} label="Nodo" value={summary.templateLabel} />
-      <SummaryRow
-        icon={Table2}
-        label="Listado"
-        value={`${summary.listName} · ${summary.rowCount} fila${summary.rowCount === 1 ? "" : "s"}`}
-      />
-      <SummaryRow icon={Type} label="Prompt" value={promptValue} />
-      <SummaryRow icon={ImageIcon} label="Referencias" value={refsValue} />
-      <SummaryRow
-        icon={Layers}
-        label="Resultados"
-        value={`${summary.rowCount} imagen${summary.rowCount === 1 ? "" : "es"}`}
-      />
-      <SummaryRow
-        icon={CircleDollarSign}
-        label="Coste estimado"
-        value={`~$${summary.costTotalUsd.toFixed(2)} (${summary.rowCount} × ~$${summary.costPerImageUsd.toFixed(3)})`}
-      />
-    </div>
-  );
-}
-
-function DesignerStudioSummaryPanel({
-  templateLabel,
-  listName,
-  rowCount,
-  slideCount,
-  fields,
-  mappedCount,
-  pendingCount,
-}: {
-  templateLabel: string;
-  listName: string;
-  rowCount: number;
-  slideCount: number;
-  fields: number;
-  mappedCount: number;
-  pendingCount: number;
-}) {
-  const fieldsValue =
-    fields === 0
-      ? "Ninguno marcado en el Designer"
-      : `${mappedCount}/${fields} asignado${mappedCount === 1 ? "" : "s"}` +
-        (pendingCount > 0 ? ` · ${pendingCount} pendiente${pendingCount === 1 ? "" : "s"}` : "");
-
-  return (
-    <div className="populate-studio-summary">
-      <SummaryRow icon={Sparkles} label="Plantilla" value={templateLabel} />
-      <SummaryRow
-        icon={Table2}
-        label="Listado"
-        value={`${listName} · ${rowCount} fila${rowCount === 1 ? "" : "s"}`}
-      />
-      <SummaryRow
-        icon={Layers}
-        label="Slides"
-        value={`${slideCount} por instancia`}
-      />
-      <SummaryRow icon={Braces} label="Campos dinámicos" value={fieldsValue} />
-      <SummaryRow
-        icon={Layers}
-        label="Resultados"
-        value={`${rowCount} instancia${rowCount === 1 ? "" : "s"} · ${rowCount * slideCount} slide${
-          rowCount * slideCount === 1 ? "" : "s"
-        }`}
-      />
-    </div>
-  );
-}
-
-function StudioSlotList({
-  slots,
-  selectedId,
-  onSelect,
-}: {
-  slots: PopulateStudioSlot[];
-  selectedId: string;
-  onSelect: (id: string) => void;
-}) {
-  return (
-    <ul className="populate-studio-slots">
-      {slots.map((slot) => (
-        <li key={slot.id}>
-          <button
-            type="button"
-            className={`populate-studio-slot${selectedId === slot.id ? " is-selected" : ""}${slot.ok ? "" : " is-warn"}`}
-            onClick={() => onSelect(slot.id)}
-          >
-            <span className="populate-studio-slot__icon">{slotIcon(slot)}</span>
-            <span className="populate-studio-slot__body">
-              <span className="populate-studio-slot__label">{slot.label}</span>
-              <span className="populate-studio-slot__status">{slot.status}</span>
-              {slot.sourceLabel ? (
-                <span className="populate-studio-slot__connected">
-                  <Link2 size={11} strokeWidth={2} aria-hidden />
-                  {slot.sourceLabel}
-                </span>
-              ) : null}
-            </span>
-            {slot.thumbUrl ? (
-              <StudioThumb url={slot.thumbUrl} alt={slot.label} className="populate-studio-slot__thumb" />
-            ) : null}
-            {slot.ok ? (
-              <Check size={14} strokeWidth={2} className="populate-studio-slot__check" aria-hidden />
-            ) : (
-              <AlertTriangle size={14} strokeWidth={2} className="populate-studio-slot__warn" aria-hidden />
-            )}
-          </button>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function ImageFieldPicker({
-  fields,
-  activeKey,
-  onPick,
-  emptyHint,
+export function PopulateStudio({
+  nodeLabel,
   dataset,
   listId,
-  rowCount,
-}: {
-  fields: { id: string; key: string; label: string }[];
-  activeKey?: string;
-  onPick: (field: { id: string; key: string; label: string }) => void;
-  emptyHint: string;
-  dataset: Dataset | null;
-  listId: string | null;
-  rowCount: number;
-}) {
-  if (fields.length === 0) {
-    return <p className="populate-studio-center__empty">{emptyHint}</p>;
-  }
-  return (
-    <ul className="populate-studio-field-list">
-      {fields.map((f) => {
-        const samples = sampleColumnImageUrls(dataset, listId, f.id, rowCount, 4);
-        return (
-          <li key={f.id}>
-            <button
-              type="button"
-              className={`populate-studio-field populate-studio-field--image${activeKey === f.key ? " is-active" : ""}`}
-              onClick={() => onPick(f)}
-            >
-              <ImageIcon size={15} strokeWidth={1.75} className="populate-studio-field__icon" aria-hidden />
-              <span className="populate-studio-field__body">
-                <span className="populate-studio-field__label">{f.label}</span>
-                <span className="populate-studio-field__key">{f.key}</span>
-              </span>
-              {samples.length > 0 ? (
-                <span className="populate-studio-field__samples">
-                  {samples.map((url, i) => (
-                    <StudioThumb
-                      key={`${f.id}-${i}`}
-                      url={url}
-                      alt={`${f.label} fila ${i + 1}`}
-                      className="populate-studio-field__sample"
-                    />
-                  ))}
-                </span>
-              ) : null}
-              {activeKey === f.key ? (
-                <Check size={14} strokeWidth={2} className="populate-studio-field__check" aria-hidden />
-              ) : null}
-            </button>
-          </li>
-        );
-      })}
-    </ul>
+  templates,
+  activeTemplate,
+  activeTemplateNodeId,
+  onSelectTemplate,
+  binding,
+  onClose,
+  onChangeBinding,
+  rasterizePages,
+  onShare,
+  shareBusy,
+  shareError,
+  shareUrl,
+  onCopyShareUrl,
+  shareMatchLabel,
+  onShareMatchLabelChange,
+  projectSaved = true,
+}: PopulateStudioProps) {
+  const list = dataset?.lists.find((l) => l.id === listId);
+  const schema = list?.schema ?? [];
+  const textCols = useMemo(() => schema.filter((f) => f.type === "text"), [schema]);
+  const imageCols = useMemo(() => imageColumnsInSchema(schema), [schema]);
+
+  const entities = useMemo(
+    () => groupPendingFieldsIntoEntities(activeTemplate.dynamicFields),
+    [activeTemplate.dynamicFields],
   );
-}
 
-function FieldPicker({
-  fields,
-  activeKey,
-  onPick,
-  emptyHint,
-  fieldIcon: FieldIcon = Type,
-}: {
-  fields: { id: string; key: string; label: string }[];
-  activeKey?: string;
-  onPick: (field: { id: string; key: string; label: string }) => void;
-  emptyHint: string;
-  fieldIcon?: React.ComponentType<{ size?: number; strokeWidth?: number; className?: string }>;
-}) {
-  if (fields.length === 0) {
-    return <p className="populate-studio-center__empty">{emptyHint}</p>;
-  }
-  return (
-    <ul className="populate-studio-field-list">
-      {fields.map((f) => (
-        <li key={f.id}>
-          <button
-            type="button"
-            className={`populate-studio-field${activeKey === f.key ? " is-active" : ""}`}
-            onClick={() => onPick(f)}
-          >
-            <FieldIcon size={15} strokeWidth={1.75} className="populate-studio-field__icon" aria-hidden />
-            <span className="populate-studio-field__body">
-              <span className="populate-studio-field__label">{f.label}</span>
-              <span className="populate-studio-field__key">{f.key}</span>
-            </span>
-            {activeKey === f.key ? (
-              <Check size={14} strokeWidth={2} className="populate-studio-field__check" aria-hidden />
-            ) : null}
-          </button>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-export function PopulateStudio(props: PopulateStudioProps) {
-  const {
-    nodeLabel,
-    mode,
-    onModeChange,
-    onClose,
-    templateLabel,
-    promptText,
-    promptLabel = "Prompt",
-    bindings,
-    activeImageRefs,
-    model,
-    onChangePrompt,
-    onChangeBinding,
-    manualTokens,
-    onChangeManualToken,
-    schema,
-    constantFields,
-    listId,
-    listName,
-    rowCount,
-    lists,
-    onSelectList,
-    datasetConnected,
-    datasetLoading,
-    dataset,
-    formModel,
-    formValues,
-    formImageRows,
-    onChangeFormText,
-    onChangeFormImageRow,
-    onAutofillForm,
-    busy,
-    progress,
-    lastRunOutputs,
-    lastRunFailures,
-    lastRunOkCount,
-    lastRunFailedCount,
-    runStatus,
-    previewRowIndex,
-    onPreviewRowChange,
-    previewUrl,
-    previewLoading,
-    onPreview,
-    onGenerateBatch,
-    onGenerateForm,
-    shareToken,
-    shareBusy,
-    shareError,
-    onShare,
-    onCopyShareUrl,
-    error,
-    datasetOutput,
-    onChangeDatasetOutput,
-    channels,
-    onChangeChannelOutput,
-    onChangeChannelPrompt,
-    lastDatasetWriteSummary,
-    isDesignerTemplate = false,
-    designerFields,
-    designerSlideCount = 0,
-    designerSlotBindings,
-    onChangeDesignerSlotBinding,
-    designerFormModel,
-    designerFormValues,
-    designerFormResults,
-    onChangeDesignerFormValue,
-    onAutofillDesignerForm,
-    onGenerateDesignerForm,
-  } = props;
-
-  const slots = useMemo(
+  const formModel = useMemo(
     () =>
-      buildPopulateStudioSlots({
-        promptText,
-        bindings,
-        activeImageRefs,
-        schema,
-        constantFields,
-        promptLabel,
-      }),
-    [promptText, bindings, activeImageRefs, schema, constantFields, promptLabel],
+      dataset && listId
+        ? derivePopulateForm({
+            binding,
+            dynamicFields: activeTemplate.dynamicFields,
+            dataset,
+            listId,
+            slideCount: activeTemplate.pages.length,
+          })
+        : null,
+    [activeTemplate.dynamicFields, activeTemplate.pages.length, binding, dataset, listId],
   );
 
-  const summary = useMemo(
-    () =>
-      buildPopulateStudioSummary({
-        templateLabel: templateLabel ?? "—",
-        listName,
-        rowCount,
-        promptText,
-        bindings,
-        activeImageRefs,
-        schema,
-        constantFields,
-        model,
-        datasetConnected,
-        hasTemplate: Boolean(templateLabel),
-      }),
-    [
-      templateLabel,
-      listName,
-      rowCount,
-      promptText,
-      bindings,
-      activeImageRefs,
-      schema,
-      constantFields,
-      model,
-      datasetConnected,
-    ],
-  );
-
-  /** Slots Designer: 1 por campo dinámico (texto → icono variable, imagen → icono imagen). */
-  const designerSlots = useMemo<PopulateStudioSlot[]>(() => {
-    if (!isDesignerTemplate) return [];
-    return (designerFields ?? []).map((f) => {
-      const kind: PopulateStudioSlot["kind"] = f.kind === "image" ? "ref" : "token";
-      if (f.status === "bound") {
-        return {
-          id: `dfield:${f.key}`,
-          kind,
-          label: f.label,
-          status: "Enlazado en Designer",
-          ok: true,
-          sourceLabel: f.fieldKey ?? f.label,
-        };
-      }
-      const mapped = designerSlotBindings?.[f.key];
-      return {
-        id: `dfield:${f.key}`,
-        kind,
-        label: f.label,
-        status: mapped ? `→ ${mapped.fieldKey}` : "Sin asignar",
-        ok: Boolean(mapped),
-        fieldKey: mapped?.fieldKey,
-        sourceLabel: mapped?.fieldKey,
-      };
-    });
-  }, [isDesignerTemplate, designerFields, designerSlotBindings]);
-
-  const activeSlots = isDesignerTemplate ? designerSlots : slots;
-
-  const [selectedId, setSelectedId] = useState("prompt");
+  const [previewPickedRows, setPreviewPickedRows] = useState<Record<string, string>>({});
+  const [previewPickedPoses, setPreviewPickedPoses] = useState<Record<string, string>>({});
+  const [manualValues, setManualValues] = useState<Record<string, string>>({});
+  const [configOpen, setConfigOpen] = useState(false);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onClose();
+    if (!formModel) return;
+    setPreviewPickedRows((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const entity of formModel.entities) {
+        if (!next[entity.pickId] && entity.options[0]?.cardId) {
+          next[entity.pickId] = entity.options[0]!.cardId;
+          changed = true;
+        }
       }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+      return changed ? next : prev;
+    });
+  }, [formModel, activeTemplateNodeId]);
 
-  // Selección efectiva derivada en render (sin setState-en-effect): si el slot guardado ya no
-  // existe (cambió la plantilla / los campos), cae al primero disponible.
-  const effectiveSelectedId = activeSlots.some((s) => s.id === selectedId)
-    ? selectedId
-    : activeSlots[0]?.id ?? "prompt";
-  const selected = activeSlots.find((s) => s.id === effectiveSelectedId) ?? activeSlots[0];
+  useEffect(() => {
+    if (binding.entityPoseColumnFieldId) {
+      setPreviewPickedPoses((prev) => ({ ...binding.entityPoseColumnFieldId, ...prev }));
+    }
+  }, [binding.entityPoseColumnFieldId]);
 
-  const textFields = useMemo(() => {
-    const allowed = datasetFieldTypesForInputKind("text");
-    const fromList = schema.filter((f) => allowed.includes(f.type));
-    const fromConst = constantFields.filter((f) => allowed.includes(f.type));
-    return [...fromList, ...fromConst].map((f) => ({ id: f.id, key: f.key, label: f.label }));
-  }, [schema, constantFields]);
-
-  const imageFields = useMemo(() => {
-    const allowed = datasetFieldTypesForInputKind("image");
-    return schema.filter((f) => allowed.includes(f.type));
-  }, [schema]);
-
-  const validityFields = useMemo(
-    () => [...schema, ...constantFields].map((f) => ({ key: f.key, label: f.label })),
-    [schema, constantFields],
-  );
-
-  const insertableFields = textFields;
-
-  const replaceTokenKey = useCallback(
-    (oldKey: string, newKey: string) => {
-      if (oldKey === newKey) return;
-      const next = promptText.replace(new RegExp(`\\{${oldKey}\\}`, "g"), `{${newKey}}`);
-      onChangePrompt(next);
+  const thumbForPreview = useMemo(
+    () => (cardId: string) => {
+      const card = list?.cards.find((c) => c.id === cardId);
+      return recordThumbFromValues(card?.values, schema);
     },
-    [promptText, onChangePrompt],
+    [list?.cards, schema],
   );
 
-  const selectedRef = useMemo(() => {
-    if (selected?.kind !== "ref" || !selected.inputId) return null;
-    return activeImageRefs.find((r) => r.inputId === selected.inputId) ?? null;
-  }, [selected, activeImageRefs]);
-
-  // Derivados Designer (Modo 2): conteo de huecos pendientes y mapeados para el resumen/avisos.
-  const designerPendingFields = useMemo(
-    () => (designerFields ?? []).filter((f) => f.status === "pending"),
-    [designerFields],
-  );
-  const designerMappedCount = useMemo(
-    () => designerPendingFields.filter((f) => Boolean(designerSlotBindings?.[f.key])).length,
-    [designerPendingFields, designerSlotBindings],
-  );
-  const designerUnmappedCount = designerPendingFields.length - designerMappedCount;
-
-  const renderDesignerCenter = () => {
-    if (!onChangeDesignerSlotBinding) return null;
-    if ((designerFields ?? []).length === 0) {
-      return (
-        <p className="populate-studio-center__empty">
-          Marca objetos como campo dinámico dentro del Designer (panel Dataset de cada objeto) para
-          poder mapearlos aquí a las columnas del Dataset.
-        </p>
-      );
-    }
-    if (!selected) return null;
-    const field = (designerFields ?? []).find((f) => `dfield:${f.key}` === selected.id);
-    if (!field) return null;
-
-    if (field.status === "bound") {
-      return (
-        <div className="populate-studio-center-panel">
-          <p className="populate-studio-center__lead">
-            Campo <span className="populate-studio-center__name">{field.label}</span> ya está enlazado
-            a la columna <span className="populate-studio-center__name">{field.fieldKey}</span> dentro
-            del propio Designer (Modo 1). Se resuelve automáticamente; no necesita mapeo aquí.
-          </p>
-        </div>
-      );
-    }
-
-    const mapped = designerSlotBindings?.[field.key];
-    const isImage = field.kind === "image";
-    const pickerFields = isImage
-      ? imageFields.map((f) => ({ id: f.id, key: f.key, label: f.label }))
-      : textFields;
-
-    return (
-      <div className="populate-studio-center-panel">
-        <p className="populate-studio-center__lead">
-          Campo dinámico <span className="populate-studio-center__name">{field.label}</span> (
-          {isImage ? "imagen" : "texto"}) — elige la columna del Dataset que lo rellenará en cada
-          instancia generada.
-        </p>
-        <ul className="populate-studio-field-list">
-          <li>
-            <button
-              type="button"
-              className={`populate-studio-field${!mapped ? " is-active" : ""}`}
-              onClick={() => onChangeDesignerSlotBinding(field.key, "")}
-            >
-              <AlertTriangle size={15} strokeWidth={1.75} className="populate-studio-field__icon" aria-hidden />
-              <span className="populate-studio-field__body">
-                <span className="populate-studio-field__label">Sin asignar</span>
-                <span className="populate-studio-field__key">El hueco queda fijo con el valor de la plantilla</span>
-              </span>
-              {!mapped ? (
-                <Check size={14} strokeWidth={2} className="populate-studio-field__check" aria-hidden />
-              ) : null}
-            </button>
-          </li>
-        </ul>
-        {isImage ? (
-          <ImageFieldPicker
-            fields={pickerFields}
-            activeKey={mapped?.fieldKey}
-            onPick={(f) => onChangeDesignerSlotBinding(field.key, f.id)}
-            emptyHint="No hay columnas de imagen en el listado activo."
-            dataset={dataset}
-            listId={listId}
-            rowCount={rowCount}
-          />
-        ) : (
-          <FieldPicker
-            fields={pickerFields}
-            activeKey={mapped?.fieldKey}
-            onPick={(f) => onChangeDesignerSlotBinding(field.key, f.id)}
-            emptyHint="No hay columnas de texto en el listado activo."
-          />
-        )}
-      </div>
-    );
-  };
-
-  const renderCenter = () => {
-    if (!templateLabel) {
-      return (
-        <p className="populate-studio-center__empty">
-          Conecta Image Creation (salida Image out) al handle Plantilla de Populate.
-        </p>
-      );
-    }
-
-    if (isDesignerTemplate) {
-      if (mode === "form") {
-        if (!designerFormModel || !onChangeDesignerFormValue || !onGenerateDesignerForm) return null;
-        return (
-          <DesignerFormPanel
-            model={designerFormModel}
-            values={designerFormValues ?? {}}
-            busy={busy}
-            progress={progress}
-            results={designerFormResults ?? []}
-            canGenerate={!designerFormModel.empty}
-            onChangeValue={onChangeDesignerFormValue}
-            onAutofill={onAutofillDesignerForm}
-            onGenerate={() => {
-              onGenerateDesignerForm();
-            }}
-            shareToken={shareToken}
-            shareBusy={shareBusy}
-            shareError={shareError}
-            onShare={onShare}
-            onCopyShareUrl={onCopyShareUrl}
-          />
-        );
-      }
-      return renderDesignerCenter();
-    }
-
-    if (mode === "form") {
-      return (
-        <PopulateFormPanel
-          model={formModel}
-          textValues={formValues}
-          imageRows={formImageRows}
-          busy={busy}
-          canGenerate={!formModel.empty}
-          onChangeText={onChangeFormText}
-          onChangeImageRow={onChangeFormImageRow}
-          onAutofill={onAutofillForm}
-          onGenerate={() => {
-            onClose();
-            onGenerateForm();
-          }}
-          shareToken={shareToken}
-          shareBusy={shareBusy}
-          shareError={shareError}
-          onShare={onShare}
-          onCopyShareUrl={onCopyShareUrl}
-        />
-      );
-    }
-
-    if (!selected) return null;
-
-    if (selected.kind === "prompt") {
-      return (
-        <div className="populate-studio-prompt-editor">
-          <PopulatePromptEditor
-            value={promptText}
-            fields={validityFields}
-            insertableFields={insertableFields}
-            label={promptLabel}
-            placeholder="Escribe el prompt que se enviará al nodo creativo…"
-            onChange={onChangePrompt}
-          />
-        </div>
-      );
-    }
-
-    if (selected.kind === "token" && selected.fieldKey) {
-      const tokenKey = selected.fieldKey;
-      const isManual = !!manualTokens && tokenKey in manualTokens;
-      const manualValue = manualTokens?.[tokenKey] ?? "";
-      const matchField = schema.find((f) => f.key === tokenKey);
-      const suggestions =
-        matchField && dataset && listId && rowCount > 0
-          ? (() => {
-              const seen = new Set<string>();
-              const out: string[] = [];
-              for (let i = 0; i < rowCount; i += 1) {
-                const text = fieldValueAsText(
-                  getListFieldValueAtRow(dataset, listId, matchField.id, i) ?? undefined,
-                ).trim();
-                if (text && !seen.has(text)) {
-                  seen.add(text);
-                  out.push(text);
-                }
-                if (out.length >= 50) break;
+  const patchFacetColumn = (slotKey: string, fieldId: string) => {
+    const f = schema.find((x) => x.id === fieldId);
+    if (!f || !list) return;
+    onChangeBinding({
+      ...binding,
+      slotColumns: {
+        ...binding.slotColumns,
+        [slotKey]: { listId, listKey: list.key, fieldId: f.id, fieldKey: f.key },
+      },
+      sources: {
+        ...binding.sources,
+        [slotKey]:
+          binding.sources[slotKey]?.kind === "dataset"
+            ? {
+                ...binding.sources[slotKey],
+                columnFieldId: f.id,
+                columnFieldKey: f.key,
               }
-              return out;
-            })()
-          : [];
-      const datalistId = `populate-token-suggest-${tokenKey}`;
-      return (
-        <div className="populate-studio-center-panel">
-          <p className="populate-studio-center__lead">
-            Variable <span className="populate-studio-center__name">{selected.label}</span> —{" "}
-            {isManual
-              ? "se rellena a mano antes de generar (igual para todas las filas)."
-              : "elige la columna del Dataset que alimenta este campo en cada fila."}
-          </p>
-          {onChangeManualToken ? (
-            <ul className="populate-studio-source-toggle">
-              <li>
-                <button
-                  type="button"
-                  className={`populate-studio-source-toggle__btn${!isManual ? " is-active" : ""}`}
-                  onClick={() => onChangeManualToken(tokenKey, null)}
-                >
-                  <Table2 size={13} strokeWidth={1.9} aria-hidden /> Columna del Dataset
-                </button>
-              </li>
-              <li>
-                <button
-                  type="button"
-                  className={`populate-studio-source-toggle__btn${isManual ? " is-active" : ""}`}
-                  onClick={() => onChangeManualToken(tokenKey, manualValue)}
-                  title="Rellenar antes de generar; constante en todas las filas"
-                >
-                  <Type size={13} strokeWidth={1.9} aria-hidden /> Manual
-                </button>
-              </li>
-            </ul>
-          ) : null}
-          {isManual && onChangeManualToken ? (
-            <div className="populate-studio-manual-field">
-              <input
-                type="text"
-                className="populate-studio-manual-input nodrag"
-                value={manualValue}
-                list={suggestions.length > 0 ? datalistId : undefined}
-                placeholder={`${selected.label}…`}
-                onChange={(e) => onChangeManualToken(tokenKey, e.target.value)}
-                onPointerDown={(e) => e.stopPropagation()}
-                onKeyDown={(e) => e.stopPropagation()}
-              />
-              {suggestions.length > 0 ? (
-                <datalist id={datalistId}>
-                  {suggestions.map((s) => (
-                    <option key={s} value={s} />
-                  ))}
-                </datalist>
-              ) : null}
-              <span className="populate-studio-manual-field__hint">
-                Se usará este valor en todas las filas. Déjalo vacío para volver a la columna.
-              </span>
-            </div>
-          ) : (
-            <FieldPicker
-              fields={textFields}
-              activeKey={tokenKey}
-              onPick={(f) => replaceTokenKey(tokenKey, f.key)}
-              emptyHint="No hay columnas de texto en el listado activo."
-            />
-          )}
-        </div>
-      );
-    }
-
-    if (selected.kind === "ref" && selected.inputId) {
-      const binding = bindings[selected.inputId];
-      const activeFieldId = binding?.source === "column" ? binding.fieldId : undefined;
-      const connectedUrl = selectedRef?.fixedUrl;
-      return (
-        <div className="populate-studio-center-panel">
-          {connectedUrl ? (
-            <div className="populate-studio-ref-preview">
-              <span className="populate-studio-ref-preview__label">
-                <ImageIcon size={14} strokeWidth={1.75} aria-hidden />
-                Referencia conectada ahora
-              </span>
-              <div className="populate-studio-ref-preview__frame">
-                <StudioThumb url={connectedUrl} alt={selected.label} className="populate-studio-ref-preview__img" />
-              </div>
-            </div>
-          ) : null}
-          <p className="populate-studio-center__lead">
-            Referencia <span className="populate-studio-center__name">{selected.label}</span>
-            {selected.sourceLabel ? (
-              <>
-                {" "}
-                · conectada desde <span className="populate-studio-center__name">{selected.sourceLabel}</span>
-              </>
-            ) : null}
-            . Mantén la imagen actual o enlázala a una columna del Dataset.
-          </p>
-          <ul className="populate-studio-field-list populate-studio-field-list--ref">
-            <li>
-              <button
-                type="button"
-                className={`populate-studio-field populate-studio-field--image${!binding || binding.source === "fixed" ? " is-active" : ""}`}
-                onClick={() =>
-                  onChangeBinding(selected.inputId!, { inputId: selected.inputId!, source: "fixed" })
-                }
-              >
-                <Pin size={15} strokeWidth={1.75} className="populate-studio-field__icon" aria-hidden />
-                <span className="populate-studio-field__body">
-                  <span className="populate-studio-field__label">Imagen fija</span>
-                  <span className="populate-studio-field__key">Usar la referencia conectada tal cual</span>
-                </span>
-                {connectedUrl ? (
-                  <StudioThumb
-                    url={connectedUrl}
-                    alt={selected.label}
-                    className="populate-studio-field__sample"
-                  />
-                ) : null}
-                {!binding || binding.source === "fixed" ? (
-                  <Check size={14} strokeWidth={2} className="populate-studio-field__check" aria-hidden />
-                ) : null}
-              </button>
-            </li>
-            <li>
-              <button
-                type="button"
-                className={`populate-studio-field populate-studio-field--image${binding?.source === "manual" ? " is-active" : ""}`}
-                onClick={() =>
-                  onChangeBinding(selected.inputId!, {
-                    inputId: selected.inputId!,
-                    source: "manual",
-                    manualValue: binding?.manualValue ?? "",
-                  })
-                }
-              >
-                <Pin size={15} strokeWidth={1.75} className="populate-studio-field__icon" aria-hidden />
-                <span className="populate-studio-field__body">
-                  <span className="populate-studio-field__label">Manual</span>
-                  <span className="populate-studio-field__key">Rellenar antes de generar (URL de imagen)</span>
-                </span>
-                {binding?.source === "manual" ? (
-                  <Check size={14} strokeWidth={2} className="populate-studio-field__check" aria-hidden />
-                ) : null}
-              </button>
-            </li>
-          </ul>
-          {binding?.source === "manual" ? (
-            <input
-              type="text"
-              className="populate-studio-manual-input nodrag"
-              value={binding.manualValue ?? ""}
-              placeholder="Pega una URL de imagen…"
-              onChange={(e) =>
-                onChangeBinding(selected.inputId!, {
-                  inputId: selected.inputId!,
-                  source: "manual",
-                  manualValue: e.target.value,
-                })
-              }
-              onPointerDown={(e) => e.stopPropagation()}
-            />
-          ) : null}
-          <ImageFieldPicker
-            fields={imageFields.map((f) => ({ id: f.id, key: f.key, label: f.label }))}
-            activeKey={
-              activeFieldId ? imageFields.find((f) => f.id === activeFieldId)?.key : undefined
-            }
-            onPick={(f) =>
-              onChangeBinding(selected.inputId!, {
-                inputId: selected.inputId!,
-                source: "column",
-                listId: listId ?? undefined,
-                fieldId: f.id,
-                fieldKey: f.key,
-              })
-            }
-            emptyHint="No hay columnas de imagen en el listado activo."
-            dataset={dataset}
-            listId={listId}
-            rowCount={rowCount}
-          />
-        </div>
-      );
-    }
-
-    return null;
+            : (binding.sources[slotKey] ?? { kind: "manual" }),
+      },
+    });
   };
 
-  const handleGenerateBatch = () => {
-    onGenerateBatch();
-  };
-
-  const okCount = lastRunOkCount ?? lastRunOutputs.length;
-  const failedCount = lastRunFailedCount ?? lastRunFailures?.length ?? 0;
-  const hasRunReport =
-    busy ||
-    runStatus === "partial" ||
-    runStatus === "error" ||
-    failedCount > 0 ||
-    (runStatus === "done" && okCount > 0);
-
-  const runSummaryMessage = useMemo(() => {
-    if (error?.trim()) return error.trim();
-    if (failedCount > 0 || runStatus === "partial" || runStatus === "error") {
-      return formatPopulateRunErrorMessage({
-        okCount,
-        failedCount,
-        totalRows: rowCount,
-        failures: lastRunFailures ?? [],
-      });
-    }
-    return null;
-  }, [error, failedCount, okCount, rowCount, lastRunFailures, runStatus]);
-
-  const runReportTitle =
-    runStatus === "error" && okCount === 0
-      ? "Error en el lote"
-      : failedCount > 0 || runStatus === "partial"
-        ? "Ejecución parcial"
-        : busy
-          ? "Generando lote"
-          : "Última ejecución";
-
-  const canGenerate = isDesignerTemplate
-    ? Boolean(templateLabel) && datasetConnected && rowCount > 0
-    : summary.canGenerate;
-
-  const progressPct =
-    progress && progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
-
-  const portal = (
+  return (
     <div
       className="populate-studio-root"
       data-foldder-studio-panel
-      data-foldder-studio-canvas
-      data-foldder-populate-studio
-      style={{ "--populate-accent": POPULATE_ACCENT } as React.CSSProperties}
+      style={{ "--populate-accent": ACCENT } as React.CSSProperties}
     >
       <FoldderStudioHeader
         nodeType="populate"
         nodeLabel={nodeLabel}
-        subtitle="Dinamización por Dataset"
+        subtitle="Previsualiza la plantilla real mientras configuras el formulario"
         onClose={onClose}
         actions={
-          <div className="populate-studio-mode-toggle" role="group" aria-label="Modo de ejecución">
+          onShare ? (
             <button
               type="button"
-              className={mode === "batch" ? "is-active" : ""}
-              onClick={() => onModeChange("batch")}
+              className="populate-studio-share nodrag"
+              disabled={shareBusy}
+              onClick={onShare}
             >
-              Lote
+              {shareBusy ? "…" : "Compartir formulario"}
             </button>
-            <button
-              type="button"
-              className={mode === "form" ? "is-active" : ""}
-              onClick={() => onModeChange("form")}
-            >
-              Formulario
-            </button>
-          </div>
+          ) : null
         }
       />
 
-      {runSummaryMessage && (failedCount > 0 || runStatus === "error" || runStatus === "partial") ? (
-        <div className="populate-studio-run-alert" role="alert">
-          <AlertTriangle size={16} strokeWidth={2} aria-hidden />
-          <div className="populate-studio-run-alert__body">
-            <strong className="populate-studio-run-alert__title">{runReportTitle}</strong>
-            <p className="populate-studio-run-alert__text">{runSummaryMessage}</p>
-          </div>
-        </div>
-      ) : null}
-
       <div className="populate-studio-body">
-        {mode === "batch" ? (
-          <>
-            <aside className="populate-studio-col populate-studio-col--left">
-              <div className="populate-studio-col__head">
-                <span className="populate-studio-col__title">
-                  {isDesignerTemplate ? "Campos dinámicos" : "Dinamizar"}
-                </span>
-                <span className="populate-studio-col__hint">
-                  {isDesignerTemplate ? "del Designer" : "elementos clicables"}
-                </span>
-              </div>
-              {lists.length > 1 ? (
-                <select
-                  className="populate-studio-list-select"
-                  value={listId ?? ""}
-                  onChange={(e) => onSelectList(e.target.value)}
-                >
-                  {lists.map((l) => (
-                    <option key={l.id} value={l.id}>
-                      {l.name} · {l.cards.length}
-                    </option>
-                  ))}
-                </select>
-              ) : null}
-              {datasetLoading ? (
-                <span className="populate-studio-loading">
-                  <Loader2 size={14} className="animate-spin" /> Cargando Dataset…
-                </span>
-              ) : isDesignerTemplate ? (
-                activeSlots.length > 0 ? (
-                  <StudioSlotList
-                    slots={activeSlots}
-                    selectedId={effectiveSelectedId}
-                    onSelect={setSelectedId}
-                  />
-                ) : (
-                  <p className="populate-studio-center__empty">
-                    Ningún objeto marcado como dinámico todavía.
-                  </p>
-                )
-              ) : (
-                <>
-                  <StudioSlotList slots={slots} selectedId={effectiveSelectedId} onSelect={setSelectedId} />
-                  {activeImageRefs.length > 0 ? (
-                    <div className="populate-studio-ref-strip">
-                      <span className="populate-studio-ref-strip__label">
-                        <ImageIcon size={13} strokeWidth={1.75} aria-hidden />
-                        Referencias conectadas
-                      </span>
-                      <div className="populate-studio-ref-strip__grid">
-                        {activeImageRefs.map((ref) => (
-                          <button
-                            key={ref.inputId}
-                            type="button"
-                            className={`populate-studio-ref-strip__item${effectiveSelectedId === `ref:${ref.inputId}` ? " is-selected" : ""}`}
-                            onClick={() => setSelectedId(`ref:${ref.inputId}`)}
-                            title={ref.label}
-                          >
-                            <StudioThumb url={ref.fixedUrl} alt={ref.label} className="populate-studio-ref-strip__thumb" />
-                            <span>{ref.label}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-                </>
-              )}
-            </aside>
-
-            <main className="populate-studio-col populate-studio-col--center">{renderCenter()}</main>
-
-            <aside className="populate-studio-col populate-studio-col--right">
-              <div className="populate-studio-col__scroll">
-                <div className="populate-studio-col__head">
-                  <span className="populate-studio-col__title">Resumen</span>
-                  <span className="populate-studio-col__hint">
-                    {busy ? "en curso" : hasRunReport && okCount > 0 ? "última ejecución" : "antes de generar"}
-                  </span>
-                </div>
-                <div className="populate-studio-summary">
-                  {isDesignerTemplate ? (
-                    <DesignerStudioSummaryPanel
-                      templateLabel={templateLabel ?? "—"}
-                      listName={listName}
-                      rowCount={rowCount}
-                      slideCount={designerSlideCount}
-                      fields={designerPendingFields.length}
-                      mappedCount={designerMappedCount}
-                      pendingCount={designerUnmappedCount}
-                    />
-                  ) : (
-                    <StudioSummaryPanel summary={summary} />
-                  )}
-                </div>
-                {isDesignerTemplate ? (
-                  designerUnmappedCount > 0 ? (
-                    <ul className="populate-studio-blockers">
-                      <li>
-                        <AlertTriangle size={14} strokeWidth={2} aria-hidden />
-                        {designerUnmappedCount} campo{designerUnmappedCount === 1 ? "" : "s"} sin
-                        columna: quedará{designerUnmappedCount === 1 ? "" : "n"} fijo
-                        {designerUnmappedCount === 1 ? "" : "s"} con el valor de la plantilla.
-                      </li>
-                    </ul>
-                  ) : null
-                ) : summary.blockers.length > 0 ? (
-                  <ul className="populate-studio-blockers">
-                    {summary.blockers.map((b) => (
-                      <li key={b}>
-                        <AlertTriangle size={14} strokeWidth={2} aria-hidden />
-                        {b}
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-                {datasetConnected && listId ? (
-                  channels && channels.length > 1 && !isDesignerTemplate ? (
-                    <div className="populate-studio-channels">
-                      <p className="populate-studio-channels__hint">
-                        {channels.length} canales conectados. Cada creador genera su imagen y la
-                        vuelca a su propia columna del Dataset.
-                      </p>
-                      {channels.map((ch) => (
-                        <div key={ch.channelId} className="populate-studio-channels__item">
-                          <p className="populate-studio-channels__label">{ch.label}</p>
-                          <label className="populate-studio-channels__prompt">
-                            <span>Prompt del canal (pose / variante)</span>
-                            {ch.nodePrompt.trim() ? (
-                              <span className="populate-studio-channels__prompt-hint">
-                                Se concatena al prompt del Image Creator: «
-                                {ch.nodePrompt.length > 72
-                                  ? `${ch.nodePrompt.slice(0, 72)}…`
-                                  : ch.nodePrompt}
-                                »
-                              </span>
-                            ) : null}
-                            <textarea
-                              className="populate-studio-channels__prompt-input nodrag"
-                              rows={3}
-                              placeholder="p. ej. de perfil, brazos cruzados, mirando a cámara…"
-                              value={ch.channelPrompt}
-                              onChange={(e) => onChangeChannelPrompt?.(ch.channelId, e.target.value)}
-                              onPointerDown={(e) => e.stopPropagation()}
-                            />
-                          </label>
-                          <PopulateDatasetOutputPanel
-                            settings={ch.settings}
-                            schema={schema}
-                            templateLabel={ch.label}
-                            onChange={(next) => onChangeChannelOutput?.(ch.channelId, next)}
-                            variant="image"
-                          />
-                        </div>
-                      ))}
-                      {lastDatasetWriteSummary ? (
-                        <p className="populate-studio-dataset-output__summary">
-                          {lastDatasetWriteSummary}
-                        </p>
-                      ) : null}
-                    </div>
-                  ) : (
-                    <PopulateDatasetOutputPanel
-                      settings={datasetOutput}
-                      schema={schema}
-                      templateLabel={templateLabel}
-                      lastWriteSummary={lastDatasetWriteSummary}
-                      onChange={onChangeDatasetOutput}
-                      variant={isDesignerTemplate ? "designer" : "image"}
-                    />
-                  )
-                ) : null}
-                {!isDesignerTemplate && rowCount > 0 ? (
-                  <label className="populate-studio-preview-row">
-                    <Eye size={14} strokeWidth={1.75} aria-hidden />
-                    <span>Vista previa</span>
-                    <select
-                      value={previewRowIndex}
-                      onChange={(e) => onPreviewRowChange(Number(e.target.value))}
-                      disabled={previewLoading || Boolean(progress)}
-                    >
-                      {Array.from({ length: rowCount }, (_, i) => (
-                        <option key={i} value={i}>
-                          Fila {i + 1}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      disabled={previewLoading || !summary.canGenerate}
-                      onClick={onPreview}
-                    >
-                      Probar
-                    </button>
-                  </label>
-                ) : null}
+        <aside className="populate-studio-sidebar">
+          <p className="populate-studio-sidebar__title">Plantillas ({templates.length}/8)</p>
+          <ul className="populate-studio-template-list">
+            {templates.map((t) => (
+              <li key={t.templateNodeId}>
                 <button
                   type="button"
-                  className="populate-studio-generate"
-                  disabled={busy || !canGenerate}
-                  onClick={handleGenerateBatch}
+                  className={`populate-studio-template-chip nodrag${t.templateNodeId === activeTemplateNodeId ? " is-active" : ""}`}
+                  onClick={() => onSelectTemplate(t.templateNodeId)}
                 >
-                  {busy && progress ? (
-                    <>
-                      <Loader2 size={14} className="animate-spin" />
-                      Bucle {progress.done}/{progress.total}
-                    </>
-                  ) : (
-                    <>
-                      <Repeat size={14} strokeWidth={2.2} />
-                      {isDesignerTemplate
-                        ? `Multiplicar · ${rowCount} instancia${rowCount === 1 ? "" : "s"}`
-                        : `Generar · ${rowCount} fila${rowCount === 1 ? "" : "s"}`}
-                    </>
-                  )}
+                  <Sparkles size={14} />
+                  {t.templateLabel}
                 </button>
-                {busy && progress ? (
-                  <div className="populate-studio-progress">
-                    <div
-                      className="populate-studio-progress__bar"
-                      style={{ width: `${progressPct}%` }}
-                    />
-                  </div>
-                ) : null}
-                {hasRunReport ? (
-                  <div className="populate-studio-run-report">
-                    <div className="populate-studio-run-report__head">
-                      <span className="populate-studio-run-report__title">{runReportTitle}</span>
-                      {busy && progress ? (
-                        <span className="populate-studio-run-report__badge">
-                          <Loader2 size={11} className="animate-spin" aria-hidden />
-                          Fila {Math.min(progress.done, rowCount)}/{rowCount}
-                        </span>
-                      ) : runStatus === "partial" ? (
-                        <span className="populate-studio-run-report__badge populate-studio-run-report__badge--warn">
-                          Parcial
-                        </span>
-                      ) : runStatus === "error" ? (
-                        <span className="populate-studio-run-report__badge populate-studio-run-report__badge--error">
-                          Error
-                        </span>
-                      ) : null}
-                    </div>
-                    <ul className="populate-studio-run-report__stats">
-                      <li>
-                        <Check size={13} strokeWidth={2.2} aria-hidden />
-                        {okCount} generada{okCount === 1 ? "" : "s"} correctamente
-                      </li>
-                      {failedCount > 0 ? (
-                        <li className="populate-studio-run-report__stats--fail">
-                          <AlertTriangle size={13} strokeWidth={2.2} aria-hidden />
-                          {failedCount} fila{failedCount === 1 ? "" : "s"} con error
-                        </li>
-                      ) : null}
-                      {!busy && rowCount > 0 ? (
-                        <li>
-                          <Repeat size={13} strokeWidth={2.2} aria-hidden />
-                          {rowCount} fila{rowCount === 1 ? "" : "s"} en total
-                        </li>
-                      ) : null}
-                    </ul>
-                    {runSummaryMessage && failedCount > 0 ? (
-                      <p className="populate-studio-run-report__summary">{runSummaryMessage}</p>
-                    ) : null}
-                    {lastRunFailures && lastRunFailures.length > 0 ? (
-                      <ul className="populate-studio-run-report__failures">
-                        {lastRunFailures.map((f) => (
-                          <li key={`run-fail-${f.rowIndex}`}>
-                            <strong>Fila {f.rowIndex + 1}</strong>
-                            <span>{f.error}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
+              </li>
+            ))}
+          </ul>
 
-              {!isDesignerTemplate && (previewLoading || previewUrl) && mode === "batch" ? (
-                <div className="populate-studio-preview-panel">
-                  <span className="populate-studio-preview-panel__label">
-                    <Eye size={14} strokeWidth={1.75} aria-hidden />
-                    Vista previa · fila {previewRowIndex + 1}
-                  </span>
-                  <div className="populate-studio-preview-panel__frame">
-                    {previewLoading ? (
-                      <div className="populate-studio-preview-panel__loading">
-                        <Loader2 size={28} className="animate-spin" style={{ color: POPULATE_ACCENT }} />
-                        <span>Generando vista previa…</span>
-                      </div>
-                    ) : previewUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={previewUrl} alt="Vista previa" className="populate-studio-preview-panel__img" draggable={false} />
-                    ) : null}
-                  </div>
-                </div>
+          {onShareMatchLabelChange ? (
+            <div className="populate-studio-share-match nodrag">
+              <p className="populate-studio-sidebar__title">Partido</p>
+              <input
+                className="populate-studio-input"
+                value={shareMatchLabel ?? ""}
+                placeholder="Ej. Partido 1 — Lakers vs Bulls"
+                onChange={(e) => onShareMatchLabelChange(e.target.value)}
+              />
+              <p className="populate-studio-hint">
+                Las piezas generadas se agrupan bajo este nombre en Foldder y en la galería pública.
+              </p>
+              {!projectSaved ? (
+                <p className="populate-studio-share-error">Guarda el proyecto antes de compartir.</p>
               ) : null}
-            </aside>
-          </>
-        ) : (
-          <>
-            <aside className="populate-studio-col populate-studio-col--left populate-studio-col--form">
-              <div className="populate-studio-col__head">
-                <span className="populate-studio-col__title">
-                  {isDesignerTemplate ? "Campos dinámicos" : "Variables"}
-                </span>
-                <span className="populate-studio-col__hint">del formulario</span>
-              </div>
-              {isDesignerTemplate ? (
-                !designerFormModel || designerFormModel.empty ? (
-                  <p className="populate-studio-center__empty">
-                    Marca objetos como campo dinámico en el Designer.
-                  </p>
-                ) : (
-                  <ul className="populate-studio-slots">
-                    {designerFormModel.fields.map((f) => (
-                      <li key={f.slotKey}>
-                        <span className="populate-studio-form-var">
-                          {f.kind === "image" ? <ImageIcon size={12} /> : <Type size={12} />}
-                          {f.label}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                )
-              ) : formModel.empty ? (
-                <p className="populate-studio-center__empty">
-                  Mapea variables en modo Lote antes de usar el formulario.
-                </p>
-              ) : (
-                <ul className="populate-studio-slots">
-                  {formModel.textFields.map((f) => (
-                    <li key={f.fieldKey}>
-                      <span className="populate-studio-form-var">
-                        <Type size={12} />
-                        {f.label}
-                      </span>
-                    </li>
-                  ))}
-                  {formModel.imageFields.map((f) => (
-                    <li key={f.inputId}>
-                      <span className="populate-studio-form-var">
-                        <ImageIcon size={12} />
-                        {f.label}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </aside>
-            <main className="populate-studio-col populate-studio-col--center populate-studio-col--form-center">
-              {renderCenter()}
-            </main>
-            <aside className="populate-studio-col populate-studio-col--right">
-              <div className="populate-studio-col__head">
-                <span className="populate-studio-col__title">Resumen</span>
-              </div>
-              <div className="populate-studio-summary">
-                <p className="populate-studio-summary__line">Modo formulario · una pieza al instante</p>
-                <p className="populate-studio-summary__line">
-                  {isDesignerTemplate
-                    ? designerFormModel && !designerFormModel.empty
-                      ? `${designerFormModel.fields.length} campo${
-                          designerFormModel.fields.length === 1 ? "" : "s"
-                        } · ${designerSlideCount} slide${designerSlideCount === 1 ? "" : "s"}`
-                      : "Sin campos dinámicos"
-                    : formModel.empty
-                      ? "Sin variables mapeadas"
-                      : `${formModel.textFields.length + formModel.imageFields.length} campos`}
-                </p>
-              </div>
-            </aside>
-          </>
-        )}
-      </div>
-
-      {error && !(failedCount > 0 || runStatus === "partial" || runStatus === "error") ? (
-        <div className="populate-studio-toast">
-          <span className="populate-studio-toast__error">
-            <AlertTriangle size={12} /> {error}
-          </span>
-        </div>
-      ) : null}
-
-      {lastRunOutputs.length > 0 || (lastRunFailures?.length ?? 0) > 0 ? (
-        <footer className="populate-studio-results">
-          <div className="populate-studio-results__head">
-            <Sparkles size={13} />
-            <span>
-              {okCount > 0
-                ? `${okCount} imagen${okCount === 1 ? "" : "es"} generada${okCount === 1 ? "" : "s"}`
-                : "Sin imágenes generadas"}
-              {failedCount > 0 ? ` · ${failedCount} fila${failedCount === 1 ? "" : "s"} falló` : ""}
-              {runStatus === "partial" ? " · ejecución parcial" : ""}
-            </span>
-          </div>
-          {lastRunFailures && lastRunFailures.length > 0 ? (
-            <ul className="populate-studio-results__failures">
-              {lastRunFailures.map((f) => (
-                <li key={`fail-${f.rowIndex}`}>
-                  <strong>Fila {f.rowIndex + 1}:</strong> {f.error}
-                </li>
-              ))}
-            </ul>
-          ) : null}
-          {lastRunOutputs.length > 0 ? (
-            <div className="populate-studio-results__grid">
-              {lastRunOutputs.map((url, i) => (
-                // eslint-disable-next-line @next/next/no-img-element
-                <a key={`${url}-${i}`} href={url} target="_blank" rel="noreferrer" className="populate-studio-results__thumb">
-                  <img src={url} alt={`Resultado ${i + 1}`} draggable={false} />
-                </a>
-              ))}
             </div>
           ) : null}
-        </footer>
-      ) : null}
+
+          {shareUrl ? (
+            <div className="populate-studio-share-link nodrag">
+              <p className="populate-studio-sidebar__title">Enlace público</p>
+              <div className="populate-studio-share-link__row">
+                <input
+                  className="populate-studio-input"
+                  readOnly
+                  value={shareUrl}
+                  onFocus={(e) => e.target.select()}
+                />
+                {onCopyShareUrl ? (
+                  <button type="button" className="populate-studio-share-copy" onClick={onCopyShareUrl}>
+                    <Copy size={14} />
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+          {shareError ? <p className="populate-studio-share-error">{shareError}</p> : null}
+        </aside>
+
+        {dataset && listId ? (
+          <PopulateStudioTemplatePreview
+            template={activeTemplate}
+            binding={binding}
+            dataset={dataset}
+            listId={listId}
+            previewPickedRows={previewPickedRows}
+            previewPickedPoses={previewPickedPoses}
+            manualValues={manualValues}
+            rasterizePages={rasterizePages}
+          />
+        ) : (
+          <div className="populate-studio-preview-stage">
+            <p className="populate-studio-preview-stage__empty">Conecta un Dataset para previsualizar.</p>
+          </div>
+        )}
+
+        <aside className="populate-studio-controls nodrag" onPointerDown={(e) => e.stopPropagation()}>
+          <p className="populate-studio-sidebar__title">Datos de prueba</p>
+          <p className="populate-studio-hint">
+            Lo que elijas aquí alimenta la vista previa central al instante.
+          </p>
+
+          {entities.length === 0 ? (
+            <p className="populate-studio-hint">
+              Marca capas dinámicas en el Designer con el mismo ID (Modo 2).
+            </p>
+          ) : (
+            <ul className="populate-studio-control-entities">
+              {entities.map((entity) => {
+                const pick =
+                  binding.picks.find((p) => p.entityId === entity.entityId) ?? binding.picks[0];
+                const manual = isEntityManual(binding, entity.entityId, entity.facets);
+                const formEntity = formModel?.entities.find((e) => e.entityId === entity.entityId);
+                const pickedCardId = pick?.id ? previewPickedRows[pick.id] ?? "" : "";
+                const imageFacets = entity.facets.filter((f) => f.kind === "image");
+                const poseFieldId =
+                  previewPickedPoses[entity.entityId] ??
+                  binding.entityPoseColumnFieldId?.[entity.entityId] ??
+                  binding.slotColumns[imageFacets[0]?.slotKey ?? ""]?.fieldId ??
+                  imageCols[0]?.id ??
+                  "";
+
+                return (
+                  <li key={entity.entityId} className="populate-studio-control-entity">
+                    <header className="populate-studio-control-entity__head">
+                      <Users size={14} className="populate-studio-entity-card__icon" />
+                      <input
+                        className="populate-studio-input populate-studio-control-entity__label"
+                        value={pick?.label ?? entity.label}
+                        placeholder="Etiqueta en formulario"
+                        onChange={(e) => {
+                          if (!pick) return;
+                          onChangeBinding({
+                            ...binding,
+                            picks: binding.picks.map((p) =>
+                              p.id === pick.id ? { ...p, label: e.target.value } : p,
+                            ),
+                          });
+                        }}
+                      />
+                      <label className="populate-studio-entity-card__manual">
+                        <input
+                          type="checkbox"
+                          checked={manual}
+                          onChange={(e) =>
+                            onChangeBinding(
+                              setEntityManualMode(
+                                binding,
+                                entity.entityId,
+                                e.target.checked,
+                                entities,
+                              ),
+                            )
+                          }
+                        />
+                        Manual
+                      </label>
+                    </header>
+
+                    {manual ? (
+                      <>
+                        {entity.facets.map((facet) => (
+                          <label key={facet.slotKey} className="populate-studio-control-manual-field">
+                            <span>{facet.label}</span>
+                            <input
+                              className="populate-studio-input"
+                              value={manualValues[facet.slotKey] ?? ""}
+                              placeholder={facet.kind === "image" ? "URL imagen…" : "Texto…"}
+                              onChange={(e) =>
+                                setManualValues((m) => ({ ...m, [facet.slotKey]: e.target.value }))
+                              }
+                            />
+                          </label>
+                        ))}
+                      </>
+                    ) : formEntity && formEntity.options.length > 0 ? (
+                      <>
+                        <PopulateRecordGrid
+                          label="Jugador"
+                          options={formEntity.options}
+                          value={pickedCardId}
+                          onChange={(cardId) => {
+                            if (!pick?.id) return;
+                            setPreviewPickedRows((rows) => ({ ...rows, [pick.id]: cardId }));
+                          }}
+                          thumbForOption={thumbForPreview}
+                          variant="studio"
+                        />
+
+                        {pickedCardId && imageFacets.length > 0 && imageCols.length > 1 && dataset ? (
+                          <PopulatePoseGrid
+                            label="Pose"
+                            variant="studio"
+                            value={poseFieldId}
+                            onChange={(fieldId) => {
+                              setPreviewPickedPoses((p) => ({ ...p, [entity.entityId]: fieldId }));
+                              const f = schema.find((x) => x.id === fieldId);
+                              if (!f || !list) return;
+                              onChangeBinding(
+                                patchEntityPoseColumn(
+                                  binding,
+                                  entity.entityId,
+                                  f.id,
+                                  listId,
+                                  list.key,
+                                  f.key,
+                                  entities,
+                                ),
+                              );
+                            }}
+                            options={poseOptionsVisual({
+                              schema,
+                              imageFieldIds: imageCols.map((c) => c.id),
+                              cardId: pickedCardId,
+                              dataset,
+                              listId,
+                            })}
+                          />
+                        ) : null}
+                      </>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+
+          <div className="populate-studio-config">
+            <button
+              type="button"
+              className="populate-studio-config__toggle"
+              onClick={() => setConfigOpen((o) => !o)}
+              aria-expanded={configOpen}
+            >
+              <ChevronDown
+                size={14}
+                className={`populate-studio-config__chevron${configOpen ? " is-open" : ""}`}
+              />
+              Configuración de columnas
+            </button>
+            {configOpen ? (
+              <div className="populate-studio-config__body">
+                <label className="populate-studio-config__field">
+                  <span>Etiqueta en desplegables</span>
+                  <select
+                    className="populate-studio-select"
+                    value={binding.labelColumnFieldId}
+                    onChange={(e) => {
+                      const field = schema.find((f) => f.id === e.target.value);
+                      onChangeBinding({
+                        ...binding,
+                        labelColumnFieldId: e.target.value,
+                        labelColumnFieldKey: field?.key,
+                      });
+                    }}
+                  >
+                    {schema.map((f) => (
+                      <option key={f.id} value={f.id}>
+                        {f.label} ({f.type})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                {entities.map((entity) => {
+                  const manual = isEntityManual(binding, entity.entityId, entity.facets);
+                  if (manual) return null;
+                  const textFacets = entity.facets.filter((f) => f.kind === "text");
+                  if (textFacets.length === 0) return null;
+                  return (
+                    <div key={entity.entityId} className="populate-studio-config__entity">
+                      <span className="populate-studio-config__entity-name">{entity.label}</span>
+                      {textFacets.map((facet) => {
+                        const col = binding.slotColumns[facet.slotKey];
+                        const fieldId = col?.fieldId ?? textCols[0]?.id ?? "";
+                        const singleTextCol = textCols.length === 1 ? textCols[0] : undefined;
+                        return (
+                          <label key={facet.slotKey} className="populate-studio-config__field">
+                            <Type size={12} aria-hidden />
+                            <span>{facet.label}</span>
+                            {singleTextCol ? (
+                              <span className="populate-studio-map-row__col">{singleTextCol.label}</span>
+                            ) : (
+                              <select
+                                className="populate-studio-select"
+                                value={fieldId}
+                                onChange={(e) => patchFacetColumn(facet.slotKey, e.target.value)}
+                              >
+                                {textCols.map((f) => (
+                                  <option key={f.id} value={f.id}>
+                                    {f.label}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+                          </label>
+                        );
+                      })}
+                      {entity.facets.some((f) => f.kind === "image") && imageCols.length === 1 ? (
+                        <label className="populate-studio-config__field">
+                          <ImageIcon size={12} aria-hidden />
+                          <span>Imagen</span>
+                          <span className="populate-studio-map-row__col">{imageCols[0]!.label}</span>
+                        </label>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
+          </div>
+        </aside>
+      </div>
     </div>
   );
-
-  if (typeof document === "undefined") return null;
-  return createPortal(portal, document.body);
 }

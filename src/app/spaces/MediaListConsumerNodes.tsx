@@ -856,7 +856,7 @@ export const ExportMultimediaNode = memo(function ExportMultimediaNode({ id, dat
             </>
           ) : (
             <p className="export-multimedia-empty-text">
-              Conecta un Dataset (arriba) o salidas media_list (p. ej. Populate, Designer).
+              Conecta un Dataset (arriba) o salidas media_list (p. ej. Loop, Designer).
             </p>
           )}
         </div>

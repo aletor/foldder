@@ -102,7 +102,7 @@ export function slideUid(): string {
 /**
  * Identidad estable de una slide. Si la página declara `slideKey` se usa; si no, se cae a su `id`
  * (determinista y estable salvo en clon, donde el `id` se regenera). Es el ancla por la que
- * Populate nombra columnas del Dataset por slide.
+ * Loop nombra columnas del Dataset por slide.
  */
 export function resolveSlideKey(page: DesignerPageState): string {
   return page.slideKey && page.slideKey.trim() ? page.slideKey : page.id;
@@ -192,7 +192,7 @@ export function duplicateDesignerPageState(page: DesignerPageState): DesignerPag
 
   // El clon genérico es "duplicar una página": es una slide NUEVA, así que su identidad estable
   // debe regenerarse (cae al nuevo `id` vía `resolveSlideKey`) para no colisionar con el original.
-  // El clon de documento por fila de Populate re-estampa explícitamente el `slideKey` de plantilla.
+  // El clon de documento por fila de Loop re-estampa explícitamente el `slideKey` de plantilla.
   delete (raw as { slideKey?: string }).slideKey;
 
   for (const o of raw.objects ?? []) applyFreehandObject(o);

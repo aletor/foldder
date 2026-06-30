@@ -104,7 +104,8 @@ function tileBorderClassForType(type: string, fallback: string): string {
   if (type === 'video_editor' || type === 'videoEditor') return 'border-[#5ec4cc] group-hover/tile:border-[#7dd8df]';
   if (type === 'presenter') return 'border-[#8ac091] group-hover/tile:border-[#8ac091]';
   if (type === 'dataset') return 'border-[#37b7df] group-hover/tile:border-[#37b7df]';
-  if (type === 'populate') return 'border-[#fd52eb] group-hover/tile:border-[#fd52eb]';
+  if (type === 'loop') return 'border-[#fd52eb] group-hover/tile:border-[#fd52eb]';
+  if (type === 'populate') return 'border-[#9b5de5] group-hover/tile:border-[#9b5de5]';
   if (type === 'projectBrain') return 'border-slate-400/60 group-hover/tile:border-slate-300/80';
   return fallback;
 }
@@ -128,6 +129,7 @@ const TOOL_ITEMS: Array<{ type: string; label: string }> = [
   { type: 'backgroundRemover', label: 'BG Removal' },
   { type: 'layerizer', label: 'Layerizer' },
   { type: 'dataset', label: 'Dataset' },
+  { type: 'loop', label: 'Loop' },
   { type: 'populate', label: 'Populate' },
   { type: 'inspiration', label: 'Inspiration' },
   { type: 'imageExport', label: 'Export' },

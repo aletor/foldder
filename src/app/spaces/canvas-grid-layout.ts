@@ -50,6 +50,7 @@ const STATIC_NODE_GRID_PRESETS: Record<string, GridPreset> = {
   mediaDescriber: { cols: 4, rows: 3 },
 
   // Tier 4 — 3×2 · utilidades y export
+  loop: { cols: 4, rows: 3 },
   populate: { cols: 4, rows: 3 },
   imageExport: { cols: 3, rows: 2 },
   export_multimedia: { cols: 3, rows: 2 },

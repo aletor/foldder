@@ -1,383 +1,305 @@
-/**
- * Populate — modo FORMULARIO para plantillas Designer (una instancia manual).
- *
- * Igual que el formulario de Image Creation deriva sus campos de las variables del prompt, el de
- * Designer los deriva de los CAMPOS DINÁMICOS pendientes de la plantilla (los huecos marcados en el
- * Designer sin columna). El usuario rellena cada hueco a mano (texto) o eligiendo una imagen, y al
- * generar se congela UNA instancia con esos valores y se rasteriza: tantas imágenes como slides.
- *
- * La resolución NO depende del Dataset: las opciones de imagen ya traen su URL materializada, de modo
- * que el mismo modelo sirve tanto en el Studio (con Dataset a mano) como en el formulario público
- * (instantánea sin Dataset).
- */
-
-import type { DesignerPageState } from "@/app/spaces/designer/DesignerNode";
-import type { FreehandObject } from "@/app/spaces/FreehandStudio";
-import type { Dataset, FieldDef } from "@/app/spaces/dataset/dataset-types";
+import type { Dataset } from "@/app/spaces/dataset/dataset-types";
 import {
   fieldValueAsText,
   getListFieldImageAtRow,
   getListFieldTextAtRow,
-  getListFieldValueAtRow,
 } from "@/app/spaces/dataset/dataset-logic";
+import { datasetListRowLabel } from "@/app/spaces/loop/loop-row-label";
+import type { DesignerSlotValueMap } from "@/app/spaces/loop/loop-designer-form";
+import type { DesignerDynamicField } from "@/app/spaces/loop/loop-designer-fields";
 import {
-  designerSlotKey,
-  isPendingDesignerBinding,
-} from "@/app/spaces/designer/designer-dataset-binding";
-import { duplicateDesignerPageState, resolveSlideKey } from "@/app/spaces/designer/designer-studio-pure";
-import { transformDesignerPageObjectsDeep } from "@/app/spaces/designer/designer-dataset-page";
-import { computeFittingLayout } from "@/app/spaces/indesign/image-frame-layout";
-import { stripDatasetBindingsFromObject } from "./populate-designer-materialize";
-import type { DesignerDynamicField } from "./populate-designer-fields";
-import type { DesignerSlotColumnRef } from "./populate-designer-materialize";
-import { datasetListRowLabel } from "./populate-row-label";
+  groupPendingFieldsIntoEntities,
+  imageColumnsInSchema,
+  slotKeyForDynamicField,
+} from "./populate-entity-groups";
+import type { PopulateTemplateBinding } from "./populate-types";
 
-export interface DesignerFormImageOption {
-  /** Valor estable que el formulario guarda como selección (`row:<i>`). */
-  value: string;
-  rowIndex: number;
+export interface PopulatePickOption {
+  cardId: string;
   label: string;
-  url: string;
-  w?: number;
-  h?: number;
 }
 
-export interface DesignerFormRow {
-  rowIndex: number;
-  label: string;
-  /** Miniatura de la primera columna de imagen mapeada en el formulario (si la hay). */
-  previewUrl?: string;
-  /** Valores por hueco para autorelleno en el formulario público (instantánea al compartir). */
-  slotValues?: Record<string, string>;
-}
-
-export interface DesignerFormField {
-  /** Clave del hueco (= `designerSlotKey`); el mapeo de valores se indexa por aquí. */
+export interface PopulateFormEntityFacet {
   slotKey: string;
   kind: "text" | "image";
   label: string;
-  /** Columna del Dataset asignada en Populate Studio (para autorelleno). */
-  mappedColumn?: DesignerSlotColumnRef | null;
-  /** Sugerencias para campos de texto (valores distintos de la columna mapeada, si la hay). */
-  suggestions: string[];
-  /** Opciones para campos de imagen (filas de la columna mapeada con su URL). */
-  imageOptions: DesignerFormImageOption[];
+  sourceKind: "dataset" | "manual";
 }
 
-export interface DesignerFormModel {
-  fields: DesignerFormField[];
-  /** Filas del listado activo (para autorellenar desde un jugador/fila). */
-  rows: DesignerFormRow[];
-  /** Nº de slides (páginas) de la plantilla → nº de imágenes que devolverá. */
+/** Un desplegable del formulario = una entidad (mismo registro para texto + imagen). */
+export interface PopulateFormEntity {
+  pickId: string;
+  entityId: string;
+  label: string;
+  options: PopulatePickOption[];
+  facets: PopulateFormEntityFacet[];
+  /** Segundo desplegable cuando hay varias columnas imagen (poses en la misma fila). */
+  poseFieldId?: string;
+  poseOptions: Array<{ fieldId: string; label: string }>;
+}
+
+export interface PopulateFormField {
+  slotKey: string;
+  kind: "text" | "image";
+  label: string;
+  sourceKind: "dataset" | "manual";
+  pickId?: string;
+  entityId?: string;
+}
+
+/** @deprecated Usar entities — mantener picks para compat. */
+export interface PopulateFormPick {
+  id: string;
+  label: string;
+  options: PopulatePickOption[];
+}
+
+export interface PopulateFormModel {
+  entities: PopulateFormEntity[];
+  picks: PopulateFormPick[];
+  fields: PopulateFormField[];
   slideCount: number;
   empty: boolean;
 }
 
-/** Valor resuelto de un hueco para una instancia concreta. */
-export type DesignerSlotValue =
-  | { kind: "text"; text: string }
-  | { kind: "image"; url: string; w?: number; h?: number };
-
-/** Mapa hueco→valor resuelto (clave = `designerSlotKey`). */
-export type DesignerSlotValueMap = Record<string, DesignerSlotValue>;
-
-function distinctColumnValues(
-  dataset: Dataset,
-  col: DesignerSlotColumnRef,
-  rowCount: number,
-): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (let i = 0; i < rowCount; i += 1) {
-    const value = getListFieldValueAtRow(dataset, col.listId, col.fieldId, i);
-    const text = fieldValueAsText(value ?? undefined).trim();
-    if (text && !seen.has(text)) {
-      seen.add(text);
-      out.push(text);
-    }
-  }
-  return out;
-}
-
-function columnImageOptions(
-  dataset: Dataset,
-  col: DesignerSlotColumnRef,
-  schema: FieldDef[],
-  rowCount: number,
-): DesignerFormImageOption[] {
-  const list = dataset.lists.find((l) => l.id === col.listId);
-  const listSchema = list?.schema ?? schema;
-  const out: DesignerFormImageOption[] = [];
-  for (let i = 0; i < rowCount; i += 1) {
-    const image = getListFieldImageAtRow(dataset, col.listId, col.fieldId, i);
-    const url = image?.url?.trim();
-    if (!url) continue;
-    out.push({
-      value: `row:${i}`,
-      rowIndex: i,
-      label: datasetListRowLabel(dataset, col.listId, listSchema, i),
-      url,
-      w: image?.w,
-      h: image?.h,
-    });
-  }
-  return out;
-}
-
-function buildDesignerFormRows(
-  dataset: Dataset,
-  listId: string,
-  rowCount: number,
-  imageFields: DesignerFormField[],
-): DesignerFormRow[] {
-  const list = dataset.lists.find((l) => l.id === listId);
-  if (!list) return [];
-  const previewByRow = new Map<number, string>();
-  for (const field of imageFields) {
-    for (const opt of field.imageOptions) {
-      if (!previewByRow.has(opt.rowIndex)) previewByRow.set(opt.rowIndex, opt.url);
-    }
-  }
-  const rows: DesignerFormRow[] = [];
-  for (let i = 0; i < rowCount; i += 1) {
-    rows.push({
-      rowIndex: i,
-      label: datasetListRowLabel(dataset, listId, list.schema, i),
-      previewUrl: previewByRow.get(i),
-    });
-  }
-  return rows;
-}
-
-/**
- * Deriva el formulario de una plantilla Designer a partir de sus campos dinámicos pendientes.
- * `slotBindings` (mapeo hueco→columna del Studio) enriquece los campos con sugerencias/opciones.
- */
-export function deriveDesignerForm(args: {
+export function derivePopulateForm(args: {
+  binding: PopulateTemplateBinding;
   dynamicFields: DesignerDynamicField[];
-  slotBindings?: Record<string, DesignerSlotColumnRef>;
-  dataset?: Dataset | null;
-  listId?: string | null;
+  dataset: Dataset;
+  listId: string;
   slideCount: number;
-}): DesignerFormModel {
-  const { dynamicFields, slotBindings, dataset, listId, slideCount } = args;
-  const list = dataset && listId ? dataset.lists.find((l) => l.id === listId) : undefined;
-  const rowCount = list?.cards.length ?? 0;
-  const schema = list?.schema ?? [];
-
-  const fields: DesignerFormField[] = [];
-  for (const f of dynamicFields) {
-    if (f.status !== "pending") continue;
-    const col = slotBindings?.[f.key] ?? null;
-    if (f.kind === "image") {
-      const imageOptions =
-        col && dataset && rowCount > 0 ? columnImageOptions(dataset, col, schema, rowCount) : [];
-      fields.push({
-        slotKey: f.key,
-        kind: "image",
-        label: f.label,
-        mappedColumn: col,
-        suggestions: [],
-        imageOptions,
-      });
-    } else {
-      const suggestions =
-        col && dataset && rowCount > 0 ? distinctColumnValues(dataset, col, rowCount) : [];
-      fields.push({
-        slotKey: f.key,
-        kind: "text",
-        label: f.label,
-        mappedColumn: col,
-        suggestions,
-        imageOptions: [],
-      });
-    }
-  }
-
-  const rows =
-    dataset && listId && rowCount > 0
-      ? buildDesignerFormRows(
-          dataset,
-          listId,
-          rowCount,
-          fields.filter((field) => field.kind === "image"),
-        )
-      : [];
-
-  return { fields, rows, slideCount, empty: fields.length === 0 };
-}
-
-/**
- * Autorellena el formulario Designer desde una fila del listado (texto + imágenes mapeadas).
- * Devuelve un único mapa de valores listo para `formValues` del nodo Populate.
- */
-export function autofillDesignerFormFromRow(
-  model: DesignerFormModel,
-  dataset: Dataset,
-  listId: string,
-  rowIndex: number,
-): Record<string, string> {
-  const values: Record<string, string> = {};
+}): PopulateFormModel {
+  const { binding, dynamicFields, dataset, listId, slideCount } = args;
   const list = dataset.lists.find((l) => l.id === listId);
-  if (!list) return values;
+  const schema = list?.schema ?? [];
+  const entityGroups = groupPendingFieldsIntoEntities(dynamicFields);
+  const imageCols = imageColumnsInSchema(schema);
 
-  for (const field of model.fields) {
-    if (field.kind === "text" && field.mappedColumn) {
-      const col = field.mappedColumn;
-      const listField = list.schema.find((f) => f.id === col.fieldId);
-      if (!listField) continue;
-      const text =
-        getListFieldTextAtRow(dataset, col.listId, col.fieldId, rowIndex) ??
-        fieldValueAsText(getListFieldValueAtRow(dataset, col.listId, col.fieldId, rowIndex) ?? undefined);
-      if (text) values[field.slotKey] = text;
-      continue;
-    }
-    if (field.kind === "image") {
-      const option = field.imageOptions.find((o) => o.rowIndex === rowIndex);
-      if (option) values[field.slotKey] = option.value;
-    }
-  }
-  return values;
+  const pickOptions: PopulatePickOption[] = (list?.cards ?? []).map((card, rowIndex) => ({
+    cardId: card.id,
+    label: datasetListRowLabel(dataset, listId, schema, rowIndex),
+  }));
+
+  const entities: PopulateFormEntity[] = entityGroups.map((group) => {
+    const pick = binding.picks.find((p) => p.entityId === group.entityId) ?? binding.picks[0];
+    const poseFieldId = binding.entityPoseColumnFieldId?.[group.entityId];
+    const hasImage = group.facets.some((f) => f.kind === "image");
+    const poseOptions =
+      hasImage && imageCols.length > 1
+        ? imageCols.map((c) => ({ fieldId: c.id, label: c.label }))
+        : [];
+
+    return {
+      pickId: pick?.id ?? "",
+      entityId: group.entityId,
+      label: pick?.label ?? group.label,
+      options: pickOptions,
+      facets: group.facets.map((facet) => {
+        const src = binding.sources[facet.slotKey];
+        return {
+          slotKey: facet.slotKey,
+          kind: facet.kind,
+          label: facet.label,
+          sourceKind: src?.kind === "manual" ? "manual" : "dataset",
+        };
+      }),
+      poseFieldId,
+      poseOptions,
+    };
+  });
+
+  const picks: PopulateFormPick[] = entities.map((e) => ({
+    id: e.pickId,
+    label: e.label,
+    options: e.options,
+  }));
+
+  const fields: PopulateFormField[] = entityGroups.flatMap((group) =>
+    group.facets.map((facet) => {
+      const slotKey = slotKeyForDynamicField(facet.field);
+      const src = binding.sources[slotKey];
+      return {
+        slotKey,
+        kind: facet.kind,
+        label: facet.label,
+        sourceKind: src?.kind === "manual" ? "manual" : "dataset",
+        pickId: src?.kind === "dataset" ? src.pickId : undefined,
+        entityId: group.entityId,
+      };
+    }),
+  );
+
+  return {
+    entities,
+    picks,
+    fields,
+    slideCount,
+    empty: fields.length === 0,
+  };
 }
 
-/**
- * Autorellena desde un índice de fila usando el modelo materializado (formulario público o imágenes
- * sin Dataset). Si la fila trae `slotValues` (instantánea al compartir), los usa; si no, rellena
- * solo los campos de imagen cuya opción coincide con la fila.
- */
-export function autofillDesignerFormFromRowIndex(
-  model: DesignerFormModel,
-  rowIndex: number,
-): Record<string, string> {
-  const row = model.rows.find((r) => r.rowIndex === rowIndex);
-  if (row?.slotValues && Object.keys(row.slotValues).length > 0) {
-    return { ...row.slotValues };
-  }
-  const values: Record<string, string> = {};
-  for (const field of model.fields) {
-    if (field.kind === "image") {
-      const option = field.imageOptions.find((o) => o.rowIndex === rowIndex);
-      if (option) values[field.slotKey] = option.value;
-    }
-  }
-  return values;
+/** Normaliza formModel para UI pública (compat enlaces legacy sin `entities`). */
+export function resolvePublicPopulateEntities(formModel: PopulateFormModel): PopulateFormEntity[] {
+  if (formModel.entities.length > 0) return formModel.entities;
+  return formModel.picks.map((p) => ({
+    pickId: p.id,
+    entityId: p.id,
+    label: p.label,
+    options: p.options,
+    facets: formModel.fields
+      .filter((f) => f.pickId === p.id)
+      .map((f) => ({
+        slotKey: f.slotKey,
+        kind: f.kind,
+        label: f.label,
+        sourceKind: f.sourceKind,
+      })),
+    poseOptions: [] as Array<{ fieldId: string; label: string }>,
+    poseFieldId: undefined,
+  }));
 }
 
-/**
- * Resuelve los valores del formulario a un mapa hueco→valor. No necesita Dataset: las imágenes se
- * leen de las opciones ya materializadas en el modelo (sirve igual en local y en el público).
- */
-export function resolveDesignerSlotValues(args: {
-  model: DesignerFormModel;
-  textValues: Record<string, string>;
-  imageSelections: Record<string, string>;
+function cardIndex(dataset: Dataset, listId: string, cardId: string): number {
+  const list = dataset.lists.find((l) => l.id === listId);
+  return list?.cards.findIndex((c) => c.id === cardId) ?? -1;
+}
+
+function resolveSlotFromRow(args: {
+  slotKey: string;
+  binding: PopulateTemplateBinding;
+  rowIndex: number;
+  listId: string;
+  dataset: Dataset;
+  poseFieldId?: string;
+}): DesignerSlotValueMap[string] | undefined {
+  const { slotKey, binding, rowIndex, listId, dataset, poseFieldId } = args;
+  const col = binding.slotColumns[slotKey];
+  const source = binding.sources[slotKey];
+  let fieldId =
+    col?.fieldId || (source?.kind === "dataset" ? source.columnFieldId : undefined);
+  const colListId = col?.listId || listId;
+
+  const facetKind = slotKey.endsWith("::image") ? "image" : slotKey.includes("image") ? "image" : "text";
+  if (facetKind === "image" && poseFieldId) {
+    fieldId = poseFieldId;
+  }
+  if (!fieldId) return undefined;
+
+  const image = getListFieldImageAtRow(dataset, colListId, fieldId, rowIndex);
+  if (image?.url) {
+    return { kind: "image", url: image.url, w: image.w, h: image.h };
+  }
+  const text = getListFieldTextAtRow(dataset, colListId, fieldId, rowIndex);
+  if (text?.trim()) {
+    return { kind: "text", text: text.trim() };
+  }
+  const fallback = fieldValueAsText(
+    dataset.lists.find((l) => l.id === colListId)?.cards[rowIndex]?.values[fieldId],
+  );
+  if (fallback.trim()) return { kind: "text", text: fallback.trim() };
+  return undefined;
+}
+
+export function resolvePopulateSlotValues(args: {
+  binding: PopulateTemplateBinding;
+  dataset: Dataset;
+  listId: string;
+  pickedRows: Record<string, string>;
+  manualValues: Record<string, string>;
+  /** entityId → fieldId de columna imagen (pose) */
+  pickedPoses?: Record<string, string>;
 }): DesignerSlotValueMap {
-  const { model, textValues, imageSelections } = args;
+  const { binding, dataset, listId, pickedRows, manualValues, pickedPoses } = args;
   const out: DesignerSlotValueMap = {};
-  for (const field of model.fields) {
-    if (field.kind === "text") {
-      const text = textValues[field.slotKey];
-      if (typeof text === "string" && text.length > 0) {
-        out[field.slotKey] = { kind: "text", text };
+
+  for (const [slotKey, src] of Object.entries(binding.sources)) {
+    if (src.kind === "manual") {
+      const raw = manualValues[slotKey]?.trim();
+      if (!raw) continue;
+      if (raw.startsWith("http") || raw.startsWith("/") || raw.startsWith("data:image")) {
+        out[slotKey] = { kind: "image", url: raw };
+      } else {
+        out[slotKey] = { kind: "text", text: raw };
       }
       continue;
     }
-    const selected = imageSelections[field.slotKey];
-    if (!selected) continue;
-    const option = field.imageOptions.find((o) => o.value === selected);
-    if (option?.url) {
-      out[field.slotKey] = { kind: "image", url: option.url, w: option.w, h: option.h };
-    }
+
+    const pickCardId = pickedRows[src.pickId];
+    if (!pickCardId) continue;
+    const rowIndex = cardIndex(dataset, listId, pickCardId);
+    if (rowIndex < 0) continue;
+
+    const pick = binding.picks.find((p) => p.id === src.pickId);
+    const entityId = pick?.entityId;
+    const poseFieldId =
+      (entityId && pickedPoses?.[entityId]) ||
+      (entityId ? binding.entityPoseColumnFieldId?.[entityId] : undefined);
+
+    const resolved = resolveSlotFromRow({
+      slotKey,
+      binding,
+      rowIndex,
+      listId,
+      dataset,
+      poseFieldId: slotKey.endsWith("::image") ? poseFieldId : undefined,
+    });
+    if (resolved) out[slotKey] = resolved;
   }
+
   return out;
 }
 
-/**
- * Aplica el valor resuelto de un hueco a UN objeto (texto/imagen). Shallow a propósito: la recursión
- * en contenedores (`booleanGroup`/`clippingContainer`) la hace `transformDesignerPageObjectsDeep`,
- * que además parchea las stories de los marcos de texto anidados.
- */
-function applyDesignerSlotValueToObject(
-  obj: FreehandObject,
-  slotValues: DesignerSlotValueMap,
-): FreehandObject {
-  const binding = obj._designerDatasetBinding;
-  if (!binding || !isPendingDesignerBinding(binding)) return obj;
-  const key = designerSlotKey(binding);
-  const val = key ? slotValues[key] : undefined;
-  if (!val) return obj;
+export function resolvePopulateSlotValuesFromSnapshot(args: {
+  binding: PopulateTemplateBinding;
+  listId: string;
+  rowsSnapshot: Array<{ cardId: string; values: Record<string, import("@/app/spaces/dataset/dataset-types").FieldValue> }>;
+  pickedRows: Record<string, string>;
+  manualValues: Record<string, string>;
+  pickedPoses?: Record<string, string>;
+}): DesignerSlotValueMap {
+  const { binding, rowsSnapshot, pickedRows, manualValues, pickedPoses } = args;
+  const out: DesignerSlotValueMap = {};
+  const rowByCard = new Map(rowsSnapshot.map((r) => [r.cardId, r]));
 
-  if (val.kind === "text" && (obj.type === "text" || obj.type === "textOnPath")) {
-    return {
-      ...obj,
-      text: val.text,
-      ...(obj.type === "text" && obj.isTextFrame
-        ? { _designerRichSpans: undefined, _designerOverflow: false }
-        : {}),
-    } as FreehandObject;
+  for (const [slotKey, src] of Object.entries(binding.sources)) {
+    if (src.kind === "manual") {
+      const raw = manualValues[slotKey]?.trim();
+      if (!raw) continue;
+      if (raw.startsWith("http") || raw.startsWith("/") || raw.startsWith("data:image")) {
+        out[slotKey] = { kind: "image", url: raw };
+      } else {
+        out[slotKey] = { kind: "text", text: raw };
+      }
+      continue;
+    }
+
+    const cardId = pickedRows[src.pickId];
+    if (!cardId) continue;
+    const row = rowByCard.get(cardId);
+    if (!row) continue;
+
+    const pick = binding.picks.find((p) => p.id === src.pickId);
+    const entityId = pick?.entityId;
+    let fieldId = binding.slotColumns[slotKey]?.fieldId || src.columnFieldId;
+    if (slotKey.endsWith("::image") && entityId) {
+      fieldId =
+        pickedPoses?.[entityId] ||
+        binding.entityPoseColumnFieldId?.[entityId] ||
+        fieldId;
+    }
+    if (!fieldId) continue;
+
+    const val = row.values[fieldId];
+    if (!val) continue;
+    if (val.type === "image" && val.url) {
+      out[slotKey] = { kind: "image", url: val.url, w: val.w, h: val.h };
+    } else if (val.type === "text") {
+      out[slotKey] = { kind: "text", text: val.value };
+    } else {
+      const text = fieldValueAsText(val);
+      if (text.trim()) out[slotKey] = { kind: "text", text: text.trim() };
+    }
   }
 
-  if (val.kind === "image" && val.url) {
-    const iw = Math.max(1, val.w ?? 100);
-    const ih = Math.max(1, val.h ?? 100);
-    if (obj.type === "image") {
-      return { ...obj, src: val.url, intrinsicRatio: iw / ih } as FreehandObject;
-    }
-    if (obj.type === "rect" && obj.isImageFrame) {
-      const layout = computeFittingLayout(obj.width, obj.height, iw, ih, "fill-proportional");
-      return {
-        ...obj,
-        imageFrameContent: {
-          src: val.url,
-          originalWidth: iw,
-          originalHeight: ih,
-          ...layout,
-          fittingMode: "fill-proportional",
-        },
-        imageFrameAutoFit: true,
-      } as FreehandObject;
-    }
-  }
-
-  return obj;
-}
-
-/**
- * Aplica los valores del formulario a una página, recorriendo el árbol en profundidad (incluidos los
- * objetos "pegados dentro" de un clip) y parcheando las stories de los marcos de texto que cambien.
- */
-export function applyDesignerSlotValuesToPage(
-  page: DesignerPageState,
-  slotValues: DesignerSlotValueMap,
-): DesignerPageState {
-  return transformDesignerPageObjectsDeep(page, (obj) =>
-    applyDesignerSlotValueToObject(obj, slotValues),
-  );
-}
-
-/**
- * Congela las páginas de la plantilla para UNA instancia de formulario:
- * clona (ids nuevos) → aplica los valores del formulario a los huecos → elimina los enlaces →
- * re-estampa `slideKey`. Los huecos sin valor quedan con el contenido de diseño.
- */
-export function freezeDesignerPagesForForm(
-  templatePages: DesignerPageState[],
-  slotValues: DesignerSlotValueMap,
-): DesignerPageState[] {
-  return templatePages.map((tpl) => {
-    const slideKey = resolveSlideKey(tpl);
-    const slideName = tpl.slideName;
-    const dup = duplicateDesignerPageState(tpl);
-    const resolved = applyDesignerSlotValuesToPage(dup, slotValues);
-    const objects = (resolved.objects ?? []).map(stripDatasetBindingsFromObject);
-    const frozen: DesignerPageState = {
-      ...resolved,
-      objects,
-      slideKey,
-      slideName,
-    };
-    delete frozen.datasetLoopListId;
-    delete frozen.datasetLoopCardId;
-    return frozen;
-  });
+  return out;
 }

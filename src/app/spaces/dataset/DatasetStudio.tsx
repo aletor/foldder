@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Link2, MoreHorizontal, Plus, Sparkles, X } from "lucide-react";
+import { Copy, Link2, MoreHorizontal, Plus, Sparkles, Trash2, X } from "lucide-react";
 import type { Dataset, DatasetList, FieldDef, FieldValue, Gap } from "./dataset-types";
 import {
   addCard,
@@ -614,7 +614,7 @@ function DataTable({
         <table className="w-full min-w-[480px] border-collapse text-[12px]">
           <thead>
             <tr className="bg-black/30">
-              <th className="sticky left-0 z-10 w-11 border-b border-r border-white/10 px-2 py-2.5 text-left text-[9px] font-black uppercase tracking-[0.08em] text-white/45">
+              <th className="sticky left-0 z-10 w-[52px] border-b border-r border-white/10 px-1 py-2.5 text-left text-[9px] font-black uppercase tracking-[0.08em] text-white/45">
                 #
               </th>
               {list.schema.map((field) => (
@@ -631,26 +631,28 @@ function DataTable({
           <tbody>
             {list.cards.map((card, idx) => (
               <tr key={card.id} className="group border-b border-white/[0.06] hover:bg-white/[0.03]">
-                <td className="sticky left-0 z-10 border-r border-white/10 bg-[#0b0f14] px-2 py-1 text-center tabular-nums text-white/40 group-hover:bg-[#0d1218]">
-                  <span className="group-hover:hidden">{idx + 1}</span>
-                  <span className="hidden items-center justify-center gap-1 group-hover:flex">
+                <td className="sticky left-0 z-10 border-r border-white/10 bg-[#0b0f14] px-1 py-1 group-hover:bg-[#0d1218]">
+                  <div className="flex items-center justify-center gap-0.5">
+                    <span className="min-w-[14px] text-center tabular-nums text-[10px] text-white/35">{idx + 1}</span>
                     <button
                       type="button"
                       onClick={() => apply(duplicateCard(dataset, list.id, card.id))}
-                      className="text-white/40 hover:text-[var(--foldder-studio-accent,#14b8a6)]"
+                      className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-white/40 transition hover:bg-white/[0.06] hover:text-[var(--foldder-studio-accent,#14b8a6)]"
                       title="Duplicar fila"
+                      aria-label={`Duplicar fila ${idx + 1}`}
                     >
-                      ⎘
+                      <Copy size={11} strokeWidth={2.25} />
                     </button>
                     <button
                       type="button"
                       onClick={() => apply(removeCard(dataset, list.id, card.id))}
-                      className="text-white/40 hover:text-rose-400"
+                      className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-white/30 opacity-0 transition hover:bg-rose-500/10 hover:text-rose-400 group-hover:opacity-100"
                       title="Eliminar fila"
+                      aria-label={`Eliminar fila ${idx + 1}`}
                     >
-                      ✕
+                      <Trash2 size={11} strokeWidth={2.25} />
                     </button>
-                  </span>
+                  </div>
                 </td>
                 {list.schema.map((field) => {
                   const gap = cellHasGap(gaps, list.id, card.id, field.id);

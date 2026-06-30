@@ -49,6 +49,7 @@ next-env.d.ts
 # Presenter share DB (local tokens + payloads)
 /data/presenter-shares.json
 /data/populate-shares.json
+/data/loop-shares.json
 /data/datasets/
 
 # Inspiration library (local fallback store; S3 is production source of truth)

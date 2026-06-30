@@ -213,7 +213,11 @@ function upsertExportAsset(
     sourceNodeId: file.sourceNodeId,
     sourceNodeType: file.nodeType,
     sourceLabel:
-      typeof file.metadata?.exportedFrom === "string" ? String(file.metadata.exportedFrom) : "export",
+      typeof file.metadata?.matchLabel === "string"
+        ? String(file.metadata.matchLabel)
+        : typeof file.metadata?.exportedFrom === "string"
+          ? String(file.metadata.exportedFrom)
+          : "export",
     exportFileId: file.id,
     hidden: file.metadata?.hidden === true,
     createdAt: file.createdAt || prev?.createdAt || nowIso(),

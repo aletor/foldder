@@ -1,7 +1,7 @@
 /**
  * BrandKit — operaciones puras (sin React, sin I/O).
  *
- * Puente clave: un BrandKit conectado a un Designer (o a Populate) aporta sus campos como
+ * Puente clave: un BrandKit conectado a un Designer (o a Loop) aporta sus campos como
  * CONSTANTES del Dataset, con id namespaced `bk:<nodeId>:<fieldId>`. Así toda la resolución
  * de bindings existente (que opera sobre `Dataset` + `rowIndex`) funciona sin cambiar firmas:
  * un binding `source: "node"` se resuelve como una constante con ese id namespaced.

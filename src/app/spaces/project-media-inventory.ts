@@ -40,7 +40,7 @@ const GENERATOR_NODE_TYPES = new Set([
   "imageCreationAdvanced",
   "painter",
   "cine",
-  "populate",
+  "loop",
 ]);
 
 const IMPORT_NODE_TYPES = new Set(["mediaInput", "urlImage", "spaceInput", "inspiration"]);
@@ -314,8 +314,8 @@ function labelForNodeType(nodeType: string): string {
       return "Nano Banana";
     case "cine":
       return "Cine";
-    case "populate":
-      return "Populate";
+    case "loop":
+      return "Loop";
     case "inspiration":
       return "Inspiration";
     case "imageExport":

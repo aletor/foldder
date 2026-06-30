@@ -298,6 +298,43 @@ export function upsertProjectFile(metadataRaw: unknown, file: ProjectFile): Proj
   return { version: 1, items: [file, ...items].slice(0, 300) };
 }
 
+/** Reemplaza un export existente con el mismo `s3Key` (re-generar la misma slide). */
+export function upsertProjectExportByS3Key(
+  metadataRaw: unknown,
+  file: ProjectFile,
+  s3Key: string,
+): ProjectFilesMetadata {
+  const current = getProjectFilesFromMetadata(metadataRaw);
+  const items = current.items.filter(
+    (item) =>
+      item.id !== file.id &&
+      item.metadata?.s3Key !== s3Key &&
+      (!file.backingNodeId || item.backingNodeId !== file.backingNodeId),
+  );
+  return { version: 1, items: [file, ...items].slice(0, 300) };
+}
+
+/** Fusiona exports remotos (p. ej. Populate live) sin pisar entradas locales más recientes. */
+export function mergeProjectFilesMetadata(
+  local: ProjectFilesMetadata,
+  remote: ProjectFilesMetadata,
+): ProjectFilesMetadata {
+  const byId = new Map<string, ProjectFile>();
+  for (const item of local.items) byId.set(item.id, item);
+  for (const item of remote.items) {
+    const prev = byId.get(item.id);
+    if (!prev || (Date.parse(item.updatedAt) || 0) >= (Date.parse(prev.updatedAt) || 0)) {
+      byId.set(item.id, item);
+    }
+  }
+  return {
+    version: 1,
+    items: Array.from(byId.values())
+      .sort((a, b) => (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0))
+      .slice(0, 300),
+  };
+}
+
 export function updateProjectFileInMetadata(
   metadataRaw: unknown,
   fileId: string,

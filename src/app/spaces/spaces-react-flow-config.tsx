@@ -39,6 +39,7 @@ import { LayerizerNode } from "./layerizer/LayerizerNode";
 import { BackgroundRemoverNode } from "./background-remover/BackgroundRemoverNode";
 import { LightroomNode } from "./lightroom/LightroomNode";
 import { DatasetNode } from "./dataset/DatasetNode";
+import { LoopNode } from "./loop/LoopNode";
 import { PopulateNode } from "./populate/PopulateNode";
 
 export const spacesInitialNodes: Node[] = [];
@@ -65,6 +66,7 @@ export const spacesNodeTypes: Record<string, ComponentType<any>> = {
   layerizer: LayerizerNode,
   lightroom: LightroomNode,
   dataset: DatasetNode,
+  loop: LoopNode,
   populate: PopulateNode,
   mediaDescriber: MediaDescriberNode,
   imageExport: ImageExportNode,

@@ -117,24 +117,27 @@ export function DesignerDatasetFieldPanel({
                 </button>
               </div>
               <label className="block space-y-1">
-                <span className="text-[9px] font-semibold uppercase tracking-wider text-zinc-500">Nombre del campo</span>
+                <span className="text-[9px] font-semibold uppercase tracking-wider text-zinc-500">
+                  Identificador
+                </span>
                 <input
                   type="text"
                   value={binding.slotLabel ?? ""}
                   onMouseDown={(e) => e.stopPropagation()}
                   onChange={(e) => onSlotLabelChange(e.target.value)}
-                  placeholder="p. ej. Nombre del jugador"
+                  placeholder="p. ej. jugador_1"
                   className={fieldInputClass}
                 />
               </label>
               <p className="text-[10px] leading-snug text-zinc-500">
-                Sin Dataset conectado. Asignarás la columna en Populate.
+                Mismo identificador en texto e imagen → un solo jugador en Populate. Asignarás los
+                valores en Loop o Populate Studio.
               </p>
             </div>
           ) : (
             <div className="space-y-2">
               <p className="text-[11px] leading-snug text-zinc-500">
-                Conéctale un Dataset o márcalo como dinámico para Populate.
+                Conéctale un Dataset o márcalo como dinámico para Loop.
               </p>
               <button
                 type="button"

@@ -74,7 +74,7 @@ export function getNodeFlowRect(opts: {
 export const HANDLE_DROP_MAP: Record<string, string> = {
   "prompt:source": "enhancer",
   "prompt:target": "promptInput",
-  /** Entrada dataset (Designer, Populate…) → suelta en el lienzo crea Dataset. */
+  /** Entrada dataset (Designer, Loop…) → suelta en el lienzo crea Dataset. */
   "dataset:target": "dataset",
   /** Salida document (json) del Designer → suelta en el lienzo crea Presenter. */
   "json:source": "presenter",
@@ -193,8 +193,10 @@ export function defaultDataForCanvasDropNode(nodeType: string): Record<string, u
       return { label: "Presenter" };
     case "dataset":
       return { label: "Dataset", _datasetShowChooser: true };
+    case "loop":
+      return { label: "Loop", status: "idle" };
     case "populate":
-      return { label: "Populate", status: "idle" };
+      return { label: "Populate", templateBindings: [], _populateKind: "assign" as const };
     case "export_multimedia":
       return { label: "Export Multimedia" };
     case "exportMultiple":

@@ -18,24 +18,24 @@ export interface NodeMetadata {
   dataSchema: Record<string, unknown>;
   preferredConnections?: Record<string, string>; // Maps output types to specific input handled IDs
   /**
-   * Declaración estándar de capacidades para orquestación (Populate).
+   * Declaración estándar de capacidades para orquestación (Loop).
    *
-   * Inversión de dependencia: Populate conoce a los nodos creativos a través de
+   * Inversión de dependencia: Loop conoce a los nodos creativos a través de
    * ESTA declaración, no con conocimiento codificado tipo por tipo. Un nodo nuevo
    * se vuelve orquestable describiéndose aquí (o, por defecto, derivando sus
    * inputs de texto/imagen/vídeo desde `inputs`). Mantener vacío = nodo puro no
    * orquestable explícitamente (aún puede derivarse por fallback).
    *
-   * - `inputs`: qué inputs editables puede variar Populate por fila.
+   * - `inputs`: qué inputs editables puede variar Loop por fila.
    * - `promptDataKey`: clave en `node.data` con el prompt inline que sirve de
    *   semilla para la plantilla (p. ej. 'promptText' en Image Creation).
    */
   orchestration?: {
     /**
      * Estrategia de orquestación:
-     * - `input-binding` (por defecto): Populate varía los `inputs` del nodo por fila (prompt + refs),
+     * - `input-binding` (por defecto): Loop varía los `inputs` del nodo por fila (prompt + refs),
      *   resolviendo valores y empujándolos a handles (modelo de Image Creation).
-     * - `node-clone`: Populate clona el nodo entero por fila (congelado), resolviendo sus enlaces
+     * - `node-clone`: Loop clona el nodo entero por fila (congelado), resolviendo sus enlaces
      *   internos. Sus campos dinámicos NO se declaran aquí (son por instancia): se descubren de los
      *   datos del nodo (p. ej. Designer lee `_designerDatasetBinding` de sus páginas).
      */
@@ -325,9 +325,9 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
       { id: 'image', label: 'Image Out', type: 'image' },
     ],
     dataSchema: {},
-    // Declaración para Populate: prompt (texto) + 4 referencias (imagen).
+    // Declaración para Loop: prompt (texto) + 4 referencias (imagen).
     // Cualquier nodo creativo futuro (Video Creation, Designer, Guionista) se
-    // orquesta declarándose igual aquí; Populate no necesita cambiar.
+    // orquesta declarándose igual aquí; Loop no necesita cambiar.
     orchestration: {
       inputs: [
         { id: 'prompt', label: 'Prompt', kind: 'text' },
@@ -592,7 +592,7 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
       label: 'string',
       value: 'string (exported raster data URL)',
     },
-    // Orquestación por clonado: Populate multiplica el Designer entero por fila (congelado),
+    // Orquestación por clonado: Loop multiplica el Designer entero por fila (congelado),
     // resolviendo sus enlaces internos (`_designerDatasetBinding`). Los campos dinámicos son por
     // instancia (dependen de qué objetos enlazó el usuario), así que se descubren de los datos del
     // nodo, no de esta lista estática.
@@ -628,11 +628,11 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
       datasetRef: '{ datasetId, version } (referencia a Dataset global; fase 2)',
     },
   },
-  populate: {
-    type: 'populate',
-    label: 'Populate',
+  loop: {
+    type: 'loop',
+    label: 'Loop',
     description:
-      'Orquestador: ejecuta un nodo creativo plantilla (conectado al handle "template") una vez por fila de un Dataset, variando los inputs mapeados a columnas. Deposita N nodos reales y autónomos en un Nested Space y agrega su salida (media_list).',
+      'Loop: ejecuta un nodo creativo plantilla (conectado al handle "template") una vez por fila de un Dataset, variando los inputs mapeados a columnas. Deposita N nodos reales y autónomos en un Nested Space y agrega su salida (media_list).',
     inputs: [
       { id: 'dataset', label: 'Dataset', type: 'dataset' as HandleType, required: true },
       { id: 'template', label: 'Plantilla', type: 'template' as HandleType },
@@ -647,6 +647,29 @@ export const NODE_REGISTRY: Record<string, NodeMetadata> = {
       spaceId: 'string (Nested Space donde se depositan los nodos generados)',
       value: 'string (salida agregada para Export Multimedia)',
       mediaListOutput: 'MediaListOutput (N resultados, uno por fila)',
+    },
+  },
+  populate: {
+    type: 'populate',
+    label: 'Populate',
+    description:
+      'Asigna 1 pieza por template Designer: el community elige filas del Dataset (selecciones) y rellena campos manuales; genera un pack de imágenes (una por slide). No itera el Dataset.',
+    inputs: [
+      { id: 'dataset', label: 'Dataset', type: 'dataset' as HandleType, required: true },
+      { id: 'template', label: 'Plantilla', type: 'template' as HandleType },
+    ],
+    outputs: [
+      { id: 'media_list', label: 'Media List', type: 'media_list' as HandleType },
+      { id: 'out', label: 'Resultados', type: 'url' as HandleType },
+    ],
+    dataSchema: {
+      label: 'string',
+      listId: 'string',
+      templateBindings: 'PopulateTemplateBinding[] (1..8 templates)',
+      publicShareToken: 'string (formulario público)',
+      value: 'string (primera imagen generada)',
+      lastRunOutputs: 'string[] (URLs de la última generación)',
+      mediaListOutput: 'MediaListOutput (slides → Export Multimedia)',
     },
   },
   canvasGroup: {
@@ -706,6 +729,8 @@ export const ASSISTANT_NODE_DATA_HINTS: Record<string, string> = {
     "pages (DesignerPageState[]), activePageIndex, label, value (export raster), autoImageOptimization, pageThumbnails (raster por p\u00e1gina); salida document (json) conecta a presenter; salida media_list conecta a Export Multimedia (thumbnails en vivo + descarga full-res por p\u00e1gina)",
   presenter:
     "label; conectar entrada document desde designer; transitionsByPageId; imageVideoPlacements; el UI lee pages del Designer vía grafo (slides / Presenter / share)",
+  populate:
+    "label, listId, templateBindings[] (1..8 Designers), activeTemplateNodeId, publicShareToken; salida value + mediaListOutput; formulario público /f/{token}; NO iterar Dataset (distinto de loop)",
   canvasGroup:
     "label (título del marco), collapsed (plegado), memberIds (ids hijos — sincronizado con parentId). Creación habitual: usuario selecciona 2+ nodos y agrupa en el lienzo (G / menú); el asistente solo debe emitir type canvasGroup si el usuario pide explícitamente un grafo agrupado en JSON: entonces cada hijo lleva parentId=id del grupo y position relativa; data.memberIds debe listar esos ids; style width/height del marco; NO incluir canvasGroup en executeNodeIds (no ejecuta). Si solo piden “organizar en grupo”, mejor devolver nodos/aristas sueltos y decir que agrupen con la UI.",
 };

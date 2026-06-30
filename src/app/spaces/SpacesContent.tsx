@@ -104,6 +104,7 @@ import {
   createProjectFileForStudioNode,
   createProjectExportFile,
   getProjectFilesFromMetadata,
+  mergeProjectFilesMetadata,
   reconcileProjectFilesFromNodes,
   setProjectFilesInMetadata,
   updateProjectFileInMetadata,
@@ -157,14 +158,16 @@ import {
   type FoldderOpenGeminiVideoDetail,
 } from "./presenter/presenter-image-video-types";
 import { useNodeExecutionRunner } from "./NodeExecutionBridge";
-import { POPULATE_COMMIT_EVENT } from "./populate/use-populate-context";
+import { LOOP_COMMIT_EVENT } from "./loop/use-loop-context";
 import {
-  buildPopulateSpacePortalNode,
-  buildPopulateToSpaceEdge,
-  findPopulateSpacePortalNode,
+  buildLoopSpacePortalNode,
+  buildLoopToSpaceEdge,
+  findLoopSpacePortalNode,
   internalCategoriesFromGeneratedNodes,
-  resolvePopulateCommitSpaceId,
-} from "./populate/populate-space-portal";
+  resolveLoopCommitSpaceId,
+} from "./loop/loop-space-portal";
+import { normalizeLegacyPopulateNodes } from "./populate/normalize-legacy-node-type";
+import { POPULATE_MAX_TEMPLATES } from "./populate/populate-types";
 import {
   analyzeNestedSpaceStructure,
   buildMediaSinkToSpaceOutputEdges,
@@ -3415,27 +3418,27 @@ export function SpacesContent() {
   }, [handleEnterSpace]);
 
   /**
-   * Populate: deposita los nodos generados en el Nested Space, crea o reutiliza
-   * el portal `space` conectado a la derecha del nodo Populate, y actualiza salidas.
+   * Loop: deposita los nodos generados en el Nested Space, crea o reutiliza
+   * el portal `space` conectado a la derecha del nodo Loop, y actualiza salidas.
    */
-  const handlePopulateCommit = useCallback((e: any) => {
+  const handleLoopCommit = useCallback((e: any) => {
     const detail = e?.detail || {};
-    const populateNodeId: string | undefined = detail.populateNodeId;
-    if (!populateNodeId) return;
+    const loopNodeId: string | undefined = detail.loopNodeId;
+    if (!loopNodeId) return;
     const genNodes: Node[] = Array.isArray(detail.nodes) ? detail.nodes : [];
     const genEdges: Edge[] = Array.isArray(detail.edges) ? detail.edges : [];
     const spaceName: string = typeof detail.spaceName === "string" && detail.spaceName.trim()
       ? detail.spaceName.trim()
-      : "Populate";
+      : "Loop";
 
     const currentNodes = liveNodesRef.current as Node[];
     const currentEdges = liveEdgesRef.current as Edge[];
-    const populateNode = currentNodes.find((n) => n.id === populateNodeId);
-    if (!populateNode) return;
+    const loopNode = currentNodes.find((n) => n.id === loopNodeId);
+    if (!loopNode) return;
 
-    const existingPortal = findPopulateSpacePortalNode(populateNodeId, currentNodes, currentEdges);
-    const { spaceId, portalNodeId, isNewPortal } = resolvePopulateCommitSpaceId(
-      populateNodeId,
+    const existingPortal = findLoopSpacePortalNode(loopNodeId, currentNodes, currentEdges);
+    const { spaceId, portalNodeId, isNewPortal } = resolveLoopCommitSpaceId(
+      loopNodeId,
       existingPortal,
     );
     const internalCategories = internalCategoriesFromGeneratedNodes(genNodes);
@@ -3464,7 +3467,7 @@ export function SpacesContent() {
       const prefix =
         typeof detail.replacePrefix === "string" && detail.replacePrefix.trim()
           ? detail.replacePrefix.trim()
-          : `pop_${populateNodeId}_r`;
+          : `loop_${loopNodeId}_r`;
       const keptNodes = (base.nodes as Node[]).filter((n) => !String(n.id).startsWith(prefix));
       const keptEdges = ((base.edges as Edge[]) || []).filter(
         (ed) => !String(ed.source).startsWith(prefix) && !String(ed.target).startsWith(prefix),
@@ -3477,7 +3480,7 @@ export function SpacesContent() {
         ? buildMediaSinkToSpaceOutputEdges(
             mediaSinkInfos.map((s) => ({ nodeId: s.node.id, sourceHandle: s.sourceHandle })),
             "out",
-            `pop_${populateNodeId}`,
+            `loop_${loopNodeId}`,
           )
         : [];
       const allEdges = [...baseEdges, ...sinkToOutEdges];
@@ -3508,12 +3511,12 @@ export function SpacesContent() {
     });
 
     setNodes((nds) => {
-      const pop = nds.find((n) => n.id === populateNodeId);
+      const pop = nds.find((n) => n.id === loopNodeId);
       if (!pop) return nds;
       const structure = portalStructureRef.current;
 
       let next = nds.map((n) =>
-        n.id === populateNodeId
+        n.id === loopNodeId
           ? {
               ...n,
               data: {
@@ -3558,11 +3561,11 @@ export function SpacesContent() {
             : n,
         );
       } else {
-        const portalNode = buildPopulateSpacePortalNode({
+        const portalNode = buildLoopSpacePortalNode({
           portalNodeId,
           spaceId,
           spaceName,
-          populateNode: pop,
+          loopNode: pop,
           internalCategories,
         });
         next = [
@@ -3583,9 +3586,9 @@ export function SpacesContent() {
     });
 
     if (isNewPortal) {
-      const edge = buildPopulateToSpaceEdge(populateNodeId, portalNodeId);
+      const edge = buildLoopToSpaceEdge(loopNodeId, portalNodeId);
       setEdges((eds) => {
-        if (eds.some((e) => e.source === populateNodeId && e.target === portalNodeId)) return eds;
+        if (eds.some((e) => e.source === loopNodeId && e.target === portalNodeId)) return eds;
         return [...eds, edge];
       });
       scheduleFoldderCanvasIntroEnd(portalNodeId);
@@ -3614,9 +3617,9 @@ export function SpacesContent() {
   ]);
 
   useEffect(() => {
-    window.addEventListener(POPULATE_COMMIT_EVENT, handlePopulateCommit);
-    return () => window.removeEventListener(POPULATE_COMMIT_EVENT, handlePopulateCommit);
-  }, [handlePopulateCommit]);
+    window.addEventListener(LOOP_COMMIT_EVENT, handleLoopCommit);
+    return () => window.removeEventListener(LOOP_COMMIT_EVENT, handleLoopCommit);
+  }, [handleLoopCommit]);
 
   // Reactive Propagation Bridge: Sync current space structure to map and parents on change
   useEffect(() => {
@@ -3673,6 +3676,43 @@ export function SpacesContent() {
     });
     return readJsonWithHttpError<SavedProjectDetail>(res, 'GET /api/spaces?id=...');
   }, [devBypassHeaders]);
+
+  const refreshProjectFilesFromServer = useCallback(async () => {
+    if (!activeProjectId || !isAuthenticated) return;
+    try {
+      const project = await fetchProjectDetailById(activeProjectId);
+      const remoteFiles = getProjectFilesFromMetadata(project.metadata ?? {});
+      setMetadata((m: Record<string, unknown>) => {
+        const localFiles = getProjectFilesFromMetadata(m);
+        const merged = mergeProjectFilesMetadata(localFiles, remoteFiles);
+        let next = setProjectFilesInMetadata(m, merged) as Record<string, unknown>;
+        const reconciled = reconcileFoldderLibraryRegistry({
+          nodes: nodes as Node[],
+          assetsMetadata: (m as Record<string, unknown>).assets,
+          projectScopeId: activeProjectId,
+          projectFiles: merged,
+          generatedTextAssets: getGuionistaTextAssetsFromMetadata(m),
+          registry: getFoldderLibraryFromMetadata(m),
+        });
+        next = setFoldderLibraryInMetadata(next, reconciled) as Record<string, unknown>;
+        return next;
+      });
+    } catch (error) {
+      console.warn("[refreshProjectFilesFromServer]", error);
+    }
+  }, [activeProjectId, fetchProjectDetailById, isAuthenticated, nodes]);
+
+  useEffect(() => {
+    if (!projectAssetsOpen) return;
+    void refreshProjectFilesFromServer();
+  }, [projectAssetsOpen, refreshProjectFilesFromServer]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !activeProjectId) return;
+    const onFocus = () => void refreshProjectFilesFromServer();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [activeProjectId, isAuthenticated, refreshProjectFilesFromServer]);
 
   const readProjectIdFromUrl = useCallback((): string | null => {
     if (typeof window === "undefined") return null;
@@ -4436,7 +4476,11 @@ export function SpacesContent() {
       // Legacy: proyectos guardados en Vista Estándar abren con sidebar desbloqueado.
       const loadedFromStandardView = ui?.workspaceViewMode === 'standard';
       markCanvasNodesIntroCompleted(sanitizedActiveGraph.nodes.map((n: Node) => n.id));
-      setNodes(reconcileSpacePortalsInNodes(sanitizedActiveGraph.nodes, spaces as Record<string, any>));
+      setNodes(
+        normalizeLegacyPopulateNodes(
+          reconcileSpacePortalsInNodes(sanitizedActiveGraph.nodes, spaces as Record<string, any>),
+        ),
+      );
       setEdges(sanitizedActiveGraph.edges);
       scheduleNodeInternalsRefresh(sanitizedActiveGraph.nodes.map((n: any) => String(n.id)));
       scheduleEdgeGeometryRefresh();
@@ -4687,7 +4731,7 @@ export function SpacesContent() {
       (Array.isArray(data.edges) ? data.edges : []) as Edge[],
     );
 
-    setNodes(sanitized.nodes);
+    setNodes(normalizeLegacyPopulateNodes(sanitized.nodes));
     markCanvasNodesIntroCompleted(sanitized.nodes.map((n) => n.id));
     setEdges(sanitized.edges);
     scheduleNodeInternalsRefresh(sanitized.nodes.map((n: any) => String(n.id)));
@@ -5216,19 +5260,19 @@ export function SpacesContent() {
     }
 
     // Bloqueo duro: no se puede encapsular en un Space una selección que alimenta la plantilla
-    // de un Populate. Un space como plantilla rompe el binding dinámico por fila y el multi-canal.
+    // de un Loop. Un space como plantilla rompe el binding dinámico por fila y el multi-canal.
     const selectedIds = new Set(selectedNodes.map((n) => n.id));
-    const feedsPopulateTemplate = edges.some(
+    const feedsLoopTemplate = edges.some(
       (e) =>
         selectedIds.has(e.source) &&
         !selectedIds.has(e.target) &&
         e.targetHandle === "template" &&
-        nodes.find((n) => n.id === e.target)?.type === "populate",
+        nodes.find((n) => n.id === e.target)?.type === "loop",
     );
-    if (feedsPopulateTemplate) {
+    if (feedsLoopTemplate) {
       window.alert(
-        "No puedes encapsular en un Space nodos conectados a la plantilla de un Populate. " +
-          "Conecta los creadores directamente al Populate (multi-canal) o desconéctalos del Populate antes de agrupar.",
+        "No puedes encapsular en un Space nodos conectados a la plantilla de un Loop. " +
+          "Conecta los creadores directamente al Loop (multi-canal) o desconéctalos del Loop antes de agrupar.",
       );
       setContextMenu(null);
       return;
@@ -5712,6 +5756,20 @@ export function SpacesContent() {
     const targetNode = resolveNode(connection.target);
     if (!sourceNode || !targetNode) return false;
     if (!areNodesConnectable(sourceNode, targetNode, connection, nodes, { spacesMap })) return false;
+    if (targetNode.type === "populate" && connection.targetHandle === "template") {
+      const duplicate = edges.some(
+        (e) =>
+          e.target === targetNode.id &&
+          e.targetHandle === "template" &&
+          e.source === connection.source,
+      );
+      if (!duplicate) {
+        const linked = edges.filter(
+          (e) => e.target === targetNode.id && e.targetHandle === "template",
+        ).length;
+        if (linked >= POPULATE_MAX_TEMPLATES) return false;
+      }
+    }
     if (targetNode.type === "export_multimedia" || targetNode.type === "exportMultiple") {
       if (isExportMultimediaDatasetTargetHandle(connection.targetHandle)) {
         return !isExportMultimediaDatasetTaken(targetNode.id, edges);

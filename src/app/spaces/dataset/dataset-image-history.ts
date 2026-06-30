@@ -1,5 +1,5 @@
 /**
- * Historial de versiones a nivel de celda imagen (Populate y regeneraciones).
+ * Historial de versiones a nivel de celda imagen (Loop y regeneraciones).
  */
 
 import type { FieldValue } from "./dataset-types";
@@ -12,7 +12,7 @@ export interface ImageGenerationHistoryEntry {
   assetId: string;
   s3Key?: string;
   savedAt: string;
-  source?: "populate" | "manual";
+  source?: "loop" | "manual";
 }
 
 export type DatasetImageValue = Extract<FieldValue, { type: "image" }>;
@@ -40,7 +40,7 @@ export function writeImageCellValue(args: {
   source?: ImageGenerationHistoryEntry["source"];
   maxHistory?: number;
 }): DatasetImageValue {
-  const { current, url, assetId, s3Key, source = "populate", maxHistory = MAX_IMAGE_CELL_GENERATION_HISTORY } =
+  const { current, url, assetId, s3Key, source = "loop", maxHistory = MAX_IMAGE_CELL_GENERATION_HISTORY } =
     args;
   const trimmed = url.trim();
   const nextAssetId = assetId?.trim() || genAssetId();
@@ -58,7 +58,7 @@ export function writeImageCellValue(args: {
           s3Key: current.s3Key,
           savedAt: current.populatedAt ?? savedAt,
           source: current.generationHistory?.length
-            ? ("populate" as const)
+            ? ("loop" as const)
             : ("manual" as const),
         }
       : null;
@@ -103,7 +103,7 @@ export function restoreImageCellFromHistory(
     assetId: current.assetId,
     s3Key: current.s3Key,
     savedAt: current.populatedAt ?? new Date().toISOString(),
-    source: "populate",
+    source: "loop",
   };
 
   return {

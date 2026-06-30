@@ -26,15 +26,15 @@ export interface FieldDef {
   defaultValue?: unknown;
   options?: string[];
   /**
-   * Procedencia Populate-Designer: id estable del grupo de columnas (un grupo por Populate-Designer).
+   * Procedencia Loop-Designer: id estable del grupo de columnas (un grupo por Loop-Designer).
    * Agrupa las M columnas (una por slide) bajo una identidad común.
    */
-  populateGroupId?: string;
+  loopGroupId?: string;
   /**
-   * Procedencia Populate-Designer: `slideKey` de la slide de origen. Permite re-emparejar la columna
+   * Procedencia Loop-Designer: `slideKey` de la slide de origen. Permite re-emparejar la columna
    * en re-ejecuciones de forma estable, independiente del nombre o del orden de las slides.
    */
-  populateSlideKey?: string;
+  loopSlideKey?: string;
   /**
    * La slide de origen ya no existe en la plantilla. La columna se conserva (con su historial) y se
    * marca visualmente como huérfana; el borrado lo decide el usuario (nunca automático).
@@ -56,9 +56,9 @@ export type FieldValue =
       w?: number;
       h?: number;
       hasAlpha?: boolean;
-      /** Clave S3 cuando la imagen viene de generación Populate. */
+      /** Clave S3 cuando la imagen viene de generación Loop. */
       s3Key?: string;
-      /** ISO timestamp de la última escritura Populate en esta celda. */
+      /** ISO timestamp de la última escritura Loop en esta celda. */
       populatedAt?: string;
       /** Versiones anteriores de esta celda (solo celdas generadas). */
       generationHistory?: ImageGenerationHistoryEntry[];
@@ -154,8 +154,8 @@ export interface DatasetPreview {
  *
  * Dos estados:
  * - RESUELTO (Modo 1, Dataset conectado al Designer): `listId`/`fieldId` apuntan a una columna real.
- * - PENDIENTE (Modo 2, Designer como plantilla de Populate): el objeto está marcado como dinámico
- *   con su `kind` y una `slotLabel`, pero SIN columna (`listId`/`fieldId` vacíos). Populate asigna
+ * - PENDIENTE (Modo 2, Designer como plantilla de Loop): el objeto está marcado como dinámico
+ *   con su `kind` y una `slotLabel`, pero SIN columna (`listId`/`fieldId` vacíos). Loop asigna
  *   la columna después en su UI de mapeo y, al congelar, rellena el hueco.
  */
 /**
@@ -177,8 +177,13 @@ export interface DesignerDatasetFieldBinding {
   nodeId?: string;
   /** Tipo del hueco dinámico. Imprescindible en estado PENDIENTE (sin columna que lo infiera). */
   kind?: "text" | "image";
-  /** Etiqueta legible del hueco (identidad para el mapeo en Populate, estilo token de prompt). */
+  /** Etiqueta legible del hueco (identidad para el mapeo en Loop, estilo token de prompt). */
   slotLabel?: string;
+  /**
+   * Id interno estable del hueco (persiste aunque cambie `slotLabel`).
+   * Objetos con el mismo `slotId` comparten entidad en Loop/Populate (texto + imagen).
+   */
+  slotId?: string;
 }
 
 /** @deprecated Usar `DesignerDatasetFieldBinding`. */

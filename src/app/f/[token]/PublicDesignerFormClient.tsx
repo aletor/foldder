@@ -2,21 +2,21 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Download, Loader2, Sparkles } from "lucide-react";
-import type { PublicPopulateShareRecord } from "@/lib/populate-share-types";
+import type { PublicLoopShareRecord } from "@/lib/loop-share-types";
 import {
   autofillDesignerFormFromRowIndex,
   freezeDesignerPagesForForm,
   resolveDesignerSlotValues,
   type DesignerFormModel,
-} from "@/app/spaces/populate/populate-designer-form";
-import { DesignerFormImagePicker } from "@/app/spaces/populate/DesignerFormImagePicker";
+} from "@/app/spaces/loop/loop-designer-form";
+import { DesignerFormImagePicker } from "@/app/spaces/loop/DesignerFormImagePicker";
 import {
   DesignerHeadlessRasterPortal,
   type DesignerHeadlessRasterRequest,
 } from "@/app/spaces/designer/DesignerHeadlessRasterPortal";
 
 type Props = {
-  initial: PublicPopulateShareRecord;
+  initial: PublicLoopShareRecord;
 };
 
 /**
@@ -43,7 +43,7 @@ export function PublicDesignerFormClient({ initial }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<string[]>([]);
 
-  // Driver del raster headless (mismo patrón que Populate): monta un Designer offscreen por petición.
+  // Driver del raster headless (mismo patrón que Loop): monta un Designer offscreen por petición.
   const [rasterReq, setRasterReq] = useState<DesignerHeadlessRasterRequest | null>(null);
   const rasterRef = useRef<{
     resolve: (m: Record<string, string>) => void;
@@ -53,7 +53,7 @@ export function PublicDesignerFormClient({ initial }: Props) {
   const seqRef = useRef(0);
 
   useEffect(() => {
-    void fetch("/api/populate-share/visit", {
+    void fetch("/api/loop-share/visit", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token: initial.token }),

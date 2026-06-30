@@ -6,17 +6,17 @@ import {
   parseCanvasGroupOutHandle,
 } from './canvas-group-logic';
 import {
-  isValidPopulateSinkEdge,
+  isValidLoopSinkEdge,
   primarySinkSourceHandle,
-} from './populate/pipeline/pipeline-bindings';
-import { POPULATE_PIPELINE_EXECUTABLE_TYPES } from './populate/pipeline/populate-pipeline-sink-types';
+} from './loop/pipeline/pipeline-bindings';
+import { LOOP_PIPELINE_EXECUTABLE_TYPES } from './loop/pipeline/loop-pipeline-sink-types';
 import {
-  isPopulateSpacePortalConnection,
+  isLoopSpacePortalConnection,
   type SpaceMapEntryLike,
-} from './space-portal-populate-link';
+} from './space-portal-loop-link';
 
 /**
- * Tipos de nodo creativo que Populate puede orquestar (plantilla).
+ * Tipos de nodo creativo que Loop puede orquestar (plantilla).
  * Empezamos por Image Creation; el resto se irá habilitando con el mismo contrato.
  */
 export const ORCHESTRABLE_CREATIVE_TYPES = new Set<string>([
@@ -26,16 +26,16 @@ export const ORCHESTRABLE_CREATIVE_TYPES = new Set<string>([
 
 /** Handle del input Dataset del Designer (Modo 1: Dataset conectado directamente). */
 export const DESIGNER_DATASET_INPUT_HANDLE = 'dataset';
-/** Handle del input Plantilla de Populate (Modo 2: el Designer es plantilla). */
-export const POPULATE_TEMPLATE_INPUT_HANDLE = 'template';
+/** Handle del input Plantilla de Loop (Modo 2: el Designer es plantilla). */
+export const LOOP_TEMPLATE_INPUT_HANDLE = 'template';
 
-/** ¿El Designer ya está conectado como plantilla de algún Populate (su salida → handle Plantilla)? */
-export function designerIsPopulateTemplate(
+/** ¿El Designer ya está conectado como plantilla de algún Loop (su salida → handle Plantilla)? */
+export function designerIsLoopTemplate(
   designerId: string,
   edges: Pick<Edge, 'source' | 'targetHandle'>[],
 ): boolean {
   return edges.some(
-    (e) => e.source === designerId && e.targetHandle === POPULATE_TEMPLATE_INPUT_HANDLE,
+    (e) => e.source === designerId && e.targetHandle === LOOP_TEMPLATE_INPUT_HANDLE,
   );
 }
 
@@ -50,7 +50,7 @@ export function designerHasDirectDataset(
 }
 
 /**
- * Regla de exclusión Modo 1 (Dataset directo) ↔ Modo 2 (plantilla de Populate): un Designer no puede
+ * Regla de exclusión Modo 1 (Dataset directo) ↔ Modo 2 (plantilla de Loop): un Designer no puede
  * estar en ambos a la vez, porque dos fuentes de datos competirían por los mismos campos dinámicos.
  *
  * Devuelve el motivo (texto para avisar) si la conexión propuesta crearía el conflicto, o `null` si
@@ -68,24 +68,24 @@ export function designerModeConflictReason(
 ): string | null {
   const typeById = new Map(nodes.map((n) => [n.id, n.type]));
 
-  // Caso A: conectar un Dataset → handle Dataset de un Designer que YA es plantilla de un Populate.
+  // Caso A: conectar un Dataset → handle Dataset de un Designer que YA es plantilla de un Loop.
   if (
     connection.targetHandle === DESIGNER_DATASET_INPUT_HANDLE &&
     connection.target &&
     typeById.get(connection.target) === 'designer' &&
-    designerIsPopulateTemplate(connection.target, edges)
+    designerIsLoopTemplate(connection.target, edges)
   ) {
-    return 'Este Designer ya es plantilla de un Populate. Desconéctalo del Populate para conectarle un Dataset directo.';
+    return 'Este Designer ya es plantilla de un Loop. Desconéctalo del Loop para conectarle un Dataset directo.';
   }
 
-  // Caso B: usar como plantilla de Populate un Designer que YA tiene un Dataset conectado directo.
+  // Caso B: usar como plantilla de Loop un Designer que YA tiene un Dataset conectado directo.
   if (
-    connection.targetHandle === POPULATE_TEMPLATE_INPUT_HANDLE &&
+    connection.targetHandle === LOOP_TEMPLATE_INPUT_HANDLE &&
     connection.source &&
     typeById.get(connection.source) === 'designer' &&
     designerHasDirectDataset(connection.source, edges)
   ) {
-    return 'Este Designer ya usa un Dataset directo. Desconéctalo para usarlo como plantilla de Populate.';
+    return 'Este Designer ya usa un Dataset directo. Desconéctalo para usarlo como plantilla de Loop.';
   }
 
   return null;
@@ -195,31 +195,47 @@ export function areNodesConnectable(
     return sourceHandleType === 'dataset' && targetHandleType === 'dataset';
   }
 
-  // Bloqueo duro: un nested Space NO puede actuar como plantilla de Populate.
+  // Bloqueo duro: un nested Space NO puede actuar como plantilla de Loop.
   // Rompe el binding dinámico por fila y el multi-canal (varios creadores internos → 1 solo
-  // sink resoluble). Para multi-canal, conecta los creadores directamente al Populate.
+  // sink resoluble). Para multi-canal, conecta los creadores directamente al Loop.
   if (
-    targetNode.type === 'populate' &&
+    targetNode.type === 'loop' &&
     connection.targetHandle === 'template' &&
     sourceNode.type === 'space'
   ) {
     return false;
   }
 
-  // Populate ↔ Space portal (destino de resultados; admite cable en ambos sentidos).
-  if (isPopulateSpacePortalConnection(sourceNode, targetNode, connection)) {
+  // Loop ↔ Space portal (destino de resultados; admite cable en ambos sentidos).
+  if (isLoopSpacePortalConnection(sourceNode, targetNode, connection)) {
     return true;
   }
 
-  // Populate plantilla: salida primaria de un nodo con executor de tubería → input template.
-  if (targetNode.type === "populate" && connection.targetHandle === "template") {
+  // Loop plantilla: salida primaria de un nodo con executor de tubería → input template.
+  if (targetNode.type === "loop" && connection.targetHandle === "template") {
     const sourceType = sourceNode.type as string;
     const sh = connection.sourceHandle ?? primarySinkSourceHandle(sourceType) ?? "image";
-    return isValidPopulateSinkEdge({
+    return isValidLoopSinkEdge({
       sourceNodeType: sourceType,
       sourceHandle: sh,
-      isPipelineExecutable: (t) => !!t && POPULATE_PIPELINE_EXECUTABLE_TYPES.has(t),
+      isPipelineExecutable: (t) => !!t && LOOP_PIPELINE_EXECUTABLE_TYPES.has(t),
     });
+  }
+
+  // Bloqueo duro: un nested Space NO puede actuar como plantilla de Populate.
+  if (
+    targetNode.type === "populate" &&
+    connection.targetHandle === "template" &&
+    sourceNode.type === "space"
+  ) {
+    return false;
+  }
+
+  // Populate plantilla: solo Designer (Document → template).
+  if (targetNode.type === "populate" && connection.targetHandle === "template") {
+    if (sourceNode.type === "space") return false;
+    const sh = connection.sourceHandle ?? "document";
+    return sourceNode.type === "designer" && (sh === "document" || sh === "template");
   }
 
   // Template handle legacy (proyectos con salida template dedicada).
@@ -228,7 +244,7 @@ export function areNodesConnectable(
     return (
       sourceHandleType === 'template' &&
       targetHandleType === 'template' &&
-      POPULATE_PIPELINE_EXECUTABLE_TYPES.has(sourceType)
+      LOOP_PIPELINE_EXECUTABLE_TYPES.has(sourceType)
     );
   }
 

@@ -593,6 +593,20 @@ export function ProjectAssetsFullscreen({
     };
   }, [libraryView]);
 
+  const exportedGroups = useMemo(() => {
+    const groups = new Map<string, LibraryAsset[]>();
+    for (const asset of libraryView.exported) {
+      const label = asset.sourceLabel?.trim() || "Exportados";
+      const bucket = groups.get(label) ?? [];
+      bucket.push(asset);
+      groups.set(label, bucket);
+    }
+    return Array.from(groups.entries()).sort(
+      (a, b) =>
+        (Date.parse(b[1][0]?.updatedAt ?? "") || 0) - (Date.parse(a[1][0]?.updatedAt ?? "") || 0),
+    );
+  }, [libraryView.exported]);
+
   const currentPreviewList = useMemo(() => {
     const list = tabPreviewLists[activeTab === "exported" ? "exported" : activeTab];
     return list.filter((asset) => isPreviewableAsset(asset, refreshedUrls));
@@ -762,28 +776,35 @@ export function ProjectAssetsFullscreen({
           {activeTab === "exported" ? (
             <FoldderLibraryStudioSection>
               {libraryView.exported.length === 0 ? (
-                <FoldderLibraryEmptyState hint="Usa Exportar en Importados o Generados para descargar y guardar entregas aquí.">
+                <FoldderLibraryEmptyState hint="Usa Exportar en Importados o Generados para descargar y guardar entregas aquí. Las piezas del formulario Populate aparecen agrupadas por partido.">
                   No hay exportados todavía
                 </FoldderLibraryEmptyState>
               ) : (
-                <FoldderLibraryAssetGrid>
-                  {libraryView.exported.map((asset) => (
-                    <FoldderLibraryAssetCell key={asset.id}>
-                      <LibraryAssetTile
-                        asset={asset}
-                        refreshedUrls={refreshedUrls}
-                        delivery
-                        liveNodeIds={liveNodeIds}
-                        onRenameAsset={onRenameAsset}
-                        onFocusNode={onFocusNode}
-                        onExportAsset={onExportAsset}
-                        onOpenPreview={handleOpenPreview}
-                        previewList={tabPreviewLists.exported}
-                        showExportAction={false}
-                      />
-                    </FoldderLibraryAssetCell>
+                <>
+                  {exportedGroups.map(([groupLabel, assets]) => (
+                    <React.Fragment key={groupLabel}>
+                      <FoldderLibrarySectionKicker label={groupLabel} count={assets.length} />
+                      <FoldderLibraryAssetGrid>
+                        {assets.map((asset) => (
+                          <FoldderLibraryAssetCell key={asset.id}>
+                            <LibraryAssetTile
+                              asset={asset}
+                              refreshedUrls={refreshedUrls}
+                              delivery
+                              liveNodeIds={liveNodeIds}
+                              onRenameAsset={onRenameAsset}
+                              onFocusNode={onFocusNode}
+                              onExportAsset={onExportAsset}
+                              onOpenPreview={handleOpenPreview}
+                              previewList={tabPreviewLists.exported}
+                              showExportAction={false}
+                            />
+                          </FoldderLibraryAssetCell>
+                        ))}
+                      </FoldderLibraryAssetGrid>
+                    </React.Fragment>
                   ))}
-                </FoldderLibraryAssetGrid>
+                </>
               )}
             </FoldderLibraryStudioSection>
           ) : null}
